@@ -1,0 +1,5 @@
+graph TD
+    A["Start: receive request"] --> B{"Authenticated?"}
+    B -->|yes| C["Handle request"]
+    B -->|no| D["Return 401"]
+    C --> E["Respond 200"]

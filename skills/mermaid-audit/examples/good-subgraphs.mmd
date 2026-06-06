@@ -1,0 +1,14 @@
+graph TD
+    subgraph SG_AUTH["Auth"]
+        direction LR
+        NODE_AUTH_login["Login"] --> NODE_AUTH_token["Issue token"]
+    end
+    subgraph SG_BILL["Billing"]
+        direction LR
+        NODE_BILL_check["Check plan"] --> NODE_BILL_charge["Charge"]
+    end
+    subgraph SG_NOTIFY["Notify"]
+        NODE_NOTIFY_email["Email"]
+    end
+    SG_AUTH --> SG_BILL
+    SG_BILL --> SG_NOTIFY
