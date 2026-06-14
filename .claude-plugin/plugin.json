@@ -1,7 +1,7 @@
 {
-  "name": "uz-kit",
-  "description": "Personal kit of Claude Code skills and slash commands. Currently includes a clean-context spec/plan review-and-fix workflow (reviewing-specs reviewer, applying-review-feedback fixer, /review-spec orchestrator).",
-  "version": "0.1.0",
+  "name": "ai-kit",
+  "description": "Personal kit of agent skills and slash commands by uz, with a one-line installer that symlinks them into Claude Code. Includes a spec/plan review-and-fix workflow, a commit-message helper, a LibCST refactor helper, a Mermaid diagram auditor, and a responsive status line.",
+  "version": "0.2.0",
   "author": {
     "name": "Uzer Zer0",
     "email": "castocolina.dev@gmail.com"

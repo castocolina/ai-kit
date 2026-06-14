@@ -1,74 +1,94 @@
-# uz-kit
+# ai-kit
 
-Personal Agent Skills and slash commands by uz. Portable across any tool that follows the [Agent Skills](https://agentskills.io) open standard — Claude Code, OpenCode, Codex CLI, Gemini CLI, Cursor, Copilot CLI, Kiro, and others.
+Personal agent skills and slash commands by uz, with a one-line installer that
+wires them into Claude Code. The skills follow the [Agent Skills](https://agentskills.io)
+open standard, so they also work on any conformant tool (OpenCode, Codex CLI,
+Gemini CLI, Cursor, Copilot CLI, Kiro, and others).
 
-GitLab: `git@gitlab.com:cco-open-src/uzkit.git`
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/castocolina/ai-kit/main/tools/install.sh | bash
+```
+
+or with `wget`:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/castocolina/ai-kit/main/tools/install.sh | bash
+```
+
+The installer clones the repo into `~/.local/share/ai-kit`, symlinks every skill,
+command, and agent into `~/.claude/`, and points your status line at the bundled
+`status-line.py`. It is **idempotent** — re-run it any time to update.
 
 ## Contents
 
 | Name | Type | Use case |
 |---|---|---|
-| [`reviewing-specs`](skills/reviewing-specs/SKILL.md) | skill | Audit-only reviewer for design/plan documents. Framework-agnostic. Accepts a pre-classified `DOC_TYPE` from the orchestrator; falls back to its own path heuristics + content-shape classification. |
-| [`applying-review-feedback`](skills/applying-review-feedback/SKILL.md) | skill | Fixer that addresses each finding from a `reviewing-specs` report. All-or-nothing per finding (escalates if any sub-trigger requires a strategy decision). |
-| [`cst-refactor`](skills/cst-refactor/SKILL.md) | skill | LibCST-based Python codemod helper. Multi-file renames and signature changes that survive comments and formatting. Bundled `codemod_template.py` with `rename-symbol`, `rename-parameter`, `add-parameter`, `remove-parameter`, `rewrite-docstring` subcommands. |
-| [`/review-spec`](commands/review-spec.md) | slash command | Orchestrator for `reviewing-specs` + `applying-review-feedback`. Persists in-memory documents, classifies the document type, dispatches a fresh reviewer subagent, then a fresh fixer subagent, looping until Approved or iteration cap. |
+| [`reviewing-specs`](skills/reviewing-specs/SKILL.md) | skill | Audit-only reviewer for design/plan documents. Framework-aware (EARS, RFC-2119, Given/When/Then, OpenSpec, Spec Kit, GSD, …). |
+| [`applying-review-feedback`](skills/applying-review-feedback/SKILL.md) | skill | Fixer that addresses each finding from a `reviewing-specs` report, in place. |
+| [`commit-message`](skills/commit-message/SKILL.md) | skill | Generate a git commit message for staged/working changes, an amend, or a specific commit. |
+| [`cst-refactor`](skills/cst-refactor/SKILL.md) | skill | LibCST-based Python codemod helper — multi-file renames and signature changes that survive comments and formatting. |
+| [`mermaid-audit`](skills/mermaid-audit/SKILL.md) | skill | Render and review Mermaid diagrams embedded in Markdown to catch syntax errors and layout problems. |
+| [`/review-spec`](commands/review-spec.md) | slash command | Orchestrates `reviewing-specs` + `applying-review-feedback` in clean-context subagents, looping until approved. |
 
-## Install
+## How the installer works
 
-The repo is itself the plugin. Clone it into the skills directory of whatever tool you're using.
+The repo is the source of truth. `tools/install.sh`:
 
-### Claude Code
+1. **fetch** — clones (or `git pull`s) the repo into `~/.local/share/ai-kit`; falls back to a tarball download when `git` is absent.
+2. **verify** — enumerates `skills/`, `commands/`, and `agents/` and validates each entry's shape (skills need a `SKILL.md`; commands/agents need Markdown with frontmatter). Malformed entries are skipped with a warning.
+3. **link** — symlinks each valid entry into `~/.claude/<category>/`. Existing real files and symlinks that point outside ai-kit are never touched.
+4. **prune** — removes broken symlinks under `~/.claude/` that point into the install dir, so deleting a skill from the repo and re-running cleans up after itself.
+5. **statusline** — sets `statusLine` in `~/.claude/settings.json` to the bundled `tools/status-line.py` (a backup is written to `settings.json.bak`).
 
-```bash
-git clone git@gitlab.com:cco-open-src/uzkit.git ~/.claude/plugins/uz-kit
-```
+Adding or removing skills/commands/agents needs no change to the script — entries are discovered dynamically.
 
-The `.claude-plugin/plugin.json` manifest is auto-detected.
-
-### OpenCode
-
-```bash
-git clone git@gitlab.com:cco-open-src/uzkit.git ~/.opencode/skills/uz-kit
-```
-
-### Gemini CLI
+### Flags & overrides
 
 ```bash
-git clone git@gitlab.com:cco-open-src/uzkit.git ~/.gemini/skills/uz-kit
+install.sh --dry-run     # show what would change, mutate nothing
+install.sh --uninstall   # remove every ai-kit symlink + statusLine (keeps the install dir)
 ```
 
-### Codex CLI / Cursor / Kiro / others
+Environment overrides: `AI_KIT_DIR`, `AI_KIT_REPO`, `AI_KIT_BRANCH`, `CLAUDE_CONFIG_DIR`.
 
-Clone into the tool's standard skills directory. Skill discovery follows the [Agent Skills](https://agentskills.io) spec — every tool that supports it reads the `name` and `description` frontmatter from each `SKILL.md` and exposes the skill automatically.
+## Updating
 
-Slash commands are Claude Code-specific today. On other tools, the orchestrator logic in `commands/review-spec.md` can still be invoked manually by reading and following its instructions.
+Re-run the install command (or `git -C ~/.local/share/ai-kit pull`). New entries
+are linked, removed ones are pruned, and skills re-read on next invocation.
 
-## Updating across machines
+## Other tools
+
+Skill discovery follows the [Agent Skills](https://agentskills.io/specification)
+spec — every conformant tool reads the `name`/`description` frontmatter from each
+`SKILL.md`. For non-Claude tools, clone this repo into the tool's skills directory:
 
 ```bash
-cd ~/.claude/plugins/uz-kit  # or wherever cloned
-git pull
+git clone https://github.com/castocolina/ai-kit ~/.opencode/skills/ai-kit   # OpenCode
+git clone https://github.com/castocolina/ai-kit ~/.gemini/skills/ai-kit     # Gemini CLI
 ```
 
-The repo is the source of truth. Skills update on next `git pull`; tools re-read the `SKILL.md` files on next invocation.
+Slash commands are Claude Code-specific; on other tools, the orchestrator logic
+in `commands/review-spec.md` can be followed manually.
 
 ## Layout
 
 ```
-uz-kit/
+ai-kit/
 ├── .claude-plugin/plugin.json   # Claude Code manifest (other tools ignore)
 ├── README.md
-├── skills/
-│   ├── reviewing-specs/
-│   ├── applying-review-feedback/
-│   └── cst-refactor/
-└── commands/
-    └── review-spec.md
+├── skills/                      # one directory per skill, each with SKILL.md
+├── commands/                    # one Markdown file per slash command
+├── tools/
+│   ├── install.sh               # the installer above
+│   └── status-line.py           # responsive Claude Code status line
+└── tests/                       # test_install.sh, test_status_line.py
 ```
 
 ## Compatibility notes
 
-- All `SKILL.md` files use the base [Agent Skills](https://agentskills.io/specification) frontmatter (`name`, `description`). No tool-specific extensions used. Claude-only fields (e.g. `allowed-tools`, `context: fork`) are not present, so the skills run unmodified on every conformant tool.
+- All `SKILL.md` files use the base [Agent Skills](https://agentskills.io/specification) frontmatter (`name`, `description`). No Claude-only fields, so the skills run unmodified on every conformant tool.
 - The `cst-refactor` skill resolves its bundled `codemod_template.py` via `${CLAUDE_PLUGIN_ROOT}`. On non-Claude tools, substitute the path to wherever this repo is cloned.
 
 ## License
