@@ -315,6 +315,23 @@ class UnifiedManifestTests(unittest.TestCase):
         self.assertIn("--agent", g.wiring)
         self.assertNotIn("pi", g.wiring.split("--agent")[1].split("--")[0])
 
+    def test_every_row_has_known_audience(self):
+        for t in self.tools:
+            self.assertIn(t.audience, {"ai", "human", "both"}, f"{t.id}: bad audience {t.audience!r}")
+
+    def test_every_row_has_a_desc(self):
+        for t in self.tools:
+            self.assertTrue(t.desc, f"{t.id}: missing desc")
+
+    def test_pi_is_disabled_by_default(self):
+        pi = next(t for t in self.tools if t.id == "pi")
+        self.assertFalse(pi.enabled)
+
+    def test_gsd_has_state_block(self):
+        g = next(t for t in self.tools if t.id == "gsd")
+        self.assertTrue(g.state_file)
+        self.assertEqual(g.state_update_key, "update_available")
+
     def test_pnpm_has_setup_command(self):
         p = next(t for t in self.tools if t.id == "pnpm")
         self.assertEqual(p.setup, "pnpm self-update && pnpm setup")
@@ -542,6 +559,31 @@ class CustomFnTests(unittest.TestCase):
         for t in mdl.load_tools(MANIFEST_NEW):
             if t.kind == "custom":
                 self.assertTrue(hasattr(cst, t.fn), f"missing {t.fn} for {t.id}")
+
+
+class WizardRenderTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import importlib
+        cls.wiz = importlib.import_module("setup")
+
+    def test_actionable_is_loud_states_only(self):
+        # actionable = LOUD states only; disabled/current/update/pinned never block
+        states = {
+            "a": "missing", "b": "needs_wiring", "c": "current",
+            "d": "disabled", "e": "update", "f": "pinned",
+        }
+        loud = [k for k, s in states.items() if eng.severity(s) == "loud"]
+        self.assertEqual(sorted(loud), ["a", "b"])
+
+    def test_for_label_maps_audience(self):
+        self.assertEqual(self.wiz.for_label("ai"), "AI")
+        self.assertEqual(self.wiz.for_label("human"), "you")
+        self.assertEqual(self.wiz.for_label("both"), "both")
+
+    def test_status_accent_covers_every_state(self):
+        for state in (eng.STATE_LOUD | eng.STATE_CALM | eng.STATE_SILENT):
+            self.assertIn(state, self.wiz.STATUS_ACCENT, f"no accent for {state}")
 
 
 class PathReminderFromRegistryTests(unittest.TestCase):

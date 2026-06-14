@@ -8,6 +8,10 @@
 # Common fields: id (unique), name, kind, category, priority, cmd (defaults to id),
 #   requires=[ids] (installed first AND dragged in if missing), bin_dir (PATH-managed),
 #   setup (one-time post-install shell command), notes.
+#   enabled (default true; false → dim, excluded from installs),
+#   audience (ai|human|both — who the tool serves, the "For" column),
+#   desc (one-line "what it does", shown in the wizard),
+#   pin (held version; presence suppresses the update state).
 # Per-kind:
 #   pkg            pkg.{debian,arch,brew}, alias_cmd (debian)
 #   cargo          crate, pkg.{arch,brew} fallback
@@ -19,6 +23,10 @@
 #   custom         fn
 # Optional [tool.version] block: latest="github:owner/repo|crates:name|json:URL#key",
 #   installed_cmd, installed_re — powers the `sync` outdated check.
+# Optional [tool.state] block (launchers): file, installed_key, latest_key, update_key —
+#   reads a tool-written JSON cache for status (no npx/network call).
+# NOTE: a [tool.version]/[tool.state] sub-table MUST come after all of that tool's
+# bare key/value lines, or tomllib assigns later keys to the sub-table.
 
 # ─────────────────────────────────────────── P0: search & data
 [[tool]]
@@ -27,6 +35,8 @@ name = "ripgrep"
 kind = "pkg"
 category = "search"
 priority = "P0"
+audience = "ai"
+desc = "Fast recursive search; respects .gitignore automatically"
 pkg = { debian = "ripgrep", arch = "ripgrep", brew = "ripgrep" }
 
 [[tool]]
@@ -35,6 +45,8 @@ name = "fd"
 kind = "pkg"
 category = "search"
 priority = "P0"
+audience = "ai"
+desc = "Find files without find's syntax friction"
 pkg = { debian = "fd-find", arch = "fd", brew = "fd" }
 alias_cmd = "fdfind"
 notes = "Debian binary: fdfind"
@@ -45,6 +57,8 @@ name = "jq"
 kind = "pkg"
 category = "data"
 priority = "P0"
+audience = "ai"
+desc = "Surgical queries and edits on JSON"
 pkg = { debian = "jq", arch = "jq", brew = "jq" }
 
 [[tool]]
@@ -53,6 +67,8 @@ name = "yq"
 kind = "github-release"
 category = "data"
 priority = "P0"
+audience = "ai"
+desc = "Surgical queries and edits on YAML"
 repo = "mikefarah/yq"
 asset = "yq_linux_{arch.deb}"
 raw = true
@@ -70,6 +86,8 @@ kind = "custom"
 fn = "install_gh"
 category = "git"
 priority = "P0"
+audience = "both"
+desc = "GitHub from the terminal: PRs, issues, releases"
 notes = "GitHub CLI (apt repo / pacman / brew)"
 
 # ─────────────────────────────────────────── P0: package managers / toolchains
@@ -79,6 +97,8 @@ name = "uv"
 kind = "curl"
 category = "pkg-mgr"
 priority = "P0"
+audience = "both"
+desc = "Fast Python package and venv manager (replaces pip/venv)"
 url = "https://astral.sh/uv/install.sh"
 shell = "sh"
 bin_dir = "~/.local/bin"
@@ -90,6 +110,8 @@ name = "volta"
 kind = "curl"
 category = "pkg-mgr"
 priority = "P0"
+audience = "both"
+desc = "Version-pinned Node.js toolchain manager"
 url = "https://get.volta.sh"
 shell = "bash"
 bin_dir = "~/.volta/bin"
@@ -102,6 +124,8 @@ kind = "custom"
 fn = "install_pnpm"
 category = "pkg-mgr"
 priority = "P0"
+audience = "both"
+desc = "Fast, disk-efficient Node package manager"
 requires = ["volta"]
 setup = "pnpm self-update && pnpm setup"
 notes = "Via volta; setup configures PNPM_HOME + global bin dir"
@@ -113,6 +137,8 @@ kind = "custom"
 fn = "install_node"
 category = "pkg-mgr"
 priority = "P0"
+audience = "both"
+desc = "Node.js 22 LTS runtime"
 requires = ["volta"]
 notes = "Node 22 LTS via volta (volta install node@22)"
 
@@ -123,6 +149,8 @@ name = "mermaid CLI"
 kind = "node"
 category = "workflow"
 priority = "P0"
+audience = "ai"
+desc = "Render Mermaid diagrams to SVG/PNG for validation"
 npm_pkg = "@mermaid-js/mermaid-cli"
 requires = ["volta"]
 notes = "Diagram generation"
@@ -134,6 +162,8 @@ name = "eza"
 kind = "github-release"
 category = "nav"
 priority = "P1"
+audience = "both"
+desc = "ls with tree view and git awareness"
 repo = "eza-community/eza"
 asset = "eza_{arch.machine}-unknown-linux-musl.tar.gz"
 member = "eza"
@@ -151,6 +181,8 @@ name = "tmux"
 kind = "pkg"
 category = "system"
 priority = "P1"
+audience = "human"
+desc = "Terminal multiplexer: persistent sessions, background tasks"
 pkg = { debian = "tmux", arch = "tmux", brew = "tmux" }
 
 [[tool]]
@@ -159,6 +191,8 @@ name = "tokei"
 kind = "cargo"
 category = "search"
 priority = "P1"
+audience = "ai"
+desc = "Instant line/language stats to orient in a repo"
 crate = "tokei"
 pkg = { arch = "tokei", brew = "tokei" }
 
@@ -169,6 +203,8 @@ name = "ast-grep"
 kind = "cargo"
 category = "search"
 priority = "P1"
+audience = "ai"
+desc = "Structural (AST) search and rewrite, not textual"
 crate = "ast-grep"
 pkg = { arch = "ast-grep", brew = "ast-grep" }
 
@@ -178,6 +214,8 @@ name = "CodeGraph"
 kind = "node"
 category = "search"
 priority = "P1"
+audience = "ai"
+desc = "Code knowledge-graph MCP server for structural queries"
 npm_pkg = "@colbymchenry/codegraph"
 requires = ["volta"]
 notes = "Code knowledge-graph MCP server (codegraph serve --mcp). Install via volta so its shim lands on PATH."
@@ -190,6 +228,8 @@ name = "pyright (LSP)"
 kind = "node"
 category = "lsp"
 priority = "P1"
+audience = "ai"
+desc = "Python language server for type-aware navigation"
 npm_pkg = "pyright"
 requires = ["volta"]
 notes = "Python LSP server (via volta/pnpm)"
@@ -201,6 +241,8 @@ name = "opencode"
 kind = "curl"
 category = "ai-cli"
 priority = "P1"
+audience = "both"
+desc = "Terminal AI coding agent (wired by gentle-ai)"
 url = "https://opencode.ai/install"
 shell = "bash"
 brew = "sst/tap/opencode"
@@ -213,6 +255,9 @@ name = "Pi"
 kind = "curl"
 category = "ai-cli"
 priority = "P1"
+enabled = false
+audience = "both"
+desc = "Pi coding agent (needs Node 22+)"
 url = "https://pi.dev/install.sh"
 shell = "sh"
 bin_dir = "~/.pi/bin"
@@ -226,6 +271,8 @@ name = "bat"
 kind = "pkg"
 category = "nav"
 priority = "P2"
+audience = "human"
+desc = "Syntax-highlighted cat with a git gutter"
 pkg = { debian = "bat", arch = "bat", brew = "bat" }
 alias_cmd = "batcat"
 notes = "Debian binary: batcat"
@@ -236,6 +283,8 @@ name = "delta"
 kind = "cargo"
 category = "git"
 priority = "P2"
+audience = "human"
+desc = "Rich, readable git diffs"
 crate = "git-delta"
 pkg = { arch = "git-delta", brew = "git-delta" }
 
@@ -245,6 +294,8 @@ name = "lazygit"
 kind = "github-release"
 category = "git"
 priority = "P2"
+audience = "human"
+desc = "Terminal UI for git"
 repo = "jesseduffield/lazygit"
 asset = "lazygit_{ver}_Linux_{arch.suffix}.tar.gz"
 member = "lazygit"
@@ -262,6 +313,8 @@ name = "htop"
 kind = "pkg"
 category = "system"
 priority = "P2"
+audience = "human"
+desc = "Interactive process viewer"
 pkg = { debian = "htop", arch = "htop", brew = "htop" }
 
 [[tool]]
@@ -271,6 +324,8 @@ kind = "custom"
 fn = "install_btop"
 category = "system"
 priority = "P2"
+audience = "human"
+desc = "Resource monitor with graphs"
 notes = "apt / snap fallback on Debian"
 
 [[tool]]
@@ -279,6 +334,8 @@ name = "ncdu"
 kind = "pkg"
 category = "system"
 priority = "P2"
+audience = "human"
+desc = "Interactive disk-usage explorer"
 pkg = { debian = "ncdu", arch = "ncdu", brew = "ncdu" }
 
 [[tool]]
@@ -288,6 +345,8 @@ name = "httpie"
 kind = "pkg"
 category = "extras"
 priority = "P2"
+audience = "human"
+desc = "Human-friendly HTTP client"
 pkg = { debian = "httpie", arch = "httpie", brew = "httpie" }
 
 [[tool]]
@@ -296,6 +355,8 @@ name = "fzf"
 kind = "pkg"
 category = "nav"
 priority = "P2"
+audience = "human"
+desc = "Fuzzy finder for files, history, anything"
 pkg = { debian = "fzf", arch = "fzf", brew = "fzf" }
 
 [[tool]]
@@ -304,6 +365,8 @@ name = "vim"
 kind = "pkg"
 category = "system"
 priority = "P2"
+audience = "human"
+desc = "Modal text editor"
 pkg = { debian = "vim", arch = "vim", brew = "vim" }
 
 [[tool]]
@@ -312,6 +375,8 @@ name = "tree"
 kind = "pkg"
 category = "nav"
 priority = "P2"
+audience = "both"
+desc = "Directory tree listing"
 pkg = { debian = "tree", arch = "tree", brew = "tree" }
 
 # ─────────────────────────────────────────── P2: code navigation
@@ -322,6 +387,8 @@ kind = "custom"
 fn = "install_ast_bro"
 category = "workflow"
 priority = "P2"
+audience = "ai"
+desc = "AST MCP server for structural code queries"
 notes = "MCP server: ast-bro install --mcp claude"
 
 # ─────────────────────────────────────────── P3: extra utilities
@@ -331,6 +398,8 @@ name = "dust"
 kind = "cargo"
 category = "system"
 priority = "P3"
+audience = "human"
+desc = "Intuitive du: disk usage by directory"
 crate = "du-dust"
 pkg = { arch = "dust", brew = "du-dust" }
 
@@ -340,6 +409,8 @@ name = "sd"
 kind = "cargo"
 category = "data"
 priority = "P3"
+audience = "both"
+desc = "Simpler sed: intuitive find and replace"
 crate = "sd"
 pkg = { arch = "sd", brew = "sd" }
 
@@ -349,6 +420,8 @@ name = "hyperfine"
 kind = "cargo"
 category = "system"
 priority = "P3"
+audience = "both"
+desc = "Statistical command-line benchmarking"
 crate = "hyperfine"
 pkg = { arch = "hyperfine", brew = "hyperfine" }
 
@@ -358,6 +431,8 @@ name = "tldr"
 kind = "pkg"
 category = "extras"
 priority = "P3"
+audience = "human"
+desc = "Community cheatsheets for CLI commands"
 pkg = { debian = "tldr", arch = "tldr", brew = "tldr" }
 
 [[tool]]
@@ -366,6 +441,8 @@ name = "gron"
 kind = "github-release"
 category = "data"
 priority = "P3"
+audience = "ai"
+desc = "Flatten JSON into greppable lines"
 repo = "tomnomnom/gron"
 asset = "gron-linux-{arch.go}-{ver}.tgz"
 member = "gron"
@@ -383,6 +460,8 @@ kind = "custom"
 fn = "install_jless"
 category = "data"
 priority = "P3"
+audience = "human"
+desc = "Interactive JSON/YAML viewer"
 notes = "Requires xcb dev libs on Debian; pacman/brew elsewhere"
 
 [[tool]]
@@ -392,6 +471,8 @@ kind = "custom"
 fn = "install_subl"
 category = "extras"
 priority = "P3"
+audience = "human"
+desc = "Sublime Text launcher (GUI editor)"
 notes = "~/.local/bin/subl symlink (no sudo on macOS)"
 
 # ═══════════════════════════════════════════ AI toolkits ═══════════════════════
@@ -401,6 +482,8 @@ name = "Superpowers"
 kind = "marketplace"
 category = "ai"
 priority = "P1"
+audience = "ai"
+desc = "Skill marketplace: brainstorming, TDD, debugging workflows"
 marketplace = "superpowers-marketplace"
 marketplace_ref = "obra/superpowers"
 plugins = ["superpowers", "superpowers-chrome", "superpowers-developing-for-claude-code"]
@@ -411,6 +494,8 @@ name = "Softaworks agent-toolkit"
 kind = "marketplace"
 category = "ai"
 priority = "P1"
+audience = "ai"
+desc = "Softaworks skills and commands toolkit for agents"
 marketplace = "agent-toolkit"
 marketplace_ref = "softaworks/agent-toolkit"
 
@@ -420,12 +505,19 @@ name = "GSD Core"
 kind = "launcher"
 category = "ai"
 priority = "P1"
+audience = "ai"
+desc = "Spec-driven phase planning and execution for agents"
 cmd = "npx"
 wiring = "npx @opengsd/gsd-core@latest"
 update = "npx @opengsd/gsd-core@latest"
 interactive = true
 verify = "/gsd-new-project"
 notes = "Interactive npx installer; wires Claude Code. Repo: open-gsd/gsd-core"
+[tool.state]
+file = "~/.cache/gsd/gsd-update-check-opengsd-gsd-core.json"
+installed_key = "installed"
+latest_key = "latest"
+update_key = "update_available"
 
 [[tool]]
 id = "gentle-ai"
@@ -433,6 +525,8 @@ name = "Gentle-AI"
 kind = "launcher"
 category = "ai"
 priority = "P1"
+audience = "both"
+desc = "Configurator that wires AI agents into your editors"
 cmd = "gentle-ai"
 bootstrap_brew = "brew tap Gentleman-Programming/homebrew-tap && brew install gentle-ai"
 bootstrap_curl = "curl -fsSL https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/scripts/install.sh | bash"

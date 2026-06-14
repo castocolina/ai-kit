@@ -33,6 +33,21 @@ from ui import console, info, ok, warn, header  # noqa: E402
 MANIFEST = _HERE / "installer" / "registry.toml"
 AI_CATEGORIES = {"ai"}                     # the toolkits menu; everything else is "CLI"
 
+AUDIENCE_LABEL = {"ai": "AI", "human": "you", "both": "both"}
+STATUS_ACCENT = {
+    "missing":      "[red]✗ missing[/red]",
+    "needs_wiring": "[yellow]● needs wiring[/yellow]",
+    "alias_needed": "[yellow]● alias needed[/yellow]",
+    "update":       "[cyan]↑ update[/cyan]",
+    "pinned":       "[blue]◆ pinned[/blue]",
+    "current":      "[green]✓ current[/green]",
+    "disabled":     "[dim]· disabled[/dim]",
+}
+
+
+def for_label(audience: str) -> str:
+    return AUDIENCE_LABEL.get(audience, audience)
+
 
 def load() -> list[mdl.Tool]:
     return mdl.load_tools(MANIFEST)
@@ -121,19 +136,19 @@ def choose_categories(tools: list[mdl.Tool]) -> list[str]:
 
 
 def audit_table(tools: list[mdl.Tool], os_name: str) -> list[mdl.Tool]:
-    """Render a status table; return the actionable (not-installed) tools."""
+    """Render a sorted status table; return the actionable (LOUD-state) tools."""
     from rich.table import Table
     table = Table(show_header=True, header_style="bold cyan")
-    for col in ("Tool", "Category", "Status", "Notes"):
+    for col in ("Pri", "Tool", "For", "What it does", "Status"):
         table.add_column(col)
-    style = {"installed": "[green]✓ installed[/green]", "missing": "[red]✗ missing[/red]",
-             "alias_needed": "[yellow]● alias needed[/yellow]"}
     actionable = []
-    for t in tools:
+    for t in mdl.sort_tools(tools):
         st = eng.status(t, os_name)
-        if st != "installed":
+        if eng.severity(st) == "loud":
             actionable.append(t)
-        table.add_row(t.name, t.category, style.get(st, st), t.notes)
+        row_style = "dim" if st == "disabled" else None
+        table.add_row(t.priority, t.name, for_label(t.audience), t.desc or t.notes,
+                      STATUS_ACCENT.get(st, st), style=row_style)
     console.print(table)
     return actionable
 
@@ -145,7 +160,10 @@ def summary(tools: list[mdl.Tool], os_name: str, failed: list[str]) -> None:
     rows: dict[str, dict[str, int]] = defaultdict(lambda: {"installed": 0, "missing": 0})
     ok_n = miss_n = 0
     for t in tools:
-        key = "installed" if eng.status(t, os_name) == "installed" else "missing"
+        st = eng.status(t, os_name)
+        if st == "disabled":
+            continue                                  # disabled tools aren't "missing"
+        key = "installed" if eng.severity(st) == "silent" else "missing"
         rows[t.category][key] += 1
         ok_n, miss_n = (ok_n + 1, miss_n) if key == "installed" else (ok_n, miss_n + 1)
     table = Table(show_header=True, header_style="bold cyan")
@@ -180,8 +198,11 @@ def run_cli_tools(select_categories: bool = True) -> int:
         return 0
 
     # Drag in any missing required tools (e.g. selecting pyright pulls volta).
-    installed = lambda t: eng.status(t, os_name) == "installed"      # noqa: E731
+    installed = lambda t: eng.severity(eng.status(t, os_name)) == "silent" \
+        and eng.status(t, os_name) != "disabled"                     # noqa: E731
     actionable = eng.with_required(actionable, all_tools, installed)
+    for dep in eng.required_but_disabled(chosen, actionable):
+        warn(f"{dep.name} is disabled but required by a selected tool — installing it anyway.")
 
     if not confirm(len(actionable)):
         return 0
@@ -198,12 +219,12 @@ def run_cli_tools(select_categories: bool = True) -> int:
 
 def ai_action_hint(tool: mdl.Tool, os_name: str) -> str:
     st = eng.status(tool, os_name)
-    if st == "installed":
+    if eng.severity(st) != "loud":
         return ""
     if tool.kind == "marketplace":
         return f"claude plugin marketplace add {tool.marketplace_ref}"
     if tool.kind == "launcher":
-        verb = "wire" if st == "unwired" else "install"
+        verb = "wire" if st == "needs_wiring" else "install"
         extra = " (interactive)" if tool.interactive or tool.cmd == "npx" else ""
         return f"{verb}: {tool.wiring or tool.cmd}{extra}"
     return "select to (re)install"
@@ -212,15 +233,13 @@ def ai_action_hint(tool: mdl.Tool, os_name: str) -> str:
 def audit_ai_table(tools: list[mdl.Tool], os_name: str) -> None:
     from rich.table import Table
     table = Table(title="AI toolkits", show_header=True, header_style="bold cyan")
-    for col in ("#", "Toolkit", "Kind", "Status", "Notes"):
+    for col in ("#", "Toolkit", "For", "Kind", "What it does", "Status"):
         table.add_column(col)
-    style = {"installed": "[green]✓ installed[/green]",
-             "unwired": "[yellow]● installed, needs wiring[/yellow]",
-             "missing": "[red]✗ missing[/red]",
-             "unknown": "[yellow]? run to (re)install[/yellow]"}
-    for i, t in enumerate(tools, 1):
+    for i, t in enumerate(mdl.sort_tools(tools), 1):
         st = eng.status(t, os_name)
-        table.add_row(str(i), t.name, t.kind, style.get(st, st), t.notes)
+        row_style = "dim" if st == "disabled" else None
+        table.add_row(str(i), t.name, for_label(t.audience), t.kind,
+                      t.desc or t.notes, STATUS_ACCENT.get(st, st), style=row_style)
     console.print(table)
 
 
@@ -231,8 +250,9 @@ def run_ai_tools(select: bool = True) -> int:
     header("AI toolkits")
     audit_ai_table(tools, os_name)
 
-    pending = [(i, t, ai_action_hint(t, os_name)) for i, t in enumerate(tools, 1)
-               if eng.status(t, os_name) != "installed"]
+    ordered = mdl.sort_tools(tools)
+    pending = [(i, t, ai_action_hint(t, os_name)) for i, t in enumerate(ordered, 1)
+               if eng.severity(eng.status(t, os_name)) == "loud"]
     if pending:
         from rich.panel import Panel
         lines = [f"[bold bright_white]{i}[/]) [bold cyan]{t.name}[/]\n"
@@ -240,17 +260,22 @@ def run_ai_tools(select: bool = True) -> int:
         console.print(Panel("\n".join(lines),
                             title="[bold black on bright_yellow] ACTIONS NEEDED [/]",
                             border_style="bright_yellow", expand=False, padding=(1, 2)))
+    updates = [t for t in ordered if eng.status(t, os_name) == "update"]
+    if updates:
+        console.print("[cyan]↑ Updates available:[/cyan] "
+                      + ", ".join(t.name for t in updates)
+                      + "  [dim](run menu 6 / their update command)[/dim]")
 
     if select:
         raw = input("Select toolkits (e.g. 1,3 — Enter for all pending): ").strip().lower()
         if raw in ("", "a", "all"):
-            chosen = [t for t in tools if eng.status(t, os_name) != "installed"] or list(tools)
+            chosen = [t for t in ordered if eng.severity(eng.status(t, os_name)) == "loud"] or list(ordered)
         else:
             idx = [int(p) for p in raw.replace(" ", "").split(",") if p.isdigit()]
-            chosen = [tools[i - 1] for i in idx if 1 <= i <= len(tools)]
+            chosen = [ordered[i - 1] for i in idx if 1 <= i <= len(ordered)]
     else:
         chosen = [t for t in tools if eng.status(t, os_name) == "missing"]
-        deferred = [t for t in tools if eng.status(t, os_name) in ("unwired", "unknown")]
+        deferred = [t for t in tools if eng.status(t, os_name) == "needs_wiring"]
         if deferred:
             info("Needs interactive setup — run setup → AI tools to handle: "
                  + ", ".join(t.name for t in deferred))
@@ -264,7 +289,7 @@ def run_ai_tools(select: bool = True) -> int:
     for tool in chosen:
         try:
             st = eng.status(tool, os_name)
-            if st == "installed" and tool.update:
+            if st in ("current", "update", "pinned") and tool.update:
                 info(f"Updating {tool.name}...")
                 (subprocess.run if tool.interactive else _checked)(["sh", "-c", tool.update])
             else:

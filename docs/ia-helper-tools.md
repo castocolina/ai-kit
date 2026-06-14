@@ -567,6 +567,37 @@ installed_re = "version=([0-9.]+)"
 `ensure_on_path()` helper), `setup` (a one-time post-install shell command, e.g. pnpm's
 `"pnpm self-update && pnpm setup"`), and `notes`.
 
+**Presentation / lifecycle fields:**
+- `enabled` (bool, default `true`) — set `false` to keep a tool in the registry but
+  hide it from installs. It renders as a dim `· disabled` row. If an enabled tool
+  `requires` a disabled one, the dependency wins (it is installed anyway, with a warning).
+- `audience` (`ai` | `human` | `both`, default `both`) — who the tool serves; shown as
+  the `For` column.
+- `desc` (string) — one-line "what it does", shown in the wizard. Keep the longer
+  rationale in this document; `notes` stays an implementation detail.
+- `pin` (string) — a version you intend to hold. When set, the tool never shows the
+  `↑ update` state even if a newer version exists.
+
+**`[tool.state]`** (launcher state-file detection) — for launchers (e.g. GSD) that
+write their own status cache instead of exposing a binary version:
+
+| Key | Meaning |
+|-----|---------|
+| `file` | path to the JSON the tool writes (e.g. `~/.cache/gsd/...json`) |
+| `installed_key` | key holding the installed version |
+| `latest_key` | key holding the latest version |
+| `update_key` | boolean key: an update is available |
+
+With a `[tool.state]` block the wizard reads status from disk — no `npx`/network call.
+Absent file → `missing`; `update_key` true (and not `pin`) → `↑ update`; otherwise
+`✓ current`.
+
+**Status states & severity:** `✗ missing` (red) and `● needs wiring` (yellow) are
+*loud* — they appear in the ACTIONS NEEDED panel. `↑ update` (cyan) is *calm* — a
+one-line FYI, never an alarm. `◆ pinned` (blue), `✓ current` (green), and `· disabled`
+(dim) are silent. The wizard lists tools sorted by priority (P0→P3), then category,
+then name.
+
 **Extending — which `kind` to pick:**
 - A binary from a GitHub release tarball → `github-release` (set `repo`/`asset`; add a
   `[tool.version]` block so `sync` can flag it outdated).
