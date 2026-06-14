@@ -1,6 +1,7 @@
 """The installer engine: audit, ordering, install, and sync — model + strategies only."""
 from __future__ import annotations
 
+import json
 import re as _re
 import shutil
 import subprocess
@@ -36,20 +37,63 @@ def check(tool: Tool, os_name: str) -> tuple[str, str]:
     return "missing", ""
 
 
+# severity buckets for the canonical states
+STATE_LOUD = {"missing", "needs_wiring", "alias_needed"}     # demand action (ACTIONS NEEDED)
+STATE_CALM = {"update"}                                      # FYI (Updates available)
+STATE_SILENT = {"current", "pinned", "disabled"}            # nothing to show
+
+
+def severity(state: str) -> str:
+    """Map a status state to its display bucket: 'loud' | 'calm' | 'silent'."""
+    if state in STATE_LOUD:
+        return "loud"
+    if state in STATE_CALM:
+        return "calm"
+    return "silent"
+
+
+def _read_state_file(tool: Tool) -> dict | None:
+    """Parse a launcher's declared JSON state file; None if absent/unreadable."""
+    if not tool.state_file:
+        return None
+    p = Path(tool.state_file).expanduser()
+    try:
+        return json.loads(p.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _launcher_status(tool: Tool) -> str:
+    if tool.state_file:
+        data = _read_state_file(tool)
+        if data is None:
+            return "missing"                       # declared a state file, it's absent → not installed
+        installed = data.get(tool.state_installed_key) if tool.state_installed_key else True
+        if not installed:
+            return "missing"
+        if tool.pin:
+            return "pinned"
+        if tool.state_update_key and data.get(tool.state_update_key):
+            return "update"
+        return "current"
+    if not shutil.which(tool.cmd):
+        return "missing"
+    if tool.wired_marker and not Path(tool.wired_marker).expanduser().exists():
+        return "needs_wiring"
+    return "current"
+
+
 def status(tool: Tool, os_name: str) -> str:
-    """'installed' | 'unwired' | 'missing' | 'alias_needed' | 'unknown'."""
+    """Canonical state: missing|needs_wiring|alias_needed|update|pinned|current|disabled."""
+    if not tool.enabled:
+        return "disabled"
     if tool.kind == "marketplace":
         from register import marketplace_enabled
-        return "installed" if marketplace_enabled(tool) else "missing"
+        return "current" if marketplace_enabled(tool) else "missing"
     if tool.kind == "launcher":
-        if tool.cmd == "npx":
-            return "unknown"
-        if not shutil.which(tool.cmd):
-            return "missing"
-        if tool.wired_marker and not Path(tool.wired_marker).expanduser().exists():
-            return "unwired"
-        return "installed"
-    return check(tool, os_name)[0]
+        return _launcher_status(tool)
+    st = check(tool, os_name)[0]                    # "installed" | "alias_needed" | "missing"
+    return "current" if st == "installed" else st
 
 
 # ── ordering + dependency drag-in ──────────────────────────────────────────────────
@@ -68,6 +112,12 @@ def with_required(selected: list[Tool], catalogue: list[Tool],
                 out[d.id] = d
                 queue.append(d)
     return list(out.values())
+
+
+def required_but_disabled(selected: list[Tool], dragged: list[Tool]) -> list[Tool]:
+    """Dragged-in dependencies that are disabled (caller should warn — dependency wins)."""
+    sel_ids = {t.id for t in selected}
+    return [t for t in dragged if not t.enabled and t.id not in sel_ids]
 
 
 def order_for_install(tools: list[Tool]) -> list[Tool]:

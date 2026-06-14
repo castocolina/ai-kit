@@ -56,6 +56,16 @@ class Tool:
     version_latest: str = ""                        # github:owner/repo | crates:name | json:URL#key
     version_cmd: str = ""
     version_re: str = ""
+    # enable / audience / description / pin
+    enabled: bool = True
+    audience: str = "both"                          # ai | human | both ("classifier")
+    desc: str = ""                                  # one-line "what it does" (notes stays impl detail)
+    pin: str = ""                                   # held version; presence suppresses the update state
+    # launcher state-file detection ([tool.state])
+    state_file: str = ""
+    state_installed_key: str = ""
+    state_latest_key: str = ""
+    state_update_key: str = ""
 
     def __post_init__(self) -> None:
         if not self.cmd:
@@ -70,6 +80,7 @@ def load_tools(manifest_path: str | Path) -> list[Tool]:
     tools: list[Tool] = []
     for row in data.get("tool", []):
         ver = row.get("version", {})
+        state = row.get("state", {})
         tools.append(Tool(
             id=row["id"], name=row.get("name", row["id"]), kind=row["kind"], category=row["category"],
             priority=row.get("priority", "P3"), cmd=row.get("cmd", ""),
@@ -88,6 +99,14 @@ def load_tools(manifest_path: str | Path) -> list[Tool]:
             fn=row.get("fn", ""), setup=row.get("setup", ""),
             version_latest=ver.get("latest", ""), version_cmd=ver.get("installed_cmd", ""),
             version_re=ver.get("installed_re", ""),
+            enabled=bool(row.get("enabled", True)),
+            audience=row.get("audience", "both"),
+            desc=row.get("desc", ""),
+            pin=row.get("pin", ""),
+            state_file=state.get("file", ""),
+            state_installed_key=state.get("installed_key", ""),
+            state_latest_key=state.get("latest_key", ""),
+            state_update_key=state.get("update_key", ""),
         ))
     return tools
 
@@ -99,3 +118,14 @@ def categories(tools: list[Tool]) -> list[str]:
         if t.category not in seen:
             seen.append(t.category)
     return seen
+
+
+_PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+
+
+def sort_tools(tools: list[Tool]) -> list[Tool]:
+    """Stable sort: priority P0→P3, then category A→Z, then tool name A→Z."""
+    return sorted(
+        tools,
+        key=lambda t: (_PRIORITY_RANK.get(t.priority, 99), t.category.lower(), t.name.lower()),
+    )

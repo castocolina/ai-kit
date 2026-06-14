@@ -216,6 +216,34 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(t.requires, [])
         self.assertEqual(t.pkg, {})
 
+    def test_new_fields_default(self):
+        t = mdl.Tool(id="rg", name="ripgrep", kind="pkg", category="search")
+        self.assertTrue(t.enabled)            # enabled by default
+        self.assertEqual(t.audience, "both")
+        self.assertEqual(t.desc, "")
+        self.assertEqual(t.pin, "")
+        self.assertEqual(t.state_file, "")
+
+    def test_loader_parses_state_block_and_flags(self):
+        import tempfile, pathlib
+        toml = (
+            '[[tool]]\n'
+            'id="gsd"\nname="GSD Core"\nkind="launcher"\ncategory="ai"\npriority="P1"\n'
+            'cmd="npx"\nenabled=false\naudience="ai"\ndesc="Spec-driven phases"\n'
+            '[tool.state]\n'
+            'file="~/.cache/gsd/x.json"\ninstalled_key="installed"\n'
+            'latest_key="latest"\nupdate_key="update_available"\n'
+        )
+        p = pathlib.Path(tempfile.mkdtemp()) / "r.toml"
+        p.write_text(toml)
+        t = mdl.load_tools(p)[0]
+        self.assertFalse(t.enabled)
+        self.assertEqual(t.audience, "ai")
+        self.assertEqual(t.desc, "Spec-driven phases")
+        self.assertEqual(t.state_file, "~/.cache/gsd/x.json")
+        self.assertEqual(t.state_installed_key, "installed")
+        self.assertEqual(t.state_update_key, "update_available")
+
     def test_loader_parses_kinds_and_version_block(self):
         import tempfile, pathlib
         toml = (
@@ -302,6 +330,28 @@ class UnifiedManifestTests(unittest.TestCase):
         self.assertLess(out.index("volta"), out.index("node"))
 
 
+class SortToolsTests(unittest.TestCase):
+    def _t(self, id, pri, cat, name=None):
+        return mdl.Tool(id=id, name=name or id, kind="pkg", category=cat, priority=pri)
+
+    def test_sorts_priority_then_category_then_name(self):
+        tools = [
+            self._t("z", "P3", "system"),
+            self._t("a", "P0", "search"),
+            self._t("yq", "P0", "data", name="yq"),
+            self._t("jq", "P0", "data", name="jq"),
+            self._t("eza", "P1", "nav"),
+        ]
+        out = [t.id for t in mdl.sort_tools(tools)]
+        # P0 first; within P0, data(jq,yq) before search(a); names A->Z within category
+        self.assertEqual(out, ["jq", "yq", "a", "eza", "z"])
+
+    def test_unknown_priority_sorts_last(self):
+        tools = [self._t("known", "P1", "x"), self._t("weird", "PX", "x")]
+        out = [t.id for t in mdl.sort_tools(tools)]
+        self.assertEqual(out, ["known", "weird"])
+
+
 class EngineStatusTests(unittest.TestCase):
     def _bin(self, name, body):
         import tempfile, pathlib
@@ -314,24 +364,51 @@ class EngineStatusTests(unittest.TestCase):
         t = mdl.Tool(id="nope-xyz", name="x", kind="pkg", category="extras")
         self.assertEqual(eng.status(t, "debian"), "missing")
 
-    def test_installed_binary(self):
+    def test_installed_binary_is_current(self):
         n = self._bin("fakeok", 'echo 1.2.3\nexit 0\n')
         t = mdl.Tool(id=n, name="x", kind="curl", category="extras")
-        self.assertEqual(eng.status(t, "debian"), "installed")
+        self.assertEqual(eng.status(t, "debian"), "current")
+
+    def test_disabled_short_circuits(self):
+        # disabled wins even for an installed binary; no subprocess needed
+        t = mdl.Tool(id="anything", name="x", kind="pkg", category="extras", enabled=False)
+        self.assertEqual(eng.status(t, "debian"), "disabled")
 
     def test_broken_volta_shim_is_missing(self):
         n = self._bin("fakepnpm", 'echo \'Volta error: Could not find executable "fakepnpm"\' >&2\nexit 1\n')
         t = mdl.Tool(id=n, name="x", kind="custom", category="pkg-mgr", fn="install_pnpm")
         self.assertEqual(eng.status(t, "debian"), "missing")
 
-    def test_launcher_unwired_when_marker_absent(self):
+    def test_launcher_needs_wiring_when_marker_absent(self):
         t = mdl.Tool(id="x", name="x", kind="launcher", category="ai", cmd="sh",
                      wired_marker="/nonexistent/marker")
-        self.assertEqual(eng.status(t, "debian"), "unwired")
+        self.assertEqual(eng.status(t, "debian"), "needs_wiring")
 
-    def test_npx_launcher_unknown(self):
-        t = mdl.Tool(id="gsd", name="gsd", kind="launcher", category="ai", cmd="npx")
-        self.assertEqual(eng.status(t, "debian"), "unknown")
+    def _state_launcher(self, payload):
+        import json, tempfile, pathlib
+        d = tempfile.mkdtemp(); self.addCleanup(__import__("shutil").rmtree, d)
+        f = pathlib.Path(d) / "state.json"; f.write_text(json.dumps(payload))
+        return mdl.Tool(id="gsd", name="gsd", kind="launcher", category="ai", cmd="npx",
+                        state_file=str(f), state_installed_key="installed",
+                        state_latest_key="latest", state_update_key="update_available")
+
+    def test_launcher_state_current(self):
+        t = self._state_launcher({"installed": "1.3.1", "latest": "1.3.1", "update_available": False})
+        self.assertEqual(eng.status(t, "debian"), "current")
+
+    def test_launcher_state_update_available(self):
+        t = self._state_launcher({"installed": "1.3.0", "latest": "1.3.1", "update_available": True})
+        self.assertEqual(eng.status(t, "debian"), "update")
+
+    def test_launcher_state_pinned_suppresses_update(self):
+        t = self._state_launcher({"installed": "1.3.0", "latest": "1.3.1", "update_available": True})
+        t.pin = "1.3.0"
+        self.assertEqual(eng.status(t, "debian"), "pinned")
+
+    def test_launcher_missing_when_state_file_absent(self):
+        t = mdl.Tool(id="gsd", name="gsd", kind="launcher", category="ai", cmd="npx",
+                     state_file="/nonexistent/gsd-state.json", state_installed_key="installed")
+        self.assertEqual(eng.status(t, "debian"), "missing")
 
 
 class EngineOrderTests(unittest.TestCase):
@@ -347,6 +424,18 @@ class EngineOrderTests(unittest.TestCase):
         catalogue = [self._t("pyright", ["volta"]), self._t("volta")]
         dragged = eng.with_required([catalogue[0]], catalogue, lambda t: t.id != "volta")
         self.assertEqual({t.id for t in dragged}, {"pyright", "volta"})
+
+    def test_required_but_disabled_is_reported(self):
+        enabled_tool = mdl.Tool(id="needsX", name="needsX", kind="pkg", category="x",
+                                requires=["X"])
+        disabled_dep = mdl.Tool(id="X", name="X", kind="pkg", category="x", enabled=False)
+        catalogue = [enabled_tool, disabled_dep]
+        dragged = eng.with_required([enabled_tool], catalogue, lambda t: False)
+        # the disabled dep is still dragged in (dependency wins)...
+        self.assertIn("X", {t.id for t in dragged})
+        # ...and flagged so the caller can warn
+        flagged = eng.required_but_disabled([enabled_tool], dragged)
+        self.assertEqual([t.id for t in flagged], ["X"])
 
     def test_drag_in_skips_already_installed_dep(self):
         catalogue = [self._t("pyright", ["volta"]), self._t("volta")]
