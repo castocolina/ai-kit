@@ -327,6 +327,16 @@ class UnifiedManifestTests(unittest.TestCase):
         pi = next(t for t in self.tools if t.id == "pi")
         self.assertFalse(pi.enabled)
 
+    def test_tui_category_groups_interactive_tools(self):
+        tui = {t.id for t in self.tools if t.category == "tui"}
+        self.assertEqual(tui, {"lazygit", "htop", "btop", "ncdu", "jless", "fzf", "vim", "subl"})
+
+    def test_tui_tools_are_for_you(self):
+        # an AI agent can't drive an interactive TUI; audience stays human ("you")
+        for t in self.tools:
+            if t.category == "tui":
+                self.assertEqual(t.audience, "human", f"{t.id} tui should be human/you")
+
     def test_gsd_has_state_block(self):
         g = next(t for t in self.tools if t.id == "gsd")
         self.assertTrue(g.state_file)
@@ -584,6 +594,11 @@ class WizardRenderTests(unittest.TestCase):
     def test_status_accent_covers_every_state(self):
         for state in (eng.STATE_LOUD | eng.STATE_CALM | eng.STATE_SILENT):
             self.assertIn(state, self.wiz.STATUS_ACCENT, f"no accent for {state}")
+
+    def test_category_color_covers_registry(self):
+        cats = {t.category for t in mdl.load_tools(MANIFEST_NEW)}
+        for c in cats:
+            self.assertIn(c, self.wiz.CATEGORY_COLOR, f"no color for category {c}")
 
 
 class PathReminderFromRegistryTests(unittest.TestCase):

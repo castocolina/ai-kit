@@ -34,6 +34,16 @@ MANIFEST = _HERE / "installer" / "registry.toml"
 AI_CATEGORIES = {"ai"}                     # the toolkits menu; everything else is "CLI"
 
 AUDIENCE_LABEL = {"ai": "AI", "human": "you", "both": "both"}
+CATEGORY_COLOR = {
+    "search": "green", "data": "bright_green", "git": "magenta",
+    "pkg-mgr": "blue", "workflow": "cyan", "nav": "bright_cyan",
+    "system": "yellow", "lsp": "bright_yellow", "ai-cli": "bright_blue",
+    "tui": "bright_red", "extras": "white", "ai": "bright_magenta",
+}
+
+
+def cat_color(category: str) -> str:
+    return CATEGORY_COLOR.get(category, "white")
 STATUS_ACCENT = {
     "missing":      "[red]✗ missing[/red]",
     "needs_wiring": "[yellow]● needs wiring[/yellow]",
@@ -116,10 +126,11 @@ def _ensure_cargo(os_name: str) -> None:
 
 def choose_categories(tools: list[mdl.Tool]) -> list[str]:
     cats = mdl.categories(tools)
-    console.print("\n[bold]Tool categories:[/bold]")
+    console.print("\n[bold]Tool categories[/bold] [dim](what each one installs):[/dim]")
     for i, c in enumerate(cats, 1):
-        n = sum(1 for t in tools if t.category == c)
-        console.print(f"  [bold]{i}[/bold]) {c} [dim]({n})[/dim]")
+        names = ", ".join(t.name for t in mdl.sort_tools([t for t in tools if t.category == c]))
+        col = cat_color(c)
+        console.print(f"  [bold]{i}[/bold]) [{col}]{c}[/{col}] [dim]—[/dim] {names}")
     raw = input("Select categories (e.g. 1,3 — or Enter for all): ").strip().lower()
     if raw in ("", "a", "all"):
         return cats
@@ -139,15 +150,21 @@ def audit_table(tools: list[mdl.Tool], os_name: str) -> list[mdl.Tool]:
     """Render a sorted status table; return the actionable (LOUD-state) tools."""
     from rich.table import Table
     table = Table(show_header=True, header_style="bold cyan")
-    for col in ("Pri", "Tool", "For", "What it does", "Status"):
+    for col in ("Pri", "Tool", "Cat", "For", "What it does", "Status"):
         table.add_column(col)
     actionable = []
+    prev_pri = None
     for t in mdl.sort_tools(tools):
         st = eng.status(t, os_name)
+        if prev_pri is not None and t.priority != prev_pri:
+            table.add_section()                      # visual separator between Px tiers
+        prev_pri = t.priority
         if eng.severity(st) == "loud":
             actionable.append(t)
         row_style = "dim" if st == "disabled" else None
-        table.add_row(t.priority, t.name, for_label(t.audience), t.desc or t.notes,
+        c = cat_color(t.category)
+        table.add_row(t.priority, t.name, f"[{c}]{t.category}[/{c}]",
+                      for_label(t.audience), t.desc or t.notes,
                       STATUS_ACCENT.get(st, st), style=row_style)
     console.print(table)
     return actionable
@@ -232,7 +249,7 @@ def ai_action_hint(tool: mdl.Tool, os_name: str) -> str:
 
 def audit_ai_table(tools: list[mdl.Tool], os_name: str) -> None:
     from rich.table import Table
-    table = Table(title="AI toolkits", show_header=True, header_style="bold cyan")
+    table = Table(title="AI agent plugins", show_header=True, header_style="bold cyan")
     for col in ("#", "Toolkit", "For", "Kind", "What it does", "Status"):
         table.add_column(col)
     for i, t in enumerate(mdl.sort_tools(tools), 1):
@@ -247,7 +264,7 @@ def run_ai_tools(select: bool = True) -> int:
     os_name, arch = pth.detect_os(), pth.detect_arch()
     tools = [t for t in load() if t.category in AI_CATEGORIES]
 
-    header("AI toolkits")
+    header("AI agent plugins")
     audit_ai_table(tools, os_name)
 
     ordered = mdl.sort_tools(tools)
@@ -353,12 +370,13 @@ def main() -> None:
     header("uz-kit setup")
     console.print(
         "What do you want to do?\n"
-        "  [bold]1[/bold]) Everything      (CLI tools + AI tools + register) [dim]— default[/dim]\n"
-        "  [bold]2[/bold]) CLI dev tools   (search, git, system, LSP, AI agents, …)\n"
-        "  [bold]3[/bold]) AI tools        (superpowers, agent-toolkit, gsd, gentle-ai)\n"
-        "  [bold]4[/bold]) Register uz-kit (Claude + Codex symlinks)\n"
-        "  [bold]5[/bold]) Shell guards    (ban npm/pip → volta/pnpm/uv)\n"
-        "  [bold]6[/bold]) Version sync    (installed vs latest + release date)\n"
+        "  [bold]1[/bold]) Everything        [dim]— install/fix ALL tools (CLI + AI plugins) + register[/dim]\n"
+        "  [bold]2[/bold]) CLI dev tools      [dim]— pick categories (search, data, git, pkg-mgr, nav,\n"
+        "                       system, tui, lsp, ai-cli, workflow, extras); lists each one's tools[/dim]\n"
+        "  [bold]3[/bold]) AI agent plugins   [dim]— superpowers, agent-toolkit, gsd, gentle-ai[/dim]\n"
+        "  [bold]4[/bold]) Register uz-kit    [dim]— Claude + Codex symlinks[/dim]\n"
+        "  [bold]5[/bold]) Shell guards       [dim]— ban npm/pip → volta/pnpm/uv[/dim]\n"
+        "  [bold]6[/bold]) Version sync       [dim]— installed vs latest + release date[/dim]\n"
     )
     try:
         choice = input("Choice [1]: ").strip() or "1"
