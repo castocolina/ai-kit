@@ -2,6 +2,7 @@ import importlib.util
 import os
 import re
 import unittest
+from unittest import mock
 
 _HERE = os.path.dirname(__file__)
 _MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
@@ -143,8 +144,8 @@ class TestEffortTable(unittest.TestCase):
             self.assertEqual(sl._EFFORT_BARS[level][0], color, level)
 
     def test_effort_fill_counts(self):
-        want = {"low": 1, "medium": 2, "auto": 2, "high": 3,
-                "xhigh": 4, "max": 5, "ultracode": 5}
+        want = {"low": 1, "medium": 2, "auto": 5, "high": 3,
+                "xhigh": 4, "max": 5, "ultracode": 5}  # auto: full 5-bar rainbow (FR-3.2)
         for level, n in want.items():
             filled = sl._EFFORT_BARS[level][1].split(sl.GREY)[0]
             count = sum(filled.count(c) for c in "▁▃▄▆█")
@@ -363,6 +364,145 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(len(out), 3)
         self.assertIn("Opus 4.8", strip(out[1]))
         self.assertIn("47%", strip(out[2]))
+
+
+class TestBlueFix(unittest.TestCase):
+    def test_blue_is_256color_true_blue(self):
+        # 1;34 bold-ANSI-blue reads purple on many terminals; use 256-color blue.
+        self.assertEqual(sl.BLUE, "\033[38;5;33m")
+
+    def test_lightblue_defined_for_chat_ramp(self):
+        self.assertEqual(sl.LIGHTBLUE, "\033[38;5;75m")
+
+    def test_path_emits_true_blue_not_bold_ansi(self):
+        out = sl.seg_path(_data(), 80)
+        self.assertIn("38;5;33", out)
+        self.assertNotIn("\033[1;34m", out)
+
+
+class TestChatSizeRamp(unittest.TestCase):
+    KB = 1024
+    MB = 1024 * 1024
+
+    def test_ramp_bands(self):
+        KB, MB = self.KB, self.MB
+        cases = [
+            (400 * KB, sl.WHITE), (512 * KB, sl.CYAN), (900 * KB, sl.CYAN),
+            (1 * MB, sl.LIGHTBLUE), (1 * MB + 1, sl.LIGHTBLUE),
+            (2 * MB, sl.GREEN), (3 * MB, sl.YELLOW), (4 * MB, sl.ORANGE),
+            (5 * MB, sl.RED), (5 * MB + 1, sl.RED), (9 * MB, sl.RED),
+            (10 * MB, sl.MAGENTA), (20 * MB, sl.MAGENTA),
+        ]
+        for n, want in cases:
+            self.assertEqual(sl.pick_color(n, sl.CHAT_SIZE_RAMP), want, n)
+
+    def test_seg_chat_size_colors_the_size(self):
+        out = sl.seg_chat_size(_data(chat_bytes=6 * self.MB), 40)
+        self.assertIn("💾", out)
+        self.assertIn(sl.RED, out)       # 6 MB -> red band
+
+    def test_seg_chat_size_none_when_no_bytes(self):
+        self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 40))
+
+
+class TestEffortAutoRender(unittest.TestCase):
+    def test_rainbow_cycles_colors_across_text(self):
+        out = sl._rainbow("abcd", [sl.CYAN, sl.GREEN])
+        self.assertEqual(out, f"{sl.CYAN}a{sl.GREEN}b{sl.CYAN}c{sl.GREEN}d{sl.RESET}")
+
+    def test_auto_word_and_bars_are_rainbow_not_static_green(self):
+        out = sl.seg_effort(_data(effort="auto"), 80)
+        # cycle = CYAN,GREEN,YELLOW,ORANGE,MAGENTA,BLUE — bars(5)+word(4) span these
+        for c in (sl.CYAN, sl.GREEN, sl.YELLOW, sl.ORANGE, sl.MAGENTA):
+            self.assertIn(c, out)
+        # not the old single-green word
+        self.assertNotIn(f"{sl.GREEN}auto", out)
+
+    def test_non_auto_effort_unchanged(self):
+        out = sl.seg_effort(_data(effort="high"), 80)
+        self.assertIn(f"{sl.YELLOW}high", out)   # high stays static yellow
+
+
+class TestResolveEffort(unittest.TestCase):
+    def test_level_auto(self):
+        self.assertEqual(sl.resolve_effort({"effort": {"level": "auto"}}, {}), "auto")
+
+    def test_env_auto(self):
+        self.assertEqual(sl.resolve_effort({}, {"CLAUDE_EFFORT": "auto"}), "auto")
+
+    def test_case_normalized(self):
+        self.assertEqual(sl.resolve_effort({"effort": {"level": "AUTO"}}, {}), "auto")
+
+    def test_level_wins_over_env(self):
+        self.assertEqual(
+            sl.resolve_effort({"effort": {"level": "high"}}, {"CLAUDE_EFFORT": "auto"}),
+            "high")
+
+    def test_missing_is_empty(self):
+        self.assertEqual(sl.resolve_effort({}, {}), "")
+
+
+class TestProcRssLinux(unittest.TestCase):
+    def test_returns_none_when_no_claude_ancestor(self):
+        # the wezterm bug: walk finds no `claude`, must return None (not a stray RSS)
+        comm = {10: "zsh", 11: "wezterm-gui", 1: "systemd"}
+        ppid = {10: 11, 11: 1, 1: 0}
+        with mock.patch.object(sl.os.path, "isdir", return_value=True), \
+             mock.patch.object(sl.os, "getppid", return_value=10), \
+             mock.patch.object(sl, "_comm_via_proc", side_effect=comm.get), \
+             mock.patch.object(sl, "_ppid_via_proc", side_effect=ppid.get), \
+             mock.patch.object(sl, "_rss_kb_via_proc", side_effect=lambda p: 5000):
+            self.assertIsNone(sl.proc_rss_bytes())
+
+    def test_returns_rss_when_claude_found(self):
+        comm = {10: "zsh", 11: "claude", 1: "systemd"}
+        ppid = {10: 11, 11: 1, 1: 0}
+        with mock.patch.object(sl.os.path, "isdir", return_value=True), \
+             mock.patch.object(sl.os, "getppid", return_value=10), \
+             mock.patch.object(sl, "_comm_via_proc", side_effect=comm.get), \
+             mock.patch.object(sl, "_ppid_via_proc", side_effect=ppid.get), \
+             mock.patch.object(sl, "_rss_kb_via_proc",
+                               side_effect=lambda p: 204800 if p == 11 else 5000):
+            self.assertEqual(sl.proc_rss_bytes(), 204800 * 1024)
+
+
+class TestProcRssMacOS(unittest.TestCase):
+    def test_ps_fallback_when_no_proc(self):
+        comm = {10: "login", 11: "claude", 1: "launchd"}
+        ppid = {10: 11, 11: 1, 1: 0}
+        rss = {11: 307200, 10: 100}
+        with mock.patch.object(sl.os.path, "isdir", return_value=False), \
+             mock.patch.object(sl.os, "getppid", return_value=10), \
+             mock.patch.object(sl, "_comm_via_ps", side_effect=comm.get), \
+             mock.patch.object(sl, "_ppid_via_ps", side_effect=ppid.get), \
+             mock.patch.object(sl, "_rss_kb_via_ps", side_effect=rss.get):
+            self.assertEqual(sl.proc_rss_bytes(), 307200 * 1024)
+
+    def test_ps_field_parses_one_value(self):
+        class R:
+            stdout = "  12345\n"
+        with mock.patch.object(sl.subprocess, "run", return_value=R()):
+            self.assertEqual(sl._ps_field(99, "rss"), "12345")
+
+
+class TestTputFallback(unittest.TestCase):
+    def test_tput_used_when_stty_yields_nothing(self):
+        def fake_run(cmd, **kw):
+            class R:
+                stdout = ""
+            r = R()
+            if cmd[:1] == ["stty"]:
+                r.stdout = ""               # stty size unavailable
+            elif cmd == ["tput", "cols"]:
+                r.stdout = "123\n"
+            elif cmd == ["tput", "lines"]:
+                r.stdout = "44\n"
+            return r
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run), \
+             mock.patch("builtins.open", mock.mock_open(read_data="")):
+            cols, lines, assumed = sl.terminal_size({})
+        self.assertEqual((cols, lines), (123, 44))
+        self.assertFalse(assumed)
 
 
 if __name__ == "__main__":

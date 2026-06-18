@@ -9,11 +9,13 @@ picture non-linear and prevents any concern from being lost.
 |---|---|---|
 | **E1** | review-spec skill + framework-aware fix routing | **done** → `skills/review-spec/` + `revise_protocol.routes` (plan: `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md`) |
 | **E2** | mermaid-audit color-palette guidance | **plan ready** → `docs/superpowers/plans/2026-06-17-e2-mermaid-color-shape-audit.md` (adds shape-semantics + render-geometry axes + consensus eval) |
-| **E3** | status-line bug fixes (effort/blue/memory/macOS) | requirements captured · PRD pending |
+| **E3** | status-line bug fixes (effort/blue/memory/macOS) | **done** → `tools/status-line.py` cross-platform; plan `docs/superpowers/plans/2026-06-18-e3-statusline-fixes-crossplatform.md` |
 | **E4** | status-line config & extensibility | **PRD drafted** → `statusline-config-extensibility-v1.0-prd.md` |
 | **E5** | installer ergonomics + setup wizard | requirements captured · PRD pending |
 
-**Suggested sequence**: E1 → E3 → E2 → E5, with **E4 first** (keystone; E3 and E5 depend on it).
+**Suggested sequence**: E1 → E2 → E3 → E4 → E5. E3 ships standalone with hardcoded
+defaults; **E4 later makes E3's colors/thresholds user-configurable** (E4 is not a
+prerequisite — the earlier "E4 first" note was a planning error).
 
 ---
 
@@ -116,8 +118,8 @@ Consumes E4's palette/toggles where relevant.
 
 **Execution tooling**: TDD (extend `tests/test_status_line.py`); no skill involved.
 
-**Dependencies**: E4 (uses palette overrides + segment toggles); FR-3.1/3.2 also
-align with E4's effort segment; FR-3.7's thresholds/colors are overridable via E4.
+**Dependencies**: none for shipping the fixes (standalone). E4 *consumes* E3 by making
+its colors/thresholds (blue, chat-size ramp, auto cycle) overridable; E3 does not block on E4.
 
 **Resolved**: `auto` (FR-3.2) renders with a fixed rotating cycle
 `CYAN → GREEN → YELLOW → ORANGE → MAGENTA → BLUE` across its letters and ladder bars

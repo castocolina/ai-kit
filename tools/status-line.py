@@ -52,7 +52,8 @@ ORANGE = "\033[38;5;208m"
 RED = "\033[1;31m"
 YELLOW = "\033[1;33m"
 MAGENTA = "\033[1;35m"
-BLUE = "\033[1;34m"
+BLUE = "\033[38;5;33m"        # true blue — 1;34 bold-ANSI-blue reads purple on many terminals
+LIGHTBLUE = "\033[38;5;75m"   # cornflower — chat-size ramp band 3 (distinct from BLUE)
 
 # Bold variants for the high-severity context bands (orange and up). Kept
 # separate so the base colors stay reusable elsewhere without forcing bold
@@ -67,6 +68,14 @@ CONTEXT_RAMP = [
     (30, YELLOW), (40, ORANGE_BOLD), (50, RED), (INF, MAGENTA_DARK_BOLD),
 ]
 RATE_RAMP = [(50, GREEN), (80, YELLOW), (INF, RED)]
+_MB = 1024 * 1024
+# Chat-transcript size bands (bytes). Mirrors the context bar's color progression;
+# top two bands are pinned: >=5 MB red, >=10 MB purple. Same "first ceil the value
+# is strictly below wins" rule as CONTEXT_RAMP, so exactly 5 MB -> red, 10 MB -> purple.
+CHAT_SIZE_RAMP = [
+    (512 * 1024, WHITE), (1 * _MB, CYAN), (2 * _MB, LIGHTBLUE), (3 * _MB, GREEN),
+    (4 * _MB, YELLOW), (5 * _MB, ORANGE), (10 * _MB, RED), (INF, MAGENTA),
+]
 
 
 def pick_color(pct, ramp):
@@ -206,11 +215,21 @@ def rate_color(pct):
 # To add a segment: write seg_x(data, avail), add it to BUILDERS, list its key
 # in a LAYOUT line, add a SEGMENTS flag. See the HOW TO CUSTOMIZE block below.
 
+# effort=auto renders as a per-letter rainbow (distinct from the static per-effort
+# colors). Cycle is applied across both the ladder bars and the word.
+AUTO_CYCLE = [CYAN, GREEN, YELLOW, ORANGE, MAGENTA, BLUE]
+
+
+def _rainbow(text, cycle):
+    """Color each character of `text` by cycling through `cycle`, ending in RESET."""
+    return "".join(f"{cycle[i % len(cycle)]}{ch}" for i, ch in enumerate(text)) + RESET
+
+
 # fill count = intensity (1..5); auto reuses medium's 2-bar fill, ultracode max's 5.
 _EFFORT_BARS = {
     "low":       (CYAN,    f"{CYAN}▁{GREY}▃▄▆█"),
     "medium":    (BLUE,    f"{BLUE}▁▃{GREY}▄▆█"),
-    "auto":      (GREEN,   f"{GREEN}▁▃{GREY}▄▆█"),
+    "auto":      (GREEN,   _rainbow("▁▃▄▆█", AUTO_CYCLE)),   # color field unused for auto; word handled in seg_effort
     "high":      (YELLOW,  f"{YELLOW}▁▃▄{GREY}▆█"),
     "xhigh":     (ORANGE,  f"{ORANGE}▁▃▄▆{GREY}█"),
     "max":       (RED,     f"{RED}▁▃▄▆█"),
@@ -292,8 +311,10 @@ def seg_effort(data, avail):
     effort = data.get("effort", "")
     if not effort:
         return None
-    color, bar = _EFFORT_BARS.get(effort.lower(), ("", f"{GREY}▁▃▄▆█"))
-    full = f"🧠 {bar}{RESET} {color}{effort}{RESET}"
+    key = effort.lower()
+    color, bar = _EFFORT_BARS.get(key, ("", f"{GREY}▁▃▄▆█"))
+    word = _rainbow(effort, AUTO_CYCLE) if key == "auto" else f"{color}{effort}{RESET}"
+    full = f"🧠 {bar}{RESET} {word}"
     compact = f"🧠 {bar}{RESET}"
     return _first_fitting([full, compact], avail)
 
@@ -341,7 +362,8 @@ def seg_chat_size(data, avail):
     n = data.get("chat_bytes")
     if n is None:
         return None
-    return _first_fitting([f"💾 {fmt_bytes(n)}"], avail)
+    color = pick_color(n, CHAT_SIZE_RAMP)
+    return _first_fitting([f"💾 {color}{fmt_bytes(n)}{RESET}"], avail)
 
 
 def seg_memory(data, avail):
@@ -418,9 +440,21 @@ PINNED = {"path", "context"}   # always rendered even if they overflow the budge
 
 
 # ═══ Extractors ═══════════════════════════════════════════════════════════════
+def _to_int(s):
+    """Parse a stripped string to int, or None on empty/non-numeric input."""
+    try:
+        return int(s) if s else None
+    except ValueError:
+        return None
+
+
 def terminal_size(env):
-    """Resolve (cols, lines, assumed). Priority: STATUSLINE_* > COLUMNS/LINES >
-    stty via /dev/tty. If none available, assume a wide panel and flag it."""
+    """Resolve (cols, lines, assumed). Fallback chain, first hit wins per dimension:
+      1. STATUSLINE_COLS / STATUSLINE_LINES env
+      2. COLUMNS / LINES env
+      3. stty size      (via /dev/tty)
+      4. tput cols/lines (via /dev/tty — macOS / setups where stty size is absent)
+      5. assumed 200x40 default (assumed=True)"""
     def _int(*keys):
         for k in keys:
             v = env.get(k)
@@ -431,13 +465,20 @@ def terminal_size(env):
     cols = _int("STATUSLINE_COLS", "COLUMNS")
     lines = _int("STATUSLINE_LINES", "LINES")
     if cols is None or lines is None:
+        # One controlling-tty open serves both probes: stty first, then tput as the
+        # macOS/terminfo fallback (_run closes over `tty` intentionally).
         try:
             with open("/dev/tty") as tty:
-                out = subprocess.run(["stty", "size"], stdin=tty,
-                                     capture_output=True, text=True, timeout=1).stdout.split()
-            if len(out) == 2:
-                lines = lines or int(out[0])
-                cols = cols or int(out[1])
+                def _run(*cmd):
+                    return subprocess.run(list(cmd), stdin=tty, capture_output=True,
+                                          text=True, timeout=1).stdout
+                size = _run("stty", "size").split()
+                if len(size) == 2:
+                    lines = lines or int(size[0])
+                    cols = cols or int(size[1])
+                if cols is None or lines is None:
+                    cols = cols or _to_int(_run("tput", "cols").strip())
+                    lines = lines or _to_int(_run("tput", "lines").strip())
         except Exception:
             pass
     assumed = False
@@ -473,30 +514,87 @@ def git_info(work_dir):
     return branch, dirty, is_worktree
 
 
-def proc_rss_bytes():
-    """Resident memory of the parent `claude` process, in bytes. None if /proc
-    is unavailable. Walk up the parent chain in case a shell wraps us."""
-    pid = os.getppid()
-    for _ in range(4):
-        try:
-            comm = open(f"/proc/{pid}/comm").read().strip()
-        except OSError:
-            return None
-        if comm == "claude":
-            break
-        try:
-            ppid = int(open(f"/proc/{pid}/stat").read().split()[3])
-        except (OSError, IndexError, ValueError):
-            return None
-        if ppid in (0, pid):
-            break
-        pid = ppid
+# ── Process RSS (cross-platform) ──────────────────────────────────────────────
+# Platform probe: Linux → /proc readers; macOS/other → `ps` readers; any read
+# failure → None (the segment hides). Three facts per pid — command name, parent
+# pid, resident memory (kB) — exposed by six thin readers (_comm/_ppid/_rss_kb ×
+# _via_proc/_via_ps). proc_rss_bytes picks a backend by the probe and walks the
+# parent chain, returning RSS ONLY on a confirmed `claude` ancestor — otherwise
+# None, so it never reports a stray process (the wezterm <10mb bug). The readers
+# return comm verbatim; proc_rss_bytes is the single basename-normalization point.
+def _comm_via_proc(pid):
     try:
-        for line in open(f"/proc/{pid}/status"):
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) * 1024
+        with open(f"/proc/{pid}/comm") as f:
+            return f.read().strip()
     except OSError:
         return None
+
+
+def _ppid_via_proc(pid):
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return int(f.read().split()[3])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _rss_kb_via_proc(pid):
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except (OSError, IndexError, ValueError):
+        return None
+    return None
+
+
+def _ps_field(pid, field):
+    """One `ps -o <field>= -p <pid>` value as a stripped string, or None."""
+    try:
+        out = subprocess.run(["ps", "-o", f"{field}=", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=1).stdout.strip()
+        return out or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _comm_via_ps(pid):
+    return _ps_field(pid, "comm")
+
+
+def _ppid_via_ps(pid):
+    return _to_int(_ps_field(pid, "ppid"))
+
+
+def _rss_kb_via_ps(pid):
+    return _to_int(_ps_field(pid, "rss"))
+
+
+def proc_rss_bytes():
+    """Resident memory (bytes) of the ancestor `claude` process, or None.
+
+    Cross-platform via a capability probe: Linux /proc, else `ps`. Walk up the parent
+    chain (bounded) and return RSS only on a `claude` match."""
+    use_proc = os.path.isdir("/proc")
+    comm_of = _comm_via_proc if use_proc else _comm_via_ps
+    ppid_of = _ppid_via_proc if use_proc else _ppid_via_ps
+    rss_kb_of = _rss_kb_via_proc if use_proc else _rss_kb_via_ps
+
+    pid = os.getppid()
+    for _ in range(8):
+        name = comm_of(pid)
+        if name is None:
+            return None
+        # `ps -o comm=` can return a full path on macOS; normalize here so both
+        # backends compare the same bare name.
+        if os.path.basename(name) == "claude":
+            kb = rss_kb_of(pid)
+            return kb * 1024 if kb is not None else None
+        parent = ppid_of(pid)
+        if parent is None or parent in (0, pid):
+            return None
+        pid = parent
     return None
 
 
@@ -674,6 +772,18 @@ def render(data, cols, lines):
 
 
 # ═══ Entry point ══════════════════════════════════════════════════════════════
+def resolve_effort(raw, env):
+    """The effort level as a normalized lowercase string ("" if unset).
+
+    Source priority: raw["effort"]["level"] > CLAUDE_EFFORT env. `auto` arrives via
+    either today. If a captured sample shows Claude Code sending the *resolved* level
+    plus a separate auto flag, add one line here, e.g.:
+        if (raw.get("effort") or {}).get("auto"): return "auto"
+    """
+    level = ((raw.get("effort") or {}).get("level") or env.get("CLAUDE_EFFORT", ""))
+    return level.strip().lower()
+
+
 def build_data(raw, env):
     model = raw.get("model") or {}
     cost = raw.get("cost") or {}
@@ -689,7 +799,7 @@ def build_data(raw, env):
     if transcript and os.path.isfile(transcript):
         ago = fmt_ago(int(time.time()) - int(os.path.getmtime(transcript)))
 
-    effort = (raw.get("effort") or {}).get("level") or env.get("CLAUDE_EFFORT", "")
+    effort = resolve_effort(raw, env)
     todo_state, todo_text = current_todo(transcript)
 
     data = {
