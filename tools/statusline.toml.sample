@@ -1,0 +1,56 @@
+## ai-kit status line — configuration recipe.
+## Copy to ~/.config/ai-kit/statusline.toml (the installer does this if the file
+## is absent; it never overwrites an existing one). As shipped EVERY line below is
+## commented, so this file is a NO-OP and the built-in defaults apply. Uncomment
+## only what you want to change.
+##
+## Precedence (low -> high): built-in defaults < this file < env (CC_AI_KIT_*).
+
+# version = 1
+
+## ─── [segments] ──────────────────────────────────────────────────────────────
+## Show/hide individual segments. Uncomment a single line to flip just that one;
+## every other segment keeps its built-in default (this block MERGES over the
+## defaults). The values below are the current defaults.
+# [segments]
+# path = true
+# branch = true
+# dirty = true
+# todo = true
+# model = true
+# time_ago = true
+# clock = true
+# effort = true
+# lines = true
+# cost = false
+# total_time = true
+# api_time = true
+# dimensions = true
+# context = true
+# chat_size = true
+# memory = true
+# rate_limits = true
+
+## ─── [[line]] ────────────────────────────────────────────────────────────────
+## Full layout override. ALL-OR-NOTHING: if you uncomment ANY [[line]] block you
+## must uncomment them ALL (a partial layout would silently drop the omitted
+## segments). `min_rows` gates a row by terminal height; segment order is
+## left -> right priority (leftmost kept first when space is tight). The blocks
+## below are the current default layout.
+# [[line]]
+# min_rows = 0
+# segments = ["path", "branch", "dirty", "todo"]
+# [[line]]
+# min_rows = 20
+# segments = ["model", "time_ago", "clock", "effort", "lines", "cost", "total_time", "api_time"]
+# [[line]]
+# min_rows = 30
+# segments = ["dimensions", "context", "chat_size", "memory", "rate_limits"]
+
+## ─── [palette] ───────────────────────────────────────────────────────────────
+## Override named colors with raw ANSI SGR params (no "\033[" / "m" wrapper).
+## Overridable names: GREY WHITE CYAN GREEN ORANGE RED YELLOW MAGENTA BLUE
+## ORANGE_BOLD MAGENTA_DARK_BOLD. Example — force a truer blue on a screen where
+## the default reads purple:
+# [palette]
+# BLUE = "38;5;33"

@@ -5,6 +5,7 @@ import re
 import shutil
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 
@@ -800,6 +801,35 @@ class TestPaletteFromConfig(unittest.TestCase):
             sl.main()
         # path segment is BLUE; overridden blue (1;34) must appear in the raw output.
         self.assertIn("\033[1;34m", buf.getvalue())
+
+
+class TestSampleRecipe(unittest.TestCase):
+    SAMPLE = os.path.join(_HERE, "..", "tools", "statusline.toml.sample")
+
+    def _uncomment(self):
+        # Data lines are "# " prefixed; prose is "## " prefixed. Reconstruct the
+        # intended config by taking the single-hash data lines, stripping "# ".
+        with open(self.SAMPLE) as f:
+            lines = f.read().splitlines()
+        return "\n".join(ln[2:] for ln in lines if ln.startswith("# "))
+
+    def test_file_exists(self):
+        self.assertTrue(os.path.isfile(self.SAMPLE))
+
+    def test_as_shipped_is_all_commented_noop(self):
+        # No active (uncommented) TOML keys: every non-blank line is a comment.
+        with open(self.SAMPLE) as f:
+            for ln in f:
+                s = ln.strip()
+                if s:
+                    self.assertTrue(s.startswith("#"), f"active line in sample: {ln!r}")
+
+    def test_uncommented_matches_internal_defaults(self):
+        parsed = tomllib.loads(self._uncomment())
+        self.assertEqual(parsed.get("version"), 1)
+        self.assertEqual(parsed.get("segments"), dict(sl.SEGMENTS))
+        want = [{"min_rows": ln.min_rows, "segments": ln.segments} for ln in sl.LAYOUT]
+        self.assertEqual(parsed.get("line"), want)
 
 
 if __name__ == "__main__":
