@@ -184,12 +184,11 @@ def load_config(env):
 RESET = "\033[0m"
 BG_LIGHTGRAY = "\033[47m"
 _DIM = "\033[90m"             # fixed dim grey for stderr warnings (palette-independent)
-LIGHTBLUE = "\033[38;5;75m"   # cornflower — chat-size ramp band 3 (distinct from BLUE)
 
 # Overridable palette: NAME -> default SGR params (no "\033[" / "m" wrapper).
-# [palette] overrides replace a value here; init_palette() rebuilds the globals
-# and every ramp that derives from them. BLUE is 38;5;33 (true blue) because the
-# bold-ANSI 1;34 reads purple on many terminals.
+# [palette] overrides replace a value here; build_theme resolves these into a
+# Theme. BLUE is 38;5;33 (true blue) because the bold-ANSI 1;34 reads purple on
+# many terminals.
 _PALETTE_DEFAULTS = {
     "GREY": "90", "WHITE": "1;97", "CYAN": "1;36", "GREEN": "1;32",
     "ORANGE": "38;5;208", "RED": "1;31", "YELLOW": "1;33", "MAGENTA": "1;35",
@@ -222,53 +221,6 @@ _EFFORT_DEFAULTS = {
 _EFFORT_GLYPHS = "▁▃▄▆█"
 
 INF = float("inf")
-_MB = 1024 * 1024
-
-
-def _build_ramps():
-    """(Re)build the color ramps + effort bars from the current color globals.
-    Called by init_palette after the color globals are (re)assigned."""
-    g = globals()
-    g["CONTEXT_RAMP"] = [
-        (10, WHITE), (15, CYAN), (20, BLUE), (25, GREEN),
-        (30, YELLOW), (40, ORANGE_BOLD), (50, RED), (INF, MAGENTA_DARK_BOLD),
-    ]
-    g["RATE_RAMP"] = [(50, GREEN), (80, YELLOW), (INF, RED)]
-    # Chat-transcript size bands (bytes). Mirrors the context bar's progression;
-    # top two bands pinned: >=5 MB red, >=10 MB purple. Same "first ceil the value
-    # is strictly below wins" rule as CONTEXT_RAMP.
-    g["CHAT_SIZE_RAMP"] = [
-        (512 * 1024, WHITE), (1 * _MB, CYAN), (2 * _MB, LIGHTBLUE), (3 * _MB, GREEN),
-        (4 * _MB, YELLOW), (5 * _MB, ORANGE), (10 * _MB, RED), (INF, MAGENTA),
-    ]
-    # API-resolved effort levels, lowest -> highest; fill count = intensity (1..5),
-    # each with a clear fixed color. `ultracode` is NOT a level (reports as xhigh)
-    # and `auto` is a *setting*, not a level — neither belongs here.
-    g["_EFFORT_BARS"] = {
-        "low":    (CYAN,   f"{CYAN}▁{GREY}▃▄▆█"),
-        "medium": (BLUE,   f"{BLUE}▁▃{GREY}▄▆█"),
-        "high":   (YELLOW, f"{YELLOW}▁▃▄{GREY}▆█"),
-        "xhigh":  (ORANGE, f"{ORANGE}▁▃▄▆{GREY}█"),
-        "max":    (RED,    f"{RED}▁▃▄▆█"),
-    }
-
-
-def init_palette(overrides=None):
-    """(Re)assign the overridable color globals from _PALETTE_DEFAULTS merged with
-    `overrides` ({NAME: "sgr;params"}; unknown names ignored), then rebuild ramps.
-    Call with no args to restore defaults. Idempotent."""
-    merged = dict(_PALETTE_DEFAULTS)
-    for name, val in (overrides or {}).items():
-        if name in _PALETTE_DEFAULTS:
-            merged[name] = str(val)
-    g = globals()
-    for name, params in merged.items():
-        g[name] = f"\033[{params}m"
-    _build_ramps()
-
-
-# Build the colors + ramps once at import so module-level defaults are in force.
-init_palette()
 
 
 def pick_color(pct, ramp):
@@ -447,7 +399,7 @@ def _resolve_ramp(pairs, palette, band, fallback):
 
 def _build_effort(palette):
     """level -> (color escape, bar string). Filled glyphs in the level's color,
-    the rest in grey (matching the legacy _EFFORT_BARS layout)."""
+    the rest in grey (the effort-ladder layout)."""
     grey = parse_color("GREY", palette) or ""
     out = {}
     for level, (name, n) in _EFFORT_DEFAULTS.items():
@@ -552,25 +504,25 @@ def rate_key_label(key):
     return f"{num}{unit}"
 
 
-def rate_color(pct):
-    return pick_color(float(pct), RATE_RAMP)
+def rate_color(pct, theme):
+    return pick_color(float(pct), theme.ramps["rate"])
 
 
 # ═══ Segment builders ════════════════════════════════════════════════════════
-# Contract: every builder is seg_x(data, avail) -> str | None.
+# Contract: every builder is seg_x(data, avail, theme) -> str | None.
 #   avail = display cells available to this segment at its position.
 #   Return None when there is no data, OR when even the smallest variant does
 #   not fit avail (the builder self-deprioritizes). Otherwise return the richest
 #   variant that fits, via _first_fitting([rich, ..., minimal], avail).
 # The packer (pack_line) supplies avail and owns the final keep/skip decision.
-# To add a segment: write seg_x(data, avail), add it to BUILDERS, list its key
+# To add a segment: write seg_x(data, avail, theme), add it to BUILDERS, list its key
 # in a LAYOUT line, add a SEGMENTS flag. See the HOW TO CUSTOMIZE block below.
 
-# NOTE: _EFFORT_BARS is built by _build_ramps() (see the Palette section) so a
-# [palette] override rebuilds the effort bars too. `ultracode` is NOT a level (it
-# reports as xhigh + standing multi-agent permission), and `auto` is a *setting*,
-# not a resolved level — neither belongs in the table. The auto setting is
-# surfaced as a "[auto]" suffix in seg_effort.
+# NOTE: the effort bars live on the Theme (theme.effort), resolved by
+# _build_effort from the palette so a [palette] override re-colors them too.
+# `ultracode` is NOT a level (it reports as xhigh + standing multi-agent
+# permission), and `auto` is a *setting*, not a resolved level — neither belongs
+# in the table. The auto setting is surfaced as a "[auto]" suffix in seg_effort.
 
 
 def _display_dir(work_dir, home):
@@ -582,33 +534,33 @@ def _display_dir(work_dir, home):
     return os.path.basename(work_dir.rstrip("/")) or shown
 
 
-def _dirty_mark(dirty):
+def _dirty_mark(dirty, theme):
     if dirty == "untracked":
-        return f"{RED}✗{RESET}"
+        return f"{theme.c('RED')}✗{RESET}"
     if dirty == "modified":
-        return f"{YELLOW}~{RESET}"
+        return f"{theme.c('YELLOW')}~{RESET}"
     return ""
 
 
 # ── identity line ────────────────────────────────────────────────────────────
-def seg_path(data, avail):
-    return f"{BLUE}{_display_dir(data['work_dir'], data['home'])}{RESET}"  # floor
+def seg_path(data, avail, theme):
+    return f"{theme.c('BLUE')}{_display_dir(data['work_dir'], data['home'])}{RESET}"  # floor
 
 
-def seg_branch(data, avail):
+def seg_branch(data, avail, theme):
     branch = data.get("branch")
     if not branch:
         return None
     icon = "🌳" if data.get("is_worktree") else "🌿"
-    return _first_fitting([f"{GREY}[{icon} {branch}]{RESET}"], avail)
+    return _first_fitting([f"{theme.c('GREY')}[{icon} {branch}]{RESET}"], avail)
 
 
-def seg_dirty(data, avail):
-    mark = _dirty_mark(data.get("dirty", "clean"))
+def seg_dirty(data, avail, theme):
+    mark = _dirty_mark(data.get("dirty", "clean"), theme)
     return _first_fitting([mark], avail) if mark else None
 
 
-def seg_todo(data, avail):
+def seg_todo(data, avail, theme):
     state, text = data.get("todo_state"), data.get("todo_text")
     if not text:
         return None
@@ -618,44 +570,44 @@ def seg_todo(data, avail):
     if len(text) > limit:
         text = text[:limit - 1] + "…"
     if state == "in_progress":
-        return f"📝 {YELLOW}{text}{RESET}"
+        return f"📝 {theme.c('YELLOW')}{text}{RESET}"
     if state == "pending":
-        return f"⏸  {GREY}{text}{RESET}"
+        return f"⏸  {theme.c('GREY')}{text}{RESET}"
     return None
 
 
 # ── model row ────────────────────────────────────────────────────────────────
-def seg_model(data, avail):
+def seg_model(data, avail, theme):
     name = data.get("model_name") or data.get("model_id")
     if not name:
         return None
-    return _first_fitting([f"{CYAN}{name}{RESET}"], avail)
+    return _first_fitting([f"{theme.c('CYAN')}{name}{RESET}"], avail)
 
 
-def seg_time_ago(data, avail):
+def seg_time_ago(data, avail, theme):
     ago = data.get("ago")
     if not ago:
         return None
-    return _first_fitting([f"{WHITE}{ago}{RESET}"], avail)
+    return _first_fitting([f"{theme.c('WHITE')}{ago}{RESET}"], avail)
 
 
-def seg_clock(data, avail):
+def seg_clock(data, avail, theme):
     return _first_fitting([f"⏰{data['clock']}"], avail)
 
 
-def seg_effort(data, avail):
+def seg_effort(data, avail, theme):
     level = data.get("effort", "")
     if not level:
         return None
     # Unknown level (stale/future): no color on the word, all-grey ladder — a safe
     # degraded display. resolve_effort already strips "auto", so it never lands here.
-    color, bar = _EFFORT_BARS.get(level.lower(), ("", f"{GREY}▁▃▄▆█"))
+    color, bar = theme.effort.get(level.lower(), ("", f"{theme.c('GREY')}▁▃▄▆█"))
     word = f"{color}{level}{RESET}"
     bars = f"🧠 {bar}{RESET}"
     if data.get("effort_auto"):
         # effortLevel is unset/auto in settings: flag the resolved level as
         # auto-chosen. The flag degrades [auto] -> * -> dropped as space tightens.
-        variants = [f"{bars} {word} {GREY}[auto]{RESET}",
+        variants = [f"{bars} {word} {theme.c('GREY')}[auto]{RESET}",
                     f"{bars} {color}{level}*{RESET}",
                     f"{bars} {word}",
                     bars]
@@ -664,54 +616,54 @@ def seg_effort(data, avail):
     return _first_fitting(variants, avail)
 
 
-def seg_lines(data, avail):
-    s = (f"📃{BG_LIGHTGRAY}{GREEN}+{fmt_number(data['added'])}{RESET}"
-         f"/{BG_LIGHTGRAY}{RED}-{fmt_number(data['removed'])}{RESET}")
+def seg_lines(data, avail, theme):
+    s = (f"📃{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(data['added'])}{RESET}"
+         f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(data['removed'])}{RESET}")
     return _first_fitting([s], avail)
 
 
-def seg_cost(data, avail):
+def seg_cost(data, avail, theme):
     return _first_fitting([f"🪙${float(data['cost']):.3f}"], avail)
 
 
-def seg_total_time(data, avail):
+def seg_total_time(data, avail, theme):
     return _first_fitting([f"💬{fmt_time_ms(data['total_ms'])}"], avail)
 
 
-def seg_api_time(data, avail):
+def seg_api_time(data, avail, theme):
     return _first_fitting([f"📡{fmt_time_ms(data['api_ms'])}"], avail)
 
 
 # ── diagnostics row ──────────────────────────────────────────────────────────
-def seg_dimensions(data, avail):
+def seg_dimensions(data, avail, theme):
     mark = "?" if data.get("dim_assumed") else ""
     return _first_fitting([f"{data['cols']}×{data['lines']}{mark}"], avail)
 
 
-def seg_context(data, avail):
+def seg_context(data, avail, theme):
     pct = int(data["context_pct"])
-    color = pick_color(pct, CONTEXT_RAMP)
+    color = pick_color(pct, theme.ramps["context"])
     pct_only = f"📊 {color}{pct}%{RESET}"
     # Measure in half-cells (5% each) and round up, so any pct > 0 shows >= ▌.
     halves = 0 if pct <= 0 else min(2 * CONTEXT_BAR_CELLS, math.ceil(pct / 5))
     full_n, half = divmod(halves, 2)
     bar_f = "█" * full_n + ("▌" if half else "")
     bar_e = "░" * (CONTEXT_BAR_CELLS - full_n - half)
-    bar = f"{color}{bar_f}{GREY}{bar_e}{RESET}"
+    bar = f"{color}{bar_f}{theme.c('GREY')}{bar_e}{RESET}"
     mid = f"📊 {bar} {color}{pct}%{RESET}"
     full = f"📊 {bar} {color}{pct}% of {fmt_tokens(data['context_max'])}{RESET}"
     return _first_fitting([full, mid, pct_only], avail) or pct_only  # floor
 
 
-def seg_chat_size(data, avail):
+def seg_chat_size(data, avail, theme):
     n = data.get("chat_bytes")
     if n is None:
         return None
-    color = pick_color(n, CHAT_SIZE_RAMP)
+    color = pick_color(n, theme.ramps["chat_size"])
     return _first_fitting([f"💾 {color}{fmt_bytes(n)}{RESET}"], avail)
 
 
-def seg_memory(data, avail):
+def seg_memory(data, avail, theme):
     n = data.get("mem_bytes")
     if n is None:
         return None
@@ -730,7 +682,7 @@ def _reset_suffix(reset, detail):
     return f" (↺ {dt.strftime('%m-%d %H:%M')})"        # e.g. 06-07 14:10
 
 
-def _rate_str(rate_limits, detail):
+def _rate_str(rate_limits, detail, theme):
     # Show every bucket that reports a percentage. Visibility never depends on
     # the clock — the reset stamp is shown only when there's room (via detail),
     # so timezone shifts / clock skew can't make a bucket vanish.
@@ -743,22 +695,22 @@ def _rate_str(rate_limits, detail):
         reset = info.get("resets_at")
         if reset is not None:
             reset = int(reset)
-        color = rate_color(pct)
+        color = rate_color(pct, theme)
         suffix = _reset_suffix(reset, detail)
         parts.append(f"{rate_key_label(key)}: {color}{round(float(pct))}%{RESET}{suffix}")
     return "⚡ " + " | ".join(parts) if parts else None
 
 
-def seg_rate_limits(data, avail):
+def seg_rate_limits(data, avail, theme):
     rate_limits = data.get("rate_limits")
     if not rate_limits:
         return None
-    return _first_fitting([_rate_str(rate_limits, "long"),
-                           _rate_str(rate_limits, "short"),
-                           _rate_str(rate_limits, "none")], avail)
+    return _first_fitting([_rate_str(rate_limits, "long", theme),
+                           _rate_str(rate_limits, "short", theme),
+                           _rate_str(rate_limits, "none", theme)], avail)
 
 
-# ═══ Segment registry — key -> builder(data, avail) ══════════════════════════
+# ═══ Segment registry — key -> builder(data, avail, theme) ═══════════════════
 # Editable surface (SEGMENTS + LAYOUT) is at the top of the file; this registry
 # (key -> builder function) stays next to the builders it wires up.
 BUILDERS = {
@@ -1012,7 +964,7 @@ def current_todo(path):
 
 
 # ═══ Packing + render ════════════════════════════════════════════════════════
-def pack_line(keys, data, cols, cfg=None):
+def pack_line(keys, data, cols, cfg=None, theme=None):
     """Best-fit pack enabled segments into cols - RIGHT_MARGIN.
 
     For each key (left->right), compute the space available at this position
@@ -1020,6 +972,7 @@ def pack_line(keys, data, cols, cfg=None):
     keep it if it is non-empty and fits — else skip it and keep trying the rest.
     Pinned segments are always kept. Order is priority: leftmost survive."""
     cfg = cfg or default_config()
+    theme = theme or build_theme(cfg)
     budget = cols - RIGHT_MARGIN
     sep_w = visible_width(SEP)
     kept, used = [], 0
@@ -1028,7 +981,7 @@ def pack_line(keys, data, cols, cfg=None):
             continue
         sep = sep_w if kept else 0
         avail = budget - used - sep
-        s = BUILDERS[key](data, max(avail, 0))
+        s = BUILDERS[key](data, max(avail, 0), theme)
         if not s:
             continue
         if key in PINNED or visible_width(s) <= avail:
@@ -1037,14 +990,15 @@ def pack_line(keys, data, cols, cfg=None):
     return SEP.join(kept)
 
 
-def render(data, cols, lines, cfg=None):
+def render(data, cols, lines, cfg=None, theme=None):
     """Render up to len(cfg.layout) lines, gated by terminal height and width."""
     cfg = cfg or default_config()
+    theme = theme or build_theme(cfg)
     out = []
     for ln in cfg.layout:
         if lines < ln.min_rows:
             continue
-        packed = pack_line(ln.segments, data, cols, cfg)
+        packed = pack_line(ln.segments, data, cols, cfg, theme)
         if packed:
             out.append(packed)
     return out
@@ -1058,7 +1012,7 @@ def render(data, cols, lines, cfg=None):
 #   LAYOUT    — the template: a list of Line(min_rows, [segment keys]). Key order
 #               in each list is LEFT->RIGHT priority; leftmost survive when the
 #               terminal is narrow. min_rows gates the whole row by terminal rows.
-#   BUILDERS  — maps each segment key to its builder(data, avail) function.
+#   BUILDERS  — maps each segment key to its builder(data, avail, theme) function.
 #
 # How show/hide is decided: the packer (pack_line) is the authority. It offers
 # each builder the space available at its spot (avail) and keeps the result only
@@ -1094,7 +1048,7 @@ def render(data, cols, lines, cfg=None):
 #                             in some LAYOUT line, and (c) the key is in BUILDERS.
 #                             All three are required for it to show.
 #   * Add a NEW segment:
-#       1. Write a builder:  def seg_foo(data, avail):
+#       1. Write a builder:  def seg_foo(data, avail, theme):
 #              if no_data: return None
 #              return _first_fitting([rich_form, compact_form], avail)
 #          (return None to hide; read what you need from `data`; let the builder
@@ -1270,7 +1224,7 @@ def main():
     if args.check is not _NO_CHECK:
         sys.exit(cmd_check(args.check, os.environ))
     cfg = load_config(os.environ)
-    init_palette(cfg.palette)        # apply overrides + rebuild ramps before render
+    theme = build_theme(cfg)
     if args.print_config:
         print(cmd_print_config(cfg))
         return
@@ -1279,7 +1233,7 @@ def main():
     except (ValueError, OSError):
         raw = {}
     data, cols, lines = build_data(raw, os.environ)
-    print("\n".join(render(data, cols, lines, cfg)))
+    print("\n".join(render(data, cols, lines, cfg, theme)))
 
 
 if __name__ == "__main__":

@@ -22,6 +22,8 @@ def load_module():
 
 sl = load_module()
 
+THEME = sl.default_theme()
+
 ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 
@@ -52,19 +54,19 @@ def _data(**over):
 class TestPickColor(unittest.TestCase):
     def test_context_ramp_bands(self):
         cases = [
-            (5, sl.WHITE), (9, sl.WHITE), (10, sl.CYAN), (14, sl.CYAN),
-            (15, sl.BLUE), (19, sl.BLUE), (20, sl.GREEN), (24, sl.GREEN),
-            (25, sl.YELLOW), (29, sl.YELLOW), (30, sl.ORANGE_BOLD), (39, sl.ORANGE_BOLD),
-            (40, sl.RED), (49, sl.RED), (50, sl.MAGENTA_DARK_BOLD), (99, sl.MAGENTA_DARK_BOLD),
+            (5, THEME.c("WHITE")), (9, THEME.c("WHITE")), (10, THEME.c("CYAN")), (14, THEME.c("CYAN")),
+            (15, THEME.c("BLUE")), (19, THEME.c("BLUE")), (20, THEME.c("GREEN")), (24, THEME.c("GREEN")),
+            (25, THEME.c("YELLOW")), (29, THEME.c("YELLOW")), (30, THEME.c("ORANGE_BOLD")), (39, THEME.c("ORANGE_BOLD")),
+            (40, THEME.c("RED")), (49, THEME.c("RED")), (50, THEME.c("MAGENTA_DARK_BOLD")), (99, THEME.c("MAGENTA_DARK_BOLD")),
         ]
         for pct, want in cases:
-            self.assertEqual(sl.pick_color(pct, sl.CONTEXT_RAMP), want, pct)
+            self.assertEqual(sl.pick_color(pct, THEME.ramps["context"]), want, pct)
 
     def test_rate_ramp_bands(self):
-        cases = [(0, sl.GREEN), (49, sl.GREEN), (50, sl.YELLOW),
-                 (79, sl.YELLOW), (80, sl.RED), (100, sl.RED)]
+        cases = [(0, THEME.c("GREEN")), (49, THEME.c("GREEN")), (50, THEME.c("YELLOW")),
+                 (79, THEME.c("YELLOW")), (80, THEME.c("RED")), (100, THEME.c("RED"))]
         for pct, want in cases:
-            self.assertEqual(sl.rate_color(pct), want, pct)
+            self.assertEqual(sl.rate_color(pct, THEME), want, pct)
 
 
 class TestFormatters(unittest.TestCase):
@@ -99,7 +101,7 @@ class TestVisibleWidth(unittest.TestCase):
         self.assertEqual(sl.visible_width("hello"), 5)
 
     def test_ansi_is_zero_width(self):
-        self.assertEqual(sl.visible_width(f"{sl.RED}hi{sl.RESET}"), 2)
+        self.assertEqual(sl.visible_width(f'{THEME.c("RED")}hi{sl.RESET}'), 2)
 
     def test_smp_emoji_is_two_cells(self):
         for ch in "📊📝🧠💬📡💾🧮🌿🌳📃":
@@ -141,86 +143,86 @@ class TestFirstFitting(unittest.TestCase):
 class TestEffortTable(unittest.TestCase):
     def test_effort_colors(self):
         want = {
-            "low": sl.CYAN, "medium": sl.BLUE,
-            "high": sl.YELLOW, "xhigh": sl.ORANGE, "max": sl.RED,
+            "low": THEME.c("CYAN"), "medium": THEME.c("BLUE"),
+            "high": THEME.c("YELLOW"), "xhigh": THEME.c("ORANGE"), "max": THEME.c("RED"),
         }
         for level, color in want.items():
-            self.assertEqual(sl._EFFORT_BARS[level][0], color, level)
+            self.assertEqual(THEME.effort[level][0], color, level)
 
     def test_effort_fill_counts(self):
         want = {"low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
         for level, n in want.items():
-            filled = sl._EFFORT_BARS[level][1].split(sl.GREY)[0]
+            filled = THEME.effort[level][1].split(THEME.c("GREY"))[0]
             count = sum(filled.count(c) for c in "▁▃▄▆█")
             self.assertEqual(count, n, level)
 
 
 class TestCooperativeBuilders(unittest.TestCase):
     def test_branch_content_then_self_hide(self):
-        self.assertIn("main", sl.seg_branch(_data(branch="main"), 50))
-        self.assertIsNone(sl.seg_branch(_data(branch="main"), 5))    # no room
-        self.assertIsNone(sl.seg_branch(_data(branch=""), 200))      # no data
+        self.assertIn("main", sl.seg_branch(_data(branch="main"), 50, THEME))
+        self.assertIsNone(sl.seg_branch(_data(branch="main"), 5, THEME))    # no room
+        self.assertIsNone(sl.seg_branch(_data(branch=""), 200, THEME))      # no data
 
     def test_branch_worktree_icon(self):
-        self.assertIn("🌳", sl.seg_branch(_data(is_worktree=True), 100))
-        self.assertIn("🌿", sl.seg_branch(_data(is_worktree=False), 100))
+        self.assertIn("🌳", sl.seg_branch(_data(is_worktree=True), 100, THEME))
+        self.assertIn("🌿", sl.seg_branch(_data(is_worktree=False), 100, THEME))
 
     def test_effort_full_then_compact_then_hide(self):
-        self.assertIn("high", strip(sl.seg_effort(_data(effort="high"), 30)))
-        compact = strip(sl.seg_effort(_data(effort="high"), 10))
+        self.assertIn("high", strip(sl.seg_effort(_data(effort="high"), 30, THEME)))
+        compact = strip(sl.seg_effort(_data(effort="high"), 10, THEME))
         self.assertNotIn("high", compact)
         self.assertIn("▁▃▄", compact)
-        self.assertIsNone(sl.seg_effort(_data(effort="high"), 5))
-        self.assertIsNone(sl.seg_effort(_data(effort=""), 200))
+        self.assertIsNone(sl.seg_effort(_data(effort="high"), 5, THEME))
+        self.assertIsNone(sl.seg_effort(_data(effort=""), 200, THEME))
 
     def test_effort_all_levels_full(self):
         for level in ("low", "medium", "high", "xhigh", "max"):
-            out = strip(sl.seg_effort(_data(effort=level), 30))
+            out = strip(sl.seg_effort(_data(effort=level), 30, THEME))
             self.assertIn(level, out)
             self.assertTrue(out.startswith("🧠"))
 
     def test_context_three_tiers_never_none(self):
-        self.assertIn("of 1M", strip(sl.seg_context(_data(context_pct=12), 200)))
-        mid = strip(sl.seg_context(_data(context_pct=12), 18))
+        self.assertIn("of 1M", strip(sl.seg_context(_data(context_pct=12), 200, THEME)))
+        mid = strip(sl.seg_context(_data(context_pct=12), 18, THEME))
         self.assertNotIn("of 1M", mid)
         self.assertIn("█", mid)
-        self.assertEqual(strip(sl.seg_context(_data(context_pct=12), 8)), "📊 12%")
-        self.assertIsNotNone(sl.seg_context(_data(context_pct=12), 2))  # floor
+        self.assertEqual(strip(sl.seg_context(_data(context_pct=12), 8, THEME)), "📊 12%")
+        self.assertIsNotNone(sl.seg_context(_data(context_pct=12), 2, THEME))  # floor
 
     def test_context_low_pct_half_bar_and_zero_empty(self):
-        self.assertIn("▌", strip(sl.seg_context(_data(context_pct=5), 200)))
-        zero = strip(sl.seg_context(_data(context_pct=0), 200))
+        self.assertIn("▌", strip(sl.seg_context(_data(context_pct=5), 200, THEME)))
+        zero = strip(sl.seg_context(_data(context_pct=0), 200, THEME))
         self.assertNotIn("█", zero)
         self.assertNotIn("▌", zero)
 
     def test_dimensions_content_then_self_hide(self):
-        self.assertEqual(strip(sl.seg_dimensions(_data(cols=120, lines=40), 200)),
+        self.assertEqual(strip(sl.seg_dimensions(_data(cols=120, lines=40), 200, THEME)),
                          "120×40")
-        self.assertIsNone(sl.seg_dimensions(_data(cols=120, lines=40), 3))
+        self.assertIsNone(sl.seg_dimensions(_data(cols=120, lines=40), 3, THEME))
 
     def test_chat_memory_self_hide_when_cramped(self):
-        self.assertIsNotNone(sl.seg_chat_size(_data(), 200))
-        self.assertIsNone(sl.seg_chat_size(_data(), 3))
-        self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 200))
-        self.assertIsNone(sl.seg_memory(_data(mem_bytes=None), 200))
+        self.assertIsNotNone(sl.seg_chat_size(_data(), 200, THEME))
+        self.assertIsNone(sl.seg_chat_size(_data(), 3, THEME))
+        self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 200, THEME))
+        self.assertIsNone(sl.seg_memory(_data(mem_bytes=None), 200, THEME))
 
     def test_rate_limits_shows_reset_then_drops_suffix_when_narrow(self):
         rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600}}
-        self.assertIn("↺", strip(sl.seg_rate_limits(_data(rate_limits=rl), 200)))
-        narrow = strip(sl.seg_rate_limits(_data(rate_limits=rl), 12))
+        self.assertIn("↺", strip(sl.seg_rate_limits(_data(rate_limits=rl), 200, THEME)))
+        narrow = strip(sl.seg_rate_limits(_data(rate_limits=rl), 12, THEME))
         self.assertNotIn("↺", narrow)
         self.assertIn("5h", narrow)
-        self.assertIsNone(sl.seg_rate_limits(_data(rate_limits={}), 200))
+        self.assertIsNone(sl.seg_rate_limits(_data(rate_limits={}), 200, THEME))
 
     def test_model_and_clock(self):
-        self.assertEqual(strip(sl.seg_model(_data(), 200)), "Opus 4.8")
-        self.assertEqual(strip(sl.seg_clock(_data(), 200)), "⏰14:30")
+        self.assertEqual(strip(sl.seg_model(_data(), 200, THEME)), "Opus 4.8")
+        self.assertEqual(strip(sl.seg_clock(_data(), 200, THEME)), "⏰14:30")
 
     def test_todo_truncates_and_hides(self):
         self.assertIn("hello", strip(sl.seg_todo(
-            _data(todo_state="in_progress", todo_text="hello"), 200)))
+            _data(todo_state="in_progress", todo_text="hello"), 200, THEME)))
         self.assertIsNone(sl.seg_todo(
-            _data(todo_state="in_progress", todo_text="hello"), 8))
+            _data(todo_state="in_progress", todo_text="hello"), 8, THEME))
 
     def test_rate_visibility_independent_of_clock(self):
         # Every bucket shows regardless of how its resets_at compares to the
@@ -228,28 +230,28 @@ class TestCooperativeBuilders(unittest.TestCase):
         # must never affect which limits are visible).
         rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600},
               "seven_day": {"used_percentage": 13, "resets_at": NOW - 60}}  # past reset
-        out = strip(sl.seg_rate_limits(_data(rate_limits=rl), 200))
+        out = strip(sl.seg_rate_limits(_data(rate_limits=rl), 200, THEME))
         self.assertIn("5h: 42%", out)
         self.assertIn("7d: 13%", out)      # past-reset bucket still shown
 
     def test_rate_past_reset_bucket_still_shown(self):
         rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW - 1}}
-        out = strip(sl.seg_rate_limits(_data(rate_limits=rl), 200))
+        out = strip(sl.seg_rate_limits(_data(rate_limits=rl), 200, THEME))
         self.assertIn("5h: 50%", out)
 
     def test_rate_no_resets_at_kept_without_suffix(self):
         rl = {"five_hour": {"used_percentage": 30}}  # no reset stamp -> just the %
-        out = strip(sl.seg_rate_limits(_data(rate_limits=rl), 200))
+        out = strip(sl.seg_rate_limits(_data(rate_limits=rl), 200, THEME))
         self.assertIn("5h: 30%", out)
         self.assertNotIn("↺", out)
 
     def test_rate_far_future_bucket_shows_long_date_when_room(self):
         rl = {"seven_day": {"used_percentage": 30, "resets_at": NOW + 7 * 86400}}
-        wide = strip(sl.seg_rate_limits(_data(rate_limits=rl), 200))
+        wide = strip(sl.seg_rate_limits(_data(rate_limits=rl), 200, THEME))
         self.assertRegex(wide, r"↺ [A-Z][a-z]{2} \d\d")   # e.g. "↺ Jan 19"
 
     def test_path_never_none(self):
-        self.assertIsNotNone(sl.seg_path(_data(), 1))
+        self.assertIsNotNone(sl.seg_path(_data(), 1, THEME))
 
     def test_builders_registry_complete(self):
         for key in ("path", "branch", "dirty", "todo", "model", "time_ago",
@@ -373,13 +375,13 @@ class TestEndToEnd(unittest.TestCase):
 class TestBlueFix(unittest.TestCase):
     def test_blue_is_256color_true_blue(self):
         # 1;34 bold-ANSI-blue reads purple on many terminals; use 256-color blue.
-        self.assertEqual(sl.BLUE, "\033[38;5;33m")
+        self.assertEqual(THEME.c("BLUE"), "\033[38;5;33m")
 
     def test_lightblue_defined_for_chat_ramp(self):
-        self.assertEqual(sl.LIGHTBLUE, "\033[38;5;75m")
+        self.assertEqual(THEME.c("LIGHTBLUE"), "\033[38;5;75m")
 
     def test_path_emits_true_blue_not_bold_ansi(self):
-        out = sl.seg_path(_data(), 80)
+        out = sl.seg_path(_data(), 80, THEME)
         self.assertIn("38;5;33", out)
         self.assertNotIn("\033[1;34m", out)
 
@@ -391,41 +393,41 @@ class TestChatSizeRamp(unittest.TestCase):
     def test_ramp_bands(self):
         KB, MB = self.KB, self.MB
         cases = [
-            (400 * KB, sl.WHITE), (512 * KB, sl.CYAN), (900 * KB, sl.CYAN),
-            (1 * MB, sl.LIGHTBLUE), (1 * MB + 1, sl.LIGHTBLUE),
-            (2 * MB, sl.GREEN), (3 * MB, sl.YELLOW), (4 * MB, sl.ORANGE),
-            (5 * MB, sl.RED), (5 * MB + 1, sl.RED), (9 * MB, sl.RED),
-            (10 * MB, sl.MAGENTA), (20 * MB, sl.MAGENTA),
+            (400 * KB, THEME.c("WHITE")), (512 * KB, THEME.c("CYAN")), (900 * KB, THEME.c("CYAN")),
+            (1 * MB, THEME.c("LIGHTBLUE")), (1 * MB + 1, THEME.c("LIGHTBLUE")),
+            (2 * MB, THEME.c("GREEN")), (3 * MB, THEME.c("YELLOW")), (4 * MB, THEME.c("ORANGE")),
+            (5 * MB, THEME.c("RED")), (5 * MB + 1, THEME.c("RED")), (9 * MB, THEME.c("RED")),
+            (10 * MB, THEME.c("MAGENTA")), (20 * MB, THEME.c("MAGENTA")),
         ]
         for n, want in cases:
-            self.assertEqual(sl.pick_color(n, sl.CHAT_SIZE_RAMP), want, n)
+            self.assertEqual(sl.pick_color(n, THEME.ramps["chat_size"]), want, n)
 
     def test_seg_chat_size_colors_the_size(self):
-        out = sl.seg_chat_size(_data(chat_bytes=6 * self.MB), 40)
+        out = sl.seg_chat_size(_data(chat_bytes=6 * self.MB), 40, THEME)
         self.assertIn("💾", out)
-        self.assertIn(sl.RED, out)       # 6 MB -> red band
+        self.assertIn(THEME.c("RED"), out)       # 6 MB -> red band
 
     def test_seg_chat_size_none_when_no_bytes(self):
-        self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 40))
+        self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 40, THEME))
 
 
 class TestEffortAutoSetting(unittest.TestCase):
     def test_auto_appends_bracket_when_room(self):
-        out = strip(sl.seg_effort(_data(effort="high", effort_auto=True), 40))
+        out = strip(sl.seg_effort(_data(effort="high", effort_auto=True), 40, THEME))
         self.assertIn("high", out)
         self.assertIn("[auto]", out)
 
     def test_resolved_level_keeps_its_color_in_auto(self):
-        out = sl.seg_effort(_data(effort="high", effort_auto=True), 40)
-        self.assertIn(f"{sl.YELLOW}high", out)   # level keeps its fixed color
+        out = sl.seg_effort(_data(effort="high", effort_auto=True), 40, THEME)
+        self.assertIn(f'{THEME.c("YELLOW")}high', out)   # level keeps its fixed color
 
     def test_auto_compacts_to_asterisk_when_tight(self):
-        out = strip(sl.seg_effort(_data(effort="medium", effort_auto=True), 18))
+        out = strip(sl.seg_effort(_data(effort="medium", effort_auto=True), 18, THEME))
         self.assertIn("medium*", out)
         self.assertNotIn("[auto]", out)
 
     def test_non_auto_has_no_annotation(self):
-        out = strip(sl.seg_effort(_data(effort="high", effort_auto=False), 40))
+        out = strip(sl.seg_effort(_data(effort="high", effort_auto=False), 40, THEME))
         self.assertIn("high", out)
         self.assertNotIn("[auto]", out)
         self.assertNotIn("*", out)
@@ -739,37 +741,7 @@ class TestResolveLayout(unittest.TestCase):
         self.assertEqual(cfg.layout, [sl.Line(0, ["path"])])
 
 
-class TestPaletteInit(unittest.TestCase):
-    def tearDown(self):
-        sl.init_palette()   # always restore defaults after a palette test
-
-    def test_defaults_unchanged_at_import(self):
-        self.assertEqual(sl.BLUE, "\033[38;5;33m")
-        self.assertEqual(sl.RED, "\033[1;31m")
-        # A ramp entry derives from the color globals.
-        self.assertIn(sl.BLUE, [c for _, c in sl.CONTEXT_RAMP])
-
-    def test_override_changes_color_and_ramp(self):
-        sl.init_palette({"BLUE": "1;34"})
-        self.assertEqual(sl.BLUE, "\033[1;34m")
-        self.assertIn("\033[1;34m", [c for _, c in sl.CONTEXT_RAMP])  # ramp rebuilt
-        self.assertEqual(sl._EFFORT_BARS["medium"][0], "\033[1;34m")  # effort bar rebuilt
-
-    def test_unknown_override_ignored(self):
-        before = sl.BLUE
-        sl.init_palette({"NOTACOLOR": "1;34"})
-        self.assertEqual(sl.BLUE, before)
-
-    def test_restore_via_no_arg(self):
-        sl.init_palette({"BLUE": "1;34"})
-        sl.init_palette()
-        self.assertEqual(sl.BLUE, "\033[38;5;33m")
-
-
 class TestPaletteFromConfig(unittest.TestCase):
-    def tearDown(self):
-        sl.init_palette()
-
     def _write(self, body):
         f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
         f.write(body)
@@ -1012,25 +984,6 @@ class TestBuildTheme(unittest.TestCase):
         self.assertEqual(t.effort["low"][1].count("▁"), 1)
         # full ladder: every glyph present, no trailing grey segment for max
         self.assertTrue(t.effort["max"][1].startswith(t.c("RED")))
-
-
-class TestThemeMatchesLegacy(unittest.TestCase):
-    """Pins the new Theme byte-identical to the still-live legacy globals, so the
-    Task-4 cutover provably changes nothing. Removed in Task 4 with the globals."""
-    def test_palette_colors_match_globals(self):
-        t = sl.default_theme()
-        for name in ("WHITE", "CYAN", "GREEN", "RED", "YELLOW", "MAGENTA",
-                     "ORANGE", "BLUE", "GREY"):
-            self.assertEqual(t.c(name), getattr(sl, name), name)
-
-    def test_ramps_match_globals(self):
-        t = sl.default_theme()
-        self.assertEqual(t.ramps["context"], sl.CONTEXT_RAMP)
-        self.assertEqual(t.ramps["rate"], sl.RATE_RAMP)
-        self.assertEqual(t.ramps["chat_size"], sl.CHAT_SIZE_RAMP)
-
-    def test_effort_matches_globals(self):
-        self.assertEqual(sl.default_theme().effort, sl._EFFORT_BARS)
 
 
 class TestRampFromConfig(unittest.TestCase):
