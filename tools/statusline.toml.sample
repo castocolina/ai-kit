@@ -68,17 +68,16 @@
 ## orange, "38;5;33" = 256-color true blue. Each line below is the current default.
 # [palette]
 # GREY = "90"                      # dim / secondary text, ladders, brackets
-# WHITE = "1;97"                   # time-ago, lowest context band
-# CYAN = "1;36"                    # model name, low effort
-# GREEN = "1;32"                   # added lines, healthy bands
+# WHITE = "97"                     # time-ago, lowest context band
+# CYAN = "36"                      # model name, low effort
+# GREEN = "32"                     # added lines, healthy bands
+# RED = "31"                       # removed lines, high-severity bands
+# YELLOW = "33"                    # high effort, mid bands
+# MAGENTA = "35"                   # top chat-size band
 # ORANGE = "38;5;208"              # xhigh effort, warning bands
-# RED = "1;31"                     # removed lines, high-severity bands
-# YELLOW = "1;33"                  # high effort, mid bands
-# MAGENTA = "1;35"                 # top chat-size band
-# BLUE = "38;5;33"                 # path, medium effort (truer blue; 1;34 reads purple on some terminals)
+# BLUE = "38;5;39"                 # path, medium effort (lightened; 1;34 reads purple on some terminals)
 # LIGHTBLUE = "38;5;75"            # cornflower — chat-size ramp band 3 (distinct from BLUE)
-# ORANGE_BOLD = "1;38;5;208"       # high-severity context band
-# MAGENTA_DARK_BOLD = "1;38;5;90"  # top context band (>= 50%)
+# MAGENTA_DARK = "38;5;90"         # dark/gothic — top context band (>= 50%)
 
 ## ─── Environment overrides (set in your shell, not this file) ─────────────────
 ## These win over everything in this file — handy for per-session tweaks:

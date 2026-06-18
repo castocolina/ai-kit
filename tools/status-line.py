@@ -186,29 +186,27 @@ BG_LIGHTGRAY = "\033[47m"
 _DIM = "\033[90m"             # fixed dim grey for stderr warnings (palette-independent)
 
 # Overridable palette: NAME -> default SGR params (no "\033[" / "m" wrapper).
-# [palette] overrides replace a value here; build_theme resolves these into a
-# Theme. BLUE is 38;5;33 (true blue) because the bold-ANSI 1;34 reads purple on
-# many terminals.
-_PALETTE_DEFAULTS = {
-    "GREY": "90", "WHITE": "1;97", "CYAN": "1;36", "GREEN": "1;32",
-    "ORANGE": "38;5;208", "RED": "1;31", "YELLOW": "1;33", "MAGENTA": "1;35",
-    "BLUE": "38;5;33",
-    "LIGHTBLUE": "38;5;75",            # NEW palette entry (chat-size ramp band 3)
-    "ORANGE_BOLD": "1;38;5;208",      # high-severity context band
-    "MAGENTA_DARK_BOLD": "1;38;5;90",  # dark/gothic — top context band (>=50%)
-}
+# Values are pure hues — no baked-in bold. Emphasis is expressed on the ramp
+# bands via "+modifiers" (e.g. "RED+bold"); see _RAMP_DEFAULTS. A [palette]
+# override replaces a value here; build_theme resolves these into a Theme.
+_PALETTE_DEFAULTS = {            # pure hues — no baked-in bold
+    "GREY": "90", "WHITE": "97", "CYAN": "36", "GREEN": "32", "RED": "31",
+    "YELLOW": "33", "MAGENTA": "35", "ORANGE": "38;5;208",
+    "BLUE": "38;5;39",           # lightened (was 38;5;33); shade reviewed on-terminal
+    "LIGHTBLUE": "38;5;75", "MAGENTA_DARK": "38;5;90",
+}   # ORANGE_BOLD / MAGENTA_DARK_BOLD removed — bold now lives on the ramp band
 
 # Ramps as data: band -> [(threshold, colorspec)]. Threshold keys go through
 # _parse_threshold (percent / byte-suffix / inf); colorspecs through parse_color
 # against the resolved palette. [ramp.X] in config REPLACES a band wholesale.
 _RAMP_DEFAULTS = {
     "context": [(10, "WHITE"), (15, "CYAN"), (20, "BLUE"), (25, "GREEN"),
-                (30, "YELLOW"), (40, "ORANGE_BOLD"), (50, "RED"),
-                ("inf", "MAGENTA_DARK_BOLD")],
-    "rate": [(50, "GREEN"), (80, "YELLOW"), ("inf", "RED")],
+                (30, "YELLOW"), (40, "ORANGE+bold"), (50, "RED+bold"),
+                ("inf", "MAGENTA_DARK+bold")],
+    "rate": [(50, "GREEN"), (80, "YELLOW"), ("inf", "RED+bold")],
     "chat_size": [("512k", "WHITE"), ("1M", "CYAN"), ("2M", "LIGHTBLUE"),
                   ("3M", "GREEN"), ("4M", "YELLOW"), ("5M", "ORANGE"),
-                  ("10M", "RED"), ("inf", "MAGENTA")],
+                  ("10M", "RED+bold"), ("inf", "MAGENTA")],
 }
 
 # Effort ladder: level -> (palette name, fill count 1..5). Palette-derived but

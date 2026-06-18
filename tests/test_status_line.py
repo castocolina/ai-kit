@@ -56,15 +56,15 @@ class TestPickColor(unittest.TestCase):
         cases = [
             (5, THEME.c("WHITE")), (9, THEME.c("WHITE")), (10, THEME.c("CYAN")), (14, THEME.c("CYAN")),
             (15, THEME.c("BLUE")), (19, THEME.c("BLUE")), (20, THEME.c("GREEN")), (24, THEME.c("GREEN")),
-            (25, THEME.c("YELLOW")), (29, THEME.c("YELLOW")), (30, THEME.c("ORANGE_BOLD")), (39, THEME.c("ORANGE_BOLD")),
-            (40, THEME.c("RED")), (49, THEME.c("RED")), (50, THEME.c("MAGENTA_DARK_BOLD")), (99, THEME.c("MAGENTA_DARK_BOLD")),
+            (25, THEME.c("YELLOW")), (29, THEME.c("YELLOW")), (30, THEME.c("ORANGE+bold")), (39, THEME.c("ORANGE+bold")),
+            (40, THEME.c("RED+bold")), (49, THEME.c("RED+bold")), (50, THEME.c("MAGENTA_DARK+bold")), (99, THEME.c("MAGENTA_DARK+bold")),
         ]
         for pct, want in cases:
             self.assertEqual(sl.pick_color(pct, THEME.ramps["context"]), want, pct)
 
     def test_rate_ramp_bands(self):
         cases = [(0, THEME.c("GREEN")), (49, THEME.c("GREEN")), (50, THEME.c("YELLOW")),
-                 (79, THEME.c("YELLOW")), (80, THEME.c("RED")), (100, THEME.c("RED"))]
+                 (79, THEME.c("YELLOW")), (80, THEME.c("RED+bold")), (100, THEME.c("RED+bold"))]
         for pct, want in cases:
             self.assertEqual(sl.rate_color(pct, THEME), want, pct)
 
@@ -373,16 +373,16 @@ class TestEndToEnd(unittest.TestCase):
 
 
 class TestBlueFix(unittest.TestCase):
-    def test_blue_is_256color_true_blue(self):
-        # 1;34 bold-ANSI-blue reads purple on many terminals; use 256-color blue.
-        self.assertEqual(THEME.c("BLUE"), "\033[38;5;33m")
+    def test_blue_is_lightened_256color(self):
+        # 1;34 bold-ANSI-blue reads purple on many terminals; use lightened 256-color blue.
+        self.assertEqual(THEME.c("BLUE"), "\033[38;5;39m")
 
     def test_lightblue_defined_for_chat_ramp(self):
         self.assertEqual(THEME.c("LIGHTBLUE"), "\033[38;5;75m")
 
     def test_path_emits_true_blue_not_bold_ansi(self):
         out = sl.seg_path(_data(), 80, THEME)
-        self.assertIn("38;5;33", out)
+        self.assertIn("38;5;39", out)
         self.assertNotIn("\033[1;34m", out)
 
 
@@ -396,7 +396,7 @@ class TestChatSizeRamp(unittest.TestCase):
             (400 * KB, THEME.c("WHITE")), (512 * KB, THEME.c("CYAN")), (900 * KB, THEME.c("CYAN")),
             (1 * MB, THEME.c("LIGHTBLUE")), (1 * MB + 1, THEME.c("LIGHTBLUE")),
             (2 * MB, THEME.c("GREEN")), (3 * MB, THEME.c("YELLOW")), (4 * MB, THEME.c("ORANGE")),
-            (5 * MB, THEME.c("RED")), (5 * MB + 1, THEME.c("RED")), (9 * MB, THEME.c("RED")),
+            (5 * MB, THEME.c("RED+bold")), (5 * MB + 1, THEME.c("RED+bold")), (9 * MB, THEME.c("RED+bold")),
             (10 * MB, THEME.c("MAGENTA")), (20 * MB, THEME.c("MAGENTA")),
         ]
         for n, want in cases:
@@ -405,7 +405,7 @@ class TestChatSizeRamp(unittest.TestCase):
     def test_seg_chat_size_colors_the_size(self):
         out = sl.seg_chat_size(_data(chat_bytes=6 * self.MB), 40, THEME)
         self.assertIn("💾", out)
-        self.assertIn(THEME.c("RED"), out)       # 6 MB -> red band
+        self.assertIn(THEME.c("RED+bold"), out)       # 6 MB -> red band
 
     def test_seg_chat_size_none_when_no_bytes(self):
         self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 40, THEME))
