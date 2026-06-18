@@ -847,6 +847,27 @@ class TestCLI(unittest.TestCase):
         path = self._write('= = not toml')
         self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
 
+    def test_check_bad_palette_hex_returns_one(self):
+        path = self._write('[palette]\nBLUE = "#zzz"\n')
+        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
+
+    def test_check_unknown_modifier_returns_one(self):
+        path = self._write('[palette]\nRED = "31+blink"\n')
+        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
+
+    def test_check_bad_ramp_color_returns_one(self):
+        path = self._write('[ramp.context]\n10 = "NOTACOLOR"\n')
+        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
+
+    def test_check_bad_ramp_threshold_returns_one(self):
+        path = self._write('[ramp.context]\noops = "RED"\n')
+        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
+
+    def test_check_valid_palette_and_ramp_returns_zero(self):
+        path = self._write('[palette]\nBLUE = "#3399ff"\n'
+                           '[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n')
+        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 0)
+
 
 class TestParseColor(unittest.TestCase):
     PAL = {"RED": "31", "BLUE": "38;5;39", "ORANGE": "38;5;208"}

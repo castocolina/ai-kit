@@ -1162,7 +1162,8 @@ def cmd_print_config(cfg):
 def validate_config_file(path, env):
     """Return a list of human-readable error strings for the config at path
     (empty list = valid). Checks: parseability, unknown segment keys, unknown
-    palette keys, and [[line]] segments that are not real builders."""
+    palette keys, palette color values, [[line]] segments that are not real
+    builders, and [ramp.*] band names / thresholds / colors."""
     if tomllib is None:
         return ["tomllib unavailable (Python < 3.11): cannot validate"]
     try:
@@ -1180,10 +1181,30 @@ def validate_config_file(path, env):
     for k in (raw.get("palette") or {}):
         if k not in _PALETTE_DEFAULTS:
             errors.append(f"unknown palette key: {k}")
+    for name, value in (raw.get("palette") or {}).items():
+        if name in _PALETTE_DEFAULTS and parse_color(str(value), palette=None) is None:
+            errors.append(f"bad palette color: {name} = {value!r}")
     for i, line in enumerate(raw.get("line") or []):
         for seg in line.get("segments", []):
             if seg not in BUILDERS:
                 errors.append(f"line[{i}] references unknown segment: {seg}")
+    resolved_palette = _resolve_palette(
+        {k: str(v) for k, v in (raw.get("palette") or {}).items()
+         if k in _PALETTE_DEFAULTS})
+    for band, table in (raw.get("ramp") or {}).items():
+        if band not in _RAMP_DEFAULTS:
+            errors.append(f"unknown ramp: {band}")
+            continue
+        if not isinstance(table, dict):
+            errors.append(f"ramp [{band}] must be a table")
+            continue
+        for thr, spec in table.items():
+            try:
+                _parse_threshold(thr)
+            except ValueError:
+                errors.append(f"ramp [{band}] bad threshold: {thr!r}")
+            if parse_color(str(spec), resolved_palette) is None:
+                errors.append(f"ramp [{band}] bad color: {spec!r}")
     return errors
 
 
