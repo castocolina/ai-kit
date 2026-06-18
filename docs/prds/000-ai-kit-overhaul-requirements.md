@@ -98,11 +98,18 @@ Consumes E4's palette/toggles where relevant.
   wrong process is measured. Correct process/RSS selection.
 - **FR-3.5** — Add a **macOS fallback** for process RSS (memory).
 - **FR-3.6** — Add a **macOS fallback** for terminal **columns/rows** detection.
+- **FR-3.7** — Color the **chat-size** segment (`seg_chat_size`, the 💾 disk-shaped
+  indicator), today **uncolored**, by **size thresholds** — mirroring how the context
+  segment colors via `pick_color(value, ramp)`. Add a `CHAT_SIZE_RAMP` keyed on bytes:
+  **< 5 MB → neutral/default**, **≥ 5 MB → red + bold**, **≥ 10 MB → magenta/purple**
+  (the `RED`/`MAGENTA` SGRs are already bold). Thresholds follow the same "first ceil the
+  value is below wins" ramp shape as `CONTEXT_RAMP`, and land as overridable values via E4's
+  config like the other E3 colors.
 
 **Execution tooling**: TDD (extend `tests/test_status_line.py`); no skill involved.
 
 **Dependencies**: E4 (uses palette overrides + segment toggles); FR-3.1/3.2 also
-align with E4's effort segment.
+align with E4's effort segment; FR-3.7's thresholds/colors are overridable via E4.
 
 **Resolved**: `auto` (FR-3.2) renders with a fixed rotating cycle
 `CYAN → GREEN → YELLOW → ORANGE → MAGENTA → BLUE` across its letters and ladder bars
