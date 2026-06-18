@@ -33,8 +33,8 @@ SEGMENTS = {
     # model row
     "model": True, "time_ago": True, "clock": True, "effort": True,
     "lines": True, "cost": False, "total_time": True, "api_time": True,
-    # diagnostics row
-    "dimensions": True, "context": True, "chat_size": True,
+    # diagnostics row (render_time + dimensions are debug aids — off by default)
+    "render_time": False, "dimensions": False, "context": True, "chat_size": True,
     "memory": True, "rate_limits": True,
 }
 
@@ -56,7 +56,7 @@ LAYOUT = [
     Line(0,  ["path", "branch", "dirty", "todo"]),
     Line(20, ["model", "time_ago", "clock", "effort", "lines",
               "cost", "total_time", "api_time"]),
-    Line(30, ["dimensions", "context", "chat_size", "memory", "rate_limits"]),
+    Line(30, ["render_time", "dimensions", "context", "chat_size", "memory", "rate_limits"]),
 ]
 PINNED = {"path", "context"}   # always rendered even if they overflow the budget
 
@@ -207,6 +207,9 @@ _RAMP_DEFAULTS = {
     "chat_size": [("512k", "WHITE"), ("1M", "CYAN"), ("2M", "LIGHTBLUE"),
                   ("3M", "GREEN"), ("4M", "YELLOW"), ("5M", "ORANGE"),
                   ("10M", "RED+bold"), ("inf", "MAGENTA")],
+    # render_time: the status line's own run time (SLO/SLA). Thresholds are time
+    # units (ns/µs/ms/s); green under the SLO, yellow under the SLA, red beyond.
+    "render_time": [("50ms", "GREEN"), ("150ms", "YELLOW"), ("inf", "RED+bold")],
 }
 
 # Effort ladder: level -> (palette name, fill count 1..5). Palette-derived but
@@ -234,7 +237,7 @@ _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 # BMP symbols we render that terminals draw 2 cells wide (east_asian_width
 # misclassifies these as narrow). Add a codepoint here if a new wide BMP glyph
 # is introduced in a segment.
-_WIDE_BMP = {0x23F0, 0x23F8, 0x26A1}  # ⏰ ⏸ ⚡
+_WIDE_BMP = {0x23F0, 0x23F1, 0x23F8, 0x26A1}  # ⏰ ⏱ ⏸ ⚡
 
 
 def char_width(ch):
@@ -318,12 +321,15 @@ def parse_color(spec, palette=None):
 
 
 _THRESHOLD_MULT = {"k": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
+# Time thresholds (render_time ramp) resolve to NANOSECONDS, matching what the
+# segment measures via time.perf_counter_ns(). "µs" and ASCII "us" both accepted.
+_TIME_MULT_NS = {"ns": 1, "us": 1000, "µs": 1000, "ms": 1_000_000, "s": 1_000_000_000}
 
 
 def _parse_threshold(key):
     """Ramp threshold -> comparable number. 'inf'/inf -> INF; '512k'/'5M'/'1G'
-    -> bytes (1024-based); bare int / numeric string -> that int (a percent).
-    Raises ValueError on anything else."""
+    -> bytes (1024-based); '50ms'/'2s'/'500us'/'100ns' -> nanoseconds; bare int /
+    numeric string -> that int (a percent). Raises ValueError on anything else."""
     if isinstance(key, float):
         return key
     if isinstance(key, int):
@@ -334,6 +340,9 @@ def _parse_threshold(key):
     m = re.fullmatch(r"(\d+)([kMG])", s)
     if m:
         return int(m.group(1)) * _THRESHOLD_MULT[m.group(2)]
+    m = re.fullmatch(r"(\d+)(ns|µs|us|ms|s)", s)
+    if m:
+        return int(m.group(1)) * _TIME_MULT_NS[m.group(2)]
     return int(s)   # ValueError on garbage
 
 
@@ -480,6 +489,19 @@ def fmt_bytes(n):
     if v < 10:
         return f"{math.ceil(v * 10) / 10:.1f}{units[i]}"
     return f"{math.ceil(v)}{units[i]}"
+
+
+def fmt_duration(ns):
+    """Adaptive duration from nanoseconds: ns / µs / ms / s, picking the largest
+    unit that keeps the value >= 1. One decimal only when the scaled value is
+    < 10 (matching fmt_bytes' style)."""
+    ns = int(ns)
+    if ns < 1000:
+        return f"{ns}ns"
+    for div, suffix in ((1_000_000_000, "s"), (1_000_000, "ms"), (1000, "µs")):
+        if ns >= div:
+            v = ns / div
+            return f"{v:.1f}{suffix}" if v < 10 else f"{v:.0f}{suffix}"
 
 
 # ═══ Rate-limit helpers ══════════════════════════════════════════════════════
@@ -633,6 +655,15 @@ def seg_api_time(data, avail, theme):
 
 
 # ── diagnostics row ──────────────────────────────────────────────────────────
+def seg_render_time(data, avail, theme):    # status-line's own run time, SLO/SLA-colored
+    t0 = data.get("t_start")
+    if t0 is None:                      # not timed (e.g. direct builder calls) -> omit
+        return None
+    elapsed = time.perf_counter_ns() - t0
+    color = pick_color(elapsed, theme.ramps["render_time"])
+    return _first_fitting([f"⏱ {color}{fmt_duration(elapsed)}{RESET}"], avail)
+
+
 def seg_dimensions(data, avail, theme):
     mark = "?" if data.get("dim_assumed") else ""
     return _first_fitting([f"{data['cols']}×{data['lines']}{mark}"], avail)
@@ -716,7 +747,7 @@ BUILDERS = {
     "model": seg_model, "time_ago": seg_time_ago, "clock": seg_clock,
     "effort": seg_effort, "lines": seg_lines, "cost": seg_cost,
     "total_time": seg_total_time, "api_time": seg_api_time,
-    "dimensions": seg_dimensions, "context": seg_context,
+    "render_time": seg_render_time, "dimensions": seg_dimensions, "context": seg_context,
     "chat_size": seg_chat_size, "memory": seg_memory,
     "rate_limits": seg_rate_limits,
 }
@@ -1032,7 +1063,9 @@ def render(data, cols, lines, cfg=None, theme=None):
 #   cost         🪙 session cost in USD (off by default)
 #   total_time   💬 total session duration
 #   api_time     📡 total API duration
-#   dimensions   terminal COLS×ROWS
+#   render_time  ⏱ status-line.py's own run time, SLO/SLA-colored via the
+#                render_time ramp (off by default; debug)
+#   dimensions   terminal COLS×ROWS (off by default; debug)
 #   context      📊 context-window usage bar + percent           [pinned]
 #   chat_size    💾 transcript file size
 #   memory       🧮 claude process RSS
@@ -1090,7 +1123,7 @@ def effort_setting_is_auto(work_dir, home):
     return True
 
 
-def build_data(raw, env):
+def build_data(raw, env, t_start=None):
     model = raw.get("model") or {}
     cost = raw.get("cost") or {}
     ctx = raw.get("context_window") or {}
@@ -1131,6 +1164,7 @@ def build_data(raw, env):
         "todo_state": todo_state, "todo_text": todo_text,
         "dim_assumed": assumed,
         "cols": cols, "lines": lines,
+        "t_start": t_start,
     }
     return data, cols, lines
 
@@ -1239,6 +1273,7 @@ def parse_args(argv):
 
 
 def main():
+    t0 = time.perf_counter_ns()        # for the optional `render_time` self-timing segment
     args = parse_args(sys.argv[1:])
     if args.check is not _NO_CHECK:
         sys.exit(cmd_check(args.check, os.environ))
@@ -1251,7 +1286,7 @@ def main():
         raw = json.load(sys.stdin)
     except (ValueError, OSError):
         raw = {}
-    data, cols, lines = build_data(raw, os.environ)
+    data, cols, lines = build_data(raw, os.environ, t0)
     print("\n".join(render(data, cols, lines, cfg, theme)))
 
 

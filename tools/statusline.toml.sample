@@ -38,7 +38,8 @@
 # total_time = true    # 💬 total session duration
 # api_time = true      # 📡 cumulative API response time
 ## diagnostics line (bottom row)
-# dimensions = true    # terminal size cols×lines  (? if assumed)
+# render_time = false  # ⏱ status-line's own render time, SLO/SLA-colored (debug; OFF)
+# dimensions = false   # terminal size cols×lines (? if assumed)  (debug; OFF by default)
 # context = true       # 📊 context-window % used (and max) (pinned)
 # chat_size = true     # 💾 transcript file size on disk
 # memory = true        # 🧮 status-line process memory (RSS)
@@ -59,7 +60,7 @@
 # segments = ["model", "time_ago", "clock", "effort", "lines", "cost", "total_time", "api_time"]
 # [[line]]
 # min_rows = 30
-# segments = ["dimensions", "context", "chat_size", "memory", "rate_limits"]
+# segments = ["render_time", "dimensions", "context", "chat_size", "memory", "rate_limits"]
 
 ## ─── color grammar (used by [palette] and [ramp.*] values) ───────────────────
 ## A color value is one of:
@@ -122,6 +123,15 @@
 # "5M" = "ORANGE"
 # "10M" = "RED+bold"
 # inf = "MAGENTA"
+
+## ─── [ramp.render_time] — self-render time -> color (ns/µs/ms/s suffixes) ─────
+## SLO/SLA thresholds for the status line's own run time, as quoted time strings
+## ("50ms", "2s", "500us"/"500µs", "100ns"); "inf" is the catch-all top band.
+## Default: GREEN within the 50ms SLO, YELLOW up to the 150ms SLA, RED+bold beyond.
+# [ramp.render_time]
+# "50ms" = "GREEN"
+# "150ms" = "YELLOW"
+# inf = "RED+bold"
 
 ## ─── Environment overrides (set in your shell, not this file) ─────────────────
 ## These win over everything in this file — handy for per-session tweaks:

@@ -55,9 +55,23 @@ resolve **built-in defaults < this file < environment variables**.
 
 ```toml
 [segments]
-cost   = true     # show the 🪙 cost segment (off by default)
-memory = false    # hide the 🧮 process-memory segment
+cost        = true   # show the 🪙 cost segment (off by default)
+memory      = false  # hide the 🧮 process-memory segment
+render_time = true   # ⏱ status-line's own render time — a debug aid, off by default
 ```
+
+**Debug segments** — `render_time` and `dimensions` are diagnostics and ship **off**:
+
+- `render_time` (⏱) — how long `status-line.py` itself took to run, from process start to
+  render (the cost of its `git`/process/file probes), shown adaptively as `ns`/`µs`/`ms`/`s`.
+  This is the *status line's own* wall-clock — distinct from `total_time` (💬) and
+  `api_time` (📡), which report Claude's session and API durations from the input JSON.
+  Its color is an SLO/SLA signal driven by the `[ramp.render_time]` ramp: green within
+  the 50 ms SLO, yellow up to the 150 ms SLA, red+bold beyond (all configurable).
+- `dimensions` — the terminal size as `cols×rows` (`?` when the size had to be assumed).
+
+Enable either via `[segments]` above or `CC_AI_KIT_SEGMENT_RENDER_TIME=1` /
+`CC_AI_KIT_SEGMENT_DIMENSIONS=1`.
 
 …or per-session via env (wins over the file):
 
@@ -99,7 +113,8 @@ BLUE = "#3399ff"
 `[ramp.*]` **REPLACES** the whole ramp — you must list every band you want. A
 ramp maps a value to a color by ascending threshold (first band the value is
 strictly below wins). Threshold keys are percent integers for `context` and
-`rate`, `k`/`M`/`G` byte suffixes (1024-based, quoted) for `chat_size`, and `inf`
+`rate`, `k`/`M`/`G` byte suffixes (1024-based, quoted) for `chat_size`,
+`ns`/`µs`/`us`/`ms`/`s` time suffixes (quoted) for `render_time`, and `inf`
 for the final catch-all band:
 
 ```toml

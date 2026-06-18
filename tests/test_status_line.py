@@ -95,6 +95,16 @@ class TestFormatters(unittest.TestCase):
         self.assertEqual(sl.fmt_bytes(1536), "1.5KB")
         self.assertEqual(sl.fmt_bytes(305000), "298KB")  # ceil rounding
 
+    def test_fmt_duration(self):
+        # adaptive ns/µs/ms/s; one decimal when the scaled value is < 10
+        self.assertEqual(sl.fmt_duration(0), "0ns")
+        self.assertEqual(sl.fmt_duration(840), "840ns")
+        self.assertEqual(sl.fmt_duration(1500), "1.5µs")
+        self.assertEqual(sl.fmt_duration(12_000), "12µs")
+        self.assertEqual(sl.fmt_duration(4_100_000), "4.1ms")
+        self.assertEqual(sl.fmt_duration(45_000_000), "45ms")
+        self.assertEqual(sl.fmt_duration(1_200_000_000), "1.2s")
+
 
 class TestVisibleWidth(unittest.TestCase):
     def test_plain_ascii(self):
@@ -195,6 +205,21 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertNotIn("█", zero)
         self.assertNotIn("▌", zero)
 
+    def test_render_time_times_self_then_self_hide(self):
+        d = _data(t_start=sl.time.perf_counter_ns())
+        out = sl.seg_render_time(d, 200, THEME)
+        self.assertIn(THEME.c("GREEN"), out)            # fast run -> SLO green band
+        out_s = strip(out)
+        self.assertTrue(out_s.startswith("⏱"))          # stopwatch mark
+        self.assertRegex(out_s, r"\d+(\.\d+)?(ns|µs|ms|s)$")  # a formatted duration
+        self.assertIsNone(sl.seg_render_time(_data(), 200, THEME))  # no t_start -> omit
+        self.assertIsNone(sl.seg_render_time(d, 1, THEME))         # no room -> hide
+
+    def test_render_time_colors_by_slo_sla_ramp(self):
+        # a slow run (200ms ago) lands in the red+bold band (beyond the SLA)
+        slow = _data(t_start=sl.time.perf_counter_ns() - 200_000_000)
+        self.assertIn(THEME.c("RED+bold"), sl.seg_render_time(slow, 200, THEME))
+
     def test_dimensions_content_then_self_hide(self):
         self.assertEqual(strip(sl.seg_dimensions(_data(cols=120, lines=40), 200, THEME)),
                          "120×40")
@@ -256,7 +281,8 @@ class TestCooperativeBuilders(unittest.TestCase):
     def test_builders_registry_complete(self):
         for key in ("path", "branch", "dirty", "todo", "model", "time_ago",
                     "clock", "effort", "lines", "cost", "total_time", "api_time",
-                    "dimensions", "context", "chat_size", "memory", "rate_limits"):
+                    "render_time", "dimensions", "context", "chat_size", "memory",
+                    "rate_limits"):
             self.assertIn(key, sl.BUILDERS, key)
             self.assertTrue(callable(sl.BUILDERS[key]))
 
@@ -335,7 +361,8 @@ class TestDocumentation(unittest.TestCase):
         src = self._src()
         for key in ("path", "branch", "dirty", "todo", "model", "time_ago",
                     "clock", "effort", "lines", "total_time", "api_time",
-                    "dimensions", "context", "chat_size", "memory", "rate_limits"):
+                    "render_time", "dimensions", "context", "chat_size", "memory",
+                    "rate_limits"):
             self.assertIn(key, src, key)
 
     def test_has_customization_guide(self):
@@ -940,6 +967,14 @@ class TestParseThreshold(unittest.TestCase):
         self.assertEqual(sl._parse_threshold("512k"), 512 * 1024)
         self.assertEqual(sl._parse_threshold("5M"), 5 * 1024 * 1024)
         self.assertEqual(sl._parse_threshold("1G"), 1024 ** 3)
+
+    def test_time_suffixes(self):
+        # render_time thresholds resolve to nanoseconds
+        self.assertEqual(sl._parse_threshold("100ns"), 100)
+        self.assertEqual(sl._parse_threshold("500us"), 500_000)
+        self.assertEqual(sl._parse_threshold("500µs"), 500_000)
+        self.assertEqual(sl._parse_threshold("50ms"), 50_000_000)
+        self.assertEqual(sl._parse_threshold("2s"), 2_000_000_000)
 
     def test_bad_key_raises(self):
         with self.assertRaises(ValueError):
