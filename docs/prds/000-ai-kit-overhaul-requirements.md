@@ -98,10 +98,16 @@ target vertical-leaning, in-band). Accessibility (C2/C5) stays advisory.
 **Intent**: correctness fixes and platform fallbacks in `tools/status-line.py`.
 Consumes E4's palette/toggles where relevant.
 
-- **FR-3.1** — Detect `effort=auto` (currently misreported as `high`). Investigate
-  the real source (`raw["effort"]["level"]` / `CLAUDE_EFFORT`) and classify `auto` correctly.
-- **FR-3.2** — Render `auto` distinctively: **each letter a different color**, and
-  the effort "ladder" (`▁▃▄▆█`) colored to match.
+- **FR-3.1** — Resolve the effort **level** from the input JSON (`raw["effort"]["level"]` /
+  `CLAUDE_EFFORT`), normalized to `low`/`medium`/`high`/`xhigh`/`max`, each with its own
+  clear fixed color and intensity (1..5 ladder fill). The input JSON always carries a
+  resolved level — never `"auto"`. (`ultracode` is not a level; it reports as `xhigh`.)
+- **FR-3.2** — Detect the **auto setting** (distinct from the resolved level): read
+  `effortLevel` from the `settings.json` chain (`<repo>/.claude/settings.local.json` →
+  `<repo>/.claude/settings.json` → `~/.claude/settings.json`). **Absent or literally
+  `"auto"` = auto.** Only in auto mode, annotate the resolved level — `high [auto]`,
+  compacting to a trailing asterisk `high*` when space is tight, dropped entirely if even
+  that doesn't fit. No rainbow / no per-letter coloring.
 - **FR-3.3** — Make the default **blue** robust where it reads as **purple** on some
   screens (pick a better default SGR; user override lands via E4 `[palette]`).
 - **FR-3.4** — Fix the **memory** segment: in wezterm it shows `<10mb`, indicating the
@@ -119,11 +125,13 @@ Consumes E4's palette/toggles where relevant.
 **Execution tooling**: TDD (extend `tests/test_status_line.py`); no skill involved.
 
 **Dependencies**: none for shipping the fixes (standalone). E4 *consumes* E3 by making
-its colors/thresholds (blue, chat-size ramp, auto cycle) overridable; E3 does not block on E4.
+its colors/thresholds (blue, chat-size ramp, per-level effort colors) overridable; E3 does not block on E4.
 
-**Resolved**: `auto` (FR-3.2) renders with a fixed rotating cycle
-`CYAN → GREEN → YELLOW → ORANGE → MAGENTA → BLUE` across its letters and ladder bars
-(distinct from the static per-effort colors). The wezterm memory bug (FR-3.4) is an
+**Resolved**: `auto` (FR-3.2) is a **setting**, not a resolved level — detected by reading
+`effortLevel` from the `settings.json` chain (absent or `"auto"` = auto), and surfaced as a
+degrading `[auto]` → `*` → dropped annotation on the otherwise normally-colored resolved
+level. The earlier rainbow/per-letter approach was dropped (auto and the resolved level are
+different things). The wezterm memory bug (FR-3.4) is an
 **implementation investigation** — capture a wezterm sample; likely the wrong PID /
 a parent process is being measured — tracked as an impl task, not a spec ambiguity.
 

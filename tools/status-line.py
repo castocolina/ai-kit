@@ -215,25 +215,16 @@ def rate_color(pct):
 # To add a segment: write seg_x(data, avail), add it to BUILDERS, list its key
 # in a LAYOUT line, add a SEGMENTS flag. See the HOW TO CUSTOMIZE block below.
 
-# effort=auto renders as a per-letter rainbow (distinct from the static per-effort
-# colors). Cycle is applied across both the ladder bars and the word.
-AUTO_CYCLE = [CYAN, GREEN, YELLOW, ORANGE, MAGENTA, BLUE]
-
-
-def _rainbow(text, cycle):
-    """Color each character of `text` by cycling through `cycle`, ending in RESET."""
-    return "".join(f"{cycle[i % len(cycle)]}{ch}" for i, ch in enumerate(text)) + RESET
-
-
-# fill count = intensity (1..5); auto reuses medium's 2-bar fill, ultracode max's 5.
+# API-resolved effort levels, lowest -> highest; fill count = intensity (1..5), each
+# with a clear fixed color. `ultracode` is NOT a level (it reports as xhigh + standing
+# multi-agent permission), and `auto` is a *setting*, not a resolved level — neither
+# belongs here. The auto setting is surfaced as a "[auto]" suffix in seg_effort.
 _EFFORT_BARS = {
-    "low":       (CYAN,    f"{CYAN}▁{GREY}▃▄▆█"),
-    "medium":    (BLUE,    f"{BLUE}▁▃{GREY}▄▆█"),
-    "auto":      (GREEN,   _rainbow("▁▃▄▆█", AUTO_CYCLE)),   # color field unused for auto; word handled in seg_effort
-    "high":      (YELLOW,  f"{YELLOW}▁▃▄{GREY}▆█"),
-    "xhigh":     (ORANGE,  f"{ORANGE}▁▃▄▆{GREY}█"),
-    "max":       (RED,     f"{RED}▁▃▄▆█"),
-    "ultracode": (MAGENTA, f"{MAGENTA}▁▃▄▆█"),
+    "low":    (CYAN,   f"{CYAN}▁{GREY}▃▄▆█"),
+    "medium": (BLUE,   f"{BLUE}▁▃{GREY}▄▆█"),
+    "high":   (YELLOW, f"{YELLOW}▁▃▄{GREY}▆█"),
+    "xhigh":  (ORANGE, f"{ORANGE}▁▃▄▆{GREY}█"),
+    "max":    (RED,    f"{RED}▁▃▄▆█"),
 }
 
 
@@ -308,15 +299,24 @@ def seg_clock(data, avail):
 
 
 def seg_effort(data, avail):
-    effort = data.get("effort", "")
-    if not effort:
+    level = data.get("effort", "")
+    if not level:
         return None
-    key = effort.lower()
-    color, bar = _EFFORT_BARS.get(key, ("", f"{GREY}▁▃▄▆█"))
-    word = _rainbow(effort, AUTO_CYCLE) if key == "auto" else f"{color}{effort}{RESET}"
-    full = f"🧠 {bar}{RESET} {word}"
-    compact = f"🧠 {bar}{RESET}"
-    return _first_fitting([full, compact], avail)
+    # Unknown level (stale/future): no color on the word, all-grey ladder — a safe
+    # degraded display. resolve_effort already strips "auto", so it never lands here.
+    color, bar = _EFFORT_BARS.get(level.lower(), ("", f"{GREY}▁▃▄▆█"))
+    word = f"{color}{level}{RESET}"
+    bars = f"🧠 {bar}{RESET}"
+    if data.get("effort_auto"):
+        # effortLevel is unset/auto in settings: flag the resolved level as
+        # auto-chosen. The flag degrades [auto] -> * -> dropped as space tightens.
+        variants = [f"{bars} {word} {GREY}[auto]{RESET}",
+                    f"{bars} {color}{level}*{RESET}",
+                    f"{bars} {word}",
+                    bars]
+    else:
+        variants = [f"{bars} {word}", bars]
+    return _first_fitting(variants, avail)
 
 
 def seg_lines(data, avail):
@@ -773,15 +773,35 @@ def render(data, cols, lines):
 
 # ═══ Entry point ══════════════════════════════════════════════════════════════
 def resolve_effort(raw, env):
-    """The effort level as a normalized lowercase string ("" if unset).
+    """The *resolved* effort level (low..max) as a normalized lowercase string, or "".
 
-    Source priority: raw["effort"]["level"] > CLAUDE_EFFORT env. `auto` arrives via
-    either today. If a captured sample shows Claude Code sending the *resolved* level
-    plus a separate auto flag, add one line here, e.g.:
-        if (raw.get("effort") or {}).get("auto"): return "auto"
-    """
+    This is the live per-turn level the API reported, read from raw["effort"]["level"]
+    (CLAUDE_EFFORT env as a fallback). It is never "auto" — auto is a *setting*, detected
+    separately from disk by effort_setting_is_auto. A stray "auto" in the resolved field
+    (transition states, env misuse) is normalized away so it can't reach the level table."""
     level = ((raw.get("effort") or {}).get("level") or env.get("CLAUDE_EFFORT", ""))
-    return level.strip().lower()
+    level = level.strip().lower()
+    return "" if level == "auto" else level
+
+
+def effort_setting_is_auto(work_dir, home):
+    """True when the effort *setting* is auto — i.e. `effortLevel` is absent (or
+    literally "auto") across the settings chain.
+
+    Precedence high->low: the project's .claude/settings.local.json, then
+    .claude/settings.json, then ~/.claude/settings.json. The first file that defines
+    `effortLevel` decides (explicit level -> not auto); if none define it, it's auto."""
+    for path in (os.path.join(work_dir, ".claude", "settings.local.json"),
+                 os.path.join(work_dir, ".claude", "settings.json"),
+                 os.path.join(home, ".claude", "settings.json")):
+        try:
+            with open(path) as f:
+                cfg = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(cfg, dict) and "effortLevel" in cfg:
+            return str(cfg["effortLevel"]).strip().lower() == "auto"
+    return True
 
 
 def build_data(raw, env):
@@ -789,7 +809,7 @@ def build_data(raw, env):
     cost = raw.get("cost") or {}
     ctx = raw.get("context_window") or {}
     workspace = raw.get("workspace") or {}
-    work_dir = workspace.get("current_dir") or "."
+    work_dir = os.path.abspath(workspace.get("current_dir") or ".")
     transcript = raw.get("transcript_path") or ""
 
     cols, lines, assumed = terminal_size(env)
@@ -800,12 +820,14 @@ def build_data(raw, env):
         ago = fmt_ago(int(time.time()) - int(os.path.getmtime(transcript)))
 
     effort = resolve_effort(raw, env)
+    effort_auto = effort_setting_is_auto(work_dir, env.get("HOME", ""))
     todo_state, todo_text = current_todo(transcript)
 
     data = {
         "model_name": model.get("display_name", ""),
         "model_id": model.get("id", "unknown"),
         "effort": effort,
+        "effort_auto": effort_auto,
         "work_dir": work_dir,
         "home": env.get("HOME", ""),
         "branch": branch, "dirty": dirty, "is_worktree": is_worktree,

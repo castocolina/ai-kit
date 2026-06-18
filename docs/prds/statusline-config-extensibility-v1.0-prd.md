@@ -39,7 +39,7 @@
   discovery/execution/caching, palette override application, the top-of-file
   reorg, and tests for all of it.
 - **Boundaries (out)**: the Python wizard and install opt-in flow (**E5**);
-  `effort=auto` detection + per-letter coloring, memory-process fix, macOS
+  effort level + auto-setting detection, memory-process fix, macOS
   size/memory fallbacks (**E3**); shipping a curated theme library.
 
 ### User Scenarios

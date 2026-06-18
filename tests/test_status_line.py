@@ -1,6 +1,9 @@
 import importlib.util
+import json
 import os
 import re
+import shutil
+import tempfile
 import unittest
 from unittest import mock
 
@@ -30,7 +33,7 @@ NOW = 1_000_000  # fixed epoch for deterministic rate-limit tests
 def _data(**over):
     base = {
         "model_name": "Opus 4.8", "model_id": "claude-opus-4-8",
-        "effort": "high", "work_dir": "/home/u/proj", "home": "/home/u",
+        "effort": "high", "effort_auto": False, "work_dir": "/home/u/proj", "home": "/home/u",
         "branch": "main", "dirty": "modified", "is_worktree": False,
         "clock": "14:30", "ago": "5m 0s ago",
         "added": 12, "removed": 3, "cost": 0.5,
@@ -136,16 +139,14 @@ class TestFirstFitting(unittest.TestCase):
 class TestEffortTable(unittest.TestCase):
     def test_effort_colors(self):
         want = {
-            "low": sl.CYAN, "medium": sl.BLUE, "auto": sl.GREEN,
+            "low": sl.CYAN, "medium": sl.BLUE,
             "high": sl.YELLOW, "xhigh": sl.ORANGE, "max": sl.RED,
-            "ultracode": sl.MAGENTA,
         }
         for level, color in want.items():
             self.assertEqual(sl._EFFORT_BARS[level][0], color, level)
 
     def test_effort_fill_counts(self):
-        want = {"low": 1, "medium": 2, "auto": 5, "high": 3,
-                "xhigh": 4, "max": 5, "ultracode": 5}  # auto: full 5-bar rainbow (FR-3.2)
+        want = {"low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
         for level, n in want.items():
             filled = sl._EFFORT_BARS[level][1].split(sl.GREY)[0]
             count = sum(filled.count(c) for c in "▁▃▄▆█")
@@ -171,7 +172,7 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertIsNone(sl.seg_effort(_data(effort=""), 200))
 
     def test_effort_all_levels_full(self):
-        for level in ("low", "medium", "auto", "high", "xhigh", "max", "ultracode"):
+        for level in ("low", "medium", "high", "xhigh", "max"):
             out = strip(sl.seg_effort(_data(effort=level), 30))
             self.assertIn(level, out)
             self.assertTrue(out.startswith("🧠"))
@@ -323,7 +324,8 @@ class TestRenderLayout(unittest.TestCase):
 
 class TestDocumentation(unittest.TestCase):
     def _src(self):
-        return open(_MODULE_PATH).read()
+        with open(_MODULE_PATH) as f:
+            return f.read()
 
     def test_module_lists_all_segments(self):
         src = self._src()
@@ -405,33 +407,86 @@ class TestChatSizeRamp(unittest.TestCase):
         self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 40))
 
 
-class TestEffortAutoRender(unittest.TestCase):
-    def test_rainbow_cycles_colors_across_text(self):
-        out = sl._rainbow("abcd", [sl.CYAN, sl.GREEN])
-        self.assertEqual(out, f"{sl.CYAN}a{sl.GREEN}b{sl.CYAN}c{sl.GREEN}d{sl.RESET}")
+class TestEffortAutoSetting(unittest.TestCase):
+    def test_auto_appends_bracket_when_room(self):
+        out = strip(sl.seg_effort(_data(effort="high", effort_auto=True), 40))
+        self.assertIn("high", out)
+        self.assertIn("[auto]", out)
 
-    def test_auto_word_and_bars_are_rainbow_not_static_green(self):
-        out = sl.seg_effort(_data(effort="auto"), 80)
-        # cycle = CYAN,GREEN,YELLOW,ORANGE,MAGENTA,BLUE — bars(5)+word(4) span these
-        for c in (sl.CYAN, sl.GREEN, sl.YELLOW, sl.ORANGE, sl.MAGENTA):
-            self.assertIn(c, out)
-        # not the old single-green word
-        self.assertNotIn(f"{sl.GREEN}auto", out)
+    def test_resolved_level_keeps_its_color_in_auto(self):
+        out = sl.seg_effort(_data(effort="high", effort_auto=True), 40)
+        self.assertIn(f"{sl.YELLOW}high", out)   # level keeps its fixed color
 
-    def test_non_auto_effort_unchanged(self):
-        out = sl.seg_effort(_data(effort="high"), 80)
-        self.assertIn(f"{sl.YELLOW}high", out)   # high stays static yellow
+    def test_auto_compacts_to_asterisk_when_tight(self):
+        out = strip(sl.seg_effort(_data(effort="medium", effort_auto=True), 18))
+        self.assertIn("medium*", out)
+        self.assertNotIn("[auto]", out)
+
+    def test_non_auto_has_no_annotation(self):
+        out = strip(sl.seg_effort(_data(effort="high", effort_auto=False), 40))
+        self.assertIn("high", out)
+        self.assertNotIn("[auto]", out)
+        self.assertNotIn("*", out)
+
+
+class TestEffortSettingAuto(unittest.TestCase):
+    def _dirs(self):
+        proj = tempfile.mkdtemp()
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, proj, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        return proj, home
+
+    def _write(self, root, name, obj):
+        path = os.path.join(root, ".claude", name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(obj, f)
+
+    def test_absent_everywhere_is_auto(self):
+        proj, home = self._dirs()
+        self.assertTrue(sl.effort_setting_is_auto(proj, home))
+
+    def test_explicit_user_level_is_not_auto(self):
+        proj, home = self._dirs()
+        self._write(home, "settings.json", {"effortLevel": "high"})
+        self.assertFalse(sl.effort_setting_is_auto(proj, home))
+
+    def test_literal_auto_value_is_auto(self):
+        proj, home = self._dirs()
+        self._write(home, "settings.json", {"effortLevel": "auto"})
+        self.assertTrue(sl.effort_setting_is_auto(proj, home))
+
+    def test_project_setting_wins_over_user(self):
+        proj, home = self._dirs()
+        self._write(home, "settings.json", {"effortLevel": "auto"})
+        self._write(proj, "settings.json", {"effortLevel": "high"})
+        self.assertFalse(sl.effort_setting_is_auto(proj, home))
+
+    def test_keyless_file_falls_through_to_next(self):
+        proj, home = self._dirs()
+        self._write(proj, "settings.local.json", {"model": "opus"})  # present, no effortLevel
+        self._write(home, "settings.json", {"effortLevel": "max"})
+        self.assertFalse(sl.effort_setting_is_auto(proj, home))
+
+    def test_local_json_wins_over_project_and_user(self):
+        proj, home = self._dirs()
+        self._write(proj, "settings.local.json", {"effortLevel": "high"})
+        self._write(proj, "settings.json", {"effortLevel": "auto"})
+        self._write(home, "settings.json", {"effortLevel": "auto"})
+        self.assertFalse(sl.effort_setting_is_auto(proj, home))
 
 
 class TestResolveEffort(unittest.TestCase):
-    def test_level_auto(self):
-        self.assertEqual(sl.resolve_effort({"effort": {"level": "auto"}}, {}), "auto")
+    def test_level_auto_normalized_away(self):
+        # "auto" is a *setting*, never a resolved level — it must not survive here.
+        self.assertEqual(sl.resolve_effort({"effort": {"level": "auto"}}, {}), "")
 
-    def test_env_auto(self):
-        self.assertEqual(sl.resolve_effort({}, {"CLAUDE_EFFORT": "auto"}), "auto")
+    def test_env_auto_normalized_away(self):
+        self.assertEqual(sl.resolve_effort({}, {"CLAUDE_EFFORT": "auto"}), "")
 
     def test_case_normalized(self):
-        self.assertEqual(sl.resolve_effort({"effort": {"level": "AUTO"}}, {}), "auto")
+        self.assertEqual(sl.resolve_effort({"effort": {"level": "HIGH"}}, {}), "high")
 
     def test_level_wins_over_env(self):
         self.assertEqual(

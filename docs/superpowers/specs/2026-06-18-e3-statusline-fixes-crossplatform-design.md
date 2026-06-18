@@ -63,21 +63,34 @@ CHAT_SIZE_RAMP = [
 "first ceil the value is below wins" rule as `CONTEXT_RAMP` (so *exactly* 5 MB → red,
 *exactly* 10 MB → purple).
 
-### 3 · effort = auto (FR-3.1 detect + FR-3.2 render)
+### 3 · effort: resolved level vs. auto *setting* (FR-3.1 + FR-3.2)
 
-**Detect (FR-3.1).** Today `build_data` reads `raw["effort"]["level"]` /
-`CLAUDE_EFFORT`; `auto` is reported as `high`. Working hypothesis: the field literally
-carries `"auto"` in one of those, but Claude Code may instead send the *resolved* level.
-**This is the one piece that needs a real sample** — at implementation time, capture one
-status-line JSON while effort is `auto` and key the detection off whatever marker it
-actually exposes. The detection lives at the single `effort = …` assignment.
+**The two are distinct things.** The status-line input JSON *always* carries a
+**resolved** effort level (`raw["effort"]["level"]`, one of `low`/`medium`/`high`/`xhigh`/
+`max`) — Claude Code resolves the agent's chosen level per turn and never sends `"auto"`
+here. Separately, the user's effort **setting** lives on disk (`effortLevel` in the
+`settings.json` chain); when that key is **absent or literally `"auto"`**, the setting is
+*auto* and the level you see was auto-chosen rather than user-pinned. `auto` is a setting,
+never a resolved value.
 
-**Render (FR-3.2).** `auto` currently shows static green. Replace with a **per-letter
-rainbow**: the word `auto` *and* the 5 ladder bars `▁▃▄▆█` each cycle through
-**CYAN → GREEN → YELLOW → ORANGE → MAGENTA → BLUE**. A new helper
-`_rainbow(text, cycle)` colors each visible character by cycling the palette; the
-`_EFFORT_BARS["auto"]` entry is generated through it rather than a static string. The
-fixed per-effort colors for the other levels are unchanged.
+**Resolved level (FR-3.1).** `resolve_effort(raw, env)` normalizes
+`raw["effort"]["level"]` (or `CLAUDE_EFFORT`) to a lowercase `low..max` string. Each level
+keeps its own **clear fixed color** via `_EFFORT_BARS` (`low`→cyan, `medium`→blue,
+`high`→yellow, `xhigh`→orange, `max`→red), with fill count = intensity (1..5). `ultracode`
+is **not** a level — it reports as `xhigh` plus standing multi-agent permission — so it does
+not appear in the table.
+
+**Auto detection (FR-3.2).** `effort_setting_is_auto(work_dir, home)` reads the settings
+chain — `<repo>/.claude/settings.local.json` → `<repo>/.claude/settings.json` →
+`~/.claude/settings.json` — and returns `True` when the first file that defines
+`effortLevel` sets it to `"auto"`, **or** when no file defines it at all. `build_data`
+wires the result into the segment data as `effort_auto`.
+
+**Render.** No rainbow, no color complications. The resolved level always renders in its
+fixed color. **Only when `effort_auto` is true**, `seg_effort` appends an annotation to the
+resolved level — `high [auto]` — that degrades as space tightens: `[auto]` → trailing
+asterisk `high*` → dropped entirely (bars + colored word, or bars alone). When the setting
+is not auto, the segment shows just the colored level with no annotation.
 
 ### 4 · memory segment — wezterm bug + macOS (FR-3.4 + FR-3.5)
 
@@ -136,9 +149,11 @@ Extend `tests/test_status_line.py`:
 - **chat-size ramp:** one assertion per band, including the exact boundaries 5 MB → red
   and 10 MB → purple (off-by-one guard on the `<`-ceil rule).
 - **blue:** assert `seg_path` / context-20% emit `38;5;33`, not `1;34`.
-- **effort=auto:** detection maps the sample's marker to `auto`; `seg_effort` output
-  contains the rainbow cycle across the word and bars (assert the per-letter SGR sequence,
-  not a static green).
+- **effort level + auto:** `resolve_effort` normalizes each level to `low..max` and keeps
+  its fixed color; `effort_setting_is_auto` returns `True` for absent/`"auto"` and `False`
+  for an explicit level, honoring the settings-chain precedence (project over user, keyless
+  file falls through). `seg_effort` appends `[auto]` only when `effort_auto`, degrades it to
+  `*` and then drops it as `avail` tightens, and emits no annotation when not auto.
 - **memory:** `proc_rss_bytes` returns `None` when no `claude` ancestor exists (regression
   for the wezterm bug); Linux `/proc` path still works; macOS `ps` fallback returns bytes
   (monkeypatch `subprocess`/`os.path.exists("/proc")`).
@@ -149,8 +164,8 @@ Extend `tests/test_status_line.py`:
 
 ## Open items
 
-- **effort=auto JSON sample** — needed before implementing cluster 3's *detection* (the
-  *rendering* can be built and tested independently of the sample).
+- None. The resolved level comes from the input JSON's `effort.level`; the auto *setting*
+  is read from the on-disk `settings.json` chain — no live sample needed.
 
 ## Deliverables
 

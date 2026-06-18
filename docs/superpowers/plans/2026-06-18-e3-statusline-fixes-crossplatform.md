@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix seven status-line defects (effort=auto, blue→purple, wezterm/macOS memory, macOS dims, chat-size color) and make the two platform-specific spots genuinely cross-platform and clear.
+**Goal:** Fix seven status-line defects (effort level + auto setting, blue→purple, wezterm/macOS memory, macOS dims, chat-size color) and make the two platform-specific spots genuinely cross-platform and clear.
 
 **Architecture:** All changes live in `tools/status-line.py`, expressed as module-level constants/ramps at single named lookup points (mirroring `CONTEXT_RAMP` + `pick_color`) so E4 can later swap their source to config. The two OS-specific concerns — process RSS and terminal size — become clear helpers selected by capability probe (`/proc` present?) with an ordered fallback chain.
 
@@ -18,7 +18,7 @@
 
 | File | Responsibility | Action |
 |------|----------------|--------|
-| `tools/status-line.py` | All fixes: palette constants, `CHAT_SIZE_RAMP`, `_rainbow`, `resolve_effort`, cross-platform `proc_rss_bytes` + `terminal_size` | Modify |
+| `tools/status-line.py` | All fixes: palette constants, `CHAT_SIZE_RAMP`, `resolve_effort` + `effort_setting_is_auto`, cross-platform `proc_rss_bytes` + `terminal_size` | Modify |
 | `tests/test_status_line.py` | New test classes per cluster (append) | Modify |
 | `docs/prds/000-ai-kit-overhaul-requirements.md` | Remove "E4 first"; mark E3 progress | Modify |
 
@@ -158,164 +158,203 @@ git commit -m "feat(status-line): threshold-colored chat-size ramp (FR-3.7)"
 
 ---
 
-### Task 3: effort=auto per-letter rainbow render (FR-3.2)
+### Task 3: effort level table + auto annotation render (FR-3.2)
+
+The resolved level always renders in its own fixed color; the **auto setting** (passed in
+as `data["effort_auto"]`, wired up in Task 4) only adds a degrading `[auto]` → `*` →
+dropped annotation. No rainbow — `auto` is a *setting*, not a resolved level.
 
 **Files:**
-- Modify: `tools/status-line.py` — add `AUTO_CYCLE` + `_rainbow` before `_EFFORT_BARS` (~line 209); regenerate the `auto` bar; rework `seg_effort` (~line 291)
+- Modify: `tools/status-line.py` — `_EFFORT_BARS` table (low/medium/high/xhigh/max only); rework `seg_effort`
 - Test: `tests/test_status_line.py`
 
 - [ ] **Step 1: Write the failing test** — append:
 
 ```python
-class TestEffortAutoRender(unittest.TestCase):
-    def test_rainbow_cycles_colors_across_text(self):
-        out = sl._rainbow("abcd", [sl.CYAN, sl.GREEN])
-        self.assertEqual(out, f"{sl.CYAN}a{sl.GREEN}b{sl.CYAN}c{sl.GREEN}d{sl.RESET}")
+class TestEffortAutoSetting(unittest.TestCase):
+    def test_auto_appends_bracket_when_room(self):
+        out = strip(sl.seg_effort(_data(effort="high", effort_auto=True), 40))
+        self.assertIn("high", out); self.assertIn("[auto]", out)
 
-    def test_auto_word_and_bars_are_rainbow_not_static_green(self):
-        out = sl.seg_effort(_data(effort="auto"), 80)
-        # cycle = CYAN,GREEN,YELLOW,ORANGE,MAGENTA,BLUE — bars(5)+word(4) span these
-        for c in (sl.CYAN, sl.GREEN, sl.YELLOW, sl.ORANGE, sl.MAGENTA):
-            self.assertIn(c, out)
-        # not the old single-green word
-        self.assertNotIn(f"{sl.GREEN}auto", out)
+    def test_resolved_level_keeps_its_color_in_auto(self):
+        out = sl.seg_effort(_data(effort="high", effort_auto=True), 40)
+        self.assertIn(f"{sl.YELLOW}high", out)
 
-    def test_non_auto_effort_unchanged(self):
-        out = sl.seg_effort(_data(effort="high"), 80)
-        self.assertIn(f"{sl.YELLOW}high", out)   # high stays static yellow
+    def test_auto_compacts_to_asterisk_when_tight(self):
+        out = strip(sl.seg_effort(_data(effort="medium", effort_auto=True), 18))
+        self.assertIn("medium*", out); self.assertNotIn("[auto]", out)
+
+    def test_non_auto_has_no_annotation(self):
+        out = strip(sl.seg_effort(_data(effort="high", effort_auto=False), 40))
+        self.assertIn("high", out); self.assertNotIn("[auto]", out); self.assertNotIn("*", out)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python3 -m unittest tests.test_status_line.TestEffortAutoRender -v`
-Expected: FAIL — `AttributeError: module has no attribute '_rainbow'`.
+Run: `python3 -m unittest tests.test_status_line.TestEffortAutoSetting -v`
+Expected: FAIL — `seg_effort` has no auto-annotation behavior yet.
 
-- [ ] **Step 3: Add the cycle + helper** — in `tools/status-line.py`, immediately **before** the `_EFFORT_BARS = {` block, add:
-
-```python
-# effort=auto renders as a per-letter rainbow (distinct from the static per-effort
-# colors). Cycle is applied across both the ladder bars and the word.
-AUTO_CYCLE = [CYAN, GREEN, YELLOW, ORANGE, MAGENTA, BLUE]
-
-
-def _rainbow(text, cycle):
-    """Color each character of `text` by cycling through `cycle`, ending in RESET."""
-    return "".join(f"{cycle[i % len(cycle)]}{ch}" for i, ch in enumerate(text)) + RESET
-```
-
-- [ ] **Step 4: Regenerate the auto bar** — in the `_EFFORT_BARS` dict, replace the `auto` entry
+- [ ] **Step 3: Set the level table** — `_EFFORT_BARS` carries only the five resolved levels
+(no `auto`, no `ultracode`), each with a clear fixed color and fill count = intensity:
 
 ```python
-    "auto":      (GREEN,   f"{GREEN}▁▃{GREY}▄▆█"),
+# API-resolved effort levels, lowest -> highest; fill count = intensity (1..5), each
+# with a clear fixed color. `ultracode` is NOT a level (it reports as xhigh + standing
+# multi-agent permission), and `auto` is a *setting*, not a resolved level — neither
+# belongs here. The auto setting is surfaced as a "[auto]" suffix in seg_effort.
+_EFFORT_BARS = {
+    "low":    (CYAN,   f"{CYAN}▁{GREY}▃▄▆█"),
+    "medium": (BLUE,   f"{BLUE}▁▃{GREY}▄▆█"),
+    "high":   (YELLOW, f"{YELLOW}▁▃▄{GREY}▆█"),
+    "xhigh":  (ORANGE, f"{ORANGE}▁▃▄▆{GREY}█"),
+    "max":    (RED,    f"{RED}▁▃▄▆█"),
+}
 ```
 
-with
-
-```python
-    "auto":      (GREEN,   _rainbow("▁▃▄▆█", AUTO_CYCLE)),   # color field unused for auto; word handled in seg_effort
-```
-
-- [ ] **Step 5: Rework `seg_effort`** — replace the whole function:
+- [ ] **Step 4: Rework `seg_effort`** — the resolved level always renders in its fixed
+color; only `effort_auto` adds the degrading annotation:
 
 ```python
 def seg_effort(data, avail):
-    effort = data.get("effort", "")
-    if not effort:
+    level = data.get("effort", "")
+    if not level:
         return None
-    key = effort.lower()
-    color, bar = _EFFORT_BARS.get(key, ("", f"{GREY}▁▃▄▆█"))
-    word = _rainbow(effort, AUTO_CYCLE) if key == "auto" else f"{color}{effort}{RESET}"
-    full = f"🧠 {bar}{RESET} {word}"
-    compact = f"🧠 {bar}{RESET}"
-    return _first_fitting([full, compact], avail)
-```
-
-- [ ] **Step 6: Run test to verify it passes**
-
-Run: `python3 -m unittest tests.test_status_line.TestEffortAutoRender -v`
-Expected: PASS.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add tools/status-line.py tests/test_status_line.py
-git commit -m "feat(status-line): per-letter rainbow for effort=auto (FR-3.2)"
-```
-
----
-
-### Task 4: effort=auto detection via `resolve_effort` (FR-3.1)
-
-**Files:**
-- Modify: `tools/status-line.py` — add `resolve_effort(raw, env)` before `build_data` (~line 677); call it inside `build_data` (~line 692)
-- Test: `tests/test_status_line.py`
-
-**Note on the sample:** the spec flags this as the one sample-dependent piece. This task locks the *known* mapping (level/env `auto` → `"auto"`, case-normalized) behind a pure, testable function. At runtime, capture one real status JSON while effort is `auto`; **if** Claude Code sends the resolved level with a separate auto marker instead of `level=="auto"`, add exactly one line to `resolve_effort` (shown in Step 3) — no other code changes.
-
-- [ ] **Step 1: Write the failing test** — append:
-
-```python
-class TestResolveEffort(unittest.TestCase):
-    def test_level_auto(self):
-        self.assertEqual(sl.resolve_effort({"effort": {"level": "auto"}}, {}), "auto")
-
-    def test_env_auto(self):
-        self.assertEqual(sl.resolve_effort({}, {"CLAUDE_EFFORT": "auto"}), "auto")
-
-    def test_case_normalized(self):
-        self.assertEqual(sl.resolve_effort({"effort": {"level": "AUTO"}}, {}), "auto")
-
-    def test_level_wins_over_env(self):
-        self.assertEqual(
-            sl.resolve_effort({"effort": {"level": "high"}}, {"CLAUDE_EFFORT": "auto"}),
-            "high")
-
-    def test_missing_is_empty(self):
-        self.assertEqual(sl.resolve_effort({}, {}), "")
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `python3 -m unittest tests.test_status_line.TestResolveEffort -v`
-Expected: FAIL — `AttributeError: module has no attribute 'resolve_effort'`.
-
-- [ ] **Step 3: Add the resolver** — in `tools/status-line.py`, immediately **before** `def build_data(`, add:
-
-```python
-def resolve_effort(raw, env):
-    """The effort level as a normalized lowercase string ("" if unset).
-
-    Source priority: raw["effort"]["level"] > CLAUDE_EFFORT env. `auto` arrives via
-    either today. If a captured sample shows Claude Code sending the *resolved* level
-    plus a separate auto flag, add one line here, e.g.:
-        if (raw.get("effort") or {}).get("auto"): return "auto"
-    """
-    level = ((raw.get("effort") or {}).get("level") or env.get("CLAUDE_EFFORT", ""))
-    return level.strip().lower()
-```
-
-- [ ] **Step 4: Use it in `build_data`** — replace the line
-
-```python
-    effort = (raw.get("effort") or {}).get("level") or env.get("CLAUDE_EFFORT", "")
-```
-
-with
-
-```python
-    effort = resolve_effort(raw, env)
+    color, bar = _EFFORT_BARS.get(level.lower(), ("", f"{GREY}▁▃▄▆█"))
+    word = f"{color}{level}{RESET}"
+    bars = f"🧠 {bar}{RESET}"
+    if data.get("effort_auto"):
+        # effortLevel is unset/auto in settings: flag the resolved level as
+        # auto-chosen. The flag degrades [auto] -> * -> dropped as space tightens.
+        variants = [f"{bars} {word} {GREY}[auto]{RESET}",
+                    f"{bars} {color}{level}*{RESET}",
+                    f"{bars} {word}",
+                    bars]
+    else:
+        variants = [f"{bars} {word}", bars]
+    return _first_fitting(variants, avail)
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `python3 -m unittest tests.test_status_line.TestResolveEffort -v`
+Run: `python3 -m unittest tests.test_status_line.TestEffortAutoSetting -v`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add tools/status-line.py tests/test_status_line.py
-git commit -m "fix(status-line): resolve_effort normalizes auto detection (FR-3.1)"
+git commit -m "feat(status-line): annotate auto-chosen effort level (FR-3.2)"
+```
+
+---
+
+### Task 4: effort level resolution + auto-setting detection (FR-3.1)
+
+`resolve_effort` normalizes the always-present resolved level from the input JSON;
+`effort_setting_is_auto` reads the on-disk settings chain to decide whether that level was
+auto-chosen. The input JSON never carries `"auto"` — that lives only in settings.
+
+**Files:**
+- Modify: `tools/status-line.py` — `resolve_effort` docstring; add `effort_setting_is_auto(work_dir, home)`; wire `effort_auto` into `build_data`
+- Test: `tests/test_status_line.py`
+
+- [ ] **Step 1: Write the failing test** — append (needs `import json, tempfile, shutil` at the top):
+
+```python
+class TestEffortSettingAuto(unittest.TestCase):
+    def _dirs(self):
+        proj = tempfile.mkdtemp(); home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, proj, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        return proj, home
+
+    def _write(self, root, name, obj):
+        path = os.path.join(root, ".claude", name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f: json.dump(obj, f)
+
+    def test_absent_everywhere_is_auto(self):
+        proj, home = self._dirs(); self.assertTrue(sl.effort_setting_is_auto(proj, home))
+
+    def test_explicit_user_level_is_not_auto(self):
+        proj, home = self._dirs(); self._write(home, "settings.json", {"effortLevel": "high"})
+        self.assertFalse(sl.effort_setting_is_auto(proj, home))
+
+    def test_literal_auto_value_is_auto(self):
+        proj, home = self._dirs(); self._write(home, "settings.json", {"effortLevel": "auto"})
+        self.assertTrue(sl.effort_setting_is_auto(proj, home))
+
+    def test_project_setting_wins_over_user(self):
+        proj, home = self._dirs(); self._write(home, "settings.json", {"effortLevel": "auto"})
+        self._write(proj, "settings.json", {"effortLevel": "high"})
+        self.assertFalse(sl.effort_setting_is_auto(proj, home))
+
+    def test_keyless_file_falls_through_to_next(self):
+        proj, home = self._dirs(); self._write(proj, "settings.local.json", {"model": "opus"})
+        self._write(home, "settings.json", {"effortLevel": "max"})
+        self.assertFalse(sl.effort_setting_is_auto(proj, home))
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `python3 -m unittest tests.test_status_line.TestEffortSettingAuto -v`
+Expected: FAIL — `AttributeError: module has no attribute 'effort_setting_is_auto'`.
+
+- [ ] **Step 3: Add the detector** — keep `resolve_effort` as the normalizer (input JSON
+never carries `"auto"`), and add `effort_setting_is_auto` reading the settings chain:
+
+```python
+def resolve_effort(raw, env):
+    """The *resolved* effort level (low..max) as a normalized lowercase string, or "".
+
+    Source priority: raw["effort"]["level"] > CLAUDE_EFFORT env. It is never "auto" —
+    auto is a *setting*, detected separately from disk by effort_setting_is_auto.
+    """
+    level = ((raw.get("effort") or {}).get("level") or env.get("CLAUDE_EFFORT", ""))
+    return level.strip().lower()
+
+
+def effort_setting_is_auto(work_dir, home):
+    """True when the effort *setting* is auto — i.e. `effortLevel` is absent (or
+    literally "auto") across the settings chain.
+
+    Precedence high->low: <repo>/.claude/settings.local.json, then
+    <repo>/.claude/settings.json, then ~/.claude/settings.json. The first file that
+    defines `effortLevel` decides; if none does, the setting is auto.
+    """
+    for path in (os.path.join(work_dir, ".claude", "settings.local.json"),
+                 os.path.join(work_dir, ".claude", "settings.json"),
+                 os.path.join(home, ".claude", "settings.json")):
+        try:
+            with open(path) as f:
+                cfg = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(cfg, dict) and "effortLevel" in cfg:
+            return str(cfg["effortLevel"]).strip().lower() == "auto"
+    return True
+```
+
+- [ ] **Step 4: Wire it into `build_data`** — after the `effort = resolve_effort(raw, env)`
+line, add the auto-setting lookup, and add `"effort_auto"` to the data dict:
+
+```python
+    effort = resolve_effort(raw, env)
+    effort_auto = effort_setting_is_auto(work_dir, env.get("HOME", ""))
+    # ... in the data dict, next to "effort": effort,
+    "effort_auto": effort_auto,
+```
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `python3 -m unittest tests.test_status_line.TestEffortSettingAuto -v`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tools/status-line.py tests/test_status_line.py
+git commit -m "fix(status-line): detect auto effort setting from settings chain (FR-3.1)"
 ```
 
 ---
@@ -662,7 +701,7 @@ prerequisite — the earlier "E4 first" note was a planning error).
 
 ```markdown
 **Dependencies**: none for shipping the fixes (standalone). E4 *consumes* E3 by making
-its colors/thresholds (blue, chat-size ramp, auto cycle) overridable; E3 does not block on E4.
+its colors/thresholds (blue, chat-size ramp, per-level effort colors) overridable; E3 does not block on E4.
 ```
 
 - [ ] **Step 4: Run the full suite once more**
@@ -682,8 +721,8 @@ git commit -m "docs(e3): correct E4-first sequencing error; mark E3 done"
 ## Self-Review
 
 **1. Spec coverage:**
-- FR-3.1 (detect auto) → Task 4 (`resolve_effort`, sample-verification note).
-- FR-3.2 (render auto distinctively) → Task 3 (`_rainbow` + `AUTO_CYCLE`).
+- FR-3.1 (resolve level + detect auto setting) → Task 4 (`resolve_effort` + `effort_setting_is_auto`).
+- FR-3.2 (annotate auto-chosen level) → Task 3 (`_EFFORT_BARS` fixed colors + `[auto]`/`*` degradation).
 - FR-3.3 (robust blue) → Task 1 (`BLUE` 38;5;33, `LIGHTBLUE` 38;5;75).
 - FR-3.4 (memory wrong process) → Task 5 (return None unless `claude` matched).
 - FR-3.5 (macOS RSS) → Task 6 (`ps` fallback).
@@ -692,9 +731,9 @@ git commit -m "docs(e3): correct E4-first sequencing error; mark E3 done"
 - Cluster 6 (cross-platform clarity) → Tasks 5–7 structure it; Task 8 applies `/simplify` + `/reduce-entropy`.
 - Index correction → Task 9. No gaps.
 
-**2. Placeholder scan:** No TBD/TODO. The one sample-dependent item (FR-3.1) is implemented against the known mapping with an explicit, single-line runtime adjustment documented in Task 4 Step 3 — not a placeholder. Task 8 is a refactor task with hard pass/scope invariants, not vague work.
+**2. Placeholder scan:** No TBD/TODO. The auto setting (FR-3.2) is read deterministically from the on-disk `settings.json` chain — no live sample needed. Task 8 is a refactor task with hard pass/scope invariants, not vague work.
 
-**3. Type consistency:** `pick_color(value, ramp)` reused for bytes (Task 2) exactly as for pct. `_rainbow(text, cycle) -> str` (Task 3) used by both the `auto` bar and `seg_effort`. `resolve_effort(raw, env) -> str` (Task 4) feeds `build_data`'s `effort` and `seg_effort`'s `key = effort.lower()`. The RSS backend trio `_comm_via_proc/_ppid_via_proc/_rss_kb_via_proc` (Task 5) and `_comm_via_ps/_ppid_via_ps/_rss_kb_via_ps` (Task 6) share one signature `(pid) -> value|None`; `proc_rss_bytes` selects between them by the `os.path.isdir("/proc")` probe and returns `int|None`. `terminal_size(env) -> (cols, lines, assumed)` unchanged. Consistent.
+**3. Type consistency:** `pick_color(value, ramp)` reused for bytes (Task 2) exactly as for pct. `resolve_effort(raw, env) -> str` (Task 4) feeds `build_data`'s `effort`; `effort_setting_is_auto(work_dir, home) -> bool` (Task 4) feeds `effort_auto`, which `seg_effort` (Task 3) reads via `data.get("effort_auto")`. The RSS backend trio `_comm_via_proc/_ppid_via_proc/_rss_kb_via_proc` (Task 5) and `_comm_via_ps/_ppid_via_ps/_rss_kb_via_ps` (Task 6) share one signature `(pid) -> value|None`; `proc_rss_bytes` selects between them by the `os.path.isdir("/proc")` probe and returns `int|None`. `terminal_size(env) -> (cols, lines, assumed)` unchanged. Consistent.
 
 ---
 
