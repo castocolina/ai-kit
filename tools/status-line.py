@@ -63,7 +63,7 @@ PINNED = {"path", "context"}   # always rendered even if they overflow the budge
 # Resolved configuration: the result of merging internal defaults < TOML file <
 # env. `segments` is a {key: bool} dict, `layout` a list[Line], `palette` a
 # {NAME: "sgr;params"} dict of overrides (empty = no override). External drop-in
-# segments are E4b and are intentionally not part of this type yet.
+# segments are E4c and are intentionally not part of this type yet.
 Config = namedtuple("Config", "segments layout palette")
 
 

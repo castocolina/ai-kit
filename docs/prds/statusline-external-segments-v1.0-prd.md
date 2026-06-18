@@ -1,9 +1,10 @@
 # Status-line External Drop-in Segments — Product Requirements Document (PRD)
 
-> Epic **E4b** of the ai-kit status-line overhaul. **Split out of E4a** (status-line
-> config). E4a ships the config engine; E4b adds the extensibility layer — user-supplied
-> drop-in segment providers — on top of it. Scheduled **after E5**; not on E5's
-> critical path. Depends on **E4a** (config model + resolved layout).
+> Epic **E4c** of the ai-kit status-line overhaul (was E4b before the color subsystem took
+> that slot). **Split out of E4a** (status-line config). E4a ships the config engine; E4c
+> adds the extensibility layer — user-supplied drop-in segment providers — on top of it.
+> Scheduled **after E5**; not on E5's critical path. Depends on **E4a** (config model +
+> resolved layout).
 
 ## Requirements Description
 
@@ -87,7 +88,7 @@ dir = "~/.config/ai-kit/segments"
   execution.
 - **External segments modeled as synthetic builders** inserted into E4a's resolved
   layout, so the existing packing/overflow logic handles them unchanged. This is the
-  seam that made the E4a/E4b split near-zero-rework.
+  seam that made the E4a/E4c split near-zero-rework.
 - **Safety**: external output is treated as display text only (no shell-eval); control
   sequences other than SGR are stripped; failures never break rendering.
 

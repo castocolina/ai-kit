@@ -10,21 +10,23 @@ picture non-linear and prevents any concern from being lost.
 | **E1** | review-spec skill + framework-aware fix routing | **done** → `skills/review-spec/` + `revise_protocol.routes` (plan: `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md`) |
 | **E2** | mermaid-audit color-palette guidance | **plan ready** → `docs/superpowers/plans/2026-06-17-e2-mermaid-color-shape-audit.md` (adds shape-semantics + render-geometry axes + consensus eval) |
 | **E3** | status-line bug fixes (effort/blue/memory/macOS) | **done** → `tools/status-line.py` cross-platform; plan `docs/superpowers/plans/2026-06-18-e3-statusline-fixes-crossplatform.md` |
-| **E4a** | status-line config | **PRD drafted** → `statusline-config-extensibility-v1.0-prd.md` (external segments split out to E4b) |
-| **E4b** | status-line external drop-in segments | requirements captured (split from E4; deferred until after E5) · PRD drafted → `statusline-external-segments-v1.0-prd.md` |
+| **E4a** | status-line config | **done (on branch `feat/e4a-statusline-config`, not merged)** → config engine; PRD `statusline-config-extensibility-v1.0-prd.md`; plan `docs/superpowers/plans/2026-06-18-e4a-statusline-config.md` |
+| **E4b** | status-line color subsystem (parser + configurable ramps) | **design ready** → `docs/superpowers/specs/2026-06-18-e4b-statusline-color-subsystem-design.md` (split from the original E4b; scheduled **before E5** so the wizard sees the final color schema) |
 | **E5** | installer ergonomics + setup wizard | requirements captured · PRD pending |
+| **E4c** | status-line external drop-in segments | requirements captured (was E4b; deferred until after E5) · PRD drafted → `statusline-external-segments-v1.0-prd.md` |
 | **E6** | doc-to-PDF skill (Markdown + mermaid → PDF/marp) | requirements captured · PRD pending |
 
-**Suggested sequence**: E1 → E2 → E3 → E4a → E5 → E4b. E3 ships standalone with hardcoded
-defaults; **E4a later makes E3's colors/thresholds user-configurable** (E4a is not a
-prerequisite — the earlier "E4 first" note was a planning error). **E3 merges to main
+**Suggested sequence**: E1 → E2 → E3 → E4a → **E4b** → E5 → **E4c**. E3 ships standalone
+with hardcoded defaults; **E4a makes E3's colors/thresholds user-configurable** (E4a is not
+a prerequisite — the earlier "E4 first" note was a planning error). **E3 merges to main
 before E4a starts** (E4a branches off clean main; both touch the shared palette/ramp code).
-**E4b (external drop-in segments) was split out of the original E4** and is deferred until
-after E5: it builds on E4a's proven config engine and is not on E5's critical path. It
-keeps the `E4` family number (not a higher epic) so it stays grouped with the status-line
-work rather than implying it runs after the unrelated E6. **E6 is
-independent** of the status-line epics and can ship any time; it benefits from E2's
-diagram-quality work but does not require it.
+**E4b (color subsystem)** — unified color parser + user-configurable ramps — comes **before
+E5** so the setup wizard is built against the final palette/ramp schema. **E4c (external
+drop-in segments)** was split out of the original E4 and is deferred until **after E5**: it
+builds on E4a's config engine and is not on E5's critical path. The E4-family letters stay
+grouped with the status-line work and ascend in run order rather than implying a run after
+the unrelated E6. **E6 is independent** of the status-line epics and can ship any time; it
+benefits from E2's diagram-quality work but does not require it.
 
 ---
 

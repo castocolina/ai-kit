@@ -4,7 +4,7 @@
 > only — three-tier resolution, segment toggles, layout/palette overrides, the shipped
 > recipe, and introspection. The interactive wizard/setup lives in E5; the
 > effort/memory/macOS fixes live in E3; **external drop-in segments were split out to
-> E4b** (`statusline-external-segments-v1.0-prd.md`) and build on this engine. E4a builds
+> E4c** (`statusline-external-segments-v1.0-prd.md`) and build on this engine. E4a builds
 > the layer those depend on.
 
 ## Requirements Description
@@ -13,7 +13,7 @@
 - **Problem**: `tools/status-line.py` is configured only by editing Python
   constants (`SEGMENTS` dict, `LAYOUT`). There is no per-user config and no way to
   toggle segments, reorder the layout, or fix a color without editing source.
-  (Adding a *new* custom segment is the related extensibility problem solved by **E4b**,
+  (Adding a *new* custom segment is the related extensibility problem solved by **E4c**,
   which builds on this engine.)
 - **Users**: the kit's author and anyone who installs ai-kit and wants to tune
   the status line to their terminal/workflow without forking it.
@@ -38,7 +38,7 @@
   shipped recipe + installer copy-if-absent, palette override application, the
   top-of-file reorg, `--print-config`/`--check` introspection, and tests for all of it.
 - **Boundaries (out)**: external drop-in segments — discovery/execution/caching/header
-  grammar (**E4b**, builds on this engine); the Python wizard and install opt-in flow
+  grammar (**E4c**, builds on this engine); the Python wizard and install opt-in flow
   (**E5**); effort level + auto-setting detection, memory-process fix, macOS
   size/memory fallbacks (**E3**); shipping a curated theme library.
 
@@ -47,7 +47,7 @@
   in the config file.
 - Reorder/move a segment between rows by editing `[[line]]` in the config file.
 - Fix a purple-ish blue: `[palette] BLUE = "38;5;33"`.
-- (Adding a brand-new custom segment — e.g. AWS-session-expiry — is **E4b**.)
+- (Adding a brand-new custom segment — e.g. AWS-session-expiry — is **E4c**.)
 
 ### Detailed Requirements
 
@@ -68,7 +68,7 @@
 - `CC_AI_KIT_CONFIG` — path to the TOML file.
 
 (External-segment env scalars — `CC_AI_KIT_SEGMENTS_DIR`, `CC_AI_KIT_EXTERNAL_TTL` —
-are introduced by **E4b**.)
+are introduced by **E4c**.)
 
 Scope note: **env only covers segment toggles and the scalars above.** Layout
 (`[[line]]`) and `[palette]` are **file-only** — there is no env override for them
@@ -94,14 +94,14 @@ BLUE = "38;5;33"
 ```
 Rule: `[segments]` merges over defaults (partial allowed). `[[line]]` is
 all-or-nothing — if present it **replaces** the default layout (so a partial
-layout can't silently drop segments by omission). (**E4b** adds an `[external]`
+layout can't silently drop segments by omission). (**E4c** adds an `[external]`
 block — `ttl`, `dir` — for drop-in segments.)
 
 **Shipped recipe (`statusline.toml.sample`)**
 - A complete, **fully-commented** TOML living in the repo (e.g. `tools/statusline.toml.sample`).
 - Contains every `[segments]` key set to its default, the full `[[line]]` layout
   (byte-identical to the internal default), and an example `[palette]` block — all
-  commented. (**E4b** later adds a commented `[external]` block to this recipe.)
+  commented. (**E4c** later adds a commented `[external]` block to this recipe.)
 - Header comment explains the two uncomment modes:
   - `[segments]` — uncomment **individual** lines to flip just those (merge).
   - `[[line]]` — to take over layout, uncomment **all** `[[line]]` blocks and edit
@@ -113,9 +113,9 @@ block — `ttl`, `dir` — for drop-in segments.)
   the user edits it. The sample stays the upstream canonical reference; E5's
   wizard can regenerate the real file from it.
 
-**External segments** — see **E4b** (`statusline-external-segments-v1.0-prd.md`). E4a leaves
+**External segments** — see **E4c** (`statusline-external-segments-v1.0-prd.md`). E4a leaves
 a clean seam: external providers are modeled as synthetic builders inserted into E4a's
-resolved layout, so the packing/overflow logic handles them unchanged once E4b lands.
+resolved layout, so the packing/overflow logic handles them unchanged once E4c lands.
 
 **File reorg**
 - Move `SEGMENTS` (defaults) and the `LAYOUT` template to the **top**, right after
@@ -146,7 +146,7 @@ resolved layout, so the packing/overflow logic handles them unchanged once E4b l
   third-party packages — preserves `curl | bash`-free, zero-install execution.
 - **One resolution pass** in `main()`/`build_data()`: `cfg = load_config(env)`,
   then `render()` consumes `cfg.layout`, `cfg.segments`, and `cfg.palette`. Keeps the
-  render path pure and testable, and leaves a clean insertion point for E4b's external
+  render path pure and testable, and leaves a clean insertion point for E4c's external
   providers (synthetic builders added to `cfg.layout`).
 - **Palette overrides**: the overridable keys are the base named colors —
   `GREY WHITE CYAN GREEN ORANGE RED YELLOW MAGENTA BLUE` plus the two band colors
@@ -225,9 +225,9 @@ resolved layout, so the packing/overflow logic handles them unchanged once E4b l
 ---
 
 **Document Version**: 1.1
-**Created**: 2026-06-14 · **Revised**: 2026-06-18 (split external segments out to E4b)
+**Created**: 2026-06-14 · **Revised**: 2026-06-18 (split external segments out to E4c)
 **Clarification Rounds**: 4 (decomposition + E4 deep-dive + shipped-recipe + gap-closure)
-  + 1 scope/sequencing revision (external-segments split → E4b).
+  + 1 scope/sequencing revision (external-segments split → E4c).
 **Sequencing**: starts after **E3** merges to main (branches off clean main).
 **Depends on / feeds**: E5 (wizard consumes this config), E3 (effort/memory fixes use the
-toggles/palette), E4b (external segments build on this config engine + resolved layout).
+toggles/palette), E4c (external segments build on this config engine + resolved layout).
