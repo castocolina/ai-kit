@@ -156,44 +156,81 @@ def load_config(env):
     raw = _load_toml(config_path(env))
     segments = _resolve_segments(base.segments, raw.get("segments"), env)
     layout = _resolve_layout(base.layout, raw.get("line"))
-    return Config(segments=segments, layout=layout, palette={})
+    palette = {}
+    for k, v in (raw.get("palette") or {}).items():
+        if k in _PALETTE_DEFAULTS:
+            palette[k] = str(v)
+        else:
+            print(f"{GREY}status-line: unknown palette key '{k}'{RESET}", file=sys.stderr)
+    return Config(segments=segments, layout=layout, palette=palette)
 
 
 # ═══ Palette ════════════════════════════════════════════════════════════════
+# Fixed (non-overridable) colors.
 RESET = "\033[0m"
-GREY = "\033[90m"
 BG_LIGHTGRAY = "\033[47m"
-WHITE = "\033[1;97m"
-CYAN = "\033[1;36m"
-GREEN = "\033[1;32m"
-ORANGE = "\033[38;5;208m"
-RED = "\033[1;31m"
-YELLOW = "\033[1;33m"
-MAGENTA = "\033[1;35m"
-BLUE = "\033[38;5;33m"        # true blue — 1;34 bold-ANSI-blue reads purple on many terminals
 LIGHTBLUE = "\033[38;5;75m"   # cornflower — chat-size ramp band 3 (distinct from BLUE)
 
-# Bold variants for the high-severity context bands (orange and up). Kept
-# separate so the base colors stay reusable elsewhere without forcing bold
-# (e.g. effort xhigh uses plain ORANGE).
-ORANGE_BOLD = "\033[1;38;5;208m"
-MAGENTA_DARK_BOLD = "\033[1;38;5;90m"  # dark/gothic — top context band (>=50%)
+# Overridable palette: NAME -> default SGR params (no "\033[" / "m" wrapper).
+# [palette] overrides replace a value here; init_palette() rebuilds the globals
+# and every ramp that derives from them. BLUE is 38;5;33 (true blue) because the
+# bold-ANSI 1;34 reads purple on many terminals.
+_PALETTE_DEFAULTS = {
+    "GREY": "90", "WHITE": "1;97", "CYAN": "1;36", "GREEN": "1;32",
+    "ORANGE": "38;5;208", "RED": "1;31", "YELLOW": "1;33", "MAGENTA": "1;35",
+    "BLUE": "38;5;33",
+    "ORANGE_BOLD": "1;38;5;208",      # high-severity context band
+    "MAGENTA_DARK_BOLD": "1;38;5;90",  # dark/gothic — top context band (>=50%)
+}
 
-# ═══ Color ramps (ceil, color) — first ceil the pct is below wins ════════════
 INF = float("inf")
-CONTEXT_RAMP = [
-    (10, WHITE), (15, CYAN), (20, BLUE), (25, GREEN),
-    (30, YELLOW), (40, ORANGE_BOLD), (50, RED), (INF, MAGENTA_DARK_BOLD),
-]
-RATE_RAMP = [(50, GREEN), (80, YELLOW), (INF, RED)]
 _MB = 1024 * 1024
-# Chat-transcript size bands (bytes). Mirrors the context bar's color progression;
-# top two bands are pinned: >=5 MB red, >=10 MB purple. Same "first ceil the value
-# is strictly below wins" rule as CONTEXT_RAMP, so exactly 5 MB -> red, 10 MB -> purple.
-CHAT_SIZE_RAMP = [
-    (512 * 1024, WHITE), (1 * _MB, CYAN), (2 * _MB, LIGHTBLUE), (3 * _MB, GREEN),
-    (4 * _MB, YELLOW), (5 * _MB, ORANGE), (10 * _MB, RED), (INF, MAGENTA),
-]
+
+
+def _build_ramps():
+    """(Re)build the color ramps + effort bars from the current color globals.
+    Called by init_palette after the color globals are (re)assigned."""
+    g = globals()
+    g["CONTEXT_RAMP"] = [
+        (10, WHITE), (15, CYAN), (20, BLUE), (25, GREEN),
+        (30, YELLOW), (40, ORANGE_BOLD), (50, RED), (INF, MAGENTA_DARK_BOLD),
+    ]
+    g["RATE_RAMP"] = [(50, GREEN), (80, YELLOW), (INF, RED)]
+    # Chat-transcript size bands (bytes). Mirrors the context bar's progression;
+    # top two bands pinned: >=5 MB red, >=10 MB purple. Same "first ceil the value
+    # is strictly below wins" rule as CONTEXT_RAMP.
+    g["CHAT_SIZE_RAMP"] = [
+        (512 * 1024, WHITE), (1 * _MB, CYAN), (2 * _MB, LIGHTBLUE), (3 * _MB, GREEN),
+        (4 * _MB, YELLOW), (5 * _MB, ORANGE), (10 * _MB, RED), (INF, MAGENTA),
+    ]
+    # API-resolved effort levels, lowest -> highest; fill count = intensity (1..5),
+    # each with a clear fixed color. `ultracode` is NOT a level (reports as xhigh)
+    # and `auto` is a *setting*, not a level — neither belongs here.
+    g["_EFFORT_BARS"] = {
+        "low":    (CYAN,   f"{CYAN}▁{GREY}▃▄▆█"),
+        "medium": (BLUE,   f"{BLUE}▁▃{GREY}▄▆█"),
+        "high":   (YELLOW, f"{YELLOW}▁▃▄{GREY}▆█"),
+        "xhigh":  (ORANGE, f"{ORANGE}▁▃▄▆{GREY}█"),
+        "max":    (RED,    f"{RED}▁▃▄▆█"),
+    }
+
+
+def init_palette(overrides=None):
+    """(Re)assign the overridable color globals from _PALETTE_DEFAULTS merged with
+    `overrides` ({NAME: "sgr;params"}; unknown names ignored), then rebuild ramps.
+    Call with no args to restore defaults. Idempotent."""
+    merged = dict(_PALETTE_DEFAULTS)
+    for name, val in (overrides or {}).items():
+        if name in _PALETTE_DEFAULTS:
+            merged[name] = str(val)
+    g = globals()
+    for name, params in merged.items():
+        g[name] = f"\033[{params}m"
+    _build_ramps()
+
+
+# Build the colors + ramps once at import so module-level defaults are in force.
+init_palette()
 
 
 def pick_color(pct, ramp):
@@ -333,17 +370,11 @@ def rate_color(pct):
 # To add a segment: write seg_x(data, avail), add it to BUILDERS, list its key
 # in a LAYOUT line, add a SEGMENTS flag. See the HOW TO CUSTOMIZE block below.
 
-# API-resolved effort levels, lowest -> highest; fill count = intensity (1..5), each
-# with a clear fixed color. `ultracode` is NOT a level (it reports as xhigh + standing
-# multi-agent permission), and `auto` is a *setting*, not a resolved level — neither
-# belongs here. The auto setting is surfaced as a "[auto]" suffix in seg_effort.
-_EFFORT_BARS = {
-    "low":    (CYAN,   f"{CYAN}▁{GREY}▃▄▆█"),
-    "medium": (BLUE,   f"{BLUE}▁▃{GREY}▄▆█"),
-    "high":   (YELLOW, f"{YELLOW}▁▃▄{GREY}▆█"),
-    "xhigh":  (ORANGE, f"{ORANGE}▁▃▄▆{GREY}█"),
-    "max":    (RED,    f"{RED}▁▃▄▆█"),
-}
+# NOTE: _EFFORT_BARS is built by _build_ramps() (see the Palette section) so a
+# [palette] override rebuilds the effort bars too. `ultracode` is NOT a level (it
+# reports as xhigh + standing multi-agent permission), and `auto` is a *setting*,
+# not a resolved level — neither belongs in the table. The auto setting is
+# surfaced as a "[auto]" suffix in seg_effort.
 
 
 def _display_dir(work_dir, home):
@@ -958,6 +989,7 @@ def build_data(raw, env):
 
 def main():
     cfg = load_config(os.environ)
+    init_palette(cfg.palette)        # apply overrides + rebuild ramps before render
     try:
         raw = json.load(sys.stdin)
     except (ValueError, OSError):

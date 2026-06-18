@@ -737,5 +737,70 @@ class TestResolveLayout(unittest.TestCase):
         self.assertEqual(cfg.layout, [sl.Line(0, ["path"])])
 
 
+class TestPaletteInit(unittest.TestCase):
+    def tearDown(self):
+        sl.init_palette()   # always restore defaults after a palette test
+
+    def test_defaults_unchanged_at_import(self):
+        self.assertEqual(sl.BLUE, "\033[38;5;33m")
+        self.assertEqual(sl.RED, "\033[1;31m")
+        # A ramp entry derives from the color globals.
+        self.assertIn(sl.BLUE, [c for _, c in sl.CONTEXT_RAMP])
+
+    def test_override_changes_color_and_ramp(self):
+        sl.init_palette({"BLUE": "1;34"})
+        self.assertEqual(sl.BLUE, "\033[1;34m")
+        self.assertIn("\033[1;34m", [c for _, c in sl.CONTEXT_RAMP])  # ramp rebuilt
+        self.assertEqual(sl._EFFORT_BARS["medium"][0], "\033[1;34m")  # effort bar rebuilt
+
+    def test_unknown_override_ignored(self):
+        before = sl.BLUE
+        sl.init_palette({"NOTACOLOR": "1;34"})
+        self.assertEqual(sl.BLUE, before)
+
+    def test_restore_via_no_arg(self):
+        sl.init_palette({"BLUE": "1;34"})
+        sl.init_palette()
+        self.assertEqual(sl.BLUE, "\033[38;5;33m")
+
+
+class TestPaletteFromConfig(unittest.TestCase):
+    def tearDown(self):
+        sl.init_palette()
+
+    def _write(self, body):
+        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
+        f.write(body)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_palette_parsed_into_config(self):
+        path = self._write('[palette]\nBLUE = "1;34"\n')
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertEqual(cfg.palette, {"BLUE": "1;34"})
+
+    def test_unknown_palette_key_dropped(self):
+        path = self._write('[palette]\nNOTACOLOR = "1;34"\n')
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertEqual(cfg.palette, {})
+
+    def test_main_applies_palette(self):
+        import io
+        from contextlib import redirect_stdout
+        path = self._write('[palette]\nBLUE = "1;34"\n')
+        raw = {"workspace": {"current_dir": "/tmp"}, "model": {"display_name": "Opus"},
+               "context_window": {"used_percentage": 10}}
+        env = {"HOME": "/tmp", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50",
+               "PATH": os.environ.get("PATH", ""),  # keep PATH so git in build_data resolves
+               "CC_AI_KIT_CONFIG": path}
+        buf = io.StringIO()
+        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))), \
+             mock.patch.dict(os.environ, env, clear=True), redirect_stdout(buf):
+            sl.main()
+        # path segment is BLUE; overridden blue (1;34) must appear in the raw output.
+        self.assertIn("\033[1;34m", buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
