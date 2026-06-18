@@ -24,6 +24,14 @@ import sys
 FENCE_OPEN = re.compile(r"^(\s*)(`{3,}|~{3,})\s*mermaid\b", re.IGNORECASE)
 LINE_RE = re.compile(r"line (\d+)", re.IGNORECASE)
 
+# Pure geometry helpers from the sibling analyzer (optional — the syntax pass
+# works without it; the geometry pass simply doesn't run if it's missing).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from mermaid_style import png_size, geometry_findings, extract_style_facts
+except Exception:
+    png_size = geometry_findings = extract_style_facts = None
+
 
 def iter_md(paths):
     for p in paths:
@@ -102,6 +110,12 @@ def main():
             if rc == 0:
                 ok += 1
                 print(f"{md}:{start}\tOK\t")
+                if geometry_findings and png_size and os.path.exists(png):
+                    dims = png_size(png)
+                    if dims:
+                        n_nodes = len(extract_style_facts(body).nodes)
+                        for g in geometry_findings(dims[0], dims[1], n_nodes):
+                            print(f"{md}:{start}\tGEOMETRY\t{g.rule}\t{g.message}\t→ {g.fix}")
             else:
                 nok += 1
                 m = LINE_RE.search(err)
