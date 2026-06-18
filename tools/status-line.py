@@ -62,15 +62,18 @@ PINNED = {"path", "context"}   # always rendered even if they overflow the budge
 
 # Resolved configuration: the result of merging internal defaults < TOML file <
 # env. `segments` is a {key: bool} dict, `layout` a list[Line], `palette` a
-# {NAME: "sgr;params"} dict of overrides (empty = no override). External drop-in
-# segments are E4c and are intentionally not part of this type yet.
-Config = namedtuple("Config", "segments layout palette")
+# {NAME: "sgr;params"} dict of overrides (empty = no override), `ramps` a
+# {band: {threshold: colorspec}} dict of whole-band overrides (empty = no
+# override). External drop-in segments are E4c and are intentionally not part of
+# this type yet.
+Config = namedtuple("Config", "segments layout palette ramps")
 
 
 def default_config():
     """A Config snapshotting the current module-global defaults (SEGMENTS/LAYOUT,
-    no palette overrides). Copies are returned so callers cannot mutate globals."""
-    return Config(segments=dict(SEGMENTS), layout=list(LAYOUT), palette={})
+    no palette/ramp overrides). Copies are returned so callers cannot mutate
+    globals."""
+    return Config(segments=dict(SEGMENTS), layout=list(LAYOUT), palette={}, ramps={})
 
 
 # ═══ Config resolution (defaults < TOML file < env) ══════════════════════════
@@ -113,7 +116,7 @@ def _load_toml(path):
     except FileNotFoundError:
         return {}
     except (OSError, tomllib.TOMLDecodeError) as e:
-        print(f"{GREY}status-line: ignoring config {path}: {e}{RESET}", file=sys.stderr)
+        print(f"{_DIM}status-line: ignoring config {path}: {e}{RESET}", file=sys.stderr)
         return {}
 
 
@@ -125,10 +128,10 @@ def _resolve_segments(defaults, file_seg, env):
     seg = dict(defaults)
     for k, v in (file_seg or {}).items():
         if k not in seg:
-            print(f"{GREY}status-line: unknown segment '{k}' in config{RESET}",
+            print(f"{_DIM}status-line: unknown segment '{k}' in config{RESET}",
                   file=sys.stderr)
         elif not isinstance(v, bool):
-            print(f"{GREY}status-line: segment '{k}' must be true/false, "
+            print(f"{_DIM}status-line: segment '{k}' must be true/false, "
                   f"got {v!r} — ignored{RESET}", file=sys.stderr)
         else:
             seg[k] = v
@@ -162,14 +165,25 @@ def load_config(env):
         if k in _PALETTE_DEFAULTS:
             palette[k] = str(v)
         else:
-            print(f"{GREY}status-line: unknown palette key '{k}'{RESET}", file=sys.stderr)
-    return Config(segments=segments, layout=layout, palette=palette)
+            print(f"{_DIM}status-line: unknown palette key '{k}'{RESET}", file=sys.stderr)
+    ramps = {}
+    for band, table in (raw.get("ramp") or {}).items():
+        if band not in _RAMP_DEFAULTS:
+            print(f"{_DIM}status-line: unknown ramp '{band}'{RESET}", file=sys.stderr)
+            continue
+        if not isinstance(table, dict):
+            print(f"{_DIM}status-line: ramp '{band}' must be a table — ignored{RESET}",
+                  file=sys.stderr)
+            continue
+        ramps[band] = {str(k): str(v) for k, v in table.items()}
+    return Config(segments=segments, layout=layout, palette=palette, ramps=ramps)
 
 
 # ═══ Palette ════════════════════════════════════════════════════════════════
 # Fixed (non-overridable) colors.
 RESET = "\033[0m"
 BG_LIGHTGRAY = "\033[47m"
+_DIM = "\033[90m"             # fixed dim grey for stderr warnings (palette-independent)
 LIGHTBLUE = "\033[38;5;75m"   # cornflower — chat-size ramp band 3 (distinct from BLUE)
 
 # Overridable palette: NAME -> default SGR params (no "\033[" / "m" wrapper).
@@ -180,9 +194,32 @@ _PALETTE_DEFAULTS = {
     "GREY": "90", "WHITE": "1;97", "CYAN": "1;36", "GREEN": "1;32",
     "ORANGE": "38;5;208", "RED": "1;31", "YELLOW": "1;33", "MAGENTA": "1;35",
     "BLUE": "38;5;33",
+    "LIGHTBLUE": "38;5;75",            # NEW palette entry (chat-size ramp band 3)
     "ORANGE_BOLD": "1;38;5;208",      # high-severity context band
     "MAGENTA_DARK_BOLD": "1;38;5;90",  # dark/gothic — top context band (>=50%)
 }
+
+# Ramps as data: band -> [(threshold, colorspec)]. Threshold keys go through
+# _parse_threshold (percent / byte-suffix / inf); colorspecs through parse_color
+# against the resolved palette. [ramp.X] in config REPLACES a band wholesale.
+_RAMP_DEFAULTS = {
+    "context": [(10, "WHITE"), (15, "CYAN"), (20, "BLUE"), (25, "GREEN"),
+                (30, "YELLOW"), (40, "ORANGE_BOLD"), (50, "RED"),
+                ("inf", "MAGENTA_DARK_BOLD")],
+    "rate": [(50, "GREEN"), (80, "YELLOW"), ("inf", "RED")],
+    "chat_size": [("512k", "WHITE"), ("1M", "CYAN"), ("2M", "LIGHTBLUE"),
+                  ("3M", "GREEN"), ("4M", "YELLOW"), ("5M", "ORANGE"),
+                  ("10M", "RED"), ("inf", "MAGENTA")],
+}
+
+# Effort ladder: level -> (palette name, fill count 1..5). Palette-derived but
+# NOT user-configurable. `auto` is a setting and `ultracode` reports as xhigh —
+# neither is a level here.
+_EFFORT_DEFAULTS = {
+    "low": ("CYAN", 1), "medium": ("BLUE", 2), "high": ("YELLOW", 3),
+    "xhigh": ("ORANGE", 4), "max": ("RED", 5),
+}
+_EFFORT_GLYPHS = "▁▃▄▆█"
 
 INF = float("inf")
 _MB = 1024 * 1024
@@ -348,6 +385,94 @@ def _parse_threshold(key):
     if m:
         return int(m.group(1)) * _THRESHOLD_MULT[m.group(2)]
     return int(s)   # ValueError on garbage
+
+
+class Theme:
+    """Resolved colors for one render. `palette` maps NAME -> bare SGR params;
+    `ramps` band -> [(ceil, escape)]; `effort` level -> (escape, bar). `c()`
+    memoizes parse_color and never raises (invalid spec -> '')."""
+
+    def __init__(self, palette, ramps, effort):
+        self.palette = palette
+        self.ramps = ramps
+        self.effort = effort
+        self._cache = {}
+
+    def c(self, spec):
+        if spec not in self._cache:
+            self._cache[spec] = parse_color(spec, self.palette) or ""
+        return self._cache[spec]
+
+
+def _resolve_palette(overrides):
+    """Merge _PALETTE_DEFAULTS with `overrides` ({NAME: spec}); each override
+    value is parsed (hex / raw SGR / +mods — no name nesting) to bare params. A
+    bad value warns and keeps the default."""
+    palette = dict(_PALETTE_DEFAULTS)
+    for name, value in (overrides or {}).items():
+        if name not in _PALETTE_DEFAULTS:
+            continue                       # unknown keys already warned in load_config
+        esc = parse_color(value, palette=None)
+        if esc is None:
+            print(f"{_DIM}status-line: bad palette {name}={value!r} — keeping "
+                  f"default{RESET}", file=sys.stderr)
+            continue
+        palette[name] = esc[2:-1]          # strip "\033[" .. "m" -> bare params
+    return palette
+
+
+def _resolve_ramp(pairs, palette, band, fallback):
+    """Resolve [(threshold, colorspec)] -> [(ceil, escape)] sorted ascending.
+    A bad band color falls back to that ceil's color in `fallback`; a bad
+    threshold abandons the override and returns `fallback` whole. `fallback` is
+    None only when resolving the built-in defaults (known-good)."""
+    fb = dict(fallback) if fallback else {}
+    out = []
+    for thr, spec in pairs:
+        try:
+            ceil = _parse_threshold(thr)
+        except ValueError:
+            print(f"{_DIM}status-line: bad ramp [{band}] threshold {thr!r} — "
+                  f"keeping default{RESET}", file=sys.stderr)
+            return list(fallback) if fallback else out
+        esc = parse_color(spec, palette)
+        if esc is None:
+            esc = fb.get(ceil, "")
+            print(f"{_DIM}status-line: bad ramp [{band}] color {spec!r} — using "
+                  f"default band{RESET}", file=sys.stderr)
+        out.append((ceil, esc))
+    out.sort(key=lambda ce: ce[0])
+    return out
+
+
+def _build_effort(palette):
+    """level -> (color escape, bar string). Filled glyphs in the level's color,
+    the rest in grey (matching the legacy _EFFORT_BARS layout)."""
+    grey = parse_color("GREY", palette) or ""
+    out = {}
+    for level, (name, n) in _EFFORT_DEFAULTS.items():
+        color = parse_color(name, palette) or ""
+        rest = _EFFORT_GLYPHS[n:]
+        bar = f"{color}{_EFFORT_GLYPHS[:n]}" + (f"{grey}{rest}" if rest else "")
+        out[level] = (color, bar)
+    return out
+
+
+def build_theme(cfg):
+    """Resolve a Config's palette + ramps + effort into a Theme."""
+    palette = _resolve_palette(cfg.palette)
+    ramps = {}
+    for band, default_pairs in _RAMP_DEFAULTS.items():
+        default_ramp = _resolve_ramp(default_pairs, palette, band, None)
+        override = (cfg.ramps or {}).get(band)
+        ramps[band] = (default_ramp if override is None
+                       else _resolve_ramp(override.items(), palette, band, default_ramp))
+    return Theme(palette, ramps, _build_effort(palette))
+
+
+def default_theme():
+    """Theme from default_config() (no overrides)."""
+    return build_theme(default_config())
 
 
 # ═══ Formatters ══════════════════════════════════════════════════════════════
@@ -1078,6 +1203,7 @@ def cmd_print_config(cfg):
         "layout": [{"min_rows": ln.min_rows, "segments": ln.segments}
                    for ln in cfg.layout],
         "palette": cfg.palette,
+        "ramps": cfg.ramps,
     }, indent=2)
 
 

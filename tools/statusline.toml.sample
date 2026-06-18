@@ -76,6 +76,7 @@
 # YELLOW = "1;33"                  # high effort, mid bands
 # MAGENTA = "1;35"                 # top chat-size band
 # BLUE = "38;5;33"                 # path, medium effort (truer blue; 1;34 reads purple on some terminals)
+# LIGHTBLUE = "38;5;75"            # cornflower — chat-size ramp band 3 (distinct from BLUE)
 # ORANGE_BOLD = "1;38;5;208"       # high-severity context band
 # MAGENTA_DARK_BOLD = "1;38;5;90"  # top context band (>= 50%)
 

@@ -671,14 +671,14 @@ class TestResolveSegments(unittest.TestCase):
 class TestRenderWithConfig(unittest.TestCase):
     def test_pack_line_honors_cfg_segments(self):
         cfg = sl.Config(segments={**sl.SEGMENTS, "clock": False},
-                        layout=list(sl.LAYOUT), palette={})
+                        layout=list(sl.LAYOUT), palette={}, ramps={})
         out = strip(sl.pack_line(["model", "clock"], _data(), 200, cfg))
         self.assertNotIn("⏰", out)
         self.assertIn("Opus 4.8", out)
 
     def test_render_honors_cfg_layout(self):
         cfg = sl.Config(segments=dict(sl.SEGMENTS),
-                        layout=[sl.Line(0, ["model"])], palette={})
+                        layout=[sl.Line(0, ["model"])], palette={}, ramps={})
         lines = sl.render(_data(), 200, 50, cfg)
         self.assertEqual(len(lines), 1)
         self.assertIn("Opus 4.8", strip(lines[0]))
@@ -852,7 +852,7 @@ class TestCLI(unittest.TestCase):
 
     def test_print_config_emits_resolved_json(self):
         cfg = sl.Config(segments={"path": True}, layout=[sl.Line(0, ["path"])],
-                        palette={"BLUE": "1;34"})
+                        palette={"BLUE": "1;34"}, ramps={})
         out = sl.cmd_print_config(cfg)
         parsed = json.loads(out)
         self.assertEqual(parsed["segments"], {"path": True})
@@ -947,6 +947,112 @@ class TestParseThreshold(unittest.TestCase):
             sl._parse_threshold("nonsense")
         with self.assertRaises(ValueError):
             sl._parse_threshold("5MB")   # only single-letter k/M/G suffix
+
+
+class TestTheme(unittest.TestCase):
+    def test_c_resolves_and_memoizes(self):
+        t = sl.default_theme()
+        first = t.c("RED")
+        self.assertTrue(first.startswith("\033["))
+        self.assertEqual(t.c("RED"), first)          # same object/value, cached
+        self.assertIn("RED", t._cache)
+
+    def test_c_modifier(self):
+        t = sl.default_theme()
+        self.assertEqual(t.c("RED+bold"), sl.parse_color("RED+bold", t.palette))
+
+    def test_c_invalid_is_empty_string(self):
+        t = sl.default_theme()
+        self.assertEqual(t.c("NOTACOLOR"), "")        # never raises, no color
+
+
+class TestBuildTheme(unittest.TestCase):
+    def _cfg(self, palette=None, ramps=None):
+        return sl.Config(segments=dict(sl.SEGMENTS), layout=list(sl.LAYOUT),
+                         palette=palette or {}, ramps=ramps or {})
+
+    def test_palette_merges_over_defaults(self):
+        t = sl.build_theme(self._cfg(palette={"BLUE": "1;34"}))
+        self.assertEqual(t.palette["BLUE"], "1;34")
+        self.assertEqual(t.palette["RED"], sl._PALETTE_DEFAULTS["RED"])  # untouched
+
+    def test_palette_hex_override_resolved_to_params(self):
+        t = sl.build_theme(self._cfg(palette={"BLUE": "#3399ff"}))
+        self.assertEqual(t.palette["BLUE"], "38;2;51;153;255")
+
+    def test_bad_palette_value_keeps_default(self):
+        t = sl.build_theme(self._cfg(palette={"BLUE": "#zzz"}))
+        self.assertEqual(t.palette["BLUE"], sl._PALETTE_DEFAULTS["BLUE"])
+
+    def test_ramp_replaced_whole(self):
+        t = sl.build_theme(self._cfg(ramps={"rate": {"50": "GREEN", "inf": "RED"}}))
+        self.assertEqual([c for _, c in t.ramps["rate"]],
+                         [t.c("GREEN"), t.c("RED")])
+        self.assertEqual([ceil for ceil, _ in t.ramps["rate"]], [50, float("inf")])
+
+    def test_unspecified_ramp_keeps_default(self):
+        t = sl.build_theme(self._cfg(ramps={"rate": {"inf": "RED"}}))
+        self.assertEqual(len(t.ramps["context"]), len(sl._RAMP_DEFAULTS["context"]))
+
+    def test_bad_band_color_falls_back_to_default_band(self):
+        # context default band at ceil 10 is WHITE; a bad override color for that
+        # band falls back to the default band's resolved color.
+        bad = {"10": "NOPE", "inf": "RED"}
+        t = sl.build_theme(self._cfg(ramps={"context": bad}))
+        self.assertEqual(t.ramps["context"][0], (10, t.c("WHITE")))
+
+    def test_bad_threshold_keeps_whole_default_ramp(self):
+        t = sl.build_theme(self._cfg(ramps={"context": {"oops": "RED"}}))
+        self.assertEqual(t.ramps["context"], sl.default_theme().ramps["context"])
+
+    def test_effort_derives_from_palette(self):
+        t = sl.default_theme()
+        self.assertEqual(t.effort["low"][0], t.c("CYAN"))
+        self.assertEqual(t.effort["max"][0], t.c("RED"))
+        self.assertEqual(t.effort["low"][1].count("▁"), 1)
+        # full ladder: every glyph present, no trailing grey segment for max
+        self.assertTrue(t.effort["max"][1].startswith(t.c("RED")))
+
+
+class TestThemeMatchesLegacy(unittest.TestCase):
+    """Pins the new Theme byte-identical to the still-live legacy globals, so the
+    Task-4 cutover provably changes nothing. Removed in Task 4 with the globals."""
+    def test_palette_colors_match_globals(self):
+        t = sl.default_theme()
+        for name in ("WHITE", "CYAN", "GREEN", "RED", "YELLOW", "MAGENTA",
+                     "ORANGE", "BLUE", "GREY"):
+            self.assertEqual(t.c(name), getattr(sl, name), name)
+
+    def test_ramps_match_globals(self):
+        t = sl.default_theme()
+        self.assertEqual(t.ramps["context"], sl.CONTEXT_RAMP)
+        self.assertEqual(t.ramps["rate"], sl.RATE_RAMP)
+        self.assertEqual(t.ramps["chat_size"], sl.CHAT_SIZE_RAMP)
+
+    def test_effort_matches_globals(self):
+        self.assertEqual(sl.default_theme().effort, sl._EFFORT_BARS)
+
+
+class TestRampFromConfig(unittest.TestCase):
+    def _write(self, body):
+        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
+        f.write(body); f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_ramp_parsed_into_config(self):
+        path = self._write('[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n')
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertEqual(cfg.ramps, {"rate": {"50": "GREEN", "inf": "RED+bold"}})
+
+    def test_unknown_ramp_dropped(self):
+        path = self._write('[ramp.bogus]\n10 = "RED"\n')
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertEqual(cfg.ramps, {})
+
+    def test_no_ramp_block_is_empty(self):
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        self.assertEqual(cfg.ramps, {})
 
 
 if __name__ == "__main__":
