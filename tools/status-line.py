@@ -280,6 +280,76 @@ def _first_fitting(variants, avail):
     return None
 
 
+# ═══ Color engine ════════════════════════════════════════════════════════════
+# One parser produces every SGR escape. Base forms (by shape): palette NAME
+# (letter-led, resolved against `palette`), raw SGR ("38;5;208" passthrough), or
+# hex ("#rgb"/"#rrggbb"/"#rrggbbaa", alpha dropped). "+bold/+dim/+italic/
+# +underline" modifiers prepend 1/2/3/4 in ascending order. Invalid -> None.
+_MOD_SGR = {"bold": "1", "dim": "2", "italic": "3", "underline": "4"}
+
+
+def _hex_to_sgr(spec):
+    """'#rgb' / '#rgba' / '#rrggbb' / '#rrggbbaa' -> '38;2;r;g;b' (alpha
+    dropped). None if not valid hex of a supported length."""
+    h = spec[1:]
+    if len(h) in (3, 4):                 # short form: expand each nibble, drop alpha
+        h = "".join(c * 2 for c in h[:3])
+    elif len(h) == 8:                    # long form with alpha: drop the alpha byte
+        h = h[:6]
+    if len(h) != 6 or re.fullmatch(r"[0-9a-fA-F]{6}", h) is None:
+        return None
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"38;2;{r};{g};{b}"
+
+
+def parse_color(spec, palette=None):
+    """Resolve a colorspec to '\\033[...m', or None if invalid. See section
+    header for the grammar. `palette` ({NAME: sgr params}) is required only for
+    name lookups; raw-SGR and hex specs ignore it."""
+    if not spec:
+        return None
+    base, *mod_names = str(spec).split("+")
+    base = base.strip()
+    mods = []
+    for m in mod_names:
+        code = _MOD_SGR.get(m.strip().lower())
+        if code is None:
+            return None
+        mods.append(code)
+    if base.startswith("#"):
+        params = _hex_to_sgr(base)
+    elif base[:1].isalpha():
+        params = (palette or {}).get(base)
+    elif re.fullmatch(r"[0-9;]+", base):
+        params = base
+    else:
+        params = None
+    if params is None:
+        return None
+    ordered = sorted(set(mods), key=int)
+    return "\033[" + ";".join(ordered + [params]) + "m"
+
+
+_THRESHOLD_MULT = {"k": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
+
+
+def _parse_threshold(key):
+    """Ramp threshold -> comparable number. 'inf'/inf -> INF; '512k'/'5M'/'1G'
+    -> bytes (1024-based); bare int / numeric string -> that int (a percent).
+    Raises ValueError on anything else."""
+    if isinstance(key, float):
+        return key
+    if isinstance(key, int):
+        return key
+    s = str(key).strip()
+    if s.lower() == "inf":
+        return INF
+    m = re.fullmatch(r"(\d+)([kMG])", s)
+    if m:
+        return int(m.group(1)) * _THRESHOLD_MULT[m.group(2)]
+    return int(s)   # ValueError on garbage
+
+
 # ═══ Formatters ══════════════════════════════════════════════════════════════
 def fmt_number(n):
     """Thousands separators: 1234567 -> '1,234,567'."""

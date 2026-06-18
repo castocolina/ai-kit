@@ -876,5 +876,78 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
 
 
+class TestParseColor(unittest.TestCase):
+    PAL = {"RED": "31", "BLUE": "38;5;39", "ORANGE": "38;5;208"}
+
+    def test_palette_name(self):
+        self.assertEqual(sl.parse_color("RED", self.PAL), "\033[31m")
+        self.assertEqual(sl.parse_color("BLUE", self.PAL), "\033[38;5;39m")
+
+    def test_raw_sgr_passthrough(self):
+        self.assertEqual(sl.parse_color("38;5;33"), "\033[38;5;33m")
+        self.assertEqual(sl.parse_color("1;31"), "\033[1;31m")
+
+    def test_hex_six(self):
+        self.assertEqual(sl.parse_color("#3399ff"), "\033[38;2;51;153;255m")
+
+    def test_hex_short_expands(self):
+        self.assertEqual(sl.parse_color("#39f"), "\033[38;2;51;153;255m")
+
+    def test_hex_alpha_stripped(self):
+        self.assertEqual(sl.parse_color("#3399ffcc"), "\033[38;2;51;153;255m")
+
+    def test_modifier_bold_on_name(self):
+        self.assertEqual(sl.parse_color("RED+bold", self.PAL), "\033[1;31m")
+
+    def test_modifier_on_hex(self):
+        self.assertEqual(sl.parse_color("#3399ff+bold"), "\033[1;38;2;51;153;255m")
+
+    def test_modifiers_canonical_order(self):
+        # underline(4)+bold(1) -> ascending 1;4 regardless of input order
+        self.assertEqual(sl.parse_color("RED+underline+bold", self.PAL), "\033[1;4;31m")
+
+    def test_all_modifiers(self):
+        self.assertEqual(sl.parse_color("RED+bold+dim+italic+underline", self.PAL),
+                         "\033[1;2;3;4;31m")
+
+    def test_unknown_name_is_none(self):
+        self.assertIsNone(sl.parse_color("NOTACOLOR", self.PAL))
+
+    def test_name_without_palette_is_none(self):
+        self.assertIsNone(sl.parse_color("RED"))
+
+    def test_unknown_modifier_is_none(self):
+        self.assertIsNone(sl.parse_color("RED+blink", self.PAL))
+
+    def test_bad_hex_is_none(self):
+        self.assertIsNone(sl.parse_color("#zzz"))
+        self.assertIsNone(sl.parse_color("#12345"))   # 5 nibbles, not 3/6/8
+
+    def test_empty_is_none(self):
+        self.assertIsNone(sl.parse_color(""))
+        self.assertIsNone(sl.parse_color(None))
+
+
+class TestParseThreshold(unittest.TestCase):
+    def test_percent_int(self):
+        self.assertEqual(sl._parse_threshold(10), 10)
+        self.assertEqual(sl._parse_threshold("25"), 25)
+
+    def test_inf(self):
+        self.assertEqual(sl._parse_threshold("inf"), float("inf"))
+        self.assertEqual(sl._parse_threshold(float("inf")), float("inf"))
+
+    def test_byte_suffixes(self):
+        self.assertEqual(sl._parse_threshold("512k"), 512 * 1024)
+        self.assertEqual(sl._parse_threshold("5M"), 5 * 1024 * 1024)
+        self.assertEqual(sl._parse_threshold("1G"), 1024 ** 3)
+
+    def test_bad_key_raises(self):
+        with self.assertRaises(ValueError):
+            sl._parse_threshold("nonsense")
+        with self.assertRaises(ValueError):
+            sl._parse_threshold("5MB")   # only single-letter k/M/G suffix
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
