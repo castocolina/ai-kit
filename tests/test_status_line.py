@@ -832,6 +832,9 @@ class TestSampleRecipe(unittest.TestCase):
         self.assertEqual(parsed.get("segments"), dict(sl.SEGMENTS))
         want = [{"min_rows": ln.min_rows, "segments": ln.segments} for ln in sl.LAYOUT]
         self.assertEqual(parsed.get("line"), want)
+        # The [palette] block documents every overridable color with its real
+        # default; assert it so the recipe can't silently drift from the code.
+        self.assertEqual(parsed.get("palette"), dict(sl._PALETTE_DEFAULTS))
 
 
 class TestCLI(unittest.TestCase):

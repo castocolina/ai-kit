@@ -44,6 +44,55 @@ The repo is the source of truth. `tools/install.sh`:
 
 Adding or removing skills/commands/agents needs no change to the script — entries are discovered dynamically.
 
+### Status-line configuration
+
+The status line works with zero config. To customize it, edit
+`~/.config/ai-kit/statusline.toml` (the installer drops a fully-commented
+starter there if you don't have one — as shipped it changes nothing). Settings
+resolve **built-in defaults < this file < environment variables**.
+
+**Toggle segments** — in the file:
+
+```toml
+[segments]
+cost   = true     # show the 🪙 cost segment (off by default)
+memory = false    # hide the 🧮 process-memory segment
+```
+
+…or per-session via env (wins over the file):
+
+```sh
+CC_AI_KIT_SEGMENT_COST=1     # 1 true t y yes on  /  0 false f n no off
+```
+
+**Reorder / move rows** — uncomment **all** `[[line]]` blocks and edit (layout
+is all-or-nothing; a partial layout would silently drop segments):
+
+```toml
+[[line]]
+min_rows = 0
+segments = ["path", "branch", "dirty", "todo"]
+```
+
+**Fix a color** (e.g. a blue that reads purple) with raw ANSI SGR params:
+
+```toml
+[palette]
+BLUE = "38;5;33"
+```
+
+**Inspect & validate:**
+
+```sh
+python3 tools/status-line.py --print-config   # resolved config as JSON
+python3 tools/status-line.py --check          # validate the config file
+python3 tools/status-line.py --help           # full env-var list
+```
+
+Environment variables: `CC_AI_KIT_CONFIG` (config path),
+`CC_AI_KIT_SEGMENT_<KEY>` (per-segment toggle). Requires Python 3.11+ for the
+TOML file; on older Python the file is ignored and only env toggles apply.
+
 ### Flags & overrides
 
 ```bash
