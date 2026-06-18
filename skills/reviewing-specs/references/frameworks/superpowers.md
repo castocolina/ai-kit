@@ -20,6 +20,22 @@ parallel_task_marker: null
 ambiguity_markers: []
 delta_model: false
 filename_date_prefix: true
+revise_protocol:
+  mode: native_command
+  routes:
+    - archetype: design
+      invoke: "skill:superpowers:brainstorming"
+      command: "Re-run the brainstorming skill on this design doc, addressing the review findings"
+      validate: null
+      notes: "The design doc (intent+requirements+design fusion) is authored by brainstorming;
+        revise it there so its structure and house style stay intact rather than hand-editing
+        with the generic fixer."
+    - archetype: plan
+      invoke: "skill:superpowers:writing-plans"
+      command: "Re-run the writing-plans skill on this plan, addressing the review findings"
+      validate: null
+      notes: "Plans are authored by writing-plans; regenerate the plan addressing findings so the
+        bite-sized TDD step structure and exact-paths discipline are preserved."
 ---
 # Superpowers — reviewer profile
 

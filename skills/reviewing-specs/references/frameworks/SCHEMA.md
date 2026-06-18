@@ -78,19 +78,49 @@ produced yet, the orchestrator stops and says so rather than fabricating a deepe
 
 ## `revise_protocol` — apply findings the framework's own way
 
-Some frameworks own plan/spec generation through a dedicated planner (GSD regenerates a phase
-plan via `/gsd-plan-phase <id> --reviews`). For those, editing files directly with the generic
-fixer can desync the framework's state or break its conventions. When `mode: native_command`,
-the orchestrator routes findings to the native command instead of the direct-edit fixer:
+Some frameworks own plan/spec generation through a dedicated authoring tool (superpowers authors
+designs via `brainstorming` and plans via `writing-plans`; GSD regenerates a phase plan via
+`/gsd-plan-phase <id> --reviews`). For those, editing files directly with the generic fixer can
+desync the framework's state or break its conventions. When `mode: native_command`, the
+orchestrator routes findings to the native tool instead of the direct-edit fixer.
 
-- `invoke: skill:<name>` — dispatch a subagent that invokes that skill with the findings.
-- `invoke: slash_command` — run it via a slash-command tool if one is available this session;
-  else fall back to **surfacing** the pre-filled command + findings report for the user to run.
-- `invoke: surface` — always hand the user the pre-filled command + report.
+Routing is **per archetype** via a `routes:` list — different archetypes of the same framework can
+go to different tools (a superpowers `design` doc → `brainstorming`; a `plan` → `writing-plans`):
 
-`applies_to` lists which archetypes the native planner owns; archetypes outside that list still
-use the direct-edit fixer. Default (`mode: direct_edit`) keeps the existing fixer for every
-archetype — most frameworks (superpowers, generic) want this.
+```yaml
+revise_protocol:
+  mode: native_command
+  routes:
+    - archetype: design                          # intent | requirements | design | plan
+      invoke: "skill:superpowers:brainstorming"  # skill:<name> | slash_command | surface
+      command: null                              # required when invoke: slash_command
+      validate: null                             # optional "agent:<name>" run after a successful revise
+      notes: "why the native path is preferred"
+    - archetype: plan
+      invoke: "skill:superpowers:writing-plans"
+```
+
+Route fields:
+- `archetype` — which archetype this route handles. A report may flag findings in more than one
+  archetype (fused docs, doc sets); each is routed independently.
+- `invoke` —
+  - `skill:<name>` — dispatch a subagent that invokes that skill to revise the doc; if the skill
+    stalls on interactive input, the orchestrator **surfaces** the command instead (hybrid).
+  - `slash_command` — run `command` via a slash-command tool if one is available this session; else
+    **surface** the pre-filled command for the user to run.
+  - `surface` — always hand the user the pre-filled `command` + findings report; never auto-run.
+- `command` — the human-facing invocation (required for `slash_command`; shown when surfacing).
+- `validate` — optional `agent:<name>`; after a successful native revise the orchestrator runs that
+  agent to validate the regenerated doc before re-review.
+- `notes` — why the native path is preferred.
+
+An archetype **without** a matching route falls back to the direct-edit fixer
+(`applying-review-feedback`). `mode: direct_edit` (or no `revise_protocol`) keeps the direct-edit
+fixer for every archetype — most frameworks (generic) want this.
+
+**Shorthand (flat) form** — still accepted for single-archetype profiles and learned cache
+profiles: `mode` + `invoke` + `command` + `applies_to: [<archetype>, …]`. The orchestrator treats
+it as one route per listed archetype. Prefer the explicit `routes:` list in curated seeds.
 
 ## Resolution order (orchestrator)
 
