@@ -8,6 +8,7 @@ builders auto-deprioritize to fit. See the "HOW TO CUSTOMIZE" block near the
 bottom. Stdlib only. The .sh original is kept as a fallback.
 """
 
+import argparse
 import json
 import math
 import os
@@ -987,9 +988,96 @@ def build_data(raw, env):
     return data, cols, lines
 
 
+# ═══ CLI introspection ═══════════════════════════════════════════════════════
+_NO_CHECK = object()   # sentinel: --check flag absent (vs. present with no FILE)
+
+_ENV_HELP = """\
+Environment variables:
+  CC_AI_KIT_CONFIG         path to the TOML config file
+  CC_AI_KIT_SEGMENT_<KEY>  per-segment bool toggle; KEY is the upper-cased
+                           segment name (PATH, MODEL, COST, CONTEXT, ...).
+                           true:  1 true t y yes on    false: 0 false f n no off
+
+Config precedence (low -> high): built-in defaults < TOML file < env."""
+
+
+def cmd_print_config(cfg):
+    """Resolved config as pretty JSON (no rendering)."""
+    return json.dumps({
+        "segments": cfg.segments,
+        "layout": [{"min_rows": ln.min_rows, "segments": ln.segments}
+                   for ln in cfg.layout],
+        "palette": cfg.palette,
+    }, indent=2)
+
+
+def validate_config_file(path, env):
+    """Return a list of human-readable error strings for the config at path
+    (empty list = valid). Checks: parseability, unknown segment keys, unknown
+    palette keys, and [[line]] segments that are not real builders."""
+    if tomllib is None:
+        return ["tomllib unavailable (Python < 3.11): cannot validate"]
+    try:
+        with open(path, "rb") as f:
+            raw = tomllib.load(f)
+    except FileNotFoundError:
+        return [f"{path}: no such file"]
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        return [f"{path}: {e}"]
+    errors = []
+    defaults = default_config()
+    for k in (raw.get("segments") or {}):
+        if k not in defaults.segments:
+            errors.append(f"unknown segment key: {k}")
+    for k in (raw.get("palette") or {}):
+        if k not in _PALETTE_DEFAULTS:
+            errors.append(f"unknown palette key: {k}")
+    for i, line in enumerate(raw.get("line") or []):
+        for seg in line.get("segments", []):
+            if seg not in BUILDERS:
+                errors.append(f"line[{i}] references unknown segment: {seg}")
+    return errors
+
+
+def cmd_check(path, env):
+    """Validate a config file; print result. Return process exit code (0/1)."""
+    path = path or config_path(env)
+    errors = validate_config_file(path, env)
+    if errors:
+        for e in errors:
+            print(f"{path}: {e}", file=sys.stderr)
+        return 1
+    print(f"{path}: OK")
+    return 0
+
+
+def parse_args(argv):
+    p = argparse.ArgumentParser(
+        prog="status-line.py",
+        description="Claude Code status line. With no flags, reads the status "
+                    "JSON on stdin and renders up to three ANSI lines.",
+        epilog=_ENV_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--print-config", action="store_true",
+                   help="resolve config (defaults < file < env), print it as "
+                        "JSON, and exit (does not read stdin)")
+    p.add_argument("--check", nargs="?", const=None, default=_NO_CHECK,
+                   metavar="FILE",
+                   help="validate a config file (default: the resolved path) "
+                        "and exit non-zero if invalid")
+    return p.parse_args(argv)
+
+
 def main():
+    args = parse_args(sys.argv[1:])
+    if args.check is not _NO_CHECK:
+        sys.exit(cmd_check(args.check, os.environ))
     cfg = load_config(os.environ)
     init_palette(cfg.palette)        # apply overrides + rebuild ramps before render
+    if args.print_config:
+        print(cmd_print_config(cfg))
+        return
     try:
         raw = json.load(sys.stdin)
     except (ValueError, OSError):

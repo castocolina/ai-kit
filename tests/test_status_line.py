@@ -694,6 +694,7 @@ class TestMainUsesConfig(unittest.TestCase):
         from contextlib import redirect_stdout
         buf = io.StringIO()
         with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))), \
+             mock.patch.object(sys, "argv", ["status-line.py"]), \
              mock.patch.dict(os.environ, env, clear=True), \
              redirect_stdout(buf):
             sl.main()
@@ -797,6 +798,7 @@ class TestPaletteFromConfig(unittest.TestCase):
                "CC_AI_KIT_CONFIG": path}
         buf = io.StringIO()
         with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))), \
+             mock.patch.object(sys, "argv", ["status-line.py"]), \
              mock.patch.dict(os.environ, env, clear=True), redirect_stdout(buf):
             sl.main()
         # path segment is BLUE; overridden blue (1;34) must appear in the raw output.
@@ -830,6 +832,45 @@ class TestSampleRecipe(unittest.TestCase):
         self.assertEqual(parsed.get("segments"), dict(sl.SEGMENTS))
         want = [{"min_rows": ln.min_rows, "segments": ln.segments} for ln in sl.LAYOUT]
         self.assertEqual(parsed.get("line"), want)
+
+
+class TestCLI(unittest.TestCase):
+    def _write(self, body):
+        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
+        f.write(body)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_parse_args_defaults(self):
+        ns = sl.parse_args([])
+        self.assertFalse(ns.print_config)
+        self.assertIs(ns.check, sl._NO_CHECK)
+
+    def test_print_config_emits_resolved_json(self):
+        cfg = sl.Config(segments={"path": True}, layout=[sl.Line(0, ["path"])],
+                        palette={"BLUE": "1;34"})
+        out = sl.cmd_print_config(cfg)
+        parsed = json.loads(out)
+        self.assertEqual(parsed["segments"], {"path": True})
+        self.assertEqual(parsed["layout"], [{"min_rows": 0, "segments": ["path"]}])
+        self.assertEqual(parsed["palette"], {"BLUE": "1;34"})
+
+    def test_check_valid_returns_zero(self):
+        path = self._write('[segments]\ncost = true\n')
+        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 0)
+
+    def test_check_unknown_segment_returns_one(self):
+        path = self._write('[segments]\nbogus = true\n')
+        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
+
+    def test_check_bad_layout_ref_returns_one(self):
+        path = self._write('[[line]]\nsegments = ["nope"]\n')
+        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
+
+    def test_check_malformed_returns_one(self):
+        path = self._write('= = not toml')
+        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
 
 
 if __name__ == "__main__":
