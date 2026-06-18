@@ -16,6 +16,10 @@ import subprocess
 import sys
 import time
 import unicodedata
+try:
+    import tomllib
+except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only config.
+    tomllib = None
 from collections import namedtuple
 from datetime import datetime
 
@@ -40,6 +44,109 @@ CONTEXT_BAR_CELLS = 10  # context bar width; ▌ half-cells give 5% resolution
 # Packing: reserve a few cols so emoji-width miscounts don't wrap the line.
 RIGHT_MARGIN = 4
 SEP = " | "
+
+# ═══ Layout template — edit to reorder / move / re-line segments ═════════════
+# One Line per row. `segments` lists keys LEFT->RIGHT; leftmost = highest
+# priority (kept first when space is tight). `min_rows` gates the whole row by
+# terminal height. Reorder = move a key within a list; move between rows = cut
+# and paste a key; hide = flip its SEGMENTS flag.
+Line = namedtuple("Line", "min_rows segments")
+LAYOUT = [
+    Line(0,  ["path", "branch", "dirty", "todo"]),
+    Line(20, ["model", "time_ago", "clock", "effort", "lines",
+              "cost", "total_time", "api_time"]),
+    Line(30, ["dimensions", "context", "chat_size", "memory", "rate_limits"]),
+]
+PINNED = {"path", "context"}   # always rendered even if they overflow the budget
+
+# Resolved configuration: the result of merging internal defaults < TOML file <
+# env. `segments` is a {key: bool} dict, `layout` a list[Line], `palette` a
+# {NAME: "sgr;params"} dict of overrides (empty = no override). External drop-in
+# segments are E4b and are intentionally not part of this type yet.
+Config = namedtuple("Config", "segments layout palette")
+
+
+def default_config():
+    """A Config snapshotting the current module-global defaults (SEGMENTS/LAYOUT,
+    no palette overrides). Copies are returned so callers cannot mutate globals."""
+    return Config(segments=dict(SEGMENTS), layout=list(LAYOUT), palette={})
+
+
+# ═══ Config resolution (defaults < TOML file < env) ══════════════════════════
+_ENV_TRUE = {"1", "true", "t", "y", "yes", "on"}
+_ENV_FALSE = {"0", "false", "f", "n", "no", "off"}
+
+
+def env_bool(env, name):
+    """Tri-state bool from env[name]: True / False / None (unset or unrecognized).
+    None means 'no override' so callers fall through to file/default."""
+    v = env.get(name)
+    if v is None:
+        return None
+    v = v.strip().lower()
+    if v in _ENV_TRUE:
+        return True
+    if v in _ENV_FALSE:
+        return False
+    return None
+
+
+def config_path(env):
+    """Resolved TOML path: CC_AI_KIT_CONFIG, else
+    ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/statusline.toml."""
+    explicit = env.get("CC_AI_KIT_CONFIG")
+    if explicit:
+        return os.path.expanduser(explicit)
+    base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
+    return os.path.join(base, "ai-kit", "statusline.toml")
+
+
+def _load_toml(path):
+    """Parse the TOML at path. Missing/empty/malformed/no-tomllib → {} (a dim
+    warning to stderr on a malformed file). Never raises."""
+    if tomllib is None:
+        return {}
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except FileNotFoundError:
+        return {}
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        print(f"{GREY}status-line: ignoring config {path}: {e}{RESET}", file=sys.stderr)
+        return {}
+
+
+def _resolve_segments(defaults, file_seg, env):
+    """defaults < file [segments] < CC_AI_KIT_SEGMENT_<KEY> env. Each file entry
+    is dropped with a dim warning if its key is unknown OR its value is not a
+    bool (e.g. `cost = "true"` instead of `cost = true`); only bool file values
+    for known keys are honored. Env always overrides whatever the file resolved."""
+    seg = dict(defaults)
+    for k, v in (file_seg or {}).items():
+        if k not in seg:
+            print(f"{GREY}status-line: unknown segment '{k}' in config{RESET}",
+                  file=sys.stderr)
+        elif not isinstance(v, bool):
+            print(f"{GREY}status-line: segment '{k}' must be true/false, "
+                  f"got {v!r} — ignored{RESET}", file=sys.stderr)
+        else:
+            seg[k] = v
+    for k in seg:
+        ov = env_bool(env, f"CC_AI_KIT_SEGMENT_{k.upper()}")
+        if ov is not None:
+            seg[k] = ov
+    return seg
+
+
+def load_config(env):
+    """Resolve the full Config: internal defaults < TOML file < env.
+    Layout and palette resolution are added in Phase 2; for now they are the
+    defaults / empty so callers get a complete Config from day one."""
+    base = default_config()
+    raw = _load_toml(config_path(env))
+    segments = _resolve_segments(base.segments, raw.get("segments"), env)
+    return Config(segments=segments, layout=base.layout, palette={})
+
 
 # ═══ Palette ════════════════════════════════════════════════════════════════
 RESET = "\033[0m"
@@ -414,6 +521,8 @@ def seg_rate_limits(data, avail):
 
 
 # ═══ Segment registry — key -> builder(data, avail) ══════════════════════════
+# Editable surface (SEGMENTS + LAYOUT) is at the top of the file; this registry
+# (key -> builder function) stays next to the builders it wires up.
 BUILDERS = {
     "path": seg_path, "branch": seg_branch, "dirty": seg_dirty, "todo": seg_todo,
     "model": seg_model, "time_ago": seg_time_ago, "clock": seg_clock,
@@ -423,21 +532,6 @@ BUILDERS = {
     "chat_size": seg_chat_size, "memory": seg_memory,
     "rate_limits": seg_rate_limits,
 }
-
-# ═══ Layout template — edit to reorder / move / re-line segments ═════════════
-# One Line per row. `segments` lists keys LEFT->RIGHT; leftmost = highest
-# priority (kept first when space is tight). `min_rows` gates the whole row by
-# terminal height. Reorder = move a key within a list; move between rows = cut
-# and paste a key; hide = flip its SEGMENTS flag.
-Line = namedtuple("Line", "min_rows segments")
-LAYOUT = [
-    Line(0,  ["path", "branch", "dirty", "todo"]),
-    Line(20, ["model", "time_ago", "clock", "effort", "lines",
-              "cost", "total_time", "api_time"]),
-    Line(30, ["dimensions", "context", "chat_size", "memory", "rate_limits"]),
-]
-PINNED = {"path", "context"}   # always rendered even if they overflow the budget
-
 
 # ═══ Extractors ═══════════════════════════════════════════════════════════════
 def _to_int(s):
@@ -680,18 +774,19 @@ def current_todo(path):
 
 
 # ═══ Packing + render ════════════════════════════════════════════════════════
-def pack_line(keys, data, cols):
+def pack_line(keys, data, cols, cfg=None):
     """Best-fit pack enabled segments into cols - RIGHT_MARGIN.
 
     For each key (left->right), compute the space available at this position
     (budget - used - separator), ask the builder for content sized to it, and
     keep it if it is non-empty and fits — else skip it and keep trying the rest.
     Pinned segments are always kept. Order is priority: leftmost survive."""
+    cfg = cfg or default_config()
     budget = cols - RIGHT_MARGIN
     sep_w = visible_width(SEP)
     kept, used = [], 0
     for key in keys:
-        if not SEGMENTS.get(key, False):       # flag gate: not built => no compute
+        if not cfg.segments.get(key, False):   # flag gate: not built => no compute
             continue
         sep = sep_w if kept else 0
         avail = budget - used - sep
@@ -704,13 +799,14 @@ def pack_line(keys, data, cols):
     return SEP.join(kept)
 
 
-def render(data, cols, lines):
-    """Render up to len(LAYOUT) lines, gated by terminal height and width."""
+def render(data, cols, lines, cfg=None):
+    """Render up to len(cfg.layout) lines, gated by terminal height and width."""
+    cfg = cfg or default_config()
     out = []
-    for ln in LAYOUT:
+    for ln in cfg.layout:
         if lines < ln.min_rows:
             continue
-        packed = pack_line(ln.segments, data, cols)
+        packed = pack_line(ln.segments, data, cols, cfg)
         if packed:
             out.append(packed)
     return out
@@ -850,12 +946,13 @@ def build_data(raw, env):
 
 
 def main():
+    cfg = load_config(os.environ)
     try:
         raw = json.load(sys.stdin)
     except (ValueError, OSError):
         raw = {}
     data, cols, lines = build_data(raw, os.environ)
-    print("\n".join(render(data, cols, lines)))
+    print("\n".join(render(data, cols, lines, cfg)))
 
 
 if __name__ == "__main__":

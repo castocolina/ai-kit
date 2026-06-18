@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -558,6 +559,156 @@ class TestTputFallback(unittest.TestCase):
             cols, lines, assumed = sl.terminal_size({})
         self.assertEqual((cols, lines), (123, 44))
         self.assertFalse(assumed)
+
+
+class TestConfigScaffold(unittest.TestCase):
+    def test_default_config_matches_globals(self):
+        cfg = sl.default_config()
+        self.assertEqual(cfg.segments, dict(sl.SEGMENTS))
+        self.assertEqual(cfg.layout, list(sl.LAYOUT))
+        self.assertEqual(cfg.palette, {})
+
+    def test_default_config_is_a_snapshot(self):
+        cfg = sl.default_config()
+        cfg.segments["clock"] = not cfg.segments["clock"]
+        self.assertNotEqual(cfg.segments["clock"], sl.SEGMENTS["clock"])  # snapshot, not alias
+
+
+class TestEnvBool(unittest.TestCase):
+    def test_true_tokens(self):
+        for v in ("1", "true", "T", "y", "Yes", "on", "ON"):
+            self.assertIs(sl.env_bool({"X": v}, "X"), True, v)
+
+    def test_false_tokens(self):
+        for v in ("0", "false", "F", "n", "No", "off", "OFF"):
+            self.assertIs(sl.env_bool({"X": v}, "X"), False, v)
+
+    def test_unset_is_none(self):
+        self.assertIsNone(sl.env_bool({}, "X"))
+
+    def test_unrecognized_is_none(self):
+        self.assertIsNone(sl.env_bool({"X": "maybe"}, "X"))
+        self.assertIsNone(sl.env_bool({"X": ""}, "X"))
+
+
+class TestConfigPathAndLoad(unittest.TestCase):
+    def test_explicit_path_wins(self):
+        env = {"CC_AI_KIT_CONFIG": "/tmp/x.toml", "HOME": "/home/u"}
+        self.assertEqual(sl.config_path(env), "/tmp/x.toml")
+
+    def test_xdg_path(self):
+        env = {"XDG_CONFIG_HOME": "/cfg", "HOME": "/home/u"}
+        self.assertEqual(sl.config_path(env), "/cfg/ai-kit/statusline.toml")
+
+    def test_home_default_path(self):
+        env = {"HOME": "/home/u"}
+        self.assertEqual(sl.config_path(env), "/home/u/.config/ai-kit/statusline.toml")
+
+    def test_missing_file_is_empty(self):
+        self.assertEqual(sl._load_toml("/no/such/file.toml"), {})
+
+    def test_malformed_file_is_empty_no_crash(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("this is = = not toml")
+            path = f.name
+        try:
+            self.assertEqual(sl._load_toml(path), {})
+        finally:
+            os.unlink(path)
+
+    def test_valid_file_parses(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[segments]\ncost = true\n")
+            path = f.name
+        try:
+            self.assertEqual(sl._load_toml(path), {"segments": {"cost": True}})
+        finally:
+            os.unlink(path)
+
+
+class TestResolveSegments(unittest.TestCase):
+    def _write(self, body):
+        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
+        f.write(body)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_defaults_when_no_file_no_env(self):
+        env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"}
+        cfg = sl.load_config(env)
+        self.assertEqual(cfg.segments, dict(sl.SEGMENTS))
+        self.assertEqual(cfg.layout, list(sl.LAYOUT))
+        self.assertEqual(cfg.palette, {})
+
+    def test_file_overrides_default(self):
+        path = self._write("[segments]\ncost = true\nmemory = false\n")
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertTrue(cfg.segments["cost"])      # default False -> True
+        self.assertFalse(cfg.segments["memory"])   # default True  -> False
+        self.assertTrue(cfg.segments["clock"])     # untouched default
+
+    def test_env_overrides_file(self):
+        path = self._write("[segments]\ncost = true\n")
+        env = {"CC_AI_KIT_CONFIG": path, "HOME": "/h", "CC_AI_KIT_SEGMENT_COST": "0"}
+        cfg = sl.load_config(env)
+        self.assertFalse(cfg.segments["cost"])     # env beats file
+
+    def test_unknown_segment_key_ignored(self):
+        path = self._write("[segments]\nbogus = true\n")
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertNotIn("bogus", cfg.segments)
+
+    def test_wrong_type_value_ignored(self):
+        # `cost = "true"` (string, not bool) is a known key but a bad value:
+        # it must be dropped (keeping the default), not silently coerced.
+        path = self._write('[segments]\ncost = "true"\n')
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertEqual(cfg.segments["cost"], sl.SEGMENTS["cost"])  # default kept
+
+
+class TestRenderWithConfig(unittest.TestCase):
+    def test_pack_line_honors_cfg_segments(self):
+        cfg = sl.Config(segments={**sl.SEGMENTS, "clock": False},
+                        layout=list(sl.LAYOUT), palette={})
+        out = strip(sl.pack_line(["model", "clock"], _data(), 200, cfg))
+        self.assertNotIn("⏰", out)
+        self.assertIn("Opus 4.8", out)
+
+    def test_render_honors_cfg_layout(self):
+        cfg = sl.Config(segments=dict(sl.SEGMENTS),
+                        layout=[sl.Line(0, ["model"])], palette={})
+        lines = sl.render(_data(), 200, 50, cfg)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("Opus 4.8", strip(lines[0]))
+
+    def test_render_default_cfg_unchanged(self):
+        # No cfg arg -> same as today (three rows when tall+wide).
+        self.assertEqual(len(sl.render(_data(), 200, 50)), 3)
+
+
+class TestMainUsesConfig(unittest.TestCase):
+    def _run_main(self, raw, env):
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))), \
+             mock.patch.dict(os.environ, env, clear=True), \
+             redirect_stdout(buf):
+            sl.main()
+        return buf.getvalue()
+
+    def test_segment_hidden_via_env(self):
+        raw = {"workspace": {"current_dir": "/tmp"}, "model": {"display_name": "Opus"},
+               "context_window": {"used_percentage": 10}}
+        # PATH is preserved: build_data shells out to `git` (unguarded), and
+        # clear=True would otherwise strip it and crash main().
+        env = {"HOME": "/tmp", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50",
+               "PATH": os.environ.get("PATH", ""),
+               "CC_AI_KIT_SEGMENT_CLOCK": "0", "CC_AI_KIT_CONFIG": "/no/such.toml"}
+        out = strip(self._run_main(raw, env))
+        self.assertNotIn("⏰", out)
+        self.assertIn("Opus", out)
 
 
 if __name__ == "__main__":
