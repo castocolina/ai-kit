@@ -8,7 +8,7 @@ picture non-linear and prevents any concern from being lost.
 | Epic | Title | Status |
 |---|---|---|
 | **E1** | review-spec skill + framework-aware fix routing | **done** → `skills/review-spec/` + `revise_protocol.routes` (plan: `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md`) |
-| **E2** | mermaid-audit color-palette guidance | requirements captured · PRD pending |
+| **E2** | mermaid-audit color-palette guidance | **plan ready** → `docs/superpowers/plans/2026-06-17-e2-mermaid-color-shape-audit.md` (adds shape-semantics + render-geometry axes + consensus eval) |
 | **E3** | status-line bug fixes (effort/blue/memory/macOS) | requirements captured · PRD pending |
 | **E4** | status-line config & extensibility | **PRD drafted** → `statusline-config-extensibility-v1.0-prd.md` |
 | **E5** | installer ergonomics + setup wizard | requirements captured · PRD pending |
@@ -75,6 +75,14 @@ emphasis.
 **Decided**: **recommend + emit the ready-to-paste snippet only** (no auto-edit of
 the diagram), consistent with mermaid-audit being an auditor. FR-2.6 accessibility
 checks are **advisory** (warnings/suggestions), not a hard gate.
+
+**Plan note**: implemented as a static `scripts/mermaid_style.py` analyzer with
+near-binary C-rules (color), S-rules (node shape), and render-measured R-rules
+(geometry / aspect ratio), plus a consensus eval that proves the rules are
+reproducible across independent agents. Two axes added beyond the color-only FR-2.x
+per user emphasis: **node-shape semantics** and **render geometry** ("forma" = a
+diagram too horizontal — ratio < 0.4 — or scrolling past ~3 pages reads badly;
+target vertical-leaning, in-band). Accessibility (C2/C5) stays advisory.
 
 **Execution tooling**: build/extend this skill with **`/skill-creator:skill-creator`**
 (and validate with `/skill-judge` if useful).
