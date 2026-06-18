@@ -74,18 +74,48 @@ min_rows = 0
 segments = ["path", "branch", "dirty", "todo"]
 ```
 
-**Fix a color** (e.g. a blue that reads purple) with raw ANSI SGR params:
+**Recolor segments** — colors are configured in the TOML file only (there is
+**no `CC_AI_KIT_*` override** for palette or ramps, unlike the scalar settings
+above). A color value is one of:
+
+| Form | Example | Notes |
+|---|---|---|
+| palette **NAME** | `RED`, `BLUE` | one of the named colors in `[palette]` |
+| raw **SGR** params | `38;5;208` | advanced; the part between `ESC[` and `m` |
+| **hex** color | `#3399ff` | `#rgb` / `#rrggbb` / `#rrggbbaa` (alpha byte dropped) |
+
+Any form may carry `+bold` / `+dim` / `+italic` / `+underline` modifiers, e.g.
+`RED+bold`, `#3399ff+bold`. (Hex needs a truecolor terminal; `italic`/`underline`
+rendering is terminal-dependent.)
+
+`[palette]` **MERGES** over the defaults — override only the names you list (e.g.
+pick a different blue):
 
 ```toml
 [palette]
-BLUE = "38;5;33"
+BLUE = "#3399ff"
 ```
+
+`[ramp.*]` **REPLACES** the whole ramp — you must list every band you want. A
+ramp maps a value to a color by ascending threshold (first band the value is
+strictly below wins). Threshold keys are percent integers for `context` and
+`rate`, `k`/`M`/`G` byte suffixes (1024-based, quoted) for `chat_size`, and `inf`
+for the final catch-all band:
+
+```toml
+[ramp.context]
+20 = "BLUE"
+50 = "RED+bold"
+inf = "MAGENTA_DARK+bold"
+```
+
+See `tools/statusline.toml.sample` for the full default palette and ramps.
 
 **Inspect & validate:**
 
 ```sh
-python3 tools/status-line.py --print-config   # resolved config as JSON
-python3 tools/status-line.py --check          # validate the config file
+python3 tools/status-line.py --print-config   # resolved config as JSON (incl. ramps)
+python3 tools/status-line.py --check          # validate palette/ramp colorspecs
 python3 tools/status-line.py --help           # full env-var list
 ```
 

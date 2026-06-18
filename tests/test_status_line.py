@@ -807,6 +807,12 @@ class TestSampleRecipe(unittest.TestCase):
         # The [palette] block documents every overridable color with its real
         # default; assert it so the recipe can't silently drift from the code.
         self.assertEqual(parsed.get("palette"), dict(sl._PALETTE_DEFAULTS))
+        # [ramp.*] blocks document the real default tables.
+        want_ramps = {
+            band: {str(thr): spec for thr, spec in pairs}
+            for band, pairs in sl._RAMP_DEFAULTS.items()
+        }
+        self.assertEqual(parsed.get("ramp"), want_ramps)
 
 
 class TestCLI(unittest.TestCase):

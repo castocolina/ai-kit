@@ -61,11 +61,22 @@
 # min_rows = 30
 # segments = ["dimensions", "context", "chat_size", "memory", "rate_limits"]
 
-## ─── [palette] — override named colors ───────────────────────────────────────
+## ─── color grammar (used by [palette] and [ramp.*] values) ───────────────────
+## A color value is one of:
+##   * a palette NAME            e.g. RED, BLUE, ORANGE
+##   * a raw SGR parameter list  e.g. 38;5;208   (advanced; "xy;x;ab" form — the
+##                               part between "ESC[" and "m", no "\033[" / "m")
+##   * a hex color               e.g. #3399ff  (#rgb / #rrggbb / #rrggbbaa;
+##                                              an accidental IDE alpha is dropped)
+## Any of these may carry +bold / +dim / +italic / +underline modifiers, e.g.
+## RED+bold, #3399ff+bold. Hex needs a truecolor terminal; italic/underline vary.
+## [palette] MERGES over the defaults (override just the names you list);
+## [ramp.X] REPLACES that whole ramp (list every band you want).
+
+## ─── [palette] — named colors (each value below IS the default) ──────────────
 ## This block MERGES over the defaults: uncomment only the colors you want to
-## change. Values are raw ANSI SGR parameters — the part between "ESC[" and "m"
-## (no "\033[" / "m" wrapper). Examples: "1;31" = bold red, "38;5;208" = 256-color
-## orange, "38;5;33" = 256-color true blue. Each line below is the current default.
+## change. The default blue is the lightened 256-color shade (1;34 reads purple
+## on some terminals). Each line below is the current default.
 # [palette]
 # GREY = "90"                      # dim / secondary text, ladders, brackets
 # WHITE = "97"                     # time-ago, lowest context band
@@ -75,9 +86,42 @@
 # YELLOW = "33"                    # high effort, mid bands
 # MAGENTA = "35"                   # top chat-size band
 # ORANGE = "38;5;208"              # xhigh effort, warning bands
-# BLUE = "38;5;39"                 # path, medium effort (lightened; 1;34 reads purple on some terminals)
+# BLUE = "38;5;39"                 # path, medium effort (lightened 256-color blue)
 # LIGHTBLUE = "38;5;75"            # cornflower — chat-size ramp band 3 (distinct from BLUE)
 # MAGENTA_DARK = "38;5;90"         # dark/gothic — top context band (>= 50%)
+
+## ─── [ramp.context] — context-window % -> color (whole-ramp replace) ─────────
+## A ramp maps a value to a color by ascending threshold: the band whose ceil
+## the value is first strictly below wins. [ramp.X] REPLACES the whole ramp, so
+## list every band you want. Each line below is the current default.
+# [ramp.context]
+# 10 = "WHITE"
+# 15 = "CYAN"
+# 20 = "BLUE"
+# 25 = "GREEN"
+# 30 = "YELLOW"
+# 40 = "ORANGE+bold"
+# 50 = "RED+bold"
+# inf = "MAGENTA_DARK+bold"
+
+## ─── [ramp.rate] — rate-limit % -> color ────────────────────────────────────
+# [ramp.rate]
+# 50 = "GREEN"
+# 80 = "YELLOW"
+# inf = "RED+bold"
+
+## ─── [ramp.chat_size] — transcript bytes -> color (k/M/G suffixes) ──────────
+## Byte thresholds must be quoted strings ("512k", "1M", …) so they parse as
+## valid TOML keys; "inf" is the catch-all top band.
+# [ramp.chat_size]
+# "512k" = "WHITE"
+# "1M" = "CYAN"
+# "2M" = "LIGHTBLUE"
+# "3M" = "GREEN"
+# "4M" = "YELLOW"
+# "5M" = "ORANGE"
+# "10M" = "RED+bold"
+# inf = "MAGENTA"
 
 ## ─── Environment overrides (set in your shell, not this file) ─────────────────
 ## These win over everything in this file — handy for per-session tweaks:
