@@ -216,6 +216,24 @@ PY
   ok "statusLine -> python3 $sl"
 }
 
+install_statusline_config() {
+  local sample="$INSTALL_DIR/tools/statusline.toml.sample"
+  local cfg_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit"
+  local cfg="$cfg_dir/statusline.toml"
+  [ -f "$sample" ] || return 0
+  if [ -f "$cfg" ]; then
+    ok "statusline config exists, leaving as-is: $cfg"
+    return 0
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '%swould%s copy %s -> %s\n' "$C_DIM" "$C_RESET" "$sample" "$cfg"
+    return 0
+  fi
+  run mkdir -p "$cfg_dir"
+  run cp "$sample" "$cfg"
+  ok "statusline config -> $cfg (commented defaults; edit to customize)"
+}
+
 # --- uninstall --------------------------------------------------------------
 do_uninstall() {
   info "removing ai-kit symlinks pointing into $INSTALL_DIR"
@@ -276,6 +294,7 @@ main() {
   done
 
   update_statusline
+  install_statusline_config
 
   info "summary: ${n_linked} linked, ${n_relinked} relinked, ${n_pruned} pruned, ${n_skip_foreign} foreign-skipped, ${n_skip_real} real-skipped, ${n_invalid} invalid"
   ok "ai-kit installed at $INSTALL_DIR"

@@ -33,6 +33,7 @@ printf -- '---\nname: doit\n---\nbody\n'  > "$FIXTURE/commands/doit.md"
 printf -- '---\nname: helper\n---\nbody\n' > "$FIXTURE/agents/helper.md"
 mkdir -p "$FIXTURE/skills/nope"           # malformed: no SKILL.md
 printf 'print("sl")\n' > "$FIXTURE/tools/status-line.py"
+printf '# version = 1\n' > "$FIXTURE/tools/statusline.toml.sample"
 
 run_install() { env -i HOME="$WORK" PATH="$PATH" \
   AI_KIT_DIR="$FIXTURE" CLAUDE_CONFIG_DIR="$CLAUDE" AI_KIT_SKIP_FETCH=1 \
@@ -47,6 +48,17 @@ check "agent linked"              is_link_to "$CLAUDE/agents/helper.md" "$FIXTUR
 check "malformed skill NOT linked" bash -c '! [ -e "'"$CLAUDE"'/skills/nope" ]'
 check "statusLine points at fixture" \
   bash -c 'grep -q "'"$FIXTURE"'/tools/status-line.py" "'"$CLAUDE"'/settings.json"'
+
+CFG="$WORK/.config/ai-kit/statusline.toml"
+check "config sample copied when absent" bash -c '[ -f "'"$CFG"'" ]'
+check "copied config equals the sample" \
+  bash -c 'diff -q "'"$FIXTURE"'/tools/statusline.toml.sample" "'"$CFG"'" >/dev/null'
+
+# pre-existing config must NOT be overwritten
+printf '# user edited\n' > "$CFG"
+run_install
+check "existing config left untouched" \
+  bash -c 'grep -q "user edited" "'"$CFG"'"'
 
 # --- 2. idempotent re-run ---------------------------------------------------
 run_install
