@@ -1,54 +1,53 @@
-# Status-line Config & Extensibility — Product Requirements Document (PRD)
+# Status-line Config — Product Requirements Document (PRD)
 
-> Epic **E4** of the ai-kit status-line overhaul. Scope: the **configuration and
-> extensibility mechanism** only. The interactive wizard/setup lives in E5; the
-> effort/memory/macOS fixes live in E3. E4 builds the layer those depend on.
+> Epic **E4a** of the ai-kit status-line overhaul. Scope: the **configuration engine**
+> only — three-tier resolution, segment toggles, layout/palette overrides, the shipped
+> recipe, and introspection. The interactive wizard/setup lives in E5; the
+> effort/memory/macOS fixes live in E3; **external drop-in segments were split out to
+> E4b** (`statusline-external-segments-v1.0-prd.md`) and build on this engine. E4a builds
+> the layer those depend on.
 
 ## Requirements Description
 
 ### Background
 - **Problem**: `tools/status-line.py` is configured only by editing Python
-  constants (`SEGMENTS` dict, `LAYOUT`). There is no per-user config, no way to
-  toggle segments without editing source, and no way to add a custom segment
-  (e.g. "AWS session expires in 12m") without patching the file — which the user
-  has already had to do on another machine.
+  constants (`SEGMENTS` dict, `LAYOUT`). There is no per-user config and no way to
+  toggle segments, reorder the layout, or fix a color without editing source.
+  (Adding a *new* custom segment is the related extensibility problem solved by **E4b**,
+  which builds on this engine.)
 - **Users**: the kit's author and anyone who installs ai-kit and wants to tune
   the status line to their terminal/workflow without forking it.
-- **Value**: tune and extend the status line through config + drop-in scripts;
-  changes apply on the next refresh without reloading Claude Code; the source
-  file stays the upstream default.
+- **Value**: tune the status line through config; changes apply on the next refresh
+  without reloading Claude Code; the source file stays the upstream default.
 
 ### Feature Overview
 - **Core**:
   1. Three-tier resolved config: **internal defaults < TOML file < env vars**.
   2. Per-segment visibility toggles via config file and `CC_AI_KIT_SEGMENT_*`.
   3. Layout (which segments on which row, order, `min_rows`) overridable from the file.
-  4. **External segments**: drop-in executables discovered from a directory, placed
-     via a metadata header, output cached with a TTL.
-  5. Minimal `[palette]` color overrides (lets a user fix "blue looks purple"
+  4. Minimal `[palette]` color overrides (lets a user fix "blue looks purple"
      without code; default-palette work itself is E3).
-  6. Refactor: move the **editable config surface (segment defaults + layout) to
+  5. Refactor: move the **editable config surface (segment defaults + layout) to
      the top of the file**, immediately after imports/constants.
-  7. A **shipped recipe**: a complete, fully-commented `statusline.toml.sample`
+  6. A **shipped recipe**: a complete, fully-commented `statusline.toml.sample`
      in the repo, copied by the installer to the default path if none exists. It
      declares every `[segments]` toggle and the full `[[line]]` layout (identical
      to internal defaults) commented out — the user uncomments only what they
      want to change; internal defaults stay in force for everything else.
 - **Boundaries (in)**: config loading/merging, env grammar, the TOML schema, the
-  shipped recipe + installer copy-if-absent, external-segment
-  discovery/execution/caching, palette override application, the top-of-file
-  reorg, and tests for all of it.
-- **Boundaries (out)**: the Python wizard and install opt-in flow (**E5**);
-  effort level + auto-setting detection, memory-process fix, macOS
+  shipped recipe + installer copy-if-absent, palette override application, the
+  top-of-file reorg, `--print-config`/`--check` introspection, and tests for all of it.
+- **Boundaries (out)**: external drop-in segments — discovery/execution/caching/header
+  grammar (**E4b**, builds on this engine); the Python wizard and install opt-in flow
+  (**E5**); effort level + auto-setting detection, memory-process fix, macOS
   size/memory fallbacks (**E3**); shipping a curated theme library.
 
 ### User Scenarios
 - Hide the `cost` segment: set `CC_AI_KIT_SEGMENT_COST=0` or `cost = false`
   in the config file.
 - Reorder/move a segment between rows by editing `[[line]]` in the config file.
-- Add an AWS-session-expiry segment: drop an executable in `~/.config/ai-kit/segments/`
-  with `# ai-kit-segment: line=2 after=clock` — it appears next refresh, cached 30s.
 - Fix a purple-ish blue: `[palette] BLUE = "38;5;33"`.
+- (Adding a brand-new custom segment — e.g. AWS-session-expiry — is **E4b**.)
 
 ### Detailed Requirements
 
@@ -67,8 +66,9 @@
 - `CC_AI_KIT_SEGMENT_<KEY>` — bool; `<KEY>` is the upper-cased segment name
   (`EFFORT`, `MEMORY`, `COST`, `CONTEXT`, …).
 - `CC_AI_KIT_CONFIG` — path to the TOML file.
-- `CC_AI_KIT_SEGMENTS_DIR` — external-segment directory.
-- `CC_AI_KIT_EXTERNAL_TTL` — int seconds, external output cache TTL.
+
+(External-segment env scalars — `CC_AI_KIT_SEGMENTS_DIR`, `CC_AI_KIT_EXTERNAL_TTL` —
+are introduced by **E4b**.)
 
 Scope note: **env only covers segment toggles and the scalars above.** Layout
 (`[[line]]`) and `[palette]` are **file-only** — there is no env override for them
@@ -91,20 +91,17 @@ segments = ["model", "clock", "effort", "lines", "total_time", "api_time"]
 
 [palette]                  # optional ANSI SGR overrides for named colors
 BLUE = "38;5;33"
-
-[external]
-ttl = 10                   # seconds (overridden by CC_AI_KIT_EXTERNAL_TTL)
-dir = "~/.config/ai-kit/segments"
 ```
 Rule: `[segments]` merges over defaults (partial allowed). `[[line]]` is
 all-or-nothing — if present it **replaces** the default layout (so a partial
-layout can't silently drop segments by omission).
+layout can't silently drop segments by omission). (**E4b** adds an `[external]`
+block — `ttl`, `dir` — for drop-in segments.)
 
 **Shipped recipe (`statusline.toml.sample`)**
 - A complete, **fully-commented** TOML living in the repo (e.g. `tools/statusline.toml.sample`).
 - Contains every `[segments]` key set to its default, the full `[[line]]` layout
-  (byte-identical to the internal default), and example `[palette]` / `[external]`
-  blocks — all commented.
+  (byte-identical to the internal default), and an example `[palette]` block — all
+  commented. (**E4b** later adds a commented `[external]` block to this recipe.)
 - Header comment explains the two uncomment modes:
   - `[segments]` — uncomment **individual** lines to flip just those (merge).
   - `[[line]]` — to take over layout, uncomment **all** `[[line]]` blocks and edit
@@ -116,29 +113,9 @@ layout can't silently drop segments by omission).
   the user edits it. The sample stays the upstream canonical reference; E5's
   wizard can regenerate the real file from it.
 
-**External segment contract**
-- Discovery: each executable file in the segments dir is a provider.
-- Metadata header (first 10 lines), regex-matched:
-  `# ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end) [id=<slug>] [timeout=<s>] [ttl=<s>]`
-  - Defaults: `line` = last layout row, position = `end`, `id` = filename stem,
-    `timeout` = 2s, `ttl` = `[external].ttl`.
-- Input: the script receives the **same status JSON Claude passes to status-line**
-  on **stdin**, and runs with **cwd = `workspace.current_dir`** — so it can be
-  context-aware (e.g. pick an AWS profile by directory). Env is inherited.
-- Execution: run with the timeout; capture stdout. Output handling:
-  - take the **first non-empty line**, strip the trailing newline;
-  - allowed inline escapes are **SGR color codes only** (`\033[…m`); any other
-    control/CSI sequence is stripped (no cursor moves, no clears);
-  - width is measured with the same `visible_width` used for built-in segments,
-    and the line is truncated to the available budget like any other segment.
-  - Non-zero exit, timeout, or empty output → segment omitted; never breaks rendering.
-- Placement: insert into the resolved layout at the declared row/position.
-  - Target row gated out by `min_rows` → simply not shown.
-  - `line=<N>` out of range → clamp to the last existing row + a dim stderr warning.
-  - Multiple externals resolving to the same slot → deterministic order by
-    **filename, then `id`**.
-- Caching: per `id`, output cached `ttl` seconds at
-  `${XDG_CACHE_HOME:-~/.cache}/ai-kit/segments/<id>`; stale or missing → re-run.
+**External segments** — see **E4b** (`statusline-external-segments-v1.0-prd.md`). E4a leaves
+a clean seam: external providers are modeled as synthetic builders inserted into E4a's
+resolved layout, so the packing/overflow logic handles them unchanged once E4b lands.
 
 **File reorg**
 - Move `SEGMENTS` (defaults) and the `LAYOUT` template to the **top**, right after
@@ -160,19 +137,17 @@ layout can't silently drop segments by omission).
 - Python < 3.11 (no `tomllib`): degrade to defaults + env only; warn once. (Kit
   targets 3.11+; record as a known limitation.)
 - Config references an unknown segment key → ignored with a dim warning.
-- External script not executable → skipped with a warning.
-- Cache dir unwritable → run without caching (best effort).
 - A `[[line]]` references a segment that is toggled off → not rendered.
 
 ## Design Decisions
 
 ### Technical Approach
-- **Single module, no new deps**: `tomllib` (stdlib ≥3.11), `subprocess` (already
-  used), `os`/`time`. No third-party packages — preserves `curl | bash`-free,
-  zero-install execution.
+- **Single module, no new deps**: `tomllib` (stdlib ≥3.11), `os`/`time`. No
+  third-party packages — preserves `curl | bash`-free, zero-install execution.
 - **One resolution pass** in `main()`/`build_data()`: `cfg = load_config(env)`,
-  then `render()` consumes `cfg.layout`, `cfg.segments`, `cfg.palette`, and the
-  external providers. Keeps the render path pure and testable.
+  then `render()` consumes `cfg.layout`, `cfg.segments`, and `cfg.palette`. Keeps the
+  render path pure and testable, and leaves a clean insertion point for E4b's external
+  providers (synthetic builders added to `cfg.layout`).
 - **Palette overrides**: the overridable keys are the base named colors —
   `GREY WHITE CYAN GREEN ORANGE RED YELLOW MAGENTA BLUE` plus the two band colors
   `ORANGE_BOLD MAGENTA_DARK_BOLD`. Values are raw SGR parameters (e.g. `"38;5;33"`
@@ -180,14 +155,10 @@ layout can't silently drop segments by omission).
   (`CONTEXT_RAMP`, `RATE_RAMP`, `_EFFORT_BARS`) are built, so the ramps inherit the
   new colors automatically; ramps are not individually overridable. Unknown palette
   keys → ignored with a dim warning.
-- **External segments** modeled as synthetic builders inserted into the layout, so
-  the existing packing/overflow logic handles them unchanged.
 
 ### Key Components
 - `env_bool(env, name)` — tri-state bool parser.
-- `load_config(env)` — returns a `Config` (segments, layout, palette, external).
-- `discover_external(cfg)` — parse headers → list of external segment specs.
-- `run_external(spec, cfg)` — TTL-cached execution with timeout.
+- `load_config(env)` — returns a `Config` (segments, layout, palette).
 - Reorg of `SEGMENTS`/`LAYOUT` to top; `BUILDERS` annotated.
 - `tools/statusline.toml.sample` — the canonical commented recipe, generated to
   match the internal defaults (a test asserts they stay in sync).
@@ -195,18 +166,13 @@ layout can't silently drop segments by omission).
   copy the sample to the default config path only when absent.
 
 ### Constraints
-- **Performance**: config-file read every render (cheap); external scripts only
-  re-run past their TTL. Per-render added cost ≈ one small file stat/read.
-  **Budget: < ~15 ms added** versus today with a warm external cache (no script
-  re-run). Cold external runs are bounded by each script's `timeout`.
+- **Performance**: config-file read every render (cheap). Per-render added cost ≈
+  one small file stat/read. **Budget: < ~15 ms added** versus today.
 - **Compatibility**: defaults unchanged when no file/env present — existing
   installs behave identically until they opt in.
-- **Safety**: never crash on bad config/scripts; external output is treated as
-  display text only (no shell-eval of config values).
+- **Safety**: never crash on bad config; config values are never shell-eval'd.
 
 ### Risk Assessment
-- **External-script latency/abuse**: bounded by per-script timeout + TTL cache;
-  document that providers should be fast and print one line.
 - **Schema drift**: the TOML schema is versioned in README; unknown keys ignored.
 - **tomllib availability**: mitigated by env-only degradation + documented 3.11+.
 
@@ -215,12 +181,6 @@ layout can't silently drop segments by omission).
 ### Functional Acceptance
 - [ ] `CC_AI_KIT_SEGMENT_COST=0` hides cost; `=1` shows it; precedence is default < file < env.
 - [ ] A `statusline.toml` with `[segments]` and `[[line]]` changes visibility and layout accordingly.
-- [ ] An executable in the segments dir with a valid header renders at the declared row/position.
-- [ ] External output is cached for its TTL and re-runs after it expires.
-- [ ] External timeout / non-zero exit / empty output omits the segment without breaking the line.
-- [ ] An external script receives the status JSON on stdin and runs in `workspace.current_dir`.
-- [ ] External output keeps SGR colors but has other control sequences stripped, and is width-measured/truncated like a built-in segment.
-- [ ] Out-of-range `line=N` clamps to the last row; same-slot externals order deterministically by filename then id.
 - [ ] `[palette] BLUE=...` changes the rendered blue (and any ramp using it); absent → current default; unknown palette key warns and is ignored.
 - [ ] `--print-config` emits the resolved config without rendering; `--check` flags an invalid config with a non-zero exit; no-arg mode still renders from stdin.
 - [ ] Missing/malformed config file falls back to defaults with no crash.
@@ -231,11 +191,11 @@ layout can't silently drop segments by omission).
 
 ### Quality Standards
 - [ ] `shellcheck`-clean install path unaffected; `status-line.py` passes existing tests.
-- [ ] New tests cover: `env_bool`, precedence merge, TOML parse + toggles + layout override, external discovery/placement/timeout/TTL, malformed-config tolerance, palette override.
+- [ ] New tests cover: `env_bool`, precedence merge, TOML parse + toggles + layout override, malformed-config tolerance, palette override.
 - [ ] No new third-party dependencies.
 
 ### User Acceptance
-- [ ] README documents the config file, env vars, the external-segment header, and precedence.
+- [ ] README documents the config file, env vars, and precedence.
 - [ ] `status-line.py --help` (or a `--print-config` mode) lists resolved config and env knobs.
 
 ## Execution Phases
@@ -254,25 +214,20 @@ layout can't silently drop segments by omission).
 - [ ] Tests for layout override + palette override.
 - **Deliverables**: full layout/theming via file.
 
-### Phase 3: External segments
-**Goal**: drop-in extensible segments.
-- [ ] Header grammar parser + `discover_external`.
-- [ ] `run_external` with timeout + TTL cache; placement into layout.
-- [ ] Tests with fixture scripts (valid header, no header, slow/timeout, failing).
-- **Deliverables**: AWS-session-style segment works as a drop-in.
-
-### Phase 4: Recipe, install copy, docs & introspection
+### Phase 3: Recipe, install copy, docs & introspection
 **Goal**: discoverability + zero-friction first config.
 - [ ] Generate `tools/statusline.toml.sample` (fully commented, complete) + drift test vs internal defaults.
 - [ ] `install.sh`: copy the sample to the default config path if absent (never overwrite).
-- [ ] README section + sample external segment.
-- [ ] `--print-config` resolved-config dump.
+- [ ] README section documenting the config file, env vars, and precedence.
+- [ ] `--print-config` / `--check` introspection.
 - **Deliverables**: shipped recipe in place on install; documented, inspectable config surface.
 
 ---
 
-**Document Version**: 1.0
-**Created**: 2026-06-14
+**Document Version**: 1.1
+**Created**: 2026-06-14 · **Revised**: 2026-06-18 (split external segments out to E4b)
 **Clarification Rounds**: 4 (decomposition + E4 deep-dive + shipped-recipe + gap-closure)
-**Quality Score**: 100/100 — no open items
-**Depends on / feeds**: E5 (wizard consumes this config), E3 (effort/memory fixes use the toggles/palette).
+  + 1 scope/sequencing revision (external-segments split → E4b).
+**Sequencing**: starts after **E3** merges to main (branches off clean main).
+**Depends on / feeds**: E5 (wizard consumes this config), E3 (effort/memory fixes use the
+toggles/palette), E4b (external segments build on this config engine + resolved layout).

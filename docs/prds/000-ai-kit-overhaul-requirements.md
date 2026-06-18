@@ -10,12 +10,21 @@ picture non-linear and prevents any concern from being lost.
 | **E1** | review-spec skill + framework-aware fix routing | **done** → `skills/review-spec/` + `revise_protocol.routes` (plan: `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md`) |
 | **E2** | mermaid-audit color-palette guidance | **plan ready** → `docs/superpowers/plans/2026-06-17-e2-mermaid-color-shape-audit.md` (adds shape-semantics + render-geometry axes + consensus eval) |
 | **E3** | status-line bug fixes (effort/blue/memory/macOS) | **done** → `tools/status-line.py` cross-platform; plan `docs/superpowers/plans/2026-06-18-e3-statusline-fixes-crossplatform.md` |
-| **E4** | status-line config & extensibility | **PRD drafted** → `statusline-config-extensibility-v1.0-prd.md` |
+| **E4a** | status-line config | **PRD drafted** → `statusline-config-extensibility-v1.0-prd.md` (external segments split out to E4b) |
+| **E4b** | status-line external drop-in segments | requirements captured (split from E4; deferred until after E5) · PRD drafted → `statusline-external-segments-v1.0-prd.md` |
 | **E5** | installer ergonomics + setup wizard | requirements captured · PRD pending |
+| **E6** | doc-to-PDF skill (Markdown + mermaid → PDF/marp) | requirements captured · PRD pending |
 
-**Suggested sequence**: E1 → E2 → E3 → E4 → E5. E3 ships standalone with hardcoded
-defaults; **E4 later makes E3's colors/thresholds user-configurable** (E4 is not a
-prerequisite — the earlier "E4 first" note was a planning error).
+**Suggested sequence**: E1 → E2 → E3 → E4a → E5 → E4b. E3 ships standalone with hardcoded
+defaults; **E4a later makes E3's colors/thresholds user-configurable** (E4a is not a
+prerequisite — the earlier "E4 first" note was a planning error). **E3 merges to main
+before E4a starts** (E4a branches off clean main; both touch the shared palette/ramp code).
+**E4b (external drop-in segments) was split out of the original E4** and is deferred until
+after E5: it builds on E4a's proven config engine and is not on E5's critical path. It
+keeps the `E4` family number (not a higher epic) so it stays grouped with the status-line
+work rather than implying it runs after the unrelated E6. **E6 is
+independent** of the status-line epics and can ship any time; it benefits from E2's
+diagram-quality work but does not require it.
 
 ---
 
@@ -96,7 +105,7 @@ target vertical-leaning, in-band). Accessibility (C2/C5) stays advisory.
 ## E3 — status-line bug fixes
 
 **Intent**: correctness fixes and platform fallbacks in `tools/status-line.py`.
-Consumes E4's palette/toggles where relevant.
+Consumes E4a's palette/toggles where relevant.
 
 - **FR-3.1** — Resolve the effort **level** from the input JSON (`raw["effort"]["level"]` /
   `CLAUDE_EFFORT`), normalized to `low`/`medium`/`high`/`xhigh`/`max`, each with its own
@@ -109,7 +118,7 @@ Consumes E4's palette/toggles where relevant.
   compacting to a trailing asterisk `high*` when space is tight, dropped entirely if even
   that doesn't fit. No rainbow / no per-letter coloring.
 - **FR-3.3** — Make the default **blue** robust where it reads as **purple** on some
-  screens (pick a better default SGR; user override lands via E4 `[palette]`).
+  screens (pick a better default SGR; user override lands via E4a `[palette]`).
 - **FR-3.4** — Fix the **memory** segment: in wezterm it shows `<10mb`, indicating the
   wrong process is measured. Correct process/RSS selection.
 - **FR-3.5** — Add a **macOS fallback** for process RSS (memory).
@@ -119,13 +128,13 @@ Consumes E4's palette/toggles where relevant.
   segment colors via `pick_color(value, ramp)`. Add a `CHAT_SIZE_RAMP` keyed on bytes:
   **< 5 MB → neutral/default**, **≥ 5 MB → red + bold**, **≥ 10 MB → magenta/purple**
   (the `RED`/`MAGENTA` SGRs are already bold). Thresholds follow the same "first ceil the
-  value is below wins" ramp shape as `CONTEXT_RAMP`, and land as overridable values via E4's
+  value is below wins" ramp shape as `CONTEXT_RAMP`, and land as overridable values via E4a's
   config like the other E3 colors.
 
 **Execution tooling**: TDD (extend `tests/test_status_line.py`); no skill involved.
 
-**Dependencies**: none for shipping the fixes (standalone). E4 *consumes* E3 by making
-its colors/thresholds (blue, chat-size ramp, per-level effort colors) overridable; E3 does not block on E4.
+**Dependencies**: none for shipping the fixes (standalone). E4a *consumes* E3 by making
+its colors/thresholds (blue, chat-size ramp, per-level effort colors) overridable; E3 does not block on E4a.
 
 **Resolved**: `auto` (FR-3.2) is a **setting**, not a resolved level — detected by reading
 `effortLevel` from the `settings.json` chain (absent or `"auto"` = auto), and surfaced as a
@@ -137,25 +146,31 @@ a parent process is being measured — tracked as an impl task, not a spec ambig
 
 ---
 
-## E4 — status-line config & extensibility  *(PRD drafted)*
+## E4a — status-line config  *(PRD drafted)*
 
 See **`statusline-config-extensibility-v1.0-prd.md`**. Summary of locked decisions:
 - Three-tier config: **internal defaults < `~/.config/ai-kit/statusline.toml` (TOML) < env (`CC_AI_KIT_*`)**.
 - Segment toggles via `CC_AI_KIT_SEGMENT_<KEY>` (bool grammar) and `[segments]`.
 - Layout overridable via `[[line]]` (all-or-nothing).
-- External drop-in segments (`~/.config/ai-kit/segments/`) placed by header, TTL-cached.
 - Minimal `[palette]` overrides.
 - Editable surface (`SEGMENTS`/`LAYOUT`) moved to top of file.
 - A complete, fully-commented **recipe** shipped + copied to the default path if absent.
+- `--print-config` / `--check` introspection.
 
-**Execution tooling**: TDD. **Dependencies**: none; **feeds** E3 and E5.
+**Scope note**: external drop-in segments were **split out to E4b** — E4a is now the pure
+config engine that E5's wizard consumes. E4a phases: (1) config core, (2) layout + palette,
+(3) recipe + install copy-if-absent + docs + introspection.
+
+**Execution tooling**: TDD. **Sequencing**: starts after E3 merges to main (branches off
+clean main). **Dependencies**: none; **feeds** E3 (overridable colors/thresholds), E5
+(config model + recipe), and E4b (config engine externals build on).
 
 ---
 
 ## E5 — installer ergonomics + setup wizard
 
 **Intent**: make install fast and configurable; the `.sh` becomes a thin
-downloader, the real logic a Python wizard. Consumes E4's config + recipe.
+downloader, the real logic a Python wizard. Consumes E4a's config + recipe.
 
 - **FR-5.1** — Provide a **`Makefile`** with `make install` (and friends) for users
   who clone the repo — fast, with shell autocomplete.
@@ -172,16 +187,150 @@ downloader, the real logic a Python wizard. Consumes E4's config + recipe.
   line is already configured in `settings.json`.
 - **FR-5.6** — A **reconfigure** entry point to re-run the wizard later.
 - **FR-5.7** — The wizard writes/regenerates `~/.config/ai-kit/statusline.toml` from
-  the E4 recipe (with internal defaults as the floor).
+  the E4a recipe (with internal defaults as the floor).
 
 **Execution tooling**: TDD for the Python wizard; bash/shellcheck for the wrapper + Makefile.
 
-**Dependencies**: **E4** (config model + recipe).
+**Dependencies**: **E4a** (config model + recipe).
 
 **Decided**: wizard UX is **plain stdin prompts with zero heavy TUI dependencies**,
 but with ANSI affordances (markers, accent/dim, per-option example) per FR-5.4. The
 live preview renders by feeding a **representative sample JSON to `status-line.py`**
 and printing its output.
+
+---
+
+## E4b — status-line external drop-in segments  *(PRD drafted · deferred until after E5)*
+
+See **`statusline-external-segments-v1.0-prd.md`**. **Split out of the original E4** so E4a
+ships the config engine first; E4b builds the extensibility layer on top of it. Kept in the
+`E4` family (not numbered after E6) so it stays grouped with the status-line work. Founding
+motivation is real: the author has already had to hand-patch a custom segment on another
+machine.
+
+- **FR-4b.1** — **Discovery**: each executable file in the segments dir
+  (`${CC_AI_KIT_SEGMENTS_DIR:-~/.config/ai-kit/segments}`) is a provider.
+- **FR-4b.2** — **Metadata header** (first 10 lines), regex-matched:
+  `# ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end) [id=<slug>] [timeout=<s>] [ttl=<s>]`.
+  Defaults: `line` = last layout row, position = `end`, `id` = filename stem, `timeout` = 2s,
+  `ttl` = `[external].ttl`.
+- **FR-4b.3** — **Input contract**: the script receives the **same status JSON** on **stdin**
+  and runs with **cwd = `workspace.current_dir`** (context-aware, e.g. pick an AWS profile by
+  directory); env inherited.
+- **FR-4b.4** — **Execution + sanitization**: run with the timeout, capture stdout, take the
+  **first non-empty line**; allow **SGR color codes only** (`\033[…m`), strip any other
+  control/CSI sequence; width-measured + truncated like a built-in segment. Non-zero exit /
+  timeout / empty output → segment omitted; never breaks rendering.
+- **FR-4b.5** — **Placement**: insert at the declared row/position in the resolved layout
+  (modeled as a synthetic builder so existing packing/overflow logic handles it). Row gated
+  out by `min_rows` → not shown; `line=<N>` out of range → clamp to last row + dim warning;
+  same-slot externals order deterministically by **filename, then `id`**.
+- **FR-4b.6** — **Caching**: per `id`, output cached `ttl` seconds at
+  `${XDG_CACHE_HOME:-~/.cache}/ai-kit/segments/<id>`; stale/missing → re-run. Cache dir
+  unwritable → run without caching (best effort).
+- **FR-4b.7** — **Config surface** (added to E4a's schema): `[external] ttl`, `[external] dir`,
+  and env `CC_AI_KIT_SEGMENTS_DIR` / `CC_AI_KIT_EXTERNAL_TTL`. README documents the header
+  grammar; a sample external segment ships as a reference.
+
+**Execution tooling**: TDD (fixture scripts: valid header, no header, slow/timeout, failing).
+**Sequencing**: after **E5**; not on E5's critical path. **Dependencies**: **E4a** (config
+engine — externals are synthetic builders inserted into E4a's resolved layout).
+
+**Decided**: split from the original E4 because E5 (the only critical-path consumer) needs
+only the config model + recipe, not external providers; the PRD already isolates externals as
+"synthetic builders inserted into layout" → clean split seam, near-zero rework; sequencing
+puts the subprocess/security surface after the config core is proven in use. **Not dropped**
+— the founding pain (hand-patching a segment) is documented and real.
+
+---
+
+## E6 — doc-to-PDF skill (Markdown + mermaid → PDF / marp)
+
+**Intent**: today, turning a Markdown doc with embedded mermaid diagrams into a
+good PDF is a repeated manual chore — extract each diagram, render it to an image,
+build a text-plus-placeholders template, link the images, then run a converter, and
+re-figure-out image inclusion every time. The same friction hits producing a **marp**
+deck from Markdown that contains mermaid. E6 is a **single skill that automates this
+end to end**, reusing the diagram-extraction/render mechanism `mermaid-audit` already
+has and the `marp-slide` skill for decks — without reinventing either.
+
+- **FR-6.1** — **Primary path: Markdown document → PDF** in one skill-driven flow,
+  with every embedded ```mermaid block rendered and embedded automatically. This
+  replaces the manual loop (extract → render → placeholder → link → build).
+- **FR-6.2** — **Non-destructive by contract.** The source `.md` is **never
+  modified**. The skill operates on a **temporary working copy**: extract each
+  mermaid fence, render it to an image, and replace the fence (via placeholder →
+  image-link substitution) **in the copy only**. The original stays byte-for-byte
+  intact. (The exact temp-copy/placeholder/replace mechanism is whatever the research
+  step surfaces as best practice.)
+- **FR-6.3** — **Output location.** The final PDF is written **alongside the source
+  `.md`** by default, or to a **user-specified path/dir**.
+- **FR-6.4** — **Don't write a *divergent* extractor; the sharing mechanism is OPEN.**
+  The proven mechanism already exists in `mermaid-audit` — regex fence extraction +
+  `mmdc` render to PNG/SVG with a `shutil.which` presence test (`scripts/audit_mermaid.py`,
+  `extract()` + `render()`). E6 must reuse **that mechanism**, not invent a second,
+  drifting one. **How** it reuses it is deliberately **left undecided**, because:
+  - E6 needs only ~20% of `mermaid-audit`; invoking it as a skill would load an
+    unrelated audit surface and risk triggering a full workflow for no reason.
+  - skills are **not** a shared Python/TS package tree, so "import a common util"
+    isn't obviously available or idiomatic here.
+  - the right cross-skill sharing convention is unknown — there may be a
+    skill-packaging idiom for it, or **duplicating the tiny extract/render snippet**
+    may simply be the cleanest, most self-contained choice.
+
+  **Resolve the sharing mechanism during the build** (research + `skill-creator` /
+  `skill-judge`), not in this requirement. The only hard *external* dependency is
+  **`mmdc`** (covered by FR-6.6).
+- **FR-6.5** — **Backend auto-selection.** Detect the **best available** Markdown→PDF
+  backend among a researched set (candidates to evaluate: **Typst**, **Pandoc + LaTeX**,
+  **headless-Chromium / md-to-pdf**, **WeasyPrint**, etc.), and use the best one
+  present. The research step must score them on install ease, agent-friendliness
+  (non-interactive, scriptable), output quality, and image/diagram handling.
+- **FR-6.6** — **Tool detection + secure install guidance (never auto-install).** Test
+  for every required tool. When one is missing, print the **exact install command**,
+  preferring **secure/modern managers** — **pnpm over npm**, **uv over pip**, and the
+  platform-appropriate equivalent (e.g. `brew`) — and let the **user run it**. The
+  skill prompts/recommends; it does not install on its own.
+- **FR-6.7** — **Winner-vs-installed heuristic.** If a **clearly superior** backend
+  exists that isn't installed, surface it as a recommendation. But if an
+  **already-installed** backend is **fully capable** for the job and the quality gap is
+  small, **use the installed one** — don't nag the user to install something that adds
+  little.
+- **FR-6.8** — **Secondary path: marp deck from Markdown-with-mermaid.** Support
+  producing a **marp** slide deck (→ PDF/PPTX/HTML) from Markdown that contains mermaid
+  diagrams — a known past pain point — by pre-rendering the diagrams (FR-6.4) and
+  **cooperating with the existing `marp-slide` skill** rather than duplicating it.
+- **FR-6.9** — **Graceful degradation & transparency.** If no backend is available
+  and the user declines to install, the skill states clearly what's missing and what
+  it would have run; on success it reports which backend and diagram renderer were
+  used.
+
+**Execution tooling**: build the skill with **`/skill-creator:skill-creator`** and
+evaluate its design with **`/skill-judge:skill-judge`**. A **research step is required
+first** (FR-6.5 candidate comparison; **and** how to share the extract/render
+mechanism across skills per FR-6.4 — vendor/duplicate vs. a skill-packaging idiom).
+The reference implementation to mirror lives in `skills/mermaid-audit/scripts/audit_mermaid.py`
+(`extract()` + `render()` via `mmdc`).
+
+**Dependencies**: none hard. **Conceptual reuse**: `mermaid-audit` (extraction/render),
+`marp-slide` (decks), `mermaid-diagrams` (authoring). Benefits from E2's diagram-quality
+rules but does not require them.
+
+**Decided**:
+- **Scope** — main goal is **MD → PDF**; **also** smooth the **MD-with-mermaid → marp
+  deck** flow (FR-6.8), since that was historically painful.
+- **Diagrams** — pre-render with `mmdc` on a **temporary copy**; **never edit the
+  original**; place the final PDF **alongside the `.md`** (or a requested path).
+- **Backend** — **detect best available** (FR-6.5), don't hardcode one.
+- **Install** — **never auto-install**; detect + recommend secure managers, **suggest a
+  real winner** if one exists, but **prefer a fully-capable installed backend** when the
+  difference is small (FR-6.6 / FR-6.7).
+
+**Open (resolve during build, not now)**:
+- **How to share the diagram extract/render mechanism with `mermaid-audit`** (FR-6.4) —
+  invoking the whole skill is rejected (loads 20%-relevant surface, may trigger its
+  workflow); choice between **duplicating the tiny snippet** vs. a **skill-packaging
+  sharing idiom** is deferred to research + `skill-creator`/`skill-judge`.
 
 ---
 
