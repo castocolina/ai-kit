@@ -138,6 +138,16 @@ def _resolve_segments(defaults, file_seg, env):
     return seg
 
 
+def _resolve_layout(default_layout, raw_lines):
+    """If the file has ANY [[line]] block, it REPLACES the whole layout
+    (all-or-nothing — a partial layout can't silently drop segments). Otherwise
+    keep the default. Each block: min_rows (default 0) + segments list."""
+    if not raw_lines:
+        return list(default_layout)
+    return [Line(int(item.get("min_rows", 0)), list(item.get("segments", [])))
+            for item in raw_lines]
+
+
 def load_config(env):
     """Resolve the full Config: internal defaults < TOML file < env.
     Layout and palette resolution are added in Phase 2; for now they are the
@@ -145,7 +155,8 @@ def load_config(env):
     base = default_config()
     raw = _load_toml(config_path(env))
     segments = _resolve_segments(base.segments, raw.get("segments"), env)
-    return Config(segments=segments, layout=base.layout, palette={})
+    layout = _resolve_layout(base.layout, raw.get("line"))
+    return Config(segments=segments, layout=layout, palette={})
 
 
 # ═══ Palette ════════════════════════════════════════════════════════════════

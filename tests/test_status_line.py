@@ -711,5 +711,31 @@ class TestMainUsesConfig(unittest.TestCase):
         self.assertIn("Opus", out)
 
 
+class TestResolveLayout(unittest.TestCase):
+    def _write(self, body):
+        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
+        f.write(body)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_no_line_keeps_default_layout(self):
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        self.assertEqual(cfg.layout, list(sl.LAYOUT))
+
+    def test_line_replaces_layout(self):
+        path = self._write(
+            '[[line]]\nmin_rows = 0\nsegments = ["path", "model"]\n'
+            '[[line]]\nmin_rows = 25\nsegments = ["context"]\n')
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertEqual(cfg.layout,
+                         [sl.Line(0, ["path", "model"]), sl.Line(25, ["context"])])
+
+    def test_line_missing_min_rows_defaults_zero(self):
+        path = self._write('[[line]]\nsegments = ["path"]\n')
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertEqual(cfg.layout, [sl.Line(0, ["path"])])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
