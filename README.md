@@ -30,7 +30,7 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`commit-message`](skills/commit-message/SKILL.md) | skill | Generate a git commit message for staged/working changes, an amend, or a specific commit. |
 | [`cst-refactor`](skills/cst-refactor/SKILL.md) | skill | LibCST-based Python codemod helper — multi-file renames and signature changes that survive comments and formatting. |
 | [`mermaid-audit`](skills/mermaid-audit/SKILL.md) | skill | Render and review Mermaid diagrams embedded in Markdown to catch syntax errors and layout problems. |
-| [`/review-spec`](commands/review-spec.md) | slash command | Orchestrates `reviewing-specs` + `applying-review-feedback` in clean-context subagents, looping until approved. |
+| [`review-spec`](skills/review-spec/SKILL.md) | skill | Orchestrates a clean-context review-and-fix loop: `reviewing-specs` to review, then routes the rewrite by framework (superpowers → `brainstorming`/`writing-plans`; GSD → `/gsd-plan-phase --reviews` + `gsd-plan-checker`; else `applying-review-feedback`). Loops until approved. |
 
 ## How the installer works
 
@@ -69,8 +69,9 @@ git clone https://github.com/castocolina/ai-kit ~/.opencode/skills/ai-kit   # Op
 git clone https://github.com/castocolina/ai-kit ~/.gemini/skills/ai-kit     # Gemini CLI
 ```
 
-Slash commands are Claude Code-specific; on other tools, the orchestrator logic
-in `commands/review-spec.md` can be followed manually.
+`review-spec` is a skill (not a slash command), so it is portable: on any
+Agent-Skills-conformant tool its orchestrator logic in
+`skills/review-spec/SKILL.md` is discovered and can be followed directly.
 
 ## Layout
 

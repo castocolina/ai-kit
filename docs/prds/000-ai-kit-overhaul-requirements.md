@@ -7,7 +7,7 @@ picture non-linear and prevents any concern from being lost.
 
 | Epic | Title | Status |
 |---|---|---|
-| **E1** | review-spec skill + framework-aware fix routing | requirements captured · PRD pending |
+| **E1** | review-spec skill + framework-aware fix routing | **done** → `skills/review-spec/` + `revise_protocol.routes` (plan: `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md`) |
 | **E2** | mermaid-audit color-palette guidance | requirements captured · PRD pending |
 | **E3** | status-line bug fixes (effort/blue/memory/macOS) | requirements captured · PRD pending |
 | **E4** | status-line config & extensibility | **PRD drafted** → `statusline-config-extensibility-v1.0-prd.md` |
