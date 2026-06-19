@@ -10,10 +10,10 @@ picture non-linear and prevents any concern from being lost.
 | **E1** | review-spec skill + framework-aware fix routing | **done** → `skills/review-spec/` + `revise_protocol.routes` (plan: `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md`) |
 | **E2** | mermaid-audit color-palette guidance | **plan ready** → `docs/superpowers/plans/2026-06-17-e2-mermaid-color-shape-audit.md` (adds shape-semantics + render-geometry axes + consensus eval) |
 | **E3** | status-line bug fixes (effort/blue/memory/macOS) | **done** → `tools/status-line.py` cross-platform; plan `docs/superpowers/plans/2026-06-18-e3-statusline-fixes-crossplatform.md` |
-| **E4a** | status-line config | **done (on branch `feat/e4a-statusline-config`, not merged)** → config engine; PRD `statusline-config-extensibility-v1.0-prd.md`; plan `docs/superpowers/plans/2026-06-18-e4a-statusline-config.md` |
+| **E4a** | status-line config | **done (merged to main)** → config engine; PRD `statusline-config-extensibility-v1.0-prd.md`; plan `docs/superpowers/plans/2026-06-18-e4a-statusline-config.md` |
 | **E4b** | status-line color subsystem (parser + configurable ramps) | **design ready** → `docs/superpowers/specs/2026-06-18-e4b-statusline-color-subsystem-design.md` (split from the original E4b; scheduled **before E5** so the wizard sees the final color schema) |
-| **E5** | installer ergonomics + setup wizard | requirements captured · PRD pending |
-| **E4c** | status-line external drop-in segments | requirements captured (was E4b; deferred until after E5) · PRD drafted → `statusline-external-segments-v1.0-prd.md` |
+| **E5** | installer ergonomics + setup wizard | **done** → bootstrapper + `setup.py` install engine + interactive status-line wizard (commits `ae473c3`/`e3781c6`/`0f26a01`) |
+| **E4c** | status-line external drop-in segments | **design in progress** (was E4b before the color subsystem took that slot) · PRD → `statusline-external-segments-v1.0-prd.md`; adds enable/disable toggles, columns-tier contract, wizard discovery now that E5 has shipped |
 | **E6** | doc-to-PDF skill (Markdown + mermaid → PDF/marp) | requirements captured · PRD pending |
 
 **Suggested sequence**: E1 → E2 → E3 → E4a → **E4b** → E5 → **E4c**. E3 ships standalone
@@ -202,41 +202,66 @@ and printing its output.
 
 ---
 
-## E4b — status-line external drop-in segments  *(PRD drafted · deferred until after E5)*
+## E4c — status-line external drop-in segments  *(PRD drafted · was E4b before the color subsystem took that slot)*
 
 See **`statusline-external-segments-v1.0-prd.md`**. **Split out of the original E4** so E4a
-ships the config engine first; E4b builds the extensibility layer on top of it. Kept in the
+ships the config engine first; E4c builds the extensibility layer on top of it. Kept in the
 `E4` family (not numbered after E6) so it stays grouped with the status-line work. Founding
 motivation is real: the author has already had to hand-patch a custom segment on another
 machine.
 
-- **FR-4b.1** — **Discovery**: each executable file in the segments dir
+> **Labeling note**: during the E4a brainstorm the family was re-split into E4a (config) /
+> E4b (color subsystem) / E4c (external segments). This section originally kept the old
+> "E4b" heading after that re-split; it is now correctly **E4c**, matching the index table
+> and both committed design docs.
+
+- **FR-4c.1** — **Discovery**: each executable file in the segments dir
   (`${CC_AI_KIT_SEGMENTS_DIR:-~/.config/ai-kit/segments}`) is a provider.
-- **FR-4b.2** — **Metadata header** (first 10 lines), regex-matched:
+- **FR-4c.2** — **Metadata header** (first 10 lines), regex-matched:
   `# ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end) [id=<slug>] [timeout=<s>] [ttl=<s>]`.
   Defaults: `line` = last layout row, position = `end`, `id` = filename stem, `timeout` = 2s,
   `ttl` = `[external].ttl`.
-- **FR-4b.3** — **Input contract**: the script receives the **same status JSON** on **stdin**
-  and runs with **cwd = `workspace.current_dir`** (context-aware, e.g. pick an AWS profile by
-  directory); env inherited.
-- **FR-4b.4** — **Execution + sanitization**: run with the timeout, capture stdout, take the
+- **FR-4c.3** — **Input contract**: the script receives the **same status JSON** on **stdin**,
+  augmented with a namespaced `segment` block (`avail_cols`, `id`, `line`, `position`) and the
+  key scalars mirrored as env vars (`AI_KIT_SEGMENT_COLS`, `AI_KIT_SEGMENT_ID`, …) so a one-line
+  shell provider needs no JSON parser. Runs with **cwd = `workspace.current_dir`**
+  (context-aware, e.g. pick an AWS profile by directory); env inherited.
+- **FR-4c.4** — **Columns contract (identical to built-in builders)**: the provider receives
+  the **available column budget** for its slot and returns the **richest variant that fits**
+  (long → medium → short tiers, its own choice) or **empty output to self-deprioritize/drop** —
+  exactly the `seg_x(data, avail, theme)` / `_first_fitting([...], avail)` contract built-ins
+  use. The core still truncates as a safety net and the **packer owns the final keep/skip by
+  priority** (`PINNED` segments win), so a provider is never special-cased.
+- **FR-4c.5** — **Execution + sanitization**: run with the timeout, capture stdout, take the
   **first non-empty line**; allow **SGR color codes only** (`\033[…m`), strip any other
   control/CSI sequence; width-measured + truncated like a built-in segment. Non-zero exit /
   timeout / empty output → segment omitted; never breaks rendering.
-- **FR-4b.5** — **Placement**: insert at the declared row/position in the resolved layout
+- **FR-4c.6** — **Placement**: insert at the declared row/position in the resolved layout
   (modeled as a synthetic builder so existing packing/overflow logic handles it). Row gated
   out by `min_rows` → not shown; `line=<N>` out of range → clamp to last row + dim warning;
   same-slot externals order deterministically by **filename, then `id`**.
-- **FR-4b.6** — **Caching**: per `id`, output cached `ttl` seconds at
+- **FR-4c.7** — **Caching**: per `id`, output cached `ttl` seconds at
   `${XDG_CACHE_HOME:-~/.cache}/ai-kit/segments/<id>`; stale/missing → re-run. Cache dir
   unwritable → run without caching (best effort).
-- **FR-4b.7** — **Config surface** (added to E4a's schema): `[external] ttl`, `[external] dir`,
+- **FR-4c.8** — **Enable/disable (enabled by default)**: discovered providers are folded into
+  E4a's `[segments]` toggle model under their `id`, **enabled by default**; a user disables one
+  **explicitly** (`[segments] <id> = false` or `CC_AI_KIT_SEGMENT_<ID>=0`). Discovery never
+  requires opt-in registration — drop the file and it shows.
+- **FR-4c.9** — **Wizard discovery (E5 is now shipped)**: the E5 setup wizard **discovers the
+  external providers** and lists them alongside built-ins with their **current enabled/disabled
+  state** loaded from the toml, so they are toggleable in the same UI. (Sequencing note: the
+  original plan put E4c after E5; E5 has since shipped, so this is integration *into* the
+  existing wizard rather than a forward dependency.)
+- **FR-4c.10** — **Config surface** (added to E4a's schema): `[external] ttl`, `[external] dir`,
   and env `CC_AI_KIT_SEGMENTS_DIR` / `CC_AI_KIT_EXTERNAL_TTL`. README documents the header
-  grammar; a sample external segment ships as a reference.
+  grammar, the **input JSON schema with a worked sample**, **expected output**, and the
+  **columns-tier handling**; a sample external segment ships as a reference.
 
-**Execution tooling**: TDD (fixture scripts: valid header, no header, slow/timeout, failing).
-**Sequencing**: after **E5**; not on E5's critical path. **Dependencies**: **E4a** (config
-engine — externals are synthetic builders inserted into E4a's resolved layout).
+**Execution tooling**: TDD (fixture scripts: valid header, no header, slow/timeout, failing,
+columns-tier).
+**Sequencing**: **E5 has shipped**, so E4c is now next in line and integrates with the existing
+wizard (FR-4c.9). **Dependencies**: **E4a** (config engine — externals are synthetic builders
+inserted into E4a's resolved layout).
 
 **Decided**: split from the original E4 because E5 (the only critical-path consumer) needs
 only the config model + recipe, not external providers; the PRD already isolates externals as
