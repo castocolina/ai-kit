@@ -620,20 +620,33 @@ class TestPatchLayout(unittest.TestCase):
         out = setup.patch_layout(text, self.LINES)
         import tomllib
         tomllib.loads(out)          # must not raise
+
+    def test_idempotent_no_accumulation(self):
+        # Running patch_layout twice must produce byte-identical output (no ##
+        # header lines or other material accumulates on re-runs).
+        text = ("# [[line]]\n# min_rows = 0\n"
+                '# segments = ["path", "branch", "dirty", "todo"]\n'
+                "# [[line]]\n# min_rows = 20\n"
+                '# segments = ["model", "clock"]\n')
+        first = setup.patch_layout(text, self.LINES)
+        second = setup.patch_layout(first, self.LINES)
+        self.assertEqual(first, second)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m unittest tests.test_setup.TestPatchLayout -v`
-Expected: FAIL — `AttributeError: ... 'patch_layout'`.
+Expected: FAIL — `AttributeError: ... 'patch_layout'` (4 tests listed, all ERROR/FAIL).
 
 - [ ] **Step 3: Write the implementation**
 
 ```python
 def _render_line_blocks(lines):
-    """The full [[line]] section as live TOML text (all-or-nothing)."""
-    chunks = ["## [[line]] layout written by the ai-kit status-line wizard.\n"
-              "## ALL-OR-NOTHING: these blocks fully define the layout.\n"]
+    """The full [[line]] section as live TOML text (all-or-nothing).
+
+    Emits ONLY the TOML [[line]] blocks — no ## comment headers — so the
+    output is byte-identical across re-runs (idempotent)."""
+    chunks = []
     for row in lines:
         segs = ", ".join(f'"{s}"' for s in row["segments"])
         chunks.append(f"[[line]]\nmin_rows = {int(row['min_rows'])}\n"
@@ -644,7 +657,11 @@ def _render_line_blocks(lines):
 def patch_layout(text, lines):
     """Replace the file's [[line]] layout with `lines` (all-or-nothing), preserving
     every other section byte-for-byte. `lines` is a list of
-    {"min_rows": int, "segments": [str]} dicts."""
+    {"min_rows": int, "segments": [str]} dicts.
+
+    Idempotent: running patch_layout twice yields a byte-identical result. Any
+    prior wizard-authored `##` comment lines immediately preceding the [[line]]
+    region are stripped during the parse pass so they do not accumulate."""
     src = text.splitlines(keepends=True)
     out = []
     block = _render_line_blocks(lines)
@@ -655,9 +672,12 @@ def patch_layout(text, lines):
         name = _header_name(src[i])
         if name == "line":
             # Consume the whole contiguous [[line]] region: this header, its body,
-            # and any immediately-following [[line]] headers + bodies (plus the
-            # comment lines that introduce them).
+            # and any immediately-following [[line]] headers + bodies.
             if region_start is None:
+                # Also strip any wizard-authored ## header lines that immediately
+                # precede this [[line]] block (they would accumulate on re-runs).
+                while out and out[-1].lstrip().startswith("##"):
+                    out.pop()
                 region_start = len(out)
             i += 1
             while i < n:
@@ -665,7 +685,7 @@ def patch_layout(text, lines):
                 if nm == "line":
                     i += 1
                     continue
-                if nm is None and not src[i].lstrip().startswith("##"):
+                if nm is None:
                     # a body line (min_rows / segments / blank) — part of the region
                     if src[i].strip() == "" or re.match(r"^\s*#?\s*(min_rows|segments)\b",
                                                          src[i]):
@@ -687,7 +707,7 @@ def patch_layout(text, lines):
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python3 -m unittest tests.test_setup.TestPatchLayout -v`
-Expected: PASS (3 tests).
+Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1211,8 +1231,7 @@ def run_statusline_wizard(paths, tty, dry):
         "worktree": bool((raw.get("git") or {}).get("worktree", False)),
         "dirty": False,
     }
-    with open(paths.sample_input if hasattr(paths, "sample_input")
-              else _sample_input_path()) as f:
+    with open(_sample_input_path()) as f:
         sample_json = f.read()
 
     def show_preview():
@@ -1296,7 +1315,7 @@ def _sample_input_path():
                         "..", "tests", "fixtures", "sample-input.json")
 ```
 
-> **Note for the implementer:** `_sample_input_path()` resolves the fixture relative to `setup.py`. If E5b's `Paths` namedtuple already carries a `sample_input` field, prefer that; otherwise the fallback above is used. Keep `render_preview`/`save_*`/patch functions as the tested units — the loop is glue.
+> **Note for the implementer:** `_sample_input_path()` resolves the fixture relative to `setup.py`. E5b's `Paths` namedtuple has no `sample_input` field, so the wizard always uses `_sample_input_path()` directly. Keep `render_preview`/`save_*`/patch functions as the tested units — the loop is glue.
 
 > **`_doctor_cmd` — do NOT redefine in E5c.** E5b already defines `_doctor_cmd(paths: Paths) -> str` (used in `cmd_install`'s closing summary). E5c's `_print_closing` calls `_doctor_cmd(paths)` — the same Paths-accepting function. E5c adds NO new `_doctor_cmd` definition and makes NO changes to E5b's `cmd_install` call site.
 
@@ -1332,21 +1351,23 @@ class TestMenuWiring(unittest.TestCase):
     def test_statusline_branch_invokes_wizard(self):
         """Verify that cmd_install's interactive branch delegates to run_statusline_wizard.
 
-        E5b defines cmd_install(paths, tty, dry) and calls run_statusline_wizard(paths, tty, dry)
-        when is_interactive(tty) is True and the user selects the Status-line option.
-        E5c wires the real wizard into that call. This test replaces run_statusline_wizard with a
-        spy and drives cmd_install through an interactive tty stub to confirm the wizard is reached.
+        E5b defines cmd_install(env, tty, dry) — it resolves Paths internally from env.
+        Passing a pre-resolved Paths namedtuple would cause AttributeError (env.get(...)
+        would be called on a namedtuple). Always pass an env dict.
+
+        E5c wires the real wizard into that call. This test replaces run_statusline_wizard
+        with a spy and drives cmd_install through an interactive tty stub to confirm the
+        wizard is reached.
         """
         called = {}
         orig = setup.run_statusline_wizard
         setup.run_statusline_wizard = lambda paths, tty, dry: called.setdefault("ok", True)
         self.addCleanup(lambda: setattr(setup, "run_statusline_wizard", orig))
-        paths = setup.resolve_paths(dict(os.environ))
         # Feed a tty that looks interactive to is_interactive() and selects
         # "Status line" (option 2 in the E5b two-option menu) then quits.
         tty = io.StringIO("2\nq\n")
-        # cmd_install is the E5b function that owns the menu dispatch.
-        setup.cmd_install(paths, tty, dry=True)
+        # cmd_install(env, tty, dry) — pass an env dict, NOT a resolved Paths namedtuple.
+        setup.cmd_install(dict(os.environ), tty, dry=True)
         self.assertTrue(called.get("ok"),
                         "run_statusline_wizard was not called — check the Status-line branch in cmd_install")
 ```
