@@ -137,7 +137,7 @@ flip rows, `Enter` to accept. Stale links are surfaced first as a warning block 
 
 ---
 
-## 5. Status-line configuration (FR-5.4, FR-5.7)
+## 5. Status line: configuration, evolution & robustness (FR-5.4, FR-5.7)
 
 The status line is **humans-only** and always interactive. Its state lives in
 `~/.config/ai-kit/statusline.toml` (the E4a recipe) — the TOML *is* the persisted selection,
@@ -174,6 +174,12 @@ colors/ramps.
 - The wizard reads the user's current values, shows them, and writes back **only the keys it
   manages** — `[segments]`, the `[[line]]` layout, `[git] worktree`. Everything else —
   `[palette]`, every `[ramp.*]`, `[external]`, and **all comments** — is preserved verbatim.
+- **Patch at key granularity, not block granularity.** Rewrite the individual `key = value`
+  line *in place*; *append* a missing managed key at the end of its block (carrying the
+  recipe's one-line doc comment for that key, so the file stays self-documented). Never
+  regenerate a block body wholesale — that would disturb comments the **user** wrote between
+  lines inside `[segments]`/`[[line]]`. After writing, the wizard **re-validates its own
+  output** (the doctor, §5.4) and refuses to leave a broken file.
 - **Headless re-run** (no TTY): the status line is not touched at all (skills-only path).
 - **New segments shipped upstream** (present in the new code/recipe, absent from the user's
   file) surface as *available* toggles at their new default — the §4 NEW-item reconciliation,
@@ -203,6 +209,76 @@ until after E5. E5 does not build them, but it must not destroy them:
   not by `[[line]]`, so the wizard's `[[line]]` rewrite cannot disturb external placement. When
   E4c lands it may surface externals as toggles; that is E4c's concern. E5 guarantees only the
   seam — providers, cache, and `[external]` left intact.
+
+### 5.3 Config evolution: version stamp, aliases & migration
+
+The contract *will* change over time (it already has: `metric` → `render_time`). Three change
+classes, each handled so the user's intent survives:
+
+- **Version stamp**: the recipe carries `# ai-kit-statusline-config v1` on its first line (and
+  is mirrored in `statusline.toml.sample`, so the drift test pins it). The wizard/doctor read it
+  to decide which migrations to apply. Bumped only on a breaking schema change.
+- **Rename** (e.g. `metric` → `render_time`): a small **alias table** `_RENAMES = {"metric":
+  "render_time", …}` lives in `status-line.py`. Two levels: (a) the **renderer honors aliases on
+  read** — a stale config keeps working immediately, non-destructively, without touching the
+  user's file (fixes the documented live `metric = true` pain on the spot); (b) the **wizard
+  offers to migrate** the file (rewrite old→new key, preserving its value and surrounding
+  comments per §5.1).
+- **Reshape** (a value's type/format changes) / **remove** (a key is retired): the doctor
+  (§5.4) flags the now-invalid or deprecated key and the wizard offers *migrate*, *reset to
+  default*, or *drop* — never a silent loss.
+
+A full migration framework is out of scope; E5 ships the **seam** (version stamp + alias table +
+the `metric→render_time` case wired) and the wizard UI that applies it.
+
+### 5.4 Renderer robustness & the doctor — never blank the bar
+
+Today `status-line.py` already degrades **config** errors (bad TOML → defaults + dim stderr
+warning; never raises). The gap: `main()` does **not** guard `build_data`/`render`, so an
+unexpected exception in a single builder makes the process exit non-zero — and **Claude Code
+blanks the whole bar**. Closed with one **centralized** mechanism plus a diagnostic surface and
+a reachable doctor.
+
+**Centralized builder isolation (not per-builder try/catch).** Builders are invoked at exactly
+one site — `pack_line` (`BUILDERS[key](data, avail, theme)`, status-line.py:1148). Wrap *that*
+call in a `safe_build(key, …)` helper: on any exception it returns a sentinel and records `key`
+in a `failed_segments` set. One place, not N fragile per-builder guards (your call — it avoids
+trusting every builder to catch correctly).
+
+**Two failure surfaces (diagnostic line is primary):**
+- *Inline*: the failed slot renders a `⚠` marker — with the segment name if width allows, else
+  just the icon.
+- *Diagnostic line (primary)*: when `failed_segments` is non-empty (or config validation found
+  errors), append a final line naming what failed and pointing at the doctor, e.g.
+  `⚠ 2 segments failed: git, context — run the doctor: <concrete command>`. Shown **only** on
+  failure (no cost on the happy path).
+
+**Never-blank guarantee**: a top-level `try/except` around the whole render pipeline in `main()`
+catches even a catastrophic failure and prints a single line
+`⚠ status-line error — run the doctor: <concrete command>`, exiting **0**. The bar is never
+blank.
+
+**The doctor** (`status-line.py --doctor`, evolving the existing `--check`): validates the
+config file (parseability, unknown/typed keys, palette/ramp/threshold/`[[line]]` checks — all of
+`validate_config_file` today) **plus** a dry render against a sample input to surface builders
+that raise, **plus** deprecated-key/migration hints (§5.3). Prints a structured report with
+remediation; non-zero exit if problems. Also exposed as `setup.py doctor` and `make doctor`.
+
+**Doctor reachability across install methods** (your point — `make` only helps repo cloners):
+the `curl|wget|bash` user still has the checkout at `INSTALL_DIR` (`~/.local/share/ai-kit`), so
+the doctor *is* present — it just needs to be reachable without memorizing a path. Three vias,
+all surfaced to the user:
+1. **The bar's own diagnostic line prints a *concrete, copy-pasteable* command** — resolved from
+   `sys.executable` + `__file__`, e.g. `python3 ~/.local/share/ai-kit/tools/status-line.py
+   --doctor` — never a bare `--doctor` that assumes a clone.
+2. **The wizard's closing summary prints** the same concrete doctor command **and** the live
+   config path (`~/.config/ai-kit/statusline.toml`, where colors/ramps are hand-edited).
+3. **The same install one-liner carries it**: `curl -fsSL …/install.sh | bash -s -- --doctor`
+   (and `--check`) — the bootstrapper sees an existing `INSTALL_DIR` (LOCAL mode), skips fetch,
+   and execs `setup.py doctor`. So the command users already know doubles as the doctor entry.
+
+(A small `ai-kit` shim in `~/.local/bin` for `ai-kit doctor` remains an optional future nicety;
+the three vias above make it unnecessary for E5.)
 
 ---
 
@@ -243,8 +319,9 @@ The headless branch exists only so an agent can install skills unattended.
 
 ### Subcommands (`setup.py`)
 
-`install` (default) · `reconfigure` · `uninstall` — dispatched from one entry point.
-Pass-through flags include `--dry-run` (mutate nothing, report intended changes).
+`install` (default) · `reconfigure` · `uninstall` · `doctor` · `check` — dispatched from one
+entry point. Pass-through flags include `--dry-run` (mutate nothing, report intended changes).
+`doctor`/`check` delegate to `status-line.py --doctor`/`--check` (§5.4).
 
 ### Reconfigure (FR-5.6)
 
@@ -258,9 +335,11 @@ future nicety, out of scope for E5.
 
 ### Makefile (FR-5.1)
 
-For users who clone the repo. Targets: `install`, `reconfigure`, `uninstall`, `test`, `lint`.
-Each is a thin wrapper over `install.sh` / `setup.py` / the test runners. Standard `make`
-tab-completion covers the "shell autocomplete" ask.
+For users who clone the repo. Targets: `install`, `reconfigure`, `uninstall`, `doctor`,
+`check`, `test`, `lint`. Each is a thin wrapper over `install.sh` / `setup.py` / the test
+runners. Standard `make` tab-completion covers the "shell autocomplete" ask. The same one-liner
+also carries flags for non-cloners: `curl … | bash -s -- --reconfigure | --doctor | --check`
+(§5.4).
 
 ### New / changed files
 
@@ -268,10 +347,12 @@ tab-completion covers the "shell autocomplete" ask.
 |---|---|
 | `tools/setup.py` | **New** — wizard + install engine (stdlib-only, like `status-line.py`; TDD/unittest) |
 | `Makefile` | **New** — install/reconfigure/uninstall/test/lint targets |
-| `tools/install.sh` | **Slimmed** from 305 lines to a bootstrapper (mode-detect, convergent fetch incl. tarball atomic-swap, ensure-python, `exec setup.py`) |
+| `tools/install.sh` | **Slimmed** from 305 lines to a bootstrapper (mode-detect, convergent fetch incl. tarball atomic-swap, ensure-python, `exec setup.py`; passes `--reconfigure`/`--doctor`/`--check` through) |
+| `tools/status-line.py` | Centralized `safe_build` isolation in `pack_line`, top-level never-blank `try/except`, diagnostic line, `_RENAMES` alias table honored on read, `--check` evolved to `--doctor` (dry-render + migration hints), config version stamp |
+| `tools/statusline.toml.sample` | Add the `# ai-kit-statusline-config v1` version stamp (drift-pinned) |
 | `tests/test_setup.py` | **New** — Python unit tests for verify/reconcile/prune/statusline/config/wizard logic |
-| `tests/test_install.sh` | Reduced to the bash bootstrapper's surface (mode detect, fetch, exec) |
-| `README.md` | Install/reconfigure docs, the one-liner, `make` targets, headless note |
+| `tests/test_install.sh` | Reduced to the bash bootstrapper's surface (mode detect, fetch, exec, flag pass-through) |
+| `README.md` | Install/reconfigure docs, the one-liner (+ `-s -- --doctor`), `make` targets, headless note, doctor reachability |
 
 ---
 
@@ -285,8 +366,10 @@ setup.py install        (default; reconfigure = same minus first-run defaults)
   ├─ menu (two-level): configure [Skills] and/or [Status line]?
   ├─ Skills branch    → reconciliation list (§4): toggle, prune-stale-with-confirm → link/unlink
   ├─ Status line branch → segment toggles + reorder/move + worktree knob + live preview (§5) → write TOML
+  ├─ (status-line branch entry) validate config (doctor); offer migrate/reset on errors (§5.3/§5.4)
   ├─ statusLine wiring with double-confirm (§6)
-  └─ summary: linked/unlinked/pruned counts, TOML path, "edit colors/ramps by hand here"
+  └─ summary: linked/unlinked/pruned counts, TOML path, the concrete `--doctor` command,
+              "edit colors/ramps by hand here"
 ```
 
 ---
@@ -307,15 +390,26 @@ setup.py install        (default; reconfigure = same minus first-run defaults)
   convergent fetch (git + tarball atomic-swap leaves no orphans), ensure-python error, exec
   handoff.
 - **Drift**: any change to `SEGMENTS`/`LAYOUT`/palette/ramp defaults must still be mirrored in
-  `tools/statusline.toml.sample` (`TestSampleRecipe`).
+  `tools/statusline.toml.sample` (`TestSampleRecipe`), now including the version stamp.
 - Run live preview against a checked-in **sample JSON fixture** so previews are deterministic.
+- **Renderer robustness (§5.4)**: a builder that raises must NOT blank the bar — other segments
+  still render, the failed slot shows `⚠`, the diagnostic line names it + the concrete doctor
+  command, and the process exits **0**. A catastrophic render failure still exits 0 with the
+  one-line diagnostic. `--doctor` exits non-zero and reports config errors + raising builders +
+  deprecated keys.
+- **Config evolution (§5.3)**: renderer honors `_RENAMES` on read (`metric` resolves to
+  `render_time`); wizard migrate rewrites the key preserving value + comments; reshape/remove
+  offer reset/drop. Version-stamp gating selects migrations.
+- **Doctor reachability (§5.4)**: the diagnostic command string is concrete (`sys.executable` +
+  resolved `__file__`), and `bash -s -- --doctor` reaches it without a clone.
 
 ---
 
 ## 11. Out of scope (YAGNI)
 
 - Interactive color/ramp/palette editing (point to the TOML; defer to manual edit / E4b schema).
-- A global `ai-kit` PATH command (future nicety).
+- A global `ai-kit` PATH command / `~/.local/bin` shim (future nicety; the three doctor vias of §5.4 cover E5).
+- A full config-migration framework (E5 ships only the seam: version stamp + alias table + the `metric→render_time` case + wizard migrate/reset UI).
 - CI/cron-oriented non-interactive status-line configuration (status line is humans-only).
 - External drop-in segments (that is **E4c**, sequenced after E5).
 
@@ -326,4 +420,7 @@ setup.py install        (default; reconfigure = same minus first-run defaults)
 None blocking. Resolved during brainstorming: bash↔Python boundary, symlinks-as-selection
 (no state file), convergent tarball fetch, `/dev/tty` interactivity, status-line reorder scope,
 reconfigure surface, colors-by-hand, **config preservation on re-run (merge-not-regenerate,
-surgical TOML patch)**, and **external-segment (E4c) forward-compat seam**.
+key-granularity surgical TOML patch)**, **external-segment (E4c) forward-compat seam**,
+**config evolution (version stamp + alias/migration, `metric→render_time`)**, and **renderer
+robustness (centralized `safe_build` isolation, never-blank diagnostic line, doctor reachable
+across install methods)**.
