@@ -3,6 +3,7 @@ import io
 import json
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -926,6 +927,9 @@ class TestCmdDelegation(unittest.TestCase):
         args = call.call_args[0][0]
         self.assertIn("/i/tools/status-line.py", args)
         self.assertIn("--doctor", args)
+        # Validate under the SAME interpreter the wizard writes/validates with,
+        # not a bare "python3" that PATH might resolve to a different venv.
+        self.assertEqual(args[0], sys.executable)
 
     def test_check_shells_out_with_check_flag(self):
         env = {"HOME": "/h", "AI_KIT_DIR": "/i"}
@@ -933,6 +937,7 @@ class TestCmdDelegation(unittest.TestCase):
             rc = setup.cmd_check(env)
         self.assertEqual(rc, 2)
         self.assertIn("--check", call.call_args[0][0])
+        self.assertEqual(call.call_args[0][0][0], sys.executable)
 
 
 class TestMenuWiring(unittest.TestCase):

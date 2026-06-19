@@ -13,7 +13,8 @@
 #   3. ensure python3 is present (clear error + per-OS hint if absent).
 #   4. exec python3 "$INSTALL_DIR/tools/setup.py" "$@"  — the wizard does the rest.
 #
-# Subcommands / flags are passed straight through to setup.py:
+# Subcommands map to setup.py; the --doctor/--check/--reconfigure/--uninstall
+# convenience flags are translated to the bare subcommand, --dry-run passes through:
 #   (none)/install · reconfigure · uninstall · doctor · check · --dry-run · --help
 #   e.g.  curl … | bash -s -- --doctor      curl … | bash -s -- reconfigure
 #
@@ -42,19 +43,40 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # --- mode detect ------------------------------------------------------------
 # LOCAL when this script lives inside a real checkout (tools/setup.py resolvable
 # next to it) OR AI_KIT_SKIP_FETCH=1; else BOOTSTRAP (piped from curl).
+MODE=""
 detect_mode() {
+  # Sets globals MODE and (for a real checkout) INSTALL_DIR. MUST be called
+  # directly — NOT in a $() command substitution — or the INSTALL_DIR assignment
+  # is lost in the subshell and a LOCAL clone resolves the wrong directory.
   if [ "${AI_KIT_SKIP_FETCH:-0}" = 1 ]; then
-    echo local; return
+    MODE=local; return
   fi
   local src="${BASH_SOURCE[0]:-}"
   if [ -n "$src" ] && [ -f "$src" ]; then
     local here; here="$(cd "$(dirname "$src")" >/dev/null 2>&1 && pwd -P)"
     if [ -f "$here/setup.py" ]; then
       INSTALL_DIR="$(cd "$here/.." && pwd -P)"
-      echo local; return
+      MODE=local; return
     fi
   fi
-  echo bootstrap
+  MODE=bootstrap
+}
+
+# Translate the convenience flags the Makefile and curl one-liner use
+# (--doctor/--check/--reconfigure/--uninstall) into the bare subcommand setup.py
+# expects. --dry-run and a bare subcommand pass through untouched. Result in ARGS.
+normalize_args() {
+  ARGS=()
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --doctor)      ARGS+=(doctor) ;;
+      --check)       ARGS+=(check) ;;
+      --reconfigure) ARGS+=(reconfigure) ;;
+      --uninstall)   ARGS+=(uninstall) ;;
+      *)             ARGS+=("$a") ;;
+    esac
+  done
 }
 
 # --- fetch (convergent) -----------------------------------------------------
@@ -115,15 +137,20 @@ ensure_python() {
 }
 
 main() {
-  local mode; mode="$(detect_mode)"
-  if [ "$mode" = bootstrap ]; then
+  detect_mode
+  if [ "$MODE" = bootstrap ]; then
     fetch_repo
   else
     info "local checkout — skipping fetch ($INSTALL_DIR)"
   fi
   [ -f "$INSTALL_DIR/tools/setup.py" ] || die "tools/setup.py missing under $INSTALL_DIR"
   ensure_python
-  exec python3 "$INSTALL_DIR/tools/setup.py" "$@"
+  # Hand the resolved location to setup.py so its resolve_paths() finds
+  # status-line.py / the sample under the SAME checkout we just resolved —
+  # critical for a LOCAL clone, where INSTALL_DIR isn't the ~/.local/share default.
+  export AI_KIT_DIR="$INSTALL_DIR"
+  normalize_args "$@"
+  exec python3 "$INSTALL_DIR/tools/setup.py" ${ARGS[@]+"${ARGS[@]}"}
 }
 
 main "$@"

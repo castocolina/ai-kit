@@ -1018,19 +1018,22 @@ def cmd_uninstall(env, dry):
 
 def _doctor_cmd(paths):
     """A concrete, copy-pasteable doctor command for this install."""
-    return "python3 %s --doctor" % paths.status_line
+    return "%s %s --doctor" % (os.path.basename(sys.executable) or "python3",
+                               paths.status_line)
 
 
 def cmd_doctor(env):
-    """Delegate to status-line.py --doctor (E5a); return its exit code."""
+    """Delegate to status-line.py --doctor (E5a); return its exit code. Run under
+    THIS interpreter (not a bare 'python3' PATH lookup) so the doctor validates
+    with the same Python the wizard writes/validates the config with."""
     paths = resolve_paths(env)
-    return subprocess.call(["python3", paths.status_line, "--doctor"])
+    return subprocess.call([sys.executable, "-S", paths.status_line, "--doctor"])
 
 
 def cmd_check(env):
     """Delegate to status-line.py --check (E5a); return its exit code."""
     paths = resolve_paths(env)
-    return subprocess.call(["python3", paths.status_line, "--check"])
+    return subprocess.call([sys.executable, "-S", paths.status_line, "--check"])
 
 
 def main(argv=None):

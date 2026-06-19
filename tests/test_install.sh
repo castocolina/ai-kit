@@ -35,11 +35,41 @@ out="$(env -i HOME="$WORK" PATH="$PATH" AI_KIT_DIR="$FIXTURE" AI_KIT_SKIP_FETCH=
 check "LOCAL skip-fetch execs setup.py with args" \
   bash -c '[ "'"$out"'" = "SETUP_RAN install --dry-run" ]'
 
-# --- 2. flag pass-through (doctor) ------------------------------------------
+# --- 1b. LOCAL clone resolves INSTALL_DIR from BASH_SOURCE (no AI_KIT_DIR) ---
+# Copy the REAL bootstrapper into a fake checkout beside a marker setup.py and
+# run it with a CLEAN env (no AI_KIT_DIR, no AI_KIT_SKIP_FETCH). It must resolve
+# INSTALL_DIR to the checkout it physically lives in — NOT the ~/.local/share
+# default — and exec the adjacent setup.py. Guards the subshell-assignment bug.
+CLONE="$WORK/clone"; mkdir -p "$CLONE/tools"
+cp "$INSTALL_SH" "$CLONE/tools/install.sh"
+# The marker echoes argv AND the AI_KIT_DIR it received, so one assertion covers
+# both INSTALL_DIR resolution and the export that lets setup.py find
+# status-line.py / the sample under the same checkout.
+cat > "$CLONE/tools/setup.py" <<'PY'
+import os, sys
+print("CLONE_SETUP " + " ".join(sys.argv[1:]) + " | " + os.environ.get("AI_KIT_DIR", ""))
+PY
+CLONEHOME="$WORK/clonehome"; mkdir -p "$CLONEHOME"
+out="$(env -i HOME="$CLONEHOME" PATH="$PATH" bash "$CLONE/tools/install.sh" install 2>/dev/null)"
+check "LOCAL clone resolves+exports INSTALL_DIR from script location (no AI_KIT_DIR)" \
+  bash -c '[ "'"$out"'" = "CLONE_SETUP install | '"$CLONE"'" ]'
+
+# --- 2. convenience flags are TRANSLATED to setup.py subcommands ------------
+# The Makefile and the curl one-liner pass --doctor/--check/--reconfigure/
+# --uninstall; setup.py wants the bare subcommand, so the bootstrapper maps
+# them. --dry-run and bare subcommands pass through untouched.
 out="$(env -i HOME="$WORK" PATH="$PATH" AI_KIT_DIR="$FIXTURE" AI_KIT_SKIP_FETCH=1 \
        bash "$INSTALL_SH" --doctor 2>/dev/null)"
-check "passes --doctor straight through" \
-  bash -c '[ "'"$out"'" = "SETUP_RAN --doctor" ]'
+check "--doctor maps to the doctor subcommand" \
+  bash -c '[ "'"$out"'" = "SETUP_RAN doctor" ]'
+out="$(env -i HOME="$WORK" PATH="$PATH" AI_KIT_DIR="$FIXTURE" AI_KIT_SKIP_FETCH=1 \
+       bash "$INSTALL_SH" --check 2>/dev/null)"
+check "--check maps to the check subcommand" \
+  bash -c '[ "'"$out"'" = "SETUP_RAN check" ]'
+out="$(env -i HOME="$WORK" PATH="$PATH" AI_KIT_DIR="$FIXTURE" AI_KIT_SKIP_FETCH=1 \
+       bash "$INSTALL_SH" --reconfigure --dry-run 2>/dev/null)"
+check "--reconfigure --dry-run maps to 'reconfigure --dry-run'" \
+  bash -c '[ "'"$out"'" = "SETUP_RAN reconfigure --dry-run" ]'
 
 # --- 3. ensure-python error when python3 absent -----------------------------
 FAKEBIN="$WORK/bin"; mkdir -p "$FAKEBIN"   # empty bin: a pruned PATH with no python3
