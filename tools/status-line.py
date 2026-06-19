@@ -35,8 +35,8 @@ SEGMENTS = {
     # model row
     "model": True, "time_ago": True, "clock": True, "effort": True,
     "lines": True, "cost": False, "total_time": True, "api_time": True,
-    # diagnostics row (render_time + dimensions are debug aids — off by default)
-    "render_time": False, "dimensions": False, "context": True, "chat_size": True,
+    # diagnostics row (dimensions is a debug aid — off by default)
+    "render_time": True, "dimensions": False, "context": True, "chat_size": True,
     "memory": True, "rate_limits": True,
 }
 
@@ -68,14 +68,22 @@ PINNED = {"path", "context"}   # always rendered even if they overflow the budge
 # {band: {threshold: colorspec}} dict of whole-band overrides (empty = no
 # override). External drop-in segments are E4c and are intentionally not part of
 # this type yet.
-Config = namedtuple("Config", "segments layout palette ramps")
+# Scalar behaviour knobs that aren't segments/colors. `worktree` controls the
+# extra `git rev-parse` that detects a linked worktree (🌳 vs 🌿) — off by default
+# because it costs a git call per render and most repos aren't worktrees.
+_GIT_DEFAULTS = {"worktree": False}
+
+# `git` defaults to None so older Config(...) call sites (which pass only the
+# four original fields) keep working; consumers read it via (cfg.git or {}).
+Config = namedtuple("Config", "segments layout palette ramps git", defaults=(None,))
 
 
 def default_config():
     """A Config snapshotting the current module-global defaults (SEGMENTS/LAYOUT,
     no palette/ramp overrides). Copies are returned so callers cannot mutate
     globals."""
-    return Config(segments=dict(SEGMENTS), layout=list(LAYOUT), palette={}, ramps={})
+    return Config(segments=dict(SEGMENTS), layout=list(LAYOUT), palette={}, ramps={},
+                  git=dict(_GIT_DEFAULTS))
 
 
 # ═══ Config resolution (defaults < TOML file < env) ══════════════════════════
@@ -178,7 +186,19 @@ def load_config(env):
                   file=sys.stderr)
             continue
         ramps[band] = {str(k): str(v) for k, v in table.items()}
-    return Config(segments=segments, layout=layout, palette=palette, ramps=ramps)
+    git = dict(_GIT_DEFAULTS)
+    for k, v in (raw.get("git") or {}).items():
+        if k not in _GIT_DEFAULTS:
+            print(f"{_DIM}status-line: unknown [git] key '{k}'{RESET}", file=sys.stderr)
+        elif not isinstance(v, bool):
+            print(f"{_DIM}status-line: [git] {k} must be true/false, got {v!r} — ignored{RESET}",
+                  file=sys.stderr)
+        else:
+            git[k] = v
+    wt = env_bool(env, "CC_AI_KIT_GIT_WORKTREE")   # env wins over file
+    if wt is not None:
+        git["worktree"] = wt
+    return Config(segments=segments, layout=layout, palette=palette, ramps=ramps, git=git)
 
 
 # ═══ Palette ════════════════════════════════════════════════════════════════
@@ -1179,7 +1199,7 @@ def render(data, cols, lines, cfg=None, theme=None):
 #   total_time   💬 total session duration
 #   api_time     📡 total API duration
 #   render_time  ⏱ status-line.py's own run time, SLO/SLA-colored via the
-#                render_time ramp (off by default; debug)
+#                render_time ramp
 #   dimensions   terminal COLS×ROWS (off by default; debug)
 #   context      📊 context-window usage bar + percent           [pinned]
 #   chat_size    💾 transcript file size
@@ -1238,7 +1258,7 @@ def effort_setting_is_auto(work_dir, home):
     return True
 
 
-def build_data(raw, env, segments=None, t_start=None):
+def build_data(raw, env, segments=None, t_start=None, git_worktree=False):
     """Gather everything the builders read.
 
     Expensive probes — git (`git_info`), the transcript parse (`current_todo`),
@@ -1270,10 +1290,12 @@ def build_data(raw, env, segments=None, t_start=None):
     # unit on either git segment being enabled.
     branch, dirty, is_worktree = "", "clean", False
     if want("branch") or want("dirty"):
-        # Each git probe is gated on the segment that needs it: the untracked walk
-        # on `dirty`, the worktree (rev-parse) check on `branch`.
+        # Each git probe is gated on what's actually needed: the untracked walk on
+        # the `dirty` segment, the worktree (rev-parse) check on the `branch`
+        # segment AND the opt-in git_worktree knob (off by default — skips the
+        # rev-parse entirely when nobody asked for 🌳/🌿 detection).
         branch, dirty, is_worktree = git_info(
-            work_dir, untracked=want("dirty"), worktree=want("branch"))
+            work_dir, untracked=want("dirty"), worktree=want("branch") and git_worktree)
 
     ago = ""
     if want("time_ago") and transcript and os.path.isfile(transcript):
@@ -1320,6 +1342,8 @@ Environment variables:
   CC_AI_KIT_SEGMENT_<KEY>  per-segment bool toggle; KEY is the upper-cased
                            segment name (PATH, MODEL, COST, CONTEXT, ...).
                            true:  1 true t y yes on    false: 0 false f n no off
+  CC_AI_KIT_GIT_WORKTREE   bool; detect linked worktrees (🌳 vs 🌿). Off by
+                           default — it adds a `git rev-parse` per render.
 
 Config precedence (low -> high): built-in defaults < TOML file < env."""
 
@@ -1332,6 +1356,7 @@ def cmd_print_config(cfg):
                    for ln in cfg.layout],
         "palette": cfg.palette,
         "ramps": cfg.ramps,
+        "git": cfg.git or {},
     }, indent=2)
 
 
@@ -1381,6 +1406,11 @@ def validate_config_file(path, env):
                 errors.append(f"ramp [{band}] bad threshold: {thr!r}")
             if parse_color(str(spec), resolved_palette) is None:
                 errors.append(f"ramp [{band}] bad color: {spec!r}")
+    for k, v in (raw.get("git") or {}).items():
+        if k not in _GIT_DEFAULTS:
+            errors.append(f"unknown [git] key: {k}")
+        elif not isinstance(v, bool):
+            errors.append(f"[git] {k} must be true/false, got {v!r}")
     return errors
 
 
@@ -1428,7 +1458,8 @@ def main():
         raw = json.load(sys.stdin)
     except (ValueError, OSError):
         raw = {}
-    data, cols, lines = build_data(raw, os.environ, cfg.segments, t0)
+    data, cols, lines = build_data(raw, os.environ, cfg.segments, t0,
+                                   (cfg.git or {}).get("worktree", False))
     print("\n".join(render(data, cols, lines, cfg, theme)))
 
 

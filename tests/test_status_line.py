@@ -595,18 +595,22 @@ class TestLazyCompute(unittest.TestCase):
             ct.assert_called_once()
 
     def test_git_probes_follow_their_segments(self):
-        # untracked walk follows `dirty`; worktree (rev-parse) follows `branch`.
-        # git_info still runs whenever EITHER git segment is on.
-        for branch_on, dirty_on in ((True, False), (False, True), (True, True)):
+        # untracked walk follows `dirty`; worktree (rev-parse) follows `branch`
+        # AND the git_worktree knob. git_info still runs whenever EITHER git
+        # segment is on.
+        for branch_on, dirty_on, knob in (
+            (True, False, True), (True, False, False),
+            (False, True, True), (True, True, True),
+        ):
             segs = dict.fromkeys(sl.SEGMENTS, False)
             segs["branch"] = branch_on
             segs["dirty"] = dirty_on
             with mock.patch.object(sl, "git_info",
                                    return_value=("m", "clean", False)) as gi:
-                sl.build_data(self.RAW, self.ENV, segs)
+                sl.build_data(self.RAW, self.ENV, segs, git_worktree=knob)
                 gi.assert_called_once()
                 self.assertEqual(gi.call_args.kwargs.get("untracked"), dirty_on)
-                self.assertEqual(gi.call_args.kwargs.get("worktree"), branch_on)
+                self.assertEqual(gi.call_args.kwargs.get("worktree"), branch_on and knob)
 
 
 class TestBlueFix(unittest.TestCase):
@@ -907,6 +911,44 @@ class TestResolveSegments(unittest.TestCase):
         self.assertEqual(cfg.segments["cost"], sl.SEGMENTS["cost"])  # default kept
 
 
+class TestGitConfig(unittest.TestCase):
+    def _write(self, body):
+        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
+        f.write(body)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_worktree_defaults_off(self):
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        self.assertEqual(cfg.git, {"worktree": False})
+
+    def test_file_enables_worktree(self):
+        path = self._write("[git]\nworktree = true\n")
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertTrue(cfg.git["worktree"])
+
+    def test_env_overrides_file(self):
+        path = self._write("[git]\nworktree = true\n")
+        env = {"CC_AI_KIT_CONFIG": path, "HOME": "/h", "CC_AI_KIT_GIT_WORKTREE": "0"}
+        self.assertFalse(sl.load_config(env).git["worktree"])   # env beats file
+
+    def test_unknown_git_key_ignored(self):
+        path = self._write("[git]\nbogus = true\n")
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertEqual(cfg.git, {"worktree": False})          # bogus dropped
+
+    def test_wrong_type_value_ignored(self):
+        path = self._write('[git]\nworktree = "true"\n')        # string, not bool
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertFalse(cfg.git["worktree"])                   # default kept
+
+    def test_check_flags_bad_git_config(self):
+        path = self._write('[git]\nbogus = true\nworktree = "x"\n')
+        errors = sl.validate_config_file(path, {"HOME": "/h"})
+        self.assertTrue(any("[git]" in e or "git" in e for e in errors), errors)
+
+
 class TestRenderWithConfig(unittest.TestCase):
     def test_pack_line_honors_cfg_segments(self):
         cfg = sl.Config(segments={**sl.SEGMENTS, "clock": False},
@@ -1050,6 +1092,8 @@ class TestSampleRecipe(unittest.TestCase):
             for band, pairs in sl._RAMP_DEFAULTS.items()
         }
         self.assertEqual(parsed.get("ramp"), want_ramps)
+        # [git] knobs document their real defaults too.
+        self.assertEqual(parsed.get("git"), dict(sl._GIT_DEFAULTS))
 
 
 class TestCLI(unittest.TestCase):

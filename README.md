@@ -57,21 +57,20 @@ resolve **built-in defaults < this file < environment variables**.
 [segments]
 cost        = true   # show the 🪙 cost segment (off by default)
 memory      = false  # hide the 🧮 process-memory segment
-render_time = true   # ⏱ status-line's own render time — a debug aid, off by default
+render_time = false  # ⏱ hide the render-time mark (on by default)
 ```
 
-**Debug segments** — `render_time` and `dimensions` are diagnostics and ship **off**:
+**Diagnostic segments:**
 
-- `render_time` (⏱) — how long `status-line.py` itself took to run, from process start to
-  render (the cost of its `git`/process/file probes), shown adaptively as `ns`/`µs`/`ms`/`s`.
-  This is the *status line's own* wall-clock — distinct from `total_time` (💬) and
-  `api_time` (📡), which report Claude's session and API durations from the input JSON.
-  Its color is an SLO/SLA signal driven by the `[ramp.render_time]` ramp: green within
-  the 50 ms SLO, yellow up to the 150 ms SLA, red+bold beyond (all configurable).
-- `dimensions` — the terminal size as `cols×rows` (`?` when the size had to be assumed).
-
-Enable either via `[segments]` above or `CC_AI_KIT_SEGMENT_RENDER_TIME=1` /
-`CC_AI_KIT_SEGMENT_DIMENSIONS=1`.
+- `render_time` (⏱, **on by default**) — how long `status-line.py` itself took to run, from
+  process start to render (the cost of its `git`/process/file probes), shown adaptively as
+  `ns`/`µs`/`ms`/`s`. This is the *status line's own* wall-clock — distinct from `total_time`
+  (💬) and `api_time` (📡), which report Claude's session and API durations from the input JSON.
+  Its color is an SLO/SLA signal driven by the `[ramp.render_time]` ramp: green within the
+  50 ms SLO, yellow up to the 150 ms SLA, red+bold beyond (all configurable). Set
+  `render_time = false` (or `CC_AI_KIT_SEGMENT_RENDER_TIME=0`) to hide it.
+- `dimensions` (**off by default**) — the terminal size as `cols×rows` (`?` when the size had
+  to be assumed). Enable via `[segments]` or `CC_AI_KIT_SEGMENT_DIMENSIONS=1`.
 
 …or per-session via env (wins over the file):
 
@@ -79,10 +78,22 @@ Enable either via `[segments]` above or `CC_AI_KIT_SEGMENT_RENDER_TIME=1` /
 CC_AI_KIT_SEGMENT_COST=1     # 1 true t y yes on  /  0 false f n no off
 ```
 
+**Worktree detection** — the `branch` segment can show 🌳 (linked worktree) vs
+🌿 (main repo), but detecting that needs an extra `git rev-parse` per render, so
+it ships **off**. Enable it in the file:
+
+```toml
+[git]
+worktree = true   # detect linked worktrees (🌳 vs 🌿); adds a git rev-parse
+```
+
+…or per-session: `CC_AI_KIT_GIT_WORKTREE=1` (wins over the file).
+
 **Performance note** — disabling a segment skips its work, not just its
 display. On a very large repository, turning off `dirty` also skips git's
-untracked-file scan (the slow part of `git status`); turning off `todo` skips
-the task-state read. The status line reads task/todo state from Claude's
+untracked-file scan (the slow part of `git status`); turning off `branch`
+(or leaving `[git] worktree` off) skips the `rev-parse`; turning off `todo`
+skips the task-state read. The status line reads task/todo state from Claude's
 on-disk state, not by re-parsing the transcript, so it stays fast as sessions grow.
 
 **Reorder / move rows** — uncomment **all** `[[line]]` blocks and edit (layout

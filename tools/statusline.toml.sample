@@ -38,7 +38,7 @@
 # total_time = true    # 💬 total session duration
 # api_time = true      # 📡 cumulative API response time
 ## diagnostics line (bottom row)
-# render_time = false  # ⏱ status-line's own render time, SLO/SLA-colored (debug; OFF)
+# render_time = true   # ⏱ status-line's own render time, SLO/SLA-colored
 # dimensions = false   # terminal size cols×lines (? if assumed)  (debug; OFF by default)
 # context = true       # 📊 context-window % used (and max) (pinned)
 # chat_size = true     # 💾 transcript file size on disk
@@ -61,6 +61,14 @@
 # [[line]]
 # min_rows = 30
 # segments = ["render_time", "dimensions", "context", "chat_size", "memory", "rate_limits"]
+
+## ─── [git] — git probe tuning ────────────────────────────────────────────────
+## Behaviour knobs for the git queries behind the `branch` / `dirty` segments.
+## This block MERGES over the defaults. Each value below is the current default.
+# [git]
+# worktree = false     # detect linked worktrees (🌳 vs 🌿 on the branch segment).
+#                      # OFF by default: it costs an extra `git rev-parse` per
+#                      # render. Env override: CC_AI_KIT_GIT_WORKTREE=1.
 
 ## ─── color grammar (used by [palette] and [ramp.*] values) ───────────────────
 ## A color value is one of:
