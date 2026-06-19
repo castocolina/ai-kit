@@ -259,6 +259,40 @@ _EFFORT_GLYPHS = "▁▃▄▆█"
 INF = float("inf")
 
 
+# ═══ External drop-in segments (E4c) ═════════════════════════════════════════
+# A provider is an executable in the segments dir. Its first 10 lines may carry
+#   # ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end) [id=<slug>] [timeout=<s>] [ttl=<s>]
+# It is modeled as a synthetic builder inserted into the resolved layout, so the
+# existing packer handles placement/priority/overflow unchanged.
+ExtSpec = namedtuple("ExtSpec", "id path line position timeout ttl cache_path")
+
+_SEG_HEADER_RE = re.compile(r"^#\s*ai-kit-segment:\s*(.*?)\s*$")
+
+
+def parse_segment_header(lines):
+    """Parse the `# ai-kit-segment:` header from a file's first lines.
+
+    Returns a dict of the raw string fields present (`line`/`id`/`timeout`/`ttl`
+    as strings, `position` as a (kind, ref) tuple) — possibly empty if the header
+    line exists but lists nothing. Returns None when no header line is present."""
+    for ln in lines:
+        m = _SEG_HEADER_RE.match(ln)
+        if m is None:
+            continue
+        fields = {}
+        for tok in m.group(1).split():
+            if tok in ("start", "end"):
+                fields["position"] = (tok, "")
+            elif "=" in tok:
+                k, v = tok.split("=", 1)
+                if k in ("after", "before"):
+                    fields["position"] = (k, v)
+                elif k in ("line", "id", "timeout", "ttl"):
+                    fields[k] = v
+        return fields
+    return None
+
+
 def pick_color(pct, ramp):
     """Return the color for the first ceil that pct is strictly below."""
     for ceil, color in ramp:
