@@ -417,6 +417,20 @@ class TestProcAndGit(unittest.TestCase):
             status_cmd = next(c for c in seen if "status" in c)
             self.assertEqual("--untracked-files=no" in status_cmd, expect_flag, untracked)
 
+    def test_worktree_call_follows_flag(self):
+        # worktree=False skips the rev-parse call entirely.
+        for worktree in (False, True):
+            seen = []
+            def fake_run(cmd, **kw):
+                seen.append(cmd)
+                class R:
+                    stdout = "## main\n" if "status" in cmd else ".git\n.git\n"
+                return R()
+            with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+                sl.git_info(".", worktree=worktree)
+            ran_revparse = any("rev-parse" in c for c in seen)
+            self.assertEqual(ran_revparse, worktree, worktree)
+
     def test_git_info_clean_and_worktree(self):
         def fake_run(cmd, **kw):
             class R:
@@ -580,17 +594,19 @@ class TestLazyCompute(unittest.TestCase):
             sl.build_data(self.RAW, self.ENV)
             ct.assert_called_once()
 
-    def test_untracked_walk_follows_dirty_segment(self):
-        # branch on, dirty off -> git_info(untracked=False); dirty on -> True
-        for dirty_on in (False, True):
+    def test_git_probes_follow_their_segments(self):
+        # untracked walk follows `dirty`; worktree (rev-parse) follows `branch`.
+        # git_info still runs whenever EITHER git segment is on.
+        for branch_on, dirty_on in ((True, False), (False, True), (True, True)):
             segs = dict.fromkeys(sl.SEGMENTS, False)
-            segs["branch"] = True
+            segs["branch"] = branch_on
             segs["dirty"] = dirty_on
             with mock.patch.object(sl, "git_info",
                                    return_value=("m", "clean", False)) as gi:
                 sl.build_data(self.RAW, self.ENV, segs)
                 gi.assert_called_once()
                 self.assertEqual(gi.call_args.kwargs.get("untracked"), dirty_on)
+                self.assertEqual(gi.call_args.kwargs.get("worktree"), branch_on)
 
 
 class TestBlueFix(unittest.TestCase):
