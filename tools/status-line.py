@@ -820,18 +820,27 @@ def _branch_from_porcelain(header):
     return rest.split("...", 1)[0].strip()                        # branch[...upstream]
 
 
-def git_info(work_dir):
+def git_info(work_dir, untracked=True):
     """Return (branch, dirty, is_worktree).
 
     dirty in {clean, untracked, modified}. is_worktree is True when work_dir sits
     in a linked worktree (git-dir != git-common-dir), False in the main repo or
     outside any repo. Two git calls: one `status --porcelain --branch` for branch
-    + dirty together, one `rev-parse` for the worktree check."""
+    + dirty together, one `rev-parse` for the worktree check.
+
+    untracked=False adds --untracked-files=no, which skips git's untracked-file
+    walk — the part of `status` that gets slow on large working trees. Callers
+    pass untracked=False when the `dirty` segment is off: there is no reason to
+    hunt for untracked files nobody will see. dirty then can't report "untracked"
+    (only modified/clean), which is fine because the marker isn't rendered."""
     def _git(*args):
         return subprocess.run(["git", "-C", work_dir, *args],
                               capture_output=True, text=True).stdout
 
-    out = _git("status", "--porcelain", "--branch").splitlines()
+    status_args = ["status", "--porcelain", "--branch"]
+    if not untracked:
+        status_args.append("--untracked-files=no")
+    out = _git(*status_args).splitlines()
     branch = _branch_from_porcelain(out[0] if out else "")
     changes = out[1:]   # change lines follow the `## <branch>` header
     if any(ln.startswith(("??", "A", "D")) or ln.startswith(" D") for ln in changes):
@@ -1256,7 +1265,8 @@ def build_data(raw, env, segments=None, t_start=None):
     # unit on either git segment being enabled.
     branch, dirty, is_worktree = "", "clean", False
     if want("branch") or want("dirty"):
-        branch, dirty, is_worktree = git_info(work_dir)
+        # Only walk untracked files when the dirty segment will actually show them.
+        branch, dirty, is_worktree = git_info(work_dir, untracked=want("dirty"))
 
     ago = ""
     if want("time_ago") and transcript and os.path.isfile(transcript):

@@ -403,6 +403,20 @@ class TestProcAndGit(unittest.TestCase):
             self.assertEqual(dirty, "untracked")   # ?? present -> untracked
             self.assertFalse(is_wt)                 # git-dir == git-common-dir
 
+    def test_untracked_flag_follows_dirty(self):
+        # untracked=False adds --untracked-files=no; True omits it.
+        for untracked, expect_flag in ((False, True), (True, False)):
+            seen = []
+            def fake_run(cmd, **kw):
+                seen.append(cmd)
+                class R:
+                    stdout = "## main\n"
+                return R()
+            with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+                sl.git_info(".", untracked=untracked)
+            status_cmd = next(c for c in seen if "status" in c)
+            self.assertEqual("--untracked-files=no" in status_cmd, expect_flag, untracked)
+
     def test_git_info_clean_and_worktree(self):
         def fake_run(cmd, **kw):
             class R:
@@ -565,6 +579,18 @@ class TestLazyCompute(unittest.TestCase):
         with mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct:
             sl.build_data(self.RAW, self.ENV)
             ct.assert_called_once()
+
+    def test_untracked_walk_follows_dirty_segment(self):
+        # branch on, dirty off -> git_info(untracked=False); dirty on -> True
+        for dirty_on in (False, True):
+            segs = dict.fromkeys(sl.SEGMENTS, False)
+            segs["branch"] = True
+            segs["dirty"] = dirty_on
+            with mock.patch.object(sl, "git_info",
+                                   return_value=("m", "clean", False)) as gi:
+                sl.build_data(self.RAW, self.ENV, segs)
+                gi.assert_called_once()
+                self.assertEqual(gi.call_args.kwargs.get("untracked"), dirty_on)
 
 
 class TestBlueFix(unittest.TestCase):

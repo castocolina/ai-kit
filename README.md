@@ -79,6 +79,12 @@ Enable either via `[segments]` above or `CC_AI_KIT_SEGMENT_RENDER_TIME=1` /
 CC_AI_KIT_SEGMENT_COST=1     # 1 true t y yes on  /  0 false f n no off
 ```
 
+**Performance note** — disabling a segment skips its work, not just its
+display. On a very large repository, turning off `dirty` also skips git's
+untracked-file scan (the slow part of `git status`); turning off `todo` skips
+the task-state read. The status line reads task/todo state from Claude's
+on-disk state, not by re-parsing the transcript, so it stays fast as sessions grow.
+
 **Reorder / move rows** — uncomment **all** `[[line]]` blocks and edit (layout
 is all-or-nothing; a partial layout would silently drop segments):
 
