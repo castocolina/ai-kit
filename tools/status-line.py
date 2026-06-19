@@ -401,6 +401,77 @@ def _sanitize_external(text, avail):
     return _truncate_visible(line, avail) or None
 
 
+def _position_str(position):
+    """('after','clock') -> 'after:clock'; ('end','') -> 'end'."""
+    kind, ref = position
+    return f"{kind}:{ref}" if ref else kind
+
+
+def _cache_read(spec):
+    """Cached raw output line if present and younger than ttl, else None.
+    ttl <= 0 always misses (forces a re-run every render)."""
+    if spec.ttl <= 0:
+        return None
+    try:
+        age = time.time() - os.stat(spec.cache_path).st_mtime
+    except OSError:
+        return None
+    if age >= spec.ttl:
+        return None
+    try:
+        with open(spec.cache_path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _cache_write(spec, text):
+    """Best-effort: persist raw output. Unwritable cache dir -> silently skip."""
+    try:
+        os.makedirs(os.path.dirname(spec.cache_path), exist_ok=True)
+        with open(spec.cache_path, "w", encoding="utf-8") as f:
+            f.write(text)
+    except OSError:
+        pass
+
+
+def _run_provider(spec, data, avail):
+    """Spawn the provider with the status JSON + segment block on stdin, the
+    AI_KIT_SEGMENT_* env mirror, and cwd = workspace dir. Returns the raw first
+    non-empty stdout line, or None on timeout / non-zero exit / no output."""
+    pos = _position_str(spec.position)
+    payload = json.dumps({**(data.get("raw") or {}),
+                          "segment": {"id": spec.id, "avail_cols": avail,
+                                      "line": spec.line, "position": pos}})
+    env = dict(os.environ)
+    env.update({"AI_KIT_SEGMENT_COLS": str(avail), "AI_KIT_SEGMENT_ID": spec.id,
+                "AI_KIT_SEGMENT_LINE": str(spec.line), "AI_KIT_SEGMENT_POSITION": pos})
+    try:
+        proc = subprocess.run(
+            [spec.path], input=payload, capture_output=True, text=True,
+            timeout=spec.timeout, cwd=data.get("work_dir") or ".", env=env)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    for line in proc.stdout.splitlines():
+        if line.strip():
+            return line
+    return None
+
+
+def run_external(spec, data, avail):
+    """TTL-cached, timeout-bounded provider invocation. Returns the sanitized,
+    width-fitted segment string, or None to omit the segment."""
+    raw_line = _cache_read(spec)
+    if raw_line is None:
+        raw_line = _run_provider(spec, data, avail)
+        if raw_line is None:
+            return None
+        _cache_write(spec, raw_line)
+    return _sanitize_external(raw_line, avail)
+
+
 def pick_color(pct, ramp):
     """Return the color for the first ceil that pct is strictly below."""
     for ceil, color in ramp:

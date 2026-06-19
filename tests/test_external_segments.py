@@ -123,5 +123,77 @@ class TestSanitize(unittest.TestCase):
         self.assertIsNone(sl._sanitize_external("hi", 0))
 
 
+class TestRunExternal(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.cache = tempfile.mkdtemp()
+        import shutil
+        self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
+        self.addCleanup(lambda: shutil.rmtree(self.cache, ignore_errors=True))
+
+    def _spec(self, path, ttl=10, timeout=2.0):
+        return sl.ExtSpec(id="t", path=path, line=1, position=("end", ""),
+                          timeout=timeout, ttl=ttl,
+                          cache_path=os.path.join(self.cache, "t"))
+
+    def _data(self):
+        return {"raw": {"workspace": {"current_dir": self.dir}}, "work_dir": self.dir}
+
+    def test_runs_and_returns_first_line(self):
+        p = write_script(self.dir, "p", "#!/bin/sh\necho '\033[33mhi\033[0m'\n")
+        self.assertEqual(sl.run_external(self._spec(p), self._data(), 40),
+                         "\033[33mhi\033[0m")
+
+    def test_receives_cols_via_env(self):
+        p = write_script(self.dir, "p", '#!/bin/sh\necho "cols=$AI_KIT_SEGMENT_COLS"\n')
+        self.assertEqual(sl.run_external(self._spec(p), self._data(), 17), "cols=17")
+
+    def test_receives_segment_block_on_stdin(self):
+        p = write_script(self.dir, "p",
+                         '#!/usr/bin/env python3\n'
+                         'import sys, json\n'
+                         'd = json.load(sys.stdin)\n'
+                         'print(d["segment"]["avail_cols"], d["segment"]["id"])\n')
+        self.assertEqual(sl.run_external(self._spec(p), self._data(), 9), "9 t")
+
+    def test_runs_in_workspace_dir(self):
+        p = write_script(self.dir, "p", "#!/bin/sh\npwd\n")
+        out = sl.run_external(self._spec(p), self._data(), 200)
+        self.assertEqual(os.path.realpath(out), os.path.realpath(self.dir))
+
+    def test_nonzero_exit_returns_none(self):
+        p = write_script(self.dir, "p", "#!/bin/sh\necho x\nexit 1\n")
+        self.assertIsNone(sl.run_external(self._spec(p), self._data(), 40))
+
+    def test_timeout_returns_none(self):
+        p = write_script(self.dir, "p", "#!/bin/sh\nsleep 5\n")
+        self.assertIsNone(sl.run_external(self._spec(p, timeout=0.3), self._data(), 40))
+
+    def test_empty_output_returns_none(self):
+        p = write_script(self.dir, "p", "#!/bin/sh\nexit 0\n")
+        self.assertIsNone(sl.run_external(self._spec(p), self._data(), 40))
+
+    def test_caches_within_ttl(self):
+        # writes a counter file each run; second call within ttl must not re-run
+        counter = os.path.join(self.dir, "n")
+        p = write_script(self.dir, "p",
+                         f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
+        spec = self._spec(p, ttl=100)
+        self.assertEqual(sl.run_external(spec, self._data(), 40), "hi")
+        self.assertEqual(sl.run_external(spec, self._data(), 40), "hi")
+        with open(counter) as f:
+            self.assertEqual(f.read(), "x")        # ran exactly once
+
+    def test_ttl_zero_always_reruns(self):
+        counter = os.path.join(self.dir, "n")
+        p = write_script(self.dir, "p",
+                         f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
+        spec = self._spec(p, ttl=0)
+        sl.run_external(spec, self._data(), 40)
+        sl.run_external(spec, self._data(), 40)
+        with open(counter) as f:
+            self.assertEqual(f.read(), "xx")       # ran twice
+
+
 if __name__ == "__main__":
     unittest.main()
