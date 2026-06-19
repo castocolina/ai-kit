@@ -804,22 +804,39 @@ def terminal_size(env):
     return cols, lines, assumed
 
 
+def _branch_from_porcelain(header):
+    """Extract the branch from a `git status --porcelain --branch` header line
+    (the `## ...` line). Returns "" for a detached HEAD, matching the old
+    `git branch --show-current` behaviour. Git forbids ".." in refnames, so the
+    "..." upstream separator can never collide with a branch name."""
+    if not header.startswith("## "):
+        return ""
+    rest = header[3:]
+    if rest.startswith("HEAD (no branch)"):                       # detached
+        return ""
+    for prefix in ("No commits yet on ", "Initial commit on "):   # unborn branch
+        if rest.startswith(prefix):
+            return rest[len(prefix):].strip()
+    return rest.split("...", 1)[0].strip()                        # branch[...upstream]
+
+
 def git_info(work_dir):
     """Return (branch, dirty, is_worktree).
 
     dirty in {clean, untracked, modified}. is_worktree is True when work_dir sits
     in a linked worktree (git-dir != git-common-dir), False in the main repo or
-    outside any repo."""
+    outside any repo. Two git calls: one `status --porcelain --branch` for branch
+    + dirty together, one `rev-parse` for the worktree check."""
     def _git(*args):
         return subprocess.run(["git", "-C", work_dir, *args],
                               capture_output=True, text=True).stdout
 
-    branch = _git("branch", "--show-current").strip()
-    status = _git("status", "--porcelain")
-    if any(ln.startswith(("??", "A", "D")) or ln.startswith(" D")
-           for ln in status.splitlines()):
+    out = _git("status", "--porcelain", "--branch").splitlines()
+    branch = _branch_from_porcelain(out[0] if out else "")
+    changes = out[1:]   # change lines follow the `## <branch>` header
+    if any(ln.startswith(("??", "A", "D")) or ln.startswith(" D") for ln in changes):
         dirty = "untracked"
-    elif status.strip():
+    elif any(ln.strip() for ln in changes):
         dirty = "modified"
     else:
         dirty = "clean"

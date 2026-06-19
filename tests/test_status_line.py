@@ -380,6 +380,39 @@ class TestProcAndGit(unittest.TestCase):
         self.assertIn(dirty, ("clean", "untracked", "modified"))
         self.assertIsInstance(is_wt, bool)
 
+    def test_branch_from_porcelain_header(self):
+        self.assertEqual(sl._branch_from_porcelain("## main"), "main")
+        self.assertEqual(sl._branch_from_porcelain("## main...origin/main"), "main")
+        self.assertEqual(sl._branch_from_porcelain("## feat/x...origin/feat/x [ahead 18]"), "feat/x")
+        self.assertEqual(sl._branch_from_porcelain("## HEAD (no branch)"), "")   # detached
+        self.assertEqual(sl._branch_from_porcelain("## No commits yet on main"), "main")
+        self.assertEqual(sl._branch_from_porcelain("## Initial commit on dev"), "dev")
+        self.assertEqual(sl._branch_from_porcelain(""), "")                      # not a repo
+
+    def test_git_info_dirty_parsing(self):
+        # git_info parses branch + dirty from the porcelain --branch output; mock
+        # subprocess so the test is independent of the live working tree.
+        def fake_run(cmd, **kw):
+            class R:
+                stdout = ("## main...origin/main [ahead 1]\n M tools/x.py\n?? new.py\n"
+                          if "status" in cmd else ".git\n.git\n")
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            branch, dirty, is_wt = sl.git_info(".")
+            self.assertEqual(branch, "main")
+            self.assertEqual(dirty, "untracked")   # ?? present -> untracked
+            self.assertFalse(is_wt)                 # git-dir == git-common-dir
+
+    def test_git_info_clean_and_worktree(self):
+        def fake_run(cmd, **kw):
+            class R:
+                stdout = "## main\n" if "status" in cmd else "/wt/.git/worktrees/x\n/main/.git\n"
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            branch, dirty, is_wt = sl.git_info(".")
+            self.assertEqual((branch, dirty), ("main", "clean"))
+            self.assertTrue(is_wt)                  # git-dir != git-common-dir
+
 
 class TestCurrentTodo(unittest.TestCase):
     """current_todo prefers Claude's materialized task/todo state on disk over
