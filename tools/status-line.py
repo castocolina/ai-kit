@@ -293,6 +293,67 @@ def parse_segment_header(lines):
     return None
 
 
+def _segments_cache_dir(env):
+    """${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/segments — per-provider output cache."""
+    base = env.get("XDG_CACHE_HOME") or os.path.join(env.get("HOME", ""), ".cache")
+    return os.path.join(base, "ai-kit", "segments")
+
+
+def _segments_dir(file_external, env):
+    """Resolve the providers directory: CC_AI_KIT_SEGMENTS_DIR > [external].dir >
+    ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/segments."""
+    d = env.get("CC_AI_KIT_SEGMENTS_DIR") or (file_external or {}).get("dir")
+    if d:
+        return os.path.expanduser(d)
+    base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
+    return os.path.join(base, "ai-kit", "segments")
+
+
+def discover_external(directory, default_ttl, env):
+    """Scan `directory` for executable providers and return a list of ExtSpec,
+    sorted by (filename, id). Non-executable files are skipped with a dim warning.
+    A file with no header still loads with all defaults (line=0 => last row at
+    placement, position=end, id=stem, timeout=2s, ttl=default_ttl)."""
+    if not directory or not os.path.isdir(directory):
+        return []
+    cache_dir = _segments_cache_dir(env)
+    specs = []
+    for name in sorted(os.listdir(directory)):
+        path = os.path.join(directory, name)
+        if not os.path.isfile(path):
+            continue
+        if not os.access(path, os.X_OK):
+            print(f"{_DIM}status-line: segment '{name}' not executable — skipped{RESET}",
+                  file=sys.stderr)
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                head = [f.readline() for _ in range(10)]
+        except OSError:
+            continue
+        fields = parse_segment_header(head) or {}
+        sid = fields.get("id") or os.path.splitext(name)[0]
+        try:
+            timeout = float(fields.get("timeout", 2))
+        except (TypeError, ValueError):
+            timeout = 2.0
+        try:
+            ttl = int(fields.get("ttl", default_ttl))
+        except (TypeError, ValueError):
+            ttl = default_ttl
+        try:
+            line = int(fields["line"]) if "line" in fields else 0
+        except (TypeError, ValueError):
+            line = 0
+        specs.append(ExtSpec(
+            id=sid, path=path, line=line,
+            position=fields.get("position", ("end", "")),
+            timeout=timeout, ttl=ttl,
+            cache_path=os.path.join(cache_dir, sid)))
+    specs.sort(key=lambda s: (os.path.basename(s.path), s.id))
+    return specs
+
+
 def pick_color(pct, ramp):
     """Return the color for the first ceil that pct is strictly below."""
     for ceil, color in ramp:

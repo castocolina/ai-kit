@@ -56,5 +56,46 @@ class TestParseHeader(unittest.TestCase):
         self.assertEqual(sl.parse_segment_header(["# ai-kit-segment:\n"]), {})
 
 
+class TestDiscover(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
+        self.env = {"XDG_CACHE_HOME": os.path.join(self.dir, "cache")}
+
+    def test_executable_with_header_is_discovered(self):
+        write_script(self.dir, "aws.sh",
+                     "#!/bin/sh\n# ai-kit-segment: line=2 after=clock id=aws ttl=30\necho hi\n")
+        specs = sl.discover_external(self.dir, default_ttl=10, env=self.env)
+        self.assertEqual(len(specs), 1)
+        s = specs[0]
+        self.assertEqual(s.id, "aws")
+        self.assertEqual(s.position, ("after", "clock"))
+        self.assertEqual(s.line, 2)
+        self.assertEqual(s.ttl, 30)
+        self.assertEqual(s.timeout, 2.0)
+        self.assertTrue(s.cache_path.endswith(os.path.join("ai-kit", "segments", "aws")))
+
+    def test_no_header_uses_defaults_and_stem_id(self):
+        write_script(self.dir, "clockx", "#!/bin/sh\necho hi\n")
+        specs = sl.discover_external(self.dir, default_ttl=7, env=self.env)
+        self.assertEqual(specs[0].id, "clockx")
+        self.assertEqual(specs[0].position, ("end", ""))
+        self.assertEqual(specs[0].line, 0)        # 0 => "last row", resolved at placement
+        self.assertEqual(specs[0].ttl, 7)
+
+    def test_non_executable_skipped(self):
+        write_script(self.dir, "noexec", "#!/bin/sh\necho hi\n", executable=False)
+        self.assertEqual(sl.discover_external(self.dir, 10, self.env), [])
+
+    def test_sorted_by_filename_then_id(self):
+        write_script(self.dir, "b.sh", "#!/bin/sh\n# ai-kit-segment: id=zeta\necho\n")
+        write_script(self.dir, "a.sh", "#!/bin/sh\n# ai-kit-segment: id=omega\necho\n")
+        ids = [s.id for s in sl.discover_external(self.dir, 10, self.env)]
+        self.assertEqual(ids, ["omega", "zeta"])   # a.sh before b.sh
+
+    def test_missing_dir_returns_empty(self):
+        self.assertEqual(sl.discover_external("/no/such/dir", 10, self.env), [])
+
+
 if __name__ == "__main__":
     unittest.main()
