@@ -155,6 +155,61 @@ Environment variables: `CC_AI_KIT_CONFIG` (config path),
 `CC_AI_KIT_SEGMENT_<KEY>` (per-segment toggle). Requires Python 3.11+ for the
 TOML file; on older Python the file is ignored and only env toggles apply.
 
+### External drop-in segments
+
+Add a status-line segment without editing `status-line.py`: drop an executable
+into `~/.config/ai-kit/segments/` (override with `CC_AI_KIT_SEGMENTS_DIR` or
+`[external] dir`). It is discovered on the next render, **enabled by default**,
+and placed via a header in its first 10 lines:
+
+```
+# ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end) [id=<slug>] [timeout=<s>] [ttl=<s>]
+```
+
+Defaults: `line` = last row, position = `end`, `id` = filename stem,
+`timeout` = 2s, `ttl` = `[external] ttl` (10s).
+
+**Input.** The provider receives the same status JSON Claude passes, augmented
+with a `segment` block, on **stdin** — and the key scalars mirrored as env vars
+so a shell one-liner needs no JSON parser:
+
+```json
+{ "...": "normal status fields",
+  "segment": { "id": "aws", "avail_cols": 24, "line": 2, "position": "after:clock" } }
+```
+
+`AI_KIT_SEGMENT_COLS`, `AI_KIT_SEGMENT_ID`, `AI_KIT_SEGMENT_LINE`,
+`AI_KIT_SEGMENT_POSITION`. The provider runs with `cwd` = the workspace directory.
+
+**Output.** Print **one line**. SGR color escapes (`\033[…m`) are kept; any other
+control sequence is stripped. Size it to `AI_KIT_SEGMENT_COLS` (long → medium →
+short) — or print nothing to omit the segment. The core truncates as a safety net
+and never lets an external push out a pinned segment. Output is cached per `id`
+for `ttl` seconds (`ttl=0` re-runs every render).
+
+**Worked example — AWS session expiry (`~/.config/ai-kit/segments/aws-session`):**
+
+```bash
+#!/bin/sh
+# ai-kit-segment: line=2 after=clock id=aws-session ttl=30
+left=$(your-aws-expiry-command)            # e.g. "4h 44m 12s"
+cols=${AI_KIT_SEGMENT_COLS:-80}
+if   [ "$cols" -ge 14 ]; then printf '\033[33m🔐 %s\033[0m\n' "$left"
+elif [ "$cols" -ge 8  ]; then printf '\033[33m🔐 4h44m\033[0m\n'
+elif [ "$cols" -ge 4  ]; then printf '\033[33m🔐4h\033[0m\n'
+fi                                          # else: nothing -> dropped
+```
+
+A cross-platform Python reference (system available memory) ships at
+`examples/segments/sysmem` — copy it as a starting point.
+
+**Disable** a provider explicitly: `[segments] aws-session = false` (or
+`CC_AI_KIT_SEGMENT_AWS_SESSION=0`).
+
+**Trust model.** Providers are arbitrary executables you place in your own
+directory; ai-kit never installs them. Keep them fast and single-line. A
+failing, slow (past `timeout`), or empty provider is simply omitted.
+
 ### Flags & overrides
 
 ```bash
