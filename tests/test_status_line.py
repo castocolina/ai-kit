@@ -1419,6 +1419,38 @@ class TestRendererRobustness(unittest.TestCase):
         self.assertIsInstance(out, list)
         self.assertFalse(any("status-line error" in strip(l) for l in out))
 
+    # A fresh /clear session sends context_window/cost PRESENT but with null inner
+    # fields (no tokens/cost accrued yet). dict.get(k, default) returns None for a
+    # present-but-null key, so int()/math on it raised inside build_data and the
+    # whole bar collapsed to "status-line error". Coalesce null -> 0 instead.
+    _NEW_SESSION_RAW = {
+        "model": {"display_name": "Opus", "id": "claude-opus-4-8"},
+        "workspace": {"current_dir": "."},
+        "transcript_path": "",
+        "context_window": {"used_percentage": None, "context_window_size": None},
+        "cost": {"total_lines_added": None, "total_lines_removed": None,
+                 "total_cost_usd": None, "total_duration_ms": None,
+                 "total_api_duration_ms": None},
+    }
+
+    def test_build_data_tolerates_present_but_null_fields(self):
+        data, _cols, _lines = sl.build_data(dict(self._NEW_SESSION_RAW), os.environ)
+        self.assertEqual(data["context_pct"], 0)
+        self.assertEqual(data["context_max"], 0)
+        self.assertEqual(data["added"], 0)
+        self.assertEqual(data["removed"], 0)
+        self.assertEqual(data["cost"], 0)
+        self.assertEqual(data["total_ms"], 0)
+        self.assertEqual(data["api_ms"], 0)
+
+    def test_render_new_session_no_error_no_warn(self):
+        cfg = sl.default_config()
+        out = sl.safe_render(dict(self._NEW_SESSION_RAW), os.environ, cfg, THEME, 0)
+        text = "\n".join(strip(l) for l in out)
+        self.assertNotIn("status-line error", text)
+        self.assertNotIn("⚠", text)        # no per-segment crashes either
+        self.assertTrue(text.strip())       # and the bar is not blank
+
 
 class TestDoctor(unittest.TestCase):
     def setUp(self):

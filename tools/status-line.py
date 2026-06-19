@@ -1361,13 +1361,16 @@ def build_data(raw, env, segments=None, t_start=None, git_worktree=False):
         "home": home,
         "branch": branch, "dirty": dirty, "is_worktree": is_worktree,
         "clock": time.strftime("%H:%M"), "ago": ago,
-        "added": cost.get("total_lines_added", 0),
-        "removed": cost.get("total_lines_removed", 0),
-        "cost": cost.get("total_cost_usd", 0),
-        "total_ms": cost.get("total_duration_ms", 0),
-        "api_ms": cost.get("total_api_duration_ms", 0),
-        "context_pct": int(ctx.get("used_percentage", 0)),
-        "context_max": ctx.get("context_window_size", 0),
+        # `or 0` (not get's default) so a PRESENT-but-null field — what a fresh
+        # /clear session sends before any tokens/cost accrue — coalesces to 0
+        # instead of raising on int()/math and blanking the whole bar.
+        "added": cost.get("total_lines_added") or 0,
+        "removed": cost.get("total_lines_removed") or 0,
+        "cost": cost.get("total_cost_usd") or 0,
+        "total_ms": cost.get("total_duration_ms") or 0,
+        "api_ms": cost.get("total_api_duration_ms") or 0,
+        "context_pct": int(ctx.get("used_percentage") or 0),
+        "context_max": ctx.get("context_window_size") or 0,
         "chat_bytes": transcript_bytes(transcript) if want("chat_size") else None,
         "mem_bytes": proc_rss_bytes() if want("memory") else None,
         "rate_limits": raw.get("rate_limits") or {},
