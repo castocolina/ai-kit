@@ -97,5 +97,31 @@ class TestDiscover(unittest.TestCase):
         self.assertEqual(sl.discover_external("/no/such/dir", 10, self.env), [])
 
 
+class TestSanitize(unittest.TestCase):
+    def test_first_non_empty_line(self):
+        self.assertEqual(sl._sanitize_external("\n\n  hello \n second\n", 40), "  hello")
+
+    def test_keeps_sgr_strips_other_csi(self):
+        # \033[33m kept (SGR), \033[2J (clear) and cursor move \033[1A stripped
+        out = sl._sanitize_external("\033[33mhi\033[0m\033[2J\033[1A", 40)
+        self.assertEqual(out, "\033[33mhi\033[0m")
+
+    def test_strips_osc_and_control_chars(self):
+        out = sl._sanitize_external("\033]0;title\007ab\tc", 40)
+        self.assertEqual(out, "abc")
+
+    def test_truncates_to_avail_and_resets(self):
+        out = sl._sanitize_external("\033[33mabcdef\033[0m", 3)
+        self.assertEqual(sl.visible_width(out), 3)
+        self.assertTrue(out.endswith(sl.RESET))
+
+    def test_empty_after_sanitize_returns_none(self):
+        self.assertIsNone(sl._sanitize_external("\033[2J\n", 40))
+        self.assertIsNone(sl._sanitize_external("   \n", 40))
+
+    def test_avail_zero_returns_none(self):
+        self.assertIsNone(sl._sanitize_external("hi", 0))
+
+
 if __name__ == "__main__":
     unittest.main()

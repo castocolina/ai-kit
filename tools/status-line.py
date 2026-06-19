@@ -354,6 +354,53 @@ def discover_external(directory, default_ttl, env):
     return specs
 
 
+_SGR_SEQ = re.compile(r"\x1b\[[0-9;]*m")            # an SGR color/style escape
+_CSI_SEQ = re.compile(r"\x1b\[[0-9;?]*([A-Za-z])")  # any CSI; group = final byte
+_OSC_SEQ = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+_STRAY_ESC = re.compile(r"\x1b(?!\[[0-9;]*m)")      # ESC not starting an SGR
+_C0_CTRL = re.compile(r"[\x00-\x09\x0b-\x1a\x1c-\x1f\x7f]")  # controls (incl. TAB) except NL/ESC
+
+
+def _truncate_visible(s, avail):
+    """Cut s to at most `avail` visible cells, preserving zero-width SGR escapes,
+    appending RESET if any SGR was emitted. avail <= 0 -> ''."""
+    if avail <= 0:
+        return ""
+    out, width, i, n, saw_sgr = [], 0, 0, len(s), False
+    while i < n:
+        m = _SGR_SEQ.match(s, i)
+        if m:
+            out.append(m.group(0))
+            saw_sgr = True
+            i = m.end()
+            continue
+        w = char_width(s[i])
+        if width + w > avail:
+            break
+        out.append(s[i])
+        width += w
+        i += 1
+    res = "".join(out)
+    if saw_sgr and not res.endswith(RESET):
+        res += RESET
+    return res
+
+
+def _sanitize_external(text, avail):
+    """First non-empty line of `text`, SGR colors kept, every other control/CSI/OSC
+    sequence stripped, width-truncated to `avail`. None if nothing renderable."""
+    line = next((c for c in text.splitlines() if c.strip()), "").rstrip()
+    if not line:
+        return None
+    line = _OSC_SEQ.sub("", line)
+    line = _CSI_SEQ.sub(lambda m: m.group(0) if m.group(1) == "m" else "", line)
+    line = _STRAY_ESC.sub("", line)
+    line = _C0_CTRL.sub("", line)
+    if not line.strip():
+        return None
+    return _truncate_visible(line, avail) or None
+
+
 def pick_color(pct, ramp):
     """Return the color for the first ceil that pct is strictly below."""
     for ceil, color in ramp:
