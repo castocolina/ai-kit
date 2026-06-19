@@ -206,6 +206,19 @@ def load_config(env):
 RESET = "\033[0m"
 BG_LIGHTGRAY = "\033[47m"
 _DIM = "\033[90m"             # fixed dim grey for stderr warnings (palette-independent)
+_WARN = "\033[33m"            # fixed yellow for failure markers (palette-independent)
+
+
+def _doctor_cmd():
+    """A concrete, copy-pasteable doctor invocation for THIS install — resolved
+    from the running interpreter and this file's path (~-collapsed). Never a bare
+    '--doctor', which would assume the user is sitting in a repo clone."""
+    py = os.path.basename(sys.executable) or "python3"
+    path = os.path.abspath(__file__)
+    home = os.path.expanduser("~")
+    if path == home or path.startswith(home + os.sep):
+        path = "~" + path[len(home):]
+    return f"{py} {path} --doctor"
 
 # Overridable palette: NAME -> default SGR params (no "\033[" / "m" wrapper).
 # Values are pure hues — no baked-in bold. Emphasis is expressed on the ramp
@@ -1128,7 +1141,22 @@ def current_todo(path, session=None, config_dir=None):
 
 
 # ═══ Packing + render ════════════════════════════════════════════════════════
-def pack_line(keys, data, cols, cfg=None, theme=None):
+def safe_build(key, data, avail, theme, failed):
+    """Invoke one segment builder in isolation. On ANY exception, record `key`
+    in the shared `failed` set and return a width-bounded warning marker instead
+    of propagating — so a single bad segment can never blank the whole bar. The
+    marker shows the segment name when it fits `avail`, else just the icon."""
+    try:
+        return BUILDERS[key](data, avail, theme)
+    except Exception:                              # noqa: BLE001 — isolation is the point
+        failed.add(key)
+        named = f"{_WARN}⚠{key}{RESET}"
+        if visible_width(named) <= avail:
+            return named
+        return f"{_WARN}⚠{RESET}"
+
+
+def pack_line(keys, data, cols, cfg=None, theme=None, failed=None):
     """Best-fit pack enabled segments into cols - RIGHT_MARGIN.
 
     For each key (left->right), compute the space available at this position
@@ -1137,6 +1165,7 @@ def pack_line(keys, data, cols, cfg=None, theme=None):
     Pinned segments are always kept. Order is priority: leftmost survive."""
     cfg = cfg or default_config()
     theme = theme or build_theme(cfg)
+    failed = failed if failed is not None else set()
     budget = cols - RIGHT_MARGIN
     sep_w = visible_width(SEP)
     kept, used = [], 0
@@ -1145,7 +1174,7 @@ def pack_line(keys, data, cols, cfg=None, theme=None):
             continue
         sep = sep_w if kept else 0
         avail = budget - used - sep
-        s = BUILDERS[key](data, max(avail, 0), theme)
+        s = safe_build(key, data, max(avail, 0), theme, failed)
         if not s:
             continue
         if key in PINNED or visible_width(s) <= avail:
@@ -1154,17 +1183,34 @@ def pack_line(keys, data, cols, cfg=None, theme=None):
     return SEP.join(kept)
 
 
+def diagnostic_line(failed):
+    """One line naming the segments that crashed this render, pointing at the
+    doctor. Returns None when nothing failed (no cost on the happy path)."""
+    if not failed:
+        return None
+    names = ", ".join(sorted(failed))
+    n = len(failed)
+    noun = "segment" if n == 1 else "segments"
+    return (f"{_WARN}⚠ {n} {noun} failed: {names} — "
+            f"run the doctor: {_doctor_cmd()}{RESET}")
+
+
 def render(data, cols, lines, cfg=None, theme=None):
-    """Render up to len(cfg.layout) lines, gated by terminal height and width."""
+    """Render up to len(cfg.layout) lines, gated by terminal height and width.
+    A trailing diagnostic line is appended only when a builder crashed."""
     cfg = cfg or default_config()
     theme = theme or build_theme(cfg)
+    failed = set()
     out = []
     for ln in cfg.layout:
         if lines < ln.min_rows:
             continue
-        packed = pack_line(ln.segments, data, cols, cfg, theme)
+        packed = pack_line(ln.segments, data, cols, cfg, theme, failed)
         if packed:
             out.append(packed)
+    diag = diagnostic_line(failed)
+    if diag:
+        out.append(diag)
     return out
 
 
@@ -1414,6 +1460,68 @@ def validate_config_file(path, env):
     return errors
 
 
+# A representative status JSON for the doctor's dry render. Self-contained (no
+# fixture file): exercises every default builder so one that raises is surfaced.
+_DOCTOR_SAMPLE = {
+    "model": {"display_name": "Opus 4.8", "id": "claude-opus-4-8"},
+    "cost": {"total_lines_added": 12, "total_lines_removed": 3,
+             "total_cost_usd": 0.0123, "total_duration_ms": 45000,
+             "total_api_duration_ms": 12000},
+    "context_window": {"used_percentage": 42, "context_window_size": 200000},
+    "workspace": {"current_dir": "."},
+    "transcript_path": "",
+    "session_id": "doctor-sample",
+    "rate_limits": {},
+    "effort": {"level": "high"},
+}
+
+
+def _dry_render_failures(cfg, theme, env):
+    """Run EVERY builder once against the sample input — including segments that
+    are disabled or absent from the layout — and return the set of segment keys
+    whose builder raised. Dry-rendering only the enabled+reachable subset would
+    let a broken disabled builder (e.g. `cost`) pass the doctor and then crash
+    the moment the user enables it, which is exactly the failure class the doctor
+    exists to catch. `safe_build` (not `pack_line`'s flag gate) does the catching,
+    so we invoke it directly for each key.
+
+    Note: this catches builders that crash on *valid* input. A builder that only
+    raises on a missing/malformed key won't be surfaced by this happy-path sample."""
+    failed = set()
+    data, _cols, _lines = build_data(
+        dict(_DOCTOR_SAMPLE), env, cfg.segments, time.perf_counter_ns(),
+        (cfg.git or {}).get("worktree", False))
+    for key in BUILDERS:
+        safe_build(key, data, 200, theme, failed)
+    return failed
+
+
+def cmd_doctor(env):
+    """Validate the resolved config AND dry-render every segment builder (not just
+    the enabled ones). Prints a report; returns process exit code (0 healthy, 1 if
+    any problem)."""
+    path = config_path(env)
+    errors = []
+    if os.path.exists(path):
+        errors = [f"{path}: {e}" for e in validate_config_file(path, env)]
+    failed = set()
+    cfg = load_config(env)                         # never raises (degrades to defaults)
+    try:
+        theme = build_theme(cfg)
+        failed = _dry_render_failures(cfg, theme, env)
+    except Exception as e:                         # noqa: BLE001
+        errors.append(f"render pipeline crashed: {e!r}")
+    for e in errors:
+        print(e, file=sys.stderr)
+    for key in sorted(failed):
+        print(f"segment '{key}' raised during render", file=sys.stderr)
+    if errors or failed:
+        print(f"after fixing, re-run: {_doctor_cmd()}", file=sys.stderr)
+        return 1
+    print(f"{path}: OK — config valid, all {len(BUILDERS)} segments render cleanly")
+    return 0
+
+
 def cmd_check(path, env):
     """Validate a config file; print result. Return process exit code (0/1)."""
     path = path or config_path(env)
@@ -1441,7 +1549,23 @@ def parse_args(argv):
                    metavar="FILE",
                    help="validate a config file (default: the resolved path) "
                         "and exit non-zero if invalid")
+    p.add_argument("--doctor", action="store_true",
+                   help="validate the config AND dry-render every segment to "
+                        "surface a builder that raises; exit non-zero if unhealthy")
     return p.parse_args(argv)
+
+
+def safe_render(raw, env, cfg, theme, t_start):
+    """Build data and render; on ANY unexpected failure return a single
+    diagnostic line instead of a blank bar. Never raises. This is the backstop
+    above safe_build's per-segment isolation (covers build_data itself)."""
+    try:
+        data, cols, lines = build_data(
+            raw, env, cfg.segments, t_start, (cfg.git or {}).get("worktree", False))
+        return render(data, cols, lines, cfg, theme)
+    except Exception:                              # noqa: BLE001 — never blank the bar
+        return [f"{_WARN}⚠ status-line error — "
+                f"run the doctor: {_doctor_cmd()}{RESET}"]
 
 
 def main():
@@ -1449,6 +1573,8 @@ def main():
     args = parse_args(sys.argv[1:])
     if args.check is not _NO_CHECK:
         sys.exit(cmd_check(args.check, os.environ))
+    if args.doctor:
+        sys.exit(cmd_doctor(os.environ))
     cfg = load_config(os.environ)
     theme = build_theme(cfg)
     if args.print_config:
@@ -1458,9 +1584,7 @@ def main():
         raw = json.load(sys.stdin)
     except (ValueError, OSError):
         raw = {}
-    data, cols, lines = build_data(raw, os.environ, cfg.segments, t0,
-                                   (cfg.git or {}).get("worktree", False))
-    print("\n".join(render(data, cols, lines, cfg, theme)))
+    print("\n".join(safe_render(raw, os.environ, cfg, theme, t0)))
 
 
 if __name__ == "__main__":

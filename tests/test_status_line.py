@@ -1324,5 +1324,146 @@ class TestRampFromConfig(unittest.TestCase):
         self.assertEqual(cfg.ramps, {})
 
 
+class TestRendererRobustness(unittest.TestCase):
+    def test_doctor_cmd_is_concrete(self):
+        cmd = sl._doctor_cmd()
+        # A copy-pasteable command, not a bare flag: ends with --doctor,
+        # names a python executable, and references this script's path.
+        self.assertTrue(cmd.endswith("--doctor"), cmd)
+        self.assertIn("status-line.py", cmd)
+        self.assertRegex(cmd, r"^\S*python\S*\s")
+
+    def test_warn_is_an_sgr_code(self):
+        self.assertTrue(sl._WARN.startswith("\033["))
+        self.assertTrue(sl._WARN.endswith("m"))
+
+    def test_safe_build_passes_through_ok_builder(self):
+        failed = set()
+        def good(data, avail, theme):
+            return "HELLO"
+        with mock.patch.dict(sl.BUILDERS, {"path": good}):
+            out = sl.safe_build("path", _data(), 40, THEME, failed)
+        self.assertEqual(out, "HELLO")
+        self.assertEqual(failed, set())
+
+    def test_safe_build_records_and_marks_on_raise(self):
+        failed = set()
+        def boom(data, avail, theme):
+            raise RuntimeError("kaboom")
+        with mock.patch.dict(sl.BUILDERS, {"path": boom}):
+            out = sl.safe_build("path", _data(), 40, THEME, failed)
+        self.assertIn("path", failed)
+        self.assertIn("path", strip(out))          # name shown when width allows
+        self.assertLessEqual(sl.visible_width(out), 40)
+
+    def test_safe_build_bare_marker_when_no_room_for_name(self):
+        failed = set()
+        def boom(data, avail, theme):
+            raise RuntimeError("x")
+        with mock.patch.dict(sl.BUILDERS, {"context": boom}):
+            out = sl.safe_build("context", _data(), 1, THEME, failed)
+        self.assertIn("context", failed)
+        self.assertNotIn("context", strip(out))    # name dropped, icon kept
+
+    def test_pack_line_survives_a_raising_pinned_builder(self):
+        # "path" is PINNED — even when its builder raises, the line still renders
+        # the other segments and records the failure.
+        failed = set()
+        def boom(data, avail, theme):
+            raise ValueError("nope")
+        cfg = sl.default_config()
+        def ok(data, avail, theme):
+            return "CTX"
+        with mock.patch.dict(sl.BUILDERS, {"path": boom, "context": ok}):
+            line = sl.pack_line(["path", "context"], _data(), 80, cfg, THEME, failed)
+        self.assertIn("path", failed)
+        self.assertIn("CTX", strip(line))          # the healthy segment still shows
+
+    def test_diagnostic_line_none_when_no_failures(self):
+        self.assertIsNone(sl.diagnostic_line(set()))
+
+    def test_diagnostic_line_lists_failures_and_doctor(self):
+        line = strip(sl.diagnostic_line({"git", "context"}))
+        self.assertIn("2 segments failed", line)
+        self.assertIn("context, git", line)         # sorted
+        self.assertIn("--doctor", line)
+
+    def test_render_appends_diagnostic_on_builder_crash(self):
+        def boom(data, avail, theme):
+            raise RuntimeError("x")
+        cfg = sl.default_config()
+        layout = [sl.Line(0, ["path"])]
+        cfg = cfg._replace(layout=layout)
+        with mock.patch.dict(sl.BUILDERS, {"path": boom}):
+            out = sl.render(_data(), 80, 40, cfg, THEME)
+        self.assertTrue(any("--doctor" in strip(l) for l in out))
+        self.assertTrue(any("path" in strip(l) for l in out))
+
+    def test_render_no_diagnostic_when_healthy(self):
+        cfg = sl.default_config()
+        out = sl.render(_data(), 80, 40, cfg, THEME)
+        self.assertFalse(any("--doctor" in strip(l) for l in out))
+
+    def test_safe_render_returns_diagnostic_on_catastrophic_failure(self):
+        cfg = sl.default_config()
+        theme = THEME
+        with mock.patch.object(sl, "build_data", side_effect=RuntimeError("boom")):
+            out = sl.safe_render({}, os.environ, cfg, theme, 0)
+        self.assertEqual(len(out), 1)
+        self.assertIn("status-line error", strip(out[0]))
+        self.assertIn("--doctor", strip(out[0]))
+
+    def test_safe_render_normal_path(self):
+        cfg = sl.default_config()
+        out = sl.safe_render({}, os.environ, cfg, THEME, 0)
+        self.assertIsInstance(out, list)
+        self.assertFalse(any("status-line error" in strip(l) for l in out))
+
+
+class TestDoctor(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        # Resolve config to a path that does NOT exist → defaults, which are valid.
+        self.env = {"HOME": self.tmp,
+                    "CC_AI_KIT_CONFIG": os.path.join(self.tmp, "absent.toml")}
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_doctor_ok_on_defaults(self):
+        rc = sl.cmd_doctor(self.env)
+        self.assertEqual(rc, 0)
+
+    def test_doctor_flags_a_raising_builder(self):
+        def boom(data, avail, theme):
+            raise RuntimeError("x")
+        with mock.patch.dict(sl.BUILDERS, {"path": boom}):
+            rc = sl.cmd_doctor(self.env)
+        self.assertEqual(rc, 1)
+
+    def test_doctor_flags_a_raising_disabled_builder(self):
+        # A builder that is DISABLED by default (`cost`) must still be dry-rendered:
+        # the doctor exists to catch a builder that would crash once enabled.
+        self.assertFalse(sl.default_config().segments.get("cost"))
+        def boom(data, avail, theme):
+            raise RuntimeError("x")
+        with mock.patch.dict(sl.BUILDERS, {"cost": boom}):
+            rc = sl.cmd_doctor(self.env)
+        self.assertEqual(rc, 1)
+
+    def test_doctor_flags_invalid_config_file(self):
+        bad = os.path.join(self.tmp, "bad.toml")
+        with open(bad, "w") as f:
+            f.write("[segments]\nthis_is_not_a_segment = true\n")
+        env = dict(self.env, CC_AI_KIT_CONFIG=bad)
+        rc = sl.cmd_doctor(env)
+        self.assertEqual(rc, 1)
+
+    def test_check_flag_still_works(self):
+        # Back-compat: --check path is untouched.
+        rc = sl.cmd_check(os.path.join(self.tmp, "absent.toml"), self.env)
+        self.assertEqual(rc, 1)   # absent file → cmd_check reports it (existing behavior)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
