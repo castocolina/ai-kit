@@ -381,6 +381,97 @@ class TestProcAndGit(unittest.TestCase):
         self.assertIsInstance(is_wt, bool)
 
 
+class TestCurrentTodo(unittest.TestCase):
+    """current_todo prefers Claude's materialized task/todo state on disk over
+    replaying the transcript."""
+
+    def _write(self, path, obj):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(obj, f)
+
+    def test_pick_helpers(self):
+        self.assertEqual(
+            sl._pick_from_tasks([{"status": "in_progress", "activeForm": "Doing X", "subject": "X"}]),
+            ("in_progress", "Doing X"))
+        self.assertEqual(
+            sl._pick_from_tasks([{"status": "pending", "subject": "Y"}]),
+            ("pending", "Y"))
+        self.assertIsNone(sl._pick_from_tasks([{"status": "completed", "subject": "Z"}]))
+        self.assertEqual(
+            sl._pick_from_todos([{"status": "in_progress", "activeForm": "Doing"}]),
+            ("in_progress", "Doing"))
+
+    def test_reads_managed_tasks_dir(self):
+        with tempfile.TemporaryDirectory() as cd:
+            s = "sess1"
+            self._write(os.path.join(cd, "tasks", s, "1.json"),
+                        {"id": "1", "subject": "first", "activeForm": "Doing first", "status": "completed"})
+            self._write(os.path.join(cd, "tasks", s, "2.json"),
+                        {"id": "2", "subject": "second", "activeForm": "Doing second", "status": "in_progress"})
+            self.assertEqual(sl.current_todo("", s, cd), ("in_progress", "Doing second"))
+
+    def test_tasks_dir_all_done_is_authoritative(self):
+        # Dir has files but none active -> (None, None); must NOT replay transcript.
+        with tempfile.TemporaryDirectory() as cd:
+            s = "sess2"
+            self._write(os.path.join(cd, "tasks", s, "1.json"),
+                        {"id": "1", "subject": "x", "activeForm": "X", "status": "completed"})
+            with mock.patch.object(sl, "_todo_from_transcript") as tr:
+                self.assertEqual(sl.current_todo("/some/transcript.jsonl", s, cd), (None, None))
+                tr.assert_not_called()
+
+    def test_reads_todos_dir_when_no_tasks(self):
+        with tempfile.TemporaryDirectory() as cd:
+            s = "sess3"
+            self._write(os.path.join(cd, "todos", f"{s}-agent-abc.json"),
+                        [{"status": "in_progress", "activeForm": "Todo active", "content": "c"}])
+            self.assertEqual(sl.current_todo("", s, cd), ("in_progress", "Todo active"))
+
+    def test_falls_back_to_transcript(self):
+        with tempfile.TemporaryDirectory() as cd:
+            tp = os.path.join(cd, "t.jsonl")
+            with open(tp, "w") as f:
+                f.write(json.dumps({"message": {"content": [
+                    {"type": "tool_use", "name": "TaskCreate",
+                     "input": {"subject": "A", "activeForm": "Doing A"}}]}}) + "\n")
+                f.write(json.dumps({"message": {"content": [
+                    {"type": "tool_use", "name": "TaskUpdate",
+                     "input": {"taskId": 1, "status": "in_progress"}}]}}) + "\n")
+            # session has no materialized dirs under cd -> transcript replay
+            self.assertEqual(sl.current_todo(tp, "nosession", cd), ("in_progress", "Doing A"))
+
+    def test_tasks_dir_preferred_over_transcript(self):
+        with tempfile.TemporaryDirectory() as cd:
+            s = "sess4"
+            self._write(os.path.join(cd, "tasks", s, "1.json"),
+                        {"id": "1", "subject": "win", "activeForm": "From tasks dir", "status": "in_progress"})
+            with mock.patch.object(sl, "_todo_from_transcript") as tr:
+                self.assertEqual(sl.current_todo("/x.jsonl", s, cd), ("in_progress", "From tasks dir"))
+                tr.assert_not_called()
+
+    def test_safe_session_rejects_traversal(self):
+        self.assertTrue(sl._safe_session("b6de6c0c-9229-407f-9d33-b157970f2e9f"))
+        for bad in ("../evil", "a/b", "..", r"a\b", ""):
+            self.assertFalse(sl._safe_session(bad), bad)
+
+    def test_traversal_session_does_not_escape_dir(self):
+        # A crafted session id with ../ must not read .json outside the tasks dir;
+        # the materialized tiers bail and we fall through to the transcript.
+        with tempfile.TemporaryDirectory() as cd:
+            self._write(os.path.join(cd, "secret.json"),
+                        [{"status": "in_progress", "activeForm": "LEAK"}])
+            with mock.patch.object(sl, "_todo_from_transcript",
+                                   return_value=(None, None)) as tr:
+                self.assertEqual(sl.current_todo("", "../", cd), (None, None))
+                tr.assert_called_once()   # fell through, did not traverse
+
+    def test_no_session_goes_straight_to_transcript(self):
+        with mock.patch.object(sl, "_todo_from_transcript", return_value=("pending", "P")) as tr:
+            self.assertEqual(sl.current_todo("/x.jsonl"), ("pending", "P"))
+            tr.assert_called_once()
+
+
 class TestEndToEnd(unittest.TestCase):
     def test_build_and_render(self):
         raw = {
@@ -397,6 +488,50 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(len(out), 3)
         self.assertIn("Opus 4.8", strip(out[1]))
         self.assertIn("47%", strip(out[2]))
+
+
+class TestLazyCompute(unittest.TestCase):
+    """A disabled segment must skip its probe in build_data, not just its render."""
+    RAW = {"workspace": {"current_dir": "."}, "transcript_path": ""}
+    ENV = {"STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50", "HOME": "/home/u"}
+
+    def test_disabled_segments_skip_their_probes(self):
+        segs = dict.fromkeys(sl.SEGMENTS, False)
+        with mock.patch.object(sl, "git_info") as gi, \
+             mock.patch.object(sl, "current_todo") as ct, \
+             mock.patch.object(sl, "proc_rss_bytes") as rss, \
+             mock.patch.object(sl, "effort_setting_is_auto") as ea:
+            sl.build_data(self.RAW, self.ENV, segs)
+            gi.assert_not_called()
+            ct.assert_not_called()
+            rss.assert_not_called()
+            ea.assert_not_called()
+
+    def test_enabled_segments_run_their_probes(self):
+        segs = {"branch": True, "todo": True, "memory": True, "effort": True}
+        with mock.patch.object(sl, "git_info", return_value=("m", "clean", False)) as gi, \
+             mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct, \
+             mock.patch.object(sl, "proc_rss_bytes", return_value=1) as rss, \
+             mock.patch.object(sl, "effort_setting_is_auto", return_value=True) as ea:
+            sl.build_data(self.RAW, self.ENV, segs)
+            gi.assert_called_once()      # branch enabled -> git probe runs
+            ct.assert_called_once()      # todo enabled  -> transcript parse runs
+            rss.assert_called_once()     # memory enabled
+            ea.assert_called_once()      # effort enabled
+
+    def test_dirty_alone_still_triggers_git(self):
+        # branch + dirty share one git_info call; either flag must trigger it.
+        segs = dict.fromkeys(sl.SEGMENTS, False)
+        segs["dirty"] = True
+        with mock.patch.object(sl, "git_info", return_value=("", "modified", False)) as gi:
+            sl.build_data(self.RAW, self.ENV, segs)
+            gi.assert_called_once()
+
+    def test_none_segments_computes_everything(self):
+        # back-compat / degrade-safe: no segments map -> compute all probes
+        with mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct:
+            sl.build_data(self.RAW, self.ENV)
+            ct.assert_called_once()
 
 
 class TestBlueFix(unittest.TestCase):

@@ -192,7 +192,7 @@ update_statusline() {
   [ -f "$sl" ] || { warn "no tools/status-line.py — skipping statusline"; return; }
   have python3 || { warn "python3 not found — skipping statusline"; return; }
   if [ "$DRY_RUN" = 1 ]; then
-    printf '%swould%s set statusLine -> python3 %s\n' "$C_DIM" "$C_RESET" "$sl"; return
+    printf '%swould%s set statusLine -> python3 -S %s\n' "$C_DIM" "$C_RESET" "$sl"; return
   fi
   [ -f "$SETTINGS" ] && cp "$SETTINGS" "$SETTINGS.bak"
   python3 - "$SETTINGS" "$sl" <<'PY'
@@ -207,13 +207,14 @@ if os.path.isfile(path):
         data = {}
 if not isinstance(data, dict):
     data = {}
-data["statusLine"] = {"type": "command", "command": "python3 " + statusline}
+# -S skips `import site` at startup (~a few ms); status-line.py is stdlib-only.
+data["statusLine"] = {"type": "command", "command": "python3 -S " + statusline}
 os.makedirs(os.path.dirname(path), exist_ok=True)
 with open(path, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
 PY
-  ok "statusLine -> python3 $sl"
+  ok "statusLine -> python3 -S $sl"
 }
 
 install_statusline_config() {

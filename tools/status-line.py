@@ -25,8 +25,10 @@ from collections import namedtuple
 from datetime import datetime
 
 # ═══ CONFIG — edit freely ════════════════════════════════════════════════════
-# Per-segment on/off. Set False to hide a segment entirely (its builder is then
-# never called). Invariant: keep "path" True so the identity line always emits.
+# Per-segment on/off. Set False to hide a segment entirely: its builder is never
+# called AND its data is never gathered, so a disabled segment costs nothing —
+# `build_data` skips the matching probe (git/transcript/RSS/etc.). Invariant:
+# keep "path" True so the identity line always emits.
 SEGMENTS = {
     # identity line
     "path": True, "branch": True, "dirty": True, "todo": True,
@@ -931,11 +933,91 @@ def _iter_tool_uses(line_obj, names):
             yield item
 
 
-def current_todo(path):
-    """Return (state, text) for the active TODO, or (None, None).
+def _pick_from_tasks(tasks):
+    """Choose the active task from a managed-Task list (creation order). Active =
+    the last in_progress, else the first pending. Returns (state, text) or None."""
+    in_prog = [t for t in tasks if t.get("status") == "in_progress"]
+    if in_prog:
+        return "in_progress", in_prog[-1].get("activeForm") or in_prog[-1].get("subject", "")
+    pending = [t for t in tasks if t.get("status") == "pending"]
+    if pending:
+        return "pending", pending[0].get("subject", "")
+    return None
 
-    Prefer the managed-tasks API (TaskCreate/TaskUpdate), projecting events in
-    order; fall back to the latest TodoWrite snapshot."""
+
+def _pick_from_todos(todos):
+    """Choose the active item from a TodoWrite snapshot. Active = the first
+    in_progress, else the first pending. Returns (state, text) or None."""
+    in_prog = [t for t in todos if t.get("status") == "in_progress"]
+    if in_prog:
+        return "in_progress", in_prog[0].get("activeForm", "")
+    pending = [t for t in todos if t.get("status") == "pending"]
+    if pending:
+        return "pending", pending[0].get("content", "")
+    return None
+
+
+def _safe_session(s):
+    """A session id is used as a single path component under the tasks/todos dir.
+    Reject anything with a path separator or parent ref so it cannot escape that
+    directory (path traversal)."""
+    return bool(s) and not re.search(r"[/\\]|\.\.", s)
+
+
+def _todo_from_tasks_dir(config_dir, session):
+    """Read Claude's materialized managed-Task state: one <id>.json per task under
+    <config_dir>/tasks/<session>/. Returns (state, text) when task files exist
+    (authoritative — may be (None, None) if all are done), else None to try the
+    next source. This is O(task count) — no transcript replay."""
+    if not _safe_session(session):
+        return None
+    d = os.path.join(config_dir, "tasks", session)
+    try:
+        names = [n for n in os.listdir(d) if n.endswith(".json")]
+    except OSError:
+        return None
+    if not names:
+        return None
+    # Sort by numeric id so creation order (and thus "last in_progress") is stable.
+    tasks = []
+    for n in sorted(names, key=lambda x: int(x[:-5]) if x[:-5].isdigit() else 0):
+        try:
+            with open(os.path.join(d, n)) as f:
+                tasks.append(json.load(f))
+        except (OSError, ValueError):
+            continue
+    return _pick_from_tasks(tasks) or (None, None)
+
+
+def _todo_from_todos_dir(config_dir, session):
+    """Read Claude's materialized TodoWrite snapshot: the most recent
+    <config_dir>/todos/<session>*-agent-*.json (a single todos array). Returns
+    (state, text) when such a file exists, else None to try the next source."""
+    if not _safe_session(session):
+        return None
+    d = os.path.join(config_dir, "todos")
+    try:
+        names = [n for n in os.listdir(d)
+                 if n.startswith(session) and "-agent-" in n and n.endswith(".json")]
+    except OSError:
+        return None
+    if not names:
+        return None
+    latest = max(names, key=lambda n: os.path.getmtime(os.path.join(d, n)))
+    try:
+        with open(os.path.join(d, latest)) as f:
+            todos = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(todos, list):
+        return None
+    return _pick_from_todos(todos) or (None, None)
+
+
+def _todo_from_transcript(path):
+    """Last-resort fallback: replay the transcript JSONL to reconstruct task /
+    todo state. O(transcript size) — used only when no materialized state exists
+    (e.g. running outside Claude Code, or an unrecognized on-disk layout)."""
     if not path or not os.path.isfile(path):
         return None, None
 
@@ -973,23 +1055,25 @@ def current_todo(path):
         return None, None
 
     if tasks:
-        in_prog = [t for t in tasks if t["status"] == "in_progress"]
-        if in_prog:
-            return "in_progress", in_prog[-1]["activeForm"]
-        pending = [t for t in tasks if t["status"] == "pending"]
-        if pending:
-            return "pending", pending[0]["subject"]
-        return None, None
-
+        return _pick_from_tasks(tasks) or (None, None)
     if todo_snapshots:
-        todos = todo_snapshots[-1]
-        in_prog = [t for t in todos if t.get("status") == "in_progress"]
-        if in_prog:
-            return "in_progress", in_prog[0].get("activeForm", "")
-        pending = [t for t in todos if t.get("status") == "pending"]
-        if pending:
-            return "pending", pending[0].get("content", "")
+        return _pick_from_todos(todo_snapshots[-1]) or (None, None)
     return None, None
+
+
+def current_todo(path, session=None, config_dir=None):
+    """Return (state, text) for the active TODO, or (None, None).
+
+    Prefer Claude's materialized state on disk — the managed-Task files, then a
+    TodoWrite snapshot — which is cheap (O(task count)) and authoritative. Only
+    when neither exists do we replay the transcript (O(transcript size)). Without
+    session/config_dir (direct/test calls) we go straight to the transcript."""
+    if session and config_dir:
+        for source in (_todo_from_tasks_dir, _todo_from_todos_dir):
+            got = source(config_dir, session)
+            if got is not None:
+                return got
+    return _todo_from_transcript(path)
 
 
 # ═══ Packing + render ════════════════════════════════════════════════════════
@@ -1123,24 +1207,48 @@ def effort_setting_is_auto(work_dir, home):
     return True
 
 
-def build_data(raw, env, t_start=None):
+def build_data(raw, env, segments=None, t_start=None):
+    """Gather everything the builders read.
+
+    Expensive probes — git (`git_info`), the transcript parse (`current_todo`),
+    process RSS (`proc_rss_bytes`), the effort-settings/file stats — run ONLY
+    when their segment is enabled in `segments`. A disabled segment costs nothing
+    to *compute*, not just nothing to *render*: this is the compute half of the
+    same flag gate `pack_line` applies to rendering. `segments=None` computes
+    everything (used by tests and as a degrade-safe default)."""
+    def want(key):
+        return segments is None or segments.get(key, False)
+
     model = raw.get("model") or {}
     cost = raw.get("cost") or {}
     ctx = raw.get("context_window") or {}
     workspace = raw.get("workspace") or {}
     work_dir = os.path.abspath(workspace.get("current_dir") or ".")
     transcript = raw.get("transcript_path") or ""
+    home = env.get("HOME", "")
+    # Session id + Claude config dir locate the materialized task/todo state that
+    # current_todo prefers over replaying the transcript. session_id is provided
+    # in the status-line input; it also equals the transcript file's basename.
+    session = raw.get("session_id") or (
+        os.path.splitext(os.path.basename(transcript))[0] if transcript else "")
+    claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
 
     cols, lines, assumed = terminal_size(env)
-    branch, dirty, is_worktree = git_info(work_dir)
+
+    # git_info yields branch + dirty + worktree in one shot, so it is gated as a
+    # unit on either git segment being enabled.
+    branch, dirty, is_worktree = "", "clean", False
+    if want("branch") or want("dirty"):
+        branch, dirty, is_worktree = git_info(work_dir)
 
     ago = ""
-    if transcript and os.path.isfile(transcript):
+    if want("time_ago") and transcript and os.path.isfile(transcript):
         ago = fmt_ago(int(time.time()) - int(os.path.getmtime(transcript)))
 
     effort = resolve_effort(raw, env)
-    effort_auto = effort_setting_is_auto(work_dir, env.get("HOME", ""))
-    todo_state, todo_text = current_todo(transcript)
+    effort_auto = effort_setting_is_auto(work_dir, home) if want("effort") else False
+    todo_state, todo_text = (current_todo(transcript, session, claude_dir)
+                             if want("todo") else (None, None))
 
     data = {
         "model_name": model.get("display_name", ""),
@@ -1148,7 +1256,7 @@ def build_data(raw, env, t_start=None):
         "effort": effort,
         "effort_auto": effort_auto,
         "work_dir": work_dir,
-        "home": env.get("HOME", ""),
+        "home": home,
         "branch": branch, "dirty": dirty, "is_worktree": is_worktree,
         "clock": time.strftime("%H:%M"), "ago": ago,
         "added": cost.get("total_lines_added", 0),
@@ -1158,8 +1266,8 @@ def build_data(raw, env, t_start=None):
         "api_ms": cost.get("total_api_duration_ms", 0),
         "context_pct": int(ctx.get("used_percentage", 0)),
         "context_max": ctx.get("context_window_size", 0),
-        "chat_bytes": transcript_bytes(transcript),
-        "mem_bytes": proc_rss_bytes(),
+        "chat_bytes": transcript_bytes(transcript) if want("chat_size") else None,
+        "mem_bytes": proc_rss_bytes() if want("memory") else None,
         "rate_limits": raw.get("rate_limits") or {},
         "todo_state": todo_state, "todo_text": todo_text,
         "dim_assumed": assumed,
@@ -1286,7 +1394,7 @@ def main():
         raw = json.load(sys.stdin)
     except (ValueError, OSError):
         raw = {}
-    data, cols, lines = build_data(raw, os.environ, t0)
+    data, cols, lines = build_data(raw, os.environ, cfg.segments, t0)
     print("\n".join(render(data, cols, lines, cfg, theme)))
 
 
