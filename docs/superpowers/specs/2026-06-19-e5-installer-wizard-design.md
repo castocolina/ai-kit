@@ -163,6 +163,47 @@ tuning are editable by hand in that file (the recipe is self-documenting). This 
 wizard small and avoids a color-grammar input surface (that detail belongs to E4b's file
 schema, not an interactive prompt).
 
+### 5.1 Configuration preservation on re-run (refines FR-5.7 — **merge, never regenerate**)
+
+FR-5.7's word "regenerates" is **explicitly narrowed here**: a re-run (`wget | bash`, update,
+reconfigure) must **never lose a user's customizations** — toggles, layout, *or* hand-edited
+colors/ramps.
+
+- The config is copied to `~/.config/ai-kit/statusline.toml` **only if absent** (E4a). On any
+  re-run it is **never overwritten wholesale**.
+- The wizard reads the user's current values, shows them, and writes back **only the keys it
+  manages** — `[segments]`, the `[[line]]` layout, `[git] worktree`. Everything else —
+  `[palette]`, every `[ramp.*]`, `[external]`, and **all comments** — is preserved verbatim.
+- **Headless re-run** (no TTY): the status line is not touched at all (skills-only path).
+- **New segments shipped upstream** (present in the new code/recipe, absent from the user's
+  file) surface as *available* toggles at their new default — the §4 NEW-item reconciliation,
+  applied to segments. Existing choices are untouched.
+
+**Implementation constraint that forces this approach**: Python's stdlib has `tomllib`
+(read-only) but **no TOML writer**. A parse→re-emit round-trip would destroy comments and the
+self-documented recipe. Therefore the write-back is a **surgical text patch** — locate each
+managed block by its header and replace only its body, leaving the rest byte-for-byte. This is
+the only design that satisfies both "zero heavy deps" and "don't lose customizations." (A
+third-party round-trip writer like `tomlkit` is rejected — it violates the stdlib-only rule.)
+
+### 5.2 External segments (E4c) — forward-compatible, never destroyed
+
+External drop-in segments are **E4c** (the requirements doc's stale `E4b` header), deferred
+until after E5. E5 does not build them, but it must not destroy them:
+
+- **Provider scripts** in `${CC_AI_KIT_SEGMENTS_DIR:-~/.config/ai-kit/segments}` are the
+  user's executables, **not** ai-kit symlinks. E5's prune only removes ai-kit symlinks under
+  `~/.claude/{skills,agents,commands}/`; it **never walks** the segments dir. Providers survive
+  install / update / uninstall.
+- **Cache** at `${XDG_CACHE_HOME:-~/.cache}/ai-kit/segments/<id>` (FR-4b.6) is owned by
+  `status-line.py` at render time, not the installer. E5 never creates or deletes it; uninstall
+  leaves `~/.cache/ai-kit/` alone.
+- The **`[external]`** config block (`ttl`, `dir`) is an unmanaged section → preserved by §5.1.
+- **No layout conflict**: externals are placed by their header metadata (`line=N after=key`),
+  not by `[[line]]`, so the wizard's `[[line]]` rewrite cannot disturb external placement. When
+  E4c lands it may surface externals as toggles; that is E4c's concern. E5 guarantees only the
+  seam — providers, cache, and `[external]` left intact.
+
 ---
 
 ## 6. settings.json / statusLine wiring (FR-5.5)
@@ -257,6 +298,11 @@ setup.py install        (default; reconfigure = same minus first-run defaults)
   prune-with-confirm, double-confirm on a foreign `statusLine`, `/dev/tty` vs headless branch
   selection, live-preview command construction (sample JSON + `CC_AI_KIT_SEGMENT_*`), TOML
   read/write of `[segments]` + `[[line]]` reorder.
+- **Preservation (§5.1/§5.2)**: a re-run that edits segments/layout must leave a hand-edited
+  `[palette]`, `[ramp.*]`, `[external]`, and comments **byte-for-byte intact** (golden-file
+  diff). Prune must never walk `~/.config/ai-kit/segments/`; uninstall must leave
+  `~/.cache/ai-kit/` and the providers dir untouched. New-upstream-segment surfaces as an
+  available toggle without resetting existing choices.
 - **`install.sh`**: `bash tests/test_install.sh` + `shellcheck tools/install.sh` — mode detect,
   convergent fetch (git + tarball atomic-swap leaves no orphans), ensure-python error, exec
   handoff.
@@ -279,4 +325,5 @@ setup.py install        (default; reconfigure = same minus first-run defaults)
 
 None blocking. Resolved during brainstorming: bash↔Python boundary, symlinks-as-selection
 (no state file), convergent tarball fetch, `/dev/tty` interactivity, status-line reorder scope,
-reconfigure surface, colors-by-hand.
+reconfigure surface, colors-by-hand, **config preservation on re-run (merge-not-regenerate,
+surgical TOML patch)**, and **external-segment (E4c) forward-compat seam**.
