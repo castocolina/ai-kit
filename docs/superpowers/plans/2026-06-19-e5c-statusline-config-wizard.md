@@ -340,10 +340,12 @@ def render_preview(status_line, segments, sample_json, env):
 
     Shells out to `python3 status-line.py` feeding `sample_json` on stdin and the
     toggles as CC_AI_KIT_SEGMENT_<KEY> env overrides (so it reflects in-memory
-    edits before they are written). `env` may carry CC_AI_KIT_GIT_WORKTREE and a
-    forced terminal size. Returns the rendered text ("" on any failure — the
-    preview is best-effort and must never crash the wizard)."""
-    child = dict(env)
+    edits before they are written). `env` carries only the keys to override
+    (CC_AI_KIT_GIT_WORKTREE and/or forced terminal size); it is merged ON TOP OF
+    os.environ so the subprocess inherits PATH, HOME, and PYTHONPATH.
+    Returns the rendered text ("" on any failure — the preview is best-effort
+    and must never crash the wizard)."""
+    child = {**os.environ, **env}   # inherit full env; overrides layer on top
     # Force a wide, tall terminal so all rows/segments render in the preview
     # regardless of the wizard's own window size.
     child.setdefault("STATUSLINE_COLS", "200")
@@ -1280,15 +1282,13 @@ def _save_and_report(paths, state, tty, dry):
     _print_closing(paths, tty)
 
 
-def _doctor_cmd(status_line):
-    py = os.path.basename(sys.executable) or "python3"
-    return f"{py} {status_line} --doctor"
-
-
 def _print_closing(paths, tty):
     print(f"\n  config: {paths.config_toml}", file=tty)
     print(f"  edit colors / ramps / palette by hand in that file.", file=tty)
-    print(f"  validate any time:  {_doctor_cmd(paths.status_line)}", file=tty)
+    # _doctor_cmd(paths) is defined in E5b — reuse it; do NOT redefine it here.
+    # E5b signature: _doctor_cmd(paths: Paths) -> str
+    # E5b call site in cmd_install already uses _doctor_cmd(paths); leave it unchanged.
+    print(f"  validate any time:  {_doctor_cmd(paths)}", file=tty)
 
 
 def _sample_input_path():
@@ -1297,6 +1297,8 @@ def _sample_input_path():
 ```
 
 > **Note for the implementer:** `_sample_input_path()` resolves the fixture relative to `setup.py`. If E5b's `Paths` namedtuple already carries a `sample_input` field, prefer that; otherwise the fallback above is used. Keep `render_preview`/`save_*`/patch functions as the tested units — the loop is glue.
+
+> **`_doctor_cmd` — do NOT redefine in E5c.** E5b already defines `_doctor_cmd(paths: Paths) -> str` (used in `cmd_install`'s closing summary). E5c's `_print_closing` calls `_doctor_cmd(paths)` — the same Paths-accepting function. E5c adds NO new `_doctor_cmd` definition and makes NO changes to E5b's `cmd_install` call site.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1328,27 +1330,31 @@ import io
 
 class TestMenuWiring(unittest.TestCase):
     def test_statusline_branch_invokes_wizard(self):
+        """Verify that cmd_install's interactive branch delegates to run_statusline_wizard.
+
+        E5b defines cmd_install(paths, tty, dry) and calls run_statusline_wizard(paths, tty, dry)
+        when is_interactive(tty) is True and the user selects the Status-line option.
+        E5c wires the real wizard into that call. This test replaces run_statusline_wizard with a
+        spy and drives cmd_install through an interactive tty stub to confirm the wizard is reached.
+        """
         called = {}
         orig = setup.run_statusline_wizard
         setup.run_statusline_wizard = lambda paths, tty, dry: called.setdefault("ok", True)
         self.addCleanup(lambda: setattr(setup, "run_statusline_wizard", orig))
-        # Drive the menu selecting the status-line branch then quitting. Adjust to
-        # E5b's actual menu entry point (e.g. setup.run_menu / setup.configure).
         paths = setup.resolve_paths(dict(os.environ))
-        tty = io.StringIO("2\nq\n")   # 2 = Status line, then quit
-        try:
-            setup.run_menu(paths, tty, dry=True)   # E5b's menu function name
-        except AttributeError:
-            self.skipTest("E5b menu entry point name differs — wire by hand")
-        self.assertTrue(called.get("ok"))
+        # Feed a tty that looks interactive to is_interactive() and selects
+        # "Status line" (option 2 in the E5b two-option menu) then quits.
+        tty = io.StringIO("2\nq\n")
+        # cmd_install is the E5b function that owns the menu dispatch.
+        setup.cmd_install(paths, tty, dry=True)
+        self.assertTrue(called.get("ok"),
+                        "run_statusline_wizard was not called — check the Status-line branch in cmd_install")
 ```
-
-> The exact menu function name comes from E5b. If it differs, adapt the call; the assertion (selecting "Status line" calls `run_statusline_wizard`) is the contract.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m unittest tests.test_setup.TestMenuWiring -v`
-Expected: FAIL (the branch is the E5b stub) or SKIP if the entry-point name differs — then wire by hand and re-run.
+Expected: FAIL — `called` dict is empty because E5b's `run_statusline_wizard` is still the stub (it does not set `called["ok"]`).
 
 - [ ] **Step 3: Wire the branch**
 
