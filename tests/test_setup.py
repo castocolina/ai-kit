@@ -19,6 +19,390 @@ def load_module():
 
 setup = load_module()
 
+FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+SAMPLE_INPUT = os.path.join(FIXTURE_DIR, "sample-input.json")
+SAMPLE_RECIPE = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "tools", "statusline.toml.sample")
+EDITED_RECIPE = os.path.join(FIXTURE_DIR, "statusline-edited.toml")
+
+
+class TestFixture(unittest.TestCase):
+    def test_sample_input_is_valid_json_with_required_keys(self):
+        with open(SAMPLE_INPUT) as f:
+            raw = json.load(f)
+        for key in ("model", "workspace", "cost", "context_window"):
+            self.assertIn(key, raw)
+        self.assertIn("display_name", raw["model"])
+        self.assertIn("used_percentage", raw["context_window"])
+
+
+class TestTomlRead(unittest.TestCase):
+    def test_read_toml_missing_returns_empty(self):
+        self.assertEqual(setup.read_toml("/no/such/file.toml"), {})
+
+    def test_read_toml_malformed_returns_empty(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("this is = = not toml\n")
+            path = f.name
+        self.addCleanup(os.unlink, path)
+        self.assertEqual(setup.read_toml(path), {})
+
+    def test_current_segments_defaults_on_noop_recipe(self):
+        # The shipped sample is all-commented (a no-op) -> pure defaults.
+        seg = setup.current_segments(SAMPLE_RECIPE)
+        self.assertTrue(seg["path"])
+        self.assertFalse(seg["cost"])        # cost OFF by default
+        self.assertFalse(seg["dimensions"])  # dimensions OFF by default
+        self.assertEqual(set(seg), set(setup.SEGMENT_DEFAULTS))
+
+    def test_current_segments_merges_file_override(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[segments]\ncost = true\nmemory = false\n")
+            path = f.name
+        self.addCleanup(os.unlink, path)
+        seg = setup.current_segments(path)
+        self.assertTrue(seg["cost"])
+        self.assertFalse(seg["memory"])
+        self.assertTrue(seg["path"])         # untouched default survives
+
+    def test_current_layout_default_on_noop_recipe(self):
+        layout = setup.current_layout(SAMPLE_RECIPE)
+        self.assertEqual([r["segments"] for r in layout],
+                         [["path", "branch", "dirty", "todo"],
+                          ["model", "time_ago", "clock", "effort", "lines",
+                           "cost", "total_time", "api_time"],
+                          ["render_time", "dimensions", "context", "chat_size",
+                           "memory", "rate_limits"]])
+
+    def test_current_layout_file_replaces_all(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write('[[line]]\nmin_rows = 0\nsegments = ["path", "context"]\n')
+            path = f.name
+        self.addCleanup(os.unlink, path)
+        layout = setup.current_layout(path)
+        self.assertEqual(layout, [{"min_rows": 0, "segments": ["path", "context"]}])
+
+    def test_segment_defaults_match_recipe_drift(self):
+        # Drift guard: every [segments] key commented in the recipe must exist in
+        # SEGMENT_DEFAULTS with the same default bool.
+        import re as _re
+        with open(SAMPLE_RECIPE) as f:
+            text = f.read()
+        in_seg = False
+        for line in text.splitlines():
+            if line.strip().startswith("# [segments]"):
+                in_seg = True
+                continue
+            if in_seg and _re.match(r"#\s*\[", line):   # next section header
+                break
+            m = _re.match(r"#\s*(\w+)\s*=\s*(true|false)\b", line)
+            if in_seg and m:
+                key, val = m.group(1), m.group(2) == "true"
+                self.assertIn(key, setup.SEGMENT_DEFAULTS)
+                self.assertEqual(setup.SEGMENT_DEFAULTS[key], val,
+                                 f"{key} default drifted from recipe")
+
+
+class TestRenderPreview(unittest.TestCase):
+    def _status_line(self):
+        return os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "tools", "status-line.py")
+
+    def test_preview_renders_and_reflects_toggle_off(self):
+        seg = dict(setup.SEGMENT_DEFAULTS)
+        with open(SAMPLE_INPUT) as f:
+            sample_json = f.read()
+        on = setup.render_preview(self._status_line(), seg, sample_json, {})
+        self.assertIn("Opus", on)            # model segment present by default
+        seg["model"] = False
+        off = setup.render_preview(self._status_line(), seg, sample_json, {})
+        self.assertNotIn("Opus", off)        # toggling model off removes it
+
+    def test_preview_passes_env_overrides_for_every_segment(self):
+        # cost is OFF by default; turning it on must surface the 🪙 marker.
+        seg = dict(setup.SEGMENT_DEFAULTS)
+        seg["cost"] = True
+        with open(SAMPLE_INPUT) as f:
+            sample_json = f.read()
+        out = setup.render_preview(self._status_line(), seg, sample_json, {})
+        self.assertIn("🪙", out)
+
+    def test_preview_never_raises_on_renderer_error(self):
+        # A bogus interpreter/path must degrade to an empty string, not crash.
+        out = setup.render_preview("/no/such/status-line.py",
+                                   dict(setup.SEGMENT_DEFAULTS), "{}", {})
+        self.assertEqual(out, "")
+
+
+class TestPatchSegments(unittest.TestCase):
+    def test_uncomments_and_sets_single_key(self):
+        text = ("# [segments]\n"
+                "# path = true          # 📂 working directory\n"
+                "# cost = false         # 🪙 session cost\n")
+        out = setup.patch_segments(text, {"cost": True})
+        self.assertIn("[segments]\n", out)              # header uncommented
+        self.assertIn("cost = true", out)               # key flipped + live
+        self.assertIn("# 🪙 session cost", out)          # trailing comment kept
+        self.assertIn("# path = true", out)             # untouched key still commented
+
+    def test_only_changed_key_touched(self):
+        text = ("# [segments]\n"
+                "# cost = false\n"
+                "# memory = true\n")
+        out = setup.patch_segments(text, {"cost": True})
+        self.assertIn("cost = true", out)
+        self.assertIn("# memory = true", out)           # memory untouched
+
+    def test_set_false_writes_live_false(self):
+        text = "# [segments]\n# memory = true\n"
+        out = setup.patch_segments(text, {"memory": False})
+        self.assertIn("memory = false", out)
+
+    def test_appends_missing_key_with_note(self):
+        text = "# [segments]\n# path = true\n"
+        out = setup.patch_segments(text, {"clock": False})
+        self.assertIn("clock = false", out)
+        self.assertIn("⏰", out)                          # the clock note glyph
+
+    def test_no_changes_returns_text_unchanged(self):
+        text = "# [segments]\n# cost = false\n"
+        self.assertEqual(setup.patch_segments(text, {}), text)
+
+    def test_preserves_lines_outside_segments(self):
+        text = ("# version = 1\n"
+                "# [segments]\n# cost = false\n"
+                "# [palette]\n# RED = \"31\"\n")
+        out = setup.patch_segments(text, {"cost": True})
+        self.assertIn("# version = 1\n", out)
+        self.assertIn("# [palette]\n# RED = \"31\"\n", out)
+
+    def test_result_parses_as_valid_toml(self):
+        text = ("# [segments]\n"
+                "# path = true\n# cost = false\n")
+        out = setup.patch_segments(text, {"cost": True})
+        import tomllib
+        parsed = tomllib.loads(out)
+        self.assertEqual(parsed["segments"]["cost"], True)
+
+
+class TestPatchLayout(unittest.TestCase):
+    LINES = [
+        {"min_rows": 0, "segments": ["path", "branch"]},
+        {"min_rows": 20, "segments": ["model", "clock"]},
+    ]
+
+    def test_writes_all_blocks_live(self):
+        text = ("# [[line]]\n# min_rows = 0\n"
+                '# segments = ["path", "branch", "dirty", "todo"]\n'
+                "# [[line]]\n# min_rows = 20\n"
+                '# segments = ["model", "clock"]\n')
+        out = setup.patch_layout(text, self.LINES)
+        import tomllib
+        parsed = tomllib.loads(out)
+        self.assertEqual([r["segments"] for r in parsed["line"]],
+                         [["path", "branch"], ["model", "clock"]])
+        self.assertEqual([r["min_rows"] for r in parsed["line"]], [0, 20])
+
+    def test_preserves_surrounding_sections(self):
+        text = ("# [segments]\n# cost = false\n"
+                "# [[line]]\n# min_rows = 0\n# segments = [\"path\"]\n"
+                "# [palette]\n# RED = \"31\"\n")
+        out = setup.patch_layout(text, self.LINES)
+        self.assertIn("# [segments]\n# cost = false\n", out)
+        self.assertIn("# [palette]\n# RED = \"31\"\n", out)
+
+    def test_roundtrip_parses(self):
+        text = "# [[line]]\n# min_rows = 0\n# segments = [\"path\"]\n"
+        out = setup.patch_layout(text, self.LINES)
+        import tomllib
+        tomllib.loads(out)          # must not raise
+
+    def test_idempotent_no_accumulation(self):
+        # Running patch_layout twice must produce byte-identical output (no ##
+        # header lines or other material accumulates on re-runs).
+        text = ("# [[line]]\n# min_rows = 0\n"
+                '# segments = ["path", "branch", "dirty", "todo"]\n'
+                "# [[line]]\n# min_rows = 20\n"
+                '# segments = ["model", "clock"]\n')
+        first = setup.patch_layout(text, self.LINES)
+        second = setup.patch_layout(first, self.LINES)
+        self.assertEqual(first, second)
+
+
+class TestPatchGitWorktree(unittest.TestCase):
+    def test_uncomments_and_sets_true(self):
+        text = "# [git]\n# worktree = false     # detect linked worktrees.\n"
+        out = setup.patch_git_worktree(text, True)
+        self.assertIn("[git]\n", out)
+        self.assertIn("worktree = true", out)
+        self.assertIn("# detect linked worktrees.", out)
+
+    def test_sets_false(self):
+        text = "[git]\nworktree = true\n"
+        out = setup.patch_git_worktree(text, False)
+        self.assertIn("worktree = false", out)
+
+    def test_appends_git_block_when_absent(self):
+        text = "# [segments]\n# cost = false\n"
+        out = setup.patch_git_worktree(text, True)
+        import tomllib
+        self.assertEqual(tomllib.loads(out)["git"]["worktree"], True)
+
+    def test_preserves_other_sections(self):
+        text = "# [git]\n# worktree = false\n# [palette]\n# RED = \"31\"\n"
+        out = setup.patch_git_worktree(text, True)
+        self.assertIn("# [palette]\n# RED = \"31\"\n", out)
+
+
+class TestWritePreserving(unittest.TestCase):
+    def _status_line(self):
+        return os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "tools", "status-line.py")
+
+    def test_writes_valid_toml_and_validates(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "statusline.toml")
+            ok = setup.write_toml_preserving(
+                path, "[segments]\ncost = true\n", self._status_line())
+            self.assertTrue(ok)
+            with open(path) as f:
+                self.assertIn("cost = true", f.read())
+
+    def test_rejects_broken_output_and_reverts(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "statusline.toml")
+            with open(path, "w") as f:
+                f.write("# good original\n")
+            # An unknown segment key fails the doctor.
+            ok = setup.write_toml_preserving(
+                path, "[segments]\nbogus_key = true\n", self._status_line())
+            self.assertFalse(ok)
+            with open(path) as f:
+                self.assertEqual(f.read(), "# good original\n")   # reverted
+
+
+def _diff_lines(a, b):
+    al, bl = a.splitlines(), b.splitlines()
+    return [(i, x, y) for i, (x, y) in enumerate(zip(al, bl)) if x != y] + \
+           [("len", len(al), len(bl))] if len(al) != len(bl) else \
+           [(i, x, y) for i, (x, y) in enumerate(zip(al, bl)) if x != y]
+
+
+class TestGoldenPreservation(unittest.TestCase):
+    def test_one_segment_toggle_changes_only_that_line(self):
+        with open(EDITED_RECIPE) as f:
+            before = f.read()
+        after = setup.patch_segments(before, {"cost": True})
+        diffs = _diff_lines(before, after)
+        self.assertEqual(len(diffs), 1, diffs)               # exactly one line changed
+        _, old, new = diffs[0]
+        self.assertIn("cost = false", old)
+        self.assertIn("cost = true", new)
+        # palette / ramp / external / version / comment all intact
+        for marker in ('RED = "38;5;196"', "hand-tuned brighter red",
+                       "[ramp.context]", "[external]", "# version = 1",
+                       "my own note"):
+            self.assertIn(marker, after)
+
+    def test_palette_and_ramp_blocks_byte_for_byte(self):
+        with open(EDITED_RECIPE) as f:
+            before = f.read()
+        after = setup.patch_segments(before, {"memory": False})
+        for block in ("[palette]\nRED = \"38;5;196\"      # hand-tuned brighter red\n"
+                      "BLUE = \"38;5;33\"\n",
+                      "[ramp.context]\n10 = \"WHITE\"\n50 = \"RED+bold\"\n"
+                      "inf = \"MAGENTA_DARK+bold\"\n"):
+            self.assertIn(block, after)
+
+
+class TestExternalSeam(unittest.TestCase):
+    def test_external_block_survives_segment_patch(self):
+        with open(EDITED_RECIPE) as f:
+            before = f.read()
+        after = setup.patch_segments(before, {"cost": True})
+        self.assertIn("[external]\nttl = 60\n"
+                      'dir = "~/.config/ai-kit/segments"\n', after)
+
+    def test_external_block_survives_layout_patch(self):
+        with open(EDITED_RECIPE) as f:
+            before = f.read()
+        after = setup.patch_layout(before, [{"min_rows": 0, "segments": ["path"]}])
+        self.assertIn("[external]\nttl = 60\n", after)
+
+    def test_external_block_survives_worktree_patch(self):
+        with open(EDITED_RECIPE) as f:
+            before = f.read()
+        after = setup.patch_git_worktree(before, True)
+        self.assertIn("[external]\nttl = 60\n", after)
+        self.assertIn("worktree = true", after)
+
+
+class TestWizardLoop(unittest.TestCase):
+    def _state(self):
+        return {"segments": dict(setup.SEGMENT_DEFAULTS),
+                "layout": [{"min_rows": 0, "segments": ["path", "branch", "dirty"]},
+                           {"min_rows": 20, "segments": ["model", "clock"]}],
+                "worktree": False, "dirty": False}
+
+    def test_toggle_by_number_flips_segment(self):
+        st = self._state()
+        order = sorted(st["segments"])          # numbering is sorted-key order
+        idx = order.index("cost") + 1
+        st2, err = setup._apply_wizard_command(st, str(idx))
+        self.assertIsNone(err)
+        self.assertTrue(st2["segments"]["cost"])
+        self.assertTrue(st2["dirty"])
+
+    def test_move_up_reorders_within_line(self):
+        st, err = setup._apply_wizard_command(self._state(), "move branch up")
+        self.assertIsNone(err)
+        self.assertEqual(st["layout"][0]["segments"][:2], ["branch", "path"])
+
+    def test_move_down_reorders_within_line(self):
+        st, err = setup._apply_wizard_command(self._state(), "move path down")
+        self.assertIsNone(err)
+        self.assertEqual(st["layout"][0]["segments"][:2], ["branch", "path"])
+
+    def test_move_across_lines(self):
+        st, err = setup._apply_wizard_command(self._state(), "move clock line 1")
+        self.assertIsNone(err)
+        self.assertIn("clock", st["layout"][0]["segments"])
+        self.assertNotIn("clock", st["layout"][1]["segments"])
+
+    def test_worktree_toggles(self):
+        st, err = setup._apply_wizard_command(self._state(), "worktree")
+        self.assertIsNone(err)
+        self.assertTrue(st["worktree"])
+
+    def test_unknown_command_returns_error(self):
+        st, err = setup._apply_wizard_command(self._state(), "frobnicate")
+        self.assertIsNotNone(err)
+
+    def test_move_unknown_segment_errors(self):
+        _, err = setup._apply_wizard_command(self._state(), "move nope up")
+        self.assertIsNotNone(err)
+
+    def test_save_writes_only_diff_from_recipe(self):
+        # Integration: a save against the shipped recipe writes a valid file that
+        # toggles cost on and preserves the palette section.
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "statusline.toml")
+            with open(SAMPLE_RECIPE) as f:
+                original = f.read()
+            with open(path, "w") as f:
+                f.write(original)
+            status_line = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), "tools", "status-line.py")
+            ok = setup.save_statusline_config(
+                path, {"cost": True}, None, None, status_line)
+            self.assertTrue(ok)
+            import tomllib
+            with open(path, "rb") as f:
+                parsed = tomllib.load(f)
+            self.assertTrue(parsed["segments"]["cost"])
+            with open(path) as f:
+                self.assertIn("# [palette]", f.read())   # palette comments intact
+
 
 class TestResolvePaths(unittest.TestCase):
     def test_defaults(self):
@@ -549,6 +933,31 @@ class TestCmdDelegation(unittest.TestCase):
             rc = setup.cmd_check(env)
         self.assertEqual(rc, 2)
         self.assertIn("--check", call.call_args[0][0])
+
+
+class TestMenuWiring(unittest.TestCase):
+    def test_statusline_branch_invokes_wizard(self):
+        """Verify that cmd_install's interactive branch delegates to run_statusline_wizard.
+
+        E5b defines cmd_install(env, tty, dry) — it resolves Paths internally from env.
+        Passing a pre-resolved Paths namedtuple would cause AttributeError (env.get(...)
+        would be called on a namedtuple). Always pass an env dict.
+
+        E5c wires the real wizard into that call. This test replaces run_statusline_wizard
+        with a spy and drives cmd_install through an interactive tty stub to confirm the
+        wizard is reached.
+        """
+        called = {}
+        orig = setup.run_statusline_wizard
+        setup.run_statusline_wizard = lambda paths, tty, dry: called.setdefault("ok", True)
+        self.addCleanup(lambda: setattr(setup, "run_statusline_wizard", orig))
+        # Feed a tty that looks interactive to is_interactive() and selects
+        # "Status line" (option 2 in the E5b two-option menu) then quits.
+        tty = io.StringIO("2\nq\n")
+        # cmd_install(env, tty, dry) — pass an env dict, NOT a resolved Paths namedtuple.
+        setup.cmd_install(dict(os.environ), tty, dry=True)
+        self.assertTrue(called.get("ok"),
+                        "run_statusline_wizard was not called — check the Status-line branch in cmd_install")
 
 
 if __name__ == "__main__":

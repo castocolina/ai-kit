@@ -1,0 +1,22 @@
+# version = 1
+
+# my own note: I like cost visible
+[segments]
+cost = false          # 🪙 session cost in USD            (OFF by default)
+memory = true         # 🧮 status-line process memory (RSS)
+
+[git]
+worktree = false
+
+[palette]
+RED = "38;5;196"      # hand-tuned brighter red
+BLUE = "38;5;33"
+
+[ramp.context]
+10 = "WHITE"
+50 = "RED+bold"
+inf = "MAGENTA_DARK+bold"
+
+[external]
+ttl = 60
+dir = "~/.config/ai-kit/segments"
