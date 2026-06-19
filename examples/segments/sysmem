@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+# ai-kit-segment: line=1 after=context id=sysmem ttl=10
+"""ai-kit external status-line segment — system AVAILABLE memory (cross-platform).
+
+This is a copy-and-edit reference provider. It reports the machine's available
+RAM (distinct from the built-in `memory` segment, which is the status-line
+process RSS). It demonstrates the external-segment contract:
+
+  * read the column budget from the AI_KIT_SEGMENT_COLS env var (mirrored from
+    the `segment.avail_cols` field in the status JSON on stdin);
+  * pick a long / medium / short rendering that fits, or print nothing to drop;
+  * emit a single line, optionally with SGR color (kept) — any other control
+    sequence is stripped by the core.
+
+Drop it in ~/.config/ai-kit/segments/ and make it executable. Disable it with
+`[segments] sysmem = false` (or CC_AI_KIT_SEGMENT_SYSMEM=0)."""
+import os
+import sys
+
+GREEN, YELLOW, RED, RESET = "\033[32m", "\033[33m", "\033[31;1m", "\033[0m"
+
+
+def available_bytes():
+    """Available system memory in bytes, or None on an unsupported platform."""
+    # Linux: MemAvailable in /proc/meminfo (kB).
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    # macOS / BSD: pages free+inactive+speculative from vm_stat * page size.
+    try:
+        import subprocess
+        vm = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=1)
+        if vm.returncode == 0:
+            page = 4096
+            free = 0
+            for line in vm.stdout.splitlines():
+                if "page size of" in line:
+                    page = int("".join(c for c in line.split("page size of")[1] if c.isdigit()))
+                for label in ("Pages free", "Pages inactive", "Pages speculative"):
+                    if line.startswith(label + ":"):
+                        free += int(line.rsplit(":", 1)[1].strip().rstrip("."))
+            return free * page
+    except (OSError, ValueError, ImportError):
+        pass
+    return None
+
+
+def fmt_gib(n):
+    return n / (1024 ** 3)
+
+
+def main():
+    n = available_bytes()
+    if n is None:
+        return 0                       # unsupported platform -> print nothing -> dropped
+    gib = fmt_gib(n)
+    color = GREEN if gib >= 4 else YELLOW if gib >= 1 else RED
+    cols = int(os.environ.get("AI_KIT_SEGMENT_COLS", "80") or "80")
+    if cols >= 14:
+        text = f"🧠 {gib:.1f} GiB free"
+    elif cols >= 9:
+        text = f"🧠 {gib:.1f}G"
+    elif cols >= 4:
+        text = f"🧠{gib:.0f}G"
+    else:
+        return 0                       # no room -> drop
+    sys.stdout.write(f"{color}{text}{RESET}\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

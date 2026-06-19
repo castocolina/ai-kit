@@ -22,7 +22,7 @@ check:
 	bash $(INSTALL_SH) --check
 
 test:
-	python3 -m unittest tests.test_setup tests.test_status_line
+	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments
 	bash tests/test_install.sh
 
 lint:

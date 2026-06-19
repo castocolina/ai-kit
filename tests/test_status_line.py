@@ -1112,7 +1112,7 @@ class TestCLI(unittest.TestCase):
     def test_print_config_emits_resolved_json(self):
         cfg = sl.Config(segments={"path": True}, layout=[sl.Line(0, ["path"])],
                         palette={"BLUE": "1;34"}, ramps={})
-        out = sl.cmd_print_config(cfg)
+        out = sl.cmd_print_config(cfg, {})
         parsed = json.loads(out)
         self.assertEqual(parsed["segments"], {"path": True})
         self.assertEqual(parsed["layout"], [{"min_rows": 0, "segments": ["path"]}])

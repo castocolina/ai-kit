@@ -70,6 +70,24 @@
 #                      # OFF by default: it costs an extra `git rev-parse` per
 #                      # render. Env override: CC_AI_KIT_GIT_WORKTREE=1.
 
+## ─── [external] — drop-in segment providers ──────────────────────────────────
+## Add a new status-line segment WITHOUT editing status-line.py: drop an
+## executable into the segments directory below. Each provider:
+##   * carries a header in its first 10 lines:
+##       # ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end) [id=<slug>] [timeout=<s>] [ttl=<s>]
+##   * receives the status JSON on stdin (plus a "segment" block with avail_cols /
+##     id / line / position) and the AI_KIT_SEGMENT_* env mirror, with cwd set to
+##     the workspace directory;
+##   * prints ONE line (SGR color allowed; other control sequences are stripped),
+##     sized to the AI_KIT_SEGMENT_COLS budget — or nothing to omit itself.
+## Discovered providers are ENABLED BY DEFAULT; disable one explicitly via
+## [segments] <id> = false (or CC_AI_KIT_SEGMENT_<ID>=0). A ready-to-copy sample
+## ships at examples/segments/sysmem (system available memory). Each value below
+## is the current default.
+# [external]
+# ttl = 10                              # default cache TTL (s); env CC_AI_KIT_EXTERNAL_TTL
+# dir = "~/.config/ai-kit/segments"     # providers directory; env CC_AI_KIT_SEGMENTS_DIR
+
 ## ─── color grammar (used by [palette] and [ramp.*] values) ───────────────────
 ## A color value is one of:
 ##   * a palette NAME            e.g. RED, BLUE, ORANGE
@@ -148,6 +166,8 @@
 ##                                                 upper-cased segment name, e.g.
 ##                                                 CC_AI_KIT_SEGMENT_COST=1
 ##   bool truthy: 1 true t y yes on   bool falsy: 0 false f n no off
+##   CC_AI_KIT_SEGMENTS_DIR=/path/to/segments   # external providers directory
+##   CC_AI_KIT_EXTERNAL_TTL=10                  # external-segment cache TTL (s)
 ##
 ## Inspect & validate the resolved config:
 ##   python3 tools/status-line.py --print-config   # resolved config as JSON

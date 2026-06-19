@@ -73,9 +73,11 @@ PINNED = {"path", "context"}   # always rendered even if they overflow the budge
 # because it costs a git call per render and most repos aren't worktrees.
 _GIT_DEFAULTS = {"worktree": False}
 
-# `git` defaults to None so older Config(...) call sites (which pass only the
-# four original fields) keep working; consumers read it via (cfg.git or {}).
-Config = namedtuple("Config", "segments layout palette ramps git", defaults=(None,))
+# `git` and `external` default to None so older Config(...) call sites (which
+# pass only the original fields) keep working; consumers read git via
+# (cfg.git or {}) and external via (cfg.external or []).
+Config = namedtuple("Config", "segments layout palette ramps git external",
+                    defaults=(None, None))
 
 
 def default_config():
@@ -162,14 +164,80 @@ def _resolve_layout(default_layout, raw_lines):
             for item in raw_lines]
 
 
+def _resolve_external(raw, env):
+    """Resolve (segments_dir, default_ttl) from defaults < [external] file < env.
+    Env: CC_AI_KIT_SEGMENTS_DIR (dir), CC_AI_KIT_EXTERNAL_TTL (int seconds)."""
+    file_ext = raw.get("external") or {}
+    ttl = 10
+    fv = file_ext.get("ttl")
+    if isinstance(fv, int) and not isinstance(fv, bool):
+        ttl = fv
+    ev = env.get("CC_AI_KIT_EXTERNAL_TTL")
+    if ev is not None:
+        try:
+            ttl = int(ev)
+        except ValueError:
+            pass
+    return _segments_dir(file_ext, env), ttl
+
+
+def _place_external(layout, specs):
+    """Insert each spec's id into the resolved layout at its row/position and
+    return (new_layout, finalized_specs). Resolves line=0 to the last row and
+    clamps out-of-range rows (with a dim warning). Specs are applied in their
+    (filename, id) sort order so same-slot externals are deterministic."""
+    if not layout:
+        return list(layout), []
+    rows = [list(ln.segments) for ln in layout]
+    nrows = len(rows)
+    final = []
+    for spec in specs:
+        want = spec.line or nrows                      # 0 => last row
+        idx = want - 1
+        if idx < 0 or idx >= nrows:
+            print(f"{_DIM}status-line: segment '{spec.id}' line={want} out of range "
+                  f"— clamped to row {nrows}{RESET}", file=sys.stderr)
+            idx = nrows - 1
+        kind, ref = spec.position
+        segs = rows[idx]
+        if kind == "start":
+            segs.insert(0, spec.id)
+        elif kind == "after" and ref in segs:
+            segs.insert(segs.index(ref) + 1, spec.id)
+        elif kind == "before" and ref in segs:
+            segs.insert(segs.index(ref), spec.id)
+        else:                                          # end, or after/before missing ref
+            segs.append(spec.id)
+        final.append(spec._replace(line=idx + 1))
+    new_layout = [Line(layout[i].min_rows, rows[i]) for i in range(nrows)]
+    return new_layout, final
+
+
 def load_config(env):
     """Resolve the full Config: internal defaults < TOML file < env.
-    Layout and palette resolution are added in Phase 2; for now they are the
-    defaults / empty so callers get a complete Config from day one."""
+
+    Resolves segments, layout, palette, ramps, and the [git] knobs. Also
+    discovers external drop-in providers from the [external] `dir` (default
+    ~/.config/ai-kit/segments) BEFORE resolving segments — so each provider id
+    is a known segment key (enabled by default, disable via `[segments] <id> =
+    false`) — and places them into the layout. The resolved providers land in
+    Config.external (a list of finalized ExtSpec); the global default cache TTL
+    and providers dir are recoverable via _resolve_external(raw, env)."""
     base = default_config()
     raw = _load_toml(config_path(env))
-    segments = _resolve_segments(base.segments, raw.get("segments"), env)
+
+    # External providers first: their ids must be known segment keys before
+    # _resolve_segments runs, so `[segments] <id> = false` is honored (not warned)
+    # and they default to enabled.
+    ext_dir, ext_ttl = _resolve_external(raw, env)
+    specs = discover_external(ext_dir, ext_ttl, env)
+    seg_defaults = dict(base.segments)
+    for s in specs:
+        seg_defaults.setdefault(s.id, True)
+
+    segments = _resolve_segments(seg_defaults, raw.get("segments"), env)
     layout = _resolve_layout(base.layout, raw.get("line"))
+    layout, external = _place_external(layout, specs)
     palette = {}
     for k, v in (raw.get("palette") or {}).items():
         if k in _PALETTE_DEFAULTS:
@@ -198,7 +266,8 @@ def load_config(env):
     wt = env_bool(env, "CC_AI_KIT_GIT_WORKTREE")   # env wins over file
     if wt is not None:
         git["worktree"] = wt
-    return Config(segments=segments, layout=layout, palette=palette, ramps=ramps, git=git)
+    return Config(segments=segments, layout=layout, palette=palette, ramps=ramps,
+                  git=git, external=external)
 
 
 # ═══ Palette ════════════════════════════════════════════════════════════════
@@ -257,6 +326,219 @@ _EFFORT_DEFAULTS = {
 _EFFORT_GLYPHS = "▁▃▄▆█"
 
 INF = float("inf")
+
+
+# ═══ External drop-in segments (E4c) ═════════════════════════════════════════
+# A provider is an executable in the segments dir. Its first 10 lines may carry
+#   # ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end) [id=<slug>] [timeout=<s>] [ttl=<s>]
+# It is modeled as a synthetic builder inserted into the resolved layout, so the
+# existing packer handles placement/priority/overflow unchanged.
+ExtSpec = namedtuple("ExtSpec", "id path line position timeout ttl cache_path")
+
+_SEG_HEADER_RE = re.compile(r"^#\s*ai-kit-segment:\s*(.*?)\s*$")
+
+
+def parse_segment_header(lines):
+    """Parse the `# ai-kit-segment:` header from a file's first lines.
+
+    Returns a dict of the raw string fields present (`line`/`id`/`timeout`/`ttl`
+    as strings, `position` as a (kind, ref) tuple) — possibly empty if the header
+    line exists but lists nothing. Returns None when no header line is present."""
+    for ln in lines:
+        m = _SEG_HEADER_RE.match(ln)
+        if m is None:
+            continue
+        fields = {}
+        for tok in m.group(1).split():
+            if tok in ("start", "end"):
+                fields["position"] = (tok, "")
+            elif "=" in tok:
+                k, v = tok.split("=", 1)
+                if k in ("after", "before"):
+                    fields["position"] = (k, v)
+                elif k in ("line", "id", "timeout", "ttl"):
+                    fields[k] = v
+        return fields
+    return None
+
+
+def _segments_cache_dir(env):
+    """${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/segments — per-provider output cache."""
+    base = env.get("XDG_CACHE_HOME") or os.path.join(env.get("HOME", ""), ".cache")
+    return os.path.join(base, "ai-kit", "segments")
+
+
+def _segments_dir(file_external, env):
+    """Resolve the providers directory: CC_AI_KIT_SEGMENTS_DIR > [external].dir >
+    ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/segments."""
+    d = env.get("CC_AI_KIT_SEGMENTS_DIR") or (file_external or {}).get("dir")
+    if d:
+        return os.path.expanduser(d)
+    base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
+    return os.path.join(base, "ai-kit", "segments")
+
+
+def discover_external(directory, default_ttl, env):
+    """Scan `directory` for executable providers and return a list of ExtSpec,
+    sorted by (filename, id). Non-executable files are skipped with a dim warning.
+    A file with no header still loads with all defaults (line=0 => last row at
+    placement, position=end, id=stem, timeout=2s, ttl=default_ttl)."""
+    if not directory or not os.path.isdir(directory):
+        return []
+    cache_dir = _segments_cache_dir(env)
+    specs = []
+    for name in sorted(os.listdir(directory)):
+        path = os.path.join(directory, name)
+        if not os.path.isfile(path):
+            continue
+        if not os.access(path, os.X_OK):
+            print(f"{_DIM}status-line: segment '{name}' not executable — skipped{RESET}",
+                  file=sys.stderr)
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                head = [f.readline() for _ in range(10)]
+        except OSError:
+            continue
+        fields = parse_segment_header(head) or {}
+        sid = fields.get("id") or os.path.splitext(name)[0]
+        try:
+            timeout = float(fields.get("timeout", 2))
+        except (TypeError, ValueError):
+            timeout = 2.0
+        try:
+            ttl = int(fields.get("ttl", default_ttl))
+        except (TypeError, ValueError):
+            ttl = default_ttl
+        try:
+            line = int(fields["line"]) if "line" in fields else 0
+        except (TypeError, ValueError):
+            line = 0
+        specs.append(ExtSpec(
+            id=sid, path=path, line=line,
+            position=fields.get("position", ("end", "")),
+            timeout=timeout, ttl=ttl,
+            cache_path=os.path.join(cache_dir, sid)))
+    specs.sort(key=lambda s: (os.path.basename(s.path), s.id))
+    return specs
+
+
+_SGR_SEQ = re.compile(r"\x1b\[[0-9;]*m")            # an SGR color/style escape
+_CSI_SEQ = re.compile(r"\x1b\[[0-9;?]*([A-Za-z])")  # any CSI; group = final byte
+_OSC_SEQ = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+_STRAY_ESC = re.compile(r"\x1b(?!\[[0-9;]*m)")      # ESC not starting an SGR
+_C0_CTRL = re.compile(r"[\x00-\x09\x0b-\x1a\x1c-\x1f\x7f]")  # controls (incl. TAB) except NL/ESC
+
+
+def _truncate_visible(s, avail):
+    """Cut s to at most `avail` visible cells, preserving zero-width SGR escapes,
+    appending RESET if any SGR was emitted. avail <= 0 -> ''."""
+    if avail <= 0:
+        return ""
+    out, width, i, n, saw_sgr = [], 0, 0, len(s), False
+    while i < n:
+        m = _SGR_SEQ.match(s, i)
+        if m:
+            out.append(m.group(0))
+            saw_sgr = True
+            i = m.end()
+            continue
+        w = char_width(s[i])
+        if width + w > avail:
+            break
+        out.append(s[i])
+        width += w
+        i += 1
+    res = "".join(out)
+    if saw_sgr and not res.endswith(RESET):
+        res += RESET
+    return res
+
+
+def _sanitize_external(text, avail):
+    """First non-empty line of `text`, SGR colors kept, every other control/CSI/OSC
+    sequence stripped, width-truncated to `avail`. None if nothing renderable."""
+    line = next((c for c in text.splitlines() if c.strip()), "").rstrip()
+    if not line:
+        return None
+    line = _OSC_SEQ.sub("", line)
+    line = _CSI_SEQ.sub(lambda m: m.group(0) if m.group(1) == "m" else "", line)
+    line = _STRAY_ESC.sub("", line)
+    line = _C0_CTRL.sub("", line)
+    if not line.strip():
+        return None
+    return _truncate_visible(line, avail) or None
+
+
+def _position_str(position):
+    """('after','clock') -> 'after:clock'; ('end','') -> 'end'."""
+    kind, ref = position
+    return f"{kind}:{ref}" if ref else kind
+
+
+def _cache_read(spec):
+    """Cached raw output line if present and younger than ttl, else None.
+    ttl <= 0 always misses (forces a re-run every render)."""
+    if spec.ttl <= 0:
+        return None
+    try:
+        age = time.time() - os.stat(spec.cache_path).st_mtime
+    except OSError:
+        return None
+    if age >= spec.ttl:
+        return None
+    try:
+        with open(spec.cache_path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _cache_write(spec, text):
+    """Best-effort: persist raw output. Unwritable cache dir -> silently skip."""
+    try:
+        os.makedirs(os.path.dirname(spec.cache_path), exist_ok=True)
+        with open(spec.cache_path, "w", encoding="utf-8") as f:
+            f.write(text)
+    except OSError:
+        pass
+
+
+def _run_provider(spec, data, avail):
+    """Spawn the provider with the status JSON + segment block on stdin, the
+    AI_KIT_SEGMENT_* env mirror, and cwd = workspace dir. Returns the raw first
+    non-empty stdout line, or None on timeout / non-zero exit / no output."""
+    pos = _position_str(spec.position)
+    payload = json.dumps({**(data.get("raw") or {}),
+                          "segment": {"id": spec.id, "avail_cols": avail,
+                                      "line": spec.line, "position": pos}})
+    env = dict(os.environ)
+    env.update({"AI_KIT_SEGMENT_COLS": str(avail), "AI_KIT_SEGMENT_ID": spec.id,
+                "AI_KIT_SEGMENT_LINE": str(spec.line), "AI_KIT_SEGMENT_POSITION": pos})
+    try:
+        proc = subprocess.run(
+            [spec.path], input=payload, capture_output=True, text=True,
+            timeout=spec.timeout, cwd=data.get("work_dir") or ".", env=env)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    for line in proc.stdout.splitlines():
+        if line.strip():
+            return line
+    return None
+
+
+def run_external(spec, data, avail):
+    """TTL-cached, timeout-bounded provider invocation. Returns the sanitized,
+    width-fitted segment string, or None to omit the segment."""
+    raw_line = _cache_read(spec)
+    if raw_line is None:
+        raw_line = _run_provider(spec, data, avail)
+        if raw_line is None:
+            return None
+        _cache_write(spec, raw_line)
+    return _sanitize_external(raw_line, avail)
 
 
 def pick_color(pct, ramp):
@@ -787,6 +1069,25 @@ BUILDERS = {
     "rate_limits": seg_rate_limits,
 }
 
+
+def make_external_builder(spec):
+    """Wrap an ExtSpec as a seg_x(data, avail, theme)-shaped builder so pack_line
+    treats it exactly like a built-in. theme is unused (the provider colors itself)."""
+    def _builder(data, avail, theme):
+        return run_external(spec, data, avail)
+    return _builder
+
+
+def _builders_for(cfg):
+    """The built-in BUILDERS merged with one synthetic builder per external
+    provider (keyed by id). External ids never collide with built-ins by design;
+    if a user names one after a built-in, the external wins for that render."""
+    builders = dict(BUILDERS)
+    for spec in (cfg.external or []):
+        builders[spec.id] = make_external_builder(spec)
+    return builders
+
+
 # ═══ Extractors ═══════════════════════════════════════════════════════════════
 def _to_int(s):
     """Parse a stripped string to int, or None on empty/non-numeric input."""
@@ -1141,13 +1442,15 @@ def current_todo(path, session=None, config_dir=None):
 
 
 # ═══ Packing + render ════════════════════════════════════════════════════════
-def safe_build(key, data, avail, theme, failed):
+def safe_build(key, data, avail, theme, failed, builders=None):
     """Invoke one segment builder in isolation. On ANY exception, record `key`
     in the shared `failed` set and return a width-bounded warning marker instead
     of propagating — so a single bad segment can never blank the whole bar. The
-    marker shows the segment name when it fits `avail`, else just the icon."""
+    marker shows the segment name when it fits `avail`, else just the icon.
+    `builders` defaults to the built-in BUILDERS registry."""
+    builders = builders if builders is not None else BUILDERS
     try:
-        return BUILDERS[key](data, avail, theme)
+        return builders[key](data, avail, theme)
     except Exception:                              # noqa: BLE001 — isolation is the point
         failed.add(key)
         named = f"{_WARN}⚠{key}{RESET}"
@@ -1156,16 +1459,19 @@ def safe_build(key, data, avail, theme, failed):
         return f"{_WARN}⚠{RESET}"
 
 
-def pack_line(keys, data, cols, cfg=None, theme=None, failed=None):
+def pack_line(keys, data, cols, cfg=None, theme=None, failed=None, builders=None):
     """Best-fit pack enabled segments into cols - RIGHT_MARGIN.
 
     For each key (left->right), compute the space available at this position
     (budget - used - separator), ask the builder for content sized to it, and
     keep it if it is non-empty and fits — else skip it and keep trying the rest.
-    Pinned segments are always kept. Order is priority: leftmost survive."""
+    Pinned segments are always kept. Order is priority: leftmost survive.
+    `builders` carries the merged built-in + external map; defaults to that
+    derived from cfg."""
     cfg = cfg or default_config()
     theme = theme or build_theme(cfg)
     failed = failed if failed is not None else set()
+    builders = builders if builders is not None else _builders_for(cfg)
     budget = cols - RIGHT_MARGIN
     sep_w = visible_width(SEP)
     kept, used = [], 0
@@ -1174,7 +1480,7 @@ def pack_line(keys, data, cols, cfg=None, theme=None, failed=None):
             continue
         sep = sep_w if kept else 0
         avail = budget - used - sep
-        s = safe_build(key, data, max(avail, 0), theme, failed)
+        s = safe_build(key, data, max(avail, 0), theme, failed, builders)
         if not s:
             continue
         if key in PINNED or visible_width(s) <= avail:
@@ -1200,12 +1506,13 @@ def render(data, cols, lines, cfg=None, theme=None):
     A trailing diagnostic line is appended only when a builder crashed."""
     cfg = cfg or default_config()
     theme = theme or build_theme(cfg)
+    builders = _builders_for(cfg)
     failed = set()
     out = []
     for ln in cfg.layout:
         if lines < ln.min_rows:
             continue
-        packed = pack_line(ln.segments, data, cols, cfg, theme, failed)
+        packed = pack_line(ln.segments, data, cols, cfg, theme, failed, builders)
         if packed:
             out.append(packed)
     diag = diagnostic_line(failed)
@@ -1353,6 +1660,7 @@ def build_data(raw, env, segments=None, t_start=None, git_worktree=False):
                              if want("todo") else (None, None))
 
     data = {
+        "raw": raw,
         "model_name": model.get("display_name", ""),
         "model_id": model.get("id", "unknown"),
         "effort": effort,
@@ -1393,12 +1701,23 @@ Environment variables:
                            true:  1 true t y yes on    false: 0 false f n no off
   CC_AI_KIT_GIT_WORKTREE   bool; detect linked worktrees (🌳 vs 🌿). Off by
                            default — it adds a `git rev-parse` per render.
+  CC_AI_KIT_SEGMENTS_DIR   external drop-in segments directory (default
+                           ${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments)
+  CC_AI_KIT_EXTERNAL_TTL   default cache TTL (seconds) for external segments
 
 Config precedence (low -> high): built-in defaults < TOML file < env."""
 
 
-def cmd_print_config(cfg):
+def cmd_print_config(cfg, env):
     """Resolved config as pretty JSON (no rendering)."""
+    # The top-level external `ttl`/`dir` are the GLOBAL resolved defaults
+    # (defaults < [external] file < env) — resolved the same way load_config
+    # does, so they're meaningful even when zero providers are discovered and
+    # are never confused with a single provider's per-header `ttl=` override
+    # (those appear per-entry in the "providers" array below). `dir` is the
+    # PROVIDERS directory (where scripts live), NOT the XDG cache dir.
+    ext_providers = cfg.external or []
+    ext_dir, ext_ttl = _resolve_external(_load_toml(config_path(env)), env)
     return json.dumps({
         "segments": cfg.segments,
         "layout": [{"min_rows": ln.min_rows, "segments": ln.segments}
@@ -1406,6 +1725,16 @@ def cmd_print_config(cfg):
         "palette": cfg.palette,
         "ramps": cfg.ramps,
         "git": cfg.git or {},
+        "external": {
+            "ttl": ext_ttl,
+            "dir": ext_dir,
+            "providers": [
+                {"id": s.id, "path": s.path, "line": s.line,
+                 "position": _position_str(s.position),
+                 "timeout": s.timeout, "ttl": s.ttl}
+                for s in ext_providers
+            ],
+        },
     }, indent=2)
 
 
@@ -1425,8 +1754,11 @@ def validate_config_file(path, env):
         return [f"{path}: {e}"]
     errors = []
     defaults = default_config()
+    ext_dir, ext_ttl = _resolve_external(raw, env)
+    ext_ids = {s.id for s in discover_external(ext_dir, ext_ttl, env)}
+    known_segments = set(defaults.segments) | ext_ids
     for k in (raw.get("segments") or {}):
-        if k not in defaults.segments:
+        if k not in known_segments:
             errors.append(f"unknown segment key: {k}")
     for k in (raw.get("palette") or {}):
         if k not in _PALETTE_DEFAULTS:
@@ -1436,7 +1768,7 @@ def validate_config_file(path, env):
             errors.append(f"bad palette color: {name} = {value!r}")
     for i, line in enumerate(raw.get("line") or []):
         for seg in line.get("segments", []):
-            if seg not in BUILDERS:
+            if seg not in BUILDERS and seg not in ext_ids:
                 errors.append(f"line[{i}] references unknown segment: {seg}")
     resolved_palette = _resolve_palette(
         {k: str(v) for k, v in (raw.get("palette") or {}).items()
@@ -1460,6 +1792,18 @@ def validate_config_file(path, env):
             errors.append(f"unknown [git] key: {k}")
         elif not isinstance(v, bool):
             errors.append(f"[git] {k} must be true/false, got {v!r}")
+    ext = raw.get("external")
+    if ext is not None:
+        if not isinstance(ext, dict):
+            errors.append("[external] must be a table")
+        else:
+            for k in ext:
+                if k not in ("ttl", "dir"):
+                    errors.append(f"unknown [external] key: {k}")
+            if "ttl" in ext and (not isinstance(ext["ttl"], int) or isinstance(ext["ttl"], bool)):
+                errors.append(f"[external] ttl must be an integer, got {ext['ttl']!r}")
+            if "dir" in ext and not isinstance(ext["dir"], str):
+                errors.append(f"[external] dir must be a string, got {ext['dir']!r}")
     return errors
 
 
@@ -1581,7 +1925,7 @@ def main():
     cfg = load_config(os.environ)
     theme = build_theme(cfg)
     if args.print_config:
-        print(cmd_print_config(cfg))
+        print(cmd_print_config(cfg, os.environ))
         return
     try:
         raw = json.load(sys.stdin)
