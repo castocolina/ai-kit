@@ -225,11 +225,13 @@ def _segment_changes_vs_recipe(path, segments, extra=None):
 
 - [ ] **Step 3c: Seed the wizard state with externals + a note fallback**
 
+> **Note:** SUPERSEDED BY Task W3 Step 3b — the full preamble block (including `ext_dir` resolution) is replaced there. Implement Task W3 Step 3b instead of this step.
+
 In `run_statusline_wizard` (~870), after the existing `raw = read_toml(cfg)` line and before building `state`, discover providers and build the `extra` baseline; thread it through state, the change computation, and the note lookup. Replace the `state = {...}` construction (~882-887):
 
 ```python
     raw = read_toml(cfg)
-    ext_dir = wizard_segments_dir(cfg, paths_env(paths))
+    ext_dir = wizard_segments_dir(cfg, os.environ)
     ext = dict(discover_external_ids(ext_dir))          # {id: path}
     ext_defaults = {sid: True for sid in ext}
     state = {
@@ -239,15 +241,6 @@ In `run_statusline_wizard` (~870), after the existing `raw = read_toml(cfg)` lin
         "external": ext_defaults,                       # baseline for save
         "dirty": False,
     }
-```
-
-`run_statusline_wizard` has `paths` but the env is `os.environ` at call time. Add a tiny accessor so the function stays testable — add near the top of `setup.py`:
-
-```python
-def paths_env(paths):
-    """The environment the wizard resolves provider dirs against. Indirection so
-    tests can monkeypatch; defaults to the process environment."""
-    return os.environ
 ```
 
 - [ ] **Step 3d: External-aware note in `_print_segments`**
@@ -385,7 +378,7 @@ In `run_statusline_wizard` (~878), after `wire_statusline(...)` and before resol
     wire_statusline(paths.settings, paths.status_line, tty, dry)
     cfg = paths.config_toml
     raw = read_toml(cfg)
-    ext_dir = wizard_segments_dir(cfg, paths_env(paths))
+    ext_dir = wizard_segments_dir(cfg, os.environ)
     copy_sample_segment(paths.install_dir, ext_dir, tty, dry)
     ext = dict(discover_external_ids(ext_dir))
     ext_defaults = {sid: True for sid in ext}
@@ -397,6 +390,8 @@ In `run_statusline_wizard` (~878), after `wire_statusline(...)` and before resol
         "dirty": False,
     }
 ```
+
+> **Note:** `copy_recipe_if_absent` (first line above) only copies the sample TOML when the config file does not yet exist — existing installs will not have the `[external]` block added automatically.
 
 (This replaces the Task W2 Step 3c block — `ext_dir` is now resolved once, before the copy prompt, and reused for discovery.)
 
@@ -435,6 +430,6 @@ Run `make install` (or `python3 tools/setup.py install`) in a scratch `HOME`, dr
 ## Self-Review (completed during authoring)
 
 - **Spec coverage (FR-4c.9):** wizard discovers providers (W1), lists them with current toml state and toggles them (W2), and offers the opt-in `sysmem` copy (W3). All three are covered.
-- **Placeholder scan:** none — complete code in every step. The one ambiguity (`paths_env` indirection for env access in `run_statusline_wizard`) is resolved with an explicit helper.
+- **Placeholder scan:** none — complete code in every step. `os.environ` is passed directly to `wizard_segments_dir` in `run_statusline_wizard` (no helper indirection needed).
 - **Type consistency:** `discover_external_ids` returns `list[(id, path)]`; `extra` is always a `{id: True}` dict; `current_segments`/`_segment_changes_vs_recipe` accept `extra` consistently across W2/W3. The W3 preamble block supersedes the W2 Step 3c block (noted inline) so `ext_dir` is resolved exactly once.
 ```

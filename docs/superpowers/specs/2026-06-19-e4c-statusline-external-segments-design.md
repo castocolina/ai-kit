@@ -54,12 +54,12 @@ unchanged. This is the seam that keeps E4c near-zero-rework on top of E4a.
 
 ```
 load_config(env) -> Config            # E4a: segments, layout, palette, ramps
-discover_external(cfg) -> [ExtSpec]   # parse headers in the segments dir
+discover_external(directory, default_ttl, env) -> [ExtSpec]   # parse headers in the segments dir
   -> fold each id into cfg.segments (default-on) + into the resolved layout
 render(data, cols, lines, cfg, theme)
   -> pack_line(keys, data, cols, cfg, theme)
        -> builder(data, avail, theme)            # built-in OR synthetic external
-            (external) run_external(spec, data, avail, cfg)  # TTL-cached, timeout-bounded
+            (external) run_external(spec, data, avail)  # TTL-cached, timeout-bounded
 ```
 
 A built-in builder is `seg_x(data, avail, theme) -> str | None`. The synthetic external
@@ -69,11 +69,12 @@ difference, so `PINNED` priority, overflow, and keep/skip behave identically.
 
 ### Key components
 
-- `discover_external(cfg) -> list[ExtSpec]` — scan the segments dir, parse headers, return
-  specs (path, id, line, position, timeout, ttl). Skips non-executables (dim warning).
+- `discover_external(directory, default_ttl, env) -> list[ExtSpec]` — scan the segments dir,
+  parse headers, return specs (path, id, line, position, timeout, ttl). Skips
+  non-executables (dim warning).
 - `ExtSpec` — resolved provider metadata.
-- `make_external_builder(spec, cfg)` — returns a `seg_x`-shaped closure for `BUILDERS`.
-- `run_external(spec, data, avail, cfg)` — TTL-cached, timeout-bounded execution +
+- `make_external_builder(spec)` — returns a `seg_x`-shaped closure for `BUILDERS`.
+- `run_external(spec, data, avail)` — TTL-cached, timeout-bounded execution +
   sanitization; the only place a subprocess is spawned.
 - Layout integration — insert each spec's id into `cfg.layout` at its declared
   row/position; fold the id into `cfg.segments` with a default of `True`.
@@ -179,7 +180,7 @@ fi                                                  # else: print nothing → co
 
 E5 (installer + setup wizard) has already shipped, so E4c integrates into it:
 
-- The wizard **runs `discover_external(cfg)`** and lists each provider alongside the
+- The wizard **runs `discover_external`** and lists each provider alongside the
   built-in segments, showing its **current enabled/disabled state** loaded from the toml
   (using the same `[x]/[ ]` + accent/dim affordance E5 already uses for built-ins).
 - Toggling a provider writes its `[segments] <id>` value like any other segment.
@@ -209,8 +210,10 @@ dir = "~/.config/ai-kit/segments"     # overridden by CC_AI_KIT_SEGMENTS_DIR
   is the canonical copy-and-edit starting point. Distinct from the built-in `🧮` segment
   (which is the Claude *process* RSS); the sample reports *system available* RAM. Header
   defaults it near the context cluster (`line=1 after=context`), documented as movable.
-- **`tests/fixtures/segments/`** — fixture providers for tests: valid-header, no-header,
-  slow/timeout, failing (non-zero), columns-tier, multi-line/huge output, non-executable.
+- **Test fixture providers** — ephemeral per-test temp dirs (not committed); each test class
+  creates its own `tempfile.mkdtemp()` dir and writes fixture scripts at runtime: valid-header,
+  no-header, slow/timeout, failing (non-zero), columns-tier, multi-line/huge output,
+  non-executable.
 - **Runtime dir** `~/.config/ai-kit/segments/` — **empty by default**; populated only when
   the user copies a sample or adds their own.
 - **AWS-session-expiry** — **docs snippet only** (shown above), not a shipped file; it is the

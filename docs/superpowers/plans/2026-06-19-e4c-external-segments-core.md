@@ -1113,7 +1113,7 @@ def render(data, cols, lines, cfg=None, theme=None):
 
 - [ ] **Step 3d: Carry the raw status JSON in `data`**
 
-In `build_data` (~1355), add `"raw": raw,` to the returned `data` dict (so `run_external` can forward the original JSON to providers). Insert it as the first key:
+In `build_data` (~1307), add `"raw": raw,` to the returned `data` dict (so `run_external` can forward the original JSON to providers). Insert it as the first key:
 
 ```python
     data = {
@@ -1171,6 +1171,8 @@ class TestCliSurface(unittest.TestCase):
         blob = json.loads(sl.cmd_print_config(cfg))
         self.assertEqual(blob["external"]["providers"][0]["id"], "sysmem")
         self.assertIn("ttl", blob["external"])
+        # `dir` is the PROVIDERS directory, not the XDG cache dir.
+        self.assertEqual(blob["external"]["dir"], self.segs)
 
     def test_validate_accepts_external_id_in_segments(self):
         write_script(self.segs, "sysmem", "#!/bin/sh\necho hi\n")
@@ -1203,6 +1205,14 @@ Replace `cmd_print_config` (~1400):
 ```python
 def cmd_print_config(cfg):
     """Resolved config as pretty JSON (no rendering)."""
+    # Reconstruct the resolved external dir/ttl from the first provider's values
+    # (all providers share the same providers dir and the load-time default ttl).
+    # `dir` is the PROVIDERS directory (where the scripts live), derived from a
+    # spec's own `path` — NOT `cache_path`, which lives under XDG_CACHE_HOME.
+    ext_providers = cfg.external or []
+    ext_ttl = ext_providers[0].ttl if ext_providers else 10
+    ext_dir = (os.path.dirname(ext_providers[0].path)
+               if ext_providers else None)
     return json.dumps({
         "segments": cfg.segments,
         "layout": [{"min_rows": ln.min_rows, "segments": ln.segments}
@@ -1211,15 +1221,19 @@ def cmd_print_config(cfg):
         "ramps": cfg.ramps,
         "git": cfg.git or {},
         "external": {
+            "ttl": ext_ttl,
+            "dir": ext_dir,
             "providers": [
                 {"id": s.id, "path": s.path, "line": s.line,
                  "position": _position_str(s.position),
                  "timeout": s.timeout, "ttl": s.ttl}
-                for s in (cfg.external or [])
+                for s in ext_providers
             ],
         },
     }, indent=2)
 ```
+
+> **Note:** `blob["external"]` always carries `"ttl"` and `"dir"` keys (reflecting the resolved external config), plus `"providers"` (the list of discovered specs). `"dir"` is the **providers directory** (where the scripts live), taken from `os.path.dirname(spec.path)` — deliberately NOT `cache_path`, which resolves under `XDG_CACHE_HOME` and would mislead anyone reading `--print-config` to diagnose discovery. The test `test_print_config_lists_external` asserts `blob["external"]["providers"][0]["id"]`, `"ttl" in blob["external"]`, and `blob["external"]["dir"] == segments_dir` — all satisfied by this implementation.
 
 - [ ] **Step 3b: Make `validate_config_file` external-aware**
 
