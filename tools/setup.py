@@ -15,11 +15,20 @@ import argparse
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import tomllib
 from collections import namedtuple
+
+try:                                  # POSIX-only; mode A gates on isatty anyway
+    import termios
+    import tty as _termmode
+except ImportError:                   # non-POSIX: raw mode is a no-op
+    termios = None
+    _termmode = None
 
 CATEGORIES = ("agents", "commands", "skills")
 
@@ -63,7 +72,7 @@ SEGMENT_DEFAULTS = {
     "chat_size": True, "memory": True, "rate_limits": True,
 }
 LAYOUT_DEFAULTS = [
-    {"min_rows": 0, "segments": ["path", "branch", "dirty", "todo"]},
+    {"min_rows": 0, "segments": ["path", "branch", "worktree", "dirty", "todo"]},
     {"min_rows": 20, "segments": ["model", "time_ago", "clock", "effort", "lines",
                                   "cost", "total_time", "api_time"]},
     {"min_rows": 30, "segments": ["render_time", "dimensions", "context",
@@ -638,56 +647,112 @@ def _default_selection(entries, installed):
     return sel
 
 
+class Selection:
+    """The shared in-memory pick model behind both the install skill-picker and
+    the status-line segment toggle. Holds an ORDERED list of (category, name)
+    items each with an enabled flag, plus a cursor. It owns ONLY *what is on* and
+    *where the cursor sits* — never layout, dirtiness, or persistence (callers
+    compose those around it). Both flows mutate it the same way (toggle / set_all
+    / move_cursor) and project it back out (category_sets / enabled_map)."""
+
+    def __init__(self, items):
+        # items: iterable of (category, name, enabled)
+        self.items = [[cat, name, bool(on)] for cat, name, on in items]
+        self.cursor = 0
+
+    def __len__(self):
+        return len(self.items)
+
+    def toggle(self, index):
+        self.items[index][2] = not self.items[index][2]
+
+    def toggle_cursor(self):
+        if self.items:
+            self.toggle(self.cursor)
+
+    def set_all(self, value):
+        for it in self.items:
+            it[2] = bool(value)
+
+    def move_cursor(self, delta):
+        if self.items:
+            self.cursor = max(0, min(len(self.items) - 1, self.cursor + delta))
+
+    def enabled_map(self):
+        """{name: enabled} over every item, order-preserving."""
+        return {name: on for _cat, name, on in self.items}
+
+    def category_sets(self, categories=None):
+        """{category: {names that are enabled}} — only the ON items appear in a
+        category's set. A category with any item present always gets a key; when
+        `categories` is given, every listed category gets a key too (empty set if
+        it has no enabled items), so callers need no post-projection backfill."""
+        out = {c: set() for c in categories} if categories else {}
+        for cat, name, on in self.items:
+            s = out.setdefault(cat, set())
+            if on:
+                s.add(name)
+        return out
+
+
 def select_skills(entries, installed, tty):
     """Compute the chosen set per category. Headless (tty None): return the
     default selection with no prompting. Interactive: render a numbered toggle
     list ([x]/[ ], accent-on/dim-off, one-line note), let the user flip rows by
-    number (or 'a'/'n' for all/none), Enter to accept."""
-    sel = _default_selection(entries, installed)
+    number (or 'a'/'n' for all/none), Enter to accept. Both paths resolve to the
+    same default — an immediate Enter equals headless."""
+    default = _default_selection(entries, installed)
     if not is_interactive(tty):
-        return sel
+        return default
     # flat numbered index over all categories, skills first (the row order the
     # wizard presents; CATEGORIES itself stays alphabetical for storage).
     _row_order = ("skills", "commands", "agents")
-    rows = []
-    for cat in _row_order:
-        for name, path in entries[cat]:
-            rows.append((cat, name, path))
+    sel = Selection(
+        (cat, name, name in default[cat])
+        for cat in _row_order
+        for name, _path in entries[cat]
+    )
+    if _mode_a_available(os.environ, tty, tty):
+        # Mode A: arrow-key chip selector on a capable terminal. esc/Ctrl-C
+        # (KeyboardInterrupt) cancels → keep the safe default selection. Any
+        # OTHER failure (a termios error on a hostile terminal, a render bug)
+        # degrades to the always-correct numbered menu below rather than
+        # crashing the installer.
+        try:
+            chip_select(sel, tty, tty, os.environ)
+            return sel.category_sets(CATEGORIES)
+        except KeyboardInterrupt:
+            return default
+        except Exception:
+            pass                                 # fall through to mode B
     while True:
         menu = ("\nSelect what to install (type numbers to toggle, "
                 "'a' all, 'n' none, Enter to accept):\n")
-        for i, (cat, name, _path) in enumerate(rows, 1):
-            on = name in sel[cat]
-            mark = "x" if on else " "
-            color = _ACCENT if on else _DIM
+        for i, (cat, name, on) in enumerate(sel.items, 1):
+            box = "[x]" if on else "[ ]"
+            word = "on " if on else "off"               # legible without color
+            label = f"{_ACCENT}{cat}/{name}{_RESET}" if on else f"{cat}/{name}"
             new = "" if (name in installed[cat] or _first_run(installed)) else "  NEW"
-            menu += ("  %2d. [%s] %s%s/%s%s%s\n"
-                     % (i, mark, color, cat, name, _RESET, new))
+            menu += f"  {i:2}. {box} {word}  {label}{new}\n"
         _tty_write(tty, menu)
         line = tty.readline()
         if not line:
-            return sel
+            break
         cmd = line.strip().lower()
         if cmd == "":
-            return sel
+            break
         if cmd == "a":
-            for cat in CATEGORIES:
-                sel[cat] = {n for n, _ in entries[cat]}
+            sel.set_all(True)
             continue
         if cmd == "n":
-            for cat in CATEGORIES:
-                sel[cat] = set()
+            sel.set_all(False)
             continue
         for tok in cmd.replace(",", " ").split():
-            if not tok.isdigit():
-                continue
-            idx = int(tok) - 1
-            if 0 <= idx < len(rows):
-                cat, name, _path = rows[idx]
-                if name in sel[cat]:
-                    sel[cat].discard(name)
-                else:
-                    sel[cat].add(name)
+            if tok.isdigit():
+                idx = int(tok) - 1
+                if 0 <= idx < len(sel):
+                    sel.toggle(idx)
+    return sel.category_sets(CATEGORIES)
 
 
 def apply_selection(selection, entries, claude_dir, dry, counts):
@@ -839,12 +904,16 @@ def _apply_wizard_command(state, cmd):
     import copy
     cmd = cmd.strip()
     st = copy.deepcopy(state)
-    order = sorted(st["segments"])
+    if cmd in ("a", "n"):                       # all-on / all-off
+        st["segments"] = {k: (cmd == "a") for k in st["segments"]}
+        st["dirty"] = True
+        return st, None
+    order = _wizard_order(st)                    # display order == toggle order
     if cmd.isdigit():
         n = int(cmd)
         if not (1 <= n <= len(order)):
             return state, f"no segment #{n}"
-        key = order[n - 1]
+        key = order[n - 1]                       # numbering is the menu's display order
         st["segments"][key] = not st["segments"][key]
         st["dirty"] = True
         return st, None
@@ -876,15 +945,381 @@ def _apply_wizard_command(state, cmd):
     return state, f"unknown command: {cmd!r}"
 
 
+# Friendly headers for the three default layout rows (keyed by min_rows);
+# any other row falls back to "line N".
+_ROW_LABELS = {0: "identity line", 20: "model line", 30: "diagnostics line"}
+
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def _visible_len(s):
+    """Length of `s` in terminal columns, ignoring SGR color escapes."""
+    return len(_ANSI_RE.sub("", s))
+
+
+def _trunc_visible(s, width):
+    """Truncate `s` to `width` visible columns, keeping SGR escapes (counted as
+    zero-width) and appending a reset if the text was cut, so color never bleeds."""
+    if width <= 0:
+        return ""
+    out, vis, i, n = [], 0, 0, len(s)
+    saw_sgr = False
+    while i < n and vis < width:
+        m = _ANSI_RE.match(s, i)
+        if m:
+            out.append(m.group())
+            i = m.end()
+            saw_sgr = True
+            continue
+        out.append(s[i])
+        vis += 1
+        i += 1
+    if i < n and saw_sgr:        # truncated AND color in play → close it cleanly
+        out.append(_RESET)       # (no spurious reset on plain text)
+    return "".join(out)
+
+
+def _wizard_groups(state):
+    """The menu's segments grouped for display: one group per layout row (its
+    segments in row order), then a trailing 'not in layout' group of any leftover
+    segments (sorted). Single source of truth for both numbering and grouping."""
+    groups, seen = [], set()
+    for i, row in enumerate(state["layout"]):
+        label = _ROW_LABELS.get(row.get("min_rows"), f"line {i + 1}")
+        keys = [k for k in row["segments"]
+                if k in state["segments"] and k not in seen]
+        seen.update(keys)
+        if keys:
+            groups.append((label, keys))
+    rest = [k for k in sorted(state["segments"]) if k not in seen]
+    if rest:
+        groups.append(("not in layout", rest))
+    return groups
+
+
+def _wizard_order(state):
+    """The flat display order of segment keys — the contract a typed menu number
+    resolves against (number N ⇒ the Nth key here). Derived from _wizard_groups
+    so the menu and the toggle resolver can never disagree."""
+    return [k for _label, keys in _wizard_groups(state) for k in keys]
+
+
 def _print_segments(tty, state):
-    """Render the numbered segment list with [x]/[ ] + accent/dim + note."""
-    accent, dim, reset = "\033[36m", "\033[90m", "\033[0m"
-    for i, key in enumerate(sorted(state["segments"]), start=1):
-        on = state["segments"][key]
-        box = "[x]" if on else "[ ]"
-        color = accent if on else dim
-        note = _SEGMENT_NOTES.get(key, "")
-        print(f"  {i:2}. {box} {color}{key}{reset}  {dim}{note}{reset}", file=tty)
+    """Render the segment menu grouped by layout row, numbered 1..n in display
+    order, with a redundant on/off word column so enabled/disabled is legible
+    without color (NO_COLOR/WCAG); color is layered on as a secondary cue."""
+    number = {key: i for i, key in enumerate(_wizard_order(state), 1)}
+    for label, keys in _wizard_groups(state):
+        print(f"\n  {label}", file=tty)
+        for key in keys:
+            on = state["segments"][key]
+            box = "[x]" if on else "[ ]"
+            word = "on " if on else "off"
+            key_col = f"{_ACCENT}{key}{_RESET}" if on else key   # dim ≠ state
+            note = _SEGMENT_NOTES.get(key, "")
+            print(f"  {number[key]:2}. {box} {word}  {key_col}  "
+                  f"{_DIM}{note}{_RESET}", file=tty)
+
+
+def _preview_lines(rendered, cols):
+    """Format the live status-line `rendered` text as preview footer lines: an
+    ASCII 'preview | ' prefix (no Unicode in the always-correct mode-B fallback),
+    each row truncated to the terminal width. Empty render → one
+    '(preview unavailable)' line so the failure is visible, not silent."""
+    prefix = "  preview | "
+    budget = max(cols - _visible_len(prefix), 1)
+    if not rendered:
+        return [prefix + "(preview unavailable)"]
+    return [prefix + _trunc_visible(line, budget)
+            for line in rendered.splitlines()]
+
+
+_CHIP_GLYPHS = {"on": "◉", "off": "◯", "cursor": "❯",
+                "more_up": "▲", "more_down": "▼", "bar": "▏"}
+_CHIP_ASCII = {"on": "[x]", "off": "[ ]", "cursor": ">",
+               "more_up": "^", "more_down": "v", "bar": "|"}
+_CHIP_HINT = "↑↓ move · space toggle · a/n all/none · enter ok · q/esc cancel"
+_CHIP_HINT_ASCII = "up/dn move · space toggle · a/n all/none · enter ok · q/esc cancel"
+
+
+def _env_truthy(val):
+    """Standard env truthiness: 1/true/t/yes/y/on (case-insensitive)."""
+    return str(val).strip().lower() in ("1", "true", "t", "yes", "y", "on")
+
+
+def _stream_isatty(stream):
+    try:
+        return bool(stream.isatty())
+    except Exception:
+        return False
+
+
+def _term_dimensions(env):
+    """(cols, rows): COLUMNS/LINES from `env` when set, else the live terminal."""
+    def _int(key):
+        try:
+            return int(env.get(key, "") or 0)
+        except ValueError:
+            return 0
+    cols, rows = _int("COLUMNS"), _int("LINES")
+    if cols and rows:
+        return cols, rows
+    sz = shutil.get_terminal_size((80, 24))
+    return (cols or sz.columns), (rows or sz.lines)
+
+
+def _mode_a_available(env, stdin, stdout):
+    """The conjunctive activation gate for the mode-A chip selector: ALL of
+    stdin&stdout are TTYs, TERM is not dumb/empty, and the terminal is at least
+    40×8. `AIKIT_PLAIN` forces mode B. NO_COLOR is deliberately NOT consulted —
+    it only strips the color layer at render time; the glyph-primary + reverse-
+    video focus keep mode A fully usable without color. Any False → caller uses
+    the always-correct mode-B numbered menu."""
+    if _env_truthy(env.get("AIKIT_PLAIN")):
+        return False
+    if not (_stream_isatty(stdin) and _stream_isatty(stdout)):
+        return False
+    if env.get("TERM", "") in ("dumb", ""):
+        return False
+    cols, rows = _term_dimensions(env)
+    return cols >= 40 and rows >= 8
+
+
+def _chip_glyphs(env, stdout):
+    """The mark set for chips: Unicode `◉/◯/❯…` normally, ASCII `[x]/[ ]/>`
+    when the terminal can't render glyphs — TERM dumb/empty OR stdout's encoding
+    can't represent the codepoints (e.g. a C/POSIX locale). NO_COLOR does NOT
+    force ASCII: `◉` (filled) vs `◯` (hollow) is a shape difference that survives
+    color stripping, which is the whole point of glyph-primary state."""
+    if env.get("TERM", "") in ("dumb", ""):
+        return dict(_CHIP_ASCII)
+    enc = getattr(stdout, "encoding", None) or "utf-8"
+    try:
+        "".join(_CHIP_GLYPHS.values()).encode(enc)
+    except (LookupError, UnicodeEncodeError):
+        return dict(_CHIP_ASCII)
+    return dict(_CHIP_GLYPHS)
+
+
+def _clamp_window(cursor, n_items, viewport):
+    """Top index of the scroll window so `cursor` stays visible within
+    `viewport` rows (cursor roughly centered). 0 when the whole list fits."""
+    if viewport <= 0 or n_items <= viewport:
+        return 0
+    top = cursor - viewport // 2
+    return max(0, min(top, n_items - viewport))
+
+
+def _parse_key(token):
+    """Map ONE de-framed key token to an action (or None). The token is a
+    complete key — the reader resolves the esc-vs-CSI-arrow ambiguity before
+    calling this, so `_parse_key` stays pure and trivially testable."""
+    return {
+        "\x1b[A": "up", "k": "up",
+        "\x1b[B": "down", "j": "down",
+        " ": "toggle",
+        "a": "all", "A": "all",
+        "n": "none", "N": "none",
+        "\r": "accept", "\n": "accept",
+        "\x1b": "cancel", "q": "cancel", "Q": "cancel", "\x03": "cancel",
+    }.get(token)
+
+
+def _chip_row(glyphs, label, enabled, focused, width, color=True):
+    """One chip row, truncated to `width`. Focused row is reverse-video
+    (`\\033[7m`) — a luminance inversion that survives NO_COLOR, unlike a
+    color-only cue; the `❯` gutter is the redundant second focus signal."""
+    gutter = glyphs["cursor"] if focused else " "
+    mark = glyphs["on"] if enabled else glyphs["off"]
+    body = _trunc_visible(f"{gutter} {mark} {label}", width)
+    if focused:
+        return f"\033[7m{body}\033[27m"
+    if color and enabled:
+        return f"{_ACCENT}{body}{_RESET}"
+    return body
+
+
+def _chip_frame(selection, glyphs, cols, rows, preview=None, color=True):
+    """Build the visible lines of one mode-A frame (PURE — no terminal I/O):
+    a windowed slice of chip rows (focused row reverse-video), `▲/▼ N more`
+    edge affordances when the list overflows, an optional `preview ▏` footer,
+    and the key-hint footer — every line truncated to cols-1."""
+    width = max(cols - 1, 1)
+    reserved = 2 + (1 if preview is not None else 0)   # hint + 2 edges (+preview)
+    viewport = max(rows - reserved, 1)
+    n = len(selection)
+    top = _clamp_window(selection.cursor, n, viewport)
+    end = min(top + viewport, n)
+    lines = []
+    if top > 0:
+        lines.append(_trunc_visible(f"  {glyphs['more_up']} {top} more", width))
+    for i in range(top, end):
+        _cat, label, enabled = selection.items[i]
+        lines.append(_chip_row(glyphs, label, enabled,
+                               i == selection.cursor, width, color))
+    if end < n:
+        lines.append(_trunc_visible(f"  {glyphs['more_down']} {n - end} more", width))
+    if preview is not None:
+        lines.append(_trunc_visible(f"  preview {glyphs['bar']} {preview}", width))
+    on = sum(1 for _c, _l, enabled in selection.items if enabled)
+    hint = _CHIP_HINT_ASCII if glyphs["cursor"] == ">" else _CHIP_HINT
+    lines.append(_trunc_visible(f"  ({on}/{n} on)  {hint}", width))   # live tally
+    return lines
+
+
+def _read_key(stdin):
+    """Read ONE key token from a raw-mode stdin, resolving the esc/CSI-arrow
+    ambiguity: a lone ESC with nothing pending is a cancel; ESC '[' X is a CSI
+    arrow. Reads single bytes via os.read on the fd (the correct raw-terminal
+    primitive — TextIOWrapper buffering would swallow keypresses). latin-1 keeps
+    the control bytes 1:1. Timing-sensitive — exercised by the T4.5 pty E2E.
+
+    A terminal disconnect (SSH drop, parent closes the fd) makes os.read raise
+    OSError(EIO) on some platforms and return b"" (EOF) on others; BOTH are
+    surfaced as a cancel (KeyboardInterrupt) so the caller falls back to the safe
+    default instead of crashing or busy-looping on an empty read."""
+    import select
+    fd = stdin.fileno()
+
+    def _rd():
+        try:
+            return os.read(fd, 1)
+        except OSError:
+            raise KeyboardInterrupt from None   # terminal vanished → cancel
+    ch = _rd()
+    if not ch:                               # EOF → cancel (never busy-loop on b"")
+        raise KeyboardInterrupt
+    if ch == b"\x1b":
+        # 50 ms split to tell a lone ESC (cancel) from a CSI arrow. Best-effort:
+        # a high-latency SSH link can deliver the '[' late and trip the lone-ESC
+        # path — acceptable, since the worst case is a stray cancel the user retries.
+        ready, _, _ = select.select([fd], [], [], 0.05)
+        if not ready:
+            return "\x1b"                    # lone ESC → cancel
+        nxt = _rd()
+        if nxt == b"[":
+            return "\x1b[" + _rd().decode("latin-1")
+        # ESC + non-'[' (Alt-combo or a fast keystroke): act on that byte rather
+        # than silently dropping it.
+        return nxt.decode("latin-1") if nxt else "\x1b"
+    return ch.decode("latin-1")
+
+
+def chip_select(selection, stdin, stdout, env, preview=None):
+    """Mode-A arrow-key chip selector over a `Selection` (the additive
+    enhancement to the mode-B menu). Bounded redraw, NEVER alt-screen: prints a
+    fixed block, then each keypress moves the cursor up by the block height it
+    LAST emitted (so a shrinking frame can't orphan rows) and rewrites every line
+    with erase-line, in a single write(). `raw_mode` guarantees teardown. The
+    caller MUST have confirmed `_mode_a_available(env, stdin, stdout)`; on
+    esc/Ctrl-C this raises KeyboardInterrupt (selection left as-is). `preview`,
+    if given, is called with the live selection each frame and must return the
+    preview text. Returns the mutated `selection`."""
+    glyphs = _chip_glyphs(env, stdout)
+    color = not _env_truthy(env.get("NO_COLOR"))
+    last_h = 0
+
+    def render():
+        nonlocal last_h
+        cols, rows = _term_dimensions(env)
+        pv = preview(selection) if preview is not None else None
+        lines = _chip_frame(selection, glyphs, cols, rows, pv, color)
+        buf = []
+        if last_h:
+            buf.append(f"\033[{last_h}A")          # up by what we LAST drew
+        for ln in lines:
+            buf.append("\033[2K" + ln + "\n")
+        for _ in range(max(last_h - len(lines), 0)):   # clear shrunk-away rows
+            buf.append("\033[2K\n")
+        if last_h > len(lines):
+            buf.append(f"\033[{last_h - len(lines)}A")
+        last_h = len(lines)
+        stdout.write("".join(buf))
+        stdout.flush()
+
+    with raw_mode(stdin.fileno(), stdout):
+        render()
+        while True:
+            action = _parse_key(_read_key(stdin))
+            if action == "up":
+                selection.move_cursor(-1)
+            elif action == "down":
+                selection.move_cursor(1)
+            elif action == "toggle":
+                selection.toggle_cursor()
+            elif action == "all":
+                selection.set_all(True)
+            elif action == "none":
+                selection.set_all(False)
+            elif action == "accept":
+                break
+            elif action == "cancel":
+                raise KeyboardInterrupt
+            render()
+    return selection
+
+
+class raw_mode:
+    """Context manager that puts terminal `fd` into raw mode for the mode-A chip
+    selector and GUARANTEES teardown on every exit path. On enter it saves the
+    termios state, installs a SIGINT trap, switches to raw, and hides the cursor;
+    on exit (normal, exception, OR SIGINT) it restores the saved state via
+    `TCSADRAIN`, shows the cursor, and re-installs the previous SIGINT handler —
+    all in one place. SIGINT additionally prints a newline and exits 130
+    (128 + SIGINT, the conventional shell code). A no-op when termios is
+    unavailable (non-POSIX); callers gate mode A on isatty regardless.
+
+    `fd` is the input file descriptor put into raw mode; `stream` is where the
+    cursor-hide/show escapes are written (the output side)."""
+
+    def __init__(self, fd, stream):
+        self.fd = fd
+        self.stream = stream
+        self.saved = None
+        self.prev_sigint = None
+        self.active = False
+
+    def __enter__(self):
+        if not termios:                          # non-POSIX → no-op
+            return self
+        self.saved = termios.tcgetattr(self.fd)
+        self.prev_sigint = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, self._on_sigint)
+        _termmode.setraw(self.fd)
+        self.active = True
+        self.stream.write("\033[?25l")           # hide cursor
+        self.stream.flush()
+        return self
+
+    def __exit__(self, *exc):
+        self._restore()
+        return False                             # never swallow exceptions
+
+    def _restore(self):
+        if not self.active:
+            return
+        self.active = False
+        # Best-effort, ORDERED teardown. A terminal disconnect can make
+        # tcsetattr raise termios.error(EIO) mid-teardown; that must not skip the
+        # cursor-show or the SIGINT-handler restore, nor mask the body's
+        # exception by propagating its own — so each step is guarded and the
+        # SIGINT handler (most important for process sanity) is always restored.
+        try:
+            termios.tcsetattr(self.fd, termios.TCSADRAIN, self.saved)
+        except Exception:
+            pass
+        try:
+            self.stream.write("\033[?25h")       # show cursor
+            self.stream.flush()
+        except Exception:
+            pass
+        signal.signal(signal.SIGINT, self.prev_sigint)
+
+    def _on_sigint(self, signum, frame):
+        self._restore()
+        self.stream.write("\n")
+        self.stream.flush()
+        raise SystemExit(130)
 
 
 def run_statusline_wizard(paths, tty, dry):
@@ -908,15 +1343,18 @@ def run_statusline_wizard(paths, tty, dry):
 
     def show_preview():
         out = render_preview(paths.status_line, state["segments"], sample_json, {})
-        print("\n  ── live preview ──", file=tty)
-        print(out or "  (preview unavailable)", file=tty)
+        cols, _rows = _term_dimensions(os.environ)
+        print("", file=tty)
+        for line in _preview_lines(out, cols):
+            print(line, file=tty)
 
     print("\nStatus-line configuration", file=tty)
     while True:
         _print_segments(tty, state)
         show_preview()
-        print("\n  commands: <n> toggle · move <seg> up|down · move <seg> line <n>"
-              " · p preview · s save · q quit", file=tty)
+        print("\n  commands: <n> toggle · a all · n none"
+              " · move <key> up|down · move <key> line <n>"
+              " · p preview · s save · q quit · done save+quit", file=tty)
         tty.write("  > ")
         tty.flush()
         cmd = tty.readline()
@@ -925,6 +1363,10 @@ def run_statusline_wizard(paths, tty, dry):
         cmd = cmd.strip()
         if cmd in ("q", "quit", ""):
             break
+        if cmd == "done":                         # save + quit
+            _save_and_report(paths, state, tty, dry)
+            state["dirty"] = False
+            return
         if cmd in ("p", "preview"):
             continue
         if cmd in ("s", "save"):

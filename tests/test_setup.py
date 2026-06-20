@@ -2,6 +2,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -69,11 +70,25 @@ class TestTomlRead(unittest.TestCase):
     def test_current_layout_default_on_noop_recipe(self):
         layout = setup.current_layout(SAMPLE_RECIPE)
         self.assertEqual([r["segments"] for r in layout],
-                         [["path", "branch", "dirty", "todo"],
+                         [["path", "branch", "worktree", "dirty", "todo"],
                           ["model", "time_ago", "clock", "effort", "lines",
                            "cost", "total_time", "api_time"],
                           ["render_time", "dimensions", "context",
                            "chat_size", "memory", "rate_limits", "slowest"]])
+
+    def test_layout_defaults_match_status_line(self):
+        # Drift guard: setup.LAYOUT_DEFAULTS must mirror the canonical default
+        # LAYOUT in tools/status-line.py (the renderer's source of truth), so the
+        # wizard's default layout can never silently diverge — e.g. dropping the
+        # worktree segment from the identity row (the T4.2 regression).
+        sl_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                               "tools", "status-line.py")
+        spec = importlib.util.spec_from_file_location("status_line_drift", sl_path)
+        sl = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sl)
+        expected = [{"min_rows": ln.min_rows, "segments": list(ln.segments)}
+                    for ln in sl.LAYOUT]
+        self.assertEqual(setup.LAYOUT_DEFAULTS, expected)
 
     def test_current_layout_file_replaces_all(self):
         with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
@@ -315,7 +330,7 @@ class TestWizardLoop(unittest.TestCase):
 
     def test_toggle_by_number_flips_segment(self):
         st = self._state()
-        order = sorted(st["segments"])          # numbering is sorted-key order
+        order = setup._wizard_order(st)         # numbering is display order
         idx = order.index("cost") + 1
         st2, err = setup._apply_wizard_command(st, str(idx))
         self.assertIsNone(err)
@@ -343,7 +358,7 @@ class TestWizardLoop(unittest.TestCase):
         # appears in SEGMENT_DEFAULTS (ON) and flips like any other segment.
         self.assertTrue(setup.SEGMENT_DEFAULTS.get("worktree"))
         st = self._state()
-        order = sorted(st["segments"])
+        order = setup._wizard_order(st)
         idx = order.index("worktree") + 1
         st2, err = setup._apply_wizard_command(st, str(idx))
         self.assertIsNone(err)
@@ -383,6 +398,371 @@ class TestWizardLoop(unittest.TestCase):
             self.assertTrue(parsed["segments"]["cost"])
             with open(path) as f:
                 self.assertIn("# [palette]", f.read())   # palette comments intact
+
+
+class TestWizardMenu(unittest.TestCase):
+    """Polished mode-B numbered menu: grouped by layout row, contiguous
+    display-order numbering shared with the toggle resolver, a redundant on/off
+    word column, and an ASCII preview footer."""
+
+    def _state(self):
+        return {
+            "segments": {"path": True, "branch": True, "dirty": False,
+                         "model": True, "clock": True, "cost": False},
+            "layout": [{"min_rows": 0, "segments": ["path", "branch", "dirty"]},
+                       {"min_rows": 20, "segments": ["model", "clock"]}],
+            "dirty": False,
+        }
+
+    def test_wizard_order_is_layout_then_sorted_rest(self):
+        # layout rows in row order, then any non-laid-out segment (sorted).
+        self.assertEqual(
+            setup._wizard_order(self._state()),
+            ["path", "branch", "dirty", "model", "clock", "cost"])
+
+    def test_menu_numbers_are_contiguous_in_display_order(self):
+        buf = io.StringIO()
+        setup._print_segments(buf, self._state())
+        nums = [int(m) for m in re.findall(r"^\s*(\d+)\.", buf.getvalue(), re.M)]
+        self.assertEqual(nums, [1, 2, 3, 4, 5, 6])     # 1..n, no gaps
+
+    def test_menu_groups_segments_by_layout_row(self):
+        out = io.StringIO()
+        setup._print_segments(out, self._state())
+        text = out.getvalue()
+        self.assertIn("identity line", text)
+        self.assertIn("model line", text)
+        self.assertIn("not in layout", text)           # trailing group for cost
+        self.assertLess(text.index("model line"), text.index("not in layout"))
+        self.assertLess(text.index("not in layout"), text.index("cost"))
+
+    def test_menu_shows_on_off_word_column(self):
+        out = io.StringIO()
+        setup._print_segments(out, self._state())
+        # strip SGR escapes so the word column is matched on plain text
+        lines = [setup._ANSI_RE.sub("", l) for l in out.getvalue().splitlines()]
+        dirty_line = next(l for l in lines if re.search(r"\bdirty\b", l))
+        path_line = next(l for l in lines if re.search(r"\bpath\b", l))
+        self.assertIn("off", dirty_line)               # disabled → word 'off'
+        self.assertIn("on", path_line)                 # enabled → word 'on'
+
+    def test_menu_number_matches_displayed_toggle(self):
+        # The visible-order contract: typing N flips the Nth displayed segment.
+        st = self._state()
+        for n, key in enumerate(setup._wizard_order(st), 1):
+            before = st["segments"][key]
+            st2, err = setup._apply_wizard_command(st, str(n))
+            self.assertIsNone(err)
+            self.assertEqual(st2["segments"][key], not before)
+
+    def test_menu_rejects_out_of_range_number(self):
+        st = self._state()
+        st2, err = setup._apply_wizard_command(st, str(len(st["segments"]) + 5))
+        self.assertIsNotNone(err)
+        self.assertEqual(st2, st)                       # unchanged, no raise
+
+    def test_menu_all_on_and_none_off(self):
+        st = self._state()
+        on, err = setup._apply_wizard_command(st, "a")
+        self.assertIsNone(err)
+        self.assertTrue(all(on["segments"].values()))
+        self.assertTrue(on["dirty"])
+        off, err = setup._apply_wizard_command(st, "n")
+        self.assertIsNone(err)
+        self.assertFalse(any(off["segments"].values()))
+
+    def test_preview_footer_ascii_prefix_and_truncates(self):
+        colored = "\033[36mhello\033[0m world this is a very long status-line bar"
+        lines = setup._preview_lines(colored, cols=20)
+        self.assertTrue(all(l.startswith("  preview | ") for l in lines))
+        self.assertNotIn("▏", "".join(lines))      # no ▏ box-drawing glyph
+        for l in lines:
+            self.assertLessEqual(setup._visible_len(l), 20)
+
+    def test_preview_footer_unavailable_when_empty(self):
+        lines = setup._preview_lines("", cols=80)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("(preview unavailable)", lines[0])
+
+
+class _FakeStream:
+    def __init__(self, isatty=True, encoding="utf-8"):
+        self._isatty = isatty
+        self.encoding = encoding
+
+    def isatty(self):
+        return self._isatty
+
+
+class TestModeAChips(unittest.TestCase):
+    """Mode-A (arrow-key chip selector) pure helpers: the conjunctive activation
+    gate, glyph/ASCII selection, scroll-window clamp, key parse, and the pure
+    frame builder. The interactive loop itself is covered by the T4.5 pty E2E."""
+
+    def _env(self, **over):
+        env = {"TERM": "xterm-256color", "COLUMNS": "100", "LINES": "40"}
+        env.update(over)
+        return env
+
+    def _sel(self, n=4, cursor=0):
+        s = setup.Selection([("seg", f"item{i}", i % 2 == 0) for i in range(n)])
+        s.cursor = cursor
+        return s
+
+    # ---- gate ----
+    def test_gate_passes_when_all_conditions_hold(self):
+        self.assertTrue(setup._mode_a_available(
+            self._env(), _FakeStream(), _FakeStream()))
+
+    def test_gate_fails_without_tty(self):
+        self.assertFalse(setup._mode_a_available(
+            self._env(), _FakeStream(isatty=False), _FakeStream()))
+        self.assertFalse(setup._mode_a_available(
+            self._env(), _FakeStream(), _FakeStream(isatty=False)))
+
+    def test_gate_fails_on_dumb_or_empty_term(self):
+        for term in ("dumb", ""):
+            self.assertFalse(setup._mode_a_available(
+                self._env(TERM=term), _FakeStream(), _FakeStream()))
+
+    def test_gate_fails_when_terminal_too_small(self):
+        self.assertFalse(setup._mode_a_available(
+            self._env(COLUMNS="39"), _FakeStream(), _FakeStream()))
+        self.assertFalse(setup._mode_a_available(
+            self._env(LINES="7"), _FakeStream(), _FakeStream()))
+
+    def test_gate_fails_when_aikit_plain_set(self):
+        self.assertFalse(setup._mode_a_available(
+            self._env(AIKIT_PLAIN="1"), _FakeStream(), _FakeStream()))
+
+    def test_gate_ignores_no_color(self):
+        # NO_COLOR strips color in rendering but must NOT disable mode A.
+        self.assertTrue(setup._mode_a_available(
+            self._env(NO_COLOR="1"), _FakeStream(), _FakeStream()))
+
+    # ---- glyphs ----
+    def test_chip_glyphs_unicode_by_default(self):
+        g = setup._chip_glyphs(self._env(), _FakeStream(encoding="utf-8"))
+        self.assertEqual(g["on"], "◉")
+        self.assertEqual(g["cursor"], "❯")
+
+    def test_chip_glyphs_ascii_on_dumb_term(self):
+        g = setup._chip_glyphs(self._env(TERM="dumb"), _FakeStream())
+        self.assertEqual(g["on"], "[x]")
+        self.assertEqual(g["cursor"], ">")
+
+    def test_chip_glyphs_ascii_when_encoding_cannot_represent(self):
+        g = setup._chip_glyphs(self._env(), _FakeStream(encoding="ascii"))
+        self.assertEqual(g["off"], "[ ]")
+
+    def test_chip_glyphs_unicode_survives_no_color(self):
+        g = setup._chip_glyphs(self._env(NO_COLOR="1"), _FakeStream(encoding="utf-8"))
+        self.assertEqual(g["on"], "◉")          # NO_COLOR keeps glyphs
+
+    # ---- window clamp ----
+    def test_window_clamp_returns_zero_when_everything_fits(self):
+        self.assertEqual(setup._clamp_window(3, 5, 10), 0)
+
+    def test_window_clamp_keeps_cursor_visible(self):
+        for cursor in range(20):
+            top = setup._clamp_window(cursor, 20, 5)
+            self.assertTrue(0 <= top <= cursor < top + 5)
+            self.assertLessEqual(top, 20 - 5)
+
+    def test_window_clamp_at_end_of_list(self):
+        self.assertEqual(setup._clamp_window(19, 20, 5), 15)
+
+    # ---- key parse ----
+    def test_chip_parse_key_arrows_and_vim(self):
+        self.assertEqual(setup._parse_key("\x1b[A"), "up")
+        self.assertEqual(setup._parse_key("k"), "up")
+        self.assertEqual(setup._parse_key("\x1b[B"), "down")
+        self.assertEqual(setup._parse_key("j"), "down")
+
+    def test_chip_parse_key_actions(self):
+        self.assertEqual(setup._parse_key(" "), "toggle")
+        self.assertEqual(setup._parse_key("a"), "all")
+        self.assertEqual(setup._parse_key("n"), "none")
+        self.assertEqual(setup._parse_key("\r"), "accept")
+        self.assertEqual(setup._parse_key("\n"), "accept")
+        for c in ("\x1b", "q", "\x03"):
+            self.assertEqual(setup._parse_key(c), "cancel")
+
+    def test_chip_parse_key_unknown_is_none(self):
+        self.assertIsNone(setup._parse_key("z"))
+
+    # ---- pure frame builder ----
+    def test_chip_frame_focused_row_is_reverse_video(self):
+        g = setup._chip_glyphs(self._env(), _FakeStream())
+        lines = setup._chip_frame(self._sel(cursor=0), g, 100, 40)
+        self.assertIn("\033[7m", lines[0])           # focused row reverse-video
+        self.assertIn("\033[27m", lines[0])
+
+    def test_chip_frame_shows_scroll_affordances_when_overflowing(self):
+        g = setup._chip_glyphs(self._env(), _FakeStream())
+        # 20 items, tiny terminal → must window + show ▲/▼ N more
+        lines = setup._chip_frame(self._sel(n=20, cursor=10), g, 100, 12)
+        joined = "\n".join(lines)
+        self.assertIn("more", joined)
+        self.assertTrue("▲" in joined or "▼" in joined)
+
+    def test_chip_frame_includes_preview_and_hint(self):
+        g = setup._chip_glyphs(self._env(), _FakeStream())
+        lines = setup._chip_frame(self._sel(), g, 100, 40, preview="THE-BAR")
+        joined = "\n".join(lines)
+        self.assertIn("preview", joined)
+        self.assertIn("THE-BAR", joined)
+        self.assertIn("toggle", lines[-1])           # key-hint footer last
+
+    def test_chip_frame_truncates_every_line_to_width(self):
+        g = setup._chip_glyphs(self._env(), _FakeStream())
+        sel = setup.Selection([("seg", "x" * 200, True)])
+        lines = setup._chip_frame(sel, g, 20, 40, preview="y" * 200)
+        for ln in lines:
+            self.assertLessEqual(setup._visible_len(ln), 19)   # cols-1
+
+    def test_chip_frame_no_severed_escape_sequences(self):
+        # Narrow terminal: truncation must never cut mid-escape nor leave a
+        # spurious/dangling ESC fragment once balanced SGR codes are stripped.
+        g = setup._chip_glyphs(self._env(), _FakeStream())
+        sel = self._sel(n=10, cursor=3)
+        for cols in (40, 25, 20):
+            for ln in setup._chip_frame(sel, g, cols, 40, preview="z" * 80):
+                self.assertNotIn("\x1b", setup._ANSI_RE.sub("", ln))
+
+    def test_chip_frame_plain_hint_has_no_spurious_reset(self):
+        # The (uncolored) hint line must not carry a trailing reset it never opened.
+        g = setup._chip_glyphs(self._env(), _FakeStream())
+        lines = setup._chip_frame(self._sel(), g, 100, 40)
+        self.assertNotIn("\033[0m", lines[-1])
+
+    def test_chip_frame_shows_selection_tally(self):
+        g = setup._chip_glyphs(self._env(), _FakeStream())
+        lines = setup._chip_frame(self._sel(n=4), g, 100, 40)   # items 0,2 on → 2/4
+        self.assertIn("(2/4 on)", lines[-1])
+
+    # ---- _read_key disconnect / ESC handling (T4.6: H1, M1) ----
+    def _fd_stdin(self, fd=7):
+        s = _FakeStream()
+        s.fileno = lambda: fd
+        return s
+
+    def test_read_key_oserror_is_cancel(self):
+        # H1: terminal disconnect makes os.read raise OSError(EIO). _read_key
+        # must surface it as a cancel (KeyboardInterrupt), never crash the run.
+        with mock.patch.object(setup.os, "read", side_effect=OSError(5, "EIO")):
+            with self.assertRaises(KeyboardInterrupt):
+                setup._read_key(self._fd_stdin())
+
+    def test_read_key_eof_is_cancel(self):
+        # H1: platforms that return b"" at EOF instead of raising must also
+        # cancel — not spin (b"" → _parse_key("") → None → 100% CPU busy-loop).
+        with mock.patch.object(setup.os, "read", return_value=b""):
+            with self.assertRaises(KeyboardInterrupt):
+                setup._read_key(self._fd_stdin())
+
+    def test_read_key_esc_then_letter_not_dropped(self):
+        # M1: ESC followed by a non-'[' byte must not be silently swallowed —
+        # the trailing key is acted on, not lost.
+        reads = [b"\x1b", b"a"]
+        with mock.patch.object(setup.os, "read",
+                               side_effect=lambda fd, n: reads.pop(0)), \
+             mock.patch("select.select", return_value=([7], [], [])):
+            self.assertEqual(setup._read_key(self._fd_stdin()), "a")
+
+    def test_read_key_lone_esc_is_cancel(self):
+        # A lone ESC (nothing pending within the disambiguation window) cancels.
+        with mock.patch.object(setup.os, "read", return_value=b"\x1b"), \
+             mock.patch("select.select", return_value=([], [], [])):
+            self.assertEqual(setup._read_key(self._fd_stdin()), "\x1b")
+
+    def test_read_key_arrow_sequence_still_parses(self):
+        # Regression: ESC '[' B (down-arrow) still resolves through the new path.
+        reads = [b"\x1b", b"[", b"B"]
+        with mock.patch.object(setup.os, "read",
+                               side_effect=lambda fd, n: reads.pop(0)), \
+             mock.patch("select.select", return_value=([7], [], [])):
+            self.assertEqual(setup._read_key(self._fd_stdin()), "\x1b[B")
+
+
+class TestRawMode(unittest.TestCase):
+    """The termios raw-mode context manager guarantees terminal teardown on
+    every exit path (normal, exception, SIGINT)."""
+
+    @mock.patch.object(setup, "signal")
+    @mock.patch.object(setup, "_termmode")
+    @mock.patch.object(setup, "termios")
+    def test_raw_mode_restores_terminal_on_exception(self, termios, termmode, sig):
+        termios.tcgetattr.return_value = "SAVED"
+        stream = io.StringIO()
+        with self.assertRaises(ValueError):
+            with setup.raw_mode(7, stream):
+                raise ValueError("boom")
+        termios.tcgetattr.assert_called_once_with(7)         # state saved
+        termmode.setraw.assert_called_once_with(7)           # entered raw
+        termios.tcsetattr.assert_called_once_with(           # restored via TCSADRAIN
+            7, termios.TCSADRAIN, "SAVED")
+        out = stream.getvalue()
+        self.assertIn("\033[?25l", out)                      # cursor hidden on enter
+        self.assertIn("\033[?25h", out)                      # cursor shown on exit
+
+    @mock.patch.object(setup, "signal")
+    @mock.patch.object(setup, "_termmode")
+    @mock.patch.object(setup, "termios")
+    def test_raw_mode_sigint_restores_and_exits_130(self, termios, termmode, sig):
+        termios.tcgetattr.return_value = "SAVED"
+        stream = io.StringIO()
+        rm = setup.raw_mode(3, stream)
+        rm.__enter__()
+        with self.assertRaises(SystemExit) as cm:
+            rm._on_sigint(2, None)
+        self.assertEqual(cm.exception.code, 130)             # 128 + SIGINT
+        termios.tcsetattr.assert_called_once_with(3, termios.TCSADRAIN, "SAVED")
+        self.assertTrue(stream.getvalue().endswith("\n"))    # newline after restore
+
+    @mock.patch.object(setup, "signal")
+    @mock.patch.object(setup, "_termmode")
+    @mock.patch.object(setup, "termios")
+    def test_raw_mode_teardown_survives_tcsetattr_error(self, termios, termmode, sig):
+        # T4.7 / H2: a terminal disconnect can make tcsetattr raise during
+        # teardown. That must NOT skip the cursor-show or the SIGINT-handler
+        # restore, nor mask the body's exception by propagating its own.
+        termios.tcgetattr.return_value = "SAVED"
+        termios.error = Exception
+        termios.tcsetattr.side_effect = Exception("EIO")
+        sig.getsignal.return_value = "PREV"
+        stream = io.StringIO()
+        # the body's exception (not the tcsetattr error) is what propagates
+        with self.assertRaises(ValueError):
+            with setup.raw_mode(7, stream):
+                raise ValueError("boom")
+        self.assertIn("\033[?25h", stream.getvalue())        # cursor shown despite throw
+        # prior SIGINT handler reinstalled despite the tcsetattr failure
+        sig.signal.assert_any_call(sig.SIGINT, "PREV")
+
+    @mock.patch.object(setup, "signal")
+    @mock.patch.object(setup, "_termmode")
+    @mock.patch.object(setup, "termios")
+    def test_raw_mode_double_restore_is_idempotent(self, termios, termmode, sig):
+        # The `active` guard makes a second teardown a no-op (e.g. SIGINT during
+        # an already-exiting __exit__).
+        termios.tcgetattr.return_value = "SAVED"
+        stream = io.StringIO()
+        rm = setup.raw_mode(3, stream)
+        rm.__enter__()
+        rm._restore()
+        termios.tcsetattr.reset_mock()
+        rm._restore()                                        # second call: no-op
+        termios.tcsetattr.assert_not_called()
+
+    @mock.patch.object(setup, "signal")
+    @mock.patch.object(setup, "_termmode", None)
+    @mock.patch.object(setup, "termios", None)
+    def test_raw_mode_is_noop_when_termios_unavailable(self, sig):
+        stream = io.StringIO()
+        with setup.raw_mode(0, stream):                      # must not raise
+            pass
+        self.assertEqual(stream.getvalue(), "")              # nothing written
 
 
 class TestResolvePaths(unittest.TestCase):
@@ -730,6 +1110,70 @@ class TestAdoptPredecessorLinks(unittest.TestCase):
         self.assertEqual(os.readlink(self.link), os.path.join(self.old, "skills", "alpha"))
 
 
+class TestSelectionModel(unittest.TestCase):
+    """The shared in-memory pick model behind the install skill-picker and the
+    status-line segment toggle: ordered (category, name) items + per-item
+    enabled flag + a cursor. It owns ONLY what is on and where the cursor sits
+    — never layout, dirtiness, or persistence."""
+
+    def _sel(self):
+        return setup.Selection([
+            ("skills", "alpha", True),
+            ("skills", "beta", False),
+            ("commands", "doit.md", True),
+        ])
+
+    def test_len_and_initial_cursor(self):
+        sel = self._sel()
+        self.assertEqual(len(sel), 3)
+        self.assertEqual(sel.cursor, 0)
+
+    def test_toggle_flips_one_item(self):
+        sel = self._sel()
+        sel.toggle(1)
+        self.assertTrue(sel.enabled_map()["beta"])
+        sel.toggle(1)
+        self.assertFalse(sel.enabled_map()["beta"])
+
+    def test_toggle_cursor_flips_item_under_cursor(self):
+        sel = self._sel()
+        sel.cursor = 2
+        sel.toggle_cursor()
+        self.assertFalse(sel.enabled_map()["doit.md"])
+
+    def test_set_all_true_then_false(self):
+        sel = self._sel()
+        sel.set_all(True)
+        self.assertEqual(set(sel.enabled_map().values()), {True})
+        sel.set_all(False)
+        self.assertEqual(set(sel.enabled_map().values()), {False})
+
+    def test_move_cursor_clamps_both_ends(self):
+        sel = self._sel()
+        sel.move_cursor(-5)
+        self.assertEqual(sel.cursor, 0)
+        sel.move_cursor(99)
+        self.assertEqual(sel.cursor, 2)
+
+    def test_category_sets_only_enabled(self):
+        cats = self._sel().category_sets()
+        self.assertEqual(cats["skills"], {"alpha"})
+        self.assertEqual(cats["commands"], {"doit.md"})
+
+    def test_enabled_map_covers_every_item(self):
+        self.assertEqual(self._sel().enabled_map(),
+                         {"alpha": True, "beta": False, "doit.md": True})
+
+    def test_empty_selection_is_safe(self):
+        sel = setup.Selection([])
+        self.assertEqual(len(sel), 0)
+        sel.toggle_cursor()          # no-op, must not raise
+        sel.move_cursor(1)
+        self.assertEqual(sel.cursor, 0)
+        self.assertEqual(sel.enabled_map(), {})
+        self.assertEqual(sel.category_sets(), {})
+
+
 class TestSelectSkills(unittest.TestCase):
     def entries(self):
         # (name, dummy path) tuples; path unused by select_skills
@@ -769,6 +1213,65 @@ class TestSelectSkills(unittest.TestCase):
         tty = io.StringIO("n\n\n")  # 'n' = none, then accept
         sel = setup.select_skills(self.entries(), installed, tty=tty)
         self.assertEqual(sel["skills"], set())
+
+    def test_mode_a_selection_when_gate_open(self):
+        # When _mode_a_available is True, select_skills drives the chip selector
+        # (not the numbered menu) and projects its mutated Selection.
+        installed = {"skills": {"alpha": "x"}, "commands": {}, "agents": {}}
+
+        def fake_chip(sel, stdin, stdout, env, preview=None):
+            sel.set_all(False)
+            sel.items[0][2] = True               # first row is skills/alpha
+            return sel
+
+        with mock.patch.object(setup, "_mode_a_available", return_value=True), \
+             mock.patch.object(setup, "chip_select", side_effect=fake_chip) as cs:
+            result = setup.select_skills(self.entries(), installed, tty=object())
+        cs.assert_called_once()
+        self.assertEqual(result["skills"], {"alpha"})
+        self.assertEqual(result["commands"], set())
+
+    def test_mode_a_cancel_keeps_default(self):
+        # esc/Ctrl-C in the chip selector (KeyboardInterrupt) keeps the default.
+        installed = {"skills": {"alpha": "x", "beta": "x"}, "commands": {}, "agents": {}}
+        with mock.patch.object(setup, "_mode_a_available", return_value=True), \
+             mock.patch.object(setup, "chip_select", side_effect=KeyboardInterrupt):
+            result = setup.select_skills(self.entries(), installed, tty=object())
+        self.assertEqual(result["skills"], {"alpha", "beta"})
+
+    def test_mode_a_error_falls_back_to_mode_b(self):
+        # L2: a non-KeyboardInterrupt failure inside chip_select (e.g. a termios
+        # error on a hostile terminal) must DEGRADE to the numbered menu, not
+        # crash the installer. Here mode B reads the tty and Enter accepts.
+        installed = {"skills": {}, "commands": {}, "agents": {}}
+        with mock.patch.object(setup, "_mode_a_available", return_value=True), \
+             mock.patch.object(setup, "chip_select",
+                               side_effect=RuntimeError("boom")):
+            result = setup.select_skills(
+                self.entries(), installed, tty=io.StringIO("\n"))
+        # fell through to mode B, accepted the first-run default (all on)
+        self.assertEqual(result["skills"], {"alpha", "beta", "gamma"})
+
+    def test_mode_b_when_gate_closed_does_not_call_chip(self):
+        installed = {"skills": {}, "commands": {}, "agents": {}}
+        with mock.patch.object(setup, "_mode_a_available", return_value=False), \
+             mock.patch.object(setup, "chip_select") as cs:
+            setup.select_skills(self.entries(), installed, tty=io.StringIO("\n"))
+        cs.assert_not_called()
+
+    def test_headless_equals_interactive_no_keypresses(self):
+        # Strengthened contract: an interactive run that accepts immediately
+        # (zero toggles — just Enter) yields EXACTLY the headless default for the
+        # same inputs. Headless is interactive-with-zero-keypresses, not a
+        # separate code path with its own defaulting.
+        for installed in (
+            {"skills": {}, "commands": {}, "agents": {}},                       # first run
+            {"skills": {"alpha": "x", "beta": "x"}, "commands": {}, "agents": {}},  # NEW gamma off
+        ):
+            headless = setup.select_skills(self.entries(), installed, tty=None)
+            interactive = setup.select_skills(
+                self.entries(), installed, tty=io.StringIO("\n"))
+            self.assertEqual(headless, interactive)
 
 
 class TestApplySelection(unittest.TestCase):
