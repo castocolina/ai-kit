@@ -361,6 +361,19 @@ class TestDiscoverExampleSegments(unittest.TestCase):
         # (the marker sits at column 0) — no inverted installer/renderer drift.
         self.assertIsNone(setup._parse_segment_header("   # ai-kit-segment: id=x\n"))
 
+    def test_seg_header_regex_literal_matches_renderer(self):
+        # C3a (C3 review M1): drift guard — setup and status-line.py cannot import
+        # each other (hyphenated filename), so the `# ai-kit-segment:` matcher is
+        # duplicated. Pin the two compiled-pattern LITERALS byte-identical so a
+        # future edit to one regex can't silently diverge installer from renderer
+        # (the behavioral test above only checks fixed example strings).
+        sl_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                               "tools", "status-line.py")
+        spec = importlib.util.spec_from_file_location("status_line_hdr_drift", sl_path)
+        sl = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sl)
+        self.assertEqual(setup._SEG_HEADER_RE.pattern, sl._SEG_HEADER_RE.pattern)
+
     def test_discover_finds_sysmem_pre_checked(self):
         d, _ = self._mk(self._HEADER)
         found = setup.discover_example_segments(d)

@@ -215,19 +215,39 @@ fi                                          # else: nothing -> dropped
 A cross-platform Python reference (system available memory) ships at
 `examples/segments/sysmem` — copy it as a starting point.
 
+**The installer offers to set these up for you.** On an interactive `install`,
+the wizard discovers every provider under the repo's `examples/segments/`,
+presents them **pre-checked** (default-ON), and copies the ones you keep into
+your config segments dir (executable, atomic, idempotent — re-running never
+duplicates). Headless / scripted runs are governed entirely by a flag and never
+prompt: `--examples=all|none|<ids>` (default `all`; `<ids>` is a comma/space list
+of segment ids). Disable an installed provider later like any segment:
+`[segments] sysmem = false`.
+
 **Disable** a provider explicitly: `[segments] aws-session = false` (or
 `CC_AI_KIT_SEGMENT_AWS_SESSION=0`).
 
-**Trust model.** Providers are arbitrary executables you place in your own
-directory; ai-kit never installs them. Keep them fast and single-line. A
-failing, slow (past `timeout`), or empty provider is simply omitted.
+**Trust model.** Providers are arbitrary executables. ai-kit only ever installs
+the **bundled examples** shipped in this repo, and only on your explicit opt-in
+(the pre-checked offer, or `--examples`); it never fetches or runs remote code.
+Anything else is something you place in your own directory. Keep them fast and
+single-line. A failing, slow (past `timeout`), or empty provider is simply omitted.
 
 ### Flags & overrides
 
 ```bash
-install.sh --dry-run     # show what would change, mutate nothing
-install.sh --uninstall   # remove every ai-kit symlink + statusLine (keeps the install dir)
+install.sh --dry-run            # show what would change, mutate nothing
+install.sh --uninstall          # remove every ai-kit symlink + statusLine (keeps the install dir)
+install.sh --examples=all|none|<ids>   # which bundled example segments to install (default: all)
+AIKIT_PLAIN=1 install.sh        # force the plain numbered wizard (skip the arrow-key chip UI)
 ```
+
+**Wizard modes.** The interactive installer auto-selects its UI: on a capable
+terminal it shows an **arrow-key chip selector** (↑↓/space/enter), and falls back
+to a **plain numbered menu** anywhere else (non-tty, `TERM=dumb`, a small window).
+Force the plain menu with `AIKIT_PLAIN=1`. With no terminal at all (CI, piped
+input) the wizard never prompts — selections come from flags and defaults, so an
+unattended `install` always completes.
 
 Environment overrides: `AI_KIT_DIR`, `AI_KIT_REPO`, `AI_KIT_BRANCH`, `CLAUDE_CONFIG_DIR`.
 
