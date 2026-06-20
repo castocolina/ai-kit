@@ -15,6 +15,7 @@ picture non-linear and prevents any concern from being lost.
 | **E5** | installer ergonomics + setup wizard | **done** → bootstrapper + `setup.py` install engine + interactive status-line wizard (commits `ae473c3`/`e3781c6`/`0f26a01`) |
 | **E4c** | status-line external drop-in segments | **design in progress** (was E4b before the color subsystem took that slot) · PRD → `statusline-external-segments-v1.0-prd.md`; adds enable/disable toggles, columns-tier contract, wizard discovery now that E5 has shipped |
 | **E6** | doc-to-PDF skill (Markdown + mermaid → PDF/marp) | requirements captured · PRD pending |
+| **E7** | install UX + worktree visibility (bootstrap dogfooding findings) | requirements captured · PRD → `e7-install-ux-worktree-visibility-v1.0-prd.md`. FR-7.1 (predecessor-link adoption) **done** (`1236345`); FR-7.2 (singular worktree segment) design final, impl in progress on `feat/e7-install-ux-fixes`; FR-7.3 (slowest-segment) + FR-7.4 (wizard UX rework) **open / to discuss** |
 
 **Suggested sequence**: E1 → E2 → E3 → E4a → **E4b** → E5 → **E4c**. E3 ships standalone
 with hardcoded defaults; **E4a makes E3's colors/thresholds user-configurable** (E4a is not
