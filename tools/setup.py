@@ -397,6 +397,161 @@ def enumerate_entries(install_dir):
     return out
 
 
+# Mirror status-line.py's canonical `_SEG_HEADER_RE` EXACTLY (whitespace-flexible
+# after `#` and after the colon; NO leading indent — the marker sits at column 0)
+# so the installer and the renderer never disagree on which files are providers
+# (the two files can't import each other — hyphenated filename, see L64 — so the
+# pattern is duplicated; keep it byte-identical to status-line.py's).
+_SEG_HEADER_RE = re.compile(r"^#\s*ai-kit-segment:\s*(.*?)\s*$")
+
+
+def _parse_segment_header(text):
+    """Parse an external segment's `# ai-kit-segment: k=v k=v …` marker line into
+    a {key: value} dict (e.g. `id`, `line`, `after`, `ttl`). Scans the head of the
+    file; returns None when no marker line is present. Bare tokens (no `=`) are
+    ignored. This is the single source of truth for the `id` that drives the
+    `segments.<id>` toggle."""
+    for line in text.splitlines():
+        m = _SEG_HEADER_RE.match(line)
+        if m:
+            fields = {}
+            for tok in m.group(1).split():
+                if "=" in tok:
+                    k, v = tok.split("=", 1)
+                    fields[k] = v
+            return fields
+    return None
+
+
+def discover_example_segments(examples_dir):
+    """Scan `examples_dir` for shippable example external segments, each carrying
+    a `# ai-kit-segment: … id=<id> …` header. Returns a list of
+    {id, name, path, default_on} sorted by id — `default_on` is always True
+    (every example is OFFERED pre-checked; the user unchecks to skip). Files
+    without the marker or without an `id` are skipped; a missing dir yields []."""
+    out = []
+    try:
+        names = sorted(os.listdir(examples_dir))
+    except OSError:
+        return out
+    for name in names:
+        path = os.path.join(examples_dir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                head = f.read(4096)
+        except OSError:
+            continue
+        fields = _parse_segment_header(head)
+        if not fields or "id" not in fields:
+            continue
+        out.append({"id": fields["id"], "name": name, "path": path,
+                    "default_on": True})
+    return sorted(out, key=lambda e: e["id"])
+
+
+def _atomic_write_executable(dst, data):
+    """Write `data` to `dst` atomically and 0o755: a temp file in the SAME dir +
+    os.replace, so an interrupted write never leaves a truncated (yet chmod-+x,
+    about-to-be-exec'd) provider in place. Raises OSError on a bad/blocked dest
+    (a name that is a directory, an unwritable dir) — the caller skips it."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), prefix=".seg-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, dst)                         # atomic; both already +x
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def install_example_segments(examples, config_dir, seg_state=None):
+    """Install each chosen example external segment: copy it into the XDG-aware
+    segments dir (`config_dir/segments` — `config_dir` comes from resolve_paths,
+    so XDG_CONFIG_HOME is already honored), make it executable, and enable its
+    `segments.<id>` toggle (set `seg_state[id] = True` when a state dict is
+    given). Idempotent: a destination already holding the same bytes is left
+    untouched and a re-run never duplicates (one fixed dest path per name); a
+    stale copy is refreshed to the source bytes via an atomic temp-file replace.
+    A provider whose source can't be read or whose destination is bad/blocked
+    (name already a directory, unwritable dir) is SKIPPED with a warning rather
+    than aborting the whole install. Returns the installed ids in input order."""
+    seg_dir = os.path.join(config_dir, "segments")
+    os.makedirs(seg_dir, exist_ok=True)
+    ids = []
+    for ex in examples:
+        try:
+            with open(ex["path"], "rb") as f:
+                want = f.read()
+        except OSError:
+            continue
+        dst = os.path.join(seg_dir, ex["name"])
+        cur = None
+        if os.path.isfile(dst):
+            try:
+                with open(dst, "rb") as f:
+                    cur = f.read()
+            except OSError:
+                cur = None
+        try:
+            if cur != want:                          # refresh only when changed
+                _atomic_write_executable(dst, want)
+            else:
+                os.chmod(dst, 0o755)                 # unchanged: just reassert +x
+        except OSError as e:
+            print("examples: skipped %s (%s)" % (ex["name"], e), file=sys.stderr)
+            continue
+        if seg_state is not None:
+            seg_state[ex["id"]] = True               # enable segments.<id>
+        ids.append(ex["id"])
+    return ids
+
+
+def resolve_example_selection(flag, examples):
+    """Resolve which discovered `examples` to install from the `--examples` value.
+    None (flag absent) or `all` → every example (they are default-ON / pre-checked);
+    `none` → []; otherwise a comma/space-separated id list → the matching examples
+    in discovery order, unknown ids ignored. `all`/`none` are case-insensitive."""
+    if flag is None:
+        return list(examples)
+    norm = flag.strip().lower()
+    if norm == "all":
+        return list(examples)
+    if norm == "none":
+        return []
+    wanted = {t for t in re.split(r"[,\s]+", flag.strip()) if t}
+    return [e for e in examples if e["id"] in wanted]
+
+
+def select_examples(examples, flag, tty):
+    """Choose which example external segments to install. Headless (tty None) OR
+    an explicit `--examples` flag ⇒ governed PURELY by resolve_example_selection
+    with NO prompting (zero reads). Interactive with no flag ⇒ offer them
+    pre-checked through the shared chip picker on a capable terminal (esc/Ctrl-C
+    cancels → install none); on an incapable terminal accept the pre-checked
+    default (every example, default-ON). Returns the chosen list of example dicts."""
+    if flag is not None or not is_interactive(tty):
+        return resolve_example_selection(flag, examples)
+    if not examples:
+        return []
+    if _mode_a_available(os.environ, tty, tty):
+        sel = Selection(("examples", e["id"], True) for e in examples)
+        by_id = {e["id"]: e for e in examples}
+        try:
+            chip_select(sel, tty, tty, os.environ)
+            return [by_id[n] for _c, n, on in sel.items if on]
+        except KeyboardInterrupt:
+            return []                                # cancel → install none
+        except Exception:
+            pass                                     # degrade to pre-checked default
+    return list(examples)
+
+
 def _is_inside(path, root):
     """True when path equals root or is nested under it (string test, mirrors
     install.sh is_inside on absolute paths)."""
@@ -1418,7 +1573,7 @@ def _sample_input_path():
                         "..", "tests", "fixtures", "sample-input.json")
 
 
-def cmd_install(env, tty, dry, reconfigure=False):
+def cmd_install(env, tty, dry, reconfigure=False, examples_flag=None):
     """Reconcile skills/agents/commands, then (interactive only) the status line.
     Headless (tty None): reconcile skills with defaults/keep + auto-remove dead
     links + warn, and SKIP the status line entirely (§7). `reconfigure` is just
@@ -1443,6 +1598,18 @@ def cmd_install(env, tty, dry, reconfigure=False):
 
     if is_interactive(tty):
         run_statusline_wizard(paths, tty, dry)
+
+    # Example external segments (sysmem, …): offer pre-checked when interactive,
+    # else governed by --examples (default ON). Copy+chmod+enable; default-ON
+    # means the copied provider renders without an explicit toggle write.
+    examples = discover_example_segments(
+        os.path.join(paths.install_dir, "examples", "segments"))
+    if examples:
+        chosen = select_examples(examples, examples_flag, tty)
+        if chosen and not dry:
+            ids = install_example_segments(chosen, paths.config_dir)
+            print("examples: installed %d external segment(s): %s"
+                  % (len(ids), ", ".join(ids)))
 
     print("summary: %d linked, %d relinked, %d unlinked, %d pruned, "
           "%d foreign-skipped, %d real-skipped"
@@ -1502,13 +1669,19 @@ def main(argv=None):
         choices=["install", "reconfigure", "uninstall", "doctor", "check"],
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--examples", default=None, metavar="all|none|<ids>",
+        help="example external segments to install (non-interactive); "
+             "comma/space-separated ids, or all/none. Default: offer pre-checked.")
     args = parser.parse_args(argv)
     env = os.environ
     dry = args.dry_run
     if args.subcommand in ("install", "reconfigure"):
         tty = open_tty()
         try:
-            return cmd_install(env, tty, dry, reconfigure=(args.subcommand == "reconfigure"))
+            return cmd_install(env, tty, dry,
+                               reconfigure=(args.subcommand == "reconfigure"),
+                               examples_flag=args.examples)
         finally:
             if tty is not None:
                 tty.close()

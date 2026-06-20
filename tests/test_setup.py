@@ -321,6 +321,229 @@ class TestExternalSeam(unittest.TestCase):
         self.assertIn("[external]\nttl = 60\n", after)
 
 
+class TestDiscoverExampleSegments(unittest.TestCase):
+    """T5.1: scan examples/segments/, parse the '# ai-kit-segment:' header for
+    id=, and offer every example pre-checked (default ON)."""
+
+    _HEADER = ("#!/usr/bin/env python3\n"
+               "# ai-kit-segment: line=1 after=context id=sysmem ttl=10\n"
+               "import sys\n")
+
+    def _mk(self, body, name="sysmem"):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        p = os.path.join(d, name)
+        with open(p, "w") as f:
+            f.write(body)
+        return d, p
+
+    def test_parse_segment_header_extracts_fields(self):
+        fields = setup._parse_segment_header(self._HEADER)
+        self.assertEqual(fields["id"], "sysmem")
+        self.assertEqual(fields["ttl"], "10")
+        self.assertEqual(fields["after"], "context")
+
+    def test_parse_segment_header_none_when_absent(self):
+        self.assertIsNone(setup._parse_segment_header("#!/bin/sh\necho hi\n"))
+
+    def test_parse_segment_header_mirrors_renderer_whitespace(self):
+        # T5.5 (G5 M1): must accept EXACTLY the forms the renderer's _SEG_HEADER_RE
+        # (^#\s*ai-kit-segment:\s*(.*?)\s*$) accepts — extra spaces after '#', no
+        # space at all, and extra spaces after the colon — so setup and
+        # status-line.py never disagree on which files are valid providers.
+        for hdr in ("#  ai-kit-segment: id=x ttl=5\n",
+                    "#ai-kit-segment: id=x\n",
+                    "# ai-kit-segment:   id=x\n"):
+            fields = setup._parse_segment_header(hdr)
+            self.assertIsNotNone(fields, hdr)
+            self.assertEqual(fields["id"], "x", hdr)
+        # ...and REJECTS a leading-indented marker, exactly as the renderer does
+        # (the marker sits at column 0) — no inverted installer/renderer drift.
+        self.assertIsNone(setup._parse_segment_header("   # ai-kit-segment: id=x\n"))
+
+    def test_discover_finds_sysmem_pre_checked(self):
+        d, _ = self._mk(self._HEADER)
+        found = setup.discover_example_segments(d)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["id"], "sysmem")
+        self.assertTrue(found[0]["default_on"])           # offered pre-checked
+
+    def test_discover_skips_files_without_marker(self):
+        d, _ = self._mk("#!/bin/sh\necho plain\n", name="plain")
+        self.assertEqual(setup.discover_example_segments(d), [])
+
+    def test_discover_missing_dir_is_empty(self):
+        self.assertEqual(
+            setup.discover_example_segments("/no/such/dir/xyz"), [])
+
+    def test_discover_real_examples_dir(self):
+        # Integration: the shipped examples/segments/ must expose sysmem.
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        found = setup.discover_example_segments(
+            os.path.join(repo, "examples", "segments"))
+        self.assertIn("sysmem", {e["id"] for e in found})
+
+
+class TestInstallExampleSegments(unittest.TestCase):
+    """T5.2: copy chosen examples into the XDG-aware segments dir, chmod +x,
+    enable segments.<id>, idempotent."""
+
+    _BODY = ("#!/usr/bin/env python3\n"
+             "# ai-kit-segment: line=1 after=context id=sysmem ttl=10\n"
+             "print('hi')\n")
+
+    def setUp(self):
+        self.src_dir = tempfile.mkdtemp()
+        self.cfg_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.src_dir, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.cfg_dir, ignore_errors=True)
+        src = os.path.join(self.src_dir, "sysmem")
+        with open(src, "w") as f:
+            f.write(self._BODY)
+        self.examples = [{"id": "sysmem", "name": "sysmem", "path": src,
+                          "default_on": True}]
+
+    def _dest(self):
+        return os.path.join(self.cfg_dir, "segments", "sysmem")
+
+    def test_install_copies_chmods_and_enables(self):
+        seg = {}
+        ids = setup.install_example_segments(self.examples, self.cfg_dir, seg)
+        self.assertEqual(ids, ["sysmem"])
+        self.assertTrue(os.path.isfile(self._dest()))
+        self.assertTrue(os.access(self._dest(), os.X_OK))     # executable
+        with open(self._dest()) as f:
+            self.assertEqual(f.read(), self._BODY)            # content copied
+        self.assertTrue(seg["sysmem"])                        # toggle flipped on
+
+    def test_install_is_idempotent(self):
+        setup.install_example_segments(self.examples, self.cfg_dir, {})
+        setup.install_example_segments(self.examples, self.cfg_dir, {})
+        seg_dir = os.path.join(self.cfg_dir, "segments")
+        self.assertEqual(os.listdir(seg_dir), ["sysmem"])     # no duplicate
+        self.assertTrue(os.access(self._dest(), os.X_OK))
+
+    def test_install_refreshes_changed_file(self):
+        # A stale copy already present is updated to the source bytes.
+        os.makedirs(os.path.join(self.cfg_dir, "segments"))
+        with open(self._dest(), "w") as f:
+            f.write("#!/bin/sh\necho OLD\n")
+        setup.install_example_segments(self.examples, self.cfg_dir, {})
+        with open(self._dest()) as f:
+            self.assertEqual(f.read(), self._BODY)
+
+    def test_install_skips_bad_dest_without_aborting(self):
+        # T5.5 (G5 H1): a destination that already exists as a directory (an
+        # unwritable/blocked dest) must NOT crash the whole install — that one
+        # provider is skipped and the others still install.
+        seg_dir = os.path.join(self.cfg_dir, "segments")
+        os.makedirs(os.path.join(seg_dir, "sysmem"))    # dest name pre-exists as a dir
+        good_src = os.path.join(self.src_dir, "other")
+        with open(good_src, "w") as f:
+            f.write(self._BODY)
+        examples = [self.examples[0],
+                    {"id": "other", "name": "other", "path": good_src,
+                     "default_on": True}]
+        ids = setup.install_example_segments(examples, self.cfg_dir, {})
+        self.assertEqual(ids, ["other"])                # bad skipped, good kept
+        self.assertTrue(os.path.isfile(os.path.join(seg_dir, "other")))
+        self.assertTrue(os.access(os.path.join(seg_dir, "other"), os.X_OK))
+
+    def test_install_is_xdg_aware(self):
+        # config_dir comes from resolve_paths → XDG_CONFIG_HOME/ai-kit; the copy
+        # must land under $XDG_CONFIG_HOME/ai-kit/segments/, not a hardcoded ~.
+        xdg = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, xdg, ignore_errors=True)
+        paths = setup.resolve_paths({"XDG_CONFIG_HOME": xdg, "HOME": xdg})
+        setup.install_example_segments(self.examples, paths.config_dir, {})
+        landed = os.path.join(xdg, "ai-kit", "segments", "sysmem")
+        self.assertTrue(os.path.isfile(landed))
+
+
+class TestSelectExamples(unittest.TestCase):
+    """T5.3: headless flag contract `--examples=all|none|<ids>`. Headless/flag
+    paths NEVER prompt; flags/defaults govern selection."""
+
+    def _ex(self, *ids):
+        return [{"id": i, "name": i, "path": f"/x/{i}", "default_on": True}
+                for i in ids]
+
+    def _ids(self, chosen):
+        return [e["id"] for e in chosen]
+
+    # ---- pure resolver ----
+    def test_resolve_default_none_is_all(self):
+        ex = self._ex("sysmem", "cost")
+        self.assertEqual(self._ids(setup.resolve_example_selection(None, ex)),
+                         ["sysmem", "cost"])
+
+    def test_resolve_all_and_none(self):
+        ex = self._ex("sysmem", "cost")
+        self.assertEqual(self._ids(setup.resolve_example_selection("all", ex)),
+                         ["sysmem", "cost"])
+        self.assertEqual(setup.resolve_example_selection("none", ex), [])
+        self.assertEqual(setup.resolve_example_selection("ALL", ex), ex)   # case-insens
+        self.assertEqual(setup.resolve_example_selection("None", ex), [])
+
+    def test_resolve_explicit_ids(self):
+        ex = self._ex("sysmem", "cost", "weather")
+        self.assertEqual(self._ids(setup.resolve_example_selection("sysmem,weather", ex)),
+                         ["sysmem", "weather"])
+        # space/comma tolerant, unknown ids ignored
+        self.assertEqual(self._ids(setup.resolve_example_selection("cost nope", ex)),
+                         ["cost"])
+
+    # ---- select_examples: headless / flag never prompts ----
+    def test_select_headless_no_flag_is_all(self):
+        ex = self._ex("sysmem")
+        self.assertEqual(setup.select_examples(ex, None, tty=None), ex)
+
+    def test_select_headless_flag_governs(self):
+        ex = self._ex("sysmem", "cost")
+        self.assertEqual(setup.select_examples(ex, "none", tty=None), [])
+        self.assertEqual(self._ids(setup.select_examples(ex, "cost", tty=None)),
+                         ["cost"])
+
+    def test_select_flag_bypasses_prompt_even_with_tty(self):
+        # An explicit --examples flag must short-circuit the interactive offer.
+        ex = self._ex("sysmem")
+        with mock.patch.object(setup, "chip_select") as cs, \
+             mock.patch.object(setup, "_mode_a_available", return_value=True):
+            result = setup.select_examples(ex, "none", tty=object())
+        cs.assert_not_called()
+        self.assertEqual(result, [])
+
+    def test_select_interactive_mode_a_delegates(self):
+        ex = self._ex("sysmem", "cost")
+
+        def fake_chip(sel, stdin, stdout, env, preview=None):
+            sel.set_all(False)
+            sel.items[0][2] = True            # keep only the first (sysmem)
+            return sel
+
+        with mock.patch.object(setup, "_mode_a_available", return_value=True), \
+             mock.patch.object(setup, "chip_select", side_effect=fake_chip):
+            result = setup.select_examples(ex, None, tty=object())
+        self.assertEqual(self._ids(result), ["sysmem"])
+
+    def test_select_interactive_incapable_terminal_keeps_pre_checked(self):
+        # Gate closed (dumb/narrow tty): no chip prompt — accept the pre-checked
+        # default (every example, default-ON).
+        ex = self._ex("sysmem", "cost")
+        with mock.patch.object(setup, "_mode_a_available", return_value=False), \
+             mock.patch.object(setup, "chip_select") as cs:
+            result = setup.select_examples(ex, None, tty=object())
+        cs.assert_not_called()
+        self.assertEqual(result, ex)
+
+    def test_main_parses_examples_flag(self):
+        # --examples is accepted by the CLI and reaches cmd_install.
+        with mock.patch.object(setup, "cmd_install", return_value=0) as ci, \
+             mock.patch.object(setup, "open_tty", return_value=None):
+            setup.main(["install", "--examples=none"])
+        self.assertEqual(ci.call_args.kwargs.get("examples_flag"), "none")
+
+
 class TestWizardLoop(unittest.TestCase):
     def _state(self):
         return {"segments": dict(setup.SEGMENT_DEFAULTS),
