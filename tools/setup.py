@@ -586,6 +586,67 @@ def prune_stale(claude_dir, install_dir, present, tty, dry, counts):
     return stale
 
 
+def predecessor_candidates(claude_dir, install_dir, entries):
+    """List (cat, name, old_target, new_target) for links left by a PREVIOUS
+    ai-kit install (e.g. a renamed repo uz-kit -> ai-kit). A candidate is a
+    symlink at <claude>/<cat>/<name> that is foreign to the CURRENT install_dir
+    yet carries the ai-kit <root>/<cat>/<name> shape (target basename == name,
+    its parent dir name == cat) AND whose <name> is a current repo entry, so it
+    can be re-pointed. Unrelated foreign symlinks (different shape, or no current
+    entry) are excluded — we never touch a link that isn't recognizably ours."""
+    out = []
+    for cat in CATEGORIES:
+        by_name = dict(entries.get(cat, []))
+        dest = os.path.join(claude_dir, cat)
+        if not os.path.isdir(dest):
+            continue
+        for name in sorted(os.listdir(dest)):
+            link = os.path.join(dest, name)
+            if not os.path.islink(link):
+                continue
+            old = os.readlink(link)
+            if _is_inside(old, install_dir):
+                continue                       # already a current ai-kit link
+            if os.path.basename(old) != name:
+                continue                       # not the ai-kit <cat>/<name> shape
+            if os.path.basename(os.path.dirname(old)) != cat:
+                continue
+            if name not in by_name:
+                continue                       # nothing current to re-point to
+            out.append((cat, name, old, by_name[name]))
+    return out
+
+
+def adopt_predecessor_links(claude_dir, install_dir, entries, tty, dry, counts):
+    """Resolve links from a previous ai-kit install. Interactive: list them and
+    ask whether to re-point to THIS install (default) or drop them. Headless:
+    warn only and leave them alone — never silently clobber a foreign link.
+    Returns the list of 'cat/name' candidates found."""
+    cands = predecessor_candidates(claude_dir, install_dir, entries)
+    items = ["%s/%s" % (cat, name) for cat, name, _, _ in cands]
+    if not cands:
+        return []
+    if not is_interactive(tty):
+        for it in items:
+            print("warn: %s links to a previous ai-kit install — run setup "
+                  "interactively to re-point or drop it" % it, file=sys.stderr)
+        return items
+    banner = "\nThese links point at a PREVIOUS ai-kit install (e.g. a renamed repo):\n"
+    banner += "".join("  - %s\n" % it for it in items)
+    _tty_write(tty, banner)
+    repoint = ask_yes_no(tty, "re-point them to this install? ('n' = drop them)",
+                         default=True)
+    for cat, name, _old, new_target in cands:
+        link = os.path.join(claude_dir, cat, name)
+        if not dry:
+            if os.path.lexists(link):
+                os.remove(link)
+            if repoint:
+                os.symlink(new_target, link)
+        counts["relinked" if repoint else "pruned"] += 1
+    return items
+
+
 _ACCENT = "\033[36m"   # cyan — enabled rows
 _DIM = "\033[2m"       # dimmed — disabled rows
 _RESET = "\033[0m"
@@ -975,12 +1036,16 @@ def cmd_install(env, tty, dry, reconfigure=False):
     is linked, _first_run() is False, so the selection keeps existing state."""
     paths = resolve_paths(env)
     entries = enumerate_entries(paths.install_dir)
-    installed = installed_links(paths.claude_dir, paths.install_dir)
     counts = new_counts()
 
     # B − A: links whose repo entry vanished upstream — warn + prune
     present = {cat: {n for n, _ in entries[cat]} for cat in CATEGORIES}
     prune_stale(paths.claude_dir, paths.install_dir, present, tty, dry, counts)
+
+    # Links from a PREVIOUS ai-kit install (renamed repo) — offer re-point / drop.
+    # Re-pointed links become current ai-kit links, so refresh `installed` after.
+    adopt_predecessor_links(paths.claude_dir, paths.install_dir, entries, tty, dry, counts)
+    installed = installed_links(paths.claude_dir, paths.install_dir)
 
     # A: choose what to install (first-run all-on / keep selection / interactive)
     selection = select_skills(entries, installed, tty)

@@ -668,6 +668,88 @@ class TestPruneStale(unittest.TestCase):
         self.assertTrue(os.path.lexists(self.gone))
 
 
+class TestAdoptPredecessorLinks(unittest.TestCase):
+    """Links left behind by a PREVIOUS ai-kit install (e.g. a renamed repo:
+    uz-kit -> ai-kit). They are foreign to the current install_dir but carry the
+    ai-kit <root>/<cat>/<name> shape, so the wizard can re-point or drop them."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.install = os.path.join(self.tmp, "ai-kit")        # current install
+        self.old = os.path.join(self.tmp, "uz-kit")            # previous install
+        self.claude = os.path.join(self.tmp, ".claude")
+        for root in (self.install, self.old):
+            os.makedirs(os.path.join(root, "skills"))
+        for cat in setup.CATEGORIES:
+            os.makedirs(os.path.join(self.claude, cat))
+        # a link from the OLD install still in ~/.claude
+        self.link = os.path.join(self.claude, "skills", "alpha")
+        os.symlink(os.path.join(self.old, "skills", "alpha"), self.link)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def entries(self):
+        # 'alpha' is a current repo entry, so it can be re-pointed
+        return {"skills": [("alpha", os.path.join(self.install, "skills", "alpha"))],
+                "commands": [], "agents": []}
+
+    def test_detects_predecessor_link(self):
+        cands = setup.predecessor_candidates(self.claude, self.install, self.entries())
+        self.assertEqual([(c, n) for c, n, _, _ in cands], [("skills", "alpha")])
+
+    def test_ignores_link_into_current_install(self):
+        os.remove(self.link)
+        os.symlink(os.path.join(self.install, "skills", "alpha"), self.link)
+        self.assertEqual(setup.predecessor_candidates(self.claude, self.install, self.entries()), [])
+
+    def test_ignores_unrelated_foreign_symlink(self):
+        # user's own symlink, not ai-kit-shaped (basename mismatch) -> left alone
+        weird = os.path.join(self.claude, "skills", "mine")
+        os.symlink("/somewhere/else/notes.md", weird)
+        cands = setup.predecessor_candidates(self.claude, self.install, self.entries())
+        self.assertNotIn("mine", [n for _, n, _, _ in cands])
+
+    def test_ignores_predecessor_with_no_current_entry(self):
+        # link from old install whose name is NOT a current repo entry -> can't re-point
+        orphan = os.path.join(self.claude, "skills", "ghost")
+        os.symlink(os.path.join(self.old, "skills", "ghost"), orphan)
+        cands = setup.predecessor_candidates(self.claude, self.install, self.entries())
+        self.assertNotIn("ghost", [n for _, n, _, _ in cands])
+
+    def test_interactive_repoint_default(self):
+        c = setup.new_counts()
+        tty = io.StringIO("\n")                # blank = accept default (re-point)
+        setup.adopt_predecessor_links(self.claude, self.install, self.entries(),
+                                      tty=tty, dry=False, counts=c)
+        self.assertEqual(os.readlink(self.link), os.path.join(self.install, "skills", "alpha"))
+        self.assertEqual(c["relinked"], 1)
+
+    def test_interactive_drop_on_no(self):
+        c = setup.new_counts()
+        tty = io.StringIO("n\n")
+        setup.adopt_predecessor_links(self.claude, self.install, self.entries(),
+                                      tty=tty, dry=False, counts=c)
+        self.assertFalse(os.path.lexists(self.link))
+        self.assertEqual(c["pruned"], 1)
+
+    def test_headless_leaves_links_untouched(self):
+        c = setup.new_counts()
+        items = setup.adopt_predecessor_links(self.claude, self.install, self.entries(),
+                                              tty=None, dry=False, counts=c)
+        self.assertEqual(items, ["skills/alpha"])
+        self.assertEqual(os.readlink(self.link), os.path.join(self.old, "skills", "alpha"))
+        self.assertEqual(c["relinked"], 0)
+        self.assertEqual(c["pruned"], 0)
+
+    def test_dry_run_mutates_nothing(self):
+        c = setup.new_counts()
+        tty = io.StringIO("\n")
+        setup.adopt_predecessor_links(self.claude, self.install, self.entries(),
+                                      tty=tty, dry=True, counts=c)
+        self.assertEqual(os.readlink(self.link), os.path.join(self.old, "skills", "alpha"))
+
+
 class TestSelectSkills(unittest.TestCase):
     def entries(self):
         # (name, dummy path) tuples; path unused by select_skills
