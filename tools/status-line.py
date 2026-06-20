@@ -9,6 +9,7 @@ bottom. Stdlib only. The .sh original is kept as a fallback.
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -31,7 +32,7 @@ from datetime import datetime
 # keep "path" True so the identity line always emits.
 SEGMENTS = {
     # identity line
-    "path": True, "branch": True, "dirty": True, "todo": True,
+    "path": True, "branch": True, "dirty": True, "worktree": True, "todo": True,
     # model row
     "model": True, "time_ago": True, "clock": True, "effort": True,
     "lines": True, "cost": False, "total_time": True, "api_time": True,
@@ -55,7 +56,7 @@ SEP = " | "
 # and paste a key; hide = flip its SEGMENTS flag.
 Line = namedtuple("Line", "min_rows segments")
 LAYOUT = [
-    Line(0,  ["path", "branch", "dirty", "todo"]),
+    Line(0,  ["path", "branch", "worktree", "dirty", "todo"]),
     Line(20, ["model", "time_ago", "clock", "effort", "lines",
               "cost", "total_time", "api_time"]),
     Line(30, ["render_time", "dimensions", "context", "chat_size", "memory", "rate_limits"]),
@@ -68,10 +69,32 @@ PINNED = {"path", "context"}   # always rendered even if they overflow the budge
 # {band: {threshold: colorspec}} dict of whole-band overrides (empty = no
 # override). External drop-in segments are E4c and are intentionally not part of
 # this type yet.
-# Scalar behaviour knobs that aren't segments/colors. `worktree` controls the
-# extra `git rev-parse` that detects a linked worktree (🌳 vs 🌿) — off by default
-# because it costs a git call per render and most repos aren't worktrees.
-_GIT_DEFAULTS = {"worktree": False}
+# Scalar behaviour knobs that aren't segments/colors. The worktree feature
+# migrated to the `segments.worktree` toggle (see SEGMENTS); `[git]` now carries
+# `cache_ttl` (seconds) — how long the shared git_snapshot worktree probe is
+# cached. Precedence: this default < TOML `[git] cache_ttl` < env CC_AI_KIT_GIT_TTL.
+_GIT_CACHE_TTL = 5                  # default seconds the worktree probe is cached
+_GIT_DEFAULTS = {"cache_ttl": _GIT_CACHE_TTL}
+# Deprecated `[git]` keys: silently accepted (no warning) and ignored, so an old
+# config carrying `[git] worktree = true/false` keeps loading cleanly after the
+# knob moved to `segments.worktree`.
+_GIT_LEGACY_IGNORED = frozenset({"worktree"})
+
+
+def _git_key_problem(k, v):
+    """Classify one `[git]` key/value so load_config and validate_config_file share
+    a single validation rule (each formats its own message). Returns:
+      'legacy'  — a deprecated key the caller should silently skip,
+      'unknown' — not a recognized `[git]` key,
+      'bad_ttl' — cache_ttl is not an int (bools excluded),
+      None      — acceptable."""
+    if k in _GIT_LEGACY_IGNORED:
+        return "legacy"
+    if k not in _GIT_DEFAULTS:
+        return "unknown"
+    if k == "cache_ttl" and (not isinstance(v, int) or isinstance(v, bool)):
+        return "bad_ttl"
+    return None
 
 # `git` and `external` default to None so older Config(...) call sites (which
 # pass only the original fields) keep working; consumers read git via
@@ -256,16 +279,23 @@ def load_config(env):
         ramps[band] = {str(k): str(v) for k, v in table.items()}
     git = dict(_GIT_DEFAULTS)
     for k, v in (raw.get("git") or {}).items():
-        if k not in _GIT_DEFAULTS:
+        problem = _git_key_problem(k, v)
+        if problem == "legacy":
+            continue                               # deprecated, tolerated, no effect
+        if problem == "unknown":
             print(f"{_DIM}status-line: unknown [git] key '{k}'{RESET}", file=sys.stderr)
-        elif not isinstance(v, bool):
-            print(f"{_DIM}status-line: [git] {k} must be true/false, got {v!r} — ignored{RESET}",
-                  file=sys.stderr)
+        elif problem == "bad_ttl":
+            print(f"{_DIM}status-line: [git] cache_ttl must be an integer, "
+                  f"got {v!r} — ignored{RESET}", file=sys.stderr)
         else:
             git[k] = v
-    wt = env_bool(env, "CC_AI_KIT_GIT_WORKTREE")   # env wins over file
-    if wt is not None:
-        git["worktree"] = wt
+    ttl_env = env.get("CC_AI_KIT_GIT_TTL")         # env wins over file
+    if ttl_env is not None:
+        try:
+            git["cache_ttl"] = int(ttl_env)
+        except ValueError:
+            print(f"{_DIM}status-line: CC_AI_KIT_GIT_TTL must be an integer, "
+                  f"got {ttl_env!r} — ignored{RESET}", file=sys.stderr)
     return Config(segments=segments, layout=layout, palette=palette, ramps=ramps,
                   git=git, external=external)
 
@@ -362,10 +392,15 @@ def parse_segment_header(lines):
     return None
 
 
-def _segments_cache_dir(env):
-    """${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/segments — per-provider output cache."""
+def _cache_base(env):
+    """${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit — root of every ai-kit on-disk cache."""
     base = env.get("XDG_CACHE_HOME") or os.path.join(env.get("HOME", ""), ".cache")
-    return os.path.join(base, "ai-kit", "segments")
+    return os.path.join(base, "ai-kit")
+
+
+def _segments_cache_dir(env):
+    """…/ai-kit/segments — per-provider output cache."""
+    return os.path.join(_cache_base(env), "segments")
 
 
 def _segments_dir(file_external, env):
@@ -888,13 +923,43 @@ def seg_branch(data, avail, theme):
     branch = data.get("branch")
     if not branch:
         return None
-    icon = "🌳" if data.get("is_worktree") else "🌿"
-    return _first_fitting([f"{theme.c('GREY')}[{icon} {branch}]{RESET}"], avail)
+    # FR-7.2: branch shows ONLY the branch — the worktree glyph moved to the
+    # dedicated `worktree` segment.
+    return _first_fitting([f"{theme.c('GREY')}[{branch}]{RESET}"], avail)
 
 
 def seg_dirty(data, avail, theme):
     mark = _dirty_mark(data.get("dirty", "clean"), theme)
     return _first_fitting([mark], avail) if mark else None
+
+
+def _trunc_cols(s, limit):
+    """Truncate s to at most `limit` display columns, appending `…` if cut.
+    Column-aware (uses char_width) so a wide/multibyte name can't blow the budget."""
+    if sum(char_width(c) for c in s) <= limit:
+        return s
+    out, width = [], 0
+    for c in s:
+        cw = char_width(c)
+        if width + cw > limit - 1:          # reserve one column for the ellipsis
+            break
+        out.append(c)
+        width += cw
+    return "".join(out) + "…"
+
+
+def seg_worktree(data, avail, theme):
+    # `worktree` names the ACTIVE linked worktree the session sits in — never a
+    # list. Mirrors `dirty`'s "absence is the neutral state" convention: hidden
+    # outside a repo. On the main checkout it shows a dimmed, struck `⎇ wt`
+    # placeholder — GREY (not just strikethrough) so it stays distinct from the
+    # cyan active form even on terminals that don't render SGR-9.
+    if not data.get("in_repo"):
+        return None
+    if not data.get("is_worktree"):
+        return _first_fitting([f"{theme.c('GREY')}\033[9m⎇ wt{RESET}"], avail)
+    name = _trunc_cols(data.get("wt_name") or "", 20)
+    return _first_fitting([f"{theme.c('CYAN')}⎇ {name}{RESET}"], avail)
 
 
 def seg_todo(data, avail, theme):
@@ -1060,7 +1125,8 @@ def seg_rate_limits(data, avail, theme):
 # Editable surface (SEGMENTS + LAYOUT) is at the top of the file; this registry
 # (key -> builder function) stays next to the builders it wires up.
 BUILDERS = {
-    "path": seg_path, "branch": seg_branch, "dirty": seg_dirty, "todo": seg_todo,
+    "path": seg_path, "branch": seg_branch, "worktree": seg_worktree,
+    "dirty": seg_dirty, "todo": seg_todo,
     "model": seg_model, "time_ago": seg_time_ago, "clock": seg_clock,
     "effort": seg_effort, "lines": seg_lines, "cost": seg_cost,
     "total_time": seg_total_time, "api_time": seg_api_time,
@@ -1154,30 +1220,80 @@ def _branch_from_porcelain(header):
     return rest.split("...", 1)[0].strip()                        # branch[...upstream]
 
 
-def git_info(work_dir, untracked=True, worktree=True):
-    """Return (branch, dirty, is_worktree).
+# The single shared git probe result. `branch`, `dirty`, and `worktree` are
+# independent segments but all read from one GitSnapshot — no duplicated git
+# querying. wt_name is the active linked-worktree's directory basename ("" on
+# the main checkout or outside a repo).
+GitSnapshot = namedtuple("GitSnapshot", "in_repo branch dirty is_worktree wt_name")
 
-    dirty in {clean, untracked, modified}. is_worktree is True when work_dir sits
-    in a linked worktree (git-dir != git-common-dir), False in the main repo or
-    outside any repo. Up to two git calls: one `status --porcelain --branch` for
-    branch + dirty together, one `rev-parse` for the worktree check.
 
-    Each call is gated on what the caller will actually render — the same flag
-    gate the segments use:
+def _git_worktree_info(work_dir):
+    """(in_repo, is_worktree, name) from ONE `git rev-parse`. is_worktree is True
+    when work_dir sits in a linked worktree (git-dir != git-common-dir). name is
+    that worktree directory's basename (from --show-toplevel), only when in a
+    linked worktree; "" otherwise. Outside any repo → (False, False, "")."""
+    out = subprocess.run(
+        ["git", "-C", work_dir, "rev-parse",
+         "--git-dir", "--git-common-dir", "--show-toplevel"],
+        capture_output=True, text=True).stdout
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return False, False, ""                 # not a git repo
+    is_worktree = lines[0] != lines[1]          # git-dir != git-common-dir
+    top = lines[2] if len(lines) >= 3 else ""
+    name = os.path.basename(top.rstrip("/")) if (is_worktree and top) else ""
+    return True, is_worktree, name
+
+
+def _git_cache_path(work_dir, env):
+    """Per-work_dir cache file for the worktree probe under …/ai-kit/git/
+    (shares `_cache_base` with the external-segment cache)."""
+    key = hashlib.sha1(os.path.abspath(work_dir).encode()).hexdigest()[:16]
+    return os.path.join(_cache_base(env), "git", key)
+
+
+def _worktree_info_cached(work_dir, ttl, env):
+    """_git_worktree_info wrapped in an on-disk TTL cache — the worktree rev-parse
+    rarely changes, so it is cached ~ttl s keyed by work_dir. ttl <= 0 always
+    misses (forces a fresh rev-parse every render). Cache I/O is best-effort."""
+    path = _git_cache_path(work_dir, env)
+    if ttl > 0:
+        try:
+            if time.time() - os.stat(path).st_mtime < ttl:
+                with open(path, encoding="utf-8") as f:
+                    d = json.load(f)
+                return d["in_repo"], d["is_worktree"], d["wt_name"]
+        except (OSError, ValueError, KeyError):
+            pass
+    info = _git_worktree_info(work_dir)
+    if ttl > 0:                                     # ttl<=0 never reads, so never write
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"in_repo": info[0], "is_worktree": info[1], "wt_name": info[2]}, f)
+        except OSError:
+            pass
+    return info
+
+
+def git_snapshot(work_dir, untracked=True, want_worktree=True, ttl=_GIT_CACHE_TTL, env=None):
+    """The single git probe behind the `branch`, `dirty`, and `worktree` segments.
+
+    Returns GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name). `branch`
+    and `dirty` come from one always-fresh `git status --porcelain --branch`; the
+    worktree rev-parse is cached ~`ttl`s on disk (it rarely changes). Each call is
+    gated on what the caller will actually render:
       * untracked=False adds --untracked-files=no, skipping git's untracked-file
-        walk (the part of `status` that gets slow on large trees). Pass it when
-        the `dirty` segment is off; dirty then can't report "untracked" (only
-        modified/clean), which is fine because the marker isn't rendered.
-      * worktree=False skips the `rev-parse` call entirely. is_worktree only
-        feeds the branch segment's 🌳/🌿 glyph, so pass it when `branch` is off."""
-    def _git(*args):
-        return subprocess.run(["git", "-C", work_dir, *args],
-                              capture_output=True, text=True).stdout
-
+        walk (the slow part of `status` on large trees). Pass it when `dirty` is
+        off; dirty then can't report "untracked" (only modified/clean).
+      * want_worktree=False skips the rev-parse (and its cache) entirely; in_repo,
+        is_worktree, wt_name stay at their defaults. Pass it when `worktree` is off."""
+    env = env or {}
     status_args = ["status", "--porcelain", "--branch"]
     if not untracked:
         status_args.append("--untracked-files=no")
-    out = _git(*status_args).splitlines()
+    out = subprocess.run(["git", "-C", work_dir, *status_args],
+                         capture_output=True, text=True).stdout.splitlines()
     branch = _branch_from_porcelain(out[0] if out else "")
     changes = out[1:]   # change lines follow the `## <branch>` header
     if any(ln.startswith(("??", "A", "D")) or ln.startswith(" D") for ln in changes):
@@ -1186,12 +1302,10 @@ def git_info(work_dir, untracked=True, worktree=True):
         dirty = "modified"
     else:
         dirty = "clean"
-    is_worktree = False
-    if worktree:
-        # Extra git call: in a linked worktree git-dir and git-common-dir differ.
-        gd = _git("rev-parse", "--git-dir", "--git-common-dir").split()
-        is_worktree = len(gd) == 2 and gd[0] != gd[1]
-    return branch, dirty, is_worktree
+    in_repo, is_worktree, wt_name = False, False, ""
+    if want_worktree:
+        in_repo, is_worktree, wt_name = _worktree_info_cached(work_dir, ttl, env)
+    return GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name)
 
 
 # ── Process RSS (cross-platform) ──────────────────────────────────────────────
@@ -1540,7 +1654,8 @@ def render(data, cols, lines, cfg=None, theme=None):
 #
 # Available segments (key -> what it shows):
 #   path         working dir (~-collapsed; basename if long)     [pinned]
-#   branch       git branch with 🌿 (repo) / 🌳 (worktree) icon
+#   branch       git branch name
+#   worktree     ⎇ active linked-worktree name (struck ⎇ wt on the main checkout)
 #   dirty        ✗ untracked / ~ modified marker
 #   todo         active TODO / task (truncated to fit)
 #   model        model display name
@@ -1611,10 +1726,10 @@ def effort_setting_is_auto(work_dir, home):
     return True
 
 
-def build_data(raw, env, segments=None, t_start=None, git_worktree=False):
+def build_data(raw, env, segments=None, t_start=None, git_ttl=_GIT_CACHE_TTL):
     """Gather everything the builders read.
 
-    Expensive probes — git (`git_info`), the transcript parse (`current_todo`),
+    Expensive probes — git (`git_snapshot`), the transcript parse (`current_todo`),
     process RSS (`proc_rss_bytes`), the effort-settings/file stats — run ONLY
     when their segment is enabled in `segments`. A disabled segment costs nothing
     to *compute*, not just nothing to *render*: this is the compute half of the
@@ -1639,16 +1754,16 @@ def build_data(raw, env, segments=None, t_start=None, git_worktree=False):
 
     cols, lines, assumed = terminal_size(env)
 
-    # git_info yields branch + dirty + worktree in one shot, so it is gated as a
-    # unit on either git segment being enabled.
-    branch, dirty, is_worktree = "", "clean", False
-    if want("branch") or want("dirty"):
-        # Each git probe is gated on what's actually needed: the untracked walk on
-        # the `dirty` segment, the worktree (rev-parse) check on the `branch`
-        # segment AND the opt-in git_worktree knob (off by default — skips the
-        # rev-parse entirely when nobody asked for 🌳/🌿 detection).
-        branch, dirty, is_worktree = git_info(
-            work_dir, untracked=want("dirty"), worktree=want("branch") and git_worktree)
+    # One shared git_snapshot feeds branch + dirty + worktree, gated as a unit on
+    # any of the three git segments being enabled. Each probe inside is itself
+    # gated: the untracked walk on the `dirty` segment, the worktree rev-parse on
+    # the `worktree` segment (skipped entirely when that segment is off).
+    branch, dirty, is_worktree, wt_name, in_repo = "", "clean", False, "", False
+    if want("branch") or want("dirty") or want("worktree"):
+        snap = git_snapshot(work_dir, untracked=want("dirty"),
+                            want_worktree=want("worktree"), ttl=git_ttl, env=env)
+        branch, dirty, is_worktree = snap.branch, snap.dirty, snap.is_worktree
+        wt_name, in_repo = snap.wt_name, snap.in_repo
 
     ago = ""
     if want("time_ago") and transcript and os.path.isfile(transcript):
@@ -1668,6 +1783,7 @@ def build_data(raw, env, segments=None, t_start=None, git_worktree=False):
         "work_dir": work_dir,
         "home": home,
         "branch": branch, "dirty": dirty, "is_worktree": is_worktree,
+        "wt_name": wt_name, "in_repo": in_repo,
         "clock": time.strftime("%H:%M"), "ago": ago,
         # `or 0` (not get's default) so a PRESENT-but-null field — what a fresh
         # /clear session sends before any tokens/cost accrue — coalesces to 0
@@ -1699,8 +1815,8 @@ Environment variables:
   CC_AI_KIT_SEGMENT_<KEY>  per-segment bool toggle; KEY is the upper-cased
                            segment name (PATH, MODEL, COST, CONTEXT, ...).
                            true:  1 true t y yes on    false: 0 false f n no off
-  CC_AI_KIT_GIT_WORKTREE   bool; detect linked worktrees (🌳 vs 🌿). Off by
-                           default — it adds a `git rev-parse` per render.
+  CC_AI_KIT_GIT_TTL        int; seconds the git worktree probe is cached. Wins
+                           over [git] cache_ttl (default 5).
   CC_AI_KIT_SEGMENTS_DIR   external drop-in segments directory (default
                            ${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments)
   CC_AI_KIT_EXTERNAL_TTL   default cache TTL (seconds) for external segments
@@ -1788,10 +1904,11 @@ def validate_config_file(path, env):
             if parse_color(str(spec), resolved_palette) is None:
                 errors.append(f"ramp [{band}] bad color: {spec!r}")
     for k, v in (raw.get("git") or {}).items():
-        if k not in _GIT_DEFAULTS:
+        problem = _git_key_problem(k, v)
+        if problem == "unknown":
             errors.append(f"unknown [git] key: {k}")
-        elif not isinstance(v, bool):
-            errors.append(f"[git] {k} must be true/false, got {v!r}")
+        elif problem == "bad_ttl":
+            errors.append(f"[git] cache_ttl must be an integer, got {v!r}")
     ext = raw.get("external")
     if ext is not None:
         if not isinstance(ext, dict):
@@ -1837,7 +1954,7 @@ def _dry_render_failures(cfg, theme, env):
     failed = set()
     data, _cols, _lines = build_data(
         dict(_DOCTOR_SAMPLE), env, cfg.segments, time.perf_counter_ns(),
-        (cfg.git or {}).get("worktree", False))
+        git_ttl=(cfg.git or {}).get("cache_ttl", _GIT_CACHE_TTL))
     for key in BUILDERS:
         safe_build(key, data, 200, theme, failed)
     return failed
@@ -1908,7 +2025,8 @@ def safe_render(raw, env, cfg, theme, t_start):
     above safe_build's per-segment isolation (covers build_data itself)."""
     try:
         data, cols, lines = build_data(
-            raw, env, cfg.segments, t_start, (cfg.git or {}).get("worktree", False))
+            raw, env, cfg.segments, t_start,
+            git_ttl=(cfg.git or {}).get("cache_ttl", _GIT_CACHE_TTL))
         return render(data, cols, lines, cfg, theme)
     except Exception:                              # noqa: BLE001 — never blank the bar
         return [f"{_WARN}⚠ status-line error — "

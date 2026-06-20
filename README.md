@@ -79,23 +79,34 @@ render_time = false  # ⏱ hide the render-time mark (on by default)
 CC_AI_KIT_SEGMENT_COST=1     # 1 true t y yes on  /  0 false f n no off
 ```
 
-**Worktree detection** — the `branch` segment can show 🌳 (linked worktree) vs
-🌿 (main repo), but detecting that needs an extra `git rev-parse` per render, so
-it ships **off**. Enable it in the file:
+**Worktree segment** — `worktree` (⎇, **on by default**) names the *active*
+linked git worktree the session sits in, never a list: `⎇ <name>` (the worktree
+directory basename, truncated to 20 columns). On the main checkout it shows a
+dimmed, struck-through `⎇ wt` placeholder; outside any git repo it's hidden. The
+`branch` segment shows only the branch — worktree state lives entirely in this
+segment. Toggle it like any other segment (`[segments] worktree = false`, or
+`CC_AI_KIT_SEGMENT_WORKTREE=0`).
+
+**Shared git probe + cache TTL** — `branch`, `dirty`, and `worktree` read from
+one shared `git` probe (no duplicate querying). `dirty` is always read fresh; the
+worktree `rev-parse` is cached (default **5 s**) because it rarely changes. Tune
+the cache:
 
 ```toml
 [git]
-worktree = true   # detect linked worktrees (🌳 vs 🌿); adds a git rev-parse
+cache_ttl = 5   # seconds the worktree probe is cached
 ```
 
-…or per-session: `CC_AI_KIT_GIT_WORKTREE=1` (wins over the file).
+…or per-session: `CC_AI_KIT_GIT_TTL=10` (wins over the file). A legacy
+`[git] worktree` key (and the old `CC_AI_KIT_GIT_WORKTREE` env) is silently
+ignored — worktree display is now the `worktree` segment.
 
 **Performance note** — disabling a segment skips its work, not just its
 display. On a very large repository, turning off `dirty` also skips git's
-untracked-file scan (the slow part of `git status`); turning off `branch`
-(or leaving `[git] worktree` off) skips the `rev-parse`; turning off `todo`
-skips the task-state read. The status line reads task/todo state from Claude's
-on-disk state, not by re-parsing the transcript, so it stays fast as sessions grow.
+untracked-file scan (the slow part of `git status`); turning off `worktree`
+skips the `rev-parse`; turning off `todo` skips the task-state read. The status
+line reads task/todo state from Claude's on-disk state, not by re-parsing the
+transcript, so it stays fast as sessions grow.
 
 **Reorder / move rows** — uncomment **all** `[[line]]` blocks and edit (layout
 is all-or-nothing; a partial layout would silently drop segments):
@@ -103,7 +114,7 @@ is all-or-nothing; a partial layout would silently drop segments):
 ```toml
 [[line]]
 min_rows = 0
-segments = ["path", "branch", "dirty", "todo"]
+segments = ["path", "branch", "worktree", "dirty", "todo"]
 ```
 
 **Recolor segments** — colors are configured in the TOML file only (there is

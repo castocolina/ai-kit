@@ -230,31 +230,6 @@ class TestPatchLayout(unittest.TestCase):
         self.assertEqual(first, second)
 
 
-class TestPatchGitWorktree(unittest.TestCase):
-    def test_uncomments_and_sets_true(self):
-        text = "# [git]\n# worktree = false     # detect linked worktrees.\n"
-        out = setup.patch_git_worktree(text, True)
-        self.assertIn("[git]\n", out)
-        self.assertIn("worktree = true", out)
-        self.assertIn("# detect linked worktrees.", out)
-
-    def test_sets_false(self):
-        text = "[git]\nworktree = true\n"
-        out = setup.patch_git_worktree(text, False)
-        self.assertIn("worktree = false", out)
-
-    def test_appends_git_block_when_absent(self):
-        text = "# [segments]\n# cost = false\n"
-        out = setup.patch_git_worktree(text, True)
-        import tomllib
-        self.assertEqual(tomllib.loads(out)["git"]["worktree"], True)
-
-    def test_preserves_other_sections(self):
-        text = "# [git]\n# worktree = false\n# [palette]\n# RED = \"31\"\n"
-        out = setup.patch_git_worktree(text, True)
-        self.assertIn("# [palette]\n# RED = \"31\"\n", out)
-
-
 class TestWritePreserving(unittest.TestCase):
     def _status_line(self):
         return os.path.join(
@@ -330,20 +305,13 @@ class TestExternalSeam(unittest.TestCase):
         after = setup.patch_layout(before, [{"min_rows": 0, "segments": ["path"]}])
         self.assertIn("[external]\nttl = 60\n", after)
 
-    def test_external_block_survives_worktree_patch(self):
-        with open(EDITED_RECIPE) as f:
-            before = f.read()
-        after = setup.patch_git_worktree(before, True)
-        self.assertIn("[external]\nttl = 60\n", after)
-        self.assertIn("worktree = true", after)
-
 
 class TestWizardLoop(unittest.TestCase):
     def _state(self):
         return {"segments": dict(setup.SEGMENT_DEFAULTS),
                 "layout": [{"min_rows": 0, "segments": ["path", "branch", "dirty"]},
                            {"min_rows": 20, "segments": ["model", "clock"]}],
-                "worktree": False, "dirty": False}
+                "dirty": False}
 
     def test_toggle_by_number_flips_segment(self):
         st = self._state()
@@ -370,10 +338,22 @@ class TestWizardLoop(unittest.TestCase):
         self.assertIn("clock", st["layout"][0]["segments"])
         self.assertNotIn("clock", st["layout"][1]["segments"])
 
-    def test_worktree_toggles(self):
-        st, err = setup._apply_wizard_command(self._state(), "worktree")
+    def test_worktree_is_a_normal_segment(self):
+        # worktree migrated from the [git] knob to a regular segment toggle: it
+        # appears in SEGMENT_DEFAULTS (ON) and flips like any other segment.
+        self.assertTrue(setup.SEGMENT_DEFAULTS.get("worktree"))
+        st = self._state()
+        order = sorted(st["segments"])
+        idx = order.index("worktree") + 1
+        st2, err = setup._apply_wizard_command(st, str(idx))
         self.assertIsNone(err)
-        self.assertTrue(st["worktree"])
+        self.assertFalse(st2["segments"]["worktree"])   # was ON, toggled OFF
+        self.assertTrue(st2["dirty"])
+
+    def test_worktree_command_no_longer_special(self):
+        # The dedicated `worktree` wizard command is gone.
+        _, err = setup._apply_wizard_command(self._state(), "worktree")
+        self.assertIsNotNone(err)
 
     def test_unknown_command_returns_error(self):
         st, err = setup._apply_wizard_command(self._state(), "frobnicate")
@@ -395,7 +375,7 @@ class TestWizardLoop(unittest.TestCase):
             status_line = os.path.join(
                 os.path.dirname(os.path.dirname(__file__)), "tools", "status-line.py")
             ok = setup.save_statusline_config(
-                path, {"cost": True}, None, None, status_line)
+                path, {"cost": True}, None, status_line)
             self.assertTrue(ok)
             import tomllib
             with open(path, "rb") as f:

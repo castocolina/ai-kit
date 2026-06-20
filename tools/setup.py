@@ -56,7 +56,7 @@ def resolve_paths(env):
 # importable module, and the wizard must run even while the renderer is mid-edit.
 # TestTomlRead.test_segment_defaults_match_recipe_drift pins these to the recipe.
 SEGMENT_DEFAULTS = {
-    "path": True, "branch": True, "dirty": True, "todo": True,
+    "path": True, "branch": True, "dirty": True, "worktree": True, "todo": True,
     "model": True, "time_ago": True, "clock": True, "effort": True,
     "lines": True, "cost": False, "total_time": True, "api_time": True,
     "render_time": True, "dimensions": False, "context": True, "chat_size": True,
@@ -116,8 +116,8 @@ def render_preview(status_line, segments, sample_json, env):
     Shells out to `python3 status-line.py` feeding `sample_json` on stdin and the
     toggles as CC_AI_KIT_SEGMENT_<KEY> env overrides (so it reflects in-memory
     edits before they are written). `env` carries only the keys to override
-    (CC_AI_KIT_GIT_WORKTREE and/or forced terminal size); it is merged ON TOP OF
-    os.environ so the subprocess inherits PATH, HOME, and PYTHONPATH.
+    (e.g. forced terminal size); it is merged ON TOP OF os.environ so the
+    subprocess inherits PATH, HOME, and PYTHONPATH.
     Returns the rendered text ("" on any failure — the preview is best-effort
     and must never crash the wizard)."""
     child = {**os.environ, **env}   # inherit full env; overrides layer on top
@@ -143,8 +143,9 @@ def render_preview(status_line, segments, sample_json, env):
 # self-documenting). Lifted verbatim from tools/statusline.toml.sample comments.
 _SEGMENT_NOTES = {
     "path": "📂 working directory, ~-relative   (pinned)",
-    "branch": "🌿 git branch  (🌳 in a worktree)",
+    "branch": "git branch name",
     "dirty": "working-tree dirty marker",
+    "worktree": "⎇ active linked-worktree name",
     "todo": "📝 current TODO  (📝 in-progress / ⏸ pending)",
     "model": "active model name (e.g. Opus)",
     "time_ago": "time since the session's first message",
@@ -299,43 +300,6 @@ def patch_layout(text, lines):
         out.append(block)
     else:
         out.insert(region_start, block)
-    return "".join(out)
-
-
-def patch_git_worktree(text, value):
-    """Set [git] worktree to `value`, preserving every other byte. Rewrites the
-    key in place (uncommenting it + the [git] header); appends a [git] block with
-    the key + doc note if [git] is absent."""
-    lines = text.splitlines(keepends=True)
-    out = []
-    in_git = False
-    git_header_idx = None
-    written = False
-    for line in lines:
-        name = _header_name(line)
-        if name is not None:
-            in_git = (name == "git")
-            if in_git:
-                git_header_idx = len(out)
-            out.append(line)
-            continue
-        if in_git and not written:
-            m = _KEY_RE.match(line)
-            if m and m.group("key") == "worktree":
-                trail = m.group("trail") or ""
-                nl = "\n" if line.endswith("\n") else ""
-                out.append(f"{m.group('indent')}worktree = "
-                           f"{'true' if value else 'false'}{trail}{nl}")
-                written = True
-                continue
-        out.append(line)
-    if written and git_header_idx is not None:
-        out[git_header_idx] = re.sub(r"^(\s*)#\s*", r"\1", out[git_header_idx], count=1)
-    if not written:
-        if out and not out[-1].endswith("\n"):
-            out.append("\n")
-        out.append(f"[git]\nworktree = {'true' if value else 'false'}"
-                   f"          # detect linked worktrees (🌳 vs 🌿).\n")
     return "".join(out)
 
 
@@ -845,19 +809,17 @@ def _segment_changes_vs_recipe(path, segments):
     return {k: v for k, v in segments.items() if current.get(k) != v}
 
 
-def save_statusline_config(path, seg_changes, layout, worktree, status_line):
+def save_statusline_config(path, seg_changes, layout, status_line):
     """Apply the managed edits to the file at `path` via surgical text patches,
     then atomically write + doctor-validate. `seg_changes` is the minimal changed
-    {key: bool}; `layout` is None (unchanged) or the full list of line dicts;
-    `worktree` is None (unchanged) or a bool. Returns True on success."""
+    {key: bool}; `layout` is None (unchanged) or the full list of line dicts.
+    Returns True on success."""
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
     if seg_changes:
         text = patch_segments(text, seg_changes)
     if layout is not None:
         text = patch_layout(text, layout)
-    if worktree is not None:
-        text = patch_git_worktree(text, worktree)
     return write_toml_preserving(path, text, status_line)
 
 
@@ -872,7 +834,7 @@ def _apply_wizard_command(state, cmd):
     """Pure state transition for one wizard command. Returns (new_state, error):
     on success error is None; on a bad command new_state is `state` unchanged and
     error is a human message. Recognized: a segment number, `move <seg> up|down`,
-    `move <seg> line <n>`, `worktree`."""
+    `move <seg> line <n>`."""
     import copy
     cmd = cmd.strip()
     st = copy.deepcopy(state)
@@ -883,10 +845,6 @@ def _apply_wizard_command(state, cmd):
             return state, f"no segment #{n}"
         key = order[n - 1]
         st["segments"][key] = not st["segments"][key]
-        st["dirty"] = True
-        return st, None
-    if cmd == "worktree":
-        st["worktree"] = not st["worktree"]
         st["dirty"] = True
         return st, None
     parts = cmd.split()
@@ -930,8 +888,8 @@ def _print_segments(tty, state):
 
 def run_statusline_wizard(paths, tty, dry):
     """Interactive status-line editor: toggle segments, reorder/move across lines,
-    flip the [git] worktree knob, live-preview after each change, write back via
-    surgical patch + doctor self-validate. Replaces the E5b stub.
+    live-preview after each change, write back via surgical patch + doctor
+    self-validate. Replaces the E5b stub.
 
     Preamble (preserved from E5b): drop the recipe at config_toml if absent and
     wire settings.json's statusLine at the bundled renderer (FR-5.5 double-confirm)
@@ -939,33 +897,25 @@ def run_statusline_wizard(paths, tty, dry):
     copy_recipe_if_absent(paths.sample, paths.config_toml, dry)
     wire_statusline(paths.settings, paths.status_line, tty, dry)
     cfg = paths.config_toml
-    raw = read_toml(cfg)
     state = {
         "segments": current_segments(cfg),
         "layout": current_layout(cfg),
-        "worktree": bool((raw.get("git") or {}).get("worktree", False)),
         "dirty": False,
     }
     with open(_sample_input_path()) as f:
         sample_json = f.read()
 
     def show_preview():
-        env = {}
-        if state["worktree"]:
-            env["CC_AI_KIT_GIT_WORKTREE"] = "1"
-        out = render_preview(paths.status_line, state["segments"], sample_json, env)
+        out = render_preview(paths.status_line, state["segments"], sample_json, {})
         print("\n  ── live preview ──", file=tty)
         print(out or "  (preview unavailable)", file=tty)
 
     print("\nStatus-line configuration", file=tty)
     while True:
         _print_segments(tty, state)
-        print(f"  worktree detection: "
-              f"{'on' if state['worktree'] else 'off'} (type 'worktree' to toggle)",
-              file=tty)
         show_preview()
         print("\n  commands: <n> toggle · move <seg> up|down · move <seg> line <n>"
-              " · worktree · p preview · s save · q quit", file=tty)
+              " · p preview · s save · q quit", file=tty)
         tty.write("  > ")
         tty.flush()
         cmd = tty.readline()
@@ -1001,13 +951,10 @@ def _save_and_report(paths, state, tty, dry):
     seg_changes = _segment_changes_vs_recipe(paths.config_toml, state["segments"])
     layout = state["layout"] if state["layout"] != current_layout(paths.config_toml) \
         else None
-    raw = read_toml(paths.config_toml)
-    cur_wt = bool((raw.get("git") or {}).get("worktree", False))
-    worktree = state["worktree"] if state["worktree"] != cur_wt else None
-    if not (seg_changes or layout is not None or worktree is not None):
+    if not (seg_changes or layout is not None):
         _print_closing(paths, tty)
         return
-    ok = save_statusline_config(paths.config_toml, seg_changes, layout, worktree,
+    ok = save_statusline_config(paths.config_toml, seg_changes, layout,
                                 paths.status_line)
     if ok:
         print("  ✓ saved", file=tty)

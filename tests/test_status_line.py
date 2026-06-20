@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -39,6 +41,7 @@ def _data(**over):
         "model_name": "Opus 4.8", "model_id": "claude-opus-4-8",
         "effort": "high", "effort_auto": False, "work_dir": "/home/u/proj", "home": "/home/u",
         "branch": "main", "dirty": "modified", "is_worktree": False,
+        "in_repo": False, "wt_name": "",
         "clock": "14:30", "ago": "5m 0s ago",
         "added": 12, "removed": 3, "cost": 0.5,
         "total_ms": 65000, "api_ms": 4200,
@@ -173,9 +176,37 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertIsNone(sl.seg_branch(_data(branch="main"), 5, THEME))    # no room
         self.assertIsNone(sl.seg_branch(_data(branch=""), 200, THEME))      # no data
 
-    def test_branch_worktree_icon(self):
-        self.assertIn("🌳", sl.seg_branch(_data(is_worktree=True), 100, THEME))
-        self.assertIn("🌿", sl.seg_branch(_data(is_worktree=False), 100, THEME))
+    def test_branch_has_no_worktree_glyph(self):
+        # FR-7.2: branch is ONLY the branch — no 🌳/🌿 glyph, regardless of the
+        # worktree state (that moved to the dedicated `worktree` segment).
+        for wt in (True, False):
+            out = sl.seg_branch(_data(branch="main", is_worktree=wt), 100, THEME)
+            self.assertIn("main", out)
+            self.assertNotIn("🌳", out)
+            self.assertNotIn("🌿", out)
+
+    def test_worktree_active_shows_name_cyan(self):
+        out = sl.seg_worktree(
+            _data(in_repo=True, is_worktree=True, wt_name="feat-x"), 100, THEME)
+        self.assertIn("⎇ feat-x", strip(out))
+        self.assertIn(THEME.c("CYAN"), out)        # active form is cyan
+        self.assertNotIn("\033[9m", out)           # NOT struck
+
+    def test_worktree_main_checkout_struck_placeholder(self):
+        out = sl.seg_worktree(_data(in_repo=True, is_worktree=False), 100, THEME)
+        self.assertIn("⎇ wt", strip(out))
+        self.assertIn("\033[9m", out)              # strikethrough SGR
+        self.assertIn(THEME.c("GREY"), out)        # dimmed/grey, distinct from cyan
+
+    def test_worktree_hidden_outside_repo(self):
+        self.assertIsNone(sl.seg_worktree(_data(in_repo=False), 100, THEME))
+
+    def test_worktree_name_truncated_to_20_cols(self):
+        out = sl.seg_worktree(
+            _data(in_repo=True, is_worktree=True, wt_name="a" * 40), 100, THEME)
+        self.assertIn("…", out)
+        # visible width (glyph + space + truncated name) stays within ~22 cols
+        self.assertLessEqual(sl.visible_width(strip(out)), 24)
 
     def test_effort_full_then_compact_then_hide(self):
         self.assertIn("high", strip(sl.seg_effort(_data(effort="high"), 30, THEME)))
@@ -376,9 +407,11 @@ class TestProcAndGit(unittest.TestCase):
     def test_proc_rss_and_git_smoke(self):
         rss = sl.proc_rss_bytes()
         self.assertTrue(rss is None or isinstance(rss, int))
-        branch, dirty, is_wt = sl.git_info(".")
-        self.assertIn(dirty, ("clean", "untracked", "modified"))
-        self.assertIsInstance(is_wt, bool)
+        with tempfile.TemporaryDirectory() as home:
+            snap = sl.git_snapshot(".", env={"HOME": home})
+        self.assertIn(snap.dirty, ("clean", "untracked", "modified"))
+        self.assertIsInstance(snap.is_worktree, bool)
+        self.assertIsInstance(snap.wt_name, str)
 
     def test_branch_from_porcelain_header(self):
         self.assertEqual(sl._branch_from_porcelain("## main"), "main")
@@ -389,19 +422,25 @@ class TestProcAndGit(unittest.TestCase):
         self.assertEqual(sl._branch_from_porcelain("## Initial commit on dev"), "dev")
         self.assertEqual(sl._branch_from_porcelain(""), "")                      # not a repo
 
-    def test_git_info_dirty_parsing(self):
-        # git_info parses branch + dirty from the porcelain --branch output; mock
-        # subprocess so the test is independent of the live working tree.
+    def _home_env(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return {"HOME": d}
+
+    def test_git_snapshot_dirty_parsing(self):
+        # git_snapshot parses branch + dirty from the porcelain --branch output;
+        # mock subprocess so the test is independent of the live working tree.
         def fake_run(cmd, **kw):
             class R:
+                returncode = 0
                 stdout = ("## main...origin/main [ahead 1]\n M tools/x.py\n?? new.py\n"
-                          if "status" in cmd else ".git\n.git\n")
+                          if "status" in cmd else ".git\n.git\n/repo\n")
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            branch, dirty, is_wt = sl.git_info(".")
-            self.assertEqual(branch, "main")
-            self.assertEqual(dirty, "untracked")   # ?? present -> untracked
-            self.assertFalse(is_wt)                 # git-dir == git-common-dir
+            snap = sl.git_snapshot(".", env=self._home_env())
+            self.assertEqual(snap.branch, "main")
+            self.assertEqual(snap.dirty, "untracked")   # ?? present -> untracked
+            self.assertFalse(snap.is_worktree)          # git-dir == git-common-dir
 
     def test_untracked_flag_follows_dirty(self):
         # untracked=False adds --untracked-files=no; True omits it.
@@ -410,36 +449,85 @@ class TestProcAndGit(unittest.TestCase):
             def fake_run(cmd, **kw):
                 seen.append(cmd)
                 class R:
+                    returncode = 0
                     stdout = "## main\n"
                 return R()
             with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-                sl.git_info(".", untracked=untracked)
+                sl.git_snapshot(".", untracked=untracked, env=self._home_env())
             status_cmd = next(c for c in seen if "status" in c)
             self.assertEqual("--untracked-files=no" in status_cmd, expect_flag, untracked)
 
-    def test_worktree_call_follows_flag(self):
-        # worktree=False skips the rev-parse call entirely.
-        for worktree in (False, True):
+    def test_worktree_probe_follows_flag(self):
+        # want_worktree=False skips the rev-parse call entirely.
+        for want, expect in ((False, False), (True, True)):
             seen = []
             def fake_run(cmd, **kw):
                 seen.append(cmd)
                 class R:
-                    stdout = "## main\n" if "status" in cmd else ".git\n.git\n"
+                    returncode = 0
+                    stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
                 return R()
             with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-                sl.git_info(".", worktree=worktree)
+                sl.git_snapshot(".", want_worktree=want, env=self._home_env())
             ran_revparse = any("rev-parse" in c for c in seen)
-            self.assertEqual(ran_revparse, worktree, worktree)
+            self.assertEqual(ran_revparse, expect, want)
 
-    def test_git_info_clean_and_worktree(self):
+    def test_git_snapshot_clean_and_worktree_name(self):
         def fake_run(cmd, **kw):
             class R:
-                stdout = "## main\n" if "status" in cmd else "/wt/.git/worktrees/x\n/main/.git\n"
+                returncode = 0
+                stdout = ("## main\n" if "status" in cmd
+                          else "/wt/.git/worktrees/feat-x\n/main/.git\n/path/to/feat-x\n")
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            branch, dirty, is_wt = sl.git_info(".")
-            self.assertEqual((branch, dirty), ("main", "clean"))
-            self.assertTrue(is_wt)                  # git-dir != git-common-dir
+            snap = sl.git_snapshot(".", env=self._home_env())
+            self.assertEqual((snap.branch, snap.dirty), ("main", "clean"))
+            self.assertTrue(snap.is_worktree)        # git-dir != git-common-dir
+            self.assertTrue(snap.in_repo)
+            self.assertEqual(snap.wt_name, "feat-x")  # basename of --show-toplevel
+
+    def test_worktree_info_cached_within_ttl(self):
+        # Second call within the TTL must NOT re-run the rev-parse (cached on disk).
+        env = self._home_env()
+        calls = []
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            class R:
+                returncode = 0
+                stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            sl.git_snapshot(".", ttl=100, env=env)
+            sl.git_snapshot(".", ttl=100, env=env)
+        self.assertEqual(sum("rev-parse" in c for c in calls), 1)   # only once
+
+    def test_worktree_cache_bypassed_when_ttl_zero(self):
+        env = self._home_env()
+        calls = []
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            class R:
+                returncode = 0
+                stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            sl.git_snapshot(".", ttl=0, env=env)
+            sl.git_snapshot(".", ttl=0, env=env)
+        self.assertEqual(sum("rev-parse" in c for c in calls), 2)   # ttl<=0 always runs
+
+    def test_worktree_cache_not_written_when_ttl_zero(self):
+        # ttl<=0 forces a fresh probe every render, so the cache file is never
+        # read — it must therefore never be WRITTEN either (no wasted disk I/O on
+        # the hot render path).
+        env = self._home_env()
+        def fake_run(cmd, **kw):
+            class R:
+                returncode = 0
+                stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            sl.git_snapshot(".", ttl=0, env=env)
+        self.assertFalse(os.path.exists(sl._git_cache_path(".", env)))
 
 
 class TestCurrentTodo(unittest.TestCase):
@@ -558,7 +646,7 @@ class TestLazyCompute(unittest.TestCase):
 
     def test_disabled_segments_skip_their_probes(self):
         segs = dict.fromkeys(sl.SEGMENTS, False)
-        with mock.patch.object(sl, "git_info") as gi, \
+        with mock.patch.object(sl, "git_snapshot") as gi, \
              mock.patch.object(sl, "current_todo") as ct, \
              mock.patch.object(sl, "proc_rss_bytes") as rss, \
              mock.patch.object(sl, "effort_setting_is_auto") as ea:
@@ -570,7 +658,8 @@ class TestLazyCompute(unittest.TestCase):
 
     def test_enabled_segments_run_their_probes(self):
         segs = {"branch": True, "todo": True, "memory": True, "effort": True}
-        with mock.patch.object(sl, "git_info", return_value=("m", "clean", False)) as gi, \
+        with mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi, \
              mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct, \
              mock.patch.object(sl, "proc_rss_bytes", return_value=1) as rss, \
              mock.patch.object(sl, "effort_setting_is_auto", return_value=True) as ea:
@@ -581,10 +670,11 @@ class TestLazyCompute(unittest.TestCase):
             ea.assert_called_once()      # effort enabled
 
     def test_dirty_alone_still_triggers_git(self):
-        # branch + dirty share one git_info call; either flag must trigger it.
+        # branch + dirty share one git_snapshot call; either flag must trigger it.
         segs = dict.fromkeys(sl.SEGMENTS, False)
         segs["dirty"] = True
-        with mock.patch.object(sl, "git_info", return_value=("", "modified", False)) as gi:
+        with mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "", "modified", False, "")) as gi:
             sl.build_data(self.RAW, self.ENV, segs)
             gi.assert_called_once()
 
@@ -594,23 +684,33 @@ class TestLazyCompute(unittest.TestCase):
             sl.build_data(self.RAW, self.ENV)
             ct.assert_called_once()
 
+    def test_git_ttl_threaded_to_snapshot(self):
+        # The resolved [git] cache_ttl flows through build_data into git_snapshot.
+        segs = {"worktree": True}
+        with mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gs:
+            sl.build_data(self.RAW, self.ENV, segs, git_ttl=42)
+            self.assertEqual(gs.call_args.kwargs.get("ttl"), 42)
+
     def test_git_probes_follow_their_segments(self):
-        # untracked walk follows `dirty`; worktree (rev-parse) follows `branch`
-        # AND the git_worktree knob. git_info still runs whenever EITHER git
-        # segment is on.
-        for branch_on, dirty_on, knob in (
+        # untracked walk follows `dirty`; worktree (rev-parse) follows the
+        # `worktree` segment toggle. git_snapshot runs whenever ANY of branch/dirty/
+        # worktree is on.
+        for branch_on, dirty_on, wt_on in (
             (True, False, True), (True, False, False),
-            (False, True, True), (True, True, True),
+            (False, True, False), (False, False, True),
+            (True, True, True),
         ):
             segs = dict.fromkeys(sl.SEGMENTS, False)
             segs["branch"] = branch_on
             segs["dirty"] = dirty_on
-            with mock.patch.object(sl, "git_info",
-                                   return_value=("m", "clean", False)) as gi:
-                sl.build_data(self.RAW, self.ENV, segs, git_worktree=knob)
+            segs["worktree"] = wt_on
+            with mock.patch.object(sl, "git_snapshot",
+                                   return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi:
+                sl.build_data(self.RAW, self.ENV, segs)
                 gi.assert_called_once()
                 self.assertEqual(gi.call_args.kwargs.get("untracked"), dirty_on)
-                self.assertEqual(gi.call_args.kwargs.get("worktree"), branch_on and knob)
+                self.assertEqual(gi.call_args.kwargs.get("want_worktree"), wt_on)
 
 
 class TestBlueFix(unittest.TestCase):
@@ -919,34 +1019,93 @@ class TestGitConfig(unittest.TestCase):
         self.addCleanup(os.unlink, f.name)
         return f.name
 
-    def test_worktree_defaults_off(self):
+    def test_cache_ttl_default_5(self):
+        # Default [git] config carries cache_ttl=5 and nothing else.
         cfg = sl.load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
-        self.assertEqual(cfg.git, {"worktree": False})
+        self.assertEqual(cfg.git, {"cache_ttl": 5})
 
-    def test_file_enables_worktree(self):
-        path = self._write("[git]\nworktree = true\n")
+    def test_cache_ttl_from_toml(self):
+        path = self._write("[git]\ncache_ttl = 20\n")
         cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
-        self.assertTrue(cfg.git["worktree"])
+        self.assertEqual(cfg.git["cache_ttl"], 20)
 
-    def test_env_overrides_file(self):
-        path = self._write("[git]\nworktree = true\n")
-        env = {"CC_AI_KIT_CONFIG": path, "HOME": "/h", "CC_AI_KIT_GIT_WORKTREE": "0"}
-        self.assertFalse(sl.load_config(env).git["worktree"])   # env beats file
+    def test_cache_ttl_env_overrides_toml(self):
+        # Precedence: default 5 < TOML [git] cache_ttl < env CC_AI_KIT_GIT_TTL.
+        path = self._write("[git]\ncache_ttl = 20\n")
+        env = {"CC_AI_KIT_CONFIG": path, "HOME": "/h", "CC_AI_KIT_GIT_TTL": "99"}
+        self.assertEqual(sl.load_config(env).git["cache_ttl"], 99)
 
-    def test_unknown_git_key_ignored(self):
+    def test_cache_ttl_env_over_default(self):
+        env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
+               "CC_AI_KIT_GIT_TTL": "0"}
+        self.assertEqual(sl.load_config(env).git["cache_ttl"], 0)
+
+    def test_cache_ttl_bad_toml_type_ignored(self):
+        path = self._write('[git]\ncache_ttl = "soon"\n')   # string, not int
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertEqual(cfg.git["cache_ttl"], 5)            # default kept
+        self.assertIn("cache_ttl", buf.getvalue())           # and warned
+
+    def test_legacy_worktree_key_tolerated_with_cache_ttl(self):
+        # Legacy `[git] worktree` is silently accepted (no warning), no effect;
+        # cache_ttl alongside it still resolves.
+        for val in ("true", "false", '"true"'):
+            path = self._write(f"[git]\nworktree = {val}\ncache_ttl = 12\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stderr(buf):
+                cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+            self.assertEqual(cfg.git, {"cache_ttl": 12}, val)
+            self.assertNotIn("worktree", buf.getvalue(), val)   # no warning
+
+    def test_worktree_env_no_longer_read(self):
+        # CC_AI_KIT_GIT_WORKTREE is retired — setting it does not affect cfg.git.
+        env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
+               "CC_AI_KIT_GIT_WORKTREE": "1"}
+        self.assertEqual(sl.load_config(env).git, {"cache_ttl": 5})
+
+    def test_unknown_git_key_warns(self):
         path = self._write("[git]\nbogus = true\n")
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
-        self.assertEqual(cfg.git, {"worktree": False})          # bogus dropped
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertNotIn("bogus", cfg.git)             # bogus dropped
+        self.assertIn("bogus", buf.getvalue())         # and warned
 
-    def test_wrong_type_value_ignored(self):
-        path = self._write('[git]\nworktree = "true"\n')        # string, not bool
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
-        self.assertFalse(cfg.git["worktree"])                   # default kept
-
-    def test_check_flags_bad_git_config(self):
-        path = self._write('[git]\nbogus = true\nworktree = "x"\n')
+    def test_check_flags_unknown_and_bad_ttl_but_not_legacy_worktree(self):
+        # `bogus` and a bad cache_ttl are flagged; legacy `worktree` is NOT.
+        path = self._write('[git]\nbogus = true\nworktree = "x"\ncache_ttl = "nope"\n')
         errors = sl.validate_config_file(path, {"HOME": "/h"})
-        self.assertTrue(any("[git]" in e or "git" in e for e in errors), errors)
+        self.assertTrue(any("bogus" in e for e in errors), errors)
+        self.assertTrue(any("cache_ttl" in e for e in errors), errors)
+        self.assertFalse(any("worktree" in e for e in errors), errors)
+
+
+class TestWorktreeSegmentToggle(unittest.TestCase):
+    """The worktree feature is now a segment toggle, ON by default."""
+
+    def _write(self, body):
+        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
+        f.write(body)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_worktree_segment_on_by_default(self):
+        self.assertIs(sl.SEGMENTS.get("worktree"), True)
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        self.assertTrue(cfg.segments["worktree"])
+
+    def test_worktree_segment_disable_via_toml(self):
+        path = self._write("[segments]\nworktree = false\n")
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertFalse(cfg.segments["worktree"])
+
+    def test_worktree_segment_disable_via_env(self):
+        env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
+               "CC_AI_KIT_SEGMENT_WORKTREE": "0"}
+        self.assertFalse(sl.load_config(env).segments["worktree"])
 
 
 class TestRenderWithConfig(unittest.TestCase):
