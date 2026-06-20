@@ -72,8 +72,8 @@ class TestTomlRead(unittest.TestCase):
                          [["path", "branch", "dirty", "todo"],
                           ["model", "time_ago", "clock", "effort", "lines",
                            "cost", "total_time", "api_time"],
-                          ["render_time", "dimensions", "context", "chat_size",
-                           "memory", "rate_limits"]])
+                          ["render_time", "dimensions", "context",
+                           "chat_size", "memory", "rate_limits", "slowest"]])
 
     def test_current_layout_file_replaces_all(self):
         with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:

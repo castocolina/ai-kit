@@ -59,15 +59,15 @@ SEGMENT_DEFAULTS = {
     "path": True, "branch": True, "dirty": True, "worktree": True, "todo": True,
     "model": True, "time_ago": True, "clock": True, "effort": True,
     "lines": True, "cost": False, "total_time": True, "api_time": True,
-    "render_time": True, "dimensions": False, "context": True, "chat_size": True,
-    "memory": True, "rate_limits": True,
+    "render_time": True, "slowest": True, "dimensions": False, "context": True,
+    "chat_size": True, "memory": True, "rate_limits": True,
 }
 LAYOUT_DEFAULTS = [
     {"min_rows": 0, "segments": ["path", "branch", "dirty", "todo"]},
     {"min_rows": 20, "segments": ["model", "time_ago", "clock", "effort", "lines",
                                   "cost", "total_time", "api_time"]},
     {"min_rows": 30, "segments": ["render_time", "dimensions", "context",
-                                  "chat_size", "memory", "rate_limits"]},
+                                  "chat_size", "memory", "rate_limits", "slowest"]},
 ]
 
 
@@ -156,6 +156,7 @@ _SEGMENT_NOTES = {
     "total_time": "💬 total session duration",
     "api_time": "📡 cumulative API response time",
     "render_time": "⏱ status-line's own render time, SLO/SLA-colored",
+    "slowest": "🐌 slowest single segment this render (name + duration)",
     "dimensions": "terminal size cols×lines (? if assumed)  (debug; OFF by default)",
     "context": "📊 context-window % used (and max) (pinned)",
     "chat_size": "💾 transcript file size on disk",

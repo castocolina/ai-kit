@@ -40,6 +40,7 @@
 # api_time = true      # 📡 cumulative API response time
 ## diagnostics line (bottom row)
 # render_time = true   # ⏱ status-line's own render time, SLO/SLA-colored
+# slowest = true       # 🐌 slowest single segment this render (name + duration)
 # dimensions = false   # terminal size cols×lines (? if assumed)  (debug; OFF by default)
 # context = true       # 📊 context-window % used (and max) (pinned)
 # chat_size = true     # 💾 transcript file size on disk
@@ -61,7 +62,7 @@
 # segments = ["model", "time_ago", "clock", "effort", "lines", "cost", "total_time", "api_time"]
 # [[line]]
 # min_rows = 30
-# segments = ["render_time", "dimensions", "context", "chat_size", "memory", "rate_limits"]
+# segments = ["render_time", "dimensions", "context", "chat_size", "memory", "rate_limits", "slowest"]
 
 ## ─── [git] — git probe tuning ────────────────────────────────────────────────
 ## Behaviour knobs for the git queries behind the `branch` / `dirty` /
@@ -160,6 +161,16 @@
 # [ramp.render_time]
 # "50ms" = "GREEN"
 # "150ms" = "YELLOW"
+# inf = "RED+bold"
+
+## ─── [ramp.slowest] — slowest single segment's time -> color (ns/µs/ms/s) ─────
+## The ONE shared SLO/SLA ramp the `slowest` segment colors by (no per-segment
+## bands). Same time-string grammar as [ramp.render_time]; tighter thresholds
+## since it grades a single builder, not the whole render.
+## Default: GREEN within the 15ms SLO, YELLOW up to the 40ms SLA, RED+bold beyond.
+# [ramp.slowest]
+# "15ms" = "GREEN"
+# "40ms" = "YELLOW"
 # inf = "RED+bold"
 
 ## ─── Environment overrides (set in your shell, not this file) ─────────────────

@@ -7,6 +7,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import tomllib
 import unittest
 from unittest import mock
@@ -70,6 +71,27 @@ class TestPickColor(unittest.TestCase):
                  (79, THEME.c("YELLOW")), (80, THEME.c("RED+bold")), (100, THEME.c("RED+bold"))]
         for pct, want in cases:
             self.assertEqual(sl.rate_color(pct, THEME), want, pct)
+
+    def test_slowest_ramp_bands(self):
+        # The single shared SLO/SLA ramp for the slowest segment: green under the
+        # SLO (15ms), yellow under the SLA (40ms), red+bold beyond. Thresholds are
+        # nanoseconds (matching data["slowest"]'s perf_counter_ns value).
+        ms = 1_000_000
+        cases = [
+            (10 * ms, THEME.c("GREEN")), (14 * ms, THEME.c("GREEN")),
+            (15 * ms, THEME.c("YELLOW")), (39 * ms, THEME.c("YELLOW")),
+            (40 * ms, THEME.c("RED+bold")), (200 * ms, THEME.c("RED+bold")),
+        ]
+        for ns, want in cases:
+            self.assertEqual(sl.pick_color(ns, THEME.ramps["slowest"]), want, ns)
+
+    def test_slowest_ramp_override_replaces_band(self):
+        # [ramp.slowest] in config REPLACES the default band wholesale.
+        cfg = sl.default_config()._replace(ramps={"slowest": {"100ms": "CYAN", "inf": "WHITE"}})
+        theme = sl.build_theme(cfg)
+        ms = 1_000_000
+        self.assertEqual(sl.pick_color(50 * ms, theme.ramps["slowest"]), theme.c("CYAN"))
+        self.assertEqual(sl.pick_color(200 * ms, theme.ramps["slowest"]), theme.c("WHITE"))
 
 
 class TestFormatters(unittest.TestCase):
@@ -364,6 +386,141 @@ class TestPackLine(unittest.TestCase):
     def test_respects_right_margin(self):
         out = sl.pack_line(["model", "clock", "effort", "lines"], _data(), 60)
         self.assertLessEqual(sl.visible_width(out), 60 - sl.RIGHT_MARGIN)
+
+
+class TestSlowestTiming(unittest.TestCase):
+    @staticmethod
+    def _slow(data, avail, theme):
+        time.sleep(0.005)
+        return "SLOW"
+
+    @staticmethod
+    def _fast(data, avail, theme):
+        return "FAST"
+
+    def test_pack_line_records_slowest_builder(self):
+        # With `slowest` enabled the packer times each builder and records the max
+        # as data["slowest"] = (name, ns) — the exact key seg_slowest (T3.3) reads.
+        builders = {"fast_seg": self._fast, "slow_seg": self._slow}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "fast_seg": True, "slow_seg": True})
+        data = _data()
+        sl.pack_line(["fast_seg", "slow_seg"], data, 200, cfg=cfg, builders=builders)
+        name, ns = data["slowest"]
+        self.assertEqual(name, "slow_seg")
+        self.assertIsInstance(ns, int)
+        self.assertGreater(ns, 0)
+
+    def test_slowest_accumulates_max_across_lines(self):
+        # render() packs each layout line sharing one data dict; the running max
+        # must survive across pack_line calls (slow line first, fast line second).
+        builders = {"fast_seg": self._fast, "slow_seg": self._slow}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "fast_seg": True, "slow_seg": True})
+        data = _data()
+        sl.pack_line(["slow_seg"], data, 200, cfg=cfg, builders=builders)
+        sl.pack_line(["fast_seg"], data, 200, cfg=cfg, builders=builders)
+        self.assertEqual(data["slowest"][0], "slow_seg")   # not overwritten by the fast line
+
+    def test_failed_builder_not_recorded_as_slowest(self):
+        # A segment that crashes never rendered, so its time must not crown it the
+        # slowest culprit (else seg_slowest would name a broken segment).
+        def boom(data, avail, theme):
+            raise RuntimeError("nope")
+        builders = {"boom": boom, "fast_seg": self._fast}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "boom": True, "fast_seg": True})
+        data = _data()
+        sl.pack_line(["boom", "fast_seg"], data, 200, cfg=cfg, builders=builders)
+        self.assertNotEqual(data.get("slowest", (None,))[0], "boom")
+
+    def test_empty_output_builder_not_recorded_as_slowest(self):
+        # A segment that renders nothing (e.g. a failing external provider that is
+        # gracefully omitted) is not a visible culprit, so it isn't crowned slowest.
+        def empty(data, avail, theme):
+            return None
+        builders = {"empty_seg": empty, "fast_seg": self._fast}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "empty_seg": True, "fast_seg": True})
+        data = _data()
+        sl.pack_line(["empty_seg", "fast_seg"], data, 200, cfg=cfg, builders=builders)
+        self.assertNotEqual(data.get("slowest", (None,))[0], "empty_seg")
+
+    def test_slowest_is_last_on_its_layout_line(self):
+        # H1: seg_slowest reads data["slowest"] as it builds, so it must be LAST on
+        # its line — else segments after it are timed too late to ever be reported.
+        line = next(l for l in sl.LAYOUT if "slowest" in l.segments)
+        self.assertEqual(line.segments[-1], "slowest")
+
+    def test_later_segment_reported_when_slowest_last(self):
+        # With slowest last, a segment built before it (but after where the buggy
+        # index-1 placement sat) is captured AND named by seg_slowest.
+        builders = dict(sl.BUILDERS)
+        builders["slow_seg"] = self._slow
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "slow_seg": True})
+        data = _data()
+        out = sl.pack_line(["slow_seg", "slowest"], data, 200, cfg=cfg, builders=builders)
+        self.assertEqual(data["slowest"][0], "slow_seg")
+        self.assertIn("slow_seg", strip(out))      # seg_slowest (built last) names it
+
+    def test_render_time_not_crowned_slowest(self):
+        # M1: render_time is a meta-segment (reports the whole render); never a culprit.
+        def slow_rt(data, avail, theme):
+            time.sleep(0.005)
+            return "RT"
+        builders = {"render_time": slow_rt, "fast_seg": self._fast}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "render_time": True, "fast_seg": True})
+        data = _data()
+        sl.pack_line(["render_time", "fast_seg"], data, 200, cfg=cfg, builders=builders)
+        self.assertNotEqual(data.get("slowest", (None,))[0], "render_time")
+
+    def test_overflow_dropped_segment_not_recorded_slowest(self):
+        # L1: a slow segment whose output is too wide to fit is dropped — it never
+        # rendered, so it must not be crowned slowest.
+        def slow_wide(data, avail, theme):
+            time.sleep(0.005)
+            return "X" * 100
+        builders = {"wide_seg": slow_wide, "fast_seg": self._fast}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "wide_seg": True, "fast_seg": True})
+        data = _data()
+        sl.pack_line(["fast_seg", "wide_seg"], data, 20, cfg=cfg, builders=builders)
+        self.assertNotEqual(data.get("slowest", (None,))[0], "wide_seg")
+
+    def test_no_timing_when_slowest_disabled(self):
+        # Negligible overhead when off: with `slowest` disabled the packer never
+        # populates data["slowest"].
+        builders = {"fast_seg": self._fast}
+        cfg = sl.default_config()
+        cfg.segments.pop("slowest", None)
+        cfg.segments["fast_seg"] = True
+        data = _data()
+        sl.pack_line(["fast_seg"], data, 200, cfg=cfg, builders=builders)
+        self.assertNotIn("slowest", data)
+
+
+class TestSlowestSegment(unittest.TestCase):
+    def test_renders_culprit_name_and_duration(self):
+        out = sl.seg_slowest(_data(slowest=("git", 30_000_000)), 200, THEME)
+        self.assertIn("🐌", out)
+        self.assertIn("git", strip(out))       # names the culprit segment
+        self.assertIn("30ms", strip(out))      # and its duration
+
+    def test_colored_by_single_slowest_ramp(self):
+        # 30ms -> YELLOW band, 100ms -> RED+bold — the one shared slowest ramp.
+        self.assertIn(THEME.c("YELLOW"),
+                      sl.seg_slowest(_data(slowest=("git", 30_000_000)), 200, THEME))
+        self.assertIn(THEME.c("RED+bold"),
+                      sl.seg_slowest(_data(slowest=("ext", 100_000_000)), 200, THEME))
+
+    def test_omitted_when_no_timing(self):
+        self.assertIsNone(sl.seg_slowest(_data(), 200, THEME))   # no data["slowest"]
+
+    def test_on_by_default_and_registered(self):
+        self.assertTrue(sl.SEGMENTS["slowest"])
+        self.assertIn("slowest", sl.BUILDERS)
 
 
 class TestRenderLayout(unittest.TestCase):

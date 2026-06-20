@@ -37,8 +37,8 @@ SEGMENTS = {
     "model": True, "time_ago": True, "clock": True, "effort": True,
     "lines": True, "cost": False, "total_time": True, "api_time": True,
     # diagnostics row (dimensions is a debug aid — off by default)
-    "render_time": True, "dimensions": False, "context": True, "chat_size": True,
-    "memory": True, "rate_limits": True,
+    "render_time": True, "slowest": True, "dimensions": False, "context": True,
+    "chat_size": True, "memory": True, "rate_limits": True,
 }
 
 # Identity-line tuning.
@@ -59,9 +59,12 @@ LAYOUT = [
     Line(0,  ["path", "branch", "worktree", "dirty", "todo"]),
     Line(20, ["model", "time_ago", "clock", "effort", "lines",
               "cost", "total_time", "api_time"]),
-    Line(30, ["render_time", "dimensions", "context", "chat_size", "memory", "rate_limits"]),
+    Line(30, ["render_time", "dimensions", "context", "chat_size", "memory", "rate_limits", "slowest"]),
 ]
 PINNED = {"path", "context"}   # always rendered even if they overflow the budget
+# Meta-segments: they report the whole render, not a single builder, so the
+# `slowest` readout never names them as the culprit (its own output + render_time).
+_SLOWEST_META = frozenset({"slowest", "render_time"})
 
 # Resolved configuration: the result of merging internal defaults < TOML file <
 # env. `segments` is a {key: bool} dict, `layout` a list[Line], `palette` a
@@ -344,6 +347,10 @@ _RAMP_DEFAULTS = {
     # render_time: the status line's own run time (SLO/SLA). Thresholds are time
     # units (ns/µs/ms/s); green under the SLO, yellow under the SLA, red beyond.
     "render_time": [("50ms", "GREEN"), ("150ms", "YELLOW"), ("inf", "RED+bold")],
+    # slowest: the single per-segment SLO/SLA ramp the `slowest` segment colors by
+    # (one shared band — NO per-segment override bands). Tighter than render_time
+    # since it grades ONE builder, not the whole render.
+    "slowest": [("15ms", "GREEN"), ("40ms", "YELLOW"), ("inf", "RED+bold")],
 }
 
 # Effort ladder: level -> (palette name, fill count 1..5). Palette-derived but
@@ -1046,6 +1053,16 @@ def seg_render_time(data, avail, theme):    # status-line's own run time, SLO/SL
     return _first_fitting([f"⏱ {color}{fmt_duration(elapsed)}{RESET}"], avail)
 
 
+def seg_slowest(data, avail, theme):        # slowest single segment this render, SLO/SLA-colored
+    slow = data.get("slowest")
+    if not slow:                            # timing off (segment disabled) -> omit
+        return None
+    name, ns = slow
+    color = pick_color(ns, theme.ramps["slowest"])
+    dur = f"{color}{fmt_duration(ns)}{RESET}"
+    return _first_fitting([f"🐌 {name} {dur}", f"🐌 {dur}"], avail)   # drop name when tight
+
+
 def seg_dimensions(data, avail, theme):
     mark = "?" if data.get("dim_assumed") else ""
     return _first_fitting([f"{data['cols']}×{data['lines']}{mark}"], avail)
@@ -1130,7 +1147,8 @@ BUILDERS = {
     "model": seg_model, "time_ago": seg_time_ago, "clock": seg_clock,
     "effort": seg_effort, "lines": seg_lines, "cost": seg_cost,
     "total_time": seg_total_time, "api_time": seg_api_time,
-    "render_time": seg_render_time, "dimensions": seg_dimensions, "context": seg_context,
+    "render_time": seg_render_time, "slowest": seg_slowest,
+    "dimensions": seg_dimensions, "context": seg_context,
     "chat_size": seg_chat_size, "memory": seg_memory,
     "rate_limits": seg_rate_limits,
 }
@@ -1588,18 +1606,35 @@ def pack_line(keys, data, cols, cfg=None, theme=None, failed=None, builders=None
     builders = builders if builders is not None else _builders_for(cfg)
     budget = cols - RIGHT_MARGIN
     sep_w = visible_width(SEP)
+    # Only time builds when the `slowest` diagnostic segment is on — two
+    # perf_counter_ns reads per segment otherwise buy nothing. The running max is
+    # accumulated into data["slowest"] = (name, ns) (the key seg_slowest reads),
+    # so it survives across the per-line pack_line calls render() makes. `slowest`
+    # is laid out LAST on its line, so every other segment is timed before its
+    # readout is built.
+    track_slow = cfg.segments.get("slowest", False)
     kept, used = [], 0
     for key in keys:
         if not cfg.segments.get(key, False):   # flag gate: not built => no compute
             continue
         sep = sep_w if kept else 0
         avail = budget - used - sep
+        t0 = time.perf_counter_ns() if track_slow else 0
         s = safe_build(key, data, max(avail, 0), theme, failed, builders)
+        ns = time.perf_counter_ns() - t0 if track_slow else 0
         if not s:
             continue
         if key in PINNED or visible_width(s) <= avail:
             kept.append(s)
             used += visible_width(s) + sep
+            # Crown the slowest segment that actually RENDERED: a kept, non-crashed
+            # (key not in failed), non-meta segment. The meta-segments (slowest's own
+            # readout, render_time's whole-render timer) report the render, not a
+            # single builder, so they're never culprits.
+            if track_slow and key not in _SLOWEST_META and key not in failed:
+                cur = data.get("slowest")
+                if cur is None or ns > cur[1]:
+                    data["slowest"] = (key, ns)
     return SEP.join(kept)
 
 
@@ -1668,6 +1703,8 @@ def render(data, cols, lines, cfg=None, theme=None):
 #   api_time     📡 total API duration
 #   render_time  ⏱ status-line.py's own run time, SLO/SLA-colored via the
 #                render_time ramp
+#   slowest      🐌 the slowest single segment this render (name + duration),
+#                SLO/SLA-colored via the shared slowest ramp
 #   dimensions   terminal COLS×ROWS (off by default; debug)
 #   context      📊 context-window usage bar + percent           [pinned]
 #   chat_size    💾 transcript file size
