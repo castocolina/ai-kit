@@ -2,8 +2,10 @@ import importlib.util
 import json
 import os
 import stat
+import sys
 import tempfile
 import time
+import types
 import unittest
 
 _HERE = os.path.dirname(__file__)
@@ -13,11 +15,24 @@ _MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
 def load_module():
     spec = importlib.util.spec_from_file_location("status_line", _MODULE_PATH)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod          # register so @dataclass can resolve cls.__module__
     spec.loader.exec_module(mod)
     return mod
 
 
 sl = load_module()
+
+
+def _ctx_from_env(raw, env, cfg, t_start=None):
+    """Resolve the per-render SHELL inputs from `env` and build a Context — the
+    test-side mirror of what safe_render does in production (terminal size, HOME,
+    claude_dir, effort). Returns (ctx, cols, lines) for call-site convenience."""
+    cols, lines, assumed = sl.terminal_size(env)
+    home = env.get("HOME", "")
+    claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    ctx = sl.build_context(raw, cfg, sl.default_theme(), cols, lines, assumed, t_start,
+                           effort=sl.resolve_effort(raw, env), home=home, claude_dir=claude_dir)
+    return ctx, cols, lines
 
 
 def write_script(directory, name, body, executable=True):
@@ -59,12 +74,13 @@ class TestDiscover(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
-        self.env = {"XDG_CACHE_HOME": os.path.join(self.dir, "cache")}
+        # cache_dir is the resolved per-provider output cache directory (…/ai-kit/segments)
+        self.cache_dir = os.path.join(self.dir, "cache", "ai-kit", "segments")
 
     def test_executable_with_header_is_discovered(self):
         write_script(self.dir, "aws.sh",
                      "#!/bin/sh\n# ai-kit-segment: line=2 after=clock id=aws ttl=30\necho hi\n")
-        specs = sl.discover_external(self.dir, default_ttl=10, env=self.env)
+        specs = sl.discover_external(self.dir, default_ttl=10, cache_dir=self.cache_dir)
         self.assertEqual(len(specs), 1)
         s = specs[0]
         self.assertEqual(s.id, "aws")
@@ -76,7 +92,7 @@ class TestDiscover(unittest.TestCase):
 
     def test_no_header_uses_defaults_and_stem_id(self):
         write_script(self.dir, "clockx", "#!/bin/sh\necho hi\n")
-        specs = sl.discover_external(self.dir, default_ttl=7, env=self.env)
+        specs = sl.discover_external(self.dir, default_ttl=7, cache_dir=self.cache_dir)
         self.assertEqual(specs[0].id, "clockx")
         self.assertEqual(specs[0].position, ("end", ""))
         self.assertEqual(specs[0].line, 0)        # 0 => "last row", resolved at placement
@@ -84,16 +100,16 @@ class TestDiscover(unittest.TestCase):
 
     def test_non_executable_skipped(self):
         write_script(self.dir, "noexec", "#!/bin/sh\necho hi\n", executable=False)
-        self.assertEqual(sl.discover_external(self.dir, 10, self.env), [])
+        self.assertEqual(sl.discover_external(self.dir, 10, self.cache_dir), [])
 
     def test_sorted_by_filename_then_id(self):
         write_script(self.dir, "b.sh", "#!/bin/sh\n# ai-kit-segment: id=zeta\necho\n")
         write_script(self.dir, "a.sh", "#!/bin/sh\n# ai-kit-segment: id=omega\necho\n")
-        ids = [s.id for s in sl.discover_external(self.dir, 10, self.env)]
+        ids = [s.id for s in sl.discover_external(self.dir, 10, self.cache_dir)]
         self.assertEqual(ids, ["omega", "zeta"])   # a.sh before b.sh
 
     def test_missing_dir_returns_empty(self):
-        self.assertEqual(sl.discover_external("/no/such/dir", 10, self.env), [])
+        self.assertEqual(sl.discover_external("/no/such/dir", 10, self.cache_dir), [])
 
 
 class TestSanitize(unittest.TestCase):
@@ -136,7 +152,9 @@ class TestRunExternal(unittest.TestCase):
                           cache_path=os.path.join(self.cache, "t"))
 
     def _data(self):
-        return {"raw": {"workspace": {"current_dir": self.dir}}, "work_dir": self.dir}
+        return types.SimpleNamespace(
+            raw={"workspace": {"current_dir": self.dir}}, work_dir=self.dir
+        )
 
     def test_runs_and_returns_first_line(self):
         p = write_script(self.dir, "p", "#!/bin/sh\necho '\033[33mhi\033[0m'\n")
@@ -361,8 +379,9 @@ class TestRenderIntegration(unittest.TestCase):
         raw = {"workspace": {"current_dir": self.dir},
                "context_window": {"used_percentage": 10, "context_window_size": 200000},
                "session_id": "x", "transcript_path": "", "rate_limits": {}}
-        data, _c, _l = sl.build_data(raw, self.env)
-        return "\n".join(sl.render(data, cols, lines, cfg, theme))
+        env = {**self.env, "STATUSLINE_COLS": str(cols), "STATUSLINE_LINES": str(lines)}
+        data, _c, _l = _ctx_from_env(raw, env, cfg)
+        return "\n".join(sl.render(data, cfg, theme))
 
     def test_external_segment_appears_in_render(self):
         write_script(self.segs, "ping",
@@ -442,7 +461,7 @@ class TestSampleProvider(unittest.TestCase):
         spec = sl.ExtSpec(id="sysmem", path=os.path.abspath(self.PATH), line=1,
                           position=("after", "context"), timeout=3.0, ttl=0,
                           cache_path=os.path.join(tempfile.mkdtemp(), "sysmem"))
-        data = {"raw": {}, "work_dir": "."}
+        data = types.SimpleNamespace(raw={}, work_dir=".")
         out = sl.run_external(spec, data, 40)
         # Renders on Linux/macOS; on an unsupported platform it cleanly drops (None).
         if out is not None:
@@ -453,7 +472,7 @@ class TestSampleProvider(unittest.TestCase):
         spec = sl.ExtSpec(id="sysmem", path=os.path.abspath(self.PATH), line=1,
                           position=("end", ""), timeout=3.0, ttl=0,
                           cache_path=os.path.join(tempfile.mkdtemp(), "sysmem"))
-        out = sl.run_external(spec, {"raw": {}, "work_dir": "."}, 4)
+        out = sl.run_external(spec, types.SimpleNamespace(raw={}, work_dir="."), 4)
         if out is not None:
             self.assertLessEqual(sl.visible_width(out), 4)
 
