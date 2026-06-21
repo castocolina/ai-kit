@@ -1790,15 +1790,51 @@ def effort_setting_is_auto(work_dir, home):
     return True
 
 
-def build_data(raw, env, segments=None, t_start=None, git_ttl=_GIT_CACHE_TTL):
-    """Gather everything the builders read.
+class _RenderData(dict):
+    """Builder-facing data map. Cheap fields are eager; expensive probes (git,
+    transcript/todo parse, process RSS, `ago`, effort-auto) are deferred as lazy
+    thunks computed on first read and memoized into the dict — so the cost lands
+    inside the *measured* build of the segment that reads it (FR-R.2, option A),
+    and any later reader gets a free hit. A segment that is gated off never
+    builds, so its field is never read and its probe never runs: laziness IS the
+    compute gate for a single-consumer probe."""
 
-    Expensive probes — git (`git_snapshot`), the transcript parse (`current_todo`),
-    process RSS (`proc_rss_bytes`), the effort-settings/file stats — run ONLY
-    when their segment is enabled in `segments`. A disabled segment costs nothing
-    to *compute*, not just nothing to *render*: this is the compute half of the
-    same flag gate `pack_line` applies to rendering. `segments=None` computes
-    everything (used by tests and as a degrade-safe default)."""
+    def __init__(self, eager, lazy):
+        super().__init__(eager)
+        self._lazy = dict(lazy)            # {key: thunk}; a thunk fills its key(s)
+
+    def _ensure(self, key):
+        thunk = self._lazy.pop(key, None)
+        # A shared probe registers the SAME thunk under several keys (git ->
+        # branch/dirty/worktree/in_repo/wt_name). The first read pops one key and
+        # runs the thunk, which fills ALL of them; the sibling entries linger in
+        # _lazy but are dead — their keys are now present, so the `key not in self`
+        # guard below (and in get()) makes them no-ops. Intentional, not a leak.
+        if thunk is not None and key not in self:
+            thunk()
+
+    def __missing__(self, key):
+        if key in self._lazy:
+            self._ensure(key)
+            return dict.get(self, key)     # filled by the thunk (else None)
+        raise KeyError(key)
+
+    def get(self, key, default=None):
+        if key in self._lazy and key not in self:
+            self._ensure(key)
+        return super().get(key, default)
+
+
+def build_data(raw, env, segments=None, t_start=None, git_ttl=_GIT_CACHE_TTL):
+    """Gather everything the builders read, as a lazy `_RenderData`.
+
+    Cheap fields are eager; the expensive probes (git, transcript/todo parse,
+    process RSS, `ago`, effort-auto) are deferred into thunks so their cost is
+    captured inside the measured build of the segment that reads them (FR-R.2,
+    option A) and a disabled segment never triggers its probe. `segments=None`
+    enables everything (tests / degrade-safe default). The shared probes keep
+    their own caches, so a second consumer in one render is a cache hit and the
+    first consumer is credited the real cost."""
     def want(key):
         return segments is None or segments.get(key, False)
 
@@ -1818,37 +1854,14 @@ def build_data(raw, env, segments=None, t_start=None, git_ttl=_GIT_CACHE_TTL):
 
     cols, lines, assumed = terminal_size(env)
 
-    # One shared git_snapshot feeds branch + dirty + worktree, gated as a unit on
-    # any of the three git segments being enabled. Each probe inside is itself
-    # gated: the untracked walk on the `dirty` segment, the worktree rev-parse on
-    # the `worktree` segment (skipped entirely when that segment is off).
-    branch, dirty, is_worktree, wt_name, in_repo = "", "clean", False, "", False
-    if want("branch") or want("dirty") or want("worktree"):
-        snap = git_snapshot(work_dir, untracked=want("dirty"),
-                            want_worktree=want("worktree"), ttl=git_ttl, env=env)
-        branch, dirty, is_worktree = snap.branch, snap.dirty, snap.is_worktree
-        wt_name, in_repo = snap.wt_name, snap.in_repo
-
-    ago = ""
-    if want("time_ago") and transcript and os.path.isfile(transcript):
-        ago = fmt_ago(int(time.time()) - int(os.path.getmtime(transcript)))
-
-    effort = resolve_effort(raw, env)
-    effort_auto = effort_setting_is_auto(work_dir, home) if want("effort") else False
-    todo_state, todo_text = (current_todo(transcript, session, claude_dir)
-                             if want("todo") else (None, None))
-
-    data = {
+    eager = {
         "raw": raw,
         "model_name": model.get("display_name", ""),
         "model_id": model.get("id", "unknown"),
-        "effort": effort,
-        "effort_auto": effort_auto,
+        "effort": resolve_effort(raw, env),
         "work_dir": work_dir,
         "home": home,
-        "branch": branch, "dirty": dirty, "is_worktree": is_worktree,
-        "wt_name": wt_name, "in_repo": in_repo,
-        "clock": time.strftime("%H:%M"), "ago": ago,
+        "clock": time.strftime("%H:%M"),
         # `or 0` (not get's default) so a PRESENT-but-null field — what a fresh
         # /clear session sends before any tokens/cost accrue — coalesces to 0
         # instead of raising on int()/math and blanking the whole bar.
@@ -1859,14 +1872,47 @@ def build_data(raw, env, segments=None, t_start=None, git_ttl=_GIT_CACHE_TTL):
         "api_ms": cost.get("total_api_duration_ms") or 0,
         "context_pct": int(ctx.get("used_percentage") or 0),
         "context_max": ctx.get("context_window_size") or 0,
-        "chat_bytes": transcript_bytes(transcript) if want("chat_size") else None,
-        "mem_bytes": proc_rss_bytes() if want("memory") else None,
         "rate_limits": raw.get("rate_limits") or {},
-        "todo_state": todo_state, "todo_text": todo_text,
         "dim_assumed": assumed,
         "cols": cols, "lines": lines,
         "t_start": t_start,
     }
+
+    # One shared git_snapshot feeds branch + dirty + worktree; each inner probe
+    # stays gated on the segment that needs it (the untracked walk on `dirty`,
+    # the worktree rev-parse on `worktree`). Runs on first read of any git field.
+    def _git():
+        snap = git_snapshot(work_dir, untracked=want("dirty"),
+                            want_worktree=want("worktree"), ttl=git_ttl, env=env)
+        data.update(branch=snap.branch, dirty=snap.dirty, is_worktree=snap.is_worktree,
+                    wt_name=snap.wt_name, in_repo=snap.in_repo)
+
+    def _ago():
+        ok = transcript and os.path.isfile(transcript)
+        data["ago"] = (fmt_ago(int(time.time()) - int(os.path.getmtime(transcript)))
+                       if ok else "")
+
+    def _effort_auto():
+        data["effort_auto"] = effort_setting_is_auto(work_dir, home)
+
+    def _todo():
+        state, text = current_todo(transcript, session, claude_dir)
+        data.update(todo_state=state, todo_text=text)
+
+    def _chat():
+        data["chat_bytes"] = transcript_bytes(transcript)
+
+    def _mem():
+        data["mem_bytes"] = proc_rss_bytes()
+
+    lazy = {
+        "branch": _git, "dirty": _git, "is_worktree": _git,
+        "wt_name": _git, "in_repo": _git,
+        "ago": _ago, "effort_auto": _effort_auto,
+        "todo_state": _todo, "todo_text": _todo,
+        "chat_bytes": _chat, "mem_bytes": _mem,
+    }
+    data = _RenderData(eager, lazy)
     return data, cols, lines
 
 

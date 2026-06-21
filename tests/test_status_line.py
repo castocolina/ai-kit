@@ -867,17 +867,32 @@ class TestEndToEnd(unittest.TestCase):
 
 
 class TestLazyCompute(unittest.TestCase):
-    """A disabled segment must skip its probe in build_data, not just its render."""
+    """A disabled segment skips its probe across the WHOLE render; an enabled one
+    runs it exactly once, inside its measured build (FR-R.2 option A). Probes no
+    longer run in build_data — they are deferred to the segment that reads them,
+    so these drive the full build_data + render path."""
     RAW = {"workspace": {"current_dir": "."}, "transcript_path": ""}
+    EFFORT_RAW = {"workspace": {"current_dir": "."}, "transcript_path": "",
+                  "effort": {"level": "high"}}
     ENV = {"STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50", "HOME": "/home/u"}
 
+    def _build_and_render(self, segs, raw=None, git_ttl=sl._GIT_CACHE_TTL):
+        cfg = sl.default_config()
+        cfg.segments.clear()                       # cfg is a namedtuple; mutate the dict
+        cfg.segments.update(dict.fromkeys(sl.SEGMENTS, False))
+        cfg.segments.update(segs)
+        theme = sl.build_theme(cfg)
+        data, cols, lines = sl.build_data(raw or self.RAW, self.ENV, cfg.segments,
+                                          git_ttl=git_ttl)
+        sl.render(data, cols, lines, cfg, theme)
+        return data
+
     def test_disabled_segments_skip_their_probes(self):
-        segs = dict.fromkeys(sl.SEGMENTS, False)
         with mock.patch.object(sl, "git_snapshot") as gi, \
              mock.patch.object(sl, "current_todo") as ct, \
              mock.patch.object(sl, "proc_rss_bytes") as rss, \
              mock.patch.object(sl, "effort_setting_is_auto") as ea:
-            sl.build_data(self.RAW, self.ENV, segs)
+            self._build_and_render(dict.fromkeys(sl.SEGMENTS, False))
             gi.assert_not_called()
             ct.assert_not_called()
             rss.assert_not_called()
@@ -890,52 +905,52 @@ class TestLazyCompute(unittest.TestCase):
              mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct, \
              mock.patch.object(sl, "proc_rss_bytes", return_value=1) as rss, \
              mock.patch.object(sl, "effort_setting_is_auto", return_value=True) as ea:
-            sl.build_data(self.RAW, self.ENV, segs)
-            gi.assert_called_once()      # branch enabled -> git probe runs
-            ct.assert_called_once()      # todo enabled  -> transcript parse runs
-            rss.assert_called_once()     # memory enabled
-            ea.assert_called_once()      # effort enabled
+            self._build_and_render(segs, raw=self.EFFORT_RAW)
+            gi.assert_called_once()      # branch built -> git probe runs
+            ct.assert_called_once()      # todo built  -> transcript parse runs
+            rss.assert_called_once()     # memory built
+            ea.assert_called_once()      # effort built (level present -> auto checked)
 
     def test_dirty_alone_still_triggers_git(self):
         # branch + dirty share one git_snapshot call; either flag must trigger it.
-        segs = dict.fromkeys(sl.SEGMENTS, False)
-        segs["dirty"] = True
         with mock.patch.object(sl, "git_snapshot",
                                return_value=sl.GitSnapshot(True, "", "modified", False, "")) as gi:
-            sl.build_data(self.RAW, self.ENV, segs)
+            self._build_and_render({"dirty": True})
             gi.assert_called_once()
 
     def test_none_segments_computes_everything(self):
-        # back-compat / degrade-safe: no segments map -> compute all probes
-        with mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct:
-            sl.build_data(self.RAW, self.ENV)
+        # back-compat / degrade-safe: build_data(segments=None) gates nothing by
+        # flag; rendering an all-on config fires the probes (here the todo parse).
+        cfg = sl.default_config()
+        theme = sl.build_theme(cfg)
+        with mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct, \
+             mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "m", "clean", False, "")):
+            data, cols, lines = sl.build_data(self.RAW, self.ENV)  # segments=None
+            sl.render(data, cols, lines, cfg, theme)
             ct.assert_called_once()
 
     def test_git_ttl_threaded_to_snapshot(self):
         # The resolved [git] cache_ttl flows through build_data into git_snapshot.
-        segs = {"worktree": True}
         with mock.patch.object(sl, "git_snapshot",
                                return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gs:
-            sl.build_data(self.RAW, self.ENV, segs, git_ttl=42)
+            self._build_and_render({"worktree": True}, git_ttl=42)
             self.assertEqual(gs.call_args.kwargs.get("ttl"), 42)
 
     def test_git_probes_follow_their_segments(self):
         # untracked walk follows `dirty`; worktree (rev-parse) follows the
         # `worktree` segment toggle. git_snapshot runs whenever ANY of branch/dirty/
-        # worktree is on.
+        # worktree is built, with the inner gates set by those segments' flags.
         for branch_on, dirty_on, wt_on in (
             (True, False, True), (True, False, False),
             (False, True, False), (False, False, True),
             (True, True, True),
         ):
-            segs = dict.fromkeys(sl.SEGMENTS, False)
-            segs["branch"] = branch_on
-            segs["dirty"] = dirty_on
-            segs["worktree"] = wt_on
             with mock.patch.object(
                     sl, "git_snapshot",
                     return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi:
-                sl.build_data(self.RAW, self.ENV, segs)
+                self._build_and_render(
+                    {"branch": branch_on, "dirty": dirty_on, "worktree": wt_on})
                 gi.assert_called_once()
                 self.assertEqual(gi.call_args.kwargs.get("untracked"), dirty_on)
                 self.assertEqual(gi.call_args.kwargs.get("want_worktree"), wt_on)
@@ -1833,6 +1848,35 @@ class TestRendererRobustness(unittest.TestCase):
         self.assertNotIn("status-line error", text)
         self.assertNotIn("⚠", text)        # no per-segment crashes either
         self.assertTrue(text.strip())       # and the bar is not blank
+
+
+class TestRenderDataLazy(unittest.TestCase):
+    """FR-R.2 (option A): expensive probes run inside the measured build of the
+    segment that reads them, not eagerly in build_data — so the cost is captured
+    by safe_build's timing and the shared probe still runs at most once."""
+
+    def test_git_probe_deferred_to_render_and_runs_once(self):
+        snap = sl.GitSnapshot(True, "main", "modified", False, "")
+        raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s"}
+        cfg = sl.default_config()
+        theme = sl.build_theme(cfg)
+        with mock.patch.object(sl, "git_snapshot", return_value=snap) as gs:
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg.segments)
+            self.assertEqual(gs.call_count, 0, "git probe must NOT run during build_data")
+            sl.render(data, cols, lines, cfg, theme)
+            self.assertEqual(gs.call_count, 1, "git probe runs exactly once during render")
+
+    def test_disabled_git_segments_skip_the_probe(self):
+        raw = {"workspace": {"current_dir": "/repo"}}
+        cfg = sl.default_config()
+        cfg.segments["branch"] = False
+        cfg.segments["dirty"] = False
+        cfg.segments["worktree"] = False
+        theme = sl.build_theme(cfg)
+        with mock.patch.object(sl, "git_snapshot") as gs:
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg.segments)
+            sl.render(data, cols, lines, cfg, theme)
+            self.assertEqual(gs.call_count, 0, "no git segment enabled => no git probe")
 
 
 class TestGoldenOutput(unittest.TestCase):
