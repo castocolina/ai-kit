@@ -890,8 +890,8 @@ class TestLazyCompute(unittest.TestCase):
         cfg.segments.update(dict.fromkeys(sl.SEGMENTS, False))
         cfg.segments.update(segs)
         theme = sl.build_theme(cfg)
-        data, cols, lines = sl.build_data(raw or self.RAW, self.ENV, cfg.segments,
-                                          git_ttl=git_ttl)
+        # build_data is segment-agnostic; cfg.segments gates probes via render().
+        data, cols, lines = sl.build_data(raw or self.RAW, self.ENV, git_ttl=git_ttl)
         sl.render(data, cols, lines, cfg, theme)
         return data
 
@@ -927,8 +927,8 @@ class TestLazyCompute(unittest.TestCase):
             gi.assert_called_once()
 
     def test_none_segments_computes_everything(self):
-        # back-compat / degrade-safe: build_data(segments=None) gates nothing by
-        # flag; rendering an all-on config fires the probes (here the todo parse).
+        # build_data is segment-agnostic: it never gates by flag. Rendering an
+        # all-on config fires the probes (here the todo parse).
         cfg = sl.default_config()
         theme = sl.build_theme(cfg)
         with mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct, \
@@ -945,10 +945,10 @@ class TestLazyCompute(unittest.TestCase):
             self._build_and_render({"worktree": True}, git_ttl=42)
             self.assertEqual(gs.call_args.kwargs.get("ttl"), 42)
 
-    def test_git_probes_follow_their_segments(self):
-        # untracked walk follows `dirty`; worktree (rev-parse) follows the
-        # `worktree` segment toggle. git_snapshot runs whenever ANY of branch/dirty/
-        # worktree is built, with the inner gates set by those segments' flags.
+    def test_git_probe_fires_for_any_git_segment_agnostically(self):
+        # build_data is segment-agnostic: git_snapshot runs once whenever ANY of
+        # branch/dirty/worktree is built — in full (no per-segment untracked/
+        # want_worktree flags threaded in) — and not at all when none are.
         for branch_on, dirty_on, wt_on in (
             (True, False, True), (True, False, False),
             (False, True, False), (False, False, True),
@@ -960,8 +960,15 @@ class TestLazyCompute(unittest.TestCase):
                 self._build_and_render(
                     {"branch": branch_on, "dirty": dirty_on, "worktree": wt_on})
                 gi.assert_called_once()
-                self.assertEqual(gi.call_args.kwargs.get("untracked"), dirty_on)
-                self.assertEqual(gi.call_args.kwargs.get("want_worktree"), wt_on)
+                # No segment-derived flags leak into the call (agnostic probe).
+                self.assertNotIn("untracked", gi.call_args.kwargs)
+                self.assertNotIn("want_worktree", gi.call_args.kwargs)
+
+        with mock.patch.object(
+                sl, "git_snapshot",
+                return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi:
+            self._build_and_render({"branch": False, "dirty": False, "worktree": False})
+            gi.assert_not_called()                  # no git segment built -> no probe
 
 
 class TestBlueFix(unittest.TestCase):
@@ -1869,7 +1876,7 @@ class TestRenderDataLazy(unittest.TestCase):
         cfg = sl.default_config()
         theme = sl.build_theme(cfg)
         with mock.patch.object(sl, "git_snapshot", return_value=snap) as gs:
-            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg.segments)
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"})
             self.assertEqual(gs.call_count, 0, "git probe must NOT run during build_data")
             sl.render(data, cols, lines, cfg, theme)
             self.assertEqual(gs.call_count, 1, "git probe runs exactly once during render")
@@ -1882,7 +1889,7 @@ class TestRenderDataLazy(unittest.TestCase):
         cfg.segments["worktree"] = False
         theme = sl.build_theme(cfg)
         with mock.patch.object(sl, "git_snapshot") as gs:
-            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg.segments)
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"})
             sl.render(data, cols, lines, cfg, theme)
             self.assertEqual(gs.call_count, 0, "no git segment enabled => no git probe")
 
@@ -1901,7 +1908,7 @@ class TestSlowestTruthful(unittest.TestCase):
             return sl.GitSnapshot(True, "main", "modified", False, "")
 
         with mock.patch.object(sl, "git_snapshot", side_effect=slow_git):
-            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg.segments)
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"})
             sl.render(data, cols, lines, cfg, theme)
         name, ns = data["slowest"]
         self.assertIn(name, ("branch", "dirty", "worktree"))  # a real git consumer
@@ -1920,7 +1927,7 @@ class TestTwoPassLayout(unittest.TestCase):
         theme = sl.build_theme(cfg)
         with mock.patch.object(sl, "git_snapshot",
                                return_value=sl.GitSnapshot(True, "main", "modified", False, "")):
-            data, _c, _l = sl.build_data(raw, {"HOME": "/h"}, cfg.segments,
+            data, _c, _l = sl.build_data(raw, {"HOME": "/h"},
                                          t_start=time.perf_counter_ns())
             out = sl.render(data, 200, 50, cfg, theme)
         return next(strip(l) for l in out if "⏱" in strip(l))
@@ -1976,8 +1983,7 @@ class TestGoldenOutput(unittest.TestCase):
         blocks = []
         with self._deterministic():
             for c in cases:
-                data, _cols, _lines = sl.build_data(c["raw"], self.ENV, cfg.segments,
-                                                    t_start=None)
+                data, _cols, _lines = sl.build_data(c["raw"], self.ENV, t_start=None)
                 data["cols"], data["lines"] = c["cols"], c["lines"]
                 out = sl.render(data, c["cols"], c["lines"], cfg, theme)
                 blocks.append(f"### {c['name']}\n" + "\n".join(strip(l) for l in out))

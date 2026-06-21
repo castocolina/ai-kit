@@ -30,9 +30,9 @@ from datetime import datetime
 
 # ═══ CONFIG — edit freely ════════════════════════════════════════════════════
 # Per-segment on/off. Set False to hide a segment entirely: its builder is never
-# called AND its data is never gathered, so a disabled segment costs nothing —
-# `build_data` skips the matching probe (git/transcript/RSS/etc.). Invariant:
-# keep "path" True so the identity line always emits.
+# called, so its data is never read and the matching lazy probe (git/transcript/
+# RSS/etc.) never runs — a disabled segment costs nothing. Invariant: keep "path"
+# True so the identity line always emits.
 SEGMENTS = {
     # identity line
     "path": True, "branch": True, "dirty": True, "worktree": True, "todo": True,
@@ -86,6 +86,47 @@ _GIT_DEFAULTS = {"cache_ttl": _GIT_CACHE_TTL}
 # config carrying `[git] worktree = true/false` keeps loading cleanly after the
 # knob moved to `segments.worktree`.
 _GIT_LEGACY_IGNORED = frozenset({"worktree"})
+
+# ── Color & effort defaults (the override baselines) ─────────────────────────
+# Overridable palette: NAME -> default SGR params (no "\033[" / "m" wrapper).
+# Values are pure hues — no baked-in bold. Emphasis is expressed on the ramp
+# bands via "+modifiers" (e.g. "RED+bold"); see _RAMP_DEFAULTS. A [palette]
+# override replaces a value here; build_theme resolves these into a Theme.
+_PALETTE_DEFAULTS = {            # pure hues — no baked-in bold
+    "GREY": "90", "WHITE": "97", "CYAN": "36", "GREEN": "32", "RED": "31",
+    "YELLOW": "33", "MAGENTA": "35", "ORANGE": "38;5;208",
+    "BLUE": "38;5;39",           # lightened (was 38;5;33); shade reviewed on-terminal
+    "LIGHTBLUE": "38;5;75", "MAGENTA_DARK": "38;5;90",
+}   # ORANGE_BOLD / MAGENTA_DARK_BOLD removed — bold now lives on the ramp band
+
+# Ramps as data: band -> [(threshold, colorspec)]. Threshold keys go through
+# _parse_threshold (percent / byte-suffix / inf); colorspecs through parse_color
+# against the resolved palette. [ramp.X] in config REPLACES a band wholesale.
+_RAMP_DEFAULTS = {
+    "context": [(10, "WHITE"), (15, "CYAN"), (20, "BLUE"), (25, "GREEN"),
+                (30, "YELLOW"), (40, "ORANGE+bold"), (50, "RED+bold"),
+                ("inf", "MAGENTA_DARK+bold")],
+    "rate": [(50, "GREEN"), (80, "YELLOW"), ("inf", "RED+bold")],
+    "chat_size": [("512k", "WHITE"), ("1M", "CYAN"), ("2M", "LIGHTBLUE"),
+                  ("3M", "GREEN"), ("4M", "YELLOW"), ("5M", "ORANGE"),
+                  ("10M", "RED+bold"), ("inf", "MAGENTA")],
+    # render_time: the status line's own run time (SLO/SLA). Thresholds are time
+    # units (ns/µs/ms/s); green under the SLO, yellow under the SLA, red beyond.
+    "render_time": [("50ms", "GREEN"), ("150ms", "YELLOW"), ("inf", "RED+bold")],
+    # slowest: the single per-segment SLO/SLA ramp the `slowest` segment colors by
+    # (one shared band — NO per-segment override bands). Tighter than render_time
+    # since it grades ONE builder, not the whole render.
+    "slowest": [("15ms", "GREEN"), ("40ms", "YELLOW"), ("inf", "RED+bold")],
+}
+
+# Effort ladder: level -> (palette name, fill count 1..5). Palette-derived but
+# NOT user-configurable. `auto` is a setting and `ultracode` reports as xhigh —
+# neither is a level here.
+_EFFORT_DEFAULTS = {
+    "low": ("CYAN", 1), "medium": ("BLUE", 2), "high": ("YELLOW", 3),
+    "xhigh": ("ORANGE", 4), "max": ("RED", 5),
+}
+_EFFORT_GLYPHS = "▁▃▄▆█"
 
 
 def _git_key_problem(k, v):
@@ -323,46 +364,6 @@ def _doctor_cmd():
     if path == home or path.startswith(home + os.sep):
         path = "~" + path[len(home):]
     return f"{py} {path} --doctor"
-
-# Overridable palette: NAME -> default SGR params (no "\033[" / "m" wrapper).
-# Values are pure hues — no baked-in bold. Emphasis is expressed on the ramp
-# bands via "+modifiers" (e.g. "RED+bold"); see _RAMP_DEFAULTS. A [palette]
-# override replaces a value here; build_theme resolves these into a Theme.
-_PALETTE_DEFAULTS = {            # pure hues — no baked-in bold
-    "GREY": "90", "WHITE": "97", "CYAN": "36", "GREEN": "32", "RED": "31",
-    "YELLOW": "33", "MAGENTA": "35", "ORANGE": "38;5;208",
-    "BLUE": "38;5;39",           # lightened (was 38;5;33); shade reviewed on-terminal
-    "LIGHTBLUE": "38;5;75", "MAGENTA_DARK": "38;5;90",
-}   # ORANGE_BOLD / MAGENTA_DARK_BOLD removed — bold now lives on the ramp band
-
-# Ramps as data: band -> [(threshold, colorspec)]. Threshold keys go through
-# _parse_threshold (percent / byte-suffix / inf); colorspecs through parse_color
-# against the resolved palette. [ramp.X] in config REPLACES a band wholesale.
-_RAMP_DEFAULTS = {
-    "context": [(10, "WHITE"), (15, "CYAN"), (20, "BLUE"), (25, "GREEN"),
-                (30, "YELLOW"), (40, "ORANGE+bold"), (50, "RED+bold"),
-                ("inf", "MAGENTA_DARK+bold")],
-    "rate": [(50, "GREEN"), (80, "YELLOW"), ("inf", "RED+bold")],
-    "chat_size": [("512k", "WHITE"), ("1M", "CYAN"), ("2M", "LIGHTBLUE"),
-                  ("3M", "GREEN"), ("4M", "YELLOW"), ("5M", "ORANGE"),
-                  ("10M", "RED+bold"), ("inf", "MAGENTA")],
-    # render_time: the status line's own run time (SLO/SLA). Thresholds are time
-    # units (ns/µs/ms/s); green under the SLO, yellow under the SLA, red beyond.
-    "render_time": [("50ms", "GREEN"), ("150ms", "YELLOW"), ("inf", "RED+bold")],
-    # slowest: the single per-segment SLO/SLA ramp the `slowest` segment colors by
-    # (one shared band — NO per-segment override bands). Tighter than render_time
-    # since it grades ONE builder, not the whole render.
-    "slowest": [("15ms", "GREEN"), ("40ms", "YELLOW"), ("inf", "RED+bold")],
-}
-
-# Effort ladder: level -> (palette name, fill count 1..5). Palette-derived but
-# NOT user-configurable. `auto` is a setting and `ultracode` reports as xhigh —
-# neither is a level here.
-_EFFORT_DEFAULTS = {
-    "low": ("CYAN", 1), "medium": ("BLUE", 2), "high": ("YELLOW", 3),
-    "xhigh": ("ORANGE", 4), "max": ("RED", 5),
-}
-_EFFORT_GLYPHS = "▁▃▄▆█"
 
 INF = float("inf")
 
@@ -1638,7 +1639,7 @@ def pack_line(keys, data, cols, cfg=None, theme=None, failed=None, builders=None
     LAYOUT positions, not forced last. So: pass 1 builds + times every non-meta
     segment left->right (crowning the slowest via _crown_slowest, whose timing now
     includes each segment's first-read probe cost thanks to FR-R.2's lazy
-    _RenderData); pass 2 builds the meta segments now that `data["slowest"]` and
+    _LazyData); pass 2 builds the meta segments now that `data["slowest"]` and
     `t_start` are settled; then assembly places everything in LAYOUT order, fitting
     left->right with all widths known. Pinned segments are always kept; otherwise
     leftmost survive when space is tight. `builders` carries the merged built-in +
@@ -1812,54 +1813,48 @@ def effort_setting_is_auto(work_dir, home):
     return True
 
 
-class _RenderData(dict):
-    """Builder-facing data map. Cheap fields are eager; expensive probes (git,
-    transcript/todo parse, process RSS, `ago`, effort-auto) are deferred as lazy
-    thunks computed on first read and memoized into the dict — so the cost lands
-    inside the *measured* build of the segment that reads it (FR-R.2, option A),
-    and any later reader gets a free hit. A segment that is gated off never
-    builds, so its field is never read and its probe never runs: laziness IS the
-    compute gate for a single-consumer probe."""
+class _LazyData(dict):
+    """Builder-facing data map. `base` values are stored directly; each `probes`
+    entry is a thunk that fills its key on first read and memoizes the result, so
+    an expensive probe's cost lands inside the *measured* build of the segment
+    that reads it (FR-R.2, option A) and later reads are free. Builders read via
+    .get(), so both .get() and item access trigger the probe. A shared probe (git
+    -> branch/dirty/worktree/in_repo/wt_name) registers ONE thunk under several
+    keys; the first read runs it and fills them all, and the `key not in self`
+    guard keeps the now-dead sibling entries no-ops."""
 
-    def __init__(self, eager, lazy):
-        super().__init__(eager)
-        self._lazy = dict(lazy)            # {key: thunk}; a thunk fills its key(s)
+    def __init__(self, base, probes):
+        super().__init__(base)
+        self._probes = probes              # {key: thunk}; a thunk fills its key(s)
 
-    def _ensure(self, key):
-        thunk = self._lazy.pop(key, None)
-        # A shared probe registers the SAME thunk under several keys (git ->
-        # branch/dirty/worktree/in_repo/wt_name). The first read pops one key and
-        # runs the thunk, which fills ALL of them; the sibling entries linger in
-        # _lazy but are dead — their keys are now present, so the `key not in self`
-        # guard below (and in get()) makes them no-ops. Intentional, not a leak.
-        if thunk is not None and key not in self:
-            thunk()
+    def _resolve(self, key):
+        probe = self._probes.pop(key, None)
+        if probe is not None and key not in self:
+            probe()
 
-    def __missing__(self, key):
-        if key in self._lazy:
-            self._ensure(key)
-            return dict.get(self, key)     # filled by the thunk (else None)
+    def __missing__(self, key):            # data[key]
+        self._resolve(key)
+        if key in self:
+            return self[key]
         raise KeyError(key)
 
-    def get(self, key, default=None):
-        if key in self._lazy and key not in self:
-            self._ensure(key)
+    def get(self, key, default=None):      # data.get(key) — the path builders use
+        self._resolve(key)
         return super().get(key, default)
 
 
-def build_data(raw, env, segments=None, t_start=None, git_ttl=_GIT_CACHE_TTL):
-    """Gather everything the builders read, as a lazy `_RenderData`.
+def build_data(raw, env, t_start=None, git_ttl=_GIT_CACHE_TTL):
+    """Gather everything the builders read, as a lazy `_LazyData`.
 
-    Cheap fields are eager; the expensive probes (git, transcript/todo parse,
+    Segment-agnostic: it does not know which segments are enabled. Cheap fields
+    are computed up front; the expensive probes (git, transcript/todo parse,
     process RSS, `ago`, effort-auto) are deferred into thunks so their cost is
     captured inside the measured build of the segment that reads them (FR-R.2,
-    option A) and a disabled segment never triggers its probe. `segments=None`
-    enables everything (tests / degrade-safe default). The shared probes keep
-    their own caches, so a second consumer in one render is a cache hit and the
-    first consumer is credited the real cost."""
-    def want(key):
-        return segments is None or segments.get(key, False)
-
+    option A). Laziness IS the compute gate — a probe runs only when an enabled
+    segment reads its field, so a disabled segment (never built by the packer)
+    never triggers it. The shared probes keep their own caches, so a second
+    consumer in one render is a cache hit and the first is credited the real
+    cost. `t_start` is the render's start timestamp (the total-render measure)."""
     model = raw.get("model") or {}
     cost = raw.get("cost") or {}
     ctx = raw.get("context_window") or {}
@@ -1876,7 +1871,7 @@ def build_data(raw, env, segments=None, t_start=None, git_ttl=_GIT_CACHE_TTL):
 
     cols, lines, assumed = terminal_size(env)
 
-    eager = {
+    base = {
         "raw": raw,
         "model_name": model.get("display_name", ""),
         "model_id": model.get("id", "unknown"),
@@ -1900,12 +1895,12 @@ def build_data(raw, env, segments=None, t_start=None, git_ttl=_GIT_CACHE_TTL):
         "t_start": t_start,
     }
 
-    # One shared git_snapshot feeds branch + dirty + worktree; each inner probe
-    # stays gated on the segment that needs it (the untracked walk on `dirty`,
-    # the worktree rev-parse on `worktree`). Runs on first read of any git field.
+    # One shared git_snapshot feeds branch + dirty + worktree, run on first read
+    # of any git field. It probes in full (untracked walk + worktree rev-parse);
+    # laziness already gates the whole call on at least one git segment being
+    # built, so there is no per-segment flag to thread through here.
     def _git():
-        snap = git_snapshot(work_dir, untracked=want("dirty"),
-                            want_worktree=want("worktree"), ttl=git_ttl, env=env)
+        snap = git_snapshot(work_dir, ttl=git_ttl, env=env)
         data.update(branch=snap.branch, dirty=snap.dirty, is_worktree=snap.is_worktree,
                     wt_name=snap.wt_name, in_repo=snap.in_repo)
 
@@ -1927,14 +1922,14 @@ def build_data(raw, env, segments=None, t_start=None, git_ttl=_GIT_CACHE_TTL):
     def _mem():
         data["mem_bytes"] = proc_rss_bytes()
 
-    lazy = {
+    probes = {
         "branch": _git, "dirty": _git, "is_worktree": _git,
         "wt_name": _git, "in_repo": _git,
         "ago": _ago, "effort_auto": _effort_auto,
         "todo_state": _todo, "todo_text": _todo,
         "chat_bytes": _chat, "mem_bytes": _mem,
     }
-    data = _RenderData(eager, lazy)
+    data = _LazyData(base, probes)
     return data, cols, lines
 
 
@@ -2085,7 +2080,7 @@ def _dry_render_failures(cfg, theme, env):
     raises on a missing/malformed key won't be surfaced by this happy-path sample."""
     failed = set()
     data, _cols, _lines = build_data(
-        dict(_DOCTOR_SAMPLE), env, cfg.segments, time.perf_counter_ns(),
+        dict(_DOCTOR_SAMPLE), env, time.perf_counter_ns(),
         git_ttl=(cfg.git or {}).get("cache_ttl", _GIT_CACHE_TTL))
     for key in BUILDERS:
         safe_build(key, data, 200, theme, failed)
@@ -2158,7 +2153,7 @@ def safe_render(raw, env, cfg, theme, t_start):
     above safe_build's per-segment isolation (covers build_data itself)."""
     try:
         data, cols, lines = build_data(
-            raw, env, cfg.segments, t_start,
+            raw, env, t_start,
             git_ttl=(cfg.git or {}).get("cache_ttl", _GIT_CACHE_TTL))
         return render(data, cols, lines, cfg, theme)
     except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation

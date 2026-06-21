@@ -361,7 +361,7 @@ class TestRenderIntegration(unittest.TestCase):
         raw = {"workspace": {"current_dir": self.dir},
                "context_window": {"used_percentage": 10, "context_window_size": 200000},
                "session_id": "x", "transcript_path": "", "rate_limits": {}}
-        data, _c, _l = sl.build_data(raw, self.env, cfg.segments)
+        data, _c, _l = sl.build_data(raw, self.env)
         return "\n".join(sl.render(data, cols, lines, cfg, theme))
 
     def test_external_segment_appears_in_render(self):
