@@ -510,23 +510,26 @@ class TestSlowestTiming(unittest.TestCase):
         sl.pack_line(["empty_seg", "fast_seg"], data, 200, cfg=cfg, builders=builders)
         self.assertNotEqual(data.get("slowest", (None,))[0], "empty_seg")
 
-    def test_slowest_is_last_on_its_layout_line(self):
-        # H1: seg_slowest reads data["slowest"] as it builds, so it must be LAST on
-        # its line — else segments after it are timed too late to ever be reported.
+    def test_slowest_built_after_non_meta_regardless_of_position(self):
+        # FR-R.3: with the two-pass packer, every non-meta build is timed in pass 1
+        # before any meta segment is built in pass 2, so slowest no longer has to be
+        # last on its line — it sits right after render_time.
         line = next(l for l in sl.LAYOUT if "slowest" in l.segments)
-        self.assertEqual(line.segments[-1], "slowest")
+        self.assertNotEqual(line.segments[-1], "slowest")
+        self.assertEqual(line.segments.index("slowest"),
+                         line.segments.index("render_time") + 1)
 
-    def test_later_segment_reported_when_slowest_last(self):
-        # With slowest last, a segment built before it (but after where the buggy
-        # index-1 placement sat) is captured AND named by seg_slowest.
+    def test_later_segment_reported_even_when_slowest_precedes_it(self):
+        # Two-pass: a slow non-meta segment is timed in pass 1, so seg_slowest names
+        # it even when `slowest` is positioned BEFORE it in the key order.
         builders = dict(sl.BUILDERS)
         builders["slow_seg"] = self._slow
         cfg = sl.default_config()
         cfg.segments.update({"slowest": True, "slow_seg": True})
         data = _data()
-        out = sl.pack_line(["slow_seg", "slowest"], data, 200, cfg=cfg, builders=builders)
+        out = sl.pack_line(["slowest", "slow_seg"], data, 200, cfg=cfg, builders=builders)
         self.assertEqual(data["slowest"][0], "slow_seg")
-        self.assertIn("slow_seg", strip(out))      # seg_slowest (built last) names it
+        self.assertIn("slow_seg", strip(out))      # seg_slowest (built in pass 2) names it
 
     def test_render_time_not_crowned_slowest(self):
         # M1: render_time is a meta-segment (reports the whole render); never a culprit.
@@ -1903,6 +1906,36 @@ class TestSlowestTruthful(unittest.TestCase):
         name, ns = data["slowest"]
         self.assertIn(name, ("branch", "dirty", "worktree"))  # a real git consumer
         self.assertGreater(ns, 1_000_000)                     # >1ms, not µs
+
+
+class TestTwoPassLayout(unittest.TestCase):
+    """FR-R.3: a measured pass times every non-meta segment, then assembly places
+    render_time/slowest at their LAYOUT positions — so slowest no longer has to be
+    last on its line and sits adjacent to render_time by default."""
+
+    def _diag_line(self):
+        raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s",
+               "cost": {"total_cost_usd": 0.5}}
+        cfg = sl.default_config()
+        theme = sl.build_theme(cfg)
+        with mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "main", "modified", False, "")):
+            data, _c, _l = sl.build_data(raw, {"HOME": "/h"}, cfg.segments,
+                                         t_start=time.perf_counter_ns())
+            out = sl.render(data, 200, 50, cfg, theme)
+        return next(strip(l) for l in out if "⏱" in strip(l))
+
+    def test_slowest_adjacent_to_render_time(self):
+        diag = self._diag_line()
+        i, j = diag.index("⏱"), diag.index("🐌")
+        self.assertGreater(j, i)              # slowest comes after render_time
+        self.assertNotIn("📊", diag[i:j])     # context not wedged between them
+
+    def test_slowest_not_forced_last_in_layout(self):
+        line = next(l for l in sl.LAYOUT if "slowest" in l.segments)
+        self.assertNotEqual(line.segments[-1], "slowest")
+        self.assertEqual(line.segments.index("slowest"),
+                         line.segments.index("render_time") + 1)
 
 
 class TestGoldenOutput(unittest.TestCase):

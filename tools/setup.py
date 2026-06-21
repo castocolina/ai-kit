@@ -78,8 +78,8 @@ LAYOUT_DEFAULTS = [
     {"min_rows": 0, "segments": ["path", "branch", "worktree", "dirty", "todo"]},
     {"min_rows": 20, "segments": ["model", "time_ago", "clock", "effort", "lines",
                                   "cost", "total_time", "api_time"]},
-    {"min_rows": 30, "segments": ["render_time", "dimensions", "context",
-                                  "chat_size", "memory", "rate_limits", "slowest"]},
+    {"min_rows": 30, "segments": ["render_time", "slowest", "dimensions",
+                                  "context", "chat_size", "memory", "rate_limits"]},
 ]
 
 

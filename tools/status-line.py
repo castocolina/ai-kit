@@ -62,8 +62,8 @@ LAYOUT = [
     Line(0,  ["path", "branch", "worktree", "dirty", "todo"]),
     Line(20, ["model", "time_ago", "clock", "effort", "lines",
               "cost", "total_time", "api_time"]),
-    Line(30, ["render_time", "dimensions", "context", "chat_size", "memory",
-              "rate_limits", "slowest"]),
+    Line(30, ["render_time", "slowest", "dimensions", "context", "chat_size",
+              "memory", "rate_limits"]),
 ]
 PINNED = {"path", "context"}   # always rendered even if they overflow the budget
 # Meta-segments: they report the whole render, not a single builder, so the
@@ -1631,40 +1631,59 @@ def _crown_slowest(data, key, ns, failed):
 
 
 def pack_line(keys, data, cols, cfg=None, theme=None, failed=None, builders=None):
-    """Best-fit pack enabled segments into cols - RIGHT_MARGIN.
+    """Best-fit pack enabled segments into cols - RIGHT_MARGIN, in two passes.
 
-    For each key (left->right), compute the space available at this position
-    (budget - used - separator), ask the builder for content sized to it, and
-    keep it if it is non-empty and fits — else skip it and keep trying the rest.
-    Pinned segments are always kept. Order is priority: leftmost survive.
-    `builders` carries the merged built-in + external map; defaults to that
-    derived from cfg."""
+    The meta segments (`render_time`, `slowest`) report the whole render, so they
+    can only be built once every other build is timed — but they live at their own
+    LAYOUT positions, not forced last. So: pass 1 builds + times every non-meta
+    segment left->right (crowning the slowest via _crown_slowest, whose timing now
+    includes each segment's first-read probe cost thanks to FR-R.2's lazy
+    _RenderData); pass 2 builds the meta segments now that `data["slowest"]` and
+    `t_start` are settled; then assembly places everything in LAYOUT order, fitting
+    left->right with all widths known. Pinned segments are always kept; otherwise
+    leftmost survive when space is tight. `builders` carries the merged built-in +
+    external map; defaults to that derived from cfg."""
     cfg = cfg or default_config()
     theme = theme or build_theme(cfg)
     failed = failed if failed is not None else set()
     builders = builders if builders is not None else _builders_for(cfg)
     budget = cols - RIGHT_MARGIN
     sep_w = visible_width(SEP)
-    # Time EVERY build (two perf_counter_ns reads are negligible next to a segment
-    # build) and let _crown_slowest track the running max into data["slowest"] =
-    # (name, ns) — the key seg_slowest reads. With FR-R.2's lazy _RenderData the
-    # build's bracket now also captures the segment's first-read probe cost, so the
-    # crowned time is the segment's REAL cost, not just its formatting.
-    kept, used = [], 0
-    for key in keys:
-        if not cfg.segments.get(key, False):   # flag gate: not built => no compute
+
+    enabled = [k for k in keys if cfg.segments.get(k, False)]   # flag gate
+    built = {}
+    # Pass 1: build + time every non-meta enabled segment, crowning the slowest.
+    used_est = 0
+    for key in enabled:
+        if key in _SLOWEST_META:
             continue
-        sep = sep_w if kept else 0
-        avail = budget - used - sep
+        sep = sep_w if used_est else 0
+        avail = max(budget - used_est - sep, 0)
         t0 = time.perf_counter_ns()
-        s = safe_build(key, data, max(avail, 0), theme, failed, builders)
+        s = safe_build(key, data, avail, theme, failed, builders)
         ns = time.perf_counter_ns() - t0
         if not s:
             continue
         if key in PINNED or visible_width(s) <= avail:
+            built[key] = s
+            used_est += visible_width(s) + sep
+            _crown_slowest(data, key, ns, failed)
+    # Pass 2: build the meta segments now that timings/max are known.
+    for key in enabled:
+        if key in _SLOWEST_META:
+            s = safe_build(key, data, budget, theme, failed, builders)
+            if s:
+                built[key] = s
+    # Assemble in layout order, fitting left->right with every width known.
+    kept, used = [], 0
+    for key in enabled:
+        s = built.get(key)
+        if not s:
+            continue
+        sep = sep_w if kept else 0
+        if key in PINNED or used + sep + visible_width(s) <= budget:
             kept.append(s)
             used += visible_width(s) + sep
-            _crown_slowest(data, key, ns, failed)
     return SEP.join(kept)
 
 
