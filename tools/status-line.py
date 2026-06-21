@@ -1618,6 +1618,18 @@ def safe_build(key, data, avail, theme, failed, builders=None):
         return f"{_WARN}⚠{RESET}"
 
 
+def _crown_slowest(data, key, ns, failed):
+    """Record the slowest non-meta, non-crashed segment build this render — the
+    single place the running max is tracked (FR-R.1). The meta segments report
+    the whole render, not one builder, so they are never the culprit; a crashed
+    segment (in `failed`) reports its warning marker's time, not real work."""
+    if key in _SLOWEST_META or key in failed:
+        return
+    cur = data.get("slowest")
+    if cur is None or ns > cur[1]:
+        data["slowest"] = (key, ns)
+
+
 def pack_line(keys, data, cols, cfg=None, theme=None, failed=None, builders=None):
     """Best-fit pack enabled segments into cols - RIGHT_MARGIN.
 
@@ -1633,35 +1645,26 @@ def pack_line(keys, data, cols, cfg=None, theme=None, failed=None, builders=None
     builders = builders if builders is not None else _builders_for(cfg)
     budget = cols - RIGHT_MARGIN
     sep_w = visible_width(SEP)
-    # Only time builds when the `slowest` diagnostic segment is on — two
-    # perf_counter_ns reads per segment otherwise buy nothing. The running max is
-    # accumulated into data["slowest"] = (name, ns) (the key seg_slowest reads),
-    # so it survives across the per-line pack_line calls render() makes. `slowest`
-    # is laid out LAST on its line, so every other segment is timed before its
-    # readout is built.
-    track_slow = cfg.segments.get("slowest", False)
+    # Time EVERY build (two perf_counter_ns reads are negligible next to a segment
+    # build) and let _crown_slowest track the running max into data["slowest"] =
+    # (name, ns) — the key seg_slowest reads. With FR-R.2's lazy _RenderData the
+    # build's bracket now also captures the segment's first-read probe cost, so the
+    # crowned time is the segment's REAL cost, not just its formatting.
     kept, used = [], 0
     for key in keys:
         if not cfg.segments.get(key, False):   # flag gate: not built => no compute
             continue
         sep = sep_w if kept else 0
         avail = budget - used - sep
-        t0 = time.perf_counter_ns() if track_slow else 0
+        t0 = time.perf_counter_ns()
         s = safe_build(key, data, max(avail, 0), theme, failed, builders)
-        ns = time.perf_counter_ns() - t0 if track_slow else 0
+        ns = time.perf_counter_ns() - t0
         if not s:
             continue
         if key in PINNED or visible_width(s) <= avail:
             kept.append(s)
             used += visible_width(s) + sep
-            # Crown the slowest segment that actually RENDERED: a kept, non-crashed
-            # (key not in failed), non-meta segment. The meta-segments (slowest's own
-            # readout, render_time's whole-render timer) report the render, not a
-            # single builder, so they're never culprits.
-            if track_slow and key not in _SLOWEST_META and key not in failed:
-                cur = data.get("slowest")
-                if cur is None or ns > cur[1]:
-                    data["slowest"] = (key, ns)
+            _crown_slowest(data, key, ns, failed)
     return SEP.join(kept)
 
 

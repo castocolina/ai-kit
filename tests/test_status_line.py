@@ -553,16 +553,21 @@ class TestSlowestTiming(unittest.TestCase):
         sl.pack_line(["fast_seg", "wide_seg"], data, 20, cfg=cfg, builders=builders)
         self.assertNotEqual(data.get("slowest", (None,))[0], "wide_seg")
 
-    def test_no_timing_when_slowest_disabled(self):
-        # Negligible overhead when off: with `slowest` disabled the packer never
-        # populates data["slowest"].
-        builders = {"fast_seg": self._fast}
+    def test_slowest_readout_hidden_when_disabled(self):
+        # Builds are always timed now (negligible, and FR-R.1 drops the per-segment
+        # special case) — but with `slowest` disabled its readout is gated off and
+        # never renders. The internal max may be tracked; the user never sees it.
         cfg = sl.default_config()
-        cfg.segments.pop("slowest", None)
-        cfg.segments["fast_seg"] = True
-        data = _data()
-        sl.pack_line(["fast_seg"], data, 200, cfg=cfg, builders=builders)
-        self.assertNotIn("slowest", data)
+        cfg.segments["slowest"] = False
+        theme = sl.build_theme(cfg)
+        env = {"HOME": "/h", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50"}
+        with mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "m", "clean", False, "")):
+            data, cols, lines = sl.build_data(
+                {"workspace": {"current_dir": "."}, "transcript_path": ""}, env,
+                cfg.segments)
+            out = "\n".join(sl.render(data, cols, lines, cfg, theme))
+        self.assertNotIn("🐌", strip(out))
 
 
 class TestSlowestSegment(unittest.TestCase):
@@ -1877,6 +1882,27 @@ class TestRenderDataLazy(unittest.TestCase):
             data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg.segments)
             sl.render(data, cols, lines, cfg, theme)
             self.assertEqual(gs.call_count, 0, "no git segment enabled => no git probe")
+
+
+class TestSlowestTruthful(unittest.TestCase):
+    """FR-R.2 acceptance: `slowest` names a real contributor whose cost is the
+    same order of magnitude as the render — ms-scale, not the µs of a cache hit."""
+
+    def test_slowest_captures_probe_cost_not_microseconds(self):
+        raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s"}
+        cfg = sl.default_config()
+        theme = sl.build_theme(cfg)
+
+        def slow_git(*_a, **_k):                 # a 20ms git status
+            time.sleep(0.02)
+            return sl.GitSnapshot(True, "main", "modified", False, "")
+
+        with mock.patch.object(sl, "git_snapshot", side_effect=slow_git):
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg.segments)
+            sl.render(data, cols, lines, cfg, theme)
+        name, ns = data["slowest"]
+        self.assertIn(name, ("branch", "dirty", "worktree"))  # a real git consumer
+        self.assertGreater(ns, 1_000_000)                     # >1ms, not µs
 
 
 class TestGoldenOutput(unittest.TestCase):
