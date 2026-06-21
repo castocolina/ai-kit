@@ -25,8 +25,9 @@
 # [segments]
 ## identity line (top row)
 # path = true          # 📂 working directory, ~-relative   (pinned)
-# branch = true        # 🌿 git branch  (🌳 in a worktree)
+# branch = true        # git branch name
 # dirty = true         # working-tree dirty marker
+# worktree = true      # ⎇ active linked-worktree name (struck ⎇ wt on main)
 # todo = true          # 📝 current TODO  (📝 in-progress / ⏸ pending)
 ## model line (middle row)
 # model = true         # active model name (e.g. Opus)
@@ -39,6 +40,7 @@
 # api_time = true      # 📡 cumulative API response time
 ## diagnostics line (bottom row)
 # render_time = true   # ⏱ status-line's own render time, SLO/SLA-colored
+# slowest = true       # 🐌 slowest single segment this render (name + duration)
 # dimensions = false   # terminal size cols×lines (? if assumed)  (debug; OFF by default)
 # context = true       # 📊 context-window % used (and max) (pinned)
 # chat_size = true     # 💾 transcript file size on disk
@@ -54,21 +56,23 @@
 ## current default layout; copy and reorder to taste.
 # [[line]]
 # min_rows = 0
-# segments = ["path", "branch", "dirty", "todo"]
+# segments = ["path", "branch", "worktree", "dirty", "todo"]
 # [[line]]
 # min_rows = 20
 # segments = ["model", "time_ago", "clock", "effort", "lines", "cost", "total_time", "api_time"]
 # [[line]]
 # min_rows = 30
-# segments = ["render_time", "dimensions", "context", "chat_size", "memory", "rate_limits"]
+# segments = ["render_time", "slowest", "dimensions", "context", "chat_size", "memory", "rate_limits"]
 
 ## ─── [git] — git probe tuning ────────────────────────────────────────────────
-## Behaviour knobs for the git queries behind the `branch` / `dirty` segments.
-## This block MERGES over the defaults. Each value below is the current default.
+## Behaviour knobs for the git queries behind the `branch` / `dirty` /
+## `worktree` segments. This block MERGES over the defaults.
+## NOTE: linked-worktree display is now the `worktree` segment (see [segments]
+## above), ON by default — toggle it there, not here. A legacy `[git] worktree =
+## true/false` key (and the old CC_AI_KIT_GIT_WORKTREE env) is silently ignored.
 # [git]
-# worktree = false     # detect linked worktrees (🌳 vs 🌿 on the branch segment).
-#                      # OFF by default: it costs an extra `git rev-parse` per
-#                      # render. Env override: CC_AI_KIT_GIT_WORKTREE=1.
+# cache_ttl = 5        # seconds the worktree probe is cached (branch/dirty stay
+#                      # fresh). Precedence: default 5 < this < env CC_AI_KIT_GIT_TTL.
 
 ## ─── [external] — drop-in segment providers ──────────────────────────────────
 ## Add a new status-line segment WITHOUT editing status-line.py: drop an
@@ -157,6 +161,16 @@
 # [ramp.render_time]
 # "50ms" = "GREEN"
 # "150ms" = "YELLOW"
+# inf = "RED+bold"
+
+## ─── [ramp.slowest] — slowest single segment's time -> color (ns/µs/ms/s) ─────
+## The ONE shared SLO/SLA ramp the `slowest` segment colors by (no per-segment
+## bands). Same time-string grammar as [ramp.render_time]; tighter thresholds
+## since it grades a single builder, not the whole render.
+## Default: GREEN within the 15ms SLO, YELLOW up to the 40ms SLA, RED+bold beyond.
+# [ramp.slowest]
+# "15ms" = "GREEN"
+# "40ms" = "YELLOW"
 # inf = "RED+bold"
 
 ## ─── Environment overrides (set in your shell, not this file) ─────────────────

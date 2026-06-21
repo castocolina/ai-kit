@@ -1,10 +1,13 @@
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
 import shutil
 import sys
 import tempfile
+import time
 import tomllib
 import unittest
 from unittest import mock
@@ -39,6 +42,7 @@ def _data(**over):
         "model_name": "Opus 4.8", "model_id": "claude-opus-4-8",
         "effort": "high", "effort_auto": False, "work_dir": "/home/u/proj", "home": "/home/u",
         "branch": "main", "dirty": "modified", "is_worktree": False,
+        "in_repo": False, "wt_name": "",
         "clock": "14:30", "ago": "5m 0s ago",
         "added": 12, "removed": 3, "cost": 0.5,
         "total_ms": 65000, "api_ms": 4200,
@@ -54,10 +58,14 @@ def _data(**over):
 class TestPickColor(unittest.TestCase):
     def test_context_ramp_bands(self):
         cases = [
-            (5, THEME.c("WHITE")), (9, THEME.c("WHITE")), (10, THEME.c("CYAN")), (14, THEME.c("CYAN")),
-            (15, THEME.c("BLUE")), (19, THEME.c("BLUE")), (20, THEME.c("GREEN")), (24, THEME.c("GREEN")),
-            (25, THEME.c("YELLOW")), (29, THEME.c("YELLOW")), (30, THEME.c("ORANGE+bold")), (39, THEME.c("ORANGE+bold")),
-            (40, THEME.c("RED+bold")), (49, THEME.c("RED+bold")), (50, THEME.c("MAGENTA_DARK+bold")), (99, THEME.c("MAGENTA_DARK+bold")),
+            (5, THEME.c("WHITE")), (9, THEME.c("WHITE")),
+            (10, THEME.c("CYAN")), (14, THEME.c("CYAN")),
+            (15, THEME.c("BLUE")), (19, THEME.c("BLUE")),
+            (20, THEME.c("GREEN")), (24, THEME.c("GREEN")),
+            (25, THEME.c("YELLOW")), (29, THEME.c("YELLOW")),
+            (30, THEME.c("ORANGE+bold")), (39, THEME.c("ORANGE+bold")),
+            (40, THEME.c("RED+bold")), (49, THEME.c("RED+bold")),
+            (50, THEME.c("MAGENTA_DARK+bold")), (99, THEME.c("MAGENTA_DARK+bold")),
         ]
         for pct, want in cases:
             self.assertEqual(sl.pick_color(pct, THEME.ramps["context"]), want, pct)
@@ -67,6 +75,27 @@ class TestPickColor(unittest.TestCase):
                  (79, THEME.c("YELLOW")), (80, THEME.c("RED+bold")), (100, THEME.c("RED+bold"))]
         for pct, want in cases:
             self.assertEqual(sl.rate_color(pct, THEME), want, pct)
+
+    def test_slowest_ramp_bands(self):
+        # The single shared SLO/SLA ramp for the slowest segment: green under the
+        # SLO (15ms), yellow under the SLA (40ms), red+bold beyond. Thresholds are
+        # nanoseconds (matching data["slowest"]'s perf_counter_ns value).
+        ms = 1_000_000
+        cases = [
+            (10 * ms, THEME.c("GREEN")), (14 * ms, THEME.c("GREEN")),
+            (15 * ms, THEME.c("YELLOW")), (39 * ms, THEME.c("YELLOW")),
+            (40 * ms, THEME.c("RED+bold")), (200 * ms, THEME.c("RED+bold")),
+        ]
+        for ns, want in cases:
+            self.assertEqual(sl.pick_color(ns, THEME.ramps["slowest"]), want, ns)
+
+    def test_slowest_ramp_override_replaces_band(self):
+        # [ramp.slowest] in config REPLACES the default band wholesale.
+        cfg = sl.default_config()._replace(ramps={"slowest": {"100ms": "CYAN", "inf": "WHITE"}})
+        theme = sl.build_theme(cfg)
+        ms = 1_000_000
+        self.assertEqual(sl.pick_color(50 * ms, theme.ramps["slowest"]), theme.c("CYAN"))
+        self.assertEqual(sl.pick_color(200 * ms, theme.ramps["slowest"]), theme.c("WHITE"))
 
 
 class TestFormatters(unittest.TestCase):
@@ -135,6 +164,14 @@ class TestVisibleWidth(unittest.TestCase):
     def test_mixed_segment(self):
         self.assertEqual(sl.visible_width("📊 12%"), 6)
 
+    def test_variation_selector_is_zero_width(self):
+        self.assertEqual(sl.char_width("️"), 0)  # VS16 emoji presentation
+        self.assertEqual(sl.char_width("︎"), 0)  # VS15 text presentation
+
+    def test_glyph_plus_vs16_measures_as_two(self):
+        # ⏸ (modeled wide) + VS16 must stay 2 cells, not inflate to 3.
+        self.assertEqual(sl.visible_width("⏸️ x"), 4)  # 2 + 0 + 1(space) + 1(x)
+
 
 class TestFirstFitting(unittest.TestCase):
     def test_returns_richest_that_fits(self):
@@ -148,6 +185,58 @@ class TestFirstFitting(unittest.TestCase):
 
     def test_ignores_falsy_variants(self):
         self.assertEqual(sl._first_fitting([None, "", "ok"], 5), "ok")
+
+
+class TestIconHelper(unittest.TestCase):
+    def test_wide_emoji_gets_single_space(self):
+        self.assertEqual(sl._icon("\U0001F4C3", "x"), "\U0001F4C3 x")  # 📃 x
+
+    def test_narrow_rendering_glyph_gets_vs16(self):
+        # ⏱ ⏸ ⚡ are modeled wide but render narrow bare -> force emoji presentation.
+        self.assertEqual(sl._icon("⏱", "x"), "⏱️ x")  # ⏱️ x
+        self.assertEqual(sl._icon("⏸", "x"), "⏸️ x")  # ⏸️ x
+        self.assertEqual(sl._icon("⚡", "x"), "⚡️ x")  # ⚡️ x
+
+    def test_already_wide_bmp_alarm_clock_no_vs16(self):
+        self.assertEqual(sl._icon("⏰", "x"), "⏰ x")  # ⏰ is EAW=W already
+
+    def test_icon_width_is_two_plus_space_plus_text(self):
+        self.assertEqual(sl.visible_width(sl._icon("⏸", "12:00")), 8)  # 2+1+5
+
+
+class TestNoCollapsedIcons(unittest.TestCase):
+    # The five segments that previously glued the glyph to the value.
+    def test_collapsers_have_a_space_after_the_icon(self):
+        cases = {
+            "⏰": sl.seg_clock(_data(), 80, THEME),                 # ⏰
+            "\U0001F4C3": sl.seg_lines(_data(), 80, THEME),            # 📃
+            "\U0001FA99": sl.seg_cost(_data(cost=0.5), 80, THEME),     # 🪙
+            "\U0001F4AC": sl.seg_total_time(_data(), 80, THEME),       # 💬
+            "\U0001F4E1": sl.seg_api_time(_data(), 80, THEME),         # 📡
+        }
+        for glyph, out in cases.items():
+            plain = strip(out)
+            self.assertTrue(plain.startswith(glyph), plain)
+            after = plain[len(glyph):]
+            self.assertTrue(after.startswith(" "), f"icon collapsed: {plain!r}")
+
+    def test_no_segment_emits_glyph_then_nonspace(self):
+        # Property check across the iconed builders at a wide budget.
+        builders = [sl.seg_clock, sl.seg_lines, lambda d, a, t: sl.seg_cost(_data(cost=0.5), a, t),
+                    sl.seg_total_time, sl.seg_api_time, sl.seg_render_time,
+                    lambda d, a, t: sl.seg_context(_data(), a, t),
+                    sl.seg_chat_size, sl.seg_memory]
+        for b in builders:
+            out = b(_data(t_start=sl.time.perf_counter_ns()), 120, THEME)
+            if not out:
+                continue
+            plain = strip(out)
+            for i, ch in enumerate(plain[:-1]):
+                # An icon (wide glyph) must be followed by a space or VS16 — never
+                # glued to text. Skip bar/box cells, which are legitimately wide.
+                if sl.char_width(ch) == 2 and ch not in "█▌░":
+                    nxt = plain[i + 1]
+                    self.assertIn(nxt, (" ", "️"), f"{plain!r} collapses at {i}")
 
 
 class TestEffortTable(unittest.TestCase):
@@ -173,9 +262,37 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertIsNone(sl.seg_branch(_data(branch="main"), 5, THEME))    # no room
         self.assertIsNone(sl.seg_branch(_data(branch=""), 200, THEME))      # no data
 
-    def test_branch_worktree_icon(self):
-        self.assertIn("🌳", sl.seg_branch(_data(is_worktree=True), 100, THEME))
-        self.assertIn("🌿", sl.seg_branch(_data(is_worktree=False), 100, THEME))
+    def test_branch_has_no_worktree_glyph(self):
+        # FR-7.2: branch is ONLY the branch — no 🌳/🌿 glyph, regardless of the
+        # worktree state (that moved to the dedicated `worktree` segment).
+        for wt in (True, False):
+            out = sl.seg_branch(_data(branch="main", is_worktree=wt), 100, THEME)
+            self.assertIn("main", out)
+            self.assertNotIn("🌳", out)
+            self.assertNotIn("🌿", out)
+
+    def test_worktree_active_shows_name_cyan(self):
+        out = sl.seg_worktree(
+            _data(in_repo=True, is_worktree=True, wt_name="feat-x"), 100, THEME)
+        self.assertIn("⎇ feat-x", strip(out))
+        self.assertIn(THEME.c("CYAN"), out)        # active form is cyan
+        self.assertNotIn("\033[9m", out)           # NOT struck
+
+    def test_worktree_main_checkout_struck_placeholder(self):
+        out = sl.seg_worktree(_data(in_repo=True, is_worktree=False), 100, THEME)
+        self.assertIn("⎇ wt", strip(out))
+        self.assertIn("\033[9m", out)              # strikethrough SGR
+        self.assertIn(THEME.c("GREY"), out)        # dimmed/grey, distinct from cyan
+
+    def test_worktree_hidden_outside_repo(self):
+        self.assertIsNone(sl.seg_worktree(_data(in_repo=False), 100, THEME))
+
+    def test_worktree_name_truncated_to_20_cols(self):
+        out = sl.seg_worktree(
+            _data(in_repo=True, is_worktree=True, wt_name="a" * 40), 100, THEME)
+        self.assertIn("…", out)
+        # visible width (glyph + space + truncated name) stays within ~22 cols
+        self.assertLessEqual(sl.visible_width(strip(out)), 24)
 
     def test_effort_full_then_compact_then_hide(self):
         self.assertIn("high", strip(sl.seg_effort(_data(effort="high"), 30, THEME)))
@@ -241,7 +358,7 @@ class TestCooperativeBuilders(unittest.TestCase):
 
     def test_model_and_clock(self):
         self.assertEqual(strip(sl.seg_model(_data(), 200, THEME)), "Opus 4.8")
-        self.assertEqual(strip(sl.seg_clock(_data(), 200, THEME)), "⏰14:30")
+        self.assertEqual(strip(sl.seg_clock(_data(), 200, THEME)), "⏰ 14:30")
 
     def test_todo_truncates_and_hides(self):
         self.assertIn("hello", strip(sl.seg_todo(
@@ -304,12 +421,12 @@ class TestPackLine(unittest.TestCase):
     def test_keeps_segments_that_fit(self):
         out = sl.pack_line(["model", "clock"], _data(), 200)
         self.assertIn("Opus 4.8", strip(out))
-        self.assertIn("⏰14:30", strip(out))
+        self.assertIn("⏰ 14:30", strip(out))
         self.assertIn(" | ", out)
 
     def test_best_fit_skips_overflow_keeps_smaller(self):
         out = strip(sl.pack_line(["model", "clock"], _data(model_name="X" * 60), 30))
-        self.assertIn("⏰14:30", out)
+        self.assertIn("⏰ 14:30", out)
         self.assertNotIn("XXXX", out)
 
     def test_flag_off_segment_not_built(self):
@@ -333,6 +450,149 @@ class TestPackLine(unittest.TestCase):
     def test_respects_right_margin(self):
         out = sl.pack_line(["model", "clock", "effort", "lines"], _data(), 60)
         self.assertLessEqual(sl.visible_width(out), 60 - sl.RIGHT_MARGIN)
+
+
+class TestSlowestTiming(unittest.TestCase):
+    @staticmethod
+    def _slow(data, avail, theme):
+        time.sleep(0.005)
+        return "SLOW"
+
+    @staticmethod
+    def _fast(data, avail, theme):
+        return "FAST"
+
+    def test_pack_line_records_slowest_builder(self):
+        # With `slowest` enabled the packer times each builder and records the max
+        # as data["slowest"] = (name, ns) — the exact key seg_slowest (T3.3) reads.
+        builders = {"fast_seg": self._fast, "slow_seg": self._slow}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "fast_seg": True, "slow_seg": True})
+        data = _data()
+        sl.pack_line(["fast_seg", "slow_seg"], data, 200, cfg=cfg, builders=builders)
+        name, ns = data["slowest"]
+        self.assertEqual(name, "slow_seg")
+        self.assertIsInstance(ns, int)
+        self.assertGreater(ns, 0)
+
+    def test_slowest_accumulates_max_across_lines(self):
+        # render() packs each layout line sharing one data dict; the running max
+        # must survive across pack_line calls (slow line first, fast line second).
+        builders = {"fast_seg": self._fast, "slow_seg": self._slow}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "fast_seg": True, "slow_seg": True})
+        data = _data()
+        sl.pack_line(["slow_seg"], data, 200, cfg=cfg, builders=builders)
+        sl.pack_line(["fast_seg"], data, 200, cfg=cfg, builders=builders)
+        self.assertEqual(data["slowest"][0], "slow_seg")   # not overwritten by the fast line
+
+    def test_failed_builder_not_recorded_as_slowest(self):
+        # A segment that crashes never rendered, so its time must not crown it the
+        # slowest culprit (else seg_slowest would name a broken segment).
+        def boom(data, avail, theme):
+            raise RuntimeError("nope")
+        builders = {"boom": boom, "fast_seg": self._fast}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "boom": True, "fast_seg": True})
+        data = _data()
+        sl.pack_line(["boom", "fast_seg"], data, 200, cfg=cfg, builders=builders)
+        self.assertNotEqual(data.get("slowest", (None,))[0], "boom")
+
+    def test_empty_output_builder_not_recorded_as_slowest(self):
+        # A segment that renders nothing (e.g. a failing external provider that is
+        # gracefully omitted) is not a visible culprit, so it isn't crowned slowest.
+        def empty(data, avail, theme):
+            return None
+        builders = {"empty_seg": empty, "fast_seg": self._fast}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "empty_seg": True, "fast_seg": True})
+        data = _data()
+        sl.pack_line(["empty_seg", "fast_seg"], data, 200, cfg=cfg, builders=builders)
+        self.assertNotEqual(data.get("slowest", (None,))[0], "empty_seg")
+
+    def test_slowest_built_after_non_meta_regardless_of_position(self):
+        # FR-R.3: with the two-pass packer, every non-meta build is timed in pass 1
+        # before any meta segment is built in pass 2, so slowest no longer has to be
+        # last on its line — it sits right after render_time.
+        line = next(l for l in sl.LAYOUT if "slowest" in l.segments)
+        self.assertNotEqual(line.segments[-1], "slowest")
+        self.assertEqual(line.segments.index("slowest"),
+                         line.segments.index("render_time") + 1)
+
+    def test_later_segment_reported_even_when_slowest_precedes_it(self):
+        # Two-pass: a slow non-meta segment is timed in pass 1, so seg_slowest names
+        # it even when `slowest` is positioned BEFORE it in the key order.
+        builders = dict(sl.BUILDERS)
+        builders["slow_seg"] = self._slow
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "slow_seg": True})
+        data = _data()
+        out = sl.pack_line(["slowest", "slow_seg"], data, 200, cfg=cfg, builders=builders)
+        self.assertEqual(data["slowest"][0], "slow_seg")
+        self.assertIn("slow_seg", strip(out))      # seg_slowest (built in pass 2) names it
+
+    def test_render_time_not_crowned_slowest(self):
+        # M1: render_time is a meta-segment (reports the whole render); never a culprit.
+        def slow_rt(data, avail, theme):
+            time.sleep(0.005)
+            return "RT"
+        builders = {"render_time": slow_rt, "fast_seg": self._fast}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "render_time": True, "fast_seg": True})
+        data = _data()
+        sl.pack_line(["render_time", "fast_seg"], data, 200, cfg=cfg, builders=builders)
+        self.assertNotEqual(data.get("slowest", (None,))[0], "render_time")
+
+    def test_overflow_dropped_segment_not_recorded_slowest(self):
+        # L1: a slow segment whose output is too wide to fit is dropped — it never
+        # rendered, so it must not be crowned slowest.
+        def slow_wide(data, avail, theme):
+            time.sleep(0.005)
+            return "X" * 100
+        builders = {"wide_seg": slow_wide, "fast_seg": self._fast}
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "wide_seg": True, "fast_seg": True})
+        data = _data()
+        sl.pack_line(["fast_seg", "wide_seg"], data, 20, cfg=cfg, builders=builders)
+        self.assertNotEqual(data.get("slowest", (None,))[0], "wide_seg")
+
+    def test_slowest_readout_hidden_when_disabled(self):
+        # Builds are always timed now (negligible, and FR-R.1 drops the per-segment
+        # special case) — but with `slowest` disabled its readout is gated off and
+        # never renders. The internal max may be tracked; the user never sees it.
+        cfg = sl.default_config()
+        cfg.segments["slowest"] = False
+        theme = sl.build_theme(cfg)
+        env = {"HOME": "/h", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50"}
+        with mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "m", "clean", False, "")):
+            data, cols, lines = sl.build_data(
+                {"workspace": {"current_dir": "."}, "transcript_path": ""}, env,
+                cfg.segments)
+            out = "\n".join(sl.render(data, cols, lines, cfg, theme))
+        self.assertNotIn("🐌", strip(out))
+
+
+class TestSlowestSegment(unittest.TestCase):
+    def test_renders_culprit_name_and_duration(self):
+        out = sl.seg_slowest(_data(slowest=("git", 30_000_000)), 200, THEME)
+        self.assertIn("🐌", out)
+        self.assertIn("git", strip(out))       # names the culprit segment
+        self.assertIn("30ms", strip(out))      # and its duration
+
+    def test_colored_by_single_slowest_ramp(self):
+        # 30ms -> YELLOW band, 100ms -> RED+bold — the one shared slowest ramp.
+        self.assertIn(THEME.c("YELLOW"),
+                      sl.seg_slowest(_data(slowest=("git", 30_000_000)), 200, THEME))
+        self.assertIn(THEME.c("RED+bold"),
+                      sl.seg_slowest(_data(slowest=("ext", 100_000_000)), 200, THEME))
+
+    def test_omitted_when_no_timing(self):
+        self.assertIsNone(sl.seg_slowest(_data(), 200, THEME))   # no data["slowest"]
+
+    def test_on_by_default_and_registered(self):
+        self.assertTrue(sl.SEGMENTS["slowest"])
+        self.assertIn("slowest", sl.BUILDERS)
 
 
 class TestRenderLayout(unittest.TestCase):
@@ -376,70 +636,128 @@ class TestProcAndGit(unittest.TestCase):
     def test_proc_rss_and_git_smoke(self):
         rss = sl.proc_rss_bytes()
         self.assertTrue(rss is None or isinstance(rss, int))
-        branch, dirty, is_wt = sl.git_info(".")
-        self.assertIn(dirty, ("clean", "untracked", "modified"))
-        self.assertIsInstance(is_wt, bool)
+        with tempfile.TemporaryDirectory() as home:
+            snap = sl.git_snapshot(".", env={"HOME": home})
+        self.assertIn(snap.dirty, ("clean", "untracked", "modified"))
+        self.assertIsInstance(snap.is_worktree, bool)
+        self.assertIsInstance(snap.wt_name, str)
 
     def test_branch_from_porcelain_header(self):
         self.assertEqual(sl._branch_from_porcelain("## main"), "main")
         self.assertEqual(sl._branch_from_porcelain("## main...origin/main"), "main")
-        self.assertEqual(sl._branch_from_porcelain("## feat/x...origin/feat/x [ahead 18]"), "feat/x")
+        self.assertEqual(
+            sl._branch_from_porcelain("## feat/x...origin/feat/x [ahead 18]"), "feat/x")
         self.assertEqual(sl._branch_from_porcelain("## HEAD (no branch)"), "")   # detached
         self.assertEqual(sl._branch_from_porcelain("## No commits yet on main"), "main")
         self.assertEqual(sl._branch_from_porcelain("## Initial commit on dev"), "dev")
         self.assertEqual(sl._branch_from_porcelain(""), "")                      # not a repo
 
-    def test_git_info_dirty_parsing(self):
-        # git_info parses branch + dirty from the porcelain --branch output; mock
-        # subprocess so the test is independent of the live working tree.
+    def _home_env(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return {"HOME": d}
+
+    def test_git_snapshot_dirty_parsing(self):
+        # git_snapshot parses branch + dirty from the porcelain --branch output;
+        # mock subprocess so the test is independent of the live working tree.
         def fake_run(cmd, **kw):
             class R:
+                returncode = 0
                 stdout = ("## main...origin/main [ahead 1]\n M tools/x.py\n?? new.py\n"
-                          if "status" in cmd else ".git\n.git\n")
+                          if "status" in cmd else ".git\n.git\n/repo\n")
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            branch, dirty, is_wt = sl.git_info(".")
-            self.assertEqual(branch, "main")
-            self.assertEqual(dirty, "untracked")   # ?? present -> untracked
-            self.assertFalse(is_wt)                 # git-dir == git-common-dir
+            snap = sl.git_snapshot(".", env=self._home_env())
+            self.assertEqual(snap.branch, "main")
+            self.assertEqual(snap.dirty, "untracked")   # ?? present -> untracked
+            self.assertFalse(snap.is_worktree)          # git-dir == git-common-dir
 
     def test_untracked_flag_follows_dirty(self):
         # untracked=False adds --untracked-files=no; True omits it.
         for untracked, expect_flag in ((False, True), (True, False)):
             seen = []
-            def fake_run(cmd, **kw):
-                seen.append(cmd)
+            def fake_run(cmd, *, _seen=seen, **kw):
+                _seen.append(cmd)
                 class R:
+                    returncode = 0
                     stdout = "## main\n"
                 return R()
             with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-                sl.git_info(".", untracked=untracked)
+                sl.git_snapshot(".", untracked=untracked, env=self._home_env())
             status_cmd = next(c for c in seen if "status" in c)
             self.assertEqual("--untracked-files=no" in status_cmd, expect_flag, untracked)
 
-    def test_worktree_call_follows_flag(self):
-        # worktree=False skips the rev-parse call entirely.
-        for worktree in (False, True):
+    def test_worktree_probe_follows_flag(self):
+        # want_worktree=False skips the rev-parse call entirely.
+        for want, expect in ((False, False), (True, True)):
             seen = []
-            def fake_run(cmd, **kw):
-                seen.append(cmd)
+            def fake_run(cmd, *, _seen=seen, **kw):
+                _seen.append(cmd)
                 class R:
-                    stdout = "## main\n" if "status" in cmd else ".git\n.git\n"
+                    returncode = 0
+                    stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
                 return R()
             with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-                sl.git_info(".", worktree=worktree)
+                sl.git_snapshot(".", want_worktree=want, env=self._home_env())
             ran_revparse = any("rev-parse" in c for c in seen)
-            self.assertEqual(ran_revparse, worktree, worktree)
+            self.assertEqual(ran_revparse, expect, want)
 
-    def test_git_info_clean_and_worktree(self):
+    def test_git_snapshot_clean_and_worktree_name(self):
         def fake_run(cmd, **kw):
             class R:
-                stdout = "## main\n" if "status" in cmd else "/wt/.git/worktrees/x\n/main/.git\n"
+                returncode = 0
+                stdout = ("## main\n" if "status" in cmd
+                          else "/wt/.git/worktrees/feat-x\n/main/.git\n/path/to/feat-x\n")
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            branch, dirty, is_wt = sl.git_info(".")
-            self.assertEqual((branch, dirty), ("main", "clean"))
-            self.assertTrue(is_wt)                  # git-dir != git-common-dir
+            snap = sl.git_snapshot(".", env=self._home_env())
+            self.assertEqual((snap.branch, snap.dirty), ("main", "clean"))
+            self.assertTrue(snap.is_worktree)        # git-dir != git-common-dir
+            self.assertTrue(snap.in_repo)
+            self.assertEqual(snap.wt_name, "feat-x")  # basename of --show-toplevel
+
+    def test_worktree_info_cached_within_ttl(self):
+        # Second call within the TTL must NOT re-run the rev-parse (cached on disk).
+        env = self._home_env()
+        calls = []
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            class R:
+                returncode = 0
+                stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            sl.git_snapshot(".", ttl=100, env=env)
+            sl.git_snapshot(".", ttl=100, env=env)
+        self.assertEqual(sum("rev-parse" in c for c in calls), 1)   # only once
+
+    def test_worktree_cache_bypassed_when_ttl_zero(self):
+        env = self._home_env()
+        calls = []
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            class R:
+                returncode = 0
+                stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            sl.git_snapshot(".", ttl=0, env=env)
+            sl.git_snapshot(".", ttl=0, env=env)
+        self.assertEqual(sum("rev-parse" in c for c in calls), 2)   # ttl<=0 always runs
+
+    def test_worktree_cache_not_written_when_ttl_zero(self):
+        # ttl<=0 forces a fresh probe every render, so the cache file is never
+        # read — it must therefore never be WRITTEN either (no wasted disk I/O on
+        # the hot render path).
+        env = self._home_env()
+        def fake_run(cmd, **kw):
+            class R:
+                returncode = 0
+                stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            sl.git_snapshot(".", ttl=0, env=env)
+        self.assertFalse(os.path.exists(sl._git_cache_path(".", env)))
 
 
 class TestCurrentTodo(unittest.TestCase):
@@ -453,7 +771,8 @@ class TestCurrentTodo(unittest.TestCase):
 
     def test_pick_helpers(self):
         self.assertEqual(
-            sl._pick_from_tasks([{"status": "in_progress", "activeForm": "Doing X", "subject": "X"}]),
+            sl._pick_from_tasks(
+                [{"status": "in_progress", "activeForm": "Doing X", "subject": "X"}]),
             ("in_progress", "Doing X"))
         self.assertEqual(
             sl._pick_from_tasks([{"status": "pending", "subject": "Y"}]),
@@ -467,9 +786,11 @@ class TestCurrentTodo(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cd:
             s = "sess1"
             self._write(os.path.join(cd, "tasks", s, "1.json"),
-                        {"id": "1", "subject": "first", "activeForm": "Doing first", "status": "completed"})
+                        {"id": "1", "subject": "first", "activeForm": "Doing first",
+                         "status": "completed"})
             self._write(os.path.join(cd, "tasks", s, "2.json"),
-                        {"id": "2", "subject": "second", "activeForm": "Doing second", "status": "in_progress"})
+                        {"id": "2", "subject": "second", "activeForm": "Doing second",
+                         "status": "in_progress"})
             self.assertEqual(sl.current_todo("", s, cd), ("in_progress", "Doing second"))
 
     def test_tasks_dir_all_done_is_authoritative(self):
@@ -506,9 +827,11 @@ class TestCurrentTodo(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cd:
             s = "sess4"
             self._write(os.path.join(cd, "tasks", s, "1.json"),
-                        {"id": "1", "subject": "win", "activeForm": "From tasks dir", "status": "in_progress"})
+                        {"id": "1", "subject": "win", "activeForm": "From tasks dir",
+                         "status": "in_progress"})
             with mock.patch.object(sl, "_todo_from_transcript") as tr:
-                self.assertEqual(sl.current_todo("/x.jsonl", s, cd), ("in_progress", "From tasks dir"))
+                self.assertEqual(
+                    sl.current_todo("/x.jsonl", s, cd), ("in_progress", "From tasks dir"))
                 tr.assert_not_called()
 
     def test_safe_session_rejects_traversal(self):
@@ -552,17 +875,32 @@ class TestEndToEnd(unittest.TestCase):
 
 
 class TestLazyCompute(unittest.TestCase):
-    """A disabled segment must skip its probe in build_data, not just its render."""
+    """A disabled segment skips its probe across the WHOLE render; an enabled one
+    runs it exactly once, inside its measured build (FR-R.2 option A). Probes no
+    longer run in build_data — they are deferred to the segment that reads them,
+    so these drive the full build_data + render path."""
     RAW = {"workspace": {"current_dir": "."}, "transcript_path": ""}
+    EFFORT_RAW = {"workspace": {"current_dir": "."}, "transcript_path": "",
+                  "effort": {"level": "high"}}
     ENV = {"STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50", "HOME": "/home/u"}
 
+    def _build_and_render(self, segs, raw=None, git_ttl=sl._GIT_CACHE_TTL):
+        cfg = sl.default_config()
+        cfg.segments.clear()                       # cfg is a namedtuple; mutate the dict
+        cfg.segments.update(dict.fromkeys(sl.SEGMENTS, False))
+        cfg.segments.update(segs)
+        theme = sl.build_theme(cfg)
+        # build_data is segment-agnostic; cfg.segments gates probes via render().
+        data, cols, lines = sl.build_data(raw or self.RAW, self.ENV, git_ttl=git_ttl)
+        sl.render(data, cols, lines, cfg, theme)
+        return data
+
     def test_disabled_segments_skip_their_probes(self):
-        segs = dict.fromkeys(sl.SEGMENTS, False)
-        with mock.patch.object(sl, "git_info") as gi, \
+        with mock.patch.object(sl, "git_snapshot") as gi, \
              mock.patch.object(sl, "current_todo") as ct, \
              mock.patch.object(sl, "proc_rss_bytes") as rss, \
              mock.patch.object(sl, "effort_setting_is_auto") as ea:
-            sl.build_data(self.RAW, self.ENV, segs)
+            self._build_and_render(dict.fromkeys(sl.SEGMENTS, False))
             gi.assert_not_called()
             ct.assert_not_called()
             rss.assert_not_called()
@@ -570,47 +908,67 @@ class TestLazyCompute(unittest.TestCase):
 
     def test_enabled_segments_run_their_probes(self):
         segs = {"branch": True, "todo": True, "memory": True, "effort": True}
-        with mock.patch.object(sl, "git_info", return_value=("m", "clean", False)) as gi, \
+        with mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi, \
              mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct, \
              mock.patch.object(sl, "proc_rss_bytes", return_value=1) as rss, \
              mock.patch.object(sl, "effort_setting_is_auto", return_value=True) as ea:
-            sl.build_data(self.RAW, self.ENV, segs)
-            gi.assert_called_once()      # branch enabled -> git probe runs
-            ct.assert_called_once()      # todo enabled  -> transcript parse runs
-            rss.assert_called_once()     # memory enabled
-            ea.assert_called_once()      # effort enabled
+            self._build_and_render(segs, raw=self.EFFORT_RAW)
+            gi.assert_called_once()      # branch built -> git probe runs
+            ct.assert_called_once()      # todo built  -> transcript parse runs
+            rss.assert_called_once()     # memory built
+            ea.assert_called_once()      # effort built (level present -> auto checked)
 
     def test_dirty_alone_still_triggers_git(self):
-        # branch + dirty share one git_info call; either flag must trigger it.
-        segs = dict.fromkeys(sl.SEGMENTS, False)
-        segs["dirty"] = True
-        with mock.patch.object(sl, "git_info", return_value=("", "modified", False)) as gi:
-            sl.build_data(self.RAW, self.ENV, segs)
+        # branch + dirty share one git_snapshot call; either flag must trigger it.
+        with mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "", "modified", False, "")) as gi:
+            self._build_and_render({"dirty": True})
             gi.assert_called_once()
 
     def test_none_segments_computes_everything(self):
-        # back-compat / degrade-safe: no segments map -> compute all probes
-        with mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct:
-            sl.build_data(self.RAW, self.ENV)
+        # build_data is segment-agnostic: it never gates by flag. Rendering an
+        # all-on config fires the probes (here the todo parse).
+        cfg = sl.default_config()
+        theme = sl.build_theme(cfg)
+        with mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct, \
+             mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "m", "clean", False, "")):
+            data, cols, lines = sl.build_data(self.RAW, self.ENV)  # segments=None
+            sl.render(data, cols, lines, cfg, theme)
             ct.assert_called_once()
 
-    def test_git_probes_follow_their_segments(self):
-        # untracked walk follows `dirty`; worktree (rev-parse) follows `branch`
-        # AND the git_worktree knob. git_info still runs whenever EITHER git
-        # segment is on.
-        for branch_on, dirty_on, knob in (
+    def test_git_ttl_threaded_to_snapshot(self):
+        # The resolved [git] cache_ttl flows through build_data into git_snapshot.
+        with mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gs:
+            self._build_and_render({"worktree": True}, git_ttl=42)
+            self.assertEqual(gs.call_args.kwargs.get("ttl"), 42)
+
+    def test_git_probe_fires_for_any_git_segment_agnostically(self):
+        # build_data is segment-agnostic: git_snapshot runs once whenever ANY of
+        # branch/dirty/worktree is built — in full (no per-segment untracked/
+        # want_worktree flags threaded in) — and not at all when none are.
+        for branch_on, dirty_on, wt_on in (
             (True, False, True), (True, False, False),
-            (False, True, True), (True, True, True),
+            (False, True, False), (False, False, True),
+            (True, True, True),
         ):
-            segs = dict.fromkeys(sl.SEGMENTS, False)
-            segs["branch"] = branch_on
-            segs["dirty"] = dirty_on
-            with mock.patch.object(sl, "git_info",
-                                   return_value=("m", "clean", False)) as gi:
-                sl.build_data(self.RAW, self.ENV, segs, git_worktree=knob)
+            with mock.patch.object(
+                    sl, "git_snapshot",
+                    return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi:
+                self._build_and_render(
+                    {"branch": branch_on, "dirty": dirty_on, "worktree": wt_on})
                 gi.assert_called_once()
-                self.assertEqual(gi.call_args.kwargs.get("untracked"), dirty_on)
-                self.assertEqual(gi.call_args.kwargs.get("worktree"), branch_on and knob)
+                # No segment-derived flags leak into the call (agnostic probe).
+                self.assertNotIn("untracked", gi.call_args.kwargs)
+                self.assertNotIn("want_worktree", gi.call_args.kwargs)
+
+        with mock.patch.object(
+                sl, "git_snapshot",
+                return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi:
+            self._build_and_render({"branch": False, "dirty": False, "worktree": False})
+            gi.assert_not_called()                  # no git segment built -> no probe
 
 
 class TestBlueFix(unittest.TestCase):
@@ -634,10 +992,12 @@ class TestChatSizeRamp(unittest.TestCase):
     def test_ramp_bands(self):
         KB, MB = self.KB, self.MB
         cases = [
-            (400 * KB, THEME.c("WHITE")), (512 * KB, THEME.c("CYAN")), (900 * KB, THEME.c("CYAN")),
+            (400 * KB, THEME.c("WHITE")), (512 * KB, THEME.c("CYAN")),
+            (900 * KB, THEME.c("CYAN")),
             (1 * MB, THEME.c("LIGHTBLUE")), (1 * MB + 1, THEME.c("LIGHTBLUE")),
             (2 * MB, THEME.c("GREEN")), (3 * MB, THEME.c("YELLOW")), (4 * MB, THEME.c("ORANGE")),
-            (5 * MB, THEME.c("RED+bold")), (5 * MB + 1, THEME.c("RED+bold")), (9 * MB, THEME.c("RED+bold")),
+            (5 * MB, THEME.c("RED+bold")), (5 * MB + 1, THEME.c("RED+bold")),
+            (9 * MB, THEME.c("RED+bold")),
             (10 * MB, THEME.c("MAGENTA")), (20 * MB, THEME.c("MAGENTA")),
         ]
         for n, want in cases:
@@ -872,9 +1232,8 @@ class TestConfigPathAndLoad(unittest.TestCase):
 
 class TestResolveSegments(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body)
-        f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
@@ -913,40 +1272,97 @@ class TestResolveSegments(unittest.TestCase):
 
 class TestGitConfig(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body)
-        f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
-    def test_worktree_defaults_off(self):
+    def test_cache_ttl_default_5(self):
+        # Default [git] config carries cache_ttl=5 and nothing else.
         cfg = sl.load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
-        self.assertEqual(cfg.git, {"worktree": False})
+        self.assertEqual(cfg.git, {"cache_ttl": 5})
 
-    def test_file_enables_worktree(self):
-        path = self._write("[git]\nworktree = true\n")
+    def test_cache_ttl_from_toml(self):
+        path = self._write("[git]\ncache_ttl = 20\n")
         cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
-        self.assertTrue(cfg.git["worktree"])
+        self.assertEqual(cfg.git["cache_ttl"], 20)
 
-    def test_env_overrides_file(self):
-        path = self._write("[git]\nworktree = true\n")
-        env = {"CC_AI_KIT_CONFIG": path, "HOME": "/h", "CC_AI_KIT_GIT_WORKTREE": "0"}
-        self.assertFalse(sl.load_config(env).git["worktree"])   # env beats file
+    def test_cache_ttl_env_overrides_toml(self):
+        # Precedence: default 5 < TOML [git] cache_ttl < env CC_AI_KIT_GIT_TTL.
+        path = self._write("[git]\ncache_ttl = 20\n")
+        env = {"CC_AI_KIT_CONFIG": path, "HOME": "/h", "CC_AI_KIT_GIT_TTL": "99"}
+        self.assertEqual(sl.load_config(env).git["cache_ttl"], 99)
 
-    def test_unknown_git_key_ignored(self):
+    def test_cache_ttl_env_over_default(self):
+        env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
+               "CC_AI_KIT_GIT_TTL": "0"}
+        self.assertEqual(sl.load_config(env).git["cache_ttl"], 0)
+
+    def test_cache_ttl_bad_toml_type_ignored(self):
+        path = self._write('[git]\ncache_ttl = "soon"\n')   # string, not int
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertEqual(cfg.git["cache_ttl"], 5)            # default kept
+        self.assertIn("cache_ttl", buf.getvalue())           # and warned
+
+    def test_legacy_worktree_key_tolerated_with_cache_ttl(self):
+        # Legacy `[git] worktree` is silently accepted (no warning), no effect;
+        # cache_ttl alongside it still resolves.
+        for val in ("true", "false", '"true"'):
+            path = self._write(f"[git]\nworktree = {val}\ncache_ttl = 12\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stderr(buf):
+                cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+            self.assertEqual(cfg.git, {"cache_ttl": 12}, val)
+            self.assertNotIn("worktree", buf.getvalue(), val)   # no warning
+
+    def test_worktree_env_no_longer_read(self):
+        # CC_AI_KIT_GIT_WORKTREE is retired — setting it does not affect cfg.git.
+        env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
+               "CC_AI_KIT_GIT_WORKTREE": "1"}
+        self.assertEqual(sl.load_config(env).git, {"cache_ttl": 5})
+
+    def test_unknown_git_key_warns(self):
         path = self._write("[git]\nbogus = true\n")
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
-        self.assertEqual(cfg.git, {"worktree": False})          # bogus dropped
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertNotIn("bogus", cfg.git)             # bogus dropped
+        self.assertIn("bogus", buf.getvalue())         # and warned
 
-    def test_wrong_type_value_ignored(self):
-        path = self._write('[git]\nworktree = "true"\n')        # string, not bool
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
-        self.assertFalse(cfg.git["worktree"])                   # default kept
-
-    def test_check_flags_bad_git_config(self):
-        path = self._write('[git]\nbogus = true\nworktree = "x"\n')
+    def test_check_flags_unknown_and_bad_ttl_but_not_legacy_worktree(self):
+        # `bogus` and a bad cache_ttl are flagged; legacy `worktree` is NOT.
+        path = self._write('[git]\nbogus = true\nworktree = "x"\ncache_ttl = "nope"\n')
         errors = sl.validate_config_file(path, {"HOME": "/h"})
-        self.assertTrue(any("[git]" in e or "git" in e for e in errors), errors)
+        self.assertTrue(any("bogus" in e for e in errors), errors)
+        self.assertTrue(any("cache_ttl" in e for e in errors), errors)
+        self.assertFalse(any("worktree" in e for e in errors), errors)
+
+
+class TestWorktreeSegmentToggle(unittest.TestCase):
+    """The worktree feature is now a segment toggle, ON by default."""
+
+    def _write(self, body):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_worktree_segment_on_by_default(self):
+        self.assertIs(sl.SEGMENTS.get("worktree"), True)
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        self.assertTrue(cfg.segments["worktree"])
+
+    def test_worktree_segment_disable_via_toml(self):
+        path = self._write("[segments]\nworktree = false\n")
+        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        self.assertFalse(cfg.segments["worktree"])
+
+    def test_worktree_segment_disable_via_env(self):
+        env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
+               "CC_AI_KIT_SEGMENT_WORKTREE": "0"}
+        self.assertFalse(sl.load_config(env).segments["worktree"])
 
 
 class TestRenderWithConfig(unittest.TestCase):
@@ -996,9 +1412,8 @@ class TestMainUsesConfig(unittest.TestCase):
 
 class TestResolveLayout(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body)
-        f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
@@ -1022,9 +1437,8 @@ class TestResolveLayout(unittest.TestCase):
 
 class TestPaletteFromConfig(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body)
-        f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
@@ -1098,9 +1512,8 @@ class TestSampleRecipe(unittest.TestCase):
 
 class TestCLI(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body)
-        f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
@@ -1304,8 +1717,8 @@ class TestBuildTheme(unittest.TestCase):
 
 class TestRampFromConfig(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body); f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
@@ -1450,6 +1863,140 @@ class TestRendererRobustness(unittest.TestCase):
         self.assertNotIn("status-line error", text)
         self.assertNotIn("⚠", text)        # no per-segment crashes either
         self.assertTrue(text.strip())       # and the bar is not blank
+
+
+class TestRenderDataLazy(unittest.TestCase):
+    """FR-R.2 (option A): expensive probes run inside the measured build of the
+    segment that reads them, not eagerly in build_data — so the cost is captured
+    by safe_build's timing and the shared probe still runs at most once."""
+
+    def test_git_probe_deferred_to_render_and_runs_once(self):
+        snap = sl.GitSnapshot(True, "main", "modified", False, "")
+        raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s"}
+        cfg = sl.default_config()
+        theme = sl.build_theme(cfg)
+        with mock.patch.object(sl, "git_snapshot", return_value=snap) as gs:
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"})
+            self.assertEqual(gs.call_count, 0, "git probe must NOT run during build_data")
+            sl.render(data, cols, lines, cfg, theme)
+            self.assertEqual(gs.call_count, 1, "git probe runs exactly once during render")
+
+    def test_disabled_git_segments_skip_the_probe(self):
+        raw = {"workspace": {"current_dir": "/repo"}}
+        cfg = sl.default_config()
+        cfg.segments["branch"] = False
+        cfg.segments["dirty"] = False
+        cfg.segments["worktree"] = False
+        theme = sl.build_theme(cfg)
+        with mock.patch.object(sl, "git_snapshot") as gs:
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"})
+            sl.render(data, cols, lines, cfg, theme)
+            self.assertEqual(gs.call_count, 0, "no git segment enabled => no git probe")
+
+
+class TestSlowestTruthful(unittest.TestCase):
+    """FR-R.2 acceptance: `slowest` names a real contributor whose cost is the
+    same order of magnitude as the render — ms-scale, not the µs of a cache hit."""
+
+    def test_slowest_captures_probe_cost_not_microseconds(self):
+        raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s"}
+        cfg = sl.default_config()
+        theme = sl.build_theme(cfg)
+
+        def slow_git(*_a, **_k):                 # a 20ms git status
+            time.sleep(0.02)
+            return sl.GitSnapshot(True, "main", "modified", False, "")
+
+        with mock.patch.object(sl, "git_snapshot", side_effect=slow_git):
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"})
+            sl.render(data, cols, lines, cfg, theme)
+        name, ns = data["slowest"]
+        self.assertIn(name, ("branch", "dirty", "worktree"))  # a real git consumer
+        self.assertGreater(ns, 1_000_000)                     # >1ms, not µs
+
+
+class TestTwoPassLayout(unittest.TestCase):
+    """FR-R.3: a measured pass times every non-meta segment, then assembly places
+    render_time/slowest at their LAYOUT positions — so slowest no longer has to be
+    last on its line and sits adjacent to render_time by default."""
+
+    def _diag_line(self):
+        raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s",
+               "cost": {"total_cost_usd": 0.5}}
+        cfg = sl.default_config()
+        theme = sl.build_theme(cfg)
+        with mock.patch.object(sl, "git_snapshot",
+                               return_value=sl.GitSnapshot(True, "main", "modified", False, "")):
+            data, _c, _l = sl.build_data(raw, {"HOME": "/h"},
+                                         t_start=time.perf_counter_ns())
+            out = sl.render(data, 200, 50, cfg, theme)
+        return next(strip(l) for l in out if "⏱" in strip(l))
+
+    def test_slowest_adjacent_to_render_time(self):
+        diag = self._diag_line()
+        i, j = diag.index("⏱"), diag.index("🐌")
+        self.assertGreater(j, i)              # slowest comes after render_time
+        self.assertNotIn("📊", diag[i:j])     # context not wedged between them
+
+    def test_slowest_not_forced_last_in_layout(self):
+        line = next(l for l in sl.LAYOUT if "slowest" in l.segments)
+        self.assertNotEqual(line.segments[-1], "slowest")
+        self.assertEqual(line.segments.index("slowest"),
+                         line.segments.index("render_time") + 1)
+
+
+class TestGoldenOutput(unittest.TestCase):
+    """Snapshot guard for the measured-pass restructure (FR-R.1/2/3). Renders a
+    set of representative inputs through build_data + render with every
+    non-deterministic probe mocked, and compares to a committed expected.txt.
+    t_start=None makes render_time self-omit and `slowest` is unset, so the
+    snapshot captures the NON-meta segment output exactly — which is what the
+    restructure must preserve. Regenerate intentionally with UPDATE_GOLDEN=1."""
+
+    GOLDEN = os.path.join(os.path.dirname(__file__), "fixtures", "golden")
+    ENV = {"HOME": "/home/dev"}
+
+    @contextlib.contextmanager
+    def _deterministic(self):
+        snap = sl.GitSnapshot(in_repo=True, branch="main", dirty="modified",
+                              is_worktree=False, wt_name="")
+        with mock.patch.object(sl.time, "strftime", return_value="14:30"), \
+             mock.patch.object(sl.time, "time", return_value=NOW), \
+             mock.patch.object(sl, "git_snapshot", return_value=snap), \
+             mock.patch.object(sl, "proc_rss_bytes", return_value=448_790_528), \
+             mock.patch.object(sl, "transcript_bytes", return_value=305_000), \
+             mock.patch.object(sl, "current_todo", return_value=(None, None)), \
+             mock.patch.object(sl, "effort_setting_is_auto", return_value=False):
+            yield
+
+    def _render_all(self):
+        with open(os.path.join(self.GOLDEN, "inputs.json"), encoding="utf-8") as f:
+            cases = json.load(f)
+        cfg = sl.default_config()
+        # The meta segments report the render itself and are inherently
+        # non-deterministic (render_time / slowest durations) and are exactly what
+        # the restructure changes — exclude them so the golden guards only the
+        # non-meta segment output it is meant to protect.
+        cfg.segments["render_time"] = False
+        cfg.segments["slowest"] = False
+        theme = sl.build_theme(cfg)
+        blocks = []
+        with self._deterministic():
+            for c in cases:
+                data, _cols, _lines = sl.build_data(c["raw"], self.ENV, t_start=None)
+                data["cols"], data["lines"] = c["cols"], c["lines"]
+                out = sl.render(data, c["cols"], c["lines"], cfg, theme)
+                blocks.append(f"### {c['name']}\n" + "\n".join(strip(l) for l in out))
+        return "\n\n".join(blocks) + "\n"
+
+    def test_matches_golden(self):
+        expected_path = os.path.join(self.GOLDEN, "expected.txt")
+        actual = self._render_all()
+        if os.environ.get("UPDATE_GOLDEN"):
+            with open(expected_path, "w", encoding="utf-8") as f:
+                f.write(actual)
+        with open(expected_path, encoding="utf-8") as f:
+            self.assertEqual(actual, f.read())
 
 
 class TestDoctor(unittest.TestCase):

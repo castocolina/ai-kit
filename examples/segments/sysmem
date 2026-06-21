@@ -58,14 +58,18 @@ def main():
     if n is None:
         return 0                       # unsupported platform -> print nothing -> dropped
     gib = fmt_gib(n)
+    # Absolute GiB thresholds (not %-of-total): tune these to your machine — on a
+    # large workstation 4 GiB free is already tight, on a small VM it is plenty.
     color = GREEN if gib >= 4 else YELLOW if gib >= 1 else RED
     cols = int(os.environ.get("AI_KIT_SEGMENT_COLS", "80") or "80")
+    # 💻 (the machine's RAM) — distinct from the built-in `memory` segment's 🧮
+    # (process RSS) and the model-memory sparkline's 🧠, so the three never collide.
     if cols >= 14:
-        text = f"🧠 {gib:.1f} GiB free"
+        text = f"💻 {gib:.1f} GiB free"
     elif cols >= 9:
-        text = f"🧠 {gib:.1f}G"
+        text = f"💻 {gib:.1f}G"
     elif cols >= 4:
-        text = f"🧠{gib:.0f}G"
+        text = f"💻{gib:.0f}G"
     else:
         return 0                       # no room -> drop
     sys.stdout.write(f"{color}{text}{RESET}\n")

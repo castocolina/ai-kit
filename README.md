@@ -79,23 +79,34 @@ render_time = false  # ⏱ hide the render-time mark (on by default)
 CC_AI_KIT_SEGMENT_COST=1     # 1 true t y yes on  /  0 false f n no off
 ```
 
-**Worktree detection** — the `branch` segment can show 🌳 (linked worktree) vs
-🌿 (main repo), but detecting that needs an extra `git rev-parse` per render, so
-it ships **off**. Enable it in the file:
+**Worktree segment** — `worktree` (⎇, **on by default**) names the *active*
+linked git worktree the session sits in, never a list: `⎇ <name>` (the worktree
+directory basename, truncated to 20 columns). On the main checkout it shows a
+dimmed, struck-through `⎇ wt` placeholder; outside any git repo it's hidden. The
+`branch` segment shows only the branch — worktree state lives entirely in this
+segment. Toggle it like any other segment (`[segments] worktree = false`, or
+`CC_AI_KIT_SEGMENT_WORKTREE=0`).
+
+**Shared git probe + cache TTL** — `branch`, `dirty`, and `worktree` read from
+one shared `git` probe (no duplicate querying). `dirty` is always read fresh; the
+worktree `rev-parse` is cached (default **5 s**) because it rarely changes. Tune
+the cache:
 
 ```toml
 [git]
-worktree = true   # detect linked worktrees (🌳 vs 🌿); adds a git rev-parse
+cache_ttl = 5   # seconds the worktree probe is cached
 ```
 
-…or per-session: `CC_AI_KIT_GIT_WORKTREE=1` (wins over the file).
+…or per-session: `CC_AI_KIT_GIT_TTL=10` (wins over the file). A legacy
+`[git] worktree` key (and the old `CC_AI_KIT_GIT_WORKTREE` env) is silently
+ignored — worktree display is now the `worktree` segment.
 
 **Performance note** — disabling a segment skips its work, not just its
 display. On a very large repository, turning off `dirty` also skips git's
-untracked-file scan (the slow part of `git status`); turning off `branch`
-(or leaving `[git] worktree` off) skips the `rev-parse`; turning off `todo`
-skips the task-state read. The status line reads task/todo state from Claude's
-on-disk state, not by re-parsing the transcript, so it stays fast as sessions grow.
+untracked-file scan (the slow part of `git status`); turning off `worktree`
+skips the `rev-parse`; turning off `todo` skips the task-state read. The status
+line reads task/todo state from Claude's on-disk state, not by re-parsing the
+transcript, so it stays fast as sessions grow.
 
 **Reorder / move rows** — uncomment **all** `[[line]]` blocks and edit (layout
 is all-or-nothing; a partial layout would silently drop segments):
@@ -103,7 +114,7 @@ is all-or-nothing; a partial layout would silently drop segments):
 ```toml
 [[line]]
 min_rows = 0
-segments = ["path", "branch", "dirty", "todo"]
+segments = ["path", "branch", "worktree", "dirty", "todo"]
 ```
 
 **Recolor segments** — colors are configured in the TOML file only (there is
@@ -204,19 +215,39 @@ fi                                          # else: nothing -> dropped
 A cross-platform Python reference (system available memory) ships at
 `examples/segments/sysmem` — copy it as a starting point.
 
+**The installer offers to set these up for you.** On an interactive `install`,
+the wizard discovers every provider under the repo's `examples/segments/`,
+presents them **pre-checked** (default-ON), and copies the ones you keep into
+your config segments dir (executable, atomic, idempotent — re-running never
+duplicates). Headless / scripted runs are governed entirely by a flag and never
+prompt: `--examples=all|none|<ids>` (default `all`; `<ids>` is a comma/space list
+of segment ids). Disable an installed provider later like any segment:
+`[segments] sysmem = false`.
+
 **Disable** a provider explicitly: `[segments] aws-session = false` (or
 `CC_AI_KIT_SEGMENT_AWS_SESSION=0`).
 
-**Trust model.** Providers are arbitrary executables you place in your own
-directory; ai-kit never installs them. Keep them fast and single-line. A
-failing, slow (past `timeout`), or empty provider is simply omitted.
+**Trust model.** Providers are arbitrary executables. ai-kit only ever installs
+the **bundled examples** shipped in this repo, and only on your explicit opt-in
+(the pre-checked offer, or `--examples`); it never fetches or runs remote code.
+Anything else is something you place in your own directory. Keep them fast and
+single-line. A failing, slow (past `timeout`), or empty provider is simply omitted.
 
 ### Flags & overrides
 
 ```bash
-install.sh --dry-run     # show what would change, mutate nothing
-install.sh --uninstall   # remove every ai-kit symlink + statusLine (keeps the install dir)
+install.sh --dry-run            # show what would change, mutate nothing
+install.sh --uninstall          # remove every ai-kit symlink + statusLine (keeps the install dir)
+install.sh --examples=all|none|<ids>   # which bundled example segments to install (default: all)
+AIKIT_PLAIN=1 install.sh        # force the plain numbered wizard (skip the arrow-key chip UI)
 ```
+
+**Wizard modes.** The interactive installer auto-selects its UI: on a capable
+terminal it shows an **arrow-key chip selector** (↑↓/space/enter), and falls back
+to a **plain numbered menu** anywhere else (non-tty, `TERM=dumb`, a small window).
+Force the plain menu with `AIKIT_PLAIN=1`. With no terminal at all (CI, piped
+input) the wizard never prompts — selections come from flags and defaults, so an
+unattended `install` always completes.
 
 Environment overrides: `AI_KIT_DIR`, `AI_KIT_REPO`, `AI_KIT_BRANCH`, `CLAUDE_CONFIG_DIR`.
 
@@ -252,6 +283,30 @@ ai-kit/
 │   ├── install.sh               # the installer above
 │   └── status-line.py           # responsive Claude Code status line
 └── tests/                       # test_install.sh, test_status_line.py
+```
+
+## Development
+
+The shipped tools stay **stdlib-only** — `tools/status-line.py` runs under the
+user's own `python3` with no dependencies. The lint/type toolchain below is
+**dev-only** and never required at runtime.
+
+```bash
+make dev        # uv sync + install pre-commit hooks (sets up the dev env)
+make test       # full test suite on system python3 (real runtime fidelity)
+make lint       # shellcheck + py_compile (quick static checks)
+make validate   # the full quality gate (see below)
+```
+
+**The quality gate is pre-commit.** `.pre-commit-config.yaml` is the single
+source of truth: `make validate` runs `uv run pre-commit run --all-files`, the
+*same* hooks (ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest)
+that gate every commit — so the gate and your local checks can never drift. Tool
+versions are pinned in `uv.lock`; `make dev` installs the hooks so commits are
+gated even if you skip `make validate`. Run it once after cloning:
+
+```bash
+make dev        # then commits are automatically gated
 ```
 
 ## Compatibility notes

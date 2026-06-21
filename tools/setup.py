@@ -12,14 +12,26 @@ Env overrides (mirrors install.sh):
 """
 
 import argparse
+import contextlib
+import copy
 import json
 import os
 import re
+import select
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import tomllib
 from collections import namedtuple
+
+try:                                  # POSIX-only; mode A gates on isatty anyway
+    import termios
+    import tty as _termmode
+except ImportError:                   # non-POSIX: raw mode is a no-op
+    termios = None
+    _termmode = None
 
 CATEGORIES = ("agents", "commands", "skills")
 
@@ -56,18 +68,18 @@ def resolve_paths(env):
 # importable module, and the wizard must run even while the renderer is mid-edit.
 # TestTomlRead.test_segment_defaults_match_recipe_drift pins these to the recipe.
 SEGMENT_DEFAULTS = {
-    "path": True, "branch": True, "dirty": True, "todo": True,
+    "path": True, "branch": True, "dirty": True, "worktree": True, "todo": True,
     "model": True, "time_ago": True, "clock": True, "effort": True,
     "lines": True, "cost": False, "total_time": True, "api_time": True,
-    "render_time": True, "dimensions": False, "context": True, "chat_size": True,
-    "memory": True, "rate_limits": True,
+    "render_time": True, "slowest": True, "dimensions": False, "context": True,
+    "chat_size": True, "memory": True, "rate_limits": True,
 }
 LAYOUT_DEFAULTS = [
-    {"min_rows": 0, "segments": ["path", "branch", "dirty", "todo"]},
+    {"min_rows": 0, "segments": ["path", "branch", "worktree", "dirty", "todo"]},
     {"min_rows": 20, "segments": ["model", "time_ago", "clock", "effort", "lines",
                                   "cost", "total_time", "api_time"]},
-    {"min_rows": 30, "segments": ["render_time", "dimensions", "context",
-                                  "chat_size", "memory", "rate_limits"]},
+    {"min_rows": 30, "segments": ["render_time", "slowest", "dimensions",
+                                  "context", "chat_size", "memory", "rate_limits"]},
 ]
 
 
@@ -116,8 +128,8 @@ def render_preview(status_line, segments, sample_json, env):
     Shells out to `python3 status-line.py` feeding `sample_json` on stdin and the
     toggles as CC_AI_KIT_SEGMENT_<KEY> env overrides (so it reflects in-memory
     edits before they are written). `env` carries only the keys to override
-    (CC_AI_KIT_GIT_WORKTREE and/or forced terminal size); it is merged ON TOP OF
-    os.environ so the subprocess inherits PATH, HOME, and PYTHONPATH.
+    (e.g. forced terminal size); it is merged ON TOP OF os.environ so the
+    subprocess inherits PATH, HOME, and PYTHONPATH.
     Returns the rendered text ("" on any failure — the preview is best-effort
     and must never crash the wizard)."""
     child = {**os.environ, **env}   # inherit full env; overrides layer on top
@@ -131,7 +143,7 @@ def render_preview(status_line, segments, sample_json, env):
         proc = subprocess.run(
             [sys.executable, "-S", status_line],
             input=sample_json, capture_output=True, text=True,
-            env=child, timeout=10)
+            env=child, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return ""
     if proc.returncode != 0:
@@ -143,8 +155,9 @@ def render_preview(status_line, segments, sample_json, env):
 # self-documenting). Lifted verbatim from tools/statusline.toml.sample comments.
 _SEGMENT_NOTES = {
     "path": "📂 working directory, ~-relative   (pinned)",
-    "branch": "🌿 git branch  (🌳 in a worktree)",
+    "branch": "git branch name",
     "dirty": "working-tree dirty marker",
+    "worktree": "⎇ active linked-worktree name",
     "todo": "📝 current TODO  (📝 in-progress / ⏸ pending)",
     "model": "active model name (e.g. Opus)",
     "time_ago": "time since the session's first message",
@@ -155,6 +168,7 @@ _SEGMENT_NOTES = {
     "total_time": "💬 total session duration",
     "api_time": "📡 cumulative API response time",
     "render_time": "⏱ status-line's own render time, SLO/SLA-colored",
+    "slowest": "🐌 slowest single segment this render (name + duration)",
     "dimensions": "terminal size cols×lines (? if assumed)  (debug; OFF by default)",
     "context": "📊 context-window % used (and max) (pinned)",
     "chat_size": "💾 transcript file size on disk",
@@ -285,8 +299,9 @@ def patch_layout(text, lines):
                     continue
                 if nm is None:
                     # a body line (min_rows / segments / blank) — part of the region
-                    if src[i].strip() == "" or re.match(r"^\s*#?\s*(min_rows|segments)\b",
-                                                         src[i]):
+                    is_body = src[i].strip() == "" or re.match(
+                        r"^\s*#?\s*(min_rows|segments)\b", src[i])
+                    if is_body:
                         i += 1
                         continue
                 break
@@ -302,43 +317,6 @@ def patch_layout(text, lines):
     return "".join(out)
 
 
-def patch_git_worktree(text, value):
-    """Set [git] worktree to `value`, preserving every other byte. Rewrites the
-    key in place (uncommenting it + the [git] header); appends a [git] block with
-    the key + doc note if [git] is absent."""
-    lines = text.splitlines(keepends=True)
-    out = []
-    in_git = False
-    git_header_idx = None
-    written = False
-    for line in lines:
-        name = _header_name(line)
-        if name is not None:
-            in_git = (name == "git")
-            if in_git:
-                git_header_idx = len(out)
-            out.append(line)
-            continue
-        if in_git and not written:
-            m = _KEY_RE.match(line)
-            if m and m.group("key") == "worktree":
-                trail = m.group("trail") or ""
-                nl = "\n" if line.endswith("\n") else ""
-                out.append(f"{m.group('indent')}worktree = "
-                           f"{'true' if value else 'false'}{trail}{nl}")
-                written = True
-                continue
-        out.append(line)
-    if written and git_header_idx is not None:
-        out[git_header_idx] = re.sub(r"^(\s*)#\s*", r"\1", out[git_header_idx], count=1)
-    if not written:
-        if out and not out[-1].endswith("\n"):
-            out.append("\n")
-        out.append(f"[git]\nworktree = {'true' if value else 'false'}"
-                   f"          # detect linked worktrees (🌳 vs 🌿).\n")
-    return "".join(out)
-
-
 def write_toml_preserving(path, text, status_line):
     """Atomically write `text` to `path`, then self-validate via the doctor.
 
@@ -349,7 +327,7 @@ def write_toml_preserving(path, text, status_line):
     on success."""
     prev = None
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             prev = f.read()
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
@@ -365,7 +343,8 @@ def write_toml_preserving(path, text, status_line):
     env["CC_AI_KIT_CONFIG"] = path
     try:
         proc = subprocess.run([sys.executable, "-S", status_line, "--doctor"],
-                              capture_output=True, text=True, env=env, timeout=10)
+                              capture_output=True, text=True, env=env, timeout=10,
+                              check=False)
         ok = proc.returncode == 0
     except (OSError, subprocess.SubprocessError):
         ok = False
@@ -398,7 +377,7 @@ def validate_entry(cat, path):
         if not (os.path.isfile(path) and path.endswith(".md")):
             return False
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 first = f.readline()
         except OSError:
             return False
@@ -421,6 +400,159 @@ def enumerate_entries(install_dir):
                     found.append((name, path))
         out[cat] = found
     return out
+
+
+# Mirror status-line.py's canonical `_SEG_HEADER_RE` EXACTLY (whitespace-flexible
+# after `#` and after the colon; NO leading indent — the marker sits at column 0)
+# so the installer and the renderer never disagree on which files are providers
+# (the two files can't import each other — hyphenated filename, see L64 — so the
+# pattern is duplicated; keep it byte-identical to status-line.py's).
+_SEG_HEADER_RE = re.compile(r"^#\s*ai-kit-segment:\s*(.*?)\s*$")
+
+
+def _parse_segment_header(text):
+    """Parse an external segment's `# ai-kit-segment: k=v k=v …` marker line into
+    a {key: value} dict (e.g. `id`, `line`, `after`, `ttl`). Scans the head of the
+    file; returns None when no marker line is present. Bare tokens (no `=`) are
+    ignored. This is the single source of truth for the `id` that drives the
+    `segments.<id>` toggle."""
+    for line in text.splitlines():
+        m = _SEG_HEADER_RE.match(line)
+        if m:
+            fields = {}
+            for tok in m.group(1).split():
+                if "=" in tok:
+                    k, v = tok.split("=", 1)
+                    fields[k] = v
+            return fields
+    return None
+
+
+def discover_example_segments(examples_dir):
+    """Scan `examples_dir` for shippable example external segments, each carrying
+    a `# ai-kit-segment: … id=<id> …` header. Returns a list of
+    {id, name, path, default_on} sorted by id — `default_on` is always True
+    (every example is OFFERED pre-checked; the user unchecks to skip). Files
+    without the marker or without an `id` are skipped; a missing dir yields []."""
+    out = []
+    try:
+        names = sorted(os.listdir(examples_dir))
+    except OSError:
+        return out
+    for name in names:
+        path = os.path.join(examples_dir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                head = f.read(4096)
+        except OSError:
+            continue
+        fields = _parse_segment_header(head)
+        if not fields or "id" not in fields:
+            continue
+        out.append({"id": fields["id"], "name": name, "path": path,
+                    "default_on": True})
+    return sorted(out, key=lambda e: e["id"])
+
+
+def _atomic_write_executable(dst, data):
+    """Write `data` to `dst` atomically and 0o755: a temp file in the SAME dir +
+    os.replace, so an interrupted write never leaves a truncated (yet chmod-+x,
+    about-to-be-exec'd) provider in place. Raises OSError on a bad/blocked dest
+    (a name that is a directory, an unwritable dir) — the caller skips it."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), prefix=".seg-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, dst)                         # atomic; both already +x
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def install_example_segments(examples, config_dir, seg_state=None):
+    """Install each chosen example external segment: copy it into the XDG-aware
+    segments dir (`config_dir/segments` — `config_dir` comes from resolve_paths,
+    so XDG_CONFIG_HOME is already honored), make it executable, and enable its
+    `segments.<id>` toggle (set `seg_state[id] = True` when a state dict is
+    given). Idempotent: a destination already holding the same bytes is left
+    untouched and a re-run never duplicates (one fixed dest path per name); a
+    stale copy is refreshed to the source bytes via an atomic temp-file replace.
+    A provider whose source can't be read or whose destination is bad/blocked
+    (name already a directory, unwritable dir) is SKIPPED with a warning rather
+    than aborting the whole install. Returns the installed ids in input order."""
+    seg_dir = os.path.join(config_dir, "segments")
+    os.makedirs(seg_dir, exist_ok=True)
+    ids = []
+    for ex in examples:
+        try:
+            with open(ex["path"], "rb") as f:
+                want = f.read()
+        except OSError:
+            continue
+        dst = os.path.join(seg_dir, ex["name"])
+        cur = None
+        if os.path.isfile(dst):
+            try:
+                with open(dst, "rb") as f:
+                    cur = f.read()
+            except OSError:
+                cur = None
+        try:
+            if cur != want:                          # refresh only when changed
+                _atomic_write_executable(dst, want)
+            else:
+                os.chmod(dst, 0o755)                 # unchanged: just reassert +x
+        except OSError as e:
+            print(f"examples: skipped {ex['name']} ({e})", file=sys.stderr)
+            continue
+        if seg_state is not None:
+            seg_state[ex["id"]] = True               # enable segments.<id>
+        ids.append(ex["id"])
+    return ids
+
+
+def resolve_example_selection(flag, examples):
+    """Resolve which discovered `examples` to install from the `--examples` value.
+    None (flag absent) or `all` → every example (they are default-ON / pre-checked);
+    `none` → []; otherwise a comma/space-separated id list → the matching examples
+    in discovery order, unknown ids ignored. `all`/`none` are case-insensitive."""
+    if flag is None:
+        return list(examples)
+    norm = flag.strip().lower()
+    if norm == "all":
+        return list(examples)
+    if norm == "none":
+        return []
+    wanted = {t for t in re.split(r"[,\s]+", flag.strip()) if t}
+    return [e for e in examples if e["id"] in wanted]
+
+
+def select_examples(examples, flag, tty):
+    """Choose which example external segments to install. Headless (tty None) OR
+    an explicit `--examples` flag ⇒ governed PURELY by resolve_example_selection
+    with NO prompting (zero reads). Interactive with no flag ⇒ offer them
+    pre-checked through the shared chip picker on a capable terminal (esc/Ctrl-C
+    cancels → install none); on an incapable terminal accept the pre-checked
+    default (every example, default-ON). Returns the chosen list of example dicts."""
+    if flag is not None or not is_interactive(tty):
+        return resolve_example_selection(flag, examples)
+    if not examples:
+        return []
+    if _mode_a_available(os.environ, tty, tty):
+        sel = Selection(("examples", e["id"], True) for e in examples)
+        by_id = {e["id"]: e for e in examples}
+        try:
+            chip_select(sel, tty, tty, os.environ)
+            return [by_id[n] for _c, n, on in sel.items if on]
+        except KeyboardInterrupt:
+            return []                                # cancel → install none
+        except Exception:  # pylint: disable=broad-exception-caught  # UI failure degrades to default
+            pass                                     # degrade to pre-checked default
+    return list(examples)
 
 
 def _is_inside(path, root):
@@ -476,7 +608,7 @@ def _tty_write(tty, text):
         tty.seek(0, 2)  # end of buffer
         tty.write(text)
         tty.seek(read_pos)
-    except (IOError, OSError, ValueError):
+    except (OSError, ValueError):
         tty.write(text)
     tty.flush()
 
@@ -528,11 +660,11 @@ def link_one(link_path, target, dry, counts):
                 os.symlink(target, link_path)
         else:
             counts["skip_foreign"] += 1
-            print("warn: %s points outside ai-kit (%s) — leaving it alone" % (link_path, cur),
+            print(f"warn: {link_path} points outside ai-kit ({cur}) — leaving it alone",
                   file=sys.stderr)
     elif os.path.exists(link_path):
         counts["skip_real"] += 1
-        print("warn: %s exists and is not a symlink — leaving it alone" % link_path,
+        print(f"warn: {link_path} exists and is not a symlink — leaving it alone",
               file=sys.stderr)
     else:
         counts["linked"] += 1
@@ -565,18 +697,18 @@ def prune_stale(claude_dir, install_dir, present, tty, dry, counts):
             # only stale if its target no longer resolves (entry removed upstream)
             if os.path.exists(link):
                 continue
-            stale.append("%s/%s" % (cat, name))
+            stale.append(f"{cat}/{name}")
     if not stale:
         return []
     if is_interactive(tty):
         banner = "\nThese ai-kit links point at entries removed upstream:\n"
-        banner += "".join("  - %s\n" % item for item in stale)
+        banner += "".join(f"  - {item}\n" for item in stale)
         _tty_write(tty, banner)
         if not ask_yes_no(tty, "prune them?", default=False):
             return stale  # offered, declined
     else:
         for item in stale:
-            print("warn: removing dead ai-kit link %s (entry removed upstream)" % item,
+            print(f"warn: removing dead ai-kit link {item} (entry removed upstream)",
                   file=sys.stderr)
     for item in stale:
         cat, name = item.split("/", 1)
@@ -584,6 +716,67 @@ def prune_stale(claude_dir, install_dir, present, tty, dry, counts):
         counts["pruned"] += 1
         counts["unlinked"] -= 1  # pruned and unlinked are distinct tallies
     return stale
+
+
+def predecessor_candidates(claude_dir, install_dir, entries):
+    """List (cat, name, old_target, new_target) for links left by a PREVIOUS
+    ai-kit install (e.g. a renamed repo uz-kit -> ai-kit). A candidate is a
+    symlink at <claude>/<cat>/<name> that is foreign to the CURRENT install_dir
+    yet carries the ai-kit <root>/<cat>/<name> shape (target basename == name,
+    its parent dir name == cat) AND whose <name> is a current repo entry, so it
+    can be re-pointed. Unrelated foreign symlinks (different shape, or no current
+    entry) are excluded — we never touch a link that isn't recognizably ours."""
+    out = []
+    for cat in CATEGORIES:
+        by_name = dict(entries.get(cat, []))
+        dest = os.path.join(claude_dir, cat)
+        if not os.path.isdir(dest):
+            continue
+        for name in sorted(os.listdir(dest)):
+            link = os.path.join(dest, name)
+            if not os.path.islink(link):
+                continue
+            old = os.readlink(link)
+            if _is_inside(old, install_dir):
+                continue                       # already a current ai-kit link
+            if os.path.basename(old) != name:
+                continue                       # not the ai-kit <cat>/<name> shape
+            if os.path.basename(os.path.dirname(old)) != cat:
+                continue
+            if name not in by_name:
+                continue                       # nothing current to re-point to
+            out.append((cat, name, old, by_name[name]))
+    return out
+
+
+def adopt_predecessor_links(claude_dir, install_dir, entries, tty, dry, counts):
+    """Resolve links from a previous ai-kit install. Interactive: list them and
+    ask whether to re-point to THIS install (default) or drop them. Headless:
+    warn only and leave them alone — never silently clobber a foreign link.
+    Returns the list of 'cat/name' candidates found."""
+    cands = predecessor_candidates(claude_dir, install_dir, entries)
+    items = [f"{cat}/{name}" for cat, name, _, _ in cands]
+    if not cands:
+        return []
+    if not is_interactive(tty):
+        for it in items:
+            print(f"warn: {it} links to a previous ai-kit install — run setup "
+                  "interactively to re-point or drop it", file=sys.stderr)
+        return items
+    banner = "\nThese links point at a PREVIOUS ai-kit install (e.g. a renamed repo):\n"
+    banner += "".join(f"  - {it}\n" for it in items)
+    _tty_write(tty, banner)
+    repoint = ask_yes_no(tty, "re-point them to this install? ('n' = drop them)",
+                         default=True)
+    for cat, name, _old, new_target in cands:
+        link = os.path.join(claude_dir, cat, name)
+        if not dry:
+            if os.path.lexists(link):
+                os.remove(link)
+            if repoint:
+                os.symlink(new_target, link)
+        counts["relinked" if repoint else "pruned"] += 1
+    return items
 
 
 _ACCENT = "\033[36m"   # cyan — enabled rows
@@ -612,56 +805,116 @@ def _default_selection(entries, installed):
     return sel
 
 
+class Selection:
+    """The shared in-memory pick model behind both the install skill-picker and
+    the status-line segment toggle. Holds an ORDERED list of (category, name)
+    items each with an enabled flag, plus a cursor. It owns ONLY *what is on* and
+    *where the cursor sits* — never layout, dirtiness, or persistence (callers
+    compose those around it). Both flows mutate it the same way (toggle / set_all
+    / move_cursor) and project it back out (category_sets / enabled_map)."""
+
+    def __init__(self, items):
+        # items: iterable of (category, name, enabled)
+        self.items = [[cat, name, bool(on)] for cat, name, on in items]
+        self.cursor = 0
+
+    def __len__(self):
+        return len(self.items)
+
+    def toggle(self, index):
+        """Flip the enabled flag of the item at `index`."""
+        self.items[index][2] = not self.items[index][2]
+
+    def toggle_cursor(self):
+        """Toggle the item currently under the cursor."""
+        if self.items:
+            self.toggle(self.cursor)
+
+    def set_all(self, value):
+        """Set every item's enabled flag to `value`."""
+        for it in self.items:
+            it[2] = bool(value)
+
+    def move_cursor(self, delta):
+        """Move the cursor by `delta`, clamped to the item range."""
+        if self.items:
+            self.cursor = max(0, min(len(self.items) - 1, self.cursor + delta))
+
+    def enabled_map(self):
+        """{name: enabled} over every item, order-preserving."""
+        return {name: on for _cat, name, on in self.items}
+
+    def category_sets(self, categories=None):
+        """{category: {names that are enabled}} — only the ON items appear in a
+        category's set. A category with any item present always gets a key; when
+        `categories` is given, every listed category gets a key too (empty set if
+        it has no enabled items), so callers need no post-projection backfill."""
+        out = {c: set() for c in categories} if categories else {}
+        for cat, name, on in self.items:
+            s = out.setdefault(cat, set())
+            if on:
+                s.add(name)
+        return out
+
+
 def select_skills(entries, installed, tty):
     """Compute the chosen set per category. Headless (tty None): return the
     default selection with no prompting. Interactive: render a numbered toggle
     list ([x]/[ ], accent-on/dim-off, one-line note), let the user flip rows by
-    number (or 'a'/'n' for all/none), Enter to accept."""
-    sel = _default_selection(entries, installed)
+    number (or 'a'/'n' for all/none), Enter to accept. Both paths resolve to the
+    same default — an immediate Enter equals headless."""
+    default = _default_selection(entries, installed)
     if not is_interactive(tty):
-        return sel
+        return default
     # flat numbered index over all categories, skills first (the row order the
     # wizard presents; CATEGORIES itself stays alphabetical for storage).
     _row_order = ("skills", "commands", "agents")
-    rows = []
-    for cat in _row_order:
-        for name, path in entries[cat]:
-            rows.append((cat, name, path))
+    sel = Selection(
+        (cat, name, name in default[cat])
+        for cat in _row_order
+        for name, _path in entries[cat]
+    )
+    if _mode_a_available(os.environ, tty, tty):
+        # Mode A: arrow-key chip selector on a capable terminal. esc/Ctrl-C
+        # (KeyboardInterrupt) cancels → keep the safe default selection. Any
+        # OTHER failure (a termios error on a hostile terminal, a render bug)
+        # degrades to the always-correct numbered menu below rather than
+        # crashing the installer.
+        try:
+            chip_select(sel, tty, tty, os.environ)
+            return sel.category_sets(CATEGORIES)
+        except KeyboardInterrupt:
+            return default
+        except Exception:  # pylint: disable=broad-exception-caught  # UI failure degrades to mode B
+            pass                                 # fall through to mode B
     while True:
         menu = ("\nSelect what to install (type numbers to toggle, "
                 "'a' all, 'n' none, Enter to accept):\n")
-        for i, (cat, name, _path) in enumerate(rows, 1):
-            on = name in sel[cat]
-            mark = "x" if on else " "
-            color = _ACCENT if on else _DIM
+        for i, (cat, name, on) in enumerate(sel.items, 1):
+            box = "[x]" if on else "[ ]"
+            word = "on " if on else "off"               # legible without color
+            label = f"{_ACCENT}{cat}/{name}{_RESET}" if on else f"{cat}/{name}"
             new = "" if (name in installed[cat] or _first_run(installed)) else "  NEW"
-            menu += ("  %2d. [%s] %s%s/%s%s%s\n"
-                     % (i, mark, color, cat, name, _RESET, new))
+            menu += f"  {i:2}. {box} {word}  {label}{new}\n"
         _tty_write(tty, menu)
         line = tty.readline()
         if not line:
-            return sel
+            break
         cmd = line.strip().lower()
         if cmd == "":
-            return sel
+            break
         if cmd == "a":
-            for cat in CATEGORIES:
-                sel[cat] = {n for n, _ in entries[cat]}
+            sel.set_all(True)
             continue
         if cmd == "n":
-            for cat in CATEGORIES:
-                sel[cat] = set()
+            sel.set_all(False)
             continue
         for tok in cmd.replace(",", " ").split():
-            if not tok.isdigit():
-                continue
-            idx = int(tok) - 1
-            if 0 <= idx < len(rows):
-                cat, name, _path = rows[idx]
-                if name in sel[cat]:
-                    sel[cat].discard(name)
-                else:
-                    sel[cat].add(name)
+            if tok.isdigit():
+                idx = int(tok) - 1
+                if 0 <= idx < len(sel):
+                    sel.toggle(idx)
+    return sel.category_sets(CATEGORIES)
 
 
 def apply_selection(selection, entries, claude_dir, dry, counts):
@@ -697,7 +950,7 @@ def _read_json(path):
     if not os.path.isfile(path):
         return {}
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (ValueError, OSError):
         return {}
@@ -707,7 +960,7 @@ def _read_json(path):
 def _write_json(path, data):
     """Write JSON with a 2-space indent + trailing newline, creating parents."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
 
@@ -726,15 +979,15 @@ def wire_statusline(settings, status_line, tty, dry):
     if cur_cmd and status_line not in cur_cmd:
         # a foreign status line — guard it
         if not is_interactive(tty):
-            print("warn: settings.json has a foreign statusLine (%s) — not wiring "
-                  "the ai-kit status line (headless)" % cur_cmd, file=sys.stderr)
+            print(f"warn: settings.json has a foreign statusLine ({cur_cmd}) — not wiring "
+                  "the ai-kit status line (headless)", file=sys.stderr)
             return False
-        _tty_write(tty, "\nsettings.json already sets a status line:\n  %s\n" % cur_cmd)
+        _tty_write(tty, f"\nsettings.json already sets a status line:\n  {cur_cmd}\n")
         if not ask_yes_no(tty, "overwrite it with the ai-kit status line?", default=False):
             print("statusLine left untouched (declined).", file=sys.stderr)
             return False
     if dry:
-        print("would set statusLine -> %s" % desired)
+        print(f"would set statusLine -> {desired}")
         return True
     data["statusLine"] = {"type": "command", "command": desired}
     _write_json(settings, data)
@@ -749,10 +1002,11 @@ def copy_recipe_if_absent(sample, config_toml, dry):
     if os.path.isfile(config_toml):
         return
     if dry:
-        print("would copy %s -> %s" % (sample, config_toml))
+        print(f"would copy {sample} -> {config_toml}")
         return
     os.makedirs(os.path.dirname(config_toml), exist_ok=True)
-    with open(sample) as src, open(config_toml, "w") as dst:
+    with open(sample, encoding="utf-8") as src, \
+         open(config_toml, "w", encoding="utf-8") as dst:
         dst.write(src.read())
 
 
@@ -784,19 +1038,17 @@ def _segment_changes_vs_recipe(path, segments):
     return {k: v for k, v in segments.items() if current.get(k) != v}
 
 
-def save_statusline_config(path, seg_changes, layout, worktree, status_line):
+def save_statusline_config(path, seg_changes, layout, status_line):
     """Apply the managed edits to the file at `path` via surgical text patches,
     then atomically write + doctor-validate. `seg_changes` is the minimal changed
-    {key: bool}; `layout` is None (unchanged) or the full list of line dicts;
-    `worktree` is None (unchanged) or a bool. Returns True on success."""
-    with open(path, "r", encoding="utf-8") as f:
+    {key: bool}; `layout` is None (unchanged) or the full list of line dicts.
+    Returns True on success."""
+    with open(path, encoding="utf-8") as f:
         text = f.read()
     if seg_changes:
         text = patch_segments(text, seg_changes)
     if layout is not None:
         text = patch_layout(text, layout)
-    if worktree is not None:
-        text = patch_git_worktree(text, worktree)
     return write_toml_preserving(path, text, status_line)
 
 
@@ -811,21 +1063,20 @@ def _apply_wizard_command(state, cmd):
     """Pure state transition for one wizard command. Returns (new_state, error):
     on success error is None; on a bad command new_state is `state` unchanged and
     error is a human message. Recognized: a segment number, `move <seg> up|down`,
-    `move <seg> line <n>`, `worktree`."""
-    import copy
+    `move <seg> line <n>`."""
     cmd = cmd.strip()
     st = copy.deepcopy(state)
-    order = sorted(st["segments"])
-    if cmd.isdigit():
-        n = int(cmd)
-        if not (1 <= n <= len(order)):
-            return state, f"no segment #{n}"
-        key = order[n - 1]
-        st["segments"][key] = not st["segments"][key]
+    if cmd in ("a", "n"):                       # all-on / all-off
+        st["segments"] = {k: (cmd == "a") for k in st["segments"]}
         st["dirty"] = True
         return st, None
-    if cmd == "worktree":
-        st["worktree"] = not st["worktree"]
+    order = _wizard_order(st)                    # display order == toggle order
+    if cmd.isdigit():
+        n = int(cmd)
+        if not 1 <= n <= len(order):
+            return state, f"no segment #{n}"
+        key = order[n - 1]                       # numbering is the menu's display order
+        st["segments"][key] = not st["segments"][key]
         st["dirty"] = True
         return st, None
     parts = cmd.split()
@@ -846,7 +1097,7 @@ def _apply_wizard_command(state, cmd):
             return st, None
         if parts[2] == "line" and len(parts) == 4 and parts[3].isdigit():
             dst = int(parts[3]) - 1
-            if not (0 <= dst < len(st["layout"])):
+            if not 0 <= dst < len(st["layout"]):
                 return state, f"no line #{parts[3]}"
             st["layout"][li]["segments"].remove(seg)
             st["layout"][dst]["segments"].append(seg)
@@ -856,21 +1107,385 @@ def _apply_wizard_command(state, cmd):
     return state, f"unknown command: {cmd!r}"
 
 
+# Friendly headers for the three default layout rows (keyed by min_rows);
+# any other row falls back to "line N".
+_ROW_LABELS = {0: "identity line", 20: "model line", 30: "diagnostics line"}
+
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def _visible_len(s):
+    """Length of `s` in terminal columns, ignoring SGR color escapes."""
+    return len(_ANSI_RE.sub("", s))
+
+
+def _trunc_visible(s, width):
+    """Truncate `s` to `width` visible columns, keeping SGR escapes (counted as
+    zero-width) and appending a reset if the text was cut, so color never bleeds."""
+    if width <= 0:
+        return ""
+    out, vis, i, n = [], 0, 0, len(s)
+    saw_sgr = False
+    while i < n and vis < width:
+        m = _ANSI_RE.match(s, i)
+        if m:
+            out.append(m.group())
+            i = m.end()
+            saw_sgr = True
+            continue
+        out.append(s[i])
+        vis += 1
+        i += 1
+    if i < n and saw_sgr:        # truncated AND color in play → close it cleanly
+        out.append(_RESET)       # (no spurious reset on plain text)
+    return "".join(out)
+
+
+def _wizard_groups(state):
+    """The menu's segments grouped for display: one group per layout row (its
+    segments in row order), then a trailing 'not in layout' group of any leftover
+    segments (sorted). Single source of truth for both numbering and grouping."""
+    groups, seen = [], set()
+    for i, row in enumerate(state["layout"]):
+        label = _ROW_LABELS.get(row.get("min_rows"), f"line {i + 1}")
+        keys = [k for k in row["segments"]
+                if k in state["segments"] and k not in seen]
+        seen.update(keys)
+        if keys:
+            groups.append((label, keys))
+    rest = [k for k in sorted(state["segments"]) if k not in seen]
+    if rest:
+        groups.append(("not in layout", rest))
+    return groups
+
+
+def _wizard_order(state):
+    """The flat display order of segment keys — the contract a typed menu number
+    resolves against (number N ⇒ the Nth key here). Derived from _wizard_groups
+    so the menu and the toggle resolver can never disagree."""
+    return [k for _label, keys in _wizard_groups(state) for k in keys]
+
+
 def _print_segments(tty, state):
-    """Render the numbered segment list with [x]/[ ] + accent/dim + note."""
-    accent, dim, reset = "\033[36m", "\033[90m", "\033[0m"
-    for i, key in enumerate(sorted(state["segments"]), start=1):
-        on = state["segments"][key]
-        box = "[x]" if on else "[ ]"
-        color = accent if on else dim
-        note = _SEGMENT_NOTES.get(key, "")
-        print(f"  {i:2}. {box} {color}{key}{reset}  {dim}{note}{reset}", file=tty)
+    """Render the segment menu grouped by layout row, numbered 1..n in display
+    order, with a redundant on/off word column so enabled/disabled is legible
+    without color (NO_COLOR/WCAG); color is layered on as a secondary cue."""
+    number = {key: i for i, key in enumerate(_wizard_order(state), 1)}
+    for label, keys in _wizard_groups(state):
+        print(f"\n  {label}", file=tty)
+        for key in keys:
+            on = state["segments"][key]
+            box = "[x]" if on else "[ ]"
+            word = "on " if on else "off"
+            key_col = f"{_ACCENT}{key}{_RESET}" if on else key   # dim ≠ state
+            note = _SEGMENT_NOTES.get(key, "")
+            print(f"  {number[key]:2}. {box} {word}  {key_col}  "
+                  f"{_DIM}{note}{_RESET}", file=tty)
+
+
+def _preview_lines(rendered, cols):
+    """Format the live status-line `rendered` text as preview footer lines: an
+    ASCII 'preview | ' prefix (no Unicode in the always-correct mode-B fallback),
+    each row truncated to the terminal width. Empty render → one
+    '(preview unavailable)' line so the failure is visible, not silent."""
+    prefix = "  preview | "
+    budget = max(cols - _visible_len(prefix), 1)
+    if not rendered:
+        return [prefix + "(preview unavailable)"]
+    return [prefix + _trunc_visible(line, budget)
+            for line in rendered.splitlines()]
+
+
+_CHIP_GLYPHS = {"on": "◉", "off": "◯", "cursor": "❯",
+                "more_up": "▲", "more_down": "▼", "bar": "▏"}
+_CHIP_ASCII = {"on": "[x]", "off": "[ ]", "cursor": ">",
+               "more_up": "^", "more_down": "v", "bar": "|"}
+_CHIP_HINT = "↑↓ move · space toggle · a/n all/none · enter ok · q/esc cancel"
+_CHIP_HINT_ASCII = "up/dn move · space toggle · a/n all/none · enter ok · q/esc cancel"
+
+
+def _env_truthy(val):
+    """Standard env truthiness: 1/true/t/yes/y/on (case-insensitive)."""
+    return str(val).strip().lower() in ("1", "true", "t", "yes", "y", "on")
+
+
+def _stream_isatty(stream):
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _term_dimensions(env):
+    """(cols, rows): COLUMNS/LINES from `env` when set, else the live terminal."""
+    def _int(key):
+        try:
+            return int(env.get(key, "") or 0)
+        except ValueError:
+            return 0
+    cols, rows = _int("COLUMNS"), _int("LINES")
+    if cols and rows:
+        return cols, rows
+    sz = shutil.get_terminal_size((80, 24))
+    return (cols or sz.columns), (rows or sz.lines)
+
+
+def _mode_a_available(env, stdin, stdout):
+    """The conjunctive activation gate for the mode-A chip selector: ALL of
+    stdin&stdout are TTYs, TERM is not dumb/empty, and the terminal is at least
+    40×8. `AIKIT_PLAIN` forces mode B. NO_COLOR is deliberately NOT consulted —
+    it only strips the color layer at render time; the glyph-primary + reverse-
+    video focus keep mode A fully usable without color. Any False → caller uses
+    the always-correct mode-B numbered menu."""
+    if _env_truthy(env.get("AIKIT_PLAIN")):
+        return False
+    if not (_stream_isatty(stdin) and _stream_isatty(stdout)):
+        return False
+    if env.get("TERM", "") in ("dumb", ""):
+        return False
+    cols, rows = _term_dimensions(env)
+    return cols >= 40 and rows >= 8
+
+
+def _chip_glyphs(env, stdout):
+    """The mark set for chips: Unicode `◉/◯/❯…` normally, ASCII `[x]/[ ]/>`
+    when the terminal can't render glyphs — TERM dumb/empty OR stdout's encoding
+    can't represent the codepoints (e.g. a C/POSIX locale). NO_COLOR does NOT
+    force ASCII: `◉` (filled) vs `◯` (hollow) is a shape difference that survives
+    color stripping, which is the whole point of glyph-primary state."""
+    if env.get("TERM", "") in ("dumb", ""):
+        return dict(_CHIP_ASCII)
+    enc = getattr(stdout, "encoding", None) or "utf-8"
+    try:
+        "".join(_CHIP_GLYPHS.values()).encode(enc)
+    except (LookupError, UnicodeEncodeError):
+        return dict(_CHIP_ASCII)
+    return dict(_CHIP_GLYPHS)
+
+
+def _clamp_window(cursor, n_items, viewport):
+    """Top index of the scroll window so `cursor` stays visible within
+    `viewport` rows (cursor roughly centered). 0 when the whole list fits."""
+    if viewport <= 0 or n_items <= viewport:
+        return 0
+    top = cursor - viewport // 2
+    return max(0, min(top, n_items - viewport))
+
+
+def _parse_key(token):
+    """Map ONE de-framed key token to an action (or None). The token is a
+    complete key — the reader resolves the esc-vs-CSI-arrow ambiguity before
+    calling this, so `_parse_key` stays pure and trivially testable."""
+    return {
+        "\x1b[A": "up", "k": "up",
+        "\x1b[B": "down", "j": "down",
+        " ": "toggle",
+        "a": "all", "A": "all",
+        "n": "none", "N": "none",
+        "\r": "accept", "\n": "accept",
+        "\x1b": "cancel", "q": "cancel", "Q": "cancel", "\x03": "cancel",
+    }.get(token)
+
+
+def _chip_row(glyphs, label, enabled, focused, width, color=True):
+    """One chip row, truncated to `width`. Focused row is reverse-video
+    (`\\033[7m`) — a luminance inversion that survives NO_COLOR, unlike a
+    color-only cue; the `❯` gutter is the redundant second focus signal."""
+    gutter = glyphs["cursor"] if focused else " "
+    mark = glyphs["on"] if enabled else glyphs["off"]
+    body = _trunc_visible(f"{gutter} {mark} {label}", width)
+    if focused:
+        return f"\033[7m{body}\033[27m"
+    if color and enabled:
+        return f"{_ACCENT}{body}{_RESET}"
+    return body
+
+
+def _chip_frame(selection, glyphs, cols, rows, preview=None, color=True):
+    """Build the visible lines of one mode-A frame (PURE — no terminal I/O):
+    a windowed slice of chip rows (focused row reverse-video), `▲/▼ N more`
+    edge affordances when the list overflows, an optional `preview ▏` footer,
+    and the key-hint footer — every line truncated to cols-1."""
+    width = max(cols - 1, 1)
+    reserved = 2 + (1 if preview is not None else 0)   # hint + 2 edges (+preview)
+    viewport = max(rows - reserved, 1)
+    n = len(selection)
+    top = _clamp_window(selection.cursor, n, viewport)
+    end = min(top + viewport, n)
+    lines = []
+    if top > 0:
+        lines.append(_trunc_visible(f"  {glyphs['more_up']} {top} more", width))
+    for i in range(top, end):
+        _cat, label, enabled = selection.items[i]
+        lines.append(_chip_row(glyphs, label, enabled,
+                               i == selection.cursor, width, color))
+    if end < n:
+        lines.append(_trunc_visible(f"  {glyphs['more_down']} {n - end} more", width))
+    if preview is not None:
+        lines.append(_trunc_visible(f"  preview {glyphs['bar']} {preview}", width))
+    on = sum(1 for _c, _l, enabled in selection.items if enabled)
+    hint = _CHIP_HINT_ASCII if glyphs["cursor"] == ">" else _CHIP_HINT
+    lines.append(_trunc_visible(f"  ({on}/{n} on)  {hint}", width))   # live tally
+    return lines
+
+
+def _read_key(stdin):
+    """Read ONE key token from a raw-mode stdin, resolving the esc/CSI-arrow
+    ambiguity: a lone ESC with nothing pending is a cancel; ESC '[' X is a CSI
+    arrow. Reads single bytes via os.read on the fd (the correct raw-terminal
+    primitive — TextIOWrapper buffering would swallow keypresses). latin-1 keeps
+    the control bytes 1:1. Timing-sensitive — exercised by the T4.5 pty E2E.
+
+    A terminal disconnect (SSH drop, parent closes the fd) makes os.read raise
+    OSError(EIO) on some platforms and return b"" (EOF) on others; BOTH are
+    surfaced as a cancel (KeyboardInterrupt) so the caller falls back to the safe
+    default instead of crashing or busy-looping on an empty read."""
+    fd = stdin.fileno()
+
+    def _rd():
+        try:
+            return os.read(fd, 1)
+        except OSError:
+            raise KeyboardInterrupt from None   # terminal vanished → cancel
+    ch = _rd()
+    if not ch:                               # EOF → cancel (never busy-loop on b"")
+        raise KeyboardInterrupt
+    if ch == b"\x1b":
+        # 50 ms split to tell a lone ESC (cancel) from a CSI arrow. Best-effort:
+        # a high-latency SSH link can deliver the '[' late and trip the lone-ESC
+        # path — acceptable, since the worst case is a stray cancel the user retries.
+        ready, _, _ = select.select([fd], [], [], 0.05)
+        if not ready:
+            return "\x1b"                    # lone ESC → cancel
+        nxt = _rd()
+        if nxt == b"[":
+            return "\x1b[" + _rd().decode("latin-1")
+        # ESC + non-'[' (Alt-combo or a fast keystroke): act on that byte rather
+        # than silently dropping it.
+        return nxt.decode("latin-1") if nxt else "\x1b"
+    return ch.decode("latin-1")
+
+
+def chip_select(selection, stdin, stdout, env, preview=None):
+    """Mode-A arrow-key chip selector over a `Selection` (the additive
+    enhancement to the mode-B menu). Bounded redraw, NEVER alt-screen: prints a
+    fixed block, then each keypress moves the cursor up by the block height it
+    LAST emitted (so a shrinking frame can't orphan rows) and rewrites every line
+    with erase-line, in a single write(). `RawMode` guarantees teardown. The
+    caller MUST have confirmed `_mode_a_available(env, stdin, stdout)`; on
+    esc/Ctrl-C this raises KeyboardInterrupt (selection left as-is). `preview`,
+    if given, is called with the live selection each frame and must return the
+    preview text. Returns the mutated `selection`."""
+    glyphs = _chip_glyphs(env, stdout)
+    color = not _env_truthy(env.get("NO_COLOR"))
+    last_h = 0
+
+    def render():
+        nonlocal last_h
+        cols, rows = _term_dimensions(env)
+        pv = preview(selection) if preview is not None else None
+        lines = _chip_frame(selection, glyphs, cols, rows, pv, color)
+        buf = []
+        if last_h:
+            buf.append(f"\033[{last_h}A")          # up by what we LAST drew
+        for ln in lines:
+            buf.append("\033[2K" + ln + "\n")
+        for _ in range(max(last_h - len(lines), 0)):   # clear shrunk-away rows
+            buf.append("\033[2K\n")
+        if last_h > len(lines):
+            buf.append(f"\033[{last_h - len(lines)}A")
+        last_h = len(lines)
+        stdout.write("".join(buf))
+        stdout.flush()
+
+    with RawMode(stdin.fileno(), stdout):
+        render()
+        while True:
+            action = _parse_key(_read_key(stdin))
+            if action == "up":
+                selection.move_cursor(-1)
+            elif action == "down":
+                selection.move_cursor(1)
+            elif action == "toggle":
+                selection.toggle_cursor()
+            elif action == "all":
+                selection.set_all(True)
+            elif action == "none":
+                selection.set_all(False)
+            elif action == "accept":
+                break
+            elif action == "cancel":
+                raise KeyboardInterrupt
+            render()
+    return selection
+
+
+class RawMode:
+    """Context manager that puts terminal `fd` into raw mode for the mode-A chip
+    selector and GUARANTEES teardown on every exit path. On enter it saves the
+    termios state, installs a SIGINT trap, switches to raw, and hides the cursor;
+    on exit (normal, exception, OR SIGINT) it restores the saved state via
+    `TCSADRAIN`, shows the cursor, and re-installs the previous SIGINT handler —
+    all in one place. SIGINT additionally prints a newline and exits 130
+    (128 + SIGINT, the conventional shell code). A no-op when termios is
+    unavailable (non-POSIX); callers gate mode A on isatty regardless.
+
+    `fd` is the input file descriptor put into raw mode; `stream` is where the
+    cursor-hide/show escapes are written (the output side)."""
+
+    def __init__(self, fd, stream):
+        self.fd = fd
+        self.stream = stream
+        self.saved = None
+        self.prev_sigint = None
+        self.active = False
+
+    def __enter__(self):
+        if termios is None or _termmode is None:  # non-POSIX → no-op
+            return self
+        self.saved = termios.tcgetattr(self.fd)
+        self.prev_sigint = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, self._on_sigint)
+        _termmode.setraw(self.fd)
+        self.active = True
+        self.stream.write("\033[?25l")           # hide cursor
+        self.stream.flush()
+        return self
+
+    def __exit__(self, *_exc):
+        self._restore()
+        return False                             # never swallow exceptions
+
+    def _restore(self):
+        if not self.active:
+            return
+        # active is only set True on the POSIX path, so the modules and the
+        # saved termios state are both present.
+        assert termios is not None and self.saved is not None
+        self.active = False
+        # Best-effort, ORDERED teardown. A terminal disconnect can make
+        # tcsetattr raise termios.error(EIO) mid-teardown; that must not skip the
+        # cursor-show or the SIGINT-handler restore, nor mask the body's
+        # exception by propagating its own — so each step is guarded and the
+        # SIGINT handler (most important for process sanity) is always restored.
+        with contextlib.suppress(termios.error):
+            termios.tcsetattr(self.fd, termios.TCSADRAIN, self.saved)
+        with contextlib.suppress(OSError, ValueError):
+            self.stream.write("\033[?25h")       # show cursor
+            self.stream.flush()
+        signal.signal(signal.SIGINT, self.prev_sigint)
+
+    def _on_sigint(self, signum, frame):
+        self._restore()
+        self.stream.write("\n")
+        self.stream.flush()
+        raise SystemExit(130)
 
 
 def run_statusline_wizard(paths, tty, dry):
     """Interactive status-line editor: toggle segments, reorder/move across lines,
-    flip the [git] worktree knob, live-preview after each change, write back via
-    surgical patch + doctor self-validate. Replaces the E5b stub.
+    live-preview after each change, write back via surgical patch + doctor
+    self-validate. Replaces the E5b stub.
 
     Preamble (preserved from E5b): drop the recipe at config_toml if absent and
     wire settings.json's statusLine at the bundled renderer (FR-5.5 double-confirm)
@@ -878,33 +1493,28 @@ def run_statusline_wizard(paths, tty, dry):
     copy_recipe_if_absent(paths.sample, paths.config_toml, dry)
     wire_statusline(paths.settings, paths.status_line, tty, dry)
     cfg = paths.config_toml
-    raw = read_toml(cfg)
     state = {
         "segments": current_segments(cfg),
         "layout": current_layout(cfg),
-        "worktree": bool((raw.get("git") or {}).get("worktree", False)),
         "dirty": False,
     }
-    with open(_sample_input_path()) as f:
+    with open(_sample_input_path(), encoding="utf-8") as f:
         sample_json = f.read()
 
     def show_preview():
-        env = {}
-        if state["worktree"]:
-            env["CC_AI_KIT_GIT_WORKTREE"] = "1"
-        out = render_preview(paths.status_line, state["segments"], sample_json, env)
-        print("\n  ── live preview ──", file=tty)
-        print(out or "  (preview unavailable)", file=tty)
+        out = render_preview(paths.status_line, state["segments"], sample_json, {})
+        cols, _rows = _term_dimensions(os.environ)
+        print("", file=tty)
+        for line in _preview_lines(out, cols):
+            print(line, file=tty)
 
     print("\nStatus-line configuration", file=tty)
     while True:
         _print_segments(tty, state)
-        print(f"  worktree detection: "
-              f"{'on' if state['worktree'] else 'off'} (type 'worktree' to toggle)",
-              file=tty)
         show_preview()
-        print("\n  commands: <n> toggle · move <seg> up|down · move <seg> line <n>"
-              " · worktree · p preview · s save · q quit", file=tty)
+        print("\n  commands: <n> toggle · a all · n none"
+              " · move <key> up|down · move <key> line <n>"
+              " · p preview · s save · q quit · done save+quit", file=tty)
         tty.write("  > ")
         tty.flush()
         cmd = tty.readline()
@@ -913,6 +1523,10 @@ def run_statusline_wizard(paths, tty, dry):
         cmd = cmd.strip()
         if cmd in ("q", "quit", ""):
             break
+        if cmd == "done":                         # save + quit
+            _save_and_report(paths, state, tty, dry)
+            state["dirty"] = False
+            return
         if cmd in ("p", "preview"):
             continue
         if cmd in ("s", "save"):
@@ -940,13 +1554,10 @@ def _save_and_report(paths, state, tty, dry):
     seg_changes = _segment_changes_vs_recipe(paths.config_toml, state["segments"])
     layout = state["layout"] if state["layout"] != current_layout(paths.config_toml) \
         else None
-    raw = read_toml(paths.config_toml)
-    cur_wt = bool((raw.get("git") or {}).get("worktree", False))
-    worktree = state["worktree"] if state["worktree"] != cur_wt else None
-    if not (seg_changes or layout is not None or worktree is not None):
+    if not (seg_changes or layout is not None):
         _print_closing(paths, tty)
         return
-    ok = save_statusline_config(paths.config_toml, seg_changes, layout, worktree,
+    ok = save_statusline_config(paths.config_toml, seg_changes, layout,
                                 paths.status_line)
     if ok:
         print("  ✓ saved", file=tty)
@@ -957,7 +1568,7 @@ def _save_and_report(paths, state, tty, dry):
 
 def _print_closing(paths, tty):
     print(f"\n  config: {paths.config_toml}", file=tty)
-    print(f"  edit colors / ramps / palette by hand in that file.", file=tty)
+    print("  edit colors / ramps / palette by hand in that file.", file=tty)
     # _doctor_cmd(paths) is defined in E5b — reuse it; do NOT redefine it here.
     print(f"  validate any time:  {_doctor_cmd(paths)}", file=tty)
 
@@ -967,20 +1578,25 @@ def _sample_input_path():
                         "..", "tests", "fixtures", "sample-input.json")
 
 
-def cmd_install(env, tty, dry, reconfigure=False):
+def cmd_install(env, tty, dry, examples_flag=None):
     """Reconcile skills/agents/commands, then (interactive only) the status line.
     Headless (tty None): reconcile skills with defaults/keep + auto-remove dead
-    links + warn, and SKIP the status line entirely (§7). `reconfigure` is just
-    install without first-run defaults — handled implicitly because once anything
-    is linked, _first_run() is False, so the selection keeps existing state."""
+    links + warn, and SKIP the status line entirely (§7). The `reconfigure`
+    subcommand is just install without first-run defaults — handled implicitly
+    because once anything is linked, _first_run() is False, so the selection
+    keeps existing state."""
     paths = resolve_paths(env)
     entries = enumerate_entries(paths.install_dir)
-    installed = installed_links(paths.claude_dir, paths.install_dir)
     counts = new_counts()
 
     # B − A: links whose repo entry vanished upstream — warn + prune
     present = {cat: {n for n, _ in entries[cat]} for cat in CATEGORIES}
     prune_stale(paths.claude_dir, paths.install_dir, present, tty, dry, counts)
+
+    # Links from a PREVIOUS ai-kit install (renamed repo) — offer re-point / drop.
+    # Re-pointed links become current ai-kit links, so refresh `installed` after.
+    adopt_predecessor_links(paths.claude_dir, paths.install_dir, entries, tty, dry, counts)
+    installed = installed_links(paths.claude_dir, paths.install_dir)
 
     # A: choose what to install (first-run all-on / keep selection / interactive)
     selection = select_skills(entries, installed, tty)
@@ -989,12 +1605,23 @@ def cmd_install(env, tty, dry, reconfigure=False):
     if is_interactive(tty):
         run_statusline_wizard(paths, tty, dry)
 
-    print("summary: %d linked, %d relinked, %d unlinked, %d pruned, "
-          "%d foreign-skipped, %d real-skipped"
-          % (counts["linked"], counts["relinked"], counts["unlinked"],
-             counts["pruned"], counts["skip_foreign"], counts["skip_real"]))
-    print("ai-kit installed at %s" % paths.install_dir)
-    print("doctor: %s" % _doctor_cmd(paths))
+    # Example external segments (sysmem, …): offer pre-checked when interactive,
+    # else governed by --examples (default ON). Copy+chmod+enable; default-ON
+    # means the copied provider renders without an explicit toggle write.
+    examples = discover_example_segments(
+        os.path.join(paths.install_dir, "examples", "segments"))
+    if examples:
+        chosen = select_examples(examples, examples_flag, tty)
+        if chosen and not dry:
+            ids = install_example_segments(chosen, paths.config_dir)
+            print(f"examples: installed {len(ids)} external segment(s): "
+                  f"{', '.join(ids)}")
+
+    print(f"summary: {counts['linked']} linked, {counts['relinked']} relinked, "
+          f"{counts['unlinked']} unlinked, {counts['pruned']} pruned, "
+          f"{counts['skip_foreign']} foreign-skipped, {counts['skip_real']} real-skipped")
+    print(f"ai-kit installed at {paths.install_dir}")
+    print(f"doctor: {_doctor_cmd(paths)}")
     if dry:
         print("(dry-run — no changes were made)")
     return 0
@@ -1011,15 +1638,15 @@ def cmd_uninstall(env, dry):
         for name in sorted(installed[cat]):
             unlink_one(os.path.join(paths.claude_dir, cat, name), dry, counts)
     unwire_statusline(paths.settings, paths.install_dir, dry)
-    print("removed %d ai-kit symlink(s). install dir left in place: %s"
-          % (counts["unlinked"], paths.install_dir))
+    print(f"removed {counts['unlinked']} ai-kit symlink(s). "
+          f"install dir left in place: {paths.install_dir}")
     return 0
 
 
 def _doctor_cmd(paths):
     """A concrete, copy-pasteable doctor command for this install."""
-    return "%s %s --doctor" % (os.path.basename(sys.executable) or "python3",
-                               paths.status_line)
+    return (f"{os.path.basename(sys.executable) or 'python3'} "
+            f"{paths.status_line} --doctor")
 
 
 def cmd_doctor(env):
@@ -1047,13 +1674,18 @@ def main(argv=None):
         choices=["install", "reconfigure", "uninstall", "doctor", "check"],
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--examples", default=None, metavar="all|none|<ids>",
+        help="example external segments to install (non-interactive); "
+             "comma/space-separated ids, or all/none. Default: offer pre-checked.")
     args = parser.parse_args(argv)
     env = os.environ
     dry = args.dry_run
     if args.subcommand in ("install", "reconfigure"):
         tty = open_tty()
         try:
-            return cmd_install(env, tty, dry, reconfigure=(args.subcommand == "reconfigure"))
+            return cmd_install(env, tty, dry,
+                               examples_flag=args.examples)
         finally:
             if tty is not None:
                 tty.close()

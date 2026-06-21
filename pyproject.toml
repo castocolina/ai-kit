@@ -1,0 +1,100 @@
+# Dev-only project metadata. The ai-kit RUNTIME (tools/status-line.py) is
+# stdlib-only and runs under the user's own python3 — it has NO dependencies.
+# This file exists solely to give `uv` a reproducible dev/lint environment
+# (ruff + pylint + pyright + vulture + pre-commit) and to hold their config.
+[project]
+name = "ai-kit"
+version = "0.0.0"
+description = "Dev/lint environment for ai-kit (runtime is stdlib-only)."
+requires-python = ">=3.12,<3.13"
+
+[tool.uv]
+# Not an installable package — just scripts + a dev toolchain. Don't build it.
+package = false
+
+[dependency-groups]
+# Pinned via uv.lock; specifiers are compatible-release floors. `make dev`
+# (uv sync) materializes these into .venv; `make validate` runs them via uv run.
+dev = [
+    "ruff~=0.14",
+    "pylint~=4.0",
+    "pyright~=1.1",
+    "vulture~=2.14",
+    "pre-commit~=4.4",
+]
+
+# ─────────────────────────── ruff ───────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    # The status line is intentionally unicode-rich UI (×, —, …, emoji, box-drawing).
+    # The ambiguous-unicode rules flag these as look-alikes; that's the whole point here.
+    "RUF001", # ambiguous char in a string
+    "RUF002", # ambiguous char in a docstring
+    "RUF003", # ambiguous char in a comment
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests held to a lighter, permissive bar (idiomatic test patterns):
+#   E741 ambiguous loop var `l`, E731 lambda-assign, E402 imports after sys.path setup,
+#   E702 compound test setup lines, E401 grouped imports, RUF012 TestCase class attrs.
+"tests/*" = ["E741", "E731", "E402", "E702", "E401", "RUF012"]
+
+# ─────────────────────────── pylint ───────────────────────────
+[tool.pylint.main]
+py-version = "3.12"
+# Docstrings required only where they add signal: builders (seg_*), private
+# helpers (_*), and tests are self-documenting via the segment contract / name.
+no-docstring-rgx = "^(_|seg_|test_)"
+
+[tool.pylint.basic]
+# `bar` is a domain term here (context / effort progress bar), not a placeholder.
+bad-names = ["foo", "baz", "toto", "tutu", "tata"]
+# Conditional stdlib import aliases that read as module-level constants.
+good-names = ["tomllib"]
+
+[tool.pylint.design]
+# Ratcheted (Task 2.6) from the render refactor's relaxed values (args/pos=8,
+# locals=40, branches=30, statements=80) down to the current honest maximum that
+# the restructured code passes — a real tighten (statements 80->50, locals
+# 40->25), not a suppression. The remaining gap to pylint defaults (args=5,
+# locals=15, branches=12, returns=6) is owned by the architecture-pattern PRD:
+# dissolving build_data into a Context (drops its 25 locals) and the single `ctx`
+# bag (cuts pack_line/safe_build from 6-7 args to 2) close it. CLI/setup
+# functions outside the render path (validate_config_file, select_skills,
+# _apply_wizard_command, adopt_predecessor_links) are not in either refactor's
+# scope and set the current ceiling on branches/returns.
+max-args = 7                  # pack_line threads the builder context explicitly
+max-positional-arguments = 7
+max-locals = 25               # build_data / validate_config_file
+max-branches = 28             # validate_config_file
+max-returns = 10              # _apply_wizard_command (setup wizard dispatch)
+max-statements = 50
+
+[tool.pylint."messages control"]
+disable = [
+    "too-many-lines",         # deliberate single-file drop-in script; shrinks as segments
+                              # externalize (E4c direction). Re-evaluate after externalization.
+    "unused-argument",        # uniform segment-builder contract (data, avail, theme): not every
+                              # builder reads all three; renaming would break the contract.
+    "duplicate-code",         # cross-occurrence false positives on small idiomatic blocks.
+    "fixme",                  # TODO/NOTE markers are allowed in-tree.
+    "too-few-public-methods", # data carriers (e.g. _RenderData dict subclass) are not APIs.
+]
+
+# ─────────────────────────── vulture ───────────────────────────
+[tool.vulture]
+min_confidence = 80
+paths = ["tools/status-line.py", "tools/setup.py"]
+# signal-handler / context-manager params required by their signature
+ignore_names = ["signum", "frame"]
+
+# ─────────────────────────── pyright ───────────────────────────
+[tool.pyright]
+include = ["tools/status-line.py", "tools/setup.py"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"

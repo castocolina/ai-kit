@@ -64,7 +64,8 @@ class TestFrameworkProfiles(unittest.TestCase):
                     _check_route(path, route)
             else:
                 invoke = str(rp.get("invoke", ""))
-                self.assertTrue(_VALID_INVOKE.match(invoke), f"{path}: flat invoke invalid: {invoke!r}")
+                self.assertTrue(_VALID_INVOKE.match(invoke),
+                                f"{path}: flat invoke invalid: {invoke!r}")
                 self.assertIsInstance(rp.get("applies_to", []), list,
                                       f"{path}: applies_to must be a list")
 

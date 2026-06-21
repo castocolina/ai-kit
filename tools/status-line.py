@@ -7,8 +7,11 @@ Layout is driven by SEGMENTS (on/off), LAYOUT (template), and BUILDERS
 builders auto-deprioritize to fit. See the "HOW TO CUSTOMIZE" block near the
 bottom. Stdlib only. The .sh original is kept as a fallback.
 """
+# pylint: disable=invalid-name  # installed script name is hyphenated (status-line.py)
 
 import argparse
+import contextlib
+import hashlib
 import json
 import math
 import os
@@ -17,6 +20,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+
 try:
     import tomllib
 except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only config.
@@ -26,18 +30,18 @@ from datetime import datetime
 
 # ═══ CONFIG — edit freely ════════════════════════════════════════════════════
 # Per-segment on/off. Set False to hide a segment entirely: its builder is never
-# called AND its data is never gathered, so a disabled segment costs nothing —
-# `build_data` skips the matching probe (git/transcript/RSS/etc.). Invariant:
-# keep "path" True so the identity line always emits.
+# called, so its data is never read and the matching lazy probe (git/transcript/
+# RSS/etc.) never runs — a disabled segment costs nothing. Invariant: keep "path"
+# True so the identity line always emits.
 SEGMENTS = {
     # identity line
-    "path": True, "branch": True, "dirty": True, "todo": True,
+    "path": True, "branch": True, "dirty": True, "worktree": True, "todo": True,
     # model row
     "model": True, "time_ago": True, "clock": True, "effort": True,
     "lines": True, "cost": False, "total_time": True, "api_time": True,
     # diagnostics row (dimensions is a debug aid — off by default)
-    "render_time": True, "dimensions": False, "context": True, "chat_size": True,
-    "memory": True, "rate_limits": True,
+    "render_time": True, "slowest": True, "dimensions": False, "context": True,
+    "chat_size": True, "memory": True, "rate_limits": True,
 }
 
 # Identity-line tuning.
@@ -55,12 +59,16 @@ SEP = " | "
 # and paste a key; hide = flip its SEGMENTS flag.
 Line = namedtuple("Line", "min_rows segments")
 LAYOUT = [
-    Line(0,  ["path", "branch", "dirty", "todo"]),
+    Line(0,  ["path", "branch", "worktree", "dirty", "todo"]),
     Line(20, ["model", "time_ago", "clock", "effort", "lines",
               "cost", "total_time", "api_time"]),
-    Line(30, ["render_time", "dimensions", "context", "chat_size", "memory", "rate_limits"]),
+    Line(30, ["render_time", "slowest", "dimensions", "context", "chat_size",
+              "memory", "rate_limits"]),
 ]
 PINNED = {"path", "context"}   # always rendered even if they overflow the budget
+# Meta-segments: they report the whole render, not a single builder, so the
+# `slowest` readout never names them as the culprit (its own output + render_time).
+_SLOWEST_META = frozenset({"slowest", "render_time"})
 
 # Resolved configuration: the result of merging internal defaults < TOML file <
 # env. `segments` is a {key: bool} dict, `layout` a list[Line], `palette` a
@@ -68,10 +76,73 @@ PINNED = {"path", "context"}   # always rendered even if they overflow the budge
 # {band: {threshold: colorspec}} dict of whole-band overrides (empty = no
 # override). External drop-in segments are E4c and are intentionally not part of
 # this type yet.
-# Scalar behaviour knobs that aren't segments/colors. `worktree` controls the
-# extra `git rev-parse` that detects a linked worktree (🌳 vs 🌿) — off by default
-# because it costs a git call per render and most repos aren't worktrees.
-_GIT_DEFAULTS = {"worktree": False}
+# Scalar behaviour knobs that aren't segments/colors. The worktree feature
+# migrated to the `segments.worktree` toggle (see SEGMENTS); `[git]` now carries
+# `cache_ttl` (seconds) — how long the shared git_snapshot worktree probe is
+# cached. Precedence: this default < TOML `[git] cache_ttl` < env CC_AI_KIT_GIT_TTL.
+_GIT_CACHE_TTL = 5                  # default seconds the worktree probe is cached
+_GIT_DEFAULTS = {"cache_ttl": _GIT_CACHE_TTL}
+# Deprecated `[git]` keys: silently accepted (no warning) and ignored, so an old
+# config carrying `[git] worktree = true/false` keeps loading cleanly after the
+# knob moved to `segments.worktree`.
+_GIT_LEGACY_IGNORED = frozenset({"worktree"})
+
+# ── Color & effort defaults (the override baselines) ─────────────────────────
+# Overridable palette: NAME -> default SGR params (no "\033[" / "m" wrapper).
+# Values are pure hues — no baked-in bold. Emphasis is expressed on the ramp
+# bands via "+modifiers" (e.g. "RED+bold"); see _RAMP_DEFAULTS. A [palette]
+# override replaces a value here; build_theme resolves these into a Theme.
+_PALETTE_DEFAULTS = {            # pure hues — no baked-in bold
+    "GREY": "90", "WHITE": "97", "CYAN": "36", "GREEN": "32", "RED": "31",
+    "YELLOW": "33", "MAGENTA": "35", "ORANGE": "38;5;208",
+    "BLUE": "38;5;39",           # lightened (was 38;5;33); shade reviewed on-terminal
+    "LIGHTBLUE": "38;5;75", "MAGENTA_DARK": "38;5;90",
+}   # ORANGE_BOLD / MAGENTA_DARK_BOLD removed — bold now lives on the ramp band
+
+# Ramps as data: band -> [(threshold, colorspec)]. Threshold keys go through
+# _parse_threshold (percent / byte-suffix / inf); colorspecs through parse_color
+# against the resolved palette. [ramp.X] in config REPLACES a band wholesale.
+_RAMP_DEFAULTS = {
+    "context": [(10, "WHITE"), (15, "CYAN"), (20, "BLUE"), (25, "GREEN"),
+                (30, "YELLOW"), (40, "ORANGE+bold"), (50, "RED+bold"),
+                ("inf", "MAGENTA_DARK+bold")],
+    "rate": [(50, "GREEN"), (80, "YELLOW"), ("inf", "RED+bold")],
+    "chat_size": [("512k", "WHITE"), ("1M", "CYAN"), ("2M", "LIGHTBLUE"),
+                  ("3M", "GREEN"), ("4M", "YELLOW"), ("5M", "ORANGE"),
+                  ("10M", "RED+bold"), ("inf", "MAGENTA")],
+    # render_time: the status line's own run time (SLO/SLA). Thresholds are time
+    # units (ns/µs/ms/s); green under the SLO, yellow under the SLA, red beyond.
+    "render_time": [("50ms", "GREEN"), ("150ms", "YELLOW"), ("inf", "RED+bold")],
+    # slowest: the single per-segment SLO/SLA ramp the `slowest` segment colors by
+    # (one shared band — NO per-segment override bands). Tighter than render_time
+    # since it grades ONE builder, not the whole render.
+    "slowest": [("15ms", "GREEN"), ("40ms", "YELLOW"), ("inf", "RED+bold")],
+}
+
+# Effort ladder: level -> (palette name, fill count 1..5). Palette-derived but
+# NOT user-configurable. `auto` is a setting and `ultracode` reports as xhigh —
+# neither is a level here.
+_EFFORT_DEFAULTS = {
+    "low": ("CYAN", 1), "medium": ("BLUE", 2), "high": ("YELLOW", 3),
+    "xhigh": ("ORANGE", 4), "max": ("RED", 5),
+}
+_EFFORT_GLYPHS = "▁▃▄▆█"
+
+
+def _git_key_problem(k, v):
+    """Classify one `[git]` key/value so load_config and validate_config_file share
+    a single validation rule (each formats its own message). Returns:
+      'legacy'  — a deprecated key the caller should silently skip,
+      'unknown' — not a recognized `[git]` key,
+      'bad_ttl' — cache_ttl is not an int (bools excluded),
+      None      — acceptable."""
+    if k in _GIT_LEGACY_IGNORED:
+        return "legacy"
+    if k not in _GIT_DEFAULTS:
+        return "unknown"
+    if k == "cache_ttl" and (not isinstance(v, int) or isinstance(v, bool)):
+        return "bad_ttl"
+    return None
 
 # `git` and `external` default to None so older Config(...) call sites (which
 # pass only the original fields) keep working; consumers read git via
@@ -174,10 +245,8 @@ def _resolve_external(raw, env):
         ttl = fv
     ev = env.get("CC_AI_KIT_EXTERNAL_TTL")
     if ev is not None:
-        try:
+        with contextlib.suppress(ValueError):
             ttl = int(ev)
-        except ValueError:
-            pass
     return _segments_dir(file_ext, env), ttl
 
 
@@ -256,16 +325,23 @@ def load_config(env):
         ramps[band] = {str(k): str(v) for k, v in table.items()}
     git = dict(_GIT_DEFAULTS)
     for k, v in (raw.get("git") or {}).items():
-        if k not in _GIT_DEFAULTS:
+        problem = _git_key_problem(k, v)
+        if problem == "legacy":
+            continue                               # deprecated, tolerated, no effect
+        if problem == "unknown":
             print(f"{_DIM}status-line: unknown [git] key '{k}'{RESET}", file=sys.stderr)
-        elif not isinstance(v, bool):
-            print(f"{_DIM}status-line: [git] {k} must be true/false, got {v!r} — ignored{RESET}",
-                  file=sys.stderr)
+        elif problem == "bad_ttl":
+            print(f"{_DIM}status-line: [git] cache_ttl must be an integer, "
+                  f"got {v!r} — ignored{RESET}", file=sys.stderr)
         else:
             git[k] = v
-    wt = env_bool(env, "CC_AI_KIT_GIT_WORKTREE")   # env wins over file
-    if wt is not None:
-        git["worktree"] = wt
+    ttl_env = env.get("CC_AI_KIT_GIT_TTL")         # env wins over file
+    if ttl_env is not None:
+        try:
+            git["cache_ttl"] = int(ttl_env)
+        except ValueError:
+            print(f"{_DIM}status-line: CC_AI_KIT_GIT_TTL must be an integer, "
+                  f"got {ttl_env!r} — ignored{RESET}", file=sys.stderr)
     return Config(segments=segments, layout=layout, palette=palette, ramps=ramps,
                   git=git, external=external)
 
@@ -289,48 +365,13 @@ def _doctor_cmd():
         path = "~" + path[len(home):]
     return f"{py} {path} --doctor"
 
-# Overridable palette: NAME -> default SGR params (no "\033[" / "m" wrapper).
-# Values are pure hues — no baked-in bold. Emphasis is expressed on the ramp
-# bands via "+modifiers" (e.g. "RED+bold"); see _RAMP_DEFAULTS. A [palette]
-# override replaces a value here; build_theme resolves these into a Theme.
-_PALETTE_DEFAULTS = {            # pure hues — no baked-in bold
-    "GREY": "90", "WHITE": "97", "CYAN": "36", "GREEN": "32", "RED": "31",
-    "YELLOW": "33", "MAGENTA": "35", "ORANGE": "38;5;208",
-    "BLUE": "38;5;39",           # lightened (was 38;5;33); shade reviewed on-terminal
-    "LIGHTBLUE": "38;5;75", "MAGENTA_DARK": "38;5;90",
-}   # ORANGE_BOLD / MAGENTA_DARK_BOLD removed — bold now lives on the ramp band
-
-# Ramps as data: band -> [(threshold, colorspec)]. Threshold keys go through
-# _parse_threshold (percent / byte-suffix / inf); colorspecs through parse_color
-# against the resolved palette. [ramp.X] in config REPLACES a band wholesale.
-_RAMP_DEFAULTS = {
-    "context": [(10, "WHITE"), (15, "CYAN"), (20, "BLUE"), (25, "GREEN"),
-                (30, "YELLOW"), (40, "ORANGE+bold"), (50, "RED+bold"),
-                ("inf", "MAGENTA_DARK+bold")],
-    "rate": [(50, "GREEN"), (80, "YELLOW"), ("inf", "RED+bold")],
-    "chat_size": [("512k", "WHITE"), ("1M", "CYAN"), ("2M", "LIGHTBLUE"),
-                  ("3M", "GREEN"), ("4M", "YELLOW"), ("5M", "ORANGE"),
-                  ("10M", "RED+bold"), ("inf", "MAGENTA")],
-    # render_time: the status line's own run time (SLO/SLA). Thresholds are time
-    # units (ns/µs/ms/s); green under the SLO, yellow under the SLA, red beyond.
-    "render_time": [("50ms", "GREEN"), ("150ms", "YELLOW"), ("inf", "RED+bold")],
-}
-
-# Effort ladder: level -> (palette name, fill count 1..5). Palette-derived but
-# NOT user-configurable. `auto` is a setting and `ultracode` reports as xhigh —
-# neither is a level here.
-_EFFORT_DEFAULTS = {
-    "low": ("CYAN", 1), "medium": ("BLUE", 2), "high": ("YELLOW", 3),
-    "xhigh": ("ORANGE", 4), "max": ("RED", 5),
-}
-_EFFORT_GLYPHS = "▁▃▄▆█"
-
 INF = float("inf")
 
 
-# ═══ External drop-in segments (E4c) ═════════════════════════════════════════
+# ═══ External drop-in segments (E4c) ═══════════════════════════════════════
 # A provider is an executable in the segments dir. Its first 10 lines may carry
-#   # ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end) [id=<slug>] [timeout=<s>] [ttl=<s>]
+#   # ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end)
+#                     [id=<slug>] [timeout=<s>] [ttl=<s>]
 # It is modeled as a synthetic builder inserted into the resolved layout, so the
 # existing packer handles placement/priority/overflow unchanged.
 ExtSpec = namedtuple("ExtSpec", "id path line position timeout ttl cache_path")
@@ -362,10 +403,15 @@ def parse_segment_header(lines):
     return None
 
 
-def _segments_cache_dir(env):
-    """${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/segments — per-provider output cache."""
+def _cache_base(env):
+    """${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit — root of every ai-kit on-disk cache."""
     base = env.get("XDG_CACHE_HOME") or os.path.join(env.get("HOME", ""), ".cache")
-    return os.path.join(base, "ai-kit", "segments")
+    return os.path.join(base, "ai-kit")
+
+
+def _segments_cache_dir(env):
+    """…/ai-kit/segments — per-provider output cache."""
+    return os.path.join(_cache_base(env), "segments")
 
 
 def _segments_dir(file_external, env):
@@ -518,7 +564,7 @@ def _run_provider(spec, data, avail):
     try:
         proc = subprocess.run(
             [spec.path], input=payload, capture_output=True, text=True,
-            timeout=spec.timeout, cwd=data.get("work_dir") or ".", env=env)
+            timeout=spec.timeout, cwd=data.get("work_dir") or ".", env=env, check=False)
     except (subprocess.TimeoutExpired, OSError):
         return None
     if proc.returncode != 0:
@@ -562,6 +608,8 @@ def char_width(ch):
     if unicodedata.combining(ch):
         return 0
     o = ord(ch)
+    if 0xFE00 <= o <= 0xFE0F:                         # variation selectors render in-place
+        return 0
     if o >= 0x1F300:                                  # emoji / pictographs (SMP)
         return 2
     if o in _WIDE_BMP:
@@ -585,6 +633,21 @@ def _first_fitting(variants, avail):
         if v and visible_width(v) <= avail:
             return v
     return None
+
+
+# Glyphs we model as wide (_WIDE_BMP) but that render NARROW bare on many
+# terminals. Forcing VS16 (emoji presentation) makes them render wide everywhere
+# so the single-space _icon gap is always one clean column. ⏰ (U+23F0) is
+# already EAW=W, so it is intentionally absent.
+_ICON_VS16 = {"⏱", "⏸", "⚡"}  # ⏱ ⏸ ⚡
+
+
+def _icon(glyph, text):
+    """Render `glyph` + exactly one space + `text` — the one place icon→text
+    spacing is decided. Narrow-rendering glyphs get VS16 so the gap is one
+    visible column regardless of terminal emoji handling."""
+    g = f"{glyph}️" if glyph in _ICON_VS16 else glyph
+    return f"{g} {text}"
 
 
 # ═══ Color engine ════════════════════════════════════════════════════════════
@@ -634,7 +697,7 @@ def parse_color(spec, palette=None):
     if params is None:
         return None
     ordered = sorted(set(mods), key=int)
-    return "\033[" + ";".join(ordered + [params]) + "m"
+    return "\033[" + ";".join([*ordered, params]) + "m"
 
 
 _THRESHOLD_MULT = {"k": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
@@ -675,6 +738,7 @@ class Theme:
         self._cache = {}
 
     def c(self, spec):
+        """Resolve a color spec to an SGR string, memoizing the lookup."""
         if spec not in self._cache:
             self._cache[spec] = parse_color(spec, self.palette) or ""
         return self._cache[spec]
@@ -819,6 +883,7 @@ def fmt_duration(ns):
         if ns >= div:
             v = ns / div
             return f"{v:.1f}{suffix}" if v < 10 else f"{v:.0f}{suffix}"
+    return f"{ns}ns"
 
 
 # ═══ Rate-limit helpers ══════════════════════════════════════════════════════
@@ -842,6 +907,7 @@ def rate_key_label(key):
 
 
 def rate_color(pct, theme):
+    """Pick the rate-limit ramp color for a usage percentage."""
     return pick_color(float(pct), theme.ramps["rate"])
 
 
@@ -888,13 +954,43 @@ def seg_branch(data, avail, theme):
     branch = data.get("branch")
     if not branch:
         return None
-    icon = "🌳" if data.get("is_worktree") else "🌿"
-    return _first_fitting([f"{theme.c('GREY')}[{icon} {branch}]{RESET}"], avail)
+    # FR-7.2: branch shows ONLY the branch — the worktree glyph moved to the
+    # dedicated `worktree` segment.
+    return _first_fitting([f"{theme.c('GREY')}[{branch}]{RESET}"], avail)
 
 
 def seg_dirty(data, avail, theme):
     mark = _dirty_mark(data.get("dirty", "clean"), theme)
     return _first_fitting([mark], avail) if mark else None
+
+
+def _trunc_cols(s, limit):
+    """Truncate s to at most `limit` display columns, appending `…` if cut.
+    Column-aware (uses char_width) so a wide/multibyte name can't blow the budget."""
+    if sum(char_width(c) for c in s) <= limit:
+        return s
+    out, width = [], 0
+    for c in s:
+        cw = char_width(c)
+        if width + cw > limit - 1:          # reserve one column for the ellipsis
+            break
+        out.append(c)
+        width += cw
+    return "".join(out) + "…"
+
+
+def seg_worktree(data, avail, theme):
+    # `worktree` names the ACTIVE linked worktree the session sits in — never a
+    # list. Mirrors `dirty`'s "absence is the neutral state" convention: hidden
+    # outside a repo. On the main checkout it shows a dimmed, struck `⎇ wt`
+    # placeholder — GREY (not just strikethrough) so it stays distinct from the
+    # cyan active form even on terminals that don't render SGR-9.
+    if not data.get("in_repo"):
+        return None
+    if not data.get("is_worktree"):
+        return _first_fitting([f"{theme.c('GREY')}\033[9m⎇ wt{RESET}"], avail)
+    name = _trunc_cols(data.get("wt_name") or "", 20)
+    return _first_fitting([f"{theme.c('CYAN')}⎇ {name}{RESET}"], avail)
 
 
 def seg_todo(data, avail, theme):
@@ -907,9 +1003,9 @@ def seg_todo(data, avail, theme):
     if len(text) > limit:
         text = text[:limit - 1] + "…"
     if state == "in_progress":
-        return f"📝 {theme.c('YELLOW')}{text}{RESET}"
+        return _icon("📝", f"{theme.c('YELLOW')}{text}{RESET}")
     if state == "pending":
-        return f"⏸  {theme.c('GREY')}{text}{RESET}"
+        return _icon("⏸", f"{theme.c('GREY')}{text}{RESET}")
     return None
 
 
@@ -929,7 +1025,7 @@ def seg_time_ago(data, avail, theme):
 
 
 def seg_clock(data, avail, theme):
-    return _first_fitting([f"⏰{data['clock']}"], avail)
+    return _first_fitting([_icon("⏰", data['clock'])], avail)
 
 
 def seg_effort(data, avail, theme):
@@ -940,7 +1036,7 @@ def seg_effort(data, avail, theme):
     # degraded display. resolve_effort already strips "auto", so it never lands here.
     color, bar = theme.effort.get(level.lower(), ("", f"{theme.c('GREY')}▁▃▄▆█"))
     word = f"{color}{level}{RESET}"
-    bars = f"🧠 {bar}{RESET}"
+    bars = _icon("🧠", f"{bar}{RESET}")
     if data.get("effort_auto"):
         # effortLevel is unset/auto in settings: flag the resolved level as
         # auto-chosen. The flag degrades [auto] -> * -> dropped as space tightens.
@@ -954,21 +1050,21 @@ def seg_effort(data, avail, theme):
 
 
 def seg_lines(data, avail, theme):
-    s = (f"📃{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(data['added'])}{RESET}"
-         f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(data['removed'])}{RESET}")
-    return _first_fitting([s], avail)
+    body = (f"{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(data['added'])}{RESET}"
+            f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(data['removed'])}{RESET}")
+    return _first_fitting([_icon("📃", body)], avail)
 
 
 def seg_cost(data, avail, theme):
-    return _first_fitting([f"🪙${float(data['cost']):.3f}"], avail)
+    return _first_fitting([_icon("🪙", f"${float(data['cost']):.3f}")], avail)
 
 
 def seg_total_time(data, avail, theme):
-    return _first_fitting([f"💬{fmt_time_ms(data['total_ms'])}"], avail)
+    return _first_fitting([_icon("💬", fmt_time_ms(data['total_ms']))], avail)
 
 
 def seg_api_time(data, avail, theme):
-    return _first_fitting([f"📡{fmt_time_ms(data['api_ms'])}"], avail)
+    return _first_fitting([_icon("📡", fmt_time_ms(data['api_ms']))], avail)
 
 
 # ── diagnostics row ──────────────────────────────────────────────────────────
@@ -978,7 +1074,18 @@ def seg_render_time(data, avail, theme):    # status-line's own run time, SLO/SL
         return None
     elapsed = time.perf_counter_ns() - t0
     color = pick_color(elapsed, theme.ramps["render_time"])
-    return _first_fitting([f"⏱ {color}{fmt_duration(elapsed)}{RESET}"], avail)
+    return _first_fitting([_icon("⏱", f"{color}{fmt_duration(elapsed)}{RESET}")], avail)
+
+
+def seg_slowest(data, avail, theme):        # slowest single segment this render, SLO/SLA-colored
+    slow = data.get("slowest")
+    if not slow:                            # timing off (segment disabled) -> omit
+        return None
+    name, ns = slow
+    color = pick_color(ns, theme.ramps["slowest"])
+    dur = f"{color}{fmt_duration(ns)}{RESET}"
+    # drop name when tight
+    return _first_fitting([_icon("🐌", f"{name} {dur}"), _icon("🐌", dur)], avail)
 
 
 def seg_dimensions(data, avail, theme):
@@ -989,15 +1096,15 @@ def seg_dimensions(data, avail, theme):
 def seg_context(data, avail, theme):
     pct = int(data["context_pct"])
     color = pick_color(pct, theme.ramps["context"])
-    pct_only = f"📊 {color}{pct}%{RESET}"
+    pct_only = _icon("📊", f"{color}{pct}%{RESET}")
     # Measure in half-cells (5% each) and round up, so any pct > 0 shows >= ▌.
     halves = 0 if pct <= 0 else min(2 * CONTEXT_BAR_CELLS, math.ceil(pct / 5))
     full_n, half = divmod(halves, 2)
     bar_f = "█" * full_n + ("▌" if half else "")
     bar_e = "░" * (CONTEXT_BAR_CELLS - full_n - half)
     bar = f"{color}{bar_f}{theme.c('GREY')}{bar_e}{RESET}"
-    mid = f"📊 {bar} {color}{pct}%{RESET}"
-    full = f"📊 {bar} {color}{pct}% of {fmt_tokens(data['context_max'])}{RESET}"
+    mid = _icon("📊", f"{bar} {color}{pct}%{RESET}")
+    full = _icon("📊", f"{bar} {color}{pct}% of {fmt_tokens(data['context_max'])}{RESET}")
     return _first_fitting([full, mid, pct_only], avail) or pct_only  # floor
 
 
@@ -1006,14 +1113,14 @@ def seg_chat_size(data, avail, theme):
     if n is None:
         return None
     color = pick_color(n, theme.ramps["chat_size"])
-    return _first_fitting([f"💾 {color}{fmt_bytes(n)}{RESET}"], avail)
+    return _first_fitting([_icon("💾", f"{color}{fmt_bytes(n)}{RESET}")], avail)
 
 
 def seg_memory(data, avail, theme):
     n = data.get("mem_bytes")
     if n is None:
         return None
-    return _first_fitting([f"🧮 {fmt_bytes(n)}"], avail)
+    return _first_fitting([_icon("🧮", fmt_bytes(n))], avail)
 
 
 def _reset_suffix(reset, detail):
@@ -1044,7 +1151,7 @@ def _rate_str(rate_limits, detail, theme):
         color = rate_color(pct, theme)
         suffix = _reset_suffix(reset, detail)
         parts.append(f"{rate_key_label(key)}: {color}{round(float(pct))}%{RESET}{suffix}")
-    return "⚡ " + " | ".join(parts) if parts else None
+    return _icon("⚡", " | ".join(parts)) if parts else None
 
 
 def seg_rate_limits(data, avail, theme):
@@ -1060,11 +1167,13 @@ def seg_rate_limits(data, avail, theme):
 # Editable surface (SEGMENTS + LAYOUT) is at the top of the file; this registry
 # (key -> builder function) stays next to the builders it wires up.
 BUILDERS = {
-    "path": seg_path, "branch": seg_branch, "dirty": seg_dirty, "todo": seg_todo,
+    "path": seg_path, "branch": seg_branch, "worktree": seg_worktree,
+    "dirty": seg_dirty, "todo": seg_todo,
     "model": seg_model, "time_ago": seg_time_ago, "clock": seg_clock,
     "effort": seg_effort, "lines": seg_lines, "cost": seg_cost,
     "total_time": seg_total_time, "api_time": seg_api_time,
-    "render_time": seg_render_time, "dimensions": seg_dimensions, "context": seg_context,
+    "render_time": seg_render_time, "slowest": seg_slowest,
+    "dimensions": seg_dimensions, "context": seg_context,
     "chat_size": seg_chat_size, "memory": seg_memory,
     "rate_limits": seg_rate_limits,
 }
@@ -1117,10 +1226,10 @@ def terminal_size(env):
         # One controlling-tty open serves both probes: stty first, then tput as the
         # macOS/terminfo fallback (_run closes over `tty` intentionally).
         try:
-            with open("/dev/tty") as tty:
+            with open("/dev/tty", encoding="utf-8") as tty:
                 def _run(*cmd):
                     return subprocess.run(list(cmd), stdin=tty, capture_output=True,
-                                          text=True, timeout=1).stdout
+                                          text=True, timeout=1, check=False).stdout
                 size = _run("stty", "size").split()
                 if len(size) == 2:
                     lines = lines or int(size[0])
@@ -1128,7 +1237,7 @@ def terminal_size(env):
                 if cols is None or lines is None:
                     cols = cols or _to_int(_run("tput", "cols").strip())
                     lines = lines or _to_int(_run("tput", "lines").strip())
-        except Exception:
+        except (OSError, ValueError, subprocess.SubprocessError):
             pass
     assumed = False
     if cols is None:
@@ -1154,30 +1263,81 @@ def _branch_from_porcelain(header):
     return rest.split("...", 1)[0].strip()                        # branch[...upstream]
 
 
-def git_info(work_dir, untracked=True, worktree=True):
-    """Return (branch, dirty, is_worktree).
+# The single shared git probe result. `branch`, `dirty`, and `worktree` are
+# independent segments but all read from one GitSnapshot — no duplicated git
+# querying. wt_name is the active linked-worktree's directory basename ("" on
+# the main checkout or outside a repo).
+GitSnapshot = namedtuple("GitSnapshot", "in_repo branch dirty is_worktree wt_name")
 
-    dirty in {clean, untracked, modified}. is_worktree is True when work_dir sits
-    in a linked worktree (git-dir != git-common-dir), False in the main repo or
-    outside any repo. Up to two git calls: one `status --porcelain --branch` for
-    branch + dirty together, one `rev-parse` for the worktree check.
 
-    Each call is gated on what the caller will actually render — the same flag
-    gate the segments use:
+def _git_worktree_info(work_dir):
+    """(in_repo, is_worktree, name) from ONE `git rev-parse`. is_worktree is True
+    when work_dir sits in a linked worktree (git-dir != git-common-dir). name is
+    that worktree directory's basename (from --show-toplevel), only when in a
+    linked worktree; "" otherwise. Outside any repo → (False, False, "")."""
+    out = subprocess.run(
+        ["git", "-C", work_dir, "rev-parse",
+         "--git-dir", "--git-common-dir", "--show-toplevel"],
+        capture_output=True, text=True, check=False).stdout
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return False, False, ""                 # not a git repo
+    is_worktree = lines[0] != lines[1]          # git-dir != git-common-dir
+    top = lines[2] if len(lines) >= 3 else ""
+    name = os.path.basename(top.rstrip("/")) if (is_worktree and top) else ""
+    return True, is_worktree, name
+
+
+def _git_cache_path(work_dir, env):
+    """Per-work_dir cache file for the worktree probe under …/ai-kit/git/
+    (shares `_cache_base` with the external-segment cache)."""
+    key = hashlib.sha1(os.path.abspath(work_dir).encode()).hexdigest()[:16]
+    return os.path.join(_cache_base(env), "git", key)
+
+
+def _worktree_info_cached(work_dir, ttl, env):
+    """_git_worktree_info wrapped in an on-disk TTL cache — the worktree rev-parse
+    rarely changes, so it is cached ~ttl s keyed by work_dir. ttl <= 0 always
+    misses (forces a fresh rev-parse every render). Cache I/O is best-effort."""
+    path = _git_cache_path(work_dir, env)
+    if ttl > 0:
+        try:
+            if time.time() - os.stat(path).st_mtime < ttl:
+                with open(path, encoding="utf-8") as f:
+                    d = json.load(f)
+                return d["in_repo"], d["is_worktree"], d["wt_name"]
+        except (OSError, ValueError, KeyError):
+            pass
+    info = _git_worktree_info(work_dir)
+    if ttl > 0:                                     # ttl<=0 never reads, so never write
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"in_repo": info[0], "is_worktree": info[1], "wt_name": info[2]}, f)
+        except OSError:
+            pass
+    return info
+
+
+def git_snapshot(work_dir, untracked=True, want_worktree=True, ttl=_GIT_CACHE_TTL, env=None):
+    """The single git probe behind the `branch`, `dirty`, and `worktree` segments.
+
+    Returns GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name). `branch`
+    and `dirty` come from one always-fresh `git status --porcelain --branch`; the
+    worktree rev-parse is cached ~`ttl`s on disk (it rarely changes). Each call is
+    gated on what the caller will actually render:
       * untracked=False adds --untracked-files=no, skipping git's untracked-file
-        walk (the part of `status` that gets slow on large trees). Pass it when
-        the `dirty` segment is off; dirty then can't report "untracked" (only
-        modified/clean), which is fine because the marker isn't rendered.
-      * worktree=False skips the `rev-parse` call entirely. is_worktree only
-        feeds the branch segment's 🌳/🌿 glyph, so pass it when `branch` is off."""
-    def _git(*args):
-        return subprocess.run(["git", "-C", work_dir, *args],
-                              capture_output=True, text=True).stdout
-
+        walk (the slow part of `status` on large trees). Pass it when `dirty` is
+        off; dirty then can't report "untracked" (only modified/clean).
+      * want_worktree=False skips the rev-parse (and its cache) entirely; in_repo,
+        is_worktree, wt_name stay at their defaults. Pass it when `worktree` is off."""
+    env = env or {}
     status_args = ["status", "--porcelain", "--branch"]
     if not untracked:
         status_args.append("--untracked-files=no")
-    out = _git(*status_args).splitlines()
+    out = subprocess.run(["git", "-C", work_dir, *status_args],
+                         capture_output=True, text=True,
+                         check=False).stdout.splitlines()
     branch = _branch_from_porcelain(out[0] if out else "")
     changes = out[1:]   # change lines follow the `## <branch>` header
     if any(ln.startswith(("??", "A", "D")) or ln.startswith(" D") for ln in changes):
@@ -1186,12 +1346,10 @@ def git_info(work_dir, untracked=True, worktree=True):
         dirty = "modified"
     else:
         dirty = "clean"
-    is_worktree = False
-    if worktree:
-        # Extra git call: in a linked worktree git-dir and git-common-dir differ.
-        gd = _git("rev-parse", "--git-dir", "--git-common-dir").split()
-        is_worktree = len(gd) == 2 and gd[0] != gd[1]
-    return branch, dirty, is_worktree
+    in_repo, is_worktree, wt_name = False, False, ""
+    if want_worktree:
+        in_repo, is_worktree, wt_name = _worktree_info_cached(work_dir, ttl, env)
+    return GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name)
 
 
 # ── Process RSS (cross-platform) ──────────────────────────────────────────────
@@ -1204,7 +1362,7 @@ def git_info(work_dir, untracked=True, worktree=True):
 # return comm verbatim; proc_rss_bytes is the single basename-normalization point.
 def _comm_via_proc(pid):
     try:
-        with open(f"/proc/{pid}/comm") as f:
+        with open(f"/proc/{pid}/comm", encoding="utf-8") as f:
             return f.read().strip()
     except OSError:
         return None
@@ -1212,7 +1370,7 @@ def _comm_via_proc(pid):
 
 def _ppid_via_proc(pid):
     try:
-        with open(f"/proc/{pid}/stat") as f:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
             return int(f.read().split()[3])
     except (OSError, IndexError, ValueError):
         return None
@@ -1220,7 +1378,7 @@ def _ppid_via_proc(pid):
 
 def _rss_kb_via_proc(pid):
     try:
-        with open(f"/proc/{pid}/status") as f:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as f:
             for line in f:
                 if line.startswith("VmRSS:"):
                     return int(line.split()[1])
@@ -1233,7 +1391,8 @@ def _ps_field(pid, field):
     """One `ps -o <field>= -p <pid>` value as a stripped string, or None."""
     try:
         out = subprocess.run(["ps", "-o", f"{field}=", "-p", str(pid)],
-                             capture_output=True, text=True, timeout=1).stdout.strip()
+                             capture_output=True, text=True, timeout=1,
+                             check=False).stdout.strip()
         return out or None
     except (OSError, subprocess.SubprocessError):
         return None
@@ -1279,6 +1438,7 @@ def proc_rss_bytes():
 
 
 def transcript_bytes(path):
+    """Return the transcript file size in bytes, or None if it is missing."""
     if not path or not os.path.isfile(path):
         return None
     try:
@@ -1347,7 +1507,7 @@ def _todo_from_tasks_dir(config_dir, session):
     tasks = []
     for n in sorted(names, key=lambda x: int(x[:-5]) if x[:-5].isdigit() else 0):
         try:
-            with open(os.path.join(d, n)) as f:
+            with open(os.path.join(d, n), encoding="utf-8") as f:
                 tasks.append(json.load(f))
         except (OSError, ValueError):
             continue
@@ -1370,7 +1530,7 @@ def _todo_from_todos_dir(config_dir, session):
         return None
     latest = max(names, key=lambda n: os.path.getmtime(os.path.join(d, n)))
     try:
-        with open(os.path.join(d, latest)) as f:
+        with open(os.path.join(d, latest), encoding="utf-8") as f:
             todos = json.load(f)
     except (OSError, ValueError):
         return None
@@ -1388,7 +1548,7 @@ def _todo_from_transcript(path):
 
     tasks = []
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             todo_snapshots = []
             for raw in fh:
                 raw = raw.strip()
@@ -1442,6 +1602,22 @@ def current_todo(path, session=None, config_dir=None):
 
 
 # ═══ Packing + render ════════════════════════════════════════════════════════
+# RENDER CONTRACT (how a line becomes text):
+#   * One registry, one gate. Built-in and external segments share a single
+#     name->builder map (`_builders_for`) and a single on/off gate
+#     (`cfg.segments.get(name, False)`). Every builder is `seg_x(data, avail,
+#     theme) -> str | None` and is interchangeable to the packer.
+#   * One guarded entry. `safe_build` is the only place a builder is called; on
+#     any exception it records the key in `failed` and returns a width-bounded
+#     ⚠ marker, so one bad segment can never blank the bar (never-blank).
+#   * One measured pass. `pack_line` times EVERY non-meta build and
+#     `_crown_slowest` tracks the single running max into `data["slowest"]`. With
+#     the lazy data map, that bracket also captures the segment's first-read
+#     probe cost — so the crowned time is the segment's REAL cost (FR-R.2).
+#   * Two meta segments. `render_time` and `slowest` (`_SLOWEST_META`) report the
+#     whole render, not one builder, so they are built in pass 2 (after every
+#     non-meta build is timed) and placed at their LAYOUT position in assembly —
+#     never forced last, never crowned as the culprit.
 def safe_build(key, data, avail, theme, failed, builders=None):
     """Invoke one segment builder in isolation. On ANY exception, record `key`
     in the shared `failed` set and return a width-bounded warning marker instead
@@ -1451,7 +1627,7 @@ def safe_build(key, data, avail, theme, failed, builders=None):
     builders = builders if builders is not None else BUILDERS
     try:
         return builders[key](data, avail, theme)
-    except Exception:                              # noqa: BLE001 — isolation is the point
+    except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
         failed.add(key)
         named = f"{_WARN}⚠{key}{RESET}"
         if visible_width(named) <= avail:
@@ -1459,31 +1635,70 @@ def safe_build(key, data, avail, theme, failed, builders=None):
         return f"{_WARN}⚠{RESET}"
 
 
-def pack_line(keys, data, cols, cfg=None, theme=None, failed=None, builders=None):
-    """Best-fit pack enabled segments into cols - RIGHT_MARGIN.
+def _crown_slowest(data, key, ns, failed):
+    """Record the slowest non-meta, non-crashed segment build this render — the
+    single place the running max is tracked (FR-R.1). The meta segments report
+    the whole render, not one builder, so they are never the culprit; a crashed
+    segment (in `failed`) reports its warning marker's time, not real work."""
+    if key in _SLOWEST_META or key in failed:
+        return
+    cur = data.get("slowest")
+    if cur is None or ns > cur[1]:
+        data["slowest"] = (key, ns)
 
-    For each key (left->right), compute the space available at this position
-    (budget - used - separator), ask the builder for content sized to it, and
-    keep it if it is non-empty and fits — else skip it and keep trying the rest.
-    Pinned segments are always kept. Order is priority: leftmost survive.
-    `builders` carries the merged built-in + external map; defaults to that
-    derived from cfg."""
+
+def pack_line(keys, data, cols, cfg=None, theme=None, failed=None, builders=None):
+    """Best-fit pack enabled segments into cols - RIGHT_MARGIN, in two passes.
+
+    The meta segments (`render_time`, `slowest`) report the whole render, so they
+    can only be built once every other build is timed — but they live at their own
+    LAYOUT positions, not forced last. So: pass 1 builds + times every non-meta
+    segment left->right (crowning the slowest via _crown_slowest, whose timing now
+    includes each segment's first-read probe cost thanks to FR-R.2's lazy
+    _LazyData); pass 2 builds the meta segments now that `data["slowest"]` and
+    `t_start` are settled; then assembly places everything in LAYOUT order, fitting
+    left->right with all widths known. Pinned segments are always kept; otherwise
+    leftmost survive when space is tight. `builders` carries the merged built-in +
+    external map; defaults to that derived from cfg."""
     cfg = cfg or default_config()
     theme = theme or build_theme(cfg)
     failed = failed if failed is not None else set()
     builders = builders if builders is not None else _builders_for(cfg)
     budget = cols - RIGHT_MARGIN
     sep_w = visible_width(SEP)
-    kept, used = [], 0
-    for key in keys:
-        if not cfg.segments.get(key, False):   # flag gate: not built => no compute
+
+    enabled = [k for k in keys if cfg.segments.get(k, False)]   # flag gate
+    built = {}
+    # Pass 1: build + time every non-meta enabled segment, crowning the slowest.
+    used_est = 0
+    for key in enabled:
+        if key in _SLOWEST_META:
             continue
-        sep = sep_w if kept else 0
-        avail = budget - used - sep
-        s = safe_build(key, data, max(avail, 0), theme, failed, builders)
+        sep = sep_w if used_est else 0
+        avail = max(budget - used_est - sep, 0)
+        t0 = time.perf_counter_ns()
+        s = safe_build(key, data, avail, theme, failed, builders)
+        ns = time.perf_counter_ns() - t0
         if not s:
             continue
         if key in PINNED or visible_width(s) <= avail:
+            built[key] = s
+            used_est += visible_width(s) + sep
+            _crown_slowest(data, key, ns, failed)
+    # Pass 2: build the meta segments now that timings/max are known.
+    for key in enabled:
+        if key in _SLOWEST_META:
+            s = safe_build(key, data, budget, theme, failed, builders)
+            if s:
+                built[key] = s
+    # Assemble in layout order, fitting left->right with every width known.
+    kept, used = [], 0
+    for key in enabled:
+        s = built.get(key)
+        if not s:
+            continue
+        sep = sep_w if kept else 0
+        if key in PINNED or used + sep + visible_width(s) <= budget:
             kept.append(s)
             used += visible_width(s) + sep
     return SEP.join(kept)
@@ -1540,7 +1755,8 @@ def render(data, cols, lines, cfg=None, theme=None):
 #
 # Available segments (key -> what it shows):
 #   path         working dir (~-collapsed; basename if long)     [pinned]
-#   branch       git branch with 🌿 (repo) / 🌳 (worktree) icon
+#   branch       git branch name
+#   worktree     ⎇ active linked-worktree name (struck ⎇ wt on the main checkout)
 #   dirty        ✗ untracked / ~ modified marker
 #   todo         active TODO / task (truncated to fit)
 #   model        model display name
@@ -1553,6 +1769,8 @@ def render(data, cols, lines, cfg=None, theme=None):
 #   api_time     📡 total API duration
 #   render_time  ⏱ status-line.py's own run time, SLO/SLA-colored via the
 #                render_time ramp
+#   slowest      🐌 the slowest single segment this render (name + duration),
+#                SLO/SLA-colored via the shared slowest ramp
 #   dimensions   terminal COLS×ROWS (off by default; debug)
 #   context      📊 context-window usage bar + percent           [pinned]
 #   chat_size    💾 transcript file size
@@ -1602,7 +1820,7 @@ def effort_setting_is_auto(work_dir, home):
                  os.path.join(work_dir, ".claude", "settings.json"),
                  os.path.join(home, ".claude", "settings.json")):
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 cfg = json.load(f)
         except (OSError, ValueError):
             continue
@@ -1611,18 +1829,48 @@ def effort_setting_is_auto(work_dir, home):
     return True
 
 
-def build_data(raw, env, segments=None, t_start=None, git_worktree=False):
-    """Gather everything the builders read.
+class _LazyData(dict):
+    """Builder-facing data map. `base` values are stored directly; each `probes`
+    entry is a thunk that fills its key on first read and memoizes the result, so
+    an expensive probe's cost lands inside the *measured* build of the segment
+    that reads it (FR-R.2, option A) and later reads are free. Builders read via
+    .get(), so both .get() and item access trigger the probe. A shared probe (git
+    -> branch/dirty/worktree/in_repo/wt_name) registers ONE thunk under several
+    keys; the first read runs it and fills them all, and the `key not in self`
+    guard keeps the now-dead sibling entries no-ops."""
 
-    Expensive probes — git (`git_info`), the transcript parse (`current_todo`),
-    process RSS (`proc_rss_bytes`), the effort-settings/file stats — run ONLY
-    when their segment is enabled in `segments`. A disabled segment costs nothing
-    to *compute*, not just nothing to *render*: this is the compute half of the
-    same flag gate `pack_line` applies to rendering. `segments=None` computes
-    everything (used by tests and as a degrade-safe default)."""
-    def want(key):
-        return segments is None or segments.get(key, False)
+    def __init__(self, base, probes):
+        super().__init__(base)
+        self._probes = probes              # {key: thunk}; a thunk fills its key(s)
 
+    def _resolve(self, key):
+        probe = self._probes.pop(key, None)
+        if probe is not None and key not in self:
+            probe()
+
+    def __missing__(self, key):            # data[key]
+        self._resolve(key)
+        if key in self:
+            return self[key]
+        raise KeyError(key)
+
+    def get(self, key, default=None):      # data.get(key) — the path builders use
+        self._resolve(key)
+        return super().get(key, default)
+
+
+def build_data(raw, env, t_start=None, git_ttl=_GIT_CACHE_TTL):
+    """Gather everything the builders read, as a lazy `_LazyData`.
+
+    Segment-agnostic: it does not know which segments are enabled. Cheap fields
+    are computed up front; the expensive probes (git, transcript/todo parse,
+    process RSS, `ago`, effort-auto) are deferred into thunks so their cost is
+    captured inside the measured build of the segment that reads them (FR-R.2,
+    option A). Laziness IS the compute gate — a probe runs only when an enabled
+    segment reads its field, so a disabled segment (never built by the packer)
+    never triggers it. The shared probes keep their own caches, so a second
+    consumer in one render is a cache hit and the first is credited the real
+    cost. `t_start` is the render's start timestamp (the total-render measure)."""
     model = raw.get("model") or {}
     cost = raw.get("cost") or {}
     ctx = raw.get("context_window") or {}
@@ -1639,36 +1887,14 @@ def build_data(raw, env, segments=None, t_start=None, git_worktree=False):
 
     cols, lines, assumed = terminal_size(env)
 
-    # git_info yields branch + dirty + worktree in one shot, so it is gated as a
-    # unit on either git segment being enabled.
-    branch, dirty, is_worktree = "", "clean", False
-    if want("branch") or want("dirty"):
-        # Each git probe is gated on what's actually needed: the untracked walk on
-        # the `dirty` segment, the worktree (rev-parse) check on the `branch`
-        # segment AND the opt-in git_worktree knob (off by default — skips the
-        # rev-parse entirely when nobody asked for 🌳/🌿 detection).
-        branch, dirty, is_worktree = git_info(
-            work_dir, untracked=want("dirty"), worktree=want("branch") and git_worktree)
-
-    ago = ""
-    if want("time_ago") and transcript and os.path.isfile(transcript):
-        ago = fmt_ago(int(time.time()) - int(os.path.getmtime(transcript)))
-
-    effort = resolve_effort(raw, env)
-    effort_auto = effort_setting_is_auto(work_dir, home) if want("effort") else False
-    todo_state, todo_text = (current_todo(transcript, session, claude_dir)
-                             if want("todo") else (None, None))
-
-    data = {
+    base = {
         "raw": raw,
         "model_name": model.get("display_name", ""),
         "model_id": model.get("id", "unknown"),
-        "effort": effort,
-        "effort_auto": effort_auto,
+        "effort": resolve_effort(raw, env),
         "work_dir": work_dir,
         "home": home,
-        "branch": branch, "dirty": dirty, "is_worktree": is_worktree,
-        "clock": time.strftime("%H:%M"), "ago": ago,
+        "clock": time.strftime("%H:%M"),
         # `or 0` (not get's default) so a PRESENT-but-null field — what a fresh
         # /clear session sends before any tokens/cost accrue — coalesces to 0
         # instead of raising on int()/math and blanking the whole bar.
@@ -1679,14 +1905,47 @@ def build_data(raw, env, segments=None, t_start=None, git_worktree=False):
         "api_ms": cost.get("total_api_duration_ms") or 0,
         "context_pct": int(ctx.get("used_percentage") or 0),
         "context_max": ctx.get("context_window_size") or 0,
-        "chat_bytes": transcript_bytes(transcript) if want("chat_size") else None,
-        "mem_bytes": proc_rss_bytes() if want("memory") else None,
         "rate_limits": raw.get("rate_limits") or {},
-        "todo_state": todo_state, "todo_text": todo_text,
         "dim_assumed": assumed,
         "cols": cols, "lines": lines,
         "t_start": t_start,
     }
+
+    # One shared git_snapshot feeds branch + dirty + worktree, run on first read
+    # of any git field. It probes in full (untracked walk + worktree rev-parse);
+    # laziness already gates the whole call on at least one git segment being
+    # built, so there is no per-segment flag to thread through here.
+    def _git():
+        snap = git_snapshot(work_dir, ttl=git_ttl, env=env)
+        data.update(branch=snap.branch, dirty=snap.dirty, is_worktree=snap.is_worktree,
+                    wt_name=snap.wt_name, in_repo=snap.in_repo)
+
+    def _ago():
+        ok = transcript and os.path.isfile(transcript)
+        data["ago"] = (fmt_ago(int(time.time()) - int(os.path.getmtime(transcript)))
+                       if ok else "")
+
+    def _effort_auto():
+        data["effort_auto"] = effort_setting_is_auto(work_dir, home)
+
+    def _todo():
+        state, text = current_todo(transcript, session, claude_dir)
+        data.update(todo_state=state, todo_text=text)
+
+    def _chat():
+        data["chat_bytes"] = transcript_bytes(transcript)
+
+    def _mem():
+        data["mem_bytes"] = proc_rss_bytes()
+
+    probes = {
+        "branch": _git, "dirty": _git, "is_worktree": _git,
+        "wt_name": _git, "in_repo": _git,
+        "ago": _ago, "effort_auto": _effort_auto,
+        "todo_state": _todo, "todo_text": _todo,
+        "chat_bytes": _chat, "mem_bytes": _mem,
+    }
+    data = _LazyData(base, probes)
     return data, cols, lines
 
 
@@ -1699,8 +1958,8 @@ Environment variables:
   CC_AI_KIT_SEGMENT_<KEY>  per-segment bool toggle; KEY is the upper-cased
                            segment name (PATH, MODEL, COST, CONTEXT, ...).
                            true:  1 true t y yes on    false: 0 false f n no off
-  CC_AI_KIT_GIT_WORKTREE   bool; detect linked worktrees (🌳 vs 🌿). Off by
-                           default — it adds a `git rev-parse` per render.
+  CC_AI_KIT_GIT_TTL        int; seconds the git worktree probe is cached. Wins
+                           over [git] cache_ttl (default 5).
   CC_AI_KIT_SEGMENTS_DIR   external drop-in segments directory (default
                            ${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments)
   CC_AI_KIT_EXTERNAL_TTL   default cache TTL (seconds) for external segments
@@ -1788,10 +2047,11 @@ def validate_config_file(path, env):
             if parse_color(str(spec), resolved_palette) is None:
                 errors.append(f"ramp [{band}] bad color: {spec!r}")
     for k, v in (raw.get("git") or {}).items():
-        if k not in _GIT_DEFAULTS:
+        problem = _git_key_problem(k, v)
+        if problem == "unknown":
             errors.append(f"unknown [git] key: {k}")
-        elif not isinstance(v, bool):
-            errors.append(f"[git] {k} must be true/false, got {v!r}")
+        elif problem == "bad_ttl":
+            errors.append(f"[git] cache_ttl must be an integer, got {v!r}")
     ext = raw.get("external")
     if ext is not None:
         if not isinstance(ext, dict):
@@ -1836,8 +2096,8 @@ def _dry_render_failures(cfg, theme, env):
     raises on a missing/malformed key won't be surfaced by this happy-path sample."""
     failed = set()
     data, _cols, _lines = build_data(
-        dict(_DOCTOR_SAMPLE), env, cfg.segments, time.perf_counter_ns(),
-        (cfg.git or {}).get("worktree", False))
+        dict(_DOCTOR_SAMPLE), env, time.perf_counter_ns(),
+        git_ttl=(cfg.git or {}).get("cache_ttl", _GIT_CACHE_TTL))
     for key in BUILDERS:
         safe_build(key, data, 200, theme, failed)
     return failed
@@ -1856,7 +2116,7 @@ def cmd_doctor(env):
     try:
         theme = build_theme(cfg)
         failed = _dry_render_failures(cfg, theme, env)
-    except Exception as e:                         # noqa: BLE001
+    except Exception as e:  # pylint: disable=broad-exception-caught  # diagnostic backstop reports any crash
         errors.append(f"render pipeline crashed: {e!r}")
     for e in errors:
         print(e, file=sys.stderr)
@@ -1882,6 +2142,7 @@ def cmd_check(path, env):
 
 
 def parse_args(argv):
+    """Parse command-line arguments for the status-line CLI."""
     p = argparse.ArgumentParser(
         prog="status-line.py",
         description="Claude Code status line. With no flags, reads the status "
@@ -1908,14 +2169,16 @@ def safe_render(raw, env, cfg, theme, t_start):
     above safe_build's per-segment isolation (covers build_data itself)."""
     try:
         data, cols, lines = build_data(
-            raw, env, cfg.segments, t_start, (cfg.git or {}).get("worktree", False))
+            raw, env, t_start,
+            git_ttl=(cfg.git or {}).get("cache_ttl", _GIT_CACHE_TTL))
         return render(data, cols, lines, cfg, theme)
-    except Exception:                              # noqa: BLE001 — never blank the bar
+    except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
         return [f"{_WARN}⚠ status-line error — "
                 f"run the doctor: {_doctor_cmd()}{RESET}"]
 
 
 def main():
+    """CLI entrypoint: dispatch subcommands or render the status line from stdin."""
     t0 = time.perf_counter_ns()        # for the optional `render_time` self-timing segment
     args = parse_args(sys.argv[1:])
     if args.check is not _NO_CHECK:

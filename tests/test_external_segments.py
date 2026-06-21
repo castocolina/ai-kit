@@ -2,7 +2,6 @@ import importlib.util
 import json
 import os
 import stat
-import sys
 import tempfile
 import time
 import unittest
@@ -252,7 +251,7 @@ class TestResolveExternal(unittest.TestCase):
 
     def test_bad_env_ttl_falls_back_to_file(self):
         raw = {"external": {"ttl": 25}}
-        d, ttl = sl._resolve_external(raw, {"CC_AI_KIT_EXTERNAL_TTL": "notanint"})
+        _d, ttl = sl._resolve_external(raw, {"CC_AI_KIT_EXTERNAL_TTL": "notanint"})
         self.assertEqual(ttl, 25)
 
 
@@ -362,7 +361,7 @@ class TestRenderIntegration(unittest.TestCase):
         raw = {"workspace": {"current_dir": self.dir},
                "context_window": {"used_percentage": 10, "context_window_size": 200000},
                "session_id": "x", "transcript_path": "", "rate_limits": {}}
-        data, c, l = sl.build_data(raw, self.env, cfg.segments)
+        data, _c, _l = sl.build_data(raw, self.env)
         return "\n".join(sl.render(data, cols, lines, cfg, theme))
 
     def test_external_segment_appears_in_render(self):

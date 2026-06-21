@@ -1,5 +1,8 @@
 __pycache__
 
+# uv dev environment (uv.lock IS committed for reproducibility)
+.venv/
+
 # Local session artifacts — not part of the kit
 .atl/
 .claude/

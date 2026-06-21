@@ -1,0 +1,55 @@
+# Single source of truth for the quality gate.
+#   make validate  →  runs every hook here across all files (parity by construction)
+#   make dev       →  installs these hooks, so commits are gated even if validate is skipped
+# All python tools come from the uv-locked dev env (`uv run`) — versions live in
+# uv.lock, NOT duplicated here. The ai-kit runtime stays stdlib-only; this is dev-only.
+#
+# Enforcement is intentionally LENIENT during the render refactor (relaxed pylint
+# design thresholds in pyproject.toml; a minimal test set below). After Phase 2 the
+# thresholds tighten (Task 2.6) and the test hook expands to the full suite.
+default_install_hook_types: [pre-commit]
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: uv run ruff check
+        language: system
+        # Scoped to the refactor's modules + tests. skills/ joins the gate later
+        # (the "enforce more after the refactor" expansion).
+        files: ^(tools|tests)/.*\.py$
+        require_serial: true
+      - id: pylint
+        name: pylint
+        entry: uv run pylint
+        language: system
+        files: ^tools/(status-line|setup)\.py$
+        require_serial: true
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        pass_filenames: false
+      - id: vulture
+        name: vulture
+        entry: uv run vulture
+        language: system
+        pass_filenames: false
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck
+        language: system
+        files: \.sh$
+      - id: py-compile
+        name: py-compile
+        entry: python3 -m py_compile
+        language: system
+        files: ^tools/(status-line|setup)\.py$
+      # Tests run on the user's real runtime (system python3, stdlib-only), matching
+      # how the status line actually runs. Minimal core set for now; expands post-refactor.
+      - id: unittest
+        name: unittest (core)
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments
+        language: system
+        pass_filenames: false
+        always_run: true
