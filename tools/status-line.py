@@ -147,8 +147,11 @@ def _git_key_problem(k, v):
 # `git` and `external` default to None so older Config(...) call sites (which
 # pass only the original fields) keep working; consumers read git via
 # (cfg.git or {}) and external via (cfg.external or []).
-Config = namedtuple("Config", "segments layout palette ramps git external",
-                    defaults=(None, None))
+Config = namedtuple(
+    "Config",
+    "segments layout palette ramps git external cache_base segments_dir",
+    defaults=(None, None, "", ""),
+)
 
 
 def default_config():
@@ -299,7 +302,8 @@ def load_config(env):
     # _resolve_segments runs, so `[segments] <id> = false` is honored (not warned)
     # and they default to enabled.
     ext_dir, ext_ttl = _resolve_external(raw, env)
-    specs = discover_external(ext_dir, ext_ttl, env)
+    cache_base = _cache_base(env)
+    specs = discover_external(ext_dir, ext_ttl, os.path.join(cache_base, "segments"))
     seg_defaults = dict(base.segments)
     for s in specs:
         seg_defaults.setdefault(s.id, True)
@@ -343,7 +347,8 @@ def load_config(env):
             print(f"{_DIM}status-line: CC_AI_KIT_GIT_TTL must be an integer, "
                   f"got {ttl_env!r} — ignored{RESET}", file=sys.stderr)
     return Config(segments=segments, layout=layout, palette=palette, ramps=ramps,
-                  git=git, external=external)
+                  git=git, external=external,
+                  cache_base=cache_base, segments_dir=ext_dir)
 
 
 # ═══ Palette ════════════════════════════════════════════════════════════════
@@ -409,11 +414,6 @@ def _cache_base(env):
     return os.path.join(base, "ai-kit")
 
 
-def _segments_cache_dir(env):
-    """…/ai-kit/segments — per-provider output cache."""
-    return os.path.join(_cache_base(env), "segments")
-
-
 def _segments_dir(file_external, env):
     """Resolve the providers directory: CC_AI_KIT_SEGMENTS_DIR > [external].dir >
     ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/segments."""
@@ -424,14 +424,14 @@ def _segments_dir(file_external, env):
     return os.path.join(base, "ai-kit", "segments")
 
 
-def discover_external(directory, default_ttl, env):
+def discover_external(directory, default_ttl, cache_dir):
     """Scan `directory` for executable providers and return a list of ExtSpec,
     sorted by (filename, id). Non-executable files are skipped with a dim warning.
     A file with no header still loads with all defaults (line=0 => last row at
-    placement, position=end, id=stem, timeout=2s, ttl=default_ttl)."""
+    placement, position=end, id=stem, timeout=2s, ttl=default_ttl).
+    `cache_dir` is the per-provider output cache directory (…/ai-kit/segments)."""
     if not directory or not os.path.isdir(directory):
         return []
-    cache_dir = _segments_cache_dir(env)
     specs = []
     for name in sorted(os.listdir(directory)):
         path = os.path.join(directory, name)
@@ -1291,19 +1291,24 @@ def _git_worktree_info(work_dir):
     return True, is_worktree, name
 
 
-def _git_cache_path(work_dir, env):
-    """Per-work_dir cache file for the worktree probe under …/ai-kit/git/
-    (shares `_cache_base` with the external-segment cache)."""
+def _git_cache_path(work_dir, cache_base):
+    """Per-work_dir cache file for the worktree probe under <cache_base>/git/."""
     key = hashlib.sha1(os.path.abspath(work_dir).encode()).hexdigest()[:16]
-    return os.path.join(_cache_base(env), "git", key)
+    return os.path.join(cache_base, "git", key)
 
 
-def _worktree_info_cached(work_dir, ttl, env):
+def _worktree_info_cached(work_dir, ttl, cache_base):
     """_git_worktree_info wrapped in an on-disk TTL cache — the worktree rev-parse
-    rarely changes, so it is cached ~ttl s keyed by work_dir. ttl <= 0 always
-    misses (forces a fresh rev-parse every render). Cache I/O is best-effort."""
-    path = _git_cache_path(work_dir, env)
-    if ttl > 0:
+    rarely changes, so it is cached ~ttl s keyed by work_dir. The cache is active
+    only when ttl > 0 AND a cache_base is resolved: ttl <= 0 forces a fresh
+    rev-parse every render, and an empty cache_base means no cache location was
+    resolved (a direct/test call with no Config) so we never touch disk — this is
+    what keeps such calls from writing a stray `./git/` under the cwd. In
+    production load_config always supplies a real cache_base. Cache I/O is
+    best-effort."""
+    cached = ttl > 0 and bool(cache_base)
+    path = _git_cache_path(work_dir, cache_base) if cached else ""
+    if cached:
         try:
             if time.time() - os.stat(path).st_mtime < ttl:
                 with open(path, encoding="utf-8") as f:
@@ -1312,7 +1317,7 @@ def _worktree_info_cached(work_dir, ttl, env):
         except (OSError, ValueError, KeyError):
             pass
     info = _git_worktree_info(work_dir)
-    if ttl > 0:                                     # ttl<=0 never reads, so never write
+    if cached:                          # caching off (ttl<=0 or no cache_base) -> never write
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
@@ -1322,19 +1327,26 @@ def _worktree_info_cached(work_dir, ttl, env):
     return info
 
 
-def git_snapshot(work_dir, untracked=True, want_worktree=True, ttl=_GIT_CACHE_TTL, env=None):
+def git_snapshot(work_dir, config=None, untracked=True, want_worktree=True):
     """The single git probe behind the `branch`, `dirty`, and `worktree` segments.
+
+    `config` is the resolved Config object — the probe reads its cache TTL and
+    cache_base FROM it (never from env, never as bare args). config=None (direct/
+    test calls with no Config) falls back to the built-in defaults.
 
     Returns GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name). `branch`
     and `dirty` come from one always-fresh `git status --porcelain --branch`; the
-    worktree rev-parse is cached ~`ttl`s on disk (it rarely changes). Each call is
-    gated on what the caller will actually render:
+    worktree rev-parse is cached ~ttl s on disk under cache_base/git/ (it rarely
+    changes). Each call is gated on what the caller will actually render:
       * untracked=False adds --untracked-files=no, skipping git's untracked-file
         walk (the slow part of `status` on large trees). Pass it when `dirty` is
         off; dirty then can't report "untracked" (only modified/clean).
       * want_worktree=False skips the rev-parse (and its cache) entirely; in_repo,
-        is_worktree, wt_name stay at their defaults. Pass it when `worktree` is off."""
-    env = env or {}
+        is_worktree, wt_name stay at their defaults. Pass it when `worktree` is off.
+    (untracked/want_worktree stay for now — Task 3.2 removes them once laziness
+    fully gates the call.)"""
+    ttl = (config.git or {}).get("cache_ttl", _GIT_CACHE_TTL) if config else _GIT_CACHE_TTL
+    cache_base = config.cache_base if config else ""
     status_args = ["status", "--porcelain", "--branch"]
     if not untracked:
         status_args.append("--untracked-files=no")
@@ -1351,7 +1363,7 @@ def git_snapshot(work_dir, untracked=True, want_worktree=True, ttl=_GIT_CACHE_TT
         dirty = "clean"
     in_repo, is_worktree, wt_name = False, False, ""
     if want_worktree:
-        in_repo, is_worktree, wt_name = _worktree_info_cached(work_dir, ttl, env)
+        in_repo, is_worktree, wt_name = _worktree_info_cached(work_dir, ttl, cache_base)
     return GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name)
 
 
@@ -1862,8 +1874,11 @@ class _LazyData(dict):
         return super().get(key, default)
 
 
-def build_data(raw, env, t_start=None, git_ttl=_GIT_CACHE_TTL):
+def build_data(raw, env, cfg, t_start=None):
     """Gather everything the builders read, as a lazy `_LazyData`.
+
+    `cfg` is the resolved Config object, passed by contract so the git probe
+    can read cache_base and cache_ttl from it (D8 — no re-resolution from env).
 
     Segment-agnostic: it does not know which segments are enabled. Cheap fields
     are computed up front; the expensive probes (git, transcript/todo parse,
@@ -1919,7 +1934,7 @@ def build_data(raw, env, t_start=None, git_ttl=_GIT_CACHE_TTL):
     # laziness already gates the whole call on at least one git segment being
     # built, so there is no per-segment flag to thread through here.
     def _git():
-        snap = git_snapshot(work_dir, ttl=git_ttl, env=env)
+        snap = git_snapshot(work_dir, cfg)
         data.update(branch=snap.branch, dirty=snap.dirty, is_worktree=snap.is_worktree,
                     wt_name=snap.wt_name, in_repo=snap.in_repo)
 
@@ -2015,10 +2030,10 @@ def validate_config_file(path, env):
     except (OSError, tomllib.TOMLDecodeError) as e:
         return [f"{path}: {e}"]
     errors = []
-    defaults = default_config()
     ext_dir, ext_ttl = _resolve_external(raw, env)
-    ext_ids = {s.id for s in discover_external(ext_dir, ext_ttl, env)}
-    known_segments = set(defaults.segments) | ext_ids
+    seg_cache = os.path.join(_cache_base(env), "segments")
+    ext_ids = {s.id for s in discover_external(ext_dir, ext_ttl, seg_cache)}
+    known_segments = set(default_config().segments) | ext_ids
     for k in (raw.get("segments") or {}):
         if k not in known_segments:
             errors.append(f"unknown segment key: {k}")
@@ -2098,9 +2113,7 @@ def _dry_render_failures(cfg, theme, env):
     Note: this catches builders that crash on *valid* input. A builder that only
     raises on a missing/malformed key won't be surfaced by this happy-path sample."""
     failed = set()
-    data, _cols, _lines = build_data(
-        dict(_DOCTOR_SAMPLE), env, time.perf_counter_ns(),
-        git_ttl=(cfg.git or {}).get("cache_ttl", _GIT_CACHE_TTL))
+    data, _cols, _lines = build_data(dict(_DOCTOR_SAMPLE), env, cfg, time.perf_counter_ns())
     for key in BUILDERS:
         safe_build(key, data, 200, theme, failed)
     return failed
@@ -2171,9 +2184,7 @@ def safe_render(raw, env, cfg, theme, t_start):
     diagnostic line instead of a blank bar. Never raises. This is the backstop
     above safe_build's per-segment isolation (covers build_data itself)."""
     try:
-        data, cols, lines = build_data(
-            raw, env, t_start,
-            git_ttl=(cfg.git or {}).get("cache_ttl", _GIT_CACHE_TTL))
+        data, cols, lines = build_data(raw, env, cfg, t_start)
         return render(data, cols, lines, cfg, theme)
     except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
         return [f"{_WARN}⚠ status-line error — "
@@ -2183,21 +2194,22 @@ def safe_render(raw, env, cfg, theme, t_start):
 def main():
     """CLI entrypoint: dispatch subcommands or render the status line from stdin."""
     t0 = time.perf_counter_ns()        # for the optional `render_time` self-timing segment
+    env = os.environ                   # single SHELL-boundary read (FR-A.1)
     args = parse_args(sys.argv[1:])
     if args.check is not _NO_CHECK:
-        sys.exit(cmd_check(args.check, os.environ))
+        sys.exit(cmd_check(args.check, env))
     if args.doctor:
-        sys.exit(cmd_doctor(os.environ))
-    cfg = load_config(os.environ)
+        sys.exit(cmd_doctor(env))
+    cfg = load_config(env)
     theme = build_theme(cfg)
     if args.print_config:
-        print(cmd_print_config(cfg, os.environ))
+        print(cmd_print_config(cfg, env))
         return
     try:
         raw = json.load(sys.stdin)
     except (ValueError, OSError):
         raw = {}
-    print("\n".join(safe_render(raw, os.environ, cfg, theme, t0)))
+    print("\n".join(safe_render(raw, env, cfg, theme, t0)))
 
 
 if __name__ == "__main__":

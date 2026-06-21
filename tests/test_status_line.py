@@ -572,8 +572,7 @@ class TestSlowestTiming(unittest.TestCase):
         with mock.patch.object(sl, "git_snapshot",
                                return_value=sl.GitSnapshot(True, "m", "clean", False, "")):
             data, cols, lines = sl.build_data(
-                {"workspace": {"current_dir": "."}, "transcript_path": ""}, env,
-                cfg.segments)
+                {"workspace": {"current_dir": "."}, "transcript_path": ""}, env, cfg)
             out = "\n".join(sl.render(data, cols, lines, cfg, theme))
         self.assertNotIn("🐌", strip(out))
 
@@ -642,7 +641,9 @@ class TestProcAndGit(unittest.TestCase):
         rss = sl.proc_rss_bytes()
         self.assertTrue(rss is None or isinstance(rss, int))
         with tempfile.TemporaryDirectory() as home:
-            snap = sl.git_snapshot(".", env={"HOME": home})
+            env = {"HOME": home}
+            cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
+            snap = sl.git_snapshot(".", cfg)
         self.assertIn(snap.dirty, ("clean", "untracked", "modified"))
         self.assertIsInstance(snap.is_worktree, bool)
         self.assertIsInstance(snap.wt_name, str)
@@ -671,14 +672,18 @@ class TestProcAndGit(unittest.TestCase):
                 stdout = ("## main...origin/main [ahead 1]\n M tools/x.py\n?? new.py\n"
                           if "status" in cmd else ".git\n.git\n/repo\n")
             return R()
+        env = self._home_env()
+        cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            snap = sl.git_snapshot(".", env=self._home_env())
+            snap = sl.git_snapshot(".", cfg)
             self.assertEqual(snap.branch, "main")
             self.assertEqual(snap.dirty, "untracked")   # ?? present -> untracked
             self.assertFalse(snap.is_worktree)          # git-dir == git-common-dir
 
     def test_untracked_flag_follows_dirty(self):
         # untracked=False adds --untracked-files=no; True omits it.
+        env = self._home_env()
+        cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
         for untracked, expect_flag in ((False, True), (True, False)):
             seen = []
             def fake_run(cmd, *, _seen=seen, **kw):
@@ -688,12 +693,14 @@ class TestProcAndGit(unittest.TestCase):
                     stdout = "## main\n"
                 return R()
             with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-                sl.git_snapshot(".", untracked=untracked, env=self._home_env())
+                sl.git_snapshot(".", cfg, untracked=untracked)
             status_cmd = next(c for c in seen if "status" in c)
             self.assertEqual("--untracked-files=no" in status_cmd, expect_flag, untracked)
 
     def test_worktree_probe_follows_flag(self):
         # want_worktree=False skips the rev-parse call entirely.
+        env = self._home_env()
+        cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
         for want, expect in ((False, False), (True, True)):
             seen = []
             def fake_run(cmd, *, _seen=seen, **kw):
@@ -703,7 +710,7 @@ class TestProcAndGit(unittest.TestCase):
                     stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
                 return R()
             with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-                sl.git_snapshot(".", want_worktree=want, env=self._home_env())
+                sl.git_snapshot(".", cfg, want_worktree=want)
             ran_revparse = any("rev-parse" in c for c in seen)
             self.assertEqual(ran_revparse, expect, want)
 
@@ -714,8 +721,10 @@ class TestProcAndGit(unittest.TestCase):
                 stdout = ("## main\n" if "status" in cmd
                           else "/wt/.git/worktrees/feat-x\n/main/.git\n/path/to/feat-x\n")
             return R()
+        env = self._home_env()
+        cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            snap = sl.git_snapshot(".", env=self._home_env())
+            snap = sl.git_snapshot(".", cfg)
             self.assertEqual((snap.branch, snap.dirty), ("main", "clean"))
             self.assertTrue(snap.is_worktree)        # git-dir != git-common-dir
             self.assertTrue(snap.in_repo)
@@ -724,6 +733,8 @@ class TestProcAndGit(unittest.TestCase):
     def test_worktree_info_cached_within_ttl(self):
         # Second call within the TTL must NOT re-run the rev-parse (cached on disk).
         env = self._home_env()
+        cache_base = sl._cache_base(env)
+        cfg = sl.default_config()._replace(cache_base=cache_base, git={"cache_ttl": 100})
         calls = []
         def fake_run(cmd, **kw):
             calls.append(cmd)
@@ -732,12 +743,14 @@ class TestProcAndGit(unittest.TestCase):
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            sl.git_snapshot(".", ttl=100, env=env)
-            sl.git_snapshot(".", ttl=100, env=env)
+            sl.git_snapshot(".", cfg)
+            sl.git_snapshot(".", cfg)
         self.assertEqual(sum("rev-parse" in c for c in calls), 1)   # only once
 
     def test_worktree_cache_bypassed_when_ttl_zero(self):
         env = self._home_env()
+        cache_base = sl._cache_base(env)
+        cfg = sl.default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
         calls = []
         def fake_run(cmd, **kw):
             calls.append(cmd)
@@ -746,8 +759,8 @@ class TestProcAndGit(unittest.TestCase):
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            sl.git_snapshot(".", ttl=0, env=env)
-            sl.git_snapshot(".", ttl=0, env=env)
+            sl.git_snapshot(".", cfg)
+            sl.git_snapshot(".", cfg)
         self.assertEqual(sum("rev-parse" in c for c in calls), 2)   # ttl<=0 always runs
 
     def test_worktree_cache_not_written_when_ttl_zero(self):
@@ -755,14 +768,16 @@ class TestProcAndGit(unittest.TestCase):
         # read — it must therefore never be WRITTEN either (no wasted disk I/O on
         # the hot render path).
         env = self._home_env()
+        cache_base = sl._cache_base(env)
+        cfg = sl.default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
         def fake_run(cmd, **kw):
             class R:
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            sl.git_snapshot(".", ttl=0, env=env)
-        self.assertFalse(os.path.exists(sl._git_cache_path(".", env)))
+            sl.git_snapshot(".", cfg)
+        self.assertFalse(os.path.exists(sl._git_cache_path(".", cache_base)))
 
 
 class TestCurrentTodo(unittest.TestCase):
@@ -872,7 +887,8 @@ class TestEndToEnd(unittest.TestCase):
                      "total_duration_ms": 65000, "total_api_duration_ms": 4200},
         }
         env = {"STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50", "HOME": "/home/u"}
-        data, cols, lines = sl.build_data(raw, env)
+        cfg = sl.default_config()
+        data, cols, lines = sl.build_data(raw, env, cfg)
         out = sl.render(data, cols, lines)
         self.assertEqual(len(out), 3)
         self.assertIn("Opus 4.8", strip(out[1]))
@@ -889,14 +905,15 @@ class TestLazyCompute(unittest.TestCase):
                   "effort": {"level": "high"}}
     ENV = {"STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50", "HOME": "/home/u"}
 
-    def _build_and_render(self, segs, raw=None, git_ttl=sl._GIT_CACHE_TTL):
-        cfg = sl.default_config()
+    def _build_and_render(self, segs, raw=None, cfg=None):
+        if cfg is None:
+            cfg = sl.default_config()
         cfg.segments.clear()                       # cfg is a namedtuple; mutate the dict
         cfg.segments.update(dict.fromkeys(sl.SEGMENTS, False))
         cfg.segments.update(segs)
         theme = sl.build_theme(cfg)
         # build_data is segment-agnostic; cfg.segments gates probes via render().
-        data, cols, lines = sl.build_data(raw or self.RAW, self.ENV, git_ttl=git_ttl)
+        data, cols, lines = sl.build_data(raw or self.RAW, self.ENV, cfg)
         sl.render(data, cols, lines, cfg, theme)
         return data
 
@@ -939,16 +956,21 @@ class TestLazyCompute(unittest.TestCase):
         with mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct, \
              mock.patch.object(sl, "git_snapshot",
                                return_value=sl.GitSnapshot(True, "m", "clean", False, "")):
-            data, cols, lines = sl.build_data(self.RAW, self.ENV)  # segments=None
+            data, cols, lines = sl.build_data(self.RAW, self.ENV, cfg)
             sl.render(data, cols, lines, cfg, theme)
             ct.assert_called_once()
 
     def test_git_ttl_threaded_to_snapshot(self):
-        # The resolved [git] cache_ttl flows through build_data into git_snapshot.
+        # The resolved [git] cache_ttl flows through build_data into git_snapshot
+        # via the Config object (D8 — consumers read cache_ttl off the object).
+        cfg = sl.default_config()._replace(git={"cache_ttl": 42})
         with mock.patch.object(sl, "git_snapshot",
                                return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gs:
-            self._build_and_render({"worktree": True}, git_ttl=42)
-            self.assertEqual(gs.call_args.kwargs.get("ttl"), 42)
+            self._build_and_render({"worktree": True}, cfg=cfg)
+            # git_snapshot receives the config; the ttl is read off it.
+            args = gs.call_args
+            passed_cfg = args.args[1] if args.args[1:] else args.kwargs.get("config")
+            self.assertEqual((passed_cfg.git or {}).get("cache_ttl"), 42)
 
     def test_git_probe_fires_for_any_git_segment_agnostically(self):
         # build_data is segment-agnostic: git_snapshot runs once whenever ANY of
@@ -1852,7 +1874,8 @@ class TestRendererRobustness(unittest.TestCase):
     }
 
     def test_build_data_tolerates_present_but_null_fields(self):
-        data, _cols, _lines = sl.build_data(dict(self._NEW_SESSION_RAW), os.environ)
+        data, _cols, _lines = sl.build_data(
+            dict(self._NEW_SESSION_RAW), os.environ, sl.default_config())
         self.assertEqual(data["context_pct"], 0)
         self.assertEqual(data["context_max"], 0)
         self.assertEqual(data["added"], 0)
@@ -1881,7 +1904,7 @@ class TestRenderDataLazy(unittest.TestCase):
         cfg = sl.default_config()
         theme = sl.build_theme(cfg)
         with mock.patch.object(sl, "git_snapshot", return_value=snap) as gs:
-            data, cols, lines = sl.build_data(raw, {"HOME": "/h"})
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg)
             self.assertEqual(gs.call_count, 0, "git probe must NOT run during build_data")
             sl.render(data, cols, lines, cfg, theme)
             self.assertEqual(gs.call_count, 1, "git probe runs exactly once during render")
@@ -1894,7 +1917,7 @@ class TestRenderDataLazy(unittest.TestCase):
         cfg.segments["worktree"] = False
         theme = sl.build_theme(cfg)
         with mock.patch.object(sl, "git_snapshot") as gs:
-            data, cols, lines = sl.build_data(raw, {"HOME": "/h"})
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg)
             sl.render(data, cols, lines, cfg, theme)
             self.assertEqual(gs.call_count, 0, "no git segment enabled => no git probe")
 
@@ -1913,7 +1936,7 @@ class TestSlowestTruthful(unittest.TestCase):
             return sl.GitSnapshot(True, "main", "modified", False, "")
 
         with mock.patch.object(sl, "git_snapshot", side_effect=slow_git):
-            data, cols, lines = sl.build_data(raw, {"HOME": "/h"})
+            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg)
             sl.render(data, cols, lines, cfg, theme)
         name, ns = data["slowest"]
         self.assertIn(name, ("branch", "dirty", "worktree"))  # a real git consumer
@@ -1932,7 +1955,7 @@ class TestTwoPassLayout(unittest.TestCase):
         theme = sl.build_theme(cfg)
         with mock.patch.object(sl, "git_snapshot",
                                return_value=sl.GitSnapshot(True, "main", "modified", False, "")):
-            data, _c, _l = sl.build_data(raw, {"HOME": "/h"},
+            data, _c, _l = sl.build_data(raw, {"HOME": "/h"}, cfg,
                                          t_start=time.perf_counter_ns())
             out = sl.render(data, 200, 50, cfg, theme)
         return next(strip(l) for l in out if "⏱" in strip(l))
@@ -1988,7 +2011,7 @@ class TestGoldenOutput(unittest.TestCase):
         blocks = []
         with self._deterministic():
             for c in cases:
-                data, _cols, _lines = sl.build_data(c["raw"], self.ENV, t_start=None)
+                data, _cols, _lines = sl.build_data(c["raw"], self.ENV, cfg, t_start=None)
                 data["cols"], data["lines"] = c["cols"], c["lines"]
                 out = sl.render(data, c["cols"], c["lines"], cfg, theme)
                 blocks.append(f"### {c['name']}\n" + "\n".join(strip(l) for l in out))

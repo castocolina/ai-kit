@@ -59,12 +59,13 @@ class TestDiscover(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
-        self.env = {"XDG_CACHE_HOME": os.path.join(self.dir, "cache")}
+        # cache_dir is the resolved per-provider output cache directory (…/ai-kit/segments)
+        self.cache_dir = os.path.join(self.dir, "cache", "ai-kit", "segments")
 
     def test_executable_with_header_is_discovered(self):
         write_script(self.dir, "aws.sh",
                      "#!/bin/sh\n# ai-kit-segment: line=2 after=clock id=aws ttl=30\necho hi\n")
-        specs = sl.discover_external(self.dir, default_ttl=10, env=self.env)
+        specs = sl.discover_external(self.dir, default_ttl=10, cache_dir=self.cache_dir)
         self.assertEqual(len(specs), 1)
         s = specs[0]
         self.assertEqual(s.id, "aws")
@@ -76,7 +77,7 @@ class TestDiscover(unittest.TestCase):
 
     def test_no_header_uses_defaults_and_stem_id(self):
         write_script(self.dir, "clockx", "#!/bin/sh\necho hi\n")
-        specs = sl.discover_external(self.dir, default_ttl=7, env=self.env)
+        specs = sl.discover_external(self.dir, default_ttl=7, cache_dir=self.cache_dir)
         self.assertEqual(specs[0].id, "clockx")
         self.assertEqual(specs[0].position, ("end", ""))
         self.assertEqual(specs[0].line, 0)        # 0 => "last row", resolved at placement
@@ -84,16 +85,16 @@ class TestDiscover(unittest.TestCase):
 
     def test_non_executable_skipped(self):
         write_script(self.dir, "noexec", "#!/bin/sh\necho hi\n", executable=False)
-        self.assertEqual(sl.discover_external(self.dir, 10, self.env), [])
+        self.assertEqual(sl.discover_external(self.dir, 10, self.cache_dir), [])
 
     def test_sorted_by_filename_then_id(self):
         write_script(self.dir, "b.sh", "#!/bin/sh\n# ai-kit-segment: id=zeta\necho\n")
         write_script(self.dir, "a.sh", "#!/bin/sh\n# ai-kit-segment: id=omega\necho\n")
-        ids = [s.id for s in sl.discover_external(self.dir, 10, self.env)]
+        ids = [s.id for s in sl.discover_external(self.dir, 10, self.cache_dir)]
         self.assertEqual(ids, ["omega", "zeta"])   # a.sh before b.sh
 
     def test_missing_dir_returns_empty(self):
-        self.assertEqual(sl.discover_external("/no/such/dir", 10, self.env), [])
+        self.assertEqual(sl.discover_external("/no/such/dir", 10, self.cache_dir), [])
 
 
 class TestSanitize(unittest.TestCase):
@@ -361,7 +362,7 @@ class TestRenderIntegration(unittest.TestCase):
         raw = {"workspace": {"current_dir": self.dir},
                "context_window": {"used_percentage": 10, "context_window_size": 200000},
                "session_id": "x", "transcript_path": "", "rate_limits": {}}
-        data, _c, _l = sl.build_data(raw, self.env)
+        data, _c, _l = sl.build_data(raw, self.env, cfg)
         return "\n".join(sl.render(data, cols, lines, cfg, theme))
 
     def test_external_segment_appears_in_render(self):
