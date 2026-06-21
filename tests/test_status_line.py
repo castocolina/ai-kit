@@ -160,6 +160,14 @@ class TestVisibleWidth(unittest.TestCase):
     def test_mixed_segment(self):
         self.assertEqual(sl.visible_width("📊 12%"), 6)
 
+    def test_variation_selector_is_zero_width(self):
+        self.assertEqual(sl.char_width("️"), 0)  # VS16 emoji presentation
+        self.assertEqual(sl.char_width("︎"), 0)  # VS15 text presentation
+
+    def test_glyph_plus_vs16_measures_as_two(self):
+        # ⏸ (modeled wide) + VS16 must stay 2 cells, not inflate to 3.
+        self.assertEqual(sl.visible_width("⏸️ x"), 4)  # 2 + 0 + 1(space) + 1(x)
+
 
 class TestFirstFitting(unittest.TestCase):
     def test_returns_richest_that_fits(self):
@@ -173,6 +181,58 @@ class TestFirstFitting(unittest.TestCase):
 
     def test_ignores_falsy_variants(self):
         self.assertEqual(sl._first_fitting([None, "", "ok"], 5), "ok")
+
+
+class TestIconHelper(unittest.TestCase):
+    def test_wide_emoji_gets_single_space(self):
+        self.assertEqual(sl._icon("\U0001F4C3", "x"), "\U0001F4C3 x")  # 📃 x
+
+    def test_narrow_rendering_glyph_gets_vs16(self):
+        # ⏱ ⏸ ⚡ are modeled wide but render narrow bare -> force emoji presentation.
+        self.assertEqual(sl._icon("⏱", "x"), "⏱️ x")  # ⏱️ x
+        self.assertEqual(sl._icon("⏸", "x"), "⏸️ x")  # ⏸️ x
+        self.assertEqual(sl._icon("⚡", "x"), "⚡️ x")  # ⚡️ x
+
+    def test_already_wide_bmp_alarm_clock_no_vs16(self):
+        self.assertEqual(sl._icon("⏰", "x"), "⏰ x")  # ⏰ is EAW=W already
+
+    def test_icon_width_is_two_plus_space_plus_text(self):
+        self.assertEqual(sl.visible_width(sl._icon("⏸", "12:00")), 8)  # 2+1+5
+
+
+class TestNoCollapsedIcons(unittest.TestCase):
+    # The five segments that previously glued the glyph to the value.
+    def test_collapsers_have_a_space_after_the_icon(self):
+        cases = {
+            "⏰": sl.seg_clock(_data(), 80, THEME),                 # ⏰
+            "\U0001F4C3": sl.seg_lines(_data(), 80, THEME),            # 📃
+            "\U0001FA99": sl.seg_cost(_data(cost=0.5), 80, THEME),     # 🪙
+            "\U0001F4AC": sl.seg_total_time(_data(), 80, THEME),       # 💬
+            "\U0001F4E1": sl.seg_api_time(_data(), 80, THEME),         # 📡
+        }
+        for glyph, out in cases.items():
+            plain = strip(out)
+            self.assertTrue(plain.startswith(glyph), plain)
+            after = plain[len(glyph):]
+            self.assertTrue(after.startswith(" "), f"icon collapsed: {plain!r}")
+
+    def test_no_segment_emits_glyph_then_nonspace(self):
+        # Property check across the iconed builders at a wide budget.
+        builders = [sl.seg_clock, sl.seg_lines, lambda d, a, t: sl.seg_cost(_data(cost=0.5), a, t),
+                    sl.seg_total_time, sl.seg_api_time, sl.seg_render_time,
+                    lambda d, a, t: sl.seg_context(_data(), a, t),
+                    sl.seg_chat_size, sl.seg_memory]
+        for b in builders:
+            out = b(_data(t_start=sl.time.perf_counter_ns()), 120, THEME)
+            if not out:
+                continue
+            plain = strip(out)
+            for i, ch in enumerate(plain[:-1]):
+                # An icon (wide glyph) must be followed by a space or VS16 — never
+                # glued to text. Skip bar/box cells, which are legitimately wide.
+                if sl.char_width(ch) == 2 and ch not in "█▌░":
+                    nxt = plain[i + 1]
+                    self.assertIn(nxt, (" ", "️"), f"{plain!r} collapses at {i}")
 
 
 class TestEffortTable(unittest.TestCase):
@@ -294,7 +354,7 @@ class TestCooperativeBuilders(unittest.TestCase):
 
     def test_model_and_clock(self):
         self.assertEqual(strip(sl.seg_model(_data(), 200, THEME)), "Opus 4.8")
-        self.assertEqual(strip(sl.seg_clock(_data(), 200, THEME)), "⏰14:30")
+        self.assertEqual(strip(sl.seg_clock(_data(), 200, THEME)), "⏰ 14:30")
 
     def test_todo_truncates_and_hides(self):
         self.assertIn("hello", strip(sl.seg_todo(
@@ -357,12 +417,12 @@ class TestPackLine(unittest.TestCase):
     def test_keeps_segments_that_fit(self):
         out = sl.pack_line(["model", "clock"], _data(), 200)
         self.assertIn("Opus 4.8", strip(out))
-        self.assertIn("⏰14:30", strip(out))
+        self.assertIn("⏰ 14:30", strip(out))
         self.assertIn(" | ", out)
 
     def test_best_fit_skips_overflow_keeps_smaller(self):
         out = strip(sl.pack_line(["model", "clock"], _data(model_name="X" * 60), 30))
-        self.assertIn("⏰14:30", out)
+        self.assertIn("⏰ 14:30", out)
         self.assertNotIn("XXXX", out)
 
     def test_flag_off_segment_not_built(self):

@@ -604,6 +604,8 @@ def char_width(ch):
     if unicodedata.combining(ch):
         return 0
     o = ord(ch)
+    if 0xFE00 <= o <= 0xFE0F:                         # variation selectors render in-place
+        return 0
     if o >= 0x1F300:                                  # emoji / pictographs (SMP)
         return 2
     if o in _WIDE_BMP:
@@ -627,6 +629,21 @@ def _first_fitting(variants, avail):
         if v and visible_width(v) <= avail:
             return v
     return None
+
+
+# Glyphs we model as wide (_WIDE_BMP) but that render NARROW bare on many
+# terminals. Forcing VS16 (emoji presentation) makes them render wide everywhere
+# so the single-space _icon gap is always one clean column. ⏰ (U+23F0) is
+# already EAW=W, so it is intentionally absent.
+_ICON_VS16 = {"⏱", "⏸", "⚡"}  # ⏱ ⏸ ⚡
+
+
+def _icon(glyph, text):
+    """Render `glyph` + exactly one space + `text` — the one place icon→text
+    spacing is decided. Narrow-rendering glyphs get VS16 so the gap is one
+    visible column regardless of terminal emoji handling."""
+    g = f"{glyph}️" if glyph in _ICON_VS16 else glyph
+    return f"{g} {text}"
 
 
 # ═══ Color engine ════════════════════════════════════════════════════════════
@@ -979,9 +996,9 @@ def seg_todo(data, avail, theme):
     if len(text) > limit:
         text = text[:limit - 1] + "…"
     if state == "in_progress":
-        return f"📝 {theme.c('YELLOW')}{text}{RESET}"
+        return _icon("📝", f"{theme.c('YELLOW')}{text}{RESET}")
     if state == "pending":
-        return f"⏸  {theme.c('GREY')}{text}{RESET}"
+        return _icon("⏸", f"{theme.c('GREY')}{text}{RESET}")
     return None
 
 
@@ -1001,7 +1018,7 @@ def seg_time_ago(data, avail, theme):
 
 
 def seg_clock(data, avail, theme):
-    return _first_fitting([f"⏰{data['clock']}"], avail)
+    return _first_fitting([_icon("⏰", data['clock'])], avail)
 
 
 def seg_effort(data, avail, theme):
@@ -1012,7 +1029,7 @@ def seg_effort(data, avail, theme):
     # degraded display. resolve_effort already strips "auto", so it never lands here.
     color, bar = theme.effort.get(level.lower(), ("", f"{theme.c('GREY')}▁▃▄▆█"))
     word = f"{color}{level}{RESET}"
-    bars = f"🧠 {bar}{RESET}"
+    bars = _icon("🧠", f"{bar}{RESET}")
     if data.get("effort_auto"):
         # effortLevel is unset/auto in settings: flag the resolved level as
         # auto-chosen. The flag degrades [auto] -> * -> dropped as space tightens.
@@ -1026,21 +1043,21 @@ def seg_effort(data, avail, theme):
 
 
 def seg_lines(data, avail, theme):
-    s = (f"📃{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(data['added'])}{RESET}"
-         f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(data['removed'])}{RESET}")
-    return _first_fitting([s], avail)
+    body = (f"{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(data['added'])}{RESET}"
+            f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(data['removed'])}{RESET}")
+    return _first_fitting([_icon("📃", body)], avail)
 
 
 def seg_cost(data, avail, theme):
-    return _first_fitting([f"🪙${float(data['cost']):.3f}"], avail)
+    return _first_fitting([_icon("🪙", f"${float(data['cost']):.3f}")], avail)
 
 
 def seg_total_time(data, avail, theme):
-    return _first_fitting([f"💬{fmt_time_ms(data['total_ms'])}"], avail)
+    return _first_fitting([_icon("💬", fmt_time_ms(data['total_ms']))], avail)
 
 
 def seg_api_time(data, avail, theme):
-    return _first_fitting([f"📡{fmt_time_ms(data['api_ms'])}"], avail)
+    return _first_fitting([_icon("📡", fmt_time_ms(data['api_ms']))], avail)
 
 
 # ── diagnostics row ──────────────────────────────────────────────────────────
@@ -1050,7 +1067,7 @@ def seg_render_time(data, avail, theme):    # status-line's own run time, SLO/SL
         return None
     elapsed = time.perf_counter_ns() - t0
     color = pick_color(elapsed, theme.ramps["render_time"])
-    return _first_fitting([f"⏱ {color}{fmt_duration(elapsed)}{RESET}"], avail)
+    return _first_fitting([_icon("⏱", f"{color}{fmt_duration(elapsed)}{RESET}")], avail)
 
 
 def seg_slowest(data, avail, theme):        # slowest single segment this render, SLO/SLA-colored
@@ -1060,7 +1077,7 @@ def seg_slowest(data, avail, theme):        # slowest single segment this render
     name, ns = slow
     color = pick_color(ns, theme.ramps["slowest"])
     dur = f"{color}{fmt_duration(ns)}{RESET}"
-    return _first_fitting([f"🐌 {name} {dur}", f"🐌 {dur}"], avail)   # drop name when tight
+    return _first_fitting([_icon("🐌", f"{name} {dur}"), _icon("🐌", dur)], avail)   # drop name when tight
 
 
 def seg_dimensions(data, avail, theme):
@@ -1071,15 +1088,15 @@ def seg_dimensions(data, avail, theme):
 def seg_context(data, avail, theme):
     pct = int(data["context_pct"])
     color = pick_color(pct, theme.ramps["context"])
-    pct_only = f"📊 {color}{pct}%{RESET}"
+    pct_only = _icon("📊", f"{color}{pct}%{RESET}")
     # Measure in half-cells (5% each) and round up, so any pct > 0 shows >= ▌.
     halves = 0 if pct <= 0 else min(2 * CONTEXT_BAR_CELLS, math.ceil(pct / 5))
     full_n, half = divmod(halves, 2)
     bar_f = "█" * full_n + ("▌" if half else "")
     bar_e = "░" * (CONTEXT_BAR_CELLS - full_n - half)
     bar = f"{color}{bar_f}{theme.c('GREY')}{bar_e}{RESET}"
-    mid = f"📊 {bar} {color}{pct}%{RESET}"
-    full = f"📊 {bar} {color}{pct}% of {fmt_tokens(data['context_max'])}{RESET}"
+    mid = _icon("📊", f"{bar} {color}{pct}%{RESET}")
+    full = _icon("📊", f"{bar} {color}{pct}% of {fmt_tokens(data['context_max'])}{RESET}")
     return _first_fitting([full, mid, pct_only], avail) or pct_only  # floor
 
 
@@ -1088,14 +1105,14 @@ def seg_chat_size(data, avail, theme):
     if n is None:
         return None
     color = pick_color(n, theme.ramps["chat_size"])
-    return _first_fitting([f"💾 {color}{fmt_bytes(n)}{RESET}"], avail)
+    return _first_fitting([_icon("💾", f"{color}{fmt_bytes(n)}{RESET}")], avail)
 
 
 def seg_memory(data, avail, theme):
     n = data.get("mem_bytes")
     if n is None:
         return None
-    return _first_fitting([f"🧮 {fmt_bytes(n)}"], avail)
+    return _first_fitting([_icon("🧮", fmt_bytes(n))], avail)
 
 
 def _reset_suffix(reset, detail):
@@ -1126,7 +1143,7 @@ def _rate_str(rate_limits, detail, theme):
         color = rate_color(pct, theme)
         suffix = _reset_suffix(reset, detail)
         parts.append(f"{rate_key_label(key)}: {color}{round(float(pct))}%{RESET}{suffix}")
-    return "⚡ " + " | ".join(parts) if parts else None
+    return _icon("⚡", " | ".join(parts)) if parts else None
 
 
 def seg_rate_limits(data, avail, theme):
