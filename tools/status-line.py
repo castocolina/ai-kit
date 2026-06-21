@@ -920,8 +920,9 @@ def rate_color(pct, theme):
 #   not fit avail (the builder self-deprioritizes). Otherwise return the richest
 #   variant that fits, via _first_fitting([rich, ..., minimal], avail).
 # The packer (pack_line) supplies avail and owns the final keep/skip decision.
-# To add a segment: write seg_x(data, avail, theme), add it to BUILDERS, list its key
-# in a LAYOUT line, add a SEGMENTS flag. See the HOW TO CUSTOMIZE block below.
+# To add a segment: write seg_x(ctx, avail, theme), list its key in a LAYOUT line,
+# add a SEGMENTS flag. The registry auto-discovers seg_* (no BUILDERS edit). See
+# the HOW TO CUSTOMIZE block below.
 
 # NOTE: the effort bars live on the Theme (theme.effort), resolved by
 # _build_effort from the palette so a [palette] override re-colors them too.
@@ -1168,20 +1169,22 @@ def seg_rate_limits(ctx, avail, theme):
                            _rate_str(rate_limits, "none", theme)], avail)
 
 
-# ═══ Segment registry — key -> builder(data, avail, theme) ═══════════════════
-# Editable surface (SEGMENTS + LAYOUT) is at the top of the file; this registry
-# (key -> builder function) stays next to the builders it wires up.
-BUILDERS = {
-    "path": seg_path, "branch": seg_branch, "worktree": seg_worktree,
-    "dirty": seg_dirty, "todo": seg_todo,
-    "model": seg_model, "time_ago": seg_time_ago, "clock": seg_clock,
-    "effort": seg_effort, "lines": seg_lines, "cost": seg_cost,
-    "total_time": seg_total_time, "api_time": seg_api_time,
-    "render_time": seg_render_time, "slowest": seg_slowest,
-    "dimensions": seg_dimensions, "context": seg_context,
-    "chat_size": seg_chat_size, "memory": seg_memory,
-    "rate_limits": seg_rate_limits,
-}
+# ═══ Segment registry — key -> builder(ctx, avail, theme) ════════════════════
+# Editable surface (SEGMENTS + LAYOUT) is at the top of the file; the registry
+# is DERIVED by convention from the seg_* functions above — no hand-maintained
+# key->fn list to drift (FR-A.3, D7).
+def _discover_builders():
+    """The built-in builder map, derived by convention from this module's
+    `seg_<key>` functions (the homologous suffix is the segment key). Replaces the
+    hand-maintained BUILDERS literal (FR-A.3, D7): adding a `seg_x` auto-registers
+    it. SEGMENTS/LAYOUT stay explicit defaults tables — discovery removes only the
+    redundant name->fn list, never the tables that encode intent."""
+    return {name[len("seg_"):]: fn
+            for name, fn in globals().items()
+            if name.startswith("seg_") and callable(fn)}
+
+
+BUILDERS = _discover_builders()   # module-level snapshot; same shape as the old literal
 
 
 def make_external_builder(spec):
@@ -1760,7 +1763,8 @@ def render(ctx, cfg=None, theme=None):
 #   LAYOUT    — the template: a list of Line(min_rows, [segment keys]). Key order
 #               in each list is LEFT->RIGHT priority; leftmost survive when the
 #               terminal is narrow. min_rows gates the whole row by terminal rows.
-#   BUILDERS  — maps each segment key to its builder(data, avail, theme) function.
+#   BUILDERS  — auto-discovered from the seg_* functions (key = the suffix after
+#               "seg_"). Not hand-maintained: write a seg_x and it registers.
 #
 # How show/hide is decided: the packer (pack_line) is the authority. It offers
 # each builder the space available at its spot (avail) and keeps the result only
@@ -1797,19 +1801,19 @@ def render(ctx, cfg=None, theme=None):
 #   * Toggle a segment:       flip its SEGMENTS[...] value.
 #   * Reorder within a line:  move its key within that Line's list.
 #   * Move to another line:   cut its key from one Line list, paste into another.
-#   * Re-enable a removed one: ensure (a) SEGMENTS[key] is True, (b) the key is
-#                             in some LAYOUT line, and (c) the key is in BUILDERS.
-#                             All three are required for it to show.
+#   * Re-enable a removed one: ensure (a) SEGMENTS[key] is True and (b) the key is
+#                             in some LAYOUT line. (The seg_* builder is discovered
+#                             automatically.) Both are required for it to show.
 #   * Add a NEW segment:
-#       1. Write a builder:  def seg_foo(data, avail, theme):
+#       1. Write a builder:  def seg_foo(ctx, avail, theme):
 #              if no_data: return None
 #              return _first_fitting([rich_form, compact_form], avail)
-#          (return None to hide; read what you need from `data`; let the builder
-#          auto-deprioritize via _first_fitting on the avail it is offered).
-#       2. Register it:      add  "foo": seg_foo  to BUILDERS.
-#       3. Place it:         add  "foo"  to a LAYOUT line where you want it.
-#       4. Flag it:          add  "foo": True  to SEGMENTS.
-#       5. Test it:          add a case in tests/test_status_line.py.
+#          (return None to hide; read what you need from `ctx`; let the builder
+#          auto-deprioritize via _first_fitting on the avail it is offered). The
+#          registry discovers seg_foo by name — no BUILDERS edit needed.
+#       2. Place it:         add  "foo"  to a LAYOUT line where you want it.
+#       3. Flag it:          add  "foo": True  to SEGMENTS.
+#       4. Test it:          add a case in tests/test_status_line.py.
 
 
 # ═══ Entry point ══════════════════════════════════════════════════════════════

@@ -442,6 +442,13 @@ class TestCooperativeBuilders(unittest.TestCase):
             self.assertIn(key, sl.BUILDERS, key)
             self.assertTrue(callable(sl.BUILDERS[key]))
 
+    def test_discovered_builders_cover_segments(self):
+        # The registry is auto-discovered from the seg_* functions (FR-A.3, D7):
+        # every SEGMENTS key has a discovered builder and discovery finds no stray
+        # keys — guards the convention so adding a seg_x just works.
+        self.assertEqual(set(sl.BUILDERS), set(sl.SEGMENTS))
+        self.assertTrue(all(callable(fn) for fn in sl.BUILDERS.values()))
+
 
 class TestDisplayDir(unittest.TestCase):
     def test_short_path_kept_whole(self):
