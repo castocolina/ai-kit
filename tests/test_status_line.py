@@ -262,14 +262,19 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertIsNone(sl.seg_branch(_data(branch="main"), 5, THEME))    # no room
         self.assertIsNone(sl.seg_branch(_data(branch=""), 200, THEME))      # no data
 
-    def test_branch_has_no_worktree_glyph(self):
-        # FR-7.2: branch is ONLY the branch — no 🌳/🌿 glyph, regardless of the
-        # worktree state (that moved to the dedicated `worktree` segment).
+    def test_branch_has_static_icon_not_worktree_state(self):
+        # branch carries its own STATIC 🌿 icon, but it must NOT encode worktree
+        # state: no 🌳 (that meaning moved to the dedicated `worktree` ⎇ segment),
+        # and the icon never changes with is_worktree.
+        outs = []
         for wt in (True, False):
             out = sl.seg_branch(_data(branch="main", is_worktree=wt), 100, THEME)
             self.assertIn("main", out)
-            self.assertNotIn("🌳", out)
-            self.assertNotIn("🌿", out)
+            self.assertIn("🌿", out)        # own branch icon restored
+            self.assertNotIn("🌳", out)     # never the worktree-tree glyph
+            self.assertNotIn("⎇", out)      # ⎇ belongs to the worktree segment
+            outs.append(out)
+        self.assertEqual(outs[0], outs[1])  # identical regardless of worktree state
 
     def test_worktree_active_shows_name_cyan(self):
         out = sl.seg_worktree(

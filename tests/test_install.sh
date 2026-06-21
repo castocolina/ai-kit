@@ -92,6 +92,64 @@ rm -rf "$STALE" && mv "$NEWTMP" "$STALE"
 check "atomic swap removes orphan files" bash -c '! [ -e "'"$STALE"'/orphan.txt" ]'
 check "atomic swap keeps new content"    bash -c '[ -f "'"$STALE"'/tools/setup.py" ]'
 
+# --- 4b. --branch is consumed by install.sh (NOT forwarded to setup.py) ------
+# Both `--branch value` and `--branch=value` forms, in LOCAL mode (the flag only
+# affects the BOOTSTRAP fetch target, so here it must simply be stripped).
+out="$(env -i HOME="$WORK" PATH="$PATH" AI_KIT_DIR="$FIXTURE" AI_KIT_SKIP_FETCH=1 \
+       bash "$INSTALL_SH" install --branch featbr --dry-run 2>/dev/null)"
+check "--branch (space form) consumed, not forwarded to setup.py" \
+  bash -c '[ "'"$out"'" = "SETUP_RAN install --dry-run" ]'
+out="$(env -i HOME="$WORK" PATH="$PATH" AI_KIT_DIR="$FIXTURE" AI_KIT_SKIP_FETCH=1 \
+       bash "$INSTALL_SH" --branch=featbr install 2>/dev/null)"
+check "--branch= (equals form) consumed, not forwarded to setup.py" \
+  bash -c '[ "'"$out"'" = "SETUP_RAN install" ]'
+
+# --- 4c. --branch drives the BOOTSTRAP clone (repo from default / AI_KIT_REPO)
+# A fake `git` records the clone's URL+branch and materializes a marker checkout
+# so the bootstrap continues; assert the branch reached the fetch and that a fork
+# is still selectable via the AI_KIT_REPO env var (no --repo flag needed).
+FAKEGIT="$WORK/fakegitbin"; mkdir -p "$FAKEGIT"
+cat > "$FAKEGIT/git" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = clone ]; then
+  shift; br=""; url=""; dir=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --branch) br="$2"; shift ;;
+      --depth)  shift ;;
+      http*|git@*) url="$1" ;;
+      *) dir="$1" ;;
+    esac
+    shift
+  done
+  printf '%s %s\n' "$url" "$br" > "$AIKIT_FETCH_MARKER"
+  mkdir -p "$dir/tools"
+  printf 'import sys\nprint("FETCHED_SETUP " + " ".join(sys.argv[1:]))\n' > "$dir/tools/setup.py"
+fi
+exit 0
+SH
+chmod +x "$FAKEGIT/git"
+MARKER="$WORK/fetch_marker"
+# Run a COPY in a lone dir (no setup.py beside it) so detect_mode picks BOOTSTRAP.
+BOOT="$WORK/boot"; mkdir -p "$BOOT"
+cp "$INSTALL_SH" "$BOOT/install.sh"
+# --branch only: repo stays the default castocolina/ai-kit.
+out="$(env -i HOME="$WORK" PATH="$FAKEGIT:$PATH" AI_KIT_DIR="$WORK/fetchdir" \
+       AIKIT_FETCH_MARKER="$MARKER" \
+       bash "$BOOT/install.sh" install --branch featbr 2>/dev/null)"
+fetched="$(cat "$MARKER" 2>/dev/null || true)"
+check "--branch drives the clone branch (default repo)" \
+  bash -c '[ "'"$fetched"'" = "https://github.com/castocolina/ai-kit.git featbr" ]'
+check "fetched setup.py runs with --branch stripped" \
+  bash -c '[ "'"$out"'" = "FETCHED_SETUP install" ]'
+# A fork is still selectable via AI_KIT_REPO (no --repo flag needed).
+out="$(env -i HOME="$WORK" PATH="$FAKEGIT:$PATH" AI_KIT_DIR="$WORK/fetchdir2" \
+       AIKIT_FETCH_MARKER="$MARKER" AI_KIT_REPO="someone/forked" \
+       bash "$BOOT/install.sh" install --branch wip 2>/dev/null)"
+fetched="$(cat "$MARKER" 2>/dev/null || true)"
+check "AI_KIT_REPO env selects a fork; --branch sets the branch" \
+  bash -c '[ "'"$fetched"'" = "https://github.com/someone/forked.git wip" ]'
+
 # --- 5. shellcheck stays clean ----------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then
   check "shellcheck clean" shellcheck "$INSTALL_SH"

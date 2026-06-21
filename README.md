@@ -239,7 +239,34 @@ single-line. A failing, slow (past `timeout`), or empty provider is simply omitt
 install.sh --dry-run            # show what would change, mutate nothing
 install.sh --uninstall          # remove every ai-kit symlink + statusLine (keeps the install dir)
 install.sh --examples=all|none|<ids>   # which bundled example segments to install (default: all)
+install.sh --branch <name>      # fetch a specific branch  (or --branch=<name>; fork via AI_KIT_REPO)
 AIKIT_PLAIN=1 install.sh        # force the plain numbered wizard (skip the arrow-key chip UI)
+```
+
+**Try a branch without merging it.** `--branch <name>` is consumed by the bootstrapper (not passed
+to the wizard) and overrides which branch is fetched. A fork is selected with the `AI_KIT_REPO` env
+var; the default is `castocolina/ai-kit`.
+
+One catch: the `install.sh` you pipe must itself be a *flag-aware* version — `--branch` only exists
+in `install.sh` from a branch that has it (or from `main` once it's merged there). So to bootstrap a
+not-yet-merged branch, fetch its `install.sh` **from that same branch**:
+
+```bash
+# install branch feat/x from the canonical repo (its own install.sh understands --branch):
+curl -fsSL https://raw.githubusercontent.com/castocolina/ai-kit/feat/x/tools/install.sh \
+  | bash -s -- --branch feat/x
+# from a fork: pipe the fork's branch install.sh and point the clone at the fork via env:
+#   curl -fsSL https://raw.githubusercontent.com/you/ai-kit/feat/x/tools/install.sh \
+#     | AI_KIT_REPO=you/ai-kit bash -s -- --branch feat/x
+# once --branch is on main, any branch works via the main install.sh:
+#   curl -fsSL …/ai-kit/main/tools/install.sh | bash -s -- --branch feat/x
+```
+
+Simplest of all, no flag and no gotcha — clone the branch and run the local install (it skips the
+fetch and uses the checked-out files directly):
+
+```bash
+git clone -b feat/x https://github.com/castocolina/ai-kit && cd ai-kit && make install
 ```
 
 **Wizard modes.** The interactive installer auto-selects its UI: on a capable

@@ -18,7 +18,13 @@
 #   (none)/install · reconfigure · uninstall · doctor · check · --dry-run · --help
 #   e.g.  curl … | bash -s -- --doctor      curl … | bash -s -- reconfigure
 #
-# Env overrides:
+# Fetch-target flag (BOOTSTRAP only; consumed here, not passed to setup.py) — install
+# any branch WITHOUT merging to main:
+#   --branch name       (or --branch=name)       override the branch to fetch
+#   e.g.  curl … feat/x/tools/install.sh | bash -s -- --branch feat/x
+#   (a fork is selected via the AI_KIT_REPO env override below.)
+#
+# Env overrides (--branch takes precedence over AI_KIT_BRANCH):
 #   AI_KIT_REPO       owner/name        (default: castocolina/ai-kit)
 #   AI_KIT_BRANCH     branch            (default: main)
 #   AI_KIT_DIR        install location  (default: ${XDG_DATA_HOME:-~/.local/share}/ai-kit)
@@ -64,18 +70,24 @@ detect_mode() {
 
 # Translate the convenience flags the Makefile and curl one-liner use
 # (--doctor/--check/--reconfigure/--uninstall) into the bare subcommand setup.py
-# expects. --dry-run and a bare subcommand pass through untouched. Result in ARGS.
+# expects. --dry-run and a bare subcommand pass through untouched. The bootstrap
+# fetch-branch flag (--branch, both `--branch name` and `--branch=name`) is
+# CONSUMED here — it sets REPO_BRANCH and is NOT forwarded to setup.py. Result in
+# ARGS. Must run BEFORE fetch so the override takes effect. (Fork selection stays
+# on the AI_KIT_REPO env var.)
 normalize_args() {
   ARGS=()
-  local a
-  for a in "$@"; do
-    case "$a" in
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
       --doctor)      ARGS+=(doctor) ;;
       --check)       ARGS+=(check) ;;
       --reconfigure) ARGS+=(reconfigure) ;;
       --uninstall)   ARGS+=(uninstall) ;;
-      *)             ARGS+=("$a") ;;
+      --branch)      REPO_BRANCH="${2:?--branch needs a value}"; shift ;;
+      --branch=*)    REPO_BRANCH="${1#*=}" ;;
+      *)             ARGS+=("$1") ;;
     esac
+    shift
   done
 }
 
@@ -137,6 +149,9 @@ ensure_python() {
 }
 
 main() {
+  # Parse args FIRST: --branch must override REPO_BRANCH before fetch_repo runs
+  # (the rest land in ARGS for setup.py).
+  normalize_args "$@"
   detect_mode
   if [ "$MODE" = bootstrap ]; then
     fetch_repo
@@ -149,7 +164,6 @@ main() {
   # status-line.py / the sample under the SAME checkout we just resolved —
   # critical for a LOCAL clone, where INSTALL_DIR isn't the ~/.local/share default.
   export AI_KIT_DIR="$INSTALL_DIR"
-  normalize_args "$@"
   exec python3 "$INSTALL_DIR/tools/setup.py" ${ARGS[@]+"${ARGS[@]}"}
 }
 

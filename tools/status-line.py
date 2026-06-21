@@ -954,9 +954,12 @@ def seg_branch(data, avail, theme):
     branch = data.get("branch")
     if not branch:
         return None
-    # FR-7.2: branch shows ONLY the branch — the worktree glyph moved to the
-    # dedicated `worktree` segment.
-    return _first_fitting([f"{theme.c('GREY')}[{branch}]{RESET}"], avail)
+    # branch carries its own STATIC 🌿 icon. It does NOT encode worktree state
+    # (no 🌳) — that moved to the dedicated `worktree` ⎇ segment (FR-7.2); the
+    # leaf glyph here is purely "this is the branch". Falls back to the bare
+    # name when too narrow for the icon, so the branch never drops just for it.
+    return _first_fitting([f"{theme.c('GREY')}[{_icon('🌿', branch)}]{RESET}",
+                           f"{theme.c('GREY')}[{branch}]{RESET}"], avail)
 
 
 def seg_dirty(data, avail, theme):
