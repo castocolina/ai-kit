@@ -1,4 +1,7 @@
-import os, sys, unittest
+import os
+import sys
+import unittest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
                                 "skills", "mermaid-audit", "scripts"))
 import mermaid_style as ms
@@ -116,7 +119,11 @@ class TestShapeRules(unittest.TestCase):
         self.assertIn("S4", _shape_rules(block))
 
 
-import struct, zlib, tempfile, subprocess, re
+import re
+import struct
+import subprocess
+import tempfile
+import zlib
 
 _SCRIPT = os.path.join(os.path.dirname(__file__), "..", "skills",
                        "mermaid-audit", "scripts", "mermaid_style.py")

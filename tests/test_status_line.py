@@ -58,10 +58,14 @@ def _data(**over):
 class TestPickColor(unittest.TestCase):
     def test_context_ramp_bands(self):
         cases = [
-            (5, THEME.c("WHITE")), (9, THEME.c("WHITE")), (10, THEME.c("CYAN")), (14, THEME.c("CYAN")),
-            (15, THEME.c("BLUE")), (19, THEME.c("BLUE")), (20, THEME.c("GREEN")), (24, THEME.c("GREEN")),
-            (25, THEME.c("YELLOW")), (29, THEME.c("YELLOW")), (30, THEME.c("ORANGE+bold")), (39, THEME.c("ORANGE+bold")),
-            (40, THEME.c("RED+bold")), (49, THEME.c("RED+bold")), (50, THEME.c("MAGENTA_DARK+bold")), (99, THEME.c("MAGENTA_DARK+bold")),
+            (5, THEME.c("WHITE")), (9, THEME.c("WHITE")),
+            (10, THEME.c("CYAN")), (14, THEME.c("CYAN")),
+            (15, THEME.c("BLUE")), (19, THEME.c("BLUE")),
+            (20, THEME.c("GREEN")), (24, THEME.c("GREEN")),
+            (25, THEME.c("YELLOW")), (29, THEME.c("YELLOW")),
+            (30, THEME.c("ORANGE+bold")), (39, THEME.c("ORANGE+bold")),
+            (40, THEME.c("RED+bold")), (49, THEME.c("RED+bold")),
+            (50, THEME.c("MAGENTA_DARK+bold")), (99, THEME.c("MAGENTA_DARK+bold")),
         ]
         for pct, want in cases:
             self.assertEqual(sl.pick_color(pct, THEME.ramps["context"]), want, pct)
@@ -633,7 +637,8 @@ class TestProcAndGit(unittest.TestCase):
     def test_branch_from_porcelain_header(self):
         self.assertEqual(sl._branch_from_porcelain("## main"), "main")
         self.assertEqual(sl._branch_from_porcelain("## main...origin/main"), "main")
-        self.assertEqual(sl._branch_from_porcelain("## feat/x...origin/feat/x [ahead 18]"), "feat/x")
+        self.assertEqual(
+            sl._branch_from_porcelain("## feat/x...origin/feat/x [ahead 18]"), "feat/x")
         self.assertEqual(sl._branch_from_porcelain("## HEAD (no branch)"), "")   # detached
         self.assertEqual(sl._branch_from_porcelain("## No commits yet on main"), "main")
         self.assertEqual(sl._branch_from_porcelain("## Initial commit on dev"), "dev")
@@ -663,8 +668,8 @@ class TestProcAndGit(unittest.TestCase):
         # untracked=False adds --untracked-files=no; True omits it.
         for untracked, expect_flag in ((False, True), (True, False)):
             seen = []
-            def fake_run(cmd, **kw):
-                seen.append(cmd)
+            def fake_run(cmd, *, _seen=seen, **kw):
+                _seen.append(cmd)
                 class R:
                     returncode = 0
                     stdout = "## main\n"
@@ -678,8 +683,8 @@ class TestProcAndGit(unittest.TestCase):
         # want_worktree=False skips the rev-parse call entirely.
         for want, expect in ((False, False), (True, True)):
             seen = []
-            def fake_run(cmd, **kw):
-                seen.append(cmd)
+            def fake_run(cmd, *, _seen=seen, **kw):
+                _seen.append(cmd)
                 class R:
                     returncode = 0
                     stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
@@ -758,7 +763,8 @@ class TestCurrentTodo(unittest.TestCase):
 
     def test_pick_helpers(self):
         self.assertEqual(
-            sl._pick_from_tasks([{"status": "in_progress", "activeForm": "Doing X", "subject": "X"}]),
+            sl._pick_from_tasks(
+                [{"status": "in_progress", "activeForm": "Doing X", "subject": "X"}]),
             ("in_progress", "Doing X"))
         self.assertEqual(
             sl._pick_from_tasks([{"status": "pending", "subject": "Y"}]),
@@ -772,9 +778,11 @@ class TestCurrentTodo(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cd:
             s = "sess1"
             self._write(os.path.join(cd, "tasks", s, "1.json"),
-                        {"id": "1", "subject": "first", "activeForm": "Doing first", "status": "completed"})
+                        {"id": "1", "subject": "first", "activeForm": "Doing first",
+                         "status": "completed"})
             self._write(os.path.join(cd, "tasks", s, "2.json"),
-                        {"id": "2", "subject": "second", "activeForm": "Doing second", "status": "in_progress"})
+                        {"id": "2", "subject": "second", "activeForm": "Doing second",
+                         "status": "in_progress"})
             self.assertEqual(sl.current_todo("", s, cd), ("in_progress", "Doing second"))
 
     def test_tasks_dir_all_done_is_authoritative(self):
@@ -811,9 +819,11 @@ class TestCurrentTodo(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cd:
             s = "sess4"
             self._write(os.path.join(cd, "tasks", s, "1.json"),
-                        {"id": "1", "subject": "win", "activeForm": "From tasks dir", "status": "in_progress"})
+                        {"id": "1", "subject": "win", "activeForm": "From tasks dir",
+                         "status": "in_progress"})
             with mock.patch.object(sl, "_todo_from_transcript") as tr:
-                self.assertEqual(sl.current_todo("/x.jsonl", s, cd), ("in_progress", "From tasks dir"))
+                self.assertEqual(
+                    sl.current_todo("/x.jsonl", s, cd), ("in_progress", "From tasks dir"))
                 tr.assert_not_called()
 
     def test_safe_session_rejects_traversal(self):
@@ -922,8 +932,9 @@ class TestLazyCompute(unittest.TestCase):
             segs["branch"] = branch_on
             segs["dirty"] = dirty_on
             segs["worktree"] = wt_on
-            with mock.patch.object(sl, "git_snapshot",
-                                   return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi:
+            with mock.patch.object(
+                    sl, "git_snapshot",
+                    return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi:
                 sl.build_data(self.RAW, self.ENV, segs)
                 gi.assert_called_once()
                 self.assertEqual(gi.call_args.kwargs.get("untracked"), dirty_on)
@@ -951,10 +962,12 @@ class TestChatSizeRamp(unittest.TestCase):
     def test_ramp_bands(self):
         KB, MB = self.KB, self.MB
         cases = [
-            (400 * KB, THEME.c("WHITE")), (512 * KB, THEME.c("CYAN")), (900 * KB, THEME.c("CYAN")),
+            (400 * KB, THEME.c("WHITE")), (512 * KB, THEME.c("CYAN")),
+            (900 * KB, THEME.c("CYAN")),
             (1 * MB, THEME.c("LIGHTBLUE")), (1 * MB + 1, THEME.c("LIGHTBLUE")),
             (2 * MB, THEME.c("GREEN")), (3 * MB, THEME.c("YELLOW")), (4 * MB, THEME.c("ORANGE")),
-            (5 * MB, THEME.c("RED+bold")), (5 * MB + 1, THEME.c("RED+bold")), (9 * MB, THEME.c("RED+bold")),
+            (5 * MB, THEME.c("RED+bold")), (5 * MB + 1, THEME.c("RED+bold")),
+            (9 * MB, THEME.c("RED+bold")),
             (10 * MB, THEME.c("MAGENTA")), (20 * MB, THEME.c("MAGENTA")),
         ]
         for n, want in cases:
@@ -1189,9 +1202,8 @@ class TestConfigPathAndLoad(unittest.TestCase):
 
 class TestResolveSegments(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body)
-        f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
@@ -1230,9 +1242,8 @@ class TestResolveSegments(unittest.TestCase):
 
 class TestGitConfig(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body)
-        f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
@@ -1303,9 +1314,8 @@ class TestWorktreeSegmentToggle(unittest.TestCase):
     """The worktree feature is now a segment toggle, ON by default."""
 
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body)
-        f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
@@ -1372,9 +1382,8 @@ class TestMainUsesConfig(unittest.TestCase):
 
 class TestResolveLayout(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body)
-        f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
@@ -1398,9 +1407,8 @@ class TestResolveLayout(unittest.TestCase):
 
 class TestPaletteFromConfig(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body)
-        f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
@@ -1474,9 +1482,8 @@ class TestSampleRecipe(unittest.TestCase):
 
 class TestCLI(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body)
-        f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 
@@ -1680,8 +1687,8 @@ class TestBuildTheme(unittest.TestCase):
 
 class TestRampFromConfig(unittest.TestCase):
     def _write(self, body):
-        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-        f.write(body); f.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(body)
         self.addCleanup(os.unlink, f.name)
         return f.name
 

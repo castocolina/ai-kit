@@ -12,9 +12,12 @@ Env overrides (mirrors install.sh):
 """
 
 import argparse
+import contextlib
+import copy
 import json
 import os
 import re
+import select
 import shutil
 import signal
 import subprocess
@@ -140,7 +143,7 @@ def render_preview(status_line, segments, sample_json, env):
         proc = subprocess.run(
             [sys.executable, "-S", status_line],
             input=sample_json, capture_output=True, text=True,
-            env=child, timeout=10)
+            env=child, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return ""
     if proc.returncode != 0:
@@ -296,8 +299,9 @@ def patch_layout(text, lines):
                     continue
                 if nm is None:
                     # a body line (min_rows / segments / blank) — part of the region
-                    if src[i].strip() == "" or re.match(r"^\s*#?\s*(min_rows|segments)\b",
-                                                         src[i]):
+                    is_body = src[i].strip() == "" or re.match(
+                        r"^\s*#?\s*(min_rows|segments)\b", src[i])
+                    if is_body:
                         i += 1
                         continue
                 break
@@ -323,7 +327,7 @@ def write_toml_preserving(path, text, status_line):
     on success."""
     prev = None
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             prev = f.read()
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
@@ -339,7 +343,8 @@ def write_toml_preserving(path, text, status_line):
     env["CC_AI_KIT_CONFIG"] = path
     try:
         proc = subprocess.run([sys.executable, "-S", status_line, "--doctor"],
-                              capture_output=True, text=True, env=env, timeout=10)
+                              capture_output=True, text=True, env=env, timeout=10,
+                              check=False)
         ok = proc.returncode == 0
     except (OSError, subprocess.SubprocessError):
         ok = False
@@ -372,7 +377,7 @@ def validate_entry(cat, path):
         if not (os.path.isfile(path) and path.endswith(".md")):
             return False
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 first = f.readline()
         except OSError:
             return False
@@ -463,10 +468,8 @@ def _atomic_write_executable(dst, data):
         os.chmod(tmp, 0o755)
         os.replace(tmp, dst)                         # atomic; both already +x
     except OSError:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
 
 
@@ -504,7 +507,7 @@ def install_example_segments(examples, config_dir, seg_state=None):
             else:
                 os.chmod(dst, 0o755)                 # unchanged: just reassert +x
         except OSError as e:
-            print("examples: skipped %s (%s)" % (ex["name"], e), file=sys.stderr)
+            print(f"examples: skipped {ex['name']} ({e})", file=sys.stderr)
             continue
         if seg_state is not None:
             seg_state[ex["id"]] = True               # enable segments.<id>
@@ -547,7 +550,7 @@ def select_examples(examples, flag, tty):
             return [by_id[n] for _c, n, on in sel.items if on]
         except KeyboardInterrupt:
             return []                                # cancel → install none
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught  # UI failure degrades to default
             pass                                     # degrade to pre-checked default
     return list(examples)
 
@@ -605,7 +608,7 @@ def _tty_write(tty, text):
         tty.seek(0, 2)  # end of buffer
         tty.write(text)
         tty.seek(read_pos)
-    except (IOError, OSError, ValueError):
+    except (OSError, ValueError):
         tty.write(text)
     tty.flush()
 
@@ -657,11 +660,11 @@ def link_one(link_path, target, dry, counts):
                 os.symlink(target, link_path)
         else:
             counts["skip_foreign"] += 1
-            print("warn: %s points outside ai-kit (%s) — leaving it alone" % (link_path, cur),
+            print(f"warn: {link_path} points outside ai-kit ({cur}) — leaving it alone",
                   file=sys.stderr)
     elif os.path.exists(link_path):
         counts["skip_real"] += 1
-        print("warn: %s exists and is not a symlink — leaving it alone" % link_path,
+        print(f"warn: {link_path} exists and is not a symlink — leaving it alone",
               file=sys.stderr)
     else:
         counts["linked"] += 1
@@ -694,18 +697,18 @@ def prune_stale(claude_dir, install_dir, present, tty, dry, counts):
             # only stale if its target no longer resolves (entry removed upstream)
             if os.path.exists(link):
                 continue
-            stale.append("%s/%s" % (cat, name))
+            stale.append(f"{cat}/{name}")
     if not stale:
         return []
     if is_interactive(tty):
         banner = "\nThese ai-kit links point at entries removed upstream:\n"
-        banner += "".join("  - %s\n" % item for item in stale)
+        banner += "".join(f"  - {item}\n" for item in stale)
         _tty_write(tty, banner)
         if not ask_yes_no(tty, "prune them?", default=False):
             return stale  # offered, declined
     else:
         for item in stale:
-            print("warn: removing dead ai-kit link %s (entry removed upstream)" % item,
+            print(f"warn: removing dead ai-kit link {item} (entry removed upstream)",
                   file=sys.stderr)
     for item in stale:
         cat, name = item.split("/", 1)
@@ -752,16 +755,16 @@ def adopt_predecessor_links(claude_dir, install_dir, entries, tty, dry, counts):
     warn only and leave them alone — never silently clobber a foreign link.
     Returns the list of 'cat/name' candidates found."""
     cands = predecessor_candidates(claude_dir, install_dir, entries)
-    items = ["%s/%s" % (cat, name) for cat, name, _, _ in cands]
+    items = [f"{cat}/{name}" for cat, name, _, _ in cands]
     if not cands:
         return []
     if not is_interactive(tty):
         for it in items:
-            print("warn: %s links to a previous ai-kit install — run setup "
-                  "interactively to re-point or drop it" % it, file=sys.stderr)
+            print(f"warn: {it} links to a previous ai-kit install — run setup "
+                  "interactively to re-point or drop it", file=sys.stderr)
         return items
     banner = "\nThese links point at a PREVIOUS ai-kit install (e.g. a renamed repo):\n"
-    banner += "".join("  - %s\n" % it for it in items)
+    banner += "".join(f"  - {it}\n" for it in items)
     _tty_write(tty, banner)
     repoint = ask_yes_no(tty, "re-point them to this install? ('n' = drop them)",
                          default=True)
@@ -819,17 +822,21 @@ class Selection:
         return len(self.items)
 
     def toggle(self, index):
+        """Flip the enabled flag of the item at `index`."""
         self.items[index][2] = not self.items[index][2]
 
     def toggle_cursor(self):
+        """Toggle the item currently under the cursor."""
         if self.items:
             self.toggle(self.cursor)
 
     def set_all(self, value):
+        """Set every item's enabled flag to `value`."""
         for it in self.items:
             it[2] = bool(value)
 
     def move_cursor(self, delta):
+        """Move the cursor by `delta`, clamped to the item range."""
         if self.items:
             self.cursor = max(0, min(len(self.items) - 1, self.cursor + delta))
 
@@ -878,7 +885,7 @@ def select_skills(entries, installed, tty):
             return sel.category_sets(CATEGORIES)
         except KeyboardInterrupt:
             return default
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught  # UI failure degrades to mode B
             pass                                 # fall through to mode B
     while True:
         menu = ("\nSelect what to install (type numbers to toggle, "
@@ -943,7 +950,7 @@ def _read_json(path):
     if not os.path.isfile(path):
         return {}
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (ValueError, OSError):
         return {}
@@ -953,7 +960,7 @@ def _read_json(path):
 def _write_json(path, data):
     """Write JSON with a 2-space indent + trailing newline, creating parents."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
 
@@ -972,15 +979,15 @@ def wire_statusline(settings, status_line, tty, dry):
     if cur_cmd and status_line not in cur_cmd:
         # a foreign status line — guard it
         if not is_interactive(tty):
-            print("warn: settings.json has a foreign statusLine (%s) — not wiring "
-                  "the ai-kit status line (headless)" % cur_cmd, file=sys.stderr)
+            print(f"warn: settings.json has a foreign statusLine ({cur_cmd}) — not wiring "
+                  "the ai-kit status line (headless)", file=sys.stderr)
             return False
-        _tty_write(tty, "\nsettings.json already sets a status line:\n  %s\n" % cur_cmd)
+        _tty_write(tty, f"\nsettings.json already sets a status line:\n  {cur_cmd}\n")
         if not ask_yes_no(tty, "overwrite it with the ai-kit status line?", default=False):
             print("statusLine left untouched (declined).", file=sys.stderr)
             return False
     if dry:
-        print("would set statusLine -> %s" % desired)
+        print(f"would set statusLine -> {desired}")
         return True
     data["statusLine"] = {"type": "command", "command": desired}
     _write_json(settings, data)
@@ -995,10 +1002,11 @@ def copy_recipe_if_absent(sample, config_toml, dry):
     if os.path.isfile(config_toml):
         return
     if dry:
-        print("would copy %s -> %s" % (sample, config_toml))
+        print(f"would copy {sample} -> {config_toml}")
         return
     os.makedirs(os.path.dirname(config_toml), exist_ok=True)
-    with open(sample) as src, open(config_toml, "w") as dst:
+    with open(sample, encoding="utf-8") as src, \
+         open(config_toml, "w", encoding="utf-8") as dst:
         dst.write(src.read())
 
 
@@ -1035,7 +1043,7 @@ def save_statusline_config(path, seg_changes, layout, status_line):
     then atomically write + doctor-validate. `seg_changes` is the minimal changed
     {key: bool}; `layout` is None (unchanged) or the full list of line dicts.
     Returns True on success."""
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         text = f.read()
     if seg_changes:
         text = patch_segments(text, seg_changes)
@@ -1056,7 +1064,6 @@ def _apply_wizard_command(state, cmd):
     on success error is None; on a bad command new_state is `state` unchanged and
     error is a human message. Recognized: a segment number, `move <seg> up|down`,
     `move <seg> line <n>`."""
-    import copy
     cmd = cmd.strip()
     st = copy.deepcopy(state)
     if cmd in ("a", "n"):                       # all-on / all-off
@@ -1066,7 +1073,7 @@ def _apply_wizard_command(state, cmd):
     order = _wizard_order(st)                    # display order == toggle order
     if cmd.isdigit():
         n = int(cmd)
-        if not (1 <= n <= len(order)):
+        if not 1 <= n <= len(order):
             return state, f"no segment #{n}"
         key = order[n - 1]                       # numbering is the menu's display order
         st["segments"][key] = not st["segments"][key]
@@ -1090,7 +1097,7 @@ def _apply_wizard_command(state, cmd):
             return st, None
         if parts[2] == "line" and len(parts) == 4 and parts[3].isdigit():
             dst = int(parts[3]) - 1
-            if not (0 <= dst < len(st["layout"])):
+            if not 0 <= dst < len(st["layout"]):
                 return state, f"no line #{parts[3]}"
             st["layout"][li]["segments"].remove(seg)
             st["layout"][dst]["segments"].append(seg)
@@ -1205,7 +1212,7 @@ def _env_truthy(val):
 def _stream_isatty(stream):
     try:
         return bool(stream.isatty())
-    except Exception:
+    except (AttributeError, OSError, ValueError):
         return False
 
 
@@ -1333,7 +1340,6 @@ def _read_key(stdin):
     OSError(EIO) on some platforms and return b"" (EOF) on others; BOTH are
     surfaced as a cancel (KeyboardInterrupt) so the caller falls back to the safe
     default instead of crashing or busy-looping on an empty read."""
-    import select
     fd = stdin.fileno()
 
     def _rd():
@@ -1365,7 +1371,7 @@ def chip_select(selection, stdin, stdout, env, preview=None):
     enhancement to the mode-B menu). Bounded redraw, NEVER alt-screen: prints a
     fixed block, then each keypress moves the cursor up by the block height it
     LAST emitted (so a shrinking frame can't orphan rows) and rewrites every line
-    with erase-line, in a single write(). `raw_mode` guarantees teardown. The
+    with erase-line, in a single write(). `RawMode` guarantees teardown. The
     caller MUST have confirmed `_mode_a_available(env, stdin, stdout)`; on
     esc/Ctrl-C this raises KeyboardInterrupt (selection left as-is). `preview`,
     if given, is called with the live selection each frame and must return the
@@ -1392,7 +1398,7 @@ def chip_select(selection, stdin, stdout, env, preview=None):
         stdout.write("".join(buf))
         stdout.flush()
 
-    with raw_mode(stdin.fileno(), stdout):
+    with RawMode(stdin.fileno(), stdout):
         render()
         while True:
             action = _parse_key(_read_key(stdin))
@@ -1414,7 +1420,7 @@ def chip_select(selection, stdin, stdout, env, preview=None):
     return selection
 
 
-class raw_mode:
+class RawMode:
     """Context manager that puts terminal `fd` into raw mode for the mode-A chip
     selector and GUARANTEES teardown on every exit path. On enter it saves the
     termios state, installs a SIGINT trap, switches to raw, and hides the cursor;
@@ -1435,7 +1441,7 @@ class raw_mode:
         self.active = False
 
     def __enter__(self):
-        if not termios:                          # non-POSIX → no-op
+        if termios is None or _termmode is None:  # non-POSIX → no-op
             return self
         self.saved = termios.tcgetattr(self.fd)
         self.prev_sigint = signal.getsignal(signal.SIGINT)
@@ -1446,28 +1452,27 @@ class raw_mode:
         self.stream.flush()
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *_exc):
         self._restore()
         return False                             # never swallow exceptions
 
     def _restore(self):
         if not self.active:
             return
+        # active is only set True on the POSIX path, so the modules and the
+        # saved termios state are both present.
+        assert termios is not None and self.saved is not None
         self.active = False
         # Best-effort, ORDERED teardown. A terminal disconnect can make
         # tcsetattr raise termios.error(EIO) mid-teardown; that must not skip the
         # cursor-show or the SIGINT-handler restore, nor mask the body's
         # exception by propagating its own — so each step is guarded and the
         # SIGINT handler (most important for process sanity) is always restored.
-        try:
+        with contextlib.suppress(termios.error):
             termios.tcsetattr(self.fd, termios.TCSADRAIN, self.saved)
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(OSError, ValueError):
             self.stream.write("\033[?25h")       # show cursor
             self.stream.flush()
-        except Exception:
-            pass
         signal.signal(signal.SIGINT, self.prev_sigint)
 
     def _on_sigint(self, signum, frame):
@@ -1493,7 +1498,7 @@ def run_statusline_wizard(paths, tty, dry):
         "layout": current_layout(cfg),
         "dirty": False,
     }
-    with open(_sample_input_path()) as f:
+    with open(_sample_input_path(), encoding="utf-8") as f:
         sample_json = f.read()
 
     def show_preview():
@@ -1563,7 +1568,7 @@ def _save_and_report(paths, state, tty, dry):
 
 def _print_closing(paths, tty):
     print(f"\n  config: {paths.config_toml}", file=tty)
-    print(f"  edit colors / ramps / palette by hand in that file.", file=tty)
+    print("  edit colors / ramps / palette by hand in that file.", file=tty)
     # _doctor_cmd(paths) is defined in E5b — reuse it; do NOT redefine it here.
     print(f"  validate any time:  {_doctor_cmd(paths)}", file=tty)
 
@@ -1573,12 +1578,13 @@ def _sample_input_path():
                         "..", "tests", "fixtures", "sample-input.json")
 
 
-def cmd_install(env, tty, dry, reconfigure=False, examples_flag=None):
+def cmd_install(env, tty, dry, examples_flag=None):
     """Reconcile skills/agents/commands, then (interactive only) the status line.
     Headless (tty None): reconcile skills with defaults/keep + auto-remove dead
-    links + warn, and SKIP the status line entirely (§7). `reconfigure` is just
-    install without first-run defaults — handled implicitly because once anything
-    is linked, _first_run() is False, so the selection keeps existing state."""
+    links + warn, and SKIP the status line entirely (§7). The `reconfigure`
+    subcommand is just install without first-run defaults — handled implicitly
+    because once anything is linked, _first_run() is False, so the selection
+    keeps existing state."""
     paths = resolve_paths(env)
     entries = enumerate_entries(paths.install_dir)
     counts = new_counts()
@@ -1608,15 +1614,14 @@ def cmd_install(env, tty, dry, reconfigure=False, examples_flag=None):
         chosen = select_examples(examples, examples_flag, tty)
         if chosen and not dry:
             ids = install_example_segments(chosen, paths.config_dir)
-            print("examples: installed %d external segment(s): %s"
-                  % (len(ids), ", ".join(ids)))
+            print(f"examples: installed {len(ids)} external segment(s): "
+                  f"{', '.join(ids)}")
 
-    print("summary: %d linked, %d relinked, %d unlinked, %d pruned, "
-          "%d foreign-skipped, %d real-skipped"
-          % (counts["linked"], counts["relinked"], counts["unlinked"],
-             counts["pruned"], counts["skip_foreign"], counts["skip_real"]))
-    print("ai-kit installed at %s" % paths.install_dir)
-    print("doctor: %s" % _doctor_cmd(paths))
+    print(f"summary: {counts['linked']} linked, {counts['relinked']} relinked, "
+          f"{counts['unlinked']} unlinked, {counts['pruned']} pruned, "
+          f"{counts['skip_foreign']} foreign-skipped, {counts['skip_real']} real-skipped")
+    print(f"ai-kit installed at {paths.install_dir}")
+    print(f"doctor: {_doctor_cmd(paths)}")
     if dry:
         print("(dry-run — no changes were made)")
     return 0
@@ -1633,15 +1638,15 @@ def cmd_uninstall(env, dry):
         for name in sorted(installed[cat]):
             unlink_one(os.path.join(paths.claude_dir, cat, name), dry, counts)
     unwire_statusline(paths.settings, paths.install_dir, dry)
-    print("removed %d ai-kit symlink(s). install dir left in place: %s"
-          % (counts["unlinked"], paths.install_dir))
+    print(f"removed {counts['unlinked']} ai-kit symlink(s). "
+          f"install dir left in place: {paths.install_dir}")
     return 0
 
 
 def _doctor_cmd(paths):
     """A concrete, copy-pasteable doctor command for this install."""
-    return "%s %s --doctor" % (os.path.basename(sys.executable) or "python3",
-                               paths.status_line)
+    return (f"{os.path.basename(sys.executable) or 'python3'} "
+            f"{paths.status_line} --doctor")
 
 
 def cmd_doctor(env):
@@ -1680,7 +1685,6 @@ def main(argv=None):
         tty = open_tty()
         try:
             return cmd_install(env, tty, dry,
-                               reconfigure=(args.subcommand == "reconfigure"),
                                examples_flag=args.examples)
         finally:
             if tty is not None:

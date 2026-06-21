@@ -7,8 +7,10 @@ Layout is driven by SEGMENTS (on/off), LAYOUT (template), and BUILDERS
 builders auto-deprioritize to fit. See the "HOW TO CUSTOMIZE" block near the
 bottom. Stdlib only. The .sh original is kept as a fallback.
 """
+# pylint: disable=invalid-name  # installed script name is hyphenated (status-line.py)
 
 import argparse
+import contextlib
 import hashlib
 import json
 import math
@@ -18,6 +20,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+
 try:
     import tomllib
 except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only config.
@@ -59,7 +62,8 @@ LAYOUT = [
     Line(0,  ["path", "branch", "worktree", "dirty", "todo"]),
     Line(20, ["model", "time_ago", "clock", "effort", "lines",
               "cost", "total_time", "api_time"]),
-    Line(30, ["render_time", "dimensions", "context", "chat_size", "memory", "rate_limits", "slowest"]),
+    Line(30, ["render_time", "dimensions", "context", "chat_size", "memory",
+              "rate_limits", "slowest"]),
 ]
 PINNED = {"path", "context"}   # always rendered even if they overflow the budget
 # Meta-segments: they report the whole render, not a single builder, so the
@@ -200,10 +204,8 @@ def _resolve_external(raw, env):
         ttl = fv
     ev = env.get("CC_AI_KIT_EXTERNAL_TTL")
     if ev is not None:
-        try:
+        with contextlib.suppress(ValueError):
             ttl = int(ev)
-        except ValueError:
-            pass
     return _segments_dir(file_ext, env), ttl
 
 
@@ -365,9 +367,10 @@ _EFFORT_GLYPHS = "▁▃▄▆█"
 INF = float("inf")
 
 
-# ═══ External drop-in segments (E4c) ═════════════════════════════════════════
+# ═══ External drop-in segments (E4c) ═══════════════════════════════════════
 # A provider is an executable in the segments dir. Its first 10 lines may carry
-#   # ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end) [id=<slug>] [timeout=<s>] [ttl=<s>]
+#   # ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end)
+#                     [id=<slug>] [timeout=<s>] [ttl=<s>]
 # It is modeled as a synthetic builder inserted into the resolved layout, so the
 # existing packer handles placement/priority/overflow unchanged.
 ExtSpec = namedtuple("ExtSpec", "id path line position timeout ttl cache_path")
@@ -560,7 +563,7 @@ def _run_provider(spec, data, avail):
     try:
         proc = subprocess.run(
             [spec.path], input=payload, capture_output=True, text=True,
-            timeout=spec.timeout, cwd=data.get("work_dir") or ".", env=env)
+            timeout=spec.timeout, cwd=data.get("work_dir") or ".", env=env, check=False)
     except (subprocess.TimeoutExpired, OSError):
         return None
     if proc.returncode != 0:
@@ -693,7 +696,7 @@ def parse_color(spec, palette=None):
     if params is None:
         return None
     ordered = sorted(set(mods), key=int)
-    return "\033[" + ";".join(ordered + [params]) + "m"
+    return "\033[" + ";".join([*ordered, params]) + "m"
 
 
 _THRESHOLD_MULT = {"k": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
@@ -734,6 +737,7 @@ class Theme:
         self._cache = {}
 
     def c(self, spec):
+        """Resolve a color spec to an SGR string, memoizing the lookup."""
         if spec not in self._cache:
             self._cache[spec] = parse_color(spec, self.palette) or ""
         return self._cache[spec]
@@ -878,6 +882,7 @@ def fmt_duration(ns):
         if ns >= div:
             v = ns / div
             return f"{v:.1f}{suffix}" if v < 10 else f"{v:.0f}{suffix}"
+    return f"{ns}ns"
 
 
 # ═══ Rate-limit helpers ══════════════════════════════════════════════════════
@@ -901,6 +906,7 @@ def rate_key_label(key):
 
 
 def rate_color(pct, theme):
+    """Pick the rate-limit ramp color for a usage percentage."""
     return pick_color(float(pct), theme.ramps["rate"])
 
 
@@ -1077,7 +1083,8 @@ def seg_slowest(data, avail, theme):        # slowest single segment this render
     name, ns = slow
     color = pick_color(ns, theme.ramps["slowest"])
     dur = f"{color}{fmt_duration(ns)}{RESET}"
-    return _first_fitting([_icon("🐌", f"{name} {dur}"), _icon("🐌", dur)], avail)   # drop name when tight
+    # drop name when tight
+    return _first_fitting([_icon("🐌", f"{name} {dur}"), _icon("🐌", dur)], avail)
 
 
 def seg_dimensions(data, avail, theme):
@@ -1218,10 +1225,10 @@ def terminal_size(env):
         # One controlling-tty open serves both probes: stty first, then tput as the
         # macOS/terminfo fallback (_run closes over `tty` intentionally).
         try:
-            with open("/dev/tty") as tty:
+            with open("/dev/tty", encoding="utf-8") as tty:
                 def _run(*cmd):
                     return subprocess.run(list(cmd), stdin=tty, capture_output=True,
-                                          text=True, timeout=1).stdout
+                                          text=True, timeout=1, check=False).stdout
                 size = _run("stty", "size").split()
                 if len(size) == 2:
                     lines = lines or int(size[0])
@@ -1229,7 +1236,7 @@ def terminal_size(env):
                 if cols is None or lines is None:
                     cols = cols or _to_int(_run("tput", "cols").strip())
                     lines = lines or _to_int(_run("tput", "lines").strip())
-        except Exception:
+        except (OSError, ValueError, subprocess.SubprocessError):
             pass
     assumed = False
     if cols is None:
@@ -1270,7 +1277,7 @@ def _git_worktree_info(work_dir):
     out = subprocess.run(
         ["git", "-C", work_dir, "rev-parse",
          "--git-dir", "--git-common-dir", "--show-toplevel"],
-        capture_output=True, text=True).stdout
+        capture_output=True, text=True, check=False).stdout
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     if len(lines) < 2:
         return False, False, ""                 # not a git repo
@@ -1328,7 +1335,8 @@ def git_snapshot(work_dir, untracked=True, want_worktree=True, ttl=_GIT_CACHE_TT
     if not untracked:
         status_args.append("--untracked-files=no")
     out = subprocess.run(["git", "-C", work_dir, *status_args],
-                         capture_output=True, text=True).stdout.splitlines()
+                         capture_output=True, text=True,
+                         check=False).stdout.splitlines()
     branch = _branch_from_porcelain(out[0] if out else "")
     changes = out[1:]   # change lines follow the `## <branch>` header
     if any(ln.startswith(("??", "A", "D")) or ln.startswith(" D") for ln in changes):
@@ -1353,7 +1361,7 @@ def git_snapshot(work_dir, untracked=True, want_worktree=True, ttl=_GIT_CACHE_TT
 # return comm verbatim; proc_rss_bytes is the single basename-normalization point.
 def _comm_via_proc(pid):
     try:
-        with open(f"/proc/{pid}/comm") as f:
+        with open(f"/proc/{pid}/comm", encoding="utf-8") as f:
             return f.read().strip()
     except OSError:
         return None
@@ -1361,7 +1369,7 @@ def _comm_via_proc(pid):
 
 def _ppid_via_proc(pid):
     try:
-        with open(f"/proc/{pid}/stat") as f:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
             return int(f.read().split()[3])
     except (OSError, IndexError, ValueError):
         return None
@@ -1369,7 +1377,7 @@ def _ppid_via_proc(pid):
 
 def _rss_kb_via_proc(pid):
     try:
-        with open(f"/proc/{pid}/status") as f:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as f:
             for line in f:
                 if line.startswith("VmRSS:"):
                     return int(line.split()[1])
@@ -1382,7 +1390,8 @@ def _ps_field(pid, field):
     """One `ps -o <field>= -p <pid>` value as a stripped string, or None."""
     try:
         out = subprocess.run(["ps", "-o", f"{field}=", "-p", str(pid)],
-                             capture_output=True, text=True, timeout=1).stdout.strip()
+                             capture_output=True, text=True, timeout=1,
+                             check=False).stdout.strip()
         return out or None
     except (OSError, subprocess.SubprocessError):
         return None
@@ -1428,6 +1437,7 @@ def proc_rss_bytes():
 
 
 def transcript_bytes(path):
+    """Return the transcript file size in bytes, or None if it is missing."""
     if not path or not os.path.isfile(path):
         return None
     try:
@@ -1496,7 +1506,7 @@ def _todo_from_tasks_dir(config_dir, session):
     tasks = []
     for n in sorted(names, key=lambda x: int(x[:-5]) if x[:-5].isdigit() else 0):
         try:
-            with open(os.path.join(d, n)) as f:
+            with open(os.path.join(d, n), encoding="utf-8") as f:
                 tasks.append(json.load(f))
         except (OSError, ValueError):
             continue
@@ -1519,7 +1529,7 @@ def _todo_from_todos_dir(config_dir, session):
         return None
     latest = max(names, key=lambda n: os.path.getmtime(os.path.join(d, n)))
     try:
-        with open(os.path.join(d, latest)) as f:
+        with open(os.path.join(d, latest), encoding="utf-8") as f:
             todos = json.load(f)
     except (OSError, ValueError):
         return None
@@ -1537,7 +1547,7 @@ def _todo_from_transcript(path):
 
     tasks = []
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             todo_snapshots = []
             for raw in fh:
                 raw = raw.strip()
@@ -1600,7 +1610,7 @@ def safe_build(key, data, avail, theme, failed, builders=None):
     builders = builders if builders is not None else BUILDERS
     try:
         return builders[key](data, avail, theme)
-    except Exception:                              # noqa: BLE001 — isolation is the point
+    except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
         failed.add(key)
         named = f"{_WARN}⚠{key}{RESET}"
         if visible_width(named) <= avail:
@@ -1771,7 +1781,7 @@ def effort_setting_is_auto(work_dir, home):
                  os.path.join(work_dir, ".claude", "settings.json"),
                  os.path.join(home, ".claude", "settings.json")):
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 cfg = json.load(f)
         except (OSError, ValueError):
             continue
@@ -2027,7 +2037,7 @@ def cmd_doctor(env):
     try:
         theme = build_theme(cfg)
         failed = _dry_render_failures(cfg, theme, env)
-    except Exception as e:                         # noqa: BLE001
+    except Exception as e:  # pylint: disable=broad-exception-caught  # diagnostic backstop reports any crash
         errors.append(f"render pipeline crashed: {e!r}")
     for e in errors:
         print(e, file=sys.stderr)
@@ -2053,6 +2063,7 @@ def cmd_check(path, env):
 
 
 def parse_args(argv):
+    """Parse command-line arguments for the status-line CLI."""
     p = argparse.ArgumentParser(
         prog="status-line.py",
         description="Claude Code status line. With no flags, reads the status "
@@ -2082,12 +2093,13 @@ def safe_render(raw, env, cfg, theme, t_start):
             raw, env, cfg.segments, t_start,
             git_ttl=(cfg.git or {}).get("cache_ttl", _GIT_CACHE_TTL))
         return render(data, cols, lines, cfg, theme)
-    except Exception:                              # noqa: BLE001 — never blank the bar
+    except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
         return [f"{_WARN}⚠ status-line error — "
                 f"run the doctor: {_doctor_cmd()}{RESET}"]
 
 
 def main():
+    """CLI entrypoint: dispatch subcommands or render the status line from stdin."""
     t0 = time.perf_counter_ns()        # for the optional `render_time` self-timing segment
     args = parse_args(sys.argv[1:])
     if args.check is not _NO_CHECK:

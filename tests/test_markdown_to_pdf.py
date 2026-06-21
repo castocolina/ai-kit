@@ -1,11 +1,16 @@
 # tests/test_markdown_to_pdf.py
-import os, shutil, sys, tempfile, unittest
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
                                 "skills", "markdown-to-pdf", "scripts"))
-import render_mermaid
-import render_mermaid as rm
 import detect_backends as db
 import markdown_to_pdf as m2p
+import render_mermaid
+import render_mermaid as rm
 
 
 class TestFindFences(unittest.TestCase):
@@ -198,8 +203,9 @@ class TestDeckAndMain(unittest.TestCase):
         with open(src, "w") as fh:
             fh.write("# slide\n")
         out = os.path.join(d, "s.pdf")
-        res = m2p.convert_deck(src, out_path=out, which=lambda n: "/x/marp" if n == "marp" else None,
-                               run=self._stub_run_writes(), render=lambda t, w, fmt="svg", run=None: t)
+        res = m2p.convert_deck(
+            src, out_path=out, which=lambda n: "/x/marp" if n == "marp" else None,
+            run=self._stub_run_writes(), render=lambda t, w, fmt="svg", run=None: t)
         self.assertEqual(res.backend, "marp-cli")
         self.assertTrue(os.path.exists(out))
 

@@ -274,9 +274,9 @@ class TestWritePreserving(unittest.TestCase):
 
 def _diff_lines(a, b):
     al, bl = a.splitlines(), b.splitlines()
-    return [(i, x, y) for i, (x, y) in enumerate(zip(al, bl)) if x != y] + \
+    return [(i, x, y) for i, (x, y) in enumerate(zip(al, bl, strict=False)) if x != y] + \
            [("len", len(al), len(bl))] if len(al) != len(bl) else \
-           [(i, x, y) for i, (x, y) in enumerate(zip(al, bl)) if x != y]
+           [(i, x, y) for i, (x, y) in enumerate(zip(al, bl, strict=False)) if x != y]
 
 
 class TestGoldenPreservation(unittest.TestCase):
@@ -607,7 +607,7 @@ class TestWizardLoop(unittest.TestCase):
         self.assertIsNotNone(err)
 
     def test_unknown_command_returns_error(self):
-        st, err = setup._apply_wizard_command(self._state(), "frobnicate")
+        _st, err = setup._apply_wizard_command(self._state(), "frobnicate")
         self.assertIsNotNone(err)
 
     def test_move_unknown_segment_errors(self):
@@ -886,16 +886,16 @@ class TestModeAChips(unittest.TestCase):
     def test_read_key_oserror_is_cancel(self):
         # H1: terminal disconnect makes os.read raise OSError(EIO). _read_key
         # must surface it as a cancel (KeyboardInterrupt), never crash the run.
-        with mock.patch.object(setup.os, "read", side_effect=OSError(5, "EIO")):
-            with self.assertRaises(KeyboardInterrupt):
-                setup._read_key(self._fd_stdin())
+        with mock.patch.object(setup.os, "read", side_effect=OSError(5, "EIO")), \
+                self.assertRaises(KeyboardInterrupt):
+            setup._read_key(self._fd_stdin())
 
     def test_read_key_eof_is_cancel(self):
         # H1: platforms that return b"" at EOF instead of raising must also
         # cancel — not spin (b"" → _parse_key("") → None → 100% CPU busy-loop).
-        with mock.patch.object(setup.os, "read", return_value=b""):
-            with self.assertRaises(KeyboardInterrupt):
-                setup._read_key(self._fd_stdin())
+        with mock.patch.object(setup.os, "read", return_value=b""), \
+                self.assertRaises(KeyboardInterrupt):
+            setup._read_key(self._fd_stdin())
 
     def test_read_key_esc_then_letter_not_dropped(self):
         # M1: ESC followed by a non-'[' byte must not be silently swallowed —
@@ -931,9 +931,8 @@ class TestRawMode(unittest.TestCase):
     def test_raw_mode_restores_terminal_on_exception(self, termios, termmode, sig):
         termios.tcgetattr.return_value = "SAVED"
         stream = io.StringIO()
-        with self.assertRaises(ValueError):
-            with setup.raw_mode(7, stream):
-                raise ValueError("boom")
+        with self.assertRaises(ValueError), setup.RawMode(7, stream):
+            raise ValueError("boom")
         termios.tcgetattr.assert_called_once_with(7)         # state saved
         termmode.setraw.assert_called_once_with(7)           # entered raw
         termios.tcsetattr.assert_called_once_with(           # restored via TCSADRAIN
@@ -948,7 +947,7 @@ class TestRawMode(unittest.TestCase):
     def test_raw_mode_sigint_restores_and_exits_130(self, termios, termmode, sig):
         termios.tcgetattr.return_value = "SAVED"
         stream = io.StringIO()
-        rm = setup.raw_mode(3, stream)
+        rm = setup.RawMode(3, stream)
         rm.__enter__()
         with self.assertRaises(SystemExit) as cm:
             rm._on_sigint(2, None)
@@ -969,9 +968,8 @@ class TestRawMode(unittest.TestCase):
         sig.getsignal.return_value = "PREV"
         stream = io.StringIO()
         # the body's exception (not the tcsetattr error) is what propagates
-        with self.assertRaises(ValueError):
-            with setup.raw_mode(7, stream):
-                raise ValueError("boom")
+        with self.assertRaises(ValueError), setup.RawMode(7, stream):
+            raise ValueError("boom")
         self.assertIn("\033[?25h", stream.getvalue())        # cursor shown despite throw
         # prior SIGINT handler reinstalled despite the tcsetattr failure
         sig.signal.assert_any_call(sig.SIGINT, "PREV")
@@ -984,7 +982,7 @@ class TestRawMode(unittest.TestCase):
         # an already-exiting __exit__).
         termios.tcgetattr.return_value = "SAVED"
         stream = io.StringIO()
-        rm = setup.raw_mode(3, stream)
+        rm = setup.RawMode(3, stream)
         rm.__enter__()
         rm._restore()
         termios.tcsetattr.reset_mock()
@@ -996,7 +994,7 @@ class TestRawMode(unittest.TestCase):
     @mock.patch.object(setup, "termios", None)
     def test_raw_mode_is_noop_when_termios_unavailable(self, sig):
         stream = io.StringIO()
-        with setup.raw_mode(0, stream):                      # must not raise
+        with setup.RawMode(0, stream):                      # must not raise
             pass
         self.assertEqual(stream.getvalue(), "")              # nothing written
 
@@ -1062,9 +1060,12 @@ class TestEnumerate(unittest.TestCase):
         self.assertFalse(setup.validate_entry("skills", os.path.join(self.tmp, "skills", "nope")))
 
     def test_validate_command_needs_md_with_front_matter(self):
-        self.assertTrue(setup.validate_entry("commands", os.path.join(self.tmp, "commands", "doit.md")))
-        self.assertFalse(setup.validate_entry("commands", os.path.join(self.tmp, "commands", "bad.md")))
-        self.assertFalse(setup.validate_entry("commands", os.path.join(self.tmp, "commands", "notmd.txt")))
+        self.assertTrue(setup.validate_entry(
+            "commands", os.path.join(self.tmp, "commands", "doit.md")))
+        self.assertFalse(setup.validate_entry(
+            "commands", os.path.join(self.tmp, "commands", "bad.md")))
+        self.assertFalse(setup.validate_entry(
+            "commands", os.path.join(self.tmp, "commands", "notmd.txt")))
 
     def test_validate_unknown_category_is_false(self):
         self.assertFalse(setup.validate_entry("widgets", self.tmp))
@@ -1236,7 +1237,8 @@ class TestPruneStale(unittest.TestCase):
     def test_interactive_prunes_on_yes(self):
         c = self.counts()
         tty = io.StringIO("y\n")
-        stale = setup.prune_stale(self.claude, self.install, present={}, tty=tty, dry=False, counts=c)
+        stale = setup.prune_stale(self.claude, self.install, present={}, tty=tty,
+                                  dry=False, counts=c)
         self.assertEqual(stale, ["skills/gone"])
         self.assertFalse(os.path.lexists(self.gone))
         self.assertEqual(c["pruned"], 1)
@@ -1250,7 +1252,8 @@ class TestPruneStale(unittest.TestCase):
 
     def test_headless_auto_removes_and_warns(self):
         c = self.counts()
-        stale = setup.prune_stale(self.claude, self.install, present={}, tty=None, dry=False, counts=c)
+        stale = setup.prune_stale(self.claude, self.install, present={}, tty=None,
+                                  dry=False, counts=c)
         self.assertEqual(stale, ["skills/gone"])
         self.assertFalse(os.path.lexists(self.gone))
         self.assertEqual(c["pruned"], 1)
@@ -1297,7 +1300,8 @@ class TestAdoptPredecessorLinks(unittest.TestCase):
     def test_ignores_link_into_current_install(self):
         os.remove(self.link)
         os.symlink(os.path.join(self.install, "skills", "alpha"), self.link)
-        self.assertEqual(setup.predecessor_candidates(self.claude, self.install, self.entries()), [])
+        self.assertEqual(
+            setup.predecessor_candidates(self.claude, self.install, self.entries()), [])
 
     def test_ignores_unrelated_foreign_symlink(self):
         # user's own symlink, not ai-kit-shaped (basename mismatch) -> left alone
@@ -1632,7 +1636,8 @@ class TestRecipeAndUnwire(unittest.TestCase):
         install_dir = os.path.join(self.tmp, "ai-kit")
         with open(settings, "w") as f:
             json.dump({"statusLine": {"type": "command",
-                                      "command": "python3 -S " + install_dir + "/tools/status-line.py"},
+                                      "command": "python3 -S " + install_dir
+                                      + "/tools/status-line.py"},
                        "theme": "dark"}, f)
         setup.unwire_statusline(settings, install_dir, dry=False)
         with open(settings) as f:
@@ -1763,7 +1768,8 @@ class TestMenuWiring(unittest.TestCase):
         # cmd_install(env, tty, dry) — pass an env dict, NOT a resolved Paths namedtuple.
         setup.cmd_install(dict(os.environ), tty, dry=True)
         self.assertTrue(called.get("ok"),
-                        "run_statusline_wizard was not called — check the Status-line branch in cmd_install")
+                        "run_statusline_wizard was not called — check the "
+                        "Status-line branch in cmd_install")
 
 
 if __name__ == "__main__":
