@@ -1,7 +1,9 @@
 # FR-R.0 — Lint ruleset & triage (report-only spike)
 
 > Baseline captured 2026-06-21 against `refactor/status-line-render`, report-only.
-> Tools run via `uvx` (ruff, pylint, vulture) + system `pyright` 1.1.410.
+> Tools run from the uv-locked dev env via `uv run` (ruff, pylint, vulture, pyright);
+> versions live in `uv.lock`. `make validate` = `uv run pre-commit run --all-files`
+> (pre-commit is the single source of truth; see `.pre-commit-config.yaml`).
 > This document is the source of truth for `pyproject.toml` (Task 1.4) and for which
 > findings are fixed in Phase 1 (`fix-now`), erased by the restructure (`fixed-by-refactor`),
 > or suppressed with justification (`legitimately-suppress`).
@@ -49,10 +51,13 @@ bad-names = ["foo", "baz", "toto", "tutu", "tata"]
 # Conditional stdlib import aliases that read as module-level constants.
 good-names = ["tomllib"]
 
-[tool.pylint.design]
-max-args = 8                 # safe_build/render thread the builder context explicitly
-max-positional-arguments = 8
-max-locals = 20
+[tool.pylint.design]   # ratcheted by Task 2.6 (see fixed-by-refactor below); pyproject.toml is authoritative
+max-args = 7                 # pack_line threads the builder context explicitly
+max-positional-arguments = 7
+max-locals = 25
+max-branches = 28
+max-returns = 10
+max-statements = 50
 
 [tool.pylint."messages control"]
 disable = [
@@ -62,7 +67,7 @@ disable = [
                              # builder reads all three; renaming would break the contract.
   "duplicate-code",          # cross-occurrence false positives on small idiomatic blocks.
   "fixme",                   # TODO/NOTE markers are allowed in-tree.
-  "too-few-public-methods",  # data carriers (e.g. _RenderData dict subclass) are not APIs.
+  "too-few-public-methods",  # data carriers (e.g. the _LazyData dict subclass) are not APIs.
 ]
 
 [tool.vulture]
@@ -115,17 +120,24 @@ line 1, justified in-file.
 | status-line.py:1215, 2013 | Narrow to the specific exception(s) the block actually guards (cache/probe I/O → `OSError`/`ValueError`); inline disable only if a genuine catch-all is required. |
 | setup.py:550,881,1208,1464,1469 | Narrow where the failure mode is known (file/JSON I/O, termios); keep wide only at true UX-degradation boundaries with an inline disable + reason. |
 
-### `fixed-by-refactor` — deferred to the Phase 2 zero-sweep (Task 2.6), NOT fixed/suppressed in Phase 1
+### `fixed-by-refactor` — Task 2.6 outcome: thresholds **ratcheted**, remainder handed to the architecture-pattern PRD
 
-| Rule | Count | Where | Why it disappears |
+Task 2.6 tightened `[tool.pylint.design]` from the relaxed values (args/pos=8, locals=40,
+branches=30, statements=80) to the current honest maximum the restructured code passes
+(args/pos=7, locals=25, branches=28, returns=10, statements=50) — a real tighten, no inline
+disables added. The render restructure (FR-R.1/2/3) did not by itself drive the render path to
+pylint defaults; the functions still above default are now explicitly owned by the follow-up
+**`status-line-architecture-pattern`** PRD.
+
+| Rule | Now (max observed) | Where | How it closes to default |
 |---|---:|---|---|
-| too-many-locals | 7 | incl. `build_data`, `pack_line`, `render` | the lazy `_RenderData` split + two-pass restructure cut local counts |
-| too-many-branches | 4 | `build_data`, `pack_line` | data-gathering moves into builders; branch nests collapse |
-| too-many-return-statements | 1 | (restructured fn) | simplified control flow |
-| too-many-arguments / too-many-positional-arguments | up to 12 | `safe_build`/`pack_line`/`render` | relaxed by `max-args=8`; remainder reduced by the restructure. Any residual gets a justified inline disable in 2.6. |
+| too-many-locals | 25 | `build_data`, `validate_config_file` | architecture PRD dissolves `build_data` into a `Context` (FR-A.2); `validate_config_file` is out-of-scope CLI |
+| too-many-branches | 28 | `validate_config_file` | out-of-scope CLI (not a render-path function) |
+| too-many-return-statements | 10 | `_apply_wizard_command` (setup) | out-of-scope setup-wizard dispatch |
+| too-many-arguments / positional | 7 | `pack_line` | architecture PRD's single `ctx` bag (FR-A.2) cuts builder/packer signatures from 6–7 args to 2 |
 
-> If a `fixed-by-refactor` row still reports after Phase 2, fix it then — or, only if genuinely
-> irreducible, add a justified inline disable and record it as `legitimately-suppress` here.
+> Final push to pylint defaults (args=5, locals=15, branches=12, returns=6) is an acceptance
+> criterion of the architecture-pattern PRD, not a suppression to add here.
 
 ### `legitimately-suppress` (config-level, justified above)
 
