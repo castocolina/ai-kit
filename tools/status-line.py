@@ -11,6 +11,7 @@ bottom. Stdlib only. The .sh original is kept as a fallback.
 
 import argparse
 import contextlib
+import functools
 import hashlib
 import json
 import math
@@ -26,6 +27,7 @@ try:
 except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only config.
     tomllib = None
 from collections import namedtuple
+from dataclasses import dataclass, field
 from datetime import datetime
 
 # ═══ CONFIG — edit freely ════════════════════════════════════════════════════
@@ -550,12 +552,12 @@ def _cache_write(spec, text):
         pass
 
 
-def _run_provider(spec, data, avail):
+def _run_provider(spec, ctx, avail):
     """Spawn the provider with the status JSON + segment block on stdin, the
     AI_KIT_SEGMENT_* env mirror, and cwd = workspace dir. Returns the raw first
     non-empty stdout line, or None on timeout / non-zero exit / no output."""
     pos = _position_str(spec.position)
-    payload = json.dumps({**(data.get("raw") or {}),
+    payload = json.dumps({**(ctx.raw or {}),
                           "segment": {"id": spec.id, "avail_cols": avail,
                                       "line": spec.line, "position": pos}})
     env = dict(os.environ)
@@ -564,7 +566,7 @@ def _run_provider(spec, data, avail):
     try:
         proc = subprocess.run(
             [spec.path], input=payload, capture_output=True, text=True,
-            timeout=spec.timeout, cwd=data.get("work_dir") or ".", env=env, check=False)
+            timeout=spec.timeout, cwd=ctx.work_dir or ".", env=env, check=False)
     except (subprocess.TimeoutExpired, OSError):
         return None
     if proc.returncode != 0:
@@ -575,12 +577,12 @@ def _run_provider(spec, data, avail):
     return None
 
 
-def run_external(spec, data, avail):
+def run_external(spec, ctx, avail):
     """TTL-cached, timeout-bounded provider invocation. Returns the sanitized,
     width-fitted segment string, or None to omit the segment."""
     raw_line = _cache_read(spec)
     if raw_line is None:
-        raw_line = _run_provider(spec, data, avail)
+        raw_line = _run_provider(spec, ctx, avail)
         if raw_line is None:
             return None
         _cache_write(spec, raw_line)
@@ -946,12 +948,12 @@ def _dirty_mark(dirty, theme):
 
 
 # ── identity line ────────────────────────────────────────────────────────────
-def seg_path(data, avail, theme):
-    return f"{theme.c('BLUE')}{_display_dir(data['work_dir'], data['home'])}{RESET}"  # floor
+def seg_path(ctx, avail, theme):
+    return f"{theme.c('BLUE')}{_display_dir(ctx.work_dir, ctx.home)}{RESET}"  # floor
 
 
-def seg_branch(data, avail, theme):
-    branch = data.get("branch")
+def seg_branch(ctx, avail, theme):
+    branch = ctx.branch
     if not branch:
         return None
     # branch carries its own STATIC 🌿 icon. It does NOT encode worktree state
@@ -962,8 +964,8 @@ def seg_branch(data, avail, theme):
                            f"{theme.c('GREY')}[{branch}]{RESET}"], avail)
 
 
-def seg_dirty(data, avail, theme):
-    mark = _dirty_mark(data.get("dirty", "clean"), theme)
+def seg_dirty(ctx, avail, theme):
+    mark = _dirty_mark(ctx.dirty, theme)
     return _first_fitting([mark], avail) if mark else None
 
 
@@ -982,22 +984,22 @@ def _trunc_cols(s, limit):
     return "".join(out) + "…"
 
 
-def seg_worktree(data, avail, theme):
+def seg_worktree(ctx, avail, theme):
     # `worktree` names the ACTIVE linked worktree the session sits in — never a
     # list. Mirrors `dirty`'s "absence is the neutral state" convention: hidden
     # outside a repo. On the main checkout it shows a dimmed, struck `⎇ wt`
     # placeholder — GREY (not just strikethrough) so it stays distinct from the
     # cyan active form even on terminals that don't render SGR-9.
-    if not data.get("in_repo"):
+    if not ctx.in_repo:
         return None
-    if not data.get("is_worktree"):
+    if not ctx.is_worktree:
         return _first_fitting([f"{theme.c('GREY')}\033[9m⎇ wt{RESET}"], avail)
-    name = _trunc_cols(data.get("wt_name") or "", 20)
+    name = _trunc_cols(ctx.wt_name or "", 20)
     return _first_fitting([f"{theme.c('CYAN')}⎇ {name}{RESET}"], avail)
 
 
-def seg_todo(data, avail, theme):
-    state, text = data.get("todo_state"), data.get("todo_text")
+def seg_todo(ctx, avail, theme):
+    state, text = ctx.todo_state, ctx.todo_text
     if not text:
         return None
     limit = avail - 4                      # room for icon + space + ellipsis
@@ -1013,26 +1015,26 @@ def seg_todo(data, avail, theme):
 
 
 # ── model row ────────────────────────────────────────────────────────────────
-def seg_model(data, avail, theme):
-    name = data.get("model_name") or data.get("model_id")
+def seg_model(ctx, avail, theme):
+    name = ctx.model_name or ctx.model_id
     if not name:
         return None
     return _first_fitting([f"{theme.c('CYAN')}{name}{RESET}"], avail)
 
 
-def seg_time_ago(data, avail, theme):
-    ago = data.get("ago")
+def seg_time_ago(ctx, avail, theme):
+    ago = ctx.ago
     if not ago:
         return None
     return _first_fitting([f"{theme.c('WHITE')}{ago}{RESET}"], avail)
 
 
-def seg_clock(data, avail, theme):
-    return _first_fitting([_icon("⏰", data['clock'])], avail)
+def seg_clock(ctx, avail, theme):
+    return _first_fitting([_icon("⏰", ctx.clock)], avail)
 
 
-def seg_effort(data, avail, theme):
-    level = data.get("effort", "")
+def seg_effort(ctx, avail, theme):
+    level = ctx.effort
     if not level:
         return None
     # Unknown level (stale/future): no color on the word, all-grey ladder — a safe
@@ -1040,7 +1042,7 @@ def seg_effort(data, avail, theme):
     color, bar = theme.effort.get(level.lower(), ("", f"{theme.c('GREY')}▁▃▄▆█"))
     word = f"{color}{level}{RESET}"
     bars = _icon("🧠", f"{bar}{RESET}")
-    if data.get("effort_auto"):
+    if ctx.effort_auto:
         # effortLevel is unset/auto in settings: flag the resolved level as
         # auto-chosen. The flag degrades [auto] -> * -> dropped as space tightens.
         variants = [f"{bars} {word} {theme.c('GREY')}[auto]{RESET}",
@@ -1052,27 +1054,27 @@ def seg_effort(data, avail, theme):
     return _first_fitting(variants, avail)
 
 
-def seg_lines(data, avail, theme):
-    body = (f"{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(data['added'])}{RESET}"
-            f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(data['removed'])}{RESET}")
+def seg_lines(ctx, avail, theme):
+    body = (f"{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(ctx.added)}{RESET}"
+            f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(ctx.removed)}{RESET}")
     return _first_fitting([_icon("📃", body)], avail)
 
 
-def seg_cost(data, avail, theme):
-    return _first_fitting([_icon("🪙", f"${float(data['cost']):.3f}")], avail)
+def seg_cost(ctx, avail, theme):
+    return _first_fitting([_icon("🪙", f"${float(ctx.cost):.3f}")], avail)
 
 
-def seg_total_time(data, avail, theme):
-    return _first_fitting([_icon("💬", fmt_time_ms(data['total_ms']))], avail)
+def seg_total_time(ctx, avail, theme):
+    return _first_fitting([_icon("💬", fmt_time_ms(ctx.total_ms))], avail)
 
 
-def seg_api_time(data, avail, theme):
-    return _first_fitting([_icon("📡", fmt_time_ms(data['api_ms']))], avail)
+def seg_api_time(ctx, avail, theme):
+    return _first_fitting([_icon("📡", fmt_time_ms(ctx.api_ms))], avail)
 
 
 # ── diagnostics row ──────────────────────────────────────────────────────────
-def seg_render_time(data, avail, theme):    # status-line's own run time, SLO/SLA-colored
-    t0 = data.get("t_start")
+def seg_render_time(ctx, avail, theme):    # status-line's own run time, SLO/SLA-colored
+    t0 = ctx.t_start
     if t0 is None:                      # not timed (e.g. direct builder calls) -> omit
         return None
     elapsed = time.perf_counter_ns() - t0
@@ -1080,8 +1082,8 @@ def seg_render_time(data, avail, theme):    # status-line's own run time, SLO/SL
     return _first_fitting([_icon("⏱", f"{color}{fmt_duration(elapsed)}{RESET}")], avail)
 
 
-def seg_slowest(data, avail, theme):        # slowest single segment this render, SLO/SLA-colored
-    slow = data.get("slowest")
+def seg_slowest(ctx, avail, theme):        # slowest single segment this render, SLO/SLA-colored
+    slow = ctx.slowest
     if not slow:                            # timing off (segment disabled) -> omit
         return None
     name, ns = slow
@@ -1091,13 +1093,13 @@ def seg_slowest(data, avail, theme):        # slowest single segment this render
     return _first_fitting([_icon("🐌", f"{name} {dur}"), _icon("🐌", dur)], avail)
 
 
-def seg_dimensions(data, avail, theme):
-    mark = "?" if data.get("dim_assumed") else ""
-    return _first_fitting([f"{data['cols']}×{data['lines']}{mark}"], avail)
+def seg_dimensions(ctx, avail, theme):
+    mark = "?" if ctx.dim_assumed else ""
+    return _first_fitting([f"{ctx.cols}×{ctx.lines}{mark}"], avail)
 
 
-def seg_context(data, avail, theme):
-    pct = int(data["context_pct"])
+def seg_context(ctx, avail, theme):
+    pct = int(ctx.context_pct)
     color = pick_color(pct, theme.ramps["context"])
     pct_only = _icon("📊", f"{color}{pct}%{RESET}")
     # Measure in half-cells (5% each) and round up, so any pct > 0 shows >= ▌.
@@ -1107,20 +1109,20 @@ def seg_context(data, avail, theme):
     bar_e = "░" * (CONTEXT_BAR_CELLS - full_n - half)
     bar = f"{color}{bar_f}{theme.c('GREY')}{bar_e}{RESET}"
     mid = _icon("📊", f"{bar} {color}{pct}%{RESET}")
-    full = _icon("📊", f"{bar} {color}{pct}% of {fmt_tokens(data['context_max'])}{RESET}")
+    full = _icon("📊", f"{bar} {color}{pct}% of {fmt_tokens(ctx.context_max)}{RESET}")
     return _first_fitting([full, mid, pct_only], avail) or pct_only  # floor
 
 
-def seg_chat_size(data, avail, theme):
-    n = data.get("chat_bytes")
+def seg_chat_size(ctx, avail, theme):
+    n = ctx.chat_bytes
     if n is None:
         return None
     color = pick_color(n, theme.ramps["chat_size"])
     return _first_fitting([_icon("💾", f"{color}{fmt_bytes(n)}{RESET}")], avail)
 
 
-def seg_memory(data, avail, theme):
-    n = data.get("mem_bytes")
+def seg_memory(ctx, avail, theme):
+    n = ctx.mem_bytes
     if n is None:
         return None
     return _first_fitting([_icon("🧮", fmt_bytes(n))], avail)
@@ -1157,8 +1159,8 @@ def _rate_str(rate_limits, detail, theme):
     return _icon("⚡", " | ".join(parts)) if parts else None
 
 
-def seg_rate_limits(data, avail, theme):
-    rate_limits = data.get("rate_limits")
+def seg_rate_limits(ctx, avail, theme):
+    rate_limits = ctx.rate_limits
     if not rate_limits:
         return None
     return _first_fitting([_rate_str(rate_limits, "long", theme),
@@ -1183,10 +1185,10 @@ BUILDERS = {
 
 
 def make_external_builder(spec):
-    """Wrap an ExtSpec as a seg_x(data, avail, theme)-shaped builder so pack_line
+    """Wrap an ExtSpec as a seg_x(ctx, avail, theme)-shaped builder so pack_line
     treats it exactly like a built-in. theme is unused (the provider colors itself)."""
-    def _builder(data, avail, theme):
-        return run_external(spec, data, avail)
+    def _builder(ctx, avail, theme):
+        return run_external(spec, ctx, avail)
     return _builder
 
 
@@ -1402,10 +1404,10 @@ def _rss_kb_via_proc(pid):
     return None
 
 
-def _ps_field(pid, field):
-    """One `ps -o <field>= -p <pid>` value as a stripped string, or None."""
+def _ps_field(pid, fieldname):
+    """One `ps -o <fieldname>= -p <pid>` value as a stripped string, or None."""
     try:
-        out = subprocess.run(["ps", "-o", f"{field}=", "-p", str(pid)],
+        out = subprocess.run(["ps", "-o", f"{fieldname}=", "-p", str(pid)],
                              capture_output=True, text=True, timeout=1,
                              check=False).stdout.strip()
         return out or None
@@ -1626,58 +1628,57 @@ def current_todo(path, session=None, config_dir=None):
 #     any exception it records the key in `failed` and returns a width-bounded
 #     ⚠ marker, so one bad segment can never blank the bar (never-blank).
 #   * One measured pass. `pack_line` times EVERY non-meta build and
-#     `_crown_slowest` tracks the single running max into `data["slowest"]`. With
-#     the lazy data map, that bracket also captures the segment's first-read
-#     probe cost — so the crowned time is the segment's REAL cost (FR-R.2).
+#     `_crown_slowest` tracks the single running max into `ctx.slowest`. The
+#     timing bracket captures each segment's first-read probe cost (FR-R.2),
+#     so the crowned time is the segment's REAL cost.
 #   * Two meta segments. `render_time` and `slowest` (`_SLOWEST_META`) report the
 #     whole render, not one builder, so they are built in pass 2 (after every
 #     non-meta build is timed) and placed at their LAYOUT position in assembly —
 #     never forced last, never crowned as the culprit.
-def safe_build(key, data, avail, theme, failed, builders=None):
+def safe_build(key, ctx, avail, theme, builders=None):
     """Invoke one segment builder in isolation. On ANY exception, record `key`
-    in the shared `failed` set and return a width-bounded warning marker instead
-    of propagating — so a single bad segment can never blank the whole bar. The
+    in `ctx.failed` and return a width-bounded warning marker instead of
+    propagating — so a single bad segment can never blank the whole bar. The
     marker shows the segment name when it fits `avail`, else just the icon.
     `builders` defaults to the built-in BUILDERS registry."""
     builders = builders if builders is not None else BUILDERS
     try:
-        return builders[key](data, avail, theme)
+        return builders[key](ctx, avail, theme)
     except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
-        failed.add(key)
+        ctx.failed.add(key)
         named = f"{_WARN}⚠{key}{RESET}"
         if visible_width(named) <= avail:
             return named
         return f"{_WARN}⚠{RESET}"
 
 
-def _crown_slowest(data, key, ns, failed):
+def _crown_slowest(ctx, key, ns):
     """Record the slowest non-meta, non-crashed segment build this render — the
     single place the running max is tracked (FR-R.1). The meta segments report
     the whole render, not one builder, so they are never the culprit; a crashed
-    segment (in `failed`) reports its warning marker's time, not real work."""
-    if key in _SLOWEST_META or key in failed:
+    segment (in `ctx.failed`) reports its warning marker's time, not real work."""
+    if key in _SLOWEST_META or key in ctx.failed:
         return
-    cur = data.get("slowest")
+    cur = ctx.slowest
     if cur is None or ns > cur[1]:
-        data["slowest"] = (key, ns)
+        ctx.slowest = (key, ns)
 
 
-def pack_line(keys, data, cols, cfg=None, theme=None, failed=None, builders=None):
+def pack_line(keys, ctx, cols, cfg=None, theme=None, builders=None):
     """Best-fit pack enabled segments into cols - RIGHT_MARGIN, in two passes.
 
     The meta segments (`render_time`, `slowest`) report the whole render, so they
     can only be built once every other build is timed — but they live at their own
     LAYOUT positions, not forced last. So: pass 1 builds + times every non-meta
-    segment left->right (crowning the slowest via _crown_slowest, whose timing now
-    includes each segment's first-read probe cost thanks to FR-R.2's lazy
-    _LazyData); pass 2 builds the meta segments now that `data["slowest"]` and
+    segment left->right (crowning the slowest via _crown_slowest, whose timing
+    captures each segment's first-read probe cost — FR-R.2 via Context's lazy
+    cached_property); pass 2 builds the meta segments now that `ctx.slowest` and
     `t_start` are settled; then assembly places everything in LAYOUT order, fitting
     left->right with all widths known. Pinned segments are always kept; otherwise
     leftmost survive when space is tight. `builders` carries the merged built-in +
     external map; defaults to that derived from cfg."""
-    cfg = cfg or default_config()
-    theme = theme or build_theme(cfg)
-    failed = failed if failed is not None else set()
+    cfg = cfg or ctx.config
+    theme = theme or ctx.theme
     builders = builders if builders is not None else _builders_for(cfg)
     budget = cols - RIGHT_MARGIN
     sep_w = visible_width(SEP)
@@ -1692,18 +1693,18 @@ def pack_line(keys, data, cols, cfg=None, theme=None, failed=None, builders=None
         sep = sep_w if used_est else 0
         avail = max(budget - used_est - sep, 0)
         t0 = time.perf_counter_ns()
-        s = safe_build(key, data, avail, theme, failed, builders)
+        s = safe_build(key, ctx, avail, theme, builders)
         ns = time.perf_counter_ns() - t0
         if not s:
             continue
         if key in PINNED or visible_width(s) <= avail:
             built[key] = s
             used_est += visible_width(s) + sep
-            _crown_slowest(data, key, ns, failed)
+            _crown_slowest(ctx, key, ns)
     # Pass 2: build the meta segments now that timings/max are known.
     for key in enabled:
         if key in _SLOWEST_META:
-            s = safe_build(key, data, budget, theme, failed, builders)
+            s = safe_build(key, ctx, budget, theme, builders)
             if s:
                 built[key] = s
     # Assemble in layout order, fitting left->right with every width known.
@@ -1731,21 +1732,21 @@ def diagnostic_line(failed):
             f"run the doctor: {_doctor_cmd()}{RESET}")
 
 
-def render(data, cols, lines, cfg=None, theme=None):
+def render(ctx, cfg=None, theme=None):
     """Render up to len(cfg.layout) lines, gated by terminal height and width.
-    A trailing diagnostic line is appended only when a builder crashed."""
-    cfg = cfg or default_config()
-    theme = theme or build_theme(cfg)
+    A trailing diagnostic line is appended only when a builder crashed. Reads
+    geometry (cols/lines) and the shared `failed` set off `ctx`."""
+    cfg = cfg or ctx.config
+    theme = theme or ctx.theme
     builders = _builders_for(cfg)
-    failed = set()
     out = []
     for ln in cfg.layout:
-        if lines < ln.min_rows:
+        if ctx.lines < ln.min_rows:
             continue
-        packed = pack_line(ln.segments, data, cols, cfg, theme, failed, builders)
+        packed = pack_line(ln.segments, ctx, ctx.cols, cfg, theme, builders)
         if packed:
             out.append(packed)
-    diag = diagnostic_line(failed)
+    diag = diagnostic_line(ctx.failed)
     if diag:
         out.append(diag)
     return out
@@ -1844,127 +1845,150 @@ def effort_setting_is_auto(work_dir, home):
     return True
 
 
-class _LazyData(dict):
-    """Builder-facing data map. `base` values are stored directly; each `probes`
-    entry is a thunk that fills its key on first read and memoizes the result, so
-    an expensive probe's cost lands inside the *measured* build of the segment
-    that reads it (FR-R.2, option A) and later reads are free. Builders read via
-    .get(), so both .get() and item access trigger the probe. A shared probe (git
-    -> branch/dirty/worktree/in_repo/wt_name) registers ONE thunk under several
-    keys; the first read runs it and fills them all, and the `key not in self`
-    guard keeps the now-dead sibling entries no-ops."""
+@dataclass
+class Context:  # pylint: disable=too-many-instance-attributes  # per-render bag (D1)
+    """Per-render bag handed to every builder (D1). Eager inputs are resolved at
+    the SHELL/CONFIG boundary; expensive probes are `cached_property`, so a probe
+    runs synchronously on first attribute read — its cost lands inside the
+    *measured* build of the first segment that reads it (FR-R.2) and later reads
+    are free. Render bookkeeping (`failed`, `slowest`) lives here too. Attribute
+    access only — never `ctx[...]` (D4). `raw` keeps `.get()`-chain access."""
+    raw: dict                       # incoming status JSON (the ONLY dict-style member)
+    config: "Config"
+    theme: "Theme"
+    # per-render terminal geometry (resolved by the SHELL; D6 — never on Config)
+    cols: int
+    lines: int
+    dim_assumed: bool
+    t_start: "int | None"
+    # cheap eager fields (were build_data's `base`)
+    model_name: str
+    model_id: str
+    effort: str
+    work_dir: str
+    home: str
+    clock: str
+    added: int
+    removed: int
+    cost: float
+    total_ms: int
+    api_ms: int
+    context_pct: int
+    context_max: int
+    rate_limits: dict
+    # probe inputs (locate materialized todo/task state; feed the cached_property probes)
+    transcript: str
+    session: str
+    claude_dir: str
+    # render bookkeeping (D1) — mutated during the render
+    failed: set = field(default_factory=set)
+    slowest: "tuple | None" = None
 
-    def __init__(self, base, probes):
-        super().__init__(base)
-        self._probes = probes              # {key: thunk}; a thunk fills its key(s)
+    # ── shared git probe: one call fills five fields (branch/dirty/worktree/…) ──
+    # The probe reads its ttl + cache_base off the Config object it is given (D8).
+    @functools.cached_property
+    def _git(self):
+        return git_snapshot(self.work_dir, self.config)
 
-    def _resolve(self, key):
-        probe = self._probes.pop(key, None)
-        if probe is not None and key not in self:
-            probe()
+    @property
+    def branch(self):
+        """Current git branch name (via shared _git probe)."""
+        return self._git.branch
 
-    def __missing__(self, key):            # data[key]
-        self._resolve(key)
-        if key in self:
-            return self[key]
-        raise KeyError(key)
+    @property
+    def dirty(self):
+        """Git working-tree state: 'clean', 'modified', or 'untracked'."""
+        return self._git.dirty
 
-    def get(self, key, default=None):      # data.get(key) — the path builders use
-        self._resolve(key)
-        return super().get(key, default)
+    @property
+    def is_worktree(self):
+        """True when the workspace is a git worktree (not the main checkout)."""
+        return self._git.is_worktree
+
+    @property
+    def wt_name(self):
+        """Worktree short name (basename of the worktree root), or ''."""
+        return self._git.wt_name
+
+    @property
+    def in_repo(self):
+        """True when the workspace is inside a git repository."""
+        return self._git.in_repo
+
+    @functools.cached_property
+    def ago(self):
+        """Human-readable age of the transcript file (e.g. '5m 0s ago'), or ''."""
+        t = self.transcript
+        if t and os.path.isfile(t):
+            return fmt_ago(int(time.time()) - int(os.path.getmtime(t)))
+        return ""
+
+    @functools.cached_property
+    def effort_auto(self):
+        """True when the Claude effort setting is 'auto' rather than a fixed level."""
+        return effort_setting_is_auto(self.work_dir, self.home)
+
+    @functools.cached_property
+    def _todo(self):
+        return current_todo(self.transcript, self.session, self.claude_dir)
+
+    @property
+    def todo_state(self):
+        """Active task state string (e.g. 'in_progress'), or None."""
+        return self._todo[0]
+
+    @property
+    def todo_text(self):
+        """Active task display text, or None when no task is active."""
+        return self._todo[1]
+
+    @functools.cached_property
+    def chat_bytes(self):
+        """Transcript file size in bytes (for the chat-size segment)."""
+        return transcript_bytes(self.transcript)
+
+    @functools.cached_property
+    def mem_bytes(self):
+        """Process RSS in bytes (for the memory segment), or None."""
+        return proc_rss_bytes()
 
 
-def build_data(raw, env, cfg, t_start=None):
-    """Gather everything the builders read, as a lazy `_LazyData`.
-
-    `cfg` is the resolved Config object, passed by contract so the git probe
-    can read cache_base and cache_ttl from it (D8 — no re-resolution from env).
-
-    Segment-agnostic: it does not know which segments are enabled. Cheap fields
-    are computed up front; the expensive probes (git, transcript/todo parse,
-    process RSS, `ago`, effort-auto) are deferred into thunks so their cost is
-    captured inside the measured build of the segment that reads them (FR-R.2,
-    option A). Laziness IS the compute gate — a probe runs only when an enabled
-    segment reads its field, so a disabled segment (never built by the packer)
-    never triggers it. The shared probes keep their own caches, so a second
-    consumer in one render is a cache hit and the first is credited the real
-    cost. `t_start` is the render's start timestamp (the total-render measure)."""
+def build_context(raw, config, theme, cols, lines, dim_assumed, t_start,  # pylint: disable=too-many-arguments,too-many-positional-arguments
+                  effort, home, claude_dir):
+    """Assemble the per-render Context from the parsed status JSON and the
+    already-resolved per-render inputs. Segment-agnostic and env-free: every
+    env read happened in the CONFIG block; the SHELL hands the resolved values
+    here. Expensive probes are deferred to Context's cached_property members."""
     model = raw.get("model") or {}
     cost = raw.get("cost") or {}
-    ctx = raw.get("context_window") or {}
+    ctx_win = raw.get("context_window") or {}
     workspace = raw.get("workspace") or {}
     work_dir = os.path.abspath(workspace.get("current_dir") or ".")
     transcript = raw.get("transcript_path") or ""
-    home = env.get("HOME", "")
-    # Session id + Claude config dir locate the materialized task/todo state that
-    # current_todo prefers over replaying the transcript. session_id is provided
-    # in the status-line input; it also equals the transcript file's basename.
+    # session_id locates the materialized task/todo state current_todo prefers
+    # over replaying the transcript; it also equals the transcript file basename.
     session = raw.get("session_id") or (
         os.path.splitext(os.path.basename(transcript))[0] if transcript else "")
-    claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-
-    cols, lines, assumed = terminal_size(env)
-
-    base = {
-        "raw": raw,
-        "model_name": model.get("display_name", ""),
-        "model_id": model.get("id", "unknown"),
-        "effort": resolve_effort(raw, env),
-        "work_dir": work_dir,
-        "home": home,
-        "clock": time.strftime("%H:%M"),
+    return Context(
+        raw=raw, config=config, theme=theme,
+        cols=cols, lines=lines, dim_assumed=dim_assumed, t_start=t_start,
+        model_name=model.get("display_name", ""),
+        model_id=model.get("id", "unknown"),
+        effort=effort, work_dir=work_dir, home=home,
+        clock=time.strftime("%H:%M"),
         # `or 0` (not get's default) so a PRESENT-but-null field — what a fresh
         # /clear session sends before any tokens/cost accrue — coalesces to 0
         # instead of raising on int()/math and blanking the whole bar.
-        "added": cost.get("total_lines_added") or 0,
-        "removed": cost.get("total_lines_removed") or 0,
-        "cost": cost.get("total_cost_usd") or 0,
-        "total_ms": cost.get("total_duration_ms") or 0,
-        "api_ms": cost.get("total_api_duration_ms") or 0,
-        "context_pct": int(ctx.get("used_percentage") or 0),
-        "context_max": ctx.get("context_window_size") or 0,
-        "rate_limits": raw.get("rate_limits") or {},
-        "dim_assumed": assumed,
-        "cols": cols, "lines": lines,
-        "t_start": t_start,
-    }
-
-    # One shared git_snapshot feeds branch + dirty + worktree, run on first read
-    # of any git field. It probes in full (untracked walk + worktree rev-parse);
-    # laziness already gates the whole call on at least one git segment being
-    # built, so there is no per-segment flag to thread through here.
-    def _git():
-        snap = git_snapshot(work_dir, cfg)
-        data.update(branch=snap.branch, dirty=snap.dirty, is_worktree=snap.is_worktree,
-                    wt_name=snap.wt_name, in_repo=snap.in_repo)
-
-    def _ago():
-        ok = transcript and os.path.isfile(transcript)
-        data["ago"] = (fmt_ago(int(time.time()) - int(os.path.getmtime(transcript)))
-                       if ok else "")
-
-    def _effort_auto():
-        data["effort_auto"] = effort_setting_is_auto(work_dir, home)
-
-    def _todo():
-        state, text = current_todo(transcript, session, claude_dir)
-        data.update(todo_state=state, todo_text=text)
-
-    def _chat():
-        data["chat_bytes"] = transcript_bytes(transcript)
-
-    def _mem():
-        data["mem_bytes"] = proc_rss_bytes()
-
-    probes = {
-        "branch": _git, "dirty": _git, "is_worktree": _git,
-        "wt_name": _git, "in_repo": _git,
-        "ago": _ago, "effort_auto": _effort_auto,
-        "todo_state": _todo, "todo_text": _todo,
-        "chat_bytes": _chat, "mem_bytes": _mem,
-    }
-    data = _LazyData(base, probes)
-    return data, cols, lines
+        added=cost.get("total_lines_added") or 0,
+        removed=cost.get("total_lines_removed") or 0,
+        cost=cost.get("total_cost_usd") or 0,
+        total_ms=cost.get("total_duration_ms") or 0,
+        api_ms=cost.get("total_api_duration_ms") or 0,
+        context_pct=int(ctx_win.get("used_percentage") or 0),
+        context_max=ctx_win.get("context_window_size") or 0,
+        rate_limits=raw.get("rate_limits") or {},
+        transcript=transcript, session=session, claude_dir=claude_dir,
+    )
 
 
 # ═══ CLI introspection ═══════════════════════════════════════════════════════
@@ -2112,11 +2136,16 @@ def _dry_render_failures(cfg, theme, env):
 
     Note: this catches builders that crash on *valid* input. A builder that only
     raises on a missing/malformed key won't be surfaced by this happy-path sample."""
-    failed = set()
-    data, _cols, _lines = build_data(dict(_DOCTOR_SAMPLE), env, cfg, time.perf_counter_ns())
+    cols, lines, assumed = terminal_size(env)
+    home = env.get("HOME", "")
+    claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    ctx = build_context(dict(_DOCTOR_SAMPLE), cfg, theme, cols, lines, assumed,
+                        time.perf_counter_ns(),
+                        effort=resolve_effort(_DOCTOR_SAMPLE, env),
+                        home=home, claude_dir=claude_dir)
     for key in BUILDERS:
-        safe_build(key, data, 200, theme, failed)
-    return failed
+        safe_build(key, ctx, 200, theme)
+    return ctx.failed
 
 
 def cmd_doctor(env):
@@ -2180,12 +2209,17 @@ def parse_args(argv):
 
 
 def safe_render(raw, env, cfg, theme, t_start):
-    """Build data and render; on ANY unexpected failure return a single
+    """Build context and render; on ANY unexpected failure return a single
     diagnostic line instead of a blank bar. Never raises. This is the backstop
-    above safe_build's per-segment isolation (covers build_data itself)."""
+    above safe_build's per-segment isolation (covers build_context itself)."""
     try:
-        data, cols, lines = build_data(raw, env, cfg, t_start)
-        return render(data, cols, lines, cfg, theme)
+        cols, lines, assumed = terminal_size(env)
+        home = env.get("HOME", "")
+        claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+        ctx = build_context(raw, cfg, theme, cols, lines, assumed, t_start,
+                            effort=resolve_effort(raw, env),
+                            home=home, claude_dir=claude_dir)
+        return render(ctx)
     except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
         return [f"{_WARN}⚠ status-line error — "
                 f"run the doctor: {_doctor_cmd()}{RESET}"]

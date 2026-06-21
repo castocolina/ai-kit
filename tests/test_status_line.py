@@ -19,6 +19,7 @@ _MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
 def load_module():
     spec = importlib.util.spec_from_file_location("status_line", _MODULE_PATH)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod          # register so @dataclass can resolve cls.__module__
     spec.loader.exec_module(mod)
     return mod
 
@@ -37,22 +38,55 @@ def strip(s):
 NOW = 1_000_000  # fixed epoch for deterministic rate-limit tests
 
 
+def _ctx_from_env(raw, env, cfg, t_start=None):
+    """Resolve the per-render SHELL inputs from `env` and build a Context — the
+    test-side mirror of what safe_render does in production (terminal size, HOME,
+    claude_dir, effort). Returns (ctx, cols, lines) for call-site convenience."""
+    cols, lines, assumed = sl.terminal_size(env)
+    home = env.get("HOME", "")
+    claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    ctx = sl.build_context(raw, cfg, sl.default_theme(), cols, lines, assumed, t_start,
+                           effort=sl.resolve_effort(raw, env), home=home, claude_dir=claude_dir)
+    return ctx, cols, lines
+
+
 def _data(**over):
-    base = {
+    """Build a seeded Context for unit tests. Cheap eager fields are passed as
+    constructor kwargs; expensive cached_property probes are injected into
+    __dict__ to bypass computation entirely (no filesystem/git/process calls)."""
+    eager = {
         "model_name": "Opus 4.8", "model_id": "claude-opus-4-8",
-        "effort": "high", "effort_auto": False, "work_dir": "/home/u/proj", "home": "/home/u",
+        "effort": "high", "work_dir": "/home/u/proj", "home": "/home/u",
+        "clock": "14:30", "added": 12, "removed": 3, "cost": 0.5,
+        "total_ms": 65000, "api_ms": 4200, "context_pct": 12,
+        "context_max": 1_000_000, "rate_limits": {},
+        "cols": 200, "lines": 50, "dim_assumed": False, "t_start": None,
+        "transcript": "", "session": "", "claude_dir": "/home/u/.claude",
+        "slowest": None,
+    }
+    probe_defaults = {
         "branch": "main", "dirty": "modified", "is_worktree": False,
         "in_repo": False, "wt_name": "",
-        "clock": "14:30", "ago": "5m 0s ago",
-        "added": 12, "removed": 3, "cost": 0.5,
-        "total_ms": 65000, "api_ms": 4200,
-        "context_pct": 12, "context_max": 1_000_000,
+        "ago": "5m 0s ago", "effort_auto": False,
+        "todo_state": None, "todo_text": None,
         "chat_bytes": 305000, "mem_bytes": 448_790_528,
-        "rate_limits": {}, "todo_state": None, "todo_text": None,
-        "dim_assumed": False, "cols": 200, "lines": 50,
     }
-    base.update(over)
-    return base
+    # Route overrides: eager fields go to the constructor, probes go to __dict__
+    eager_over = {k: over.pop(k) for k in list(over) if k in eager}
+    probe_over = {**probe_defaults, **over}
+    eager.update(eager_over)
+    ctx = sl.Context(raw={}, config=sl.default_config(), theme=THEME, **eager)
+    # Seed cached_property slots directly so probes never fire during tests
+    ctx.__dict__["_git"] = sl.GitSnapshot(
+        in_repo=probe_over["in_repo"], branch=probe_over["branch"],
+        dirty=probe_over["dirty"], is_worktree=probe_over["is_worktree"],
+        wt_name=probe_over["wt_name"])
+    ctx.__dict__["_todo"] = (probe_over["todo_state"], probe_over["todo_text"])
+    for k in ("ago", "effort_auto", "chat_bytes", "mem_bytes"):
+        ctx.__dict__[k] = probe_over[k]
+    if "failed" in over:                 # render-bookkeeping override (else fresh set)
+        ctx.failed = over["failed"]
+    return ctx
 
 
 class TestPickColor(unittest.TestCase):
@@ -458,6 +492,30 @@ class TestPackLine(unittest.TestCase):
 
 
 class TestSlowestTiming(unittest.TestCase):
+    def test_probe_cost_counted_in_triggering_segment(self):
+        # FR-A.2 / FR-R.2: a Context cached_property probe runs synchronously on
+        # first read, so its cost lands INSIDE the measured build of the segment
+        # that reads it — not amortized to µs. A live (un-seeded) Context whose
+        # git probe sleeps proves the `branch` segment is crowned ms-scale, and
+        # that the probe actually fired during pack_line (not pre-seeded).
+        def slow_git(*_a, **_k):
+            time.sleep(0.005)
+            return sl.GitSnapshot(in_repo=True, branch="main", dirty="clean",
+                                  is_worktree=False, wt_name="")
+        cfg = sl.default_config()
+        cfg.segments.update({"slowest": True, "branch": True})
+        ctx = sl.build_context(
+            raw={"workspace": {"current_dir": "/tmp"}}, config=cfg, theme=THEME,
+            cols=200, lines=50, dim_assumed=False, t_start=sl.time.perf_counter_ns(),
+            effort="high", home="/home/u", claude_dir="/home/u/.claude")
+        with mock.patch.object(sl, "git_snapshot", side_effect=slow_git):
+            sl.pack_line(["branch"], ctx, 200, cfg=cfg)
+        # The cached_property must have run during pack_line (proves laziness):
+        self.assertIsNotNone(ctx.__dict__.get("_git"))
+        name, ns = ctx.slowest
+        self.assertEqual(name, "branch")
+        self.assertGreaterEqual(ns, 4_000_000)   # >= ~4ms: probe cost is inside the build
+
     @staticmethod
     def _slow(data, avail, theme):
         time.sleep(0.005)
@@ -469,19 +527,19 @@ class TestSlowestTiming(unittest.TestCase):
 
     def test_pack_line_records_slowest_builder(self):
         # With `slowest` enabled the packer times each builder and records the max
-        # as data["slowest"] = (name, ns) — the exact key seg_slowest (T3.3) reads.
+        # as ctx.slowest = (name, ns) — the exact attribute seg_slowest reads.
         builders = {"fast_seg": self._fast, "slow_seg": self._slow}
         cfg = sl.default_config()
         cfg.segments.update({"slowest": True, "fast_seg": True, "slow_seg": True})
         data = _data()
         sl.pack_line(["fast_seg", "slow_seg"], data, 200, cfg=cfg, builders=builders)
-        name, ns = data["slowest"]
+        name, ns = data.slowest
         self.assertEqual(name, "slow_seg")
         self.assertIsInstance(ns, int)
         self.assertGreater(ns, 0)
 
     def test_slowest_accumulates_max_across_lines(self):
-        # render() packs each layout line sharing one data dict; the running max
+        # render() packs each layout line sharing one ctx; the running max
         # must survive across pack_line calls (slow line first, fast line second).
         builders = {"fast_seg": self._fast, "slow_seg": self._slow}
         cfg = sl.default_config()
@@ -489,7 +547,7 @@ class TestSlowestTiming(unittest.TestCase):
         data = _data()
         sl.pack_line(["slow_seg"], data, 200, cfg=cfg, builders=builders)
         sl.pack_line(["fast_seg"], data, 200, cfg=cfg, builders=builders)
-        self.assertEqual(data["slowest"][0], "slow_seg")   # not overwritten by the fast line
+        self.assertEqual(data.slowest[0], "slow_seg")   # not overwritten by the fast line
 
     def test_failed_builder_not_recorded_as_slowest(self):
         # A segment that crashes never rendered, so its time must not crown it the
@@ -501,7 +559,7 @@ class TestSlowestTiming(unittest.TestCase):
         cfg.segments.update({"slowest": True, "boom": True, "fast_seg": True})
         data = _data()
         sl.pack_line(["boom", "fast_seg"], data, 200, cfg=cfg, builders=builders)
-        self.assertNotEqual(data.get("slowest", (None,))[0], "boom")
+        self.assertNotEqual((data.slowest or (None,))[0], "boom")
 
     def test_empty_output_builder_not_recorded_as_slowest(self):
         # A segment that renders nothing (e.g. a failing external provider that is
@@ -513,7 +571,7 @@ class TestSlowestTiming(unittest.TestCase):
         cfg.segments.update({"slowest": True, "empty_seg": True, "fast_seg": True})
         data = _data()
         sl.pack_line(["empty_seg", "fast_seg"], data, 200, cfg=cfg, builders=builders)
-        self.assertNotEqual(data.get("slowest", (None,))[0], "empty_seg")
+        self.assertNotEqual((data.slowest or (None,))[0], "empty_seg")
 
     def test_slowest_built_after_non_meta_regardless_of_position(self):
         # FR-R.3: with the two-pass packer, every non-meta build is timed in pass 1
@@ -533,7 +591,7 @@ class TestSlowestTiming(unittest.TestCase):
         cfg.segments.update({"slowest": True, "slow_seg": True})
         data = _data()
         out = sl.pack_line(["slowest", "slow_seg"], data, 200, cfg=cfg, builders=builders)
-        self.assertEqual(data["slowest"][0], "slow_seg")
+        self.assertEqual(data.slowest[0], "slow_seg")
         self.assertIn("slow_seg", strip(out))      # seg_slowest (built in pass 2) names it
 
     def test_render_time_not_crowned_slowest(self):
@@ -546,7 +604,7 @@ class TestSlowestTiming(unittest.TestCase):
         cfg.segments.update({"slowest": True, "render_time": True, "fast_seg": True})
         data = _data()
         sl.pack_line(["render_time", "fast_seg"], data, 200, cfg=cfg, builders=builders)
-        self.assertNotEqual(data.get("slowest", (None,))[0], "render_time")
+        self.assertNotEqual((data.slowest or (None,))[0], "render_time")
 
     def test_overflow_dropped_segment_not_recorded_slowest(self):
         # L1: a slow segment whose output is too wide to fit is dropped — it never
@@ -559,7 +617,7 @@ class TestSlowestTiming(unittest.TestCase):
         cfg.segments.update({"slowest": True, "wide_seg": True, "fast_seg": True})
         data = _data()
         sl.pack_line(["fast_seg", "wide_seg"], data, 20, cfg=cfg, builders=builders)
-        self.assertNotEqual(data.get("slowest", (None,))[0], "wide_seg")
+        self.assertNotEqual((data.slowest or (None,))[0], "wide_seg")
 
     def test_slowest_readout_hidden_when_disabled(self):
         # Builds are always timed now (negligible, and FR-R.1 drops the per-segment
@@ -571,9 +629,9 @@ class TestSlowestTiming(unittest.TestCase):
         env = {"HOME": "/h", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50"}
         with mock.patch.object(sl, "git_snapshot",
                                return_value=sl.GitSnapshot(True, "m", "clean", False, "")):
-            data, cols, lines = sl.build_data(
+            data, _cols, _lines = _ctx_from_env(
                 {"workspace": {"current_dir": "."}, "transcript_path": ""}, env, cfg)
-            out = "\n".join(sl.render(data, cols, lines, cfg, theme))
+            out = "\n".join(sl.render(data, cfg, theme))
         self.assertNotIn("🐌", strip(out))
 
 
@@ -601,14 +659,14 @@ class TestSlowestSegment(unittest.TestCase):
 
 class TestRenderLayout(unittest.TestCase):
     def test_three_lines_when_tall_and_wide(self):
-        self.assertEqual(len(sl.render(_data(), 200, 50)), 3)
+        self.assertEqual(len(sl.render(_data())), 3)
 
     def test_line_gating_by_rows(self):
-        self.assertEqual(len(sl.render(_data(), 200, 10)), 1)   # identity only
-        self.assertEqual(len(sl.render(_data(), 200, 25)), 2)   # + model row
+        self.assertEqual(len(sl.render(_data(lines=10))), 1)   # identity only
+        self.assertEqual(len(sl.render(_data(lines=25))), 2)   # + model row
 
     def test_identity_line_never_empty(self):
-        out = sl.render(_data(branch="", dirty="clean", todo_text=None), 200, 50)
+        out = sl.render(_data(branch="", dirty="clean", todo_text=None))
         self.assertTrue(out[0].strip())
 
     def test_context_pinned(self):
@@ -888,8 +946,8 @@ class TestEndToEnd(unittest.TestCase):
         }
         env = {"STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50", "HOME": "/home/u"}
         cfg = sl.default_config()
-        data, cols, lines = sl.build_data(raw, env, cfg)
-        out = sl.render(data, cols, lines)
+        data, _cols, _lines = _ctx_from_env(raw, env, cfg)
+        out = sl.render(data)
         self.assertEqual(len(out), 3)
         self.assertIn("Opus 4.8", strip(out[1]))
         self.assertIn("47%", strip(out[2]))
@@ -913,8 +971,8 @@ class TestLazyCompute(unittest.TestCase):
         cfg.segments.update(segs)
         theme = sl.build_theme(cfg)
         # build_data is segment-agnostic; cfg.segments gates probes via render().
-        data, cols, lines = sl.build_data(raw or self.RAW, self.ENV, cfg)
-        sl.render(data, cols, lines, cfg, theme)
+        data, _cols, _lines = _ctx_from_env(raw or self.RAW, self.ENV, cfg)
+        sl.render(data, cfg, theme)
         return data
 
     def test_disabled_segments_skip_their_probes(self):
@@ -956,8 +1014,8 @@ class TestLazyCompute(unittest.TestCase):
         with mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct, \
              mock.patch.object(sl, "git_snapshot",
                                return_value=sl.GitSnapshot(True, "m", "clean", False, "")):
-            data, cols, lines = sl.build_data(self.RAW, self.ENV, cfg)
-            sl.render(data, cols, lines, cfg, theme)
+            data, _cols, _lines = _ctx_from_env(self.RAW, self.ENV, cfg)
+            sl.render(data, cfg, theme)
             ct.assert_called_once()
 
     def test_git_ttl_threaded_to_snapshot(self):
@@ -1403,13 +1461,13 @@ class TestRenderWithConfig(unittest.TestCase):
     def test_render_honors_cfg_layout(self):
         cfg = sl.Config(segments=dict(sl.SEGMENTS),
                         layout=[sl.Line(0, ["model"])], palette={}, ramps={})
-        lines = sl.render(_data(), 200, 50, cfg)
+        lines = sl.render(_data(), cfg)
         self.assertEqual(len(lines), 1)
         self.assertIn("Opus 4.8", strip(lines[0]))
 
     def test_render_default_cfg_unchanged(self):
         # No cfg arg -> same as today (three rows when tall+wide).
-        self.assertEqual(len(sl.render(_data(), 200, 50)), 3)
+        self.assertEqual(len(sl.render(_data())), 3)
 
 
 class TestMainUsesConfig(unittest.TestCase):
@@ -1778,45 +1836,45 @@ class TestRendererRobustness(unittest.TestCase):
         self.assertTrue(sl._WARN.endswith("m"))
 
     def test_safe_build_passes_through_ok_builder(self):
-        failed = set()
         def good(data, avail, theme):
             return "HELLO"
+        ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": good}):
-            out = sl.safe_build("path", _data(), 40, THEME, failed)
+            out = sl.safe_build("path", ctx, 40, THEME)
         self.assertEqual(out, "HELLO")
-        self.assertEqual(failed, set())
+        self.assertEqual(ctx.failed, set())
 
     def test_safe_build_records_and_marks_on_raise(self):
-        failed = set()
         def boom(data, avail, theme):
             raise RuntimeError("kaboom")
+        ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": boom}):
-            out = sl.safe_build("path", _data(), 40, THEME, failed)
-        self.assertIn("path", failed)
+            out = sl.safe_build("path", ctx, 40, THEME)
+        self.assertIn("path", ctx.failed)
         self.assertIn("path", strip(out))          # name shown when width allows
         self.assertLessEqual(sl.visible_width(out), 40)
 
     def test_safe_build_bare_marker_when_no_room_for_name(self):
-        failed = set()
         def boom(data, avail, theme):
             raise RuntimeError("x")
+        ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"context": boom}):
-            out = sl.safe_build("context", _data(), 1, THEME, failed)
-        self.assertIn("context", failed)
+            out = sl.safe_build("context", ctx, 1, THEME)
+        self.assertIn("context", ctx.failed)
         self.assertNotIn("context", strip(out))    # name dropped, icon kept
 
     def test_pack_line_survives_a_raising_pinned_builder(self):
         # "path" is PINNED — even when its builder raises, the line still renders
         # the other segments and records the failure.
-        failed = set()
         def boom(data, avail, theme):
             raise ValueError("nope")
         cfg = sl.default_config()
         def ok(data, avail, theme):
             return "CTX"
+        ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": boom, "context": ok}):
-            line = sl.pack_line(["path", "context"], _data(), 80, cfg, THEME, failed)
-        self.assertIn("path", failed)
+            line = sl.pack_line(["path", "context"], ctx, 80, cfg, THEME)
+        self.assertIn("path", ctx.failed)
         self.assertIn("CTX", strip(line))          # the healthy segment still shows
 
     def test_diagnostic_line_none_when_no_failures(self):
@@ -1835,19 +1893,19 @@ class TestRendererRobustness(unittest.TestCase):
         layout = [sl.Line(0, ["path"])]
         cfg = cfg._replace(layout=layout)
         with mock.patch.dict(sl.BUILDERS, {"path": boom}):
-            out = sl.render(_data(), 80, 40, cfg, THEME)
+            out = sl.render(_data(cols=80, lines=40), cfg, THEME)
         self.assertTrue(any("--doctor" in strip(l) for l in out))
         self.assertTrue(any("path" in strip(l) for l in out))
 
     def test_render_no_diagnostic_when_healthy(self):
         cfg = sl.default_config()
-        out = sl.render(_data(), 80, 40, cfg, THEME)
+        out = sl.render(_data(cols=80, lines=40), cfg, THEME)
         self.assertFalse(any("--doctor" in strip(l) for l in out))
 
     def test_safe_render_returns_diagnostic_on_catastrophic_failure(self):
         cfg = sl.default_config()
         theme = THEME
-        with mock.patch.object(sl, "build_data", side_effect=RuntimeError("boom")):
+        with mock.patch.object(sl, "build_context", side_effect=RuntimeError("boom")):
             out = sl.safe_render({}, os.environ, cfg, theme, 0)
         self.assertEqual(len(out), 1)
         self.assertIn("status-line error", strip(out[0]))
@@ -1874,15 +1932,15 @@ class TestRendererRobustness(unittest.TestCase):
     }
 
     def test_build_data_tolerates_present_but_null_fields(self):
-        data, _cols, _lines = sl.build_data(
+        data, _cols, _lines = _ctx_from_env(
             dict(self._NEW_SESSION_RAW), os.environ, sl.default_config())
-        self.assertEqual(data["context_pct"], 0)
-        self.assertEqual(data["context_max"], 0)
-        self.assertEqual(data["added"], 0)
-        self.assertEqual(data["removed"], 0)
-        self.assertEqual(data["cost"], 0)
-        self.assertEqual(data["total_ms"], 0)
-        self.assertEqual(data["api_ms"], 0)
+        self.assertEqual(data.context_pct, 0)
+        self.assertEqual(data.context_max, 0)
+        self.assertEqual(data.added, 0)
+        self.assertEqual(data.removed, 0)
+        self.assertEqual(data.cost, 0)
+        self.assertEqual(data.total_ms, 0)
+        self.assertEqual(data.api_ms, 0)
 
     def test_render_new_session_no_error_no_warn(self):
         cfg = sl.default_config()
@@ -1904,9 +1962,9 @@ class TestRenderDataLazy(unittest.TestCase):
         cfg = sl.default_config()
         theme = sl.build_theme(cfg)
         with mock.patch.object(sl, "git_snapshot", return_value=snap) as gs:
-            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg)
+            data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
             self.assertEqual(gs.call_count, 0, "git probe must NOT run during build_data")
-            sl.render(data, cols, lines, cfg, theme)
+            sl.render(data, cfg, theme)
             self.assertEqual(gs.call_count, 1, "git probe runs exactly once during render")
 
     def test_disabled_git_segments_skip_the_probe(self):
@@ -1917,8 +1975,8 @@ class TestRenderDataLazy(unittest.TestCase):
         cfg.segments["worktree"] = False
         theme = sl.build_theme(cfg)
         with mock.patch.object(sl, "git_snapshot") as gs:
-            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg)
-            sl.render(data, cols, lines, cfg, theme)
+            data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
+            sl.render(data, cfg, theme)
             self.assertEqual(gs.call_count, 0, "no git segment enabled => no git probe")
 
 
@@ -1936,9 +1994,9 @@ class TestSlowestTruthful(unittest.TestCase):
             return sl.GitSnapshot(True, "main", "modified", False, "")
 
         with mock.patch.object(sl, "git_snapshot", side_effect=slow_git):
-            data, cols, lines = sl.build_data(raw, {"HOME": "/h"}, cfg)
-            sl.render(data, cols, lines, cfg, theme)
-        name, ns = data["slowest"]
+            data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
+            sl.render(data, cfg, theme)
+        name, ns = data.slowest
         self.assertIn(name, ("branch", "dirty", "worktree"))  # a real git consumer
         self.assertGreater(ns, 1_000_000)                     # >1ms, not µs
 
@@ -1955,9 +2013,9 @@ class TestTwoPassLayout(unittest.TestCase):
         theme = sl.build_theme(cfg)
         with mock.patch.object(sl, "git_snapshot",
                                return_value=sl.GitSnapshot(True, "main", "modified", False, "")):
-            data, _c, _l = sl.build_data(raw, {"HOME": "/h"}, cfg,
+            data, _c, _l = _ctx_from_env(raw, {"HOME": "/h"}, cfg,
                                          t_start=time.perf_counter_ns())
-            out = sl.render(data, 200, 50, cfg, theme)
+            out = sl.render(data, cfg, theme)
         return next(strip(l) for l in out if "⏱" in strip(l))
 
     def test_slowest_adjacent_to_render_time(self):
@@ -2011,9 +2069,11 @@ class TestGoldenOutput(unittest.TestCase):
         blocks = []
         with self._deterministic():
             for c in cases:
-                data, _cols, _lines = sl.build_data(c["raw"], self.ENV, cfg, t_start=None)
-                data["cols"], data["lines"] = c["cols"], c["lines"]
-                out = sl.render(data, c["cols"], c["lines"], cfg, theme)
+                env = {**self.ENV,
+                       "STATUSLINE_COLS": str(c["cols"]),
+                       "STATUSLINE_LINES": str(c["lines"])}
+                data, _cols, _lines = _ctx_from_env(c["raw"], env, cfg, t_start=None)
+                out = sl.render(data, cfg, theme)
                 blocks.append(f"### {c['name']}\n" + "\n".join(strip(l) for l in out))
         return "\n\n".join(blocks) + "\n"
 

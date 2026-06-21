@@ -85,6 +85,7 @@ class TestTomlRead(unittest.TestCase):
                                "tools", "status-line.py")
         spec = importlib.util.spec_from_file_location("status_line_drift", sl_path)
         sl = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = sl       # register so @dataclass can resolve cls.__module__
         spec.loader.exec_module(sl)
         expected = [{"min_rows": ln.min_rows, "segments": list(ln.segments)}
                     for ln in sl.LAYOUT]
@@ -371,6 +372,7 @@ class TestDiscoverExampleSegments(unittest.TestCase):
                                "tools", "status-line.py")
         spec = importlib.util.spec_from_file_location("status_line_hdr_drift", sl_path)
         sl = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = sl       # register so @dataclass can resolve cls.__module__
         spec.loader.exec_module(sl)
         self.assertEqual(setup._SEG_HEADER_RE.pattern, sl._SEG_HEADER_RE.pattern)
 
