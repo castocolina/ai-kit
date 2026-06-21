@@ -58,21 +58,15 @@ bad-names = ["foo", "baz", "toto", "tutu", "tata"]
 good-names = ["tomllib"]
 
 [tool.pylint.design]
-# Ratcheted (Task 2.6) from the render refactor's relaxed values (args/pos=8,
-# locals=40, branches=30, statements=80) down to the current honest maximum that
-# the restructured code passes — a real tighten (statements 80->50, locals
-# 40->25), not a suppression. The remaining gap to pylint defaults (args=5,
-# locals=15, branches=12, returns=6) is owned by the architecture-pattern PRD:
-# dissolving build_data into a Context (drops its 25 locals) and the single `ctx`
-# bag (cuts pack_line/safe_build from 6-7 args to 2) close it. CLI/setup
-# functions outside the render path (validate_config_file, select_skills,
-# _apply_wizard_command, adopt_predecessor_links) are not in either refactor's
-# scope and set the current ceiling on branches/returns.
-max-args = 7                  # pack_line threads the builder context explicitly
-max-positional-arguments = 7
-max-locals = 25               # build_data / validate_config_file
-max-branches = 28             # validate_config_file
-max-returns = 10              # _apply_wizard_command (setup wizard dispatch)
+# At pylint defaults (FR-A.6, D4/D5). Render-path functions were restructured
+# to fit; CLI/setup out-of-scope functions (validate_config_file, cmd_doctor,
+# _apply_wizard_command, adopt_predecessor_links) carry localized per-function
+# `# pylint: disable=` where they exceed a threshold.
+max-args = 5
+max-positional-arguments = 5
+max-locals = 15
+max-branches = 12
+max-returns = 6
 max-statements = 50
 
 [tool.pylint."messages control"]

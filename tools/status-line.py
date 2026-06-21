@@ -7,6 +7,7 @@ Layout is driven by SEGMENTS (on/off), LAYOUT (template), and BUILDERS
 builders auto-deprioritize to fit. See the "HOW TO CUSTOMIZE" block near the
 bottom. Stdlib only. The .sh original is kept as a fallback.
 """
+# pyright: strict
 # ARCHITECTURE — functional core / imperative shell, one file, six blocks:
 #   SHELL     side effects only (env capture, stdin, print); calls the core.
 #   CONFIG    the ONLY block that reads env/TOML -> one immutable Config (stable
@@ -38,12 +39,18 @@ import time
 import unicodedata
 
 try:
-    import tomllib
+    import tomllib as _tomllib_impl
+    tomllib = _tomllib_impl
 except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only config.
-    tomllib = None
-from collections import namedtuple
+    tomllib = None  # type: ignore[assignment]  # stdlib boundary: optional module absent on <3.11
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any, NamedTuple, Optional, cast
+
+# Environment dict: a snapshot of os.environ captured once in main() (D6).
+# Mapping[str, str] covers both plain dict and os.environ (_Environ[str]).
+Env = Mapping[str, str]
 
 # ═══ CONFIG — edit freely ════════════════════════════════════════════════════
 # Per-segment on/off. Set False to hide a segment entirely: its builder is never
@@ -54,7 +61,7 @@ from datetime import datetime
 # ═══ 1. SHELL — side effects only: env capture, stdin, print ═════════════════
 
 
-def parse_args(argv):
+def parse_args(argv: list[str]) -> argparse.Namespace:
     """Parse command-line arguments for the status-line CLI."""
     p = argparse.ArgumentParser(
         prog="status-line.py",
@@ -76,7 +83,8 @@ def parse_args(argv):
     return p.parse_args(argv)
 
 
-def safe_render(raw, env, cfg, theme, t_start):
+def safe_render(raw: dict[str, Any], env: Env, cfg: "Config", theme: "Theme",
+                t_start: int) -> list[str]:
     """Build context and render; on ANY unexpected failure return a single
     diagnostic line instead of a blank bar. Never raises. This is the backstop
     above safe_build's per-segment isolation (covers build_context itself)."""
@@ -93,7 +101,7 @@ def safe_render(raw, env, cfg, theme, t_start):
                 f"run the doctor: {_doctor_cmd()}{RESET}"]
 
 
-def main():
+def main() -> None:
     """CLI entrypoint: dispatch subcommands or render the status line from stdin."""
     t0 = time.perf_counter_ns()        # for the optional `render_time` self-timing segment
     env = os.environ                   # single SHELL-boundary read (FR-A.1)
@@ -108,7 +116,7 @@ def main():
         print(cmd_print_config(cfg, env))
         return
     try:
-        raw = json.load(sys.stdin)
+        raw: dict[str, Any] = json.load(sys.stdin)
     except (ValueError, OSError):
         raw = {}
     print("\n".join(safe_render(raw, env, cfg, theme, t0)))
@@ -145,7 +153,11 @@ SEP = " | "
 # priority (kept first when space is tight). `min_rows` gates the whole row by
 # terminal height. Reorder = move a key within a list; move between rows = cut
 # and paste a key; hide = flip its SEGMENTS flag.
-Line = namedtuple("Line", "min_rows segments")
+class Line(NamedTuple):
+    """One display row: minimum terminal height to show it + ordered segment keys."""
+
+    min_rows: int
+    segments: list[str]
 
 
 LAYOUT = [
@@ -233,7 +245,7 @@ _EFFORT_DEFAULTS = {
 _EFFORT_GLYPHS = "▁▃▄▆█"
 
 
-def _git_key_problem(k, v):
+def _git_key_problem(k: str, v: Any) -> str | None:
     """Classify one `[git]` key/value so load_config and validate_config_file share
     a single validation rule (each formats its own message). Returns:
       'legacy'  — a deprecated key the caller should silently skip,
@@ -252,14 +264,20 @@ def _git_key_problem(k, v):
 # `git` and `external` default to None so older Config(...) call sites (which
 # pass only the original fields) keep working; consumers read git via
 # (cfg.git or {}) and external via (cfg.external or []).
-Config = namedtuple(
-    "Config",
-    "segments layout palette ramps git external cache_base segments_dir",
-    defaults=(None, None, "", ""),
-)
+class Config(NamedTuple):
+    """Resolved, validated configuration for one render pass."""
+
+    segments: dict[str, bool]
+    layout: list[Line]
+    palette: dict[str, str]
+    ramps: dict[str, dict[str, str]]
+    git: dict[str, int] | None = None
+    external: list[Any] | None = None
+    cache_base: str = ""
+    segments_dir: str = ""
 
 
-def default_config():
+def default_config() -> "Config":
     """A Config snapshotting the current module-global defaults (SEGMENTS/LAYOUT,
     no palette/ramp overrides). Copies are returned so callers cannot mutate
     globals."""
@@ -273,7 +291,7 @@ _ENV_TRUE = {"1", "true", "t", "y", "yes", "on"}
 _ENV_FALSE = {"0", "false", "f", "n", "no", "off"}
 
 
-def env_bool(env, name):
+def env_bool(env: Env, name: str) -> bool | None:
     """Tri-state bool from env[name]: True / False / None (unset or unrecognized).
     None means 'no override' so callers fall through to file/default."""
     v = env.get(name)
@@ -287,7 +305,7 @@ def env_bool(env, name):
     return None
 
 
-def config_path(env):
+def config_path(env: Env) -> str:
     """Resolved TOML path: CC_AI_KIT_CONFIG, else
     ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/statusline.toml."""
     explicit = env.get("CC_AI_KIT_CONFIG")
@@ -297,7 +315,7 @@ def config_path(env):
     return os.path.join(base, "ai-kit", "statusline.toml")
 
 
-def _load_toml(path):
+def _load_toml(path: str) -> dict[str, Any]:
     """Parse the TOML at path. Missing/empty/malformed/no-tomllib → {} (a dim
     warning to stderr on a malformed file). Never raises."""
     if tomllib is None:
@@ -312,13 +330,13 @@ def _load_toml(path):
         return {}
 
 
-def _resolve_segments(defaults, file_seg, env):
+def _resolve_segments(defaults: dict[str, bool], file_seg: Any, env: Env) -> dict[str, bool]:
     """defaults < file [segments] < CC_AI_KIT_SEGMENT_<KEY> env. Each file entry
     is dropped with a dim warning if its key is unknown OR its value is not a
     bool (e.g. `cost = "true"` instead of `cost = true`); only bool file values
     for known keys are honored. Env always overrides whatever the file resolved."""
     seg = dict(defaults)
-    for k, v in (file_seg or {}).items():
+    for k, v in cast(dict[str, Any], file_seg or {}).items():
         if k not in seg:
             print(f"{_DIM}status-line: unknown segment '{k}' in config{RESET}",
                   file=sys.stderr)
@@ -334,7 +352,7 @@ def _resolve_segments(defaults, file_seg, env):
     return seg
 
 
-def _resolve_layout(default_layout, raw_lines):
+def _resolve_layout(default_layout: list[Line], raw_lines: Any) -> list[Line]:
     """If the file has ANY [[line]] block, it REPLACES the whole layout
     (all-or-nothing — a partial layout can't silently drop segments). Otherwise
     keep the default. Each block: min_rows (default 0) + segments list."""
@@ -344,12 +362,12 @@ def _resolve_layout(default_layout, raw_lines):
             for item in raw_lines]
 
 
-def _resolve_external(raw, env):
+def _resolve_external(raw: dict[str, Any], env: Env) -> tuple[str, int]:
     """Resolve (segments_dir, default_ttl) from defaults < [external] file < env.
     Env: CC_AI_KIT_SEGMENTS_DIR (dir), CC_AI_KIT_EXTERNAL_TTL (int seconds)."""
-    file_ext = raw.get("external") or {}
+    file_ext: dict[str, Any] = cast(dict[str, Any], raw.get("external") or {})
     ttl = 10
-    fv = file_ext.get("ttl")
+    fv: Any = file_ext.get("ttl")
     if isinstance(fv, int) and not isinstance(fv, bool):
         ttl = fv
     ev = env.get("CC_AI_KIT_EXTERNAL_TTL")
@@ -359,7 +377,9 @@ def _resolve_external(raw, env):
     return _segments_dir(file_ext, env), ttl
 
 
-def _place_external(layout, specs):
+def _place_external(
+    layout: list[Line], specs: list["ExtSpec"]
+) -> tuple[list[Line], list["ExtSpec"]]:
     """Insert each spec's id into the resolved layout at its row/position and
     return (new_layout, finalized_specs). Resolves line=0 to the last row and
     clamps out-of-range rows (with a dim warning). Specs are applied in their
@@ -368,7 +388,7 @@ def _place_external(layout, specs):
         return list(layout), []
     rows = [list(ln.segments) for ln in layout]
     nrows = len(rows)
-    final = []
+    final: list[ExtSpec] = []
     for spec in specs:
         want = spec.line or nrows                      # 0 => last row
         idx = want - 1
@@ -391,7 +411,9 @@ def _place_external(layout, specs):
     return new_layout, final
 
 
-def load_config(env):
+def load_config(  # pylint: disable=too-many-locals,too-many-branches
+    env: Env,
+) -> "Config":
     """Resolve the full Config: internal defaults < TOML file < env.
 
     Resolves segments, layout, palette, ramps, and the [git] knobs. Also
@@ -417,14 +439,14 @@ def load_config(env):
     segments = _resolve_segments(seg_defaults, raw.get("segments"), env)
     layout = _resolve_layout(base.layout, raw.get("line"))
     layout, external = _place_external(layout, specs)
-    palette = {}
-    for k, v in (raw.get("palette") or {}).items():
+    palette: dict[str, str] = {}
+    for k, v in cast(dict[str, Any], raw.get("palette") or {}).items():
         if k in _PALETTE_DEFAULTS:
             palette[k] = str(v)
         else:
             print(f"{_DIM}status-line: unknown palette key '{k}'{RESET}", file=sys.stderr)
-    ramps = {}
-    for band, table in (raw.get("ramp") or {}).items():
+    ramps: dict[str, dict[str, str]] = {}
+    for band, table in cast(dict[str, Any], raw.get("ramp") or {}).items():
         if band not in _RAMP_DEFAULTS:
             print(f"{_DIM}status-line: unknown ramp '{band}'{RESET}", file=sys.stderr)
             continue
@@ -432,9 +454,9 @@ def load_config(env):
             print(f"{_DIM}status-line: ramp '{band}' must be a table — ignored{RESET}",
                   file=sys.stderr)
             continue
-        ramps[band] = {str(k): str(v) for k, v in table.items()}
-    git = dict(_GIT_DEFAULTS)
-    for k, v in (raw.get("git") or {}).items():
+        ramps[band] = {str(k): str(v) for k, v in cast(dict[Any, Any], table).items()}
+    git: dict[str, Any] = dict(_GIT_DEFAULTS)
+    for k, v in cast(dict[str, Any], raw.get("git") or {}).items():
         problem = _git_key_problem(k, v)
         if problem == "legacy":
             continue                               # deprecated, tolerated, no effect
@@ -457,23 +479,24 @@ def load_config(env):
                   cache_base=cache_base, segments_dir=ext_dir)
 
 
-def _cache_base(env):
+def _cache_base(env: Env) -> str:
     """${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit — root of every ai-kit on-disk cache."""
     base = env.get("XDG_CACHE_HOME") or os.path.join(env.get("HOME", ""), ".cache")
     return os.path.join(base, "ai-kit")
 
 
-def _segments_dir(file_external, env):
+def _segments_dir(file_external: Any, env: Env) -> str:
     """Resolve the providers directory: CC_AI_KIT_SEGMENTS_DIR > [external].dir >
     ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/segments."""
-    d = env.get("CC_AI_KIT_SEGMENTS_DIR") or (file_external or {}).get("dir")
+    ext_block: dict[str, Any] = cast(dict[str, Any], file_external or {})
+    d: str | None = env.get("CC_AI_KIT_SEGMENTS_DIR") or ext_block.get("dir")
     if d:
         return os.path.expanduser(d)
     base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
     return os.path.join(base, "ai-kit", "segments")
 
 
-def _to_int(s):
+def _to_int(s: str | None) -> int | None:
     """Parse a stripped string to int, or None on empty/non-numeric input."""
     try:
         return int(s) if s else None
@@ -481,14 +504,14 @@ def _to_int(s):
         return None
 
 
-def terminal_size(env):
+def terminal_size(env: Env) -> tuple[int, int, bool]:
     """Resolve (cols, lines, assumed). Fallback chain, first hit wins per dimension:
       1. STATUSLINE_COLS / STATUSLINE_LINES env
       2. COLUMNS / LINES env
       3. stty size      (via /dev/tty)
       4. tput cols/lines (via /dev/tty — macOS / setups where stty size is absent)
       5. assumed 200x40 default (assumed=True)"""
-    def _int(*keys):
+    def _int(*keys: str) -> int | None:
         for k in keys:
             v = env.get(k)
             if v and str(v).isdigit() and int(v) > 0:
@@ -502,7 +525,7 @@ def terminal_size(env):
         # macOS/terminfo fallback (_run closes over `tty` intentionally).
         try:
             with open("/dev/tty", encoding="utf-8") as tty:
-                def _run(*cmd):
+                def _run(*cmd: str) -> str:
                     return subprocess.run(list(cmd), stdin=tty, capture_output=True,
                                           text=True, timeout=1, check=False).stdout
                 size = _run("stty", "size").split()
@@ -522,19 +545,20 @@ def terminal_size(env):
     return cols, lines, assumed
 
 
-def resolve_effort(raw, env):
+def resolve_effort(raw: dict[str, Any], env: Env) -> str:
     """The *resolved* effort level (low..max) as a normalized lowercase string, or "".
 
     This is the live per-turn level the API reported, read from raw["effort"]["level"]
     (CLAUDE_EFFORT env as a fallback). It is never "auto" — auto is a *setting*, detected
     separately from disk by effort_setting_is_auto. A stray "auto" in the resolved field
     (transition states, env misuse) is normalized away so it can't reach the level table."""
-    level = ((raw.get("effort") or {}).get("level") or env.get("CLAUDE_EFFORT", ""))
+    effort_block: dict[str, Any] = cast(dict[str, Any], raw.get("effort") or {})
+    level: str = str(effort_block.get("level") or env.get("CLAUDE_EFFORT") or "")
     level = level.strip().lower()
     return "" if level == "auto" else level
 
 
-def effort_setting_is_auto(work_dir, home):
+def effort_setting_is_auto(work_dir: str, home: str) -> bool:
     """True when the effort *setting* is auto — i.e. `effortLevel` is absent (or
     literally "auto") across the settings chain.
 
@@ -550,10 +574,15 @@ def effort_setting_is_auto(work_dir, home):
         except (OSError, ValueError):
             continue
         if isinstance(cfg, dict) and "effortLevel" in cfg:
-            return str(cfg["effortLevel"]).strip().lower() == "auto"
+            return str(cast(dict[str, Any], cfg)["effortLevel"]).strip().lower() == "auto"
     return True
 
 # ═══ 3. CONTEXT — per-render bag (eager + cached_property probes + bookkeeping) ═
+
+
+def _str_set() -> set[str]:
+    """Typed factory for Context.failed — bare `set` loses the generic parameter."""
+    return set()
 
 
 @dataclass
@@ -564,14 +593,14 @@ class Context:  # pylint: disable=too-many-instance-attributes  # per-render bag
     *measured* build of the first segment that reads it (FR-R.2) and later reads
     are free. Render bookkeeping (`failed`, `slowest`) lives here too. Attribute
     access only — never `ctx[...]` (D4). `raw` keeps `.get()`-chain access."""
-    raw: dict                       # incoming status JSON (the ONLY dict-style member)
+    raw: dict[str, Any]             # incoming status JSON (the ONLY dict-style member)
     config: "Config"
     theme: "Theme"
     # per-render terminal geometry (resolved by the SHELL; D6 — never on Config)
     cols: int
     lines: int
     dim_assumed: bool
-    t_start: "int | None"
+    t_start: int | None
     # cheap eager fields (were build_data's `base`)
     model_name: str
     model_id: str
@@ -586,48 +615,48 @@ class Context:  # pylint: disable=too-many-instance-attributes  # per-render bag
     api_ms: int
     context_pct: int
     context_max: int
-    rate_limits: dict
+    rate_limits: dict[str, Any]
     # probe inputs (locate materialized todo/task state; feed the cached_property probes)
     transcript: str
     session: str
     claude_dir: str
     # render bookkeeping (D1) — mutated during the render
-    failed: set = field(default_factory=set)
-    slowest: "tuple | None" = None
+    failed: set[str] = field(default_factory=_str_set)
+    slowest: tuple[str, int] | None = None
 
     # ── shared git probe: one call fills five fields (branch/dirty/worktree/…) ──
     # The probe reads its ttl + cache_base off the Config object it is given (D8).
     @functools.cached_property
-    def _git(self):
+    def _git(self) -> "GitSnapshot":
         return git_snapshot(self.work_dir, self.config)
 
     @property
-    def branch(self):
+    def branch(self) -> str:
         """Current git branch name (via shared _git probe)."""
         return self._git.branch
 
     @property
-    def dirty(self):
+    def dirty(self) -> str:
         """Git working-tree state: 'clean', 'modified', or 'untracked'."""
         return self._git.dirty
 
     @property
-    def is_worktree(self):
+    def is_worktree(self) -> bool:
         """True when the workspace is a git worktree (not the main checkout)."""
         return self._git.is_worktree
 
     @property
-    def wt_name(self):
+    def wt_name(self) -> str:
         """Worktree short name (basename of the worktree root), or ''."""
         return self._git.wt_name
 
     @property
-    def in_repo(self):
+    def in_repo(self) -> bool:
         """True when the workspace is inside a git repository."""
         return self._git.in_repo
 
     @functools.cached_property
-    def ago(self):
+    def ago(self) -> str:
         """Human-readable age of the transcript file (e.g. '5m 0s ago'), or ''."""
         t = self.transcript
         if t and os.path.isfile(t):
@@ -635,69 +664,70 @@ class Context:  # pylint: disable=too-many-instance-attributes  # per-render bag
         return ""
 
     @functools.cached_property
-    def effort_auto(self):
+    def effort_auto(self) -> bool:
         """True when the Claude effort setting is 'auto' rather than a fixed level."""
         return effort_setting_is_auto(self.work_dir, self.home)
 
     @functools.cached_property
-    def _todo(self):
+    def _todo(self) -> tuple[str | None, str | None]:
         return current_todo(self.transcript, self.session, self.claude_dir)
 
     @property
-    def todo_state(self):
+    def todo_state(self) -> str | None:
         """Active task state string (e.g. 'in_progress'), or None."""
         return self._todo[0]
 
     @property
-    def todo_text(self):
+    def todo_text(self) -> str | None:
         """Active task display text, or None when no task is active."""
         return self._todo[1]
 
     @functools.cached_property
-    def chat_bytes(self):
-        """Transcript file size in bytes (for the chat-size segment)."""
+    def chat_bytes(self) -> int | None:
+        """Transcript file size in bytes (for the chat-size segment), or None."""
         return transcript_bytes(self.transcript)
 
     @functools.cached_property
-    def mem_bytes(self):
+    def mem_bytes(self) -> int | None:
         """Process RSS in bytes (for the memory segment), or None."""
         return proc_rss_bytes()
 
 
-def build_context(raw, config, theme, cols, lines, dim_assumed, t_start,  # pylint: disable=too-many-arguments,too-many-positional-arguments
-                  effort, home, claude_dir):
+def build_context(raw: dict[str, Any], config: "Config", theme: "Theme",  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+                  cols: int, lines: int, dim_assumed: bool, t_start: int | None,
+                  effort: str, home: str, claude_dir: str) -> "Context":
     """Assemble the per-render Context from the parsed status JSON and the
     already-resolved per-render inputs. Segment-agnostic and env-free: every
     env read happened in the CONFIG block; the SHELL hands the resolved values
     here. Expensive probes are deferred to Context's cached_property members."""
-    model = raw.get("model") or {}
-    cost = raw.get("cost") or {}
-    ctx_win = raw.get("context_window") or {}
-    workspace = raw.get("workspace") or {}
-    work_dir = os.path.abspath(workspace.get("current_dir") or ".")
-    transcript = raw.get("transcript_path") or ""
+    model: dict[str, Any] = cast(dict[str, Any], raw.get("model") or {})
+    cost: dict[str, Any] = cast(dict[str, Any], raw.get("cost") or {})
+    ctx_win: dict[str, Any] = cast(dict[str, Any], raw.get("context_window") or {})
+    workspace: dict[str, Any] = cast(dict[str, Any], raw.get("workspace") or {})
+    work_dir: str = os.path.abspath(str(workspace.get("current_dir") or "."))
+    transcript: str = str(raw.get("transcript_path") or "")
     # session_id locates the materialized task/todo state current_todo prefers
     # over replaying the transcript; it also equals the transcript file basename.
-    session = raw.get("session_id") or (
-        os.path.splitext(os.path.basename(transcript))[0] if transcript else "")
+    session: str = str(raw.get("session_id") or (
+        os.path.splitext(os.path.basename(transcript))[0] if transcript else ""))
     return Context(
         raw=raw, config=config, theme=theme,
         cols=cols, lines=lines, dim_assumed=dim_assumed, t_start=t_start,
-        model_name=model.get("display_name", ""),
-        model_id=model.get("id", "unknown"),
+        model_name=str(model.get("display_name") or ""),
+        model_id=str(model.get("id") or "unknown"),
         effort=effort, work_dir=work_dir, home=home,
         clock=time.strftime("%H:%M"),
         # `or 0` (not get's default) so a PRESENT-but-null field — what a fresh
         # /clear session sends before any tokens/cost accrue — coalesces to 0
         # instead of raising on int()/math and blanking the whole bar.
-        added=cost.get("total_lines_added") or 0,
-        removed=cost.get("total_lines_removed") or 0,
-        cost=cost.get("total_cost_usd") or 0,
-        total_ms=cost.get("total_duration_ms") or 0,
-        api_ms=cost.get("total_api_duration_ms") or 0,
+        added=int(cost.get("total_lines_added") or 0),
+        removed=int(cost.get("total_lines_removed") or 0),
+        cost=float(cost.get("total_cost_usd") or 0),
+        total_ms=int(cost.get("total_duration_ms") or 0),
+        api_ms=int(cost.get("total_api_duration_ms") or 0),
         context_pct=int(ctx_win.get("used_percentage") or 0),
-        context_max=ctx_win.get("context_window_size") or 0,
-        rate_limits=raw.get("rate_limits") or {},
+        context_max=int(ctx_win.get("context_window_size") or 0),
+        rate_limits=cast(dict[str, Any], raw.get("rate_limits") or {}),
         transcript=transcript, session=session, claude_dir=claude_dir,
     )
 
@@ -717,7 +747,7 @@ _DIM = "\033[90m"             # fixed dim grey for stderr warnings (palette-inde
 _WARN = "\033[33m"            # fixed yellow for failure markers (palette-independent)
 
 
-def _doctor_cmd():
+def _doctor_cmd() -> str:
     """A concrete, copy-pasteable doctor invocation for THIS install — resolved
     from the running interpreter and this file's path (~-collapsed). Never a bare
     '--doctor', which would assume the user is sitting in a repo clone."""
@@ -747,12 +777,13 @@ _STRAY_ESC = re.compile(r"\x1b(?!\[[0-9;]*m)")      # ESC not starting an SGR
 _C0_CTRL = re.compile(r"[\x00-\x09\x0b-\x1a\x1c-\x1f\x7f]")  # controls (incl. TAB) except NL/ESC
 
 
-def _truncate_visible(s, avail):
+def _truncate_visible(s: str, avail: int) -> str:
     """Cut s to at most `avail` visible cells, preserving zero-width SGR escapes,
     appending RESET if any SGR was emitted. avail <= 0 -> ''."""
     if avail <= 0:
         return ""
-    out, width, i, n, saw_sgr = [], 0, 0, len(s), False
+    out: list[str] = []
+    width, i, n, saw_sgr = 0, 0, len(s), False
     while i < n:
         m = _SGR_SEQ.match(s, i)
         if m:
@@ -772,7 +803,7 @@ def _truncate_visible(s, avail):
     return res
 
 
-def pick_color(pct, ramp):
+def pick_color(pct: float, ramp: list[tuple[float, str]]) -> str:
     """Return the color for the first ceil that pct is strictly below."""
     for ceil, color in ramp:
         if pct < ceil:
@@ -789,7 +820,7 @@ _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 _WIDE_BMP = {0x23F0, 0x23F1, 0x23F8, 0x26A1}  # ⏰ ⏱ ⏸ ⚡
 
 
-def char_width(ch):
+def char_width(ch: str) -> int:
     """Display cells for one char: 0 (combining/zero-width), 1, or 2 (wide)."""
     if unicodedata.combining(ch):
         return 0
@@ -805,12 +836,12 @@ def char_width(ch):
     return 1
 
 
-def visible_width(s):
+def visible_width(s: str) -> int:
     """Terminal display width of s, ignoring ANSI SGR escapes."""
     return sum(char_width(c) for c in _ANSI_RE.sub("", s))
 
 
-def _first_fitting(variants, avail):
+def _first_fitting(variants: Sequence[str | None], avail: int) -> str | None:
     """Return the first (richest) truthy variant whose display width fits avail.
 
     None if none fit. Builders pass their variants rich-first so the widest
@@ -828,7 +859,7 @@ def _first_fitting(variants, avail):
 _ICON_VS16 = {"⏱", "⏸", "⚡"}  # ⏱ ⏸ ⚡
 
 
-def _icon(glyph, text):
+def _icon(glyph: str, text: str) -> str:
     """Render `glyph` + exactly one space + `text` — the one place icon→text
     spacing is decided. Narrow-rendering glyphs get VS16 so the gap is one
     visible column regardless of terminal emoji handling."""
@@ -843,7 +874,7 @@ def _icon(glyph, text):
 _MOD_SGR = {"bold": "1", "dim": "2", "italic": "3", "underline": "4"}
 
 
-def _hex_to_sgr(spec):
+def _hex_to_sgr(spec: str) -> str | None:
     """'#rgb' / '#rgba' / '#rrggbb' / '#rrggbbaa' -> '38;2;r;g;b' (alpha
     dropped). None if not valid hex of a supported length."""
     h = spec[1:]
@@ -857,7 +888,7 @@ def _hex_to_sgr(spec):
     return f"38;2;{r};{g};{b}"
 
 
-def parse_color(spec, palette=None):
+def parse_color(spec: Any, palette: dict[str, str] | None = None) -> str | None:
     """Resolve a colorspec to '\\033[...m', or None if invalid. See section
     header for the grammar. `palette` ({NAME: sgr params}) is required only for
     name lookups; raw-SGR and hex specs ignore it."""
@@ -865,7 +896,7 @@ def parse_color(spec, palette=None):
         return None
     base, *mod_names = str(spec).split("+")
     base = base.strip()
-    mods = []
+    mods: list[str] = []
     for m in mod_names:
         code = _MOD_SGR.get(m.strip().lower())
         if code is None:
@@ -893,7 +924,7 @@ _THRESHOLD_MULT = {"k": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
 _TIME_MULT_NS = {"ns": 1, "us": 1000, "µs": 1000, "ms": 1_000_000, "s": 1_000_000_000}
 
 
-def _parse_threshold(key):
+def _parse_threshold(key: str | int | float) -> float:
     """Ramp threshold -> comparable number. 'inf'/inf -> INF; '512k'/'5M'/'1G'
     -> bytes (1024-based); '50ms'/'2s'/'500us'/'100ns' -> nanoseconds; bare int /
     numeric string -> that int (a percent). Raises ValueError on anything else."""
@@ -918,25 +949,31 @@ class Theme:
     `ramps` band -> [(ceil, escape)]; `effort` level -> (escape, bar). `c()`
     memoizes parse_color and never raises (invalid spec -> '')."""
 
-    def __init__(self, palette, ramps, effort):
+    def __init__(self, palette: dict[str, str],
+                 ramps: dict[str, list[tuple[float, str]]],
+                 effort: dict[str, tuple[str, str]]) -> None:
         self.palette = palette
         self.ramps = ramps
         self.effort = effort
-        self._cache = {}
+        self._cache: dict[str, str] = {}
 
-    def c(self, spec):
+    def c(self, spec: str) -> str:
         """Resolve a color spec to an SGR string, memoizing the lookup."""
         if spec not in self._cache:
             self._cache[spec] = parse_color(spec, self.palette) or ""
         return self._cache[spec]
 
 
-def _resolve_palette(overrides):
+# A builder takes (ctx, avail_cols, theme) and returns a rendered string or None.
+Builder = Callable[["Context", int, "Theme"], str | None]
+
+
+def _resolve_palette(overrides: Any) -> dict[str, str]:
     """Merge _PALETTE_DEFAULTS with `overrides` ({NAME: spec}); each override
     value is parsed (hex / raw SGR / +mods — no name nesting) to bare params. A
     bad value warns and keeps the default."""
     palette = dict(_PALETTE_DEFAULTS)
-    for name, value in (overrides or {}).items():
+    for name, value in cast(dict[str, Any], overrides or {}).items():
         if name not in _PALETTE_DEFAULTS:
             continue                       # unknown keys already warned in load_config
         esc = parse_color(value, palette=None)
@@ -948,14 +985,15 @@ def _resolve_palette(overrides):
     return palette
 
 
-def _resolve_ramp(pairs, palette, band, fallback):
+def _resolve_ramp(pairs: Any, palette: dict[str, str], band: str,
+                  fallback: list[tuple[float, str]] | None) -> list[tuple[float, str]]:
     """Resolve [(threshold, colorspec)] -> [(ceil, escape)] sorted ascending.
     A bad band color falls back to that ceil's color in `fallback`; a bad
     threshold abandons the override and returns `fallback` whole. `fallback` is
     None only when resolving the built-in defaults (known-good)."""
-    fb = dict(fallback) if fallback else {}
-    out = []
-    for thr, spec in pairs:
+    fb: dict[float, str] = dict(fallback) if fallback else {}
+    out: list[tuple[float, str]] = []
+    for thr, spec in (cast(list[Any], pairs) if pairs else []):
         try:
             ceil = _parse_threshold(thr)
         except ValueError:
@@ -972,11 +1010,11 @@ def _resolve_ramp(pairs, palette, band, fallback):
     return out
 
 
-def _build_effort(palette):
+def _build_effort(palette: dict[str, str]) -> dict[str, tuple[str, str]]:
     """level -> (color escape, bar string). Filled glyphs in the level's color,
     the rest in grey (the effort-ladder layout)."""
     grey = parse_color("GREY", palette) or ""
-    out = {}
+    out: dict[str, tuple[str, str]] = {}
     for level, (name, n) in _EFFORT_DEFAULTS.items():
         color = parse_color(name, palette) or ""
         rest = _EFFORT_GLYPHS[n:]
@@ -985,10 +1023,10 @@ def _build_effort(palette):
     return out
 
 
-def build_theme(cfg):
+def build_theme(cfg: "Config") -> "Theme":
     """Resolve a Config's palette + ramps + effort into a Theme."""
     palette = _resolve_palette(cfg.palette)
-    ramps = {}
+    ramps: dict[str, list[tuple[float, str]]] = {}
     for band, default_pairs in _RAMP_DEFAULTS.items():
         default_ramp = _resolve_ramp(default_pairs, palette, band, None)
         override = (cfg.ramps or {}).get(band)
@@ -997,17 +1035,17 @@ def build_theme(cfg):
     return Theme(palette, ramps, _build_effort(palette))
 
 
-def default_theme():
+def default_theme() -> "Theme":
     """Theme from default_config() (no overrides)."""
     return build_theme(default_config())
 
 
-def fmt_number(n):
+def fmt_number(n: int | float) -> str:
     """Thousands separators: 1234567 -> '1,234,567'."""
     return f"{int(n):,}"
 
 
-def fmt_time_ms(ms):
+def fmt_time_ms(ms: int | float) -> str:
     """Human-readable duration from milliseconds (matches statusline.sh)."""
     ms = int(ms)
     if ms < 1000:
@@ -1019,7 +1057,7 @@ def fmt_time_ms(ms):
     return f"{ms // 3_600_000}h {(ms % 3_600_000) // 60_000}m"
 
 
-def fmt_tokens(n):
+def fmt_tokens(n: int | float) -> str:
     """200000 -> '200K', 1000000 -> '1M'."""
     n = int(n)
     if n >= 1_000_000:
@@ -1029,7 +1067,7 @@ def fmt_tokens(n):
     return str(n)
 
 
-def fmt_ago(secs):
+def fmt_ago(secs: int | float) -> str:
     """Seconds since last activity as an 'ago' string."""
     secs = int(secs)
     if secs <= 0:
@@ -1041,7 +1079,7 @@ def fmt_ago(secs):
     return f"{secs // 3600}h {(secs % 3600) // 60}m ago"
 
 
-def fmt_bytes(n):
+def fmt_bytes(n: int | float) -> str:
     """IEC byte size matching `numfmt --to=iec --suffix=B`: ceiling rounding,
     one decimal only when the scaled value is < 10."""
     n = int(n)
@@ -1058,7 +1096,7 @@ def fmt_bytes(n):
     return f"{math.ceil(v)}{units[i]}"
 
 
-def fmt_duration(ns):
+def fmt_duration(ns: int | float) -> str:
     """Adaptive duration from nanoseconds: ns / µs / ms / s, picking the largest
     unit that keeps the value >= 1. One decimal only when the scaled value is
     < 10 (matching fmt_bytes' style)."""
@@ -1085,7 +1123,7 @@ _UNIT_ABBR = {
 }
 
 
-def rate_key_label(key):
+def rate_key_label(key: str) -> str:
     """five_hour -> '5h', thirty_day -> '30d'. Unknown words pass through."""
     num, _, unit = key.partition("_")
     num = _NUM_WORDS.get(num, num)
@@ -1093,12 +1131,12 @@ def rate_key_label(key):
     return f"{num}{unit}"
 
 
-def rate_color(pct, theme):
+def rate_color(pct: float, theme: "Theme") -> str:
     """Pick the rate-limit ramp color for a usage percentage."""
     return pick_color(float(pct), theme.ramps["rate"])
 
 
-def _branch_from_porcelain(header):
+def _branch_from_porcelain(header: str) -> str:
     """Extract the branch from a `git status --porcelain --branch` header line
     (the `## ...` line). Returns "" for a detached HEAD, matching the old
     `git branch --show-current` behaviour. Git forbids ".." in refnames, so the
@@ -1118,10 +1156,17 @@ def _branch_from_porcelain(header):
 # independent segments but all read from one GitSnapshot — no duplicated git
 # querying. wt_name is the active linked-worktree's directory basename ("" on
 # the main checkout or outside a repo).
-GitSnapshot = namedtuple("GitSnapshot", "in_repo branch dirty is_worktree wt_name")
+class GitSnapshot(NamedTuple):
+    """One-shot result from the shared git probe (branch, dirty, worktree)."""
+
+    in_repo: bool
+    branch: str
+    dirty: str
+    is_worktree: bool
+    wt_name: str
 
 
-def _git_worktree_info(work_dir):
+def _git_worktree_info(work_dir: str) -> tuple[bool, bool, str]:
     """(in_repo, is_worktree, name) from ONE `git rev-parse`. is_worktree is True
     when work_dir sits in a linked worktree (git-dir != git-common-dir). name is
     that worktree directory's basename (from --show-toplevel), only when in a
@@ -1139,13 +1184,13 @@ def _git_worktree_info(work_dir):
     return True, is_worktree, name
 
 
-def _git_cache_path(work_dir, cache_base):
+def _git_cache_path(work_dir: str, cache_base: str) -> str:
     """Per-work_dir cache file for the worktree probe under <cache_base>/git/."""
     key = hashlib.sha1(os.path.abspath(work_dir).encode()).hexdigest()[:16]
     return os.path.join(cache_base, "git", key)
 
 
-def _worktree_info_cached(work_dir, ttl, cache_base):
+def _worktree_info_cached(work_dir: str, ttl: int, cache_base: str) -> tuple[bool, bool, str]:
     """_git_worktree_info wrapped in an on-disk TTL cache — the worktree rev-parse
     rarely changes, so it is cached ~ttl s keyed by work_dir. The cache is active
     only when ttl > 0 AND a cache_base is resolved: ttl <= 0 forces a fresh
@@ -1175,7 +1220,7 @@ def _worktree_info_cached(work_dir, ttl, cache_base):
     return info
 
 
-def git_snapshot(work_dir, config=None):
+def git_snapshot(work_dir: str, config: Optional["Config"] = None) -> "GitSnapshot":
     """The single git probe behind the `branch`, `dirty`, and `worktree` segments.
 
     `config` is the resolved Config object — the probe reads its cache TTL and
@@ -1214,7 +1259,7 @@ def git_snapshot(work_dir, config=None):
 # parent chain, returning RSS ONLY on a confirmed `claude` ancestor — otherwise
 # None, so it never reports a stray process (the wezterm <10mb bug). The readers
 # return comm verbatim; proc_rss_bytes is the single basename-normalization point.
-def _comm_via_proc(pid):
+def _comm_via_proc(pid: int) -> str | None:
     try:
         with open(f"/proc/{pid}/comm", encoding="utf-8") as f:
             return f.read().strip()
@@ -1222,7 +1267,7 @@ def _comm_via_proc(pid):
         return None
 
 
-def _ppid_via_proc(pid):
+def _ppid_via_proc(pid: int) -> int | None:
     try:
         with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
             return int(f.read().split()[3])
@@ -1230,7 +1275,7 @@ def _ppid_via_proc(pid):
         return None
 
 
-def _rss_kb_via_proc(pid):
+def _rss_kb_via_proc(pid: int) -> int | None:
     try:
         with open(f"/proc/{pid}/status", encoding="utf-8") as f:
             for line in f:
@@ -1241,7 +1286,7 @@ def _rss_kb_via_proc(pid):
     return None
 
 
-def _ps_field(pid, fieldname):
+def _ps_field(pid: int, fieldname: str) -> str | None:
     """One `ps -o <fieldname>= -p <pid>` value as a stripped string, or None."""
     try:
         out = subprocess.run(["ps", "-o", f"{fieldname}=", "-p", str(pid)],
@@ -1252,19 +1297,19 @@ def _ps_field(pid, fieldname):
         return None
 
 
-def _comm_via_ps(pid):
+def _comm_via_ps(pid: int) -> str | None:
     return _ps_field(pid, "comm")
 
 
-def _ppid_via_ps(pid):
+def _ppid_via_ps(pid: int) -> int | None:
     return _to_int(_ps_field(pid, "ppid"))
 
 
-def _rss_kb_via_ps(pid):
+def _rss_kb_via_ps(pid: int) -> int | None:
     return _to_int(_ps_field(pid, "rss"))
 
 
-def proc_rss_bytes():
+def proc_rss_bytes() -> int | None:
     """Resident memory (bytes) of the ancestor `claude` process, or None.
 
     Cross-platform via a capability probe: Linux /proc, else `ps`. Walk up the parent
@@ -1291,7 +1336,7 @@ def proc_rss_bytes():
     return None
 
 
-def transcript_bytes(path):
+def transcript_bytes(path: str) -> int | None:
     """Return the transcript file size in bytes, or None if it is missing."""
     if not path or not os.path.isfile(path):
         return None
@@ -1301,18 +1346,22 @@ def transcript_bytes(path):
         return None
 
 
-def _iter_tool_uses(line_obj, names):
+def _iter_tool_uses(line_obj: dict[str, Any], names: tuple[str, ...]) -> Iterator[dict[str, Any]]:
     # In real transcripts message.content is a list of blocks for tool turns but
     # a plain string for text turns — only iterate when it is a list of dicts.
-    content = (line_obj.get("message") or {}).get("content")
+    msg: dict[str, Any] = cast(dict[str, Any], line_obj.get("message") or {})
+    content: Any = msg.get("content")
     if not isinstance(content, list):
         return
-    for item in content:
-        if isinstance(item, dict) and item.get("type") == "tool_use" and item.get("name") in names:
-            yield item
+    for item in cast(list[Any], content):
+        if not isinstance(item, dict):
+            continue
+        block = cast(dict[str, Any], item)
+        if block.get("type") == "tool_use" and block.get("name") in names:
+            yield block
 
 
-def _pick_from_tasks(tasks):
+def _pick_from_tasks(tasks: list[dict[str, Any]]) -> tuple[str, str] | None:
     """Choose the active task from a managed-Task list (creation order). Active =
     the last in_progress, else the first pending. Returns (state, text) or None."""
     in_prog = [t for t in tasks if t.get("status") == "in_progress"]
@@ -1324,7 +1373,7 @@ def _pick_from_tasks(tasks):
     return None
 
 
-def _pick_from_todos(todos):
+def _pick_from_todos(todos: list[dict[str, Any]]) -> tuple[str, str] | None:
     """Choose the active item from a TodoWrite snapshot. Active = the first
     in_progress, else the first pending. Returns (state, text) or None."""
     in_prog = [t for t in todos if t.get("status") == "in_progress"]
@@ -1336,14 +1385,14 @@ def _pick_from_todos(todos):
     return None
 
 
-def _safe_session(s):
+def _safe_session(s: Any) -> bool:
     """A session id is used as a single path component under the tasks/todos dir.
     Reject anything with a path separator or parent ref so it cannot escape that
     directory (path traversal)."""
     return bool(s) and not re.search(r"[/\\]|\.\.", s)
 
 
-def _todo_from_tasks_dir(config_dir, session):
+def _todo_from_tasks_dir(config_dir: str, session: Any) -> tuple[str | None, str | None] | None:
     """Read Claude's materialized managed-Task state: one <id>.json per task under
     <config_dir>/tasks/<session>/. Returns (state, text) when task files exist
     (authoritative — may be (None, None) if all are done), else None to try the
@@ -1358,17 +1407,17 @@ def _todo_from_tasks_dir(config_dir, session):
     if not names:
         return None
     # Sort by numeric id so creation order (and thus "last in_progress") is stable.
-    tasks = []
+    tasks: list[dict[str, Any]] = []
     for n in sorted(names, key=lambda x: int(x[:-5]) if x[:-5].isdigit() else 0):
         try:
             with open(os.path.join(d, n), encoding="utf-8") as f:
-                tasks.append(json.load(f))
+                tasks.append(cast(dict[str, Any], json.load(f)))
         except (OSError, ValueError):
             continue
     return _pick_from_tasks(tasks) or (None, None)
 
 
-def _todo_from_todos_dir(config_dir, session):
+def _todo_from_todos_dir(config_dir: str, session: Any) -> tuple[str | None, str | None] | None:
     """Read Claude's materialized TodoWrite snapshot: the most recent
     <config_dir>/todos/<session>*-agent-*.json (a single todos array). Returns
     (state, text) when such a file exists, else None to try the next source."""
@@ -1385,37 +1434,39 @@ def _todo_from_todos_dir(config_dir, session):
     latest = max(names, key=lambda n: os.path.getmtime(os.path.join(d, n)))
     try:
         with open(os.path.join(d, latest), encoding="utf-8") as f:
-            todos = json.load(f)
+            todos: Any = json.load(f)
     except (OSError, ValueError):
         return None
     if not isinstance(todos, list):
         return None
-    return _pick_from_todos(todos) or (None, None)
+    return _pick_from_todos(cast(list[dict[str, Any]], todos)) or (None, None)
 
 
-def _todo_from_transcript(path):
+def _todo_from_transcript(  # pylint: disable=too-many-branches
+    path: str | None,
+) -> tuple[str | None, str | None]:
     """Last-resort fallback: replay the transcript JSONL to reconstruct task /
     todo state. O(transcript size) — used only when no materialized state exists
     (e.g. running outside Claude Code, or an unrecognized on-disk layout)."""
     if not path or not os.path.isfile(path):
         return None, None
 
-    tasks = []
+    tasks: list[dict[str, Any]] = []
     try:
         with open(path, encoding="utf-8") as fh:
-            todo_snapshots = []
+            todo_snapshots: list[list[dict[str, Any]]] = []
             for raw in fh:
                 raw = raw.strip()
                 if not raw:
                     continue
                 try:
-                    obj = json.loads(raw)
+                    obj: Any = json.loads(raw)
                 except ValueError:
                     continue
                 if not isinstance(obj, dict):
                     continue
-                for tu in _iter_tool_uses(obj, ("TaskCreate", "TaskUpdate")):
-                    inp = tu.get("input", {})
+                for tu in _iter_tool_uses(cast(dict[str, Any], obj), ("TaskCreate", "TaskUpdate")):
+                    inp: dict[str, Any] = cast(dict[str, Any], tu.get("input") or {})
                     if tu["name"] == "TaskCreate":
                         tasks.append({
                             "id": len(tasks) + 1,
@@ -1428,8 +1479,9 @@ def _todo_from_transcript(path):
                         for t in tasks:
                             if str(t["id"]) == tid and inp.get("status"):
                                 t["status"] = inp["status"]
-                for tu in _iter_tool_uses(obj, ("TodoWrite",)):
-                    todo_snapshots.append(tu.get("input", {}).get("todos", []))
+                for tu in _iter_tool_uses(cast(dict[str, Any], obj), ("TodoWrite",)):
+                    inp2: dict[str, Any] = cast(dict[str, Any], tu.get("input") or {})
+                    todo_snapshots.append(cast(list[dict[str, Any]], inp2.get("todos") or []))
     except OSError:
         return None, None
 
@@ -1440,7 +1492,8 @@ def _todo_from_transcript(path):
     return None, None
 
 
-def current_todo(path, session=None, config_dir=None):
+def current_todo(path: str | None, session: str | None = None,
+                 config_dir: str | None = None) -> tuple[str | None, str | None]:
     """Return (state, text) for the active TODO, or (None, None).
 
     Prefer Claude's materialized state on disk — the managed-Task files, then a
@@ -1474,7 +1527,7 @@ def current_todo(path, session=None, config_dir=None):
 # in the table. The auto setting is surfaced as a "[auto]" suffix in seg_effort.
 
 
-def _display_dir(work_dir, home):
+def _display_dir(work_dir: str, home: str) -> str:
     shown = work_dir
     if home and work_dir.startswith(home):
         shown = "~" + work_dir[len(home):]
@@ -1483,7 +1536,7 @@ def _display_dir(work_dir, home):
     return os.path.basename(work_dir.rstrip("/")) or shown
 
 
-def _dirty_mark(dirty, theme):
+def _dirty_mark(dirty: str, theme: "Theme") -> str:
     if dirty == "untracked":
         return f"{theme.c('RED')}✗{RESET}"
     if dirty == "modified":
@@ -1492,11 +1545,11 @@ def _dirty_mark(dirty, theme):
 
 
 # ── identity line ────────────────────────────────────────────────────────────
-def seg_path(ctx, avail, theme):
+def seg_path(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return f"{theme.c('BLUE')}{_display_dir(ctx.work_dir, ctx.home)}{RESET}"  # floor
 
 
-def seg_branch(ctx, avail, theme):
+def seg_branch(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     branch = ctx.branch
     if not branch:
         return None
@@ -1508,17 +1561,18 @@ def seg_branch(ctx, avail, theme):
                            f"{theme.c('GREY')}[{branch}]{RESET}"], avail)
 
 
-def seg_dirty(ctx, avail, theme):
+def seg_dirty(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     mark = _dirty_mark(ctx.dirty, theme)
     return _first_fitting([mark], avail) if mark else None
 
 
-def _trunc_cols(s, limit):
+def _trunc_cols(s: str, limit: int) -> str:
     """Truncate s to at most `limit` display columns, appending `…` if cut.
     Column-aware (uses char_width) so a wide/multibyte name can't blow the budget."""
     if sum(char_width(c) for c in s) <= limit:
         return s
-    out, width = [], 0
+    out: list[str] = []
+    width = 0
     for c in s:
         cw = char_width(c)
         if width + cw > limit - 1:          # reserve one column for the ellipsis
@@ -1528,7 +1582,7 @@ def _trunc_cols(s, limit):
     return "".join(out) + "…"
 
 
-def seg_worktree(ctx, avail, theme):
+def seg_worktree(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     # `worktree` names the ACTIVE linked worktree the session sits in — never a
     # list. Mirrors `dirty`'s "absence is the neutral state" convention: hidden
     # outside a repo. On the main checkout it shows a dimmed, struck `⎇ wt`
@@ -1542,7 +1596,7 @@ def seg_worktree(ctx, avail, theme):
     return _first_fitting([f"{theme.c('CYAN')}⎇ {name}{RESET}"], avail)
 
 
-def seg_todo(ctx, avail, theme):
+def seg_todo(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     state, text = ctx.todo_state, ctx.todo_text
     if not text:
         return None
@@ -1559,25 +1613,25 @@ def seg_todo(ctx, avail, theme):
 
 
 # ── model row ────────────────────────────────────────────────────────────────
-def seg_model(ctx, avail, theme):
+def seg_model(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     name = ctx.model_name or ctx.model_id
     if not name:
         return None
     return _first_fitting([f"{theme.c('CYAN')}{name}{RESET}"], avail)
 
 
-def seg_time_ago(ctx, avail, theme):
+def seg_time_ago(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     ago = ctx.ago
     if not ago:
         return None
     return _first_fitting([f"{theme.c('WHITE')}{ago}{RESET}"], avail)
 
 
-def seg_clock(ctx, avail, theme):
+def seg_clock(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return _first_fitting([_icon("⏰", ctx.clock)], avail)
 
 
-def seg_effort(ctx, avail, theme):
+def seg_effort(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     level = ctx.effort
     if not level:
         return None
@@ -1598,26 +1652,27 @@ def seg_effort(ctx, avail, theme):
     return _first_fitting(variants, avail)
 
 
-def seg_lines(ctx, avail, theme):
+def seg_lines(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     body = (f"{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(ctx.added)}{RESET}"
             f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(ctx.removed)}{RESET}")
     return _first_fitting([_icon("📃", body)], avail)
 
 
-def seg_cost(ctx, avail, theme):
+def seg_cost(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return _first_fitting([_icon("🪙", f"${float(ctx.cost):.3f}")], avail)
 
 
-def seg_total_time(ctx, avail, theme):
+def seg_total_time(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return _first_fitting([_icon("💬", fmt_time_ms(ctx.total_ms))], avail)
 
 
-def seg_api_time(ctx, avail, theme):
+def seg_api_time(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return _first_fitting([_icon("📡", fmt_time_ms(ctx.api_ms))], avail)
 
 
 # ── diagnostics row ──────────────────────────────────────────────────────────
-def seg_render_time(ctx, avail, theme):    # status-line's own run time, SLO/SLA-colored
+# status-line's own run time, SLO/SLA-colored
+def seg_render_time(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     t0 = ctx.t_start
     if t0 is None:                      # not timed (e.g. direct builder calls) -> omit
         return None
@@ -1626,7 +1681,8 @@ def seg_render_time(ctx, avail, theme):    # status-line's own run time, SLO/SLA
     return _first_fitting([_icon("⏱", f"{color}{fmt_duration(elapsed)}{RESET}")], avail)
 
 
-def seg_slowest(ctx, avail, theme):        # slowest single segment this render, SLO/SLA-colored
+# slowest single segment this render, SLO/SLA-colored
+def seg_slowest(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     slow = ctx.slowest
     if not slow:                            # timing off (segment disabled) -> omit
         return None
@@ -1637,12 +1693,12 @@ def seg_slowest(ctx, avail, theme):        # slowest single segment this render,
     return _first_fitting([_icon("🐌", f"{name} {dur}"), _icon("🐌", dur)], avail)
 
 
-def seg_dimensions(ctx, avail, theme):
+def seg_dimensions(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     mark = "?" if ctx.dim_assumed else ""
     return _first_fitting([f"{ctx.cols}×{ctx.lines}{mark}"], avail)
 
 
-def seg_context(ctx, avail, theme):
+def seg_context(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     pct = int(ctx.context_pct)
     color = pick_color(pct, theme.ramps["context"])
     pct_only = _icon("📊", f"{color}{pct}%{RESET}")
@@ -1657,7 +1713,7 @@ def seg_context(ctx, avail, theme):
     return _first_fitting([full, mid, pct_only], avail) or pct_only  # floor
 
 
-def seg_chat_size(ctx, avail, theme):
+def seg_chat_size(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     n = ctx.chat_bytes
     if n is None:
         return None
@@ -1665,14 +1721,14 @@ def seg_chat_size(ctx, avail, theme):
     return _first_fitting([_icon("💾", f"{color}{fmt_bytes(n)}{RESET}")], avail)
 
 
-def seg_memory(ctx, avail, theme):
+def seg_memory(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     n = ctx.mem_bytes
     if n is None:
         return None
     return _first_fitting([_icon("🧮", fmt_bytes(n))], avail)
 
 
-def _reset_suffix(reset, detail):
+def _reset_suffix(reset: int | None, detail: str) -> str:
     """Reset stamp at the requested detail: 'long' | 'short' | 'none'.
     Pure formatting of resets_at in local time — never compared against the
     clock, so a wrong system time or a timezone change can't change what shows."""
@@ -1684,26 +1740,26 @@ def _reset_suffix(reset, detail):
     return f" (↺ {dt.strftime('%m-%d %H:%M')})"        # e.g. 06-07 14:10
 
 
-def _rate_str(rate_limits, detail, theme):
+def _rate_str(rate_limits: dict[str, Any], detail: str, theme: "Theme") -> str | None:
     # Show every bucket that reports a percentage. Visibility never depends on
     # the clock — the reset stamp is shown only when there's room (via detail),
     # so timezone shifts / clock skew can't make a bucket vanish.
-    parts = []
+    parts: list[str] = []
     for key in sorted(rate_limits):
-        info = rate_limits[key] or {}
-        pct = info.get("used_percentage")
-        if pct is None:
+        info: dict[str, Any] = cast(dict[str, Any], rate_limits[key] or {})
+        pct_raw: Any = info.get("used_percentage")
+        if pct_raw is None:
             continue
-        reset = info.get("resets_at")
-        if reset is not None:
-            reset = int(reset)
+        pct = float(pct_raw)
+        reset_raw: Any = info.get("resets_at")
+        reset: int | None = int(reset_raw) if reset_raw is not None else None
         color = rate_color(pct, theme)
         suffix = _reset_suffix(reset, detail)
-        parts.append(f"{rate_key_label(key)}: {color}{round(float(pct))}%{RESET}{suffix}")
+        parts.append(f"{rate_key_label(key)}: {color}{round(pct)}%{RESET}{suffix}")
     return _icon("⚡", " | ".join(parts)) if parts else None
 
 
-def seg_rate_limits(ctx, avail, theme):
+def seg_rate_limits(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     rate_limits = ctx.rate_limits
     if not rate_limits:
         return None
@@ -1715,15 +1771,17 @@ def seg_rate_limits(ctx, avail, theme):
 # Editable surface (SEGMENTS + LAYOUT) is at the top of the file; the registry
 # is DERIVED by convention from the seg_* functions above — no hand-maintained
 # key->fn list to drift (FR-A.3, D7).
-def _discover_builders():
+def _discover_builders() -> dict[str, "Builder"]:
     """The built-in builder map, derived by convention from this module's
     `seg_<key>` functions (the homologous suffix is the segment key). Replaces the
     hand-maintained BUILDERS literal (FR-A.3, D7): adding a `seg_x` auto-registers
     it. SEGMENTS/LAYOUT stay explicit defaults tables — discovery removes only the
     redundant name->fn list, never the tables that encode intent."""
-    return {name[len("seg_"):]: fn
-            for name, fn in globals().items()
-            if name.startswith("seg_") and callable(fn)}
+    # cast: globals() returns dict[str, Any]; the comprehension filters to seg_*
+    # callables matching the Builder protocol — types are erased at this stdlib boundary.
+    return cast(dict[str, "Builder"], {name[len("seg_"):]: fn
+                                       for name, fn in globals().items()
+                                       if name.startswith("seg_") and callable(fn)})
 
 
 BUILDERS = _discover_builders()   # module-level snapshot; same shape as the old literal
@@ -1737,13 +1795,22 @@ BUILDERS = _discover_builders()   # module-level snapshot; same shape as the old
 #                     [id=<slug>] [timeout=<s>] [ttl=<s>]
 # It is modeled as a synthetic builder inserted into the resolved layout, so the
 # existing packer handles placement/priority/overflow unchanged.
-ExtSpec = namedtuple("ExtSpec", "id path line position timeout ttl cache_path")
+class ExtSpec(NamedTuple):
+    """Metadata for one external segment provider discovered from the segments dir."""
+
+    id: str
+    path: str
+    line: int
+    position: tuple[str, str]
+    timeout: float
+    ttl: int
+    cache_path: str
 
 
 _SEG_HEADER_RE = re.compile(r"^#\s*ai-kit-segment:\s*(.*?)\s*$")
 
 
-def parse_segment_header(lines):
+def parse_segment_header(lines: list[str]) -> dict[str, Any] | None:
     """Parse the `# ai-kit-segment:` header from a file's first lines.
 
     Returns a dict of the raw string fields present (`line`/`id`/`timeout`/`ttl`
@@ -1753,7 +1820,7 @@ def parse_segment_header(lines):
         m = _SEG_HEADER_RE.match(ln)
         if m is None:
             continue
-        fields = {}
+        fields: dict[str, Any] = {}
         for tok in m.group(1).split():
             if tok in ("start", "end"):
                 fields["position"] = (tok, "")
@@ -1767,7 +1834,7 @@ def parse_segment_header(lines):
     return None
 
 
-def discover_external(directory, default_ttl, cache_dir):
+def discover_external(directory: str, default_ttl: int, cache_dir: str) -> list["ExtSpec"]:
     """Scan `directory` for executable providers and return a list of ExtSpec,
     sorted by (filename, id). Non-executable files are skipped with a dim warning.
     A file with no header still loads with all defaults (line=0 => last row at
@@ -1775,7 +1842,7 @@ def discover_external(directory, default_ttl, cache_dir):
     `cache_dir` is the per-provider output cache directory (…/ai-kit/segments)."""
     if not directory or not os.path.isdir(directory):
         return []
-    specs = []
+    specs: list[ExtSpec] = []
     for name in sorted(os.listdir(directory)):
         path = os.path.join(directory, name)
         if not os.path.isfile(path):
@@ -1812,7 +1879,7 @@ def discover_external(directory, default_ttl, cache_dir):
     return specs
 
 
-def _sanitize_external(text, avail):
+def _sanitize_external(text: str, avail: int) -> str | None:
     """First non-empty line of `text`, SGR colors kept, every other control/CSI/OSC
     sequence stripped, width-truncated to `avail`. None if nothing renderable."""
     line = next((c for c in text.splitlines() if c.strip()), "").rstrip()
@@ -1827,13 +1894,13 @@ def _sanitize_external(text, avail):
     return _truncate_visible(line, avail) or None
 
 
-def _position_str(position):
+def _position_str(position: tuple[str, str]) -> str:
     """('after','clock') -> 'after:clock'; ('end','') -> 'end'."""
     kind, ref = position
     return f"{kind}:{ref}" if ref else kind
 
 
-def _cache_read(spec):
+def _cache_read(spec: "ExtSpec") -> str | None:
     """Cached raw output line if present and younger than ttl, else None.
     ttl <= 0 always misses (forces a re-run every render)."""
     if spec.ttl <= 0:
@@ -1851,7 +1918,7 @@ def _cache_read(spec):
         return None
 
 
-def _cache_write(spec, text):
+def _cache_write(spec: "ExtSpec", text: str) -> None:
     """Best-effort: persist raw output. Unwritable cache dir -> silently skip."""
     try:
         os.makedirs(os.path.dirname(spec.cache_path), exist_ok=True)
@@ -1861,7 +1928,7 @@ def _cache_write(spec, text):
         pass
 
 
-def _run_provider(spec, ctx, avail):
+def _run_provider(spec: "ExtSpec", ctx: "Context", avail: int) -> str | None:
     """Spawn the provider with the status JSON + segment block on stdin, the
     AI_KIT_SEGMENT_* env mirror, and cwd = workspace dir. Returns the raw first
     non-empty stdout line, or None on timeout / non-zero exit / no output."""
@@ -1886,7 +1953,7 @@ def _run_provider(spec, ctx, avail):
     return None
 
 
-def run_external(spec, ctx, avail):
+def run_external(spec: "ExtSpec", ctx: "Context", avail: int) -> str | None:
     """TTL-cached, timeout-bounded provider invocation. Returns the sanitized,
     width-fitted segment string, or None to omit the segment."""
     raw_line = _cache_read(spec)
@@ -1898,15 +1965,15 @@ def run_external(spec, ctx, avail):
     return _sanitize_external(raw_line, avail)
 
 
-def make_external_builder(spec):
+def make_external_builder(spec: "ExtSpec") -> "Builder":
     """Wrap an ExtSpec as a seg_x(ctx, avail, theme)-shaped builder so pack_line
     treats it exactly like a built-in. theme is unused (the provider colors itself)."""
-    def _builder(ctx, avail, theme):
+    def _builder(ctx: "Context", avail: int, theme: "Theme") -> str | None:
         return run_external(spec, ctx, avail)
     return _builder
 
 
-def _builders_for(cfg):
+def _builders_for(cfg: "Config") -> dict[str, "Builder"]:
     """The built-in BUILDERS merged with one synthetic builder per external
     provider (keyed by id). External ids never collide with built-ins by design;
     if a user names one after a built-in, the external wins for that render."""
@@ -1934,7 +2001,10 @@ def _builders_for(cfg):
 #     whole render, not one builder, so they are built in pass 2 (after every
 #     non-meta build is timed) and placed at their LAYOUT position in assembly —
 #     never forced last, never crowned as the culprit.
-def safe_build(key, ctx, avail, theme, builders=None):
+def safe_build(
+    key: str, ctx: "Context", avail: int, theme: "Theme",
+    builders: dict[str, "Builder"] | None = None,
+) -> str | None:
     """Invoke one segment builder in isolation. On ANY exception, record `key`
     in `ctx.failed` and return a width-bounded warning marker instead of
     propagating — so a single bad segment can never blank the whole bar. The
@@ -1951,7 +2021,7 @@ def safe_build(key, ctx, avail, theme, builders=None):
         return f"{_WARN}⚠{RESET}"
 
 
-def _crown_slowest(ctx, key, ns):
+def _crown_slowest(ctx: "Context", key: str, ns: int) -> None:
     """Record the slowest non-meta, non-crashed segment build this render — the
     single place the running max is tracked (FR-R.1). The meta segments report
     the whole render, not one builder, so they are never the culprit; a crashed
@@ -1963,7 +2033,65 @@ def _crown_slowest(ctx, key, ns):
         ctx.slowest = (key, ns)
 
 
-def pack_line(keys, ctx, cols, cfg=None, theme=None, builders=None):
+def _pass1_non_meta(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    enabled: list[str], ctx: "Context", budget: int, sep_w: int,
+    theme: "Theme", builders: dict[str, "Builder"],
+) -> dict[str, str]:
+    """Pass 1: build + time every non-meta enabled segment, crowning the slowest."""
+    built: dict[str, str] = {}
+    used_est = 0
+    for key in enabled:
+        if key in _SLOWEST_META:
+            continue
+        sep = sep_w if used_est else 0
+        avail = max(budget - used_est - sep, 0)
+        t0 = time.perf_counter_ns()
+        s = safe_build(key, ctx, avail, theme, builders)
+        ns = time.perf_counter_ns() - t0
+        if not s:
+            continue
+        if key in PINNED or visible_width(s) <= avail:
+            built[key] = s
+            used_est += visible_width(s) + sep
+            _crown_slowest(ctx, key, ns)
+    return built
+
+
+def _pass2_meta(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    enabled: list[str], ctx: "Context", budget: int,
+    theme: "Theme", builders: dict[str, "Builder"],
+    built: dict[str, str],
+) -> None:
+    """Pass 2: build meta segments now that all timings/max are known (in-place)."""
+    for key in enabled:
+        if key in _SLOWEST_META:
+            s = safe_build(key, ctx, budget, theme, builders)
+            if s:
+                built[key] = s
+
+
+def _assemble_line(
+    enabled: list[str], built: dict[str, str], budget: int, sep_w: int,
+) -> str:
+    """Assemble in layout order, fitting left->right with every width known."""
+    kept: list[str] = []
+    used = 0
+    for key in enabled:
+        s = built.get(key)
+        if not s:
+            continue
+        sep = sep_w if kept else 0
+        if key in PINNED or used + sep + visible_width(s) <= budget:
+            kept.append(s)
+            used += visible_width(s) + sep
+    return SEP.join(kept)
+
+
+def pack_line(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    keys: list[str], ctx: "Context", cols: int,
+    cfg: Optional["Config"] = None, theme: Optional["Theme"] = None,
+    builders: dict[str, "Builder"] | None = None,
+) -> str:
     """Best-fit pack enabled segments into cols - RIGHT_MARGIN, in two passes.
 
     The meta segments (`render_time`, `slowest`) report the whole render, so they
@@ -1981,45 +2109,13 @@ def pack_line(keys, ctx, cols, cfg=None, theme=None, builders=None):
     builders = builders if builders is not None else _builders_for(cfg)
     budget = cols - RIGHT_MARGIN
     sep_w = visible_width(SEP)
-
-    enabled = [k for k in keys if cfg.segments.get(k, False)]   # flag gate
-    built = {}
-    # Pass 1: build + time every non-meta enabled segment, crowning the slowest.
-    used_est = 0
-    for key in enabled:
-        if key in _SLOWEST_META:
-            continue
-        sep = sep_w if used_est else 0
-        avail = max(budget - used_est - sep, 0)
-        t0 = time.perf_counter_ns()
-        s = safe_build(key, ctx, avail, theme, builders)
-        ns = time.perf_counter_ns() - t0
-        if not s:
-            continue
-        if key in PINNED or visible_width(s) <= avail:
-            built[key] = s
-            used_est += visible_width(s) + sep
-            _crown_slowest(ctx, key, ns)
-    # Pass 2: build the meta segments now that timings/max are known.
-    for key in enabled:
-        if key in _SLOWEST_META:
-            s = safe_build(key, ctx, budget, theme, builders)
-            if s:
-                built[key] = s
-    # Assemble in layout order, fitting left->right with every width known.
-    kept, used = [], 0
-    for key in enabled:
-        s = built.get(key)
-        if not s:
-            continue
-        sep = sep_w if kept else 0
-        if key in PINNED or used + sep + visible_width(s) <= budget:
-            kept.append(s)
-            used += visible_width(s) + sep
-    return SEP.join(kept)
+    enabled = [k for k in keys if cfg.segments.get(k, False)]
+    built = _pass1_non_meta(enabled, ctx, budget, sep_w, theme, builders)
+    _pass2_meta(enabled, ctx, budget, theme, builders, built)
+    return _assemble_line(enabled, built, budget, sep_w)
 
 
-def diagnostic_line(failed):
+def diagnostic_line(failed: set[str]) -> str | None:
     """One line naming the segments that crashed this render, pointing at the
     doctor. Returns None when nothing failed (no cost on the happy path)."""
     if not failed:
@@ -2031,14 +2127,16 @@ def diagnostic_line(failed):
             f"run the doctor: {_doctor_cmd()}{RESET}")
 
 
-def render(ctx, cfg=None, theme=None):
+def render(
+    ctx: "Context", cfg: Optional["Config"] = None, theme: Optional["Theme"] = None
+) -> list[str]:
     """Render up to len(cfg.layout) lines, gated by terminal height and width.
     A trailing diagnostic line is appended only when a builder crashed. Reads
     geometry (cols/lines) and the shared `failed` set off `ctx`."""
     cfg = cfg or ctx.config
     theme = theme or ctx.theme
     builders = _builders_for(cfg)
-    out = []
+    out: list[str] = []
     for ln in cfg.layout:
         if ctx.lines < ln.min_rows:
             continue
@@ -2131,7 +2229,7 @@ Environment variables:
 Config precedence (low -> high): built-in defaults < TOML file < env."""
 
 
-def cmd_print_config(cfg, env):
+def cmd_print_config(cfg: "Config", env: Env) -> str:
     """Resolved config as pretty JSON (no rendering)."""
     # The top-level external `ttl`/`dir` are the GLOBAL resolved defaults
     # (defaults < [external] file < env) — resolved the same way load_config
@@ -2161,7 +2259,9 @@ def cmd_print_config(cfg, env):
     }, indent=2)
 
 
-def validate_config_file(path, env):
+def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements,too-many-branches
+    path: str, env: Env,
+) -> list[str]:
     """Return a list of human-readable error strings for the config at path
     (empty list = valid). Checks: parseability, unknown segment keys, unknown
     palette keys, palette color values, [[line]] segments that are not real
@@ -2175,59 +2275,62 @@ def validate_config_file(path, env):
         return [f"{path}: no such file"]
     except (OSError, tomllib.TOMLDecodeError) as e:
         return [f"{path}: {e}"]
-    errors = []
+    errors: list[str] = []
     ext_dir, ext_ttl = _resolve_external(raw, env)
     seg_cache = os.path.join(_cache_base(env), "segments")
     ext_ids = {s.id for s in discover_external(ext_dir, ext_ttl, seg_cache)}
     known_segments = set(default_config().segments) | ext_ids
-    for k in (raw.get("segments") or {}):
+    for k in cast(dict[str, Any], raw.get("segments") or {}):
         if k not in known_segments:
             errors.append(f"unknown segment key: {k}")
-    for k in (raw.get("palette") or {}):
+    for k in cast(dict[str, Any], raw.get("palette") or {}):
         if k not in _PALETTE_DEFAULTS:
             errors.append(f"unknown palette key: {k}")
-    for name, value in (raw.get("palette") or {}).items():
+    for name, value in cast(dict[str, Any], raw.get("palette") or {}).items():
         if name in _PALETTE_DEFAULTS and parse_color(str(value), palette=None) is None:
             errors.append(f"bad palette color: {name} = {value!r}")
-    for i, line in enumerate(raw.get("line") or []):
-        for seg in line.get("segments", []):
+    for i, line in enumerate(cast(list[Any], raw.get("line") or [])):
+        line_dict = cast(dict[str, Any], line) if isinstance(line, dict) else {}
+        for seg in cast(list[Any], line_dict.get("segments") or []):
             if seg not in BUILDERS and seg not in ext_ids:
                 errors.append(f"line[{i}] references unknown segment: {seg}")
     resolved_palette = _resolve_palette(
-        {k: str(v) for k, v in (raw.get("palette") or {}).items()
+        {str(k): str(v) for k, v in cast(dict[str, Any], raw.get("palette") or {}).items()
          if k in _PALETTE_DEFAULTS})
-    for band, table in (raw.get("ramp") or {}).items():
+    for band, table in cast(dict[str, Any], raw.get("ramp") or {}).items():
         if band not in _RAMP_DEFAULTS:
             errors.append(f"unknown ramp: {band}")
             continue
         if not isinstance(table, dict):
             errors.append(f"ramp [{band}] must be a table")
             continue
-        for thr, spec in table.items():
+        for thr, spec in cast(dict[Any, Any], table).items():
             try:
-                _parse_threshold(thr)
+                _parse_threshold(str(thr))
             except ValueError:
                 errors.append(f"ramp [{band}] bad threshold: {thr!r}")
             if parse_color(str(spec), resolved_palette) is None:
                 errors.append(f"ramp [{band}] bad color: {spec!r}")
-    for k, v in (raw.get("git") or {}).items():
+    for k, v in cast(dict[str, Any], raw.get("git") or {}).items():
         problem = _git_key_problem(k, v)
         if problem == "unknown":
             errors.append(f"unknown [git] key: {k}")
         elif problem == "bad_ttl":
             errors.append(f"[git] cache_ttl must be an integer, got {v!r}")
-    ext = raw.get("external")
+    ext: Any = raw.get("external")
     if ext is not None:
         if not isinstance(ext, dict):
             errors.append("[external] must be a table")
         else:
-            for k in ext:
+            ext_dict: dict[str, Any] = cast(dict[str, Any], ext)
+            for k in ext_dict:
                 if k not in ("ttl", "dir"):
                     errors.append(f"unknown [external] key: {k}")
-            if "ttl" in ext and (not isinstance(ext["ttl"], int) or isinstance(ext["ttl"], bool)):
-                errors.append(f"[external] ttl must be an integer, got {ext['ttl']!r}")
-            if "dir" in ext and not isinstance(ext["dir"], str):
-                errors.append(f"[external] dir must be a string, got {ext['dir']!r}")
+            ttl_val = ext_dict.get("ttl")
+            if "ttl" in ext_dict and (not isinstance(ttl_val, int) or isinstance(ttl_val, bool)):
+                errors.append(f"[external] ttl must be an integer, got {ttl_val!r}")
+            if "dir" in ext_dict and not isinstance(ext_dict["dir"], str):
+                errors.append(f"[external] dir must be a string, got {ext_dict['dir']!r}")
     return errors
 
 
@@ -2247,7 +2350,7 @@ _DOCTOR_SAMPLE = {
 }
 
 
-def _dry_render_failures(cfg, theme, env):
+def _dry_render_failures(cfg: "Config", theme: "Theme", env: Env) -> set[str]:
     """Run EVERY builder once against the sample input — including segments that
     are disabled or absent from the layout — and return the set of segment keys
     whose builder raised. Dry-rendering only the enabled+reachable subset would
@@ -2270,15 +2373,15 @@ def _dry_render_failures(cfg, theme, env):
     return ctx.failed
 
 
-def cmd_doctor(env):
+def cmd_doctor(env: Env) -> int:
     """Validate the resolved config AND dry-render every segment builder (not just
     the enabled ones). Prints a report; returns process exit code (0 healthy, 1 if
     any problem)."""
     path = config_path(env)
-    errors = []
+    errors: list[str] = []
     if os.path.exists(path):
         errors = [f"{path}: {e}" for e in validate_config_file(path, env)]
-    failed = set()
+    failed: set[str] = set()
     cfg = load_config(env)                         # never raises (degrades to defaults)
     try:
         theme = build_theme(cfg)
@@ -2296,7 +2399,7 @@ def cmd_doctor(env):
     return 0
 
 
-def cmd_check(path, env):
+def cmd_check(path: str, env: Env) -> int:
     """Validate a config file; print result. Return process exit code (0/1)."""
     path = path or config_path(env)
     errors = validate_config_file(path, env)

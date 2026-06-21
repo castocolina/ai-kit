@@ -680,7 +680,9 @@ def unlink_one(link_path, dry, counts):
         os.remove(link_path)
 
 
-def prune_stale(claude_dir, install_dir, present, tty, dry, counts):
+def prune_stale(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    claude_dir, install_dir, present, tty, dry, counts,
+):
     """B − A: ai-kit symlinks under ~/.claude whose repo entry no longer exists
     (deleted upstream). `present` maps cat -> set(names) still in the repo.
     Interactive: warn by name, offer to prune (confirmed). Headless: auto-remove
@@ -749,7 +751,9 @@ def predecessor_candidates(claude_dir, install_dir, entries):
     return out
 
 
-def adopt_predecessor_links(claude_dir, install_dir, entries, tty, dry, counts):
+def adopt_predecessor_links(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    claude_dir, install_dir, entries, tty, dry, counts,
+):
     """Resolve links from a previous ai-kit install. Interactive: list them and
     ask whether to re-point to THIS install (default) or drop them. Headless:
     warn only and leave them alone — never silently clobber a foreign link.
@@ -857,7 +861,9 @@ class Selection:
         return out
 
 
-def select_skills(entries, installed, tty):
+def select_skills(  # pylint: disable=too-many-locals,too-many-branches
+    entries, installed, tty,
+):
     """Compute the chosen set per category. Headless (tty None): return the
     default selection with no prompting. Interactive: render a numbered toggle
     list ([x]/[ ], accent-on/dim-off, one-line note), let the user flip rows by
@@ -1059,7 +1065,9 @@ def _find_line(layout, seg):
     return None, None
 
 
-def _apply_wizard_command(state, cmd):
+def _apply_wizard_command(  # pylint: disable=too-many-return-statements
+    state, cmd,
+):
     """Pure state transition for one wizard command. Returns (new_state, error):
     on success error is None; on a bad command new_state is `state` unchanged and
     error is a human message. Recognized: a segment number, `move <seg> up|down`,
@@ -1287,7 +1295,9 @@ def _parse_key(token):
     }.get(token)
 
 
-def _chip_row(glyphs, label, enabled, focused, width, color=True):
+def _chip_row(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    glyphs, label, enabled, focused, width, color=True,
+):
     """One chip row, truncated to `width`. Focused row is reverse-video
     (`\\033[7m`) — a luminance inversion that survives NO_COLOR, unlike a
     color-only cue; the `❯` gutter is the redundant second focus signal."""
@@ -1301,7 +1311,9 @@ def _chip_row(glyphs, label, enabled, focused, width, color=True):
     return body
 
 
-def _chip_frame(selection, glyphs, cols, rows, preview=None, color=True):
+def _chip_frame(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    selection, glyphs, cols, rows, preview=None, color=True,
+):
     """Build the visible lines of one mode-A frame (PURE — no terminal I/O):
     a windowed slice of chip rows (focused row reverse-video), `▲/▼ N more`
     edge affordances when the list overflows, an optional `preview ▏` footer,
