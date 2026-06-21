@@ -1602,6 +1602,22 @@ def current_todo(path, session=None, config_dir=None):
 
 
 # ═══ Packing + render ════════════════════════════════════════════════════════
+# RENDER CONTRACT (how a line becomes text):
+#   * One registry, one gate. Built-in and external segments share a single
+#     name->builder map (`_builders_for`) and a single on/off gate
+#     (`cfg.segments.get(name, False)`). Every builder is `seg_x(data, avail,
+#     theme) -> str | None` and is interchangeable to the packer.
+#   * One guarded entry. `safe_build` is the only place a builder is called; on
+#     any exception it records the key in `failed` and returns a width-bounded
+#     ⚠ marker, so one bad segment can never blank the bar (never-blank).
+#   * One measured pass. `pack_line` times EVERY non-meta build and
+#     `_crown_slowest` tracks the single running max into `data["slowest"]`. With
+#     the lazy data map, that bracket also captures the segment's first-read
+#     probe cost — so the crowned time is the segment's REAL cost (FR-R.2).
+#   * Two meta segments. `render_time` and `slowest` (`_SLOWEST_META`) report the
+#     whole render, not one builder, so they are built in pass 2 (after every
+#     non-meta build is timed) and placed at their LAYOUT position in assembly —
+#     never forced last, never crowned as the culprit.
 def safe_build(key, data, avail, theme, failed, builders=None):
     """Invoke one segment builder in isolation. On ANY exception, record `key`
     in the shared `failed` set and return a width-bounded warning marker instead
