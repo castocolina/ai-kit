@@ -745,39 +745,38 @@ class TestProcAndGit(unittest.TestCase):
             self.assertEqual(snap.dirty, "untracked")   # ?? present -> untracked
             self.assertFalse(snap.is_worktree)          # git-dir == git-common-dir
 
-    def test_untracked_flag_follows_dirty(self):
-        # untracked=False adds --untracked-files=no; True omits it.
+    def test_git_snapshot_always_does_full_untracked_walk(self):
+        # The probe owns its policy: it ALWAYS does the full untracked walk (no
+        # per-call gating knob). Laziness — not a flag — gates whether it runs.
         env = self._home_env()
         cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
-        for untracked, expect_flag in ((False, True), (True, False)):
-            seen = []
-            def fake_run(cmd, *, _seen=seen, **kw):
-                _seen.append(cmd)
-                class R:
-                    returncode = 0
-                    stdout = "## main\n"
-                return R()
-            with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-                sl.git_snapshot(".", cfg, untracked=untracked)
-            status_cmd = next(c for c in seen if "status" in c)
-            self.assertEqual("--untracked-files=no" in status_cmd, expect_flag, untracked)
+        seen = []
+        def fake_run(cmd, *, _seen=seen, **kw):
+            _seen.append(cmd)
+            class R:
+                returncode = 0
+                stdout = "## main\n"
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            sl.git_snapshot(".", cfg)
+        status_cmd = next(c for c in seen if "status" in c)
+        self.assertNotIn("--untracked-files=no", status_cmd)   # always the full walk
 
-    def test_worktree_probe_follows_flag(self):
-        # want_worktree=False skips the rev-parse call entirely.
+    def test_git_snapshot_always_runs_worktree_probe(self):
+        # The probe always runs the worktree rev-parse (no want_worktree knob);
+        # laziness gates whether git_snapshot is called at all, not this rev-parse.
         env = self._home_env()
         cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
-        for want, expect in ((False, False), (True, True)):
-            seen = []
-            def fake_run(cmd, *, _seen=seen, **kw):
-                _seen.append(cmd)
-                class R:
-                    returncode = 0
-                    stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
-                return R()
-            with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-                sl.git_snapshot(".", cfg, want_worktree=want)
-            ran_revparse = any("rev-parse" in c for c in seen)
-            self.assertEqual(ran_revparse, expect, want)
+        seen = []
+        def fake_run(cmd, *, _seen=seen, **kw):
+            _seen.append(cmd)
+            class R:
+                returncode = 0
+                stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            sl.git_snapshot(".", cfg)
+        self.assertTrue(any("rev-parse" in c for c in seen))
 
     def test_git_snapshot_clean_and_worktree_name(self):
         def fake_run(cmd, **kw):

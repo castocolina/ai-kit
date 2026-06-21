@@ -1332,7 +1332,7 @@ def _worktree_info_cached(work_dir, ttl, cache_base):
     return info
 
 
-def git_snapshot(work_dir, config=None, untracked=True, want_worktree=True):
+def git_snapshot(work_dir, config=None):
     """The single git probe behind the `branch`, `dirty`, and `worktree` segments.
 
     `config` is the resolved Config object — the probe reads its cache TTL and
@@ -1340,22 +1340,15 @@ def git_snapshot(work_dir, config=None, untracked=True, want_worktree=True):
     test calls with no Config) falls back to the built-in defaults.
 
     Returns GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name). `branch`
-    and `dirty` come from one always-fresh `git status --porcelain --branch`; the
-    worktree rev-parse is cached ~ttl s on disk under cache_base/git/ (it rarely
-    changes). Each call is gated on what the caller will actually render:
-      * untracked=False adds --untracked-files=no, skipping git's untracked-file
-        walk (the slow part of `status` on large trees). Pass it when `dirty` is
-        off; dirty then can't report "untracked" (only modified/clean).
-      * want_worktree=False skips the rev-parse (and its cache) entirely; in_repo,
-        is_worktree, wt_name stay at their defaults. Pass it when `worktree` is off.
-    (untracked/want_worktree stay for now — Task 3.2 removes them once laziness
-    fully gates the call.)"""
+    and `dirty` come from one always-fresh `git status --porcelain --branch`
+    (full untracked walk); the worktree rev-parse is cached ~ttl s on disk under
+    cache_base/git/ (it rarely changes). The probe owns its policy and always
+    does the full work — there are no per-call gating knobs: laziness is the
+    compute gate (Context._git only runs when an enabled git segment reads a git
+    field, so a disabled git segment never triggers the probe at all)."""
     ttl = (config.git or {}).get("cache_ttl", _GIT_CACHE_TTL) if config else _GIT_CACHE_TTL
     cache_base = config.cache_base if config else ""
-    status_args = ["status", "--porcelain", "--branch"]
-    if not untracked:
-        status_args.append("--untracked-files=no")
-    out = subprocess.run(["git", "-C", work_dir, *status_args],
+    out = subprocess.run(["git", "-C", work_dir, "status", "--porcelain", "--branch"],
                          capture_output=True, text=True,
                          check=False).stdout.splitlines()
     branch = _branch_from_porcelain(out[0] if out else "")
@@ -1366,9 +1359,7 @@ def git_snapshot(work_dir, config=None, untracked=True, want_worktree=True):
         dirty = "modified"
     else:
         dirty = "clean"
-    in_repo, is_worktree, wt_name = False, False, ""
-    if want_worktree:
-        in_repo, is_worktree, wt_name = _worktree_info_cached(work_dir, ttl, cache_base)
+    in_repo, is_worktree, wt_name = _worktree_info_cached(work_dir, ttl, cache_base)
     return GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name)
 
 
