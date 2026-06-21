@@ -302,7 +302,13 @@ The already-spaced builders — convert their icon prefix to `_icon` so no spaci
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m unittest tests.test_status_line.TestNoCollapsedIcons tests.test_status_line.TestCooperativeBuilders -v`
-Expected: PASS. Then full module: `python3 -m unittest tests.test_status_line -v` — any failures here are existing tests asserting old glued/double-space output; update those expected strings to the corrected form (this is the intended FR-R.5 change, not a regression).
+Expected: PASS. Then run the full module and surface any remaining failures:
+
+```bash
+python3 -m unittest tests.test_status_line -v 2>&1 | grep -i fail
+```
+
+Any failures printed are existing tests that assert the old collapsed/double-space icon format. For each, open `tests/test_status_line.py`, find the test method named in the output, and update its expected string to the corrected icon→space form — e.g. `"⏰14:30"` → `"⏰ 14:30"`, `"⏸  pending…"` → `"⏸️ pending…"`. Re-run `python3 -m unittest tests.test_status_line -v` after each update until the grep output is empty. These are the intended FR-R.5 changes, not regressions.
 
 - [ ] **Step 5: Commit**
 
@@ -574,6 +580,9 @@ class _RenderData(dict):
     def _ensure(self, key):
         if key not in self and key in self._lazy:
             self._lazy.pop(key)()          # run once; thunk does self.update(...)
+            # Alias keys (e.g. "dirty", "worktree") that share a thunk with
+            # "branch" remain in _lazy after first access — intentional and
+            # harmless: the `key not in self` guard above prevents re-execution.
 
     def __missing__(self, key):
         if key in self._lazy:
@@ -884,24 +893,33 @@ git add tools/status-line.py tests/test_status_line.py tests/fixtures/golden
 git commit -m "refactor(status-line): two-pass pack; slowest adjacent to render_time, drop last-on-line workaround (FR-R.3)"
 ```
 
-### Task 2.5: Document the contract in-file + `/simplify` + `/reducing-entropy`
+### Task 2.5: Document the contract in-file + dead-code/redundancy cleanup
 
 **Files:**
 - Modify: `tools/status-line.py` (the HOW TO CUSTOMIZE banner ~1673; add a short "render contract" note)
 
 - [ ] **Step 1: Add an in-file contract note** above the builders or near `render`, documenting: built-in + external segments share one `name->builder` map (`_builders_for`) and one gate (`cfg.segments.get(name, False)`); `safe_build` is the single guarded entry (sets `failed`, preserves never-blank); the measured pass times every non-meta build and `_crown_slowest` tracks the max; `render_time`/`slowest` are the only meta segments, built in pass 2.
 
-- [ ] **Step 2: Run `/simplify` then `/reducing-entropy`** over the changed regions; accept only changes that keep the golden + full suite green.
+- [ ] **Step 2: Manually clean up the changed regions**
 
-- [ ] **Step 3: Verify**
+Review each function modified or added in Phases 1 and 2 (`_icon`, `_crown_slowest`, `_RenderData`, the rewritten `build_data`, `pack_line`, `render`) for the following, in order:
 
-Run: `python3 -m unittest tests.test_status_line` — Expected: PASS.
+1. **Dead code.** Run `uvx vulture tools/status-line.py` and remove any function, variable, or branch it flags that is no longer reachable after the restructure (cross-check against the `fixed-by-refactor` column in `docs/refactor/lint-ruleset-and-triage.md` — these should now be gone).
+2. **Redundant logic.** Read each of the functions listed above and check for duplicated conditionals, variables assigned but never read, or helper calls whose return value is unused. Remove or collapse them inline.
+3. **Verify no regressions.**
 
-- [ ] **Step 4: Commit**
+```bash
+make validate
+python3 -m unittest tests.test_status_line
+```
+
+Both must pass before continuing.
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add tools/status-line.py
-git commit -m "docs(status-line): document the render contract in-file; simplify the measured pass"
+git commit -m "docs(status-line): in-file render contract; dead-code and redundancy cleanup (FR-R.1)"
 ```
 
 ### Task 2.6: Final fix-to-clean zero-sweep (FR-R.4-final)
