@@ -3,10 +3,25 @@
 
 Reads the status JSON on stdin and prints up to three ANSI-colored lines.
 Layout is driven by SEGMENTS (on/off), LAYOUT (template), and BUILDERS
-(key -> builder(data, avail)). The packer is the authority on show/hide;
+(key -> builder(ctx, avail)). The packer is the authority on show/hide;
 builders auto-deprioritize to fit. See the "HOW TO CUSTOMIZE" block near the
 bottom. Stdlib only. The .sh original is kept as a fallback.
 """
+# ARCHITECTURE — functional core / imperative shell, one file, six blocks:
+#   SHELL     side effects only (env capture, stdin, print); calls the core.
+#   CONFIG    the ONLY block that reads env/TOML -> one immutable Config (stable
+#             settings + resolved cache paths). SEGMENTS/LAYOUT/*_DEFAULTS are the
+#             explicit intent tables.
+#   CONTEXT   per-render Context: eager inputs + cached_property probes (git/todo/
+#             ago/rss/effort-auto) + render bookkeeping (failed, slowest). Probes
+#             run on first attribute read, so their cost lands in the measured
+#             build of the reading segment (FR-R.2). Attribute access only (D4).
+#   HELPERS   probes own their caching/TTL; read only what ctx/config give them.
+#   SEGMENTS  seg_x(ctx, avail, theme) -> str | None, self-sourcing; the builder
+#             map is auto-discovered from seg_* names (add a seg_x, it registers).
+#   PACK      fully segment-agnostic: keys, the discovered map, widths, two passes.
+# To add a segment: write seg_<key>(ctx, avail, theme); add <key> to a LAYOUT line;
+# add <key>: True to SEGMENTS. The registry wires itself.
 # pylint: disable=invalid-name  # installed script name is hyphenated (status-line.py)
 
 import argparse
@@ -35,6 +50,71 @@ from datetime import datetime
 # called, so its data is never read and the matching lazy probe (git/transcript/
 # RSS/etc.) never runs — a disabled segment costs nothing. Invariant: keep "path"
 # True so the identity line always emits.
+
+# ═══ 1. SHELL — side effects only: env capture, stdin, print ═════════════════
+
+
+def parse_args(argv):
+    """Parse command-line arguments for the status-line CLI."""
+    p = argparse.ArgumentParser(
+        prog="status-line.py",
+        description="Claude Code status line. With no flags, reads the status "
+                    "JSON on stdin and renders up to three ANSI lines.",
+        epilog=_ENV_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--print-config", action="store_true",
+                   help="resolve config (defaults < file < env), print it as "
+                        "JSON, and exit (does not read stdin)")
+    p.add_argument("--check", nargs="?", const=None, default=_NO_CHECK,
+                   metavar="FILE",
+                   help="validate a config file (default: the resolved path) "
+                        "and exit non-zero if invalid")
+    p.add_argument("--doctor", action="store_true",
+                   help="validate the config AND dry-render every segment to "
+                        "surface a builder that raises; exit non-zero if unhealthy")
+    return p.parse_args(argv)
+
+
+def safe_render(raw, env, cfg, theme, t_start):
+    """Build context and render; on ANY unexpected failure return a single
+    diagnostic line instead of a blank bar. Never raises. This is the backstop
+    above safe_build's per-segment isolation (covers build_context itself)."""
+    try:
+        cols, lines, assumed = terminal_size(env)
+        home = env.get("HOME", "")
+        claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+        ctx = build_context(raw, cfg, theme, cols, lines, assumed, t_start,
+                            effort=resolve_effort(raw, env),
+                            home=home, claude_dir=claude_dir)
+        return render(ctx)
+    except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
+        return [f"{_WARN}⚠ status-line error — "
+                f"run the doctor: {_doctor_cmd()}{RESET}"]
+
+
+def main():
+    """CLI entrypoint: dispatch subcommands or render the status line from stdin."""
+    t0 = time.perf_counter_ns()        # for the optional `render_time` self-timing segment
+    env = os.environ                   # single SHELL-boundary read (FR-A.1)
+    args = parse_args(sys.argv[1:])
+    if args.check is not _NO_CHECK:
+        sys.exit(cmd_check(args.check, env))
+    if args.doctor:
+        sys.exit(cmd_doctor(env))
+    cfg = load_config(env)
+    theme = build_theme(cfg)
+    if args.print_config:
+        print(cmd_print_config(cfg, env))
+        return
+    try:
+        raw = json.load(sys.stdin)
+    except (ValueError, OSError):
+        raw = {}
+    print("\n".join(safe_render(raw, env, cfg, theme, t0)))
+
+# ═══ 2. CONFIG — the ONLY block that reads env/TOML -> immutable Config ════════
+
 SEGMENTS = {
     # identity line
     "path": True, "branch": True, "dirty": True, "worktree": True, "todo": True,
@@ -46,20 +126,28 @@ SEGMENTS = {
     "chat_size": True, "memory": True, "rate_limits": True,
 }
 
+
 # Identity-line tuning.
 PATH_MAX_LEN = 20       # ~-collapsed path longer than this collapses to its basename
+
+
 CONTEXT_BAR_CELLS = 10  # context bar width; ▌ half-cells give 5% resolution
+
 
 # Packing: reserve a few cols so emoji-width miscounts don't wrap the line.
 RIGHT_MARGIN = 4
+
+
 SEP = " | "
 
-# ═══ Layout template — edit to reorder / move / re-line segments ═════════════
+
 # One Line per row. `segments` lists keys LEFT->RIGHT; leftmost = highest
 # priority (kept first when space is tight). `min_rows` gates the whole row by
 # terminal height. Reorder = move a key within a list; move between rows = cut
 # and paste a key; hide = flip its SEGMENTS flag.
 Line = namedtuple("Line", "min_rows segments")
+
+
 LAYOUT = [
     Line(0,  ["path", "branch", "worktree", "dirty", "todo"]),
     Line(20, ["model", "time_ago", "clock", "effort", "lines",
@@ -67,10 +155,15 @@ LAYOUT = [
     Line(30, ["render_time", "slowest", "dimensions", "context", "chat_size",
               "memory", "rate_limits"]),
 ]
+
+
 PINNED = {"path", "context"}   # always rendered even if they overflow the budget
+
+
 # Meta-segments: they report the whole render, not a single builder, so the
 # `slowest` readout never names them as the culprit (its own output + render_time).
 _SLOWEST_META = frozenset({"slowest", "render_time"})
+
 
 # Resolved configuration: the result of merging internal defaults < TOML file <
 # env. `segments` is a {key: bool} dict, `layout` a list[Line], `palette` a
@@ -83,11 +176,16 @@ _SLOWEST_META = frozenset({"slowest", "render_time"})
 # `cache_ttl` (seconds) — how long the shared git_snapshot worktree probe is
 # cached. Precedence: this default < TOML `[git] cache_ttl` < env CC_AI_KIT_GIT_TTL.
 _GIT_CACHE_TTL = 5                  # default seconds the worktree probe is cached
+
+
 _GIT_DEFAULTS = {"cache_ttl": _GIT_CACHE_TTL}
+
+
 # Deprecated `[git]` keys: silently accepted (no warning) and ignored, so an old
 # config carrying `[git] worktree = true/false` keeps loading cleanly after the
 # knob moved to `segments.worktree`.
 _GIT_LEGACY_IGNORED = frozenset({"worktree"})
+
 
 # ── Color & effort defaults (the override baselines) ─────────────────────────
 # Overridable palette: NAME -> default SGR params (no "\033[" / "m" wrapper).
@@ -100,6 +198,7 @@ _PALETTE_DEFAULTS = {            # pure hues — no baked-in bold
     "BLUE": "38;5;39",           # lightened (was 38;5;33); shade reviewed on-terminal
     "LIGHTBLUE": "38;5;75", "MAGENTA_DARK": "38;5;90",
 }   # ORANGE_BOLD / MAGENTA_DARK_BOLD removed — bold now lives on the ramp band
+
 
 # Ramps as data: band -> [(threshold, colorspec)]. Threshold keys go through
 # _parse_threshold (percent / byte-suffix / inf); colorspecs through parse_color
@@ -121,6 +220,7 @@ _RAMP_DEFAULTS = {
     "slowest": [("15ms", "GREEN"), ("40ms", "YELLOW"), ("inf", "RED+bold")],
 }
 
+
 # Effort ladder: level -> (palette name, fill count 1..5). Palette-derived but
 # NOT user-configurable. `auto` is a setting and `ultracode` reports as xhigh —
 # neither is a level here.
@@ -128,6 +228,8 @@ _EFFORT_DEFAULTS = {
     "low": ("CYAN", 1), "medium": ("BLUE", 2), "high": ("YELLOW", 3),
     "xhigh": ("ORANGE", 4), "max": ("RED", 5),
 }
+
+
 _EFFORT_GLYPHS = "▁▃▄▆█"
 
 
@@ -145,6 +247,7 @@ def _git_key_problem(k, v):
     if k == "cache_ttl" and (not isinstance(v, int) or isinstance(v, bool)):
         return "bad_ttl"
     return None
+
 
 # `git` and `external` default to None so older Config(...) call sites (which
 # pass only the original fields) keep working; consumers read git via
@@ -164,8 +267,9 @@ def default_config():
                   git=dict(_GIT_DEFAULTS))
 
 
-# ═══ Config resolution (defaults < TOML file < env) ══════════════════════════
 _ENV_TRUE = {"1", "true", "t", "y", "yes", "on"}
+
+
 _ENV_FALSE = {"0", "false", "f", "n", "no", "off"}
 
 
@@ -353,63 +457,6 @@ def load_config(env):
                   cache_base=cache_base, segments_dir=ext_dir)
 
 
-# ═══ Palette ════════════════════════════════════════════════════════════════
-# Fixed (non-overridable) colors.
-RESET = "\033[0m"
-BG_LIGHTGRAY = "\033[47m"
-_DIM = "\033[90m"             # fixed dim grey for stderr warnings (palette-independent)
-_WARN = "\033[33m"            # fixed yellow for failure markers (palette-independent)
-
-
-def _doctor_cmd():
-    """A concrete, copy-pasteable doctor invocation for THIS install — resolved
-    from the running interpreter and this file's path (~-collapsed). Never a bare
-    '--doctor', which would assume the user is sitting in a repo clone."""
-    py = os.path.basename(sys.executable) or "python3"
-    path = os.path.abspath(__file__)
-    home = os.path.expanduser("~")
-    if path == home or path.startswith(home + os.sep):
-        path = "~" + path[len(home):]
-    return f"{py} {path} --doctor"
-
-INF = float("inf")
-
-
-# ═══ External drop-in segments (E4c) ═══════════════════════════════════════
-# A provider is an executable in the segments dir. Its first 10 lines may carry
-#   # ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end)
-#                     [id=<slug>] [timeout=<s>] [ttl=<s>]
-# It is modeled as a synthetic builder inserted into the resolved layout, so the
-# existing packer handles placement/priority/overflow unchanged.
-ExtSpec = namedtuple("ExtSpec", "id path line position timeout ttl cache_path")
-
-_SEG_HEADER_RE = re.compile(r"^#\s*ai-kit-segment:\s*(.*?)\s*$")
-
-
-def parse_segment_header(lines):
-    """Parse the `# ai-kit-segment:` header from a file's first lines.
-
-    Returns a dict of the raw string fields present (`line`/`id`/`timeout`/`ttl`
-    as strings, `position` as a (kind, ref) tuple) — possibly empty if the header
-    line exists but lists nothing. Returns None when no header line is present."""
-    for ln in lines:
-        m = _SEG_HEADER_RE.match(ln)
-        if m is None:
-            continue
-        fields = {}
-        for tok in m.group(1).split():
-            if tok in ("start", "end"):
-                fields["position"] = (tok, "")
-            elif "=" in tok:
-                k, v = tok.split("=", 1)
-                if k in ("after", "before"):
-                    fields["position"] = (k, v)
-                elif k in ("line", "id", "timeout", "ttl"):
-                    fields[k] = v
-        return fields
-    return None
-
-
 def _cache_base(env):
     """${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit — root of every ai-kit on-disk cache."""
     base = env.get("XDG_CACHE_HOME") or os.path.join(env.get("HOME", ""), ".cache")
@@ -426,55 +473,277 @@ def _segments_dir(file_external, env):
     return os.path.join(base, "ai-kit", "segments")
 
 
-def discover_external(directory, default_ttl, cache_dir):
-    """Scan `directory` for executable providers and return a list of ExtSpec,
-    sorted by (filename, id). Non-executable files are skipped with a dim warning.
-    A file with no header still loads with all defaults (line=0 => last row at
-    placement, position=end, id=stem, timeout=2s, ttl=default_ttl).
-    `cache_dir` is the per-provider output cache directory (…/ai-kit/segments)."""
-    if not directory or not os.path.isdir(directory):
-        return []
-    specs = []
-    for name in sorted(os.listdir(directory)):
-        path = os.path.join(directory, name)
-        if not os.path.isfile(path):
+def _to_int(s):
+    """Parse a stripped string to int, or None on empty/non-numeric input."""
+    try:
+        return int(s) if s else None
+    except ValueError:
+        return None
+
+
+def terminal_size(env):
+    """Resolve (cols, lines, assumed). Fallback chain, first hit wins per dimension:
+      1. STATUSLINE_COLS / STATUSLINE_LINES env
+      2. COLUMNS / LINES env
+      3. stty size      (via /dev/tty)
+      4. tput cols/lines (via /dev/tty — macOS / setups where stty size is absent)
+      5. assumed 200x40 default (assumed=True)"""
+    def _int(*keys):
+        for k in keys:
+            v = env.get(k)
+            if v and str(v).isdigit() and int(v) > 0:
+                return int(v)
+        return None
+
+    cols = _int("STATUSLINE_COLS", "COLUMNS")
+    lines = _int("STATUSLINE_LINES", "LINES")
+    if cols is None or lines is None:
+        # One controlling-tty open serves both probes: stty first, then tput as the
+        # macOS/terminfo fallback (_run closes over `tty` intentionally).
+        try:
+            with open("/dev/tty", encoding="utf-8") as tty:
+                def _run(*cmd):
+                    return subprocess.run(list(cmd), stdin=tty, capture_output=True,
+                                          text=True, timeout=1, check=False).stdout
+                size = _run("stty", "size").split()
+                if len(size) == 2:
+                    lines = lines or int(size[0])
+                    cols = cols or int(size[1])
+                if cols is None or lines is None:
+                    cols = cols or _to_int(_run("tput", "cols").strip())
+                    lines = lines or _to_int(_run("tput", "lines").strip())
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    assumed = False
+    if cols is None:
+        cols, assumed = 200, True
+    if lines is None:
+        lines, assumed = 40, True
+    return cols, lines, assumed
+
+
+def resolve_effort(raw, env):
+    """The *resolved* effort level (low..max) as a normalized lowercase string, or "".
+
+    This is the live per-turn level the API reported, read from raw["effort"]["level"]
+    (CLAUDE_EFFORT env as a fallback). It is never "auto" — auto is a *setting*, detected
+    separately from disk by effort_setting_is_auto. A stray "auto" in the resolved field
+    (transition states, env misuse) is normalized away so it can't reach the level table."""
+    level = ((raw.get("effort") or {}).get("level") or env.get("CLAUDE_EFFORT", ""))
+    level = level.strip().lower()
+    return "" if level == "auto" else level
+
+
+def effort_setting_is_auto(work_dir, home):
+    """True when the effort *setting* is auto — i.e. `effortLevel` is absent (or
+    literally "auto") across the settings chain.
+
+    Precedence high->low: the project's .claude/settings.local.json, then
+    .claude/settings.json, then ~/.claude/settings.json. The first file that defines
+    `effortLevel` decides (explicit level -> not auto); if none define it, it's auto."""
+    for path in (os.path.join(work_dir, ".claude", "settings.local.json"),
+                 os.path.join(work_dir, ".claude", "settings.json"),
+                 os.path.join(home, ".claude", "settings.json")):
+        try:
+            with open(path, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, ValueError):
             continue
-        if not os.access(path, os.X_OK):
-            print(f"{_DIM}status-line: segment '{name}' not executable — skipped{RESET}",
-                  file=sys.stderr)
-            continue
-        try:
-            with open(path, encoding="utf-8", errors="replace") as f:
-                head = [f.readline() for _ in range(10)]
-        except OSError:
-            continue
-        fields = parse_segment_header(head) or {}
-        sid = fields.get("id") or os.path.splitext(name)[0]
-        try:
-            timeout = float(fields.get("timeout", 2))
-        except (TypeError, ValueError):
-            timeout = 2.0
-        try:
-            ttl = int(fields.get("ttl", default_ttl))
-        except (TypeError, ValueError):
-            ttl = default_ttl
-        try:
-            line = int(fields["line"]) if "line" in fields else 0
-        except (TypeError, ValueError):
-            line = 0
-        specs.append(ExtSpec(
-            id=sid, path=path, line=line,
-            position=fields.get("position", ("end", "")),
-            timeout=timeout, ttl=ttl,
-            cache_path=os.path.join(cache_dir, sid)))
-    specs.sort(key=lambda s: (os.path.basename(s.path), s.id))
-    return specs
+        if isinstance(cfg, dict) and "effortLevel" in cfg:
+            return str(cfg["effortLevel"]).strip().lower() == "auto"
+    return True
+
+# ═══ 3. CONTEXT — per-render bag (eager + cached_property probes + bookkeeping) ═
+
+
+@dataclass
+class Context:  # pylint: disable=too-many-instance-attributes  # per-render bag (D1)
+    """Per-render bag handed to every builder (D1). Eager inputs are resolved at
+    the SHELL/CONFIG boundary; expensive probes are `cached_property`, so a probe
+    runs synchronously on first attribute read — its cost lands inside the
+    *measured* build of the first segment that reads it (FR-R.2) and later reads
+    are free. Render bookkeeping (`failed`, `slowest`) lives here too. Attribute
+    access only — never `ctx[...]` (D4). `raw` keeps `.get()`-chain access."""
+    raw: dict                       # incoming status JSON (the ONLY dict-style member)
+    config: "Config"
+    theme: "Theme"
+    # per-render terminal geometry (resolved by the SHELL; D6 — never on Config)
+    cols: int
+    lines: int
+    dim_assumed: bool
+    t_start: "int | None"
+    # cheap eager fields (were build_data's `base`)
+    model_name: str
+    model_id: str
+    effort: str
+    work_dir: str
+    home: str
+    clock: str
+    added: int
+    removed: int
+    cost: float
+    total_ms: int
+    api_ms: int
+    context_pct: int
+    context_max: int
+    rate_limits: dict
+    # probe inputs (locate materialized todo/task state; feed the cached_property probes)
+    transcript: str
+    session: str
+    claude_dir: str
+    # render bookkeeping (D1) — mutated during the render
+    failed: set = field(default_factory=set)
+    slowest: "tuple | None" = None
+
+    # ── shared git probe: one call fills five fields (branch/dirty/worktree/…) ──
+    # The probe reads its ttl + cache_base off the Config object it is given (D8).
+    @functools.cached_property
+    def _git(self):
+        return git_snapshot(self.work_dir, self.config)
+
+    @property
+    def branch(self):
+        """Current git branch name (via shared _git probe)."""
+        return self._git.branch
+
+    @property
+    def dirty(self):
+        """Git working-tree state: 'clean', 'modified', or 'untracked'."""
+        return self._git.dirty
+
+    @property
+    def is_worktree(self):
+        """True when the workspace is a git worktree (not the main checkout)."""
+        return self._git.is_worktree
+
+    @property
+    def wt_name(self):
+        """Worktree short name (basename of the worktree root), or ''."""
+        return self._git.wt_name
+
+    @property
+    def in_repo(self):
+        """True when the workspace is inside a git repository."""
+        return self._git.in_repo
+
+    @functools.cached_property
+    def ago(self):
+        """Human-readable age of the transcript file (e.g. '5m 0s ago'), or ''."""
+        t = self.transcript
+        if t and os.path.isfile(t):
+            return fmt_ago(int(time.time()) - int(os.path.getmtime(t)))
+        return ""
+
+    @functools.cached_property
+    def effort_auto(self):
+        """True when the Claude effort setting is 'auto' rather than a fixed level."""
+        return effort_setting_is_auto(self.work_dir, self.home)
+
+    @functools.cached_property
+    def _todo(self):
+        return current_todo(self.transcript, self.session, self.claude_dir)
+
+    @property
+    def todo_state(self):
+        """Active task state string (e.g. 'in_progress'), or None."""
+        return self._todo[0]
+
+    @property
+    def todo_text(self):
+        """Active task display text, or None when no task is active."""
+        return self._todo[1]
+
+    @functools.cached_property
+    def chat_bytes(self):
+        """Transcript file size in bytes (for the chat-size segment)."""
+        return transcript_bytes(self.transcript)
+
+    @functools.cached_property
+    def mem_bytes(self):
+        """Process RSS in bytes (for the memory segment), or None."""
+        return proc_rss_bytes()
+
+
+def build_context(raw, config, theme, cols, lines, dim_assumed, t_start,  # pylint: disable=too-many-arguments,too-many-positional-arguments
+                  effort, home, claude_dir):
+    """Assemble the per-render Context from the parsed status JSON and the
+    already-resolved per-render inputs. Segment-agnostic and env-free: every
+    env read happened in the CONFIG block; the SHELL hands the resolved values
+    here. Expensive probes are deferred to Context's cached_property members."""
+    model = raw.get("model") or {}
+    cost = raw.get("cost") or {}
+    ctx_win = raw.get("context_window") or {}
+    workspace = raw.get("workspace") or {}
+    work_dir = os.path.abspath(workspace.get("current_dir") or ".")
+    transcript = raw.get("transcript_path") or ""
+    # session_id locates the materialized task/todo state current_todo prefers
+    # over replaying the transcript; it also equals the transcript file basename.
+    session = raw.get("session_id") or (
+        os.path.splitext(os.path.basename(transcript))[0] if transcript else "")
+    return Context(
+        raw=raw, config=config, theme=theme,
+        cols=cols, lines=lines, dim_assumed=dim_assumed, t_start=t_start,
+        model_name=model.get("display_name", ""),
+        model_id=model.get("id", "unknown"),
+        effort=effort, work_dir=work_dir, home=home,
+        clock=time.strftime("%H:%M"),
+        # `or 0` (not get's default) so a PRESENT-but-null field — what a fresh
+        # /clear session sends before any tokens/cost accrue — coalesces to 0
+        # instead of raising on int()/math and blanking the whole bar.
+        added=cost.get("total_lines_added") or 0,
+        removed=cost.get("total_lines_removed") or 0,
+        cost=cost.get("total_cost_usd") or 0,
+        total_ms=cost.get("total_duration_ms") or 0,
+        api_ms=cost.get("total_api_duration_ms") or 0,
+        context_pct=int(ctx_win.get("used_percentage") or 0),
+        context_max=ctx_win.get("context_window_size") or 0,
+        rate_limits=raw.get("rate_limits") or {},
+        transcript=transcript, session=session, claude_dir=claude_dir,
+    )
+
+# ═══ 4. HELPERS — probes own their caching; pure helpers (color/width/format) ══
+
+
+# Fixed (non-overridable) colors.
+RESET = "\033[0m"
+
+
+BG_LIGHTGRAY = "\033[47m"
+
+
+_DIM = "\033[90m"             # fixed dim grey for stderr warnings (palette-independent)
+
+
+_WARN = "\033[33m"            # fixed yellow for failure markers (palette-independent)
+
+
+def _doctor_cmd():
+    """A concrete, copy-pasteable doctor invocation for THIS install — resolved
+    from the running interpreter and this file's path (~-collapsed). Never a bare
+    '--doctor', which would assume the user is sitting in a repo clone."""
+    py = os.path.basename(sys.executable) or "python3"
+    path = os.path.abspath(__file__)
+    home = os.path.expanduser("~")
+    if path == home or path.startswith(home + os.sep):
+        path = "~" + path[len(home):]
+    return f"{py} {path} --doctor"
+
+
+INF = float("inf")
 
 
 _SGR_SEQ = re.compile(r"\x1b\[[0-9;]*m")            # an SGR color/style escape
+
+
 _CSI_SEQ = re.compile(r"\x1b\[[0-9;?]*([A-Za-z])")  # any CSI; group = final byte
+
+
 _OSC_SEQ = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
 _STRAY_ESC = re.compile(r"\x1b(?!\[[0-9;]*m)")      # ESC not starting an SGR
+
+
 _C0_CTRL = re.compile(r"[\x00-\x09\x0b-\x1a\x1c-\x1f\x7f]")  # controls (incl. TAB) except NL/ESC
 
 
@@ -503,92 +772,6 @@ def _truncate_visible(s, avail):
     return res
 
 
-def _sanitize_external(text, avail):
-    """First non-empty line of `text`, SGR colors kept, every other control/CSI/OSC
-    sequence stripped, width-truncated to `avail`. None if nothing renderable."""
-    line = next((c for c in text.splitlines() if c.strip()), "").rstrip()
-    if not line:
-        return None
-    line = _OSC_SEQ.sub("", line)
-    line = _CSI_SEQ.sub(lambda m: m.group(0) if m.group(1) == "m" else "", line)
-    line = _STRAY_ESC.sub("", line)
-    line = _C0_CTRL.sub("", line)
-    if not line.strip():
-        return None
-    return _truncate_visible(line, avail) or None
-
-
-def _position_str(position):
-    """('after','clock') -> 'after:clock'; ('end','') -> 'end'."""
-    kind, ref = position
-    return f"{kind}:{ref}" if ref else kind
-
-
-def _cache_read(spec):
-    """Cached raw output line if present and younger than ttl, else None.
-    ttl <= 0 always misses (forces a re-run every render)."""
-    if spec.ttl <= 0:
-        return None
-    try:
-        age = time.time() - os.stat(spec.cache_path).st_mtime
-    except OSError:
-        return None
-    if age >= spec.ttl:
-        return None
-    try:
-        with open(spec.cache_path, encoding="utf-8") as f:
-            return f.read()
-    except OSError:
-        return None
-
-
-def _cache_write(spec, text):
-    """Best-effort: persist raw output. Unwritable cache dir -> silently skip."""
-    try:
-        os.makedirs(os.path.dirname(spec.cache_path), exist_ok=True)
-        with open(spec.cache_path, "w", encoding="utf-8") as f:
-            f.write(text)
-    except OSError:
-        pass
-
-
-def _run_provider(spec, ctx, avail):
-    """Spawn the provider with the status JSON + segment block on stdin, the
-    AI_KIT_SEGMENT_* env mirror, and cwd = workspace dir. Returns the raw first
-    non-empty stdout line, or None on timeout / non-zero exit / no output."""
-    pos = _position_str(spec.position)
-    payload = json.dumps({**(ctx.raw or {}),
-                          "segment": {"id": spec.id, "avail_cols": avail,
-                                      "line": spec.line, "position": pos}})
-    env = dict(os.environ)
-    env.update({"AI_KIT_SEGMENT_COLS": str(avail), "AI_KIT_SEGMENT_ID": spec.id,
-                "AI_KIT_SEGMENT_LINE": str(spec.line), "AI_KIT_SEGMENT_POSITION": pos})
-    try:
-        proc = subprocess.run(
-            [spec.path], input=payload, capture_output=True, text=True,
-            timeout=spec.timeout, cwd=ctx.work_dir or ".", env=env, check=False)
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-    if proc.returncode != 0:
-        return None
-    for line in proc.stdout.splitlines():
-        if line.strip():
-            return line
-    return None
-
-
-def run_external(spec, ctx, avail):
-    """TTL-cached, timeout-bounded provider invocation. Returns the sanitized,
-    width-fitted segment string, or None to omit the segment."""
-    raw_line = _cache_read(spec)
-    if raw_line is None:
-        raw_line = _run_provider(spec, ctx, avail)
-        if raw_line is None:
-            return None
-        _cache_write(spec, raw_line)
-    return _sanitize_external(raw_line, avail)
-
-
 def pick_color(pct, ramp):
     """Return the color for the first ceil that pct is strictly below."""
     for ceil, color in ramp:
@@ -597,8 +780,9 @@ def pick_color(pct, ramp):
     return ramp[-1][1]
 
 
-# ═══ Display width ═══════════════════════════════════════════════════════════
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
 # BMP symbols we render that terminals draw 2 cells wide (east_asian_width
 # misclassifies these as narrow). Add a codepoint here if a new wide BMP glyph
 # is introduced in a segment.
@@ -652,7 +836,6 @@ def _icon(glyph, text):
     return f"{g} {text}"
 
 
-# ═══ Color engine ════════════════════════════════════════════════════════════
 # One parser produces every SGR escape. Base forms (by shape): palette NAME
 # (letter-led, resolved against `palette`), raw SGR ("38;5;208" passthrough), or
 # hex ("#rgb"/"#rrggbb"/"#rrggbbaa", alpha dropped). "+bold/+dim/+italic/
@@ -703,6 +886,8 @@ def parse_color(spec, palette=None):
 
 
 _THRESHOLD_MULT = {"k": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
+
+
 # Time thresholds (render_time ramp) resolve to NANOSECONDS, matching what the
 # segment measures via time.perf_counter_ns(). "µs" and ASCII "us" both accepted.
 _TIME_MULT_NS = {"ns": 1, "us": 1000, "µs": 1000, "ms": 1_000_000, "s": 1_000_000_000}
@@ -817,7 +1002,6 @@ def default_theme():
     return build_theme(default_config())
 
 
-# ═══ Formatters ══════════════════════════════════════════════════════════════
 def fmt_number(n):
     """Thousands separators: 1234567 -> '1,234,567'."""
     return f"{int(n):,}"
@@ -888,12 +1072,13 @@ def fmt_duration(ns):
     return f"{ns}ns"
 
 
-# ═══ Rate-limit helpers ══════════════════════════════════════════════════════
 _NUM_WORDS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
     "seven": 7, "eight": 8, "nine": 9, "ten": 10, "fifteen": 15,
     "twenty": 20, "thirty": 30, "sixty": 60,
 }
+
+
 _UNIT_ABBR = {
     "hour": "h", "hours": "h", "day": "d", "days": "d",
     "week": "w", "weeks": "w", "month": "mo", "months": "mo",
@@ -911,348 +1096,6 @@ def rate_key_label(key):
 def rate_color(pct, theme):
     """Pick the rate-limit ramp color for a usage percentage."""
     return pick_color(float(pct), theme.ramps["rate"])
-
-
-# ═══ Segment builders ════════════════════════════════════════════════════════
-# Contract: every builder is seg_x(data, avail, theme) -> str | None.
-#   avail = display cells available to this segment at its position.
-#   Return None when there is no data, OR when even the smallest variant does
-#   not fit avail (the builder self-deprioritizes). Otherwise return the richest
-#   variant that fits, via _first_fitting([rich, ..., minimal], avail).
-# The packer (pack_line) supplies avail and owns the final keep/skip decision.
-# To add a segment: write seg_x(ctx, avail, theme), list its key in a LAYOUT line,
-# add a SEGMENTS flag. The registry auto-discovers seg_* (no BUILDERS edit). See
-# the HOW TO CUSTOMIZE block below.
-
-# NOTE: the effort bars live on the Theme (theme.effort), resolved by
-# _build_effort from the palette so a [palette] override re-colors them too.
-# `ultracode` is NOT a level (it reports as xhigh + standing multi-agent
-# permission), and `auto` is a *setting*, not a resolved level — neither belongs
-# in the table. The auto setting is surfaced as a "[auto]" suffix in seg_effort.
-
-
-def _display_dir(work_dir, home):
-    shown = work_dir
-    if home and work_dir.startswith(home):
-        shown = "~" + work_dir[len(home):]
-    if len(shown) <= PATH_MAX_LEN:
-        return shown
-    return os.path.basename(work_dir.rstrip("/")) or shown
-
-
-def _dirty_mark(dirty, theme):
-    if dirty == "untracked":
-        return f"{theme.c('RED')}✗{RESET}"
-    if dirty == "modified":
-        return f"{theme.c('YELLOW')}~{RESET}"
-    return ""
-
-
-# ── identity line ────────────────────────────────────────────────────────────
-def seg_path(ctx, avail, theme):
-    return f"{theme.c('BLUE')}{_display_dir(ctx.work_dir, ctx.home)}{RESET}"  # floor
-
-
-def seg_branch(ctx, avail, theme):
-    branch = ctx.branch
-    if not branch:
-        return None
-    # branch carries its own STATIC 🌿 icon. It does NOT encode worktree state
-    # (no 🌳) — that moved to the dedicated `worktree` ⎇ segment (FR-7.2); the
-    # leaf glyph here is purely "this is the branch". Falls back to the bare
-    # name when too narrow for the icon, so the branch never drops just for it.
-    return _first_fitting([f"{theme.c('GREY')}[{_icon('🌿', branch)}]{RESET}",
-                           f"{theme.c('GREY')}[{branch}]{RESET}"], avail)
-
-
-def seg_dirty(ctx, avail, theme):
-    mark = _dirty_mark(ctx.dirty, theme)
-    return _first_fitting([mark], avail) if mark else None
-
-
-def _trunc_cols(s, limit):
-    """Truncate s to at most `limit` display columns, appending `…` if cut.
-    Column-aware (uses char_width) so a wide/multibyte name can't blow the budget."""
-    if sum(char_width(c) for c in s) <= limit:
-        return s
-    out, width = [], 0
-    for c in s:
-        cw = char_width(c)
-        if width + cw > limit - 1:          # reserve one column for the ellipsis
-            break
-        out.append(c)
-        width += cw
-    return "".join(out) + "…"
-
-
-def seg_worktree(ctx, avail, theme):
-    # `worktree` names the ACTIVE linked worktree the session sits in — never a
-    # list. Mirrors `dirty`'s "absence is the neutral state" convention: hidden
-    # outside a repo. On the main checkout it shows a dimmed, struck `⎇ wt`
-    # placeholder — GREY (not just strikethrough) so it stays distinct from the
-    # cyan active form even on terminals that don't render SGR-9.
-    if not ctx.in_repo:
-        return None
-    if not ctx.is_worktree:
-        return _first_fitting([f"{theme.c('GREY')}\033[9m⎇ wt{RESET}"], avail)
-    name = _trunc_cols(ctx.wt_name or "", 20)
-    return _first_fitting([f"{theme.c('CYAN')}⎇ {name}{RESET}"], avail)
-
-
-def seg_todo(ctx, avail, theme):
-    state, text = ctx.todo_state, ctx.todo_text
-    if not text:
-        return None
-    limit = avail - 4                      # room for icon + space + ellipsis
-    if limit < 6:                          # too cramped to be useful -> hide
-        return None
-    if len(text) > limit:
-        text = text[:limit - 1] + "…"
-    if state == "in_progress":
-        return _icon("📝", f"{theme.c('YELLOW')}{text}{RESET}")
-    if state == "pending":
-        return _icon("⏸", f"{theme.c('GREY')}{text}{RESET}")
-    return None
-
-
-# ── model row ────────────────────────────────────────────────────────────────
-def seg_model(ctx, avail, theme):
-    name = ctx.model_name or ctx.model_id
-    if not name:
-        return None
-    return _first_fitting([f"{theme.c('CYAN')}{name}{RESET}"], avail)
-
-
-def seg_time_ago(ctx, avail, theme):
-    ago = ctx.ago
-    if not ago:
-        return None
-    return _first_fitting([f"{theme.c('WHITE')}{ago}{RESET}"], avail)
-
-
-def seg_clock(ctx, avail, theme):
-    return _first_fitting([_icon("⏰", ctx.clock)], avail)
-
-
-def seg_effort(ctx, avail, theme):
-    level = ctx.effort
-    if not level:
-        return None
-    # Unknown level (stale/future): no color on the word, all-grey ladder — a safe
-    # degraded display. resolve_effort already strips "auto", so it never lands here.
-    color, bar = theme.effort.get(level.lower(), ("", f"{theme.c('GREY')}▁▃▄▆█"))
-    word = f"{color}{level}{RESET}"
-    bars = _icon("🧠", f"{bar}{RESET}")
-    if ctx.effort_auto:
-        # effortLevel is unset/auto in settings: flag the resolved level as
-        # auto-chosen. The flag degrades [auto] -> * -> dropped as space tightens.
-        variants = [f"{bars} {word} {theme.c('GREY')}[auto]{RESET}",
-                    f"{bars} {color}{level}*{RESET}",
-                    f"{bars} {word}",
-                    bars]
-    else:
-        variants = [f"{bars} {word}", bars]
-    return _first_fitting(variants, avail)
-
-
-def seg_lines(ctx, avail, theme):
-    body = (f"{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(ctx.added)}{RESET}"
-            f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(ctx.removed)}{RESET}")
-    return _first_fitting([_icon("📃", body)], avail)
-
-
-def seg_cost(ctx, avail, theme):
-    return _first_fitting([_icon("🪙", f"${float(ctx.cost):.3f}")], avail)
-
-
-def seg_total_time(ctx, avail, theme):
-    return _first_fitting([_icon("💬", fmt_time_ms(ctx.total_ms))], avail)
-
-
-def seg_api_time(ctx, avail, theme):
-    return _first_fitting([_icon("📡", fmt_time_ms(ctx.api_ms))], avail)
-
-
-# ── diagnostics row ──────────────────────────────────────────────────────────
-def seg_render_time(ctx, avail, theme):    # status-line's own run time, SLO/SLA-colored
-    t0 = ctx.t_start
-    if t0 is None:                      # not timed (e.g. direct builder calls) -> omit
-        return None
-    elapsed = time.perf_counter_ns() - t0
-    color = pick_color(elapsed, theme.ramps["render_time"])
-    return _first_fitting([_icon("⏱", f"{color}{fmt_duration(elapsed)}{RESET}")], avail)
-
-
-def seg_slowest(ctx, avail, theme):        # slowest single segment this render, SLO/SLA-colored
-    slow = ctx.slowest
-    if not slow:                            # timing off (segment disabled) -> omit
-        return None
-    name, ns = slow
-    color = pick_color(ns, theme.ramps["slowest"])
-    dur = f"{color}{fmt_duration(ns)}{RESET}"
-    # drop name when tight
-    return _first_fitting([_icon("🐌", f"{name} {dur}"), _icon("🐌", dur)], avail)
-
-
-def seg_dimensions(ctx, avail, theme):
-    mark = "?" if ctx.dim_assumed else ""
-    return _first_fitting([f"{ctx.cols}×{ctx.lines}{mark}"], avail)
-
-
-def seg_context(ctx, avail, theme):
-    pct = int(ctx.context_pct)
-    color = pick_color(pct, theme.ramps["context"])
-    pct_only = _icon("📊", f"{color}{pct}%{RESET}")
-    # Measure in half-cells (5% each) and round up, so any pct > 0 shows >= ▌.
-    halves = 0 if pct <= 0 else min(2 * CONTEXT_BAR_CELLS, math.ceil(pct / 5))
-    full_n, half = divmod(halves, 2)
-    bar_f = "█" * full_n + ("▌" if half else "")
-    bar_e = "░" * (CONTEXT_BAR_CELLS - full_n - half)
-    bar = f"{color}{bar_f}{theme.c('GREY')}{bar_e}{RESET}"
-    mid = _icon("📊", f"{bar} {color}{pct}%{RESET}")
-    full = _icon("📊", f"{bar} {color}{pct}% of {fmt_tokens(ctx.context_max)}{RESET}")
-    return _first_fitting([full, mid, pct_only], avail) or pct_only  # floor
-
-
-def seg_chat_size(ctx, avail, theme):
-    n = ctx.chat_bytes
-    if n is None:
-        return None
-    color = pick_color(n, theme.ramps["chat_size"])
-    return _first_fitting([_icon("💾", f"{color}{fmt_bytes(n)}{RESET}")], avail)
-
-
-def seg_memory(ctx, avail, theme):
-    n = ctx.mem_bytes
-    if n is None:
-        return None
-    return _first_fitting([_icon("🧮", fmt_bytes(n))], avail)
-
-
-def _reset_suffix(reset, detail):
-    """Reset stamp at the requested detail: 'long' | 'short' | 'none'.
-    Pure formatting of resets_at in local time — never compared against the
-    clock, so a wrong system time or a timezone change can't change what shows."""
-    if reset is None or detail == "none":
-        return ""
-    dt = datetime.fromtimestamp(reset)
-    if detail == "long":
-        return f" (↺ {dt.strftime('%b %d %H:%M')})"   # e.g. Jun 07 14:10
-    return f" (↺ {dt.strftime('%m-%d %H:%M')})"        # e.g. 06-07 14:10
-
-
-def _rate_str(rate_limits, detail, theme):
-    # Show every bucket that reports a percentage. Visibility never depends on
-    # the clock — the reset stamp is shown only when there's room (via detail),
-    # so timezone shifts / clock skew can't make a bucket vanish.
-    parts = []
-    for key in sorted(rate_limits):
-        info = rate_limits[key] or {}
-        pct = info.get("used_percentage")
-        if pct is None:
-            continue
-        reset = info.get("resets_at")
-        if reset is not None:
-            reset = int(reset)
-        color = rate_color(pct, theme)
-        suffix = _reset_suffix(reset, detail)
-        parts.append(f"{rate_key_label(key)}: {color}{round(float(pct))}%{RESET}{suffix}")
-    return _icon("⚡", " | ".join(parts)) if parts else None
-
-
-def seg_rate_limits(ctx, avail, theme):
-    rate_limits = ctx.rate_limits
-    if not rate_limits:
-        return None
-    return _first_fitting([_rate_str(rate_limits, "long", theme),
-                           _rate_str(rate_limits, "short", theme),
-                           _rate_str(rate_limits, "none", theme)], avail)
-
-
-# ═══ Segment registry — key -> builder(ctx, avail, theme) ════════════════════
-# Editable surface (SEGMENTS + LAYOUT) is at the top of the file; the registry
-# is DERIVED by convention from the seg_* functions above — no hand-maintained
-# key->fn list to drift (FR-A.3, D7).
-def _discover_builders():
-    """The built-in builder map, derived by convention from this module's
-    `seg_<key>` functions (the homologous suffix is the segment key). Replaces the
-    hand-maintained BUILDERS literal (FR-A.3, D7): adding a `seg_x` auto-registers
-    it. SEGMENTS/LAYOUT stay explicit defaults tables — discovery removes only the
-    redundant name->fn list, never the tables that encode intent."""
-    return {name[len("seg_"):]: fn
-            for name, fn in globals().items()
-            if name.startswith("seg_") and callable(fn)}
-
-
-BUILDERS = _discover_builders()   # module-level snapshot; same shape as the old literal
-
-
-def make_external_builder(spec):
-    """Wrap an ExtSpec as a seg_x(ctx, avail, theme)-shaped builder so pack_line
-    treats it exactly like a built-in. theme is unused (the provider colors itself)."""
-    def _builder(ctx, avail, theme):
-        return run_external(spec, ctx, avail)
-    return _builder
-
-
-def _builders_for(cfg):
-    """The built-in BUILDERS merged with one synthetic builder per external
-    provider (keyed by id). External ids never collide with built-ins by design;
-    if a user names one after a built-in, the external wins for that render."""
-    builders = dict(BUILDERS)
-    for spec in (cfg.external or []):
-        builders[spec.id] = make_external_builder(spec)
-    return builders
-
-
-# ═══ Extractors ═══════════════════════════════════════════════════════════════
-def _to_int(s):
-    """Parse a stripped string to int, or None on empty/non-numeric input."""
-    try:
-        return int(s) if s else None
-    except ValueError:
-        return None
-
-
-def terminal_size(env):
-    """Resolve (cols, lines, assumed). Fallback chain, first hit wins per dimension:
-      1. STATUSLINE_COLS / STATUSLINE_LINES env
-      2. COLUMNS / LINES env
-      3. stty size      (via /dev/tty)
-      4. tput cols/lines (via /dev/tty — macOS / setups where stty size is absent)
-      5. assumed 200x40 default (assumed=True)"""
-    def _int(*keys):
-        for k in keys:
-            v = env.get(k)
-            if v and str(v).isdigit() and int(v) > 0:
-                return int(v)
-        return None
-
-    cols = _int("STATUSLINE_COLS", "COLUMNS")
-    lines = _int("STATUSLINE_LINES", "LINES")
-    if cols is None or lines is None:
-        # One controlling-tty open serves both probes: stty first, then tput as the
-        # macOS/terminfo fallback (_run closes over `tty` intentionally).
-        try:
-            with open("/dev/tty", encoding="utf-8") as tty:
-                def _run(*cmd):
-                    return subprocess.run(list(cmd), stdin=tty, capture_output=True,
-                                          text=True, timeout=1, check=False).stdout
-                size = _run("stty", "size").split()
-                if len(size) == 2:
-                    lines = lines or int(size[0])
-                    cols = cols or int(size[1])
-                if cols is None or lines is None:
-                    cols = cols or _to_int(_run("tput", "cols").strip())
-                    lines = lines or _to_int(_run("tput", "lines").strip())
-        except (OSError, ValueError, subprocess.SubprocessError):
-            pass
-    assumed = False
-    if cols is None:
-        cols, assumed = 200, True
-    if lines is None:
-        lines, assumed = 40, True
-    return cols, lines, assumed
 
 
 def _branch_from_porcelain(header):
@@ -1611,12 +1454,474 @@ def current_todo(path, session=None, config_dir=None):
                 return got
     return _todo_from_transcript(path)
 
+# ═══ 5. SEGMENTS — seg_x(ctx, avail, theme); auto-discovered registry ═════════
 
-# ═══ Packing + render ════════════════════════════════════════════════════════
+
+# Contract: every builder is seg_x(ctx, avail, theme) -> str | None.
+#   avail = display cells available to this segment at its position.
+#   Return None when there is no data, OR when even the smallest variant does
+#   not fit avail (the builder self-deprioritizes). Otherwise return the richest
+#   variant that fits, via _first_fitting([rich, ..., minimal], avail).
+# The packer (pack_line) supplies avail and owns the final keep/skip decision.
+# To add a segment: write seg_x(ctx, avail, theme), list its key in a LAYOUT line,
+# add a SEGMENTS flag. The registry auto-discovers seg_* (no BUILDERS edit). See
+# the HOW TO CUSTOMIZE block below.
+
+# NOTE: the effort bars live on the Theme (theme.effort), resolved by
+# _build_effort from the palette so a [palette] override re-colors them too.
+# `ultracode` is NOT a level (it reports as xhigh + standing multi-agent
+# permission), and `auto` is a *setting*, not a resolved level — neither belongs
+# in the table. The auto setting is surfaced as a "[auto]" suffix in seg_effort.
+
+
+def _display_dir(work_dir, home):
+    shown = work_dir
+    if home and work_dir.startswith(home):
+        shown = "~" + work_dir[len(home):]
+    if len(shown) <= PATH_MAX_LEN:
+        return shown
+    return os.path.basename(work_dir.rstrip("/")) or shown
+
+
+def _dirty_mark(dirty, theme):
+    if dirty == "untracked":
+        return f"{theme.c('RED')}✗{RESET}"
+    if dirty == "modified":
+        return f"{theme.c('YELLOW')}~{RESET}"
+    return ""
+
+
+# ── identity line ────────────────────────────────────────────────────────────
+def seg_path(ctx, avail, theme):
+    return f"{theme.c('BLUE')}{_display_dir(ctx.work_dir, ctx.home)}{RESET}"  # floor
+
+
+def seg_branch(ctx, avail, theme):
+    branch = ctx.branch
+    if not branch:
+        return None
+    # branch carries its own STATIC 🌿 icon. It does NOT encode worktree state
+    # (no 🌳) — that moved to the dedicated `worktree` ⎇ segment (FR-7.2); the
+    # leaf glyph here is purely "this is the branch". Falls back to the bare
+    # name when too narrow for the icon, so the branch never drops just for it.
+    return _first_fitting([f"{theme.c('GREY')}[{_icon('🌿', branch)}]{RESET}",
+                           f"{theme.c('GREY')}[{branch}]{RESET}"], avail)
+
+
+def seg_dirty(ctx, avail, theme):
+    mark = _dirty_mark(ctx.dirty, theme)
+    return _first_fitting([mark], avail) if mark else None
+
+
+def _trunc_cols(s, limit):
+    """Truncate s to at most `limit` display columns, appending `…` if cut.
+    Column-aware (uses char_width) so a wide/multibyte name can't blow the budget."""
+    if sum(char_width(c) for c in s) <= limit:
+        return s
+    out, width = [], 0
+    for c in s:
+        cw = char_width(c)
+        if width + cw > limit - 1:          # reserve one column for the ellipsis
+            break
+        out.append(c)
+        width += cw
+    return "".join(out) + "…"
+
+
+def seg_worktree(ctx, avail, theme):
+    # `worktree` names the ACTIVE linked worktree the session sits in — never a
+    # list. Mirrors `dirty`'s "absence is the neutral state" convention: hidden
+    # outside a repo. On the main checkout it shows a dimmed, struck `⎇ wt`
+    # placeholder — GREY (not just strikethrough) so it stays distinct from the
+    # cyan active form even on terminals that don't render SGR-9.
+    if not ctx.in_repo:
+        return None
+    if not ctx.is_worktree:
+        return _first_fitting([f"{theme.c('GREY')}\033[9m⎇ wt{RESET}"], avail)
+    name = _trunc_cols(ctx.wt_name or "", 20)
+    return _first_fitting([f"{theme.c('CYAN')}⎇ {name}{RESET}"], avail)
+
+
+def seg_todo(ctx, avail, theme):
+    state, text = ctx.todo_state, ctx.todo_text
+    if not text:
+        return None
+    limit = avail - 4                      # room for icon + space + ellipsis
+    if limit < 6:                          # too cramped to be useful -> hide
+        return None
+    if len(text) > limit:
+        text = text[:limit - 1] + "…"
+    if state == "in_progress":
+        return _icon("📝", f"{theme.c('YELLOW')}{text}{RESET}")
+    if state == "pending":
+        return _icon("⏸", f"{theme.c('GREY')}{text}{RESET}")
+    return None
+
+
+# ── model row ────────────────────────────────────────────────────────────────
+def seg_model(ctx, avail, theme):
+    name = ctx.model_name or ctx.model_id
+    if not name:
+        return None
+    return _first_fitting([f"{theme.c('CYAN')}{name}{RESET}"], avail)
+
+
+def seg_time_ago(ctx, avail, theme):
+    ago = ctx.ago
+    if not ago:
+        return None
+    return _first_fitting([f"{theme.c('WHITE')}{ago}{RESET}"], avail)
+
+
+def seg_clock(ctx, avail, theme):
+    return _first_fitting([_icon("⏰", ctx.clock)], avail)
+
+
+def seg_effort(ctx, avail, theme):
+    level = ctx.effort
+    if not level:
+        return None
+    # Unknown level (stale/future): no color on the word, all-grey ladder — a safe
+    # degraded display. resolve_effort already strips "auto", so it never lands here.
+    color, bar = theme.effort.get(level.lower(), ("", f"{theme.c('GREY')}▁▃▄▆█"))
+    word = f"{color}{level}{RESET}"
+    bars = _icon("🧠", f"{bar}{RESET}")
+    if ctx.effort_auto:
+        # effortLevel is unset/auto in settings: flag the resolved level as
+        # auto-chosen. The flag degrades [auto] -> * -> dropped as space tightens.
+        variants = [f"{bars} {word} {theme.c('GREY')}[auto]{RESET}",
+                    f"{bars} {color}{level}*{RESET}",
+                    f"{bars} {word}",
+                    bars]
+    else:
+        variants = [f"{bars} {word}", bars]
+    return _first_fitting(variants, avail)
+
+
+def seg_lines(ctx, avail, theme):
+    body = (f"{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(ctx.added)}{RESET}"
+            f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(ctx.removed)}{RESET}")
+    return _first_fitting([_icon("📃", body)], avail)
+
+
+def seg_cost(ctx, avail, theme):
+    return _first_fitting([_icon("🪙", f"${float(ctx.cost):.3f}")], avail)
+
+
+def seg_total_time(ctx, avail, theme):
+    return _first_fitting([_icon("💬", fmt_time_ms(ctx.total_ms))], avail)
+
+
+def seg_api_time(ctx, avail, theme):
+    return _first_fitting([_icon("📡", fmt_time_ms(ctx.api_ms))], avail)
+
+
+# ── diagnostics row ──────────────────────────────────────────────────────────
+def seg_render_time(ctx, avail, theme):    # status-line's own run time, SLO/SLA-colored
+    t0 = ctx.t_start
+    if t0 is None:                      # not timed (e.g. direct builder calls) -> omit
+        return None
+    elapsed = time.perf_counter_ns() - t0
+    color = pick_color(elapsed, theme.ramps["render_time"])
+    return _first_fitting([_icon("⏱", f"{color}{fmt_duration(elapsed)}{RESET}")], avail)
+
+
+def seg_slowest(ctx, avail, theme):        # slowest single segment this render, SLO/SLA-colored
+    slow = ctx.slowest
+    if not slow:                            # timing off (segment disabled) -> omit
+        return None
+    name, ns = slow
+    color = pick_color(ns, theme.ramps["slowest"])
+    dur = f"{color}{fmt_duration(ns)}{RESET}"
+    # drop name when tight
+    return _first_fitting([_icon("🐌", f"{name} {dur}"), _icon("🐌", dur)], avail)
+
+
+def seg_dimensions(ctx, avail, theme):
+    mark = "?" if ctx.dim_assumed else ""
+    return _first_fitting([f"{ctx.cols}×{ctx.lines}{mark}"], avail)
+
+
+def seg_context(ctx, avail, theme):
+    pct = int(ctx.context_pct)
+    color = pick_color(pct, theme.ramps["context"])
+    pct_only = _icon("📊", f"{color}{pct}%{RESET}")
+    # Measure in half-cells (5% each) and round up, so any pct > 0 shows >= ▌.
+    halves = 0 if pct <= 0 else min(2 * CONTEXT_BAR_CELLS, math.ceil(pct / 5))
+    full_n, half = divmod(halves, 2)
+    bar_f = "█" * full_n + ("▌" if half else "")
+    bar_e = "░" * (CONTEXT_BAR_CELLS - full_n - half)
+    bar = f"{color}{bar_f}{theme.c('GREY')}{bar_e}{RESET}"
+    mid = _icon("📊", f"{bar} {color}{pct}%{RESET}")
+    full = _icon("📊", f"{bar} {color}{pct}% of {fmt_tokens(ctx.context_max)}{RESET}")
+    return _first_fitting([full, mid, pct_only], avail) or pct_only  # floor
+
+
+def seg_chat_size(ctx, avail, theme):
+    n = ctx.chat_bytes
+    if n is None:
+        return None
+    color = pick_color(n, theme.ramps["chat_size"])
+    return _first_fitting([_icon("💾", f"{color}{fmt_bytes(n)}{RESET}")], avail)
+
+
+def seg_memory(ctx, avail, theme):
+    n = ctx.mem_bytes
+    if n is None:
+        return None
+    return _first_fitting([_icon("🧮", fmt_bytes(n))], avail)
+
+
+def _reset_suffix(reset, detail):
+    """Reset stamp at the requested detail: 'long' | 'short' | 'none'.
+    Pure formatting of resets_at in local time — never compared against the
+    clock, so a wrong system time or a timezone change can't change what shows."""
+    if reset is None or detail == "none":
+        return ""
+    dt = datetime.fromtimestamp(reset)
+    if detail == "long":
+        return f" (↺ {dt.strftime('%b %d %H:%M')})"   # e.g. Jun 07 14:10
+    return f" (↺ {dt.strftime('%m-%d %H:%M')})"        # e.g. 06-07 14:10
+
+
+def _rate_str(rate_limits, detail, theme):
+    # Show every bucket that reports a percentage. Visibility never depends on
+    # the clock — the reset stamp is shown only when there's room (via detail),
+    # so timezone shifts / clock skew can't make a bucket vanish.
+    parts = []
+    for key in sorted(rate_limits):
+        info = rate_limits[key] or {}
+        pct = info.get("used_percentage")
+        if pct is None:
+            continue
+        reset = info.get("resets_at")
+        if reset is not None:
+            reset = int(reset)
+        color = rate_color(pct, theme)
+        suffix = _reset_suffix(reset, detail)
+        parts.append(f"{rate_key_label(key)}: {color}{round(float(pct))}%{RESET}{suffix}")
+    return _icon("⚡", " | ".join(parts)) if parts else None
+
+
+def seg_rate_limits(ctx, avail, theme):
+    rate_limits = ctx.rate_limits
+    if not rate_limits:
+        return None
+    return _first_fitting([_rate_str(rate_limits, "long", theme),
+                           _rate_str(rate_limits, "short", theme),
+                           _rate_str(rate_limits, "none", theme)], avail)
+
+
+# Editable surface (SEGMENTS + LAYOUT) is at the top of the file; the registry
+# is DERIVED by convention from the seg_* functions above — no hand-maintained
+# key->fn list to drift (FR-A.3, D7).
+def _discover_builders():
+    """The built-in builder map, derived by convention from this module's
+    `seg_<key>` functions (the homologous suffix is the segment key). Replaces the
+    hand-maintained BUILDERS literal (FR-A.3, D7): adding a `seg_x` auto-registers
+    it. SEGMENTS/LAYOUT stay explicit defaults tables — discovery removes only the
+    redundant name->fn list, never the tables that encode intent."""
+    return {name[len("seg_"):]: fn
+            for name, fn in globals().items()
+            if name.startswith("seg_") and callable(fn)}
+
+
+BUILDERS = _discover_builders()   # module-level snapshot; same shape as the old literal
+
+
+# ── External drop-in segments (E4c) ──────────────────────────────────────────
+
+
+# A provider is an executable in the segments dir. Its first 10 lines may carry
+#   # ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end)
+#                     [id=<slug>] [timeout=<s>] [ttl=<s>]
+# It is modeled as a synthetic builder inserted into the resolved layout, so the
+# existing packer handles placement/priority/overflow unchanged.
+ExtSpec = namedtuple("ExtSpec", "id path line position timeout ttl cache_path")
+
+
+_SEG_HEADER_RE = re.compile(r"^#\s*ai-kit-segment:\s*(.*?)\s*$")
+
+
+def parse_segment_header(lines):
+    """Parse the `# ai-kit-segment:` header from a file's first lines.
+
+    Returns a dict of the raw string fields present (`line`/`id`/`timeout`/`ttl`
+    as strings, `position` as a (kind, ref) tuple) — possibly empty if the header
+    line exists but lists nothing. Returns None when no header line is present."""
+    for ln in lines:
+        m = _SEG_HEADER_RE.match(ln)
+        if m is None:
+            continue
+        fields = {}
+        for tok in m.group(1).split():
+            if tok in ("start", "end"):
+                fields["position"] = (tok, "")
+            elif "=" in tok:
+                k, v = tok.split("=", 1)
+                if k in ("after", "before"):
+                    fields["position"] = (k, v)
+                elif k in ("line", "id", "timeout", "ttl"):
+                    fields[k] = v
+        return fields
+    return None
+
+
+def discover_external(directory, default_ttl, cache_dir):
+    """Scan `directory` for executable providers and return a list of ExtSpec,
+    sorted by (filename, id). Non-executable files are skipped with a dim warning.
+    A file with no header still loads with all defaults (line=0 => last row at
+    placement, position=end, id=stem, timeout=2s, ttl=default_ttl).
+    `cache_dir` is the per-provider output cache directory (…/ai-kit/segments)."""
+    if not directory or not os.path.isdir(directory):
+        return []
+    specs = []
+    for name in sorted(os.listdir(directory)):
+        path = os.path.join(directory, name)
+        if not os.path.isfile(path):
+            continue
+        if not os.access(path, os.X_OK):
+            print(f"{_DIM}status-line: segment '{name}' not executable — skipped{RESET}",
+                  file=sys.stderr)
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                head = [f.readline() for _ in range(10)]
+        except OSError:
+            continue
+        fields = parse_segment_header(head) or {}
+        sid = fields.get("id") or os.path.splitext(name)[0]
+        try:
+            timeout = float(fields.get("timeout", 2))
+        except (TypeError, ValueError):
+            timeout = 2.0
+        try:
+            ttl = int(fields.get("ttl", default_ttl))
+        except (TypeError, ValueError):
+            ttl = default_ttl
+        try:
+            line = int(fields["line"]) if "line" in fields else 0
+        except (TypeError, ValueError):
+            line = 0
+        specs.append(ExtSpec(
+            id=sid, path=path, line=line,
+            position=fields.get("position", ("end", "")),
+            timeout=timeout, ttl=ttl,
+            cache_path=os.path.join(cache_dir, sid)))
+    specs.sort(key=lambda s: (os.path.basename(s.path), s.id))
+    return specs
+
+
+def _sanitize_external(text, avail):
+    """First non-empty line of `text`, SGR colors kept, every other control/CSI/OSC
+    sequence stripped, width-truncated to `avail`. None if nothing renderable."""
+    line = next((c for c in text.splitlines() if c.strip()), "").rstrip()
+    if not line:
+        return None
+    line = _OSC_SEQ.sub("", line)
+    line = _CSI_SEQ.sub(lambda m: m.group(0) if m.group(1) == "m" else "", line)
+    line = _STRAY_ESC.sub("", line)
+    line = _C0_CTRL.sub("", line)
+    if not line.strip():
+        return None
+    return _truncate_visible(line, avail) or None
+
+
+def _position_str(position):
+    """('after','clock') -> 'after:clock'; ('end','') -> 'end'."""
+    kind, ref = position
+    return f"{kind}:{ref}" if ref else kind
+
+
+def _cache_read(spec):
+    """Cached raw output line if present and younger than ttl, else None.
+    ttl <= 0 always misses (forces a re-run every render)."""
+    if spec.ttl <= 0:
+        return None
+    try:
+        age = time.time() - os.stat(spec.cache_path).st_mtime
+    except OSError:
+        return None
+    if age >= spec.ttl:
+        return None
+    try:
+        with open(spec.cache_path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _cache_write(spec, text):
+    """Best-effort: persist raw output. Unwritable cache dir -> silently skip."""
+    try:
+        os.makedirs(os.path.dirname(spec.cache_path), exist_ok=True)
+        with open(spec.cache_path, "w", encoding="utf-8") as f:
+            f.write(text)
+    except OSError:
+        pass
+
+
+def _run_provider(spec, ctx, avail):
+    """Spawn the provider with the status JSON + segment block on stdin, the
+    AI_KIT_SEGMENT_* env mirror, and cwd = workspace dir. Returns the raw first
+    non-empty stdout line, or None on timeout / non-zero exit / no output."""
+    pos = _position_str(spec.position)
+    payload = json.dumps({**(ctx.raw or {}),
+                          "segment": {"id": spec.id, "avail_cols": avail,
+                                      "line": spec.line, "position": pos}})
+    env = dict(os.environ)
+    env.update({"AI_KIT_SEGMENT_COLS": str(avail), "AI_KIT_SEGMENT_ID": spec.id,
+                "AI_KIT_SEGMENT_LINE": str(spec.line), "AI_KIT_SEGMENT_POSITION": pos})
+    try:
+        proc = subprocess.run(
+            [spec.path], input=payload, capture_output=True, text=True,
+            timeout=spec.timeout, cwd=ctx.work_dir or ".", env=env, check=False)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    for line in proc.stdout.splitlines():
+        if line.strip():
+            return line
+    return None
+
+
+def run_external(spec, ctx, avail):
+    """TTL-cached, timeout-bounded provider invocation. Returns the sanitized,
+    width-fitted segment string, or None to omit the segment."""
+    raw_line = _cache_read(spec)
+    if raw_line is None:
+        raw_line = _run_provider(spec, ctx, avail)
+        if raw_line is None:
+            return None
+        _cache_write(spec, raw_line)
+    return _sanitize_external(raw_line, avail)
+
+
+def make_external_builder(spec):
+    """Wrap an ExtSpec as a seg_x(ctx, avail, theme)-shaped builder so pack_line
+    treats it exactly like a built-in. theme is unused (the provider colors itself)."""
+    def _builder(ctx, avail, theme):
+        return run_external(spec, ctx, avail)
+    return _builder
+
+
+def _builders_for(cfg):
+    """The built-in BUILDERS merged with one synthetic builder per external
+    provider (keyed by id). External ids never collide with built-ins by design;
+    if a user names one after a built-in, the external wins for that render."""
+    builders = dict(BUILDERS)
+    for spec in (cfg.external or []):
+        builders[spec.id] = make_external_builder(spec)
+    return builders
+
+# ═══ 6. LAYOUT / PACK — segment-agnostic two-pass packer + render ════════════
+
+
 # RENDER CONTRACT (how a line becomes text):
 #   * One registry, one gate. Built-in and external segments share a single
 #     name->builder map (`_builders_for`) and a single on/off gate
-#     (`cfg.segments.get(name, False)`). Every builder is `seg_x(data, avail,
+#     (`cfg.segments.get(name, False)`). Every builder is `seg_x(ctx, avail,
 #     theme) -> str | None` and is interchangeable to the packer.
 #   * One guarded entry. `safe_build` is the only place a builder is called; on
 #     any exception it records the key in `failed` and returns a width-bounded
@@ -1745,7 +2050,6 @@ def render(ctx, cfg=None, theme=None):
         out.append(diag)
     return out
 
-
 # ═══ HOW TO CUSTOMIZE ════════════════════════════════════════════════════════
 # Three knobs at the top of the file drive everything:
 #
@@ -1806,188 +2110,11 @@ def render(ctx, cfg=None, theme=None):
 #       3. Flag it:          add  "foo": True  to SEGMENTS.
 #       4. Test it:          add a case in tests/test_status_line.py.
 
-
-# ═══ Entry point ══════════════════════════════════════════════════════════════
-def resolve_effort(raw, env):
-    """The *resolved* effort level (low..max) as a normalized lowercase string, or "".
-
-    This is the live per-turn level the API reported, read from raw["effort"]["level"]
-    (CLAUDE_EFFORT env as a fallback). It is never "auto" — auto is a *setting*, detected
-    separately from disk by effort_setting_is_auto. A stray "auto" in the resolved field
-    (transition states, env misuse) is normalized away so it can't reach the level table."""
-    level = ((raw.get("effort") or {}).get("level") or env.get("CLAUDE_EFFORT", ""))
-    level = level.strip().lower()
-    return "" if level == "auto" else level
+# ═══ CLI introspection — out of the render path, kept in-file (D2) ════════════
 
 
-def effort_setting_is_auto(work_dir, home):
-    """True when the effort *setting* is auto — i.e. `effortLevel` is absent (or
-    literally "auto") across the settings chain.
-
-    Precedence high->low: the project's .claude/settings.local.json, then
-    .claude/settings.json, then ~/.claude/settings.json. The first file that defines
-    `effortLevel` decides (explicit level -> not auto); if none define it, it's auto."""
-    for path in (os.path.join(work_dir, ".claude", "settings.local.json"),
-                 os.path.join(work_dir, ".claude", "settings.json"),
-                 os.path.join(home, ".claude", "settings.json")):
-        try:
-            with open(path, encoding="utf-8") as f:
-                cfg = json.load(f)
-        except (OSError, ValueError):
-            continue
-        if isinstance(cfg, dict) and "effortLevel" in cfg:
-            return str(cfg["effortLevel"]).strip().lower() == "auto"
-    return True
-
-
-@dataclass
-class Context:  # pylint: disable=too-many-instance-attributes  # per-render bag (D1)
-    """Per-render bag handed to every builder (D1). Eager inputs are resolved at
-    the SHELL/CONFIG boundary; expensive probes are `cached_property`, so a probe
-    runs synchronously on first attribute read — its cost lands inside the
-    *measured* build of the first segment that reads it (FR-R.2) and later reads
-    are free. Render bookkeeping (`failed`, `slowest`) lives here too. Attribute
-    access only — never `ctx[...]` (D4). `raw` keeps `.get()`-chain access."""
-    raw: dict                       # incoming status JSON (the ONLY dict-style member)
-    config: "Config"
-    theme: "Theme"
-    # per-render terminal geometry (resolved by the SHELL; D6 — never on Config)
-    cols: int
-    lines: int
-    dim_assumed: bool
-    t_start: "int | None"
-    # cheap eager fields (were build_data's `base`)
-    model_name: str
-    model_id: str
-    effort: str
-    work_dir: str
-    home: str
-    clock: str
-    added: int
-    removed: int
-    cost: float
-    total_ms: int
-    api_ms: int
-    context_pct: int
-    context_max: int
-    rate_limits: dict
-    # probe inputs (locate materialized todo/task state; feed the cached_property probes)
-    transcript: str
-    session: str
-    claude_dir: str
-    # render bookkeeping (D1) — mutated during the render
-    failed: set = field(default_factory=set)
-    slowest: "tuple | None" = None
-
-    # ── shared git probe: one call fills five fields (branch/dirty/worktree/…) ──
-    # The probe reads its ttl + cache_base off the Config object it is given (D8).
-    @functools.cached_property
-    def _git(self):
-        return git_snapshot(self.work_dir, self.config)
-
-    @property
-    def branch(self):
-        """Current git branch name (via shared _git probe)."""
-        return self._git.branch
-
-    @property
-    def dirty(self):
-        """Git working-tree state: 'clean', 'modified', or 'untracked'."""
-        return self._git.dirty
-
-    @property
-    def is_worktree(self):
-        """True when the workspace is a git worktree (not the main checkout)."""
-        return self._git.is_worktree
-
-    @property
-    def wt_name(self):
-        """Worktree short name (basename of the worktree root), or ''."""
-        return self._git.wt_name
-
-    @property
-    def in_repo(self):
-        """True when the workspace is inside a git repository."""
-        return self._git.in_repo
-
-    @functools.cached_property
-    def ago(self):
-        """Human-readable age of the transcript file (e.g. '5m 0s ago'), or ''."""
-        t = self.transcript
-        if t and os.path.isfile(t):
-            return fmt_ago(int(time.time()) - int(os.path.getmtime(t)))
-        return ""
-
-    @functools.cached_property
-    def effort_auto(self):
-        """True when the Claude effort setting is 'auto' rather than a fixed level."""
-        return effort_setting_is_auto(self.work_dir, self.home)
-
-    @functools.cached_property
-    def _todo(self):
-        return current_todo(self.transcript, self.session, self.claude_dir)
-
-    @property
-    def todo_state(self):
-        """Active task state string (e.g. 'in_progress'), or None."""
-        return self._todo[0]
-
-    @property
-    def todo_text(self):
-        """Active task display text, or None when no task is active."""
-        return self._todo[1]
-
-    @functools.cached_property
-    def chat_bytes(self):
-        """Transcript file size in bytes (for the chat-size segment)."""
-        return transcript_bytes(self.transcript)
-
-    @functools.cached_property
-    def mem_bytes(self):
-        """Process RSS in bytes (for the memory segment), or None."""
-        return proc_rss_bytes()
-
-
-def build_context(raw, config, theme, cols, lines, dim_assumed, t_start,  # pylint: disable=too-many-arguments,too-many-positional-arguments
-                  effort, home, claude_dir):
-    """Assemble the per-render Context from the parsed status JSON and the
-    already-resolved per-render inputs. Segment-agnostic and env-free: every
-    env read happened in the CONFIG block; the SHELL hands the resolved values
-    here. Expensive probes are deferred to Context's cached_property members."""
-    model = raw.get("model") or {}
-    cost = raw.get("cost") or {}
-    ctx_win = raw.get("context_window") or {}
-    workspace = raw.get("workspace") or {}
-    work_dir = os.path.abspath(workspace.get("current_dir") or ".")
-    transcript = raw.get("transcript_path") or ""
-    # session_id locates the materialized task/todo state current_todo prefers
-    # over replaying the transcript; it also equals the transcript file basename.
-    session = raw.get("session_id") or (
-        os.path.splitext(os.path.basename(transcript))[0] if transcript else "")
-    return Context(
-        raw=raw, config=config, theme=theme,
-        cols=cols, lines=lines, dim_assumed=dim_assumed, t_start=t_start,
-        model_name=model.get("display_name", ""),
-        model_id=model.get("id", "unknown"),
-        effort=effort, work_dir=work_dir, home=home,
-        clock=time.strftime("%H:%M"),
-        # `or 0` (not get's default) so a PRESENT-but-null field — what a fresh
-        # /clear session sends before any tokens/cost accrue — coalesces to 0
-        # instead of raising on int()/math and blanking the whole bar.
-        added=cost.get("total_lines_added") or 0,
-        removed=cost.get("total_lines_removed") or 0,
-        cost=cost.get("total_cost_usd") or 0,
-        total_ms=cost.get("total_duration_ms") or 0,
-        api_ms=cost.get("total_api_duration_ms") or 0,
-        context_pct=int(ctx_win.get("used_percentage") or 0),
-        context_max=ctx_win.get("context_window_size") or 0,
-        rate_limits=raw.get("rate_limits") or {},
-        transcript=transcript, session=session, claude_dir=claude_dir,
-    )
-
-
-# ═══ CLI introspection ═══════════════════════════════════════════════════════
 _NO_CHECK = object()   # sentinel: --check flag absent (vs. present with no FILE)
+
 
 _ENV_HELP = """\
 Environment variables:
@@ -2179,66 +2306,6 @@ def cmd_check(path, env):
         return 1
     print(f"{path}: OK")
     return 0
-
-
-def parse_args(argv):
-    """Parse command-line arguments for the status-line CLI."""
-    p = argparse.ArgumentParser(
-        prog="status-line.py",
-        description="Claude Code status line. With no flags, reads the status "
-                    "JSON on stdin and renders up to three ANSI lines.",
-        epilog=_ENV_HELP,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p.add_argument("--print-config", action="store_true",
-                   help="resolve config (defaults < file < env), print it as "
-                        "JSON, and exit (does not read stdin)")
-    p.add_argument("--check", nargs="?", const=None, default=_NO_CHECK,
-                   metavar="FILE",
-                   help="validate a config file (default: the resolved path) "
-                        "and exit non-zero if invalid")
-    p.add_argument("--doctor", action="store_true",
-                   help="validate the config AND dry-render every segment to "
-                        "surface a builder that raises; exit non-zero if unhealthy")
-    return p.parse_args(argv)
-
-
-def safe_render(raw, env, cfg, theme, t_start):
-    """Build context and render; on ANY unexpected failure return a single
-    diagnostic line instead of a blank bar. Never raises. This is the backstop
-    above safe_build's per-segment isolation (covers build_context itself)."""
-    try:
-        cols, lines, assumed = terminal_size(env)
-        home = env.get("HOME", "")
-        claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-        ctx = build_context(raw, cfg, theme, cols, lines, assumed, t_start,
-                            effort=resolve_effort(raw, env),
-                            home=home, claude_dir=claude_dir)
-        return render(ctx)
-    except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
-        return [f"{_WARN}⚠ status-line error — "
-                f"run the doctor: {_doctor_cmd()}{RESET}"]
-
-
-def main():
-    """CLI entrypoint: dispatch subcommands or render the status line from stdin."""
-    t0 = time.perf_counter_ns()        # for the optional `render_time` self-timing segment
-    env = os.environ                   # single SHELL-boundary read (FR-A.1)
-    args = parse_args(sys.argv[1:])
-    if args.check is not _NO_CHECK:
-        sys.exit(cmd_check(args.check, env))
-    if args.doctor:
-        sys.exit(cmd_doctor(env))
-    cfg = load_config(env)
-    theme = build_theme(cfg)
-    if args.print_config:
-        print(cmd_print_config(cfg, env))
-        return
-    try:
-        raw = json.load(sys.stdin)
-    except (ValueError, OSError):
-        raw = {}
-    print("\n".join(safe_render(raw, env, cfg, theme, t0)))
 
 
 if __name__ == "__main__":
