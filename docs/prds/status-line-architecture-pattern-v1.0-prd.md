@@ -51,6 +51,8 @@ These were settled in the brainstorming dialogue and are **not** open during imp
 | D3 | Naming convention | **Light prefixes + banners.** `# ═══` section banners + noun-grouping (`_git_*`, `_cache_*`) + plain `_` for private. No heavy role prefixes (`_seg_helper_git`). |
 | D4 | `obj[key]` subscript ban | Applies to **our own types** (the `ctx`/`Config` objects → attribute access only). The incoming `raw` JSON keeps `.get()`-chain access (safer; avoids `KeyError`). |
 | D5 | Typing sequence | **Types last.** Strict hints + strict linters (incl. the subscript ban) land **after** all structural simplification, dedup, prefix/block reorg, and tests are green — as one dedicated pass, not interleaved. |
+| D6 | Config vs Context boundary | **`Config` = stable only** (env + TOML: palette, ramps, thresholds, segment on/off defaults, git ttl, cache dirs). **Per-render** inputs — terminal size and the stdin `raw` JSON — live on `Context`, never `Config`. Mirrors dotenv (stable config) vs per-request data. |
+| D7 | Discovery scope | **Auto-derive `BUILDERS` only** from the module's `seg_*` functions (homologous suffix). `SEGMENTS` (on/off) stays an **explicit internal-defaults table** alongside `_RAMP_DEFAULTS`/`_PALETTE_DEFAULTS`/`_EFFORT_DEFAULTS`; `LAYOUT` stays explicit (deliberate order/lines). Discovery removes only the redundant name→fn list, not the tables that encode intent. |
 
 ### The pattern (target architecture)
 
@@ -59,8 +61,8 @@ banner-delimited blocks in one file, in dependency order:
 
 ```
 1. SHELL (main)      side effects only: timestamp, read os.environ, read stdin JSON, print
-2. CONFIG            the ONLY block that reads env/TOML → one immutable Config object
-3. CONTEXT           per-render bag: raw, config, theme, terminal, t_start (eager)
+2. CONFIG            the ONLY block that reads env/TOML → one immutable Config (STABLE only)
+3. CONTEXT           per-render bag: raw JSON, config, theme, terminal size, t_start (eager)
                      + cached_property probes (git/todo/ago/rss/effort-auto)
                      + render bookkeeping (failed, slowest)
 4. HELPERS           probes own their own caching/TTL; read only what ctx/config give them
@@ -71,16 +73,21 @@ banner-delimited blocks in one file, in dependency order:
 ### Feature Overview
 
 - **FR-A.1 — Config object boundary.** All env/TOML reads consolidate into the CONFIG block, which
-  produces one immutable `Config`. No `os.environ` / `env.get` access anywhere downstream; derived
-  paths (e.g. the segments cache dir) become `Config` fields, not standalone helpers. (D2/D4)
+  produces one immutable `Config` carrying **stable settings only**. No `os.environ` / `env.get`
+  access anywhere downstream; derived paths (e.g. the segments cache dir) become `Config` fields,
+  not standalone helpers. Per-render inputs — terminal size and the stdin `raw` JSON — are resolved
+  by the SHELL and handed to the `Context`, **not** folded into `Config`. (D4/D6)
 - **FR-A.2 — `Context` replaces `build_data` + `_LazyData`.** A `Context` object carries eager
   inputs, `cached_property` lazy probes, and the render-bookkeeping fields. The hand-enumerated
   core fields collapse: each is read by the single segment that needs it, directly from
   `ctx.raw`. The first read of a probe still fires inside the measured build of the segment that
   triggers it — **FR-R.2 (truthful `slowest`) must be preserved, with a test proving it.** (D1)
-- **FR-A.3 — Convention-discovered builders.** Replace the hand-maintained `BUILDERS` dict with a
-  one-time discovery of module `seg_*` functions, keyed by the homologous suffix. External
-  providers merge into the same map. `SEGMENTS` (the on/off flags + defaults) stays explicit.
+- **FR-A.3 — Convention-discovered builders.** Replace **only** the hand-maintained `BUILDERS` dict
+  with a one-time discovery of module `seg_*` functions, keyed by the homologous suffix. External
+  providers merge into the same map. `SEGMENTS` (on/off) stays an **explicit internal-defaults
+  table** alongside the existing `_RAMP_DEFAULTS`/`_PALETTE_DEFAULTS`/`_EFFORT_DEFAULTS`, and
+  `LAYOUT` stays explicit — discovery removes the redundant name→fn list, never the tables that
+  encode intent (which segments default on, in what order, on which line). (D7)
 - **FR-A.4 — Encapsulated helpers.** The git probe (and any other shared helper) owns its caching
   policy and TTL; callers pass `ctx`/`Config`, never raw knobs. Helper grouped under one banner.
 - **FR-A.5 — Block/structure reorg.** Reorganize the whole file into the six blocks above with
@@ -97,16 +104,63 @@ banner-delimited blocks in one file, in dependency order:
 
 ### Acceptance criteria
 
-- Every existing test passes unchanged; the golden snapshot is byte-identical (no output drift).
-- A test asserts a probe's cost is captured inside the triggering segment's measured build
-  (FR-R.2 invariant survives the `Context` move).
-- `grep` finds **no** `os.environ`/`env.get` outside the CONFIG block; **no** `ctx[...]`/`config[...]`
-  subscript on our own types.
-- `BUILDERS` hand-maintenance is gone; adding a `seg_x` function auto-registers it.
-- `make validate` is green with pyright in `strict` mode and the design thresholds at pylint
-  defaults (the render-refactor branch ratcheted them part-way; this branch finishes the job by
-  dissolving `build_data` and cutting builder arg-counts via `ctx`).
-- The six-block structure is present and a short in-file contract note describes the pattern.
+**Behavior preservation (the safety net — D-reuse).** The render refactor's golden snapshot +
+508-test suite **are** the net; no new test infra is added. They must stay green and the golden
+byte-identical at **every step** of the overhaul (verify after each task, not just at the end).
+
+- [ ] Every existing test passes unchanged; the golden snapshot is byte-identical (no output drift).
+- [ ] A test asserts a probe's cost is captured inside the triggering segment's measured build
+      (FR-R.2 invariant survives the `Context` move).
+- [ ] `grep` finds **no** `os.environ`/`env.get` outside the CONFIG block.
+- [ ] `grep` finds **no** `ctx[...]`/`config[...]` subscript on our own types (attribute access only).
+- [ ] `BUILDERS` hand-maintenance is gone; adding a `seg_x` function auto-registers it; `SEGMENTS`/
+      `LAYOUT` remain explicit defaults tables.
+- [ ] `Config` carries stable settings only; terminal size + `raw` JSON live on `Context`.
+- [ ] `make validate` green with pyright `strict` and pylint design thresholds at defaults
+      (args=5, locals=15, branches=12, returns=6) for the render path — closed by dissolving
+      `build_data` and the single `ctx` bag.
+- [ ] The six-block structure is present and a short in-file contract note describes the pattern.
+
+## Execution Phases
+
+> Detailed task breakdown is the `writing-plans` deliverable; this is the phase skeleton and
+> ordering. Each phase keeps the golden + suite green before the next begins. **Behavior-preserving
+> throughout** — types are the last phase (D5).
+
+### Phase 1: Config boundary
+**Goal:** one `Config` (stable only); zero downstream env reads.
+- [ ] Consolidate every `env.get`/`os.environ` read into the CONFIG block; turn derived paths
+      (cache dirs, segments dir) into `Config` fields; delete the now-redundant path helpers.
+- [ ] **Deliverable:** `grep` shows no env access outside CONFIG; suite green.
+
+### Phase 2: Context replaces build_data
+**Goal:** dissolve `build_data`/`_LazyData` into a `Context` with `cached_property` probes.
+- [ ] Introduce `Context`; move the hand-enumerated core fields into the single consuming segment
+      (read from `ctx.raw`); keep the FR-R.2 truthful-slowest test green.
+- [ ] **Deliverable:** `build_data` gone; `slowest` still ms-scale; suite green.
+
+### Phase 3: Convention registry + encapsulated helpers
+**Goal:** auto-derive `BUILDERS`; helpers own their TTL/caching.
+- [ ] Replace the `BUILDERS` literal with `seg_*` discovery; route the git probe's ttl through
+      `Config` so no caller threads knobs.
+- [ ] **Deliverable:** adding a `seg_x` auto-registers; suite green.
+
+### Phase 4: Block/structure reorg
+**Goal:** the six banner-delimited blocks + D3 naming; externals in their own block.
+- [ ] Reorder the file into the blocks; apply naming convention; add the in-file contract note.
+- [ ] **Deliverable:** structure present; behavior unchanged; suite + golden green.
+
+### Phase 5: Strict typing (last)
+**Goal:** full type hints; pyright `strict`; subscript ban; pylint design at defaults.
+- [ ] Add hints throughout; flip pyright to `strict`; enable typing + subscript-ban rules; resolve
+      every finding by fixing (not suppressing); push pylint design thresholds to defaults.
+- [ ] **Deliverable:** `make validate` green under the strict ruleset; suite + golden green.
+
+---
+
+**Document Version:** 1.0
+**Clarification:** requirements-clarity pass — 1 round (config boundary, discovery scope, safety
+net resolved → D6/D7 + reused net). **Quality Score:** 94/100.
 
 ### Risks / notes
 
