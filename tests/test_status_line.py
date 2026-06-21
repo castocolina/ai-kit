@@ -1835,6 +1835,61 @@ class TestRendererRobustness(unittest.TestCase):
         self.assertTrue(text.strip())       # and the bar is not blank
 
 
+class TestGoldenOutput(unittest.TestCase):
+    """Snapshot guard for the measured-pass restructure (FR-R.1/2/3). Renders a
+    set of representative inputs through build_data + render with every
+    non-deterministic probe mocked, and compares to a committed expected.txt.
+    t_start=None makes render_time self-omit and `slowest` is unset, so the
+    snapshot captures the NON-meta segment output exactly — which is what the
+    restructure must preserve. Regenerate intentionally with UPDATE_GOLDEN=1."""
+
+    GOLDEN = os.path.join(os.path.dirname(__file__), "fixtures", "golden")
+    ENV = {"HOME": "/home/dev"}
+
+    @contextlib.contextmanager
+    def _deterministic(self):
+        snap = sl.GitSnapshot(in_repo=True, branch="main", dirty="modified",
+                              is_worktree=False, wt_name="")
+        with mock.patch.object(sl.time, "strftime", return_value="14:30"), \
+             mock.patch.object(sl.time, "time", return_value=NOW), \
+             mock.patch.object(sl, "git_snapshot", return_value=snap), \
+             mock.patch.object(sl, "proc_rss_bytes", return_value=448_790_528), \
+             mock.patch.object(sl, "transcript_bytes", return_value=305_000), \
+             mock.patch.object(sl, "current_todo", return_value=(None, None)), \
+             mock.patch.object(sl, "effort_setting_is_auto", return_value=False):
+            yield
+
+    def _render_all(self):
+        with open(os.path.join(self.GOLDEN, "inputs.json"), encoding="utf-8") as f:
+            cases = json.load(f)
+        cfg = sl.default_config()
+        # The meta segments report the render itself and are inherently
+        # non-deterministic (render_time / slowest durations) and are exactly what
+        # the restructure changes — exclude them so the golden guards only the
+        # non-meta segment output it is meant to protect.
+        cfg.segments["render_time"] = False
+        cfg.segments["slowest"] = False
+        theme = sl.build_theme(cfg)
+        blocks = []
+        with self._deterministic():
+            for c in cases:
+                data, _cols, _lines = sl.build_data(c["raw"], self.ENV, cfg.segments,
+                                                    t_start=None)
+                data["cols"], data["lines"] = c["cols"], c["lines"]
+                out = sl.render(data, c["cols"], c["lines"], cfg, theme)
+                blocks.append(f"### {c['name']}\n" + "\n".join(strip(l) for l in out))
+        return "\n\n".join(blocks) + "\n"
+
+    def test_matches_golden(self):
+        expected_path = os.path.join(self.GOLDEN, "expected.txt")
+        actual = self._render_all()
+        if os.environ.get("UPDATE_GOLDEN"):
+            with open(expected_path, "w", encoding="utf-8") as f:
+                f.write(actual)
+        with open(expected_path, encoding="utf-8") as f:
+            self.assertEqual(actual, f.read())
+
+
 class TestDoctor(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
