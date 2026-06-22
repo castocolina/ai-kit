@@ -204,6 +204,8 @@ Apply `cfg_` to the loader family and `core_` to the render/theme/registry/exter
 
 > DECISION POINT for the executor: FR-2.1 says "every function carries its role." The cleanest reading renames even `pack_line` → `core_pack`, `render` → `core_render`, etc., and updates all `sl.*` test references in one sweep. The lighter reading keeps the test-facing entrypoints. **Default: rename everything to the prefix** (matches the user's structure-obsession and the FR-8.1 "role-prefix integrity" rule, which is simplest when there are no exceptions). Update every `sl.<old>` reference across `tests/test_status_line.py` and `tests/test_external_segments.py` in the same commit. If the sweep proves too broad to land safely in one task, split by family (`cfg_` commit, then `core_` commit).
 
+> **TEMPORARY NAME — `core_pack` is dissolved in Task 3.1.** The `pack_line → core_pack` rename above is a *structural placeholder*: it gives the two-pass packer the correct role prefix so Phase-1 classification passes the arch test. Task 3.1 (Phase 3) **replaces `core_pack` entirely** with three focused functions (`core_measure_all` for Phase A, `core_build_meta` for Phase B, `core_assemble_line` for Phase C) — the old `core_pack` body is deleted, not extended. Do not invest in stabilizing `core_pack`'s internals; they are throwaway.
+
 - [ ] **Step 1: Apply `cfg_` renames** (loader family) + update all `sl.<name>` test references.
 - [ ] **Step 2: GOLDEN + GATE.** `python3 -m unittest tests.test_status_line.TestGoldenOutput -v` then `make validate && make test`.
 - [ ] **Step 3: Commit.** `git add -A && git commit -m "refactor(status-line): cfg_ prefix for config loader family (FR-2.1)"`
@@ -295,6 +297,41 @@ git add -A && git commit -m "refactor(status-line): rename git_snapshot -> probe
 - Test: `tests/test_status_line.py`
 
 FR-1.1: the per-render object's root represents Claude's incoming JSON (typed) + SHELL-injected runtime (`cols`/`lines`/`dim_assumed` geometry, resolved `effort`, `t_start`, the raw JSON) + `line_conf` (today's `Config`) + `theme` + render bookkeeping (`failed`, `slowest`). FR-1.3: NO single-consumer probe fields (RSS, chat size, ago, effort-auto, todo, git).
+
+**Data-model change required in this task (HIGH — drives Tasks 2.5 and beyond):**
+Today `Config` has two flat fields — `external: list[Any] | None` (the discovered `ExtSpec` providers list) and `segments_dir: str` (the providers directory) — plus the external TTL is returned only from `_resolve_external`, never stored on `Config`. FR-1.1's nested-group mandate and FR-1.6's `line_conf.external.dir` / `line_conf.external.cache_ttl` targets require `external` to become a nested group. Introduce a new `ExternalConf` NamedTuple (following the existing `Line`/`GitSnapshot`/`ExtSpec` style) and replace the two flat fields with it:
+
+```python
+class ExternalConf(NamedTuple):
+    """Resolved external-segment configuration for one render pass."""
+    dir: str               # providers directory (was Config.segments_dir)
+    cache_ttl: int         # default cache TTL in seconds (was returned only by _resolve_external)
+    providers: list[Any]   # finalized ExtSpec list (was Config.external)
+```
+
+Update `Config` in the DEFAULTS block:
+```python
+class Config(NamedTuple):
+    segments: dict[str, bool]
+    layout: list[Line]
+    palette: dict[str, str]
+    ramps: dict[str, dict[str, str]]
+    git: dict[str, int] | None = None
+    external: "ExternalConf | None" = None   # replaces flat `external` list + `segments_dir`
+    cache_base: str = ""
+    # NOTE: `segments_dir` field is REMOVED — access via external.dir
+```
+
+All consumer sites that currently read `cfg.segments_dir` or `cfg.external` (the list) must be updated:
+- `load_config` / `cfg_load_config`: build an `ExternalConf(dir=ext_dir, cache_ttl=ext_ttl, providers=external_list)` and store it as `Config.external`; remove `segments_dir=` from the `Config(...)` call.
+- `_place_external`: call site in `load_config` passes the `specs` list; the finalized list goes into `ExternalConf.providers`.
+- `discover_external` call in `load_config`: uses `ext_dir` local variable (unchanged); the result feeds `ExternalConf.providers`.
+- `make_external_builder` / `_builders_for`: currently reads `cfg.external or []` — change to `(cfg.external.providers if cfg.external else [])`.
+- `cmd_print_config`: currently calls `_resolve_external(...)` to reconstruct `ext_dir`/`ext_ttl` separately — after this change, read `cfg.external.dir`, `cfg.external.cache_ttl`, and `cfg.external.providers` directly; the separate `_resolve_external` call in `cmd_print_config` is removed.
+- `validate_config_file`: currently calls `_resolve_external(raw, env)` independently — this is fine to keep since `validate_config_file` builds its own raw TOML context; no change needed there.
+- `default_config` / `cfg_default_config`: add `external=ExternalConf(dir="", cache_ttl=10, providers=[])` to the returned `Config` so `external` is never `None` after this task.
+
+Do **not** commit yet — segments and the test helper are repointed in Task 2.4.
 
 - [ ] **Step 1: Write the failing test** asserting the new shape — root carries Claude-JSON-derived fields and `line_conf`, and the removed probe fields are gone:
 
@@ -422,7 +459,7 @@ def _data(**over):
     # pop probe overrides expressed as flat kwargs (branch=, dirty=, in_repo=, etc.)
     # and fold them into the GitSnapshot / tuple as before, then:
     ctx = sl.Context(raw={}, line_conf=sl.cfg_default_config(), theme=THEME, **eager)
-    ctx._probe_cache.update(probe_defaults_resolved)
+    ctx._probe_cache.update(probe_defaults)
     return ctx
 ```
 
@@ -472,7 +509,12 @@ class TestEnvConvention(unittest.TestCase):
         self.assertFalse(cfg.segments["branch"])
     def test_external_dir_via_convention(self):
         cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_DIR": "/x/seg"})
-        self.assertEqual(cfg.segments_dir, "/x/seg")
+        # cfg.external is an ExternalConf after Task 2.2; the flat `segments_dir`
+        # field no longer exists — FR-1.6 routes EXTERNAL_DIR -> external.dir
+        self.assertEqual(cfg.external.dir, "/x/seg")
+    def test_external_cache_ttl_via_convention(self):
+        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "30"})
+        self.assertEqual(cfg.external.cache_ttl, 30)
     def test_old_git_ttl_name_still_works(self):
         # back-compat: old name maps forward with at most a dim warning
         cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_GIT_TTL": "7"})
@@ -480,7 +522,7 @@ class TestEnvConvention(unittest.TestCase):
 ```
 
 - [ ] **Step 2: Run — Expected: FAIL** (new names unrecognized).
-- [ ] **Step 3: Implement the single env reader** in the `cfg_` block. One function walks `env` for keys matching `CC_AI_KIT_<TOKEN>_<REST>` and routes by the leading token: `SEGMENT` → `segments[rest.lower()]` (via `cfg_env_bool`), `GIT` → `git[rest.lower()]`, `EXTERNAL` → `external.<rest.lower()>` (dir/cache_ttl). The bootstrap `CC_AI_KIT_CONFIG_FILE` is read by an explicit hardcoded line in `cfg_config_path` (FR-1.7) — documented as the exception. Map the old names (`CC_AI_KIT_GIT_TTL`, `CC_AI_KIT_EXTERNAL_TTL`, `CC_AI_KIT_SEGMENTS_DIR`, `CC_AI_KIT_CONFIG`) forward to the new ones with at most a dim deprecation warning. Remove the scattered `env.get("CC_AI_KIT_...")` reads from `_resolve_external`/`_segments_dir`/`load_config`/`config_path` — they all funnel through the one reader (except the FR-1.7 bootstrap).
+- [ ] **Step 3: Implement the single env reader** in the `cfg_` block. One function walks `env` for keys matching `CC_AI_KIT_<TOKEN>_<REST>` and routes by the leading token: `SEGMENT` → `segments[rest.lower()]` (via `cfg_env_bool`), `GIT` → `git[rest.lower()]`, `EXTERNAL` → `external.dir` (when `REST == "DIR"`) or `external.cache_ttl` (when `REST == "CACHE_TTL"`). These are the two `ExternalConf` fields introduced in Task 2.2; `cfg.segments_dir` no longer exists as a flat field — the `_segments_dir` helper function (which resolved the dir from env + TOML) is folded into this single reader as an implementation detail, not a public function. The bootstrap `CC_AI_KIT_CONFIG_FILE` is read by an explicit hardcoded line in `cfg_config_path` (FR-1.7) — documented as the exception. Map the old names (`CC_AI_KIT_GIT_TTL`, `CC_AI_KIT_EXTERNAL_TTL`, `CC_AI_KIT_SEGMENTS_DIR`, `CC_AI_KIT_CONFIG`) forward to the new ones with at most a dim deprecation warning. Remove the scattered `env.get("CC_AI_KIT_...")` reads from `_resolve_external`/`_segments_dir`/`load_config`/`config_path` — they all funnel through the one reader (except the FR-1.7 bootstrap).
 - [ ] **Step 4: Update `_ENV_HELP`** and `tools/statusline.toml.sample` + any docs naming the env vars to the new names (note old names accepted).
 - [ ] **Step 5: GATE + GOLDEN.** `make validate && make test`. The golden is env-driven only via `STATUSLINE_COLS`/`LINES` (whitelisted runtime) — unaffected.
 - [ ] **Step 6: Commit.** `git add -A && git commit -m "refactor(status-line): single config env reader, structure-aware convention (FR-1.6–1.8)"`
@@ -520,7 +562,7 @@ def test_missing_is_empty(self):
 - Modify: `tools/status-line.py` (the `core_` packer: `pack_line`, `_pass1_non_meta`, `_pass2_meta`, `_assemble_line`, `render`)
 - Test: `tests/test_status_line.py`
 
-Today `render` calls `pack_line` per layout line; `pack_line` does pass1 (build+time non-meta, with a provisional `used_est` fit) + pass2 (meta) + assemble. FR-4 restructures to: `core_render` runs Phase A (build+time every active non-meta segment across ALL lines, crowning the single global slowest), Phase B (compute `render_time`/`slowest` once globally), Phase C (per-line `core_pack` over already-built strings). The only logic change is that `ctx.slowest` is now crowned across ALL lines before Phase B; golden byte-identical is preserved because Phase A passes each segment the same per-line shrinking `avail` it received in the old `_pass1_non_meta` (see below).
+Today `render` calls `pack_line` per layout line; `pack_line` does pass1 (build+time non-meta, with a provisional `used_est` fit) + pass2 (meta) + assemble. FR-4 restructures to: `core_render` (the orchestrator) runs Phase A (`core_measure_all` — build+time every active non-meta segment across ALL lines, crowning the single global slowest), Phase B (`core_build_meta` — compute `render_time`/`slowest` once globally), Phase C (`core_assemble_line` — per-line assembly over already-built strings). The only logic change is that `ctx.slowest` is now crowned across ALL lines before Phase B; golden byte-identical is preserved because Phase A passes each segment the same per-line shrinking `avail` it received in the old `_pass1_non_meta` (see below).
 
 **`avail` semantics for Phase A (critical for golden parity):**
 
@@ -530,9 +572,11 @@ The current `_pass1_non_meta` maintains a per-line `used_est` counter and passes
 - For each non-meta segment on that line: `sep = sep_w if used_est else 0`; `avail = max(budget - used_est - sep, 0)`; build the segment; if it fits (or is PINNED), add to `built` for that (line, key) and advance `used_est += visible_width(s) + sep`. Crown `ctx.slowest` from the timing.
 - Phase A's `built` dict is therefore keyed `(line_index, segment_key)` — or equivalently, Phase A runs the current `_pass1_non_meta` logic for each line but crowns `ctx.slowest` globally across all lines rather than discarding it at the end of each line.
 - Phase B builds `render_time`/`slowest` once into a separate `meta_built: dict[str, str]`.
-- Phase C assembles each line from its slice of `built` plus `meta_built`, using `_assemble_line` unchanged.
+- Phase C (`core_assemble_line`) assembles each line from its slice of `built` plus `meta_built`. The low-level `_assemble_line` helper is renamed to `core_assemble_line` here — it becomes the Phase-C function directly.
 
 This means the real semantic change is: old `render` crowned `ctx.slowest` inside `pack_line` (per-line scope, with the last line's crowning being final), while new `core_render` crowns globally before Phase B. The `_pass1_non_meta` fit logic is preserved line-for-line.
+
+**FR-4.4 reconciliation:** FR-4.4 says "the provisional `used_est` fit is removed." Phase A retains the per-line fit decision — a segment enters `built` only if it fits within `avail` or is `PINNED` — because `util_first_fitting` variant selection depends on a shrinking per-line `avail`; what FR-4.4 removes is the *double-fit* of the old two-pass model (the second fit that `_assemble_line` performed in pass2 over segments already fit in pass1), not the Phase-A fit itself. Phase A is the single authoritative fit pass; `core_assemble_line` (Phase C) assembles from already-filtered `built` without re-checking width.
 
 - [ ] **Step 1: Write the failing test** — meta values are position-independent (FR-4.5):
 
@@ -584,17 +628,38 @@ class TestMetaPositionIndependent(unittest.TestCase):
 ```
 
 - [ ] **Step 2: Run — Expected: FAIL** (today's per-line meta makes `ctx.slowest` position-dependent — last line wins). `python3 -m unittest tests.test_status_line.TestMetaPositionIndependent -v`
-- [ ] **Step 3: Implement the three phases.** FR-4.1: active per line = `[k for k in line.segments if cfg.segments.get(k, False)]`. Phase A: `core_measure_all` — for each layout line, walk its active non-meta segments left-to-right with per-line `used_est = 0`, passing `avail = max(budget - used_est - sep, 0)` to each builder (exactly as `_pass1_non_meta` does today), storing built strings in `built: dict[tuple[int, str], str]` keyed by `(line_index, segment_key)`, and calling `_crown_slowest` globally for all lines. Phase B: `core_build_meta` — build `render_time`/`slowest` once (passing `avail = budget`) into `meta_built: dict[str, str]`. Phase C: `core_pack` — for each line, first **strip the line index** out of the global tuple-keyed `built` into a plain `dict[str, str]` (because `_assemble_line(enabled, built, budget, sep_w)` takes a string-keyed dict — verified against the live signature), then merge `meta_built` on top, then call `_assemble_line` unchanged:
+- [ ] **Step 3: Dissolve `core_pack` and implement the three phases.** The old `core_pack` (the renamed `pack_line` from Task 1.4, the two-pass packer) is **deleted here** — its body is not extended or patched. It is replaced in full by the three new functions below.
+
+  FR-4.1: active per line = `[k for k in line.segments if cfg.segments.get(k, False)]`.
+
+  - **Phase A — `core_measure_all`:** for each layout line, walk its active non-meta segments left-to-right with per-line `used_est = 0`, passing `avail = max(budget - used_est - sep, 0)` to each builder (exactly as `_pass1_non_meta` does today), storing built strings in `built: dict[tuple[int, str], str]` keyed by `(line_index, segment_key)`, and calling `_crown_slowest` globally for all lines.
+  - **Phase B — `core_build_meta`:** build `render_time`/`slowest` once (passing `avail = budget`) into `meta_built: dict[str, str]`.
+  - **Phase C — `core_assemble_line`:** rename `_assemble_line` → `core_assemble_line`. The body of the old `_assemble_line` (which took `enabled, built, budget, sep_w` — a string-keyed dict already filtered to one line) becomes `core_assemble_line`'s body unchanged. `core_render` calls it in a loop:
 
 ```python
-for line_index, line in enumerate(cfg.layout):
-    enabled = [k for k in line.segments if cfg.segments.get(k, False)]
-    line_built = {k: v for (i, k), v in built.items() if i == line_index}
-    line_built.update(meta_built)   # render_time / slowest, built once in Phase B
-    out.append(_assemble_line(enabled, line_built, budget, sep_w))
+def core_assemble_line(
+    enabled: list[str],
+    built: dict[str, str],
+    budget: int,
+    sep_w: int,
+) -> str:
+    # ... body of the old _assemble_line, unchanged ...
+    ...
+
+def core_render(ctx: "Context", *, cfg: "Config") -> list[str]:
+    budget, sep_w = ...
+    built = core_measure_all(ctx, cfg=cfg, budget=budget, sep_w=sep_w)
+    meta_built = core_build_meta(ctx, cfg=cfg, budget=budget)
+    out: list[str] = []
+    for line_index, line in enumerate(cfg.layout):
+        enabled = [k for k in line.segments if cfg.segments.get(k, False)]
+        line_built = {k: v for (i, k), v in built.items() if i == line_index}
+        line_built.update(meta_built)   # render_time / slowest, built once in Phase B
+        out.append(core_assemble_line(enabled, line_built, budget, sep_w))
+    return out
 ```
 
-`_assemble_line` itself is unchanged. Keep `_SLOWEST_META`, `PINNED`, `SEP`, `RIGHT_MARGIN` semantics unchanged.
+  Keep `_SLOWEST_META`, `PINNED`, `SEP`, `RIGHT_MARGIN` semantics unchanged. Update every `sl._assemble_line` test reference to `sl.core_assemble_line`.
 - [ ] **Step 4: GOLDEN + FRR2 + new test + full suite.** The golden disables meta, so it guards Phase A/C output. FRR2 guards the timing. Run `python3 -m unittest tests.test_status_line -v`. Expected: all PASS, golden byte-identical.
 - [ ] **Step 5: GATE.** `make validate && make test`.
 - [ ] **Step 6: Commit.** `git add -A && git commit -m "refactor(status-line): three-phase packer, global meta, no double-fit (FR-4)"`
@@ -636,7 +701,7 @@ class TestAltBackCompat(unittest.TestCase):
         self.assertFalse(cfg.segments["alt_time_clock"])
 ```
 
-(Provide a `_load_cfg_with_toml` helper writing a temp TOML and pointing `CC_AI_KIT_CONFIG_FILE` at it.)
+(Provide a `_load_cfg_with_toml` helper writing a temp TOML and pointing `CC_AI_KIT_CONFIG_FILE` at it. (`CC_AI_KIT_CONFIG_FILE` is the post-Phase-2.5 bootstrap var name; the legacy `CC_AI_KIT_CONFIG` also works via back-compat.))
 
 - [ ] **Step 2: Run — Expected: FAIL.**
 - [ ] **Step 3: Apply the renames** (builders + `SEGMENTS` keys + `LAYOUT` keys + `_SLOWEST_META` unaffected) via codemod. Update the `SEGMENTS` dict and `LAYOUT` lists to the new keys. The auto-discovery registry (`core_discover_builders`) strips the `seg_` prefix, so `seg_alt_time_clock` → key `alt_time_clock` automatically — verify the prefix-strip handles `seg_alt_` correctly (it strips only `seg_`, leaving `alt_time_clock`, which is the intended key — good).
@@ -702,7 +767,23 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Move the introspection symbols** out of `status-line.py` into the doctor script: `cmd_print_config`, `validate_config_file`, `_DOCTOR_SAMPLE`, `_dry_render_failures`, `cmd_doctor`, `cmd_check`, `_NO_CHECK`, `_ENV_HELP`, and the `--doctor`/`--check`/`--print-config` flags from `parse_args`. The render module's `main()` becomes render-only (read stdin → `safe_render` → print).
 - [ ] **Step 3: Repoint `_doctor_cmd`** in `status-line.py` so its "run the doctor" hint builds `python3 <doctor-script-path> --doctor` (resolve the sibling `statusline-doctor.py` path), not `status-line.py --doctor`. Keep `_doctor_cmd` in the render `core_` block — it is called only in the exception handler of `safe_render` and in `diagnostic_line` when a builder crashed; it must remain in the render module so it is available without importing the doctor script.
-- [ ] **Step 4: Move the doctor tests** to `tests/test_statusline_doctor.py` with their own `load_module` for the doctor script; keep the render-module tests in `tests/test_status_line.py`. Add the new test module to `make test` and the pre-commit `unittest` hook.
+- [ ] **Step 4: Move the doctor tests** to `tests/test_statusline_doctor.py` with their own `load_module` for the doctor script; keep the render-module tests in `tests/test_status_line.py`. Add the new test module to `make test` and the pre-commit `unittest` hook using the exact edits below.
+
+  **Makefile** (`/home/user-zero/git/personal/ai-kit/Makefile`) — `test` target:
+  ```
+  # Change:
+  	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_sysmem_e2e
+  # To:
+  	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_sysmem_e2e
+  ```
+
+  **`.pre-commit-config.yaml`** — `unittest` hook `entry:` line:
+  ```
+  # Change:
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments
+  # To:
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor
+  ```
 - [ ] **Step 5: GATE + full suite.** `make validate && make test`. Run the moved tests explicitly: `python3 -m unittest tests.test_statusline_doctor -v`.
 - [ ] **Step 6: Commit.** `git add -A && git commit -m "refactor(status-line): extract introspection to statusline-doctor.py (FR-7.1–7.3)"`
 
@@ -764,7 +845,23 @@ class TestArchitecture(unittest.TestCase):
 - [ ] **Step 6: Implement rules 3, 5, 6** (bookkeeping readers; DEFAULTS-before-cfg ordering + data-only; role-prefix integrity). For ordering, compute the line numbers of the DEFAULTS banner and the first `cfg_` def. For role-prefix integrity, map each top-level `FunctionDef` to the banner block it falls under (by line ranges parsed from the `# ═══ N. <ROLE>` comments) and assert its prefix matches.
 - [ ] **Step 7: Run the full arch test — Expected: PASS** against the refactored tree. If a rule fails, that is a real FR-8 violation introduced earlier — fix the source, not the test.
 - [ ] **Step 8: Negative check (FR-8.3).** Temporarily introduce a deliberate violation (e.g. add `os.environ["CC_AI_KIT_X"]` inside a `seg_` function) and confirm the arch test FAILS; then revert.
-- [ ] **Step 9: Wire into the gate.** Add `tests.test_arch` to the `Makefile` `test` target and the `.pre-commit-config.yaml` `unittest` hook entry (FR-8.2).
+- [ ] **Step 9: Wire into the gate.** Add `tests.test_arch` to the `Makefile` `test` target and the `.pre-commit-config.yaml` `unittest` hook entry (FR-8.2) using the exact edits below.
+
+  **Makefile** (`/home/user-zero/git/personal/ai-kit/Makefile`) — `test` target (after Task 4.1 already added `tests.test_statusline_doctor`):
+  ```
+  # Change:
+  	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_sysmem_e2e
+  # To:
+  	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_sysmem_e2e
+  ```
+
+  **`.pre-commit-config.yaml`** — `unittest` hook `entry:` line (after Task 4.1 already added `tests.test_statusline_doctor`):
+  ```
+  # Change:
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor
+  # To:
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch
+  ```
 - [ ] **Step 10: GATE.** `make validate && make test` — Expected: all green including the arch test.
 - [ ] **Step 11: Commit.** `git add -A && git commit -m "test(status-line): AST architecture fitness test in the gate (FR-8)"`
 
