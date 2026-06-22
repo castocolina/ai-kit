@@ -88,9 +88,9 @@ Expected: all green. If not, STOP — the baseline must be clean before refactor
 | `8. seg_` | all `seg_*` builders |
 | `9. CLI` (extracted in Phase 4) | `parse_args` flags, `cmd_print_config`, `validate_config_file`, `_DOCTOR_SAMPLE`, `_dry_render_failures`, `cmd_doctor`, `cmd_check`, `_NO_CHECK`, `_ENV_HELP` |
 
-> Rationale for keeping `_doctor_cmd` in `core_`: it is read on the render hot path (`safe_render`, `diagnostic_line`) to print the "run the doctor" hint. It is NOT introspection; it only formats a command string. It stays in the render module; Phase 4 repoints the string it builds.
+> Rationale for keeping `_doctor_cmd` in `core_`: it is called only in the exception handler of `safe_render` and in `diagnostic_line` when `failed` is non-empty — never on the success render path. It is NOT introspection; it only formats a command string that must be available inside a failed render without importing the doctor module. It stays in the render module; Phase 4 repoints the string it builds to name `statusline-doctor.py`.
 
-> `resolve_effort` is classed `probe_`-adjacent here (it reads `raw` + env). In Phase 2 its env read is removed (FR-1.9), leaving a pure-from-`raw` resolver; it stays in the `probe_`/`core_` boundary region — final placement is whichever block the arch test (Phase 5) accepts. For Phase 1, place it with the effort/terminal probes.
+> `resolve_effort` placement: **place it in the `cfg_` block for Phase 1.** Until Phase 2.6 removes the `CLAUDE_EFFORT` env read, it touches `os.environ` — and the FR-8.1 arch test (Phase 5) requires env reads to live in `cfg_` functions. After Phase 2.6 removes that read the function is pure-from-raw JSON; at that point it may stay in `cfg_` (acceptable, since config loading is its consumer) or move to `probe_` — but the Phase 5 arch test must be written to accept it in whichever block it lands. **Default: keep it in `cfg_` throughout, since its primary consumer is `build_context` which reads `cfg_`.**
 
 ### Task 1.1: Rename pure formatters to `fmt_` (they already are) and confirm the vocabulary baseline
 
@@ -252,50 +252,41 @@ Expected: all 247 tests PASS. Pay attention to import-time ordering errors (a sy
 
 **Critical invariant:** FRR2 (probe-timing) must stay green at every step. The mechanism shifts from `cached_property` on the god-bag to a module-level memoize on `probe_*` — but the cost must still land inside the first segment's timed build.
 
-### Task 2.1: Introduce module-level memoization for the shared git probe; segments call it directly
+### Task 2.1: Rename `git_snapshot` → `probe_git_snapshot` (the underlying I/O only)
 
-The git snapshot is shared by `seg_branch`/`seg_dirty`/`seg_worktree`. Today they read `ctx.branch`/`ctx.dirty`/`ctx.is_worktree`, backed by `Context._git` (`cached_property`). FR-1.3 moves this to a memoized `probe_*` keyed by `work_dir`.
+This task is purely a rename — no memoization yet. Memoization is introduced in Task 2.3 once `ctx._probe_cache` exists.
 
 **Files:**
-- Modify: `tools/status-line.py`
-- Test: `tests/test_status_line.py`
+- Modify: `tools/status-line.py`, `tests/test_status_line.py`
 
-- [ ] **Step 1: Write the failing test** for a memoized per-render git probe that runs once and is callable without a Context. Add to `tests/test_status_line.py`:
+- [ ] **Step 1: Rename `git_snapshot` → `probe_git_snapshot`** (definition + every call site in `status-line.py`, plus `mock.patch.object(sl, "git_snapshot", ...)` in `tests/test_status_line.py` → `mock.patch.object(sl, "probe_git_snapshot", ...)`).
 
-```python
-class TestGitProbeMemoized(unittest.TestCase):
-    def test_probe_runs_once_per_workdir(self):
-        calls = []
-        def fake(work_dir, conf):
-            calls.append(work_dir)
-            return sl.GitSnapshot(in_repo=True, branch="main", dirty="clean",
-                                  is_worktree=False, wt_name="")
-        cfg = sl.default_config()
-        with mock.patch.object(sl, "probe_git_snapshot", side_effect=fake):
-            snap1 = sl.probe_git("/tmp/x", cfg)
-            snap2 = sl.probe_git("/tmp/x", cfg)
-        self.assertEqual(snap1.branch, "main")
-        self.assertIs(snap1, snap2)          # memoized: same object
-        self.assertEqual(len(calls), 1)      # underlying probe ran once
+```bash
+grep -n "git_snapshot" tools/status-line.py tests/test_status_line.py
 ```
 
-- [ ] **Step 2: Run it — Expected: FAIL** (`probe_git` undefined). `python3 -m unittest tests.test_status_line.TestGitProbeMemoized -v`
-- [ ] **Step 3: Implement `probe_git`** as a per-render memoized wrapper. Because memoization must reset each render (work_dir can differ across processes but within one render is constant), key it on `work_dir` in a small per-render cache held on `ctx`, OR use `functools.lru_cache` cleared at render start. **Default: a tiny per-render cache dict on the thin ctx** (see Task 2.3 for the ctx shape) so there is no cross-render leakage:
+Update every occurrence (approximately 3–5 sites in the module, plus several mock targets in the test file).
 
-```python
-def probe_git(work_dir: str, line_conf: "Config") -> "GitSnapshot":
-    """Shared git snapshot for branch/dirty/worktree. Memoized per render via
-    the caller's cache so the three segments trigger exactly one probe, and that
-    probe's cost lands in the first segment's timed build (FR-1.4 / FR-R.2)."""
-    return probe_git_snapshot(work_dir, line_conf)
+- [ ] **Step 2: FRR2 + GOLDEN.** Run:
+
+```bash
+python3 -m unittest tests.test_status_line.TestSlowestTiming.test_probe_cost_counted_in_triggering_segment tests.test_status_line.TestGoldenOutput -v
 ```
 
-The memoization wrapper lives on `ctx` (Task 2.3). For this task, prove the function exists and delegates; wire memoization in 2.3 where the ctx cache exists. Adjust the test to assert single-call via the ctx cache there.
+Expected: PASS (rename can't change output; mocks bind to the new name).
 
-> If the executor prefers `functools.lru_cache(maxsize=1)` reset per render, that is acceptable provided FRR2 stays green and there is no state leak between renders (the golden renders many cases in one process — a stale cache would corrupt it). The per-render-cache-on-ctx approach is safer; default to it.
+- [ ] **Step 3: GATE.** `make validate && make test` — Expected: all green.
+- [ ] **Step 4: Commit.**
 
-- [ ] **Step 4: GATE + FRR2.** `make validate && make test`.
-- [ ] **Step 5: Commit.** `git add -A && git commit -m "refactor(status-line): shared git probe as memoized probe_git (FR-1.3)"`
+```bash
+git add -A && git commit -m "refactor(status-line): rename git_snapshot -> probe_git_snapshot (FR-2.1)"
+```
+
+> Note: Do NOT introduce a memoized wrapper in this task. The `probe_git_for(ctx)` accessor that segments will call is introduced in Task 2.3 once `ctx._probe_cache` exists.
+
+---
+
+> **Tasks 2.2, 2.3, and 2.4 form one atomic behavior-preserving change.** You cannot remove the probe fields from `Context` without simultaneously repointing the segments and the `_data()` test helper. Execute Tasks 2.2 + 2.3 + 2.4 as a single subagent task and land them in **one commit** (the commit in Task 2.4 Step 7). The numbered steps in each task are a checklist within that single unit — do not commit between tasks.
 
 ### Task 2.2: Define the thin per-render model — `ctx` root (Claude JSON + runtime) + nested `ctx.line_conf`
 
@@ -324,30 +315,57 @@ class TestThinContext(unittest.TestCase):
                              f"{gone} must no longer be a ctx member")
 ```
 
-- [ ] **Step 2: Run it — Expected: FAIL.**
+- [ ] **Step 2: Run it — Expected: FAIL** (both assertions fail against the current god-bag).
 - [ ] **Step 3: Rename `Context.config` → `Context.line_conf`** across the module and tests (this is the `ctx.line_conf` split — the field that *was* `config` now reads as our settings sub-object). Keep the eager Claude-JSON fields (`model_name`, `cost`, `context_pct`, …) on the root. Remove the `cached_property` probe members (`_git`, `branch`, `dirty`, `is_worktree`, `wt_name`, `in_repo`, `ago`, `effort_auto`, `_todo`, `todo_state`, `todo_text`, `chat_bytes`, `mem_bytes`). Add a per-render probe cache field: `_probe_cache: dict[str, Any] = field(default_factory=dict)`.
-- [ ] **Step 4: This will break every segment that read those members** (`seg_branch`, `seg_dirty`, `seg_worktree`, `seg_time_ago`, `seg_effort`, `seg_todo`, `seg_chat_size`, `seg_memory`). They are fixed in Task 2.4. To keep the suite green *within this task*, do Steps 3+Task 2.4 as a single logical unit if needed — but prefer the ordering below: land the model + the segment rewrites together in this task's commit so the suite is never red between commits.
-- [ ] **Step 5: GATE + GOLDEN + FRR2** after Task 2.4's segment rewrites are in. (See 2.4.)
 
-> Practical sequencing note: Tasks 2.2, 2.3, 2.4 form one atomic behavior-preserving change (you cannot remove the probe members without simultaneously repointing the segments and the `_data()` test helper). Execute them as one subagent task with one commit, using the three sub-task descriptions as the checklist. The split here is for clarity, not for three separate red→green commits.
+Do not commit yet — the segments that read the removed members are repointed in Task 2.4.
 
 ### Task 2.3: Memoized `probe_*` accessors keyed through the ctx cache; co-locate `core_build_context` with the model
 
 **Files:**
 - Modify: `tools/status-line.py`
+- Test: `tests/test_status_line.py`
 
-FR-1.3 functions to (re)home as memoized probes the owning segment calls: `probe_git` (2.1), plus `probe_ago(ctx)`, `probe_effort_auto(ctx)`, `probe_todo(ctx)`, `probe_chat_size(ctx)`, `probe_rss(ctx)`. Each memoizes on `ctx._probe_cache` so it runs once per render and its cost lands in the triggering segment's timed build (FR-1.4).
+FR-1.3 functions to implement as memoized probes the owning segment calls: `probe_git_for(ctx)` plus `probe_ago(ctx)`, `probe_effort_auto(ctx)`, `probe_todo(ctx)`, `probe_chat_size(ctx)`, `probe_rss(ctx)`. Each memoizes on `ctx._probe_cache` so it runs once per render and its cost lands in the triggering segment's timed build (FR-1.4).
 
-- [ ] **Step 1: Implement the memoize helper + the five probe accessors.** Example shape:
+- [ ] **Step 1: Write the failing test** for `probe_git_for` — the memoized ctx-keyed git accessor:
+
+```python
+class TestGitProbeMemoized(unittest.TestCase):
+    def test_probe_git_for_runs_once_per_render(self):
+        calls = []
+        def fake(work_dir, conf):
+            calls.append(work_dir)
+            return sl.GitSnapshot(in_repo=True, branch="main", dirty="clean",
+                                  is_worktree=False, wt_name="")
+        ctx = _data()
+        with mock.patch.object(sl, "probe_git_snapshot", side_effect=fake):
+            snap1 = sl.probe_git_for(ctx)
+            snap2 = sl.probe_git_for(ctx)
+        self.assertEqual(snap1.branch, "main")
+        self.assertIs(snap1, snap2)       # same object — memoized on ctx
+        self.assertEqual(len(calls), 1)   # underlying I/O ran exactly once
+```
+
+- [ ] **Step 2: Run it — Expected: FAIL** (`probe_git_for` undefined). `python3 -m unittest tests.test_status_line.TestGitProbeMemoized -v`
+
+- [ ] **Step 3: Implement the memoize helper + all six memoized probe accessors** in `tools/status-line.py` (in the `core_` or `probe_` block, after the `Context` dataclass):
 
 ```python
 def _memo(ctx: "Context", key: str, fn: "Callable[[], Any]") -> Any:
-    """Run fn() once per render, caching on ctx; preserves FR-R.2 timing because
-    the first caller (inside the packer's per-segment bracket) pays the cost."""
+    """Run fn() once per render, caching on ctx._probe_cache.
+    Preserves FR-R.2 timing: the first caller (inside the packer's per-segment
+    bracket) pays the I/O cost; subsequent callers in the same render are free."""
     cache = ctx._probe_cache
     if key not in cache:
         cache[key] = fn()
     return cache[key]
+
+def probe_git_for(ctx: "Context") -> "GitSnapshot":
+    """Memoized git snapshot for this render. Calls probe_git_snapshot once;
+    branch/dirty/worktree segments all share the result (FR-1.3/FR-1.4)."""
+    return _memo(ctx, "git",
+                 lambda: probe_git_snapshot(ctx.work_dir, ctx.line_conf))
 
 def probe_ago(ctx: "Context") -> str:
     def _compute() -> str:
@@ -372,10 +390,9 @@ def probe_rss(ctx: "Context") -> int | None:
     return _memo(ctx, "rss", lambda: probe_rss_bytes())
 ```
 
-And `probe_git` (2.1) memoizes via `_memo(ctx, "git", lambda: probe_git_snapshot(ctx.work_dir, ctx.line_conf))` — but `probe_git` is called as `probe_git(work_dir, line_conf)` in some tests; reconcile by having segments call a `probe_git_for(ctx)` wrapper that memoizes, and keep `probe_git_snapshot` as the underlying I/O. Update Task 2.1's test to match the final wrapper name.
+- [ ] **Step 4: Move `core_build_context` + the `Context` dataclass adjacent** (FR-1.5) — the assembler immediately follows the dataclass it constructs, both in the `core_` block.
 
-- [ ] **Step 2: Move `core_build_context` + the `Context` dataclass adjacent** (FR-1.5) — the assembler immediately follows the dataclass it constructs, both in the `core_` block.
-- [ ] **Step 3:** (verification folded into 2.4).
+Do not commit yet — segments are repointed in Task 2.4.
 
 ### Task 2.4: Repoint every probe-consuming segment to its `probe_*`; rewrite the `_data()` test helper
 
@@ -404,7 +421,7 @@ def _data(**over):
     }
     # pop probe overrides expressed as flat kwargs (branch=, dirty=, in_repo=, etc.)
     # and fold them into the GitSnapshot / tuple as before, then:
-    ctx = sl.Context(raw={}, line_conf=sl.default_config(), theme=THEME, **eager)
+    ctx = sl.Context(raw={}, line_conf=sl.cfg_default_config(), theme=THEME, **eager)
     ctx._probe_cache.update(probe_defaults_resolved)
     return ctx
 ```
@@ -412,7 +429,7 @@ def _data(**over):
 Preserve the existing override surface (`branch=`, `dirty=`, `in_repo=`, `wt_name=`, `is_worktree=`, `ago=`, `effort_auto=`, `todo_state=`, `todo_text=`, `chat_bytes=`/`mem_bytes=`) by mapping them onto the cache keys, so the ~50 call sites that pass these don't all need editing. Map `chat_bytes`→`chat_size`, `mem_bytes`→`rss`, `todo_state`/`todo_text`→the `todo` tuple, and the git fields→the `git` GitSnapshot.
 
 - [ ] **Step 3: Update the golden's `_deterministic()` mocks.** It patches `sl.git_snapshot`→ now `sl.probe_git_snapshot`, `sl.proc_rss_bytes`→`sl.probe_rss_bytes`, `sl.transcript_bytes`→`sl.probe_transcript_bytes`, `sl.current_todo`→`sl.probe_current_todo`, `sl.effort_setting_is_auto`→`sl.probe_effort_setting_is_auto`. These are the underlying I/O fns the memoized probes call, so patching them keeps the golden deterministic.
-- [ ] **Step 4: Update the FRR2 test** (`test_probe_cost_counted_in_triggering_segment`) — it builds a live Context and patches `sl.git_snapshot`. Repoint to `sl.probe_git_snapshot` and assert the cost landed via `ctx._probe_cache.get("git")` instead of `ctx.__dict__.get("_git")`.
+- [ ] **Step 4: Update the FRR2 test** (`test_probe_cost_counted_in_triggering_segment`) — it builds a live Context and patches `sl.git_snapshot`. Repoint to `sl.probe_git_snapshot` (the underlying I/O that `probe_git_for` delegates to) and assert the probe cost landed via `ctx._probe_cache.get("git")` instead of `ctx.__dict__.get("_git")`.
 - [ ] **Step 5: GOLDEN + FRR2 + full suite.** Run:
 
 ```bash
@@ -422,7 +439,7 @@ python3 -m unittest tests.test_status_line -v
 Expected: all PASS. The golden MUST be byte-identical.
 
 - [ ] **Step 6: GATE.** `make validate && make test`.
-- [ ] **Step 7: Commit** (Tasks 2.2–2.4 as one logical unit).
+- [ ] **Step 7: Commit** (Tasks 2.2 + 2.3 + 2.4 as one atomic unit — this is the single commit for all three tasks):
 
 ```bash
 git add -A && git commit -m "refactor(status-line): thin ctx + line_conf split, probes out of the data model (FR-1.1–1.5)"
@@ -448,17 +465,17 @@ FR-1.6: all config env reading happens in exactly one `cfg_` function, by a gene
 ```python
 class TestEnvConvention(unittest.TestCase):
     def test_git_cache_ttl_via_convention(self):
-        cfg = sl.load_config({"HOME": "/h", "CC_AI_KIT_GIT_CACHE_TTL": "42"})
+        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_GIT_CACHE_TTL": "42"})
         self.assertEqual(cfg.git["cache_ttl"], 42)
     def test_segment_toggle_via_convention(self):
-        cfg = sl.load_config({"HOME": "/h", "CC_AI_KIT_SEGMENT_BRANCH": "false"})
+        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_SEGMENT_BRANCH": "false"})
         self.assertFalse(cfg.segments["branch"])
     def test_external_dir_via_convention(self):
-        cfg = sl.load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_DIR": "/x/seg"})
+        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_DIR": "/x/seg"})
         self.assertEqual(cfg.segments_dir, "/x/seg")
     def test_old_git_ttl_name_still_works(self):
         # back-compat: old name maps forward with at most a dim warning
-        cfg = sl.load_config({"HOME": "/h", "CC_AI_KIT_GIT_TTL": "7"})
+        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_GIT_TTL": "7"})
         self.assertEqual(cfg.git["cache_ttl"], 7)
 ```
 
@@ -503,22 +520,81 @@ def test_missing_is_empty(self):
 - Modify: `tools/status-line.py` (the `core_` packer: `pack_line`, `_pass1_non_meta`, `_pass2_meta`, `_assemble_line`, `render`)
 - Test: `tests/test_status_line.py`
 
-Today `render` calls `pack_line` per layout line; `pack_line` does pass1 (build+time non-meta, with a provisional `used_est` fit) + pass2 (meta) + assemble. FR-4 restructures to: `core_render` runs Phase A (build+time every active non-meta segment across ALL lines, crown the single global slowest), Phase B (compute `render_time`/`slowest` once), Phase C (per-line `core_pack` over already-built strings). The `used_est` provisional fit in pass1 is removed (FR-4.4) — fitting lives only in Phase C.
+Today `render` calls `pack_line` per layout line; `pack_line` does pass1 (build+time non-meta, with a provisional `used_est` fit) + pass2 (meta) + assemble. FR-4 restructures to: `core_render` runs Phase A (build+time every active non-meta segment across ALL lines, crowning the single global slowest), Phase B (compute `render_time`/`slowest` once globally), Phase C (per-line `core_pack` over already-built strings). The only logic change is that `ctx.slowest` is now crowned across ALL lines before Phase B; golden byte-identical is preserved because Phase A passes each segment the same per-line shrinking `avail` it received in the old `_pass1_non_meta` (see below).
+
+**`avail` semantics for Phase A (critical for golden parity):**
+
+The current `_pass1_non_meta` maintains a per-line `used_est` counter and passes `avail = max(budget - used_est - sep, 0)` to each builder — this is a shrinking per-line remaining budget. Several builders (`seg_path`, `seg_branch`, etc.) use `_first_fitting(variants, avail)` to choose compact vs. rich variants. Phase A MUST replicate this per-line walk exactly to keep variant selection identical and preserve the golden. The three-phase refactor does NOT collapse all segments to `avail = budget` — that would change variant selection and break the golden. Concretely:
+
+- Phase A iterates each layout line separately, maintaining its own `used_est = 0` per line.
+- For each non-meta segment on that line: `sep = sep_w if used_est else 0`; `avail = max(budget - used_est - sep, 0)`; build the segment; if it fits (or is PINNED), add to `built` for that (line, key) and advance `used_est += visible_width(s) + sep`. Crown `ctx.slowest` from the timing.
+- Phase A's `built` dict is therefore keyed `(line_index, segment_key)` — or equivalently, Phase A runs the current `_pass1_non_meta` logic for each line but crowns `ctx.slowest` globally across all lines rather than discarding it at the end of each line.
+- Phase B builds `render_time`/`slowest` once into a separate `meta_built: dict[str, str]`.
+- Phase C assembles each line from its slice of `built` plus `meta_built`, using `_assemble_line` unchanged.
+
+This means the real semantic change is: old `render` crowned `ctx.slowest` inside `pack_line` (per-line scope, with the last line's crowning being final), while new `core_render` crowns globally before Phase B. The `_pass1_non_meta` fit logic is preserved line-for-line.
 
 - [ ] **Step 1: Write the failing test** — meta values are position-independent (FR-4.5):
 
 ```python
 class TestMetaPositionIndependent(unittest.TestCase):
     def test_slowest_same_regardless_of_line(self):
-        # slowest on line 1 vs line 3 must report the same builder/value
-        ...  # build two layouts differing only in which line carries `slowest`,
-             # render both with a seeded slow segment, assert identical slowest text
+        """slowest segment text must be identical whether slowest is on line 1 or line 2."""
+        import re
+
+        def _make_cfg_with_slowest_on_line(line_idx: int) -> "sl.Config":
+            """Return a config where `slowest` lives on `line_idx` (0 or 1)."""
+            core_keys = ["path", "model"]
+            meta_keys = ["render_time", "slowest"]
+            lines = [sl.Line(min_rows=1, segments=core_keys),
+                     sl.Line(min_rows=1, segments=core_keys)]
+            lines[line_idx] = sl.Line(
+                min_rows=1, segments=core_keys + meta_keys
+            )
+            cfg = sl.cfg_default_config()
+            # enable only the keys we use; ensure slowest/render_time enabled
+            segs = {k: False for k in cfg.segments}
+            for k in core_keys + meta_keys:
+                segs[k] = True
+            return cfg._replace(layout=lines, segments=segs)
+
+        ctx0 = _data()
+        ctx1 = _data()
+        cfg0 = _make_cfg_with_slowest_on_line(0)
+        cfg1 = _make_cfg_with_slowest_on_line(1)
+
+        lines0 = sl.core_render(ctx0, cfg=cfg0)
+        lines1 = sl.core_render(ctx1, cfg=cfg1)
+
+        # Extract the `slowest` segment text from whichever output line it landed on
+        def _find_slowest(rendered: list[str]) -> str:
+            for line in rendered:
+                # seg_slowest emits the slowest builder name + duration
+                m = re.search(r'slowest[^|]*\d+ms', line)
+                if m:
+                    return m.group(0)
+            return ""
+
+        slowest0 = _find_slowest(lines0)
+        slowest1 = _find_slowest(lines1)
+        self.assertTrue(slowest0, "slowest segment not found in layout 0 output")
+        self.assertTrue(slowest1, "slowest segment not found in layout 1 output")
+        self.assertEqual(slowest0, slowest1,
+                         f"slowest differs by position: {slowest0!r} vs {slowest1!r}")
 ```
 
-(Write a concrete version using `_data()` + two `Config` layouts and `mock` of a slow builder; assert the `slowest` segment's stripped output is identical across the two layouts.)
+- [ ] **Step 2: Run — Expected: FAIL** (today's per-line meta makes `ctx.slowest` position-dependent — last line wins). `python3 -m unittest tests.test_status_line.TestMetaPositionIndependent -v`
+- [ ] **Step 3: Implement the three phases.** FR-4.1: active per line = `[k for k in line.segments if cfg.segments.get(k, False)]`. Phase A: `core_measure_all` — for each layout line, walk its active non-meta segments left-to-right with per-line `used_est = 0`, passing `avail = max(budget - used_est - sep, 0)` to each builder (exactly as `_pass1_non_meta` does today), storing built strings in `built: dict[tuple[int, str], str]` keyed by `(line_index, segment_key)`, and calling `_crown_slowest` globally for all lines. Phase B: `core_build_meta` — build `render_time`/`slowest` once (passing `avail = budget`) into `meta_built: dict[str, str]`. Phase C: `core_pack` — for each line, first **strip the line index** out of the global tuple-keyed `built` into a plain `dict[str, str]` (because `_assemble_line(enabled, built, budget, sep_w)` takes a string-keyed dict — verified against the live signature), then merge `meta_built` on top, then call `_assemble_line` unchanged:
 
-- [ ] **Step 2: Run — Expected: FAIL** (today's per-line meta makes it position-coupled only-correct-on-last-line).
-- [ ] **Step 3: Implement the three phases.** FR-4.1: active = `(⋃ line.segments) ∩ {k: line_conf.segments[k]}`. Phase A: `core_measure_all` builds+times every active non-meta segment once, into a global `built: dict[str,str]`, crowning `ctx.slowest`. Phase B: `core_build_meta` builds `render_time`/`slowest` once into `built`. Phase C: `core_pack` iterates each layout line and assembles from `built` with the single fitting pass (the current `_assemble_line` logic, which already fits left→right with widths known). Keep `_SLOWEST_META`, `PINNED`, `SEP`, `RIGHT_MARGIN` semantics.
+```python
+for line_index, line in enumerate(cfg.layout):
+    enabled = [k for k in line.segments if cfg.segments.get(k, False)]
+    line_built = {k: v for (i, k), v in built.items() if i == line_index}
+    line_built.update(meta_built)   # render_time / slowest, built once in Phase B
+    out.append(_assemble_line(enabled, line_built, budget, sep_w))
+```
+
+`_assemble_line` itself is unchanged. Keep `_SLOWEST_META`, `PINNED`, `SEP`, `RIGHT_MARGIN` semantics unchanged.
 - [ ] **Step 4: GOLDEN + FRR2 + new test + full suite.** The golden disables meta, so it guards Phase A/C output. FRR2 guards the timing. Run `python3 -m unittest tests.test_status_line -v`. Expected: all PASS, golden byte-identical.
 - [ ] **Step 5: GATE.** `make validate && make test`.
 - [ ] **Step 6: Commit.** `git add -A && git commit -m "refactor(status-line): three-phase packer, global meta, no double-fit (FR-4)"`
@@ -556,7 +632,7 @@ class TestAltBackCompat(unittest.TestCase):
         cfg = _load_cfg_with_toml("[segments]\nclock = false\n")
         self.assertFalse(cfg.segments["alt_time_clock"])
     def test_old_segment_env_maps_forward(self):
-        cfg = sl.load_config({"HOME": "/h", "CC_AI_KIT_SEGMENT_CLOCK": "false"})
+        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_SEGMENT_CLOCK": "false"})
         self.assertFalse(cfg.segments["alt_time_clock"])
 ```
 
@@ -625,7 +701,7 @@ if __name__ == "__main__":
 ```
 
 - [ ] **Step 2: Move the introspection symbols** out of `status-line.py` into the doctor script: `cmd_print_config`, `validate_config_file`, `_DOCTOR_SAMPLE`, `_dry_render_failures`, `cmd_doctor`, `cmd_check`, `_NO_CHECK`, `_ENV_HELP`, and the `--doctor`/`--check`/`--print-config` flags from `parse_args`. The render module's `main()` becomes render-only (read stdin → `safe_render` → print).
-- [ ] **Step 3: Repoint `_doctor_cmd`** in `status-line.py` so its "run the doctor" hint builds `python3 <doctor-script-path> --doctor` (resolve the sibling `statusline-doctor.py` path), not `status-line.py --doctor`. Keep `_doctor_cmd` in the render `core_` block (it is hot-path error text, not introspection).
+- [ ] **Step 3: Repoint `_doctor_cmd`** in `status-line.py` so its "run the doctor" hint builds `python3 <doctor-script-path> --doctor` (resolve the sibling `statusline-doctor.py` path), not `status-line.py --doctor`. Keep `_doctor_cmd` in the render `core_` block — it is called only in the exception handler of `safe_render` and in `diagnostic_line` when a builder crashed; it must remain in the render module so it is available without importing the doctor script.
 - [ ] **Step 4: Move the doctor tests** to `tests/test_statusline_doctor.py` with their own `load_module` for the doctor script; keep the render-module tests in `tests/test_status_line.py`. Add the new test module to `make test` and the pre-commit `unittest` hook.
 - [ ] **Step 5: GATE + full suite.** `make validate && make test`. Run the moved tests explicitly: `python3 -m unittest tests.test_statusline_doctor -v`.
 - [ ] **Step 6: Commit.** `git add -A && git commit -m "refactor(status-line): extract introspection to statusline-doctor.py (FR-7.1–7.3)"`
@@ -757,5 +833,5 @@ make validate && make test    # final post-merge gate
 ## Open implementation choices left to the executor (per PRD)
 
 - Whether `_DOCTOR_SAMPLE` stays a literal in the doctor script or moves to a fixture (FR-7.5) — default: keep it a literal in the doctor script (self-contained, no fixture file).
-- Exact `probe_git` memoization mechanism (per-render ctx cache vs `lru_cache` reset) — default: per-render ctx cache (no cross-render leak; safest for the multi-case golden).
+- `probe_git_for(ctx)` memoization is locked: per-render ctx cache via `_memo(ctx, "git", ...)` — no `lru_cache` (avoids cross-render leak across the multi-case golden).
 - Whether widely-referenced entrypoints (`pack_line`/`render`/`load_config`/`build_context`) get the `core_`/`cfg_` prefix or keep their names — default: rename them and update all `sl.*` test references (cleanest for FR-8.1 role-prefix integrity).
