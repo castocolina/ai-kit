@@ -75,7 +75,7 @@ class TestWorktreeDisplayE2E(unittest.TestCase):
             **os.environ,
             "HOME": self.home,
             "XDG_CACHE_HOME": os.path.join(self.home, ".cache"),
-            "CC_AI_KIT_CONFIG": "/no/such.toml",   # built-in defaults (worktree ON)
+            "CC_AI_KIT_CONFIG_FILE": "/no/such.toml",   # built-in defaults (worktree ON)
             "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50",
         }
         p = subprocess.run([sys.executable, _STATUS_LINE], input=sample,

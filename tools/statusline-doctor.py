@@ -59,8 +59,6 @@ sl = _load_core()
 # pylint: disable-next=protected-access
 _EXTERNAL_CACHE_TTL = sl._EXTERNAL_CACHE_TTL
 # pylint: disable-next=protected-access
-_LEGACY_SEGMENT_KEYS = sl._LEGACY_SEGMENT_KEYS
-# pylint: disable-next=protected-access
 _PALETTE_DEFAULTS = sl._PALETTE_DEFAULTS
 # pylint: disable-next=protected-access
 _RAMP_DEFAULTS = sl._RAMP_DEFAULTS
@@ -80,12 +78,6 @@ Environment variables:
   CC_AI_KIT_EXTERNAL_DIR     external drop-in segments directory (default
                              ${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments)
   CC_AI_KIT_EXTERNAL_CACHE_TTL  default cache TTL (seconds) for external segments
-
-Deprecated names (still accepted, emit a warning):
-  CC_AI_KIT_CONFIG       → CC_AI_KIT_CONFIG_FILE
-  CC_AI_KIT_GIT_TTL      → CC_AI_KIT_GIT_CACHE_TTL
-  CC_AI_KIT_SEGMENTS_DIR → CC_AI_KIT_EXTERNAL_DIR
-  CC_AI_KIT_EXTERNAL_TTL → CC_AI_KIT_EXTERNAL_CACHE_TTL
 
 Config precedence (low -> high): built-in defaults < TOML file < env."""
 
@@ -162,14 +154,12 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
     except (OSError, tomllib.TOMLDecodeError) as e:
         return [f"{path}: {e}"]
     errors: list[str] = []
-    env = sl.cfg_env_normalize(env)
     ext_dir, ext_ttl = sl.cfg_resolve_external(raw, env)
-    _, ext_dir, ext_ttl, _ = sl.cfg_env_apply_overrides(env, {}, ext_dir, ext_ttl, {})
+    _, ext_dir, ext_ttl, _ = sl.cfg_bind_scalars(
+        raw, env, sl.cfg_default_config().git, ext_dir, ext_ttl)
     seg_cache = os.path.join(sl.cfg_cache_base(env), "segments")
     ext_ids = {s.id for s in sl.core_discover_external(ext_dir, ext_ttl, seg_cache)}
-    # Legacy (pre-rename) keys still resolve via forwarding (FR-5.3), so --check
-    # must accept them too — otherwise it would reject a config the renderer loads.
-    known_segments = set(sl.cfg_default_config().segments) | ext_ids | set(_LEGACY_SEGMENT_KEYS)
+    known_segments = set(sl.cfg_default_config().segments) | ext_ids
     for k in cast(dict[str, Any], raw.get("segments") or {}):
         if k not in known_segments:
             errors.append(f"unknown segment key: {k}")

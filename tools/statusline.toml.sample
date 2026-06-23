@@ -3,7 +3,7 @@
 ## ═══════════════════════════════════════════════════════════════════════════
 ## Location: ~/.config/ai-kit/statusline.toml
 ##   (or $XDG_CONFIG_HOME/ai-kit/statusline.toml when XDG_CONFIG_HOME is set;
-##    or any path you point $CC_AI_KIT_CONFIG at).
+##    or any path you point $CC_AI_KIT_CONFIG_FILE at).
 ## The installer drops this file there if you don't already have one, and never
 ## overwrites an existing one.
 ##
@@ -46,9 +46,6 @@
 # chat_size = true           # 💾 transcript file size on disk
 # alt_system_memory = true   # 🧮 status-line process memory (RSS)
 # alt_rate_limits = true     # ⚡ rate-limit buckets with reset time
-## Old segment names (branch/dirty/worktree/clock/cost/time_ago/total_time/
-## api_time/rate_limits/dimensions/memory) are still accepted as deprecated
-## aliases — they forward to the names above with a dim one-time warning.
 
 ## ─── [[line]] — full layout override ─────────────────────────────────────────
 ## ALL-OR-NOTHING (unlike [segments], which merges): if you uncomment ANY [[line]]
@@ -183,19 +180,10 @@
 ##   CC_AI_KIT_SEGMENT_<KEY>=<bool>                  # toggle one segment; KEY is the
 ##                                                     upper-cased segment name, e.g.
 ##                                                     CC_AI_KIT_SEGMENT_ALT_COST=1
-##                                                     (old names like
-##                                                     CC_AI_KIT_SEGMENT_COST still
-##                                                     work, deprecated)
 ##   bool truthy: 1 true t y yes on   bool falsy: 0 false f n no off
 ##   CC_AI_KIT_EXTERNAL_DIR=/path/to/segments         # external providers directory
 ##   CC_AI_KIT_EXTERNAL_CACHE_TTL=10                  # external-segment cache TTL (s)
 ##   CC_AI_KIT_GIT_CACHE_TTL=5                        # git probe cache TTL (s)
-##
-## Deprecated names (still accepted, emit a dim warning — please migrate):
-##   CC_AI_KIT_CONFIG       → CC_AI_KIT_CONFIG_FILE
-##   CC_AI_KIT_GIT_TTL      → CC_AI_KIT_GIT_CACHE_TTL
-##   CC_AI_KIT_SEGMENTS_DIR → CC_AI_KIT_EXTERNAL_DIR
-##   CC_AI_KIT_EXTERNAL_TTL → CC_AI_KIT_EXTERNAL_CACHE_TTL
 ##
 ## Inspect & validate the resolved config (introspection lives in the doctor script;
 ## the render module status-line.py renders only and no longer takes these flags):

@@ -182,24 +182,6 @@ _EXTERNAL_CACHE_TTL = 10            # default seconds an external provider's out
 _GIT_DEFAULTS = {"cache_ttl": _GIT_CACHE_TTL}
 
 
-# Deprecated `[git]` keys: silently accepted (no warning) and ignored, so an old
-# config carrying `[git] worktree = true/false` keeps loading cleanly after the
-# knob moved to `segments.alt_git_worktree`. This is the `[git]`-table namespace
-# — DISTINCT from the `[segments] worktree → alt_git_worktree` rename below.
-_GIT_LEGACY_IGNORED = frozenset({"worktree"})
-
-
-# Renamed segment keys (FR-5): each pre-rename `[segments]`/`CC_AI_KIT_SEGMENT_*`
-# key maps forward to its new domain-family + dispensability-tier key. Old keys
-# stay accepted (back-compat) with a dim deprecation warning; see
-# cfg_resolve_segments and cfg_env_apply_overrides (the two forwarding points).
-_LEGACY_SEGMENT_KEYS = {
-    "branch": "git_branch", "dirty": "git_dirty", "clock": "alt_time_clock",
-    "time_ago": "alt_time_ago", "total_time": "alt_time_session",
-    "api_time": "alt_time_api", "cost": "alt_cost", "rate_limits": "alt_rate_limits",
-    "dimensions": "alt_term_dimensions", "worktree": "alt_git_worktree",
-    "memory": "alt_system_memory",
-}
 
 
 # ── Color & effort defaults (the override baselines) ─────────────────────────
@@ -338,12 +320,9 @@ def cfg_git_key_problem(k: str, v: Any) -> str | None:
     """Classify one `[git]` key/value so cfg_load_config and the doctor's
     validate_config_file share a single validation rule (each formats its own
     message). Returns:
-      'legacy'  — a deprecated key the caller should silently skip,
       'unknown' — not a recognized `[git]` key,
       'bad_ttl' — cache_ttl is not an int (bools excluded),
       None      — acceptable."""
-    if k in _GIT_LEGACY_IGNORED:
-        return "legacy"
     if k not in _GIT_DEFAULTS:
         return "unknown"
     if k == "cache_ttl" and (not isinstance(v, int) or isinstance(v, bool)):
@@ -398,6 +377,95 @@ def cfg_coerce(raw: Any, kind: str, source: str, label: str) -> tuple[Any, str |
     return (raw, None) if isinstance(raw, int) and not isinstance(raw, bool) else (None, bad)
 
 
+def cfg_source_get(source: str, raw_toml: dict[str, Any], env: Env,
+                   path: tuple[str, ...]) -> Any | None:
+    """Raw value for `path` from `source`, or None if absent. Env name is the
+    mechanical projection CC_AI_KIT_<PATH> (the ('segments', KEY) path projects to
+    CC_AI_KIT_SEGMENT_<KEY>); TOML is a nested-dict lookup."""
+    if source == "env":
+        head = "SEGMENT" if path[0] == "segments" else path[0].upper()
+        name = "CC_AI_KIT_" + "_".join([head, *(p.upper() for p in path[1:])])
+        return env.get(name)
+    cur: dict[str, Any] = raw_toml
+    for i, part in enumerate(path):
+        if part not in cur:
+            return None
+        val: Any = cur[part]
+        if i < len(path) - 1:
+            if not isinstance(val, dict):
+                return None
+            cur = cast(dict[str, Any], val)
+        else:
+            return val
+    return None
+
+
+def _env_label(path: tuple[str, ...]) -> str:
+    """Message subject for an env field = the projected env var name."""
+    head = "SEGMENT" if path[0] == "segments" else path[0].upper()
+    return "CC_AI_KIT_" + "_".join([head, *(p.upper() for p in path[1:])])
+
+
+def _env_segment_keys(env: Env) -> list[str]:
+    """Lower-cased segment keys present as CC_AI_KIT_SEGMENT_* in env."""
+    pre = "CC_AI_KIT_SEGMENT_"
+    return [k[len(pre):].lower() for k in env if k.startswith(pre)]
+
+
+def cfg_bind_scalars(
+    raw_toml: dict[str, Any], env: Env, git: dict[str, Any],
+    ext_dir: str, ext_ttl: int,
+) -> tuple[dict[str, Any], str, int, list[str]]:
+    """Bind the scalar line_conf groups (git, external) from env on top of the
+    already-resolved default<TOML values. Runs BEFORE external-provider discovery
+    because CC_AI_KIT_EXTERNAL_DIR changes which directory is scanned. Phase 2
+    binds ENV only (TOML stays in the git loop / cfg_resolve_external and folds
+    into this walk in a later phase, when their warnings migrate to the problem
+    channel). Collects problems instead of printing; the caller decides. Returns
+    (git, ext_dir, ext_ttl, problems)."""
+    g, d, t = dict(git), ext_dir, ext_ttl
+    problems: list[str] = []
+
+    def bind_int(path: tuple[str, ...], cur: int) -> int:
+        raw = cfg_source_get("env", raw_toml, env, path)
+        if raw is None:
+            return cur
+        value, prob = cfg_coerce(raw, "int", "env", _env_label(path))
+        if prob:
+            problems.append(prob)
+            return cur
+        return value if value is not None else cur
+
+    g["cache_ttl"] = bind_int(("git", "cache_ttl"), g["cache_ttl"])
+    t = bind_int(("external", "cache_ttl"), t)
+    raw_dir = cfg_source_get("env", raw_toml, env, ("external", "dir"))
+    if raw_dir:
+        d = os.path.expanduser(cast(str, raw_dir))
+    return g, d, t, problems
+
+
+def cfg_bind_segments(
+    raw_toml: dict[str, Any], env: Env, segments: dict[str, bool],
+) -> tuple[dict[str, bool], list[str]]:
+    """Bind the segment toggle map from env on top of the already-resolved
+    default<TOML map (cfg_resolve_segments). Runs AFTER external-provider
+    discovery so provider ids are known segment keys. Canonical keys only — no
+    legacy forwarding. env bad-bool stays silent (tri-state). Collects problems
+    instead of printing. Returns (segments, problems)."""
+    seg = dict(segments)
+    problems: list[str] = []
+    for key in _env_segment_keys(env):
+        if key not in seg:
+            continue
+        raw = cfg_source_get("env", raw_toml, env, ("segments", key))
+        value, prob = cfg_coerce(raw, "bool", "env", _env_label(("segments", key)))
+        if prob:
+            problems.append(prob)
+        elif value is not None:
+            seg[key] = value
+    return seg, problems
+
+
 def cfg_default_config() -> "Config":
     """A Config snapshotting the current module-global defaults (SEGMENTS/LAYOUT,
     no palette/ramp overrides). Copies are returned so callers cannot mutate
@@ -406,104 +474,14 @@ def cfg_default_config() -> "Config":
                   git=dict(_GIT_DEFAULTS))
 
 
-def cfg_env_normalize(env: Env) -> Env:
-    """Return a copy of env with deprecated CC_AI_KIT_* names forwarded to their
-    canonical successors (FR-1.6 back-compat). Emits a dim deprecation warning to
-    stderr for each old name present so users know to migrate.
-
-    Mapping (old → new):
-      CC_AI_KIT_GIT_TTL      → CC_AI_KIT_GIT_CACHE_TTL
-      CC_AI_KIT_EXTERNAL_TTL → CC_AI_KIT_EXTERNAL_CACHE_TTL
-      CC_AI_KIT_SEGMENTS_DIR → CC_AI_KIT_EXTERNAL_DIR
-      CC_AI_KIT_CONFIG       → CC_AI_KIT_CONFIG_FILE
-    """
-    _ALIASES: dict[str, str] = {
-        "CC_AI_KIT_GIT_TTL":      "CC_AI_KIT_GIT_CACHE_TTL",
-        "CC_AI_KIT_EXTERNAL_TTL": "CC_AI_KIT_EXTERNAL_CACHE_TTL",
-        "CC_AI_KIT_SEGMENTS_DIR": "CC_AI_KIT_EXTERNAL_DIR",
-        "CC_AI_KIT_CONFIG":       "CC_AI_KIT_CONFIG_FILE",
-    }
-    out: dict[str, str] = dict(env)
-    for old, new in _ALIASES.items():
-        if old in out and new not in out:
-            print(f"{_DIM}status-line: {old} is deprecated; use {new}{RESET}",
-                  file=sys.stderr)
-            out[new] = out[old]
-    return out
-
-
-def cfg_env_apply_overrides(  # pylint: disable=too-many-locals,too-many-branches
-    env: Env,
-    git: dict[str, Any],
-    ext_dir: str,
-    ext_ttl: int,
-    segments: dict[str, bool],
-) -> tuple[dict[str, Any], str, int, dict[str, bool]]:
-    """Single structure-aware env reader (FR-1.6). Walks *normalized* env for
-    keys matching CC_AI_KIT_<TOKEN>_<REST> and routes by the leading token:
-
-      SEGMENT → segments[rest.lower()]          (via cfg_coerce tri-state)
-      GIT     → git[rest.lower()]               (int for CACHE_TTL, ignored otherwise)
-      EXTERNAL→ ext_dir  (REST == "DIR")
-               ext_ttl  (REST == "CACHE_TTL"; int)
-
-    CC_AI_KIT_CONFIG_FILE is the bootstrap exception — handled in cfg_config_path.
-    Returns (git, ext_dir, ext_ttl, segments) with any env overrides applied.
-    """
-    PREFIX = "CC_AI_KIT_"
-    seg = dict(segments)
-    g = dict(git)
-    d = ext_dir
-    t = ext_ttl
-    for key, val in env.items():
-        if not key.startswith(PREFIX):
-            continue
-        rest = key[len(PREFIX):]                   # e.g. "GIT_CACHE_TTL", "SEGMENT_COST"
-        parts = rest.split("_", 1)
-        if len(parts) < 2:
-            continue
-        token, suffix = parts[0], parts[1]
-
-        if token == "SEGMENT":
-            # SEGMENT tokens resolved only in the segments pass (seg non-empty); the
-            # throwaway git/external pass passes seg={} and is skipped so a legacy
-            # key warns once, not once per pass.
-            if not seg:
-                continue
-            seg_key = cfg_forward_legacy_segment(suffix.lower())
-            if seg_key in seg:
-                ov, _prob = cfg_coerce(val, "bool", "env", key)  # unrecognized -> None (silent)
-                if ov is not None:
-                    seg[seg_key] = ov
-        elif token == "GIT":
-            if suffix == "CACHE_TTL":
-                v, prob = cfg_coerce(val, "int", "env", key)
-                if prob:
-                    cfg_warn(prob)
-                elif v is not None:
-                    g["cache_ttl"] = v
-        elif token == "EXTERNAL":
-            if suffix == "DIR":
-                if val:
-                    d = os.path.expanduser(val)
-            elif suffix == "CACHE_TTL":
-                v, prob = cfg_coerce(val, "int", "env", key)
-                if prob:
-                    cfg_warn(prob)
-                elif v is not None:
-                    t = v
-        # CONFIG_FILE is the bootstrap exception (handled in cfg_config_path)
-    return g, d, t, seg
-
-
 def cfg_config_path(env: Env) -> str:
-    """Resolved TOML path: CC_AI_KIT_CONFIG_FILE (new) or CC_AI_KIT_CONFIG (back-compat),
-    else ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/statusline.toml.
+    """Resolved TOML path: CC_AI_KIT_CONFIG_FILE, else
+    ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/statusline.toml.
 
     FR-1.7: this is the bootstrap exception — it reads env directly before any
     TOML is loaded (chicken-and-egg), so it is the one explicit hardcoded env read
-    outside the single cfg_env_apply_overrides reader."""
-    explicit = env.get("CC_AI_KIT_CONFIG_FILE") or env.get("CC_AI_KIT_CONFIG")
+    outside the cfg_bind_scalars/cfg_bind_segments layer."""
+    explicit = env.get("CC_AI_KIT_CONFIG_FILE")
     if explicit:
         return os.path.expanduser(explicit)
     base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
@@ -525,31 +503,14 @@ def cfg_load_toml(path: str) -> dict[str, Any]:
         return {}
 
 
-def cfg_forward_legacy_segment(key: str) -> str:
-    """Map a pre-rename segment key forward to its new canonical key (FR-5.3),
-    emitting one dim deprecation warning. A non-legacy key passes through
-    unchanged. The single forwarding rule shared by both back-compat points
-    (cfg_resolve_segments for TOML, cfg_env_apply_overrides for env)."""
-    new = _LEGACY_SEGMENT_KEYS.get(key)
-    if new is None:
-        return key
-    print(f"{_DIM}status-line: segment '{key}' is renamed to '{new}'{RESET}",
-          file=sys.stderr)
-    return new
-
-
 def cfg_resolve_segments(defaults: dict[str, bool], file_seg: Any) -> dict[str, bool]:
-    """defaults < file [segments] (TOML only). A pre-rename key (FR-5.3) is
-    forwarded to its new canonical name (with a dim deprecation warning) BEFORE
-    the unknown-key check, so e.g. `[segments] clock = false` sets
-    `alt_time_clock` and does not warn "unknown segment". Each remaining file
-    entry is dropped with a dim warning if its key is unknown OR its value is not
-    a bool (e.g. `alt_cost = "true"` instead of `alt_cost = true`); only bool
-    file values for known keys are honored. Env overrides are applied later by
-    cfg_env_apply_overrides (FR-1.6)."""
+    """defaults < file [segments] (TOML only). Each file entry is dropped with a
+    dim warning if its key is unknown OR its value is not a bool (e.g.
+    `alt_cost = "true"` instead of `alt_cost = true`); only bool file values for
+    known keys are honored. Env overrides are applied later by
+    cfg_bind_segments (FR-3)."""
     seg = dict(defaults)
     for k, v in cast(dict[str, Any], file_seg or {}).items():
-        k = cfg_forward_legacy_segment(k)
         if k not in seg:
             print(f"{_DIM}status-line: unknown segment '{k}' in config{RESET}",
                   file=sys.stderr)
@@ -573,7 +534,7 @@ def cfg_resolve_layout(default_layout: list[Line], raw_lines: Any) -> list[Line]
 
 def cfg_resolve_external(raw: dict[str, Any], env: Env) -> tuple[str, int]:
     """Resolve (dir, default_ttl) from defaults < [external] file.
-    Env overrides are applied later by cfg_env_apply_overrides (FR-1.6)."""
+    Env overrides are applied later by cfg_bind_scalars (FR-2)."""
     file_ext: dict[str, Any] = cast(dict[str, Any], raw.get("external") or {})
     ttl = _EXTERNAL_CACHE_TTL
     fv: Any = file_ext.get("ttl")
@@ -629,11 +590,9 @@ def cfg_load_config(  # pylint: disable=too-many-locals,too-many-branches
     Config.external (an ExternalConf whose `.providers` holds the finalized
     ExtSpec list, `.dir` the providers directory, `.cache_ttl` the default TTL).
 
-    All CC_AI_KIT_* config env reads funnel through cfg_env_normalize (back-compat
-    alias forwarding) then cfg_env_apply_overrides (FR-1.6 single reader). The
-    bootstrap CC_AI_KIT_CONFIG_FILE read is the sole exception (FR-1.7)."""
-    # FR-1.6/1.8: normalize env (forward deprecated names) then use as canonical env.
-    env = cfg_env_normalize(env)
+    All CC_AI_KIT_* config env reads funnel through cfg_bind_scalars /
+    cfg_bind_segments (FR-2/FR-3 access/convert/bind layer). The bootstrap
+    CC_AI_KIT_CONFIG_FILE read is the sole exception (FR-1.7)."""
     base = cfg_default_config()
     raw = cfg_load_toml(cfg_config_path(env))
 
@@ -647,8 +606,6 @@ def cfg_load_config(  # pylint: disable=too-many-locals,too-many-branches
     git: dict[str, Any] = dict(_GIT_DEFAULTS)
     for k, v in cast(dict[str, Any], raw.get("git") or {}).items():
         problem = cfg_git_key_problem(k, v)
-        if problem == "legacy":
-            continue                               # deprecated, tolerated, no effect
         if problem == "unknown":
             print(f"{_DIM}status-line: unknown [git] key '{k}'{RESET}", file=sys.stderr)
         elif problem == "bad_ttl":
@@ -657,11 +614,10 @@ def cfg_load_config(  # pylint: disable=too-many-locals,too-many-branches
         else:
             git[k] = v
 
-    # FR-1.6 single reader, scalars pass: apply CC_AI_KIT_* overrides to git +
-    # external dir/ttl now. Segments are deferred until after discovery (below):
-    # external provider ids aren't known segment keys until then, so the reader is
-    # called a second time for segments — never for git/external again.
-    git, ext_dir, ext_ttl, _ = cfg_env_apply_overrides(env, git, ext_dir, ext_ttl, {})
+    # FR-2/FR-3: env binds via the access/convert layer. Scalars bind BEFORE
+    # discovery so the env-bound external dir is the one scanned; segments bind
+    # AFTER discovery so provider ids are known segment keys.
+    git, ext_dir, ext_ttl, prob_scalars = cfg_bind_scalars(raw, env, git, ext_dir, ext_ttl)
 
     # Discover external providers using the final resolved dir/ttl (env wins over TOML).
     specs = core_discover_external(ext_dir, ext_ttl, os.path.join(cache_base, "segments"))
@@ -672,9 +628,10 @@ def cfg_load_config(  # pylint: disable=too-many-locals,too-many-branches
     seg_defaults = dict(base.segments)
     for s in specs:
         seg_defaults.setdefault(s.id, True)
-    segments = cfg_resolve_segments(seg_defaults, raw.get("segments"))
-    # FR-1.6 single reader, segments pass (git/external already final — discarded).
-    _, _, _, segments = cfg_env_apply_overrides(env, git, ext_dir, ext_ttl, segments)
+    segments = cfg_resolve_segments(seg_defaults, raw.get("segments"))   # TOML pass (warns)
+    segments, prob_segs = cfg_bind_segments(raw, env, segments)          # env pass + problems
+    for p in (*prob_scalars, *prob_segs):                                # Phase-2 parity: print
+        cfg_warn(p)
 
     layout = cfg_resolve_layout(base.layout, raw.get("line"))
     layout, external = cfg_place_external(layout, specs)
@@ -708,8 +665,8 @@ def cfg_cache_base(env: Env) -> str:
 
 def cfg_segments_dir(file_external: Any, env: Env) -> str:
     """Resolve the providers directory from [external].dir (TOML) or the XDG default.
-    Env override (CC_AI_KIT_EXTERNAL_DIR) is applied later by cfg_env_apply_overrides
-    (FR-1.6); this function is TOML + XDG only."""
+    Env override (CC_AI_KIT_EXTERNAL_DIR) is applied later by cfg_bind_scalars
+    (FR-2); this function is TOML + XDG only."""
     ext_block: dict[str, Any] = cast(dict[str, Any], file_external or {})
     d: str | None = ext_block.get("dir")
     if d:

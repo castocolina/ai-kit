@@ -1408,9 +1408,62 @@ class TestCfgCoerce(unittest.TestCase):
         self.assertEqual(prob, "[git] cache_ttl must be an integer, got True — ignored")
 
 
+class TestCfgSourceGet(unittest.TestCase):
+    def test_cfg_source_get_env_projection(self):
+        env = {"CC_AI_KIT_GIT_CACHE_TTL": "9", "CC_AI_KIT_SEGMENT_ALT_COST": "1"}
+        self.assertEqual(sl.cfg_source_get("env", {}, env, ("git", "cache_ttl")), "9")
+        self.assertEqual(sl.cfg_source_get("env", {}, env, ("segments", "alt_cost")), "1")
+        self.assertIsNone(sl.cfg_source_get("env", {}, env, ("git", "missing")))
+
+    def test_cfg_source_get_toml_nested(self):
+        raw = {"git": {"cache_ttl": 7}, "segments": {"alt_cost": True}}
+        self.assertEqual(sl.cfg_source_get("toml", raw, {}, ("git", "cache_ttl")), 7)
+        self.assertIs(sl.cfg_source_get("toml", raw, {}, ("segments", "alt_cost")), True)
+        self.assertIsNone(sl.cfg_source_get("toml", raw, {}, ("git", "missing")))
+
+
+class TestCfgBind(unittest.TestCase):
+    def test_cfg_bind_scalars_precedence_and_problems(self):
+        raw = {"git": {"cache_ttl": 8}}
+        # env overrides git cache_ttl; default is 5, TOML(8) already applied by caller,
+        # env(12) wins here.
+        git, ext_dir, ext_ttl, probs = sl.cfg_bind_scalars(
+            raw, {"CC_AI_KIT_GIT_CACHE_TTL": "12"}, {"cache_ttl": 8}, "/d", 10)
+        self.assertEqual(git["cache_ttl"], 12)
+        self.assertEqual((ext_dir, ext_ttl), ("/d", 10))
+        self.assertEqual(probs, [])
+        # env external dir + ttl override
+        _git2, ext_dir2, ext_ttl2, probs2 = sl.cfg_bind_scalars(
+            raw, {"CC_AI_KIT_EXTERNAL_DIR": "/x", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "20"},
+            {"cache_ttl": 8}, "/d", 10)
+        self.assertEqual((ext_dir2, ext_ttl2), ("/x", 20))
+        self.assertEqual(probs2, [])
+        # invalid env int -> falls back AND records a problem
+        _, _, _, probs3 = sl.cfg_bind_scalars(
+            raw, {"CC_AI_KIT_GIT_CACHE_TTL": "x"}, {"cache_ttl": 8}, "/d", 10)
+        self.assertIn("CC_AI_KIT_GIT_CACHE_TTL must be an integer, got 'x' — ignored", probs3)
+
+    def test_cfg_bind_segments_env_override(self):
+        segs, probs = sl.cfg_bind_segments(
+            {}, {"CC_AI_KIT_SEGMENT_ALT_COST": "0"}, {"alt_cost": True, "path": True})
+        self.assertIs(segs["alt_cost"], False)        # env override applied
+        self.assertIs(segs["path"], True)             # untouched
+        self.assertEqual(probs, [])
+        # unknown segment env key -> silently skipped (not a known key)
+        segs2, probs2 = sl.cfg_bind_segments(
+            {}, {"CC_AI_KIT_SEGMENT_BOGUS": "1"}, {"alt_cost": True})
+        self.assertNotIn("bogus", segs2)
+        self.assertEqual(probs2, [])
+        # env bad-bool stays silent (tri-state): unrecognized string -> no override, no problem
+        segs3, probs3 = sl.cfg_bind_segments(
+            {}, {"CC_AI_KIT_SEGMENT_ALT_COST": "maybe"}, {"alt_cost": True})
+        self.assertIs(segs3["alt_cost"], True)
+        self.assertEqual(probs3, [])
+
+
 class TestConfigPathAndLoad(unittest.TestCase):
     def test_explicit_path_wins(self):
-        env = {"CC_AI_KIT_CONFIG": "/tmp/x.toml", "HOME": "/home/u"}
+        env = {"CC_AI_KIT_CONFIG_FILE": "/tmp/x.toml", "HOME": "/home/u"}
         self.assertEqual(sl.cfg_config_path(env), "/tmp/x.toml")
 
     def test_xdg_path(self):
@@ -1451,7 +1504,7 @@ class TestResolveSegments(unittest.TestCase):
         return f.name
 
     def test_defaults_when_no_file_no_env(self):
-        env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"}
+        env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"}
         cfg = sl.cfg_load_config(env)
         self.assertEqual(cfg.segments, dict(sl.SEGMENTS))
         self.assertEqual(cfg.layout, list(sl.LAYOUT))
@@ -1459,27 +1512,27 @@ class TestResolveSegments(unittest.TestCase):
 
     def test_file_overrides_default(self):
         path = self._write("[segments]\nalt_cost = true\nalt_system_memory = false\n")
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertTrue(cfg.segments["alt_cost"])             # default False -> True
         self.assertFalse(cfg.segments["alt_system_memory"])  # default True  -> False
         self.assertTrue(cfg.segments["alt_time_clock"])       # untouched default
 
     def test_env_overrides_file(self):
         path = self._write("[segments]\nalt_cost = true\n")
-        env = {"CC_AI_KIT_CONFIG": path, "HOME": "/h", "CC_AI_KIT_SEGMENT_ALT_COST": "0"}
+        env = {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h", "CC_AI_KIT_SEGMENT_ALT_COST": "0"}
         cfg = sl.cfg_load_config(env)
         self.assertFalse(cfg.segments["alt_cost"])  # env beats file
 
     def test_unknown_segment_key_ignored(self):
         path = self._write("[segments]\nbogus = true\n")
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertNotIn("bogus", cfg.segments)
 
     def test_wrong_type_value_ignored(self):
         # `alt_cost = "true"` (string, not bool) is a known key but a bad value:
         # it must be dropped (keeping the default), not silently coerced.
         path = self._write('[segments]\nalt_cost = "true"\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.segments["alt_cost"], sl.SEGMENTS["alt_cost"])  # default kept
 
 
@@ -1492,47 +1545,36 @@ class TestGitConfig(unittest.TestCase):
 
     def test_cache_ttl_default_5(self):
         # Default [git] config carries cache_ttl=5 and nothing else.
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
         self.assertEqual(cfg.git, {"cache_ttl": 5})
 
     def test_cache_ttl_from_toml(self):
         path = self._write("[git]\ncache_ttl = 20\n")
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.git["cache_ttl"], 20)
 
     def test_cache_ttl_env_overrides_toml(self):
-        # Precedence: default 5 < TOML [git] cache_ttl < env CC_AI_KIT_GIT_TTL.
+        # Precedence: default 5 < TOML [git] cache_ttl < env CC_AI_KIT_GIT_CACHE_TTL.
         path = self._write("[git]\ncache_ttl = 20\n")
-        env = {"CC_AI_KIT_CONFIG": path, "HOME": "/h", "CC_AI_KIT_GIT_TTL": "99"}
+        env = {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h", "CC_AI_KIT_GIT_CACHE_TTL": "99"}
         self.assertEqual(sl.cfg_load_config(env).git["cache_ttl"], 99)
 
     def test_cache_ttl_env_over_default(self):
-        env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
-               "CC_AI_KIT_GIT_TTL": "0"}
+        env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h",
+               "CC_AI_KIT_GIT_CACHE_TTL": "0"}
         self.assertEqual(sl.cfg_load_config(env).git["cache_ttl"], 0)
 
     def test_cache_ttl_bad_toml_type_ignored(self):
         path = self._write('[git]\ncache_ttl = "soon"\n')   # string, not int
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
-            cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+            cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.git["cache_ttl"], 5)            # default kept
         self.assertIn("cache_ttl", buf.getvalue())           # and warned
 
-    def test_legacy_worktree_key_tolerated_with_cache_ttl(self):
-        # Legacy `[git] worktree` is silently accepted (no warning), no effect;
-        # cache_ttl alongside it still resolves.
-        for val in ("true", "false", '"true"'):
-            path = self._write(f"[git]\nworktree = {val}\ncache_ttl = 12\n")
-            buf = io.StringIO()
-            with contextlib.redirect_stderr(buf):
-                cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
-            self.assertEqual(cfg.git, {"cache_ttl": 12}, val)
-            self.assertNotIn("worktree", buf.getvalue(), val)   # no warning
-
     def test_worktree_env_no_longer_read(self):
         # CC_AI_KIT_GIT_WORKTREE is retired — setting it does not affect cfg.git.
-        env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
+        env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h",
                "CC_AI_KIT_GIT_WORKTREE": "1"}
         self.assertEqual(sl.cfg_load_config(env).git, {"cache_ttl": 5})
 
@@ -1540,7 +1582,7 @@ class TestGitConfig(unittest.TestCase):
         path = self._write("[git]\nbogus = true\n")
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
-            cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+            cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertNotIn("bogus", cfg.git)             # bogus dropped
         self.assertIn("bogus", buf.getvalue())         # and warned
 
@@ -1556,16 +1598,16 @@ class TestWorktreeSegmentToggle(unittest.TestCase):
 
     def test_worktree_segment_on_by_default(self):
         self.assertIs(sl.SEGMENTS.get("alt_git_worktree"), True)
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
         self.assertTrue(cfg.segments["alt_git_worktree"])
 
     def test_worktree_segment_disable_via_toml(self):
         path = self._write("[segments]\nalt_git_worktree = false\n")
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertFalse(cfg.segments["alt_git_worktree"])
 
     def test_worktree_segment_disable_via_env(self):
-        env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
+        env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h",
                "CC_AI_KIT_SEGMENT_ALT_GIT_WORKTREE": "0"}
         self.assertFalse(sl.cfg_load_config(env).segments["alt_git_worktree"])
 
@@ -1609,7 +1651,7 @@ class TestMainUsesConfig(unittest.TestCase):
         # clear=True would otherwise strip it and crash main().
         env = {"HOME": "/tmp", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50",
                "PATH": os.environ.get("PATH", ""),
-               "CC_AI_KIT_SEGMENT_CLOCK": "0", "CC_AI_KIT_CONFIG": "/no/such.toml"}
+               "CC_AI_KIT_SEGMENT_ALT_TIME_CLOCK": "0", "CC_AI_KIT_CONFIG_FILE": "/no/such.toml"}
         out = strip(self._run_main(raw, env))
         self.assertNotIn("⏰", out)
         self.assertIn("Opus", out)
@@ -1623,20 +1665,20 @@ class TestResolveLayout(unittest.TestCase):
         return f.name
 
     def test_no_line_keeps_default_layout(self):
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
         self.assertEqual(cfg.layout, list(sl.LAYOUT))
 
     def test_line_replaces_layout(self):
         path = self._write(
             '[[line]]\nmin_rows = 0\nsegments = ["path", "model"]\n'
             '[[line]]\nmin_rows = 25\nsegments = ["context"]\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.layout,
                          [sl.Line(0, ["path", "model"]), sl.Line(25, ["context"])])
 
     def test_line_missing_min_rows_defaults_zero(self):
         path = self._write('[[line]]\nsegments = ["path"]\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.layout, [sl.Line(0, ["path"])])
 
 
@@ -1649,12 +1691,12 @@ class TestPaletteFromConfig(unittest.TestCase):
 
     def test_palette_parsed_into_config(self):
         path = self._write('[palette]\nBLUE = "1;34"\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.palette, {"BLUE": "1;34"})
 
     def test_unknown_palette_key_dropped(self):
         path = self._write('[palette]\nNOTACOLOR = "1;34"\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.palette, {})
 
     def test_main_applies_palette(self):
@@ -1665,7 +1707,7 @@ class TestPaletteFromConfig(unittest.TestCase):
                "context_window": {"used_percentage": 10}}
         env = {"HOME": "/tmp", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50",
                "PATH": os.environ.get("PATH", ""),  # keep PATH so git in build_data resolves
-               "CC_AI_KIT_CONFIG": path}
+               "CC_AI_KIT_CONFIG_FILE": path}
         buf = io.StringIO()
         with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))),\
              mock.patch.object(sys, "argv", ["status-line.py"]),\
@@ -1870,16 +1912,16 @@ class TestRampFromConfig(unittest.TestCase):
 
     def test_ramp_parsed_into_config(self):
         path = self._write('[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.ramps, {"rate": {"50": "GREEN", "inf": "RED+bold"}})
 
     def test_unknown_ramp_dropped(self):
         path = self._write('[ramp.bogus]\n10 = "RED"\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.ramps, {})
 
     def test_no_ramp_block_is_empty(self):
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
         self.assertEqual(cfg.ramps, {})
 
 
@@ -2205,42 +2247,6 @@ class TestEnvConvention(unittest.TestCase):
     def test_external_cache_ttl_via_convention(self):
         cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "30"})
         self.assertEqual(cfg.external.cache_ttl, 30)
-
-    def test_old_git_ttl_name_still_works(self):
-        # back-compat: old name maps forward with at most a dim warning
-        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_GIT_TTL": "7"})
-        self.assertEqual(cfg.git["cache_ttl"], 7)
-
-
-class TestAltBackCompat(unittest.TestCase):
-    """FR-5.3: an OLD segment key (pre-rename) still resolves, mapping forward to
-    its new canonical key with at most a dim deprecation warning. Covers both
-    back-compat wiring points: the TOML [segments] resolver and the env reader."""
-
-    def test_old_segment_key_in_toml_maps_forward(self):
-        cfg = _load_cfg_with_toml("[segments]\nclock = false\n")
-        self.assertFalse(cfg.segments["alt_time_clock"])
-
-    def test_old_segment_env_maps_forward(self):
-        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_SEGMENT_CLOCK": "false"})
-        self.assertFalse(cfg.segments["alt_time_clock"])
-
-    def test_old_toml_key_does_not_warn_unknown(self):
-        # A legacy key forwards BEFORE the unknown-key check, so it must not be
-        # reported as an unknown segment (it emits a rename notice instead).
-        buf = io.StringIO()
-        with contextlib.redirect_stderr(buf):
-            cfg = _load_cfg_with_toml("[segments]\nworktree = false\n")
-        self.assertFalse(cfg.segments["alt_git_worktree"])
-        self.assertNotIn("unknown segment", buf.getvalue())
-
-    def test_every_legacy_key_maps_to_a_real_new_key(self):
-        # Each old key forwards to a key that exists in the resolved defaults.
-        defaults = sl.cfg_default_config().segments
-        for old, new in sl._LEGACY_SEGMENT_KEYS.items():
-            self.assertIn(new, defaults, f"{old} -> {new} (new key missing)")
-            self.assertNotIn(old, defaults, f"{old} should no longer be a key")
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
