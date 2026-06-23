@@ -351,26 +351,59 @@ def cfg_git_key_problem(k: str, v: Any) -> str | None:
     return None
 
 
+def cfg_warn(msg: str) -> None:
+    """The single render-format config-warning emitter: dim grey, 'status-line:'
+    prefix, stderr. Phase-3 the doctor prints bind problems through this same
+    wrapper, so relocated warning text is byte-identical to what render emitted."""
+    print(f"{_DIM}status-line: {msg}{RESET}", file=sys.stderr)
+
+
+# kind -> (human description for messages, env-string parser).
+# Open dispatch: add a kind by adding one row (no caller edits). bool/int only
+# (FR scope; no float/list config field exists — YAGNI).
+def _coerce_env_bool(raw: str) -> tuple[Any, bool]:
+    """(value, recognized). Unrecognized -> (None, False) = tri-state no-override."""
+    v = raw.strip().lower()
+    if v in _ENV_TRUE:
+        return True, True
+    if v in _ENV_FALSE:
+        return False, True
+    return None, False
+
+
+def cfg_coerce(raw: Any, kind: str, source: str, label: str) -> tuple[Any, str | None]:
+    """Coerce a raw config value to `kind` ('bool'|'int') from `source`
+    ('env'|'toml'). Returns (value, problem):
+      (value, None)   -> a coerced value to apply,
+      (None, None)    -> no override / skip (no real config value is None),
+      (None, problem) -> present but not coercible; `problem` is the core text.
+    source='env' (raw is str): bool via _ENV_TRUE/_ENV_FALSE, UNRECOGNIZED -> skip
+    (preserves today's SILENT env-bad-bool); int via int(raw).
+    source='toml' (raw already typed): bool must be a real bool; int must be int
+    and not bool. `label` is the message subject (env var name / "segment 'x'" /
+    '[git] cache_ttl')."""
+    desc = "true/false" if kind == "bool" else "an integer"
+    bad = f"{label} must be {desc}, got {raw!r} — ignored"
+    if source == "env":
+        if kind == "bool":
+            value, recognized = _coerce_env_bool(cast(str, raw))
+            return (value, None) if recognized else (None, None)  # unrecognized = silent skip
+        try:
+            return int(cast(str, raw)), None
+        except (TypeError, ValueError):
+            return None, bad
+    # source == "toml": strict, already-typed
+    if kind == "bool":
+        return (raw, None) if isinstance(raw, bool) else (None, bad)
+    return (raw, None) if isinstance(raw, int) and not isinstance(raw, bool) else (None, bad)
+
+
 def cfg_default_config() -> "Config":
     """A Config snapshotting the current module-global defaults (SEGMENTS/LAYOUT,
     no palette/ramp overrides). Copies are returned so callers cannot mutate
     globals."""
     return Config(segments=dict(SEGMENTS), layout=list(LAYOUT), palette={}, ramps={},
                   git=dict(_GIT_DEFAULTS))
-
-
-def cfg_env_bool(env: Env, name: str) -> bool | None:
-    """Tri-state bool from env[name]: True / False / None (unset or unrecognized).
-    None means 'no override' so callers fall through to file/default."""
-    v = env.get(name)
-    if v is None:
-        return None
-    v = v.strip().lower()
-    if v in _ENV_TRUE:
-        return True
-    if v in _ENV_FALSE:
-        return False
-    return None
 
 
 def cfg_env_normalize(env: Env) -> Env:
@@ -399,17 +432,6 @@ def cfg_env_normalize(env: Env) -> Env:
     return out
 
 
-def cfg_env_int(key: str, val: str, fallback: int) -> int:
-    """Parse an int env override; on a non-integer value warn (dim) and keep fallback.
-    Shared by the GIT and EXTERNAL int knobs in cfg_env_apply_overrides (FR-1.6 DRY)."""
-    try:
-        return int(val)
-    except ValueError:
-        print(f"{_DIM}status-line: {key} must be an integer, got {val!r} — ignored{RESET}",
-              file=sys.stderr)
-        return fallback
-
-
 def cfg_env_apply_overrides(  # pylint: disable=too-many-locals,too-many-branches
     env: Env,
     git: dict[str, Any],
@@ -420,7 +442,7 @@ def cfg_env_apply_overrides(  # pylint: disable=too-many-locals,too-many-branche
     """Single structure-aware env reader (FR-1.6). Walks *normalized* env for
     keys matching CC_AI_KIT_<TOKEN>_<REST> and routes by the leading token:
 
-      SEGMENT → segments[rest.lower()]          (via cfg_env_bool tri-state)
+      SEGMENT → segments[rest.lower()]          (via cfg_coerce tri-state)
       GIT     → git[rest.lower()]               (int for CACHE_TTL, ignored otherwise)
       EXTERNAL→ ext_dir  (REST == "DIR")
                ext_ttl  (REST == "CACHE_TTL"; int)
@@ -443,27 +465,33 @@ def cfg_env_apply_overrides(  # pylint: disable=too-many-locals,too-many-branche
         token, suffix = parts[0], parts[1]
 
         if token == "SEGMENT":
-            # SEGMENT tokens are resolved only in the segments pass (seg non-empty);
-            # the throwaway git/external pass passes seg={} and is skipped here so a
-            # legacy key warns once, not once per pass.
+            # SEGMENT tokens resolved only in the segments pass (seg non-empty); the
+            # throwaway git/external pass passes seg={} and is skipped so a legacy
+            # key warns once, not once per pass.
             if not seg:
                 continue
-            # Forward a pre-rename key (FR-5.3) before the membership check, so
-            # CC_AI_KIT_SEGMENT_CLOCK=false toggles `alt_time_clock`.
             seg_key = cfg_forward_legacy_segment(suffix.lower())
             if seg_key in seg:
-                ov = cfg_env_bool(env, key)
+                ov, _prob = cfg_coerce(val, "bool", "env", key)  # unrecognized -> None (silent)
                 if ov is not None:
                     seg[seg_key] = ov
         elif token == "GIT":
             if suffix == "CACHE_TTL":
-                g["cache_ttl"] = cfg_env_int(key, val, g["cache_ttl"])
+                v, prob = cfg_coerce(val, "int", "env", key)
+                if prob:
+                    cfg_warn(prob)
+                elif v is not None:
+                    g["cache_ttl"] = v
         elif token == "EXTERNAL":
             if suffix == "DIR":
                 if val:
                     d = os.path.expanduser(val)
             elif suffix == "CACHE_TTL":
-                t = cfg_env_int(key, val, t)
+                v, prob = cfg_coerce(val, "int", "env", key)
+                if prob:
+                    cfg_warn(prob)
+                elif v is not None:
+                    t = v
         # CONFIG_FILE is the bootstrap exception (handled in cfg_config_path)
     return g, d, t, seg
 
@@ -690,14 +718,6 @@ def cfg_segments_dir(file_external: Any, env: Env) -> str:
     return os.path.join(base, "ai-kit", "segments")
 
 
-def cfg_to_int(s: str | None) -> int | None:
-    """Parse a stripped string to int, or None on empty/non-numeric input."""
-    try:
-        return int(s) if s else None
-    except ValueError:
-        return None
-
-
 def cfg_resolve_effort(raw: dict[str, Any]) -> str:
     """The *resolved* effort level (low..max) as a normalized lowercase string, or "".
 
@@ -743,8 +763,8 @@ def probe_terminal_size(env: Env) -> tuple[int, int, bool]:
                     lines = lines or int(size[0])
                     cols = cols or int(size[1])
                 if cols is None or lines is None:
-                    cols = cols or cfg_to_int(_run("tput", "cols").strip())
-                    lines = lines or cfg_to_int(_run("tput", "lines").strip())
+                    cols = cols or util_to_int(_run("tput", "cols").strip())
+                    lines = lines or util_to_int(_run("tput", "lines").strip())
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
     assumed = False
@@ -911,12 +931,12 @@ def probe_comm_via_ps(pid: int) -> str | None:
 
 def probe_ppid_via_ps(pid: int) -> int | None:
     """Read parent PID via `ps -o ppid=`, or None on error."""
-    return cfg_to_int(probe_ps_field(pid, "ppid"))
+    return util_to_int(probe_ps_field(pid, "ppid"))
 
 
 def probe_rss_kb_via_ps(pid: int) -> int | None:
     """Read RSS (kB) via `ps -o rss=`, or None on error."""
-    return cfg_to_int(probe_ps_field(pid, "rss"))
+    return util_to_int(probe_ps_field(pid, "rss"))
 
 
 def probe_rss_bytes() -> int | None:
@@ -1513,6 +1533,15 @@ def util_trunc_cols(s: str, limit: int) -> str:
         out.append(c)
         width += cw
     return "".join(out) + "…"
+
+
+def util_to_int(s: str | None) -> int | None:
+    """Parse a stripped string to int, or None on empty/non-numeric input. Pure
+    probe-support parser (tput/ps output) — not config; see cfg_coerce for config."""
+    try:
+        return int(s) if s else None
+    except ValueError:
+        return None
 
 
 def util_reset_suffix(reset: int | None, detail: str) -> str:

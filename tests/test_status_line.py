@@ -1357,20 +1357,55 @@ class TestConfigScaffold(unittest.TestCase):
 
 
 class TestEnvBool(unittest.TestCase):
-    def test_true_tokens(self):
-        for v in ("1", "true", "T", "y", "Yes", "on", "ON"):
-            self.assertIs(sl.cfg_env_bool({"X": v}, "X"), True, v)
+    def test_env_bool_via_coerce(self):
+        for v in ("1", "true", "t", "y", "yes", "on", "TRUE", "On"):
+            self.assertEqual(sl.cfg_coerce(v, "bool", "env", "X"), (True, None), v)
+        for v in ("0", "false", "f", "n", "no", "off", "OFF"):
+            self.assertEqual(sl.cfg_coerce(v, "bool", "env", "X"), (False, None), v)
+        self.assertEqual(sl.cfg_coerce("maybe", "bool", "env", "X"), (None, None))
+        self.assertEqual(sl.cfg_coerce("", "bool", "env", "X"), (None, None))
 
-    def test_false_tokens(self):
-        for v in ("0", "false", "F", "n", "No", "off", "OFF"):
-            self.assertIs(sl.cfg_env_bool({"X": v}, "X"), False, v)
+    def test_cfg_warn_format(self):
+        """cfg_warn wraps a core message in the fixed dim render-format on stderr."""
+        import io
+        from contextlib import redirect_stderr
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            sl.cfg_warn("segment 'x' must be true/false, got 'maybe' — ignored")
+        expected = (
+            f"{sl._DIM}status-line: segment 'x' must be true/false, "
+            f"got 'maybe' — ignored{sl.RESET}\n"
+        )
+        self.assertEqual(buf.getvalue(), expected)
 
-    def test_unset_is_none(self):
-        self.assertIsNone(sl.cfg_env_bool({}, "X"))
 
-    def test_unrecognized_is_none(self):
-        self.assertIsNone(sl.cfg_env_bool({"X": "maybe"}, "X"))
-        self.assertIsNone(sl.cfg_env_bool({"X": ""}, "X"))
+class TestCfgCoerce(unittest.TestCase):
+    def test_cfg_coerce_env_bool(self):
+        self.assertEqual(sl.cfg_coerce("yes", "bool", "env", "X"), (True, None))
+        self.assertEqual(sl.cfg_coerce("OFF", "bool", "env", "X"), (False, None))
+        # unrecognized env bool is tri-state no-override (silent), NOT a problem:
+        self.assertEqual(sl.cfg_coerce("maybe", "bool", "env", "X"), (None, None))
+        self.assertEqual(sl.cfg_coerce("", "bool", "env", "X"), (None, None))
+
+    def test_cfg_coerce_env_int(self):
+        self.assertEqual(sl.cfg_coerce("10", "int", "env", "CC_AI_KIT_GIT_CACHE_TTL"), (10, None))
+        v, prob = sl.cfg_coerce("x", "int", "env", "CC_AI_KIT_GIT_CACHE_TTL")
+        self.assertIsNone(v)
+        self.assertEqual(prob, "CC_AI_KIT_GIT_CACHE_TTL must be an integer, got 'x' — ignored")
+
+    def test_cfg_coerce_toml_bool(self):
+        self.assertEqual(sl.cfg_coerce(True, "bool", "toml", "segment 'alt_cost'"), (True, None))
+        # a TOML STRING for a bool key is rejected (strict) — NOT parsed like env:
+        v, prob = sl.cfg_coerce("true", "bool", "toml", "segment 'alt_cost'")
+        self.assertIsNone(v)
+        self.assertEqual(prob, "segment 'alt_cost' must be true/false, got 'true' — ignored")
+
+    def test_cfg_coerce_toml_int(self):
+        self.assertEqual(sl.cfg_coerce(5, "int", "toml", "[git] cache_ttl"), (5, None))
+        # bool is not an int here:
+        v, prob = sl.cfg_coerce(True, "int", "toml", "[git] cache_ttl")
+        self.assertIsNone(v)
+        self.assertEqual(prob, "[git] cache_ttl must be an integer, got True — ignored")
 
 
 class TestConfigPathAndLoad(unittest.TestCase):
