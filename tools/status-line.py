@@ -13,22 +13,23 @@ bottom. Stdlib only. The .sh original is kept as a fallback.
 # (--doctor / --check / --print-config) lives in the sibling statusline-doctor.py,
 # which imports this render core one-way (never the reverse).
 # Every top-level function carries a role prefix and lives in the matching block,
-# so a reader can locate (and lift out) a whole role by name. Block order:
-#   1. SHELL     side effects only (env capture, stdin, print); the render entrypoint.
-#   2. DEFAULTS  data only — SEGMENTS/LAYOUT/PINNED + palette/ramp/effort tables +
+# so a reader can locate (and lift out) a whole role by name. Block order
+# (functional core first, imperative shell last):
+#   1. DEFAULTS  data only — SEGMENTS/LAYOUT/PINNED + palette/ramp/effort tables +
 #                tuning scalars + fixed colors + type decls (Config/Line/
 #                GitSnapshot/ExtSpec). No logic; edit a default here.
-#   3. cfg_      config loading & resolution — the ONLY block that reads config
+#   2. cfg_      config loading & resolution — the ONLY block that reads config
 #                env/TOML -> one immutable Config (settings + resolved cache paths).
-#   4. probe_    side-effecting data gatherers (git / proc / ps / fs / subprocess);
+#   3. probe_    side-effecting data gatherers (git / proc / ps / fs / subprocess);
 #                each owns its caching/TTL. Memoized per render so the cost lands
 #                in the measured build of the first segment that calls it (FR-R.2).
-#   5. fmt_      pure formatters (number / tokens / duration / bytes / ago).
-#   6. util_     pure non-format helpers (color / width / truncate / fit / parse).
-#   7. core_     render machinery — Context (attribute access only, D4), Theme, the
+#   4. fmt_      pure formatters (number / tokens / duration / bytes / ago).
+#   5. util_     pure non-format helpers (color / width / truncate / fit / parse).
+#   6. core_     render machinery — Context (attribute access only, D4), Theme, the
 #                builder registry, the packer, and render.
-#   8. seg_      seg_x(ctx, avail, theme) -> str | None, self-sourcing; the builder
+#   7. seg_      seg_x(ctx, avail, theme) -> str | None, self-sourcing; the builder
 #                map is auto-discovered from seg_* names (add a seg_x, it registers).
+#   8. SHELL     side effects only (env capture, stdin, print); the render entrypoint.
 #   9. HOW TO CUSTOMIZE — the segment-authoring guide. Introspection itself
 #                (--doctor/--check/--print-config) is extracted to the sibling
 #                statusline-doctor.py; this module no longer accepts those flags.
@@ -61,52 +62,13 @@ from typing import Any, NamedTuple, Optional, cast
 Env = Mapping[str, str]
 
 
-# ═══ 1. SHELL — side effects only: env capture, stdin, print, render entrypoint ═
+# ═══ 1. DEFAULTS — data-only: segment/layout/palette/ramp tables + type decls ═
 
 
 # Per-segment on/off. Set False to hide a segment entirely: its builder is never
 # called, so its data is never read and the matching lazy probe (git/transcript/
 # RSS/etc.) never runs — a disabled segment costs nothing. Invariant: keep "path"
 # True so the identity line always emits.
-
-
-
-def safe_render(raw: dict[str, Any], env: Env, cfg: "Config", theme: "Theme",
-                t_start: int) -> list[str]:
-    """Build context and render; on ANY unexpected failure return a single
-    diagnostic line instead of a blank bar. Never raises. This is the backstop
-    above core_safe_build's per-segment isolation (covers core_build_context itself)."""
-    try:
-        cols, lines, assumed = probe_terminal_size(env)
-        home = env.get("HOME", "")
-        claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-        ctx = core_build_context(raw, cfg, theme, cols, lines, assumed, t_start,
-                            effort=cfg_resolve_effort(raw),
-                            home=home, claude_dir=claude_dir)
-        return core_render(ctx)
-    except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
-        return [f"{_WARN}⚠ status-line error — "
-                f"run the doctor: {core_doctor_cmd()}{RESET}"]
-
-
-def main() -> None:
-    """CLI entrypoint: render the status line from stdin. Renders only — config
-    introspection (--doctor / --check / --print-config) lives in the sibling
-    statusline-doctor.py, which imports this module one-way."""
-    t0 = time.perf_counter_ns()        # for the optional `render_time` self-timing segment
-    env = os.environ                   # single SHELL-boundary read (FR-A.1)
-    cfg = cfg_load_config(env)
-    theme = core_build_theme(cfg)
-    try:
-        raw: dict[str, Any] = json.load(sys.stdin)
-    except (ValueError, OSError):
-        raw = {}
-    print("\n".join(safe_render(raw, env, cfg, theme, t0)))
-
-
-# ═══ 2. DEFAULTS — data-only: segment/layout/palette/ramp tables + type decls ═
-
-
 SEGMENTS = {
     # identity line
     "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": True,
@@ -313,7 +275,7 @@ class ExtSpec(NamedTuple):
     cache_path: str
 
 
-# ═══ 3. cfg_ — config loading & resolution (the only block that reads config env)
+# ═══ 2. cfg_ — config loading & resolution (the only block that reads config env)
 
 
 def cfg_git_key_problem(k: str, v: Any) -> str | None:
@@ -715,7 +677,10 @@ def cfg_resolve_effort(raw: dict[str, Any]) -> str:
     return "" if level == "auto" else level
 
 
-# ═══ 4. probe_ — side-effecting data gatherers (git / proc / fs / subprocess) ═
+# ═══ 3. probe_ — side-effecting data gatherers (git / proc / fs / subprocess) ═
+# Two sub-tiers: raw gatherers on primitives (probe_git_snapshot(work_dir), …) and
+# the memoized segment-facing accessors signed (ctx) (probe_git_for, probe_rss, …).
+# Classified by NATURE (side-effecting), not by which segment consumes them.
 
 
 def probe_terminal_size(env: Env) -> tuple[int, int, bool]:
@@ -1129,7 +1094,9 @@ def probe_rss(ctx: "Context") -> int | None:
     return _memo(ctx, "rss", probe_rss_bytes)
 
 
-# ═══ 5. fmt_ — pure formatters (number / tokens / duration / bytes / ago) ═════
+# ═══ 4. fmt_ — pure formatters (number / tokens / duration / bytes / ago) ═════
+# Formatters are pure value→display-string and consumer-independent: the same
+# fmt_ produces the same text regardless of which segment calls it.
 
 
 def fmt_number(n: int | float) -> str:
@@ -1223,7 +1190,12 @@ def fmt_rate_key_label(key: str) -> str:
     return f"{num}{unit}"
 
 
-# ═══ 6. util_ — pure non-format helpers (color / width / truncate / fit / parse)
+# ═══ 5. util_ — pure non-format helpers (color / width / truncate / fit / parse)
+# Shared by default; classify by NATURE, not caller. A helper keeps its prefix even
+# if only one tier calls it today (a caller-based name rots when reuse appears).
+# Extraction seam: git/proc-only helpers travel with those probes if ever
+# externalized; the cross-tier ones are the irreducible shared core. The exact
+# caller census is regenerable on demand via AST — not kept here.
 
 
 _SGR_SEQ = re.compile(r"\x1b\[[0-9;]*m")            # an SGR color/style escape
@@ -1582,7 +1554,7 @@ def util_position_str(position: tuple[str, str]) -> str:
     return f"{kind}:{ref}" if ref else kind
 
 
-# ═══ 7. core_ — render machinery: Context, Theme, registry, packer, render ════
+# ═══ 6. core_ — render machinery: Context, Theme, registry, packer, render ════
 
 
 def core_str_set() -> set[str]:
@@ -2127,7 +2099,7 @@ def core_render(
     return out
 
 
-# ═══ 8. seg_ — segment builders seg_x(ctx, avail, theme); auto-discovered registry
+# ═══ 7. seg_ — segment builders seg_x(ctx, avail, theme); auto-discovered registry
 
 
 # ── identity line ────────────────────────────────────────────────────────────
@@ -2326,6 +2298,42 @@ BUILDERS = core_discover_builders()   # module-level snapshot; same shape as the
 # `ultracode` is NOT a level (it reports as xhigh + standing multi-agent
 # permission), and `auto` is a *setting*, not a resolved level — neither belongs
 # in the table. The auto setting is surfaced as a "[auto]" suffix in seg_effort.
+
+
+# ═══ 8. SHELL — side effects only: env capture, stdin, print, render entrypoint ═
+
+
+def safe_render(raw: dict[str, Any], env: Env, cfg: "Config", theme: "Theme",
+                t_start: int) -> list[str]:
+    """Build context and render; on ANY unexpected failure return a single
+    diagnostic line instead of a blank bar. Never raises. This is the backstop
+    above core_safe_build's per-segment isolation (covers core_build_context itself)."""
+    try:
+        cols, lines, assumed = probe_terminal_size(env)
+        home = env.get("HOME", "")
+        claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+        ctx = core_build_context(raw, cfg, theme, cols, lines, assumed, t_start,
+                            effort=cfg_resolve_effort(raw),
+                            home=home, claude_dir=claude_dir)
+        return core_render(ctx)
+    except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
+        return [f"{_WARN}⚠ status-line error — "
+                f"run the doctor: {core_doctor_cmd()}{RESET}"]
+
+
+def main() -> None:
+    """CLI entrypoint: render the status line from stdin. Renders only — config
+    introspection (--doctor / --check / --print-config) lives in the sibling
+    statusline-doctor.py, which imports this module one-way."""
+    t0 = time.perf_counter_ns()        # for the optional `render_time` self-timing segment
+    env = os.environ                   # single SHELL-boundary read (FR-A.1)
+    cfg = cfg_load_config(env)
+    theme = core_build_theme(cfg)
+    try:
+        raw: dict[str, Any] = json.load(sys.stdin)
+    except (ValueError, OSError):
+        raw = {}
+    print("\n".join(safe_render(raw, env, cfg, theme, t0)))
 
 
 # ═══ 9. HOW TO CUSTOMIZE — this module renders only. Config introspection

@@ -1422,6 +1422,15 @@ class TestCfgSourceGet(unittest.TestCase):
 
 
 class TestCfgBind(unittest.TestCase):
+    def test_single_reader_auto_extends(self):
+        """FR-6 proof: a NEW typed field binds via the generic access/convert layer
+        with NO env-reader edits — cfg_source_get projects the name, cfg_coerce types it."""
+        raw = {"newgroup": {"flag": True}}
+        env = {"CC_AI_KIT_NEWGROUP_FLAG": "off"}
+        self.assertEqual(sl.cfg_source_get("toml", raw, env, ("newgroup", "flag")), True)
+        self.assertEqual(sl.cfg_source_get("env", raw, env, ("newgroup", "flag")), "off")
+        self.assertEqual(sl.cfg_coerce("off", "bool", "env", "X"), (False, None))
+
     def test_cfg_bind_scalars_precedence_and_problems(self):
         raw = {"git": {"cache_ttl": 8}}
         # env overrides git cache_ttl; default is 5, TOML(8) already applied by caller,

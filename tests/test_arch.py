@@ -19,7 +19,8 @@ Conventions parsed from the source:
   dynamically from those comments (line numbers drift; the banners do not).
 * Top-level functions carry a role prefix (``cfg_``/``probe_``/``fmt_``/
   ``util_``/``core_``/``seg_``) matching the block they live in, except the two
-  SHELL entrypoints ``main`` and ``safe_render`` which are unprefixed by design.
+  SHELL entrypoints ``main`` and ``safe_render`` (the SHELL block is now last,
+  after ``seg_``) which are unprefixed by design.
 """
 import ast
 import os
@@ -35,17 +36,18 @@ _BANNER_RE = re.compile(r"^#\s*═══\s*(\d+)\.\s*([A-Za-z_]+)")
 _CONFIG_ENV_PREFIX = "CC_AI_KIT_"
 
 # Block-index → expected role prefix for a top-level FunctionDef (rule 6).
-# Blocks 1/2/9 are special-cased (SHELL entrypoints / data-only / trailing doc).
+# Blocks 1 (DEFAULTS, data-only) and 9 (trailing doc) define no role functions;
+# the SHELL block (now block 8) is matched by its ROLE name, not a fixed index.
 _BLOCK_PREFIX = {
-    3: "cfg_",
-    4: "probe_",
-    5: "fmt_",
-    6: "util_",
-    7: "core_",
-    8: "seg_",
+    2: "cfg_",
+    3: "probe_",
+    4: "fmt_",
+    5: "util_",
+    6: "core_",
+    7: "seg_",
 }
 
-# The unprefixed SHELL entrypoints permitted in block 1 (FR-A.1).
+# The unprefixed SHELL entrypoints permitted in the SHELL block (FR-A.1).
 _SHELL_ENTRYPOINTS = {"main", "safe_render"}
 
 # Doctor / introspection symbols that must NOT live in the render module (FR-7).
@@ -183,22 +185,32 @@ def _config_env_literals(tree):
 
 
 def check_config_env_in_cfg(tree):
-    """Rule 1: every config-env (``CC_AI_KIT_*``) read lives in a ``cfg_`` function.
+    """Rule 1 (reduced): the env reader is now STRUCTURAL. cfg_source_get projects
+    each typed path to its ``CC_AI_KIT_<...>`` name DYNAMICALLY (string built, then
+    ``env.get(name)``), so no function reads a *literal* config-env name — except the
+    bootstrap ``cfg_config_path``, which reads ``CC_AI_KIT_CONFIG_FILE`` before any
+    TOML loads (chicken-and-egg). This rule now guards only that exception: every
+    literal ``CC_AI_KIT_*`` read must live in ``cfg_config_path``, and the only such
+    literal is ``CC_AI_KIT_CONFIG_FILE``.
 
-    Runtime/third-party reads (``HOME``, ``XDG_*``, ``STATUSLINE_*``,
-    ``COLUMNS``/``LINES``, ``CLAUDE_CONFIG_DIR``) carry no ``CC_AI_KIT_`` prefix
-    and so are never matched (FR-1.8 whitelist). The bare ``env = os.environ``
-    SHELL capture is likewise not a keyed read and is exempt.
+    Runtime/third-party reads (``HOME``, ``XDG_*``, ``STATUSLINE_*``, ``COLUMNS``/
+    ``LINES``, ``CLAUDE_CONFIG_DIR``) carry no ``CC_AI_KIT_`` prefix and are never
+    matched (FR-1.8 whitelist).
     """
+    bootstrap_names = {"CC_AI_KIT_CONFIG_FILE"}
     violations = []
     for node, key in _config_env_literals(tree):
         owners = _enclosing_funcdef_names(tree, node)
-        # Pass if ANY enclosing scope (walking outward to module level) is cfg_.
-        if not any(name.startswith("cfg_") for name in owners):
+        if "cfg_config_path" not in owners:
             where = owners[0] if owners else "<module level>"
             violations.append(
                 f"config env {key!r} read at line {node.lineno} in {where} "
-                f"(no enclosing cfg_ function)"
+                f"(only the cfg_config_path bootstrap may read a literal config-env name)"
+            )
+        elif key not in bootstrap_names:
+            violations.append(
+                f"unexpected literal config-env read {key!r} at line {node.lineno} "
+                f"(only {sorted(bootstrap_names)} is a recognized bootstrap name)"
             )
     return violations
 
@@ -293,8 +305,8 @@ def check_defaults_data_only(tree, source):
 
 def check_role_prefix_integrity(tree, source):
     """Rule 6: each top-level function's prefix matches the banner block it lives
-    in. SHELL (block 1) permits exactly ``main``/``safe_render``; DEFAULTS (2) and
-    the trailing doc block (9) permit no role-prefixed defs.
+    in. SHELL (now the last named block) permits exactly ``main``/``safe_render``;
+    DEFAULTS (1) and the trailing doc block (9) permit no role-prefixed defs.
 
     A single bare-underscore private helper (``_memo``) is exempt: a leading ``_``
     is Python's "private internal" convention, and role prefixes govern the public
@@ -311,7 +323,7 @@ def check_role_prefix_integrity(tree, source):
             violations.append(f"{func.name} (line {func.lineno}) is in no banner block")
             continue
         index, role = located
-        if index == 1:
+        if role == "SHELL":
             if func.name not in _SHELL_ENTRYPOINTS:
                 violations.append(
                     f"{func.name} in SHELL block must be a known entrypoint "
@@ -352,8 +364,11 @@ class TestArchitecture(unittest.TestCase):
         cls.render_tree, cls.render_src = _parse("status-line.py")
         cls.doctor_tree, cls.doctor_src = _parse("statusline-doctor.py")
 
-    def test_rule1_config_env_only_in_cfg(self):
+    def test_rule1_config_env_only_in_bootstrap(self):
         self.assertEqual([], check_config_env_in_cfg(self.render_tree))
+        # non-vacuity: the bootstrap literal actually exists in the live module
+        literals = {key for _, key in _config_env_literals(self.render_tree)}
+        self.assertIn("CC_AI_KIT_CONFIG_FILE", literals)
 
     def test_rule2_no_subscript_on_typed_models(self):
         self.assertEqual([], check_no_typed_model_subscript(self.render_tree))
@@ -407,34 +422,39 @@ class TestArchNonVacuity(unittest.TestCase):
     def test_rule1_flags_config_env_outside_cfg(self):
         bad = ast.parse(
             "def seg_oops(ctx, avail, theme):\n"
-            "    return env.get('CC_AI_KIT_GIT_CACHE_TTL')\n"
+            "    return env.get('CC_AI_KIT_CONFIG_FILE')\n"
         )
         good = ast.parse(
-            "def cfg_load(env):\n"
-            "    return env.get('CC_AI_KIT_GIT_CACHE_TTL')\n"
+            "def cfg_config_path(env):\n"
+            "    return env.get('CC_AI_KIT_CONFIG_FILE')\n"
         )
         runtime_ok = ast.parse(
             "def seg_term(ctx, avail, theme):\n"
             "    return env.get('STATUSLINE_COLS')\n"  # not CC_AI_KIT_* → exempt
         )
+        also_bad = ast.parse(
+            "def cfg_config_path(env):\n"
+            "    return env.get('CC_AI_KIT_GIT_CACHE_TTL')\n"  # right place, non-bootstrap name
+        )
         self.assertNotEqual([], check_config_env_in_cfg(bad))
         self.assertEqual([], check_config_env_in_cfg(good))
         self.assertEqual([], check_config_env_in_cfg(runtime_ok))
+        self.assertNotEqual([], check_config_env_in_cfg(also_bad))
 
     def test_rule1_walks_enclosing_chain(self):
-        """A CC_AI_KIT_* read in a closure nested inside a cfg_ function PASSES
-        (the cfg_ ancestor counts), while the same read nested inside a
-        util_/seg_ function — with no cfg_ ancestor — is still FLAGGED."""
+        """A CC_AI_KIT_CONFIG_FILE read in a closure nested inside cfg_config_path
+        PASSES (the cfg_config_path ancestor counts), while the same read nested
+        inside a non-bootstrap function is FLAGGED."""
         nested_ok = ast.parse(
-            "def cfg_load(env):\n"
+            "def cfg_config_path(env):\n"
             "    def inner():\n"
-            "        return env.get('CC_AI_KIT_GIT_CACHE_TTL')\n"
+            "        return env.get('CC_AI_KIT_CONFIG_FILE')\n"
             "    return inner\n"
         )
         nested_bad = ast.parse(
             "def util_helper(env):\n"
             "    def inner():\n"
-            "        return env.get('CC_AI_KIT_GIT_CACHE_TTL')\n"
+            "        return env.get('CC_AI_KIT_CONFIG_FILE')\n"
             "    return inner\n"
         )
         self.assertEqual([], check_config_env_in_cfg(nested_ok))
@@ -494,14 +514,14 @@ class TestArchNonVacuity(unittest.TestCase):
 
     def test_rule6_flags_misplaced_prefix(self):
         src = (
-            "# ═══ 5. fmt_ — formatters ═══\n"
+            "# ═══ 4. fmt_ — formatters ═══\n"
             "def util_misplaced(x):\n"  # util_ in the fmt_ block
             "    return x\n"
         )
         bad = ast.parse(src)
         self.assertNotEqual([], check_role_prefix_integrity(bad, src))
         good_src = (
-            "# ═══ 5. fmt_ — formatters ═══\n"
+            "# ═══ 4. fmt_ — formatters ═══\n"
             "def fmt_ok(x):\n"
             "    return x\n"
         )
@@ -528,11 +548,11 @@ class TestArchNonVacuity(unittest.TestCase):
         )
 
     def test_rule6_flags_def_in_non_function_block(self):
-        """A role-prefixed def landing in a non-function block (DEFAULTS=2 or the
+        """A role-prefixed def landing in a non-function block (DEFAULTS=1 or the
         trailing doc block=9) — blocks with no entry in ``_BLOCK_PREFIX`` — is
         flagged as living in a non-function block."""
         defaults_src = (
-            "# ═══ 2. DEFAULTS — data ═══\n"
+            "# ═══ 1. DEFAULTS — data ═══\n"
             "def cfg_stray(env):\n"  # any def at all is wrong here
             "    return env\n"
         )
