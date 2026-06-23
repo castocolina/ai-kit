@@ -72,7 +72,7 @@
 ## true/false` key (and the old CC_AI_KIT_GIT_WORKTREE env) is silently ignored.
 # [git]
 # cache_ttl = 5        # seconds the worktree probe is cached (branch/dirty stay
-#                      # fresh). Precedence: default 5 < this < env CC_AI_KIT_GIT_TTL.
+#                      # fresh). Precedence: default 5 < this < env CC_AI_KIT_GIT_CACHE_TTL.
 
 ## ─── [external] — drop-in segment providers ──────────────────────────────────
 ## Add a new status-line segment WITHOUT editing status-line.py: drop an
@@ -89,8 +89,8 @@
 ## ships at examples/segments/sysmem (system available memory). Each value below
 ## is the current default.
 # [external]
-# ttl = 10                              # default cache TTL (s); env CC_AI_KIT_EXTERNAL_TTL
-# dir = "~/.config/ai-kit/segments"     # providers directory; env CC_AI_KIT_SEGMENTS_DIR
+# ttl = 10                              # default cache TTL (s); env CC_AI_KIT_EXTERNAL_CACHE_TTL
+# dir = "~/.config/ai-kit/segments"     # providers directory; env CC_AI_KIT_EXTERNAL_DIR
 
 ## ─── color grammar (used by [palette] and [ramp.*] values) ───────────────────
 ## A color value is one of:
@@ -175,13 +175,20 @@
 
 ## ─── Environment overrides (set in your shell, not this file) ─────────────────
 ## These win over everything in this file — handy for per-session tweaks:
-##   CC_AI_KIT_CONFIG=/path/to/statusline.toml   # use a config file elsewhere
-##   CC_AI_KIT_SEGMENT_<KEY>=<bool>              # toggle one segment; KEY is the
-##                                                 upper-cased segment name, e.g.
-##                                                 CC_AI_KIT_SEGMENT_COST=1
+##   CC_AI_KIT_CONFIG_FILE=/path/to/statusline.toml  # use a config file elsewhere
+##   CC_AI_KIT_SEGMENT_<KEY>=<bool>                  # toggle one segment; KEY is the
+##                                                     upper-cased segment name, e.g.
+##                                                     CC_AI_KIT_SEGMENT_COST=1
 ##   bool truthy: 1 true t y yes on   bool falsy: 0 false f n no off
-##   CC_AI_KIT_SEGMENTS_DIR=/path/to/segments   # external providers directory
-##   CC_AI_KIT_EXTERNAL_TTL=10                  # external-segment cache TTL (s)
+##   CC_AI_KIT_EXTERNAL_DIR=/path/to/segments         # external providers directory
+##   CC_AI_KIT_EXTERNAL_CACHE_TTL=10                  # external-segment cache TTL (s)
+##   CC_AI_KIT_GIT_CACHE_TTL=5                        # git probe cache TTL (s)
+##
+## Deprecated names (still accepted, emit a dim warning — please migrate):
+##   CC_AI_KIT_CONFIG       → CC_AI_KIT_CONFIG_FILE
+##   CC_AI_KIT_GIT_TTL      → CC_AI_KIT_GIT_CACHE_TTL
+##   CC_AI_KIT_SEGMENTS_DIR → CC_AI_KIT_EXTERNAL_DIR
+##   CC_AI_KIT_EXTERNAL_TTL → CC_AI_KIT_EXTERNAL_CACHE_TTL
 ##
 ## Inspect & validate the resolved config:
 ##   python3 tools/status-line.py --print-config   # resolved config as JSON

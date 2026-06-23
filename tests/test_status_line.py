@@ -46,14 +46,14 @@ def _ctx_from_env(raw, env, cfg, t_start=None):
     home = env.get("HOME", "")
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
     ctx = sl.core_build_context(raw, cfg, sl.core_default_theme(), cols, lines, assumed, t_start,
-                           effort=sl.cfg_resolve_effort(raw, env), home=home, claude_dir=claude_dir)
+                           effort=sl.cfg_resolve_effort(raw), home=home, claude_dir=claude_dir)
     return ctx, cols, lines
 
 
 def _data(**over):
     """Build a seeded Context for unit tests. Cheap eager fields are passed as
-    constructor kwargs; expensive cached_property probes are injected into
-    __dict__ to bypass computation entirely (no filesystem/git/process calls)."""
+    constructor kwargs; expensive probe results are injected into probe_cache
+    to bypass computation entirely (no filesystem/git/process calls)."""
     eager = {
         "model_name": "Opus 4.8", "model_id": "claude-opus-4-8",
         "effort": "high", "work_dir": "/home/u/proj", "home": "/home/u",
@@ -71,19 +71,21 @@ def _data(**over):
         "todo_state": None, "todo_text": None,
         "chat_bytes": 305000, "mem_bytes": 448_790_528,
     }
-    # Route overrides: eager fields go to the constructor, probes go to __dict__
+    # Route overrides: eager fields go to the constructor, probes go to probe_cache
     eager_over = {k: over.pop(k) for k in list(over) if k in eager}
     probe_over = {**probe_defaults, **over}
     eager.update(eager_over)
-    ctx = sl.Context(raw={}, config=sl.cfg_default_config(), theme=THEME, **eager)
-    # Seed cached_property slots directly so probes never fire during tests
-    ctx.__dict__["_git"] = sl.GitSnapshot(
+    ctx = sl.Context(raw={}, line_conf=sl.cfg_default_config(), theme=THEME, **eager)
+    # Seed probe_cache directly so probes never fire during tests
+    ctx.probe_cache["git"] = sl.GitSnapshot(
         in_repo=probe_over["in_repo"], branch=probe_over["branch"],
         dirty=probe_over["dirty"], is_worktree=probe_over["is_worktree"],
         wt_name=probe_over["wt_name"])
-    ctx.__dict__["_todo"] = (probe_over["todo_state"], probe_over["todo_text"])
-    for k in ("ago", "effort_auto", "chat_bytes", "mem_bytes"):
-        ctx.__dict__[k] = probe_over[k]
+    ctx.probe_cache["todo"] = (probe_over["todo_state"], probe_over["todo_text"])
+    ctx.probe_cache["ago"] = probe_over["ago"]
+    ctx.probe_cache["effort_auto"] = probe_over["effort_auto"]
+    ctx.probe_cache["chat_size"] = probe_over["chat_bytes"]
+    ctx.probe_cache["rss"] = probe_over["mem_bytes"]
     if "failed" in over:                 # render-bookkeeping override (else fresh set)
         ctx.failed = over["failed"]
     return ctx
@@ -500,11 +502,11 @@ class TestPackLine(unittest.TestCase):
 
 class TestSlowestTiming(unittest.TestCase):
     def test_probe_cost_counted_in_triggering_segment(self):
-        # FR-A.2 / FR-R.2: a Context cached_property probe runs synchronously on
-        # first read, so its cost lands INSIDE the measured build of the segment
-        # that reads it — not amortized to µs. A live (un-seeded) Context whose
-        # git probe sleeps proves the `branch` segment is crowned ms-scale, and
-        # that the probe actually fired during core_pack (not pre-seeded).
+        # FR-A.2 / FR-R.2: a memoized probe runs synchronously on first access,
+        # so its cost lands INSIDE the measured build of the segment that reads it
+        # — not amortized to µs. A live (un-seeded) Context whose git probe sleeps
+        # proves the `branch` segment is crowned ms-scale, and that the probe
+        # actually fired during core_pack (not pre-seeded).
         def slow_git(*_a, **_k):
             time.sleep(0.005)
             return sl.GitSnapshot(in_repo=True, branch="main", dirty="clean",
@@ -517,8 +519,8 @@ class TestSlowestTiming(unittest.TestCase):
             effort="high", home="/home/u", claude_dir="/home/u/.claude")
         with mock.patch.object(sl, "probe_git_snapshot", side_effect=slow_git):
             sl.core_pack(["branch"], ctx, 200, cfg=cfg)
-        # The cached_property must have run during core_pack (proves laziness):
-        self.assertIsNotNone(ctx.__dict__.get("_git"))
+        # The probe must have run during core_pack (proves laziness via probe_cache):
+        self.assertIsNotNone(ctx.probe_cache.get("git"))
         name, ns = ctx.slowest
         self.assertEqual(name, "branch")
         self.assertGreaterEqual(ns, 4_000_000)   # >= ~4ms: probe cost is inside the build
@@ -1178,21 +1180,14 @@ class TestEffortSettingAuto(unittest.TestCase):
 class TestResolveEffort(unittest.TestCase):
     def test_level_auto_normalized_away(self):
         # "auto" is a *setting*, never a resolved level — it must not survive here.
-        self.assertEqual(sl.cfg_resolve_effort({"effort": {"level": "auto"}}, {}), "")
-
-    def test_env_auto_normalized_away(self):
-        self.assertEqual(sl.cfg_resolve_effort({}, {"CLAUDE_EFFORT": "auto"}), "")
+        self.assertEqual(sl.cfg_resolve_effort({"effort": {"level": "auto"}}), "")
 
     def test_case_normalized(self):
-        self.assertEqual(sl.cfg_resolve_effort({"effort": {"level": "HIGH"}}, {}), "high")
-
-    def test_level_wins_over_env(self):
-        self.assertEqual(
-            sl.cfg_resolve_effort({"effort": {"level": "high"}}, {"CLAUDE_EFFORT": "auto"}),
-            "high")
+        self.assertEqual(sl.cfg_resolve_effort({"effort": {"level": "HIGH"}}), "high")
 
     def test_missing_is_empty(self):
-        self.assertEqual(sl.cfg_resolve_effort({}, {}), "")
+        # FR-1.9: effort resolves from JSON + settings only; no CLAUDE_EFFORT env source.
+        self.assertEqual(sl.cfg_resolve_effort({}), "")
 
 
 class TestProcRssLinux(unittest.TestCase):
@@ -2138,6 +2133,70 @@ class TestDoctor(unittest.TestCase):
         # Back-compat: --check path is untouched.
         rc = sl.cmd_check(os.path.join(self.tmp, "absent.toml"), self.env)
         self.assertEqual(rc, 1)   # absent file → cmd_check reports it (existing behavior)
+
+
+class TestThinContext(unittest.TestCase):
+    def test_root_has_claude_json_and_line_conf(self):
+        ctx = _data()
+        self.assertTrue(hasattr(ctx, "line_conf"))
+        self.assertIsInstance(ctx.line_conf, sl.Config)
+        self.assertTrue(hasattr(ctx, "cols"))
+        self.assertEqual(ctx.model_name, "Opus 4.8")
+
+    def test_no_single_consumer_probe_fields(self):
+        ctx = _data()
+        for gone in ("ago", "effort_auto", "chat_bytes", "mem_bytes",
+                     "branch", "dirty", "is_worktree", "wt_name",
+                     "todo_state", "todo_text"):
+            self.assertNotIn(gone, type(ctx).__dict__,
+                             f"{gone} must no longer be a ctx member")
+
+
+class TestGitProbeMemoized(unittest.TestCase):
+    def test_probe_git_for_runs_once_per_render(self):
+        calls = []
+        def fake(work_dir, conf):
+            calls.append(work_dir)
+            return sl.GitSnapshot(in_repo=True, branch="main", dirty="clean",
+                                  is_worktree=False, wt_name="")
+        # Use a fresh context without pre-seeded probe_cache so the probe fires.
+        ctx = sl.core_build_context(
+            raw={"workspace": {"current_dir": "/tmp"}},
+            config=sl.cfg_default_config(), theme=THEME,
+            cols=200, lines=50, dim_assumed=False, t_start=None,
+            effort="high", home="/home/u", claude_dir="/home/u/.claude")
+        with mock.patch.object(sl, "probe_git_snapshot", side_effect=fake):
+            snap1 = sl.probe_git_for(ctx)
+            snap2 = sl.probe_git_for(ctx)
+        self.assertEqual(snap1.branch, "main")
+        self.assertIs(snap1, snap2)
+        self.assertEqual(len(calls), 1)
+
+
+class TestEnvConvention(unittest.TestCase):
+    """FR-1.6/1.7/1.8: all config env reading funnels through one structure-aware reader."""
+
+    def test_git_cache_ttl_via_convention(self):
+        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_GIT_CACHE_TTL": "42"})
+        self.assertEqual(cfg.git["cache_ttl"], 42)
+
+    def test_segment_toggle_via_convention(self):
+        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_SEGMENT_BRANCH": "false"})
+        self.assertFalse(cfg.segments["branch"])
+
+    def test_external_dir_via_convention(self):
+        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_DIR": "/x/seg"})
+        # cfg.external is an ExternalConf; FR-1.6 routes EXTERNAL_DIR -> external.dir
+        self.assertEqual(cfg.external.dir, "/x/seg")
+
+    def test_external_cache_ttl_via_convention(self):
+        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "30"})
+        self.assertEqual(cfg.external.cache_ttl, 30)
+
+    def test_old_git_ttl_name_still_works(self):
+        # back-compat: old name maps forward with at most a dim warning
+        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_GIT_TTL": "7"})
+        self.assertEqual(cfg.git["cache_ttl"], 7)
 
 
 if __name__ == "__main__":

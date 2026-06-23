@@ -33,8 +33,6 @@ bottom. Stdlib only. The .sh original is kept as a fallback.
 # pylint: disable=invalid-name  # installed script name is hyphenated (status-line.py)
 
 import argparse
-import contextlib
-import functools
 import hashlib
 import json
 import math
@@ -102,7 +100,7 @@ def safe_render(raw: dict[str, Any], env: Env, cfg: "Config", theme: "Theme",
         home = env.get("HOME", "")
         claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
         ctx = core_build_context(raw, cfg, theme, cols, lines, assumed, t_start,
-                            effort=cfg_resolve_effort(raw, env),
+                            effort=cfg_resolve_effort(raw),
                             home=home, claude_dir=claude_dir)
         return core_render(ctx)
     except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
@@ -197,8 +195,11 @@ _SLOWEST_META = frozenset({"slowest", "render_time"})
 # Scalar behaviour knobs that aren't segments/colors. The worktree feature
 # migrated to the `segments.worktree` toggle (see SEGMENTS); `[git]` now carries
 # `cache_ttl` (seconds) — how long the shared probe_git_snapshot worktree probe is
-# cached. Precedence: this default < TOML `[git] cache_ttl` < env CC_AI_KIT_GIT_TTL.
+# cached. Precedence: this default < TOML `[git] cache_ttl` < env CC_AI_KIT_GIT_CACHE_TTL.
 _GIT_CACHE_TTL = 5                  # default seconds the worktree probe is cached
+
+
+_EXTERNAL_CACHE_TTL = 10            # default seconds an external provider's output is cached
 
 
 _GIT_DEFAULTS = {"cache_ttl": _GIT_CACHE_TTL}
@@ -257,8 +258,16 @@ _EFFORT_GLYPHS = "▁▃▄▆█"
 
 
 # `git` and `external` default to None so older Config(...) call sites (which
-# pass only the original fields) keep working; consumers read git via
-# (cfg.git or {}) and external via (cfg.external or []).
+# pass only the original fields) keep working; consumers guard with
+# (cfg.git or {}) and (cfg.external.providers if cfg.external else []).
+class ExternalConf(NamedTuple):
+    """Resolved external-segment configuration for one render pass."""
+
+    dir: str               # providers directory (was Config.segments_dir)
+    cache_ttl: int         # default cache TTL in seconds
+    providers: list[Any]   # finalized ExtSpec list (was Config.external)
+
+
 class Config(NamedTuple):
     """Resolved, validated configuration for one render pass."""
 
@@ -267,9 +276,8 @@ class Config(NamedTuple):
     palette: dict[str, str]
     ramps: dict[str, dict[str, str]]
     git: dict[str, int] | None = None
-    external: list[Any] | None = None
+    external: "ExternalConf | None" = None
     cache_base: str = ""
-    segments_dir: str = ""
 
 
 _ENV_TRUE = {"1", "true", "t", "y", "yes", "on"}
@@ -373,10 +381,102 @@ def cfg_env_bool(env: Env, name: str) -> bool | None:
     return None
 
 
+def cfg_env_normalize(env: Env) -> Env:
+    """Return a copy of env with deprecated CC_AI_KIT_* names forwarded to their
+    canonical successors (FR-1.6 back-compat). Emits a dim deprecation warning to
+    stderr for each old name present so users know to migrate.
+
+    Mapping (old → new):
+      CC_AI_KIT_GIT_TTL      → CC_AI_KIT_GIT_CACHE_TTL
+      CC_AI_KIT_EXTERNAL_TTL → CC_AI_KIT_EXTERNAL_CACHE_TTL
+      CC_AI_KIT_SEGMENTS_DIR → CC_AI_KIT_EXTERNAL_DIR
+      CC_AI_KIT_CONFIG       → CC_AI_KIT_CONFIG_FILE
+    """
+    _ALIASES: dict[str, str] = {
+        "CC_AI_KIT_GIT_TTL":      "CC_AI_KIT_GIT_CACHE_TTL",
+        "CC_AI_KIT_EXTERNAL_TTL": "CC_AI_KIT_EXTERNAL_CACHE_TTL",
+        "CC_AI_KIT_SEGMENTS_DIR": "CC_AI_KIT_EXTERNAL_DIR",
+        "CC_AI_KIT_CONFIG":       "CC_AI_KIT_CONFIG_FILE",
+    }
+    out: dict[str, str] = dict(env)
+    for old, new in _ALIASES.items():
+        if old in out and new not in out:
+            print(f"{_DIM}status-line: {old} is deprecated; use {new}{RESET}",
+                  file=sys.stderr)
+            out[new] = out[old]
+    return out
+
+
+def cfg_env_int(key: str, val: str, fallback: int) -> int:
+    """Parse an int env override; on a non-integer value warn (dim) and keep fallback.
+    Shared by the GIT and EXTERNAL int knobs in cfg_env_apply_overrides (FR-1.6 DRY)."""
+    try:
+        return int(val)
+    except ValueError:
+        print(f"{_DIM}status-line: {key} must be an integer, got {val!r} — ignored{RESET}",
+              file=sys.stderr)
+        return fallback
+
+
+def cfg_env_apply_overrides(  # pylint: disable=too-many-locals,too-many-branches
+    env: Env,
+    git: dict[str, Any],
+    ext_dir: str,
+    ext_ttl: int,
+    segments: dict[str, bool],
+) -> tuple[dict[str, Any], str, int, dict[str, bool]]:
+    """Single structure-aware env reader (FR-1.6). Walks *normalized* env for
+    keys matching CC_AI_KIT_<TOKEN>_<REST> and routes by the leading token:
+
+      SEGMENT → segments[rest.lower()]          (via cfg_env_bool tri-state)
+      GIT     → git[rest.lower()]               (int for CACHE_TTL, ignored otherwise)
+      EXTERNAL→ ext_dir  (REST == "DIR")
+               ext_ttl  (REST == "CACHE_TTL"; int)
+
+    CC_AI_KIT_CONFIG_FILE is the bootstrap exception — handled in cfg_config_path.
+    Returns (git, ext_dir, ext_ttl, segments) with any env overrides applied.
+    """
+    PREFIX = "CC_AI_KIT_"
+    seg = dict(segments)
+    g = dict(git)
+    d = ext_dir
+    t = ext_ttl
+    for key, val in env.items():
+        if not key.startswith(PREFIX):
+            continue
+        rest = key[len(PREFIX):]                   # e.g. "GIT_CACHE_TTL", "SEGMENT_COST"
+        parts = rest.split("_", 1)
+        if len(parts) < 2:
+            continue
+        token, suffix = parts[0], parts[1]
+
+        if token == "SEGMENT":
+            seg_key = suffix.lower()
+            if seg_key in seg:
+                ov = cfg_env_bool(env, key)
+                if ov is not None:
+                    seg[seg_key] = ov
+        elif token == "GIT":
+            if suffix == "CACHE_TTL":
+                g["cache_ttl"] = cfg_env_int(key, val, g["cache_ttl"])
+        elif token == "EXTERNAL":
+            if suffix == "DIR":
+                if val:
+                    d = os.path.expanduser(val)
+            elif suffix == "CACHE_TTL":
+                t = cfg_env_int(key, val, t)
+        # CONFIG_FILE is the bootstrap exception (handled in cfg_config_path)
+    return g, d, t, seg
+
+
 def cfg_config_path(env: Env) -> str:
-    """Resolved TOML path: CC_AI_KIT_CONFIG, else
-    ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/statusline.toml."""
-    explicit = env.get("CC_AI_KIT_CONFIG")
+    """Resolved TOML path: CC_AI_KIT_CONFIG_FILE (new) or CC_AI_KIT_CONFIG (back-compat),
+    else ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/statusline.toml.
+
+    FR-1.7: this is the bootstrap exception — it reads env directly before any
+    TOML is loaded (chicken-and-egg), so it is the one explicit hardcoded env read
+    outside the single cfg_env_apply_overrides reader."""
+    explicit = env.get("CC_AI_KIT_CONFIG_FILE") or env.get("CC_AI_KIT_CONFIG")
     if explicit:
         return os.path.expanduser(explicit)
     base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
@@ -398,11 +498,11 @@ def cfg_load_toml(path: str) -> dict[str, Any]:
         return {}
 
 
-def cfg_resolve_segments(defaults: dict[str, bool], file_seg: Any, env: Env) -> dict[str, bool]:
-    """defaults < file [segments] < CC_AI_KIT_SEGMENT_<KEY> env. Each file entry
-    is dropped with a dim warning if its key is unknown OR its value is not a
-    bool (e.g. `cost = "true"` instead of `cost = true`); only bool file values
-    for known keys are honored. Env always overrides whatever the file resolved."""
+def cfg_resolve_segments(defaults: dict[str, bool], file_seg: Any) -> dict[str, bool]:
+    """defaults < file [segments] (TOML only). Each file entry is dropped with a
+    dim warning if its key is unknown OR its value is not a bool (e.g. `cost =
+    "true"` instead of `cost = true`); only bool file values for known keys are
+    honored. Env overrides are applied later by cfg_env_apply_overrides (FR-1.6)."""
     seg = dict(defaults)
     for k, v in cast(dict[str, Any], file_seg or {}).items():
         if k not in seg:
@@ -413,10 +513,6 @@ def cfg_resolve_segments(defaults: dict[str, bool], file_seg: Any, env: Env) -> 
                   f"got {v!r} — ignored{RESET}", file=sys.stderr)
         else:
             seg[k] = v
-    for k in seg:
-        ov = cfg_env_bool(env, f"CC_AI_KIT_SEGMENT_{k.upper()}")
-        if ov is not None:
-            seg[k] = ov
     return seg
 
 
@@ -431,17 +527,13 @@ def cfg_resolve_layout(default_layout: list[Line], raw_lines: Any) -> list[Line]
 
 
 def cfg_resolve_external(raw: dict[str, Any], env: Env) -> tuple[str, int]:
-    """Resolve (segments_dir, default_ttl) from defaults < [external] file < env.
-    Env: CC_AI_KIT_SEGMENTS_DIR (dir), CC_AI_KIT_EXTERNAL_TTL (int seconds)."""
+    """Resolve (dir, default_ttl) from defaults < [external] file.
+    Env overrides are applied later by cfg_env_apply_overrides (FR-1.6)."""
     file_ext: dict[str, Any] = cast(dict[str, Any], raw.get("external") or {})
-    ttl = 10
+    ttl = _EXTERNAL_CACHE_TTL
     fv: Any = file_ext.get("ttl")
     if isinstance(fv, int) and not isinstance(fv, bool):
         ttl = fv
-    ev = env.get("CC_AI_KIT_EXTERNAL_TTL")
-    if ev is not None:
-        with contextlib.suppress(ValueError):
-            ttl = int(ev)
     return cfg_segments_dir(file_ext, env), ttl
 
 
@@ -489,22 +581,56 @@ def cfg_load_config(  # pylint: disable=too-many-locals,too-many-branches
     ~/.config/ai-kit/segments) BEFORE resolving segments — so each provider id
     is a known segment key (enabled by default, disable via `[segments] <id> =
     false`) — and places them into the layout. The resolved providers land in
-    Config.external (a list of finalized ExtSpec); the global default cache TTL
-    and providers dir are recoverable via cfg_resolve_external(raw, env)."""
+    Config.external (an ExternalConf whose `.providers` holds the finalized
+    ExtSpec list, `.dir` the providers directory, `.cache_ttl` the default TTL).
+
+    All CC_AI_KIT_* config env reads funnel through cfg_env_normalize (back-compat
+    alias forwarding) then cfg_env_apply_overrides (FR-1.6 single reader). The
+    bootstrap CC_AI_KIT_CONFIG_FILE read is the sole exception (FR-1.7)."""
+    # FR-1.6/1.8: normalize env (forward deprecated names) then use as canonical env.
+    env = cfg_env_normalize(env)
     base = cfg_default_config()
     raw = cfg_load_toml(cfg_config_path(env))
 
     # External providers first: their ids must be known segment keys before
     # cfg_resolve_segments runs, so `[segments] <id> = false` is honored (not warned)
-    # and they default to enabled.
+    # and they default to enabled. TOML-based dir/ttl resolved here; env overrides applied below.
     ext_dir, ext_ttl = cfg_resolve_external(raw, env)
     cache_base = cfg_cache_base(env)
+
+    # git: resolve from TOML first, then env overrides via single reader below.
+    git: dict[str, Any] = dict(_GIT_DEFAULTS)
+    for k, v in cast(dict[str, Any], raw.get("git") or {}).items():
+        problem = cfg_git_key_problem(k, v)
+        if problem == "legacy":
+            continue                               # deprecated, tolerated, no effect
+        if problem == "unknown":
+            print(f"{_DIM}status-line: unknown [git] key '{k}'{RESET}", file=sys.stderr)
+        elif problem == "bad_ttl":
+            print(f"{_DIM}status-line: [git] cache_ttl must be an integer, "
+                  f"got {v!r} — ignored{RESET}", file=sys.stderr)
+        else:
+            git[k] = v
+
+    # FR-1.6 single reader, scalars pass: apply CC_AI_KIT_* overrides to git +
+    # external dir/ttl now. Segments are deferred until after discovery (below):
+    # external provider ids aren't known segment keys until then, so the reader is
+    # called a second time for segments — never for git/external again.
+    git, ext_dir, ext_ttl, _ = cfg_env_apply_overrides(env, git, ext_dir, ext_ttl, {})
+
+    # Discover external providers using the final resolved dir/ttl (env wins over TOML).
     specs = core_discover_external(ext_dir, ext_ttl, os.path.join(cache_base, "segments"))
+
+    # segments resolved exactly once: defaults + external ids < [segments] TOML < env.
+    # External provider ids are known segment keys (default enabled, disable via
+    # `[segments] <id> = false`).
     seg_defaults = dict(base.segments)
     for s in specs:
         seg_defaults.setdefault(s.id, True)
+    segments = cfg_resolve_segments(seg_defaults, raw.get("segments"))
+    # FR-1.6 single reader, segments pass (git/external already final — discarded).
+    _, _, _, segments = cfg_env_apply_overrides(env, git, ext_dir, ext_ttl, segments)
 
-    segments = cfg_resolve_segments(seg_defaults, raw.get("segments"), env)
     layout = cfg_resolve_layout(base.layout, raw.get("line"))
     layout, external = cfg_place_external(layout, specs)
     palette: dict[str, str] = {}
@@ -523,28 +649,10 @@ def cfg_load_config(  # pylint: disable=too-many-locals,too-many-branches
                   file=sys.stderr)
             continue
         ramps[band] = {str(k): str(v) for k, v in cast(dict[Any, Any], table).items()}
-    git: dict[str, Any] = dict(_GIT_DEFAULTS)
-    for k, v in cast(dict[str, Any], raw.get("git") or {}).items():
-        problem = cfg_git_key_problem(k, v)
-        if problem == "legacy":
-            continue                               # deprecated, tolerated, no effect
-        if problem == "unknown":
-            print(f"{_DIM}status-line: unknown [git] key '{k}'{RESET}", file=sys.stderr)
-        elif problem == "bad_ttl":
-            print(f"{_DIM}status-line: [git] cache_ttl must be an integer, "
-                  f"got {v!r} — ignored{RESET}", file=sys.stderr)
-        else:
-            git[k] = v
-    ttl_env = env.get("CC_AI_KIT_GIT_TTL")         # env wins over file
-    if ttl_env is not None:
-        try:
-            git["cache_ttl"] = int(ttl_env)
-        except ValueError:
-            print(f"{_DIM}status-line: CC_AI_KIT_GIT_TTL must be an integer, "
-                  f"got {ttl_env!r} — ignored{RESET}", file=sys.stderr)
     return Config(segments=segments, layout=layout, palette=palette, ramps=ramps,
-                  git=git, external=external,
-                  cache_base=cache_base, segments_dir=ext_dir)
+                  git=git,
+                  external=ExternalConf(dir=ext_dir, cache_ttl=ext_ttl, providers=external),
+                  cache_base=cache_base)
 
 
 def cfg_cache_base(env: Env) -> str:
@@ -554,10 +662,11 @@ def cfg_cache_base(env: Env) -> str:
 
 
 def cfg_segments_dir(file_external: Any, env: Env) -> str:
-    """Resolve the providers directory: CC_AI_KIT_SEGMENTS_DIR > [external].dir >
-    ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/segments."""
+    """Resolve the providers directory from [external].dir (TOML) or the XDG default.
+    Env override (CC_AI_KIT_EXTERNAL_DIR) is applied later by cfg_env_apply_overrides
+    (FR-1.6); this function is TOML + XDG only."""
     ext_block: dict[str, Any] = cast(dict[str, Any], file_external or {})
-    d: str | None = env.get("CC_AI_KIT_SEGMENTS_DIR") or ext_block.get("dir")
+    d: str | None = ext_block.get("dir")
     if d:
         return os.path.expanduser(d)
     base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
@@ -572,16 +681,16 @@ def cfg_to_int(s: str | None) -> int | None:
         return None
 
 
-def cfg_resolve_effort(raw: dict[str, Any], env: Env) -> str:
+def cfg_resolve_effort(raw: dict[str, Any]) -> str:
     """The *resolved* effort level (low..max) as a normalized lowercase string, or "".
 
     This is the live per-turn level the API reported, read from raw["effort"]["level"]
-    (CLAUDE_EFFORT env as a fallback). It is never "auto" — auto is a *setting*, detected
-    separately from disk by probe_effort_setting_is_auto. A stray "auto" in the resolved field
-    (transition states, env misuse) is normalized away so it can't reach the level table."""
+    (JSON + settings only — FR-1.9 dropped the CLAUDE_EFFORT env source). It is never
+    "auto" — auto is a *setting*, detected separately from disk by
+    probe_effort_setting_is_auto. A stray "auto" in the resolved field (transition states)
+    is normalized away so it can't reach the level table."""
     effort_block: dict[str, Any] = cast(dict[str, Any], raw.get("effort") or {})
-    level: str = str(effort_block.get("level") or env.get("CLAUDE_EFFORT") or "")
-    level = level.strip().lower()
+    level: str = str(effort_block.get("level") or "").strip().lower()
     return "" if level == "auto" else level
 
 
@@ -948,6 +1057,54 @@ def probe_current_todo(path: str | None, session: str | None = None,
             if got is not None:
                 return got
     return probe_todo_from_transcript(path)
+
+
+# ── per-render memoized probe accessors (module-level; cost lands in FR-R.2) ──
+
+def _memo(ctx: "Context", key: str, fn: "Callable[[], Any]") -> Any:
+    """Run fn() once per render, caching the result on ctx.probe_cache."""
+    cache = ctx.probe_cache
+    if key not in cache:
+        cache[key] = fn()
+    return cache[key]
+
+
+def probe_git_for(ctx: "Context") -> "GitSnapshot":
+    """Memoized git snapshot for this render (branch/dirty/worktree/…)."""
+    return _memo(ctx, "git",
+                 lambda: probe_git_snapshot(ctx.work_dir, ctx.line_conf))
+
+
+def probe_ago(ctx: "Context") -> str:
+    """Memoized human-readable age of the transcript file, or ''."""
+    def _compute() -> str:
+        t = ctx.transcript
+        if t and os.path.isfile(t):
+            return fmt_ago(int(time.time()) - int(os.path.getmtime(t)))
+        return ""
+    return _memo(ctx, "ago", _compute)
+
+
+def probe_effort_auto(ctx: "Context") -> bool:
+    """Memoized: True when the Claude effort setting is 'auto'."""
+    return _memo(ctx, "effort_auto",
+                 lambda: probe_effort_setting_is_auto(ctx.work_dir, ctx.home))
+
+
+def probe_todo(ctx: "Context") -> tuple[str | None, str | None]:
+    """Memoized (state, text) pair for the active TODO, or (None, None)."""
+    return _memo(ctx, "todo",
+                 lambda: probe_current_todo(ctx.transcript, ctx.session, ctx.claude_dir))
+
+
+def probe_chat_size(ctx: "Context") -> int | None:
+    """Memoized transcript file size in bytes, or None."""
+    return _memo(ctx, "chat_size", lambda: probe_transcript_bytes(ctx.transcript))
+
+
+def probe_rss(ctx: "Context") -> int | None:
+    """Memoized process RSS in bytes, or None."""
+    return _memo(ctx, "rss", probe_rss_bytes)
 
 
 # ═══ 5. fmt_ — pure formatters (number / tokens / duration / bytes / ago) ═════
@@ -1402,16 +1559,21 @@ def core_str_set() -> set[str]:
     return set()
 
 
+def core_probe_cache() -> dict[str, Any]:
+    """Typed factory for Context.probe_cache — bare `dict` loses the generic parameter."""
+    return {}
+
+
 @dataclass
 class Context:  # pylint: disable=too-many-instance-attributes  # per-render bag (D1)
     """Per-render bag handed to every builder (D1). Eager inputs are resolved at
-    the SHELL/CONFIG boundary; expensive probes are `cached_property`, so a probe
-    runs synchronously on first attribute read — its cost lands inside the
+    the SHELL/CONFIG boundary; expensive probes are memoized via `probe_cache`
+    so each probe runs synchronously on first access — its cost lands inside the
     *measured* build of the first segment that reads it (FR-R.2) and later reads
     are free. Render bookkeeping (`failed`, `slowest`) lives here too. Attribute
     access only — never `ctx[...]` (D4). `raw` keeps `.get()`-chain access."""
     raw: dict[str, Any]             # incoming status JSON (the ONLY dict-style member)
-    config: "Config"
+    line_conf: "Config"
     theme: "Theme"
     # per-render terminal geometry (resolved by the SHELL; D6 — never on Config)
     cols: int
@@ -1433,81 +1595,15 @@ class Context:  # pylint: disable=too-many-instance-attributes  # per-render bag
     context_pct: int
     context_max: int
     rate_limits: dict[str, Any]
-    # probe inputs (locate materialized todo/task state; feed the cached_property probes)
+    # probe inputs (locate materialized todo/task state; feed the memoized probes)
     transcript: str
     session: str
     claude_dir: str
     # render bookkeeping (D1) — mutated during the render
     failed: set[str] = field(default_factory=core_str_set)
     slowest: tuple[str, int] | None = None
-
-    # ── shared git probe: one call fills five fields (branch/dirty/worktree/…) ──
-    # The probe reads its ttl + cache_base off the Config object it is given (D8).
-    @functools.cached_property
-    def _git(self) -> "GitSnapshot":
-        return probe_git_snapshot(self.work_dir, self.config)
-
-    @property
-    def branch(self) -> str:
-        """Current git branch name (via shared _git probe)."""
-        return self._git.branch
-
-    @property
-    def dirty(self) -> str:
-        """Git working-tree state: 'clean', 'modified', or 'untracked'."""
-        return self._git.dirty
-
-    @property
-    def is_worktree(self) -> bool:
-        """True when the workspace is a git worktree (not the main checkout)."""
-        return self._git.is_worktree
-
-    @property
-    def wt_name(self) -> str:
-        """Worktree short name (basename of the worktree root), or ''."""
-        return self._git.wt_name
-
-    @property
-    def in_repo(self) -> bool:
-        """True when the workspace is inside a git repository."""
-        return self._git.in_repo
-
-    @functools.cached_property
-    def ago(self) -> str:
-        """Human-readable age of the transcript file (e.g. '5m 0s ago'), or ''."""
-        t = self.transcript
-        if t and os.path.isfile(t):
-            return fmt_ago(int(time.time()) - int(os.path.getmtime(t)))
-        return ""
-
-    @functools.cached_property
-    def effort_auto(self) -> bool:
-        """True when the Claude effort setting is 'auto' rather than a fixed level."""
-        return probe_effort_setting_is_auto(self.work_dir, self.home)
-
-    @functools.cached_property
-    def _todo(self) -> tuple[str | None, str | None]:
-        return probe_current_todo(self.transcript, self.session, self.claude_dir)
-
-    @property
-    def todo_state(self) -> str | None:
-        """Active task state string (e.g. 'in_progress'), or None."""
-        return self._todo[0]
-
-    @property
-    def todo_text(self) -> str | None:
-        """Active task display text, or None when no task is active."""
-        return self._todo[1]
-
-    @functools.cached_property
-    def chat_bytes(self) -> int | None:
-        """Transcript file size in bytes (for the chat-size segment), or None."""
-        return probe_transcript_bytes(self.transcript)
-
-    @functools.cached_property
-    def mem_bytes(self) -> int | None:
-        """Process RSS in bytes (for the memory segment), or None."""
-        return probe_rss_bytes()
+    # memoization cache for per-render probes (keyed by probe name)
+    probe_cache: dict[str, Any] = field(default_factory=core_probe_cache)
 
 
 def core_build_context(raw: dict[str, Any], config: "Config", theme: "Theme",  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -1516,7 +1612,7 @@ def core_build_context(raw: dict[str, Any], config: "Config", theme: "Theme",  #
     """Assemble the per-render Context from the parsed status JSON and the
     already-resolved per-render inputs. Segment-agnostic and env-free: every
     env read happened in the CONFIG block; the SHELL hands the resolved values
-    here. Expensive probes are deferred to Context's cached_property members."""
+    here. Expensive probes are deferred via probe_cache memoization."""
     model: dict[str, Any] = cast(dict[str, Any], raw.get("model") or {})
     cost: dict[str, Any] = cast(dict[str, Any], raw.get("cost") or {})
     ctx_win: dict[str, Any] = cast(dict[str, Any], raw.get("context_window") or {})
@@ -1528,7 +1624,7 @@ def core_build_context(raw: dict[str, Any], config: "Config", theme: "Theme",  #
     session: str = str(raw.get("session_id") or (
         os.path.splitext(os.path.basename(transcript))[0] if transcript else ""))
     return Context(
-        raw=raw, config=config, theme=theme,
+        raw=raw, line_conf=config, theme=theme,
         cols=cols, lines=lines, dim_assumed=dim_assumed, t_start=t_start,
         model_name=str(model.get("display_name") or ""),
         model_id=str(model.get("id") or "unknown"),
@@ -1819,7 +1915,7 @@ def core_builders_for(cfg: "Config") -> dict[str, "Builder"]:
     provider (keyed by id). External ids never collide with built-ins by design;
     if a user names one after a built-in, the external wins for that render."""
     builders = dict(BUILDERS)
-    for spec in (cfg.external or []):
+    for spec in (cfg.external.providers if cfg.external else []):
         builders[spec.id] = core_make_external_builder(spec)
     return builders
 
@@ -1937,13 +2033,13 @@ def core_pack(  # pylint: disable=too-many-arguments,too-many-positional-argumen
     can only be built once every other build is timed — but they live at their own
     LAYOUT positions, not forced last. So: pass 1 builds + times every non-meta
     segment left->right (crowning the slowest via core_crown_slowest, whose timing
-    captures each segment's first-read probe cost — FR-R.2 via Context's lazy
-    cached_property); pass 2 builds the meta segments now that `ctx.slowest` and
-    `t_start` are settled; then assembly places everything in LAYOUT order, fitting
-    left->right with all widths known. Pinned segments are always kept; otherwise
-    leftmost survive when space is tight. `builders` carries the merged built-in +
-    external map; defaults to that derived from cfg."""
-    cfg = cfg or ctx.config
+    captures each segment's first-read probe cost — FR-R.2 via memoized
+    probe accessors on probe_cache); pass 2 builds the meta segments now that
+    `ctx.slowest` and `t_start` are settled; then assembly places everything in
+    LAYOUT order, fitting left->right with all widths known. Pinned segments are
+    always kept; otherwise leftmost survive when space is tight. `builders`
+    carries the merged built-in + external map; defaults to that derived from cfg."""
+    cfg = cfg or ctx.line_conf
     theme = theme or ctx.theme
     builders = builders if builders is not None else core_builders_for(cfg)
     budget = cols - RIGHT_MARGIN
@@ -1972,7 +2068,7 @@ def core_render(
     """Render up to len(cfg.layout) lines, gated by terminal height and width.
     A trailing diagnostic line is appended only when a builder crashed. Reads
     geometry (cols/lines) and the shared `failed` set off `ctx`."""
-    cfg = cfg or ctx.config
+    cfg = cfg or ctx.line_conf
     theme = theme or ctx.theme
     builders = core_builders_for(cfg)
     out: list[str] = []
@@ -1997,7 +2093,7 @@ def seg_path(ctx: "Context", avail: int, theme: "Theme") -> str | None:
 
 
 def seg_branch(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    branch = ctx.branch
+    branch = probe_git_for(ctx).branch
     if not branch:
         return None
     # branch carries its own STATIC 🌿 icon. It does NOT encode worktree state
@@ -2009,7 +2105,7 @@ def seg_branch(ctx: "Context", avail: int, theme: "Theme") -> str | None:
 
 
 def seg_dirty(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    mark = util_dirty_mark(ctx.dirty, theme)
+    mark = util_dirty_mark(probe_git_for(ctx).dirty, theme)
     return util_first_fitting([mark], avail) if mark else None
 
 
@@ -2019,16 +2115,17 @@ def seg_worktree(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     # outside a repo. On the main checkout it shows a dimmed, struck `⎇ wt`
     # placeholder — GREY (not just strikethrough) so it stays distinct from the
     # cyan active form even on terminals that don't render SGR-9.
-    if not ctx.in_repo:
+    snap = probe_git_for(ctx)
+    if not snap.in_repo:
         return None
-    if not ctx.is_worktree:
+    if not snap.is_worktree:
         return util_first_fitting([f"{theme.c('GREY')}\033[9m⎇ wt{RESET}"], avail)
-    name = util_trunc_cols(ctx.wt_name or "", 20)
+    name = util_trunc_cols(snap.wt_name or "", 20)
     return util_first_fitting([f"{theme.c('CYAN')}⎇ {name}{RESET}"], avail)
 
 
 def seg_todo(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    state, text = ctx.todo_state, ctx.todo_text
+    state, text = probe_todo(ctx)
     if not text:
         return None
     limit = avail - 4                      # room for icon + space + ellipsis
@@ -2052,7 +2149,7 @@ def seg_model(ctx: "Context", avail: int, theme: "Theme") -> str | None:
 
 
 def seg_time_ago(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    ago = ctx.ago
+    ago = probe_ago(ctx)
     if not ago:
         return None
     return util_first_fitting([f"{theme.c('WHITE')}{ago}{RESET}"], avail)
@@ -2071,7 +2168,7 @@ def seg_effort(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     color, bar = theme.effort.get(level.lower(), ("", f"{theme.c('GREY')}▁▃▄▆█"))
     word = f"{color}{level}{RESET}"
     bars = util_icon("🧠", f"{bar}{RESET}")
-    if ctx.effort_auto:
+    if probe_effort_auto(ctx):
         # effortLevel is unset/auto in settings: flag the resolved level as
         # auto-chosen. The flag degrades [auto] -> * -> dropped as space tightens.
         variants = [f"{bars} {word} {theme.c('GREY')}[auto]{RESET}",
@@ -2145,7 +2242,7 @@ def seg_context(ctx: "Context", avail: int, theme: "Theme") -> str | None:
 
 
 def seg_chat_size(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    n = ctx.chat_bytes
+    n = probe_chat_size(ctx)
     if n is None:
         return None
     color = util_pick_color(n, theme.ramps["chat_size"])
@@ -2153,7 +2250,7 @@ def seg_chat_size(ctx: "Context", avail: int, theme: "Theme") -> str | None:
 
 
 def seg_memory(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    n = ctx.mem_bytes
+    n = probe_rss(ctx)
     if n is None:
         return None
     return util_first_fitting([util_icon("🧮", fmt_bytes(n))], avail)
@@ -2257,15 +2354,21 @@ _NO_CHECK = object()   # sentinel: --check flag absent (vs. present with no FILE
 
 _ENV_HELP = """\
 Environment variables:
-  CC_AI_KIT_CONFIG         path to the TOML config file
-  CC_AI_KIT_SEGMENT_<KEY>  per-segment bool toggle; KEY is the upper-cased
-                           segment name (PATH, MODEL, COST, CONTEXT, ...).
-                           true:  1 true t y yes on    false: 0 false f n no off
-  CC_AI_KIT_GIT_TTL        int; seconds the git worktree probe is cached. Wins
-                           over [git] cache_ttl (default 5).
-  CC_AI_KIT_SEGMENTS_DIR   external drop-in segments directory (default
-                           ${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments)
-  CC_AI_KIT_EXTERNAL_TTL   default cache TTL (seconds) for external segments
+  CC_AI_KIT_CONFIG_FILE      path to the TOML config file
+  CC_AI_KIT_SEGMENT_<KEY>    per-segment bool toggle; KEY is the upper-cased
+                             segment name (PATH, MODEL, COST, CONTEXT, ...).
+                             true:  1 true t y yes on    false: 0 false f n no off
+  CC_AI_KIT_GIT_CACHE_TTL    int; seconds the git worktree probe is cached. Wins
+                             over [git] cache_ttl (default 5).
+  CC_AI_KIT_EXTERNAL_DIR     external drop-in segments directory (default
+                             ${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments)
+  CC_AI_KIT_EXTERNAL_CACHE_TTL  default cache TTL (seconds) for external segments
+
+Deprecated names (still accepted, emit a warning):
+  CC_AI_KIT_CONFIG       → CC_AI_KIT_CONFIG_FILE
+  CC_AI_KIT_GIT_TTL      → CC_AI_KIT_GIT_CACHE_TTL
+  CC_AI_KIT_SEGMENTS_DIR → CC_AI_KIT_EXTERNAL_DIR
+  CC_AI_KIT_EXTERNAL_TTL → CC_AI_KIT_EXTERNAL_CACHE_TTL
 
 Config precedence (low -> high): built-in defaults < TOML file < env."""
 
@@ -2278,8 +2381,9 @@ def cmd_print_config(cfg: "Config", env: Env) -> str:
     # are never confused with a single provider's per-header `ttl=` override
     # (those appear per-entry in the "providers" array below). `dir` is the
     # PROVIDERS directory (where scripts live), NOT the XDG cache dir.
-    ext_providers = cfg.external or []
-    ext_dir, ext_ttl = cfg_resolve_external(cfg_load_toml(cfg_config_path(env)), env)
+    ext_providers = cfg.external.providers if cfg.external else []
+    ext_dir = cfg.external.dir if cfg.external else ""
+    ext_ttl = cfg.external.cache_ttl if cfg.external else _EXTERNAL_CACHE_TTL
     return json.dumps({
         "segments": cfg.segments,
         "layout": [{"min_rows": ln.min_rows, "segments": ln.segments}
@@ -2317,7 +2421,9 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
     except (OSError, tomllib.TOMLDecodeError) as e:
         return [f"{path}: {e}"]
     errors: list[str] = []
+    env = cfg_env_normalize(env)
     ext_dir, ext_ttl = cfg_resolve_external(raw, env)
+    _, ext_dir, ext_ttl, _ = cfg_env_apply_overrides(env, {}, ext_dir, ext_ttl, {})
     seg_cache = os.path.join(cfg_cache_base(env), "segments")
     ext_ids = {s.id for s in core_discover_external(ext_dir, ext_ttl, seg_cache)}
     known_segments = set(cfg_default_config().segments) | ext_ids
@@ -2407,7 +2513,7 @@ def _dry_render_failures(cfg: "Config", theme: "Theme", env: Env) -> set[str]:
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
     ctx = core_build_context(dict(_DOCTOR_SAMPLE), cfg, theme, cols, lines, assumed,
                         time.perf_counter_ns(),
-                        effort=cfg_resolve_effort(_DOCTOR_SAMPLE, env),
+                        effort=cfg_resolve_effort(_DOCTOR_SAMPLE),
                         home=home, claude_dir=claude_dir)
     for key in BUILDERS:
         core_safe_build(key, ctx, 200, theme)

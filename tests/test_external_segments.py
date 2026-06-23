@@ -31,7 +31,7 @@ def _ctx_from_env(raw, env, cfg, t_start=None):
     home = env.get("HOME", "")
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
     ctx = sl.core_build_context(raw, cfg, sl.core_default_theme(), cols, lines, assumed, t_start,
-                           effort=sl.cfg_resolve_effort(raw, env), home=home, claude_dir=claude_dir)
+                           effort=sl.cfg_resolve_effort(raw), home=home, claude_dir=claude_dir)
     return ctx, cols, lines
 
 
@@ -262,14 +262,22 @@ class TestResolveExternal(unittest.TestCase):
         self.assertEqual((d, ttl), ("/tmp/segs", 25))
 
     def test_env_wins(self):
+        # FR-1.6: env overrides now applied by cfg_env_apply_overrides, not cfg_resolve_external.
+        # Old names are back-compat aliases; test at the combined TOML+env layer.
         raw = {"external": {"ttl": 25, "dir": "/tmp/segs"}}
-        env = {"CC_AI_KIT_SEGMENTS_DIR": "/env/segs", "CC_AI_KIT_EXTERNAL_TTL": "3"}
+        env = sl.cfg_env_normalize(
+            {"CC_AI_KIT_SEGMENTS_DIR": "/env/segs", "CC_AI_KIT_EXTERNAL_TTL": "3"}
+        )
         d, ttl = sl.cfg_resolve_external(raw, env)
+        _, d, ttl, _ = sl.cfg_env_apply_overrides(env, {}, d, ttl, {})
         self.assertEqual((d, ttl), ("/env/segs", 3))
 
     def test_bad_env_ttl_falls_back_to_file(self):
+        # FR-1.6: bad env TTL now handled by cfg_env_apply_overrides (prints warning, ignores).
         raw = {"external": {"ttl": 25}}
-        _d, ttl = sl.cfg_resolve_external(raw, {"CC_AI_KIT_EXTERNAL_TTL": "notanint"})
+        env = {"CC_AI_KIT_EXTERNAL_CACHE_TTL": "notanint"}
+        d, ttl = sl.cfg_resolve_external(raw, env)
+        _, _d, ttl, _ = sl.cfg_env_apply_overrides(env, {}, d, ttl, {})
         self.assertEqual(ttl, 25)
 
 
@@ -343,7 +351,7 @@ class TestLoadConfigExternal(unittest.TestCase):
         cfg = sl.cfg_load_config(self._env())
         self.assertTrue(cfg.segments.get("sysmem"))            # default-on
         self.assertIn("sysmem", cfg.layout[0].segments)        # placed on row 1
-        self.assertEqual([s.id for s in cfg.external], ["sysmem"])
+        self.assertEqual([s.id for s in cfg.external.providers], ["sysmem"])
 
     def test_explicit_disable_in_toml_is_honored(self):
         write_script(self.segs, "sysmem", "#!/bin/sh\necho hi\n")
@@ -359,7 +367,8 @@ class TestLoadConfigExternal(unittest.TestCase):
 
     def test_no_providers_keeps_external_empty(self):
         cfg = sl.cfg_load_config(self._env())
-        self.assertEqual(cfg.external, [])
+        self.assertIsNotNone(cfg.external)
+        self.assertEqual(cfg.external.providers, [])
 
 
 class TestRenderIntegration(unittest.TestCase):
