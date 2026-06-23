@@ -299,41 +299,41 @@ class TestPlace(unittest.TestCase):
                           timeout=2.0, ttl=10, cache_path=f"/c/{sid}")
 
     def test_after_key(self):
-        layout, final = sl.cfg_place_external(self._layout(),
-                                           [self._spec("aws", 2, ("after", "clock"))])
+        layout, final, _ = sl.cfg_place_external(self._layout(),
+                                              [self._spec("aws", 2, ("after", "clock"))])
         self.assertEqual(layout[1].segments, ["model", "clock", "aws"])
         self.assertEqual(final[0].line, 2)
 
     def test_before_key(self):
-        layout, _ = sl.cfg_place_external(self._layout(),
-                                       [self._spec("x", 2, ("before", "clock"))])
+        layout, _, _ = sl.cfg_place_external(self._layout(),
+                                          [self._spec("x", 2, ("before", "clock"))])
         self.assertEqual(layout[1].segments, ["model", "x", "clock"])
 
     def test_start_and_end(self):
-        layout, _ = sl.cfg_place_external(self._layout(), [
+        layout, _, _ = sl.cfg_place_external(self._layout(), [
             self._spec("s", 1, ("start", "")), self._spec("e", 1, ("end", ""))])
         self.assertEqual(layout[0].segments, ["s", "path", "branch", "e"])
 
     def test_line_zero_means_last_row(self):
-        layout, final = sl.cfg_place_external(self._layout(),
-                                           [self._spec("z", 0, ("end", ""))])
+        layout, final, _ = sl.cfg_place_external(self._layout(),
+                                              [self._spec("z", 0, ("end", ""))])
         self.assertEqual(layout[2].segments, ["context", "memory", "z"])
         self.assertEqual(final[0].line, 3)         # resolved to the last row
 
     def test_out_of_range_clamps_to_last(self):
-        layout, final = sl.cfg_place_external(self._layout(),
-                                           [self._spec("z", 9, ("end", ""))])
+        layout, final, _ = sl.cfg_place_external(self._layout(),
+                                              [self._spec("z", 9, ("end", ""))])
         self.assertEqual(layout[2].segments[-1], "z")
         self.assertEqual(final[0].line, 3)
 
     def test_missing_ref_appends(self):
-        layout, _ = sl.cfg_place_external(self._layout(),
-                                       [self._spec("z", 2, ("after", "nope"))])
+        layout, _, _ = sl.cfg_place_external(self._layout(),
+                                          [self._spec("z", 2, ("after", "nope"))])
         self.assertEqual(layout[1].segments, ["model", "clock", "z"])
 
     def test_min_rows_preserved(self):
-        layout, _ = sl.cfg_place_external(self._layout(),
-                                       [self._spec("z", 2, ("end", ""))])
+        layout, _, _ = sl.cfg_place_external(self._layout(),
+                                          [self._spec("z", 2, ("end", ""))])
         self.assertEqual([ln.min_rows for ln in layout], [0, 20, 30])
 
 

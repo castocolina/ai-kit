@@ -87,6 +87,21 @@ class TestCLI(unittest.TestCase):
                            '[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n')
         self.assertEqual(doctor.cmd_check(path, {"HOME": "/h"}), 0)
 
+    def test_doctor_reports_env_problems_byte_identical(self):
+        """cmd_check surfaces env-side bind errors byte-identical to cfg_warn output."""
+        import io
+        from contextlib import redirect_stderr
+        env = {"CC_AI_KIT_GIT_CACHE_TTL": "not-an-int"}
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            rc = doctor.cmd_check("", env)
+        self.assertEqual(rc, 1)
+        self.assertIn(
+            f"{doctor.sl._DIM}status-line: CC_AI_KIT_GIT_CACHE_TTL must be an integer, "
+            f"got 'not-an-int' — ignored{doctor.sl.RESET}",
+            buf.getvalue(),
+        )
+
 
 class TestValidateConfigFile(unittest.TestCase):
     def _write(self, body):

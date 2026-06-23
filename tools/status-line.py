@@ -489,8 +489,8 @@ def cfg_config_path(env: Env) -> str:
 
 
 def cfg_load_toml(path: str) -> dict[str, Any]:
-    """Parse the TOML at path. Missing/empty/malformed/no-tomllib → {} (a dim
-    warning to stderr on a malformed file). Never raises."""
+    """Parse the TOML at path. Missing/empty/malformed/no-tomllib → {}.
+    Never raises, never prints."""
     if tomllib is None:
         return {}
     try:
@@ -498,28 +498,33 @@ def cfg_load_toml(path: str) -> dict[str, Any]:
             return tomllib.load(f)
     except FileNotFoundError:
         return {}
-    except (OSError, tomllib.TOMLDecodeError) as e:
-        print(f"{_DIM}status-line: ignoring config {path}: {e}{RESET}", file=sys.stderr)
+    except (OSError, tomllib.TOMLDecodeError):
         return {}
 
 
-def cfg_resolve_segments(defaults: dict[str, bool], file_seg: Any) -> dict[str, bool]:
+def cfg_resolve_segments(
+    defaults: dict[str, bool], file_seg: Any
+) -> tuple[dict[str, bool], list[str]]:
     """defaults < file [segments] (TOML only). Each file entry is dropped with a
     dim warning if its key is unknown OR its value is not a bool (e.g.
     `alt_cost = "true"` instead of `alt_cost = true`); only bool file values for
     known keys are honored. Env overrides are applied later by
-    cfg_bind_segments (FR-3)."""
+    cfg_bind_segments (FR-3).
+
+    Returns (resolved_segments, problems) — problems is a list of raw message
+    strings (no ANSI); callers decide whether to print or discard them."""
     seg = dict(defaults)
+    problems: list[str] = []
     for k, v in cast(dict[str, Any], file_seg or {}).items():
         if k not in seg:
-            print(f"{_DIM}status-line: unknown segment '{k}' in config{RESET}",
-                  file=sys.stderr)
+            problems.append(f"unknown segment '{k}' in config")
         elif not isinstance(v, bool):
-            print(f"{_DIM}status-line: segment '{k}' must be true/false, "
-                  f"got {v!r} — ignored{RESET}", file=sys.stderr)
+            problems.append(
+                f"segment '{k}' must be true/false, got {v!r} — ignored"
+            )
         else:
             seg[k] = v
-    return seg
+    return seg, problems
 
 
 def cfg_resolve_layout(default_layout: list[Line], raw_lines: Any) -> list[Line]:
@@ -545,22 +550,27 @@ def cfg_resolve_external(raw: dict[str, Any], env: Env) -> tuple[str, int]:
 
 def cfg_place_external(
     layout: list[Line], specs: list["ExtSpec"]
-) -> tuple[list[Line], list["ExtSpec"]]:
+) -> tuple[list[Line], list["ExtSpec"], list[str]]:
     """Insert each spec's id into the resolved layout at its row/position and
-    return (new_layout, finalized_specs). Resolves line=0 to the last row and
-    clamps out-of-range rows (with a dim warning). Specs are applied in their
-    (filename, id) sort order so same-slot externals are deterministic."""
+    return (new_layout, finalized_specs, problems). Resolves line=0 to the last
+    row and clamps out-of-range rows. Specs are applied in their (filename, id)
+    sort order so same-slot externals are deterministic.
+
+    problems is a list of raw message strings (no ANSI); callers decide whether
+    to print or discard them."""
     if not layout:
-        return list(layout), []
+        return list(layout), [], []
     rows = [list(ln.segments) for ln in layout]
     nrows = len(rows)
     final: list[ExtSpec] = []
+    problems: list[str] = []
     for spec in specs:
         want = spec.line or nrows                      # 0 => last row
         idx = want - 1
         if idx < 0 or idx >= nrows:
-            print(f"{_DIM}status-line: segment '{spec.id}' line={want} out of range "
-                  f"— clamped to row {nrows}{RESET}", file=sys.stderr)
+            problems.append(
+                f"segment '{spec.id}' line={want} out of range — clamped to row {nrows}"
+            )
             idx = nrows - 1
         kind, ref = spec.position
         segs = rows[idx]
@@ -574,12 +584,12 @@ def cfg_place_external(
             segs.append(spec.id)
         final.append(spec._replace(line=idx + 1))
     new_layout = [Line(layout[i].min_rows, rows[i]) for i in range(nrows)]
-    return new_layout, final
+    return new_layout, final, problems
 
 
-def cfg_load_config(  # pylint: disable=too-many-locals,too-many-branches
+def cfg_load_config_verbose(  # pylint: disable=too-many-locals,too-many-branches
     env: Env,
-) -> "Config":
+) -> "tuple[Config, list[str]]":
     """Resolve the full Config: internal defaults < TOML file < env.
 
     Resolves segments, layout, palette, ramps, and the [git] knobs. Also
@@ -592,9 +602,14 @@ def cfg_load_config(  # pylint: disable=too-many-locals,too-many-branches
 
     All CC_AI_KIT_* config env reads funnel through cfg_bind_scalars /
     cfg_bind_segments (FR-2/FR-3 access/convert/bind layer). The bootstrap
-    CC_AI_KIT_CONFIG_FILE read is the sole exception (FR-1.7)."""
+    CC_AI_KIT_CONFIG_FILE read is the sole exception (FR-1.7).
+
+    Returns (Config, problems) where problems is a list of raw message strings
+    (no ANSI, no 'status-line: ' prefix) describing every skipped/clamped value.
+    Emits NOTHING to stderr — callers decide what to do with problems."""
     base = cfg_default_config()
     raw = cfg_load_toml(cfg_config_path(env))
+    problems: list[str] = []
 
     # External providers first: their ids must be known segment keys before
     # cfg_resolve_segments runs, so `[segments] <id> = false` is honored (not warned)
@@ -607,10 +622,11 @@ def cfg_load_config(  # pylint: disable=too-many-locals,too-many-branches
     for k, v in cast(dict[str, Any], raw.get("git") or {}).items():
         problem = cfg_git_key_problem(k, v)
         if problem == "unknown":
-            print(f"{_DIM}status-line: unknown [git] key '{k}'{RESET}", file=sys.stderr)
+            problems.append(f"unknown [git] key '{k}'")
         elif problem == "bad_ttl":
-            print(f"{_DIM}status-line: [git] cache_ttl must be an integer, "
-                  f"got {v!r} — ignored{RESET}", file=sys.stderr)
+            problems.append(
+                f"[git] cache_ttl must be an integer, got {v!r} — ignored"
+            )
         else:
             git[k] = v
 
@@ -618,6 +634,7 @@ def cfg_load_config(  # pylint: disable=too-many-locals,too-many-branches
     # discovery so the env-bound external dir is the one scanned; segments bind
     # AFTER discovery so provider ids are known segment keys.
     git, ext_dir, ext_ttl, prob_scalars = cfg_bind_scalars(raw, env, git, ext_dir, ext_ttl)
+    problems.extend(prob_scalars)
 
     # Discover external providers using the final resolved dir/ttl (env wins over TOML).
     specs = core_discover_external(ext_dir, ext_ttl, os.path.join(cache_base, "segments"))
@@ -628,33 +645,43 @@ def cfg_load_config(  # pylint: disable=too-many-locals,too-many-branches
     seg_defaults = dict(base.segments)
     for s in specs:
         seg_defaults.setdefault(s.id, True)
-    segments = cfg_resolve_segments(seg_defaults, raw.get("segments"))   # TOML pass (warns)
+    segments, prob_seg_file = cfg_resolve_segments(seg_defaults, raw.get("segments"))
+    problems.extend(prob_seg_file)
     segments, prob_segs = cfg_bind_segments(raw, env, segments)          # env pass + problems
-    for p in (*prob_scalars, *prob_segs):                                # Phase-2 parity: print
-        cfg_warn(p)
+    problems.extend(prob_segs)
 
     layout = cfg_resolve_layout(base.layout, raw.get("line"))
-    layout, external = cfg_place_external(layout, specs)
+    layout, external, prob_place = cfg_place_external(layout, specs)
+    problems.extend(prob_place)
     palette: dict[str, str] = {}
     for k, v in cast(dict[str, Any], raw.get("palette") or {}).items():
         if k in _PALETTE_DEFAULTS:
             palette[k] = str(v)
         else:
-            print(f"{_DIM}status-line: unknown palette key '{k}'{RESET}", file=sys.stderr)
+            problems.append(f"unknown palette key '{k}'")
     ramps: dict[str, dict[str, str]] = {}
     for band, table in cast(dict[str, Any], raw.get("ramp") or {}).items():
         if band not in _RAMP_DEFAULTS:
-            print(f"{_DIM}status-line: unknown ramp '{band}'{RESET}", file=sys.stderr)
+            problems.append(f"unknown ramp '{band}'")
             continue
         if not isinstance(table, dict):
-            print(f"{_DIM}status-line: ramp '{band}' must be a table — ignored{RESET}",
-                  file=sys.stderr)
+            problems.append(f"ramp '{band}' must be a table — ignored")
             continue
         ramps[band] = {str(k): str(v) for k, v in cast(dict[Any, Any], table).items()}
-    return Config(segments=segments, layout=layout, palette=palette, ramps=ramps,
-                  git=git,
-                  external=ExternalConf(dir=ext_dir, cache_ttl=ext_ttl, providers=external),
-                  cache_base=cache_base)
+    cfg = Config(segments=segments, layout=layout, palette=palette, ramps=ramps,
+                 git=git,
+                 external=ExternalConf(dir=ext_dir, cache_ttl=ext_ttl, providers=external),
+                 cache_base=cache_base)
+    return cfg, problems
+
+
+def cfg_load_config(env: Env) -> "Config":
+    """Silent wrapper around cfg_load_config_verbose — discards all problems.
+
+    The render path calls this so it emits nothing to stderr. Use
+    cfg_load_config_verbose when you need the problem list (e.g. the doctor)."""
+    cfg, _ = cfg_load_config_verbose(env)
+    return cfg
 
 
 def cfg_cache_base(env: Env) -> str:

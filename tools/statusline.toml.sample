@@ -185,9 +185,9 @@
 ##   CC_AI_KIT_EXTERNAL_CACHE_TTL=10                  # external-segment cache TTL (s)
 ##   CC_AI_KIT_GIT_CACHE_TTL=5                        # git probe cache TTL (s)
 ##
-## Inspect & validate the resolved config (introspection lives in the doctor script;
-## the render module status-line.py renders only and no longer takes these flags):
+## Inspect & validate the resolved config (the render module status-line.py is
+## intentionally silent — all validation lives in the doctor script):
 ##   python3 tools/statusline-doctor.py --print-config   # resolved config as JSON
-##   python3 tools/statusline-doctor.py --check          # validate this file
+##   python3 tools/statusline-doctor.py --check          # validate this file + env overrides
 ##   python3 tools/statusline-doctor.py --doctor         # validate AND dry-render every segment
 ##   python3 tools/statusline-doctor.py --help           # full flag + env reference

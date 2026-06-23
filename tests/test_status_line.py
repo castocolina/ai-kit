@@ -1367,7 +1367,6 @@ class TestEnvBool(unittest.TestCase):
 
     def test_cfg_warn_format(self):
         """cfg_warn wraps a core message in the fixed dim render-format on stderr."""
-        import io
         from contextlib import redirect_stderr
         buf = io.StringIO()
         with redirect_stderr(buf):
@@ -1535,6 +1534,25 @@ class TestResolveSegments(unittest.TestCase):
         cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.segments["alt_cost"], sl.SEGMENTS["alt_cost"])  # default kept
 
+    def test_render_silent_on_broken_config(self):
+        """cfg_load_config emits NOTHING to stderr even when env/TOML has bad values."""
+        from contextlib import redirect_stderr
+        env = {"CC_AI_KIT_GIT_CACHE_TTL": "not-an-int", "CC_AI_KIT_SEGMENT_NOPE": "1"}
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            cfg = sl.cfg_load_config(env)
+        self.assertEqual(buf.getvalue(), "")
+        self.assertEqual(cfg.git["cache_ttl"], sl._GIT_CACHE_TTL)
+
+    def test_verbose_reports_problems(self):
+        """cfg_load_config_verbose returns problems without printing."""
+        env = {"CC_AI_KIT_GIT_CACHE_TTL": "not-an-int"}
+        _, problems = sl.cfg_load_config_verbose(env)
+        self.assertIn(
+            "CC_AI_KIT_GIT_CACHE_TTL must be an integer, got 'not-an-int' — ignored",
+            problems,
+        )
+
 
 class TestGitConfig(unittest.TestCase):
     def _write(self, body):
@@ -1566,11 +1584,8 @@ class TestGitConfig(unittest.TestCase):
 
     def test_cache_ttl_bad_toml_type_ignored(self):
         path = self._write('[git]\ncache_ttl = "soon"\n')   # string, not int
-        buf = io.StringIO()
-        with contextlib.redirect_stderr(buf):
-            cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
-        self.assertEqual(cfg.git["cache_ttl"], 5)            # default kept
-        self.assertIn("cache_ttl", buf.getvalue())           # and warned
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        self.assertEqual(cfg.git["cache_ttl"], 5)            # default kept; render is silent
 
     def test_worktree_env_no_longer_read(self):
         # CC_AI_KIT_GIT_WORKTREE is retired — setting it does not affect cfg.git.
@@ -1578,13 +1593,10 @@ class TestGitConfig(unittest.TestCase):
                "CC_AI_KIT_GIT_WORKTREE": "1"}
         self.assertEqual(sl.cfg_load_config(env).git, {"cache_ttl": 5})
 
-    def test_unknown_git_key_warns(self):
+    def test_unknown_git_key_ignored_silently(self):
         path = self._write("[git]\nbogus = true\n")
-        buf = io.StringIO()
-        with contextlib.redirect_stderr(buf):
-            cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
-        self.assertNotIn("bogus", cfg.git)             # bogus dropped
-        self.assertIn("bogus", buf.getvalue())         # and warned
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        self.assertNotIn("bogus", cfg.git)             # bogus dropped; render is silent
 
 
 class TestWorktreeSegmentToggle(unittest.TestCase):
@@ -1634,7 +1646,6 @@ class TestRenderWithConfig(unittest.TestCase):
 
 class TestMainUsesConfig(unittest.TestCase):
     def _run_main(self, raw, env):
-        import io
         from contextlib import redirect_stdout
         buf = io.StringIO()
         with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))),\
@@ -1700,7 +1711,6 @@ class TestPaletteFromConfig(unittest.TestCase):
         self.assertEqual(cfg.palette, {})
 
     def test_main_applies_palette(self):
-        import io
         from contextlib import redirect_stdout
         path = self._write('[palette]\nBLUE = "1;34"\n')
         raw = {"workspace": {"current_dir": "/tmp"}, "model": {"display_name": "Opus"},
