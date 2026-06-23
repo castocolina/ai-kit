@@ -107,8 +107,13 @@ actual diff, the invariants are firm):
   place** (the structure walk), down from two (model + router); config validation rules exist in
   **exactly one place** (`cfg_convert`), down from two (render inline + doctor). This is the
   core win — measured by absence of the second encoding, not by line count.
-- **`cfg_` function count**: **18 → ~12–13** (delete `cfg_env_bool`, `cfg_env_int`, `cfg_to_int`;
-  collapse the per-token router; net of `cfg_convert` + `cfg_source_get` + `cfg_bind`).
+- **`cfg_` function count**: **18 → ~12–13** (delete the config-env string parsers `cfg_env_bool`
+  and `cfg_env_int`; collapse the per-token router; net of `cfg_convert` + `cfg_source_get` +
+  `cfg_bind`). Separately, `cfg_to_int` is **reclassified to `util_to_int`** — call-site analysis
+  shows it is a pure probe-support parser (parses `tput`/`ps` output, called only from `probe_*`),
+  misfiled in the `cfg_` block; moving it removes a `probe_ → cfg_` layering smell and matches
+  "classify by nature, not caller". It is **not** absorbed into `cfg_convert` (which is for config
+  values, not subprocess output).
 - **Line count (secondary signal — relocation, not deletion, for warnings)**:
   - `tools/status-line.py`: **strictly decreases** (firm invariant). Estimate ~80–150 lines down
     (helpers + router + inline warnings + two-pass removed).
