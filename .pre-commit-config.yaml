@@ -53,3 +53,11 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      # Textual + PTY suites require uv (textual is not installed in the system python3).
+      # Runs after the core suite so errors are easy to attribute.
+      - id: unittest-wizard
+        name: unittest (wizard — uv)
+        entry: uv run python -m unittest tests.test_wizard_app tests.test_wizard_pty
+        language: system
+        pass_filenames: false
+        always_run: true
