@@ -49,7 +49,7 @@ repos:
       # how the status line actually runs. Minimal core set for now; expands post-refactor.
       - id: unittest
         name: unittest (core)
-        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch
         language: system
         pass_filenames: false
         always_run: true

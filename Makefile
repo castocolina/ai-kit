@@ -28,7 +28,7 @@ check:
 	bash $(INSTALL_SH) --check
 
 test:
-	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_sysmem_e2e
+	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_sysmem_e2e
 	bash tests/test_install.sh
 
 lint:
