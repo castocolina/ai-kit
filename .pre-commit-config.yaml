@@ -23,7 +23,7 @@ repos:
         name: pylint
         entry: uv run pylint
         language: system
-        files: ^tools/(status-line|setup)\.py$
+        files: ^tools/(status-line|statusline-doctor|setup)\.py$
         require_serial: true
       - id: pyright
         name: pyright
@@ -44,12 +44,12 @@ repos:
         name: py-compile
         entry: python3 -m py_compile
         language: system
-        files: ^tools/(status-line|setup)\.py$
+        files: ^tools/(status-line|statusline-doctor|setup)\.py$
       # Tests run on the user's real runtime (system python3, stdlib-only), matching
       # how the status line actually runs. Minimal core set for now; expands post-refactor.
       - id: unittest
         name: unittest (core)
-        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch
         language: system
         pass_filenames: false
         always_run: true

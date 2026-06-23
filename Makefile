@@ -28,12 +28,12 @@ check:
 	bash $(INSTALL_SH) --check
 
 test:
-	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_sysmem_e2e
+	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_sysmem_e2e
 	bash tests/test_install.sh
 
 lint:
 	shellcheck $(INSTALL_SH) tests/test_install.sh
-	python3 -m py_compile $(SETUP_PY) tools/status-line.py
+	python3 -m py_compile $(SETUP_PY) tools/status-line.py tools/statusline-doctor.py
 
 # Quality gate. Runs the SAME pre-commit hooks that gate commits, across all
 # files — so `make validate` and the commit hook can never drift. `uv run`

@@ -37,7 +37,8 @@ CATEGORIES = ("agents", "commands", "skills")
 
 Paths = namedtuple(
     "Paths",
-    "install_dir claude_dir settings config_dir config_toml sample status_line",
+    "install_dir claude_dir settings config_dir config_toml sample status_line "
+    "statusline_doctor",
 )
 
 
@@ -60,6 +61,7 @@ def resolve_paths(env):
         config_toml=os.path.join(config_dir, "statusline.toml"),
         sample=os.path.join(install_dir, "tools", "statusline.toml.sample"),
         status_line=os.path.join(install_dir, "tools", "status-line.py"),
+        statusline_doctor=os.path.join(install_dir, "tools", "statusline-doctor.py"),
     )
 
 
@@ -68,18 +70,23 @@ def resolve_paths(env):
 # importable module, and the wizard must run even while the renderer is mid-edit.
 # TestTomlRead.test_segment_defaults_match_recipe_drift pins these to the recipe.
 SEGMENT_DEFAULTS = {
-    "path": True, "branch": True, "dirty": True, "worktree": True, "todo": True,
-    "model": True, "time_ago": True, "clock": True, "effort": True,
-    "lines": True, "cost": False, "total_time": True, "api_time": True,
-    "render_time": True, "slowest": True, "dimensions": False, "context": True,
-    "chat_size": True, "memory": True, "rate_limits": True,
+    "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": True,
+    "todo": True,
+    "model": True, "alt_time_ago": True, "alt_time_clock": True, "effort": True,
+    "lines": True, "alt_cost": False, "alt_time_session": True, "alt_time_api": True,
+    "render_time": True, "slowest": True, "alt_term_dimensions": False,
+    "context": True,
+    "chat_size": True, "alt_system_memory": True, "alt_rate_limits": True,
 }
 LAYOUT_DEFAULTS = [
-    {"min_rows": 0, "segments": ["path", "branch", "worktree", "dirty", "todo"]},
-    {"min_rows": 20, "segments": ["model", "time_ago", "clock", "effort", "lines",
-                                  "cost", "total_time", "api_time"]},
-    {"min_rows": 30, "segments": ["render_time", "slowest", "dimensions",
-                                  "context", "chat_size", "memory", "rate_limits"]},
+    {"min_rows": 0,
+     "segments": ["path", "git_branch", "alt_git_worktree", "git_dirty", "todo"]},
+    {"min_rows": 20, "segments": ["model", "alt_time_ago", "alt_time_clock",
+                                  "effort", "lines", "alt_cost", "alt_time_session",
+                                  "alt_time_api"]},
+    {"min_rows": 30, "segments": ["render_time", "slowest", "alt_term_dimensions",
+                                  "context", "chat_size", "alt_system_memory",
+                                  "alt_rate_limits"]},
 ]
 
 
@@ -155,29 +162,29 @@ def render_preview(status_line, segments, sample_json, env):
 # self-documenting). Lifted verbatim from tools/statusline.toml.sample comments.
 _SEGMENT_NOTES = {
     "path": "📂 working directory, ~-relative   (pinned)",
-    "branch": "git branch name",
-    "dirty": "working-tree dirty marker",
-    "worktree": "⎇ active linked-worktree name",
+    "git_branch": "git branch name",
+    "git_dirty": "working-tree dirty marker",
+    "alt_git_worktree": "⎇ active linked-worktree name",
     "todo": "📝 current TODO  (📝 in-progress / ⏸ pending)",
     "model": "active model name (e.g. Opus)",
-    "time_ago": "time since the session's first message",
-    "clock": "⏰ current wall-clock time",
+    "alt_time_ago": "time since the session's first message",
+    "alt_time_clock": "⏰ current wall-clock time",
     "effort": "🧠 reasoning-effort ladder + level ([auto] when auto)",
     "lines": "📃 lines added / removed this session",
-    "cost": "🪙 session cost in USD            (OFF by default)",
-    "total_time": "💬 total session duration",
-    "api_time": "📡 cumulative API response time",
+    "alt_cost": "🪙 session cost in USD            (OFF by default)",
+    "alt_time_session": "💬 total session duration",
+    "alt_time_api": "📡 cumulative API response time",
     "render_time": "⏱ status-line's own render time, SLO/SLA-colored",
     "slowest": "🐌 slowest single segment this render (name + duration)",
-    "dimensions": "terminal size cols×lines (? if assumed)  (debug; OFF by default)",
+    "alt_term_dimensions": "terminal size cols×lines (? if assumed)  (debug; OFF by default)",
     "context": "📊 context-window % used (and max) (pinned)",
     "chat_size": "💾 transcript file size on disk",
-    "memory": "🧮 status-line process memory (RSS)",
-    "rate_limits": "⚡ rate-limit buckets with reset time",
+    "alt_system_memory": "🧮 status-line process memory (RSS)",
+    "alt_rate_limits": "⚡ rate-limit buckets with reset time",
 }
 
 # A managed key line, optionally commented, capturing key + trailing comment:
-#   "# cost = false   # 🪙 ..."   ->  key="cost", trailing="# 🪙 ..."
+#   "# alt_cost = false   # 🪙 ..."   ->  key="alt_cost", trailing="# 🪙 ..."
 _KEY_RE = re.compile(
     r"^(?P<indent>\s*)#?\s*(?P<key>\w+)\s*=\s*[^#\n]*?(?P<trail>\s*#.*)?$")
 
@@ -317,14 +324,14 @@ def patch_layout(text, lines):
     return "".join(out)
 
 
-def write_toml_preserving(path, text, status_line):
+def write_toml_preserving(path, text, statusline_doctor):
     """Atomically write `text` to `path`, then self-validate via the doctor.
 
     Writes to a sibling temp file and os.replace()s it into place (atomic). Then
-    runs `status-line.py --doctor` against the result (CC_AI_KIT_CONFIG=path); if
-    the doctor reports problems, the previous file content is restored and False
-    is returned — the wizard must never leave a broken config (§5.1). Returns True
-    on success."""
+    runs `statusline-doctor.py --doctor` against the result
+    (CC_AI_KIT_CONFIG_FILE=path); if the doctor reports problems, the previous file
+    content is restored and False is returned — the wizard must never leave a broken
+    config (§5.1). Returns True on success."""
     prev = None
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
@@ -340,9 +347,9 @@ def write_toml_preserving(path, text, status_line):
             os.unlink(tmp)
         return False
     env = dict(os.environ)
-    env["CC_AI_KIT_CONFIG"] = path
+    env["CC_AI_KIT_CONFIG_FILE"] = path
     try:
-        proc = subprocess.run([sys.executable, "-S", status_line, "--doctor"],
+        proc = subprocess.run([sys.executable, "-S", statusline_doctor, "--doctor"],
                               capture_output=True, text=True, env=env, timeout=10,
                               check=False)
         ok = proc.returncode == 0
@@ -1044,7 +1051,7 @@ def _segment_changes_vs_recipe(path, segments):
     return {k: v for k, v in segments.items() if current.get(k) != v}
 
 
-def save_statusline_config(path, seg_changes, layout, status_line):
+def save_statusline_config(path, seg_changes, layout, statusline_doctor):
     """Apply the managed edits to the file at `path` via surgical text patches,
     then atomically write + doctor-validate. `seg_changes` is the minimal changed
     {key: bool}; `layout` is None (unchanged) or the full list of line dicts.
@@ -1055,7 +1062,7 @@ def save_statusline_config(path, seg_changes, layout, status_line):
         text = patch_segments(text, seg_changes)
     if layout is not None:
         text = patch_layout(text, layout)
-    return write_toml_preserving(path, text, status_line)
+    return write_toml_preserving(path, text, statusline_doctor)
 
 
 def _find_line(layout, seg):
@@ -1570,7 +1577,7 @@ def _save_and_report(paths, state, tty, dry):
         _print_closing(paths, tty)
         return
     ok = save_statusline_config(paths.config_toml, seg_changes, layout,
-                                paths.status_line)
+                                paths.statusline_doctor)
     if ok:
         print("  ✓ saved", file=tty)
     else:
@@ -1658,21 +1665,21 @@ def cmd_uninstall(env, dry):
 def _doctor_cmd(paths):
     """A concrete, copy-pasteable doctor command for this install."""
     return (f"{os.path.basename(sys.executable) or 'python3'} "
-            f"{paths.status_line} --doctor")
+            f"{paths.statusline_doctor} --doctor")
 
 
 def cmd_doctor(env):
-    """Delegate to status-line.py --doctor (E5a); return its exit code. Run under
-    THIS interpreter (not a bare 'python3' PATH lookup) so the doctor validates
+    """Delegate to statusline-doctor.py --doctor (E5a); return its exit code. Run
+    under THIS interpreter (not a bare 'python3' PATH lookup) so the doctor validates
     with the same Python the wizard writes/validates the config with."""
     paths = resolve_paths(env)
-    return subprocess.call([sys.executable, "-S", paths.status_line, "--doctor"])
+    return subprocess.call([sys.executable, "-S", paths.statusline_doctor, "--doctor"])
 
 
 def cmd_check(env):
-    """Delegate to status-line.py --check (E5a); return its exit code."""
+    """Delegate to statusline-doctor.py --check (E5a); return its exit code."""
     paths = resolve_paths(env)
-    return subprocess.call([sys.executable, "-S", paths.status_line, "--check"])
+    return subprocess.call([sys.executable, "-S", paths.statusline_doctor, "--check"])
 
 
 def main(argv=None):
