@@ -45,6 +45,85 @@ The repo is the source of truth. `tools/install.sh`:
 
 Adding or removing skills/commands/agents needs no change to the script — entries are discovered dynamically.
 
+### The install wizard
+
+After the repo is fetched, `install.sh` launches `tools/setup.py` — a
+full-screen **Textual** wizard with two surfaces: an **install-picks screen**
+(choose which skills, commands, agents, and example segments to install) and a
+**2-D layout board** (arrange status-line segments visually instead of
+hand-editing TOML). You can also reach it directly:
+
+```bash
+uv run tools/setup.py            # interactive install
+uv run tools/setup.py reconfigure   # reload your current selection + layout
+make install                        # same as install.sh — launches the wizard
+```
+
+`reconfigure` pre-loads your current TOML layout so the board reflects reality
+before you make changes.
+
+**`uv` and `textual` are wizard-only.** The status-line render path
+(`tools/status-line.py`) stays plain `python3 -S` with zero dependencies —
+`uv`/`textual` are never required at render time and are never installed into
+your system Python. On first launch, if `uv` is missing, the wizard asks
+consent and installs it via the official [astral installer](https://astral.sh/uv);
+then re-execs itself under `uv run` so PEP-723 inline deps resolve `textual`
+into an ephemeral environment.
+
+**Fail-closed / interactive-only.** The wizard requires a real terminal. If
+there is no usable TTY, or `uv`/`textual` cannot be obtained, or the terminal
+is too small to render the TUI, it prints a clear reason and exits non-zero.
+There is no plain-menu fallback and no headless-defaults mode — this is
+deliberate. A clean `Ctrl-C`, `q`, or `esc` abort leaves the original config
+intact.
+
+#### Install-picks screen keybindings
+
+| Key | Action |
+|---|---|
+| `space` | Toggle the focused pick on (◉) / off (◯) |
+| `a` | Select all |
+| `n` | Select none |
+| `tab` | Go to the Layout Board |
+| `enter` | Go to the summary / confirm |
+| `q` / `esc` | Cancel — abort, nothing installed |
+
+#### Layout Board keybindings
+
+The board shows segments as chips (`[>seg<]` = focused). Active segments sit
+on numbered lines; inactive ones drop into an **off-tray** (disabled). Moving
+a chip up from the top line sends it to the off-tray; moving a tray chip down
+re-activates it onto line 1.
+
+| Key | Action |
+|---|---|
+| `←` / `h` | Move chip left (reorder within a line) |
+| `→` / `l` | Move chip right (reorder within a line) |
+| `↑` / `k` | Move chip up (or off → off-tray from top line) |
+| `↓` / `j` | Move chip down (or tray → line 1) |
+| `space` | Toggle focused segment active / off-tray |
+| `n` | Focus next chip |
+| `p` | Focus previous chip |
+| `tab` / `esc` | Back to install-picks |
+| `enter` | Go to the summary / confirm |
+
+#### Summary screen
+
+`enter` / `y` confirms and writes `~/.config/ai-kit/statusline.toml`
+(doctor-validated; auto-reverts a bad write). `q` / `esc` aborts. An empty
+selection triggers a confirm modal ("install nothing?") defaulting to No
+(`y` to proceed, `n` / `esc` / `q` to go back).
+
+The board's **live preview** uses a representative fixture — it cannot show
+your live session's model/context/cost during a standalone wizard run, so it
+displays realistic sample values.
+
+**What the wizard does not cover.** Adding/removing lines and editing
+per-segment min-width gates must be done by hand-editing the TOML (see
+[Status-line configuration](#status-line-configuration) below for colors,
+ramps, and palette). The TOML file remains the authoritative source; the
+wizard writes standard TOML that you can continue to edit by hand.
+
 ### Status-line configuration
 
 The status line works with zero config. To customize it, edit
@@ -251,7 +330,7 @@ install.sh --dry-run            # show what would change, mutate nothing
 install.sh --uninstall          # remove every ai-kit symlink + statusLine (keeps the install dir)
 install.sh --examples=all|none|<ids>   # which bundled example segments to install (default: all)
 install.sh --branch <name>      # fetch a specific branch  (or --branch=<name>; fork via AI_KIT_REPO)
-AIKIT_PLAIN=1 install.sh        # force the plain numbered wizard (skip the arrow-key chip UI)
+install.sh reconfigure          # re-open the wizard pre-loaded with your current selection + layout
 ```
 
 **Try a branch without merging it.** `--branch <name>` is consumed by the bootstrapper (not passed
@@ -280,12 +359,12 @@ fetch and uses the checked-out files directly):
 git clone -b feat/x https://github.com/castocolina/ai-kit && cd ai-kit && make install
 ```
 
-**Wizard modes.** The interactive installer auto-selects its UI: on a capable
-terminal it shows an **arrow-key chip selector** (↑↓/space/enter), and falls back
-to a **plain numbered menu** anywhere else (non-tty, `TERM=dumb`, a small window).
-Force the plain menu with `AIKIT_PLAIN=1`. With no terminal at all (CI, piped
-input) the wizard never prompts — selections come from flags and defaults, so an
-unattended `install` always completes.
+**Wizard modes.** The interactive wizard requires a real terminal and a
+sufficiently large window (see [The install wizard](#the-install-wizard) above).
+If either is missing it exits non-zero with a clear message — there is no
+plain-menu fallback. For non-interactive installs, pass `--examples=all|none|<ids>`
+to control which example segments are copied; the rest of the link/prune/statusline
+steps are always non-interactive.
 
 Environment overrides: `AI_KIT_DIR`, `AI_KIT_REPO`, `AI_KIT_BRANCH`, `CLAUDE_CONFIG_DIR`.
 
