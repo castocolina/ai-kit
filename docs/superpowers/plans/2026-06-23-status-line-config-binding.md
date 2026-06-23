@@ -10,6 +10,29 @@
 
 ---
 
+## SCOPE AMENDMENTS (2026-06-23, post-approval — supersede the body where they conflict)
+
+1. **Canonical names only — NO back-compat (new Task 2.0, runs first in Phase 2).** Single user;
+   breaking old config/env names is authorized. DELETE: `cfg_env_normalize` + its `_ALIASES`,
+   `_LEGACY_SEGMENT_KEYS` + `cfg_forward_legacy_segment`, `_GIT_LEGACY_IGNORED` + the
+   `cfg_git_key_problem` "legacy" branch + the `cfg_load_config` git "legacy" continue, and the
+   `CC_AI_KIT_CONFIG` fallback in `cfg_config_path` (canonical `CC_AI_KIT_CONFIG_FILE` only). Repoint
+   the doctor (drops its `cfg_env_normalize` call + `_LEGACY_SEGMENT_KEYS` import/union). Delete the
+   deprecation/forwarding tests; strip the "Deprecated names" sections from README + sample. Golden
+   byte-identical (default config has no deprecated keys); old names become unknown keys.
+2. **Bind is two functions, NO forwarding.** The single `cfg_bind` in the body is superseded by
+   `cfg_bind_scalars` (git/external, BEFORE discovery) + `cfg_bind_segments` (segments, AFTER
+   discovery) — env-bound `ext_dir` must precede discovery, provider ids must precede segment bind,
+   so one call can't straddle discovery. `cfg_bind_segments` binds known canonical segment keys only
+   (no legacy forwarding). This eliminates the throwaway double env-walk (the real "two-pass" cost).
+3. **Parity matrix drops the deprecation classes** (`deprecated-alias`, `deprecated-segment-key`) —
+   they no longer exist. Remaining classes: invalid-value (env bad-int, TOML wrong-type),
+   unknown-key, malformed-file, out-of-range. env-bad-bool stays silent.
+4. **FR-9 (Phase 4): move the whole SHELL block to the END** of the module (just before
+   `if __name__ == "__main__"`), functional-core-first / impure-shell-last. Renumber banners; update
+   the FR-8 block-order arch test to `DEFAULTS → cfg_ → probe_ → fmt_ → util_ → core_ → seg_ → SHELL`.
+   Golden byte-identical (call-time name resolution).
+
 ## Hard Constraints (EVERY task)
 
 - **Golden byte-identical**: `tests/fixtures/golden/expected.txt` (stdout) unchanged after every task. NEVER run `UPDATE_GOLDEN=1`. The fixture must not appear in any commit diff.

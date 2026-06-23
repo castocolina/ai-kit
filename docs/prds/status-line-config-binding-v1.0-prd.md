@@ -64,8 +64,9 @@
      per-key code; render is unaffected by any warning noise.
   2. A user typos `CC_AI_KIT_SEGMENT_ALT_COST=banana` → render silently keeps the default;
      `statusline-doctor.py --check` reports "must be true/false".
-  3. A user keeps a deprecated `CC_AI_KIT_GIT_TTL` → it still functions (forwarded silently at
-     runtime); the doctor reports the deprecation.
+  3. Config and env vars use **canonical names only**. There is a single user; all deprecated
+     aliases and legacy segment keys are **removed** (no back-compat machinery). An old name
+     (e.g. `CC_AI_KIT_GIT_TTL`, `[segments] clock`, `[git] worktree`) is simply an unknown key.
 
 ### Detailed Requirements
 
@@ -73,9 +74,9 @@
   - Inputs: the typed default `Config`, the parsed TOML dict, and the `Env` mapping.
   - Output (render): a fully resolved `Config`, byte-identical in its effect on **stdout** to
     today; **no stderr** emitted by the render path.
-  - Output (doctor): the resolved `Config` **plus** the ordered list of problems (deprecations,
-    invalid values, unknown keys, malformed file, out-of-range clamps), formatted as the dim
-    warnings the render path used to emit.
+  - Output (doctor): the resolved `Config` **plus** the ordered list of problems (invalid values,
+    unknown keys, malformed file, out-of-range clamps), formatted as the dim warnings the render
+    path used to emit.
 
 - **User Interaction**: unchanged CLI surface. `status-line.py` renders only (no flags). The
   doctor's existing flags (`--check`, `--doctor`, `--print-config`) gain the full validation
@@ -87,8 +88,10 @@
     override → fall through), **present-and-valid**, and **present-but-invalid** (→ problem).
   - The env-name projection is deterministic: `config.<group>.<field>` ⇄
     `CC_AI_KIT_<GROUP>_<FIELD>` (upper-cased); `segments.<key>` ⇄ `CC_AI_KIT_SEGMENT_<KEY>`.
-  - The deprecated-alias map and the legacy-segment-key map remain **data**; forwarding is
-    applied during bind (silently); the deprecation is surfaced as a *problem* (doctor-only).
+  - **No back-compat machinery.** All deprecated env aliases (`cfg_env_normalize`/`_ALIASES`),
+    legacy segment keys (`_LEGACY_SEGMENT_KEYS`/`cfg_forward_legacy_segment`), the legacy
+    `[git] worktree` tolerance (`_GIT_LEGACY_IGNORED`), and the `CC_AI_KIT_CONFIG` fallback are
+    **deleted**. Single user → canonical names only; old names are just unknown keys.
 
 - **Edge Cases**:
   - Malformed TOML → render uses `{}` silently; doctor reports the parse error.
@@ -167,7 +170,7 @@ Moving warnings to the doctor must not silently change what users see when they 
 doctor. The contract:
 
 - **Problem taxonomy** (the complete set the converter/bind layer must surface, each tagged with a
-  stable class): `deprecated-alias`, `deprecated-segment-key`, `invalid-value` (bad int / non-bool),
+  stable class): `invalid-value` (bad int / non-bool),
   `unknown-key` (segment / `[git]` / palette / ramp), `malformed-file` (TOML parse error),
   `out-of-range` (external segment line clamp).
 - **Text parity**: for each class, the doctor emits the **byte-identical** dim message the render
@@ -196,8 +199,9 @@ Grounded in `reducing-entropy` (data-over-abstractions + simplicity-vs-easy):
 
 - **Performance Requirements**: render is no slower (silent bind removes stderr writes);
   FR-R.2 probe-timing test stays green.
-- **Compatibility**: deprecated `CC_AI_KIT_*` aliases and legacy segment keys keep working
-  identically at runtime. Golden **stdout** stays byte-identical (never `UPDATE_GOLDEN=1`).
+- **Compatibility**: NONE retained — canonical names only (single user; breaking old config/env
+  names is explicitly authorized). Golden **stdout** stays byte-identical for the default/canonical
+  config (never `UPDATE_GOLDEN=1`); only deprecated names stop working.
 - **Security**: none new (no new I/O, no subprocess, no network).
 - **Scalability**: a new typed config field needs **zero** reader edits — access/convert/bind
   pick it up from the structure (the auto-extending property).
@@ -231,7 +235,7 @@ Grounded in `reducing-entropy` (data-over-abstractions + simplicity-vs-easy):
       with the section merge policy preserved; the throwaway **two-pass** env call is eliminated
       (segments bound once, after discovery).
 - [ ] **FR-4 Silent render / doctor validation**: the render path emits **no** stderr config
-      warnings; `statusline-doctor.py` reports every problem class (deprecation, invalid value,
+      warnings; `statusline-doctor.py` reports every problem class (invalid value,
       unknown key, malformed file, out-of-range clamp) for both file and env.
 - [ ] **FR-4a Parity contract**: for each problem class the doctor's message is byte-identical to
       the message render emitted before; verified by a captured-stderr fixture in
@@ -239,12 +243,20 @@ Grounded in `reducing-entropy` (data-over-abstractions + simplicity-vs-easy):
 - [ ] **FR-3a Bind boundary + precedence**: the walk binds only the `line_conf` groups (not SHELL
       geometry, JSON effort, or the bootstrap read); per-field precedence is default < TOML < env
       with present-but-invalid falling back (and yielding a problem).
-- [ ] **FR-5 Back-compat**: deprecated env aliases and legacy segment keys still forward and
-      function identically at runtime; the doctor reports them as deprecations.
+- [ ] **FR-5 Canonical-only (no back-compat)**: `cfg_env_normalize`/`_ALIASES`,
+      `_LEGACY_SEGMENT_KEYS`/`cfg_forward_legacy_segment`, `_GIT_LEGACY_IGNORED` (+ its
+      `cfg_git_key_problem` "legacy" branch), and the `CC_AI_KIT_CONFIG` fallback are all deleted;
+      old names resolve as unknown keys. Deprecation tests/docs removed.
 - [ ] **FR-6 FR-8 rule reduced**: the AST "single env reader" rule is trimmed to the minimal
       still-meaningful guard, allowlist updated to the bind symbol; redundant clauses removed.
 - [ ] **FR-7 Seam comments**: `probe_`/`util_`/`fmt_` block headers carry the "shared by default;
       classify by nature; single-kind seam noted" rule; no per-function census; no runtime code.
+- [ ] **FR-9 SHELL block at end**: the whole SHELL role block (env capture, stdin, `_run`, print
+      helpers, `main`, `safe_render`) moves to the END of the module, just before
+      `if __name__ == "__main__"` — functional-core-first, impure-shell-last. Banners renumbered;
+      the FR-8 block-order arch test updated to the new sequence
+      (`DEFAULTS → cfg_ → probe_ → fmt_ → util_ → core_ → seg_ → SHELL`). Golden byte-identical
+      (Python resolves names at call time, so order is runtime-irrelevant).
 
 ### Quality Standards
 
