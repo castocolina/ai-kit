@@ -272,22 +272,19 @@ class TestResolveExternal(unittest.TestCase):
         self.assertEqual((d, ttl), ("/tmp/segs", 25))
 
     def test_env_wins(self):
-        # FR-1.6: env overrides now applied by cfg_env_apply_overrides, not cfg_resolve_external.
-        # Old names are back-compat aliases; test at the combined TOML+env layer.
+        # FR-2: env overrides applied by cfg_bind_scalars; canonical names only.
         raw = {"external": {"ttl": 25, "dir": "/tmp/segs"}}
-        env = sl.cfg_env_normalize(
-            {"CC_AI_KIT_SEGMENTS_DIR": "/env/segs", "CC_AI_KIT_EXTERNAL_TTL": "3"}
-        )
+        env = {"CC_AI_KIT_EXTERNAL_DIR": "/env/segs", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "3"}
         d, ttl = sl.cfg_resolve_external(raw, env)
-        _, d, ttl, _ = sl.cfg_env_apply_overrides(env, {}, d, ttl, {})
+        _, d, ttl, _ = sl.cfg_bind_scalars(raw, env, dict(sl._GIT_DEFAULTS), d, ttl)
         self.assertEqual((d, ttl), ("/env/segs", 3))
 
     def test_bad_env_ttl_falls_back_to_file(self):
-        # FR-1.6: bad env TTL now handled by cfg_env_apply_overrides (prints warning, ignores).
+        # FR-2: bad env TTL now handled by cfg_bind_scalars (collects problem, ignores).
         raw = {"external": {"ttl": 25}}
         env = {"CC_AI_KIT_EXTERNAL_CACHE_TTL": "notanint"}
         d, ttl = sl.cfg_resolve_external(raw, env)
-        _, _d, ttl, _ = sl.cfg_env_apply_overrides(env, {}, d, ttl, {})
+        _, _d, ttl, _ = sl.cfg_bind_scalars(raw, env, dict(sl._GIT_DEFAULTS), d, ttl)
         self.assertEqual(ttl, 25)
 
 
@@ -302,41 +299,41 @@ class TestPlace(unittest.TestCase):
                           timeout=2.0, ttl=10, cache_path=f"/c/{sid}")
 
     def test_after_key(self):
-        layout, final = sl.cfg_place_external(self._layout(),
-                                           [self._spec("aws", 2, ("after", "clock"))])
+        layout, final, _ = sl.cfg_place_external(self._layout(),
+                                              [self._spec("aws", 2, ("after", "clock"))])
         self.assertEqual(layout[1].segments, ["model", "clock", "aws"])
         self.assertEqual(final[0].line, 2)
 
     def test_before_key(self):
-        layout, _ = sl.cfg_place_external(self._layout(),
-                                       [self._spec("x", 2, ("before", "clock"))])
+        layout, _, _ = sl.cfg_place_external(self._layout(),
+                                          [self._spec("x", 2, ("before", "clock"))])
         self.assertEqual(layout[1].segments, ["model", "x", "clock"])
 
     def test_start_and_end(self):
-        layout, _ = sl.cfg_place_external(self._layout(), [
+        layout, _, _ = sl.cfg_place_external(self._layout(), [
             self._spec("s", 1, ("start", "")), self._spec("e", 1, ("end", ""))])
         self.assertEqual(layout[0].segments, ["s", "path", "branch", "e"])
 
     def test_line_zero_means_last_row(self):
-        layout, final = sl.cfg_place_external(self._layout(),
-                                           [self._spec("z", 0, ("end", ""))])
+        layout, final, _ = sl.cfg_place_external(self._layout(),
+                                              [self._spec("z", 0, ("end", ""))])
         self.assertEqual(layout[2].segments, ["context", "memory", "z"])
         self.assertEqual(final[0].line, 3)         # resolved to the last row
 
     def test_out_of_range_clamps_to_last(self):
-        layout, final = sl.cfg_place_external(self._layout(),
-                                           [self._spec("z", 9, ("end", ""))])
+        layout, final, _ = sl.cfg_place_external(self._layout(),
+                                              [self._spec("z", 9, ("end", ""))])
         self.assertEqual(layout[2].segments[-1], "z")
         self.assertEqual(final[0].line, 3)
 
     def test_missing_ref_appends(self):
-        layout, _ = sl.cfg_place_external(self._layout(),
-                                       [self._spec("z", 2, ("after", "nope"))])
+        layout, _, _ = sl.cfg_place_external(self._layout(),
+                                          [self._spec("z", 2, ("after", "nope"))])
         self.assertEqual(layout[1].segments, ["model", "clock", "z"])
 
     def test_min_rows_preserved(self):
-        layout, _ = sl.cfg_place_external(self._layout(),
-                                       [self._spec("z", 2, ("end", ""))])
+        layout, _, _ = sl.cfg_place_external(self._layout(),
+                                          [self._spec("z", 2, ("end", ""))])
         self.assertEqual([ln.min_rows for ln in layout], [0, 20, 30])
 
 
@@ -350,7 +347,7 @@ class TestLoadConfigExternal(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
 
     def _env(self, **extra):
-        env = {"CC_AI_KIT_CONFIG": self.cfg, "CC_AI_KIT_SEGMENTS_DIR": self.segs,
+        env = {"CC_AI_KIT_CONFIG_FILE": self.cfg, "CC_AI_KIT_EXTERNAL_DIR": self.segs,
                "XDG_CACHE_HOME": os.path.join(self.dir, "cache"), "HOME": self.dir}
         env.update(extra)
         return env
@@ -389,7 +386,7 @@ class TestRenderIntegration(unittest.TestCase):
         os.makedirs(self.segs)
         self.cfg = os.path.join(self.dir, "statusline.toml")
         self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
-        self.env = {"CC_AI_KIT_CONFIG": self.cfg, "CC_AI_KIT_SEGMENTS_DIR": self.segs,
+        self.env = {"CC_AI_KIT_CONFIG_FILE": self.cfg, "CC_AI_KIT_EXTERNAL_DIR": self.segs,
                     "XDG_CACHE_HOME": os.path.join(self.dir, "cache"), "HOME": self.dir}
 
     def _render(self, cols=200, lines=40):
@@ -436,7 +433,7 @@ class TestCliSurface(unittest.TestCase):
         os.makedirs(self.segs)
         self.cfg = os.path.join(self.dir, "statusline.toml")
         self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
-        self.env = {"CC_AI_KIT_CONFIG": self.cfg, "CC_AI_KIT_SEGMENTS_DIR": self.segs,
+        self.env = {"CC_AI_KIT_CONFIG_FILE": self.cfg, "CC_AI_KIT_EXTERNAL_DIR": self.segs,
                     "XDG_CACHE_HOME": os.path.join(self.dir, "cache"), "HOME": self.dir}
 
     def test_print_config_lists_external(self):
@@ -503,7 +500,7 @@ class TestRecipe(unittest.TestCase):
         with open(self.PATH, encoding="utf-8") as f:
             text = f.read()
         self.assertIn("[external]", text)
-        self.assertIn("CC_AI_KIT_SEGMENTS_DIR", text)
+        self.assertIn("CC_AI_KIT_EXTERNAL_DIR", text)
         # Block ships fully commented (NO-OP): no live (uncommented) [external].
         for line in text.splitlines():
             self.assertNotEqual(line.strip(), "[external]",

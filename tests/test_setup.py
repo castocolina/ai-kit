@@ -136,9 +136,9 @@ class TestRenderPreview(unittest.TestCase):
         self.assertNotIn("Opus", off)        # toggling model off removes it
 
     def test_preview_passes_env_overrides_for_every_segment(self):
-        # cost is OFF by default; turning it on must surface the 🪙 marker.
+        # alt_cost is OFF by default; turning it on must surface the 🪙 marker.
         seg = dict(setup.SEGMENT_DEFAULTS)
-        seg["cost"] = True
+        seg["alt_cost"] = True
         with open(SAMPLE_INPUT) as f:
             sample_json = f.read()
         out = setup.render_preview(self._status_line(), seg, sample_json, {})
@@ -255,10 +255,10 @@ class TestWritePreserving(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "statusline.toml")
             ok = setup.write_toml_preserving(
-                path, "[segments]\ncost = true\n", self._statusline_doctor())
+                path, "[segments]\nalt_cost = true\n", self._statusline_doctor())
             self.assertTrue(ok)
             with open(path) as f:
-                self.assertIn("cost = true", f.read())
+                self.assertIn("alt_cost = true", f.read())
 
     def test_rejects_broken_output_and_reverts(self):
         with tempfile.TemporaryDirectory() as d:
@@ -619,7 +619,7 @@ class TestWizardLoop(unittest.TestCase):
 
     def test_save_writes_only_diff_from_recipe(self):
         # Integration: a save against the shipped recipe writes a valid file that
-        # toggles cost on and preserves the palette section.
+        # toggles alt_cost on and preserves the palette section.
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "statusline.toml")
             with open(SAMPLE_RECIPE) as f:
@@ -629,12 +629,12 @@ class TestWizardLoop(unittest.TestCase):
             statusline_doctor = os.path.join(
                 os.path.dirname(os.path.dirname(__file__)), "tools", "statusline-doctor.py")
             ok = setup.save_statusline_config(
-                path, {"cost": True}, None, statusline_doctor)
+                path, {"alt_cost": True}, None, statusline_doctor)
             self.assertTrue(ok)
             import tomllib
             with open(path, "rb") as f:
                 parsed = tomllib.load(f)
-            self.assertTrue(parsed["segments"]["cost"])
+            self.assertTrue(parsed["segments"]["alt_cost"])
             with open(path) as f:
                 self.assertIn("# [palette]", f.read())   # palette comments intact
 

@@ -59,8 +59,6 @@ sl = _load_core()
 # pylint: disable-next=protected-access
 _EXTERNAL_CACHE_TTL = sl._EXTERNAL_CACHE_TTL
 # pylint: disable-next=protected-access
-_LEGACY_SEGMENT_KEYS = sl._LEGACY_SEGMENT_KEYS
-# pylint: disable-next=protected-access
 _PALETTE_DEFAULTS = sl._PALETTE_DEFAULTS
 # pylint: disable-next=protected-access
 _RAMP_DEFAULTS = sl._RAMP_DEFAULTS
@@ -80,12 +78,6 @@ Environment variables:
   CC_AI_KIT_EXTERNAL_DIR     external drop-in segments directory (default
                              ${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments)
   CC_AI_KIT_EXTERNAL_CACHE_TTL  default cache TTL (seconds) for external segments
-
-Deprecated names (still accepted, emit a warning):
-  CC_AI_KIT_CONFIG       → CC_AI_KIT_CONFIG_FILE
-  CC_AI_KIT_GIT_TTL      → CC_AI_KIT_GIT_CACHE_TTL
-  CC_AI_KIT_SEGMENTS_DIR → CC_AI_KIT_EXTERNAL_DIR
-  CC_AI_KIT_EXTERNAL_TTL → CC_AI_KIT_EXTERNAL_CACHE_TTL
 
 Config precedence (low -> high): built-in defaults < TOML file < env."""
 
@@ -162,14 +154,12 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
     except (OSError, tomllib.TOMLDecodeError) as e:
         return [f"{path}: {e}"]
     errors: list[str] = []
-    env = sl.cfg_env_normalize(env)
     ext_dir, ext_ttl = sl.cfg_resolve_external(raw, env)
-    _, ext_dir, ext_ttl, _ = sl.cfg_env_apply_overrides(env, {}, ext_dir, ext_ttl, {})
+    _, ext_dir, ext_ttl, _ = sl.cfg_bind_scalars(
+        raw, env, sl.cfg_default_config().git, ext_dir, ext_ttl)
     seg_cache = os.path.join(sl.cfg_cache_base(env), "segments")
     ext_ids = {s.id for s in sl.core_discover_external(ext_dir, ext_ttl, seg_cache)}
-    # Legacy (pre-rename) keys still resolve via forwarding (FR-5.3), so --check
-    # must accept them too — otherwise it would reject a config the renderer loads.
-    known_segments = set(sl.cfg_default_config().segments) | ext_ids | set(_LEGACY_SEGMENT_KEYS)
+    known_segments = set(sl.cfg_default_config().segments) | ext_ids
     for k in cast(dict[str, Any], raw.get("segments") or {}):
         if k not in known_segments:
             errors.append(f"unknown segment key: {k}")
@@ -263,6 +253,17 @@ def _dry_render_failures(cfg: Any, theme: Any, env: Env) -> set[str]:
     return cast("set[str]", ctx.failed)
 
 
+def _env_problems(env: Env) -> list[str]:
+    """Return env-side bind problems from the render core's verbose config load.
+
+    Calls cfg_load_config_verbose and filters to problems that originate from
+    CC_AI_KIT_* env vars (identified by the 'CC_AI_KIT_' prefix in the message).
+    Each returned string is a raw problem message (no ANSI, no 'status-line: '
+    prefix); pass through sl.cfg_warn to emit it as a dim warning."""
+    _, problems = sl.cfg_load_config_verbose(env)
+    return [p for p in problems if "CC_AI_KIT_" in p]
+
+
 def cmd_doctor(env: Env) -> int:
     """Validate the resolved config AND dry-render every segment builder (not just
     the enabled ones). Prints a report; returns process exit code (0 healthy, 1 if
@@ -278,11 +279,14 @@ def cmd_doctor(env: Env) -> int:
         failed = _dry_render_failures(cfg, theme, env)
     except Exception as e:  # pylint: disable=broad-exception-caught  # diagnostic backstop reports any crash
         errors.append(f"render pipeline crashed: {e!r}")
+    env_probs = _env_problems(env)
     for e in errors:
         print(e, file=sys.stderr)
     for key in sorted(failed):
         print(f"segment '{key}' raised during render", file=sys.stderr)
-    if errors or failed:
+    for p in env_probs:
+        sl.cfg_warn(p)
+    if errors or failed or env_probs:
         print(f"after fixing, re-run: {sl.core_doctor_cmd()}", file=sys.stderr)
         return 1
     print(f"{path}: OK — config valid, all {len(sl.BUILDERS)} segments render cleanly")
@@ -293,9 +297,16 @@ def cmd_check(path: str, env: Env) -> int:
     """Validate a config file; print result. Return process exit code (0/1)."""
     path = path or sl.cfg_config_path(env)
     errors = validate_config_file(path, env)
+    env_probs = _env_problems(env)
     if errors:
         for e in errors:
             print(f"{path}: {e}", file=sys.stderr)
+        for p in env_probs:
+            sl.cfg_warn(p)
+        return 1
+    if env_probs:
+        for p in env_probs:
+            sl.cfg_warn(p)
         return 1
     print(f"{path}: OK")
     return 0
