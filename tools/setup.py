@@ -37,7 +37,8 @@ CATEGORIES = ("agents", "commands", "skills")
 
 Paths = namedtuple(
     "Paths",
-    "install_dir claude_dir settings config_dir config_toml sample status_line",
+    "install_dir claude_dir settings config_dir config_toml sample status_line "
+    "statusline_doctor",
 )
 
 
@@ -60,6 +61,7 @@ def resolve_paths(env):
         config_toml=os.path.join(config_dir, "statusline.toml"),
         sample=os.path.join(install_dir, "tools", "statusline.toml.sample"),
         status_line=os.path.join(install_dir, "tools", "status-line.py"),
+        statusline_doctor=os.path.join(install_dir, "tools", "statusline-doctor.py"),
     )
 
 
@@ -322,14 +324,14 @@ def patch_layout(text, lines):
     return "".join(out)
 
 
-def write_toml_preserving(path, text, status_line):
+def write_toml_preserving(path, text, statusline_doctor):
     """Atomically write `text` to `path`, then self-validate via the doctor.
 
     Writes to a sibling temp file and os.replace()s it into place (atomic). Then
-    runs `status-line.py --doctor` against the result (CC_AI_KIT_CONFIG=path); if
-    the doctor reports problems, the previous file content is restored and False
-    is returned — the wizard must never leave a broken config (§5.1). Returns True
-    on success."""
+    runs `statusline-doctor.py --doctor` against the result
+    (CC_AI_KIT_CONFIG_FILE=path); if the doctor reports problems, the previous file
+    content is restored and False is returned — the wizard must never leave a broken
+    config (§5.1). Returns True on success."""
     prev = None
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
@@ -345,9 +347,9 @@ def write_toml_preserving(path, text, status_line):
             os.unlink(tmp)
         return False
     env = dict(os.environ)
-    env["CC_AI_KIT_CONFIG"] = path
+    env["CC_AI_KIT_CONFIG_FILE"] = path
     try:
-        proc = subprocess.run([sys.executable, "-S", status_line, "--doctor"],
+        proc = subprocess.run([sys.executable, "-S", statusline_doctor, "--doctor"],
                               capture_output=True, text=True, env=env, timeout=10,
                               check=False)
         ok = proc.returncode == 0
@@ -1049,7 +1051,7 @@ def _segment_changes_vs_recipe(path, segments):
     return {k: v for k, v in segments.items() if current.get(k) != v}
 
 
-def save_statusline_config(path, seg_changes, layout, status_line):
+def save_statusline_config(path, seg_changes, layout, statusline_doctor):
     """Apply the managed edits to the file at `path` via surgical text patches,
     then atomically write + doctor-validate. `seg_changes` is the minimal changed
     {key: bool}; `layout` is None (unchanged) or the full list of line dicts.
@@ -1060,7 +1062,7 @@ def save_statusline_config(path, seg_changes, layout, status_line):
         text = patch_segments(text, seg_changes)
     if layout is not None:
         text = patch_layout(text, layout)
-    return write_toml_preserving(path, text, status_line)
+    return write_toml_preserving(path, text, statusline_doctor)
 
 
 def _find_line(layout, seg):
@@ -1575,7 +1577,7 @@ def _save_and_report(paths, state, tty, dry):
         _print_closing(paths, tty)
         return
     ok = save_statusline_config(paths.config_toml, seg_changes, layout,
-                                paths.status_line)
+                                paths.statusline_doctor)
     if ok:
         print("  ✓ saved", file=tty)
     else:
@@ -1663,21 +1665,21 @@ def cmd_uninstall(env, dry):
 def _doctor_cmd(paths):
     """A concrete, copy-pasteable doctor command for this install."""
     return (f"{os.path.basename(sys.executable) or 'python3'} "
-            f"{paths.status_line} --doctor")
+            f"{paths.statusline_doctor} --doctor")
 
 
 def cmd_doctor(env):
-    """Delegate to status-line.py --doctor (E5a); return its exit code. Run under
-    THIS interpreter (not a bare 'python3' PATH lookup) so the doctor validates
+    """Delegate to statusline-doctor.py --doctor (E5a); return its exit code. Run
+    under THIS interpreter (not a bare 'python3' PATH lookup) so the doctor validates
     with the same Python the wizard writes/validates the config with."""
     paths = resolve_paths(env)
-    return subprocess.call([sys.executable, "-S", paths.status_line, "--doctor"])
+    return subprocess.call([sys.executable, "-S", paths.statusline_doctor, "--doctor"])
 
 
 def cmd_check(env):
-    """Delegate to status-line.py --check (E5a); return its exit code."""
+    """Delegate to statusline-doctor.py --check (E5a); return its exit code."""
     paths = resolve_paths(env)
-    return subprocess.call([sys.executable, "-S", paths.status_line, "--check"])
+    return subprocess.call([sys.executable, "-S", paths.statusline_doctor, "--check"])
 
 
 def main(argv=None):

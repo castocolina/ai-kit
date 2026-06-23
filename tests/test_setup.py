@@ -247,15 +247,15 @@ class TestPatchLayout(unittest.TestCase):
 
 
 class TestWritePreserving(unittest.TestCase):
-    def _status_line(self):
+    def _statusline_doctor(self):
         return os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "tools", "status-line.py")
+            os.path.dirname(os.path.dirname(__file__)), "tools", "statusline-doctor.py")
 
     def test_writes_valid_toml_and_validates(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "statusline.toml")
             ok = setup.write_toml_preserving(
-                path, "[segments]\ncost = true\n", self._status_line())
+                path, "[segments]\ncost = true\n", self._statusline_doctor())
             self.assertTrue(ok)
             with open(path) as f:
                 self.assertIn("cost = true", f.read())
@@ -267,7 +267,7 @@ class TestWritePreserving(unittest.TestCase):
                 f.write("# good original\n")
             # An unknown segment key fails the doctor.
             ok = setup.write_toml_preserving(
-                path, "[segments]\nbogus_key = true\n", self._status_line())
+                path, "[segments]\nbogus_key = true\n", self._statusline_doctor())
             self.assertFalse(ok)
             with open(path) as f:
                 self.assertEqual(f.read(), "# good original\n")   # reverted
@@ -626,10 +626,10 @@ class TestWizardLoop(unittest.TestCase):
                 original = f.read()
             with open(path, "w") as f:
                 f.write(original)
-            status_line = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "tools", "status-line.py")
+            statusline_doctor = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), "tools", "statusline-doctor.py")
             ok = setup.save_statusline_config(
-                path, {"cost": True}, None, status_line)
+                path, {"cost": True}, None, statusline_doctor)
             self.assertTrue(ok)
             import tomllib
             with open(path, "rb") as f:
@@ -1013,6 +1013,8 @@ class TestResolvePaths(unittest.TestCase):
         self.assertEqual(p.config_toml, "/home/u/.config/ai-kit/statusline.toml")
         self.assertEqual(p.sample, "/home/u/.local/share/ai-kit/tools/statusline.toml.sample")
         self.assertEqual(p.status_line, "/home/u/.local/share/ai-kit/tools/status-line.py")
+        self.assertEqual(p.statusline_doctor,
+                         "/home/u/.local/share/ai-kit/tools/statusline-doctor.py")
 
     def test_env_overrides(self):
         env = {
@@ -1734,7 +1736,7 @@ class TestCmdDelegation(unittest.TestCase):
             rc = setup.cmd_doctor(env)
         self.assertEqual(rc, 0)
         args = call.call_args[0][0]
-        self.assertIn("/i/tools/status-line.py", args)
+        self.assertIn("/i/tools/statusline-doctor.py", args)
         self.assertIn("--doctor", args)
         # Validate under the SAME interpreter the wizard writes/validates with,
         # not a bare "python3" that PATH might resolve to a different venv.

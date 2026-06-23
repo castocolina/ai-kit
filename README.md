@@ -163,12 +163,14 @@ inf = "MAGENTA_DARK+bold"
 
 See `tools/statusline.toml.sample` for the full default palette and ramps.
 
-**Inspect & validate:**
+**Inspect & validate:** config introspection lives in `tools/statusline-doctor.py`
+(the render module `status-line.py` renders only and no longer accepts these flags):
 
 ```sh
-python3 tools/status-line.py --print-config   # resolved config as JSON (incl. ramps)
-python3 tools/status-line.py --check          # validate palette/ramp colorspecs
-python3 tools/status-line.py --help           # full env-var list
+python3 tools/statusline-doctor.py --print-config   # resolved config as JSON (incl. ramps)
+python3 tools/statusline-doctor.py --check          # validate palette/ramp colorspecs
+python3 tools/statusline-doctor.py --doctor         # validate + dry-render every segment
+python3 tools/statusline-doctor.py --help           # full env-var list
 ```
 
 Environment variables: `CC_AI_KIT_CONFIG_FILE` (config path),

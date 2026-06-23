@@ -83,12 +83,12 @@ disable = [
 # ─────────────────────────── vulture ───────────────────────────
 [tool.vulture]
 min_confidence = 80
-paths = ["tools/status-line.py", "tools/setup.py"]
+paths = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py"]
 # signal-handler / context-manager params required by their signature
 ignore_names = ["signum", "frame"]
 
 # ─────────────────────────── pyright ───────────────────────────
 [tool.pyright]
-include = ["tools/status-line.py", "tools/setup.py"]
+include = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"

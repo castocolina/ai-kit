@@ -9,9 +9,12 @@ bottom. Stdlib only. The .sh original is kept as a fallback.
 """
 # pyright: strict
 # ARCHITECTURE — functional core / imperative shell, one file, nine role blocks.
+# This module RENDERS ONLY: read stdin JSON -> pack -> print. Config introspection
+# (--doctor / --check / --print-config) lives in the sibling statusline-doctor.py,
+# which imports this render core one-way (never the reverse).
 # Every top-level function carries a role prefix and lives in the matching block,
 # so a reader can locate (and lift out) a whole role by name. Block order:
-#   1. SHELL     side effects only (env capture, stdin, print); the CLI entrypoint.
+#   1. SHELL     side effects only (env capture, stdin, print); the render entrypoint.
 #   2. DEFAULTS  data only — SEGMENTS/LAYOUT/PINNED + palette/ramp/effort tables +
 #                tuning scalars + fixed colors + type decls (Config/Line/
 #                GitSnapshot/ExtSpec). No logic; edit a default here.
@@ -26,13 +29,13 @@ bottom. Stdlib only. The .sh original is kept as a fallback.
 #                builder registry, the packer, and render.
 #   8. seg_      seg_x(ctx, avail, theme) -> str | None, self-sourcing; the builder
 #                map is auto-discovered from seg_* names (add a seg_x, it registers).
-#   9. CLI       introspection (--doctor/--check/--print-config); off the render
-#                hot path (extracted to statusline-doctor.py in a later phase).
+#   9. HOW TO CUSTOMIZE — the segment-authoring guide. Introspection itself
+#                (--doctor/--check/--print-config) is extracted to the sibling
+#                statusline-doctor.py; this module no longer accepts those flags.
 # To add a segment: write seg_<key>(ctx, avail, theme) in the seg_ block; add <key>
 # to a LAYOUT line; add <key>: True to SEGMENTS. The registry wires itself.
 # pylint: disable=invalid-name  # installed script name is hyphenated (status-line.py)
 
-import argparse
 import hashlib
 import json
 import math
@@ -58,7 +61,7 @@ from typing import Any, NamedTuple, Optional, cast
 Env = Mapping[str, str]
 
 
-# ═══ 1. SHELL — side effects only: env capture, stdin, print, CLI entrypoint ══
+# ═══ 1. SHELL — side effects only: env capture, stdin, print, render entrypoint ═
 
 
 # Per-segment on/off. Set False to hide a segment entirely: its builder is never
@@ -66,28 +69,6 @@ Env = Mapping[str, str]
 # RSS/etc.) never runs — a disabled segment costs nothing. Invariant: keep "path"
 # True so the identity line always emits.
 
-
-
-def parse_args(argv: list[str]) -> argparse.Namespace:
-    """Parse command-line arguments for the status-line CLI."""
-    p = argparse.ArgumentParser(
-        prog="status-line.py",
-        description="Claude Code status line. With no flags, reads the status "
-                    "JSON on stdin and renders up to three ANSI lines.",
-        epilog=_ENV_HELP,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p.add_argument("--print-config", action="store_true",
-                   help="resolve config (defaults < file < env), print it as "
-                        "JSON, and exit (does not read stdin)")
-    p.add_argument("--check", nargs="?", const=None, default=_NO_CHECK,
-                   metavar="FILE",
-                   help="validate a config file (default: the resolved path) "
-                        "and exit non-zero if invalid")
-    p.add_argument("--doctor", action="store_true",
-                   help="validate the config AND dry-render every segment to "
-                        "surface a builder that raises; exit non-zero if unhealthy")
-    return p.parse_args(argv)
 
 
 def safe_render(raw: dict[str, Any], env: Env, cfg: "Config", theme: "Theme",
@@ -109,19 +90,13 @@ def safe_render(raw: dict[str, Any], env: Env, cfg: "Config", theme: "Theme",
 
 
 def main() -> None:
-    """CLI entrypoint: dispatch subcommands or render the status line from stdin."""
+    """CLI entrypoint: render the status line from stdin. Renders only — config
+    introspection (--doctor / --check / --print-config) lives in the sibling
+    statusline-doctor.py, which imports this module one-way."""
     t0 = time.perf_counter_ns()        # for the optional `render_time` self-timing segment
     env = os.environ                   # single SHELL-boundary read (FR-A.1)
-    args = parse_args(sys.argv[1:])
-    if args.check is not _NO_CHECK:
-        sys.exit(cmd_check(args.check, env))
-    if args.doctor:
-        sys.exit(cmd_doctor(env))
     cfg = cfg_load_config(env)
     theme = core_build_theme(cfg)
-    if args.print_config:
-        print(cmd_print_config(cfg, env))
-        return
     try:
         raw: dict[str, Any] = json.load(sys.stdin)
     except (ValueError, OSError):
@@ -360,8 +335,9 @@ class ExtSpec(NamedTuple):
 
 
 def cfg_git_key_problem(k: str, v: Any) -> str | None:
-    """Classify one `[git]` key/value so cfg_load_config and validate_config_file share
-    a single validation rule (each formats its own message). Returns:
+    """Classify one `[git]` key/value so cfg_load_config and the doctor's
+    validate_config_file share a single validation rule (each formats its own
+    message). Returns:
       'legacy'  — a deprecated key the caller should silently skip,
       'unknown' — not a recognized `[git]` key,
       'bad_ttl' — cache_ttl is not an int (bools excluded),
@@ -1689,10 +1665,13 @@ def core_build_context(raw: dict[str, Any], config: "Config", theme: "Theme",  #
 
 def core_doctor_cmd() -> str:
     """A concrete, copy-pasteable doctor invocation for THIS install — resolved
-    from the running interpreter and this file's path (~-collapsed). Never a bare
-    '--doctor', which would assume the user is sitting in a repo clone."""
+    from the running interpreter and the SIBLING statusline-doctor.py path
+    (~-collapsed). Never a bare '--doctor', which would assume the user is sitting
+    in a repo clone. Builds the string only; it does not import the doctor module,
+    so it stays usable from inside a failed render."""
     py = os.path.basename(sys.executable) or "python3"
-    path = os.path.abspath(__file__)
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "statusline-doctor.py")
     home = os.path.expanduser("~")
     if path == home or path.startswith(home + os.sep):
         path = "~" + path[len(home):]
@@ -2336,7 +2315,10 @@ BUILDERS = core_discover_builders()   # module-level snapshot; same shape as the
 # in the table. The auto setting is surfaced as a "[auto]" suffix in seg_effort.
 
 
-# ═══ 9. CLI — introspection: --doctor / --check / --print-config (extracted in Phase 4)
+# ═══ 9. HOW TO CUSTOMIZE — this module renders only. Config introspection
+# (--doctor / --check / --print-config) lives in the sibling statusline-doctor.py,
+# which imports this render core one-way. See that script to validate config and
+# dry-render every builder.
 
 
 # Three knobs at the top of the file drive everything:
@@ -2397,219 +2379,6 @@ BUILDERS = core_discover_builders()   # module-level snapshot; same shape as the
 #       2. Place it:         add  "foo"  to a LAYOUT line where you want it.
 #       3. Flag it:          add  "foo": True  to SEGMENTS.
 #       4. Test it:          add a case in tests/test_status_line.py.
-
-
-
-_NO_CHECK = object()   # sentinel: --check flag absent (vs. present with no FILE)
-
-
-_ENV_HELP = """\
-Environment variables:
-  CC_AI_KIT_CONFIG_FILE      path to the TOML config file
-  CC_AI_KIT_SEGMENT_<KEY>    per-segment bool toggle; KEY is the upper-cased
-                             segment name (PATH, MODEL, COST, CONTEXT, ...).
-                             true:  1 true t y yes on    false: 0 false f n no off
-  CC_AI_KIT_GIT_CACHE_TTL    int; seconds the git worktree probe is cached. Wins
-                             over [git] cache_ttl (default 5).
-  CC_AI_KIT_EXTERNAL_DIR     external drop-in segments directory (default
-                             ${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments)
-  CC_AI_KIT_EXTERNAL_CACHE_TTL  default cache TTL (seconds) for external segments
-
-Deprecated names (still accepted, emit a warning):
-  CC_AI_KIT_CONFIG       → CC_AI_KIT_CONFIG_FILE
-  CC_AI_KIT_GIT_TTL      → CC_AI_KIT_GIT_CACHE_TTL
-  CC_AI_KIT_SEGMENTS_DIR → CC_AI_KIT_EXTERNAL_DIR
-  CC_AI_KIT_EXTERNAL_TTL → CC_AI_KIT_EXTERNAL_CACHE_TTL
-
-Config precedence (low -> high): built-in defaults < TOML file < env."""
-
-
-def cmd_print_config(cfg: "Config", env: Env) -> str:
-    """Resolved config as pretty JSON (no rendering)."""
-    # The top-level external `ttl`/`dir` are the GLOBAL resolved defaults
-    # (defaults < [external] file < env) — resolved the same way cfg_load_config
-    # does, so they're meaningful even when zero providers are discovered and
-    # are never confused with a single provider's per-header `ttl=` override
-    # (those appear per-entry in the "providers" array below). `dir` is the
-    # PROVIDERS directory (where scripts live), NOT the XDG cache dir.
-    ext_providers = cfg.external.providers if cfg.external else []
-    ext_dir = cfg.external.dir if cfg.external else ""
-    ext_ttl = cfg.external.cache_ttl if cfg.external else _EXTERNAL_CACHE_TTL
-    return json.dumps({
-        "segments": cfg.segments,
-        "layout": [{"min_rows": ln.min_rows, "segments": ln.segments}
-                   for ln in cfg.layout],
-        "palette": cfg.palette,
-        "ramps": cfg.ramps,
-        "git": cfg.git or {},
-        "external": {
-            "ttl": ext_ttl,
-            "dir": ext_dir,
-            "providers": [
-                {"id": s.id, "path": s.path, "line": s.line,
-                 "position": util_position_str(s.position),
-                 "timeout": s.timeout, "ttl": s.ttl}
-                for s in ext_providers
-            ],
-        },
-    }, indent=2)
-
-
-def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements,too-many-branches
-    path: str, env: Env,
-) -> list[str]:
-    """Return a list of human-readable error strings for the config at path
-    (empty list = valid). Checks: parseability, unknown segment keys, unknown
-    palette keys, palette color values, [[line]] segments that are not real
-    builders, and [ramp.*] band names / thresholds / colors."""
-    if tomllib is None:
-        return ["tomllib unavailable (Python < 3.11): cannot validate"]
-    try:
-        with open(path, "rb") as f:
-            raw = tomllib.load(f)
-    except FileNotFoundError:
-        return [f"{path}: no such file"]
-    except (OSError, tomllib.TOMLDecodeError) as e:
-        return [f"{path}: {e}"]
-    errors: list[str] = []
-    env = cfg_env_normalize(env)
-    ext_dir, ext_ttl = cfg_resolve_external(raw, env)
-    _, ext_dir, ext_ttl, _ = cfg_env_apply_overrides(env, {}, ext_dir, ext_ttl, {})
-    seg_cache = os.path.join(cfg_cache_base(env), "segments")
-    ext_ids = {s.id for s in core_discover_external(ext_dir, ext_ttl, seg_cache)}
-    # Legacy (pre-rename) keys still resolve via forwarding (FR-5.3), so --check
-    # must accept them too — otherwise it would reject a config the renderer loads.
-    known_segments = set(cfg_default_config().segments) | ext_ids | set(_LEGACY_SEGMENT_KEYS)
-    for k in cast(dict[str, Any], raw.get("segments") or {}):
-        if k not in known_segments:
-            errors.append(f"unknown segment key: {k}")
-    for k in cast(dict[str, Any], raw.get("palette") or {}):
-        if k not in _PALETTE_DEFAULTS:
-            errors.append(f"unknown palette key: {k}")
-    for name, value in cast(dict[str, Any], raw.get("palette") or {}).items():
-        if name in _PALETTE_DEFAULTS and util_parse_color(str(value), palette=None) is None:
-            errors.append(f"bad palette color: {name} = {value!r}")
-    for i, line in enumerate(cast(list[Any], raw.get("line") or [])):
-        line_dict = cast(dict[str, Any], line) if isinstance(line, dict) else {}
-        for seg in cast(list[Any], line_dict.get("segments") or []):
-            if seg not in BUILDERS and seg not in ext_ids:
-                errors.append(f"line[{i}] references unknown segment: {seg}")
-    resolved_palette = core_resolve_palette(
-        {str(k): str(v) for k, v in cast(dict[str, Any], raw.get("palette") or {}).items()
-         if k in _PALETTE_DEFAULTS})
-    for band, table in cast(dict[str, Any], raw.get("ramp") or {}).items():
-        if band not in _RAMP_DEFAULTS:
-            errors.append(f"unknown ramp: {band}")
-            continue
-        if not isinstance(table, dict):
-            errors.append(f"ramp [{band}] must be a table")
-            continue
-        for thr, spec in cast(dict[Any, Any], table).items():
-            try:
-                util_parse_threshold(str(thr))
-            except ValueError:
-                errors.append(f"ramp [{band}] bad threshold: {thr!r}")
-            if util_parse_color(str(spec), resolved_palette) is None:
-                errors.append(f"ramp [{band}] bad color: {spec!r}")
-    for k, v in cast(dict[str, Any], raw.get("git") or {}).items():
-        problem = cfg_git_key_problem(k, v)
-        if problem == "unknown":
-            errors.append(f"unknown [git] key: {k}")
-        elif problem == "bad_ttl":
-            errors.append(f"[git] cache_ttl must be an integer, got {v!r}")
-    ext: Any = raw.get("external")
-    if ext is not None:
-        if not isinstance(ext, dict):
-            errors.append("[external] must be a table")
-        else:
-            ext_dict: dict[str, Any] = cast(dict[str, Any], ext)
-            for k in ext_dict:
-                if k not in ("ttl", "dir"):
-                    errors.append(f"unknown [external] key: {k}")
-            ttl_val = ext_dict.get("ttl")
-            if "ttl" in ext_dict and (not isinstance(ttl_val, int) or isinstance(ttl_val, bool)):
-                errors.append(f"[external] ttl must be an integer, got {ttl_val!r}")
-            if "dir" in ext_dict and not isinstance(ext_dict["dir"], str):
-                errors.append(f"[external] dir must be a string, got {ext_dict['dir']!r}")
-    return errors
-
-
-# A representative status JSON for the doctor's dry render. Self-contained (no
-# fixture file): exercises every default builder so one that raises is surfaced.
-_DOCTOR_SAMPLE = {
-    "model": {"display_name": "Opus 4.8", "id": "claude-opus-4-8"},
-    "cost": {"total_lines_added": 12, "total_lines_removed": 3,
-             "total_cost_usd": 0.0123, "total_duration_ms": 45000,
-             "total_api_duration_ms": 12000},
-    "context_window": {"used_percentage": 42, "context_window_size": 200000},
-    "workspace": {"current_dir": "."},
-    "transcript_path": "",
-    "session_id": "doctor-sample",
-    "rate_limits": {},
-    "effort": {"level": "high"},
-}
-
-
-def _dry_render_failures(cfg: "Config", theme: "Theme", env: Env) -> set[str]:
-    """Run EVERY builder once against the sample input — including segments that
-    are disabled or absent from the layout — and return the set of segment keys
-    whose builder raised. Dry-rendering only the enabled+reachable subset would
-    let a broken disabled builder (e.g. `cost`) pass the doctor and then crash
-    the moment the user enables it, which is exactly the failure class the doctor
-    exists to catch. `core_safe_build` (not the packer's flag gate) does the catching,
-    so we invoke it directly for each key.
-
-    Note: this catches builders that crash on *valid* input. A builder that only
-    raises on a missing/malformed key won't be surfaced by this happy-path sample."""
-    cols, lines, assumed = probe_terminal_size(env)
-    home = env.get("HOME", "")
-    claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-    ctx = core_build_context(dict(_DOCTOR_SAMPLE), cfg, theme, cols, lines, assumed,
-                        time.perf_counter_ns(),
-                        effort=cfg_resolve_effort(_DOCTOR_SAMPLE),
-                        home=home, claude_dir=claude_dir)
-    for key in BUILDERS:
-        core_safe_build(key, ctx, 200, theme)
-    return ctx.failed
-
-
-def cmd_doctor(env: Env) -> int:
-    """Validate the resolved config AND dry-render every segment builder (not just
-    the enabled ones). Prints a report; returns process exit code (0 healthy, 1 if
-    any problem)."""
-    path = cfg_config_path(env)
-    errors: list[str] = []
-    if os.path.exists(path):
-        errors = [f"{path}: {e}" for e in validate_config_file(path, env)]
-    failed: set[str] = set()
-    cfg = cfg_load_config(env)                         # never raises (degrades to defaults)
-    try:
-        theme = core_build_theme(cfg)
-        failed = _dry_render_failures(cfg, theme, env)
-    except Exception as e:  # pylint: disable=broad-exception-caught  # diagnostic backstop reports any crash
-        errors.append(f"render pipeline crashed: {e!r}")
-    for e in errors:
-        print(e, file=sys.stderr)
-    for key in sorted(failed):
-        print(f"segment '{key}' raised during render", file=sys.stderr)
-    if errors or failed:
-        print(f"after fixing, re-run: {core_doctor_cmd()}", file=sys.stderr)
-        return 1
-    print(f"{path}: OK — config valid, all {len(BUILDERS)} segments render cleanly")
-    return 0
-
-
-def cmd_check(path: str, env: Env) -> int:
-    """Validate a config file; print result. Return process exit code (0/1)."""
-    path = path or cfg_config_path(env)
-    errors = validate_config_file(path, env)
-    if errors:
-        for e in errors:
-            print(f"{path}: {e}", file=sys.stderr)
-        return 1
-    print(f"{path}: OK")
-    return 0
-
 
 if __name__ == "__main__":
     main()

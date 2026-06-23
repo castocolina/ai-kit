@@ -10,6 +10,7 @@ import unittest
 
 _HERE = os.path.dirname(__file__)
 _MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
+_DOCTOR_PATH = os.path.join(_HERE, "..", "tools", "statusline-doctor.py")
 
 
 def load_module():
@@ -20,7 +21,16 @@ def load_module():
     return mod
 
 
+def load_doctor():
+    spec = importlib.util.spec_from_file_location("statusline_doctor", _DOCTOR_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 sl = load_module()
+doctor = load_doctor()   # introspection (--print-config / --check) lives here (Phase 4)
 
 
 def _ctx_from_env(raw, env, cfg, t_start=None):
@@ -432,7 +442,7 @@ class TestCliSurface(unittest.TestCase):
     def test_print_config_lists_external(self):
         write_script(self.segs, "sysmem", "#!/bin/sh\n# ai-kit-segment: line=1 end\necho hi\n")
         cfg = sl.cfg_load_config(self.env)
-        blob = json.loads(sl.cmd_print_config(cfg, self.env))
+        blob = json.loads(doctor.cmd_print_config(cfg, self.env))
         self.assertEqual(blob["external"]["providers"][0]["id"], "sysmem")
         self.assertIn("ttl", blob["external"])
         # `dir` is the PROVIDERS directory, not the XDG cache dir.
@@ -442,18 +452,18 @@ class TestCliSurface(unittest.TestCase):
         write_script(self.segs, "sysmem", "#!/bin/sh\necho hi\n")
         with open(self.cfg, "w") as f:
             f.write("[segments]\nsysmem = false\n")
-        self.assertEqual(sl.validate_config_file(self.cfg, self.env), [])
+        self.assertEqual(doctor.validate_config_file(self.cfg, self.env), [])
 
     def test_validate_flags_unknown_external_key(self):
         with open(self.cfg, "w") as f:
             f.write("[external]\nbogus = 1\n")
-        errs = sl.validate_config_file(self.cfg, self.env)
+        errs = doctor.validate_config_file(self.cfg, self.env)
         self.assertTrue(any("external" in e for e in errs))
 
     def test_validate_flags_bad_external_ttl(self):
         with open(self.cfg, "w") as f:
             f.write('[external]\nttl = "soon"\n')
-        errs = sl.validate_config_file(self.cfg, self.env)
+        errs = doctor.validate_config_file(self.cfg, self.env)
         self.assertTrue(any("ttl" in e for e in errs))
 
 

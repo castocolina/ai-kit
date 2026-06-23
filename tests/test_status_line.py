@@ -1509,14 +1509,6 @@ class TestGitConfig(unittest.TestCase):
         self.assertNotIn("bogus", cfg.git)             # bogus dropped
         self.assertIn("bogus", buf.getvalue())         # and warned
 
-    def test_check_flags_unknown_and_bad_ttl_but_not_legacy_worktree(self):
-        # `bogus` and a bad cache_ttl are flagged; legacy `worktree` is NOT.
-        path = self._write('[git]\nbogus = true\nworktree = "x"\ncache_ttl = "nope"\n')
-        errors = sl.validate_config_file(path, {"HOME": "/h"})
-        self.assertTrue(any("bogus" in e for e in errors), errors)
-        self.assertTrue(any("cache_ttl" in e for e in errors), errors)
-        self.assertFalse(any("worktree" in e for e in errors), errors)
-
 
 class TestWorktreeSegmentToggle(unittest.TestCase):
     """The worktree feature is now a segment toggle, ON by default."""
@@ -1686,65 +1678,6 @@ class TestSampleRecipe(unittest.TestCase):
         self.assertEqual(parsed.get("ramp"), want_ramps)
         # [git] knobs document their real defaults too.
         self.assertEqual(parsed.get("git"), dict(sl._GIT_DEFAULTS))
-
-
-class TestCLI(unittest.TestCase):
-    def _write(self, body):
-        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
-            f.write(body)
-        self.addCleanup(os.unlink, f.name)
-        return f.name
-
-    def test_parse_args_defaults(self):
-        ns = sl.parse_args([])
-        self.assertFalse(ns.print_config)
-        self.assertIs(ns.check, sl._NO_CHECK)
-
-    def test_print_config_emits_resolved_json(self):
-        cfg = sl.Config(segments={"path": True}, layout=[sl.Line(0, ["path"])],
-                        palette={"BLUE": "1;34"}, ramps={})
-        out = sl.cmd_print_config(cfg, {})
-        parsed = json.loads(out)
-        self.assertEqual(parsed["segments"], {"path": True})
-        self.assertEqual(parsed["layout"], [{"min_rows": 0, "segments": ["path"]}])
-        self.assertEqual(parsed["palette"], {"BLUE": "1;34"})
-
-    def test_check_valid_returns_zero(self):
-        path = self._write('[segments]\ncost = true\n')
-        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 0)
-
-    def test_check_unknown_segment_returns_one(self):
-        path = self._write('[segments]\nbogus = true\n')
-        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
-
-    def test_check_bad_layout_ref_returns_one(self):
-        path = self._write('[[line]]\nsegments = ["nope"]\n')
-        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
-
-    def test_check_malformed_returns_one(self):
-        path = self._write('= = not toml')
-        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
-
-    def test_check_bad_palette_hex_returns_one(self):
-        path = self._write('[palette]\nBLUE = "#zzz"\n')
-        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
-
-    def test_check_unknown_modifier_returns_one(self):
-        path = self._write('[palette]\nRED = "31+blink"\n')
-        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
-
-    def test_check_bad_ramp_color_returns_one(self):
-        path = self._write('[ramp.context]\n10 = "NOTACOLOR"\n')
-        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
-
-    def test_check_bad_ramp_threshold_returns_one(self):
-        path = self._write('[ramp.context]\noops = "RED"\n')
-        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 1)
-
-    def test_check_valid_palette_and_ramp_returns_zero(self):
-        path = self._write('[palette]\nBLUE = "#3399ff"\n'
-                           '[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n')
-        self.assertEqual(sl.cmd_check(path, {"HOME": "/h"}), 0)
 
 
 class TestParseColor(unittest.TestCase):
@@ -1918,10 +1851,11 @@ class TestRampFromConfig(unittest.TestCase):
 class TestRendererRobustness(unittest.TestCase):
     def test_doctor_cmd_is_concrete(self):
         cmd = sl.core_doctor_cmd()
-        # A copy-pasteable command, not a bare flag: ends with --doctor,
-        # names a python executable, and references this script's path.
+        # A copy-pasteable command, not a bare flag: ends with --doctor, names a
+        # python executable, and references the sibling doctor script (introspection
+        # moved out of the render module in Phase 4).
         self.assertTrue(cmd.endswith("--doctor"), cmd)
-        self.assertIn("status-line.py", cmd)
+        self.assertIn("statusline-doctor.py", cmd)
         self.assertRegex(cmd, r"^\S*python\S*\s")
 
     def test_warn_is_an_sgr_code(self):
@@ -2178,52 +2112,6 @@ class TestGoldenOutput(unittest.TestCase):
                 f.write(actual)
         with open(expected_path, encoding="utf-8") as f:
             self.assertEqual(actual, f.read())
-
-
-class TestDoctor(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        # Resolve config to a path that does NOT exist → defaults, which are valid.
-        self.env = {"HOME": self.tmp,
-                    "CC_AI_KIT_CONFIG": os.path.join(self.tmp, "absent.toml")}
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def test_doctor_ok_on_defaults(self):
-        rc = sl.cmd_doctor(self.env)
-        self.assertEqual(rc, 0)
-
-    def test_doctor_flags_a_raising_builder(self):
-        def boom(data, avail, theme):
-            raise RuntimeError("x")
-        with mock.patch.dict(sl.BUILDERS, {"path": boom}):
-            rc = sl.cmd_doctor(self.env)
-        self.assertEqual(rc, 1)
-
-    def test_doctor_flags_a_raising_disabled_builder(self):
-        # A builder that is DISABLED by default (`alt_cost`) must still be
-        # dry-rendered: the doctor catches a builder that would crash once enabled.
-        self.assertFalse(sl.cfg_default_config().segments.get("alt_cost"))
-        def boom(data, avail, theme):
-            raise RuntimeError("x")
-        with mock.patch.dict(sl.BUILDERS, {"alt_cost": boom}):
-            rc = sl.cmd_doctor(self.env)
-        self.assertEqual(rc, 1)
-
-    def test_doctor_flags_invalid_config_file(self):
-        bad = os.path.join(self.tmp, "bad.toml")
-        with open(bad, "w") as f:
-            f.write("[segments]\nthis_is_not_a_segment = true\n")
-        env = dict(self.env, CC_AI_KIT_CONFIG=bad)
-        rc = sl.cmd_doctor(env)
-        self.assertEqual(rc, 1)
-
-    def test_check_flag_still_works(self):
-        # Back-compat: --check path is untouched.
-        rc = sl.cmd_check(os.path.join(self.tmp, "absent.toml"), self.env)
-        self.assertEqual(rc, 1)   # absent file → cmd_check reports it (existing behavior)
-
 
 class TestThinContext(unittest.TestCase):
     def test_root_has_claude_json_and_line_conf(self):
