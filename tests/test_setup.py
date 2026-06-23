@@ -53,28 +53,28 @@ class TestTomlRead(unittest.TestCase):
         # The shipped sample is all-commented (a no-op) -> pure defaults.
         seg = setup.current_segments(SAMPLE_RECIPE)
         self.assertTrue(seg["path"])
-        self.assertFalse(seg["cost"])        # cost OFF by default
-        self.assertFalse(seg["dimensions"])  # dimensions OFF by default
+        self.assertFalse(seg["alt_cost"])             # alt_cost OFF by default
+        self.assertFalse(seg["alt_term_dimensions"])  # dimensions OFF by default
         self.assertEqual(set(seg), set(setup.SEGMENT_DEFAULTS))
 
     def test_current_segments_merges_file_override(self):
         with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
-            f.write("[segments]\ncost = true\nmemory = false\n")
+            f.write("[segments]\nalt_cost = true\nalt_system_memory = false\n")
             path = f.name
         self.addCleanup(os.unlink, path)
         seg = setup.current_segments(path)
-        self.assertTrue(seg["cost"])
-        self.assertFalse(seg["memory"])
+        self.assertTrue(seg["alt_cost"])
+        self.assertFalse(seg["alt_system_memory"])
         self.assertTrue(seg["path"])         # untouched default survives
 
     def test_current_layout_default_on_noop_recipe(self):
         layout = setup.current_layout(SAMPLE_RECIPE)
         self.assertEqual([r["segments"] for r in layout],
-                         [["path", "branch", "worktree", "dirty", "todo"],
-                          ["model", "time_ago", "clock", "effort", "lines",
-                           "cost", "total_time", "api_time"],
-                          ["render_time", "slowest", "dimensions",
-                           "context", "chat_size", "memory", "rate_limits"]])
+                         [["path", "git_branch", "alt_git_worktree", "git_dirty", "todo"],
+                          ["model", "alt_time_ago", "alt_time_clock", "effort", "lines",
+                           "alt_cost", "alt_time_session", "alt_time_api"],
+                          ["render_time", "slowest", "alt_term_dimensions",
+                           "context", "chat_size", "alt_system_memory", "alt_rate_limits"]])
 
     def test_layout_defaults_match_status_line(self):
         # Drift guard: setup.LAYOUT_DEFAULTS must mirror the canonical default
@@ -177,8 +177,8 @@ class TestPatchSegments(unittest.TestCase):
 
     def test_appends_missing_key_with_note(self):
         text = "# [segments]\n# path = true\n"
-        out = setup.patch_segments(text, {"clock": False})
-        self.assertIn("clock = false", out)
+        out = setup.patch_segments(text, {"alt_time_clock": False})
+        self.assertIn("alt_time_clock = false", out)
         self.assertIn("⏰", out)                          # the clock note glyph
 
     def test_no_changes_returns_text_unchanged(self):
@@ -562,45 +562,46 @@ class TestSelectExamples(unittest.TestCase):
 class TestWizardLoop(unittest.TestCase):
     def _state(self):
         return {"segments": dict(setup.SEGMENT_DEFAULTS),
-                "layout": [{"min_rows": 0, "segments": ["path", "branch", "dirty"]},
-                           {"min_rows": 20, "segments": ["model", "clock"]}],
+                "layout": [{"min_rows": 0,
+                            "segments": ["path", "git_branch", "git_dirty"]},
+                           {"min_rows": 20, "segments": ["model", "alt_time_clock"]}],
                 "dirty": False}
 
     def test_toggle_by_number_flips_segment(self):
         st = self._state()
         order = setup._wizard_order(st)         # numbering is display order
-        idx = order.index("cost") + 1
+        idx = order.index("alt_cost") + 1
         st2, err = setup._apply_wizard_command(st, str(idx))
         self.assertIsNone(err)
-        self.assertTrue(st2["segments"]["cost"])
+        self.assertTrue(st2["segments"]["alt_cost"])
         self.assertTrue(st2["dirty"])
 
     def test_move_up_reorders_within_line(self):
-        st, err = setup._apply_wizard_command(self._state(), "move branch up")
+        st, err = setup._apply_wizard_command(self._state(), "move git_branch up")
         self.assertIsNone(err)
-        self.assertEqual(st["layout"][0]["segments"][:2], ["branch", "path"])
+        self.assertEqual(st["layout"][0]["segments"][:2], ["git_branch", "path"])
 
     def test_move_down_reorders_within_line(self):
         st, err = setup._apply_wizard_command(self._state(), "move path down")
         self.assertIsNone(err)
-        self.assertEqual(st["layout"][0]["segments"][:2], ["branch", "path"])
+        self.assertEqual(st["layout"][0]["segments"][:2], ["git_branch", "path"])
 
     def test_move_across_lines(self):
-        st, err = setup._apply_wizard_command(self._state(), "move clock line 1")
+        st, err = setup._apply_wizard_command(self._state(), "move alt_time_clock line 1")
         self.assertIsNone(err)
-        self.assertIn("clock", st["layout"][0]["segments"])
-        self.assertNotIn("clock", st["layout"][1]["segments"])
+        self.assertIn("alt_time_clock", st["layout"][0]["segments"])
+        self.assertNotIn("alt_time_clock", st["layout"][1]["segments"])
 
     def test_worktree_is_a_normal_segment(self):
         # worktree migrated from the [git] knob to a regular segment toggle: it
         # appears in SEGMENT_DEFAULTS (ON) and flips like any other segment.
-        self.assertTrue(setup.SEGMENT_DEFAULTS.get("worktree"))
+        self.assertTrue(setup.SEGMENT_DEFAULTS.get("alt_git_worktree"))
         st = self._state()
         order = setup._wizard_order(st)
-        idx = order.index("worktree") + 1
+        idx = order.index("alt_git_worktree") + 1
         st2, err = setup._apply_wizard_command(st, str(idx))
         self.assertIsNone(err)
-        self.assertFalse(st2["segments"]["worktree"])   # was ON, toggled OFF
+        self.assertFalse(st2["segments"]["alt_git_worktree"])   # was ON, toggled OFF
         self.assertTrue(st2["dirty"])
 
     def test_worktree_command_no_longer_special(self):

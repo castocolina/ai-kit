@@ -56,54 +56,62 @@ resolve **built-in defaults < this file < environment variables**.
 
 ```toml
 [segments]
-cost        = true   # show the 🪙 cost segment (off by default)
-memory      = false  # hide the 🧮 process-memory segment
-render_time = false  # ⏱ hide the render-time mark (on by default)
+alt_cost          = true   # show the 🪙 cost segment (off by default)
+alt_system_memory = false  # hide the 🧮 process-memory segment
+render_time       = false  # ⏱ hide the render-time mark (on by default)
 ```
+
+Segment keys follow a **domain-family / dispensability** scheme: a `git_` or
+`system_` prefix names the domain, and an `alt_` prefix marks a *dispensable*
+segment (dropped first when the line is tight). The pre-2026-06 bare names
+(`cost`, `memory`, `branch`, `dirty`, `worktree`, `clock`, `time_ago`,
+`total_time`, `api_time`, `dimensions`, `rate_limits`) **still load** — each is
+forwarded to its new key with a one-time deprecation note, in both the TOML and
+the `CC_AI_KIT_SEGMENT_<KEY>` env form.
 
 **Diagnostic segments:**
 
 - `render_time` (⏱, **on by default**) — how long `status-line.py` itself took to run, from
   process start to render (the cost of its `git`/process/file probes), shown adaptively as
-  `ns`/`µs`/`ms`/`s`. This is the *status line's own* wall-clock — distinct from `total_time`
-  (💬) and `api_time` (📡), which report Claude's session and API durations from the input JSON.
+  `ns`/`µs`/`ms`/`s`. This is the *status line's own* wall-clock — distinct from `alt_time_session`
+  (💬) and `alt_time_api` (📡), which report Claude's session and API durations from the input JSON.
   Its color is an SLO/SLA signal driven by the `[ramp.render_time]` ramp: green within the
   50 ms SLO, yellow up to the 150 ms SLA, red+bold beyond (all configurable). Set
   `render_time = false` (or `CC_AI_KIT_SEGMENT_RENDER_TIME=0`) to hide it.
-- `dimensions` (**off by default**) — the terminal size as `cols×rows` (`?` when the size had
-  to be assumed). Enable via `[segments]` or `CC_AI_KIT_SEGMENT_DIMENSIONS=1`.
+- `alt_term_dimensions` (**off by default**) — the terminal size as `cols×rows` (`?` when the size
+  had to be assumed). Enable via `[segments]` or `CC_AI_KIT_SEGMENT_ALT_TERM_DIMENSIONS=1`.
 
 …or per-session via env (wins over the file):
 
 ```sh
-CC_AI_KIT_SEGMENT_COST=1     # 1 true t y yes on  /  0 false f n no off
+CC_AI_KIT_SEGMENT_ALT_COST=1     # 1 true t y yes on  /  0 false f n no off
 ```
 
-**Worktree segment** — `worktree` (⎇, **on by default**) names the *active*
+**Worktree segment** — `alt_git_worktree` (⎇, **on by default**) names the *active*
 linked git worktree the session sits in, never a list: `⎇ <name>` (the worktree
 directory basename, truncated to 20 columns). On the main checkout it shows a
 dimmed, struck-through `⎇ wt` placeholder; outside any git repo it's hidden. The
-`branch` segment shows only the branch — worktree state lives entirely in this
-segment. Toggle it like any other segment (`[segments] worktree = false`, or
-`CC_AI_KIT_SEGMENT_WORKTREE=0`).
+`git_branch` segment shows only the branch — worktree state lives entirely in this
+segment. Toggle it like any other segment (`[segments] alt_git_worktree = false`, or
+`CC_AI_KIT_SEGMENT_ALT_GIT_WORKTREE=0`).
 
-**Shared git probe + cache TTL** — `branch`, `dirty`, and `worktree` read from
-one shared `git` probe (no duplicate querying). `dirty` is always read fresh; the
-worktree `rev-parse` is cached (default **5 s**) because it rarely changes. Tune
-the cache:
+**Shared git probe + cache TTL** — `git_branch`, `git_dirty`, and `alt_git_worktree`
+read from one shared `git` probe (no duplicate querying). `git_dirty` is always read
+fresh; the worktree `rev-parse` is cached (default **5 s**) because it rarely changes.
+Tune the cache:
 
 ```toml
 [git]
 cache_ttl = 5   # seconds the worktree probe is cached
 ```
 
-…or per-session: `CC_AI_KIT_GIT_TTL=10` (wins over the file). A legacy
+…or per-session: `CC_AI_KIT_GIT_CACHE_TTL=10` (wins over the file). A legacy
 `[git] worktree` key (and the old `CC_AI_KIT_GIT_WORKTREE` env) is silently
-ignored — worktree display is now the `worktree` segment.
+ignored — worktree display is now the `alt_git_worktree` segment.
 
 **Performance note** — disabling a segment skips its work, not just its
-display. On a very large repository, turning off `dirty` also skips git's
-untracked-file scan (the slow part of `git status`); turning off `worktree`
+display. On a very large repository, turning off `git_dirty` also skips git's
+untracked-file scan (the slow part of `git status`); turning off `alt_git_worktree`
 skips the `rev-parse`; turning off `todo` skips the task-state read. The status
 line reads task/todo state from Claude's on-disk state, not by re-parsing the
 transcript, so it stays fast as sessions grow.
@@ -114,7 +122,7 @@ is all-or-nothing; a partial layout would silently drop segments):
 ```toml
 [[line]]
 min_rows = 0
-segments = ["path", "branch", "worktree", "dirty", "todo"]
+segments = ["path", "git_branch", "alt_git_worktree", "git_dirty", "todo"]
 ```
 
 **Recolor segments** — colors are configured in the TOML file only (there is
@@ -163,14 +171,14 @@ python3 tools/status-line.py --check          # validate palette/ramp colorspecs
 python3 tools/status-line.py --help           # full env-var list
 ```
 
-Environment variables: `CC_AI_KIT_CONFIG` (config path),
+Environment variables: `CC_AI_KIT_CONFIG_FILE` (config path),
 `CC_AI_KIT_SEGMENT_<KEY>` (per-segment toggle). Requires Python 3.11+ for the
 TOML file; on older Python the file is ignored and only env toggles apply.
 
 ### External drop-in segments
 
 Add a status-line segment without editing `status-line.py`: drop an executable
-into `~/.config/ai-kit/segments/` (override with `CC_AI_KIT_SEGMENTS_DIR` or
+into `~/.config/ai-kit/segments/` (override with `CC_AI_KIT_EXTERNAL_DIR` or
 `[external] dir`). It is discovered on the next render, **enabled by default**,
 and placed via a header in its first 10 lines:
 
@@ -187,7 +195,7 @@ so a shell one-liner needs no JSON parser:
 
 ```json
 { "...": "normal status fields",
-  "segment": { "id": "aws", "avail_cols": 24, "line": 2, "position": "after:clock" } }
+  "segment": { "id": "aws", "avail_cols": 24, "line": 2, "position": "after:alt_time_clock" } }
 ```
 
 `AI_KIT_SEGMENT_COLS`, `AI_KIT_SEGMENT_ID`, `AI_KIT_SEGMENT_LINE`,
@@ -203,7 +211,7 @@ for `ttl` seconds (`ttl=0` re-runs every render).
 
 ```bash
 #!/bin/sh
-# ai-kit-segment: line=2 after=clock id=aws-session ttl=30
+# ai-kit-segment: line=2 after=alt_time_clock id=aws-session ttl=30
 left=$(your-aws-expiry-command)            # e.g. "4h 44m 12s"
 cols=${AI_KIT_SEGMENT_COLS:-80}
 if   [ "$cols" -ge 14 ]; then printf '\033[33m🔐 %s\033[0m\n' "$left"

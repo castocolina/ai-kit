@@ -134,13 +134,15 @@ def main() -> None:
 
 SEGMENTS = {
     # identity line
-    "path": True, "branch": True, "dirty": True, "worktree": True, "todo": True,
+    "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": True,
+    "todo": True,
     # model row
-    "model": True, "time_ago": True, "clock": True, "effort": True,
-    "lines": True, "cost": False, "total_time": True, "api_time": True,
-    # diagnostics row (dimensions is a debug aid — off by default)
-    "render_time": True, "slowest": True, "dimensions": False, "context": True,
-    "chat_size": True, "memory": True, "rate_limits": True,
+    "model": True, "alt_time_ago": True, "alt_time_clock": True, "effort": True,
+    "lines": True, "alt_cost": False, "alt_time_session": True, "alt_time_api": True,
+    # diagnostics row (alt_term_dimensions is a debug aid — off by default)
+    "render_time": True, "slowest": True, "alt_term_dimensions": False,
+    "context": True,
+    "chat_size": True, "alt_system_memory": True, "alt_rate_limits": True,
 }
 
 
@@ -170,11 +172,11 @@ class Line(NamedTuple):
 
 
 LAYOUT = [
-    Line(0,  ["path", "branch", "worktree", "dirty", "todo"]),
-    Line(20, ["model", "time_ago", "clock", "effort", "lines",
-              "cost", "total_time", "api_time"]),
-    Line(30, ["render_time", "slowest", "dimensions", "context", "chat_size",
-              "memory", "rate_limits"]),
+    Line(0,  ["path", "git_branch", "alt_git_worktree", "git_dirty", "todo"]),
+    Line(20, ["model", "alt_time_ago", "alt_time_clock", "effort", "lines",
+              "alt_cost", "alt_time_session", "alt_time_api"]),
+    Line(30, ["render_time", "slowest", "alt_term_dimensions", "context",
+              "chat_size", "alt_system_memory", "alt_rate_limits"]),
 ]
 
 
@@ -193,7 +195,7 @@ _SLOWEST_META = frozenset({"slowest", "render_time"})
 # override). External drop-in segments are E4c and are intentionally not part of
 # this type yet.
 # Scalar behaviour knobs that aren't segments/colors. The worktree feature
-# migrated to the `segments.worktree` toggle (see SEGMENTS); `[git]` now carries
+# migrated to the `segments.alt_git_worktree` toggle (see SEGMENTS); `[git]` now carries
 # `cache_ttl` (seconds) — how long the shared probe_git_snapshot worktree probe is
 # cached. Precedence: this default < TOML `[git] cache_ttl` < env CC_AI_KIT_GIT_CACHE_TTL.
 _GIT_CACHE_TTL = 5                  # default seconds the worktree probe is cached
@@ -207,8 +209,22 @@ _GIT_DEFAULTS = {"cache_ttl": _GIT_CACHE_TTL}
 
 # Deprecated `[git]` keys: silently accepted (no warning) and ignored, so an old
 # config carrying `[git] worktree = true/false` keeps loading cleanly after the
-# knob moved to `segments.worktree`.
+# knob moved to `segments.alt_git_worktree`. This is the `[git]`-table namespace
+# — DISTINCT from the `[segments] worktree → alt_git_worktree` rename below.
 _GIT_LEGACY_IGNORED = frozenset({"worktree"})
+
+
+# Renamed segment keys (FR-5): each pre-rename `[segments]`/`CC_AI_KIT_SEGMENT_*`
+# key maps forward to its new domain-family + dispensability-tier key. Old keys
+# stay accepted (back-compat) with a dim deprecation warning; see
+# cfg_resolve_segments and cfg_env_apply_overrides (the two forwarding points).
+_LEGACY_SEGMENT_KEYS = {
+    "branch": "git_branch", "dirty": "git_dirty", "clock": "alt_time_clock",
+    "time_ago": "alt_time_ago", "total_time": "alt_time_session",
+    "api_time": "alt_time_api", "cost": "alt_cost", "rate_limits": "alt_rate_limits",
+    "dimensions": "alt_term_dimensions", "worktree": "alt_git_worktree",
+    "memory": "alt_system_memory",
+}
 
 
 # ── Color & effort defaults (the override baselines) ─────────────────────────
@@ -306,10 +322,10 @@ INF = float("inf")
 Builder = Callable[["Context", int, "Theme"], str | None]
 
 
-# The single shared git probe result. `branch`, `dirty`, and `worktree` are
-# independent segments but all read from one GitSnapshot — no duplicated git
-# querying. wt_name is the active linked-worktree's directory basename ("" on
-# the main checkout or outside a repo).
+# The single shared git probe result. `git_branch`, `git_dirty`, and
+# `alt_git_worktree` are independent segments but all read from one GitSnapshot —
+# no duplicated git querying. wt_name is the active linked-worktree's directory
+# basename ("" on the main checkout or outside a repo).
 class GitSnapshot(NamedTuple):
     """One-shot result from the shared git probe (branch, dirty, worktree)."""
 
@@ -451,7 +467,14 @@ def cfg_env_apply_overrides(  # pylint: disable=too-many-locals,too-many-branche
         token, suffix = parts[0], parts[1]
 
         if token == "SEGMENT":
-            seg_key = suffix.lower()
+            # SEGMENT tokens are resolved only in the segments pass (seg non-empty);
+            # the throwaway git/external pass passes seg={} and is skipped here so a
+            # legacy key warns once, not once per pass.
+            if not seg:
+                continue
+            # Forward a pre-rename key (FR-5.3) before the membership check, so
+            # CC_AI_KIT_SEGMENT_CLOCK=false toggles `alt_time_clock`.
+            seg_key = cfg_forward_legacy_segment(suffix.lower())
             if seg_key in seg:
                 ov = cfg_env_bool(env, key)
                 if ov is not None:
@@ -498,13 +521,31 @@ def cfg_load_toml(path: str) -> dict[str, Any]:
         return {}
 
 
+def cfg_forward_legacy_segment(key: str) -> str:
+    """Map a pre-rename segment key forward to its new canonical key (FR-5.3),
+    emitting one dim deprecation warning. A non-legacy key passes through
+    unchanged. The single forwarding rule shared by both back-compat points
+    (cfg_resolve_segments for TOML, cfg_env_apply_overrides for env)."""
+    new = _LEGACY_SEGMENT_KEYS.get(key)
+    if new is None:
+        return key
+    print(f"{_DIM}status-line: segment '{key}' is renamed to '{new}'{RESET}",
+          file=sys.stderr)
+    return new
+
+
 def cfg_resolve_segments(defaults: dict[str, bool], file_seg: Any) -> dict[str, bool]:
-    """defaults < file [segments] (TOML only). Each file entry is dropped with a
-    dim warning if its key is unknown OR its value is not a bool (e.g. `cost =
-    "true"` instead of `cost = true`); only bool file values for known keys are
-    honored. Env overrides are applied later by cfg_env_apply_overrides (FR-1.6)."""
+    """defaults < file [segments] (TOML only). A pre-rename key (FR-5.3) is
+    forwarded to its new canonical name (with a dim deprecation warning) BEFORE
+    the unknown-key check, so e.g. `[segments] clock = false` sets
+    `alt_time_clock` and does not warn "unknown segment". Each remaining file
+    entry is dropped with a dim warning if its key is unknown OR its value is not
+    a bool (e.g. `alt_cost = "true"` instead of `alt_cost = true`); only bool
+    file values for known keys are honored. Env overrides are applied later by
+    cfg_env_apply_overrides (FR-1.6)."""
     seg = dict(defaults)
     for k, v in cast(dict[str, Any], file_seg or {}).items():
+        k = cfg_forward_legacy_segment(k)
         if k not in seg:
             print(f"{_DIM}status-line: unknown segment '{k}' in config{RESET}",
                   file=sys.stderr)
@@ -807,7 +848,8 @@ def probe_worktree_info_cached(work_dir: str, ttl: int, cache_base: str) -> tupl
 
 
 def probe_git_snapshot(work_dir: str, config: Optional["Config"] = None) -> "GitSnapshot":
-    """The single git probe behind the `branch`, `dirty`, and `worktree` segments.
+    """The single git probe behind the `git_branch`, `git_dirty`, and
+    `alt_git_worktree` segments.
 
     `config` is the resolved Config object — the probe reads its cache TTL and
     cache_base FROM it (never from env, never as bare args). config=None (direct/
@@ -1903,7 +1945,7 @@ def core_run_external(spec: "ExtSpec", ctx: "Context", avail: int) -> str | None
 
 
 def core_make_external_builder(spec: "ExtSpec") -> "Builder":
-    """Wrap an ExtSpec as a seg_x(ctx, avail, theme)-shaped builder so core_pack
+    """Wrap an ExtSpec as a seg_x(ctx, avail, theme)-shaped builder so the packer
     treats it exactly like a built-in. theme is unused (the provider colors itself)."""
     def _builder(ctx: "Context", avail: int, theme: "Theme") -> str | None:
         return core_run_external(spec, ctx, avail)
@@ -1928,14 +1970,18 @@ def core_builders_for(cfg: "Config") -> dict[str, "Builder"]:
 #   * One guarded entry. `core_safe_build` is the only place a builder is called; on
 #     any exception it records the key in `failed` and returns a width-bounded
 #     ⚠ marker, so one bad segment can never blank the bar (never-blank).
-#   * One measured pass. `core_pack` times EVERY non-meta build and
-#     `core_crown_slowest` tracks the single running max into `ctx.slowest`. The
-#     timing bracket captures each segment's first-read probe cost (FR-R.2),
-#     so the crowned time is the segment's REAL cost.
+#   * Three phases. `core_render` orchestrates Phase A (`core_measure_all` —
+#     build + time EVERY non-meta segment across ALL gated-in lines, with
+#     `core_crown_slowest` tracking the single GLOBAL running max into
+#     `ctx.slowest`), Phase B (`core_build_meta`), and Phase C
+#     (`core_assemble_line`, per line). The Phase-A timing bracket captures each
+#     segment's first-read probe cost (FR-R.2), so the crowned time is the
+#     segment's REAL cost.
 #   * Two meta segments. `render_time` and `slowest` (`_SLOWEST_META`) report the
-#     whole render, not one builder, so they are built in pass 2 (after every
-#     non-meta build is timed) and placed at their LAYOUT position in assembly —
-#     never forced last, never crowned as the culprit.
+#     whole render, not one builder, so they are built ONCE in Phase B (after
+#     every non-meta build is timed, GLOBALLY — so the readout is the same on any
+#     line) and placed at their LAYOUT position in assembly — never forced last,
+#     never crowned as the culprit.
 def core_safe_build(
     key: str, ctx: "Context", avail: int, theme: "Theme",
     builders: dict[str, "Builder"] | None = None,
@@ -1968,41 +2014,66 @@ def core_crown_slowest(ctx: "Context", key: str, ns: int) -> None:
         ctx.slowest = (key, ns)
 
 
-def core_pass1_non_meta(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    enabled: list[str], ctx: "Context", budget: int, sep_w: int,
+def core_gated_lines(ctx: "Context", cfg: "Config") -> Iterator[tuple[int, list[str]]]:
+    """Yield `(line_index, enabled_keys)` for each layout line that clears the
+    terminal-height gate (`ctx.lines >= min_rows`). The single place the per-line
+    height gate AND the enabled-segment filter are computed — all three render
+    phases (measure / meta / assemble) consume it, so a future gate-rule change
+    lives in exactly one spot."""
+    for line_index, ln in enumerate(cfg.layout):
+        if ctx.lines < ln.min_rows:
+            continue
+        yield line_index, [k for k in ln.segments if cfg.segments.get(k, False)]
+
+
+def core_measure_all(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    ctx: "Context", cfg: "Config", budget: int, sep_w: int,
     theme: "Theme", builders: dict[str, "Builder"],
-) -> dict[str, str]:
-    """Pass 1: build + time every non-meta enabled segment, crowning the slowest."""
-    built: dict[str, str] = {}
-    used_est = 0
-    for key in enabled:
-        if key in _SLOWEST_META:
-            continue
-        sep = sep_w if used_est else 0
-        avail = max(budget - used_est - sep, 0)
-        t0 = time.perf_counter_ns()
-        s = core_safe_build(key, ctx, avail, theme, builders)
-        ns = time.perf_counter_ns() - t0
-        if not s:
-            continue
-        if key in PINNED or util_visible_width(s) <= avail:
-            built[key] = s
-            used_est += util_visible_width(s) + sep
-            core_crown_slowest(ctx, key, ns)
+) -> dict[tuple[int, str], str]:
+    """Phase A: build + time every active non-meta segment across ALL rendered
+    layout lines, crowning the single GLOBAL slowest (FR-4). Each line is walked
+    left->right with its own shrinking `used_est` so `avail` (hence variant
+    selection inside builders) matches the per-line fit exactly. Lines gated out
+    by terminal height are skipped (via core_gated_lines), so their segments are
+    never built/timed/crowned. Returns built strings keyed by `(line_index, key)`."""
+    built: dict[tuple[int, str], str] = {}
+    for line_index, enabled in core_gated_lines(ctx, cfg):
+        used_est = 0
+        for key in enabled:
+            if key in _SLOWEST_META:
+                continue
+            sep = sep_w if used_est else 0
+            avail = max(budget - used_est - sep, 0)
+            t0 = time.perf_counter_ns()
+            s = core_safe_build(key, ctx, avail, theme, builders)
+            ns = time.perf_counter_ns() - t0
+            if not s:
+                continue
+            if key in PINNED or util_visible_width(s) <= avail:
+                built[(line_index, key)] = s
+                used_est += util_visible_width(s) + sep
+                core_crown_slowest(ctx, key, ns)
     return built
 
 
-def core_pass2_meta(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    enabled: list[str], ctx: "Context", budget: int,
+def core_build_meta(
+    ctx: "Context", cfg: "Config", budget: int,
     theme: "Theme", builders: dict[str, "Builder"],
-    built: dict[str, str],
-) -> None:
-    """Pass 2: build meta segments now that all timings/max are known (in-place)."""
-    for key in enabled:
-        if key in _SLOWEST_META:
+) -> dict[str, str]:
+    """Phase B: build the meta segments (`render_time`, `slowest`) ONCE, now that
+    every non-meta build is timed and `ctx.slowest`/`t_start` are settled (FR-4).
+    A meta key is built when it is enabled on any height-gated-in line; the dict
+    keying dedupes. Each is offered the full `budget` (it is placed per line in
+    Phase C). Returns the shared meta strings reused across all lines."""
+    meta_built: dict[str, str] = {}
+    for _, enabled in core_gated_lines(ctx, cfg):
+        for key in enabled:
+            if key not in _SLOWEST_META or key in meta_built:
+                continue
             s = core_safe_build(key, ctx, budget, theme, builders)
             if s:
-                built[key] = s
+                meta_built[key] = s
+    return meta_built
 
 
 def core_assemble_line(
@@ -2022,34 +2093,6 @@ def core_assemble_line(
     return SEP.join(kept)
 
 
-def core_pack(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    keys: list[str], ctx: "Context", cols: int,
-    cfg: Optional["Config"] = None, theme: Optional["Theme"] = None,
-    builders: dict[str, "Builder"] | None = None,
-) -> str:
-    """Best-fit pack enabled segments into cols - RIGHT_MARGIN, in two passes.
-
-    The meta segments (`render_time`, `slowest`) report the whole render, so they
-    can only be built once every other build is timed — but they live at their own
-    LAYOUT positions, not forced last. So: pass 1 builds + times every non-meta
-    segment left->right (crowning the slowest via core_crown_slowest, whose timing
-    captures each segment's first-read probe cost — FR-R.2 via memoized
-    probe accessors on probe_cache); pass 2 builds the meta segments now that
-    `ctx.slowest` and `t_start` are settled; then assembly places everything in
-    LAYOUT order, fitting left->right with all widths known. Pinned segments are
-    always kept; otherwise leftmost survive when space is tight. `builders`
-    carries the merged built-in + external map; defaults to that derived from cfg."""
-    cfg = cfg or ctx.line_conf
-    theme = theme or ctx.theme
-    builders = builders if builders is not None else core_builders_for(cfg)
-    budget = cols - RIGHT_MARGIN
-    sep_w = util_visible_width(SEP)
-    enabled = [k for k in keys if cfg.segments.get(k, False)]
-    built = core_pass1_non_meta(enabled, ctx, budget, sep_w, theme, builders)
-    core_pass2_meta(enabled, ctx, budget, theme, builders, built)
-    return core_assemble_line(enabled, built, budget, sep_w)
-
-
 def core_diagnostic_line(failed: set[str]) -> str | None:
     """One line naming the segments that crashed this render, pointing at the
     doctor. Returns None when nothing failed (no cost on the happy path)."""
@@ -2065,17 +2108,25 @@ def core_diagnostic_line(failed: set[str]) -> str | None:
 def core_render(
     ctx: "Context", cfg: Optional["Config"] = None, theme: Optional["Theme"] = None
 ) -> list[str]:
-    """Render up to len(cfg.layout) lines, gated by terminal height and width.
-    A trailing diagnostic line is appended only when a builder crashed. Reads
+    """Render up to len(cfg.layout) lines, gated by terminal height and width,
+    in three phases (FR-4): Phase A measures + times every active non-meta segment
+    across ALL gated-in lines and crowns the single GLOBAL slowest; Phase B builds
+    the meta segments (`render_time`, `slowest`) ONCE off that settled state; Phase
+    C assembles each gated-in line from its slice of Phase-A strings plus the shared
+    meta. A trailing diagnostic line is appended only when a builder crashed. Reads
     geometry (cols/lines) and the shared `failed` set off `ctx`."""
     cfg = cfg or ctx.line_conf
     theme = theme or ctx.theme
     builders = core_builders_for(cfg)
+    budget = ctx.cols - RIGHT_MARGIN
+    sep_w = util_visible_width(SEP)
+    built = core_measure_all(ctx, cfg, budget, sep_w, theme, builders)   # Phase A
+    meta_built = core_build_meta(ctx, cfg, budget, theme, builders)      # Phase B
     out: list[str] = []
-    for ln in cfg.layout:
-        if ctx.lines < ln.min_rows:
-            continue
-        packed = core_pack(ln.segments, ctx, ctx.cols, cfg, theme, builders)
+    for line_index, enabled in core_gated_lines(ctx, cfg):               # Phase C
+        line_built = {k: v for (i, k), v in built.items() if i == line_index}
+        line_built.update(meta_built)
+        packed = core_assemble_line(enabled, line_built, budget, sep_w)
         if packed:
             out.append(packed)
     diag = core_diagnostic_line(ctx.failed)
@@ -2092,26 +2143,26 @@ def seg_path(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return f"{theme.c('BLUE')}{util_display_dir(ctx.work_dir, ctx.home)}{RESET}"  # floor
 
 
-def seg_branch(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+def seg_git_branch(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     branch = probe_git_for(ctx).branch
     if not branch:
         return None
-    # branch carries its own STATIC 🌿 icon. It does NOT encode worktree state
-    # (no 🌳) — that moved to the dedicated `worktree` ⎇ segment (FR-7.2); the
-    # leaf glyph here is purely "this is the branch". Falls back to the bare
+    # git_branch carries its own STATIC 🌿 icon. It does NOT encode worktree state
+    # (no 🌳) — that moved to the dedicated `alt_git_worktree` ⎇ segment (FR-7.2);
+    # the leaf glyph here is purely "this is the branch". Falls back to the bare
     # name when too narrow for the icon, so the branch never drops just for it.
     return util_first_fitting([f"{theme.c('GREY')}[{util_icon('🌿', branch)}]{RESET}",
                            f"{theme.c('GREY')}[{branch}]{RESET}"], avail)
 
 
-def seg_dirty(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+def seg_git_dirty(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     mark = util_dirty_mark(probe_git_for(ctx).dirty, theme)
     return util_first_fitting([mark], avail) if mark else None
 
 
-def seg_worktree(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    # `worktree` names the ACTIVE linked worktree the session sits in — never a
-    # list. Mirrors `dirty`'s "absence is the neutral state" convention: hidden
+def seg_alt_git_worktree(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    # alt_git_worktree names the ACTIVE linked worktree the session sits in —
+    # never a list. Mirrors git_dirty's "absence is the neutral state": hidden
     # outside a repo. On the main checkout it shows a dimmed, struck `⎇ wt`
     # placeholder — GREY (not just strikethrough) so it stays distinct from the
     # cyan active form even on terminals that don't render SGR-9.
@@ -2148,14 +2199,14 @@ def seg_model(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return util_first_fitting([f"{theme.c('CYAN')}{name}{RESET}"], avail)
 
 
-def seg_time_ago(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+def seg_alt_time_ago(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     ago = probe_ago(ctx)
     if not ago:
         return None
     return util_first_fitting([f"{theme.c('WHITE')}{ago}{RESET}"], avail)
 
 
-def seg_clock(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+def seg_alt_time_clock(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return util_first_fitting([util_icon("⏰", ctx.clock)], avail)
 
 
@@ -2186,15 +2237,15 @@ def seg_lines(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return util_first_fitting([util_icon("📃", body)], avail)
 
 
-def seg_cost(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+def seg_alt_cost(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return util_first_fitting([util_icon("🪙", f"${float(ctx.cost):.3f}")], avail)
 
 
-def seg_total_time(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+def seg_alt_time_session(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return util_first_fitting([util_icon("💬", fmt_time_ms(ctx.total_ms))], avail)
 
 
-def seg_api_time(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+def seg_alt_time_api(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return util_first_fitting([util_icon("📡", fmt_time_ms(ctx.api_ms))], avail)
 
 
@@ -2221,7 +2272,7 @@ def seg_slowest(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return util_first_fitting([util_icon("🐌", f"{name} {dur}"), util_icon("🐌", dur)], avail)
 
 
-def seg_dimensions(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+def seg_alt_term_dimensions(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     mark = "?" if ctx.dim_assumed else ""
     return util_first_fitting([f"{ctx.cols}×{ctx.lines}{mark}"], avail)
 
@@ -2249,14 +2300,14 @@ def seg_chat_size(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return util_first_fitting([util_icon("💾", f"{color}{fmt_bytes(n)}{RESET}")], avail)
 
 
-def seg_memory(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+def seg_alt_system_memory(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     n = probe_rss(ctx)
     if n is None:
         return None
     return util_first_fitting([util_icon("🧮", fmt_bytes(n))], avail)
 
 
-def seg_rate_limits(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+def seg_alt_rate_limits(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     rate_limits = ctx.rate_limits
     if not rate_limits:
         return None
@@ -2273,7 +2324,7 @@ BUILDERS = core_discover_builders()   # module-level snapshot; same shape as the
 #   Return None when there is no data, OR when even the smallest variant does
 #   not fit avail (the builder self-deprioritizes). Otherwise return the richest
 #   variant that fits, via util_first_fitting([rich, ..., minimal], avail).
-# The packer (core_pack) supplies avail and owns the final keep/skip decision.
+# The packer (Phase A, core_measure_all) supplies avail and owns the final keep/skip decision.
 # To add a segment: write seg_x(ctx, avail, theme), list its key in a LAYOUT line,
 # add a SEGMENTS flag. The registry auto-discovers seg_* (no BUILDERS edit). See
 # the HOW TO CUSTOMIZE block below.
@@ -2298,7 +2349,7 @@ BUILDERS = core_discover_builders()   # module-level snapshot; same shape as the
 #   BUILDERS  — auto-discovered from the seg_* functions (key = the suffix after
 #               "seg_"). Not hand-maintained: write a seg_x and it registers.
 #
-# How show/hide is decided: the packer (core_pack) is the authority. It offers
+# How show/hide is decided: the packer (Phase A, core_measure_all) is the authority. It offers
 # each builder the space available at its spot (avail) and keeps the result only
 # if it is non-empty and fits; otherwise it skips it and tries the next. A
 # builder cooperates by auto-deprioritizing itself — returning a compact variant
@@ -2306,28 +2357,28 @@ BUILDERS = core_discover_builders()   # module-level snapshot; same shape as the
 # PINNED segments ("path", "context") are kept even if they overflow.
 #
 # Available segments (key -> what it shows):
-#   path         working dir (~-collapsed; basename if long)     [pinned]
-#   branch       git branch name
-#   worktree     ⎇ active linked-worktree name (struck ⎇ wt on the main checkout)
-#   dirty        ✗ untracked / ~ modified marker
-#   todo         active TODO / task (truncated to fit)
-#   model        model display name
-#   time_ago     time since last transcript activity
-#   clock        ⏰ wall clock HH:MM
-#   effort       🧠 effort ramp bar (+ level word when room)
-#   lines        📃 +added/-removed line counts
-#   cost         🪙 session cost in USD (off by default)
-#   total_time   💬 total session duration
-#   api_time     📡 total API duration
-#   render_time  ⏱ status-line.py's own run time, SLO/SLA-colored via the
-#                render_time ramp
-#   slowest      🐌 the slowest single segment this render (name + duration),
-#                SLO/SLA-colored via the shared slowest ramp
-#   dimensions   terminal COLS×ROWS (off by default; debug)
-#   context      📊 context-window usage bar + percent           [pinned]
-#   chat_size    💾 transcript file size
-#   memory       🧮 claude process RSS
-#   rate_limits  ⚡ rate-limit buckets (+ reset times when room)
+#   path                 working dir (~-collapsed; basename if long)   [pinned]
+#   git_branch           git branch name
+#   alt_git_worktree     ⎇ active linked-worktree name (struck ⎇ wt on the main checkout)
+#   git_dirty            ✗ untracked / ~ modified marker
+#   todo                 active TODO / task (truncated to fit)
+#   model                model display name
+#   alt_time_ago         time since last transcript activity
+#   alt_time_clock       ⏰ wall clock HH:MM
+#   effort               🧠 effort ramp bar (+ level word when room)
+#   lines                📃 +added/-removed line counts
+#   alt_cost             🪙 session cost in USD (off by default)
+#   alt_time_session     💬 total session duration
+#   alt_time_api         📡 total API duration
+#   render_time          ⏱ status-line.py's own run time, SLO/SLA-colored via the
+#                        render_time ramp
+#   slowest              🐌 the slowest single segment this render (name + duration),
+#                        SLO/SLA-colored via the shared slowest ramp
+#   alt_term_dimensions  terminal COLS×ROWS (off by default; debug)
+#   context              📊 context-window usage bar + percent         [pinned]
+#   chat_size            💾 transcript file size
+#   alt_system_memory    🧮 claude process RSS
+#   alt_rate_limits      ⚡ rate-limit buckets (+ reset times when room)
 #
 # Common edits:
 #   * Toggle a segment:       flip its SEGMENTS[...] value.
@@ -2426,7 +2477,9 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
     _, ext_dir, ext_ttl, _ = cfg_env_apply_overrides(env, {}, ext_dir, ext_ttl, {})
     seg_cache = os.path.join(cfg_cache_base(env), "segments")
     ext_ids = {s.id for s in core_discover_external(ext_dir, ext_ttl, seg_cache)}
-    known_segments = set(cfg_default_config().segments) | ext_ids
+    # Legacy (pre-rename) keys still resolve via forwarding (FR-5.3), so --check
+    # must accept them too — otherwise it would reject a config the renderer loads.
+    known_segments = set(cfg_default_config().segments) | ext_ids | set(_LEGACY_SEGMENT_KEYS)
     for k in cast(dict[str, Any], raw.get("segments") or {}):
         if k not in known_segments:
             errors.append(f"unknown segment key: {k}")
@@ -2503,7 +2556,7 @@ def _dry_render_failures(cfg: "Config", theme: "Theme", env: Env) -> set[str]:
     whose builder raised. Dry-rendering only the enabled+reachable subset would
     let a broken disabled builder (e.g. `cost`) pass the doctor and then crash
     the moment the user enables it, which is exactly the failure class the doctor
-    exists to catch. `core_safe_build` (not `core_pack`'s flag gate) does the catching,
+    exists to catch. `core_safe_build` (not the packer's flag gate) does the catching,
     so we invoke it directly for each key.
 
     Note: this catches builders that crash on *valid* input. A builder that only

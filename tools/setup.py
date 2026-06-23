@@ -68,18 +68,23 @@ def resolve_paths(env):
 # importable module, and the wizard must run even while the renderer is mid-edit.
 # TestTomlRead.test_segment_defaults_match_recipe_drift pins these to the recipe.
 SEGMENT_DEFAULTS = {
-    "path": True, "branch": True, "dirty": True, "worktree": True, "todo": True,
-    "model": True, "time_ago": True, "clock": True, "effort": True,
-    "lines": True, "cost": False, "total_time": True, "api_time": True,
-    "render_time": True, "slowest": True, "dimensions": False, "context": True,
-    "chat_size": True, "memory": True, "rate_limits": True,
+    "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": True,
+    "todo": True,
+    "model": True, "alt_time_ago": True, "alt_time_clock": True, "effort": True,
+    "lines": True, "alt_cost": False, "alt_time_session": True, "alt_time_api": True,
+    "render_time": True, "slowest": True, "alt_term_dimensions": False,
+    "context": True,
+    "chat_size": True, "alt_system_memory": True, "alt_rate_limits": True,
 }
 LAYOUT_DEFAULTS = [
-    {"min_rows": 0, "segments": ["path", "branch", "worktree", "dirty", "todo"]},
-    {"min_rows": 20, "segments": ["model", "time_ago", "clock", "effort", "lines",
-                                  "cost", "total_time", "api_time"]},
-    {"min_rows": 30, "segments": ["render_time", "slowest", "dimensions",
-                                  "context", "chat_size", "memory", "rate_limits"]},
+    {"min_rows": 0,
+     "segments": ["path", "git_branch", "alt_git_worktree", "git_dirty", "todo"]},
+    {"min_rows": 20, "segments": ["model", "alt_time_ago", "alt_time_clock",
+                                  "effort", "lines", "alt_cost", "alt_time_session",
+                                  "alt_time_api"]},
+    {"min_rows": 30, "segments": ["render_time", "slowest", "alt_term_dimensions",
+                                  "context", "chat_size", "alt_system_memory",
+                                  "alt_rate_limits"]},
 ]
 
 
@@ -155,29 +160,29 @@ def render_preview(status_line, segments, sample_json, env):
 # self-documenting). Lifted verbatim from tools/statusline.toml.sample comments.
 _SEGMENT_NOTES = {
     "path": "📂 working directory, ~-relative   (pinned)",
-    "branch": "git branch name",
-    "dirty": "working-tree dirty marker",
-    "worktree": "⎇ active linked-worktree name",
+    "git_branch": "git branch name",
+    "git_dirty": "working-tree dirty marker",
+    "alt_git_worktree": "⎇ active linked-worktree name",
     "todo": "📝 current TODO  (📝 in-progress / ⏸ pending)",
     "model": "active model name (e.g. Opus)",
-    "time_ago": "time since the session's first message",
-    "clock": "⏰ current wall-clock time",
+    "alt_time_ago": "time since the session's first message",
+    "alt_time_clock": "⏰ current wall-clock time",
     "effort": "🧠 reasoning-effort ladder + level ([auto] when auto)",
     "lines": "📃 lines added / removed this session",
-    "cost": "🪙 session cost in USD            (OFF by default)",
-    "total_time": "💬 total session duration",
-    "api_time": "📡 cumulative API response time",
+    "alt_cost": "🪙 session cost in USD            (OFF by default)",
+    "alt_time_session": "💬 total session duration",
+    "alt_time_api": "📡 cumulative API response time",
     "render_time": "⏱ status-line's own render time, SLO/SLA-colored",
     "slowest": "🐌 slowest single segment this render (name + duration)",
-    "dimensions": "terminal size cols×lines (? if assumed)  (debug; OFF by default)",
+    "alt_term_dimensions": "terminal size cols×lines (? if assumed)  (debug; OFF by default)",
     "context": "📊 context-window % used (and max) (pinned)",
     "chat_size": "💾 transcript file size on disk",
-    "memory": "🧮 status-line process memory (RSS)",
-    "rate_limits": "⚡ rate-limit buckets with reset time",
+    "alt_system_memory": "🧮 status-line process memory (RSS)",
+    "alt_rate_limits": "⚡ rate-limit buckets with reset time",
 }
 
 # A managed key line, optionally commented, capturing key + trailing comment:
-#   "# cost = false   # 🪙 ..."   ->  key="cost", trailing="# 🪙 ..."
+#   "# alt_cost = false   # 🪙 ..."   ->  key="alt_cost", trailing="# 🪙 ..."
 _KEY_RE = re.compile(
     r"^(?P<indent>\s*)#?\s*(?P<key>\w+)\s*=\s*[^#\n]*?(?P<trail>\s*#.*)?$")
 

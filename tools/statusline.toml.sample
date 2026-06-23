@@ -24,28 +24,31 @@
 ## hides them entirely.)
 # [segments]
 ## identity line (top row)
-# path = true          # 📂 working directory, ~-relative   (pinned)
-# branch = true        # git branch name
-# dirty = true         # working-tree dirty marker
-# worktree = true      # ⎇ active linked-worktree name (struck ⎇ wt on main)
-# todo = true          # 📝 current TODO  (📝 in-progress / ⏸ pending)
+# path = true                # 📂 working directory, ~-relative   (pinned)
+# git_branch = true          # git branch name
+# git_dirty = true           # working-tree dirty marker
+# alt_git_worktree = true    # ⎇ active linked-worktree name (struck ⎇ wt on main)
+# todo = true                # 📝 current TODO  (📝 in-progress / ⏸ pending)
 ## model line (middle row)
-# model = true         # active model name (e.g. Opus)
-# time_ago = true      # time since the session's first message
-# clock = true         # ⏰ current wall-clock time
-# effort = true        # 🧠 reasoning-effort ladder + level ([auto] when auto)
-# lines = true         # 📃 lines added / removed this session
-# cost = false         # 🪙 session cost in USD            (OFF by default)
-# total_time = true    # 💬 total session duration
-# api_time = true      # 📡 cumulative API response time
+# model = true               # active model name (e.g. Opus)
+# alt_time_ago = true        # time since the session's first message
+# alt_time_clock = true      # ⏰ current wall-clock time
+# effort = true              # 🧠 reasoning-effort ladder + level ([auto] when auto)
+# lines = true               # 📃 lines added / removed this session
+# alt_cost = false           # 🪙 session cost in USD            (OFF by default)
+# alt_time_session = true    # 💬 total session duration
+# alt_time_api = true        # 📡 cumulative API response time
 ## diagnostics line (bottom row)
-# render_time = true   # ⏱ status-line's own render time, SLO/SLA-colored
-# slowest = true       # 🐌 slowest single segment this render (name + duration)
-# dimensions = false   # terminal size cols×lines (? if assumed)  (debug; OFF by default)
-# context = true       # 📊 context-window % used (and max) (pinned)
-# chat_size = true     # 💾 transcript file size on disk
-# memory = true        # 🧮 status-line process memory (RSS)
-# rate_limits = true   # ⚡ rate-limit buckets with reset time
+# render_time = true         # ⏱ status-line's own render time, SLO/SLA-colored
+# slowest = true             # 🐌 slowest single segment this render (name + duration)
+# alt_term_dimensions = false  # terminal size cols×lines (? if assumed)  (debug; OFF by default)
+# context = true             # 📊 context-window % used (and max) (pinned)
+# chat_size = true           # 💾 transcript file size on disk
+# alt_system_memory = true   # 🧮 status-line process memory (RSS)
+# alt_rate_limits = true     # ⚡ rate-limit buckets with reset time
+## Old segment names (branch/dirty/worktree/clock/cost/time_ago/total_time/
+## api_time/rate_limits/dimensions/memory) are still accepted as deprecated
+## aliases — they forward to the names above with a dim one-time warning.
 
 ## ─── [[line]] — full layout override ─────────────────────────────────────────
 ## ALL-OR-NOTHING (unlike [segments], which merges): if you uncomment ANY [[line]]
@@ -56,20 +59,21 @@
 ## current default layout; copy and reorder to taste.
 # [[line]]
 # min_rows = 0
-# segments = ["path", "branch", "worktree", "dirty", "todo"]
+# segments = ["path", "git_branch", "alt_git_worktree", "git_dirty", "todo"]
 # [[line]]
 # min_rows = 20
-# segments = ["model", "time_ago", "clock", "effort", "lines", "cost", "total_time", "api_time"]
+# segments = ["model", "alt_time_ago", "alt_time_clock", "effort", "lines", "alt_cost", "alt_time_session", "alt_time_api"]
 # [[line]]
 # min_rows = 30
-# segments = ["render_time", "slowest", "dimensions", "context", "chat_size", "memory", "rate_limits"]
+# segments = ["render_time", "slowest", "alt_term_dimensions", "context", "chat_size", "alt_system_memory", "alt_rate_limits"]
 
 ## ─── [git] — git probe tuning ────────────────────────────────────────────────
-## Behaviour knobs for the git queries behind the `branch` / `dirty` /
-## `worktree` segments. This block MERGES over the defaults.
-## NOTE: linked-worktree display is now the `worktree` segment (see [segments]
-## above), ON by default — toggle it there, not here. A legacy `[git] worktree =
-## true/false` key (and the old CC_AI_KIT_GIT_WORKTREE env) is silently ignored.
+## Behaviour knobs for the git queries behind the `git_branch` / `git_dirty` /
+## `alt_git_worktree` segments. This block MERGES over the defaults.
+## NOTE: linked-worktree display is now the `alt_git_worktree` segment (see
+## [segments] above), ON by default — toggle it there, not here. A legacy
+## `[git] worktree = true/false` key (and the old CC_AI_KIT_GIT_WORKTREE env)
+## is silently ignored.
 # [git]
 # cache_ttl = 5        # seconds the worktree probe is cached (branch/dirty stay
 #                      # fresh). Precedence: default 5 < this < env CC_AI_KIT_GIT_CACHE_TTL.
@@ -178,7 +182,10 @@
 ##   CC_AI_KIT_CONFIG_FILE=/path/to/statusline.toml  # use a config file elsewhere
 ##   CC_AI_KIT_SEGMENT_<KEY>=<bool>                  # toggle one segment; KEY is the
 ##                                                     upper-cased segment name, e.g.
-##                                                     CC_AI_KIT_SEGMENT_COST=1
+##                                                     CC_AI_KIT_SEGMENT_ALT_COST=1
+##                                                     (old names like
+##                                                     CC_AI_KIT_SEGMENT_COST still
+##                                                     work, deprecated)
 ##   bool truthy: 1 true t y yes on   bool falsy: 0 false f n no off
 ##   CC_AI_KIT_EXTERNAL_DIR=/path/to/segments         # external providers directory
 ##   CC_AI_KIT_EXTERNAL_CACHE_TTL=10                  # external-segment cache TTL (s)

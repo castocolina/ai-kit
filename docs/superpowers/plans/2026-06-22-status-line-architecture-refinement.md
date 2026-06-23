@@ -669,24 +669,52 @@ def core_render(ctx: "Context", *, cfg: "Config") -> list[str]:
 **Files:**
 - Modify: `tools/status-line.py`, `tests/test_status_line.py`, `tools/setup.py`, `tests/test_setup.py`, `tools/statusline.toml.sample`, docs
 
-Confirmed partition (FR-5.2) — **stacked-name default confirmed at plan time**:
+**Domain-family naming (user direction, amends FR-5.2).** Beyond the `time_` family, segments take
+**domain-family prefixes** where a domain clarifies them, extending the same pattern: `git_` (branch,
+dirty, worktree), `time_` (clock, ago, session, api), `system_` (memory). The domain prefix is
+ORTHOGONAL to the `alt_` dispensability tier and STACKS with it (exactly like `alt_time_clock`): a
+core git segment is `seg_git_branch` / key `git_branch`; a dispensable git segment is
+`seg_alt_git_worktree` / key `alt_git_worktree`. This expands the original "core keys unchanged" stance
+— core keys that gain a domain (e.g. `branch`→`git_branch`) ARE renamed. All renames stay
+**golden-byte-identical** (keys are internal identifiers; rendered output unchanged) and get FR-5.3
+back-compat from every old key + `CC_AI_KIT_SEGMENT_<OLDKEY>`.
 
-- **Core (11, unchanged keys):** `path`, `branch`, `dirty`, `todo`, `model`, `effort`, `lines`, `render_time`, `slowest`, `context`, `chat_size`.
-- **Alt (9):** `alt_cost`, `alt_rate_limits`, `alt_dimensions`, `alt_worktree`, `alt_memory`, and the time family `alt_time_clock` (was `clock`), `alt_time_ago` (was `time_ago`), `alt_time_session` (was `total_time`), `alt_time_api` (was `api_time`).
+> **CONFIRM the exact table at Task 3.2 execution time.** The names below are the proposed taxonomy;
+> the user gave `git_branch`/`git_worktree`/`system_memory` explicitly and "and so on" — the rest
+> (`git_dirty`, `alt_term_dimensions`) extend the same domains and should be confirmed before applying.
+> `pss_memory` (a PSS metric distinct from the current RSS) is a FEATURE that ADDS rendered output →
+> it breaks the byte-identical golden and is DEFERRED to a follow-up; the existing RSS segment is a
+> rename only. Keys not improved by a domain stay bare (`path`, `todo`, `model`, `effort`, `lines`,
+> `context`, `chat_size`; meta `render_time`/`slowest` keep their names — they are in `_SLOWEST_META`).
+
+Proposed partition:
+
+- **Core (11):** `path`, **`git_branch`** (was `branch`), **`git_dirty`** (was `dirty`), `todo`,
+  `model`, `effort`, `lines`, `render_time`, `slowest`, `context`, `chat_size`.
+- **Alt (9):** `alt_cost`, `alt_rate_limits`, **`alt_term_dimensions`** (was `dimensions`),
+  **`alt_git_worktree`** (was `worktree`), **`alt_system_memory`** (was `memory`), and the time family
+  `alt_time_clock` (was `clock`), `alt_time_ago` (was `time_ago`), `alt_time_session` (was
+  `total_time`), `alt_time_api` (was `api_time`).
 
 Builder/key rename map:
 
 | Current builder | New builder | New key | Old key (back-compat) |
 |---|---|---|---|
+| `seg_branch` | `seg_git_branch` | `git_branch` | `branch` |
+| `seg_dirty` | `seg_git_dirty` | `git_dirty` | `dirty` |
 | `seg_cost` | `seg_alt_cost` | `alt_cost` | `cost` |
 | `seg_rate_limits` | `seg_alt_rate_limits` | `alt_rate_limits` | `rate_limits` |
-| `seg_dimensions` | `seg_alt_dimensions` | `alt_dimensions` | `dimensions` |
-| `seg_worktree` | `seg_alt_worktree` | `alt_worktree` | `worktree` |
-| `seg_memory` | `seg_alt_memory` | `alt_memory` | `memory` |
+| `seg_dimensions` | `seg_alt_term_dimensions` | `alt_term_dimensions` | `dimensions` |
+| `seg_worktree` | `seg_alt_git_worktree` | `alt_git_worktree` | `worktree` |
+| `seg_memory` | `seg_alt_system_memory` | `alt_system_memory` | `memory` |
 | `seg_clock` | `seg_alt_time_clock` | `alt_time_clock` | `clock` |
 | `seg_time_ago` | `seg_alt_time_ago` | `alt_time_ago` | `time_ago` |
 | `seg_total_time` | `seg_alt_time_session` | `alt_time_session` | `total_time` |
 | `seg_api_time` | `seg_alt_time_api` | `alt_time_api` | `api_time` |
+
+> Note `git_branch`/`git_dirty` are CORE (no `alt_`) but still domain-prefixed. `core_discover_builders`
+> strips only the leading `seg_`, so `seg_git_branch` → key `git_branch` and `seg_alt_git_worktree` →
+> key `alt_git_worktree` automatically. The `LAYOUT` lists and `SEGMENTS` dict use the new keys.
 
 - [ ] **Step 1: Write the failing back-compat test** (FR-5.3): every old key still loads from its old spelling and its old `CC_AI_KIT_SEGMENT_<OLDKEY>` env name, mapped forward:
 
@@ -705,9 +733,9 @@ class TestAltBackCompat(unittest.TestCase):
 
 - [ ] **Step 2: Run — Expected: FAIL.**
 - [ ] **Step 3: Apply the renames** (builders + `SEGMENTS` keys + `LAYOUT` keys + `_SLOWEST_META` unaffected) via codemod. Update the `SEGMENTS` dict and `LAYOUT` lists to the new keys. The auto-discovery registry (`core_discover_builders`) strips the `seg_` prefix, so `seg_alt_time_clock` → key `alt_time_clock` automatically — verify the prefix-strip handles `seg_alt_` correctly (it strips only `seg_`, leaving `alt_time_clock`, which is the intended key — good).
-- [ ] **Step 4: Add the back-compat key mapping** in the `cfg_` segment resolver: a `_LEGACY_SEGMENT_KEYS = {"clock": "alt_time_clock", "time_ago": "alt_time_ago", "total_time": "alt_time_session", "api_time": "alt_time_api", "cost": "alt_cost", "rate_limits": "alt_rate_limits", "dimensions": "alt_dimensions", "worktree": "alt_worktree", "memory": "alt_memory"}` consulted when a file/env key is an old name — mapped forward with at most a dim deprecation warning (mirror the existing `_GIT_LEGACY_IGNORED` handling). Note `worktree` already had legacy `[git] worktree` handling — keep that distinct from the new `[segments] worktree → alt_worktree` mapping.
+- [ ] **Step 4: Add the back-compat key mapping** in the `cfg_` segment resolver: a `_LEGACY_SEGMENT_KEYS = {"branch": "git_branch", "dirty": "git_dirty", "clock": "alt_time_clock", "time_ago": "alt_time_ago", "total_time": "alt_time_session", "api_time": "alt_time_api", "cost": "alt_cost", "rate_limits": "alt_rate_limits", "dimensions": "alt_term_dimensions", "worktree": "alt_git_worktree", "memory": "alt_system_memory"}` consulted when a file/env key is an old name — mapped forward with at most a dim deprecation warning (mirror the existing `_GIT_LEGACY_IGNORED` handling). Note `worktree` already had legacy `[git] worktree` handling — keep that distinct from the new `[segments] worktree → alt_git_worktree` mapping.
 - [ ] **Step 5: Update `tools/setup.py`** — the `_SEG_DESCRIPTIONS`/segment mirror (lines ~66, ~170–175) and any LAYOUT mirror must use the new keys; update `tests/test_setup.py` assertions accordingly.
-- [ ] **Step 6: Update `tests/test_status_line.py`** — every test referencing `clock`/`total_time`/`api_time`/`cost`/`rate_limits`/`dimensions`/`worktree`/`memory`/`time_ago` as keys, and the `_data()`/segment tests, to the new keys. The golden `inputs.json` uses `default_config()` which now has the new keys — **the rendered output is unaffected** (keys are identifiers; the emoji/text each builder emits is unchanged), so `expected.txt` stays byte-identical. Verify this explicitly.
+- [ ] **Step 6: Update `tests/test_status_line.py`** — every test referencing `branch`/`dirty`/`clock`/`total_time`/`api_time`/`cost`/`rate_limits`/`dimensions`/`worktree`/`memory`/`time_ago` as keys, and the `_data()`/segment tests, to the new keys. The golden `inputs.json` uses `default_config()` which now has the new keys — **the rendered output is unaffected** (keys are identifiers; the emoji/text each builder emits is unchanged), so `expected.txt` stays byte-identical. Verify this explicitly.
 - [ ] **Step 7: GOLDEN (critical) + full suite.** Run `python3 -m unittest tests.test_status_line.TestGoldenOutput -v` first — Expected: byte-identical PASS. Then `python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments -v`.
 - [ ] **Step 8: GATE.** `make validate && make test`.
 - [ ] **Step 9: Commit.** `git add -A && git commit -m "refactor(status-line): alt_ tier + time_ family rename, back-compat keys (FR-5)"`
