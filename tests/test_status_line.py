@@ -26,7 +26,7 @@ def load_module():
 
 sl = load_module()
 
-THEME = sl.default_theme()
+THEME = sl.core_default_theme()
 
 ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
@@ -42,11 +42,11 @@ def _ctx_from_env(raw, env, cfg, t_start=None):
     """Resolve the per-render SHELL inputs from `env` and build a Context — the
     test-side mirror of what safe_render does in production (terminal size, HOME,
     claude_dir, effort). Returns (ctx, cols, lines) for call-site convenience."""
-    cols, lines, assumed = sl.terminal_size(env)
+    cols, lines, assumed = sl.probe_terminal_size(env)
     home = env.get("HOME", "")
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-    ctx = sl.build_context(raw, cfg, sl.default_theme(), cols, lines, assumed, t_start,
-                           effort=sl.resolve_effort(raw, env), home=home, claude_dir=claude_dir)
+    ctx = sl.core_build_context(raw, cfg, sl.core_default_theme(), cols, lines, assumed, t_start,
+                           effort=sl.cfg_resolve_effort(raw, env), home=home, claude_dir=claude_dir)
     return ctx, cols, lines
 
 
@@ -75,7 +75,7 @@ def _data(**over):
     eager_over = {k: over.pop(k) for k in list(over) if k in eager}
     probe_over = {**probe_defaults, **over}
     eager.update(eager_over)
-    ctx = sl.Context(raw={}, config=sl.default_config(), theme=THEME, **eager)
+    ctx = sl.Context(raw={}, config=sl.cfg_default_config(), theme=THEME, **eager)
     # Seed cached_property slots directly so probes never fire during tests
     ctx.__dict__["_git"] = sl.GitSnapshot(
         in_repo=probe_over["in_repo"], branch=probe_over["branch"],
@@ -102,13 +102,13 @@ class TestPickColor(unittest.TestCase):
             (50, THEME.c("MAGENTA_DARK+bold")), (99, THEME.c("MAGENTA_DARK+bold")),
         ]
         for pct, want in cases:
-            self.assertEqual(sl.pick_color(pct, THEME.ramps["context"]), want, pct)
+            self.assertEqual(sl.util_pick_color(pct, THEME.ramps["context"]), want, pct)
 
     def test_rate_ramp_bands(self):
         cases = [(0, THEME.c("GREEN")), (49, THEME.c("GREEN")), (50, THEME.c("YELLOW")),
                  (79, THEME.c("YELLOW")), (80, THEME.c("RED+bold")), (100, THEME.c("RED+bold"))]
         for pct, want in cases:
-            self.assertEqual(sl.rate_color(pct, THEME), want, pct)
+            self.assertEqual(sl.util_rate_color(pct, THEME), want, pct)
 
     def test_slowest_ramp_bands(self):
         # The single shared SLO/SLA ramp for the slowest segment: green under the
@@ -121,15 +121,15 @@ class TestPickColor(unittest.TestCase):
             (40 * ms, THEME.c("RED+bold")), (200 * ms, THEME.c("RED+bold")),
         ]
         for ns, want in cases:
-            self.assertEqual(sl.pick_color(ns, THEME.ramps["slowest"]), want, ns)
+            self.assertEqual(sl.util_pick_color(ns, THEME.ramps["slowest"]), want, ns)
 
     def test_slowest_ramp_override_replaces_band(self):
         # [ramp.slowest] in config REPLACES the default band wholesale.
-        cfg = sl.default_config()._replace(ramps={"slowest": {"100ms": "CYAN", "inf": "WHITE"}})
-        theme = sl.build_theme(cfg)
+        cfg = sl.cfg_default_config()._replace(ramps={"slowest": {"100ms": "CYAN", "inf": "WHITE"}})
+        theme = sl.core_build_theme(cfg)
         ms = 1_000_000
-        self.assertEqual(sl.pick_color(50 * ms, theme.ramps["slowest"]), theme.c("CYAN"))
-        self.assertEqual(sl.pick_color(200 * ms, theme.ramps["slowest"]), theme.c("WHITE"))
+        self.assertEqual(sl.util_pick_color(50 * ms, theme.ramps["slowest"]), theme.c("CYAN"))
+        self.assertEqual(sl.util_pick_color(200 * ms, theme.ramps["slowest"]), theme.c("WHITE"))
 
 
 class TestFormatters(unittest.TestCase):
@@ -171,71 +171,71 @@ class TestFormatters(unittest.TestCase):
 
 class TestVisibleWidth(unittest.TestCase):
     def test_plain_ascii(self):
-        self.assertEqual(sl.visible_width("hello"), 5)
+        self.assertEqual(sl.util_visible_width("hello"), 5)
 
     def test_ansi_is_zero_width(self):
-        self.assertEqual(sl.visible_width(f'{THEME.c("RED")}hi{sl.RESET}'), 2)
+        self.assertEqual(sl.util_visible_width(f'{THEME.c("RED")}hi{sl.RESET}'), 2)
 
     def test_smp_emoji_is_two_cells(self):
         for ch in "📊📝🧠💬📡💾🧮🌿🌳📃":
-            self.assertEqual(sl.char_width(ch), 2, ch)
+            self.assertEqual(sl.util_char_width(ch), 2, ch)
 
     def test_wide_bmp_symbols_are_two_cells(self):
         for ch in "⏰⏸⚡":
-            self.assertEqual(sl.char_width(ch), 2, ch)
+            self.assertEqual(sl.util_char_width(ch), 2, ch)
 
     def test_box_drawing_is_one_cell(self):
         for ch in "▁▃▄▆█▌░":
-            self.assertEqual(sl.char_width(ch), 1, ch)
+            self.assertEqual(sl.util_char_width(ch), 1, ch)
 
     def test_narrow_symbols_are_one_cell(self):
         for ch in "✗~↺":
-            self.assertEqual(sl.char_width(ch), 1, ch)
+            self.assertEqual(sl.util_char_width(ch), 1, ch)
 
     def test_combining_mark_is_zero(self):
-        self.assertEqual(sl.visible_width("é"), 1)  # e + combining acute
+        self.assertEqual(sl.util_visible_width("é"), 1)  # e + combining acute
 
     def test_mixed_segment(self):
-        self.assertEqual(sl.visible_width("📊 12%"), 6)
+        self.assertEqual(sl.util_visible_width("📊 12%"), 6)
 
     def test_variation_selector_is_zero_width(self):
-        self.assertEqual(sl.char_width("️"), 0)  # VS16 emoji presentation
-        self.assertEqual(sl.char_width("︎"), 0)  # VS15 text presentation
+        self.assertEqual(sl.util_char_width("️"), 0)  # VS16 emoji presentation
+        self.assertEqual(sl.util_char_width("︎"), 0)  # VS15 text presentation
 
     def test_glyph_plus_vs16_measures_as_two(self):
         # ⏸ (modeled wide) + VS16 must stay 2 cells, not inflate to 3.
-        self.assertEqual(sl.visible_width("⏸️ x"), 4)  # 2 + 0 + 1(space) + 1(x)
+        self.assertEqual(sl.util_visible_width("⏸️ x"), 4)  # 2 + 0 + 1(space) + 1(x)
 
 
 class TestFirstFitting(unittest.TestCase):
     def test_returns_richest_that_fits(self):
-        self.assertEqual(sl._first_fitting(["abcdef", "abc", "a"], 4), "abc")
+        self.assertEqual(sl.util_first_fitting(["abcdef", "abc", "a"], 4), "abc")
 
     def test_returns_first_when_all_fit(self):
-        self.assertEqual(sl._first_fitting(["ab", "a"], 10), "ab")
+        self.assertEqual(sl.util_first_fitting(["ab", "a"], 10), "ab")
 
     def test_none_when_nothing_fits(self):
-        self.assertIsNone(sl._first_fitting(["abcdef", "abcd"], 3))
+        self.assertIsNone(sl.util_first_fitting(["abcdef", "abcd"], 3))
 
     def test_ignores_falsy_variants(self):
-        self.assertEqual(sl._first_fitting([None, "", "ok"], 5), "ok")
+        self.assertEqual(sl.util_first_fitting([None, "", "ok"], 5), "ok")
 
 
 class TestIconHelper(unittest.TestCase):
     def test_wide_emoji_gets_single_space(self):
-        self.assertEqual(sl._icon("\U0001F4C3", "x"), "\U0001F4C3 x")  # 📃 x
+        self.assertEqual(sl.util_icon("\U0001F4C3", "x"), "\U0001F4C3 x")  # 📃 x
 
     def test_narrow_rendering_glyph_gets_vs16(self):
         # ⏱ ⏸ ⚡ are modeled wide but render narrow bare -> force emoji presentation.
-        self.assertEqual(sl._icon("⏱", "x"), "⏱️ x")  # ⏱️ x
-        self.assertEqual(sl._icon("⏸", "x"), "⏸️ x")  # ⏸️ x
-        self.assertEqual(sl._icon("⚡", "x"), "⚡️ x")  # ⚡️ x
+        self.assertEqual(sl.util_icon("⏱", "x"), "⏱️ x")  # ⏱️ x
+        self.assertEqual(sl.util_icon("⏸", "x"), "⏸️ x")  # ⏸️ x
+        self.assertEqual(sl.util_icon("⚡", "x"), "⚡️ x")  # ⚡️ x
 
     def test_already_wide_bmp_alarm_clock_no_vs16(self):
-        self.assertEqual(sl._icon("⏰", "x"), "⏰ x")  # ⏰ is EAW=W already
+        self.assertEqual(sl.util_icon("⏰", "x"), "⏰ x")  # ⏰ is EAW=W already
 
     def test_icon_width_is_two_plus_space_plus_text(self):
-        self.assertEqual(sl.visible_width(sl._icon("⏸", "12:00")), 8)  # 2+1+5
+        self.assertEqual(sl.util_visible_width(sl.util_icon("⏸", "12:00")), 8)  # 2+1+5
 
 
 class TestNoCollapsedIcons(unittest.TestCase):
@@ -268,7 +268,7 @@ class TestNoCollapsedIcons(unittest.TestCase):
             for i, ch in enumerate(plain[:-1]):
                 # An icon (wide glyph) must be followed by a space or VS16 — never
                 # glued to text. Skip bar/box cells, which are legitimately wide.
-                if sl.char_width(ch) == 2 and ch not in "█▌░":
+                if sl.util_char_width(ch) == 2 and ch not in "█▌░":
                     nxt = plain[i + 1]
                     self.assertIn(nxt, (" ", "️"), f"{plain!r} collapses at {i}")
 
@@ -331,7 +331,7 @@ class TestCooperativeBuilders(unittest.TestCase):
             _data(in_repo=True, is_worktree=True, wt_name="a" * 40), 100, THEME)
         self.assertIn("…", out)
         # visible width (glyph + space + truncated name) stays within ~22 cols
-        self.assertLessEqual(sl.visible_width(strip(out)), 24)
+        self.assertLessEqual(sl.util_visible_width(strip(out)), 24)
 
     def test_effort_full_then_compact_then_hide(self):
         self.assertIn("high", strip(sl.seg_effort(_data(effort="high"), 30, THEME)))
@@ -452,50 +452,50 @@ class TestCooperativeBuilders(unittest.TestCase):
 
 class TestDisplayDir(unittest.TestCase):
     def test_short_path_kept_whole(self):
-        self.assertEqual(sl._display_dir("/home/u/proj", "/home/u"), "~/proj")
+        self.assertEqual(sl.util_display_dir("/home/u/proj", "/home/u"), "~/proj")
 
     def test_long_path_collapses_to_basename(self):
         long = "/home/u/very/long/path/exceeding/twenty/chars"
-        self.assertEqual(sl._display_dir(long, "/home/u"), "chars")
+        self.assertEqual(sl.util_display_dir(long, "/home/u"), "chars")
 
     def test_no_ellipsis_prefix(self):
         long = "/home/u/very/long/path/exceeding/twenty/chars"
-        self.assertNotIn("/", sl._display_dir(long, "/home/u"))
+        self.assertNotIn("/", sl.util_display_dir(long, "/home/u"))
 
 
 class TestPackLine(unittest.TestCase):
     def test_keeps_segments_that_fit(self):
-        out = sl.pack_line(["model", "clock"], _data(), 200)
+        out = sl.core_pack(["model", "clock"], _data(), 200)
         self.assertIn("Opus 4.8", strip(out))
         self.assertIn("⏰ 14:30", strip(out))
         self.assertIn(" | ", out)
 
     def test_best_fit_skips_overflow_keeps_smaller(self):
-        out = strip(sl.pack_line(["model", "clock"], _data(model_name="X" * 60), 30))
+        out = strip(sl.core_pack(["model", "clock"], _data(model_name="X" * 60), 30))
         self.assertIn("⏰ 14:30", out)
         self.assertNotIn("XXXX", out)
 
     def test_flag_off_segment_not_built(self):
         sl.SEGMENTS["clock"] = False
         try:
-            out = strip(sl.pack_line(["model", "clock"], _data(), 200))
+            out = strip(sl.core_pack(["model", "clock"], _data(), 200))
             self.assertNotIn("⏰", out)
         finally:
             sl.SEGMENTS["clock"] = True
 
     def test_pinned_path_present_even_when_too_narrow(self):
-        out = strip(sl.pack_line(["path", "branch"],
+        out = strip(sl.core_pack(["path", "branch"],
                                  _data(work_dir="/home/u/proj", home="/home/u"), 5))
         self.assertIn("proj", out)
 
     def test_pinned_context_present_even_when_too_narrow(self):
-        out = strip(sl.pack_line(["dimensions", "context"],
+        out = strip(sl.core_pack(["dimensions", "context"],
                                  _data(cols=300, lines=80, context_pct=12), 8))
         self.assertIn("12%", out)
 
     def test_respects_right_margin(self):
-        out = sl.pack_line(["model", "clock", "effort", "lines"], _data(), 60)
-        self.assertLessEqual(sl.visible_width(out), 60 - sl.RIGHT_MARGIN)
+        out = sl.core_pack(["model", "clock", "effort", "lines"], _data(), 60)
+        self.assertLessEqual(sl.util_visible_width(out), 60 - sl.RIGHT_MARGIN)
 
 
 class TestSlowestTiming(unittest.TestCase):
@@ -504,20 +504,20 @@ class TestSlowestTiming(unittest.TestCase):
         # first read, so its cost lands INSIDE the measured build of the segment
         # that reads it — not amortized to µs. A live (un-seeded) Context whose
         # git probe sleeps proves the `branch` segment is crowned ms-scale, and
-        # that the probe actually fired during pack_line (not pre-seeded).
+        # that the probe actually fired during core_pack (not pre-seeded).
         def slow_git(*_a, **_k):
             time.sleep(0.005)
             return sl.GitSnapshot(in_repo=True, branch="main", dirty="clean",
                                   is_worktree=False, wt_name="")
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         cfg.segments.update({"slowest": True, "branch": True})
-        ctx = sl.build_context(
+        ctx = sl.core_build_context(
             raw={"workspace": {"current_dir": "/tmp"}}, config=cfg, theme=THEME,
             cols=200, lines=50, dim_assumed=False, t_start=sl.time.perf_counter_ns(),
             effort="high", home="/home/u", claude_dir="/home/u/.claude")
-        with mock.patch.object(sl, "git_snapshot", side_effect=slow_git):
-            sl.pack_line(["branch"], ctx, 200, cfg=cfg)
-        # The cached_property must have run during pack_line (proves laziness):
+        with mock.patch.object(sl, "probe_git_snapshot", side_effect=slow_git):
+            sl.core_pack(["branch"], ctx, 200, cfg=cfg)
+        # The cached_property must have run during core_pack (proves laziness):
         self.assertIsNotNone(ctx.__dict__.get("_git"))
         name, ns = ctx.slowest
         self.assertEqual(name, "branch")
@@ -536,24 +536,24 @@ class TestSlowestTiming(unittest.TestCase):
         # With `slowest` enabled the packer times each builder and records the max
         # as ctx.slowest = (name, ns) — the exact attribute seg_slowest reads.
         builders = {"fast_seg": self._fast, "slow_seg": self._slow}
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         cfg.segments.update({"slowest": True, "fast_seg": True, "slow_seg": True})
         data = _data()
-        sl.pack_line(["fast_seg", "slow_seg"], data, 200, cfg=cfg, builders=builders)
+        sl.core_pack(["fast_seg", "slow_seg"], data, 200, cfg=cfg, builders=builders)
         name, ns = data.slowest
         self.assertEqual(name, "slow_seg")
         self.assertIsInstance(ns, int)
         self.assertGreater(ns, 0)
 
     def test_slowest_accumulates_max_across_lines(self):
-        # render() packs each layout line sharing one ctx; the running max
-        # must survive across pack_line calls (slow line first, fast line second).
+        # core_render() packs each layout line sharing one ctx; the running max
+        # must survive across core_pack calls (slow line first, fast line second).
         builders = {"fast_seg": self._fast, "slow_seg": self._slow}
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         cfg.segments.update({"slowest": True, "fast_seg": True, "slow_seg": True})
         data = _data()
-        sl.pack_line(["slow_seg"], data, 200, cfg=cfg, builders=builders)
-        sl.pack_line(["fast_seg"], data, 200, cfg=cfg, builders=builders)
+        sl.core_pack(["slow_seg"], data, 200, cfg=cfg, builders=builders)
+        sl.core_pack(["fast_seg"], data, 200, cfg=cfg, builders=builders)
         self.assertEqual(data.slowest[0], "slow_seg")   # not overwritten by the fast line
 
     def test_failed_builder_not_recorded_as_slowest(self):
@@ -562,10 +562,10 @@ class TestSlowestTiming(unittest.TestCase):
         def boom(data, avail, theme):
             raise RuntimeError("nope")
         builders = {"boom": boom, "fast_seg": self._fast}
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         cfg.segments.update({"slowest": True, "boom": True, "fast_seg": True})
         data = _data()
-        sl.pack_line(["boom", "fast_seg"], data, 200, cfg=cfg, builders=builders)
+        sl.core_pack(["boom", "fast_seg"], data, 200, cfg=cfg, builders=builders)
         self.assertNotEqual((data.slowest or (None,))[0], "boom")
 
     def test_empty_output_builder_not_recorded_as_slowest(self):
@@ -574,10 +574,10 @@ class TestSlowestTiming(unittest.TestCase):
         def empty(data, avail, theme):
             return None
         builders = {"empty_seg": empty, "fast_seg": self._fast}
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         cfg.segments.update({"slowest": True, "empty_seg": True, "fast_seg": True})
         data = _data()
-        sl.pack_line(["empty_seg", "fast_seg"], data, 200, cfg=cfg, builders=builders)
+        sl.core_pack(["empty_seg", "fast_seg"], data, 200, cfg=cfg, builders=builders)
         self.assertNotEqual((data.slowest or (None,))[0], "empty_seg")
 
     def test_slowest_built_after_non_meta_regardless_of_position(self):
@@ -594,10 +594,10 @@ class TestSlowestTiming(unittest.TestCase):
         # it even when `slowest` is positioned BEFORE it in the key order.
         builders = dict(sl.BUILDERS)
         builders["slow_seg"] = self._slow
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         cfg.segments.update({"slowest": True, "slow_seg": True})
         data = _data()
-        out = sl.pack_line(["slowest", "slow_seg"], data, 200, cfg=cfg, builders=builders)
+        out = sl.core_pack(["slowest", "slow_seg"], data, 200, cfg=cfg, builders=builders)
         self.assertEqual(data.slowest[0], "slow_seg")
         self.assertIn("slow_seg", strip(out))      # seg_slowest (built in pass 2) names it
 
@@ -607,10 +607,10 @@ class TestSlowestTiming(unittest.TestCase):
             time.sleep(0.005)
             return "RT"
         builders = {"render_time": slow_rt, "fast_seg": self._fast}
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         cfg.segments.update({"slowest": True, "render_time": True, "fast_seg": True})
         data = _data()
-        sl.pack_line(["render_time", "fast_seg"], data, 200, cfg=cfg, builders=builders)
+        sl.core_pack(["render_time", "fast_seg"], data, 200, cfg=cfg, builders=builders)
         self.assertNotEqual((data.slowest or (None,))[0], "render_time")
 
     def test_overflow_dropped_segment_not_recorded_slowest(self):
@@ -620,25 +620,25 @@ class TestSlowestTiming(unittest.TestCase):
             time.sleep(0.005)
             return "X" * 100
         builders = {"wide_seg": slow_wide, "fast_seg": self._fast}
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         cfg.segments.update({"slowest": True, "wide_seg": True, "fast_seg": True})
         data = _data()
-        sl.pack_line(["fast_seg", "wide_seg"], data, 20, cfg=cfg, builders=builders)
+        sl.core_pack(["fast_seg", "wide_seg"], data, 20, cfg=cfg, builders=builders)
         self.assertNotEqual((data.slowest or (None,))[0], "wide_seg")
 
     def test_slowest_readout_hidden_when_disabled(self):
         # Builds are always timed now (negligible, and FR-R.1 drops the per-segment
         # special case) — but with `slowest` disabled its readout is gated off and
         # never renders. The internal max may be tracked; the user never sees it.
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         cfg.segments["slowest"] = False
-        theme = sl.build_theme(cfg)
+        theme = sl.core_build_theme(cfg)
         env = {"HOME": "/h", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50"}
-        with mock.patch.object(sl, "git_snapshot",
+        with mock.patch.object(sl, "probe_git_snapshot",
                                return_value=sl.GitSnapshot(True, "m", "clean", False, "")):
             data, _cols, _lines = _ctx_from_env(
                 {"workspace": {"current_dir": "."}, "transcript_path": ""}, env, cfg)
-            out = "\n".join(sl.render(data, cfg, theme))
+            out = "\n".join(sl.core_render(data, cfg, theme))
         self.assertNotIn("🐌", strip(out))
 
 
@@ -666,14 +666,14 @@ class TestSlowestSegment(unittest.TestCase):
 
 class TestRenderLayout(unittest.TestCase):
     def test_three_lines_when_tall_and_wide(self):
-        self.assertEqual(len(sl.render(_data())), 3)
+        self.assertEqual(len(sl.core_render(_data())), 3)
 
     def test_line_gating_by_rows(self):
-        self.assertEqual(len(sl.render(_data(lines=10))), 1)   # identity only
-        self.assertEqual(len(sl.render(_data(lines=25))), 2)   # + model row
+        self.assertEqual(len(sl.core_render(_data(lines=10))), 1)   # identity only
+        self.assertEqual(len(sl.core_render(_data(lines=25))), 2)   # + model row
 
     def test_identity_line_never_empty(self):
-        out = sl.render(_data(branch="", dirty="clean", todo_text=None))
+        out = sl.core_render(_data(branch="", dirty="clean", todo_text=None))
         self.assertTrue(out[0].strip())
 
     def test_context_pinned(self):
@@ -703,25 +703,25 @@ class TestDocumentation(unittest.TestCase):
 
 class TestProcAndGit(unittest.TestCase):
     def test_proc_rss_and_git_smoke(self):
-        rss = sl.proc_rss_bytes()
+        rss = sl.probe_rss_bytes()
         self.assertTrue(rss is None or isinstance(rss, int))
         with tempfile.TemporaryDirectory() as home:
             env = {"HOME": home}
-            cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
-            snap = sl.git_snapshot(".", cfg)
+            cfg = sl.cfg_default_config()._replace(cache_base=sl.cfg_cache_base(env))
+            snap = sl.probe_git_snapshot(".", cfg)
         self.assertIn(snap.dirty, ("clean", "untracked", "modified"))
         self.assertIsInstance(snap.is_worktree, bool)
         self.assertIsInstance(snap.wt_name, str)
 
     def test_branch_from_porcelain_header(self):
-        self.assertEqual(sl._branch_from_porcelain("## main"), "main")
-        self.assertEqual(sl._branch_from_porcelain("## main...origin/main"), "main")
+        self.assertEqual(sl.util_branch_from_porcelain("## main"), "main")
+        self.assertEqual(sl.util_branch_from_porcelain("## main...origin/main"), "main")
         self.assertEqual(
-            sl._branch_from_porcelain("## feat/x...origin/feat/x [ahead 18]"), "feat/x")
-        self.assertEqual(sl._branch_from_porcelain("## HEAD (no branch)"), "")   # detached
-        self.assertEqual(sl._branch_from_porcelain("## No commits yet on main"), "main")
-        self.assertEqual(sl._branch_from_porcelain("## Initial commit on dev"), "dev")
-        self.assertEqual(sl._branch_from_porcelain(""), "")                      # not a repo
+            sl.util_branch_from_porcelain("## feat/x...origin/feat/x [ahead 18]"), "feat/x")
+        self.assertEqual(sl.util_branch_from_porcelain("## HEAD (no branch)"), "")   # detached
+        self.assertEqual(sl.util_branch_from_porcelain("## No commits yet on main"), "main")
+        self.assertEqual(sl.util_branch_from_porcelain("## Initial commit on dev"), "dev")
+        self.assertEqual(sl.util_branch_from_porcelain(""), "")                      # not a repo
 
     def _home_env(self):
         d = tempfile.mkdtemp()
@@ -729,7 +729,7 @@ class TestProcAndGit(unittest.TestCase):
         return {"HOME": d}
 
     def test_git_snapshot_dirty_parsing(self):
-        # git_snapshot parses branch + dirty from the porcelain --branch output;
+        # probe_git_snapshot parses branch + dirty from the porcelain --branch output;
         # mock subprocess so the test is independent of the live working tree.
         def fake_run(cmd, **kw):
             class R:
@@ -738,9 +738,9 @@ class TestProcAndGit(unittest.TestCase):
                           if "status" in cmd else ".git\n.git\n/repo\n")
             return R()
         env = self._home_env()
-        cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
+        cfg = sl.cfg_default_config()._replace(cache_base=sl.cfg_cache_base(env))
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            snap = sl.git_snapshot(".", cfg)
+            snap = sl.probe_git_snapshot(".", cfg)
             self.assertEqual(snap.branch, "main")
             self.assertEqual(snap.dirty, "untracked")   # ?? present -> untracked
             self.assertFalse(snap.is_worktree)          # git-dir == git-common-dir
@@ -749,7 +749,7 @@ class TestProcAndGit(unittest.TestCase):
         # The probe owns its policy: it ALWAYS does the full untracked walk (no
         # per-call gating knob). Laziness — not a flag — gates whether it runs.
         env = self._home_env()
-        cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
+        cfg = sl.cfg_default_config()._replace(cache_base=sl.cfg_cache_base(env))
         seen = []
         def fake_run(cmd, *, _seen=seen, **kw):
             _seen.append(cmd)
@@ -758,15 +758,15 @@ class TestProcAndGit(unittest.TestCase):
                 stdout = "## main\n"
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            sl.git_snapshot(".", cfg)
+            sl.probe_git_snapshot(".", cfg)
         status_cmd = next(c for c in seen if "status" in c)
         self.assertNotIn("--untracked-files=no", status_cmd)   # always the full walk
 
     def test_git_snapshot_always_runs_worktree_probe(self):
         # The probe always runs the worktree rev-parse (no want_worktree knob);
-        # laziness gates whether git_snapshot is called at all, not this rev-parse.
+        # laziness gates whether probe_git_snapshot is called at all, not this rev-parse.
         env = self._home_env()
-        cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
+        cfg = sl.cfg_default_config()._replace(cache_base=sl.cfg_cache_base(env))
         seen = []
         def fake_run(cmd, *, _seen=seen, **kw):
             _seen.append(cmd)
@@ -775,7 +775,7 @@ class TestProcAndGit(unittest.TestCase):
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            sl.git_snapshot(".", cfg)
+            sl.probe_git_snapshot(".", cfg)
         self.assertTrue(any("rev-parse" in c for c in seen))
 
     def test_git_snapshot_clean_and_worktree_name(self):
@@ -786,9 +786,9 @@ class TestProcAndGit(unittest.TestCase):
                           else "/wt/.git/worktrees/feat-x\n/main/.git\n/path/to/feat-x\n")
             return R()
         env = self._home_env()
-        cfg = sl.default_config()._replace(cache_base=sl._cache_base(env))
+        cfg = sl.cfg_default_config()._replace(cache_base=sl.cfg_cache_base(env))
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            snap = sl.git_snapshot(".", cfg)
+            snap = sl.probe_git_snapshot(".", cfg)
             self.assertEqual((snap.branch, snap.dirty), ("main", "clean"))
             self.assertTrue(snap.is_worktree)        # git-dir != git-common-dir
             self.assertTrue(snap.in_repo)
@@ -797,8 +797,8 @@ class TestProcAndGit(unittest.TestCase):
     def test_worktree_info_cached_within_ttl(self):
         # Second call within the TTL must NOT re-run the rev-parse (cached on disk).
         env = self._home_env()
-        cache_base = sl._cache_base(env)
-        cfg = sl.default_config()._replace(cache_base=cache_base, git={"cache_ttl": 100})
+        cache_base = sl.cfg_cache_base(env)
+        cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 100})
         calls = []
         def fake_run(cmd, **kw):
             calls.append(cmd)
@@ -807,14 +807,14 @@ class TestProcAndGit(unittest.TestCase):
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            sl.git_snapshot(".", cfg)
-            sl.git_snapshot(".", cfg)
+            sl.probe_git_snapshot(".", cfg)
+            sl.probe_git_snapshot(".", cfg)
         self.assertEqual(sum("rev-parse" in c for c in calls), 1)   # only once
 
     def test_worktree_cache_bypassed_when_ttl_zero(self):
         env = self._home_env()
-        cache_base = sl._cache_base(env)
-        cfg = sl.default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
+        cache_base = sl.cfg_cache_base(env)
+        cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
         calls = []
         def fake_run(cmd, **kw):
             calls.append(cmd)
@@ -823,8 +823,8 @@ class TestProcAndGit(unittest.TestCase):
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            sl.git_snapshot(".", cfg)
-            sl.git_snapshot(".", cfg)
+            sl.probe_git_snapshot(".", cfg)
+            sl.probe_git_snapshot(".", cfg)
         self.assertEqual(sum("rev-parse" in c for c in calls), 2)   # ttl<=0 always runs
 
     def test_worktree_cache_not_written_when_ttl_zero(self):
@@ -832,20 +832,20 @@ class TestProcAndGit(unittest.TestCase):
         # read — it must therefore never be WRITTEN either (no wasted disk I/O on
         # the hot render path).
         env = self._home_env()
-        cache_base = sl._cache_base(env)
-        cfg = sl.default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
+        cache_base = sl.cfg_cache_base(env)
+        cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
         def fake_run(cmd, **kw):
             class R:
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            sl.git_snapshot(".", cfg)
-        self.assertFalse(os.path.exists(sl._git_cache_path(".", cache_base)))
+            sl.probe_git_snapshot(".", cfg)
+        self.assertFalse(os.path.exists(sl.util_git_cache_path(".", cache_base)))
 
 
 class TestCurrentTodo(unittest.TestCase):
-    """current_todo prefers Claude's materialized task/todo state on disk over
+    """probe_current_todo prefers Claude's materialized task/todo state on disk over
     replaying the transcript."""
 
     def _write(self, path, obj):
@@ -855,15 +855,15 @@ class TestCurrentTodo(unittest.TestCase):
 
     def test_pick_helpers(self):
         self.assertEqual(
-            sl._pick_from_tasks(
+            sl.util_pick_from_tasks(
                 [{"status": "in_progress", "activeForm": "Doing X", "subject": "X"}]),
             ("in_progress", "Doing X"))
         self.assertEqual(
-            sl._pick_from_tasks([{"status": "pending", "subject": "Y"}]),
+            sl.util_pick_from_tasks([{"status": "pending", "subject": "Y"}]),
             ("pending", "Y"))
-        self.assertIsNone(sl._pick_from_tasks([{"status": "completed", "subject": "Z"}]))
+        self.assertIsNone(sl.util_pick_from_tasks([{"status": "completed", "subject": "Z"}]))
         self.assertEqual(
-            sl._pick_from_todos([{"status": "in_progress", "activeForm": "Doing"}]),
+            sl.util_pick_from_todos([{"status": "in_progress", "activeForm": "Doing"}]),
             ("in_progress", "Doing"))
 
     def test_reads_managed_tasks_dir(self):
@@ -875,7 +875,7 @@ class TestCurrentTodo(unittest.TestCase):
             self._write(os.path.join(cd, "tasks", s, "2.json"),
                         {"id": "2", "subject": "second", "activeForm": "Doing second",
                          "status": "in_progress"})
-            self.assertEqual(sl.current_todo("", s, cd), ("in_progress", "Doing second"))
+            self.assertEqual(sl.probe_current_todo("", s, cd), ("in_progress", "Doing second"))
 
     def test_tasks_dir_all_done_is_authoritative(self):
         # Dir has files but none active -> (None, None); must NOT replay transcript.
@@ -883,8 +883,9 @@ class TestCurrentTodo(unittest.TestCase):
             s = "sess2"
             self._write(os.path.join(cd, "tasks", s, "1.json"),
                         {"id": "1", "subject": "x", "activeForm": "X", "status": "completed"})
-            with mock.patch.object(sl, "_todo_from_transcript") as tr:
-                self.assertEqual(sl.current_todo("/some/transcript.jsonl", s, cd), (None, None))
+            with mock.patch.object(sl, "probe_todo_from_transcript") as tr:
+                result = sl.probe_current_todo("/some/transcript.jsonl", s, cd)
+                self.assertEqual(result, (None, None))
                 tr.assert_not_called()
 
     def test_reads_todos_dir_when_no_tasks(self):
@@ -892,7 +893,7 @@ class TestCurrentTodo(unittest.TestCase):
             s = "sess3"
             self._write(os.path.join(cd, "todos", f"{s}-agent-abc.json"),
                         [{"status": "in_progress", "activeForm": "Todo active", "content": "c"}])
-            self.assertEqual(sl.current_todo("", s, cd), ("in_progress", "Todo active"))
+            self.assertEqual(sl.probe_current_todo("", s, cd), ("in_progress", "Todo active"))
 
     def test_falls_back_to_transcript(self):
         with tempfile.TemporaryDirectory() as cd:
@@ -905,7 +906,7 @@ class TestCurrentTodo(unittest.TestCase):
                     {"type": "tool_use", "name": "TaskUpdate",
                      "input": {"taskId": 1, "status": "in_progress"}}]}}) + "\n")
             # session has no materialized dirs under cd -> transcript replay
-            self.assertEqual(sl.current_todo(tp, "nosession", cd), ("in_progress", "Doing A"))
+            self.assertEqual(sl.probe_current_todo(tp, "nosession", cd), ("in_progress", "Doing A"))
 
     def test_tasks_dir_preferred_over_transcript(self):
         with tempfile.TemporaryDirectory() as cd:
@@ -913,15 +914,15 @@ class TestCurrentTodo(unittest.TestCase):
             self._write(os.path.join(cd, "tasks", s, "1.json"),
                         {"id": "1", "subject": "win", "activeForm": "From tasks dir",
                          "status": "in_progress"})
-            with mock.patch.object(sl, "_todo_from_transcript") as tr:
+            with mock.patch.object(sl, "probe_todo_from_transcript") as tr:
                 self.assertEqual(
-                    sl.current_todo("/x.jsonl", s, cd), ("in_progress", "From tasks dir"))
+                    sl.probe_current_todo("/x.jsonl", s, cd), ("in_progress", "From tasks dir"))
                 tr.assert_not_called()
 
     def test_safe_session_rejects_traversal(self):
-        self.assertTrue(sl._safe_session("b6de6c0c-9229-407f-9d33-b157970f2e9f"))
+        self.assertTrue(sl.util_safe_session("b6de6c0c-9229-407f-9d33-b157970f2e9f"))
         for bad in ("../evil", "a/b", "..", r"a\b", ""):
-            self.assertFalse(sl._safe_session(bad), bad)
+            self.assertFalse(sl.util_safe_session(bad), bad)
 
     def test_traversal_session_does_not_escape_dir(self):
         # A crafted session id with ../ must not read .json outside the tasks dir;
@@ -929,14 +930,15 @@ class TestCurrentTodo(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cd:
             self._write(os.path.join(cd, "secret.json"),
                         [{"status": "in_progress", "activeForm": "LEAK"}])
-            with mock.patch.object(sl, "_todo_from_transcript",
+            with mock.patch.object(sl, "probe_todo_from_transcript",
                                    return_value=(None, None)) as tr:
-                self.assertEqual(sl.current_todo("", "../", cd), (None, None))
+                self.assertEqual(sl.probe_current_todo("", "../", cd), (None, None))
                 tr.assert_called_once()   # fell through, did not traverse
 
     def test_no_session_goes_straight_to_transcript(self):
-        with mock.patch.object(sl, "_todo_from_transcript", return_value=("pending", "P")) as tr:
-            self.assertEqual(sl.current_todo("/x.jsonl"), ("pending", "P"))
+        patch_target = "probe_todo_from_transcript"
+        with mock.patch.object(sl, patch_target, return_value=("pending", "P")) as tr:
+            self.assertEqual(sl.probe_current_todo("/x.jsonl"), ("pending", "P"))
             tr.assert_called_once()
 
 
@@ -951,9 +953,9 @@ class TestEndToEnd(unittest.TestCase):
                      "total_duration_ms": 65000, "total_api_duration_ms": 4200},
         }
         env = {"STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50", "HOME": "/home/u"}
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         data, _cols, _lines = _ctx_from_env(raw, env, cfg)
-        out = sl.render(data)
+        out = sl.core_render(data)
         self.assertEqual(len(out), 3)
         self.assertIn("Opus 4.8", strip(out[1]))
         self.assertIn("47%", strip(out[2]))
@@ -971,21 +973,21 @@ class TestLazyCompute(unittest.TestCase):
 
     def _build_and_render(self, segs, raw=None, cfg=None):
         if cfg is None:
-            cfg = sl.default_config()
+            cfg = sl.cfg_default_config()
         cfg.segments.clear()                       # cfg is a namedtuple; mutate the dict
         cfg.segments.update(dict.fromkeys(sl.SEGMENTS, False))
         cfg.segments.update(segs)
-        theme = sl.build_theme(cfg)
+        theme = sl.core_build_theme(cfg)
         # build_data is segment-agnostic; cfg.segments gates probes via render().
         data, _cols, _lines = _ctx_from_env(raw or self.RAW, self.ENV, cfg)
-        sl.render(data, cfg, theme)
+        sl.core_render(data, cfg, theme)
         return data
 
     def test_disabled_segments_skip_their_probes(self):
-        with mock.patch.object(sl, "git_snapshot") as gi, \
-             mock.patch.object(sl, "current_todo") as ct, \
-             mock.patch.object(sl, "proc_rss_bytes") as rss, \
-             mock.patch.object(sl, "effort_setting_is_auto") as ea:
+        with mock.patch.object(sl, "probe_git_snapshot") as gi,\
+             mock.patch.object(sl, "probe_current_todo") as ct,\
+             mock.patch.object(sl, "probe_rss_bytes") as rss,\
+             mock.patch.object(sl, "probe_effort_setting_is_auto") as ea:
             self._build_and_render(dict.fromkeys(sl.SEGMENTS, False))
             gi.assert_not_called()
             ct.assert_not_called()
@@ -994,11 +996,11 @@ class TestLazyCompute(unittest.TestCase):
 
     def test_enabled_segments_run_their_probes(self):
         segs = {"branch": True, "todo": True, "memory": True, "effort": True}
-        with mock.patch.object(sl, "git_snapshot",
-                               return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi, \
-             mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct, \
-             mock.patch.object(sl, "proc_rss_bytes", return_value=1) as rss, \
-             mock.patch.object(sl, "effort_setting_is_auto", return_value=True) as ea:
+        with mock.patch.object(sl, "probe_git_snapshot",
+                               return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi,\
+             mock.patch.object(sl, "probe_current_todo", return_value=(None, None)) as ct,\
+             mock.patch.object(sl, "probe_rss_bytes", return_value=1) as rss,\
+             mock.patch.object(sl, "probe_effort_setting_is_auto", return_value=True) as ea:
             self._build_and_render(segs, raw=self.EFFORT_RAW)
             gi.assert_called_once()      # branch built -> git probe runs
             ct.assert_called_once()      # todo built  -> transcript parse runs
@@ -1006,8 +1008,8 @@ class TestLazyCompute(unittest.TestCase):
             ea.assert_called_once()      # effort built (level present -> auto checked)
 
     def test_dirty_alone_still_triggers_git(self):
-        # branch + dirty share one git_snapshot call; either flag must trigger it.
-        with mock.patch.object(sl, "git_snapshot",
+        # branch + dirty share one probe_git_snapshot call; either flag must trigger it.
+        with mock.patch.object(sl, "probe_git_snapshot",
                                return_value=sl.GitSnapshot(True, "", "modified", False, "")) as gi:
             self._build_and_render({"dirty": True})
             gi.assert_called_once()
@@ -1015,29 +1017,29 @@ class TestLazyCompute(unittest.TestCase):
     def test_none_segments_computes_everything(self):
         # build_data is segment-agnostic: it never gates by flag. Rendering an
         # all-on config fires the probes (here the todo parse).
-        cfg = sl.default_config()
-        theme = sl.build_theme(cfg)
-        with mock.patch.object(sl, "current_todo", return_value=(None, None)) as ct, \
-             mock.patch.object(sl, "git_snapshot",
+        cfg = sl.cfg_default_config()
+        theme = sl.core_build_theme(cfg)
+        with mock.patch.object(sl, "probe_current_todo", return_value=(None, None)) as ct,\
+             mock.patch.object(sl, "probe_git_snapshot",
                                return_value=sl.GitSnapshot(True, "m", "clean", False, "")):
             data, _cols, _lines = _ctx_from_env(self.RAW, self.ENV, cfg)
-            sl.render(data, cfg, theme)
+            sl.core_render(data, cfg, theme)
             ct.assert_called_once()
 
     def test_git_ttl_threaded_to_snapshot(self):
-        # The resolved [git] cache_ttl flows through build_data into git_snapshot
+        # The resolved [git] cache_ttl flows through build_data into probe_git_snapshot
         # via the Config object (D8 — consumers read cache_ttl off the object).
-        cfg = sl.default_config()._replace(git={"cache_ttl": 42})
-        with mock.patch.object(sl, "git_snapshot",
+        cfg = sl.cfg_default_config()._replace(git={"cache_ttl": 42})
+        with mock.patch.object(sl, "probe_git_snapshot",
                                return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gs:
             self._build_and_render({"worktree": True}, cfg=cfg)
-            # git_snapshot receives the config; the ttl is read off it.
+            # probe_git_snapshot receives the config; the ttl is read off it.
             args = gs.call_args
             passed_cfg = args.args[1] if args.args[1:] else args.kwargs.get("config")
             self.assertEqual((passed_cfg.git or {}).get("cache_ttl"), 42)
 
     def test_git_probe_fires_for_any_git_segment_agnostically(self):
-        # build_data is segment-agnostic: git_snapshot runs once whenever ANY of
+        # build_data is segment-agnostic: probe_git_snapshot runs once whenever ANY of
         # branch/dirty/worktree is built — in full (no per-segment untracked/
         # want_worktree flags threaded in) — and not at all when none are.
         for branch_on, dirty_on, wt_on in (
@@ -1046,7 +1048,7 @@ class TestLazyCompute(unittest.TestCase):
             (True, True, True),
         ):
             with mock.patch.object(
-                    sl, "git_snapshot",
+                    sl, "probe_git_snapshot",
                     return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi:
                 self._build_and_render(
                     {"branch": branch_on, "dirty": dirty_on, "worktree": wt_on})
@@ -1056,7 +1058,7 @@ class TestLazyCompute(unittest.TestCase):
                 self.assertNotIn("want_worktree", gi.call_args.kwargs)
 
         with mock.patch.object(
-                sl, "git_snapshot",
+                sl, "probe_git_snapshot",
                 return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi:
             self._build_and_render({"branch": False, "dirty": False, "worktree": False})
             gi.assert_not_called()                  # no git segment built -> no probe
@@ -1092,7 +1094,7 @@ class TestChatSizeRamp(unittest.TestCase):
             (10 * MB, THEME.c("MAGENTA")), (20 * MB, THEME.c("MAGENTA")),
         ]
         for n, want in cases:
-            self.assertEqual(sl.pick_color(n, THEME.ramps["chat_size"]), want, n)
+            self.assertEqual(sl.util_pick_color(n, THEME.ramps["chat_size"]), want, n)
 
     def test_seg_chat_size_colors_the_size(self):
         out = sl.seg_chat_size(_data(chat_bytes=6 * self.MB), 40, THEME)
@@ -1141,56 +1143,56 @@ class TestEffortSettingAuto(unittest.TestCase):
 
     def test_absent_everywhere_is_auto(self):
         proj, home = self._dirs()
-        self.assertTrue(sl.effort_setting_is_auto(proj, home))
+        self.assertTrue(sl.probe_effort_setting_is_auto(proj, home))
 
     def test_explicit_user_level_is_not_auto(self):
         proj, home = self._dirs()
         self._write(home, "settings.json", {"effortLevel": "high"})
-        self.assertFalse(sl.effort_setting_is_auto(proj, home))
+        self.assertFalse(sl.probe_effort_setting_is_auto(proj, home))
 
     def test_literal_auto_value_is_auto(self):
         proj, home = self._dirs()
         self._write(home, "settings.json", {"effortLevel": "auto"})
-        self.assertTrue(sl.effort_setting_is_auto(proj, home))
+        self.assertTrue(sl.probe_effort_setting_is_auto(proj, home))
 
     def test_project_setting_wins_over_user(self):
         proj, home = self._dirs()
         self._write(home, "settings.json", {"effortLevel": "auto"})
         self._write(proj, "settings.json", {"effortLevel": "high"})
-        self.assertFalse(sl.effort_setting_is_auto(proj, home))
+        self.assertFalse(sl.probe_effort_setting_is_auto(proj, home))
 
     def test_keyless_file_falls_through_to_next(self):
         proj, home = self._dirs()
         self._write(proj, "settings.local.json", {"model": "opus"})  # present, no effortLevel
         self._write(home, "settings.json", {"effortLevel": "max"})
-        self.assertFalse(sl.effort_setting_is_auto(proj, home))
+        self.assertFalse(sl.probe_effort_setting_is_auto(proj, home))
 
     def test_local_json_wins_over_project_and_user(self):
         proj, home = self._dirs()
         self._write(proj, "settings.local.json", {"effortLevel": "high"})
         self._write(proj, "settings.json", {"effortLevel": "auto"})
         self._write(home, "settings.json", {"effortLevel": "auto"})
-        self.assertFalse(sl.effort_setting_is_auto(proj, home))
+        self.assertFalse(sl.probe_effort_setting_is_auto(proj, home))
 
 
 class TestResolveEffort(unittest.TestCase):
     def test_level_auto_normalized_away(self):
         # "auto" is a *setting*, never a resolved level — it must not survive here.
-        self.assertEqual(sl.resolve_effort({"effort": {"level": "auto"}}, {}), "")
+        self.assertEqual(sl.cfg_resolve_effort({"effort": {"level": "auto"}}, {}), "")
 
     def test_env_auto_normalized_away(self):
-        self.assertEqual(sl.resolve_effort({}, {"CLAUDE_EFFORT": "auto"}), "")
+        self.assertEqual(sl.cfg_resolve_effort({}, {"CLAUDE_EFFORT": "auto"}), "")
 
     def test_case_normalized(self):
-        self.assertEqual(sl.resolve_effort({"effort": {"level": "HIGH"}}, {}), "high")
+        self.assertEqual(sl.cfg_resolve_effort({"effort": {"level": "HIGH"}}, {}), "high")
 
     def test_level_wins_over_env(self):
         self.assertEqual(
-            sl.resolve_effort({"effort": {"level": "high"}}, {"CLAUDE_EFFORT": "auto"}),
+            sl.cfg_resolve_effort({"effort": {"level": "high"}}, {"CLAUDE_EFFORT": "auto"}),
             "high")
 
     def test_missing_is_empty(self):
-        self.assertEqual(sl.resolve_effort({}, {}), "")
+        self.assertEqual(sl.cfg_resolve_effort({}, {}), "")
 
 
 class TestProcRssLinux(unittest.TestCase):
@@ -1198,23 +1200,23 @@ class TestProcRssLinux(unittest.TestCase):
         # the wezterm bug: walk finds no `claude`, must return None (not a stray RSS)
         comm = {10: "zsh", 11: "wezterm-gui", 1: "systemd"}
         ppid = {10: 11, 11: 1, 1: 0}
-        with mock.patch.object(sl.os.path, "isdir", return_value=True), \
-             mock.patch.object(sl.os, "getppid", return_value=10), \
-             mock.patch.object(sl, "_comm_via_proc", side_effect=comm.get), \
-             mock.patch.object(sl, "_ppid_via_proc", side_effect=ppid.get), \
-             mock.patch.object(sl, "_rss_kb_via_proc", side_effect=lambda p: 5000):
-            self.assertIsNone(sl.proc_rss_bytes())
+        with mock.patch.object(sl.os.path, "isdir", return_value=True),\
+             mock.patch.object(sl.os, "getppid", return_value=10),\
+             mock.patch.object(sl, "probe_comm_via_proc", side_effect=comm.get),\
+             mock.patch.object(sl, "probe_ppid_via_proc", side_effect=ppid.get),\
+             mock.patch.object(sl, "probe_rss_kb_via_proc", side_effect=lambda p: 5000):
+            self.assertIsNone(sl.probe_rss_bytes())
 
     def test_returns_rss_when_claude_found(self):
         comm = {10: "zsh", 11: "claude", 1: "systemd"}
         ppid = {10: 11, 11: 1, 1: 0}
-        with mock.patch.object(sl.os.path, "isdir", return_value=True), \
-             mock.patch.object(sl.os, "getppid", return_value=10), \
-             mock.patch.object(sl, "_comm_via_proc", side_effect=comm.get), \
-             mock.patch.object(sl, "_ppid_via_proc", side_effect=ppid.get), \
-             mock.patch.object(sl, "_rss_kb_via_proc",
+        with mock.patch.object(sl.os.path, "isdir", return_value=True),\
+             mock.patch.object(sl.os, "getppid", return_value=10),\
+             mock.patch.object(sl, "probe_comm_via_proc", side_effect=comm.get),\
+             mock.patch.object(sl, "probe_ppid_via_proc", side_effect=ppid.get),\
+             mock.patch.object(sl, "probe_rss_kb_via_proc",
                                side_effect=lambda p: 204800 if p == 11 else 5000):
-            self.assertEqual(sl.proc_rss_bytes(), 204800 * 1024)
+            self.assertEqual(sl.probe_rss_bytes(), 204800 * 1024)
 
 
 class TestProcRssMacOS(unittest.TestCase):
@@ -1222,18 +1224,18 @@ class TestProcRssMacOS(unittest.TestCase):
         comm = {10: "login", 11: "claude", 1: "launchd"}
         ppid = {10: 11, 11: 1, 1: 0}
         rss = {11: 307200, 10: 100}
-        with mock.patch.object(sl.os.path, "isdir", return_value=False), \
-             mock.patch.object(sl.os, "getppid", return_value=10), \
-             mock.patch.object(sl, "_comm_via_ps", side_effect=comm.get), \
-             mock.patch.object(sl, "_ppid_via_ps", side_effect=ppid.get), \
-             mock.patch.object(sl, "_rss_kb_via_ps", side_effect=rss.get):
-            self.assertEqual(sl.proc_rss_bytes(), 307200 * 1024)
+        with mock.patch.object(sl.os.path, "isdir", return_value=False),\
+             mock.patch.object(sl.os, "getppid", return_value=10),\
+             mock.patch.object(sl, "probe_comm_via_ps", side_effect=comm.get),\
+             mock.patch.object(sl, "probe_ppid_via_ps", side_effect=ppid.get),\
+             mock.patch.object(sl, "probe_rss_kb_via_ps", side_effect=rss.get):
+            self.assertEqual(sl.probe_rss_bytes(), 307200 * 1024)
 
     def test_ps_field_parses_one_value(self):
         class R:
             stdout = "  12345\n"
         with mock.patch.object(sl.subprocess, "run", return_value=R()):
-            self.assertEqual(sl._ps_field(99, "rss"), "12345")
+            self.assertEqual(sl.probe_ps_field(99, "rss"), "12345")
 
 
 class TestTputFallback(unittest.TestCase):
@@ -1249,22 +1251,22 @@ class TestTputFallback(unittest.TestCase):
             elif cmd == ["tput", "lines"]:
                 r.stdout = "44\n"
             return r
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run), \
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run),\
              mock.patch("builtins.open", mock.mock_open(read_data="")):
-            cols, lines, assumed = sl.terminal_size({})
+            cols, lines, assumed = sl.probe_terminal_size({})
         self.assertEqual((cols, lines), (123, 44))
         self.assertFalse(assumed)
 
 
 class TestConfigScaffold(unittest.TestCase):
     def test_default_config_matches_globals(self):
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         self.assertEqual(cfg.segments, dict(sl.SEGMENTS))
         self.assertEqual(cfg.layout, list(sl.LAYOUT))
         self.assertEqual(cfg.palette, {})
 
     def test_default_config_is_a_snapshot(self):
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         cfg.segments["clock"] = not cfg.segments["clock"]
         self.assertNotEqual(cfg.segments["clock"], sl.SEGMENTS["clock"])  # snapshot, not alias
 
@@ -1272,42 +1274,42 @@ class TestConfigScaffold(unittest.TestCase):
 class TestEnvBool(unittest.TestCase):
     def test_true_tokens(self):
         for v in ("1", "true", "T", "y", "Yes", "on", "ON"):
-            self.assertIs(sl.env_bool({"X": v}, "X"), True, v)
+            self.assertIs(sl.cfg_env_bool({"X": v}, "X"), True, v)
 
     def test_false_tokens(self):
         for v in ("0", "false", "F", "n", "No", "off", "OFF"):
-            self.assertIs(sl.env_bool({"X": v}, "X"), False, v)
+            self.assertIs(sl.cfg_env_bool({"X": v}, "X"), False, v)
 
     def test_unset_is_none(self):
-        self.assertIsNone(sl.env_bool({}, "X"))
+        self.assertIsNone(sl.cfg_env_bool({}, "X"))
 
     def test_unrecognized_is_none(self):
-        self.assertIsNone(sl.env_bool({"X": "maybe"}, "X"))
-        self.assertIsNone(sl.env_bool({"X": ""}, "X"))
+        self.assertIsNone(sl.cfg_env_bool({"X": "maybe"}, "X"))
+        self.assertIsNone(sl.cfg_env_bool({"X": ""}, "X"))
 
 
 class TestConfigPathAndLoad(unittest.TestCase):
     def test_explicit_path_wins(self):
         env = {"CC_AI_KIT_CONFIG": "/tmp/x.toml", "HOME": "/home/u"}
-        self.assertEqual(sl.config_path(env), "/tmp/x.toml")
+        self.assertEqual(sl.cfg_config_path(env), "/tmp/x.toml")
 
     def test_xdg_path(self):
         env = {"XDG_CONFIG_HOME": "/cfg", "HOME": "/home/u"}
-        self.assertEqual(sl.config_path(env), "/cfg/ai-kit/statusline.toml")
+        self.assertEqual(sl.cfg_config_path(env), "/cfg/ai-kit/statusline.toml")
 
     def test_home_default_path(self):
         env = {"HOME": "/home/u"}
-        self.assertEqual(sl.config_path(env), "/home/u/.config/ai-kit/statusline.toml")
+        self.assertEqual(sl.cfg_config_path(env), "/home/u/.config/ai-kit/statusline.toml")
 
     def test_missing_file_is_empty(self):
-        self.assertEqual(sl._load_toml("/no/such/file.toml"), {})
+        self.assertEqual(sl.cfg_load_toml("/no/such/file.toml"), {})
 
     def test_malformed_file_is_empty_no_crash(self):
         with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
             f.write("this is = = not toml")
             path = f.name
         try:
-            self.assertEqual(sl._load_toml(path), {})
+            self.assertEqual(sl.cfg_load_toml(path), {})
         finally:
             os.unlink(path)
 
@@ -1316,7 +1318,7 @@ class TestConfigPathAndLoad(unittest.TestCase):
             f.write("[segments]\ncost = true\n")
             path = f.name
         try:
-            self.assertEqual(sl._load_toml(path), {"segments": {"cost": True}})
+            self.assertEqual(sl.cfg_load_toml(path), {"segments": {"cost": True}})
         finally:
             os.unlink(path)
 
@@ -1330,14 +1332,14 @@ class TestResolveSegments(unittest.TestCase):
 
     def test_defaults_when_no_file_no_env(self):
         env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"}
-        cfg = sl.load_config(env)
+        cfg = sl.cfg_load_config(env)
         self.assertEqual(cfg.segments, dict(sl.SEGMENTS))
         self.assertEqual(cfg.layout, list(sl.LAYOUT))
         self.assertEqual(cfg.palette, {})
 
     def test_file_overrides_default(self):
         path = self._write("[segments]\ncost = true\nmemory = false\n")
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertTrue(cfg.segments["cost"])      # default False -> True
         self.assertFalse(cfg.segments["memory"])   # default True  -> False
         self.assertTrue(cfg.segments["clock"])     # untouched default
@@ -1345,19 +1347,19 @@ class TestResolveSegments(unittest.TestCase):
     def test_env_overrides_file(self):
         path = self._write("[segments]\ncost = true\n")
         env = {"CC_AI_KIT_CONFIG": path, "HOME": "/h", "CC_AI_KIT_SEGMENT_COST": "0"}
-        cfg = sl.load_config(env)
+        cfg = sl.cfg_load_config(env)
         self.assertFalse(cfg.segments["cost"])     # env beats file
 
     def test_unknown_segment_key_ignored(self):
         path = self._write("[segments]\nbogus = true\n")
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertNotIn("bogus", cfg.segments)
 
     def test_wrong_type_value_ignored(self):
         # `cost = "true"` (string, not bool) is a known key but a bad value:
         # it must be dropped (keeping the default), not silently coerced.
         path = self._write('[segments]\ncost = "true"\n')
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertEqual(cfg.segments["cost"], sl.SEGMENTS["cost"])  # default kept
 
 
@@ -1370,30 +1372,30 @@ class TestGitConfig(unittest.TestCase):
 
     def test_cache_ttl_default_5(self):
         # Default [git] config carries cache_ttl=5 and nothing else.
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
         self.assertEqual(cfg.git, {"cache_ttl": 5})
 
     def test_cache_ttl_from_toml(self):
         path = self._write("[git]\ncache_ttl = 20\n")
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertEqual(cfg.git["cache_ttl"], 20)
 
     def test_cache_ttl_env_overrides_toml(self):
         # Precedence: default 5 < TOML [git] cache_ttl < env CC_AI_KIT_GIT_TTL.
         path = self._write("[git]\ncache_ttl = 20\n")
         env = {"CC_AI_KIT_CONFIG": path, "HOME": "/h", "CC_AI_KIT_GIT_TTL": "99"}
-        self.assertEqual(sl.load_config(env).git["cache_ttl"], 99)
+        self.assertEqual(sl.cfg_load_config(env).git["cache_ttl"], 99)
 
     def test_cache_ttl_env_over_default(self):
         env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
                "CC_AI_KIT_GIT_TTL": "0"}
-        self.assertEqual(sl.load_config(env).git["cache_ttl"], 0)
+        self.assertEqual(sl.cfg_load_config(env).git["cache_ttl"], 0)
 
     def test_cache_ttl_bad_toml_type_ignored(self):
         path = self._write('[git]\ncache_ttl = "soon"\n')   # string, not int
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
-            cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+            cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertEqual(cfg.git["cache_ttl"], 5)            # default kept
         self.assertIn("cache_ttl", buf.getvalue())           # and warned
 
@@ -1404,7 +1406,7 @@ class TestGitConfig(unittest.TestCase):
             path = self._write(f"[git]\nworktree = {val}\ncache_ttl = 12\n")
             buf = io.StringIO()
             with contextlib.redirect_stderr(buf):
-                cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+                cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
             self.assertEqual(cfg.git, {"cache_ttl": 12}, val)
             self.assertNotIn("worktree", buf.getvalue(), val)   # no warning
 
@@ -1412,13 +1414,13 @@ class TestGitConfig(unittest.TestCase):
         # CC_AI_KIT_GIT_WORKTREE is retired — setting it does not affect cfg.git.
         env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
                "CC_AI_KIT_GIT_WORKTREE": "1"}
-        self.assertEqual(sl.load_config(env).git, {"cache_ttl": 5})
+        self.assertEqual(sl.cfg_load_config(env).git, {"cache_ttl": 5})
 
     def test_unknown_git_key_warns(self):
         path = self._write("[git]\nbogus = true\n")
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
-            cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+            cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertNotIn("bogus", cfg.git)             # bogus dropped
         self.assertIn("bogus", buf.getvalue())         # and warned
 
@@ -1442,38 +1444,38 @@ class TestWorktreeSegmentToggle(unittest.TestCase):
 
     def test_worktree_segment_on_by_default(self):
         self.assertIs(sl.SEGMENTS.get("worktree"), True)
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
         self.assertTrue(cfg.segments["worktree"])
 
     def test_worktree_segment_disable_via_toml(self):
         path = self._write("[segments]\nworktree = false\n")
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertFalse(cfg.segments["worktree"])
 
     def test_worktree_segment_disable_via_env(self):
         env = {"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h",
                "CC_AI_KIT_SEGMENT_WORKTREE": "0"}
-        self.assertFalse(sl.load_config(env).segments["worktree"])
+        self.assertFalse(sl.cfg_load_config(env).segments["worktree"])
 
 
 class TestRenderWithConfig(unittest.TestCase):
     def test_pack_line_honors_cfg_segments(self):
         cfg = sl.Config(segments={**sl.SEGMENTS, "clock": False},
                         layout=list(sl.LAYOUT), palette={}, ramps={})
-        out = strip(sl.pack_line(["model", "clock"], _data(), 200, cfg))
+        out = strip(sl.core_pack(["model", "clock"], _data(), 200, cfg))
         self.assertNotIn("⏰", out)
         self.assertIn("Opus 4.8", out)
 
     def test_render_honors_cfg_layout(self):
         cfg = sl.Config(segments=dict(sl.SEGMENTS),
                         layout=[sl.Line(0, ["model"])], palette={}, ramps={})
-        lines = sl.render(_data(), cfg)
+        lines = sl.core_render(_data(), cfg)
         self.assertEqual(len(lines), 1)
         self.assertIn("Opus 4.8", strip(lines[0]))
 
     def test_render_default_cfg_unchanged(self):
         # No cfg arg -> same as today (three rows when tall+wide).
-        self.assertEqual(len(sl.render(_data())), 3)
+        self.assertEqual(len(sl.core_render(_data())), 3)
 
 
 class TestMainUsesConfig(unittest.TestCase):
@@ -1481,9 +1483,9 @@ class TestMainUsesConfig(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
         buf = io.StringIO()
-        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))), \
-             mock.patch.object(sys, "argv", ["status-line.py"]), \
-             mock.patch.dict(os.environ, env, clear=True), \
+        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))),\
+             mock.patch.object(sys, "argv", ["status-line.py"]),\
+             mock.patch.dict(os.environ, env, clear=True),\
              redirect_stdout(buf):
             sl.main()
         return buf.getvalue()
@@ -1509,20 +1511,20 @@ class TestResolveLayout(unittest.TestCase):
         return f.name
 
     def test_no_line_keeps_default_layout(self):
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
         self.assertEqual(cfg.layout, list(sl.LAYOUT))
 
     def test_line_replaces_layout(self):
         path = self._write(
             '[[line]]\nmin_rows = 0\nsegments = ["path", "model"]\n'
             '[[line]]\nmin_rows = 25\nsegments = ["context"]\n')
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertEqual(cfg.layout,
                          [sl.Line(0, ["path", "model"]), sl.Line(25, ["context"])])
 
     def test_line_missing_min_rows_defaults_zero(self):
         path = self._write('[[line]]\nsegments = ["path"]\n')
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertEqual(cfg.layout, [sl.Line(0, ["path"])])
 
 
@@ -1535,12 +1537,12 @@ class TestPaletteFromConfig(unittest.TestCase):
 
     def test_palette_parsed_into_config(self):
         path = self._write('[palette]\nBLUE = "1;34"\n')
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertEqual(cfg.palette, {"BLUE": "1;34"})
 
     def test_unknown_palette_key_dropped(self):
         path = self._write('[palette]\nNOTACOLOR = "1;34"\n')
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertEqual(cfg.palette, {})
 
     def test_main_applies_palette(self):
@@ -1553,8 +1555,8 @@ class TestPaletteFromConfig(unittest.TestCase):
                "PATH": os.environ.get("PATH", ""),  # keep PATH so git in build_data resolves
                "CC_AI_KIT_CONFIG": path}
         buf = io.StringIO()
-        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))), \
-             mock.patch.object(sys, "argv", ["status-line.py"]), \
+        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))),\
+             mock.patch.object(sys, "argv", ["status-line.py"]),\
              mock.patch.dict(os.environ, env, clear=True), redirect_stdout(buf):
             sl.main()
         # path segment is BLUE; overridden blue (1;34) must appear in the raw output.
@@ -1664,97 +1666,97 @@ class TestParseColor(unittest.TestCase):
     PAL = {"RED": "31", "BLUE": "38;5;39", "ORANGE": "38;5;208"}
 
     def test_palette_name(self):
-        self.assertEqual(sl.parse_color("RED", self.PAL), "\033[31m")
-        self.assertEqual(sl.parse_color("BLUE", self.PAL), "\033[38;5;39m")
+        self.assertEqual(sl.util_parse_color("RED", self.PAL), "\033[31m")
+        self.assertEqual(sl.util_parse_color("BLUE", self.PAL), "\033[38;5;39m")
 
     def test_raw_sgr_passthrough(self):
-        self.assertEqual(sl.parse_color("38;5;33"), "\033[38;5;33m")
-        self.assertEqual(sl.parse_color("1;31"), "\033[1;31m")
+        self.assertEqual(sl.util_parse_color("38;5;33"), "\033[38;5;33m")
+        self.assertEqual(sl.util_parse_color("1;31"), "\033[1;31m")
 
     def test_hex_six(self):
-        self.assertEqual(sl.parse_color("#3399ff"), "\033[38;2;51;153;255m")
+        self.assertEqual(sl.util_parse_color("#3399ff"), "\033[38;2;51;153;255m")
 
     def test_hex_short_expands(self):
-        self.assertEqual(sl.parse_color("#39f"), "\033[38;2;51;153;255m")
+        self.assertEqual(sl.util_parse_color("#39f"), "\033[38;2;51;153;255m")
 
     def test_hex_alpha_stripped(self):
-        self.assertEqual(sl.parse_color("#3399ffcc"), "\033[38;2;51;153;255m")
+        self.assertEqual(sl.util_parse_color("#3399ffcc"), "\033[38;2;51;153;255m")
 
     def test_modifier_bold_on_name(self):
-        self.assertEqual(sl.parse_color("RED+bold", self.PAL), "\033[1;31m")
+        self.assertEqual(sl.util_parse_color("RED+bold", self.PAL), "\033[1;31m")
 
     def test_modifier_on_hex(self):
-        self.assertEqual(sl.parse_color("#3399ff+bold"), "\033[1;38;2;51;153;255m")
+        self.assertEqual(sl.util_parse_color("#3399ff+bold"), "\033[1;38;2;51;153;255m")
 
     def test_modifiers_canonical_order(self):
         # underline(4)+bold(1) -> ascending 1;4 regardless of input order
-        self.assertEqual(sl.parse_color("RED+underline+bold", self.PAL), "\033[1;4;31m")
+        self.assertEqual(sl.util_parse_color("RED+underline+bold", self.PAL), "\033[1;4;31m")
 
     def test_all_modifiers(self):
-        self.assertEqual(sl.parse_color("RED+bold+dim+italic+underline", self.PAL),
+        self.assertEqual(sl.util_parse_color("RED+bold+dim+italic+underline", self.PAL),
                          "\033[1;2;3;4;31m")
 
     def test_unknown_name_is_none(self):
-        self.assertIsNone(sl.parse_color("NOTACOLOR", self.PAL))
+        self.assertIsNone(sl.util_parse_color("NOTACOLOR", self.PAL))
 
     def test_name_without_palette_is_none(self):
-        self.assertIsNone(sl.parse_color("RED"))
+        self.assertIsNone(sl.util_parse_color("RED"))
 
     def test_unknown_modifier_is_none(self):
-        self.assertIsNone(sl.parse_color("RED+blink", self.PAL))
+        self.assertIsNone(sl.util_parse_color("RED+blink", self.PAL))
 
     def test_bad_hex_is_none(self):
-        self.assertIsNone(sl.parse_color("#zzz"))
-        self.assertIsNone(sl.parse_color("#12345"))   # 5 nibbles, not 3/6/8
+        self.assertIsNone(sl.util_parse_color("#zzz"))
+        self.assertIsNone(sl.util_parse_color("#12345"))   # 5 nibbles, not 3/6/8
 
     def test_empty_is_none(self):
-        self.assertIsNone(sl.parse_color(""))
-        self.assertIsNone(sl.parse_color(None))
+        self.assertIsNone(sl.util_parse_color(""))
+        self.assertIsNone(sl.util_parse_color(None))
 
 
 class TestParseThreshold(unittest.TestCase):
     def test_percent_int(self):
-        self.assertEqual(sl._parse_threshold(10), 10)
-        self.assertEqual(sl._parse_threshold("25"), 25)
+        self.assertEqual(sl.util_parse_threshold(10), 10)
+        self.assertEqual(sl.util_parse_threshold("25"), 25)
 
     def test_inf(self):
-        self.assertEqual(sl._parse_threshold("inf"), float("inf"))
-        self.assertEqual(sl._parse_threshold(float("inf")), float("inf"))
+        self.assertEqual(sl.util_parse_threshold("inf"), float("inf"))
+        self.assertEqual(sl.util_parse_threshold(float("inf")), float("inf"))
 
     def test_byte_suffixes(self):
-        self.assertEqual(sl._parse_threshold("512k"), 512 * 1024)
-        self.assertEqual(sl._parse_threshold("5M"), 5 * 1024 * 1024)
-        self.assertEqual(sl._parse_threshold("1G"), 1024 ** 3)
+        self.assertEqual(sl.util_parse_threshold("512k"), 512 * 1024)
+        self.assertEqual(sl.util_parse_threshold("5M"), 5 * 1024 * 1024)
+        self.assertEqual(sl.util_parse_threshold("1G"), 1024 ** 3)
 
     def test_time_suffixes(self):
         # render_time thresholds resolve to nanoseconds
-        self.assertEqual(sl._parse_threshold("100ns"), 100)
-        self.assertEqual(sl._parse_threshold("500us"), 500_000)
-        self.assertEqual(sl._parse_threshold("500µs"), 500_000)
-        self.assertEqual(sl._parse_threshold("50ms"), 50_000_000)
-        self.assertEqual(sl._parse_threshold("2s"), 2_000_000_000)
+        self.assertEqual(sl.util_parse_threshold("100ns"), 100)
+        self.assertEqual(sl.util_parse_threshold("500us"), 500_000)
+        self.assertEqual(sl.util_parse_threshold("500µs"), 500_000)
+        self.assertEqual(sl.util_parse_threshold("50ms"), 50_000_000)
+        self.assertEqual(sl.util_parse_threshold("2s"), 2_000_000_000)
 
     def test_bad_key_raises(self):
         with self.assertRaises(ValueError):
-            sl._parse_threshold("nonsense")
+            sl.util_parse_threshold("nonsense")
         with self.assertRaises(ValueError):
-            sl._parse_threshold("5MB")   # only single-letter k/M/G suffix
+            sl.util_parse_threshold("5MB")   # only single-letter k/M/G suffix
 
 
 class TestTheme(unittest.TestCase):
     def test_c_resolves_and_memoizes(self):
-        t = sl.default_theme()
+        t = sl.core_default_theme()
         first = t.c("RED")
         self.assertTrue(first.startswith("\033["))
         self.assertEqual(t.c("RED"), first)          # same object/value, cached
         self.assertIn("RED", t._cache)
 
     def test_c_modifier(self):
-        t = sl.default_theme()
-        self.assertEqual(t.c("RED+bold"), sl.parse_color("RED+bold", t.palette))
+        t = sl.core_default_theme()
+        self.assertEqual(t.c("RED+bold"), sl.util_parse_color("RED+bold", t.palette))
 
     def test_c_invalid_is_empty_string(self):
-        t = sl.default_theme()
+        t = sl.core_default_theme()
         self.assertEqual(t.c("NOTACOLOR"), "")        # never raises, no color
 
 
@@ -1764,41 +1766,41 @@ class TestBuildTheme(unittest.TestCase):
                          palette=palette or {}, ramps=ramps or {})
 
     def test_palette_merges_over_defaults(self):
-        t = sl.build_theme(self._cfg(palette={"BLUE": "1;34"}))
+        t = sl.core_build_theme(self._cfg(palette={"BLUE": "1;34"}))
         self.assertEqual(t.palette["BLUE"], "1;34")
         self.assertEqual(t.palette["RED"], sl._PALETTE_DEFAULTS["RED"])  # untouched
 
     def test_palette_hex_override_resolved_to_params(self):
-        t = sl.build_theme(self._cfg(palette={"BLUE": "#3399ff"}))
+        t = sl.core_build_theme(self._cfg(palette={"BLUE": "#3399ff"}))
         self.assertEqual(t.palette["BLUE"], "38;2;51;153;255")
 
     def test_bad_palette_value_keeps_default(self):
-        t = sl.build_theme(self._cfg(palette={"BLUE": "#zzz"}))
+        t = sl.core_build_theme(self._cfg(palette={"BLUE": "#zzz"}))
         self.assertEqual(t.palette["BLUE"], sl._PALETTE_DEFAULTS["BLUE"])
 
     def test_ramp_replaced_whole(self):
-        t = sl.build_theme(self._cfg(ramps={"rate": {"50": "GREEN", "inf": "RED"}}))
+        t = sl.core_build_theme(self._cfg(ramps={"rate": {"50": "GREEN", "inf": "RED"}}))
         self.assertEqual([c for _, c in t.ramps["rate"]],
                          [t.c("GREEN"), t.c("RED")])
         self.assertEqual([ceil for ceil, _ in t.ramps["rate"]], [50, float("inf")])
 
     def test_unspecified_ramp_keeps_default(self):
-        t = sl.build_theme(self._cfg(ramps={"rate": {"inf": "RED"}}))
+        t = sl.core_build_theme(self._cfg(ramps={"rate": {"inf": "RED"}}))
         self.assertEqual(len(t.ramps["context"]), len(sl._RAMP_DEFAULTS["context"]))
 
     def test_bad_band_color_falls_back_to_default_band(self):
         # context default band at ceil 10 is WHITE; a bad override color for that
         # band falls back to the default band's resolved color.
         bad = {"10": "NOPE", "inf": "RED"}
-        t = sl.build_theme(self._cfg(ramps={"context": bad}))
+        t = sl.core_build_theme(self._cfg(ramps={"context": bad}))
         self.assertEqual(t.ramps["context"][0], (10, t.c("WHITE")))
 
     def test_bad_threshold_keeps_whole_default_ramp(self):
-        t = sl.build_theme(self._cfg(ramps={"context": {"oops": "RED"}}))
-        self.assertEqual(t.ramps["context"], sl.default_theme().ramps["context"])
+        t = sl.core_build_theme(self._cfg(ramps={"context": {"oops": "RED"}}))
+        self.assertEqual(t.ramps["context"], sl.core_default_theme().ramps["context"])
 
     def test_effort_derives_from_palette(self):
-        t = sl.default_theme()
+        t = sl.core_default_theme()
         self.assertEqual(t.effort["low"][0], t.c("CYAN"))
         self.assertEqual(t.effort["max"][0], t.c("RED"))
         self.assertEqual(t.effort["low"][1].count("▁"), 1)
@@ -1815,22 +1817,22 @@ class TestRampFromConfig(unittest.TestCase):
 
     def test_ramp_parsed_into_config(self):
         path = self._write('[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n')
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertEqual(cfg.ramps, {"rate": {"50": "GREEN", "inf": "RED+bold"}})
 
     def test_unknown_ramp_dropped(self):
         path = self._write('[ramp.bogus]\n10 = "RED"\n')
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": path, "HOME": "/h"})
         self.assertEqual(cfg.ramps, {})
 
     def test_no_ramp_block_is_empty(self):
-        cfg = sl.load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
+        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG": "/no/such.toml", "HOME": "/h"})
         self.assertEqual(cfg.ramps, {})
 
 
 class TestRendererRobustness(unittest.TestCase):
     def test_doctor_cmd_is_concrete(self):
-        cmd = sl._doctor_cmd()
+        cmd = sl.core_doctor_cmd()
         # A copy-pasteable command, not a bare flag: ends with --doctor,
         # names a python executable, and references this script's path.
         self.assertTrue(cmd.endswith("--doctor"), cmd)
@@ -1846,7 +1848,7 @@ class TestRendererRobustness(unittest.TestCase):
             return "HELLO"
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": good}):
-            out = sl.safe_build("path", ctx, 40, THEME)
+            out = sl.core_safe_build("path", ctx, 40, THEME)
         self.assertEqual(out, "HELLO")
         self.assertEqual(ctx.failed, set())
 
@@ -1855,17 +1857,17 @@ class TestRendererRobustness(unittest.TestCase):
             raise RuntimeError("kaboom")
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": boom}):
-            out = sl.safe_build("path", ctx, 40, THEME)
+            out = sl.core_safe_build("path", ctx, 40, THEME)
         self.assertIn("path", ctx.failed)
         self.assertIn("path", strip(out))          # name shown when width allows
-        self.assertLessEqual(sl.visible_width(out), 40)
+        self.assertLessEqual(sl.util_visible_width(out), 40)
 
     def test_safe_build_bare_marker_when_no_room_for_name(self):
         def boom(data, avail, theme):
             raise RuntimeError("x")
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"context": boom}):
-            out = sl.safe_build("context", ctx, 1, THEME)
+            out = sl.core_safe_build("context", ctx, 1, THEME)
         self.assertIn("context", ctx.failed)
         self.assertNotIn("context", strip(out))    # name dropped, icon kept
 
@@ -1874,20 +1876,20 @@ class TestRendererRobustness(unittest.TestCase):
         # the other segments and records the failure.
         def boom(data, avail, theme):
             raise ValueError("nope")
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         def ok(data, avail, theme):
             return "CTX"
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": boom, "context": ok}):
-            line = sl.pack_line(["path", "context"], ctx, 80, cfg, THEME)
+            line = sl.core_pack(["path", "context"], ctx, 80, cfg, THEME)
         self.assertIn("path", ctx.failed)
         self.assertIn("CTX", strip(line))          # the healthy segment still shows
 
     def test_diagnostic_line_none_when_no_failures(self):
-        self.assertIsNone(sl.diagnostic_line(set()))
+        self.assertIsNone(sl.core_diagnostic_line(set()))
 
     def test_diagnostic_line_lists_failures_and_doctor(self):
-        line = strip(sl.diagnostic_line({"git", "context"}))
+        line = strip(sl.core_diagnostic_line({"git", "context"}))
         self.assertIn("2 segments failed", line)
         self.assertIn("context, git", line)         # sorted
         self.assertIn("--doctor", line)
@@ -1895,30 +1897,30 @@ class TestRendererRobustness(unittest.TestCase):
     def test_render_appends_diagnostic_on_builder_crash(self):
         def boom(data, avail, theme):
             raise RuntimeError("x")
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         layout = [sl.Line(0, ["path"])]
         cfg = cfg._replace(layout=layout)
         with mock.patch.dict(sl.BUILDERS, {"path": boom}):
-            out = sl.render(_data(cols=80, lines=40), cfg, THEME)
+            out = sl.core_render(_data(cols=80, lines=40), cfg, THEME)
         self.assertTrue(any("--doctor" in strip(l) for l in out))
         self.assertTrue(any("path" in strip(l) for l in out))
 
     def test_render_no_diagnostic_when_healthy(self):
-        cfg = sl.default_config()
-        out = sl.render(_data(cols=80, lines=40), cfg, THEME)
+        cfg = sl.cfg_default_config()
+        out = sl.core_render(_data(cols=80, lines=40), cfg, THEME)
         self.assertFalse(any("--doctor" in strip(l) for l in out))
 
     def test_safe_render_returns_diagnostic_on_catastrophic_failure(self):
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         theme = THEME
-        with mock.patch.object(sl, "build_context", side_effect=RuntimeError("boom")):
+        with mock.patch.object(sl, "core_build_context", side_effect=RuntimeError("boom")):
             out = sl.safe_render({}, os.environ, cfg, theme, 0)
         self.assertEqual(len(out), 1)
         self.assertIn("status-line error", strip(out[0]))
         self.assertIn("--doctor", strip(out[0]))
 
     def test_safe_render_normal_path(self):
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         out = sl.safe_render({}, os.environ, cfg, THEME, 0)
         self.assertIsInstance(out, list)
         self.assertFalse(any("status-line error" in strip(l) for l in out))
@@ -1939,7 +1941,7 @@ class TestRendererRobustness(unittest.TestCase):
 
     def test_build_data_tolerates_present_but_null_fields(self):
         data, _cols, _lines = _ctx_from_env(
-            dict(self._NEW_SESSION_RAW), os.environ, sl.default_config())
+            dict(self._NEW_SESSION_RAW), os.environ, sl.cfg_default_config())
         self.assertEqual(data.context_pct, 0)
         self.assertEqual(data.context_max, 0)
         self.assertEqual(data.added, 0)
@@ -1949,7 +1951,7 @@ class TestRendererRobustness(unittest.TestCase):
         self.assertEqual(data.api_ms, 0)
 
     def test_render_new_session_no_error_no_warn(self):
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         out = sl.safe_render(dict(self._NEW_SESSION_RAW), os.environ, cfg, THEME, 0)
         text = "\n".join(strip(l) for l in out)
         self.assertNotIn("status-line error", text)
@@ -1960,29 +1962,29 @@ class TestRendererRobustness(unittest.TestCase):
 class TestRenderDataLazy(unittest.TestCase):
     """FR-R.2 (option A): expensive probes run inside the measured build of the
     segment that reads them, not eagerly in build_data — so the cost is captured
-    by safe_build's timing and the shared probe still runs at most once."""
+    by core_safe_build's timing and the shared probe still runs at most once."""
 
     def test_git_probe_deferred_to_render_and_runs_once(self):
         snap = sl.GitSnapshot(True, "main", "modified", False, "")
         raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s"}
-        cfg = sl.default_config()
-        theme = sl.build_theme(cfg)
-        with mock.patch.object(sl, "git_snapshot", return_value=snap) as gs:
+        cfg = sl.cfg_default_config()
+        theme = sl.core_build_theme(cfg)
+        with mock.patch.object(sl, "probe_git_snapshot", return_value=snap) as gs:
             data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
             self.assertEqual(gs.call_count, 0, "git probe must NOT run during build_data")
-            sl.render(data, cfg, theme)
+            sl.core_render(data, cfg, theme)
             self.assertEqual(gs.call_count, 1, "git probe runs exactly once during render")
 
     def test_disabled_git_segments_skip_the_probe(self):
         raw = {"workspace": {"current_dir": "/repo"}}
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         cfg.segments["branch"] = False
         cfg.segments["dirty"] = False
         cfg.segments["worktree"] = False
-        theme = sl.build_theme(cfg)
-        with mock.patch.object(sl, "git_snapshot") as gs:
+        theme = sl.core_build_theme(cfg)
+        with mock.patch.object(sl, "probe_git_snapshot") as gs:
             data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
-            sl.render(data, cfg, theme)
+            sl.core_render(data, cfg, theme)
             self.assertEqual(gs.call_count, 0, "no git segment enabled => no git probe")
 
 
@@ -1992,16 +1994,16 @@ class TestSlowestTruthful(unittest.TestCase):
 
     def test_slowest_captures_probe_cost_not_microseconds(self):
         raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s"}
-        cfg = sl.default_config()
-        theme = sl.build_theme(cfg)
+        cfg = sl.cfg_default_config()
+        theme = sl.core_build_theme(cfg)
 
         def slow_git(*_a, **_k):                 # a 20ms git status
             time.sleep(0.02)
             return sl.GitSnapshot(True, "main", "modified", False, "")
 
-        with mock.patch.object(sl, "git_snapshot", side_effect=slow_git):
+        with mock.patch.object(sl, "probe_git_snapshot", side_effect=slow_git):
             data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
-            sl.render(data, cfg, theme)
+            sl.core_render(data, cfg, theme)
         name, ns = data.slowest
         self.assertIn(name, ("branch", "dirty", "worktree"))  # a real git consumer
         self.assertGreater(ns, 1_000_000)                     # >1ms, not µs
@@ -2015,13 +2017,13 @@ class TestTwoPassLayout(unittest.TestCase):
     def _diag_line(self):
         raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s",
                "cost": {"total_cost_usd": 0.5}}
-        cfg = sl.default_config()
-        theme = sl.build_theme(cfg)
-        with mock.patch.object(sl, "git_snapshot",
+        cfg = sl.cfg_default_config()
+        theme = sl.core_build_theme(cfg)
+        with mock.patch.object(sl, "probe_git_snapshot",
                                return_value=sl.GitSnapshot(True, "main", "modified", False, "")):
             data, _c, _l = _ctx_from_env(raw, {"HOME": "/h"}, cfg,
                                          t_start=time.perf_counter_ns())
-            out = sl.render(data, cfg, theme)
+            out = sl.core_render(data, cfg, theme)
         return next(strip(l) for l in out if "⏱" in strip(l))
 
     def test_slowest_adjacent_to_render_time(self):
@@ -2052,26 +2054,26 @@ class TestGoldenOutput(unittest.TestCase):
     def _deterministic(self):
         snap = sl.GitSnapshot(in_repo=True, branch="main", dirty="modified",
                               is_worktree=False, wt_name="")
-        with mock.patch.object(sl.time, "strftime", return_value="14:30"), \
-             mock.patch.object(sl.time, "time", return_value=NOW), \
-             mock.patch.object(sl, "git_snapshot", return_value=snap), \
-             mock.patch.object(sl, "proc_rss_bytes", return_value=448_790_528), \
-             mock.patch.object(sl, "transcript_bytes", return_value=305_000), \
-             mock.patch.object(sl, "current_todo", return_value=(None, None)), \
-             mock.patch.object(sl, "effort_setting_is_auto", return_value=False):
+        with mock.patch.object(sl.time, "strftime", return_value="14:30"),\
+             mock.patch.object(sl.time, "time", return_value=NOW),\
+             mock.patch.object(sl, "probe_git_snapshot", return_value=snap),\
+             mock.patch.object(sl, "probe_rss_bytes", return_value=448_790_528),\
+             mock.patch.object(sl, "probe_transcript_bytes", return_value=305_000),\
+             mock.patch.object(sl, "probe_current_todo", return_value=(None, None)),\
+             mock.patch.object(sl, "probe_effort_setting_is_auto", return_value=False):
             yield
 
     def _render_all(self):
         with open(os.path.join(self.GOLDEN, "inputs.json"), encoding="utf-8") as f:
             cases = json.load(f)
-        cfg = sl.default_config()
+        cfg = sl.cfg_default_config()
         # The meta segments report the render itself and are inherently
         # non-deterministic (render_time / slowest durations) and are exactly what
         # the restructure changes — exclude them so the golden guards only the
         # non-meta segment output it is meant to protect.
         cfg.segments["render_time"] = False
         cfg.segments["slowest"] = False
-        theme = sl.build_theme(cfg)
+        theme = sl.core_build_theme(cfg)
         blocks = []
         with self._deterministic():
             for c in cases:
@@ -2079,7 +2081,7 @@ class TestGoldenOutput(unittest.TestCase):
                        "STATUSLINE_COLS": str(c["cols"]),
                        "STATUSLINE_LINES": str(c["lines"])}
                 data, _cols, _lines = _ctx_from_env(c["raw"], env, cfg, t_start=None)
-                out = sl.render(data, cfg, theme)
+                out = sl.core_render(data, cfg, theme)
                 blocks.append(f"### {c['name']}\n" + "\n".join(strip(l) for l in out))
         return "\n\n".join(blocks) + "\n"
 
@@ -2117,7 +2119,7 @@ class TestDoctor(unittest.TestCase):
     def test_doctor_flags_a_raising_disabled_builder(self):
         # A builder that is DISABLED by default (`cost`) must still be dry-rendered:
         # the doctor exists to catch a builder that would crash once enabled.
-        self.assertFalse(sl.default_config().segments.get("cost"))
+        self.assertFalse(sl.cfg_default_config().segments.get("cost"))
         def boom(data, avail, theme):
             raise RuntimeError("x")
         with mock.patch.dict(sl.BUILDERS, {"cost": boom}):
