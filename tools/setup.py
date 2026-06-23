@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["textual>=0.60"]
+# ///
+# ^ Consumed by `uv run tools/setup.py` to resolve textual into an ephemeral env
+#   for the wizard ONLY. Plain `python3 tools/setup.py` ignores this comment; the
+#   status-line render path never uses uv/textual (see plan Global Constraints).
 """ai-kit setup wizard + install engine (stdlib-only, like status-line.py).
 
 Invoked by tools/install.sh after it has guaranteed the repo and python3 are on
@@ -14,24 +21,17 @@ Env overrides (mirrors install.sh):
 import argparse
 import contextlib
 import copy
+import importlib.util
 import json
 import os
 import re
-import select
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
 import tomllib
 from collections import namedtuple
-
-try:                                  # POSIX-only; mode A gates on isatty anyway
-    import termios
-    import tty as _termmode
-except ImportError:                   # non-POSIX: raw mode is a no-op
-    termios = None
-    _termmode = None
+from typing import cast
 
 CATEGORIES = ("agents", "commands", "skills")
 
@@ -129,7 +129,9 @@ def _bool_env(value):
     return "1" if value else "0"
 
 
-def render_preview(status_line, segments, sample_json, env):
+def render_preview(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    status_line, segments, sample_json, env, layout=None, base_config=None,
+):
     """Render the status line with the given segment toggles, for the live preview.
 
     Shells out to `python3 status-line.py` feeding `sample_json` on stdin and the
@@ -137,6 +139,12 @@ def render_preview(status_line, segments, sample_json, env):
     edits before they are written). `env` carries only the keys to override
     (e.g. forced terminal size); it is merged ON TOP OF os.environ so the
     subprocess inherits PATH, HOME, and PYTHONPATH.
+
+    When `layout` is provided (list of {"min_rows": int, "segments": [str]} dicts),
+    a throwaway temp config is written with the patched layout and the subprocess
+    reads it via CC_AI_KIT_CONFIG_FILE.  The temp file is deleted in a try/finally
+    so it is never leaked, even on error.
+
     Returns the rendered text ("" on any failure — the preview is best-effort
     and must never crash the wizard)."""
     child = {**os.environ, **env}   # inherit full env; overrides layer on top
@@ -146,16 +154,33 @@ def render_preview(status_line, segments, sample_json, env):
     child.setdefault("STATUSLINE_LINES", "40")
     for key, on in segments.items():
         child[f"CC_AI_KIT_SEGMENT_{key.upper()}"] = _bool_env(on)
+    tmp_path = None
     try:
-        proc = subprocess.run(
-            [sys.executable, "-S", status_line],
-            input=sample_json, capture_output=True, text=True,
-            env=child, timeout=10, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    if proc.returncode != 0:
-        return ""
-    return proc.stdout.rstrip("\n")
+        if layout is not None:
+            patched = patch_layout(base_config or "", layout)
+            fd, tmp_path = tempfile.mkstemp(suffix=".toml", prefix="ai_kit_preview_")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(patched)
+            except OSError:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_path)
+                return ""
+            child["CC_AI_KIT_CONFIG_FILE"] = tmp_path
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-S", status_line],
+                input=sample_json, capture_output=True, text=True,
+                env=child, timeout=10, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        if proc.returncode != 0:
+            return ""
+        return proc.stdout.rstrip("\n")
+    finally:
+        if tmp_path is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
 
 
 # One-line doc notes carried when a managed key is appended (keeps the recipe
@@ -539,26 +564,13 @@ def resolve_example_selection(flag, examples):
 
 
 def select_examples(examples, flag, tty):
-    """Choose which example external segments to install. Headless (tty None) OR
-    an explicit `--examples` flag ⇒ governed PURELY by resolve_example_selection
-    with NO prompting (zero reads). Interactive with no flag ⇒ offer them
-    pre-checked through the shared chip picker on a capable terminal (esc/Ctrl-C
-    cancels → install none); on an incapable terminal accept the pre-checked
-    default (every example, default-ON). Returns the chosen list of example dicts."""
-    if flag is not None or not is_interactive(tty):
+    """Choose which example external segments to install. A `--examples` flag ⇒
+    governed PURELY by resolve_example_selection with NO prompting. No flag ⇒
+    accept the pre-checked default (every example, default-ON). Interactive
+    selection returns in Phase 2 via the Textual app (Task 2.1).
+    Returns the chosen list of example dicts."""
+    if flag is not None:
         return resolve_example_selection(flag, examples)
-    if not examples:
-        return []
-    if _mode_a_available(os.environ, tty, tty):
-        sel = Selection(("examples", e["id"], True) for e in examples)
-        by_id = {e["id"]: e for e in examples}
-        try:
-            chip_select(sel, tty, tty, os.environ)
-            return [by_id[n] for _c, n, on in sel.items if on]
-        except KeyboardInterrupt:
-            return []                                # cancel → install none
-        except Exception:  # pylint: disable=broad-exception-caught  # UI failure degrades to default
-            pass                                     # degrade to pre-checked default
     return list(examples)
 
 
@@ -589,19 +601,75 @@ def installed_links(claude_dir, install_dir):
     return out
 
 
+class _StdTty:
+    """Adapts separate sys.stdin/sys.stdout into one tty-like object exposing
+    readline()/write()/flush()/isatty()/close(). close() is a no-op — we must
+    not close the process's own std streams."""
+
+    def __init__(self, rstream, wstream):
+        """Store the read and write streams."""
+        self._r, self._w = rstream, wstream
+
+    def readline(self):
+        """Read one line from stdin."""
+        return self._r.readline()
+
+    def write(self, text):
+        """Write text to stdout."""
+        return self._w.write(text)
+
+    def flush(self):
+        """Flush the write stream."""
+        return self._w.flush()
+
+    def isatty(self):
+        """Always True — only constructed when both streams are real TTYs."""
+        return True
+
+    def tell(self):
+        """Raise OSError; std streams are not seekable."""
+        raise OSError("std tty is not seekable")
+
+    def seek(self, offset, whence=0):
+        """Raise OSError; std streams are not seekable."""
+        raise OSError("std tty is not seekable")
+
+    def close(self):
+        """No-op — must not close the process's own std streams."""
+
+
 def open_tty():
-    """Open the controlling terminal for read/write, or return None when there
-    is none (genuinely headless). Prompts read from /dev/tty — not stdin —
-    because under `curl | bash` stdin is the pipe carrying the script (§7)."""
+    """Open an interactive terminal stream, or return None when none exists.
+
+    Prefers /dev/tty (so `curl | bash` — where stdin is the script pipe — still
+    reads the keyboard). When /dev/tty cannot be opened (IDE task runners, some
+    uv/sandbox contexts), fall back to sys.stdin/stdout ONLY when BOTH are real
+    TTYs — i.e. a direct local run where stdin literally is the keyboard. When
+    nothing is usable, return None; the caller fails closed (no headless path)."""
     try:
         return open("/dev/tty", "r+", encoding="utf-8")
     except OSError:
-        return None
+        pass
+    if _stream_isatty(sys.stdin) and _stream_isatty(sys.stdout):
+        return _StdTty(sys.stdin, sys.stdout)
+    return None
 
 
 def is_interactive(tty):
     """True when a usable tty stream is present (a human at a terminal)."""
     return tty is not None
+
+
+def require_tty(tty):
+    """Fail closed: the wizard is interactive-only. With no usable terminal,
+    print one clear reason and exit non-zero — never a silent headless default.
+    Returns `tty` unchanged so callers can narrow the type in one expression:
+    ``tty = require_tty(open_tty())``."""
+    if not is_interactive(tty):
+        print("setup: no interactive terminal available — run this in a real "
+              "terminal (the wizard cannot run headless).", file=sys.stderr)
+        sys.exit(2)
+    return tty
 
 
 def _tty_write(tty, text):
@@ -868,66 +936,10 @@ class Selection:
         return out
 
 
-def select_skills(  # pylint: disable=too-many-locals,too-many-branches
-    entries, installed, tty,
-):
-    """Compute the chosen set per category. Headless (tty None): return the
-    default selection with no prompting. Interactive: render a numbered toggle
-    list ([x]/[ ], accent-on/dim-off, one-line note), let the user flip rows by
-    number (or 'a'/'n' for all/none), Enter to accept. Both paths resolve to the
-    same default — an immediate Enter equals headless."""
-    default = _default_selection(entries, installed)
-    if not is_interactive(tty):
-        return default
-    # flat numbered index over all categories, skills first (the row order the
-    # wizard presents; CATEGORIES itself stays alphabetical for storage).
-    _row_order = ("skills", "commands", "agents")
-    sel = Selection(
-        (cat, name, name in default[cat])
-        for cat in _row_order
-        for name, _path in entries[cat]
-    )
-    if _mode_a_available(os.environ, tty, tty):
-        # Mode A: arrow-key chip selector on a capable terminal. esc/Ctrl-C
-        # (KeyboardInterrupt) cancels → keep the safe default selection. Any
-        # OTHER failure (a termios error on a hostile terminal, a render bug)
-        # degrades to the always-correct numbered menu below rather than
-        # crashing the installer.
-        try:
-            chip_select(sel, tty, tty, os.environ)
-            return sel.category_sets(CATEGORIES)
-        except KeyboardInterrupt:
-            return default
-        except Exception:  # pylint: disable=broad-exception-caught  # UI failure degrades to mode B
-            pass                                 # fall through to mode B
-    while True:
-        menu = ("\nSelect what to install (type numbers to toggle, "
-                "'a' all, 'n' none, Enter to accept):\n")
-        for i, (cat, name, on) in enumerate(sel.items, 1):
-            box = "[x]" if on else "[ ]"
-            word = "on " if on else "off"               # legible without color
-            label = f"{_ACCENT}{cat}/{name}{_RESET}" if on else f"{cat}/{name}"
-            new = "" if (name in installed[cat] or _first_run(installed)) else "  NEW"
-            menu += f"  {i:2}. {box} {word}  {label}{new}\n"
-        _tty_write(tty, menu)
-        line = tty.readline()
-        if not line:
-            break
-        cmd = line.strip().lower()
-        if cmd == "":
-            break
-        if cmd == "a":
-            sel.set_all(True)
-            continue
-        if cmd == "n":
-            sel.set_all(False)
-            continue
-        for tok in cmd.replace(",", " ").split():
-            if tok.isdigit():
-                idx = int(tok) - 1
-                if 0 <= idx < len(sel):
-                    sel.toggle(idx)
-    return sel.category_sets(CATEGORIES)
+def select_skills(entries, installed, tty):
+    """The pre-checked selection the wizard seeds from. Interaction now lives in
+    the Textual app; this is the pure default projection (no prompting)."""
+    return _default_selection(entries, installed)
 
 
 def apply_selection(selection, entries, claude_dir, dry, counts):
@@ -1122,6 +1134,140 @@ def _apply_wizard_command(  # pylint: disable=too-many-return-statements
     return state, f"unknown command: {cmd!r}"
 
 
+def off_tray(state):
+    """Segments currently toggled OFF.
+
+    ON segments live in exactly one layout line; OFF segments live in the tray
+    (in no line list).  ``off_tray`` returns the OFF segments.
+
+    Definition: segments whose ``state["segments"][key]`` is falsy, in stable
+    order — layout-line order (left to right, top to bottom) first, then any
+    segment that is not referenced in any line, sorted alphabetically.  This
+    matches ``_wizard_order``'s traversal so the UI is always deterministic and
+    consistent with the menu numbering.
+    """
+    seen = []
+    seen_set = set()
+    for row in state["layout"]:
+        for seg in row["segments"]:
+            if seg in state["segments"] and seg not in seen_set:
+                seen.append(seg)
+                seen_set.add(seg)
+    # segments not referenced in any layout line, sorted for stability
+    extras = sorted(k for k in state["segments"] if k not in seen_set)
+    ordered = seen + extras
+    return [seg for seg in ordered if not state["segments"].get(seg)]
+
+
+def layout_move(  # pylint: disable=too-many-return-statements
+    state, seg, direction,
+):
+    """Pure 2-D move adapter for the wizard editor.  Returns ``(new_state, err)``
+    matching ``_apply_wizard_command``'s contract: on success err is None and
+    new_state has ``dirty=True``; on failure new_state is the unchanged input and
+    err is a human-readable string.  The input state is NEVER mutated (deep-copy).
+
+    Direction semantics
+    -------------------
+    left   — reorder within the segment's line toward the start (swap left).
+             Delegates to ``_apply_wizard_command(state, "move <seg> up")``.
+    right  — reorder within the line toward the end (swap right).
+             Delegates to ``_apply_wizard_command(state, "move <seg> down")``.
+    up     — move across lines toward the previous line.
+             • If already on line 0 (top): send to the off-tray
+               (set segments[seg]=False, remove from the line list).
+             • Otherwise: move to the previous line via
+               ``_apply_wizard_command(state, "move <seg> line <prev_1based>")``.
+               If current 0-based index is li, previous 1-based = li  (li-1+1).
+    down   — move across lines toward the next line.
+             • If seg is in the off-tray (segments[seg] is False and not in any
+               line): re-activate onto line 1
+               (set segments[seg]=True, append to layout[0]["segments"]).
+             • Otherwise if on a non-last line: move to the next line via
+               ``_apply_wizard_command(state, "move <seg> line <next_1based>")``.
+               next_1based = li + 2  (li is 0-based, next is li+1, 1-based = li+2).
+             • If already on the last line: return an error.
+    """
+    if direction not in ("left", "right", "up", "down"):
+        return state, f"unknown direction: {direction!r}"
+
+    li, _pos = _find_line(state["layout"], seg)
+    in_layout = li is not None
+
+    # ── left / right: within-line reorder ──────────────────────────────────
+    if direction == "left":
+        if not in_layout:
+            return state, f"segment '{seg}' is not in the layout"
+        return _apply_wizard_command(state, f"move {seg} up")
+
+    if direction == "right":
+        if not in_layout:
+            return state, f"segment '{seg}' is not in the layout"
+        return _apply_wizard_command(state, f"move {seg} down")
+
+    # ── up: cross-line toward previous ─────────────────────────────────────
+    if direction == "up":
+        if not in_layout:
+            return state, f"segment '{seg}' is not in the layout"
+        if li == 0:
+            # top line → off-tray: toggle off + remove from line list
+            st = copy.deepcopy(state)
+            st["segments"][seg] = False
+            st["layout"][0]["segments"].remove(seg)
+            st["dirty"] = True
+            return st, None
+        # move to previous line; previous 0-based = li-1, 1-based = li
+        return _apply_wizard_command(state, f"move {seg} line {li}")
+
+    # ── down: cross-line toward next (direction == "down") ──────────────────
+    seg_on = state["segments"].get(seg)
+    if not in_layout and not seg_on:
+        # off-tray → re-activate onto line 1 (layout index 0)
+        st = copy.deepcopy(state)
+        st["segments"][seg] = True
+        st["layout"][0]["segments"].append(seg)
+        st["dirty"] = True
+        return st, None
+    if not in_layout:
+        return state, f"segment '{seg}' is not in the layout"
+    num_lines = len(state["layout"])
+    if li == num_lines - 1:
+        return state, f"'{seg}' is already on the last line"
+    # move to next line; next 0-based = li+1, 1-based = li+2
+    return _apply_wizard_command(state, f"move {seg} line {li + 2}")
+
+
+def layout_toggle(state, seg):
+    """Toggle a segment between ON (in a layout line) and OFF (in the tray).
+
+    ON segments live in exactly one layout line; OFF segments live in the tray
+    (in no line list).  ``layout_toggle`` maintains this invariant:
+
+    * If *seg* is ON (present in some layout line): set ``segments[seg]=False``
+      and remove it from that line — moves to the tray.  Works from any line.
+    * If *seg* is OFF (in the tray): set ``segments[seg]=True`` and append to
+      ``layout[0]["segments"]`` — re-activates onto line 1.
+    * If *seg* is unknown: return ``(state, "unknown segment '<seg>'")``.
+
+    Deep-copies state; never mutates input.  Sets ``dirty=True`` on success.
+    Returns ``(new_state, None)`` on success or ``(state, err_msg)`` on failure.
+    """
+    if seg not in state["segments"]:
+        return state, f"unknown segment '{seg}'"
+    st = copy.deepcopy(state)
+    li, _pos = _find_line(st["layout"], seg)
+    if li is not None:
+        # Segment is ON — remove from its line and move to tray.
+        st["segments"][seg] = False
+        st["layout"][li]["segments"].remove(seg)
+    else:
+        # Segment is OFF (in tray) — re-activate onto line 1 (index 0).
+        st["segments"][seg] = True
+        st["layout"][0]["segments"].append(seg)
+    st["dirty"] = True
+    return st, None
+
+
 # Friendly headers for the three default layout rows (keyed by min_rows);
 # any other row falls back to "line N".
 _ROW_LABELS = {0: "identity line", 20: "model line", 30: "diagnostics line"}
@@ -1181,44 +1327,6 @@ def _wizard_order(state):
     return [k for _label, keys in _wizard_groups(state) for k in keys]
 
 
-def _print_segments(tty, state):
-    """Render the segment menu grouped by layout row, numbered 1..n in display
-    order, with a redundant on/off word column so enabled/disabled is legible
-    without color (NO_COLOR/WCAG); color is layered on as a secondary cue."""
-    number = {key: i for i, key in enumerate(_wizard_order(state), 1)}
-    for label, keys in _wizard_groups(state):
-        print(f"\n  {label}", file=tty)
-        for key in keys:
-            on = state["segments"][key]
-            box = "[x]" if on else "[ ]"
-            word = "on " if on else "off"
-            key_col = f"{_ACCENT}{key}{_RESET}" if on else key   # dim ≠ state
-            note = _SEGMENT_NOTES.get(key, "")
-            print(f"  {number[key]:2}. {box} {word}  {key_col}  "
-                  f"{_DIM}{note}{_RESET}", file=tty)
-
-
-def _preview_lines(rendered, cols):
-    """Format the live status-line `rendered` text as preview footer lines: an
-    ASCII 'preview | ' prefix (no Unicode in the always-correct mode-B fallback),
-    each row truncated to the terminal width. Empty render → one
-    '(preview unavailable)' line so the failure is visible, not silent."""
-    prefix = "  preview | "
-    budget = max(cols - _visible_len(prefix), 1)
-    if not rendered:
-        return [prefix + "(preview unavailable)"]
-    return [prefix + _trunc_visible(line, budget)
-            for line in rendered.splitlines()]
-
-
-_CHIP_GLYPHS = {"on": "◉", "off": "◯", "cursor": "❯",
-                "more_up": "▲", "more_down": "▼", "bar": "▏"}
-_CHIP_ASCII = {"on": "[x]", "off": "[ ]", "cursor": ">",
-               "more_up": "^", "more_down": "v", "bar": "|"}
-_CHIP_HINT = "↑↓ move · space toggle · a/n all/none · enter ok · q/esc cancel"
-_CHIP_HINT_ASCII = "up/dn move · space toggle · a/n all/none · enter ok · q/esc cancel"
-
-
 def _env_truthy(val):
     """Standard env truthiness: 1/true/t/yes/y/on (case-insensitive)."""
     return str(val).strip().lower() in ("1", "true", "t", "yes", "y", "on")
@@ -1245,351 +1353,23 @@ def _term_dimensions(env):
     return (cols or sz.columns), (rows or sz.lines)
 
 
-def _mode_a_available(env, stdin, stdout):
-    """The conjunctive activation gate for the mode-A chip selector: ALL of
-    stdin&stdout are TTYs, TERM is not dumb/empty, and the terminal is at least
-    40×8. `AIKIT_PLAIN` forces mode B. NO_COLOR is deliberately NOT consulted —
-    it only strips the color layer at render time; the glyph-primary + reverse-
-    video focus keep mode A fully usable without color. Any False → caller uses
-    the always-correct mode-B numbered menu."""
-    if _env_truthy(env.get("AIKIT_PLAIN")):
-        return False
-    if not (_stream_isatty(stdin) and _stream_isatty(stdout)):
-        return False
-    if env.get("TERM", "") in ("dumb", ""):
-        return False
-    cols, rows = _term_dimensions(env)
-    return cols >= 40 and rows >= 8
 
 
-def _chip_glyphs(env, stdout):
-    """The mark set for chips: Unicode `◉/◯/❯…` normally, ASCII `[x]/[ ]/>`
-    when the terminal can't render glyphs — TERM dumb/empty OR stdout's encoding
-    can't represent the codepoints (e.g. a C/POSIX locale). NO_COLOR does NOT
-    force ASCII: `◉` (filled) vs `◯` (hollow) is a shape difference that survives
-    color stripping, which is the whole point of glyph-primary state."""
-    if env.get("TERM", "") in ("dumb", ""):
-        return dict(_CHIP_ASCII)
-    enc = getattr(stdout, "encoding", None) or "utf-8"
-    try:
-        "".join(_CHIP_GLYPHS.values()).encode(enc)
-    except (LookupError, UnicodeEncodeError):
-        return dict(_CHIP_ASCII)
-    return dict(_CHIP_GLYPHS)
-
-
-def _clamp_window(cursor, n_items, viewport):
-    """Top index of the scroll window so `cursor` stays visible within
-    `viewport` rows (cursor roughly centered). 0 when the whole list fits."""
-    if viewport <= 0 or n_items <= viewport:
-        return 0
-    top = cursor - viewport // 2
-    return max(0, min(top, n_items - viewport))
-
-
-def _parse_key(token):
-    """Map ONE de-framed key token to an action (or None). The token is a
-    complete key — the reader resolves the esc-vs-CSI-arrow ambiguity before
-    calling this, so `_parse_key` stays pure and trivially testable."""
-    return {
-        "\x1b[A": "up", "k": "up",
-        "\x1b[B": "down", "j": "down",
-        " ": "toggle",
-        "a": "all", "A": "all",
-        "n": "none", "N": "none",
-        "\r": "accept", "\n": "accept",
-        "\x1b": "cancel", "q": "cancel", "Q": "cancel", "\x03": "cancel",
-    }.get(token)
-
-
-def _chip_row(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    glyphs, label, enabled, focused, width, color=True,
-):
-    """One chip row, truncated to `width`. Focused row is reverse-video
-    (`\\033[7m`) — a luminance inversion that survives NO_COLOR, unlike a
-    color-only cue; the `❯` gutter is the redundant second focus signal."""
-    gutter = glyphs["cursor"] if focused else " "
-    mark = glyphs["on"] if enabled else glyphs["off"]
-    body = _trunc_visible(f"{gutter} {mark} {label}", width)
-    if focused:
-        return f"\033[7m{body}\033[27m"
-    if color and enabled:
-        return f"{_ACCENT}{body}{_RESET}"
-    return body
-
-
-def _chip_frame(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    selection, glyphs, cols, rows, preview=None, color=True,
-):
-    """Build the visible lines of one mode-A frame (PURE — no terminal I/O):
-    a windowed slice of chip rows (focused row reverse-video), `▲/▼ N more`
-    edge affordances when the list overflows, an optional `preview ▏` footer,
-    and the key-hint footer — every line truncated to cols-1."""
-    width = max(cols - 1, 1)
-    reserved = 2 + (1 if preview is not None else 0)   # hint + 2 edges (+preview)
-    viewport = max(rows - reserved, 1)
-    n = len(selection)
-    top = _clamp_window(selection.cursor, n, viewport)
-    end = min(top + viewport, n)
-    lines = []
-    if top > 0:
-        lines.append(_trunc_visible(f"  {glyphs['more_up']} {top} more", width))
-    for i in range(top, end):
-        _cat, label, enabled = selection.items[i]
-        lines.append(_chip_row(glyphs, label, enabled,
-                               i == selection.cursor, width, color))
-    if end < n:
-        lines.append(_trunc_visible(f"  {glyphs['more_down']} {n - end} more", width))
-    if preview is not None:
-        lines.append(_trunc_visible(f"  preview {glyphs['bar']} {preview}", width))
-    on = sum(1 for _c, _l, enabled in selection.items if enabled)
-    hint = _CHIP_HINT_ASCII if glyphs["cursor"] == ">" else _CHIP_HINT
-    lines.append(_trunc_visible(f"  ({on}/{n} on)  {hint}", width))   # live tally
-    return lines
-
-
-def _read_key(stdin):
-    """Read ONE key token from a raw-mode stdin, resolving the esc/CSI-arrow
-    ambiguity: a lone ESC with nothing pending is a cancel; ESC '[' X is a CSI
-    arrow. Reads single bytes via os.read on the fd (the correct raw-terminal
-    primitive — TextIOWrapper buffering would swallow keypresses). latin-1 keeps
-    the control bytes 1:1. Timing-sensitive — exercised by the T4.5 pty E2E.
-
-    A terminal disconnect (SSH drop, parent closes the fd) makes os.read raise
-    OSError(EIO) on some platforms and return b"" (EOF) on others; BOTH are
-    surfaced as a cancel (KeyboardInterrupt) so the caller falls back to the safe
-    default instead of crashing or busy-looping on an empty read."""
-    fd = stdin.fileno()
-
-    def _rd():
-        try:
-            return os.read(fd, 1)
-        except OSError:
-            raise KeyboardInterrupt from None   # terminal vanished → cancel
-    ch = _rd()
-    if not ch:                               # EOF → cancel (never busy-loop on b"")
-        raise KeyboardInterrupt
-    if ch == b"\x1b":
-        # 50 ms split to tell a lone ESC (cancel) from a CSI arrow. Best-effort:
-        # a high-latency SSH link can deliver the '[' late and trip the lone-ESC
-        # path — acceptable, since the worst case is a stray cancel the user retries.
-        ready, _, _ = select.select([fd], [], [], 0.05)
-        if not ready:
-            return "\x1b"                    # lone ESC → cancel
-        nxt = _rd()
-        if nxt == b"[":
-            return "\x1b[" + _rd().decode("latin-1")
-        # ESC + non-'[' (Alt-combo or a fast keystroke): act on that byte rather
-        # than silently dropping it.
-        return nxt.decode("latin-1") if nxt else "\x1b"
-    return ch.decode("latin-1")
-
-
-def chip_select(selection, stdin, stdout, env, preview=None):
-    """Mode-A arrow-key chip selector over a `Selection` (the additive
-    enhancement to the mode-B menu). Bounded redraw, NEVER alt-screen: prints a
-    fixed block, then each keypress moves the cursor up by the block height it
-    LAST emitted (so a shrinking frame can't orphan rows) and rewrites every line
-    with erase-line, in a single write(). `RawMode` guarantees teardown. The
-    caller MUST have confirmed `_mode_a_available(env, stdin, stdout)`; on
-    esc/Ctrl-C this raises KeyboardInterrupt (selection left as-is). `preview`,
-    if given, is called with the live selection each frame and must return the
-    preview text. Returns the mutated `selection`."""
-    glyphs = _chip_glyphs(env, stdout)
-    color = not _env_truthy(env.get("NO_COLOR"))
-    last_h = 0
-
-    def render():
-        nonlocal last_h
-        cols, rows = _term_dimensions(env)
-        pv = preview(selection) if preview is not None else None
-        lines = _chip_frame(selection, glyphs, cols, rows, pv, color)
-        buf = []
-        if last_h:
-            buf.append(f"\033[{last_h}A")          # up by what we LAST drew
-        for ln in lines:
-            buf.append("\033[2K" + ln + "\n")
-        for _ in range(max(last_h - len(lines), 0)):   # clear shrunk-away rows
-            buf.append("\033[2K\n")
-        if last_h > len(lines):
-            buf.append(f"\033[{last_h - len(lines)}A")
-        last_h = len(lines)
-        stdout.write("".join(buf))
-        stdout.flush()
-
-    with RawMode(stdin.fileno(), stdout):
-        render()
-        while True:
-            action = _parse_key(_read_key(stdin))
-            if action == "up":
-                selection.move_cursor(-1)
-            elif action == "down":
-                selection.move_cursor(1)
-            elif action == "toggle":
-                selection.toggle_cursor()
-            elif action == "all":
-                selection.set_all(True)
-            elif action == "none":
-                selection.set_all(False)
-            elif action == "accept":
-                break
-            elif action == "cancel":
-                raise KeyboardInterrupt
-            render()
-    return selection
-
-
-class RawMode:
-    """Context manager that puts terminal `fd` into raw mode for the mode-A chip
-    selector and GUARANTEES teardown on every exit path. On enter it saves the
-    termios state, installs a SIGINT trap, switches to raw, and hides the cursor;
-    on exit (normal, exception, OR SIGINT) it restores the saved state via
-    `TCSADRAIN`, shows the cursor, and re-installs the previous SIGINT handler —
-    all in one place. SIGINT additionally prints a newline and exits 130
-    (128 + SIGINT, the conventional shell code). A no-op when termios is
-    unavailable (non-POSIX); callers gate mode A on isatty regardless.
-
-    `fd` is the input file descriptor put into raw mode; `stream` is where the
-    cursor-hide/show escapes are written (the output side)."""
-
-    def __init__(self, fd, stream):
-        self.fd = fd
-        self.stream = stream
-        self.saved = None
-        self.prev_sigint = None
-        self.active = False
-
-    def __enter__(self):
-        if termios is None or _termmode is None:  # non-POSIX → no-op
-            return self
-        self.saved = termios.tcgetattr(self.fd)
-        self.prev_sigint = signal.getsignal(signal.SIGINT)
-        signal.signal(signal.SIGINT, self._on_sigint)
-        _termmode.setraw(self.fd)
-        self.active = True
-        self.stream.write("\033[?25l")           # hide cursor
-        self.stream.flush()
-        return self
-
-    def __exit__(self, *_exc):
-        self._restore()
-        return False                             # never swallow exceptions
-
-    def _restore(self):
-        if not self.active:
-            return
-        # active is only set True on the POSIX path, so the modules and the
-        # saved termios state are both present.
-        assert termios is not None and self.saved is not None
-        self.active = False
-        # Best-effort, ORDERED teardown. A terminal disconnect can make
-        # tcsetattr raise termios.error(EIO) mid-teardown; that must not skip the
-        # cursor-show or the SIGINT-handler restore, nor mask the body's
-        # exception by propagating its own — so each step is guarded and the
-        # SIGINT handler (most important for process sanity) is always restored.
-        with contextlib.suppress(termios.error):
-            termios.tcsetattr(self.fd, termios.TCSADRAIN, self.saved)
-        with contextlib.suppress(OSError, ValueError):
-            self.stream.write("\033[?25h")       # show cursor
-            self.stream.flush()
-        signal.signal(signal.SIGINT, self.prev_sigint)
-
-    def _on_sigint(self, signum, frame):
-        self._restore()
-        self.stream.write("\n")
-        self.stream.flush()
-        raise SystemExit(130)
-
-
-def run_statusline_wizard(paths, tty, dry):
-    """Interactive status-line editor: toggle segments, reorder/move across lines,
-    live-preview after each change, write back via surgical patch + doctor
-    self-validate. Replaces the E5b stub.
-
-    Preamble (preserved from E5b): drop the recipe at config_toml if absent and
-    wire settings.json's statusLine at the bundled renderer (FR-5.5 double-confirm)
-    before the editor runs."""
-    copy_recipe_if_absent(paths.sample, paths.config_toml, dry)
-    wire_statusline(paths.settings, paths.status_line, tty, dry)
-    cfg = paths.config_toml
-    state = {
-        "segments": current_segments(cfg),
-        "layout": current_layout(cfg),
-        "dirty": False,
-    }
-    with open(_sample_input_path(), encoding="utf-8") as f:
-        sample_json = f.read()
-
-    def show_preview():
-        out = render_preview(paths.status_line, state["segments"], sample_json, {})
-        cols, _rows = _term_dimensions(os.environ)
-        print("", file=tty)
-        for line in _preview_lines(out, cols):
-            print(line, file=tty)
-
-    print("\nStatus-line configuration", file=tty)
-    while True:
-        _print_segments(tty, state)
-        show_preview()
-        print("\n  commands: <n> toggle · a all · n none"
-              " · move <key> up|down · move <key> line <n>"
-              " · p preview · s save · q quit · done save+quit", file=tty)
-        tty.write("  > ")
-        tty.flush()
-        cmd = tty.readline()
-        if not cmd:
-            cmd = "q"
-        cmd = cmd.strip()
-        if cmd in ("q", "quit", ""):
-            break
-        if cmd == "done":                         # save + quit
-            _save_and_report(paths, state, tty, dry)
-            state["dirty"] = False
-            return
-        if cmd in ("p", "preview"):
-            continue
-        if cmd in ("s", "save"):
-            _save_and_report(paths, state, tty, dry)
-            state["dirty"] = False
-            continue
-        new_state, err = _apply_wizard_command(state, cmd)
-        if err:
-            print(f"  ! {err}", file=tty)
-        else:
-            state = new_state
-
-    if state["dirty"]:
-        _save_and_report(paths, state, tty, dry)
-    else:
-        _print_closing(paths, tty)
-
-
-def _save_and_report(paths, state, tty, dry):
+def _persist_layout(paths, state, dry):
+    """Compute the minimal seg_changes + layout diff vs disk, then delegate to
+    ``save_statusline_config`` for the atomic write + doctor validation + auto-
+    revert (FR-W.5).  Returns True on success (including no-op and dry-run)."""
     if dry:
-        print("  [dry-run] would write status-line config — no changes made",
-              file=tty)
-        _print_closing(paths, tty)
-        return
+        print("[dry-run] would write status-line config — no changes made",
+              file=sys.stderr)
+        return True
     seg_changes = _segment_changes_vs_recipe(paths.config_toml, state["segments"])
     layout = state["layout"] if state["layout"] != current_layout(paths.config_toml) \
         else None
     if not (seg_changes or layout is not None):
-        _print_closing(paths, tty)
-        return
-    ok = save_statusline_config(paths.config_toml, seg_changes, layout,
-                                paths.statusline_doctor)
-    if ok:
-        print("  ✓ saved", file=tty)
-    else:
-        print("  ! the doctor rejected the change — file left unchanged", file=tty)
-    _print_closing(paths, tty)
-
-
-def _print_closing(paths, tty):
-    print(f"\n  config: {paths.config_toml}", file=tty)
-    print("  edit colors / ramps / palette by hand in that file.", file=tty)
-    # _doctor_cmd(paths) is defined in E5b — reuse it; do NOT redefine it here.
-    print(f"  validate any time:  {_doctor_cmd(paths)}", file=tty)
+        return True   # nothing to write — already up-to-date
+    return save_statusline_config(paths.config_toml, seg_changes, layout,
+                                  paths.statusline_doctor)
 
 
 def _sample_input_path():
@@ -1597,13 +1377,115 @@ def _sample_input_path():
                         "..", "tests", "fixtures", "sample-input.json")
 
 
+def _engine_ns(paths, sample_json):
+    """Bundle the engine callables as a SimpleNamespace for injection into
+    WizardContext.  wizard_app calls these at runtime; they all live here so
+    wizard_app imports nothing from setup.py.
+
+    ``sample_json`` is captured by the ``_render_preview`` closure so the
+    render call is self-contained (no shared mutable state)."""
+    # `types` is stdlib; the import is here (not top-level) because this helper
+    # is only called from the wizard path (after uv re-exec), not from the
+    # stdlib-only status-line render path.
+    import types as _types  # pylint: disable=import-outside-toplevel
+
+    def _render_preview(segments, layout=None):
+        base_config = None
+        if layout is not None:
+            cfg = paths.config_toml if os.path.isfile(paths.config_toml) else paths.sample
+            try:
+                with open(cfg, encoding="utf-8") as fh:
+                    base_config = fh.read()
+            except OSError:
+                base_config = ""
+        return render_preview(paths.status_line, segments, sample_json, {},
+                              layout=layout, base_config=base_config)
+
+    return _types.SimpleNamespace(
+        render_preview=_render_preview,
+        apply_command=_apply_wizard_command,
+        groups=_wizard_groups,
+        order=_wizard_order,
+        layout_move=layout_move,
+        layout_toggle=layout_toggle,
+        off_tray=off_tray,
+    )
+
+
+def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    paths, entries, installed, tty, dry, counts,
+):
+    """Build the engine context and run the Textual wizard.  Applies the chosen
+    selection on confirm; a None result (abort) leaves everything as-is.
+
+    Fail-closed / single-path: this function is only reached after
+    ``require_tty(open_tty())`` in ``main()`` has guaranteed a real,
+    Textual-drivable terminal.  If a non-real tty somehow reaches here,
+    the program fails loud — it never silently applies defaults.
+
+    Lazy import of wizard_app is intentional: this function is only reached
+    after ensure_rich_runtime() has guaranteed textual is available."""
+    # Guard: belt-and-suspenders — require_tty in main() is the primary gate.
+    isatty_fn = getattr(tty, "isatty", None)
+    if tty is None or not callable(isatty_fn) or not isatty_fn():
+        print(
+            "error: launch_wizard reached without a real terminal — this is a bug. "
+            "require_tty() should have exited before this point.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    default = _default_selection(entries, installed)
+
+    # Ensure tools/ is on sys.path so `import wizard_app` resolves regardless
+    # of the caller's CWD (repo root in tests; tools/ when run directly).
+    _tools_dir = os.path.dirname(os.path.abspath(__file__))
+    if _tools_dir not in sys.path:
+        sys.path.insert(0, _tools_dir)
+
+    import wizard_app  # pylint: disable=import-outside-toplevel
+
+    sel = Selection(
+        (cat, name, name in default[cat])
+        for cat in CATEGORIES
+        for name, _ in entries[cat]
+    )
+    with open(_sample_input_path(), encoding="utf-8") as f:
+        sample_json = f.read()
+    ctx = wizard_app.WizardContext(
+        selection=sel,
+        state={"segments": current_segments(paths.config_toml),
+               "layout": current_layout(paths.config_toml), "dirty": False},
+        sample_json=sample_json,
+        engine=_engine_ns(paths, sample_json),
+    )
+    try:
+        result = wizard_app.run_wizard(ctx)
+    except wizard_app.WizardCrash as exc:
+        reason = exc.args[0] if exc.args else exc
+        print(f"error: wizard failed — {reason}", file=sys.stderr)
+        sys.exit(2)
+    if result is None:
+        return
+    # wizard_app types selection as `object` to avoid a circular import; cast here.
+    sel = cast(Selection, result.selection)
+    apply_selection(
+        sel.category_sets(CATEGORIES), entries, paths.claude_dir, dry, counts
+    )
+    if not _persist_layout(paths, result.state, dry):
+        print(
+            "warning: the doctor rejected the layout/segment change — "
+            "config file left unchanged (symlink selections already applied).",
+            file=sys.stderr,
+        )
+
+
 def cmd_install(env, tty, dry, examples_flag=None):
-    """Reconcile skills/agents/commands, then (interactive only) the status line.
-    Headless (tty None): reconcile skills with defaults/keep + auto-remove dead
-    links + warn, and SKIP the status line entirely (§7). The `reconfigure`
-    subcommand is just install without first-run defaults — handled implicitly
-    because once anything is linked, _first_run() is False, so the selection
-    keeps existing state."""
+    """Reconcile skills/agents/commands and wire the status line. Interactive-only
+    and fail-closed: ``require_tty`` exits before this function is ever called with
+    tty=None, so tty is always a real terminal here. The ``reconfigure`` subcommand
+    is install without first-run defaults — when anything is already linked,
+    _first_run() is False, so the selection keeps existing state."""
     paths = resolve_paths(env)
     entries = enumerate_entries(paths.install_dir)
     counts = new_counts()
@@ -1617,12 +1499,11 @@ def cmd_install(env, tty, dry, examples_flag=None):
     adopt_predecessor_links(paths.claude_dir, paths.install_dir, entries, tty, dry, counts)
     installed = installed_links(paths.claude_dir, paths.install_dir)
 
-    # A: choose what to install (first-run all-on / keep selection / interactive)
-    selection = select_skills(entries, installed, tty)
-    apply_selection(selection, entries, paths.claude_dir, dry, counts)
+    copy_recipe_if_absent(paths.sample, paths.config_toml, dry)
+    wire_statusline(paths.settings, paths.status_line, tty, dry)
 
-    if is_interactive(tty):
-        run_statusline_wizard(paths, tty, dry)
+    # A: choose what to install + segment layout via Textual wizard (Task 2.1+).
+    launch_wizard(paths, entries, installed, tty, dry, counts)
 
     # Example external segments (sysmem, …): offer pre-checked when interactive,
     # else governed by --examples (default ON). Copy+chmod+enable; default-ON
@@ -1682,6 +1563,106 @@ def cmd_check(env):
     return subprocess.call([sys.executable, "-S", paths.statusline_doctor, "--check"])
 
 
+# ---------------------------------------------------------------------------
+# uv bootstrap — ensure textual (and the whole rich runtime) is available
+# before any wizard UI code runs.  The status-line RENDER path must never
+# call these (it stays stdlib-only).
+# ---------------------------------------------------------------------------
+
+def _textual_importable():
+    """True when `textual` can be imported in THIS interpreter."""
+    return importlib.util.find_spec("textual") is not None
+
+
+def _under_uv(env):
+    return env.get("AI_KIT_UV_REEXEC") == "1"
+
+
+def _have_uv():
+    """Path to the uv binary, or None. Checks PATH then ~/.local/bin (astral default)."""
+    cand = shutil.which("uv")
+    if cand:
+        return cand
+    fallback = os.path.expanduser("~/.local/bin/uv")
+    return fallback if os.path.exists(fallback) else None
+
+
+def _install_uv(tty):
+    """Install uv via the official astral installer, after showing the exact
+    command and getting consent. Returns True on success, False on decline,
+    cancel (Ctrl-C), or failure.
+
+    SECURITY: `shell=True` is required because the official installer is a
+    `download | sh` PIPE (two processes joined by the shell). It is safe by
+    construction: `cmd` is one of two FIXED string literals below — no user
+    input, no f-string interpolation of external data is ever spliced into it,
+    so there is no command-injection surface. Do NOT refactor `cmd` to include
+    any caller-supplied value; if that ever changes, this must stop using a
+    shell. The exact command is printed and consented to before running."""
+    if shutil.which("curl"):
+        cmd = "curl -LsSf https://astral.sh/uv/install.sh | sh"
+    elif shutil.which("wget"):
+        cmd = "wget -qO- https://astral.sh/uv/install.sh | sh"
+    else:
+        print("setup: uv install needs curl or wget; neither found.", file=sys.stderr)
+        return False
+    try:
+        _tty_write(tty, f"\n  uv is required for the wizard. Install it now with:\n    {cmd}\n")
+        if not ask_yes_no(tty, "  run this?", default=True):
+            return False
+        # cmd is a constant literal (see SECURITY note) — shell is the pipe runner.
+        return subprocess.run(cmd, shell=True, check=False).returncode == 0
+    except KeyboardInterrupt:
+        return False
+    except OSError:
+        return False
+
+
+def _reexec_under_uv(uv_path):
+    """Re-exec this script under `uv run` so the PEP-723 deps resolve. Sets the
+    loop-guard marker first. Normally never returns; on OSError prints a clear
+    stderr reason and exits 3."""
+    env = dict(os.environ, AI_KIT_UV_REEXEC="1")
+    script = os.path.abspath(__file__)
+    try:
+        os.execve(uv_path, [uv_path, "run", "--script", script, *sys.argv[1:]], env)
+    except OSError as exc:
+        print(f"setup: failed to exec uv at {uv_path!r}: {exc}", file=sys.stderr)
+        sys.exit(3)
+
+
+def ensure_rich_runtime(env):
+    """Guarantee textual is importable, or fail closed. Re-exec under uv at most
+    once (env marker guards the loop)."""
+    if _textual_importable():
+        return
+    if _under_uv(env):                       # already re-exec'd, still missing → stop
+        print("setup: textual is unavailable under uv — cannot launch the wizard.",
+              file=sys.stderr)
+        sys.exit(3)
+    uv_path = _have_uv()
+    if uv_path is None:
+        tty = open_tty()
+        if tty is None:
+            print(
+                "setup: uv is required for the wizard and no terminal is available"
+                " to confirm installing it.",
+                file=sys.stderr,
+            )
+            sys.exit(3)
+        if not _install_uv(tty):
+            print("setup: uv is required for the wizard and was not installed.",
+                  file=sys.stderr)
+            sys.exit(3)
+        # Re-resolve after install; uv may now be at ~/.local/bin/uv.
+        uv_path = _have_uv()
+        if uv_path is None:
+            print("setup: uv install reported success but binary not found.",
+                  file=sys.stderr)
+            sys.exit(3)
+    _reexec_under_uv(uv_path)               # normally never returns
+
+
 def main(argv=None):
     """Parse the subcommand and dispatch. Default subcommand is install."""
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -1701,13 +1682,13 @@ def main(argv=None):
     env = os.environ
     dry = args.dry_run
     if args.subcommand in ("install", "reconfigure"):
-        tty = open_tty()
+        ensure_rich_runtime(env)              # may re-exec; must be BEFORE open_tty
+        tty = cast("_StdTty", require_tty(open_tty()))  # fail-closed (FR-W.1/B)
         try:
             return cmd_install(env, tty, dry,
                                examples_flag=args.examples)
         finally:
-            if tty is not None:
-                tty.close()
+            tty.close()
     if args.subcommand == "uninstall":
         return cmd_uninstall(env, dry)
     if args.subcommand == "doctor":

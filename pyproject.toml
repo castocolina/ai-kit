@@ -21,6 +21,7 @@ dev = [
     "pyright~=1.1",
     "vulture~=2.14",
     "pre-commit~=4.4",
+    "textual>=8.0,<9.0",
 ]
 
 # ─────────────────────────── ruff ───────────────────────────
@@ -85,7 +86,7 @@ disable = [
 min_confidence = 80
 paths = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py"]
 # signal-handler / context-manager params required by their signature
-ignore_names = ["signum", "frame"]
+ignore_names = ["signum", "frame", "offset", "whence"]
 
 # ─────────────────────────── pyright ───────────────────────────
 [tool.pyright]

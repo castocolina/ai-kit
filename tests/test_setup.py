@@ -2,7 +2,6 @@ import importlib.util
 import io
 import json
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -149,6 +148,59 @@ class TestRenderPreview(unittest.TestCase):
         out = setup.render_preview("/no/such/status-line.py",
                                    dict(setup.SEGMENT_DEFAULTS), "{}", {})
         self.assertEqual(out, "")
+
+    def test_preview_layout_produces_different_output_no_leak(self):
+        """render_preview with a reordered layout yields different output; no temp files leaked."""
+        seg = dict(setup.SEGMENT_DEFAULTS)
+        with open(SAMPLE_INPUT) as f:
+            sample_json = f.read()
+        with open(SAMPLE_RECIPE, encoding="utf-8") as f:
+            base_config = f.read()
+        default_out = setup.render_preview(self._status_line(), seg, sample_json, {})
+        # Reorder layout: swap segments so row 1 has model only (no path)
+        reordered = [
+            {"min_rows": 0, "segments": ["model"]},
+            {"min_rows": 20, "segments": []},
+        ]
+        reorder_out = setup.render_preview(
+            self._status_line(), seg, sample_json, {},
+            layout=reordered, base_config=base_config,
+        )
+        self.assertNotEqual(default_out, reorder_out,
+                            "layout reorder must change preview output")
+        # No temp files leaked — nothing matching the prefix should exist in /tmp
+        import glob as _glob  # pylint: disable=import-outside-toplevel
+        leaked = _glob.glob("/tmp/ai_kit_preview_*.toml")
+        self.assertEqual(leaked, [], f"temp file(s) leaked: {leaked}")
+
+
+class TestPreviewFixture(unittest.TestCase):
+    """Fixture-shape pin test (Task 3.3 / C.2 #7).
+
+    Asserts that the checked-in sample-input.json fixture is rich enough for
+    the real renderer to produce non-empty output that does NOT fall back to
+    the "(preview unavailable)" sentinel.  This guards against fixture drift
+    that would silently break the live-preview pane.
+    """
+
+    _STATUS_LINE = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "tools", "status-line.py")
+    _RECIPE = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "tools", "statusline.toml.sample")
+
+    def test_fixture_drives_renderer_without_unavailable(self):
+        """sample-input.json must produce a real render (not empty / unavailable)."""
+        with open(setup._sample_input_path(), encoding="utf-8") as f:  # pylint: disable=protected-access
+            sample = f.read()
+        out = setup.render_preview(
+            self._STATUS_LINE,
+            setup.current_segments(self._RECIPE),
+            sample,
+            {},
+        )
+        self.assertTrue(out, "render_preview returned empty string — fixture may have drifted")
+        self.assertNotIn("(preview unavailable)", out,
+                         "render produced the unavailable sentinel — fixture may have drifted")
 
 
 class TestPatchSegments(unittest.TestCase):
@@ -519,42 +571,13 @@ class TestSelectExamples(unittest.TestCase):
         self.assertEqual(self._ids(setup.select_examples(ex, "cost", tty=None)),
                          ["cost"])
 
-    def test_select_flag_bypasses_prompt_even_with_tty(self):
-        # An explicit --examples flag must short-circuit the interactive offer.
-        ex = self._ex("sysmem")
-        with mock.patch.object(setup, "chip_select") as cs, \
-             mock.patch.object(setup, "_mode_a_available", return_value=True):
-            result = setup.select_examples(ex, "none", tty=object())
-        cs.assert_not_called()
-        self.assertEqual(result, [])
-
-    def test_select_interactive_mode_a_delegates(self):
-        ex = self._ex("sysmem", "cost")
-
-        def fake_chip(sel, stdin, stdout, env, preview=None):
-            sel.set_all(False)
-            sel.items[0][2] = True            # keep only the first (sysmem)
-            return sel
-
-        with mock.patch.object(setup, "_mode_a_available", return_value=True), \
-             mock.patch.object(setup, "chip_select", side_effect=fake_chip):
-            result = setup.select_examples(ex, None, tty=object())
-        self.assertEqual(self._ids(result), ["sysmem"])
-
-    def test_select_interactive_incapable_terminal_keeps_pre_checked(self):
-        # Gate closed (dumb/narrow tty): no chip prompt — accept the pre-checked
-        # default (every example, default-ON).
-        ex = self._ex("sysmem", "cost")
-        with mock.patch.object(setup, "_mode_a_available", return_value=False), \
-             mock.patch.object(setup, "chip_select") as cs:
-            result = setup.select_examples(ex, None, tty=object())
-        cs.assert_not_called()
-        self.assertEqual(result, ex)
-
     def test_main_parses_examples_flag(self):
         # --examples is accepted by the CLI and reaches cmd_install.
-        with mock.patch.object(setup, "cmd_install", return_value=0) as ci, \
-             mock.patch.object(setup, "open_tty", return_value=None):
+        fake_tty = io.StringIO()
+        with mock.patch.object(setup, "ensure_rich_runtime"), \
+             mock.patch.object(setup, "cmd_install", return_value=0) as ci, \
+             mock.patch.object(setup, "open_tty", return_value=fake_tty), \
+             mock.patch.object(fake_tty, "close", return_value=None):
             setup.main(["install", "--examples=none"])
         self.assertEqual(ci.call_args.kwargs.get("examples_flag"), "none")
 
@@ -637,369 +660,6 @@ class TestWizardLoop(unittest.TestCase):
             self.assertTrue(parsed["segments"]["alt_cost"])
             with open(path) as f:
                 self.assertIn("# [palette]", f.read())   # palette comments intact
-
-
-class TestWizardMenu(unittest.TestCase):
-    """Polished mode-B numbered menu: grouped by layout row, contiguous
-    display-order numbering shared with the toggle resolver, a redundant on/off
-    word column, and an ASCII preview footer."""
-
-    def _state(self):
-        return {
-            "segments": {"path": True, "branch": True, "dirty": False,
-                         "model": True, "clock": True, "cost": False},
-            "layout": [{"min_rows": 0, "segments": ["path", "branch", "dirty"]},
-                       {"min_rows": 20, "segments": ["model", "clock"]}],
-            "dirty": False,
-        }
-
-    def test_wizard_order_is_layout_then_sorted_rest(self):
-        # layout rows in row order, then any non-laid-out segment (sorted).
-        self.assertEqual(
-            setup._wizard_order(self._state()),
-            ["path", "branch", "dirty", "model", "clock", "cost"])
-
-    def test_menu_numbers_are_contiguous_in_display_order(self):
-        buf = io.StringIO()
-        setup._print_segments(buf, self._state())
-        nums = [int(m) for m in re.findall(r"^\s*(\d+)\.", buf.getvalue(), re.M)]
-        self.assertEqual(nums, [1, 2, 3, 4, 5, 6])     # 1..n, no gaps
-
-    def test_menu_groups_segments_by_layout_row(self):
-        out = io.StringIO()
-        setup._print_segments(out, self._state())
-        text = out.getvalue()
-        self.assertIn("identity line", text)
-        self.assertIn("model line", text)
-        self.assertIn("not in layout", text)           # trailing group for cost
-        self.assertLess(text.index("model line"), text.index("not in layout"))
-        self.assertLess(text.index("not in layout"), text.index("cost"))
-
-    def test_menu_shows_on_off_word_column(self):
-        out = io.StringIO()
-        setup._print_segments(out, self._state())
-        # strip SGR escapes so the word column is matched on plain text
-        lines = [setup._ANSI_RE.sub("", l) for l in out.getvalue().splitlines()]
-        dirty_line = next(l for l in lines if re.search(r"\bdirty\b", l))
-        path_line = next(l for l in lines if re.search(r"\bpath\b", l))
-        self.assertIn("off", dirty_line)               # disabled → word 'off'
-        self.assertIn("on", path_line)                 # enabled → word 'on'
-
-    def test_menu_number_matches_displayed_toggle(self):
-        # The visible-order contract: typing N flips the Nth displayed segment.
-        st = self._state()
-        for n, key in enumerate(setup._wizard_order(st), 1):
-            before = st["segments"][key]
-            st2, err = setup._apply_wizard_command(st, str(n))
-            self.assertIsNone(err)
-            self.assertEqual(st2["segments"][key], not before)
-
-    def test_menu_rejects_out_of_range_number(self):
-        st = self._state()
-        st2, err = setup._apply_wizard_command(st, str(len(st["segments"]) + 5))
-        self.assertIsNotNone(err)
-        self.assertEqual(st2, st)                       # unchanged, no raise
-
-    def test_menu_all_on_and_none_off(self):
-        st = self._state()
-        on, err = setup._apply_wizard_command(st, "a")
-        self.assertIsNone(err)
-        self.assertTrue(all(on["segments"].values()))
-        self.assertTrue(on["dirty"])
-        off, err = setup._apply_wizard_command(st, "n")
-        self.assertIsNone(err)
-        self.assertFalse(any(off["segments"].values()))
-
-    def test_preview_footer_ascii_prefix_and_truncates(self):
-        colored = "\033[36mhello\033[0m world this is a very long status-line bar"
-        lines = setup._preview_lines(colored, cols=20)
-        self.assertTrue(all(l.startswith("  preview | ") for l in lines))
-        self.assertNotIn("▏", "".join(lines))      # no ▏ box-drawing glyph
-        for l in lines:
-            self.assertLessEqual(setup._visible_len(l), 20)
-
-    def test_preview_footer_unavailable_when_empty(self):
-        lines = setup._preview_lines("", cols=80)
-        self.assertEqual(len(lines), 1)
-        self.assertIn("(preview unavailable)", lines[0])
-
-
-class _FakeStream:
-    def __init__(self, isatty=True, encoding="utf-8"):
-        self._isatty = isatty
-        self.encoding = encoding
-
-    def isatty(self):
-        return self._isatty
-
-
-class TestModeAChips(unittest.TestCase):
-    """Mode-A (arrow-key chip selector) pure helpers: the conjunctive activation
-    gate, glyph/ASCII selection, scroll-window clamp, key parse, and the pure
-    frame builder. The interactive loop itself is covered by the T4.5 pty E2E."""
-
-    def _env(self, **over):
-        env = {"TERM": "xterm-256color", "COLUMNS": "100", "LINES": "40"}
-        env.update(over)
-        return env
-
-    def _sel(self, n=4, cursor=0):
-        s = setup.Selection([("seg", f"item{i}", i % 2 == 0) for i in range(n)])
-        s.cursor = cursor
-        return s
-
-    # ---- gate ----
-    def test_gate_passes_when_all_conditions_hold(self):
-        self.assertTrue(setup._mode_a_available(
-            self._env(), _FakeStream(), _FakeStream()))
-
-    def test_gate_fails_without_tty(self):
-        self.assertFalse(setup._mode_a_available(
-            self._env(), _FakeStream(isatty=False), _FakeStream()))
-        self.assertFalse(setup._mode_a_available(
-            self._env(), _FakeStream(), _FakeStream(isatty=False)))
-
-    def test_gate_fails_on_dumb_or_empty_term(self):
-        for term in ("dumb", ""):
-            self.assertFalse(setup._mode_a_available(
-                self._env(TERM=term), _FakeStream(), _FakeStream()))
-
-    def test_gate_fails_when_terminal_too_small(self):
-        self.assertFalse(setup._mode_a_available(
-            self._env(COLUMNS="39"), _FakeStream(), _FakeStream()))
-        self.assertFalse(setup._mode_a_available(
-            self._env(LINES="7"), _FakeStream(), _FakeStream()))
-
-    def test_gate_fails_when_aikit_plain_set(self):
-        self.assertFalse(setup._mode_a_available(
-            self._env(AIKIT_PLAIN="1"), _FakeStream(), _FakeStream()))
-
-    def test_gate_ignores_no_color(self):
-        # NO_COLOR strips color in rendering but must NOT disable mode A.
-        self.assertTrue(setup._mode_a_available(
-            self._env(NO_COLOR="1"), _FakeStream(), _FakeStream()))
-
-    # ---- glyphs ----
-    def test_chip_glyphs_unicode_by_default(self):
-        g = setup._chip_glyphs(self._env(), _FakeStream(encoding="utf-8"))
-        self.assertEqual(g["on"], "◉")
-        self.assertEqual(g["cursor"], "❯")
-
-    def test_chip_glyphs_ascii_on_dumb_term(self):
-        g = setup._chip_glyphs(self._env(TERM="dumb"), _FakeStream())
-        self.assertEqual(g["on"], "[x]")
-        self.assertEqual(g["cursor"], ">")
-
-    def test_chip_glyphs_ascii_when_encoding_cannot_represent(self):
-        g = setup._chip_glyphs(self._env(), _FakeStream(encoding="ascii"))
-        self.assertEqual(g["off"], "[ ]")
-
-    def test_chip_glyphs_unicode_survives_no_color(self):
-        g = setup._chip_glyphs(self._env(NO_COLOR="1"), _FakeStream(encoding="utf-8"))
-        self.assertEqual(g["on"], "◉")          # NO_COLOR keeps glyphs
-
-    # ---- window clamp ----
-    def test_window_clamp_returns_zero_when_everything_fits(self):
-        self.assertEqual(setup._clamp_window(3, 5, 10), 0)
-
-    def test_window_clamp_keeps_cursor_visible(self):
-        for cursor in range(20):
-            top = setup._clamp_window(cursor, 20, 5)
-            self.assertTrue(0 <= top <= cursor < top + 5)
-            self.assertLessEqual(top, 20 - 5)
-
-    def test_window_clamp_at_end_of_list(self):
-        self.assertEqual(setup._clamp_window(19, 20, 5), 15)
-
-    # ---- key parse ----
-    def test_chip_parse_key_arrows_and_vim(self):
-        self.assertEqual(setup._parse_key("\x1b[A"), "up")
-        self.assertEqual(setup._parse_key("k"), "up")
-        self.assertEqual(setup._parse_key("\x1b[B"), "down")
-        self.assertEqual(setup._parse_key("j"), "down")
-
-    def test_chip_parse_key_actions(self):
-        self.assertEqual(setup._parse_key(" "), "toggle")
-        self.assertEqual(setup._parse_key("a"), "all")
-        self.assertEqual(setup._parse_key("n"), "none")
-        self.assertEqual(setup._parse_key("\r"), "accept")
-        self.assertEqual(setup._parse_key("\n"), "accept")
-        for c in ("\x1b", "q", "\x03"):
-            self.assertEqual(setup._parse_key(c), "cancel")
-
-    def test_chip_parse_key_unknown_is_none(self):
-        self.assertIsNone(setup._parse_key("z"))
-
-    # ---- pure frame builder ----
-    def test_chip_frame_focused_row_is_reverse_video(self):
-        g = setup._chip_glyphs(self._env(), _FakeStream())
-        lines = setup._chip_frame(self._sel(cursor=0), g, 100, 40)
-        self.assertIn("\033[7m", lines[0])           # focused row reverse-video
-        self.assertIn("\033[27m", lines[0])
-
-    def test_chip_frame_shows_scroll_affordances_when_overflowing(self):
-        g = setup._chip_glyphs(self._env(), _FakeStream())
-        # 20 items, tiny terminal → must window + show ▲/▼ N more
-        lines = setup._chip_frame(self._sel(n=20, cursor=10), g, 100, 12)
-        joined = "\n".join(lines)
-        self.assertIn("more", joined)
-        self.assertTrue("▲" in joined or "▼" in joined)
-
-    def test_chip_frame_includes_preview_and_hint(self):
-        g = setup._chip_glyphs(self._env(), _FakeStream())
-        lines = setup._chip_frame(self._sel(), g, 100, 40, preview="THE-BAR")
-        joined = "\n".join(lines)
-        self.assertIn("preview", joined)
-        self.assertIn("THE-BAR", joined)
-        self.assertIn("toggle", lines[-1])           # key-hint footer last
-
-    def test_chip_frame_truncates_every_line_to_width(self):
-        g = setup._chip_glyphs(self._env(), _FakeStream())
-        sel = setup.Selection([("seg", "x" * 200, True)])
-        lines = setup._chip_frame(sel, g, 20, 40, preview="y" * 200)
-        for ln in lines:
-            self.assertLessEqual(setup._visible_len(ln), 19)   # cols-1
-
-    def test_chip_frame_no_severed_escape_sequences(self):
-        # Narrow terminal: truncation must never cut mid-escape nor leave a
-        # spurious/dangling ESC fragment once balanced SGR codes are stripped.
-        g = setup._chip_glyphs(self._env(), _FakeStream())
-        sel = self._sel(n=10, cursor=3)
-        for cols in (40, 25, 20):
-            for ln in setup._chip_frame(sel, g, cols, 40, preview="z" * 80):
-                self.assertNotIn("\x1b", setup._ANSI_RE.sub("", ln))
-
-    def test_chip_frame_plain_hint_has_no_spurious_reset(self):
-        # The (uncolored) hint line must not carry a trailing reset it never opened.
-        g = setup._chip_glyphs(self._env(), _FakeStream())
-        lines = setup._chip_frame(self._sel(), g, 100, 40)
-        self.assertNotIn("\033[0m", lines[-1])
-
-    def test_chip_frame_shows_selection_tally(self):
-        g = setup._chip_glyphs(self._env(), _FakeStream())
-        lines = setup._chip_frame(self._sel(n=4), g, 100, 40)   # items 0,2 on → 2/4
-        self.assertIn("(2/4 on)", lines[-1])
-
-    # ---- _read_key disconnect / ESC handling (T4.6: H1, M1) ----
-    def _fd_stdin(self, fd=7):
-        s = _FakeStream()
-        s.fileno = lambda: fd
-        return s
-
-    def test_read_key_oserror_is_cancel(self):
-        # H1: terminal disconnect makes os.read raise OSError(EIO). _read_key
-        # must surface it as a cancel (KeyboardInterrupt), never crash the run.
-        with mock.patch.object(setup.os, "read", side_effect=OSError(5, "EIO")), \
-                self.assertRaises(KeyboardInterrupt):
-            setup._read_key(self._fd_stdin())
-
-    def test_read_key_eof_is_cancel(self):
-        # H1: platforms that return b"" at EOF instead of raising must also
-        # cancel — not spin (b"" → _parse_key("") → None → 100% CPU busy-loop).
-        with mock.patch.object(setup.os, "read", return_value=b""), \
-                self.assertRaises(KeyboardInterrupt):
-            setup._read_key(self._fd_stdin())
-
-    def test_read_key_esc_then_letter_not_dropped(self):
-        # M1: ESC followed by a non-'[' byte must not be silently swallowed —
-        # the trailing key is acted on, not lost.
-        reads = [b"\x1b", b"a"]
-        with mock.patch.object(setup.os, "read",
-                               side_effect=lambda fd, n: reads.pop(0)), \
-             mock.patch("select.select", return_value=([7], [], [])):
-            self.assertEqual(setup._read_key(self._fd_stdin()), "a")
-
-    def test_read_key_lone_esc_is_cancel(self):
-        # A lone ESC (nothing pending within the disambiguation window) cancels.
-        with mock.patch.object(setup.os, "read", return_value=b"\x1b"), \
-             mock.patch("select.select", return_value=([], [], [])):
-            self.assertEqual(setup._read_key(self._fd_stdin()), "\x1b")
-
-    def test_read_key_arrow_sequence_still_parses(self):
-        # Regression: ESC '[' B (down-arrow) still resolves through the new path.
-        reads = [b"\x1b", b"[", b"B"]
-        with mock.patch.object(setup.os, "read",
-                               side_effect=lambda fd, n: reads.pop(0)), \
-             mock.patch("select.select", return_value=([7], [], [])):
-            self.assertEqual(setup._read_key(self._fd_stdin()), "\x1b[B")
-
-
-class TestRawMode(unittest.TestCase):
-    """The termios raw-mode context manager guarantees terminal teardown on
-    every exit path (normal, exception, SIGINT)."""
-
-    @mock.patch.object(setup, "signal")
-    @mock.patch.object(setup, "_termmode")
-    @mock.patch.object(setup, "termios")
-    def test_raw_mode_restores_terminal_on_exception(self, termios, termmode, sig):
-        termios.tcgetattr.return_value = "SAVED"
-        stream = io.StringIO()
-        with self.assertRaises(ValueError), setup.RawMode(7, stream):
-            raise ValueError("boom")
-        termios.tcgetattr.assert_called_once_with(7)         # state saved
-        termmode.setraw.assert_called_once_with(7)           # entered raw
-        termios.tcsetattr.assert_called_once_with(           # restored via TCSADRAIN
-            7, termios.TCSADRAIN, "SAVED")
-        out = stream.getvalue()
-        self.assertIn("\033[?25l", out)                      # cursor hidden on enter
-        self.assertIn("\033[?25h", out)                      # cursor shown on exit
-
-    @mock.patch.object(setup, "signal")
-    @mock.patch.object(setup, "_termmode")
-    @mock.patch.object(setup, "termios")
-    def test_raw_mode_sigint_restores_and_exits_130(self, termios, termmode, sig):
-        termios.tcgetattr.return_value = "SAVED"
-        stream = io.StringIO()
-        rm = setup.RawMode(3, stream)
-        rm.__enter__()
-        with self.assertRaises(SystemExit) as cm:
-            rm._on_sigint(2, None)
-        self.assertEqual(cm.exception.code, 130)             # 128 + SIGINT
-        termios.tcsetattr.assert_called_once_with(3, termios.TCSADRAIN, "SAVED")
-        self.assertTrue(stream.getvalue().endswith("\n"))    # newline after restore
-
-    @mock.patch.object(setup, "signal")
-    @mock.patch.object(setup, "_termmode")
-    @mock.patch.object(setup, "termios")
-    def test_raw_mode_teardown_survives_tcsetattr_error(self, termios, termmode, sig):
-        # T4.7 / H2: a terminal disconnect can make tcsetattr raise during
-        # teardown. That must NOT skip the cursor-show or the SIGINT-handler
-        # restore, nor mask the body's exception by propagating its own.
-        termios.tcgetattr.return_value = "SAVED"
-        termios.error = Exception
-        termios.tcsetattr.side_effect = Exception("EIO")
-        sig.getsignal.return_value = "PREV"
-        stream = io.StringIO()
-        # the body's exception (not the tcsetattr error) is what propagates
-        with self.assertRaises(ValueError), setup.RawMode(7, stream):
-            raise ValueError("boom")
-        self.assertIn("\033[?25h", stream.getvalue())        # cursor shown despite throw
-        # prior SIGINT handler reinstalled despite the tcsetattr failure
-        sig.signal.assert_any_call(sig.SIGINT, "PREV")
-
-    @mock.patch.object(setup, "signal")
-    @mock.patch.object(setup, "_termmode")
-    @mock.patch.object(setup, "termios")
-    def test_raw_mode_double_restore_is_idempotent(self, termios, termmode, sig):
-        # The `active` guard makes a second teardown a no-op (e.g. SIGINT during
-        # an already-exiting __exit__).
-        termios.tcgetattr.return_value = "SAVED"
-        stream = io.StringIO()
-        rm = setup.RawMode(3, stream)
-        rm.__enter__()
-        rm._restore()
-        termios.tcsetattr.reset_mock()
-        rm._restore()                                        # second call: no-op
-        termios.tcsetattr.assert_not_called()
-
-    @mock.patch.object(setup, "signal")
-    @mock.patch.object(setup, "_termmode", None)
-    @mock.patch.object(setup, "termios", None)
-    def test_raw_mode_is_noop_when_termios_unavailable(self, sig):
-        stream = io.StringIO()
-        with setup.RawMode(0, stream):                      # must not raise
-            pass
-        self.assertEqual(stream.getvalue(), "")              # nothing written
 
 
 class TestResolvePaths(unittest.TestCase):
@@ -1442,82 +1102,6 @@ class TestSelectSkills(unittest.TestCase):
         sel = setup.select_skills(self.entries(), installed, tty=None)
         self.assertEqual(sel["skills"], {"alpha", "beta"})
 
-    def test_interactive_toggle_flips_a_row(self):
-        installed = {"skills": {"alpha": "x"}, "commands": {}, "agents": {}}
-        # menu shows skills 1=alpha[x] 2=beta[ ] 3=gamma[ ] 4=doit.md[ ];
-        # user types "2" to enable beta, then Enter to accept
-        tty = io.StringIO("2\n\n")
-        sel = setup.select_skills(self.entries(), installed, tty=tty)
-        self.assertEqual(sel["skills"], {"alpha", "beta"})
-
-    def test_interactive_all_then_none(self):
-        installed = {"skills": {}, "commands": {}, "agents": {}}
-        tty = io.StringIO("a\n\n")  # 'a' = all, then accept
-        sel = setup.select_skills(self.entries(), installed, tty=tty)
-        self.assertEqual(sel["skills"], {"alpha", "beta", "gamma"})
-        tty = io.StringIO("n\n\n")  # 'n' = none, then accept
-        sel = setup.select_skills(self.entries(), installed, tty=tty)
-        self.assertEqual(sel["skills"], set())
-
-    def test_mode_a_selection_when_gate_open(self):
-        # When _mode_a_available is True, select_skills drives the chip selector
-        # (not the numbered menu) and projects its mutated Selection.
-        installed = {"skills": {"alpha": "x"}, "commands": {}, "agents": {}}
-
-        def fake_chip(sel, stdin, stdout, env, preview=None):
-            sel.set_all(False)
-            sel.items[0][2] = True               # first row is skills/alpha
-            return sel
-
-        with mock.patch.object(setup, "_mode_a_available", return_value=True), \
-             mock.patch.object(setup, "chip_select", side_effect=fake_chip) as cs:
-            result = setup.select_skills(self.entries(), installed, tty=object())
-        cs.assert_called_once()
-        self.assertEqual(result["skills"], {"alpha"})
-        self.assertEqual(result["commands"], set())
-
-    def test_mode_a_cancel_keeps_default(self):
-        # esc/Ctrl-C in the chip selector (KeyboardInterrupt) keeps the default.
-        installed = {"skills": {"alpha": "x", "beta": "x"}, "commands": {}, "agents": {}}
-        with mock.patch.object(setup, "_mode_a_available", return_value=True), \
-             mock.patch.object(setup, "chip_select", side_effect=KeyboardInterrupt):
-            result = setup.select_skills(self.entries(), installed, tty=object())
-        self.assertEqual(result["skills"], {"alpha", "beta"})
-
-    def test_mode_a_error_falls_back_to_mode_b(self):
-        # L2: a non-KeyboardInterrupt failure inside chip_select (e.g. a termios
-        # error on a hostile terminal) must DEGRADE to the numbered menu, not
-        # crash the installer. Here mode B reads the tty and Enter accepts.
-        installed = {"skills": {}, "commands": {}, "agents": {}}
-        with mock.patch.object(setup, "_mode_a_available", return_value=True), \
-             mock.patch.object(setup, "chip_select",
-                               side_effect=RuntimeError("boom")):
-            result = setup.select_skills(
-                self.entries(), installed, tty=io.StringIO("\n"))
-        # fell through to mode B, accepted the first-run default (all on)
-        self.assertEqual(result["skills"], {"alpha", "beta", "gamma"})
-
-    def test_mode_b_when_gate_closed_does_not_call_chip(self):
-        installed = {"skills": {}, "commands": {}, "agents": {}}
-        with mock.patch.object(setup, "_mode_a_available", return_value=False), \
-             mock.patch.object(setup, "chip_select") as cs:
-            setup.select_skills(self.entries(), installed, tty=io.StringIO("\n"))
-        cs.assert_not_called()
-
-    def test_headless_equals_interactive_no_keypresses(self):
-        # Strengthened contract: an interactive run that accepts immediately
-        # (zero toggles — just Enter) yields EXACTLY the headless default for the
-        # same inputs. Headless is interactive-with-zero-keypresses, not a
-        # separate code path with its own defaulting.
-        for installed in (
-            {"skills": {}, "commands": {}, "agents": {}},                       # first run
-            {"skills": {"alpha": "x", "beta": "x"}, "commands": {}, "agents": {}},  # NEW gamma off
-        ):
-            headless = setup.select_skills(self.entries(), installed, tty=None)
-            interactive = setup.select_skills(
-                self.entries(), installed, tty=io.StringIO("\n"))
-            self.assertEqual(headless, interactive)
-
 
 class TestApplySelection(unittest.TestCase):
     def setUp(self):
@@ -1680,18 +1264,28 @@ class TestCmdInstall(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_headless_first_run_links_all_skips_statusline(self):
-        # tty None → headless: link defaults (all-on first run), no statusLine wiring
-        rc = setup.cmd_install(self.env, tty=None, dry=False)
+    def test_headless_first_run_links_all_and_wires_statusline(self):
+        # launch_wizard is patched to apply the default selection explicitly,
+        # matching first-run all-on behaviour without invoking the Textual TUI
+        # (which requires uv + textual and a real terminal, per Addendum B).
+        def _apply_defaults(paths, entries, installed, tty, dry, counts):
+            default = setup._default_selection(entries, installed)
+            setup.apply_selection(default, entries, paths.claude_dir, dry, counts)
+
+        with mock.patch.object(setup, "launch_wizard", side_effect=_apply_defaults):
+            rc = setup.cmd_install(self.env, tty=None, dry=False)
         self.assertEqual(rc, 0)
         self.assertTrue(os.path.islink(os.path.join(self.claude, "skills", "alpha")))
-        # headless never wires the status line
-        self.assertFalse(os.path.exists(os.path.join(self.claude, "settings.json")))
+        with open(os.path.join(self.claude, "settings.json")) as f:
+            self.assertIn("status-line.py", f.read())
 
     def test_interactive_wires_statusline(self):
-        # accept the all-on default (Enter), then accept status-line wiring path
-        tty = io.StringIO("\n")
-        rc = setup.cmd_install(self.env, tty=tty, dry=False)
+        # launch_wizard is patched to a no-op: statusLine wiring and recipe
+        # copy both happen before launch_wizard in cmd_install, so this test
+        # only exercises those pre-wizard steps (Addendum B: TUI is fail-closed).
+        with mock.patch.object(setup, "launch_wizard"):
+            tty = io.StringIO("\n")
+            rc = setup.cmd_install(self.env, tty=tty, dry=False)
         self.assertEqual(rc, 0)
         with open(os.path.join(self.claude, "settings.json")) as f:
             self.assertIn("status-line.py", f.read())
@@ -1700,7 +1294,9 @@ class TestCmdInstall(unittest.TestCase):
             os.path.join(self.tmp, ".config", "ai-kit", "statusline.toml")))
 
     def test_dry_run_mutates_nothing(self):
-        rc = setup.cmd_install(self.env, tty=None, dry=True)
+        # launch_wizard patched to no-op so plain python3 never imports textual.
+        with mock.patch.object(setup, "launch_wizard"):
+            rc = setup.cmd_install(self.env, tty=None, dry=True)
         self.assertEqual(rc, 0)
         self.assertFalse(os.path.lexists(os.path.join(self.claude, "skills", "alpha")))
 
@@ -1751,30 +1347,583 @@ class TestCmdDelegation(unittest.TestCase):
         self.assertEqual(call.call_args[0][0][0], sys.executable)
 
 
-class TestMenuWiring(unittest.TestCase):
-    def test_statusline_branch_invokes_wizard(self):
-        """Verify that cmd_install's interactive branch delegates to run_statusline_wizard.
+class TestOpenTty(unittest.TestCase):
+    def test_dev_tty_used_when_openable(self):
+        sentinel = io.StringIO()
+        with mock.patch("builtins.open", return_value=sentinel) as op:
+            self.assertIs(setup.open_tty(), sentinel)
+            op.assert_called_once_with("/dev/tty", "r+", encoding="utf-8")
 
-        E5b defines cmd_install(env, tty, dry) — it resolves Paths internally from env.
-        Passing a pre-resolved Paths namedtuple would cause AttributeError (env.get(...)
-        would be called on a namedtuple). Always pass an env dict.
+    def test_falls_back_to_std_streams_when_both_are_ttys(self):
+        with mock.patch("builtins.open", side_effect=OSError(6, "No such device")), \
+             mock.patch.object(setup.sys, "stdin")  as si, \
+             mock.patch.object(setup.sys, "stdout") as so:
+            si.isatty.return_value = True
+            so.isatty.return_value = True
+            tty = setup.open_tty()
+            self.assertIsNotNone(tty)            # a usable interactive stream
+            self.assertTrue(setup.is_interactive(tty))
 
-        E5c wires the real wizard into that call. This test replaces run_statusline_wizard
-        with a spy and drives cmd_install through an interactive tty stub to confirm the
-        wizard is reached.
-        """
-        called = {}
-        orig = setup.run_statusline_wizard
-        setup.run_statusline_wizard = lambda paths, tty, dry: called.setdefault("ok", True)
-        self.addCleanup(lambda: setattr(setup, "run_statusline_wizard", orig))
-        # Feed a tty that looks interactive to is_interactive() and selects
-        # "Status line" (option 2 in the E5b two-option menu) then quits.
-        tty = io.StringIO("2\nq\n")
-        # cmd_install(env, tty, dry) — pass an env dict, NOT a resolved Paths namedtuple.
-        setup.cmd_install(dict(os.environ), tty, dry=True)
-        self.assertTrue(called.get("ok"),
-                        "run_statusline_wizard was not called — check the "
-                        "Status-line branch in cmd_install")
+    def test_none_when_dev_tty_fails_and_stdin_is_pipe(self):
+        # curl | bash: stdin is the script pipe, not a keyboard → not interactive
+        with mock.patch("builtins.open", side_effect=OSError(6, "No such device")), \
+             mock.patch.object(setup.sys, "stdin")  as si, \
+             mock.patch.object(setup.sys, "stdout") as so:
+            si.isatty.return_value = False
+            so.isatty.return_value = True
+            self.assertIsNone(setup.open_tty())
+
+    def test_none_when_nothing_is_a_tty(self):
+        with mock.patch("builtins.open", side_effect=OSError(6, "No such device")), \
+             mock.patch.object(setup.sys, "stdin")  as si, \
+             mock.patch.object(setup.sys, "stdout") as so:
+            si.isatty.return_value = False
+            so.isatty.return_value = False
+            self.assertIsNone(setup.open_tty())
+
+
+class TestFailClosed(unittest.TestCase):
+    def test_install_exits_nonzero_when_no_tty(self):
+        with mock.patch.object(setup, "ensure_rich_runtime"), \
+             mock.patch.object(setup, "open_tty", return_value=None), \
+             mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO) as err:
+            with self.assertRaises(SystemExit) as cm:
+                setup.main(["install"])
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("terminal", err.getvalue().lower())
+
+    def test_reconfigure_exits_nonzero_when_no_tty(self):
+        with mock.patch.object(setup, "ensure_rich_runtime"), \
+             mock.patch.object(setup, "open_tty", return_value=None), \
+             mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO) as err:
+            with self.assertRaises(SystemExit) as cm:
+                setup.main(["reconfigure"])
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("terminal", err.getvalue().lower())
+
+
+class TestUvBootstrap(unittest.TestCase):
+    def test_returns_quietly_when_textual_importable(self):
+        with mock.patch.object(setup, "_textual_importable", return_value=True), \
+             mock.patch.object(setup, "_reexec_under_uv") as rx:
+            setup.ensure_rich_runtime({"AI_KIT_UV_REEXEC": "1"})
+            rx.assert_not_called()
+
+    def test_reexecs_once_when_uv_present_and_textual_missing(self):
+        with mock.patch.object(setup, "_textual_importable", return_value=False), \
+             mock.patch.object(setup, "_have_uv", return_value="/usr/bin/uv"), \
+             mock.patch.object(setup, "_reexec_under_uv", side_effect=SystemExit(0)) as rx:
+            with self.assertRaises(SystemExit):
+                setup.ensure_rich_runtime({})        # marker absent → may re-exec
+            rx.assert_called_once_with("/usr/bin/uv")
+
+    def test_no_reexec_loop_when_marker_already_set(self):
+        # Under uv (marker set) but textual STILL missing → fail closed, never loop.
+        with mock.patch.object(setup, "_textual_importable", return_value=False), \
+             mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO) as err:
+            with self.assertRaises(SystemExit) as cm:
+                setup.ensure_rich_runtime({"AI_KIT_UV_REEXEC": "1"})
+            self.assertEqual(cm.exception.code, 3)
+            self.assertIn("textual", err.getvalue().lower())
+
+    def test_exits_when_uv_missing_and_consent_declined(self):
+        with mock.patch.object(setup, "_textual_importable", return_value=False), \
+             mock.patch.object(setup, "_have_uv", return_value=None), \
+             mock.patch.object(setup, "open_tty", return_value=io.StringIO("n\n")), \
+             mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO):
+            with self.assertRaises(SystemExit) as cm:
+                setup.ensure_rich_runtime({})
+            self.assertEqual(cm.exception.code, 3)
+
+    def test_exits_3_when_uv_missing_and_no_tty(self):
+        # No tty available → fail closed with uv-specific message, not generic require_tty.
+        with mock.patch.object(setup, "_textual_importable", return_value=False), \
+             mock.patch.object(setup, "_have_uv", return_value=None), \
+             mock.patch.object(setup, "open_tty", return_value=None), \
+             mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO) as err:
+            with self.assertRaises(SystemExit) as cm:
+                setup.ensure_rich_runtime({})
+            self.assertEqual(cm.exception.code, 3)
+            self.assertIn("uv", err.getvalue().lower())
+            self.assertIn("terminal", err.getvalue().lower())
+
+    def test_reexecs_once_after_successful_install(self):
+        # uv absent → _install_uv returns True → re-resolve finds uv → reexec called once.
+        uv_after_install = "/home/user/.local/bin/uv"
+        have_uv_calls = iter([None, uv_after_install])
+        with mock.patch.object(setup, "_textual_importable", return_value=False), \
+             mock.patch.object(setup, "_have_uv", side_effect=have_uv_calls), \
+             mock.patch.object(setup, "open_tty", return_value=io.StringIO("y\n")), \
+             mock.patch.object(setup, "_install_uv", return_value=True), \
+             mock.patch.object(setup, "_reexec_under_uv", side_effect=SystemExit(0)) as rx:
+            with self.assertRaises(SystemExit):
+                setup.ensure_rich_runtime({})
+            rx.assert_called_once_with(uv_after_install)
+
+
+class TestLayoutModel(unittest.TestCase):
+    """T3.1: layout-model adapters — off_tray and layout_move."""
+
+    def _state(self):
+        # Three layout lines; "cost" is OFF and not in any line (off-tray).
+        return {
+            "segments": {"path": True, "model": True, "cost": False},
+            "layout": [
+                {"min_rows": 0,  "segments": ["path"]},
+                {"min_rows": 20, "segments": ["model"]},
+            ],
+            "dirty": False,
+        }
+
+    # ---- off_tray --------------------------------------------------------
+
+    def test_off_tray_returns_toggled_off_segments(self):
+        st = self._state()
+        tray = setup.off_tray(st)
+        self.assertIn("cost", tray)
+        self.assertNotIn("path", tray)
+        self.assertNotIn("model", tray)
+
+    def test_off_tray_stable_order(self):
+        # off_tray returns a list (stable order; repeated calls agree)
+        st = self._state()
+        self.assertEqual(setup.off_tray(st), setup.off_tray(st))
+
+    def test_off_tray_empty_when_all_on(self):
+        st = self._state()
+        st["segments"]["cost"] = True
+        self.assertEqual(setup.off_tray(st), [])
+
+    # ---- brief's three pinned tests ---------------------------------------
+
+    def test_left_right_reorders_within_line(self):
+        st = self._state()
+        st["layout"][0]["segments"] = ["path", "model"]
+        st2, err = setup.layout_move(st, "model", "left")
+        self.assertIsNone(err)
+        self.assertEqual(st2["layout"][0]["segments"], ["model", "path"])
+
+    def test_up_from_top_line_sends_to_off_tray(self):
+        st2, err = setup.layout_move(self._state(), "path", "up")
+        self.assertIsNone(err)
+        self.assertIn("path", setup.off_tray(st2))
+        self.assertFalse(st2["segments"]["path"])
+
+    def test_min_width_gate_preserved_on_move(self):
+        # "model" is on line 2 (index 1); moving up lands on line 1 (index 0).
+        st2, _ = setup.layout_move(self._state(), "model", "up")
+        self.assertEqual([ln["min_rows"] for ln in st2["layout"]], [0, 20])
+
+    # ---- additional coverage ----------------------------------------------
+
+    def test_up_from_middle_line_lands_on_previous_not_tray(self):
+        # "model" is on line index 1; moving up → line index 0, still on.
+        st2, err = setup.layout_move(self._state(), "model", "up")
+        self.assertIsNone(err)
+        self.assertIn("model", st2["layout"][0]["segments"])
+        self.assertNotIn("model", st2["layout"][1]["segments"])
+        self.assertNotIn("model", setup.off_tray(st2))
+        self.assertTrue(st2["segments"]["model"])
+        self.assertTrue(st2["dirty"])
+
+    def test_down_from_off_tray_reactivates_onto_line_1(self):
+        # "cost" is OFF (off-tray). Moving it down should re-activate it on line 0.
+        st2, err = setup.layout_move(self._state(), "cost", "down")
+        self.assertIsNone(err)
+        self.assertIn("cost", st2["layout"][0]["segments"])
+        self.assertTrue(st2["segments"]["cost"])
+        self.assertNotIn("cost", setup.off_tray(st2))
+        self.assertTrue(st2["dirty"])
+
+    def test_down_from_non_last_line_moves_to_next_line(self):
+        # "path" is on line 0; moving down → line 1.
+        st2, err = setup.layout_move(self._state(), "path", "down")
+        self.assertIsNone(err)
+        self.assertIn("path", st2["layout"][1]["segments"])
+        self.assertNotIn("path", st2["layout"][0]["segments"])
+        self.assertTrue(st2["dirty"])
+
+    def test_down_from_last_line_is_noop_or_error(self):
+        # "model" is on line 1 (the last line). down must return an error.
+        import copy
+        base = self._state()
+        original = copy.deepcopy(base)
+        st, err = setup.layout_move(base, "model", "down")
+        self.assertIsNotNone(err)
+        self.assertEqual(st, original)
+
+    def test_right_at_end_of_line_is_noop_or_error(self):
+        # "path" is the only segment on line 0; moving right must return an error.
+        import copy
+        base = self._state()
+        original = copy.deepcopy(base)
+        st, err = setup.layout_move(base, "path", "right")
+        self.assertIsNotNone(err)
+        self.assertEqual(st, original)
+
+    def test_left_at_start_of_line_is_noop_or_error(self):
+        # "path" is at position 0 on line 0; moving left must return an error.
+        import copy
+        base = self._state()
+        original = copy.deepcopy(base)
+        st, err = setup.layout_move(base, "path", "left")
+        self.assertIsNotNone(err)
+        self.assertEqual(st, original)
+
+    def test_layout_move_down_from_tray_does_not_mutate_input(self):
+        # Pure-function guard: down-from-tray path must not mutate the input state.
+        import copy
+        st = self._state()
+        original = copy.deepcopy(st)
+        setup.layout_move(st, "cost", "down")  # "cost" is OFF (off-tray)
+        self.assertEqual(st, original)
+
+    def test_round_trip_up_to_tray_then_down_restores_membership(self):
+        # path: up → tray; then down → back on line 0.
+        st1, _ = setup.layout_move(self._state(), "path", "up")
+        self.assertIn("path", setup.off_tray(st1))
+        st2, err = setup.layout_move(st1, "path", "down")
+        self.assertIsNone(err)
+        self.assertIn("path", st2["layout"][0]["segments"])
+        self.assertTrue(st2["segments"]["path"])
+        self.assertNotIn("path", setup.off_tray(st2))
+
+    def test_layout_move_does_not_mutate_input(self):
+        # Pure function: original state must be unchanged.
+        import copy
+        st = self._state()
+        original = copy.deepcopy(st)
+        setup.layout_move(st, "path", "up")
+        self.assertEqual(st, original)
+
+    def test_dirty_set_on_success(self):
+        st = self._state()
+        self.assertFalse(st["dirty"])
+        st2, err = setup.layout_move(st, "model", "up")
+        self.assertIsNone(err)
+        self.assertTrue(st2["dirty"])
+
+    def test_invalid_direction_returns_error(self):
+        _, err = setup.layout_move(self._state(), "path", "sideways")
+        self.assertIsNotNone(err)
+
+    # ---- layout_toggle -------------------------------------------------------
+
+    def test_toggle_on_to_off_seg_leaves_line(self):
+        # "path" is ON (line 0). Toggle → moves to tray.
+        st2, err = setup.layout_toggle(self._state(), "path")
+        self.assertIsNone(err)
+        self.assertNotIn("path", st2["layout"][0]["segments"])
+        self.assertFalse(st2["segments"]["path"])
+        self.assertIn("path", setup.off_tray(st2))
+        self.assertTrue(st2["dirty"])
+
+    def test_toggle_off_to_on_seg_appears_on_line_0(self):
+        # "cost" is OFF (tray). Toggle → re-activates on line 0.
+        st2, err = setup.layout_toggle(self._state(), "cost")
+        self.assertIsNone(err)
+        self.assertIn("cost", st2["layout"][0]["segments"])
+        self.assertTrue(st2["segments"]["cost"])
+        self.assertNotIn("cost", setup.off_tray(st2))
+        self.assertTrue(st2["dirty"])
+
+    def test_toggle_round_trip_restores_state(self):
+        # Toggle "path" OFF then ON; membership should be restored (on line 0).
+        base = self._state()
+        st1, _ = setup.layout_toggle(base, "path")
+        self.assertIn("path", setup.off_tray(st1))
+        st2, err = setup.layout_toggle(st1, "path")
+        self.assertIsNone(err)
+        self.assertIn("path", st2["layout"][0]["segments"])
+        self.assertTrue(st2["segments"]["path"])
+        self.assertNotIn("path", setup.off_tray(st2))
+
+    def test_toggle_preserves_min_rows(self):
+        # min_rows must survive a toggle cycle.
+        base = self._state()
+        st1, _ = setup.layout_toggle(base, "model")   # ON→OFF
+        self.assertEqual([ln["min_rows"] for ln in st1["layout"]], [0, 20])
+        st2, _ = setup.layout_toggle(st1, "model")    # OFF→ON
+        self.assertEqual([ln["min_rows"] for ln in st2["layout"]], [0, 20])
+
+    def test_toggle_unknown_seg_returns_error(self):
+        _, err = setup.layout_toggle(self._state(), "nonexistent")
+        self.assertIsNotNone(err)
+        self.assertIn("nonexistent", err)
+
+    def test_toggle_does_not_mutate_input(self):
+        # Pure function: original state must be unchanged after toggle.
+        import copy
+        st = self._state()
+        original = copy.deepcopy(st)
+        setup.layout_toggle(st, "path")
+        self.assertEqual(st, original)
+
+    def test_toggle_on_from_non_first_line(self):
+        # "model" is ON on line 1 (not line 0). Toggle → tray regardless of line.
+        st2, err = setup.layout_toggle(self._state(), "model")
+        self.assertIsNone(err)
+        self.assertNotIn("model", st2["layout"][1]["segments"])
+        self.assertFalse(st2["segments"]["model"])
+        self.assertIn("model", setup.off_tray(st2))
+
+
+class TestPersistRoundTrip(unittest.TestCase):
+    """T3.4: _persist_layout writes the minimal diff through save_statusline_config
+    (doctor-validated path), and the written result round-trips correctly."""
+
+    _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def _statusline_doctor(self):
+        return os.path.join(self._REPO, "tools", "statusline-doctor.py")
+
+    def _sample_recipe(self):
+        return os.path.join(self._REPO, "tools", "statusline.toml.sample")
+
+    def _paths(self, cfg_path):
+        """Minimal Paths-like namespace pointing at the temp config."""
+        import types as _types
+        return _types.SimpleNamespace(
+            config_toml=cfg_path,
+            statusline_doctor=self._statusline_doctor(),
+        )
+
+    def _seed_recipe(self):
+        """Copy statusline.toml.sample to a tempfile; return its path."""
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".toml", delete=False, dir=tempfile.gettempdir()
+        ) as tmp:
+            tmp_name = tmp.name
+        shutil.copy(self._sample_recipe(), tmp_name)
+        self.addCleanup(os.unlink, tmp_name)
+        return tmp_name
+
+    # ------------------------------------------------------------------
+    # 1. Layout change round-trips and doctor passes
+    # ------------------------------------------------------------------
+
+    def test_layout_change_round_trips_and_doctor_passes(self):
+        cfg = self._seed_recipe()
+        state = {
+            "segments": setup.current_segments(cfg),
+            "layout": setup.current_layout(cfg),
+            "dirty": True,
+        }
+        # Make a real layout change: reverse line 0's segment list.
+        state["layout"][0]["segments"].reverse()
+        expected_line0 = list(state["layout"][0]["segments"])
+
+        ok = setup._persist_layout(self._paths(cfg), state, dry=False)
+        self.assertTrue(ok)
+
+        # Re-read and assert round-trip.
+        actual_layout = setup.current_layout(cfg)
+        self.assertEqual(actual_layout[0]["segments"], expected_line0)
+
+    def test_doctor_passes_after_persist(self):
+        """The doctor must exit 0 on the written config."""
+        import subprocess
+        cfg = self._seed_recipe()
+        state = {
+            "segments": setup.current_segments(cfg),
+            "layout": setup.current_layout(cfg),
+            "dirty": True,
+        }
+        state["layout"][0]["segments"].reverse()
+
+        ok = setup._persist_layout(self._paths(cfg), state, dry=False)
+        self.assertTrue(ok)
+
+        env = dict(os.environ, CC_AI_KIT_CONFIG_FILE=cfg)
+        proc = subprocess.run(
+            [sys.executable, "-S", self._statusline_doctor(), "--check"],
+            env=env, capture_output=True,
+        )
+        self.assertEqual(proc.returncode, 0,
+                         f"doctor failed:\n{proc.stdout.decode()}\n{proc.stderr.decode()}")
+
+    # ------------------------------------------------------------------
+    # 2. Dry-run writes nothing
+    # ------------------------------------------------------------------
+
+    def test_dry_run_writes_nothing(self):
+        cfg = self._seed_recipe()
+        with open(cfg, "rb") as f:
+            before = f.read()
+
+        state = {
+            "segments": setup.current_segments(cfg),
+            "layout": setup.current_layout(cfg),
+            "dirty": True,
+        }
+        state["layout"][0]["segments"].reverse()
+
+        ok = setup._persist_layout(self._paths(cfg), state, dry=True)
+        self.assertTrue(ok)
+
+        with open(cfg, "rb") as f:
+            after = f.read()
+        self.assertEqual(before, after, "dry-run must not modify the file")
+
+    # ------------------------------------------------------------------
+    # 3. No-op returns True without writing
+    # ------------------------------------------------------------------
+
+    def test_noop_returns_true(self):
+        cfg = self._seed_recipe()
+        state = {
+            "segments": setup.current_segments(cfg),
+            "layout": setup.current_layout(cfg),
+            "dirty": False,
+        }
+        # Nothing changed — _persist_layout should return True immediately.
+        ok = setup._persist_layout(self._paths(cfg), state, dry=False)
+        self.assertTrue(ok)
+
+    # ------------------------------------------------------------------
+    # 4. Segment toggle round-trips
+    # ------------------------------------------------------------------
+
+    def test_segment_toggle_round_trips(self):
+        cfg = self._seed_recipe()
+        segs = setup.current_segments(cfg)
+        # Find a segment that is currently False and flip it.
+        target = next(k for k, v in segs.items() if not v)
+        segs[target] = True
+        state = {
+            "segments": segs,
+            "layout": setup.current_layout(cfg),
+            "dirty": True,
+        }
+
+        ok = setup._persist_layout(self._paths(cfg), state, dry=False)
+        self.assertTrue(ok)
+
+        reread = setup.current_segments(cfg)
+        self.assertTrue(reread[target], f"{target} should now be True on disk")
+
+    # ------------------------------------------------------------------
+    # 5. Drift guard: patch_layout round-trip preserves membership + min_rows
+    # ------------------------------------------------------------------
+
+    def test_patch_layout_round_trip_preserves_membership_and_min_rows(self):
+        """Extend the drift guard: a layout retrieved from the sample, mutated,
+        written via patch_layout, then re-read via current_layout must preserve
+        all original segments (just reordered) and min_rows values."""
+        original_layout = setup.current_layout(self._sample_recipe())
+        # Reverse line 0's segments (a structural mutation, not a content loss).
+        mutated = [dict(row, segments=list(row["segments"])) for row in original_layout]
+        mutated[0]["segments"].reverse()
+
+        cfg = self._seed_recipe()
+        with open(cfg, encoding="utf-8") as f:
+            text = f.read()
+        patched = setup.patch_layout(text, mutated)
+        with open(cfg, "w", encoding="utf-8") as f:
+            f.write(patched)
+
+        reread = setup.current_layout(cfg)
+        for i, (orig, rr) in enumerate(zip(original_layout, reread, strict=True)):
+            self.assertEqual(orig["min_rows"], rr["min_rows"],
+                             f"line {i} min_rows changed")
+            self.assertEqual(set(orig["segments"]), set(rr["segments"]),
+                             f"line {i} segment membership changed")
+
+
+class TestLaunchWizardCrash(unittest.TestCase):
+    """Task 4.1 — launch_wizard converts WizardCrash to non-zero exit; clean
+    abort still returns normally (exit 0 / no SystemExit).
+
+    launch_wizard does a lazy ``import wizard_app`` inside the function body,
+    so we inject a fake module into sys.modules to control its behaviour
+    without importing Textual (which requires uv).
+    """
+
+    def _make_fake_wizard_module(self):
+        """Return a mock module that looks enough like wizard_app to satisfy
+        launch_wizard: WizardCrash, WizardContext, and run_wizard."""
+        mod = mock.MagicMock()
+
+        class WizardCrash(Exception):
+            pass
+
+        mod.WizardCrash = WizardCrash
+        mod.WizardContext = mock.MagicMock  # not called in these paths
+        return mod
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.install = os.path.join(self.tmp, "ai-kit")
+        self.claude = os.path.join(self.tmp, ".claude")
+        os.makedirs(os.path.join(self.install, "tools"))
+        # Stub a sample-input file so _sample_input_path() resolves.
+        os.makedirs(os.path.join(self.install, "tools"), exist_ok=True)
+        sample = os.path.join(self.install, "tools", "sample-input.json")
+        with open(sample, "w") as f:
+            f.write("{}")
+        self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install,
+                    "CLAUDE_CONFIG_DIR": self.claude,
+                    "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config")}
+        self._orig_sample_path = setup._sample_input_path  # type: ignore[attr-defined]
+        setup._sample_input_path = lambda: sample           # type: ignore[assignment]
+
+    def tearDown(self):
+        setup._sample_input_path = self._orig_sample_path  # type: ignore[assignment]
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        # Remove any injected fake wizard_app so later tests start clean.
+        sys.modules.pop("wizard_app", None)
+
+    def _make_paths(self):
+        """Return a minimal paths object that satisfies launch_wizard."""
+        paths = setup.resolve_paths(self.env)
+        # Ensure config_toml exists so current_segments/current_layout don't crash.
+        os.makedirs(os.path.dirname(paths.config_toml), exist_ok=True)
+        with open(paths.config_toml, "w") as f:
+            f.write("")
+        return paths
+
+    def test_wizard_crash_exits_nonzero(self):
+        """If run_wizard raises WizardCrash, launch_wizard must sys.exit(2)."""
+        fake_mod = self._make_fake_wizard_module()
+
+        def _crashing_run_wizard(_ctx):
+            raise fake_mod.WizardCrash(RuntimeError("boom"))
+
+        fake_mod.run_wizard = _crashing_run_wizard
+        sys.modules["wizard_app"] = fake_mod  # type: ignore[assignment]
+
+        paths = self._make_paths()
+        entries = {cat: [] for cat in setup.CATEGORIES}
+        installed = {cat: set() for cat in setup.CATEGORIES}
+        fake_tty = mock.MagicMock()
+        fake_tty.isatty.return_value = True
+
+        with mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO) as err, \
+             self.assertRaises(SystemExit) as cm:
+            setup.launch_wizard(paths, entries, installed, fake_tty, False,
+                                setup.new_counts())
+
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("error", err.getvalue().lower())
+
+    def test_clean_abort_does_not_exit(self):
+        """If run_wizard returns None (user aborted), launch_wizard must return
+        normally — no SystemExit, no error message."""
+        fake_mod = self._make_fake_wizard_module()
+        fake_mod.run_wizard = lambda _ctx: None          # clean abort
+        sys.modules["wizard_app"] = fake_mod             # type: ignore[assignment]
+
+        paths = self._make_paths()
+        entries = {cat: [] for cat in setup.CATEGORIES}
+        installed = {cat: set() for cat in setup.CATEGORIES}
+        fake_tty = mock.MagicMock()
+        fake_tty.isatty.return_value = True
+
+        # Should return without raising and print nothing to stderr.
+        with mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO) as err:
+            setup.launch_wizard(paths, entries, installed, fake_tty, False,
+                                setup.new_counts())
+        self.assertEqual(err.getvalue(), "")
 
 
 if __name__ == "__main__":
