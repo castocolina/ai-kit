@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ai-kit install wizard — Textual mockup</title>
+<style>
+  /* ====================================================================
+     TEXTUAL mockup — a full-screen alternate-screen TUI app.
+     Persistent header bar + body + footer key-bar, ALL inside the
+     terminal window. 3 numbered steps (Welcome removed): the HEADER says
+     where you are (title + Step n/3 + pips), the FOOTER is the per-step
+     KEY LEGEND. Real keyboard interaction: arrow-key highlight + Space
+     toggle on Step 1; a focused chip moved by shape [>seg<] on Step 2
+     with a live-updating preview; Review reflects real state.
+     ==================================================================== */
+  :root{
+    --bg:#0d1117; --panel:#0f141b; --fg:#c9d1d9; --dim:#6e7681;
+    --line:#30363d; --accent:#58a6ff; --green:#3fb950; --warn:#d29922;
+    --pink:#db61a2; --cyan:#39c5cf; --selbg:#161b22; --keycap:#21262d;
+    --headbg:#161b22;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:#05070a;}
+  body{
+    font-family:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+    color:var(--fg);display:flex;flex-direction:column;align-items:center;
+    justify-content:center;padding:24px 16px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;font-size:13.5px;
+  }
+  .term{
+    width:900px;max-width:100%;background:var(--bg);
+    border:1px solid var(--line);border-radius:8px;
+    box-shadow:0 24px 60px rgba(0,0,0,.6),0 0 0 1px rgba(88,166,255,.06);
+    overflow:hidden;display:flex;flex-direction:column;outline:none;
+  }
+  /* subtle focus ring so the user knows the keyboard is live */
+  .term:focus-visible,.term.kbfocus{box-shadow:0 24px 60px rgba(0,0,0,.6),0 0 0 2px rgba(88,166,255,.45);}
+  .titlebar{
+    display:flex;align-items:center;gap:8px;padding:8px 12px;
+    background:#010409;border-bottom:1px solid var(--line);
+  }
+  .dot{width:11px;height:11px;border-radius:50%;}
+  .dot.r{background:#ff5f56;}.dot.y{background:#ffbd2e;}.dot.g{background:#27c93f;}
+  .titlebar .who{margin-left:8px;color:var(--dim);font-size:12px;}
+
+  /* ---- Textual app frame: header / body / footer ------------------- */
+  .app{display:flex;flex-direction:column;min-height:520px;position:relative;}
+
+  /* persistent HEADER bar (Textual Header widget) */
+  .header{
+    display:flex;align-items:center;justify-content:space-between;
+    background:var(--headbg);border-bottom:1px solid var(--line);
+    padding:6px 14px;
+  }
+  .header .htitle{color:var(--accent);font-weight:700;}
+  .header .hstep{color:var(--dim);}
+  .header .pips{letter-spacing:3px;margin-left:10px;font-size:14px;}
+  .pip-on{color:var(--accent);}.pip-off{color:var(--line);}
+
+  .body{flex:1;padding:14px 18px 10px;}
+  .screen{display:none;}
+  .screen.active{display:block;}
+
+  .h1{font-size:18px;color:#f0f6fc;margin:0 0 3px;}
+  .sub{color:var(--dim);margin:0 0 12px;font-size:13px;}
+  .box{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--panel);}
+  .box .bt{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
+
+  /* picks list — bordered Textual OptionList look */
+  .cat{margin:10px 0 3px;color:var(--cyan);font-size:12px;letter-spacing:.5px;
+       display:flex;align-items:baseline;justify-content:space-between;}
+  .cat:first-child{margin-top:2px;}
+  .cat .cathint{color:var(--dim);font-size:11px;letter-spacing:0;}
+  .cat .cathint b{color:var(--green);font-weight:400;}
+  .row{padding:2px 8px;border-radius:4px;white-space:pre;display:block;}
+  .row.foc{background:var(--selbg);outline:1px solid var(--accent);}
+  /* the ▌ gutter marks the highlighted row, color-independent */
+  .row .gut{color:var(--accent);}
+  .on{color:var(--green);}.off{color:var(--dim);}
+  .nm{color:var(--fg);}.row.foc .nm{color:#f0f6fc;}
+  .ds{color:var(--dim);}
+  .row.foc .ds{color:#8b949e;}
+
+  /* 2-D chip board */
+  .board{display:flex;flex-direction:column;gap:8px;}
+  .lane{border:1px solid var(--line);border-radius:6px;padding:7px 9px;background:var(--panel);}
+  .lane.tray{border-style:dashed;}
+  .lane .lbl{color:var(--dim);font-size:11px;margin-bottom:5px;
+             display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
+  .lane .gate{color:var(--warn);font-size:10.5px;letter-spacing:0;opacity:.85;}
+  .lane.gated{border-style:dashed;opacity:.92;}
+  .lane.gated .lbl{color:var(--warn);}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;min-height:20px;}
+  .chip{
+    padding:1px 8px;border:1px solid var(--line);border-radius:4px;
+    color:var(--fg);background:#0d1117;white-space:nowrap;font-size:12.5px;
+  }
+  .chip.offseg{color:var(--dim);opacity:.8;}
+  .chip.tray{color:var(--dim);border-style:dashed;}
+  /* FOCUS IS A SHAPE: [> <] brackets carry focus, not color alone */
+  .chip.foc{border-color:var(--pink);color:#fff;background:#1b1016;font-weight:700;}
+  .chip .b{color:var(--pink);font-weight:700;}
+
+  .preview{margin-top:12px;border:1px solid var(--line);border-radius:6px;background:#010409;padding:9px 12px;}
+  .preview .plbl{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;}
+  .pline{white-space:pre-wrap;color:#d6dee8;}
+  .pline .sep{color:var(--line);}
+
+  .grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:12px;}
+
+  .summary .k{color:var(--cyan);}
+  .summary .ok{color:var(--green);}
+  .summary ul{margin:4px 0 12px;padding-left:0;list-style:none;}
+  .summary li{white-space:pre-wrap;}
+
+  .done-art{color:var(--green);white-space:pre;font-size:13px;margin:6px 0;}
+  .done-art .b{color:var(--accent);}
+  .note{color:var(--warn);font-size:12.5px;margin-top:10px;}
+  .rule{color:var(--line);white-space:pre;font-size:12.5px;}
+
+  /* install affordance on Review */
+  .cta{
+    margin-top:12px;display:flex;align-items:center;gap:10px;
+    border:1px solid var(--green);border-radius:6px;background:#0c1f12;
+    padding:9px 12px;color:#b9f0c8;
+  }
+  .cta .cmd{color:#7ee2a0;font-weight:700;}
+  .cta .cap{
+    display:inline-block;padding:0 7px;border-radius:3px;background:#10421f;
+    border:1px solid var(--green);color:#d6ffe4;font-size:11.5px;margin-left:auto;
+  }
+
+  /* help overlay — toggled with ? ; covers the body, stays in-frame */
+  .overlay{
+    position:absolute;inset:0;display:none;z-index:20;
+    background:rgba(1,4,9,.86);backdrop-filter:blur(1px);
+    padding:22px 26px;overflow:auto;
+  }
+  .overlay.show{display:block;}
+  .overlay h2{color:var(--accent);font-size:14px;margin:0 0 2px;}
+  .overlay .osub{color:var(--dim);font-size:12px;margin:0 0 14px;}
+  .overlay .grp{margin-bottom:14px;}
+  .overlay .grp .gh{color:var(--cyan);font-size:11px;text-transform:uppercase;
+                    letter-spacing:1px;margin-bottom:6px;}
+  .overlay .krow{display:flex;align-items:baseline;gap:10px;margin:3px 0;}
+  .overlay .krow .cap{
+    display:inline-block;min-width:46px;text-align:center;padding:1px 6px;
+    border-radius:3px;background:var(--keycap);border:1px solid var(--line);
+    color:#e6edf3;font-size:11.5px;
+  }
+  .overlay .krow span:last-child{color:var(--fg);font-size:12.5px;}
+  .overlay .ofoot{color:var(--dim);font-size:12px;margin-top:6px;}
+  .overlay .ofoot b{color:#e6edf3;}
+
+  /* persistent FOOTER key-bar = the key LEGEND. Lives INSIDE frame. */
+  .footer{
+    display:flex;align-items:center;gap:0;background:#010409;
+    border-top:1px solid var(--line);padding:0;font-size:12.5px;
+    flex-wrap:wrap;
+  }
+  .key{
+    display:flex;align-items:center;gap:6px;padding:7px 12px;color:var(--dim);
+    cursor:default;border-right:1px solid var(--line);user-select:none;
+  }
+  .key .cap{
+    display:inline-block;padding:0 6px;border-radius:3px;background:var(--keycap);
+    border:1px solid var(--line);color:#e6edf3;font-size:11.5px;
+  }
+  .key.act{cursor:pointer;}
+  .key.act:hover{background:var(--selbg);color:#e6edf3;}
+  .key.primary .cap{background:#10325c;border-color:var(--accent);color:#cae3ff;}
+  .key.primary{color:#cae3ff;}
+  .key.q{margin-left:auto;border-right:none;border-left:1px solid var(--line);}
+
+  .legend{color:var(--dim);font-size:11px;text-align:center;margin-top:10px;max-width:900px;}
+  .legend b{color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="term" id="term" tabindex="0" autofocus>
+  <div class="titlebar">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="who">uv run tools/setup.py — ai-kit installer — 96×34</span>
+  </div>
+
+  <div class="app">
+    <!-- persistent HEADER: title + Step n/3 + pips -->
+    <div class="header">
+      <span class="htitle">─ ai-kit install wizard</span>
+      <span><span class="hstep" id="hstep"></span><span class="pips" id="pips"></span></span>
+    </div>
+
+    <!-- BODY -->
+    <div class="body">
+
+      <!-- ===== STEP 1 — Choose components ===== -->
+      <section class="screen active" data-step="0">
+        <p class="h1">Choose what to install</p>
+        <p class="sub"><b style="color:#cae3ff">↑↓</b> move · <b style="color:#cae3ff">Space</b> toggle · <b style="color:var(--green)">◉</b> install <b style="color:var(--dim)">◯</b> skip · <b>a</b>/<b>n</b> all/none this category · <b>A</b>/<b>N</b> everything · <b>?</b> help.</p>
+        <div class="box" style="padding:8px 10px;" id="picksBox"></div>
+        <p class="sub" style="margin-top:8px;" id="picksCount"></p>
+      </section>
+
+      <!-- ===== STEP 2 — Arrange status line (the showcase) ===== -->
+      <section class="screen" data-step="1">
+        <p class="h1">Arrange your status line</p>
+        <p class="sub">Focus is the <span style="color:var(--pink)">[&gt;chip&lt;]</span> brackets. <b>←→</b> move within line · <b>↑↓</b> across lines (off Line 1 → tray) · <b>Space</b> on/off · <b>Tab</b> next · <b>r</b> reset · <b>?</b> help. Preview is live.</p>
+        <div class="grid2">
+          <div class="board" id="board"></div>
+          <div>
+            <div class="preview" style="margin-top:0;">
+              <div class="plbl" id="prevLbl">live preview</div>
+              <div id="prevLines"></div>
+            </div>
+            <div class="box" style="margin-top:10px;">
+              <div class="bt">focused chip</div>
+              <div class="pline" id="focName" style="color:#f0f6fc;"></div>
+              <div class="sub" id="focDesc" style="margin:4px 0 0;"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== STEP 3 — Review & confirm ===== -->
+      <section class="screen" data-step="2">
+        <p class="h1">Review &amp; confirm</p>
+        <p class="sub">Nothing has been written yet. Confirm to apply.</p>
+        <div class="summary">
+          <div class="box">
+            <div class="bt">components to install</div>
+            <ul id="reviewPicks"></ul>
+          </div>
+          <div class="preview">
+            <div class="plbl" id="reviewPrevLbl"></div>
+            <div id="reviewPrevLines"></div>
+          </div>
+          <div class="box" style="margin-top:10px;">
+            <div class="bt">what happens on confirm</div>
+            <ul id="reviewActions"></ul>
+          </div>
+          <div class="cta" id="installCta">
+            <span>▸ <span class="cmd">Install ai-kit</span> <span id="ctaCount"></span></span>
+            <span class="cap">Enter</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Done — end card, not a numbered step ===== -->
+      <section class="screen" data-step="3">
+        <div class="done-art">   <span class="b">┌─┐ ┬</span>   installed.
+   <span class="b">├─┤ │</span>
+   <span class="b">┴ ┴ ┴</span> ─kit</div>
+        <p class="h1" style="color:var(--green)">✓ ai-kit is installed</p>
+        <p class="sub" id="doneSummary"></p>
+        <div class="box">
+          <div class="bt">next</div>
+          <div class="rule">  • Open a new Claude Code session to see your status line.</div>
+          <div class="rule">  • Re-run  uv run tools/setup.py  any time to change picks.</div>
+          <div class="rule">  • Tweak segments later in  ~/.claude/statusline.toml.</div>
+        </div>
+        <p class="note">Tip: the wizard never touched your shell config — only ~/.claude/.</p>
+      </section>
+    </div>
+
+    <!-- persistent FOOTER key-bar = the per-step KEY LEGEND, INSIDE the frame -->
+    <div class="footer" id="footer"></div>
+
+    <!-- help overlay (toggled by ? / dismissed by ? or Esc) -->
+    <div class="overlay" id="overlay">
+      <h2 id="ovTitle">Keyboard help</h2>
+      <p class="osub" id="ovSub"></p>
+      <div id="ovBody"></div>
+      <p class="ofoot">Press <b>?</b> or <b>Esc</b> to close.</p>
+    </div>
+  </div>
+</div>
+
+<p class="legend">
+  <b>Textual</b> · full-screen alternate-screen app. Keyboard is live on load (the frame is focused).
+  The footer is the key legend for the current step; click <b>Enter ▸</b> / <b>◀ Esc</b> as a fallback.
+</p>
+
+<script>
+/* ===================== data (ported from _protodata.py) ================ */
+var CATEGORIES = {
+  agents:[["ui-ux-designer",true,"research-backed design critic"],
+          ["mermaid-diagram-specialist",true,"flowcharts, ERDs, sequences"],
+          ["code-reviewer",false,"diff review at an effort level"]],
+  commands:[["code-review",true,"review the current diff"],
+            ["gsd-plan-phase",true,"detailed phase planning"],
+            ["brainstorm",false,"explore intent before building"]],
+  skills:[["brainstorming",true,"explore intent before building"],
+          ["writing-plans",true,"turn a spec into a plan"],
+          ["markdown-to-pdf",true,"render md (+mermaid) to PDF"],
+          ["subagent-driven-development",false,"run plans via subagents"]]
+};
+// segment -> [icon, default_on, sample, description]
+var SEGMENTS = [
+  ["path","📂",true,"~/project","working directory"],
+  ["git_branch","🌿",true,"main","current git branch"],
+  ["alt_git_worktree","🌲",true,"wt:feat","active worktree, if any"],
+  ["git_dirty","±",true,"±3","uncommitted change count"],
+  ["todo","✅",true,"3 todo","open todo items"],
+  ["model","🤖",true,"Opus 4.8","active model"],
+  ["alt_time_ago","🕐",true,"2m ago","time since last turn"],
+  ["alt_time_clock","⏰",true,"20:35","wall-clock time"],
+  ["effort","🔋",true,"high","reasoning effort"],
+  ["lines","📃",true,"+128/-42","lines changed this session"],
+  ["alt_cost","💰",false,"$0.12","session cost estimate"],
+  ["alt_time_session","⏳",true,"12m","session elapsed"],
+  ["alt_time_api","📡",true,"98ms","last API latency"],
+  ["render_time","⏱️",true,"2.1ms","status-line render time"],
+  ["slowest","🐌",true,"sysmem 85µs","slowest segment"],
+  ["alt_term_dimensions","📐",false,"96x34","terminal size"],
+  ["context","📊",true,"10% of 200K","context window used"],
+  ["chat_size","💬",true,"0.7s","transcript load time"],
+  ["alt_system_memory","🧮",true,"682MB","process memory"],
+  ["alt_rate_limits","🚦",true,"ok","rate-limit headroom"]
+];
+var LAYOUT = [
+  ["path","git_branch","alt_git_worktree","git_dirty","todo"],
+  ["model","alt_time_ago","alt_time_clock","effort","lines",
+   "alt_cost","alt_time_session","alt_time_api"],
+  ["render_time","slowest","alt_term_dimensions","context",
+   "chat_size","alt_system_memory","alt_rate_limits"]
+];
+var ICON={},SAMPLE={},DESC={},DEFON={};
+SEGMENTS.forEach(function(s){ICON[s[0]]=s[1];DEFON[s[0]]=s[2];SAMPLE[s[0]]=s[3];DESC[s[0]]=s[4];});
+var LANE_LBL=["LINE 1 — always shown",
+              "LINE 2 — shown when terminal ≥ 20 rows",
+              "LINE 3 — shown when terminal ≥ 30 rows"];
+var LANE_GATE=[0,20,30];   // min terminal rows for each line to appear
+
+/* ===================== live state ===================================== */
+var picks={};   // {cat:{name:bool}}
+Object.keys(CATEGORIES).forEach(function(c){picks[c]={};CATEGORIES[c].forEach(function(it){picks[c][it[0]]=it[1];});});
+var on={};      // {seg:bool}
+SEGMENTS.forEach(function(s){on[s[0]]=s[2];});
+var layout=LAYOUT.map(function(l){return l.slice();});  // 3 lines
+var tray=[];    // off-tray segments (still in `on` map but parked here, off)
+// flatten picks for Step-1 list navigation
+var rows=[];    // [{cat,name,desc}]
+Object.keys(CATEGORIES).forEach(function(c){
+  CATEGORIES[c].forEach(function(it){rows.push({cat:c,name:it[0],desc:it[2]});});
+});
+var rowFoc=0;        // highlighted row on Step 1
+var foc={line:0,idx:0,tray:false};  // focused chip on Step 2
+
+var i=0; // step: 0 choose, 1 arrange, 2 review, 3 done
+
+/* ===================== footer legends per step ======================== */
+// each item: [label, cap, kind, action]  kind: primary|back|plain|quit
+var FOOTERS=[
+  [["Continue","Enter","primary","next"],["Toggle","Space","plain",null],
+   ["Move","↑↓","plain",null],["Category","a/n","plain",null],
+   ["Help","?","help","help"],["Quit","q","quit",null]],
+  [["Continue","Enter","primary","next"],["Back","Esc","back","back"],
+   ["Move","←→","plain",null],["Line","↑↓","plain",null],
+   ["On/off","Space","plain",null],["Reset","r","plain",null],
+   ["Help","?","help","help"],["Quit","q","quit",null]],
+  [["Install","Enter","primary","next"],["Back","Esc","back","back"],
+   ["Help","?","help","help"],["Quit","q","quit",null]],
+  [["Finish & exit","Enter","primary","next"],["Quit","q","quit",null]]
+];
+// per-step help: [section title, [[cap,desc],...]]
+var HELP=[
+  [["Choose components — Step 1 of 3",[
+     ["↑ ↓","Move the highlight between components"],
+     ["Space","Install / skip the highlighted component"],
+     ["a / n","Select all / none in the current category"],
+     ["A / N","Select all / none across every category"],
+     ["Enter","Continue to Arrange"],
+     ["?","Toggle this help"],
+     ["q","Quit the installer"]]]],
+  [["Arrange status line — Step 2 of 3",[
+     ["← →","Reorder the focused chip within its line"],
+     ["↑ ↓","Move the chip across lines; ↑ off Line 1 parks it in the OFF tray"],
+     ["Space","Turn the focused segment on/off (off → OFF tray)"],
+     ["Tab","Focus the next chip (wraps through tray)"],
+     ["r","Reset the layout to defaults"],
+     ["Enter","Continue to Review"],
+     ["Esc","Back to Choose"],
+     ["?","Toggle this help"],
+     ["q","Quit the installer"]]]],
+  [["Review & confirm — Step 3 of 3",[
+     ["Enter","Install — symlink components and write statusline.toml"],
+     ["Esc","Back to Arrange"],
+     ["?","Toggle this help"],
+     ["q","Quit the installer"]]]],
+  [["Done",[
+     ["Enter","Finish and exit"],
+     ["q","Quit"]]]]
+];
+var LABELS=["Step 1 of 3 — Choose components","Step 2 of 3 — Arrange status line",
+            "Step 3 of 3 — Review & confirm","Done"];
+
+/* ===================== helpers ======================================== */
+function pad(s,n){s=String(s);while(s.length<n)s+=" ";return s;}
+function countOn(){var n=0;SEGMENTS.forEach(function(s){if(on[s[0]])n++;});return n;}
+function selectedCount(){var n=0;Object.keys(picks).forEach(function(c){Object.keys(picks[c]).forEach(function(k){if(picks[c][k])n++;});});return n;}
+function previewLinesHTML(){
+  var out=[];
+  layout.forEach(function(line){
+    var parts=line.filter(function(s){return on[s];})
+      .map(function(s){return ICON[s]+" "+SAMPLE[s];});
+    if(parts.length) out.push(parts.join(' <span class="sep">|</span> '));
+  });
+  if(!out.length) out.push("(all segments off)");
+  return out.map(function(p){return '<div class="pline">'+p+'</div>';}).join("");
+}
+
+/* ===================== render: Step 1 picks =========================== */
+function catCount(c){var n=0,t=0;Object.keys(picks[c]).forEach(function(k){t++;if(picks[c][k])n++;});return [n,t];}
+function renderPicks(){
+  var box=document.getElementById('picksBox');
+  var html="",lastCat=null,curCat=rows[rowFoc]?rows[rowFoc].cat:null;
+  rows.forEach(function(r,idx){
+    if(r.cat!==lastCat){
+      var cc=catCount(r.cat),here=r.cat===curCat;
+      html+='<div class="cat"><span>▌ '+r.cat.toUpperCase()+'</span>'
+          +'<span class="cathint"><b>'+cc[0]+'</b>/'+cc[1]+' on'
+          +(here?' · a all · n none':'')+'</span></div>';
+      lastCat=r.cat;
+    }
+    var sel=picks[r.cat][r.name];
+    var isFoc=idx===rowFoc;
+    var glyph=sel?'<span class="on">◉</span>':'<span class="off">◯</span>';
+    var gut=isFoc?'<span class="gut">▌</span>':' ';
+    html+='<div class="row'+(isFoc?' foc':'')+'" data-row="'+idx+'">'
+        +gut+' '+glyph+' <span class="nm">'+pad(r.name,28)+'</span>'
+        +'<span class="ds">'+r.desc+'</span></div>';
+  });
+  box.innerHTML=html;
+  // click a row to focus+toggle (mouse fallback)
+  Array.prototype.forEach.call(box.querySelectorAll('.row'),function(el){
+    el.onclick=function(){rowFoc=parseInt(el.getAttribute('data-row'),10);toggleRow();};
+  });
+  document.getElementById('picksCount').innerHTML=
+    '<b style="color:var(--green)">'+selectedCount()+'</b> of '+rows.length+' components selected.';
+}
+function toggleRow(){var r=rows[rowFoc];picks[r.cat][r.name]=!picks[r.cat][r.name];renderPicks();}
+function setAll(v){Object.keys(picks).forEach(function(c){Object.keys(picks[c]).forEach(function(k){picks[c][k]=v;});});renderPicks();}
+function setCat(v){var c=rows[rowFoc]&&rows[rowFoc].cat;if(!c)return;Object.keys(picks[c]).forEach(function(k){picks[c][k]=v;});renderPicks();}
+
+/* ===================== render: Step 2 board =========================== */
+function chipHTML(seg,isFoc,parked){
+  var label=ICON[seg]+" "+seg;
+  var cls="chip"+(isFoc?" foc":"")+(parked?" tray offseg":(!on[seg]?" offseg":""));
+  if(isFoc) return '<span class="'+cls+'"><span class="b">[&gt;</span>'+label+'<span class="b">&lt;]</span></span>';
+  return '<span class="'+cls+'">'+label+'</span>';
+}
+function renderBoard(){
+  var b=document.getElementById('board');var html="";
+  layout.forEach(function(line,li){
+    var gated=LANE_GATE[li]>0;
+    var gateHint=gated?'<span class="gate">needs ≥ '+LANE_GATE[li]+' rows</span>':'';
+    html+='<div class="lane'+(gated?' gated':'')+'"><div class="lbl"><span>'
+         +LANE_LBL[li].split(' — ')[0]+'</span>'+gateHint+'</div><div class="chips" data-line="'+li+'">';
+    line.forEach(function(seg,ci){
+      html+='<span data-line="'+li+'" data-idx="'+ci+'">'
+           +chipHTML(seg,!foc.tray&&foc.line===li&&foc.idx===ci,false)+'</span>';
+    });
+    html+='</div></div>';
+  });
+  // OFF tray
+  html+='<div class="lane tray"><div class="lbl">OFF — disabled (Space parks a chip here; ↓ returns it to Line 1)</div><div class="chips" data-tray="1">';
+  if(!tray.length) html+='<span class="chip tray offseg" style="opacity:.5;">(none)</span>';
+  tray.forEach(function(seg,ci){
+    html+='<span data-tray="1" data-idx="'+ci+'">'+chipHTML(seg,foc.tray&&foc.idx===ci,true)+'</span>';
+  });
+  html+='</div></div>';
+  b.innerHTML=html;
+  // click a chip to focus it (mouse fallback)
+  Array.prototype.forEach.call(b.querySelectorAll('[data-idx]'),function(el){
+    el.onclick=function(){
+      if(el.getAttribute('data-tray')){foc={tray:true,idx:parseInt(el.getAttribute('data-idx'),10),line:0};}
+      else{foc={tray:false,line:parseInt(el.getAttribute('data-line'),10),idx:parseInt(el.getAttribute('data-idx'),10)};}
+      renderBoard();renderFocusPanel();
+    };
+  });
+  renderPreviewPane();
+}
+function renderPreviewPane(){
+  document.getElementById('prevLbl').textContent="live preview · "+countOn()+" on / "+(SEGMENTS.length-countOn())+" off";
+  document.getElementById('prevLines').innerHTML=previewLinesHTML();
+}
+function focusedSeg(){
+  if(foc.tray) return tray[foc.idx];
+  return layout[foc.line] ? layout[foc.line][foc.idx] : undefined;
+}
+function renderFocusPanel(){
+  var seg=focusedSeg();
+  document.getElementById('focName').textContent=seg?(ICON[seg]+" "+seg):"(empty)";
+  document.getElementById('focDesc').textContent=seg?(DESC[seg]+(on[seg]?"":" — currently OFF (in tray)")):"";
+}
+
+/* ===================== Step-2 keyboard moves ========================== */
+function clampFoc(){
+  if(foc.tray){
+    if(!tray.length){foc.tray=false;foc.line=0;foc.idx=0;}
+    else foc.idx=Math.max(0,Math.min(tray.length-1,foc.idx));
+  }else{
+    foc.line=Math.max(0,Math.min(layout.length-1,foc.line));
+    var len=layout[foc.line].length;
+    if(len===0){ // skip empty line downward then upward
+      foc.idx=0;
+    }else foc.idx=Math.max(0,Math.min(len-1,foc.idx));
+  }
+}
+function moveInLine(d){ // ←/→ : reorder focused chip within its line
+  if(foc.tray) return;                 // tray has no ordering meaning here
+  var line=layout[foc.line];var j=foc.idx+d;
+  if(j<0||j>=line.length) return;
+  var t=line[foc.idx];line[foc.idx]=line[j];line[j]=t;foc.idx=j;
+}
+function moveBetweenLines(d){ // ↑/↓ : move focused chip to line above/below; off Line 1 ↑ -> tray
+  if(foc.tray){
+    if(d>0){ // ↓ from tray -> append onto Line 1
+      var seg=tray.splice(foc.idx,1)[0];on[seg]=true;
+      layout[0].push(seg);foc={tray:false,line:0,idx:layout[0].length-1};
+    }
+    return;
+  }
+  var line=layout[foc.line];var seg=line[foc.idx];
+  if(d<0 && foc.line===0){ // ↑ off Line 1 -> OFF tray
+    line.splice(foc.idx,1);on[seg]=false;tray.push(seg);
+    foc={tray:true,line:0,idx:tray.length-1};return;
+  }
+  var nl=foc.line+d;
+  if(nl<0||nl>=layout.length) return;
+  line.splice(foc.idx,1);
+  var dest=layout[nl];var ni=Math.min(foc.idx,dest.length);
+  dest.splice(ni,0,seg);foc={tray:false,line:nl,idx:ni};
+}
+function toggleFocusedSeg(){ // Space : on<->off (off => move to tray, on => back to Line 1)
+  var seg=focusedSeg();if(!seg) return;
+  if(foc.tray){ // turning a tray chip on -> onto Line 1
+    tray.splice(foc.idx,1);on[seg]=true;layout[0].push(seg);
+    foc={tray:false,line:0,idx:layout[0].length-1};
+  }else{
+    if(on[seg]){ // turn off -> park in tray
+      layout[foc.line].splice(foc.idx,1);on[seg]=false;tray.push(seg);
+      foc={tray:true,line:0,idx:tray.length-1};
+    }else{ on[seg]=true; } // already in a line but off — just re-enable in place
+  }
+}
+function resetLayout(){ // r : restore default layout + on-state + empty tray
+  layout=LAYOUT.map(function(l){return l.slice();});
+  SEGMENTS.forEach(function(s){on[s[0]]=s[2];});
+  tray=[];foc={line:0,idx:0,tray:false};
+}
+function cycleFocus(){ // Tab : next chip across lines then tray, wrapping
+  var seq=[];
+  layout.forEach(function(line,li){line.forEach(function(_,ci){seq.push({tray:false,line:li,idx:ci});});});
+  tray.forEach(function(_,ci){seq.push({tray:true,line:0,idx:ci});});
+  if(!seq.length) return;
+  var cur=0;
+  for(var k=0;k<seq.length;k++){
+    if(seq[k].tray===foc.tray && seq[k].idx===foc.idx && (foc.tray||seq[k].line===foc.line)){cur=k;break;}
+  }
+  var nx=seq[(cur+1)%seq.length];foc={tray:nx.tray,line:nx.line,idx:nx.idx};
+}
+
+/* ===================== render: Step 3 review ========================== */
+function renderReview(){
+  var ul=document.getElementById('reviewPicks');var html="";
+  Object.keys(picks).forEach(function(c){
+    var parts=CATEGORIES[c].map(function(it){
+      var sel=picks[c][it[0]];
+      return (sel?'<span class="on">◉</span>':'<span class="off">◯</span>')+' '+it[0];
+    });
+    html+='<li>  <span class="k">'+pad(c,9)+'</span>'+parts.join("  ")+'</li>';
+  });
+  ul.innerHTML=html;
+  var onN=countOn(),offN=SEGMENTS.length-onN,nLines=layout.filter(function(l){return l.some(function(s){return on[s];});}).length;
+  document.getElementById('reviewPrevLbl').textContent="status-line — "+onN+" segments / "+nLines+" lines / "+offN+" off";
+  document.getElementById('reviewPrevLines').innerHTML=previewLinesHTML();
+  var nSel=selectedCount();
+  document.getElementById('reviewActions').innerHTML=
+    '<li>  <span class="ok">→</span> symlink '+nSel+' components into ~/.claude/</li>'
+   +'<li>  <span class="ok">→</span> write ~/.claude/statusline.toml (validated by statusline-doctor)</li>'
+   +'<li>  <span class="ok">→</span> no existing files overwritten without a prompt</li>';
+  document.getElementById('ctaCount').innerHTML=
+    '<span style="color:#b9f0c8;opacity:.85;">— '+nSel+' components, '+onN+' segments</span>';
+}
+function renderDone(){
+  document.getElementById('doneSummary').textContent=
+    selectedCount()+" components symlinked · statusline.toml written and doctor-validated.";
+}
+
+/* ===================== footer + step machine ========================== */
+function pips(n){
+  if(n>=3) return '<span class="pip-on">●●●</span>'; // Done = all on
+  var s="";for(var k=0;k<3;k++){s+=(k<=n?'<span class="pip-on">●</span>':'<span class="pip-off">○</span>');}
+  return s;
+}
+function renderFooter(){
+  var f=document.getElementById('footer');f.innerHTML="";
+  FOOTERS[i].forEach(function(item){
+    var label=item[0],cap=item[1],kind=item[2],act=item[3];
+    var el=document.createElement('span');
+    el.className='key'+(kind==='primary'?' primary act':'')
+                +((kind==='back'||kind==='help')?' act':'')+(kind==='quit'?' q':'');
+    el.innerHTML='<span class="cap">'+cap+'</span> '+label;
+    if(act==='next'){el.onclick=function(){show(i+1);};}
+    if(act==='back'){el.onclick=function(){show(i-1);};}
+    if(act==='help'){el.onclick=function(){toggleHelp();};}
+    f.appendChild(el);
+  });
+}
+var screens=Array.prototype.slice.call(document.querySelectorAll('.screen'));
+function show(n){
+  i=Math.max(0,Math.min(screens.length-1,n));
+  if(helpOpen) toggleHelp(false);
+  screens.forEach(function(s,k){s.classList.toggle('active',k===i);});
+  document.getElementById('hstep').textContent=LABELS[i];
+  document.getElementById('pips').innerHTML=pips(i);
+  if(i===0) renderPicks();
+  if(i===1){clampFoc();renderBoard();renderFocusPanel();}
+  if(i===2) renderReview();
+  if(i===3) renderDone();
+  renderFooter();
+}
+
+/* ===================== help overlay =================================== */
+var helpOpen=false;
+function renderHelp(){
+  var spec=HELP[i][0];
+  document.getElementById('ovTitle').textContent=spec[0];
+  document.getElementById('ovSub').textContent="Keys active right now. The footer always shows this step's legend.";
+  var html='<div class="grp">';
+  spec[1].forEach(function(row){
+    html+='<div class="krow"><span class="cap">'+row[0]+'</span><span>'+row[1]+'</span></div>';
+  });
+  html+='</div>';
+  document.getElementById('ovBody').innerHTML=html;
+}
+function toggleHelp(force){
+  helpOpen=(typeof force==='boolean')?force:!helpOpen;
+  if(helpOpen) renderHelp();
+  document.getElementById('overlay').classList.toggle('show',helpOpen);
+}
+
+/* ===================== keyboard ======================================= */
+var term=document.getElementById('term');
+term.classList.add('kbfocus');
+document.addEventListener('keydown',function(e){
+  var k=e.key;
+  // help overlay: ? toggles anywhere; while open, only ?/Esc act
+  if(k==='?'){e.preventDefault();toggleHelp();return;}
+  if(helpOpen){
+    if(k==='Escape'){e.preventDefault();toggleHelp(false);}
+    return;
+  }
+  // global
+  if(k==='q'||k==='Q'){ /* mock quit: bounce to Step 1 */ show(0);return;}
+  if(k==='Enter'){e.preventDefault();show(i+1);return;}
+  if(k==='Escape'){e.preventDefault();if(i>0&&i<3)show(i-1);return;}
+
+  if(i===0){ // Choose
+    if(k==='ArrowDown'){e.preventDefault();rowFoc=Math.min(rows.length-1,rowFoc+1);renderPicks();}
+    else if(k==='ArrowUp'){e.preventDefault();rowFoc=Math.max(0,rowFoc-1);renderPicks();}
+    else if(k===' '){e.preventDefault();toggleRow();}
+    else if(k==='a'){setCat(true);}        // scope: current category
+    else if(k==='n'){setCat(false);}
+    else if(k==='A'){setAll(true);}        // scope: everything
+    else if(k==='N'){setAll(false);}
+  }else if(i===1){ // Arrange
+    if(k==='ArrowLeft'){e.preventDefault();moveInLine(-1);renderBoard();renderFocusPanel();}
+    else if(k==='ArrowRight'){e.preventDefault();moveInLine(1);renderBoard();renderFocusPanel();}
+    else if(k==='ArrowUp'){e.preventDefault();moveBetweenLines(-1);clampFoc();renderBoard();renderFocusPanel();}
+    else if(k==='ArrowDown'){e.preventDefault();moveBetweenLines(1);clampFoc();renderBoard();renderFocusPanel();}
+    else if(k===' '){e.preventDefault();toggleFocusedSeg();clampFoc();renderBoard();renderFocusPanel();}
+    else if(k==='Tab'){e.preventDefault();cycleFocus();renderBoard();renderFocusPanel();}
+    else if(k==='r'||k==='R'){e.preventDefault();resetLayout();renderBoard();renderFocusPanel();}
+  }
+});
+// keep focus ring while interacting
+term.addEventListener('focus',function(){term.classList.add('kbfocus');});
+window.addEventListener('load',function(){term.focus();});
+
+// mouse fallback: clicking the Review install bar confirms
+document.getElementById('installCta').style.cursor='pointer';
+document.getElementById('installCta').onclick=function(){if(i===2)show(3);};
+// click the dimmed overlay backdrop to dismiss
+document.getElementById('overlay').onclick=function(e){if(e.target===this)toggleHelp(false);};
+
+show(0);
+</script>
+</body>
+</html>
