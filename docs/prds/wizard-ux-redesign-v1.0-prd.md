@@ -1,6 +1,10 @@
 # ai-kit Install Wizard — UX Redesign v1.0 PRD
 
 **Status:** Design locked (mockup-approved). Ready for implementation planning.
+**Amendment (2026-06-24):** corrected config path to `~/.config/ai-kit/statusline.toml`
+(was wrongly `~/.claude/`); added user-segment discovery (`~/.config/ai-kit/segments/`) and a
+self-describing external-segment header standard (`name`/`description`/`icon`/`sample`,
+wizard-side only). See "External / user segments".
 **Goal:** Rebuild the Textual install wizard's UX into a linear, panelled, next-next
 carousel that matches the approved mockup — without changing the render path, the
 fail-closed contract, or the doctor-validated persistence of the existing wizard.
@@ -85,13 +89,13 @@ This redesign linearizes the flow and gives every area a dedicated bordered pane
 ### Step 3 — Review & confirm
 - **components to install** box (by category) · **status line** preview box (same dark
   status-line background as Step 2, for consistency) · **what happens on confirm** box
-  (symlink N components, write `~/.claude/statusline.toml` with M segments, validate via
+  (symlink N components, write `~/.config/ai-kit/statusline.toml` with M segments, validate via
   `statusline-doctor`) · a green **`▸ Install ai-kit`** CTA with an `Enter` keycap.
 - `Enter` = Install (the ONLY place the wizard mutates disk); `Esc` = Back to Arrange.
 
 ### Done
 - Confirmation card + next-steps box (open a new session, re-run to change picks, edit
-  `~/.claude/statusline.toml`). `Enter`/`q` exits.
+  `~/.config/ai-kit/statusline.toml`). `Enter`/`q` exits.
 
 ## Data sourcing & segment inventory
 
@@ -117,7 +121,7 @@ lists. Clarified via requirements-clarity (score 91/100). The prototype's
   SOLE source; never user-configurable), `sample` (static value shown in the preview),
   `icon` (default), `line` (default/preferred line).
 - **Override layering (read by setup/wizard, not the renderer):** the current
-  `~/.claude/statusline.toml`, if present, **overrides `icon` + `line`**; the inventory
+  `~/.config/ai-kit/statusline.toml`, if present, **overrides `icon` + `line`**; the inventory
   supplies the fallback defaults for `icon` + `line` and is the only source of
   `description` + `sample`.
 - **Samples are static**, authored in the inventory (not live-rendered).
@@ -128,20 +132,47 @@ lists. Clarified via requirements-clarity (score 91/100). The prototype's
   segment has an inventory entry (**fail-closed coverage**). Icons are NOT ripped out of
   `status-line.py`; single-sourcing icons into the inventory is a deferred option.
 
-### External / example segments
-- Discovered from `examples/segments/` via the existing `# ai-kit-segment: k=v …` header
-  (e4c infra; `id`/`line`/`after`/`ttl` already parsed).
-- Shown **like any other segment** (same description/icon/line/sample) but **tagged
-  "external"** so the UI marks provenance.
-- Their metadata is **self-describing**: extend the header with `desc=` / `sample=` /
-  `icon=` (and the existing `line=`). Built-ins get metadata from the inventory; externals
-  from their header. Missing fields fall back to id/name + default icon/line.
+### External / user segments
+
+External segments **already render today** — the stdlib render path's `core_discover_external`
+(`tools/status-line.py`) scans `${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments/`, runs each as a
+subprocess (stdin = status JSON, TTL-cached under `~/.cache/ai-kit/segments/<id>`, 2 s timeout,
+output sanitized), and merges them into the builder registry. **No render-path change is needed
+for user-dropped segments to render.** This work is wizard/installer-side only: *discover* and
+*show* them with metadata.
+
+- **Two discovery sources (wizard/installer):**
+  1. **Bundled** repo `examples/segments/` (existing `discover_example_segments`, `tools/setup.py`).
+  2. **User** `${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments/` — the SAME directory the renderer
+     already reads. Today `discover_example_segments` scans only (1); extend it to also scan (2).
+  Both are surfaced in the wizard, **tagged by provenance** (`bundled` / `user`) so the UI marks
+  where each came from.
+- **Self-describing header standard (the contract for "drop a script and the wizard shows it"):**
+  the `# ai-kit-segment: k=v …` header gains **four OPTIONAL** UI keys alongside the existing
+  `line=`: `name=`, `description=`, `icon=`, `sample=`. All optional. Missing fields fall back to
+  **id as name, blank description, default icon, default/last line.** A segment author self-describes
+  by editing only its own header — no inventory entry, no core change.
+- **Metadata source split:** built-ins get UI metadata from `segments_inventory.toml`; externals
+  get it from **their own header** (the inventory does NOT carry external segments). `description`
+  is UI-only either way.
+- **Parsing seam (render-path purity preserved):** the new `name=`/`description=`/`icon=`/`sample=`
+  keys are parsed **wizard/installer-side only** (`tools/setup.py`). The renderer's
+  `core_parse_segment_header` (`tools/status-line.py`) is **NOT** extended — it still reads only
+  `id`/`line`/`after`/`before`/`start`/`end`/`ttl`/`timeout`, so `status-line.py` stays
+  `python3 -S` / no-UI-copy.
+- **Default state:** a discovered external/user segment shows **OFF** (available, discoverable)
+  unless the user's `~/.config/ai-kit/statusline.toml` already enables + places it — same
+  reconfigure-layering rule as `alt_*` segments. The wizard always LISTS them so they stay
+  discoverable.
+- **Reference segment demonstrates the standard:** the renamed `examples/segments/system_memory`
+  (see below) carries the full optional header (`name=`/`description=`/`icon=`/`sample=`) as the
+  canonical copy-and-edit example of a self-describing external segment.
 
 ### Segment defaults & naming (added during clarity)
 - **All `alt_*` segments default OFF — no exemptions (incl. `alt_git_worktree`).** They are
   optional extras: the renderer's `SEGMENTS` default for every `alt_*` key becomes `False`.
   The ONLY way an `alt_*` segment renders on a line is on **reconfigure**, when the user's
-  existing `~/.claude/statusline.toml` already has it `= true` AND placed on a line (env
+  existing `~/.config/ai-kit/statusline.toml` already has it `= true` AND placed on a line (env
   mirror equivalent). A fresh install shows every `alt_*` OFF (in the wizard's OFF tray,
   available to enable). The wizard always LISTS them (unchecked) so they stay discoverable.
   - **Golden impact (intended):** this makes the default rendered status line leaner (today
@@ -152,8 +183,10 @@ lists. Clarified via requirements-clarity (score 91/100). The prototype's
   - Built-in `alt_process_memory` (process RSS) — name unchanged (was `alt_system_memory`).
     Being `alt_*`, it is now off-by-default per the rule above.
   - External example `examples/segments/sysmem` (system AVAILABLE memory) → **rename to
-    `system_memory`**: file name, header `id=system_memory`, toggle `segments.system_memory`,
-    env `CC_AI_KIT_SEGMENT_SYSTEM_MEMORY`, the file's docstring examples,
+    `system_memory`** (to differentiate from the internal `process_memory`): file name, header
+    `id=system_memory`, toggle `segments.system_memory`,
+    env `CC_AI_KIT_SEGMENT_SYSTEM_MEMORY`, and — demonstrating the self-describing standard —
+    the optional header keys `name=`/`description=`/`icon=`/`sample=`; plus the file's docstring examples,
     `tools/statusline.toml.sample`, the `tools/setup.py` discovery comment, `README.md` /
     `Makefile` references, and tests (`tests/test_setup.py` shipped-segment assertion,
     `tests/test_external_segments.py`, `tests/test_sysmem_e2e.py` → renamed). Historical
@@ -173,7 +206,19 @@ lists. Clarified via requirements-clarity (score 91/100). The prototype's
 - [ ] Inventory default `icon`/`line` == renderer defaults (asserted); golden render
       byte-identical.
 - [ ] `statusline.toml` `icon`/`line` overrides win over inventory defaults in the wizard.
-- [ ] External segments appear, marked external, with header-supplied description/sample.
+- [ ] The wizard discovers external segments from BOTH `examples/segments/` (bundled) and
+      `${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments/` (user); each is shown tagged by
+      provenance (`bundled` / `user`).
+- [ ] External segments appear, marked external, with header-supplied
+      `name`/`description`/`icon`/`sample`; absent fields fall back to id-as-name / blank
+      description / default icon / default line (no crash on a header carrying only `id=`).
+- [ ] The wizard-side header parser (`tools/setup.py`) reads the optional
+      `name`/`description`/`icon`/`sample` keys; the renderer's header parser
+      (`tools/status-line.py`) is UNCHANGED (render path stays `python3 -S` / no UI copy).
+- [ ] `examples/segments/system_memory` carries the full self-describing header
+      (`name`/`description`/`icon`/`sample` + `line`/`ttl`) as the canonical example.
+- [ ] Config path is `~/.config/ai-kit/statusline.toml` everywhere (XDG-aware); no
+      `~/.claude/statusline.toml` reference remains in shipped code, the PRD, or the prototype copy.
 - [ ] No fake/hardcoded component or segment list (incl. `_protodata.py`) remains in the
       shipped wizard.
 

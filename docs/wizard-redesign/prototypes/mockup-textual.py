@@ -389,7 +389,7 @@ class WizardApp(App):
             f"[{DIM}]•[/] Symlink [bold]{ncomp}[/] components into "
             f"~/.claude/(agents|commands|skills)/\n"
             f"[{DIM}]•[/] Write your status line ([bold]{nseg}[/] segments) to "
-            f"~/.claude/statusline.toml\n"
+            f"~/.config/ai-kit/statusline.toml\n"
             f"[{DIM}]•[/] Validate with statusline-doctor before saving\n"
             f"[{WARN}]Prototype:[/] this run writes nothing to disk.")
         self.query_one("#cta", Static).update(
@@ -402,7 +402,7 @@ class WizardApp(App):
         self.query_one("#done-next", Static).update(
             f"[{DIM}]•[/] Open a new Claude Code session to see your status line.\n"
             f"[{DIM}]•[/] Re-run  uv run tools/setup.py  any time to change picks.\n"
-            f"[{DIM}]•[/] Tweak segments later in  ~/.claude/statusline.toml.")
+            f"[{DIM}]•[/] Tweak segments later in  ~/.config/ai-kit/statusline.toml.")
 
     # ---- input -----------------------------------------------------------
     def on_key(self, event: events.Key) -> None:
