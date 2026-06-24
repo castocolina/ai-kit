@@ -80,6 +80,38 @@ def spawn_pty(args, env):
     return pid, master_fd
 
 
+def spawn_pty_piped_stdin(args, env, pipe_data=b"# leftover script bytes\n"):
+    """Spawn ``args`` in the exact shape of ``curl … | bash``: the controlling
+    terminal is a PTY, but the child's **fd 0 (stdin) is a pipe**, not the PTY.
+
+    ``pty.fork()`` gives the child the PTY slave as fds 0/1/2 *and* as its
+    controlling terminal.  We then ``dup2`` a pipe onto fd 0 only, so:
+      - ``os.isatty(0)`` is False (stdin is the script pipe, like curl | bash),
+      - ``/dev/tty`` still resolves to the PTY (fds 1/2 and the ctty are intact).
+
+    The parent writes ``pipe_data`` then closes the write end (EOF), mimicking
+    bash having drained the script before exec.  Keystrokes are driven through
+    ``master_fd`` — i.e. only reachable via ``/dev/tty``, never via fd 0 — so a
+    wizard that responds to them *proves* it read the controlling terminal.
+
+    Returns ``(pid, master_fd)``.
+    """
+    r, w = os.pipe()
+    pid, master_fd = pty.fork()
+    if pid == 0:
+        os.close(w)
+        os.dup2(r, 0)        # stdin ← pipe (NOT the PTY); fds 1/2 stay the PTY
+        os.close(r)
+        with contextlib.suppress(OSError):
+            os.execvpe(args[0], args, env)
+        os._exit(127)
+    os.close(r)
+    with contextlib.suppress(OSError):
+        os.write(w, pipe_data)
+    os.close(w)              # EOF on stdin, as after bash drains the script
+    return pid, master_fd
+
+
 def drive_until(master_fd, marker, deadline, captured=None):
     """Poll ``master_fd`` for ``marker`` (bytes), reading until found or ``deadline``.
 
@@ -736,6 +768,106 @@ class TestPhase3E2E(unittest.TestCase):
                 f"but it was not found.\n"
                 f"Captured output:\n{all_output}"
             ),
+        )
+
+
+class TestCurlBashE2E(unittest.TestCase):
+    """The ``curl … | bash`` install shape: stdin is the script pipe (not a
+    TTY), but a controlling terminal exists via ``/dev/tty``.
+
+    This is the path the PTY suites above do NOT cover — they hand the child a
+    real TTY as stdin.  Without ``stdin_on_tty()`` redirecting fd 0 onto
+    ``/dev/tty``, Textual (which reads keys from ``sys.__stdin__.fileno()``)
+    sees the pipe and the wizard cannot be driven.  Here keystrokes are sent
+    only through the PTY master — reachable solely as the controlling terminal
+    — so a wizard that renders and responds proves the redirect works.
+    """
+
+    def setUp(self):
+        self._tmpdirs = []
+
+    def tearDown(self):
+        for d in self._tmpdirs:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def _mk_config_dir(self):
+        d = _tmp_config_dir()
+        self._tmpdirs.append(d)
+        return d
+
+    def test_piped_stdin_wizard_still_driven_via_dev_tty(self):
+        uv = _uv_cmd()
+        config_dir = self._mk_config_dir()
+        env = dict(
+            os.environ,
+            CLAUDE_CONFIG_DIR=config_dir,
+            AI_KIT_DIR=_REPO_ROOT,
+            AI_KIT_UV_REEXEC="1",
+        )
+
+        # stdin = pipe (curl|bash); ctty + stdout/stderr = PTY.
+        pid, master_fd = spawn_pty_piped_stdin(
+            [uv, "run", "--script", SETUP, "--dry-run", "install"],
+            env,
+        )
+
+        _BOOT_WAIT = 30.0
+        _TOTAL_WAIT = 60
+
+        startup_output = b""
+        try:
+            boot_deadline = time.time() + _BOOT_WAIT
+            # Picks screen rendering at all means Textual is reading the PTY —
+            # impossible unless fd 0 was redirected off the pipe onto /dev/tty.
+            _PICKS_MARKERS = (b"\xe2\x97\x89", b"Cancel", b"\x1b[")  # ◉, footer, ANSI
+            all_captured: list[bytes] = []
+            found = False
+            for marker in _PICKS_MARKERS:
+                try:
+                    startup_output = drive_until(
+                        master_fd, marker, boot_deadline, captured=all_captured
+                    )
+                    found = True
+                    break
+                except AssertionError:
+                    pass
+            if not found:
+                startup_output = b"".join(all_captured)
+        except OSError:
+            startup_output = b""
+
+        # Drive a keystroke through the PTY (i.e. via /dev/tty, never via fd 0):
+        # 'q' aborts the wizard.  A clean abort exit proves the key was received.
+        with contextlib.suppress(OSError):
+            os.write(master_fd, b"q")
+
+        drain_deadline = time.time() + max(10, _TOTAL_WAIT - _BOOT_WAIT)
+        tail_output = _drain(master_fd, drain_deadline)
+        with contextlib.suppress(OSError):
+            os.close(master_fd)
+        exit_code = None
+        with contextlib.suppress(ChildProcessError):
+            _, status = os.waitpid(pid, 0)
+            exit_code = os.WEXITSTATUS(status)
+
+        output = startup_output + tail_output
+        decoded = output.decode("utf-8", errors="replace")
+        # The wizard rendered under piped stdin — only possible via the /dev/tty
+        # redirect.  (ANSI escapes / the picks glyph / the summary all qualify.)
+        self.assertTrue(
+            output,
+            msg="wizard produced no output under piped stdin — the /dev/tty "
+                "redirect did not take effect",
+        )
+        self.assertTrue(
+            ("\x1b[" in decoded) or ("◉" in decoded) or ("summary:" in decoded.lower()),
+            msg=f"wizard did not render a TUI under piped stdin; got {decoded!r}",
+        )
+        # 'q' abort is a clean exit; a hung/failed driver would not exit 0.
+        self.assertEqual(
+            exit_code, 0,
+            msg=f"expected clean abort exit 0 under piped stdin; got {exit_code}, "
+                f"output={decoded!r}",
         )
 
 
