@@ -1348,14 +1348,24 @@ class TestCmdDelegation(unittest.TestCase):
 
 
 class TestOpenTty(unittest.TestCase):
-    def test_dev_tty_used_when_openable(self):
-        sentinel = io.StringIO()
-        with mock.patch("builtins.open", return_value=sentinel) as op:
+    def test_dev_tty_opened_getpass_style(self):
+        # /dev/tty must be opened via os.open + FileIO/TextIOWrapper (NOT
+        # builtin open("r+"), which raises "not seekable" on every terminal).
+        sentinel = object()
+        with mock.patch.object(setup.os, "open", return_value=7) as osopen, \
+             mock.patch.object(setup.io, "FileIO") as fileio, \
+             mock.patch.object(setup.io, "TextIOWrapper",
+                               return_value=sentinel) as wrapper:
             self.assertIs(setup.open_tty(), sentinel)
-            op.assert_called_once_with("/dev/tty", "r+", encoding="utf-8")
+            osopen.assert_called_once_with(
+                "/dev/tty", setup.os.O_RDWR | setup.os.O_NOCTTY
+            )
+            fileio.assert_called_once_with(7, "r+")
+            self.assertIs(wrapper.call_args.args[0], fileio.return_value)
 
     def test_falls_back_to_std_streams_when_both_are_ttys(self):
-        with mock.patch("builtins.open", side_effect=OSError(6, "No such device")), \
+        with mock.patch.object(setup.os, "open",
+                               side_effect=OSError(6, "No such device")), \
              mock.patch.object(setup.sys, "stdin")  as si, \
              mock.patch.object(setup.sys, "stdout") as so:
             si.isatty.return_value = True
@@ -1365,8 +1375,10 @@ class TestOpenTty(unittest.TestCase):
             self.assertTrue(setup.is_interactive(tty))
 
     def test_none_when_dev_tty_fails_and_stdin_is_pipe(self):
-        # curl | bash: stdin is the script pipe, not a keyboard → not interactive
-        with mock.patch("builtins.open", side_effect=OSError(6, "No such device")), \
+        # curl | bash WITHOUT a controlling terminal: /dev/tty open fails and
+        # stdin is the script pipe → not interactive → fail closed.
+        with mock.patch.object(setup.os, "open",
+                               side_effect=OSError(6, "No such device")), \
              mock.patch.object(setup.sys, "stdin")  as si, \
              mock.patch.object(setup.sys, "stdout") as so:
             si.isatty.return_value = False
@@ -1374,12 +1386,74 @@ class TestOpenTty(unittest.TestCase):
             self.assertIsNone(setup.open_tty())
 
     def test_none_when_nothing_is_a_tty(self):
-        with mock.patch("builtins.open", side_effect=OSError(6, "No such device")), \
+        with mock.patch.object(setup.os, "open",
+                               side_effect=OSError(6, "No such device")), \
              mock.patch.object(setup.sys, "stdin")  as si, \
              mock.patch.object(setup.sys, "stdout") as so:
             si.isatty.return_value = False
             so.isatty.return_value = False
             self.assertIsNone(setup.open_tty())
+
+
+class TestStdinOnTty(unittest.TestCase):
+    """stdin_on_tty() points fd 0 at /dev/tty when stdin is not a TTY
+    (the curl | bash shape), and restores it afterwards."""
+
+    def test_noop_when_stdin_already_tty(self):
+        # A direct terminal run (or the PTY tests): fd 0 is already a TTY, so
+        # the helper must NOT touch the fds at all.
+        with mock.patch.object(setup.os, "isatty", return_value=True) as isatty, \
+             mock.patch.object(setup.os, "open") as op, \
+             mock.patch.object(setup.os, "dup2") as dup2:
+            with setup.stdin_on_tty():
+                pass
+            isatty.assert_called_once_with(0)
+            op.assert_not_called()
+            dup2.assert_not_called()
+
+    def test_redirects_and_restores_when_stdin_not_tty(self):
+        # curl | bash: fd 0 is the script pipe. The helper opens /dev/tty, dup2s
+        # it onto fd 0 for the body, then restores the saved fd 0 on exit.
+        order = []
+        with mock.patch.object(setup.os, "isatty", return_value=False), \
+             mock.patch.object(setup.os, "open", return_value=7) as op, \
+             mock.patch.object(setup.os, "dup", return_value=9) as dup, \
+             mock.patch.object(setup.os, "dup2",
+                               side_effect=lambda a, b: order.append((a, b))), \
+             mock.patch.object(setup.os, "close",
+                               side_effect=lambda fd: order.append(("close", fd))):
+            with setup.stdin_on_tty():
+                # inside the body: /dev/tty (fd 7) is now fd 0; saved fd is 9.
+                self.assertIn((7, 0), order)        # redirected before yield
+                self.assertNotIn((9, 0), order)     # not yet restored
+            op.assert_called_once_with("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+            dup.assert_called_once_with(0)          # saved the original fd 0
+            self.assertEqual(order[-2:], [(9, 0), ("close", 9)])  # restore + close saved
+
+    def test_restores_on_exception(self):
+        # The finally must restore fd 0 even when the body raises.
+        order = []
+        with mock.patch.object(setup.os, "isatty", return_value=False), \
+             mock.patch.object(setup.os, "open", return_value=7), \
+             mock.patch.object(setup.os, "dup", return_value=9), \
+             mock.patch.object(setup.os, "dup2",
+                               side_effect=lambda a, b: order.append((a, b))), \
+             mock.patch.object(setup.os, "close",
+                               side_effect=lambda fd: order.append(("close", fd))):
+            with self.assertRaises(ValueError), setup.stdin_on_tty():
+                raise ValueError("boom")
+            self.assertEqual(order[-2:], [(9, 0), ("close", 9)])  # restored despite raise
+
+    def test_proceeds_when_dev_tty_unavailable(self):
+        # No controlling terminal at all (require_tty fails closed upstream):
+        # the helper must not crash — it yields without redirecting.
+        with mock.patch.object(setup.os, "isatty", return_value=False), \
+             mock.patch.object(setup.os, "open",
+                               side_effect=OSError(6, "No such device")), \
+             mock.patch.object(setup.os, "dup2") as dup2:
+            with setup.stdin_on_tty():
+                pass
+            dup2.assert_not_called()
 
 
 class TestFailClosed(unittest.TestCase):

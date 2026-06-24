@@ -22,6 +22,7 @@ import argparse
 import contextlib
 import copy
 import importlib.util
+import io
 import json
 import os
 import re
@@ -642,17 +643,65 @@ def open_tty():
     """Open an interactive terminal stream, or return None when none exists.
 
     Prefers /dev/tty (so `curl | bash` — where stdin is the script pipe — still
-    reads the keyboard). When /dev/tty cannot be opened (IDE task runners, some
-    uv/sandbox contexts), fall back to sys.stdin/stdout ONLY when BOTH are real
-    TTYs — i.e. a direct local run where stdin literally is the keyboard. When
-    nothing is usable, return None; the caller fails closed (no headless path)."""
+    reaches the keyboard). The handle is built getpass-style as
+    ``TextIOWrapper(FileIO(os.open("/dev/tty", O_RDWR|O_NOCTTY)))`` rather than
+    ``open("/dev/tty", "r+")``: builtin r+ creates a BufferedRandom that demands
+    a seekable raw stream, and a terminal is not seekable, so it raises
+    "not seekable" on every TTY. The FileIO+TextIOWrapper path has no seek probe.
+
+    When /dev/tty cannot be opened (no controlling terminal — IDE task runners,
+    some sandbox contexts), fall back to sys.stdin/stdout ONLY when BOTH are real
+    TTYs — a direct local run where stdin literally is the keyboard. When nothing
+    is usable, return None; the caller fails closed (no headless path)."""
     try:
-        return open("/dev/tty", "r+", encoding="utf-8")
+        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+        return io.TextIOWrapper(
+            io.FileIO(fd, "r+"), encoding="utf-8", line_buffering=True
+        )
     except OSError:
         pass
     if _stream_isatty(sys.stdin) and _stream_isatty(sys.stdout):
         return _StdTty(sys.stdin, sys.stdout)
     return None
+
+
+@contextlib.contextmanager
+def stdin_on_tty():
+    """Point fd 0 at the controlling terminal for the duration of the wizard.
+
+    Under ``curl … | bash`` the process inherits the *script pipe* as stdin, so
+    fd 0 is not a TTY.  Textual's Linux driver reads keystrokes from
+    ``sys.__stdin__.fileno()`` (fd 0) — not from any handle we pass it — so
+    without this the full-screen wizard cannot be driven and would hang or abort.
+    When fd 0 is already a TTY (a direct terminal run, or our PTY tests) this is
+    a no-op.  The original fd 0 is restored on exit (even on exception).
+
+    Only stdin is touched: Textual writes its escape sequences to stderr (fd 2),
+    which under ``curl | bash`` is still the user's terminal, so stdout/stderr are
+    left exactly as the caller arranged them."""
+    if os.isatty(0):
+        yield
+        return
+    try:
+        tty_fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        # No controlling terminal — require_tty() has already failed closed
+        # upstream, so this branch is unreachable in the current call graph (a
+        # usable tty is a precondition for reaching launch_wizard). Kept as
+        # defense-in-depth: proceed without redirect rather than mask the path.
+        # NOTE: a future caller that invokes stdin_on_tty() WITHOUT the
+        # require_tty gate would leave fd 0 unredirected and the TUI undrivable;
+        # gate any new call site the same way rather than relying on this.
+        yield
+        return
+    saved = os.dup(0)
+    try:
+        os.dup2(tty_fd, 0)
+        os.close(tty_fd)
+        yield
+    finally:
+        os.dup2(saved, 0)
+        os.close(saved)
 
 
 def is_interactive(tty):
@@ -1460,7 +1509,10 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
         engine=_engine_ns(paths, sample_json),
     )
     try:
-        result = wizard_app.run_wizard(ctx)
+        # curl | bash inherits the script pipe as fd 0; Textual reads keys from
+        # fd 0, so redirect it onto the controlling terminal for the run.
+        with stdin_on_tty():
+            result = wizard_app.run_wizard(ctx)
     except wizard_app.WizardCrash as exc:
         reason = exc.args[0] if exc.args else exc
         print(f"error: wizard failed — {reason}", file=sys.stderr)
