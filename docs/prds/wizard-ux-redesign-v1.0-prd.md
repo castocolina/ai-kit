@@ -1,10 +1,14 @@
 # ai-kit Install Wizard — UX Redesign v1.0 PRD
 
 **Status:** Design locked (mockup-approved). Ready for implementation planning.
-**Amendment (2026-06-24):** corrected config path to `~/.config/ai-kit/statusline.toml`
-(was wrongly `~/.claude/`); added user-segment discovery (`~/.config/ai-kit/segments/`) and a
-self-describing external-segment header standard (`name`/`description`/`icon`/`sample`,
-wizard-side only). See "External / user segments".
+**Amendment 1 (2026-06-24, on main `548ed0a`):** corrected config path to
+`~/.config/ai-kit/statusline.toml` (was wrongly `~/.claude/`); added user-segment discovery
+(`~/.config/ai-kit/segments/`) and a self-describing external-segment header standard
+(`name`/`description`/`icon`/`sample`, wizard-side only). See "External / user segments".
+**Amendment 2 (2026-06-24, on branch `feat/wizard-ux-redesign`):** the status line is now
+**OPTIONAL** — Step 2 opens with a detection-driven adoption gate (unset/ours/foreign); skip =
+no status-line writes; components-only is a first-class install. See "Status-line adoption
+(optional)" and the updated Step 2 / Step 3.
 **Goal:** Rebuild the Textual install wizard's UX into a linear, panelled, next-next
 carousel that matches the approved mockup — without changing the render path, the
 fail-closed contract, or the doctor-validated persistence of the existing wizard.
@@ -33,8 +37,10 @@ This redesign linearizes the flow and gives every area a dedicated bordered pane
 ## Locked decisions
 
 1. **Three numbered steps, NO Welcome screen.** Flow:
-   `Choose components (1/3) → Arrange status line (2/3) → Review & confirm (3/3) → Done`.
-   Done is an end card, not a numbered step. Start directly on Choose.
+   `Choose components (1/3) → Status line (2/3) → Review & confirm (3/3) → Done`.
+   Done is an end card, not a numbered step. Start directly on Choose. **The status line
+   is OPTIONAL** — Step 2 opens with an adoption gate (see "Status-line adoption (optional)");
+   the step count stays fixed at 3 (pips don't change) whether or not the user adopts it.
 2. **Single screen with a swappable step body** (recommended architecture) rather than
    pushed Textual Screens. The prototype proves this sidesteps the **Enter double-fire
    gotcha** entirely: because no new screen is pushed on `Enter`, the forwarded key never
@@ -63,7 +69,28 @@ This redesign linearizes the flow and gives every area a dedicated bordered pane
 - `a`/`n` select all/none **within the focused category**; `A`/`N` across **everything**.
 - Live per-category `N/M on` counts and a total `X of Y components selected`.
 
-### Step 2 — Arrange status line (the showcase)
+### Step 2 — Status line
+
+#### Adoption gate (shown first, every run)
+The status line is **opt-in**. On entering Step 2 the wizard inspects the *current*
+`settings.json` `statusLine` (read via the engine; see "Status-line adoption (optional)") and
+branches:
+
+- **Unset** (no `statusLine`): offer to adopt — "ai-kit can manage your Claude Code status line."
+  with **Adopt** (→ the Arrange editor below) and **Skip** (→ no status-line changes).
+- **Foreign** (a `statusLine` set to a command/path that is NOT ai-kit's
+  `python3 -S …/status-line.py`): **warn**, **show the current command/path**, and ask
+  **Replace with ai-kit's** (→ Arrange editor) or **Keep yours** (→ no changes).
+- **Ours** (already ai-kit's `status-line.py`): reconfigure — go straight to the Arrange editor,
+  pre-loaded from the existing `~/.config/ai-kit/statusline.toml`.
+
+When the user **Skips / Keeps theirs**, Step 2's body collapses to a one-line confirmation
+("Keeping your current status line: `<path>`" or "No status line will be configured"), the
+wizard writes **neither** `~/.config/ai-kit/statusline.toml` **nor** `settings.json`'s
+`statusLine`, and any existing status-line config is **left untouched** (skip = no-op). The
+adoption choice is held in the wizard state and reflected in Step 3.
+
+#### Arrange editor (the showcase — only when adopted/reconfiguring)
 - Three **bordered lane panels** (`Line 1/2/3`). Line 2 and Line 3 are **dashed** and
   carry a `needs ≥ 20 rows` / `needs ≥ 30 rows` border-subtitle (the real renderer's
   row-gate).
@@ -87,15 +114,48 @@ This redesign linearizes the flow and gives every area a dedicated bordered pane
   ideal home), not a fixed Line 1.
 
 ### Step 3 — Review & confirm
-- **components to install** box (by category) · **status line** preview box (same dark
-  status-line background as Step 2, for consistency) · **what happens on confirm** box
-  (symlink N components, write `~/.config/ai-kit/statusline.toml` with M segments, validate via
-  `statusline-doctor`) · a green **`▸ Install ai-kit`** CTA with an `Enter` keycap.
-- `Enter` = Install (the ONLY place the wizard mutates disk); `Esc` = Back to Arrange.
+- **components to install** box (by category) · **status line** box · **what happens on
+  confirm** box · a green **`▸ Install ai-kit`** CTA with an `Enter` keycap.
+- The **status line** box is conditional on the adoption choice:
+  - *Adopted/reconfigured:* the preview box (same dark status-line background as Step 2) and the
+    confirm line "write `~/.config/ai-kit/statusline.toml` with M segments + set
+    `settings.json` `statusLine`, validate via `statusline-doctor`."
+  - *Skipped/kept theirs:* "Status line: unchanged" (with the kept path, if any) and **no**
+    status-line line in "what happens on confirm."
+- **what happens on confirm** always lists component symlinks: "symlink N components into
+  `~/.claude/{skills,agents,commands}/` (and unlink deselected)."
+- **Guard:** if the result would change **nothing** (no component add/remove AND status line
+  skipped), confirm is blocked with a "nothing to do" notice (reuse the empty-install guard).
+- `Enter` = Install (the ONLY place the wizard mutates disk); `Esc` = Back to Step 2.
 
 ### Done
 - Confirmation card + next-steps box (open a new session, re-run to change picks, edit
   `~/.config/ai-kit/statusline.toml`). `Enter`/`q` exits.
+
+## Status-line adoption (optional)
+
+The status line is no longer assumed; the wizard detects its current state and only ever
+touches it with consent. This is an **engine + persistence** concern surfaced to the UI via
+`WizardContext`; the renderer is unaffected.
+
+- **Detection (engine, read-only):** a helper reads `settings.json`'s `statusLine` and
+  classifies it: `unset` (absent/empty), `ours` (the command invokes ai-kit's
+  `paths.status_line`, i.e. `python3 -S …/tools/status-line.py`), or `foreign` (set, but not
+  ours). The detected `{state, current_command}` is added to `WizardContext` for Step 2's gate.
+  Path comparison uses the resolved `paths.status_line` (XDG-aware), not a hard-coded string.
+- **Consent model:** `unset`/`foreign` require an explicit Adopt/Replace before any status-line
+  write; `ours` is treated as reconfigure (already consented historically). **Skip/Keep = no-op:**
+  the wizard writes neither `~/.config/ai-kit/statusline.toml` nor `settings.json` `statusLine`,
+  and never deletes/edits an existing status line on skip (removal is out of scope for v1.0).
+- **Persistence is conditional:** the existing `save_statusline_config` / `write_toml_preserving`
+  / doctor path runs **only when the user adopted/reconfigured**. Component symlinking
+  (link/relink/unlink/prune) runs **independently** of the status-line choice, so a
+  components-only install never reads or writes any status-line file. Setting `settings.json`
+  `statusLine` to `python3 -S …/status-line.py` happens **only on adopt** (and is left as-is on
+  reconfigure if already correct).
+- **Components-only is a first-class outcome:** selecting components with the status line skipped
+  is a complete, valid install (symlinks only). Selecting nothing AND skipping the status line is
+  the "nothing to do" case (blocked at Review).
 
 ## Data sourcing & segment inventory
 
@@ -116,8 +176,8 @@ lists. Clarified via requirements-clarity (score 91/100). The prototype's
 - The canonical segment list is **discovered** from `tools/status-line.py`'s `SEGMENTS`
   / self-registering registry. The render file stays `python3 -S` stdlib-only and
   carries **no** UI copy or sample data.
-- **New inventory data file** (proposed `tools/segments_inventory.toml`, TOML — name/format
-  to confirm), keyed by segment name; each entry: `description` (UI-only; inventory is the
+- **New inventory data file** (`tools/segments_inventory.toml`, TOML — name/format confirmed
+  2026-06-24), keyed by segment name; each entry: `description` (UI-only; inventory is the
   SOLE source; never user-configurable), `sample` (static value shown in the preview),
   `icon` (default), `line` (default/preferred line).
 - **Override layering (read by setup/wizard, not the renderer):** the current
@@ -175,10 +235,11 @@ for user-dropped segments to render.** This work is wizard/installer-side only: 
   existing `~/.config/ai-kit/statusline.toml` already has it `= true` AND placed on a line (env
   mirror equivalent). A fresh install shows every `alt_*` OFF (in the wizard's OFF tray,
   available to enable). The wizard always LISTS them (unchecked) so they stay discoverable.
-  - **Golden impact (intended):** this makes the default rendered status line leaner (today
-    several `alt_*` default on: `alt_git_worktree`, `alt_time_ago`, `alt_time_clock`,
-    `alt_time_session`, `alt_time_api`). Golden baselines are regenerated to the new lean
-    default — intended, not a regression.
+  - **Golden impact (intended):** this makes the default rendered status line leaner. The
+    `alt_*` keys that default ON today (all flip OFF): `alt_git_worktree`, `alt_time_ago`,
+    `alt_time_clock`, `alt_time_session`, `alt_time_api`, `alt_system_memory`,
+    `alt_rate_limits` (`alt_cost` and `alt_term_dimensions` are already OFF). Golden baselines
+    are regenerated to the new lean default — intended, not a regression.
 - **Two distinct memory segments — keep both:**
   - Built-in `alt_process_memory` (process RSS) — name unchanged (was `alt_system_memory`).
     Being `alt_*`, it is now off-by-default per the rule above.
@@ -221,6 +282,20 @@ for user-dropped segments to render.** This work is wizard/installer-side only: 
       `~/.claude/statusline.toml` reference remains in shipped code, the PRD, or the prototype copy.
 - [ ] No fake/hardcoded component or segment list (incl. `_protodata.py`) remains in the
       shipped wizard.
+
+### Acceptance (status-line adoption)
+- [ ] Engine detection classifies `settings.json` `statusLine` as `unset` / `ours` / `foreign`
+      using the resolved `paths.status_line` (not a hard-coded string); state + current command
+      are exposed on `WizardContext`.
+- [ ] `unset` and `foreign` show the adoption gate (foreign also shows a warning + the current
+      command/path); `ours` goes straight to the Arrange editor pre-loaded from disk.
+- [ ] **Components-only install:** adopting components with the status line skipped writes the
+      component symlinks and touches **no** status-line file and **not** `settings.json`
+      `statusLine`; an existing status line is left byte-for-byte untouched.
+- [ ] **Adopt** writes `~/.config/ai-kit/statusline.toml` (doctor-validated) AND sets
+      `settings.json` `statusLine` to `python3 -S …/status-line.py`.
+- [ ] Selecting nothing AND skipping the status line is blocked at Review ("nothing to do").
+- [ ] Component link/relink/unlink/prune runs independently of the status-line choice.
 
 ## Binding invariants (carried verbatim from the shipped wizard — do not regress)
 
