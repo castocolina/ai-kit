@@ -2639,5 +2639,74 @@ class TestCmdInstallExternalReconcile(unittest.TestCase):
         mock_select.assert_called_once()
 
 
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestReadComponentDesc(unittest.TestCase):
+    """_read_component_desc parses description: from YAML frontmatter."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _make_file(self, relpath, content):
+        p = os.path.join(self.tmp, relpath)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(content)
+        return p
+
+    def test_reads_description_from_md_file(self):
+        p = self._make_file("my-cmd.md",
+                            "---\nname: my-cmd\ndescription: Does the thing\n---\n")
+        self.assertEqual(setup._read_component_desc(p), "Does the thing")
+
+    def test_reads_description_from_skill_directory(self):
+        self._make_file("my-skill/SKILL.md",
+                        "---\nname: my-skill\ndescription: Skill description here\n---\n")
+        skill_dir = os.path.join(self.tmp, "my-skill")
+        self.assertEqual(setup._read_component_desc(skill_dir), "Skill description here")
+
+    def test_returns_empty_string_when_no_frontmatter(self):
+        p = self._make_file("bare.md", "# Just a heading\nNo frontmatter here.\n")
+        self.assertEqual(setup._read_component_desc(p), "")
+
+    def test_returns_empty_string_when_file_missing(self):
+        self.assertEqual(
+            setup._read_component_desc(os.path.join(self.tmp, "nonexistent.md")), "")
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestComponentMetaInContext(unittest.TestCase):
+    """_build_wizard_context populates component_meta from real frontmatter."""
+
+    def _ctx(self):
+        wa = _import_wizard_app()
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = {"HOME": home, "AI_KIT_DIR": repo}
+        paths = setup.resolve_paths(env)
+        entries = setup.enumerate_entries(paths.install_dir)
+        installed = {cat: set() for cat in setup.CATEGORIES}
+        return setup._build_wizard_context(paths, entries, installed, "{}", wa)
+
+    def test_component_meta_is_dict(self):
+        ctx = self._ctx()
+        self.assertIsInstance(ctx.component_meta, dict)
+
+    def test_component_meta_keys_match_selection_names(self):
+        ctx = self._ctx()
+        sel_names = {name for _, name, _ in ctx.selection.items}
+        for name in sel_names:
+            self.assertIn(name, ctx.component_meta,
+                          f"component {name!r} missing from component_meta")
+
+    def test_component_meta_values_are_strings(self):
+        ctx = self._ctx()
+        for name, desc in ctx.component_meta.items():
+            self.assertIsInstance(desc, str,
+                                  f"component_meta[{name!r}] must be str, got {type(desc)}")
+
+
 if __name__ == "__main__":
     unittest.main()

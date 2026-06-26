@@ -117,6 +117,7 @@ def _fake_ctx_layout():
         status_line={"state": "unset", "current_command": None},
         segment_meta={},
         external_segments=[],
+        component_meta={},
     )
 
 
@@ -142,6 +143,7 @@ def _fake_ctx(items=None):
         status_line={"state": "unset", "current_command": None},
         segment_meta={},
         external_segments=[],
+        component_meta={},
     )
 
 
@@ -183,6 +185,7 @@ def _fake_ctx_picks():
             "push":    {"icon": "🚀", "description": "Git push"},
         },
         external_segments=[],
+        component_meta={},
     )
 
 
@@ -1161,6 +1164,7 @@ class TestPreview(unittest.IsolatedAsyncioTestCase):
             status_line={"state": "unset", "current_command": None},
             segment_meta={},
             external_segments=[],
+            component_meta={},
         )
 
     async def _navigate_to_board(self, app, pilot):
@@ -1327,6 +1331,7 @@ class TestPreview(unittest.IsolatedAsyncioTestCase):
             status_line={"state": "unset", "current_command": None},
             segment_meta={},
             external_segments=[],
+            component_meta={},
         )
 
     async def test_unavailable_sentinel_on_raise(self):
@@ -1424,6 +1429,7 @@ class TestCrashSafety(unittest.IsolatedAsyncioTestCase):
             status_line={"state": "unset", "current_command": None},
             segment_meta={},
             external_segments=[],
+            component_meta={},
         )
 
     def test_unhandled_exception_raises_wizard_crash(self):
@@ -1497,6 +1503,7 @@ class TestWizardContextShape(unittest.TestCase):
             segment_meta={"path": {"description": "d", "sample": "s",
                                    "icon": "", "line": 0}},
             external_segments=[],
+            component_meta={},
         )
         self.assertEqual(ctx.status_line["state"], "unset")
         self.assertEqual(ctx.segment_meta["path"]["line"], 0)
@@ -1520,6 +1527,7 @@ class TestWizardContextShape(unittest.TestCase):
                     status_line={"state": state_val, "current_command": cmd_val},
                     segment_meta={},
                     external_segments=[],
+                    component_meta={},
                 )
                 self.assertIsInstance(ctx.status_line["state"], str)
                 self.assertIn(ctx.status_line["state"], ("unset", "ours", "foreign"))
@@ -1542,6 +1550,7 @@ class TestWizardContextShape(unittest.TestCase):
             status_line={"state": "unset", "current_command": None},
             segment_meta=meta,
             external_segments=[],
+            component_meta={},
         )
         for key, val in ctx.segment_meta.items():
             with self.subTest(segment=key):
@@ -1563,6 +1572,7 @@ class TestWizardContextShape(unittest.TestCase):
             status_line={"state": "unset", "current_command": None},
             segment_meta={},
             external_segments=ext,
+            component_meta={},
         )
         self.assertIsInstance(ctx.external_segments, list)
         required_keys = ("id", "name", "path", "description", "icon",

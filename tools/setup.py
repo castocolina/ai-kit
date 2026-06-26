@@ -485,6 +485,32 @@ def write_toml_preserving(path, text, statusline_doctor):
     return True
 
 
+def _read_component_desc(abspath: str) -> str:
+    """Return the ``description:`` value from YAML frontmatter of a component.
+
+    For skills ``abspath`` is a directory — the frontmatter lives in
+    ``{abspath}/SKILL.md``.  For commands and agents it is the ``.md`` file
+    directly.  Returns an empty string if the file is absent, unreadable, or
+    has no frontmatter block.
+    """
+    if not abspath:
+        return ""
+    candidate = os.path.join(abspath, "SKILL.md") if os.path.isdir(abspath) else abspath
+    try:
+        with open(candidate, encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return ""
+    if not lines or lines[0].rstrip() != "---":
+        return ""
+    for line in lines[1:]:
+        if line.rstrip() == "---":
+            break
+        if line.startswith("description:"):
+            return line[len("description:"):].strip()
+    return ""
+
+
 def validate_entry(cat, path):
     """Port of install.sh validate_entry. skills: a dir containing SKILL.md.
     commands/agents: a *.md file whose first line is the YAML front-matter
@@ -1734,6 +1760,12 @@ def _build_wizard_context(  # pylint: disable=too-many-locals
     for e in external:
         segments[e["id"]] = _external_enabled_in_toml(paths.config_toml, e["id"])
 
+    component_meta = {
+        name: _read_component_desc(abspath)
+        for cat in CATEGORIES
+        for name, abspath in entries[cat]
+    }
+
     return wizard_app_mod.WizardContext(
         selection=sel,
         state={"segments": segments,
@@ -1745,6 +1777,7 @@ def _build_wizard_context(  # pylint: disable=too-many-locals
         status_line=sl_state,
         segment_meta=segment_meta,
         external_segments=external,
+        component_meta=component_meta,
     )
 
 

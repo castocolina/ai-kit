@@ -197,6 +197,7 @@ class WizardContext(NamedTuple):
     segment_meta: dict          # {key: {description, sample, icon, line}}
     external_segments: list     # [{id, name, path, default_on, description,
                                 #   icon, sample, line, provenance}, …]
+    component_meta: dict          # {name: description} across all CATEGORIES
 
 
 class WizardCrash(Exception):
