@@ -364,6 +364,37 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Nothing to write",
                           str(app.query_one("#cta", Static).content))
 
+    async def test_decline_omits_status_line_on_review_and_done(self):
+        app = wa.WizardApp(make_ctx(sl_state="foreign"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")          # choose → arrange (gate)
+            await pilot.press("n")              # decline → Review (arrange skipped)
+            self.assertEqual(app.step, wa.STEP_REVIEW)
+            # status-line preview panel is hidden; CTA & "what" omit segments
+            self.assertFalse(app.query_one("#rev-preview", Static).display)
+            self.assertNotIn("segments", str(app.query_one("#cta", Static).content))
+            self.assertIn("left unchanged",
+                          str(app.query_one("#rev-what", Static).content))
+            await pilot.press("enter")          # commit (components are a net change)
+            self.assertEqual(app.step, wa.STEP_DONE)
+            self.assertIs(app.result.state["adopt"], False)
+            sub = str(app.query_one("#step-sub", Static).content)
+            self.assertNotIn("status line is ready", sub)
+            self.assertNotIn("segments", sub)
+            self.assertIn("left unchanged", sub)
+
+    async def test_accept_shows_status_line_on_review(self):
+        app = wa.WizardApp(make_ctx(sl_state="unset"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")          # choose → arrange (gate)
+            await pilot.press("y")              # accept
+            await pilot.press("enter")          # arrange → review
+            self.assertEqual(app.step, wa.STEP_REVIEW)
+            self.assertTrue(app.query_one("#rev-preview", Static).display)
+            self.assertIn("segments", str(app.query_one("#cta", Static).content))
+
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestChrome(unittest.IsolatedAsyncioTestCase):

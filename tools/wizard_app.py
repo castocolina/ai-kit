@@ -356,10 +356,14 @@ class WizardApp(App):
         title_w.update(f"[{color}]{TITLES[self.step]}[/]")
         if self.step == STEP_DONE:
             ncomp = sum(1 for _c, _n, on in self.sel.items if on)
-            nseg = sum(len(line) for line in self.lines)
-            nlines = sum(1 for line in self.lines if line)
-            sub_w.update(f"[{DIM}]{ncomp} components · {nseg} segments · "
-                         f"{nlines} lines — your status line is ready[/]")
+            if self.state.get("adopt", False):
+                nseg = sum(len(line) for line in self.lines)
+                nlines = sum(1 for line in self.lines if line)
+                sub_w.update(f"[{DIM}]{ncomp} components · {nseg} segments · "
+                             f"{nlines} lines — your status line is ready[/]")
+            else:
+                sub_w.update(f"[{DIM}]{ncomp} components installed · "
+                             "status line left unchanged[/]")
         else:
             sub_w.update(SUBS[self.step])
         self.query_one(f"#{steps[self.step]}").display = True
@@ -511,29 +515,47 @@ class WizardApp(App):
                 + (", ".join(by_cat[c]) if by_cat[c] else f"[{DIM}](none)[/]")
                 for c in cats]
         self.query_one("#rev-components", Static).update("\n".join(rows))
-        self.query_one("#rev-preview", Static).update(
-            "\n".join(f"[#d6dee8]{p}[/]" for p in self._preview()))
         ncomp = sum(1 for _c, _n, on in items if on)
         nseg = sum(len(line) for line in self.lines)
         adopt = self.state.get("adopt", False)
-        sl_line = ("Writes ~/.config/ai-kit/statusline.toml + wires settings.json"
-                   if adopt else "Status line left unchanged (components only)")
-        self.query_one("#rev-what", Static).update(
-            f"[{DIM}]•[/] Symlink [bold]{ncomp}[/] components into "
-            f"~/.claude/(agents|commands|skills)/\n"
-            f"[{DIM}]•[/] {sl_line}\n"
-            f"[{DIM}]•[/] Validate with statusline-doctor before saving")
+        # Status-line preview panel: only shown when adopting — declining skips
+        # the whole status-line section.
+        rp = self.query_one("#rev-preview", Static)
+        rp.display = adopt
+        if adopt:
+            rp.update("\n".join(f"[#d6dee8]{p}[/]" for p in self._preview()))
+        if adopt:
+            what = (f"[{DIM}]•[/] Symlink [bold]{ncomp}[/] components into "
+                    f"~/.claude/(agents|commands|skills)/\n"
+                    f"[{DIM}]•[/] Write ~/.config/ai-kit/statusline.toml + "
+                    f"wire settings.json\n"
+                    f"[{DIM}]•[/] Validate with statusline-doctor before saving")
+        else:
+            what = (f"[{DIM}]•[/] Symlink [bold]{ncomp}[/] components into "
+                    f"~/.claude/(agents|commands|skills)/\n"
+                    f"[{DIM}]•[/] Status line left unchanged (components only)")
+        self.query_one("#rev-what", Static).update(what)
+        seg_note = f" · {nseg} segments" if adopt else ""
         self.query_one("#cta", Static).update(
-            f"▸ [bold #7ee2a0]Install ai-kit[/]  [{DIM}]{ncomp} components · "
-            f"{nseg} segments[/]   [#d6ffe4 on #10421f] Enter [/]")
+            f"▸ [bold #7ee2a0]Install ai-kit[/]  [{DIM}]{ncomp} components"
+            f"{seg_note}[/]   [#d6ffe4 on #10421f] Enter [/]")
 
     def _render_done(self) -> None:
         self.query_one("#done-art", Static).update(
             f"[{GREEN}]┌─┐ ┬[/]\n[{GREEN}]├─┤ │[/]\n[{GREEN}]┴ ┴ ┴[/] ─kit")
-        self.query_one("#done-next", Static).update(
-            f"[{DIM}]•[/] Open a new Claude Code session to see your status line.\n"
-            f"[{DIM}]•[/] Re-run  uv run tools/setup.py  any time to change picks.\n"
-            f"[{DIM}]•[/] Tweak segments later in  ~/.config/ai-kit/statusline.toml.")
+        if self.state.get("adopt", False):
+            nxt = (f"[{DIM}]•[/] Open a new Claude Code session to see your "
+                   f"status line.\n"
+                   f"[{DIM}]•[/] Re-run  uv run tools/setup.py  any time to "
+                   f"change picks.\n"
+                   f"[{DIM}]•[/] Tweak segments later in  "
+                   f"~/.config/ai-kit/statusline.toml.")
+        else:
+            nxt = (f"[{DIM}]•[/] Re-run  uv run tools/setup.py  any time to "
+                   f"change picks.\n"
+                   f"[{DIM}]•[/] Want a status line? Run it again and choose "
+                   f"Yes at the status-line gate.")
+        self.query_one("#done-next", Static).update(nxt)
 
     # ---- input -----------------------------------------------------------
     def on_key(self, event: events.Key) -> None:
