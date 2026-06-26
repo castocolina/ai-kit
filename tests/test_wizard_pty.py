@@ -285,23 +285,19 @@ class TestPhase1E2E(unittest.TestCase):
         _TOTAL_WAIT = 60    # total wall-clock budget for the full run
 
         startup_output = b""
+        all_captured: list[bytes] = []
         try:
-            # Wait until the picks screen renders (glyph ◉ or Footer "Cancel").
+            # Wait until the Choose screen is FULLY painted. The picksbox border
+            # title ("select components") paints a frame after the body, so wait
+            # for it specifically — stopping at an earlier marker (◉/ANSI) can
+            # capture an intermediate paint that lacks the border title (flaky).
             boot_deadline = time.time() + _BOOT_WAIT
-            _PICKS_MARKERS = (b"\xe2\x97\x89", b"Cancel", b"\x1b[")  # ◉ (UTF-8), footer, ANSI
-            all_captured: list[bytes] = []
-            found = False
-            for marker in _PICKS_MARKERS:
-                try:
-                    startup_output = drive_until(
-                        master_fd, marker, boot_deadline, captured=all_captured
-                    )
-                    found = True
-                    break
-                except AssertionError:
-                    pass
-            if not found:
-                startup_output = b"".join(all_captured)
+            try:
+                startup_output = drive_until(
+                    master_fd, b"select components", boot_deadline, captured=all_captured
+                )
+            except AssertionError:
+                startup_output = b"".join(all_captured)  # let the assertions report clearly
         except OSError:
             startup_output = b""
 
