@@ -2675,6 +2675,58 @@ class TestReadComponentDesc(unittest.TestCase):
         self.assertEqual(
             setup._read_component_desc(os.path.join(self.tmp, "nonexistent.md")), "")
 
+    def test_folds_block_scalar_into_one_line(self):
+        # `description: >-` with the text on the following indented lines must
+        # be joined, not returned as ">-" (the original bug).
+        p = self._make_file("blk.md",
+                            "---\nname: blk\ndescription: >-\n"
+                            "  First line of the block\n"
+                            "  and the second line.\n"
+                            "tools: Read\n---\n")
+        self.assertEqual(setup._read_component_desc(p),
+                         "First line of the block and the second line.")
+
+    def test_folds_literal_block_scalar(self):
+        p = self._make_file("lit.md",
+                            "---\ndescription: |\n  line one\n  line two\n---\n")
+        self.assertEqual(setup._read_component_desc(p), "line one line two")
+
+    def test_block_scalar_stops_at_next_key(self):
+        # A following less-indented key terminates the block.
+        p = self._make_file("stop.md",
+                            "---\ndescription: >-\n  only this line\n"
+                            "name: stop\n---\n")
+        self.assertEqual(setup._read_component_desc(p), "only this line")
+
+    def test_strips_quotes_on_inline_value(self):
+        p = self._make_file("q.md",
+                            '---\ndescription: "Quoted value"\n---\n')
+        self.assertEqual(setup._read_component_desc(p), "Quoted value")
+
+    def test_caps_long_description_at_max(self):
+        long = "word " * 100  # 500 chars
+        p = self._make_file("long.md",
+                            f"---\ndescription: {long}\n---\n")
+        out = setup._read_component_desc(p)
+        self.assertLessEqual(len(out), setup._DESC_MAX)
+        self.assertTrue(out.endswith("…"))
+
+    def test_returns_empty_when_description_absent(self):
+        p = self._make_file("nodesc.md", "---\nname: nodesc\ntools: Read\n---\n")
+        self.assertEqual(setup._read_component_desc(p), "")
+
+    def test_real_block_scalar_skill_is_folded(self):
+        # Ground against a real bundled skill that uses `description: >-`.
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        skill = os.path.join(repo, "skills", "markdown-to-pdf")
+        if not os.path.isdir(skill):
+            self.skipTest("bundled skill markdown-to-pdf not present")
+        out = setup._read_component_desc(skill)
+        self.assertTrue(out, "expected a non-empty description")
+        self.assertNotIn(">-", out)
+        self.assertNotIn("\n", out)
+        self.assertLessEqual(len(out), setup._DESC_MAX)
+
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestComponentMetaInContext(unittest.TestCase):
     """_build_wizard_context populates component_meta from real frontmatter."""

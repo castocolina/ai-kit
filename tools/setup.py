@@ -485,13 +485,34 @@ def write_toml_preserving(path, text, statusline_doctor):
     return True
 
 
+_DESC_MAX = 200
+
+
+def _cap_desc(desc: str) -> str:
+    """Collapse whitespace to one line and cap at ``_DESC_MAX`` chars,
+    preferring a word boundary and marking truncation with an ellipsis."""
+    desc = " ".join(desc.split())
+    if len(desc) <= _DESC_MAX:
+        return desc
+    cut = desc[:_DESC_MAX - 1]
+    sp = cut.rfind(" ")
+    if sp > _DESC_MAX // 2:  # prefer a word boundary when one is close
+        cut = cut[:sp]
+    return cut.rstrip() + "…"
+
+
 def _read_component_desc(abspath: str) -> str:
-    """Return the ``description:`` value from YAML frontmatter of a component.
+    """Return the ``description:`` value from a component's YAML frontmatter.
 
     For skills ``abspath`` is a directory — the frontmatter lives in
     ``{abspath}/SKILL.md``.  For commands and agents it is the ``.md`` file
-    directly.  Returns an empty string if the file is absent, unreadable, or
-    has no frontmatter block.
+    directly.  Handles both inline values (``description: text``) and YAML
+    block scalars (``description: >-`` or ``|`` with the text on the
+    following indented lines), folding multi-line values into a single
+    space-joined string.  The result is collapsed to one line and capped at
+    ``_DESC_MAX`` characters (an ellipsis marks truncation).  Returns ``""``
+    if the file is absent, unreadable, or has no ``description`` in its
+    frontmatter.
     """
     if not abspath:
         return ""
@@ -503,12 +524,33 @@ def _read_component_desc(abspath: str) -> str:
         return ""
     if not lines or lines[0].rstrip() != "---":
         return ""
-    for line in lines[1:]:
-        if line.rstrip() == "---":
-            break
+
+    desc = ""
+    i = 1
+    while i < len(lines):
+        line = lines[i]
+        if line.rstrip() == "---":  # frontmatter ended without a description
+            return ""
         if line.startswith("description:"):
-            return line[len("description:"):].strip()
-    return ""
+            rest = line[len("description:"):].strip()
+            if rest[:1] in ("|", ">"):  # YAML block scalar — gather the body
+                parts = []
+                i += 1
+                while i < len(lines):
+                    nxt = lines[i]
+                    if nxt.rstrip() == "---":
+                        break
+                    if nxt.strip() and not nxt[:1].isspace():
+                        break  # a new, less-indented top-level key
+                    parts.append(nxt.strip())
+                    i += 1
+                desc = " ".join(p for p in parts if p)
+            else:  # inline value (optionally quoted)
+                desc = rest.strip("'\"")
+            break
+        i += 1
+
+    return _cap_desc(desc)
 
 
 def validate_entry(cat, path):
