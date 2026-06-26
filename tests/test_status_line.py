@@ -296,7 +296,7 @@ class TestNoCollapsedIcons(unittest.TestCase):
                     lambda d, a, t: sl.seg_alt_cost(_data(cost=0.5), a, t),
                     sl.seg_alt_time_session, sl.seg_alt_time_api, sl.seg_render_time,
                     lambda d, a, t: sl.seg_context(_data(), a, t),
-                    sl.seg_chat_size, sl.seg_alt_system_memory]
+                    sl.seg_chat_size, sl.seg_alt_process_memory]
         for b in builders:
             out = b(_data(t_start=sl.time.perf_counter_ns()), 120, THEME)
             if not out:
@@ -422,7 +422,7 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertIsNotNone(sl.seg_chat_size(_data(), 200, THEME))
         self.assertIsNone(sl.seg_chat_size(_data(), 3, THEME))
         self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 200, THEME))
-        self.assertIsNone(sl.seg_alt_system_memory(_data(mem_bytes=None), 200, THEME))
+        self.assertIsNone(sl.seg_alt_process_memory(_data(mem_bytes=None), 200, THEME))
 
     def test_rate_limits_shows_reset_then_drops_suffix_when_narrow(self):
         rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600}}
@@ -476,7 +476,7 @@ class TestCooperativeBuilders(unittest.TestCase):
                     "alt_time_ago", "alt_time_clock", "effort", "lines", "alt_cost",
                     "alt_time_session", "alt_time_api", "render_time",
                     "alt_term_dimensions", "context", "chat_size",
-                    "alt_system_memory", "alt_rate_limits"):
+                    "alt_process_memory", "alt_rate_limits"):
             self.assertIn(key, sl.BUILDERS, key)
             self.assertTrue(callable(sl.BUILDERS[key]))
 
@@ -503,23 +503,28 @@ class TestDisplayDir(unittest.TestCase):
 
 class TestPackLine(unittest.TestCase):
     def test_keeps_segments_that_fit(self):
-        out = _pack(["model", "alt_time_clock"], _data(), 200)
-        self.assertIn("Opus 4.8", strip(out))
-        self.assertIn("⏰ 14:30", strip(out))
-        self.assertIn(" | ", out)
+        sl.SEGMENTS["alt_time_clock"] = True
+        try:
+            out = _pack(["model", "alt_time_clock"], _data(), 200)
+            self.assertIn("Opus 4.8", strip(out))
+            self.assertIn("⏰ 14:30", strip(out))
+            self.assertIn(" | ", out)
+        finally:
+            sl.SEGMENTS["alt_time_clock"] = False
 
     def test_best_fit_skips_overflow_keeps_smaller(self):
-        out = strip(_pack(["model", "alt_time_clock"], _data(model_name="X" * 60), 30))
-        self.assertIn("⏰ 14:30", out)
-        self.assertNotIn("XXXX", out)
+        sl.SEGMENTS["alt_time_clock"] = True
+        try:
+            out = strip(_pack(["model", "alt_time_clock"], _data(model_name="X" * 60), 30))
+            self.assertIn("⏰ 14:30", out)
+            self.assertNotIn("XXXX", out)
+        finally:
+            sl.SEGMENTS["alt_time_clock"] = False
 
     def test_flag_off_segment_not_built(self):
-        sl.SEGMENTS["alt_time_clock"] = False
-        try:
-            out = strip(_pack(["model", "alt_time_clock"], _data(), 200))
-            self.assertNotIn("⏰", out)
-        finally:
-            sl.SEGMENTS["alt_time_clock"] = True
+        # alt_time_clock is already OFF by default; this test confirms the flag is honoured.
+        out = strip(_pack(["model", "alt_time_clock"], _data(), 200))
+        self.assertNotIn("⏰", out)
 
     def test_pinned_path_present_even_when_too_narrow(self):
         out = strip(_pack(["path", "git_branch"],
@@ -779,7 +784,7 @@ class TestDocumentation(unittest.TestCase):
                     "alt_time_ago", "alt_time_clock", "effort", "lines",
                     "alt_time_session", "alt_time_api", "render_time",
                     "alt_term_dimensions", "context", "chat_size",
-                    "alt_system_memory", "alt_rate_limits"):
+                    "alt_process_memory", "alt_rate_limits"):
             self.assertIn(key, src, key)
 
     def test_has_customization_guide(self):
@@ -1083,7 +1088,7 @@ class TestLazyCompute(unittest.TestCase):
             ea.assert_not_called()
 
     def test_enabled_segments_run_their_probes(self):
-        segs = {"git_branch": True, "todo": True, "alt_system_memory": True,
+        segs = {"git_branch": True, "todo": True, "alt_process_memory": True,
                 "effort": True}
         with mock.patch.object(sl, "probe_git_snapshot",
                                return_value=sl.GitSnapshot(True, "m", "clean", False, "")) as gi,\
@@ -1519,11 +1524,11 @@ class TestResolveSegments(unittest.TestCase):
         self.assertEqual(cfg.palette, {})
 
     def test_file_overrides_default(self):
-        path = self._write("[segments]\nalt_cost = true\nalt_system_memory = false\n")
+        path = self._write("[segments]\nalt_cost = true\nalt_process_memory = false\n")
         cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
-        self.assertTrue(cfg.segments["alt_cost"])             # default False -> True
-        self.assertFalse(cfg.segments["alt_system_memory"])  # default True  -> False
-        self.assertTrue(cfg.segments["alt_time_clock"])       # untouched default
+        self.assertTrue(cfg.segments["alt_cost"])              # default False -> True
+        self.assertFalse(cfg.segments["alt_process_memory"])   # default False, still False
+        self.assertTrue(cfg.segments["model"])                # untouched default (non-alt)
 
     def test_env_overrides_file(self):
         path = self._write("[segments]\nalt_cost = true\n")
@@ -1617,10 +1622,11 @@ class TestWorktreeSegmentToggle(unittest.TestCase):
         self.addCleanup(os.unlink, f.name)
         return f.name
 
-    def test_worktree_segment_on_by_default(self):
-        self.assertIs(sl.SEGMENTS.get("alt_git_worktree"), True)
+    def test_worktree_segment_off_by_default(self):
+        # alt_git_worktree is opt-in (OFF by default) since the alt_* default flip.
+        self.assertIs(sl.SEGMENTS.get("alt_git_worktree"), False)
         cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
-        self.assertTrue(cfg.segments["alt_git_worktree"])
+        self.assertFalse(cfg.segments["alt_git_worktree"])
 
     def test_worktree_segment_disable_via_toml(self):
         path = self._write("[segments]\nalt_git_worktree = false\n")
@@ -2266,6 +2272,33 @@ class TestEnvConvention(unittest.TestCase):
     def test_external_cache_ttl_via_convention(self):
         cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "30"})
         self.assertEqual(cfg.external.cache_ttl, 30)
+
+class TestAltSegmentsDefaultOff(unittest.TestCase):
+    def test_every_alt_segment_defaults_off(self):
+        for key, val in sl.SEGMENTS.items():
+            if key.startswith("alt_"):
+                self.assertFalse(val, f"{key} must default OFF (alt_* are opt-in)")
+
+
+class TestProcessMemoryRename(unittest.TestCase):
+    def test_renamed_key_present_old_absent(self):
+        self.assertIn("alt_process_memory", sl.SEGMENTS)
+        self.assertNotIn("alt_system_memory", sl.SEGMENTS)
+        self.assertTrue(hasattr(sl, "seg_alt_process_memory"))
+        self.assertFalse(hasattr(sl, "seg_alt_system_memory"))
+
+
+class TestRendererHeaderIgnoresUIKeys(unittest.TestCase):
+    def test_core_parser_ignores_name_description_icon_sample(self):
+        head = ["# ai-kit-segment: id=x line=1 icon=💻 name=N "
+                "description=D sample=S\n"]
+        fields = sl.core_parse_segment_header(head)
+        self.assertEqual(fields.get("id"), "x")
+        self.assertEqual(fields.get("line"), "1")
+        for ui_key in ("name", "description", "icon", "sample"):
+            self.assertNotIn(ui_key, fields,
+                             f"renderer parser must ignore UI key {ui_key}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

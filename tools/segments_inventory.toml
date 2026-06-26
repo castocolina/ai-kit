@@ -1,0 +1,125 @@
+# Segment inventory — UI metadata for built-in status-line segments.
+# Read by the installer/wizard ONLY (never by the render path). The renderer keeps
+# its own icon/line defaults; THIS file's icon/line MUST mirror them exactly
+# (arch test enforces it). `description` + `sample` are the SOLE source for UI copy.
+# External/user segments are NOT listed here — they self-describe via their header.
+
+[path]
+description = "Working directory, ~-relative"
+sample = "~/proj"
+icon = ""
+line = 0
+
+[git_branch]
+description = "Current git branch"
+sample = "main"
+icon = "🌿"
+line = 0
+
+[git_dirty]
+description = "Working-tree dirty marker"
+sample = "~"
+icon = ""
+line = 0
+
+[alt_git_worktree]
+description = "Active linked-worktree name"
+sample = "wt-feature"
+icon = "⎇"
+line = 0
+
+[todo]
+description = "Current TODO (in-progress / pending)"
+sample = "write tests"
+icon = "📝"
+line = 0
+
+[model]
+description = "Active model name"
+sample = "Opus"
+icon = ""
+line = 1
+
+[alt_time_ago]
+description = "Time since the session's first message"
+sample = "12m ago"
+icon = ""
+line = 1
+
+[alt_time_clock]
+description = "Current wall-clock time"
+sample = "14:30"
+icon = "⏰"
+line = 1
+
+[effort]
+description = "Reasoning-effort ladder + level"
+sample = "high"
+icon = "🧠"
+line = 1
+
+[lines]
+description = "Lines added / removed this session"
+sample = "+12 -3"
+icon = "📃"
+line = 1
+
+[alt_cost]
+description = "Session cost in USD"
+sample = "$0.50"
+icon = "🪙"
+line = 1
+
+[alt_time_session]
+description = "Total session duration"
+sample = "1h 04m"
+icon = "💬"
+line = 1
+
+[alt_time_api]
+description = "Cumulative API response time"
+sample = "42s"
+icon = "📡"
+line = 1
+
+[render_time]
+description = "Status line's own render time"
+sample = "18ms"
+icon = "⏱"
+line = 2
+
+[slowest]
+description = "Slowest single segment this render"
+sample = "git 9ms"
+icon = "🐌"
+line = 2
+
+[alt_term_dimensions]
+description = "Terminal size (cols×lines)"
+sample = "120×40"
+icon = ""
+line = 2
+
+[context]
+description = "Context-window % used (and max)"
+sample = "32%"
+icon = "📊"
+line = 2
+
+[chat_size]
+description = "Transcript file size on disk"
+sample = "305k"
+icon = "💾"
+line = 2
+
+[alt_process_memory]
+description = "Agent process memory (RSS)"
+sample = "428M"
+icon = "🧮"
+line = 2
+
+[alt_rate_limits]
+description = "Rate-limit buckets with reset time"
+sample = "80% 3h"
+icon = "⚡"
+line = 2

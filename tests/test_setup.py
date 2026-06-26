@@ -20,6 +20,27 @@ def load_module():
 
 setup = load_module()
 
+try:
+    import textual  # noqa: F401
+    HAVE_TEXTUAL = True
+except ImportError:
+    HAVE_TEXTUAL = False
+
+
+def _import_wizard_app():
+    """Import the SAME wizard_app module object setup.launch_wizard imports.
+
+    launch_wizard puts tools/ on sys.path and does ``import wizard_app`` (bare),
+    so patching ``tools.wizard_app`` would patch a different module object and the
+    real Textual TUI would launch (and hang). Importing the bare name here returns
+    exactly the module launch_wizard will reuse from sys.modules."""
+    tools_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import wizard_app  # pylint: disable=import-outside-toplevel
+    return wizard_app
+
 FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 SAMPLE_INPUT = os.path.join(FIXTURE_DIR, "sample-input.json")
 SAMPLE_RECIPE = os.path.join(
@@ -58,12 +79,12 @@ class TestTomlRead(unittest.TestCase):
 
     def test_current_segments_merges_file_override(self):
         with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
-            f.write("[segments]\nalt_cost = true\nalt_system_memory = false\n")
+            f.write("[segments]\nalt_cost = true\nalt_process_memory = false\n")
             path = f.name
         self.addCleanup(os.unlink, path)
         seg = setup.current_segments(path)
         self.assertTrue(seg["alt_cost"])
-        self.assertFalse(seg["alt_system_memory"])
+        self.assertFalse(seg["alt_process_memory"])
         self.assertTrue(seg["path"])         # untouched default survives
 
     def test_current_layout_default_on_noop_recipe(self):
@@ -73,7 +94,7 @@ class TestTomlRead(unittest.TestCase):
                           ["model", "alt_time_ago", "alt_time_clock", "effort", "lines",
                            "alt_cost", "alt_time_session", "alt_time_api"],
                           ["render_time", "slowest", "alt_term_dimensions",
-                           "context", "chat_size", "alt_system_memory", "alt_rate_limits"]])
+                           "context", "chat_size", "alt_process_memory", "alt_rate_limits"]])
 
     def test_layout_defaults_match_status_line(self):
         # Drift guard: setup.LAYOUT_DEFAULTS must mirror the canonical default
@@ -379,10 +400,10 @@ class TestDiscoverExampleSegments(unittest.TestCase):
     id=, and offer every example pre-checked (default ON)."""
 
     _HEADER = ("#!/usr/bin/env python3\n"
-               "# ai-kit-segment: line=1 after=context id=sysmem ttl=10\n"
+               "# ai-kit-segment: line=1 after=context id=system_memory ttl=10\n"
                "import sys\n")
 
-    def _mk(self, body, name="sysmem"):
+    def _mk(self, body, name="system_memory"):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         p = os.path.join(d, name)
@@ -392,7 +413,7 @@ class TestDiscoverExampleSegments(unittest.TestCase):
 
     def test_parse_segment_header_extracts_fields(self):
         fields = setup._parse_segment_header(self._HEADER)
-        self.assertEqual(fields["id"], "sysmem")
+        self.assertEqual(fields["id"], "system_memory")
         self.assertEqual(fields["ttl"], "10")
         self.assertEqual(fields["after"], "context")
 
@@ -428,11 +449,11 @@ class TestDiscoverExampleSegments(unittest.TestCase):
         spec.loader.exec_module(sl)
         self.assertEqual(setup._SEG_HEADER_RE.pattern, sl._SEG_HEADER_RE.pattern)
 
-    def test_discover_finds_sysmem_pre_checked(self):
+    def test_discover_finds_system_memory_pre_checked(self):
         d, _ = self._mk(self._HEADER)
         found = setup.discover_example_segments(d)
         self.assertEqual(len(found), 1)
-        self.assertEqual(found[0]["id"], "sysmem")
+        self.assertEqual(found[0]["id"], "system_memory")
         self.assertTrue(found[0]["default_on"])           # offered pre-checked
 
     def test_discover_skips_files_without_marker(self):
@@ -444,11 +465,89 @@ class TestDiscoverExampleSegments(unittest.TestCase):
             setup.discover_example_segments("/no/such/dir/xyz"), [])
 
     def test_discover_real_examples_dir(self):
-        # Integration: the shipped examples/segments/ must expose sysmem.
+        # Integration: the shipped examples/segments/ must expose system_memory.
         repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         found = setup.discover_example_segments(
             os.path.join(repo, "examples", "segments"))
-        self.assertIn("sysmem", {e["id"] for e in found})
+        self.assertIn("system_memory", {e["id"] for e in found})
+
+    def test_discover_surfaces_ui_metadata_with_fallbacks(self):
+        full = ("#!/usr/bin/env python3\n"
+                "# ai-kit-segment: id=full line=1 icon=💻 name=Full "
+                "description=desc sample=9G\n")
+        d, _ = self._mk(full)
+        e = setup.discover_example_segments(d)[0]
+        self.assertEqual(e["name"], "Full")
+        self.assertEqual(e["description"], "desc")
+        self.assertEqual(e["icon"], "💻")
+        self.assertEqual(e["sample"], "9G")
+        self.assertEqual(e["line"], 1)
+
+    def test_discover_applies_fallbacks_for_id_only(self):
+        d, _ = self._mk("# ai-kit-segment: id=bare\n")
+        e = setup.discover_example_segments(d)[0]
+        self.assertEqual(e["name"], "bare")          # id-as-name
+        self.assertEqual(e["description"], "")       # blank
+        self.assertEqual(e["icon"], setup.DEFAULT_SEGMENT_ICON)
+        self.assertEqual(e["line"], len(setup.LAYOUT_DEFAULTS) - 1)  # last line
+
+    def test_parse_quoted_values(self):
+        """T0.1: quoted values with spaces parse to the full phrase."""
+        hdr = ('# ai-kit-segment: id=system_memory name="System memory" '
+               'description="System available RAM" sample="12.0 GiB free" '
+               'icon=💻 line=1 after=context ttl=10\n')
+        fields = setup._parse_segment_header(hdr)
+        self.assertEqual(fields["name"], "System memory")
+        self.assertEqual(fields["description"], "System available RAM")
+        self.assertEqual(fields["sample"], "12.0 GiB free")
+        # Unquoted tokens still parse correctly
+        self.assertEqual(fields["id"], "system_memory")
+        self.assertEqual(fields["line"], "1")
+        self.assertEqual(fields["ttl"], "10")
+
+    def test_parse_quoted_value_with_apostrophe(self):
+        """T0.2: values with apostrophe/punctuation inside double quotes."""
+        hdr = "# ai-kit-segment: id=x description=\"don't panic\" sample=ok\n"
+        fields = setup._parse_segment_header(hdr)
+        self.assertEqual(fields["description"], "don't panic")
+        self.assertEqual(fields["sample"], "ok")
+
+    def test_parse_id_only_header_unchanged(self):
+        """T0.3: bare id-only header still parses (regression guard)."""
+        hdr = "# ai-kit-segment: id=foo\n"
+        fields = setup._parse_segment_header(hdr)
+        self.assertEqual(fields, {"id": "foo"})
+
+    def test_discover_real_examples_surfaces_quoted_description(self):
+        """T0.5: shipped system_memory header uses quoted values; discover returns
+        the real-space strings (not underscore-escaped)."""
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        found = setup.discover_example_segments(
+            os.path.join(repo, "examples", "segments"))
+        sm = next((e for e in found if e["id"] == "system_memory"), None)
+        self.assertIsNotNone(sm, "system_memory not found in examples/segments/")
+        self.assertEqual(sm["name"], "System memory")
+        self.assertEqual(sm["description"], "System available RAM")
+        self.assertEqual(sm["sample"], "12.0 GiB free")
+
+
+class TestSelfDescribingHeader(unittest.TestCase):
+    def test_parses_optional_ui_keys(self):
+        text = ("#!/usr/bin/env python3\n"
+                "# ai-kit-segment: id=demo line=2 icon=💻 name=DemoSeg "
+                "description=shows_a_demo sample=42units\n")
+        f = setup._parse_segment_header(text)
+        self.assertEqual(f["id"], "demo")
+        self.assertEqual(f["icon"], "💻")
+        self.assertEqual(f["name"], "DemoSeg")
+        self.assertEqual(f["description"], "shows_a_demo")
+        self.assertEqual(f["sample"], "42units")
+
+    def test_id_only_header_has_no_ui_keys(self):
+        f = setup._parse_segment_header("# ai-kit-segment: id=bare\n")
+        self.assertEqual(f["id"], "bare")
+        self.assertNotIn("name", f)
+        self.assertNotIn("description", f)
 
 
 class TestInstallExampleSegments(unittest.TestCase):
@@ -456,7 +555,7 @@ class TestInstallExampleSegments(unittest.TestCase):
     enable segments.<id>, idempotent."""
 
     _BODY = ("#!/usr/bin/env python3\n"
-             "# ai-kit-segment: line=1 after=context id=sysmem ttl=10\n"
+             "# ai-kit-segment: line=1 after=context id=system_memory ttl=10\n"
              "print('hi')\n")
 
     def setUp(self):
@@ -464,30 +563,30 @@ class TestInstallExampleSegments(unittest.TestCase):
         self.cfg_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.src_dir, ignore_errors=True)
         self.addCleanup(shutil.rmtree, self.cfg_dir, ignore_errors=True)
-        src = os.path.join(self.src_dir, "sysmem")
+        src = os.path.join(self.src_dir, "system_memory")
         with open(src, "w") as f:
             f.write(self._BODY)
-        self.examples = [{"id": "sysmem", "name": "sysmem", "path": src,
-                          "default_on": True}]
+        self.examples = [{"id": "system_memory", "filename": "system_memory",
+                          "name": "system_memory", "path": src, "default_on": True}]
 
     def _dest(self):
-        return os.path.join(self.cfg_dir, "segments", "sysmem")
+        return os.path.join(self.cfg_dir, "segments", "system_memory")
 
     def test_install_copies_chmods_and_enables(self):
         seg = {}
         ids = setup.install_example_segments(self.examples, self.cfg_dir, seg)
-        self.assertEqual(ids, ["sysmem"])
+        self.assertEqual(ids, ["system_memory"])
         self.assertTrue(os.path.isfile(self._dest()))
         self.assertTrue(os.access(self._dest(), os.X_OK))     # executable
         with open(self._dest()) as f:
             self.assertEqual(f.read(), self._BODY)            # content copied
-        self.assertTrue(seg["sysmem"])                        # toggle flipped on
+        self.assertTrue(seg["system_memory"])                 # toggle flipped on
 
     def test_install_is_idempotent(self):
         setup.install_example_segments(self.examples, self.cfg_dir, {})
         setup.install_example_segments(self.examples, self.cfg_dir, {})
         seg_dir = os.path.join(self.cfg_dir, "segments")
-        self.assertEqual(os.listdir(seg_dir), ["sysmem"])     # no duplicate
+        self.assertEqual(os.listdir(seg_dir), ["system_memory"])  # no duplicate
         self.assertTrue(os.access(self._dest(), os.X_OK))
 
     def test_install_refreshes_changed_file(self):
@@ -504,13 +603,13 @@ class TestInstallExampleSegments(unittest.TestCase):
         # unwritable/blocked dest) must NOT crash the whole install — that one
         # provider is skipped and the others still install.
         seg_dir = os.path.join(self.cfg_dir, "segments")
-        os.makedirs(os.path.join(seg_dir, "sysmem"))    # dest name pre-exists as a dir
+        os.makedirs(os.path.join(seg_dir, "system_memory"))  # dest name pre-exists as a dir
         good_src = os.path.join(self.src_dir, "other")
         with open(good_src, "w") as f:
             f.write(self._BODY)
         examples = [self.examples[0],
-                    {"id": "other", "name": "other", "path": good_src,
-                     "default_on": True}]
+                    {"id": "other", "filename": "other", "name": "other",
+                     "path": good_src, "default_on": True}]
         ids = setup.install_example_segments(examples, self.cfg_dir, {})
         self.assertEqual(ids, ["other"])                # bad skipped, good kept
         self.assertTrue(os.path.isfile(os.path.join(seg_dir, "other")))
@@ -523,8 +622,55 @@ class TestInstallExampleSegments(unittest.TestCase):
         self.addCleanup(shutil.rmtree, xdg, ignore_errors=True)
         paths = setup.resolve_paths({"XDG_CONFIG_HOME": xdg, "HOME": xdg})
         setup.install_example_segments(self.examples, paths.config_dir, {})
-        landed = os.path.join(xdg, "ai-kit", "segments", "sysmem")
+        landed = os.path.join(xdg, "ai-kit", "segments", "system_memory")
         self.assertTrue(os.path.isfile(landed))
+
+
+class TestDiscoverInstallFilenameVsId(unittest.TestCase):
+    """E2E: a segment whose filesystem filename differs from its header id/name
+    must install to the filesystem filename, expose id for toggle, and name for UI.
+    This tests the filename/id/name separation added in the Task-4 review fix."""
+
+    _BODY = ("#!/usr/bin/env python3\n"
+             "# ai-kit-segment: line=1 after=context id=cpu name=CPU_load ttl=10\n"
+             "print('cpu')\n")
+
+    def setUp(self):
+        self.src_dir = tempfile.mkdtemp()
+        self.cfg_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.src_dir, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.cfg_dir, ignore_errors=True)
+        # Filesystem filename ("my_cpu_seg") differs from header id ("cpu") and name ("CPU_load")
+        src = os.path.join(self.src_dir, "my_cpu_seg")
+        with open(src, "w") as f:
+            f.write(self._BODY)
+
+    def test_discover_install_uses_filesystem_filename_not_id_or_name(self):
+        examples = setup.discover_example_segments(self.src_dir)
+        self.assertEqual(len(examples), 1)
+        ex = examples[0]
+        # id comes from header
+        self.assertEqual(ex["id"], "cpu")
+        # name (UI label) comes from header name=
+        self.assertEqual(ex["name"], "CPU_load")
+        # filename (copy destination) is the real filesystem filename
+        self.assertEqual(ex["filename"], "my_cpu_seg")
+
+        seg_state = {}
+        ids = setup.install_example_segments(examples, self.cfg_dir, seg_state)
+
+        # installed file lands at <segdir>/my_cpu_seg (filesystem filename)
+        installed = os.path.join(self.cfg_dir, "segments", "my_cpu_seg")
+        self.assertTrue(os.path.isfile(installed),
+                        "file should be at my_cpu_seg, not cpu or CPU_load")
+        # NOT at the id path
+        self.assertFalse(os.path.isfile(os.path.join(self.cfg_dir, "segments", "cpu")))
+        # NOT at the name path
+        self.assertFalse(os.path.isfile(os.path.join(self.cfg_dir, "segments", "CPU_load")))
+        # toggle uses id
+        self.assertTrue(seg_state.get("cpu"), "toggle should be keyed on id=cpu")
+        # return list uses id
+        self.assertEqual(ids, ["cpu"])
 
 
 class TestSelectExamples(unittest.TestCase):
@@ -532,6 +678,9 @@ class TestSelectExamples(unittest.TestCase):
     paths NEVER prompt; flags/defaults govern selection."""
 
     def _ex(self, *ids):
+        # Minimal dict for selection-only tests. Intentionally omits `filename`,
+        # `description`, `icon`, `sample`, `line`, and `provenance` — those fields
+        # are not consulted by select_examples / resolve_example_selection.
         return [{"id": i, "name": i, "path": f"/x/{i}", "default_on": True}
                 for i in ids]
 
@@ -540,33 +689,33 @@ class TestSelectExamples(unittest.TestCase):
 
     # ---- pure resolver ----
     def test_resolve_default_none_is_all(self):
-        ex = self._ex("sysmem", "cost")
+        ex = self._ex("system_memory", "cost")
         self.assertEqual(self._ids(setup.resolve_example_selection(None, ex)),
-                         ["sysmem", "cost"])
+                         ["system_memory", "cost"])
 
     def test_resolve_all_and_none(self):
-        ex = self._ex("sysmem", "cost")
+        ex = self._ex("system_memory", "cost")
         self.assertEqual(self._ids(setup.resolve_example_selection("all", ex)),
-                         ["sysmem", "cost"])
+                         ["system_memory", "cost"])
         self.assertEqual(setup.resolve_example_selection("none", ex), [])
         self.assertEqual(setup.resolve_example_selection("ALL", ex), ex)   # case-insens
         self.assertEqual(setup.resolve_example_selection("None", ex), [])
 
     def test_resolve_explicit_ids(self):
-        ex = self._ex("sysmem", "cost", "weather")
-        self.assertEqual(self._ids(setup.resolve_example_selection("sysmem,weather", ex)),
-                         ["sysmem", "weather"])
+        ex = self._ex("system_memory", "cost", "weather")
+        self.assertEqual(self._ids(setup.resolve_example_selection("system_memory,weather", ex)),
+                         ["system_memory", "weather"])
         # space/comma tolerant, unknown ids ignored
         self.assertEqual(self._ids(setup.resolve_example_selection("cost nope", ex)),
                          ["cost"])
 
     # ---- select_examples: headless / flag never prompts ----
     def test_select_headless_no_flag_is_all(self):
-        ex = self._ex("sysmem")
+        ex = self._ex("system_memory")
         self.assertEqual(setup.select_examples(ex, None, tty=None), ex)
 
     def test_select_headless_flag_governs(self):
-        ex = self._ex("sysmem", "cost")
+        ex = self._ex("system_memory", "cost")
         self.assertEqual(setup.select_examples(ex, "none", tty=None), [])
         self.assertEqual(self._ids(setup.select_examples(ex, "cost", tty=None)),
                          ["cost"])
@@ -617,14 +766,14 @@ class TestWizardLoop(unittest.TestCase):
 
     def test_worktree_is_a_normal_segment(self):
         # worktree migrated from the [git] knob to a regular segment toggle: it
-        # appears in SEGMENT_DEFAULTS (ON) and flips like any other segment.
-        self.assertTrue(setup.SEGMENT_DEFAULTS.get("alt_git_worktree"))
+        # appears in SEGMENT_DEFAULTS (OFF by default — opt-in) and flips like any other segment.
+        self.assertFalse(setup.SEGMENT_DEFAULTS.get("alt_git_worktree"))
         st = self._state()
         order = setup._wizard_order(st)
         idx = order.index("alt_git_worktree") + 1
         st2, err = setup._apply_wizard_command(st, str(idx))
         self.assertIsNone(err)
-        self.assertFalse(st2["segments"]["alt_git_worktree"])   # was ON, toggled OFF
+        self.assertTrue(st2["segments"]["alt_git_worktree"])    # was OFF, toggled ON
         self.assertTrue(st2["dirty"])
 
     def test_worktree_command_no_longer_special(self):
@@ -1078,6 +1227,20 @@ class TestSelectionModel(unittest.TestCase):
         self.assertEqual(sel.enabled_map(), {})
         self.assertEqual(sel.category_sets(), {})
 
+    def test_set_category_false_flips_only_target_category(self):
+        sel = self._sel()
+        sel.set_category("skills", False)
+        self.assertFalse(sel.items[0][2])  # alpha: True → False
+        self.assertFalse(sel.items[1][2])  # beta: False → stays False
+        self.assertTrue(sel.items[2][2])   # doit.md: True → unchanged
+
+    def test_set_category_true_flips_only_target_category(self):
+        sel = self._sel()
+        sel.set_category("skills", True)
+        self.assertTrue(sel.items[0][2])   # alpha: True → stays True
+        self.assertTrue(sel.items[1][2])   # beta: False → True
+        self.assertTrue(sel.items[2][2])   # doit.md: True → unchanged
+
 
 class TestSelectSkills(unittest.TestCase):
     def entries(self):
@@ -1265,12 +1428,17 @@ class TestCmdInstall(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_headless_first_run_links_all_and_wires_statusline(self):
-        # launch_wizard is patched to apply the default selection explicitly,
-        # matching first-run all-on behaviour without invoking the Textual TUI
-        # (which requires uv + textual and a real terminal, per Addendum B).
+        # launch_wizard is patched to apply the default selection AND adopt the
+        # status line (matching first-run all-on + adopt behaviour) WITHOUT the
+        # Textual TUI. After Task 10 the statusLine wiring + recipe copy are gated
+        # on the wizard's adopt decision via persist_statusline — not pre-wizard.
         def _apply_defaults(paths, entries, installed, tty, dry, counts):
             default = setup._default_selection(entries, installed)
             setup.apply_selection(default, entries, paths.claude_dir, dry, counts)
+            state = {"segments": dict(setup.SEGMENT_DEFAULTS),
+                     "layout": [dict(l) for l in setup.LAYOUT_DEFAULTS],
+                     "dirty": False, "adopt": True}
+            setup.persist_statusline(paths, state, adopt=True, dry=dry, tty=tty)
 
         with mock.patch.object(setup, "launch_wizard", side_effect=_apply_defaults):
             rc = setup.cmd_install(self.env, tty=None, dry=False)
@@ -1279,19 +1447,25 @@ class TestCmdInstall(unittest.TestCase):
         with open(os.path.join(self.claude, "settings.json")) as f:
             self.assertIn("status-line.py", f.read())
 
-    def test_interactive_wires_statusline(self):
-        # launch_wizard is patched to a no-op: statusLine wiring and recipe
-        # copy both happen before launch_wizard in cmd_install, so this test
-        # only exercises those pre-wizard steps (Addendum B: TUI is fail-closed).
-        with mock.patch.object(setup, "launch_wizard"):
-            tty = io.StringIO("\n")
-            rc = setup.cmd_install(self.env, tty=tty, dry=False)
+    def test_components_only_run_does_not_wire_statusline(self):
+        # Task 10 constraint 1: a wizard run that does NOT adopt (components-only)
+        # must write no statusline.toml and never touch settings.json statusLine —
+        # because cmd_install no longer wires the status line pre-wizard.
+        def _components_only(paths, entries, installed, tty, dry, counts):
+            default = setup._default_selection(entries, installed)
+            setup.apply_selection(default, entries, paths.claude_dir, dry, counts)
+            # no persist_statusline call — adopt is implicitly False
+
+        with mock.patch.object(setup, "launch_wizard", side_effect=_components_only):
+            rc = setup.cmd_install(self.env, tty=None, dry=False)
         self.assertEqual(rc, 0)
-        with open(os.path.join(self.claude, "settings.json")) as f:
-            self.assertIn("status-line.py", f.read())
-        # recipe copied
-        self.assertTrue(os.path.isfile(
+        self.assertTrue(os.path.islink(os.path.join(self.claude, "skills", "alpha")))
+        self.assertFalse(os.path.isfile(
             os.path.join(self.tmp, ".config", "ai-kit", "statusline.toml")))
+        settings = os.path.join(self.claude, "settings.json")
+        if os.path.isfile(settings):
+            with open(settings) as f:
+                self.assertNotIn("statusLine", json.load(f))
 
     def test_dry_run_mutates_nothing(self):
         # launch_wizard patched to no-op so plain python3 never imports textual.
@@ -1998,6 +2172,471 @@ class TestLaunchWizardCrash(unittest.TestCase):
             setup.launch_wizard(paths, entries, installed, fake_tty, False,
                                 setup.new_counts())
         self.assertEqual(err.getvalue(), "")
+
+
+class TestUserSegmentDiscovery(unittest.TestCase):
+    def _seg(self, d, fname, header):
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, fname)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(header)
+        os.chmod(p, 0o755)
+        return p
+
+    def test_segments_dir_resolves_under_config(self):
+        paths = setup.resolve_paths({"HOME": "/home/x"})
+        self.assertEqual(paths.segments_dir,
+                         os.path.join("/home/x", ".config", "ai-kit", "segments"))
+
+    def test_segments_dir_respects_xdg(self):
+        paths = setup.resolve_paths({"HOME": "/home/x", "XDG_CONFIG_HOME": "/cfg"})
+        self.assertEqual(paths.segments_dir, "/cfg/ai-kit/segments")
+
+    def test_merges_bundled_and_user_tagged_by_provenance(self):
+        home = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        examples = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, examples, ignore_errors=True)
+        self._seg(examples, "b", "# ai-kit-segment: id=bundled_one line=1\n")
+        userdir = os.path.join(home, ".config", "ai-kit", "segments")
+        self._seg(userdir, "u", "# ai-kit-segment: id=user_one line=2\n")
+        paths = setup.resolve_paths({"HOME": home})
+        found = setup.discover_external_segments(paths, examples)
+        by_id = {e["id"]: e for e in found}
+        self.assertEqual(by_id["bundled_one"]["provenance"], "bundled")
+        self.assertEqual(by_id["user_one"]["provenance"], "user")
+
+    def test_user_wins_on_id_collision(self):
+        home = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        examples = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, examples, ignore_errors=True)
+        self._seg(examples, "dup", "# ai-kit-segment: id=dup name=Bundled line=1\n")
+        userdir = os.path.join(home, ".config", "ai-kit", "segments")
+        self._seg(userdir, "dup", "# ai-kit-segment: id=dup name=User line=2\n")
+        paths = setup.resolve_paths({"HOME": home})
+        found = setup.discover_external_segments(paths, examples)
+        dup = [e for e in found if e["id"] == "dup"]
+        self.assertEqual(len(dup), 1)
+        self.assertEqual(dup[0]["provenance"], "user")
+        self.assertEqual(dup[0]["name"], "User")
+
+    def test_missing_user_dir_no_crash(self):
+        home = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        examples = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, examples, ignore_errors=True)
+        self._seg(examples, "b", "# ai-kit-segment: id=only_bundled line=1\n")
+        # user segments dir does NOT exist
+        paths = setup.resolve_paths({"HOME": home})
+        found = setup.discover_external_segments(paths, examples)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["provenance"], "bundled")
+
+
+class TestSystemMemoryCanonicalHeader(unittest.TestCase):
+    def test_shipped_example_is_self_describing(self):
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        found = setup.discover_example_segments(
+            os.path.join(repo, "examples", "segments"))
+        e = next(x for x in found if x["id"] == "system_memory")
+        self.assertTrue(e["name"])
+        self.assertTrue(e["description"])
+        self.assertEqual(e["icon"], "💻")
+        self.assertTrue(e["sample"])
+
+
+class TestStatusLineDetection(unittest.TestCase):
+    def _paths(self, settings_payload):
+        home = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        paths = setup.resolve_paths({"HOME": home})
+        os.makedirs(os.path.dirname(paths.settings), exist_ok=True)
+        if settings_payload is not None:
+            with open(paths.settings, "w", encoding="utf-8") as f:
+                json.dump(settings_payload, f)
+        return paths
+
+    def test_unset_when_absent(self):
+        paths = self._paths({})
+        d = setup.detect_statusline(paths)
+        self.assertEqual(d["state"], "unset")
+        self.assertIsNone(d["current_command"])
+
+    def test_ours_when_command_invokes_resolved_status_line(self):
+        paths = self._paths(None)
+        cmd = "python3 -S " + paths.status_line
+        with open(paths.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": {"type": "command", "command": cmd}}, f)
+        d = setup.detect_statusline(paths)
+        self.assertEqual(d["state"], "ours")
+        self.assertEqual(d["current_command"], cmd)
+
+    def test_foreign_when_other_command(self):
+        paths = self._paths({"statusLine": {"type": "command", "command": "/usr/bin/mybar"}})
+        d = setup.detect_statusline(paths)
+        self.assertEqual(d["state"], "foreign")
+        self.assertEqual(d["current_command"], "/usr/bin/mybar")
+
+    def test_string_form_statusline_ours(self):
+        paths = self._paths(None)
+        cmd = "python3 -S " + paths.status_line
+        with open(paths.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": cmd}, f)
+        d = setup.detect_statusline(paths)
+        self.assertEqual(d["state"], "ours")
+        self.assertEqual(d["current_command"], cmd)
+
+    def test_string_form_statusline_foreign(self):
+        paths = self._paths({"statusLine": "/usr/bin/mybar"})
+        d = setup.detect_statusline(paths)
+        self.assertEqual(d["state"], "foreign")
+        self.assertEqual(d["current_command"], "/usr/bin/mybar")
+
+    def test_missing_settings_file_returns_unset(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        paths = setup.resolve_paths({"HOME": home})
+        # Do NOT create the settings file
+        d = setup.detect_statusline(paths)
+        self.assertEqual(d["state"], "unset")
+        self.assertIsNone(d["current_command"])
+
+    def test_malformed_settings_file_returns_unset(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        paths = setup.resolve_paths({"HOME": home})
+        os.makedirs(os.path.dirname(paths.settings), exist_ok=True)
+        with open(paths.settings, "w", encoding="utf-8") as f:
+            f.write("{ not valid json }")
+        d = setup.detect_statusline(paths)
+        self.assertEqual(d["state"], "unset")
+        self.assertIsNone(d["current_command"])
+
+
+class TestSegmentInventoryLoader(unittest.TestCase):
+    def test_loads_shipped_inventory_shape(self):
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
+        self.assertIn("path", inv)
+        entry = inv["alt_process_memory"]
+        self.assertEqual(entry["icon"], "🧮")
+        self.assertEqual(entry["line"], 2)
+        self.assertEqual(set(entry), {"description", "sample", "icon", "line"})
+
+    def test_missing_file_yields_empty(self):
+        self.assertEqual(setup.load_segment_inventory("/no/such/inv.toml"), {})
+
+
+class TestConditionalPersistence(unittest.TestCase):
+    def _paths(self):
+        home = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        paths = setup.resolve_paths({"HOME": home})
+        os.makedirs(paths.config_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(paths.settings), exist_ok=True)
+        # seed a real status-line.py + doctor + recipe so writes can doctor-validate
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return paths, repo
+
+    def _state(self):
+        return {"segments": dict(setup.SEGMENT_DEFAULTS),
+                "layout": [dict(l) for l in setup.LAYOUT_DEFAULTS], "dirty": False}
+
+    def test_skip_writes_nothing(self):
+        paths, _ = self._paths()
+        ok = setup.persist_statusline(paths, self._state(), adopt=False, dry=False)
+        self.assertTrue(ok)
+        self.assertFalse(os.path.exists(paths.config_toml))
+        self.assertFalse(os.path.exists(paths.settings))
+
+    def test_adopt_sets_settings_statusline(self):
+        paths, repo = self._paths()
+        # point resolved status_line/doctor at the real repo tools so the doctor runs
+        paths = paths._replace(
+            status_line=os.path.join(repo, "tools", "status-line.py"),
+            statusline_doctor=os.path.join(repo, "tools", "statusline-doctor.py"),
+            sample=os.path.join(repo, "tools", "statusline.toml.sample"))
+        # seed the recipe so save_statusline_config has a base file
+        import shutil as _sh
+        _sh.copy(paths.sample, paths.config_toml)
+        ok = setup.persist_statusline(paths, self._state(), adopt=True, dry=False)
+        self.assertTrue(ok)
+        with open(paths.settings, encoding="utf-8") as fh:
+            data = json.load(fh)
+        self.assertIn(paths.status_line, data["statusLine"]["command"])
+        self.assertTrue(data["statusLine"]["command"].startswith("python3 -S "))
+
+    def test_reconfigure_leaves_existing_ours_statusline(self):
+        paths, repo = self._paths()
+        paths = paths._replace(
+            status_line=os.path.join(repo, "tools", "status-line.py"),
+            statusline_doctor=os.path.join(repo, "tools", "statusline-doctor.py"),
+            sample=os.path.join(repo, "tools", "statusline.toml.sample"))
+        import shutil as _sh
+        _sh.copy(paths.sample, paths.config_toml)
+        ours_cmd = "python3 -S " + paths.status_line   # already ours, possibly hand-edited
+        with open(paths.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": {"type": "command", "command": ours_cmd},
+                       "other": 1}, f)
+        ok = setup.persist_statusline(paths, self._state(), adopt=True, dry=False)
+        self.assertTrue(ok)
+        with open(paths.settings, encoding="utf-8") as fh:
+            data = json.load(fh)
+        self.assertEqual(data["statusLine"]["command"], ours_cmd)  # untouched
+        self.assertEqual(data["other"], 1)
+
+
+class TestBuildSegmentMeta(unittest.TestCase):
+    def test_inventory_defaults_with_toml_overrides(self):
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
+        # no overrides -> inventory defaults pass through
+        meta = setup.build_segment_meta(inv, {})
+        self.assertEqual(meta["alt_process_memory"]["icon"], "🧮")
+        self.assertEqual(meta["context"]["line"], 2)
+        # toml override wins for icon + line
+        meta = setup.build_segment_meta(inv, {"context": {"icon": "X", "line": 0}})
+        self.assertEqual(meta["context"]["icon"], "X")
+        self.assertEqual(meta["context"]["line"], 0)
+        # description/sample never come from overrides
+        self.assertEqual(meta["context"]["description"], inv["context"]["description"])
+
+    def test_icon_line_overrides_read_from_statusline_toml(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        paths = setup.resolve_paths({"HOME": home})
+        os.makedirs(paths.config_dir, exist_ok=True)
+        with open(paths.config_toml, "w", encoding="utf-8") as f:
+            f.write('[segments.context]\nicon = "Z"\nline = 1\n'
+                    '[segments.path]\nenabled = true\n')   # no icon/line -> ignored
+        ov = setup._statusline_icon_line_overrides(paths.config_toml)
+        self.assertEqual(ov["context"], {"icon": "Z", "line": 1})
+        self.assertNotIn("path", ov)
+
+    def test_overrides_missing_file_is_empty(self):
+        self.assertEqual(setup._statusline_icon_line_overrides("/no/such.toml"), {})
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestWizardContextPopulation(unittest.TestCase):
+    """Task 10: launch_wizard builds a context whose new fields have the right
+    shapes, and a freshly-discovered external NOT in statusline.toml is OFF
+    (externals default OFF — never pre-checked via default_on)."""
+
+    def _env(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = {"HOME": home, "AI_KIT_DIR": repo}
+        return env, setup.resolve_paths(env)
+
+    def test_context_shape_and_external_off_by_default(self):
+        _env, paths = self._env()
+        os.makedirs(paths.segments_dir, exist_ok=True)
+        # a fresh user external segment NOT mentioned in statusline.toml
+        with open(os.path.join(paths.segments_dir, "freshseg"), "w",
+                  encoding="utf-8") as f:
+            f.write("#!/bin/sh\n# ai-kit-segment: id=freshseg name=Fresh\necho hi\n")
+        # capture the context that launch_wizard would build by stubbing run_wizard
+        captured = {}
+
+        wa = _import_wizard_app()
+
+        def _fake_run(ctx):
+            captured["ctx"] = ctx
+            return None   # abort -> launch_wizard returns without persisting
+
+        entries = setup.enumerate_entries(paths.install_dir)
+        installed = {cat: set() for cat in setup.CATEGORIES}
+
+        class _FakeTty:
+            def isatty(self):
+                return True
+
+        import contextlib
+        with mock.patch.object(wa, "run_wizard", _fake_run), \
+             mock.patch.object(setup, "stdin_on_tty",
+                               return_value=contextlib.nullcontext()):
+            setup.launch_wizard(paths, entries, installed, _FakeTty(), True,
+                                setup.new_counts())
+
+        ctx = captured["ctx"]
+        # status_line shape
+        self.assertIn("state", ctx.status_line)
+        self.assertIn("current_command", ctx.status_line)
+        self.assertEqual(ctx.status_line["state"], "unset")
+        # adopt derived from detection (unset -> False)
+        self.assertFalse(ctx.state["adopt"])
+        # segment_meta carries built-in inventory keys
+        self.assertIn("context", ctx.segment_meta)
+        self.assertEqual(set(ctx.segment_meta["context"]),
+                         {"description", "sample", "icon", "line"})
+        # external discovered with provenance
+        ids = {e["id"]: e for e in ctx.external_segments}
+        self.assertIn("freshseg", ids)
+        self.assertEqual(ids["freshseg"]["provenance"], "user")
+        # the fresh external is OFF in the wizard's segment state (not pre-checked)
+        self.assertIn("freshseg", ctx.state["segments"])
+        self.assertFalse(ctx.state["segments"]["freshseg"])
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestCmdInstallSkipNoStatusline(unittest.TestCase):
+    """Task 10 constraint 1: the REAL install flow routes status-line persistence
+    through persist_statusline gated on the wizard's adopt decision. A wizard run
+    that does NOT adopt must write no statusline.toml and leave settings.json's
+    statusLine untouched — proving the production wiring, not just a unit."""
+
+    def test_no_adopt_writes_no_statusline_and_no_settings(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = {"HOME": home, "AI_KIT_DIR": repo}
+        paths = setup.resolve_paths(env)
+
+        wa = _import_wizard_app()
+        import contextlib
+
+        def _fake_run(ctx):
+            # confirm install but DO NOT adopt the status line
+            st = dict(ctx.state)
+            st["adopt"] = False
+            return wa.WizardResult(selection=ctx.selection, state=st)
+
+        class _FakeTty:
+            def isatty(self):
+                return True
+
+        with mock.patch.object(wa, "run_wizard", _fake_run), \
+             mock.patch.object(setup, "stdin_on_tty",
+                               return_value=contextlib.nullcontext()), \
+             mock.patch.object(setup, "apply_selection"):
+            entries = setup.enumerate_entries(paths.install_dir)
+            installed = {cat: set() for cat in setup.CATEGORIES}
+            setup.launch_wizard(paths, entries, installed, _FakeTty(), False,
+                                setup.new_counts())
+
+        self.assertFalse(os.path.exists(paths.config_toml),
+                         "components-only run must not write statusline.toml")
+        # settings.json statusLine must be untouched (file may not even exist)
+        if os.path.exists(paths.settings):
+            with open(paths.settings, encoding="utf-8") as fh:
+                data = json.load(fh)
+            self.assertNotIn("statusLine", data)
+
+
+class TestCmdInstallExternalReconcile(unittest.TestCase):
+    """I-1: wizard result drives external-segment install; no double-prompt."""
+
+    def _fake_result(self, seg_state):
+        """Build a minimal WizardResult-shaped object (NamedTuple) with the
+        given segments state dict."""
+        import types
+        return types.SimpleNamespace(
+            selection=None,
+            state={"segments": seg_state, "layout": [], "dirty": False, "adopt": False}
+        )
+
+    @mock.patch.object(setup, "install_example_segments", return_value=["system_memory"])
+    @mock.patch.object(setup, "select_examples")
+    @mock.patch.object(setup, "discover_example_segments")
+    def test_interactive_install_uses_wizard_state_not_select_examples(
+        self, mock_discover, mock_select, mock_install
+    ):
+        """When wizard returned a result, install_example_segments is called
+        with exactly the wizard-enabled segments; select_examples is NOT called."""
+        mock_discover.return_value = [
+            {"id": "system_memory", "name": "System memory",
+             "path": "/fake/system_memory", "filename": "system_memory",
+             "default_on": True, "description": "", "icon": "\U0001f4bb",
+             "sample": "", "line": 0, "provenance": "bundled"},
+        ]
+        # Simulate wizard: user ENABLED system_memory.
+        fake_result = self._fake_result({"system_memory": True})
+
+        # Invoke just the post-wizard example block logic. We call it via
+        # cmd_install with launch_wizard mocked to return our fake result.
+        with mock.patch.object(setup, "launch_wizard", return_value=fake_result), \
+             mock.patch.object(setup, "resolve_paths", return_value=mock.MagicMock(
+                 install_dir="/fake", config_dir="/fake/cfg",
+                 claude_dir="/fake/.claude")), \
+             mock.patch.object(setup, "enumerate_entries", return_value={
+                 "agents": [], "commands": [], "skills": []}), \
+             mock.patch.object(setup, "new_counts",
+                               return_value=setup.new_counts()), \
+             mock.patch.object(setup, "prune_stale"), \
+             mock.patch.object(setup, "adopt_predecessor_links"), \
+             mock.patch.object(setup, "installed_links", return_value={}), \
+             mock.patch("builtins.print"):
+            setup.cmd_install(os.environ.copy(), tty=mock.MagicMock(isatty=lambda: True),
+                              dry=False, examples_flag=None)
+
+        # select_examples must NOT have been called (no double-prompt).
+        mock_select.assert_not_called()
+        # install_example_segments IS called with the wizard-enabled segment.
+        mock_install.assert_called_once()
+        chosen_arg = mock_install.call_args[0][0]
+        self.assertEqual([e["id"] for e in chosen_arg], ["system_memory"])
+
+    @mock.patch.object(setup, "install_example_segments", return_value=[])
+    @mock.patch.object(setup, "select_examples", return_value=[])
+    @mock.patch.object(setup, "discover_example_segments")
+    def test_abort_installs_no_examples(
+        self, mock_discover, mock_select, mock_install
+    ):
+        """When the wizard is aborted (result=None), nothing further is
+        installed: neither select_examples nor install_example_segments runs
+        (abort is a full no-op for example segments too)."""
+        mock_discover.return_value = [
+            {"id": "system_memory", "name": "System memory",
+             "path": "/fake/system_memory", "filename": "system_memory",
+             "default_on": True, "description": "", "icon": "\U0001f4bb",
+             "sample": "", "line": 0, "provenance": "bundled"},
+        ]
+        with mock.patch.object(setup, "launch_wizard", return_value=None), \
+             mock.patch.object(setup, "resolve_paths", return_value=mock.MagicMock(
+                 install_dir="/fake", config_dir="/fake/cfg",
+                 claude_dir="/fake/.claude")), \
+             mock.patch.object(setup, "enumerate_entries", return_value={
+                 "agents": [], "commands": [], "skills": []}), \
+             mock.patch.object(setup, "new_counts",
+                               return_value=setup.new_counts()), \
+             mock.patch.object(setup, "prune_stale"), \
+             mock.patch.object(setup, "adopt_predecessor_links"), \
+             mock.patch.object(setup, "installed_links", return_value={}), \
+             mock.patch("builtins.print"):
+            setup.cmd_install(os.environ.copy(), tty=mock.MagicMock(isatty=lambda: True),
+                              dry=False, examples_flag="none")
+
+        # Abort = no-op: neither path runs.
+        mock_select.assert_not_called()
+        mock_install.assert_not_called()
+
+    @mock.patch.object(setup, "install_example_segments", return_value=["system_memory"])
+    @mock.patch.object(setup, "select_examples", return_value=[])
+    @mock.patch.object(setup, "discover_example_segments")
+    def test_examples_flag_overrides_wizard_selection_on_confirm(
+        self, mock_discover, mock_select, mock_install
+    ):
+        """On a confirmed install, an explicit --examples flag overrides the
+        wizard's toggles via select_examples (no prompt — the flag is set)."""
+        mock_discover.return_value = [
+            {"id": "system_memory", "name": "System memory",
+             "path": "/fake/system_memory", "filename": "system_memory",
+             "default_on": True, "description": "", "icon": "\U0001f4bb",
+             "sample": "", "line": 0, "provenance": "bundled"},
+        ]
+        # Wizard confirmed with system_memory toggled OFF; --examples=all must
+        # override and select_examples governs the result.
+        fake_result = self._fake_result({"system_memory": False})
+        with mock.patch.object(setup, "launch_wizard", return_value=fake_result), \
+             mock.patch.object(setup, "resolve_paths", return_value=mock.MagicMock(
+                 install_dir="/fake", config_dir="/fake/cfg",
+                 claude_dir="/fake/.claude")), \
+             mock.patch.object(setup, "enumerate_entries", return_value={
+                 "agents": [], "commands": [], "skills": []}), \
+             mock.patch.object(setup, "new_counts",
+                               return_value=setup.new_counts()), \
+             mock.patch.object(setup, "prune_stale"), \
+             mock.patch.object(setup, "adopt_predecessor_links"), \
+             mock.patch.object(setup, "installed_links", return_value={}), \
+             mock.patch("builtins.print"):
+            setup.cmd_install(os.environ.copy(), tty=mock.MagicMock(isatty=lambda: True),
+                              dry=False, examples_flag="all")
+
+        # Explicit flag → select_examples governs the override path.
+        mock_select.assert_called_once()
 
 
 if __name__ == "__main__":

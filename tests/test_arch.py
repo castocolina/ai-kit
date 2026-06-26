@@ -23,11 +23,21 @@ Conventions parsed from the source:
   after ``seg_``) which are unprefixed by design.
 """
 import ast
+import importlib.util
 import os
 import re
+import sys
 import unittest
 
 _TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
+
+# Load setup module for inventory tests.
+_SETUP_SPEC = importlib.util.spec_from_file_location(
+    "setup", os.path.join(_TOOLS, "setup.py")
+)
+_SETUP_MOD = importlib.util.module_from_spec(_SETUP_SPEC)
+_SETUP_SPEC.loader.exec_module(_SETUP_MOD)
+setup = _SETUP_MOD
 
 # Banner marker: "# ═══ N. ROLE — ..." — capture the block index and the role token.
 _BANNER_RE = re.compile(r"^#\s*═══\s*(\d+)\.\s*([A-Za-z_]+)")
@@ -575,6 +585,55 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertNotEqual([], check_no_doctor_symbols(bad))
         self.assertNotEqual([], check_no_doctor_symbols(bad_assign))
         self.assertEqual([], check_no_doctor_symbols(good))
+
+
+class TestSegmentInventory(unittest.TestCase):
+    """Segment inventory: coverage, line-mirror, and icon-mirror (Task 7)."""
+
+    # Reviewed mirror of the seg_* inline glyphs; "" means no static icon.
+    EXPECTED_ICONS = {
+        "path": "", "git_branch": "🌿", "git_dirty": "", "alt_git_worktree": "⎇",
+        "todo": "📝", "model": "", "alt_time_ago": "", "alt_time_clock": "⏰",
+        "effort": "🧠", "lines": "📃", "alt_cost": "🪙", "alt_time_session": "💬",
+        "alt_time_api": "📡", "render_time": "⏱", "slowest": "🐌",
+        "alt_term_dimensions": "", "context": "📊", "chat_size": "💾",
+        "alt_process_memory": "🧮", "alt_rate_limits": "⚡",
+    }
+    # Icon single-sourcing into the inventory is DEFERRED per the PRD; until then
+    # the inventory icon is hand-mirrored and this test pins it to the reviewed map.
+
+    def _sl(self):
+        sl_path = os.path.join(_TOOLS, "status-line.py")
+        spec = importlib.util.spec_from_file_location("status_line_inv", sl_path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _line_index(self, sl, key):
+        for i, ln in enumerate(sl.LAYOUT):
+            if key in ln.segments:
+                return i
+        raise AssertionError(f"{key} not in LAYOUT")
+
+    def test_coverage_every_segment_has_entry(self):
+        sl = self._sl()
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
+        for key in sl.SEGMENTS:
+            self.assertIn(key, inv, f"SEGMENTS key {key} missing from inventory")
+
+    def test_line_mirror(self):
+        sl = self._sl()
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
+        for key in sl.SEGMENTS:
+            self.assertEqual(inv[key]["line"], self._line_index(sl, key),
+                             f"{key} inventory line != LAYOUT line")
+
+    def test_icon_mirror(self):
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
+        for key, icon in self.EXPECTED_ICONS.items():
+            self.assertEqual(inv[key]["icon"], icon,
+                             f"{key} inventory icon != reviewed glyph")
 
 
 if __name__ == "__main__":

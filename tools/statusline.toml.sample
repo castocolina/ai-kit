@@ -27,25 +27,25 @@
 # path = true                # 📂 working directory, ~-relative   (pinned)
 # git_branch = true          # git branch name
 # git_dirty = true           # working-tree dirty marker
-# alt_git_worktree = true    # ⎇ active linked-worktree name (struck ⎇ wt on main)
+# alt_git_worktree = false   # ⎇ active linked-worktree name (struck ⎇ wt on main)
 # todo = true                # 📝 current TODO  (📝 in-progress / ⏸ pending)
 ## model line (middle row)
 # model = true               # active model name (e.g. Opus)
-# alt_time_ago = true        # time since the session's first message
-# alt_time_clock = true      # ⏰ current wall-clock time
+# alt_time_ago = false       # time since the session's first message
+# alt_time_clock = false     # ⏰ current wall-clock time
 # effort = true              # 🧠 reasoning-effort ladder + level ([auto] when auto)
 # lines = true               # 📃 lines added / removed this session
 # alt_cost = false           # 🪙 session cost in USD            (OFF by default)
-# alt_time_session = true    # 💬 total session duration
-# alt_time_api = true        # 📡 cumulative API response time
+# alt_time_session = false   # 💬 total session duration
+# alt_time_api = false       # 📡 cumulative API response time
 ## diagnostics line (bottom row)
 # render_time = true         # ⏱ status-line's own render time, SLO/SLA-colored
 # slowest = true             # 🐌 slowest single segment this render (name + duration)
 # alt_term_dimensions = false  # terminal size cols×lines (? if assumed)  (debug; OFF by default)
 # context = true             # 📊 context-window % used (and max) (pinned)
 # chat_size = true           # 💾 transcript file size on disk
-# alt_system_memory = true   # 🧮 status-line process memory (RSS)
-# alt_rate_limits = true     # ⚡ rate-limit buckets with reset time
+# alt_process_memory = false # 🧮 agent process memory (RSS)
+# alt_rate_limits = false    # ⚡ rate-limit buckets with reset time
 
 ## ─── [[line]] — full layout override ─────────────────────────────────────────
 ## ALL-OR-NOTHING (unlike [segments], which merges): if you uncomment ANY [[line]]
@@ -62,7 +62,7 @@
 # segments = ["model", "alt_time_ago", "alt_time_clock", "effort", "lines", "alt_cost", "alt_time_session", "alt_time_api"]
 # [[line]]
 # min_rows = 30
-# segments = ["render_time", "slowest", "alt_term_dimensions", "context", "chat_size", "alt_system_memory", "alt_rate_limits"]
+# segments = ["render_time", "slowest", "alt_term_dimensions", "context", "chat_size", "alt_process_memory", "alt_rate_limits"]
 
 ## ─── [git] — git probe tuning ────────────────────────────────────────────────
 ## Behaviour knobs for the git queries behind the `git_branch` / `git_dirty` /
@@ -80,6 +80,9 @@
 ## executable into the segments directory below. Each provider:
 ##   * carries a header in its first 10 lines:
 ##       # ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end) [id=<slug>] [timeout=<s>] [ttl=<s>]
+##     Values with spaces or punctuation can be double-quoted:
+##       # ai-kit-segment: id=system_memory name="System memory" description="System available RAM"
+##     Unquoted values must not contain whitespace.
 ##   * receives the status JSON on stdin (plus a "segment" block with avail_cols /
 ##     id / line / position) and the AI_KIT_SEGMENT_* env mirror, with cwd set to
 ##     the workspace directory;
@@ -87,7 +90,7 @@
 ##     sized to the AI_KIT_SEGMENT_COLS budget — or nothing to omit itself.
 ## Discovered providers are ENABLED BY DEFAULT; disable one explicitly via
 ## [segments] <id> = false (or CC_AI_KIT_SEGMENT_<ID>=0). A ready-to-copy sample
-## ships at examples/segments/sysmem (system available memory). Each value below
+## ships at examples/segments/system_memory (system available memory). Each value below
 ## is the current default.
 # [external]
 # ttl = 10                              # default cache TTL (s); env CC_AI_KIT_EXTERNAL_CACHE_TTL

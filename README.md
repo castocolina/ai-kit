@@ -303,7 +303,7 @@ fi                                          # else: nothing -> dropped
 ```
 
 A cross-platform Python reference (system available memory) ships at
-`examples/segments/sysmem` — copy it as a starting point.
+`examples/segments/system_memory` — copy it as a starting point.
 
 **The installer offers to set these up for you.** On an interactive `install`,
 the wizard discovers every provider under the repo's `examples/segments/`,
@@ -312,7 +312,7 @@ your config segments dir (executable, atomic, idempotent — re-running never
 duplicates). Headless / scripted runs are governed entirely by a flag and never
 prompt: `--examples=all|none|<ids>` (default `all`; `<ids>` is a comma/space list
 of segment ids). Disable an installed provider later like any segment:
-`[segments] sysmem = false`.
+`[segments] system_memory = false`.
 
 **Disable** a provider explicitly: `[segments] aws-session = false` (or
 `CC_AI_KIT_SEGMENT_AWS_SESSION=0`).

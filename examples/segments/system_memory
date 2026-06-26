@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ai-kit-segment: line=1 after=context id=sysmem ttl=10
+# ai-kit-segment: id=system_memory name="System memory" description="System available RAM" sample="12.0 GiB free" icon=💻 line=1 after=context ttl=10
 """ai-kit external status-line segment — system AVAILABLE memory (cross-platform).
 
 This is a copy-and-edit reference provider. It reports the machine's available
@@ -13,7 +13,7 @@ process RSS). It demonstrates the external-segment contract:
     sequence is stripped by the core.
 
 Drop it in ~/.config/ai-kit/segments/ and make it executable. Disable it with
-`[segments] sysmem = false` (or CC_AI_KIT_SEGMENT_SYSMEM=0)."""
+`[segments] system_memory = false` (or CC_AI_KIT_SEGMENT_SYSTEM_MEMORY=0)."""
 import os
 import sys
 

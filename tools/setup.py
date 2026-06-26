@@ -26,6 +26,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -39,7 +40,7 @@ CATEGORIES = ("agents", "commands", "skills")
 Paths = namedtuple(
     "Paths",
     "install_dir claude_dir settings config_dir config_toml sample status_line "
-    "statusline_doctor",
+    "statusline_doctor segments_dir",
 )
 
 
@@ -63,6 +64,7 @@ def resolve_paths(env):
         sample=os.path.join(install_dir, "tools", "statusline.toml.sample"),
         status_line=os.path.join(install_dir, "tools", "status-line.py"),
         statusline_doctor=os.path.join(install_dir, "tools", "statusline-doctor.py"),
+        segments_dir=os.path.join(config_dir, "segments"),
     )
 
 
@@ -71,13 +73,13 @@ def resolve_paths(env):
 # importable module, and the wizard must run even while the renderer is mid-edit.
 # TestTomlRead.test_segment_defaults_match_recipe_drift pins these to the recipe.
 SEGMENT_DEFAULTS = {
-    "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": True,
+    "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": False,
     "todo": True,
-    "model": True, "alt_time_ago": True, "alt_time_clock": True, "effort": True,
-    "lines": True, "alt_cost": False, "alt_time_session": True, "alt_time_api": True,
+    "model": True, "alt_time_ago": False, "alt_time_clock": False, "effort": True,
+    "lines": True, "alt_cost": False, "alt_time_session": False, "alt_time_api": False,
     "render_time": True, "slowest": True, "alt_term_dimensions": False,
     "context": True,
-    "chat_size": True, "alt_system_memory": True, "alt_rate_limits": True,
+    "chat_size": True, "alt_process_memory": False, "alt_rate_limits": False,
 }
 LAYOUT_DEFAULTS = [
     {"min_rows": 0,
@@ -86,9 +88,92 @@ LAYOUT_DEFAULTS = [
                                   "effort", "lines", "alt_cost", "alt_time_session",
                                   "alt_time_api"]},
     {"min_rows": 30, "segments": ["render_time", "slowest", "alt_term_dimensions",
-                                  "context", "chat_size", "alt_system_memory",
+                                  "context", "chat_size", "alt_process_memory",
                                   "alt_rate_limits"]},
 ]
+
+# Fallback UI glyph for an external segment whose header omits `icon=`.
+DEFAULT_SEGMENT_ICON = "●"
+
+# Absolute path to the shipped built-in segment UI inventory.
+INVENTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "segments_inventory.toml")
+
+
+def load_segment_inventory(path):
+    """Load the built-in segment UI inventory (description/sample/icon/line) keyed
+    by segment name. Installer/wizard-only metadata; never read by the render path.
+    Returns {key: {"description": str, "sample": str, "icon": str, "line": int}}.
+    A missing/malformed file yields {} (fail-closed coverage is asserted by the
+    arch test, not here)."""
+    data = read_toml(path)
+    inv = {}
+    for key, val in data.items():
+        if not isinstance(val, dict):
+            continue
+        inv[key] = {
+            "description": str(val.get("description", "")),
+            "sample": str(val.get("sample", "")),
+            "icon": str(val.get("icon", "")),
+            "line": int(val.get("line", 0)),
+        }
+    return inv
+
+
+def build_segment_meta(inventory, overrides):
+    """Merge the built-in inventory (description/sample/icon/line) with per-key
+    icon+line overrides from the user's statusline.toml. `overrides` is
+    {key: {"icon"?: str, "line"?: int}}. description/sample are inventory-only
+    (never overridable). Returns {key: {description, sample, icon, line}}."""
+    meta = {}
+    for key, entry in inventory.items():
+        ov = overrides.get(key, {})
+        meta[key] = {
+            "description": entry["description"],
+            "sample": entry["sample"],
+            "icon": ov["icon"] if "icon" in ov else entry["icon"],
+            "line": int(ov["line"]) if "line" in ov else entry["line"],
+        }
+    return meta
+
+
+def _statusline_icon_line_overrides(config_toml):
+    """Read per-segment icon+line overrides from the user's statusline.toml, if
+    present. Returns {key: {"icon"?: str, "line"?: int}}. The renderer ignores
+    these wizard-side override keys; this is installer/wizard metadata only."""
+    data = read_toml(config_toml)
+    seg = data.get("segments")
+    out = {}
+    if isinstance(seg, dict):
+        for key, val in seg.items():
+            if isinstance(val, dict):
+                ov = {}
+                if "icon" in val:
+                    ov["icon"] = str(val["icon"])
+                if "line" in val:
+                    with contextlib.suppress(TypeError, ValueError):
+                        ov["line"] = int(val["line"])
+                if ov:
+                    out[key] = ov
+    return out
+
+
+def _external_enabled_in_toml(config_toml, ext_id):
+    """True iff the user's statusline.toml enables external segment `ext_id`.
+
+    Externals default OFF in the wizard (spec: enabling requires statusline.toml
+    /env, never default_on). An external is ON only when the file has either
+    `segments.<id> = true` (bool) or `[segments.<id>] enabled = true`. Anything
+    else — absent, false, non-bool — is OFF."""
+    seg = read_toml(config_toml).get("segments")
+    if not isinstance(seg, dict):
+        return False
+    val = seg.get(ext_id)
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, dict):
+        return val.get("enabled") is True
+    return False
 
 
 def read_toml(path):
@@ -205,7 +290,7 @@ _SEGMENT_NOTES = {
     "alt_term_dimensions": "terminal size cols×lines (? if assumed)  (debug; OFF by default)",
     "context": "📊 context-window % used (and max) (pinned)",
     "chat_size": "💾 transcript file size on disk",
-    "alt_system_memory": "🧮 status-line process memory (RSS)",
+    "alt_process_memory": "🧮 agent process memory (RSS)",
     "alt_rate_limits": "⚡ rate-limit buckets with reset time",
 }
 
@@ -445,15 +530,25 @@ _SEG_HEADER_RE = re.compile(r"^#\s*ai-kit-segment:\s*(.*?)\s*$")
 
 def _parse_segment_header(text):
     """Parse an external segment's `# ai-kit-segment: k=v k=v …` marker line into
-    a {key: value} dict (e.g. `id`, `line`, `after`, `ttl`). Scans the head of the
-    file; returns None when no marker line is present. Bare tokens (no `=`) are
-    ignored. This is the single source of truth for the `id` that drives the
-    `segments.<id>` toggle."""
+    a {key: value} dict. Recognizes the renderer keys (`id`, `line`, `after`,
+    `before`, `timeout`, `ttl`) AND the wizard-only OPTIONAL UI keys
+    (`name`, `description`, `icon`, `sample`) — the latter are read installer-side
+    only; the renderer's parser never sees them (render-path purity). Scans the
+    head of the file; returns None when no marker line is present. Bare tokens
+    (no `=`) are ignored. Values may be double-quoted to hold spaces/punctuation
+    (e.g. `description="System available RAM"`); quoting is wizard-side only —
+    the renderer's parser (`core_parse_segment_header` in status-line.py) does
+    not need it since it never reads the UI keys. This is the single source of
+    truth for the `id` that drives the `segments.<id>` toggle."""
     for line in text.splitlines():
         m = _SEG_HEADER_RE.match(line)
         if m:
             fields = {}
-            for tok in m.group(1).split():
+            try:
+                tokens = shlex.split(m.group(1), posix=True)
+            except ValueError:
+                tokens = m.group(1).split()   # malformed quotes → graceful fallback
+            for tok in tokens:
                 if "=" in tok:
                     k, v = tok.split("=", 1)
                     fields[k] = v
@@ -464,9 +559,14 @@ def _parse_segment_header(text):
 def discover_example_segments(examples_dir):
     """Scan `examples_dir` for shippable example external segments, each carrying
     a `# ai-kit-segment: … id=<id> …` header. Returns a list of
-    {id, name, path, default_on} sorted by id — `default_on` is always True
-    (every example is OFFERED pre-checked; the user unchecks to skip). Files
-    without the marker or without an `id` are skipped; a missing dir yields []."""
+    {id, filename, name, path, default_on, description, icon, sample, line}
+    sorted by id. `filename` is the real filesystem filename (used as the
+    install-destination by install_example_segments). `default_on` is always
+    True (every example is OFFERED pre-checked). The UI keys come from the
+    OPTIONAL self-describing header (`name`/`description`/`icon`/`sample`);
+    missing fields fall back to id-as-name, blank description,
+    DEFAULT_SEGMENT_ICON, and the last layout line. Files without the marker or
+    without an `id` are skipped; a missing dir yields []."""
     out = []
     try:
         names = sorted(os.listdir(examples_dir))
@@ -484,9 +584,75 @@ def discover_example_segments(examples_dir):
         fields = _parse_segment_header(head)
         if not fields or "id" not in fields:
             continue
-        out.append({"id": fields["id"], "name": name, "path": path,
-                    "default_on": True})
+        out.append(_external_entry(fields, name, path, provenance="bundled"))
     return sorted(out, key=lambda e: e["id"])
+
+
+def _external_entry(fields, filename, path, provenance):
+    """Build the wizard-facing external-segment dict from a parsed header, applying
+    the self-describing fallbacks (id-as-name, blank description, default icon,
+    last layout line). `filename` is the real filesystem filename (used as the copy
+    destination); `name` is the UI display label (header `name=` or id fallback).
+    `provenance` is "bundled" or "user"."""
+    try:
+        line = int(fields["line"]) if "line" in fields else len(LAYOUT_DEFAULTS) - 1
+    except (TypeError, ValueError):
+        line = len(LAYOUT_DEFAULTS) - 1
+    seg_id = fields["id"]
+    return {
+        "id": seg_id,
+        "filename": filename if filename is not None else seg_id,
+        "name": fields.get("name") or seg_id,
+        "path": path,
+        "default_on": True,
+        "description": fields.get("description", ""),
+        "icon": fields.get("icon") or DEFAULT_SEGMENT_ICON,
+        "sample": fields.get("sample", ""),
+        "line": line,
+        "provenance": provenance,
+    }
+
+
+def _discover_user_segments(segments_dir):
+    """Scan the user dir (the same one the renderer reads) for external segments,
+    tagged provenance="user". Same header contract as bundled examples; a missing
+    dir yields []."""
+    out = []
+    try:
+        names = sorted(os.listdir(segments_dir))
+    except OSError:
+        return out
+    for name in names:
+        path = os.path.join(segments_dir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                head = f.read(4096)
+        except OSError:
+            continue
+        fields = _parse_segment_header(head)
+        if not fields or "id" not in fields:
+            continue
+        out.append(_external_entry(fields, name, path, provenance="user"))
+    return out
+
+
+def discover_external_segments(paths, examples_dir):
+    """Merge bundled (examples/segments/) and user (paths.segments_dir) external
+    segments. Each entry carries {id, filename, name, path, default_on,
+    description, icon, sample, line, provenance} where provenance is
+    "bundled" | "user". On an id collision the USER entry wins (it shadows
+    the bundled copy the user customized). All entries default OFF in the wizard
+    unless statusline.toml enables them. `filename` is preserved from the
+    winning entry and drives the install-destination in install_example_segments.
+    Returned list is id-sorted."""
+    merged = {}
+    for e in discover_example_segments(examples_dir):
+        merged[e["id"]] = e
+    for e in _discover_user_segments(paths.segments_dir):
+        merged[e["id"]] = e        # user overrides bundled
+    return sorted(merged.values(), key=lambda e: e["id"])
 
 
 def _atomic_write_executable(dst, data):
@@ -526,7 +692,7 @@ def install_example_segments(examples, config_dir, seg_state=None):
                 want = f.read()
         except OSError:
             continue
-        dst = os.path.join(seg_dir, ex["name"])
+        dst = os.path.join(seg_dir, ex["filename"])
         cur = None
         if os.path.isfile(dst):
             try:
@@ -540,7 +706,7 @@ def install_example_segments(examples, config_dir, seg_state=None):
             else:
                 os.chmod(dst, 0o755)                 # unchanged: just reassert +x
         except OSError as e:
-            print(f"examples: skipped {ex['name']} ({e})", file=sys.stderr)
+            print(f"examples: skipped {ex['filename']} ({e})", file=sys.stderr)
             continue
         if seg_state is not None:
             seg_state[ex["id"]] = True               # enable segments.<id>
@@ -963,6 +1129,12 @@ class Selection:
         for it in self.items:
             it[2] = bool(value)
 
+    def set_category(self, cat: str, value: bool) -> None:
+        """Set all items in `cat` to `value`."""
+        for it in self.items:
+            if it[0] == cat:
+                it[2] = bool(value)
+
     def move_cursor(self, delta):
         """Move the cursor by `delta`, clamped to the item range."""
         if self.items:
@@ -1066,6 +1238,32 @@ def wire_statusline(settings, status_line, tty, dry):
     data["statusLine"] = {"type": "command", "command": desired}
     _write_json(settings, data)
     return True
+
+
+def detect_statusline(paths):
+    """Read-only: classify settings.json's statusLine for the adoption gate.
+
+    Returns {"state": "unset"|"ours"|"foreign", "current_command": str|None}.
+      - "ours"    iff the command invokes the resolved paths.status_line
+                  (XDG-aware substring match — NOT a hard-coded string).
+      - "foreign" iff a statusLine is configured but does not reference our script.
+      - "unset"   iff absent, empty, or file is missing/malformed.
+
+    statusLine may be a bare string or an object with a "command" key (both
+    shapes are supported by Claude Code).  Writes nothing."""
+    data = _read_json(paths.settings)
+    cur = data.get("statusLine")
+    if isinstance(cur, dict):
+        cur_cmd = cur.get("command", "")
+    elif isinstance(cur, str):
+        cur_cmd = cur
+    else:
+        cur_cmd = ""
+    if not cur_cmd:
+        return {"state": "unset", "current_command": None}
+    if paths.status_line in cur_cmd:
+        return {"state": "ours", "current_command": cur_cmd}
+    return {"state": "foreign", "current_command": cur_cmd}
 
 
 def copy_recipe_if_absent(sample, config_toml, dry):
@@ -1421,6 +1619,38 @@ def _persist_layout(paths, state, dry):
                                   paths.statusline_doctor)
 
 
+def persist_statusline(paths, state, adopt, dry, tty=None):
+    """Conditionally persist the status-line config + wire settings.json.
+
+    adopt is False  -> NO-OP: write neither statusline.toml nor settings.json's
+                       statusLine; an existing status line is left untouched.
+    adopt is True   -> ensure the recipe exists (copy-if-absent), write
+                       statusline.toml (doctor-validated, auto-revert) via
+                       _persist_layout, then set settings.json statusLine to
+                       `python3 -S <status_line>` UNLESS it already points at ours
+                       (reconfigure leaves a correct, possibly hand-edited command
+                       in place). Returns True on success.
+
+    Component symlinking is the caller's concern and runs INDEPENDENTLY of this
+    function (a components-only install never calls persist_statusline with adopt
+    True, so no status-line file is read or written)."""
+    if not adopt:
+        return True
+    # Adopting: the config TOML must exist before _persist_layout patches it.
+    # copy-if-absent is gated here (NOT pre-wizard) so a non-adopting run never
+    # materializes a statusline.toml (Task 10 constraint 1).
+    copy_recipe_if_absent(paths.sample, paths.config_toml, dry)
+    if not _persist_layout(paths, state, dry):
+        return False
+    if detect_statusline(paths)["state"] == "ours":
+        return True
+    # Propagate wire_statusline's return (Task 9 left it discarded): True when
+    # statusLine now points at ai-kit, False when left untouched (declined /
+    # headless-foreign). The config write already succeeded, so a declined wire
+    # is not a hard failure — but the caller can see what happened.
+    return wire_statusline(paths.settings, paths.status_line, tty, dry)
+
+
 def _sample_input_path():
     return os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "..", "tests", "fixtures", "sample-input.json")
@@ -1461,6 +1691,63 @@ def _engine_ns(paths, sample_json):
     )
 
 
+def _build_wizard_context(  # pylint: disable=too-many-locals
+    paths, entries, installed, sample_json, wizard_app_mod,
+):
+    """Construct WizardContext for launch_wizard (extracted for testability).
+
+    ``wizard_app_mod`` is the already-imported wizard_app module, passed
+    explicitly so tests can supply ``tools.wizard_app`` without module-identity
+    issues (the bare ``import wizard_app`` in launch_wizard is a different object
+    than ``from tools import wizard_app``).
+
+    ``_initial_enabled`` is keyed by the INSTALLED state, not the wizard's
+    visual pre-selection.  On a first run the wizard pre-checks everything, but
+    nothing is installed yet — so the baseline must be all-False to let
+    ``_has_net_change`` (Task 5) correctly detect that confirming the defaults
+    IS a write.  On a reconfigure, installed state equals the pre-selection so
+    both representations agree."""
+    default = _default_selection(entries, installed)
+    sel = Selection(
+        (cat, name, name in default[cat])
+        for cat in CATEGORIES
+        for name, _ in entries[cat]
+    )
+    initial_enabled = {
+        (cat, name): (name in installed[cat])
+        for cat in CATEGORIES
+        for name, _ in entries[cat]
+    }
+
+    sl_state = detect_statusline(paths)
+    inventory = load_segment_inventory(INVENTORY_PATH)
+    overrides = _statusline_icon_line_overrides(paths.config_toml)
+    segment_meta = build_segment_meta(inventory, overrides)
+    examples_dir = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "examples", "segments")
+    external = discover_external_segments(paths, examples_dir)
+
+    # Wizard segment state = built-in defaults/recipe, plus every discovered
+    # external keyed by id. Externals default OFF unless the user's statusline.toml
+    # enables them — NEVER pre-checked via default_on (Task 10 constraint).
+    segments = current_segments(paths.config_toml)
+    for e in external:
+        segments[e["id"]] = _external_enabled_in_toml(paths.config_toml, e["id"])
+
+    return wizard_app_mod.WizardContext(
+        selection=sel,
+        state={"segments": segments,
+               "layout": current_layout(paths.config_toml), "dirty": False,
+               "adopt": sl_state["state"] == "ours",
+               "_initial_enabled": initial_enabled},
+        sample_json=sample_json,
+        engine=_engine_ns(paths, sample_json),
+        status_line=sl_state,
+        segment_meta=segment_meta,
+        external_segments=external,
+    )
+
+
 def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     paths, entries, installed, tty, dry, counts,
 ):
@@ -1484,8 +1771,6 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
         )
         sys.exit(2)
 
-    default = _default_selection(entries, installed)
-
     # Ensure tools/ is on sys.path so `import wizard_app` resolves regardless
     # of the caller's CWD (repo root in tests; tools/ when run directly).
     _tools_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1494,20 +1779,9 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
 
     import wizard_app  # pylint: disable=import-outside-toplevel
 
-    sel = Selection(
-        (cat, name, name in default[cat])
-        for cat in CATEGORIES
-        for name, _ in entries[cat]
-    )
     with open(_sample_input_path(), encoding="utf-8") as f:
         sample_json = f.read()
-    ctx = wizard_app.WizardContext(
-        selection=sel,
-        state={"segments": current_segments(paths.config_toml),
-               "layout": current_layout(paths.config_toml), "dirty": False},
-        sample_json=sample_json,
-        engine=_engine_ns(paths, sample_json),
-    )
+    ctx = _build_wizard_context(paths, entries, installed, sample_json, wizard_app)
     try:
         # curl | bash inherits the script pipe as fd 0; Textual reads keys from
         # fd 0, so redirect it onto the controlling terminal for the run.
@@ -1518,18 +1792,27 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
         print(f"error: wizard failed — {reason}", file=sys.stderr)
         sys.exit(2)
     if result is None:
-        return
+        return None
     # wizard_app types selection as `object` to avoid a circular import; cast here.
     sel = cast(Selection, result.selection)
+    # Component link/relink/unlink/prune runs UNCONDITIONALLY — independent of the
+    # status-line adoption decision (a components-only install is valid).
     apply_selection(
         sel.category_sets(CATEGORIES), entries, paths.claude_dir, dry, counts
     )
-    if not _persist_layout(paths, result.state, dry):
+    # Status-line persistence is gated on the wizard's adopt decision. adopt=False
+    # (skip / components-only) is a NO-OP: no statusline.toml, no settings.json
+    # statusLine touched. This routes the REAL install flow through the single
+    # persist_statusline seam (Task 9) rather than calling _persist_layout/
+    # wire_statusline directly (Task 10 constraint 1).
+    adopt = bool(result.state.get("adopt"))
+    if not persist_statusline(paths, result.state, adopt, dry, tty):
         print(
             "warning: the doctor rejected the layout/segment change — "
             "config file left unchanged (symlink selections already applied).",
             file=sys.stderr,
         )
+    return result   # propagate wizard result to cmd_install (I-1)
 
 
 def cmd_install(env, tty, dry, examples_flag=None):
@@ -1551,23 +1834,36 @@ def cmd_install(env, tty, dry, examples_flag=None):
     adopt_predecessor_links(paths.claude_dir, paths.install_dir, entries, tty, dry, counts)
     installed = installed_links(paths.claude_dir, paths.install_dir)
 
-    copy_recipe_if_absent(paths.sample, paths.config_toml, dry)
-    wire_statusline(paths.settings, paths.status_line, tty, dry)
+    # Status-line config + settings.json wiring is no longer done unconditionally
+    # here. It is gated on the wizard's adopt decision inside launch_wizard via
+    # persist_statusline (Task 10): a components-only / skipped run writes no
+    # statusline.toml and never touches settings.json's statusLine.
 
     # A: choose what to install + segment layout via Textual wizard (Task 2.1+).
-    launch_wizard(paths, entries, installed, tty, dry, counts)
+    result = launch_wizard(paths, entries, installed, tty, dry, counts)
 
-    # Example external segments (sysmem, …): offer pre-checked when interactive,
-    # else governed by --examples (default ON). Copy+chmod+enable; default-ON
-    # means the copied provider renders without an explicit toggle write.
-    examples = discover_example_segments(
-        os.path.join(paths.install_dir, "examples", "segments"))
-    if examples:
-        chosen = select_examples(examples, examples_flag, tty)
-        if chosen and not dry:
-            ids = install_example_segments(chosen, paths.config_dir)
-            print(f"examples: installed {len(ids)} external segment(s): "
-                  f"{', '.join(ids)}")
+    # Example external segments (system_memory, …). Aborting the wizard
+    # (result is None) is a full no-op — nothing further is installed. On a
+    # confirmed install the wizard's own segment toggles drive what gets
+    # installed (no double-prompt, I-1); an explicit --examples flag
+    # (all|none|<ids>) overrides that selection.
+    if result is not None:
+        examples = discover_example_segments(
+            os.path.join(paths.install_dir, "examples", "segments"))
+        if examples:
+            if examples_flag is not None:
+                # Explicit --examples override wins over the wizard's toggles
+                # (resolves the flag without prompting — flag is set).
+                chosen = select_examples(examples, examples_flag, tty)
+            else:
+                # Drive install from the wizard's external-segment toggles
+                # captured in result.state["segments"].
+                seg_state = result.state["segments"]
+                chosen = [e for e in examples if seg_state.get(e["id"], False)]
+            if chosen and not dry:
+                ids = install_example_segments(chosen, paths.config_dir)
+                print(f"examples: installed {len(ids)} external segment(s): "
+                      f"{', '.join(ids)}")
 
     print(f"summary: {counts['linked']} linked, {counts['relinked']} relinked, "
           f"{counts['unlinked']} unlinked, {counts['pruned']} pruned, "

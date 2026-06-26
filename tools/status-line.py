@@ -71,15 +71,15 @@ Env = Mapping[str, str]
 # True so the identity line always emits.
 SEGMENTS = {
     # identity line
-    "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": True,
+    "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": False,
     "todo": True,
     # model row
-    "model": True, "alt_time_ago": True, "alt_time_clock": True, "effort": True,
-    "lines": True, "alt_cost": False, "alt_time_session": True, "alt_time_api": True,
+    "model": True, "alt_time_ago": False, "alt_time_clock": False, "effort": True,
+    "lines": True, "alt_cost": False, "alt_time_session": False, "alt_time_api": False,
     # diagnostics row (alt_term_dimensions is a debug aid — off by default)
     "render_time": True, "slowest": True, "alt_term_dimensions": False,
     "context": True,
-    "chat_size": True, "alt_system_memory": True, "alt_rate_limits": True,
+    "chat_size": True, "alt_process_memory": False, "alt_rate_limits": False,
 }
 
 
@@ -113,7 +113,7 @@ LAYOUT = [
     Line(20, ["model", "alt_time_ago", "alt_time_clock", "effort", "lines",
               "alt_cost", "alt_time_session", "alt_time_api"]),
     Line(30, ["render_time", "slowest", "alt_term_dimensions", "context",
-              "chat_size", "alt_system_memory", "alt_rate_limits"]),
+              "chat_size", "alt_process_memory", "alt_rate_limits"]),
 ]
 
 
@@ -2264,7 +2264,7 @@ def seg_chat_size(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     return util_first_fitting([util_icon("💾", f"{color}{fmt_bytes(n)}{RESET}")], avail)
 
 
-def seg_alt_system_memory(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+def seg_alt_process_memory(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     n = probe_rss(ctx)
     if n is None:
         return None
@@ -2380,7 +2380,7 @@ def main() -> None:
 #   alt_term_dimensions  terminal COLS×ROWS (off by default; debug)
 #   context              📊 context-window usage bar + percent         [pinned]
 #   chat_size            💾 transcript file size
-#   alt_system_memory    🧮 claude process RSS
+#   alt_process_memory   🧮 agent process memory (RSS)
 #   alt_rate_limits      ⚡ rate-limit buckets (+ reset times when room)
 #
 # Common edits:
