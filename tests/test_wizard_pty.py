@@ -15,15 +15,23 @@ The uv-guard re-exec scenario (C.2 #5) is fully covered by unit tests in
 """
 
 import contextlib
+import fcntl
 import json
 import os
 import pty
 import select
 import shutil
+import struct
 import subprocess
 import tempfile
+import termios
 import time
 import unittest
+
+# A roomy PTY window so the full Arrange board (3 lane panels + focused-chip +
+# OFF tray + live preview) renders without being clipped off a short screen.
+_PTY_ROWS = 50
+_PTY_COLS = 120
 
 # Absolute path to the wizard so the tests work from any cwd.
 SETUP = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tools", "setup.py"))
@@ -78,6 +86,12 @@ def spawn_pty(args, env):
         with contextlib.suppress(OSError):
             os.execvpe(args[0], args, env)
         os._exit(127)
+    # Size the PTY before the child queries it (master+slave share the winsize),
+    # so Textual lays out at _PTY_ROWS×_PTY_COLS and renders the whole board
+    # (3 lane panels + focused-chip + OFF tray + live preview) without clipping.
+    with contextlib.suppress(OSError):
+        fcntl.ioctl(master_fd, termios.TIOCSWINSZ,
+                    struct.pack("HHHH", _PTY_ROWS, _PTY_COLS, 0, 0))
     return pid, master_fd
 
 
@@ -107,6 +121,11 @@ def spawn_pty_piped_stdin(args, env, pipe_data=b"# leftover script bytes\n"):
             os.execvpe(args[0], args, env)
         os._exit(127)
     os.close(r)
+    # Size the PTY before the child queries it (master+slave share the winsize),
+    # so Textual lays out at _PTY_ROWS×_PTY_COLS and renders the whole board.
+    with contextlib.suppress(OSError):
+        fcntl.ioctl(master_fd, termios.TIOCSWINSZ,
+                    struct.pack("HHHH", _PTY_ROWS, _PTY_COLS, 0, 0))
     with contextlib.suppress(OSError):
         os.write(w, pipe_data)
     os.close(w)              # EOF on stdin, as after bash drains the script
@@ -339,10 +358,12 @@ class TestPhase2E2E(unittest.TestCase):
     def test_pick_skill_and_confirm_creates_symlink(self):
         """Fresh install: accept all-ON defaults → confirm → symlink created.
 
-        The picks default to all-ON on a first run.  The confirm path is:
-        Enter (picks → arrange gate) → n (skip adoption) → Enter (one-liner →
-        summary) → Enter (summary → confirm).  We then assert that at least one
-        known skill symlink exists under the temp CLAUDE_CONFIG_DIR/skills.
+        The picks default to all-ON on a first run.  The confirm path in the
+        re-ported single-WizardApp flow is:
+        Enter (Choose → Arrange, gate shown) → n (decline adoption, board shows)
+        → Enter (Arrange → Review) → Enter (Review → commit → Done) → Enter
+        (Done → exit; setup applies the selection).  We then assert that at least
+        one known skill symlink exists under the temp CLAUDE_CONFIG_DIR/skills.
         """
         uv = _uv_cmd()
         config_dir = self._mk_config_dir()
@@ -361,11 +382,13 @@ class TestPhase2E2E(unittest.TestCase):
         _SUMMARY_DEADLINE = 30.0
         _DRAIN_DEADLINE = 30.0
 
-        # Markers chosen from static text the app DEFINITELY renders:
-        #   picks screen  → ◉ (UTF-8 bytes) — the glyph prepended to every enabled pick
-        #   summary screen → "Install Summary" — the literal header in _build_summary_text
+        # Markers chosen from static text the re-ported app DEFINITELY renders:
+        #   Choose screen → ◉ (UTF-8 bytes) — the glyph prepended to every enabled pick
+        #   Arrange gate  → "Wire your status line?" — the unset-state gate prompt
+        #   Arrange board → "git_branch" — a default-ON segment chip in Line 1
+        #   Review screen → "Review & confirm" — the step title
+        #   Done screen   → "ai-kit is installed" — the step title
         _PICKS_MARKER = "◉".encode()         # b'\xe2\x97\x89'
-        _SUMMARY_MARKER = b"Install Summary"
 
         pid, master_fd = spawn_pty(
             [uv, "run", "--script", SETUP, "install"],
@@ -382,55 +405,58 @@ class TestPhase2E2E(unittest.TestCase):
                 captured=captured,
             )
 
-            # ── Step 2: Enter → navigate to arrange gate ─────────────────────
-            # _PicksScreen.key_enter posts AdvanceStep(STEP_ARRANGE), so
-            # the adoption gate now appears before the summary screen.
+            # ── Step 2: Enter → Choose → Arrange (adoption gate shown) ───────
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
-            # ── Step 2b: wait for adoption gate prompt ────────────────────────
+            # ── Step 2b: wait for the adoption gate prompt ───────────────────
             drive_until(
                 master_fd,
-                b"Wire status line?",
+                b"Wire your status line?",
                 time.time() + _SUMMARY_DEADLINE,
                 captured=captured,
             )
 
-            # ── Step 2c: settle — wait for LayoutBoard to acquire focus ──────
-            # on_mount defers focus via call_after_refresh; the gate text
-            # appears in the PTY before that callback fires, so sending 'n'
-            # too early is silently dropped.  A 1-second drain covers this.
+            # ── Step 2c: settle before sending the gate answer ───────────────
             _drain(master_fd, time.time() + 1.0)
 
-            # ── Step 2d: press n — skip status-line adoption ─────────────────
+            # ── Step 2d: press n — decline adoption; the board renders ───────
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"n")
 
-            # ── Step 2e: wait for skip confirmation one-liner ─────────────────
+            # ── Step 2e: wait for the board (a default-ON segment chip) ──────
             drive_until(
                 master_fd,
-                b"No status-line writes",
+                b"git_branch",
                 time.time() + _SUMMARY_DEADLINE,
                 captured=captured,
             )
 
-            # ── Step 2f: enter → advance from one-liner to SummaryScreen ─────
+            # ── Step 3: Enter → Arrange → Review ─────────────────────────────
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
-
-            # ── Step 3: wait for the summary screen ──────────────────────────
             drive_until(
                 master_fd,
-                _SUMMARY_MARKER,
+                b"Review & confirm",
                 time.time() + _SUMMARY_DEADLINE,
                 captured=captured,
             )
 
-            # ── Step 4: Enter → confirm; apply_selection creates symlinks ────
+            # ── Step 4: Enter → Review commits (net change) → Done ───────────
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"\r")
+            drive_until(
+                master_fd,
+                b"ai-kit is installed",
+                time.time() + _SUMMARY_DEADLINE,
+                captured=captured,
+            )
+
+            # ── Step 5: Enter → Done exits; setup applies the selection ──────
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
-            # ── Step 5: drain to completion ───────────────────────────────────
+            # ── Step 6: drain to completion ──────────────────────────────────
             tail = _drain(master_fd, time.time() + _DRAIN_DEADLINE)
             captured.append(tail)
 
@@ -592,58 +618,56 @@ class TestPhase3E2E(unittest.TestCase):
                 captured=captured,
             )
 
-            # ── Step 2: tab → enter LayoutBoard ──────────────────────────────
-            with contextlib.suppress(OSError):
-                os.write(master_fd, b"\t")
-
-            # ── Step 2b: wait for adoption gate prompt ────────────────────────
-            # Task 4 (Plan B) added an adoption gate that appears before the
-            # board editor.  State is "unset" on a fresh install, so the gate
-            # shows "Wire status line? [Y/n]".
-            drive_until(
-                master_fd,
-                b"Wire status line?",
-                time.time() + self._BOARD_DEADLINE,
-                captured=captured,
-            )
-
-            # ── Step 2c: settle — wait for LayoutBoard to acquire focus ──────
-            # `LayoutBoard.on_mount` defers focus via `call_after_refresh`.  The
-            # gate text appears in the PTY before that callback fires, so sending
-            # 'n' too early lands on the Screen (which has no key_n handler) and
-            # is silently dropped.  A 1-second drain lets the refresh complete.
-            _drain(master_fd, time.time() + 1.0)
-
-            # ── Step 2d: press n — skip status-line adoption ─────────────────
-            # This sets ctx.state["adopt"] = False, satisfying Assert 1 below.
-            with contextlib.suppress(OSError):
-                os.write(master_fd, b"n")
-
-            # ── Step 3: wait for skip confirmation one-liner ─────────────────
-            # key_n → _show_skip_confirm() mounts a Static with this literal.
-            # No board panels are rendered (adopt=False, no _open_board call).
-            drive_until(
-                master_fd,
-                b"No status-line writes",
-                time.time() + self._BOARD_DEADLINE,
-                captured=captured,
-            )
-
-            # ── Step 4: enter → advance from one-liner to SummaryScreen ──────
-            # _gate_done is True; key_enter returns early so the BINDING
-            # action_advance_step fires → AdvanceStep(STEP_REVIEW).
+            # ── Step 2: Enter → Choose → Arrange (adoption gate shown) ───────
+            # Tab is a no-op on Choose in the re-ported flow; Enter advances.
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
-            # ── Step 5: wait for SummaryScreen ───────────────────────────────
+            # ── Step 2b: wait for the adoption gate prompt ───────────────────
+            # State is "unset" on a fresh install → "Wire your status line? [Y/n]".
             drive_until(
                 master_fd,
-                b"Install Summary",
+                b"Wire your status line?",
+                time.time() + self._BOARD_DEADLINE,
+                captured=captured,
+            )
+
+            # ── Step 2c: settle before sending the gate answer ───────────────
+            _drain(master_fd, time.time() + 1.0)
+
+            # ── Step 2d: press n — decline adoption (state["adopt"] = False) ─
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"n")
+
+            # ── Step 3: wait for the board (a default-ON segment chip) ───────
+            drive_until(
+                master_fd,
+                b"git_branch",
+                time.time() + self._BOARD_DEADLINE,
+                captured=captured,
+            )
+
+            # ── Step 4: Enter → Arrange → Review ─────────────────────────────
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"\r")
+            drive_until(
+                master_fd,
+                b"Review & confirm",
                 time.time() + self._SUMMARY_DEADLINE,
                 captured=captured,
             )
 
-            # ── Step 6: enter → confirm (apply_selection + _persist_layout) ───
+            # ── Step 5: Enter → Review commits → Done ────────────────────────
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"\r")
+            drive_until(
+                master_fd,
+                b"ai-kit is installed",
+                time.time() + self._SUMMARY_DEADLINE,
+                captured=captured,
+            )
+
+            # ── Step 6: Enter → Done exits; setup applies the selection ──────
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
@@ -706,12 +730,14 @@ class TestPhase3E2E(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_reconfigure_preloads_saved_arrangement(self):
-        """reconfigure pre-loads the on-disk arrangement into the LayoutBoard.
+        """reconfigure pre-loads the on-disk arrangement into the Arrange board.
 
         Pre-seeds config_toml with path=false (path toggled OFF).  Spawns
-        reconfigure, drives to the LayoutBoard, and asserts "OFF-TRAY:" appears in
-        the board — proving the wizard loaded the on-disk state, not the defaults.
-        Then aborts with ``q`` (no write).
+        reconfigure, drives to the Arrange board, and proves the on-disk state was
+        loaded (not the defaults): ``path`` appears in the UI but its preview
+        sample ``~/proj`` is ABSENT — i.e. path is OFF (in the tray), which only
+        happens if the saved arrangement was pre-loaded (by default path is ON and
+        its sample would render in the live preview).  Then aborts with ``q``.
         """
         uv = _uv_cmd()
         claude_dir = self._mk_temp_dir()
@@ -747,52 +773,41 @@ class TestPhase3E2E(unittest.TestCase):
                 captured=captured,
             )
 
-            # ── Step 2: tab → enter LayoutBoard ──────────────────────────────
+            # ── Step 2: Enter → Choose → Arrange (adoption gate shown) ───────
+            # Tab is a no-op on Choose in the re-ported flow; Enter advances.
             with contextlib.suppress(OSError):
-                os.write(master_fd, b"\t")
+                os.write(master_fd, b"\r")
 
-            # ── Step 2b: wait for adoption gate prompt ────────────────────────
-            # Task 4 (Plan B) added an adoption gate before the board editor.
+            # ── Step 2b: wait for the adoption gate prompt ───────────────────
             # State is "unset" here (no statusLine command in settings.json),
-            # so the gate shows "Wire status line? [Y/n]".
+            # so the gate shows "Wire your status line? [Y/n]".
             drive_until(
                 master_fd,
-                b"Wire status line?",
+                b"Wire your status line?",
                 time.time() + self._BOARD_DEADLINE,
                 captured=captured,
             )
 
-            # ── Step 2c: settle — wait for LayoutBoard to acquire focus ──────
-            # call_after_refresh(self.focus) fires AFTER the first render, so
-            # "Wire status line?" may already be visible before LayoutBoard is
-            # the focused widget.  Drain briefly to let the focus cycle land
-            # before sending 'y'; otherwise 'y' goes to whatever has focus and
-            # is silently dropped.
+            # ── Step 2c: settle before sending the gate answer ───────────────
             _drain(master_fd, time.time() + 1.0)
 
-            # ── Step 2d: press y — proceed to board ──────────────────────────
+            # ── Step 2d: press y — proceed to the board ──────────────────────
             # adopt=True; doesn't affect what the board shows — the pre-seeded
-            # off-tray arrangement is still visible regardless of adopt choice.
+            # off arrangement is visible regardless of the adopt choice.
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"y")
 
-            # ── Step 3: wait for board render — drain until "identity line:" ────
-            # The board renders both the layout lines AND the OFF-TRAY in one
-            # call to _render_board().  We wait until "identity line:" is in
-            # the accumulated output; "OFF-TRAY:" will be in the SAME render
-            # frame (already buffered) so we check captured directly afterward
-            # rather than issuing a second drive_until that would block on fresh
-            # bytes.
+            # ── Step 3: wait for the board render (a default-ON segment chip) ─
+            # path is OFF (pre-seeded), so git_branch is the first Line-1 chip.
+            # The whole frame (lanes + tray + preview) flushes together.
             drive_until(
                 master_fd,
-                b"identity line:",
+                b"git_branch",
                 time.time() + self._BOARD_DEADLINE,
                 captured=captured,
             )
 
             # Give the TUI one more short poll to finish flushing the render frame.
-            # (drive_until returns as soon as "identity line:" hits; "OFF-TRAY:"
-            # may still be in the pipe buffer.)
             tail_board = _drain(master_fd, time.time() + 3.0)
             if tail_board:
                 captured.append(tail_board)
@@ -810,28 +825,28 @@ class TestPhase3E2E(unittest.TestCase):
             with contextlib.suppress(ChildProcessError, OSError):
                 os.waitpid(pid, 0)
 
-        # Verify that the board text contained OFF-TRAY (already asserted above;
-        # this assertion is explicit for the test report).
         all_output = b"".join(captured).decode("utf-8", errors="replace")
+
+        # The board rendered: the 'path' segment is present in the UI (as a chip).
         self.assertIn(
-            "OFF-TRAY:",
+            "path",
             all_output,
             msg=(
-                f"Expected 'OFF-TRAY:' in board output after reconfigure with "
-                f"pre-seeded path=false layout.\n"
-                f"Captured output:\n{all_output}"
+                f"Expected the 'path' segment chip to appear on the Arrange board "
+                f"after reconfigure.\nCaptured output:\n{all_output}"
             ),
         )
 
-        # Confirm path is in the off-tray (appears with parens or focus brackets)
-        # The board renders tray chips as (chip) or [>chip<] for focused.
-        path_in_tray = "(path)" in all_output or "[>path<]" in all_output
-        self.assertTrue(
-            path_in_tray,
+        # Proof the saved arrangement was pre-loaded (not defaults): path is OFF,
+        # so it sits in the tray and its preview sample '~/proj' is NOT rendered.
+        # By default path is ON and '~/proj' would appear in the live preview.
+        self.assertNotIn(
+            "~/proj",
+            all_output,
             msg=(
-                f"Expected 'path' chip to appear in OFF-TRAY (as '(path)' or '[>path<]'), "
-                f"but it was not found.\n"
-                f"Captured output:\n{all_output}"
+                "Expected path's preview sample '~/proj' to be ABSENT (path OFF / "
+                "in tray) after reconfigure pre-loaded the saved path=false "
+                f"arrangement, but it was rendered.\nCaptured output:\n{all_output}"
             ),
         )
 
