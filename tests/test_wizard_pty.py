@@ -437,9 +437,11 @@ class TestPhase2E2E(unittest.TestCase):
             # ── Step 2c: settle before sending the gate answer ───────────────
             _drain(master_fd, time.time() + 1.0)
 
-            # ── Step 2d: press n — decline adoption; the board renders ───────
+            # ── Step 2d: press y — accept adoption so the board renders ──────
+            # (Declining now skips the segment board straight to Review; this
+            # test asserts the board, so it accepts.)
             with contextlib.suppress(OSError):
-                os.write(master_fd, b"n")
+                os.write(master_fd, b"y")
 
             # ── Step 2e: wait for the board (a default-ON segment chip) ──────
             drive_until(
@@ -560,8 +562,8 @@ class TestPhase3E2E(unittest.TestCase):
          lands at ``$XDG_CONFIG_HOME/ai-kit/statusline.toml``).
       2. Drive: Choose screen (◉ marker) → Enter (advance to Arrange) → gate
          "Wire your status line?" appears (state=unset) → press n (adopt=False)
-         → board renders (git_branch chip visible) → Enter (Arrange→Review) →
-         "Review & confirm" → Enter (Review→Done) → "ai-kit is installed" →
+         → the segment board is SKIPPED and Review shows directly
+         ("Review & confirm") → Enter (Review→Done) → "ai-kit is installed" →
          Enter (Done exits).
       3. Assert NO statusline.toml written (adopt=False skips status-line persist)
          and settings.json has NO statusLine key; component symlinks ARE created.
@@ -637,12 +639,11 @@ class TestPhase3E2E(unittest.TestCase):
         """n on adoption gate + confirm on a FRESH install (status line "unset")
         → status-line persistence is SKIPPED end-to-end.
 
-        After Task 10 the install flow routes status-line writes through
-        persist_statusline gated on the wizard's ``adopt`` decision, which starts
-        False unless the existing status line is already ours. The Plan-A UI has
-        no adoption-gate screen yet (that is Plan B), so a fresh install confirms
+        The install flow routes status-line writes through persist_statusline
+        gated on the wizard's ``adopt`` decision. Declining the adoption gate
+        (``n``) sets adopt False, skips the segment board entirely, and confirms
         WITHOUT adopting: NO statusline.toml is written and settings.json's
-        statusLine is left untouched — proving constraint 1's production wiring
+        statusLine is left untouched — proving the non-adopting path's wiring
         through a real PTY (component symlinks are still created independently)."""
         uv = _uv_cmd()
         claude_dir = self._mk_temp_dir()
@@ -682,20 +683,12 @@ class TestPhase3E2E(unittest.TestCase):
             _drain(master_fd, time.time() + 1.0)
 
             # ── Step 2d: press n — decline adoption (state["adopt"] = False) ─
+            # Declining SKIPS the segment board and jumps straight to Review;
+            # there is no status line to arrange.
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"n")
 
-            # ── Step 3: wait for the board (a default-ON segment chip) ───────
-            drive_until(
-                master_fd,
-                b"git_branch",
-                time.time() + self._BOARD_DEADLINE,
-                captured=captured,
-            )
-
-            # ── Step 4: Enter → Arrange → Review ─────────────────────────────
-            with contextlib.suppress(OSError):
-                os.write(master_fd, b"\r")
+            # ── Step 3: decline lands directly on Review (board skipped) ─────
             drive_until(
                 master_fd,
                 b"Review & confirm",

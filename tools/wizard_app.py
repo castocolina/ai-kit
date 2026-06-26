@@ -151,6 +151,8 @@ class WizardApp(App):
     .lane {{ border: round {CYAN}; height: auto; padding: 0 1; margin-bottom: 1;
             background: #0f141b; border-title-color: {CYAN}; }}
     .lane.gated {{ border: dashed {CYAN}; border-subtitle-color: {WARN}; }}
+    .lane.gate-attention {{ border: round {WARN}; background: #211803;
+                            border-title-color: {WARN}; }}
     #focchip {{ border: round {PINK}; background: #1b1016; height: auto; padding: 0 1;
                margin-bottom: 1; border-title-color: {PINK}; }}
     #tray {{ border: dashed {DIM}; height: auto; padding: 0 1; margin-bottom: 1;
@@ -383,7 +385,11 @@ class WizardApp(App):
 
     def _render_footer(self) -> None:
         sep = f"   [{LINE}]│[/]   "
-        left = sep.join(self._cap(*k) for k in FOOTERS[self.step])
+        if self.step == STEP_ARRANGE and not self.gate_done:
+            keys = [("Yes", "Y", True), ("No", "N", False), ("Back", "Esc", False)]
+        else:
+            keys = FOOTERS[self.step]
+        left = sep.join(self._cap(*k) for k in keys)
         self.query_one("#footer-left", Static).update(left)
         self.query_one("#footer-q", Static).update(self._cap(*QUIT_KEY, False))
 
@@ -439,18 +445,29 @@ class WizardApp(App):
         return f"[{col} on #0d1117] {label} [/]"
 
     def _render_arrange(self) -> None:
+        lane0 = self.query_one("#lane0", Static)
         if not self.gate_done:
             sl = self.ctx.status_line
             if sl.get("state") == "foreign":
                 cmd = sl.get("current_command") or "(unknown)"
-                gate = (f"[{WARN}]Existing status line detected.[/]\n"
-                        f"[{DIM}]Current:[/] {cmd}\n\nReplace with ai-kit?  [y/N]")
+                gate = (f"[b {WARN}]⚠  Existing status line detected[/]\n"
+                        f"[{DIM}]Current:[/] {cmd}\n\n"
+                        f"[#0d1117 on {WARN}] Replace it with ai-kit?  "
+                        f"y = replace · N / Enter = keep mine [/]")
             else:
-                gate = "Wire your status line?  [Y/n]"
-            self.query_one("#lane0", Static).update(gate)
+                gate = ("[b #f0f6fc]Wire your status line?[/]\n"
+                        f"[{DIM}]ai-kit can render git/model/diagnostics in your "
+                        "status line.[/]\n\n"
+                        f"[#0d1117 on {ACCENT}] Y / Enter = set it up · "
+                        "n = skip (leave it unset) [/]")
+            lane0.add_class("gate-attention")
+            lane0.border_title = "⚠ status line — action needed"
+            lane0.update(gate)
             for wid in ("#lane1", "#lane2", "#focchip", "#tray", "#preview"):
                 self.query_one(wid, Static).update("")
             return
+        lane0.remove_class("gate-attention")
+        lane0.border_title = "Line 1"
         self._clamp_focus()
         zones = self._zones()
         for li in range(3):
@@ -546,11 +563,20 @@ class WizardApp(App):
         self.step = step
         return True
 
+    def _enter_arrange(self) -> bool:
+        # Entering the status-line step from Choose. Re-ask the adoption gate
+        # unless the user already opted in (adopt True) or the status line is
+        # already ours — so a prior "decline" never lands on a stale board.
+        if not self.state.get("adopt"):
+            self.gate_done = self.ctx.status_line.get("state") == "ours"
+        self.step = STEP_ARRANGE
+        return True
+
     def _key_choose(self, event: events.Key) -> bool:
         ch, k = event.character, event.key
         n = len(self.sel.items)
         if not n:
-            return k == "enter" and self._goto(STEP_ARRANGE)
+            return k == "enter" and self._enter_arrange()
         if k == "up":
             self.sel.cursor = (self.sel.cursor - 1) % n
         elif k == "down":
@@ -562,7 +588,7 @@ class WizardApp(App):
         elif ch in ("A", "N"):
             self.sel.set_all(ch == "A")
         elif k == "enter":
-            return self._goto(STEP_ARRANGE)
+            return self._enter_arrange()
         elif k == "tab":
             pass          # consume — Tab is a no-op on Choose (never advances)
         else:
@@ -572,20 +598,22 @@ class WizardApp(App):
     def _key_arrange(self, event: events.Key) -> bool:
         if not self.gate_done:
             ch, k = event.character, event.key
+            if k == "escape":
+                self.step = STEP_CHOOSE        # back out without answering
+                return True
             if ch == "y":
                 self.state["adopt"] = True
-                self.gate_done = True
             elif ch == "n":
                 self.state["adopt"] = False
-                self.gate_done = True
-            elif k == "enter":
+            elif k == "enter":                 # follow the shown default
                 self.state["adopt"] = self.ctx.status_line.get("state") != "foreign"
-                self.gate_done = True
-            elif k == "escape":
-                self.state["adopt"] = False
-                self.gate_done = True
             else:
                 return False
+            self.gate_done = True
+            if not self.state["adopt"]:
+                # Declined: nothing to arrange and settings.json is left
+                # untouched, so skip the segment board straight to Review.
+                self.step = STEP_REVIEW
             return True
         ch, k = event.character, event.key
         z, p = self.focus_zp
@@ -668,7 +696,9 @@ class WizardApp(App):
             self.step = STEP_DONE
             return True
         if event.key == "escape":
-            self.step = STEP_ARRANGE
+            # Declining skipped Arrange, so step back to Choose rather than a
+            # screen the user never saw.
+            self.step = STEP_ARRANGE if self.state.get("adopt") else STEP_CHOOSE
             return True
         return False
 

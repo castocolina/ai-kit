@@ -151,15 +151,28 @@ class TestAdoptionGate(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")          # answer gate (default Yes)
             self.assertTrue(app.gate_done)
             self.assertIs(app.state["adopt"], True)
+            # Accepted → stays on the Arrange board (segments to arrange).
+            self.assertEqual(app.step, wa.STEP_ARRANGE)
 
-    async def test_foreign_enter_declines(self):
+    async def test_foreign_enter_declines_and_skips_arrange(self):
         app = wa.WizardApp(make_ctx(sl_state="foreign"))
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("enter")          # choose → arrange
+            await pilot.press("enter")          # choose → arrange (gate)
             await pilot.press("enter")          # answer gate (default No for foreign)
             self.assertTrue(app.gate_done)
             self.assertIs(app.state["adopt"], False)
+            # Declined → segment arrangement is skipped; jump straight to Review.
+            self.assertEqual(app.step, wa.STEP_REVIEW)
+
+    async def test_unset_n_declines_and_skips_arrange(self):
+        app = wa.WizardApp(make_ctx(sl_state="unset"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")          # choose → arrange (gate)
+            await pilot.press("n")              # decline
+            self.assertIs(app.state["adopt"], False)
+            self.assertEqual(app.step, wa.STEP_REVIEW)
 
     async def test_y_n_force(self):
         app = wa.WizardApp(make_ctx(sl_state="foreign"))
@@ -169,6 +182,27 @@ class TestAdoptionGate(unittest.IsolatedAsyncioTestCase):
             await pilot.press("y")
             self.assertIs(app.state["adopt"], True)
             self.assertTrue(app.gate_done)
+            self.assertEqual(app.step, wa.STEP_ARRANGE)   # accepted → board
+
+    async def test_gate_escape_returns_to_choose(self):
+        app = wa.WizardApp(make_ctx(sl_state="foreign"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")          # choose → arrange (gate)
+            await pilot.press("escape")         # back out of the gate
+            self.assertEqual(app.step, wa.STEP_CHOOSE)
+            self.assertFalse(app.gate_done)     # gate re-asks on next entry
+
+    async def test_review_escape_after_decline_returns_to_choose(self):
+        app = wa.WizardApp(make_ctx(sl_state="foreign"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")          # choose → arrange (gate)
+            await pilot.press("n")              # decline → Review (arrange skipped)
+            self.assertEqual(app.step, wa.STEP_REVIEW)
+            await pilot.press("escape")         # back from Review
+            # Arrange was skipped, so Esc returns to Choose, not Arrange.
+            self.assertEqual(app.step, wa.STEP_CHOOSE)
 
     async def test_ours_skips_gate_at_init(self):
         app = wa.WizardApp(make_ctx(sl_state="ours"))
@@ -322,9 +356,9 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("N")              # all components off == initial
-            await pilot.press("enter")          # choose → arrange
-            await pilot.press("n")              # gate: do not adopt
-            await pilot.press("enter")          # arrange → review
+            await pilot.press("enter")          # choose → arrange (gate)
+            await pilot.press("n")              # decline → jumps to Review
+            self.assertEqual(app.step, wa.STEP_REVIEW)
             await pilot.press("enter")          # review → blocked (no net change)
             self.assertEqual(app.step, wa.STEP_REVIEW)
             self.assertIn("Nothing to write",
