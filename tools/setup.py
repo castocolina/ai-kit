@@ -1123,13 +1123,25 @@ def adopt_predecessor_links(  # pylint: disable=too-many-arguments,too-many-posi
     if not is_interactive(tty):
         for it in items:
             print(f"warn: {it} links to a previous ai-kit install — run setup "
-                  "interactively to re-point or drop it", file=sys.stderr)
+                  "interactively to re-point or delete it", file=sys.stderr)
         return items
+    n = len(items)
+    warn = _WARN if _use_color(tty) else ""
+    bold = _BOLD if _use_color(tty) else ""
+    rst = _RESET if _use_color(tty) else ""
     banner = "\nThese links point at a PREVIOUS ai-kit install (e.g. a renamed repo):\n"
     banner += "".join(f"  - {it}\n" for it in items)
+    banner += (
+        f"\n{warn}  ⚠  Answering No DELETES these {n} stale link(s) — "
+        f"this cannot be undone.{rst}\n\n"
+        f"  {bold}Yes{rst} → re-point all {n} link(s) to THIS install (each link recreated here)\n"
+        f"  {bold}No{rst}  → {warn}DELETE{rst} all {n} stale link(s) from ~/.claude\n"
+        "         (only these dangling links are removed — your files and this\n"
+        "         install are left untouched)\n")
     _tty_write(tty, banner)
-    repoint = ask_yes_no(tty, "re-point them to this install? ('n' = drop them)",
-                         default=True)
+    prompt = (f"Re-point them to this install?  "
+              f"{warn}(No DELETES the {n} stale link(s)){rst}")
+    repoint = ask_yes_no(tty, prompt, default=True)
     for cat, name, _old, new_target in cands:
         link = os.path.join(claude_dir, cat, name)
         if not dry:
@@ -1143,7 +1155,18 @@ def adopt_predecessor_links(  # pylint: disable=too-many-arguments,too-many-posi
 
 _ACCENT = "\033[36m"   # cyan — enabled rows
 _DIM = "\033[2m"       # dimmed — disabled rows
+_WARN = "\033[1;33m"   # bold yellow — destructive emphasis
+_BOLD = "\033[1m"      # bold
 _RESET = "\033[0m"
+
+
+def _use_color(tty):
+    """ANSI emphasis is safe only on a real terminal with NO_COLOR unset.
+    A test ``io.StringIO`` reports ``isatty() == False`` → plain text."""
+    if os.environ.get("NO_COLOR"):
+        return False
+    isatty_fn = getattr(tty, "isatty", None)
+    return callable(isatty_fn) and bool(isatty_fn())
 
 
 def _first_run(installed):

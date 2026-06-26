@@ -1147,6 +1147,19 @@ class TestAdoptPredecessorLinks(unittest.TestCase):
         self.assertFalse(os.path.lexists(self.link))
         self.assertEqual(c["pruned"], 1)
 
+    def test_prompt_emphasizes_that_no_deletes(self):
+        # The banner/prompt must make the destructive choice unmissable: state
+        # that No DELETES the stale links, and reassure that files are untouched.
+        c = setup.new_counts()
+        tty = io.StringIO("n\n")
+        setup.adopt_predecessor_links(self.claude, self.install, self.entries(),
+                                      tty=tty, dry=False, counts=c)
+        shown = tty.getvalue()
+        self.assertIn("DELETE", shown)
+        self.assertIn("left untouched", shown)
+        # io.StringIO is not a tty → emphasis stays plain (no raw ANSI codes).
+        self.assertNotIn("\033[", shown)
+
     def test_headless_leaves_links_untouched(self):
         c = setup.new_counts()
         items = setup.adopt_predecessor_links(self.claude, self.install, self.entries(),
