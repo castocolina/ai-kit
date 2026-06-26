@@ -1,4 +1,4 @@
-"""Phase-1 and Phase-2 PTY E2E tests for the install wizard.
+"""PTY end-to-end tests for the 4-step install wizard (Choose→Arrange→Review→Done).
 
 These tests spawn ``setup.py`` via ``uv run --script`` — the canonical
 invocation — so that ``textual`` resolves (8.2.7, cache is warm) and
@@ -6,12 +6,15 @@ invocation — so that ``textual`` resolves (8.2.7, cache is warm) and
 fail-closed / interactive-terminal behaviour being exercised.
 
 Scenarios:
-  TestPhase1E2E.test_no_tty_exits_nonzero_with_reason   (C.2 #4)
-  TestPhase1E2E.test_interactive_under_pty_runs_to_completion  (C.2 #3)
-  TestPhase2E2E.test_pick_skill_and_confirm_creates_symlink    (C.2 #1 partial)
+  TestPhase1E2E.test_no_tty_exits_nonzero_with_reason         — fail-closed: no tty
+  TestPhase1E2E.test_interactive_under_pty_runs_to_completion — Choose screen renders + abort
+  TestPhase2E2E.test_pick_skill_and_confirm_creates_symlink   — full flow: symlinks created
+  TestPhase3E2E.test_arrange_confirm_skips_statusline_when_not_adopted — adopt=n path
+  TestPhase3E2E.test_reconfigure_preloads_saved_arrangement   — reconfigure pre-loads state
+  TestCurlBashE2E.test_piped_stdin_wizard_still_driven_via_dev_tty — curl|bash /dev/tty path
 
-The uv-guard re-exec scenario (C.2 #5) is fully covered by unit tests in
-``TestUvBootstrap`` in ``test_setup.py`` and is not duplicated here.
+The uv-guard re-exec scenario is fully covered by unit tests in ``TestUvBootstrap``
+in ``test_setup.py`` and is not duplicated here.
 """
 
 import contextlib
@@ -302,6 +305,18 @@ class TestPhase1E2E(unittest.TestCase):
         except OSError:
             startup_output = b""
 
+        # ── Choose-screen assertions (before any keystrokes) ───────────────
+        choose_output = b"".join(all_captured)
+        self.assertIn(b"ai-kit install wizard", choose_output,
+                      msg="Choose: expected header 'ai-kit install wizard' on first screen")
+        self.assertIn(b"select components", choose_output,
+                      msg="Choose: expected picksbox border title 'select components'")
+        self.assertIn(b"components selected", choose_output,
+                      msg="Choose: expected pick count '... components selected'")
+        self.assertNotIn(b"render_time", choose_output,
+                         msg="Choose: segment id 'render_time' must not appear on the "
+                             "Choose screen (segments only show on the Arrange board)")
+
         with contextlib.suppress(OSError):
             os.write(master_fd, b"q")
 
@@ -320,6 +335,12 @@ class TestPhase1E2E(unittest.TestCase):
         decoded = output.decode("utf-8", errors="replace")
         self.assertIn("summary:", decoded.lower(),
                       msg=f"expected install summary in output; got {decoded!r}")
+        # ── Abort: q at Choose must leave the config dir clean ───────────────
+        self.assertFalse(
+            os.path.isdir(os.path.join(config_dir, "skills")),
+            msg=f"Expected no skills/ dir after abort (q at Choose), "
+                f"but it exists under {config_dir!r}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -466,9 +487,36 @@ class TestPhase2E2E(unittest.TestCase):
             with contextlib.suppress(ChildProcessError, OSError):
                 os.waitpid(pid, 0)
 
-        # ── Step 6: assert symlinks were created ─────────────────────────────
+        # ── Assert screen content from the captured output ───────────────────
         skills_dir = os.path.join(config_dir, "skills")
         all_output = b"".join(captured).decode("utf-8", errors="replace")
+
+        # Choose screen
+        self.assertIn("ai-kit install wizard", all_output,
+                      msg="Choose: expected header 'ai-kit install wizard' in output")
+        self.assertIn("select components", all_output,
+                      msg="Choose: expected picksbox border title 'select components'")
+        self.assertIn("components selected", all_output,
+                      msg="Choose: expected pick count '... components selected'")
+        # Arrange board border titles
+        self.assertIn("Line 1", all_output,
+                      msg="Arrange: expected lane border title 'Line 1'")
+        self.assertIn("Line 2", all_output,
+                      msg="Arrange: expected lane border title 'Line 2'")
+        self.assertIn("Line 3", all_output,
+                      msg="Arrange: expected lane border title 'Line 3'")
+        self.assertIn("live preview", all_output,
+                      msg="Arrange: expected live preview panel")
+        # Review screen
+        self.assertIn("components to install", all_output,
+                      msg="Review: expected 'components to install' panel")
+        self.assertIn("status line", all_output,
+                      msg="Review: expected 'status line' panel")
+        self.assertIn("Install ai-kit", all_output,
+                      msg="Review: expected confirm button 'Install ai-kit'")
+        # Done screen
+        self.assertIn("next", all_output,
+                      msg="Done: expected 'next' panel")
 
         self.assertTrue(
             os.path.isdir(skills_dir),
@@ -507,24 +555,26 @@ class TestPhase2E2E(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestPhase3E2E(unittest.TestCase):
-    """Drive the Textual wizard into the LayoutBoard, edit the layout, confirm,
-    and assert the written TOML reflects the edit AND the doctor passes.
+    """Drive the Textual wizard through the 4-step flow (Choose→Arrange→Review→Done)
+    with an emphasis on the status-line adoption gate and reconfigure pre-loading.
 
-    Scenario 1 — arrange + confirm:
+    Scenario 1 — not-adopted + confirm (Choose→Arrange via gate→Review→Done):
       1. Spawn ``setup.py install`` under a PTY with temp dirs for both
          CLAUDE_CONFIG_DIR (symlinks land there) and XDG_CONFIG_HOME (config_toml
          lands at ``$XDG_CONFIG_HOME/ai-kit/statusline.toml``).
-      2. Drive: picks (◉) → tab (enter LayoutBoard) → wait for board render
-         (marker: "identity line:") → space (toggle focused chip "path" to OFF-TRAY)
-         → wait for OFF-TRAY marker → enter (board → SummaryScreen) → wait for
-         "Install Summary" → enter (confirm).
-      3. Assert config_toml has ``path = false`` in [segments] via
-         ``current_segments``, and that the doctor passes (exit 0) on the file.
+      2. Drive: Choose screen (◉ marker) → Enter (advance to Arrange) → gate
+         "Wire your status line?" appears (state=unset) → press n (adopt=False)
+         → board renders (git_branch chip visible) → Enter (Arrange→Review) →
+         "Review & confirm" → Enter (Review→Done) → "ai-kit is installed" →
+         Enter (Done exits).
+      3. Assert NO statusline.toml written (adopt=False skips status-line persist)
+         and settings.json has NO statusLine key; component symlinks ARE created.
 
     Scenario 2 — reconfigure pre-loads saved arrangement:
-      Pre-seed config_toml with a known non-default layout (path toggled OFF).
-      Spawn ``setup.py reconfigure``, drive to the LayoutBoard, and assert the
-      board renders "OFF-TRAY" (proving the saved arrangement was pre-loaded).
+      Pre-seed config_toml with a known non-default layout (path=false / OFF).
+      Spawn ``setup.py reconfigure``, drive to the Arrange board, and assert the
+      saved arrangement was pre-loaded (path's preview sample '~/proj' is absent
+      because path is in the tray, not the default ON position).
       Abort cleanly with ``q``.
     """
 
@@ -942,6 +992,11 @@ class TestCurlBashE2E(unittest.TestCase):
         self.assertTrue(
             ("\x1b[" in decoded) or ("◉" in decoded) or ("summary:" in decoded.lower()),
             msg=f"wizard did not render a TUI under piped stdin; got {decoded!r}",
+        )
+        self.assertIn(
+            "select components", decoded,
+            msg="curl|bash path: expected Choose-screen text 'select components' "
+                f"in piped-stdin output; got {decoded!r}",
         )
         # 'q' abort is a clean exit; a hung/failed driver would not exit 0.
         self.assertEqual(
