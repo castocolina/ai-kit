@@ -311,9 +311,13 @@ See `docs/prds/install-wizard-tui-v1.0-prd.md` and the merged implementation.
   `status-line.py` / `statusline-doctor.py` only by subprocess.
 - **Persistence (writes on Install only):** `save_statusline_config` →
   `write_toml_preserving` → `statusline-doctor --doctor` → atomic write + auto-revert.
-- **Live preview = the real renderer** fed a temp config via `CC_AI_KIT_CONFIG_FILE`
-  (so moves render), debounced, `@work(thread=True, exclusive=True)`, epoch-guarded
-  against stale overwrites (the existing "I1" fix).
+- **Preview = a styled MOCK** built from each segment's inventory `sample` + icon (and
+  external `sample`), laid out per-lane as `{icon} {sample} | {icon} {sample}` with a
+  `N on · M off` footer; it does **not** shell out to `status-line.py`. *Rationale:* a
+  live render reads the host environment for some segments (git branch/worktree, memory),
+  which is empty/broken when the installer runs outside a git repo or before any Claude
+  context exists; a deterministic mock avoids this. *(Amended 2026-06-26 — the prior
+  live-renderer binding invariant is superseded by this mock-preview invariant.)*
 - **curl | bash:** keep `open_tty()` (getpass-style `FileIO`+`TextIOWrapper`) and
   `stdin_on_tty()` (dup2 `/dev/tty` onto fd 0 for the wizard run). Preserve the PTY E2E.
 - **Textual 8.2.7** on py3.12 — verify every API against 8.x (not the older docs).
