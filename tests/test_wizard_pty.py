@@ -15,6 +15,7 @@ The uv-guard re-exec scenario (C.2 #5) is fully covered by unit tests in
 """
 
 import contextlib
+import json
 import os
 import pty
 import select
@@ -338,10 +339,10 @@ class TestPhase2E2E(unittest.TestCase):
     def test_pick_skill_and_confirm_creates_symlink(self):
         """Fresh install: accept all-ON defaults → confirm → symlink created.
 
-        The picks default to all-ON on a first run.  The minimal confirm path
-        is: Enter (picks → summary) then Enter (summary → confirm).  We then
-        assert that at least one known skill symlink exists under the temp
-        CLAUDE_CONFIG_DIR/skills.
+        The picks default to all-ON on a first run.  The confirm path is:
+        Enter (picks → arrange gate) → n (skip adoption) → Enter (one-liner →
+        summary) → Enter (summary → confirm).  We then assert that at least one
+        known skill symlink exists under the temp CLAUDE_CONFIG_DIR/skills.
         """
         uv = _uv_cmd()
         config_dir = self._mk_config_dir()
@@ -381,7 +382,39 @@ class TestPhase2E2E(unittest.TestCase):
                 captured=captured,
             )
 
-            # ── Step 2: Enter → navigate to summary screen ───────────────────
+            # ── Step 2: Enter → navigate to arrange gate ─────────────────────
+            # _PicksScreen.key_enter posts AdvanceStep(STEP_ARRANGE), so
+            # the adoption gate now appears before the summary screen.
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"\r")
+
+            # ── Step 2b: wait for adoption gate prompt ────────────────────────
+            drive_until(
+                master_fd,
+                b"Wire status line?",
+                time.time() + _SUMMARY_DEADLINE,
+                captured=captured,
+            )
+
+            # ── Step 2c: settle — wait for LayoutBoard to acquire focus ──────
+            # on_mount defers focus via call_after_refresh; the gate text
+            # appears in the PTY before that callback fires, so sending 'n'
+            # too early is silently dropped.  A 1-second drain covers this.
+            _drain(master_fd, time.time() + 1.0)
+
+            # ── Step 2d: press n — skip status-line adoption ─────────────────
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"n")
+
+            # ── Step 2e: wait for skip confirmation one-liner ─────────────────
+            drive_until(
+                master_fd,
+                b"No status-line writes",
+                time.time() + _SUMMARY_DEADLINE,
+                captured=captured,
+            )
+
+            # ── Step 2f: enter → advance from one-liner to SummaryScreen ─────
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
@@ -528,10 +561,17 @@ class TestPhase3E2E(unittest.TestCase):
     # Scenario 1
     # ------------------------------------------------------------------
 
-    def test_arrange_confirm_toml_reflects_and_doctor_passes(self):
-        """arrange (space-toggle path to OFF-TRAY) + confirm → TOML has path=false +
-        doctor passes.  Proves the full write pipeline: LayoutBoard state →
-        _persist_layout → save_statusline_config → doctor-validated TOML."""
+    def test_arrange_confirm_skips_statusline_when_not_adopted(self):
+        """n on adoption gate + confirm on a FRESH install (status line "unset")
+        → status-line persistence is SKIPPED end-to-end.
+
+        After Task 10 the install flow routes status-line writes through
+        persist_statusline gated on the wizard's ``adopt`` decision, which starts
+        False unless the existing status line is already ours. The Plan-A UI has
+        no adoption-gate screen yet (that is Plan B), so a fresh install confirms
+        WITHOUT adopting: NO statusline.toml is written and settings.json's
+        statusLine is left untouched — proving constraint 1's production wiring
+        through a real PTY (component symlinks are still created independently)."""
         uv = _uv_cmd()
         claude_dir = self._mk_temp_dir()
         xdg_home = self._mk_temp_dir()
@@ -556,34 +596,46 @@ class TestPhase3E2E(unittest.TestCase):
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\t")
 
-            # ── Step 3: wait for board render (label: "identity line:") ──────
-            # The board always renders "  identity line:" as the first row header.
+            # ── Step 2b: wait for adoption gate prompt ────────────────────────
+            # Task 4 (Plan B) added an adoption gate that appears before the
+            # board editor.  State is "unset" on a fresh install, so the gate
+            # shows "Wire status line? [Y/n]".
             drive_until(
                 master_fd,
-                b"identity line:",
+                b"Wire status line?",
                 time.time() + self._BOARD_DEADLINE,
                 captured=captured,
             )
 
-            # ── Step 4: space → toggle focused chip ("path") to OFF-TRAY ─────
-            # On mount, focused_seg = "path" (first chip of first layout line).
-            # After toggle, board re-renders and appends "  OFF-TRAY: ..."
-            with contextlib.suppress(OSError):
-                os.write(master_fd, b" ")
+            # ── Step 2c: settle — wait for LayoutBoard to acquire focus ──────
+            # `LayoutBoard.on_mount` defers focus via `call_after_refresh`.  The
+            # gate text appears in the PTY before that callback fires, so sending
+            # 'n' too early lands on the Screen (which has no key_n handler) and
+            # is silently dropped.  A 1-second drain lets the refresh complete.
+            _drain(master_fd, time.time() + 1.0)
 
-            # ── Step 5: wait for OFF-TRAY to confirm the toggle rendered ──────
+            # ── Step 2d: press n — skip status-line adoption ─────────────────
+            # This sets ctx.state["adopt"] = False, satisfying Assert 1 below.
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"n")
+
+            # ── Step 3: wait for skip confirmation one-liner ─────────────────
+            # key_n → _show_skip_confirm() mounts a Static with this literal.
+            # No board panels are rendered (adopt=False, no _open_board call).
             drive_until(
                 master_fd,
-                b"OFF-TRAY:",
-                time.time() + self._TRAY_DEADLINE,
+                b"No status-line writes",
+                time.time() + self._BOARD_DEADLINE,
                 captured=captured,
             )
 
-            # ── Step 6: enter → board pushes SummaryScreen ───────────────────
+            # ── Step 4: enter → advance from one-liner to SummaryScreen ──────
+            # _gate_done is True; key_enter returns early so the BINDING
+            # action_advance_step fires → AdvanceStep(STEP_REVIEW).
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
-            # ── Step 7: wait for SummaryScreen ───────────────────────────────
+            # ── Step 5: wait for SummaryScreen ───────────────────────────────
             drive_until(
                 master_fd,
                 b"Install Summary",
@@ -591,11 +643,11 @@ class TestPhase3E2E(unittest.TestCase):
                 captured=captured,
             )
 
-            # ── Step 8: enter → confirm (apply_selection + _persist_layout) ───
+            # ── Step 6: enter → confirm (apply_selection + _persist_layout) ───
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
-            # ── Step 9: drain to completion ───────────────────────────────────
+            # ── Step 7: drain to completion ───────────────────────────────────
             tail = _drain(master_fd, time.time() + self._DRAIN_DEADLINE)
             captured.append(tail)
 
@@ -607,57 +659,45 @@ class TestPhase3E2E(unittest.TestCase):
 
         all_output = b"".join(captured).decode("utf-8", errors="replace")
 
-        # ── Assert 1: config_toml was written ────────────────────────────────
-        self.assertTrue(
+        # ── Assert 1: NO statusline.toml was written (adopt=False no-op) ──────
+        self.assertFalse(
             os.path.isfile(config_toml),
             msg=(
-                f"Expected config_toml to be written at {config_toml!r} after confirm,\n"
-                f"but it does not exist.\n"
-                f"XDG_CONFIG_HOME={xdg_home}\n"
+                f"Expected NO config_toml at {config_toml!r} after a non-adopting "
+                f"confirm (status line was unset, adopt defaults False), but the "
+                f"file exists.\nXDG_CONFIG_HOME={xdg_home}\n"
                 f"Captured output:\n{all_output}"
             ),
         )
 
-        # Import setup.py as a module to use current_segments / current_layout.
-        import importlib.util as _ilu
-        spec = _ilu.spec_from_file_location("_setup", SETUP)
-        setup_mod = _ilu.module_from_spec(spec)  # type: ignore[arg-type]
-        spec.loader.exec_module(setup_mod)  # type: ignore[union-attr]
+        # ── Assert 2: settings.json statusLine left untouched ────────────────
+        settings = os.path.join(claude_dir, "settings.json")
+        if os.path.isfile(settings):
+            with open(settings, encoding="utf-8") as f:
+                data = json.load(f)
+            self.assertNotIn(
+                "statusLine", data,
+                msg=(
+                    "Expected settings.json to have NO statusLine after a "
+                    f"non-adopting confirm, but it does.\nsettings={settings}\n"
+                    f"Captured output:\n{all_output}"
+                ),
+            )
 
-        segs = setup_mod.current_segments(config_toml)
-
-        # ── Assert 2: the toggled segment ("path") is present AND explicitly False ──
-        self.assertIn(
-            "path",
-            segs,
+        # ── Assert 3: component symlinks WERE created (independent of adopt) ──
+        # The install ran to completion: at least one skill symlink under
+        # CLAUDE_CONFIG_DIR/skills proves apply_selection ran unconditionally.
+        skills_dir = os.path.join(claude_dir, "skills")
+        links = []
+        if os.path.isdir(skills_dir):
+            links = [n for n in os.listdir(skills_dir)
+                     if os.path.islink(os.path.join(skills_dir, n))]
+        self.assertTrue(
+            links,
             msg=(
-                f"Expected 'path' key in segments dict (toggled to OFF-TRAY), "
-                f"but key is absent.\n"
-                f"Full segments: {segs}\n"
-                f"config_toml={config_toml}\n"
-                f"Captured output:\n{all_output}"
-            ),
-        )
-        self.assertIs(
-            segs["path"],
-            False,
-            msg=(
-                f"Expected segments['path'] is False after toggling it to the "
-                f"OFF-TRAY, but got: {segs['path']!r}\n"
-                f"Full segments: {segs}\n"
-                f"config_toml={config_toml}\n"
-                f"Captured output:\n{all_output}"
-            ),
-        )
-
-        # ── Assert 3: doctor passes on the written config ─────────────────────
-        doctor_rc = self._run_doctor_check(config_toml)
-        self.assertEqual(
-            doctor_rc, 0,
-            msg=(
-                f"statusline-doctor.py --check {config_toml!r} exited {doctor_rc} "
-                f"(expected 0 — config should be valid after wizard write).\n"
-                f"Captured output:\n{all_output}"
+                "Expected at least one skill symlink (apply_selection runs "
+                "independently of the status-line adoption decision), but found "
+                f"none under {skills_dir}.\nCaptured output:\n{all_output}"
             ),
         )
 
@@ -710,6 +750,31 @@ class TestPhase3E2E(unittest.TestCase):
             # ── Step 2: tab → enter LayoutBoard ──────────────────────────────
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\t")
+
+            # ── Step 2b: wait for adoption gate prompt ────────────────────────
+            # Task 4 (Plan B) added an adoption gate before the board editor.
+            # State is "unset" here (no statusLine command in settings.json),
+            # so the gate shows "Wire status line? [Y/n]".
+            drive_until(
+                master_fd,
+                b"Wire status line?",
+                time.time() + self._BOARD_DEADLINE,
+                captured=captured,
+            )
+
+            # ── Step 2c: settle — wait for LayoutBoard to acquire focus ──────
+            # call_after_refresh(self.focus) fires AFTER the first render, so
+            # "Wire status line?" may already be visible before LayoutBoard is
+            # the focused widget.  Drain briefly to let the focus cycle land
+            # before sending 'y'; otherwise 'y' goes to whatever has focus and
+            # is silently dropped.
+            _drain(master_fd, time.time() + 1.0)
+
+            # ── Step 2d: press y — proceed to board ──────────────────────────
+            # adopt=True; doesn't affect what the board shows — the pre-seeded
+            # off-tray arrangement is still visible regardless of adopt choice.
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"y")
 
             # ── Step 3: wait for board render — drain until "identity line:" ────
             # The board renders both the layout lines AND the OFF-TRAY in one
