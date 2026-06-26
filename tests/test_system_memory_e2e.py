@@ -1,11 +1,11 @@
-"""T5.4 — End-to-end install + render of the sysmem example external segment.
+"""T5.4 — End-to-end install + render of the system_memory example external segment.
 
 Hermetic: one self-contained tmpdir is the fake HOME and the ai-kit install dir,
 so the suite never touches the live workspace. Runs the REAL setup.py installer
 non-interactively with `--examples=all` (in a fresh session so it can never grab
-a controlling /dev/tty and block on the wizard), asserts the sysmem provider
+a controlling /dev/tty and block on the wizard), asserts the system_memory provider
 lands executable under ~/.config/ai-kit/segments/, then renders the REAL
-status-line.py and asserts the sysmem segment shows up in the output line.
+status-line.py and asserts the system_memory segment shows up in the output line.
 
 The render assertion needs a platform whose available memory the provider can
 read (Linux /proc/meminfo); it is skipped elsewhere. The install/executable
@@ -26,16 +26,16 @@ _REPO = os.path.abspath(os.path.join(_HERE, ".."))
 _ANSI = re.compile(r"\033\[[0-9;]*m")
 
 
-class TestSysmemInstallE2E(unittest.TestCase):
+class TestSystemMemoryInstallE2E(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.mkdtemp(prefix="aikit-sysmem-e2e-")
+        cls.tmp = tempfile.mkdtemp(prefix="aikit-system-memory-e2e-")
         cls.home = os.path.join(cls.tmp, "home")
         cls.inst = os.path.join(cls.tmp, "share", "ai-kit")
         os.makedirs(cls.home)
         os.makedirs(os.path.join(cls.inst, "examples", "segments"))
-        shutil.copy(os.path.join(_REPO, "examples", "segments", "sysmem"),
-                    os.path.join(cls.inst, "examples", "segments", "sysmem"))
+        shutil.copy(os.path.join(_REPO, "examples", "segments", "system_memory"),
+                    os.path.join(cls.inst, "examples", "segments", "system_memory"))
         shutil.copytree(os.path.join(_REPO, "tools"),
                         os.path.join(cls.inst, "tools"))
         cls.setup_py = os.path.join(cls.inst, "tools", "setup.py")
@@ -62,21 +62,21 @@ class TestSysmemInstallE2E(unittest.TestCase):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def _seg(self):
-        return os.path.join(self.home, ".config", "ai-kit", "segments", "sysmem")
+        return os.path.join(self.home, ".config", "ai-kit", "segments", "system_memory")
 
     def test_install_succeeded(self):
         self.assertEqual(self.proc.returncode, 0, self.proc.stderr)
 
-    def test_sysmem_installed_and_executable(self):
+    def test_system_memory_installed_and_executable(self):
         self.assertTrue(os.path.isfile(self._seg()),
-                        f"sysmem not installed.\nstdout:\n{self.proc.stdout}\n"
+                        f"system_memory not installed.\nstdout:\n{self.proc.stdout}\n"
                         f"stderr:\n{self.proc.stderr}")
         self.assertTrue(os.stat(self._seg()).st_mode & stat.S_IXUSR,
-                        "installed sysmem is not executable")
+                        "installed system_memory is not executable")
 
     @unittest.skipUnless(os.path.exists("/proc/meminfo"),
-                         "sysmem reads /proc/meminfo (Linux) to render")
-    def test_sysmem_renders_in_status_line(self):
+                         "system_memory reads /proc/meminfo (Linux) to render")
+    def test_system_memory_renders_in_status_line(self):
         sample = json.dumps({
             "model": {"display_name": "Opus 4.8", "id": "claude-opus-4-8"},
             "workspace": {"current_dir": self.home},
@@ -88,7 +88,7 @@ class TestSysmemInstallE2E(unittest.TestCase):
                            capture_output=True, text=True, env=env, cwd=self.home)
         self.assertEqual(p.returncode, 0, p.stderr)
         plain = _ANSI.sub("", p.stdout)
-        self.assertIn("💻", plain)              # the sysmem segment's glyph
+        self.assertIn("💻", plain)              # the system_memory segment's glyph
         self.assertIn("free", plain)            # "<N> GiB free" — the long form
 
 
