@@ -635,7 +635,7 @@ class WizardApp(App):
             return
         seg = zone.pop(p)
         if z == 3:  # off -> on -> its inventory "home" line (not a fixed Line 1)
-            home = self.home_line.get(seg, 0)
+            home = self.home_line.get(seg, 2)  # default matches the other call sites
             self.lines[home].append(seg)
             self.focus_zp = (home, len(self.lines[home]) - 1)
         else:
