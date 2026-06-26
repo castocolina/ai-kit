@@ -353,24 +353,24 @@ class TestLoadConfigExternal(unittest.TestCase):
         return env
 
     def test_discovered_provider_enabled_by_default_and_placed(self):
-        write_script(self.segs, "sysmem",
+        write_script(self.segs, "system_memory",
                      "#!/bin/sh\n# ai-kit-segment: line=1 end\necho hi\n")
         cfg = sl.cfg_load_config(self._env())
-        self.assertTrue(cfg.segments.get("sysmem"))            # default-on
-        self.assertIn("sysmem", cfg.layout[0].segments)        # placed on row 1
-        self.assertEqual([s.id for s in cfg.external.providers], ["sysmem"])
+        self.assertTrue(cfg.segments.get("system_memory"))            # default-on
+        self.assertIn("system_memory", cfg.layout[0].segments)        # placed on row 1
+        self.assertEqual([s.id for s in cfg.external.providers], ["system_memory"])
 
     def test_explicit_disable_in_toml_is_honored(self):
-        write_script(self.segs, "sysmem", "#!/bin/sh\necho hi\n")
+        write_script(self.segs, "system_memory", "#!/bin/sh\necho hi\n")
         with open(self.cfg, "w") as f:
-            f.write("[segments]\nsysmem = false\n")
+            f.write("[segments]\nsystem_memory = false\n")
         cfg = sl.cfg_load_config(self._env())
-        self.assertFalse(cfg.segments["sysmem"])
+        self.assertFalse(cfg.segments["system_memory"])
 
     def test_env_toggle_disables_external(self):
-        write_script(self.segs, "sysmem", "#!/bin/sh\necho hi\n")
-        cfg = sl.cfg_load_config(self._env(CC_AI_KIT_SEGMENT_SYSMEM="0"))
-        self.assertFalse(cfg.segments["sysmem"])
+        write_script(self.segs, "system_memory", "#!/bin/sh\necho hi\n")
+        cfg = sl.cfg_load_config(self._env(CC_AI_KIT_SEGMENT_SYSTEM_MEMORY="0"))
+        self.assertFalse(cfg.segments["system_memory"])
 
     def test_no_providers_keeps_external_empty(self):
         cfg = sl.cfg_load_config(self._env())
@@ -437,18 +437,19 @@ class TestCliSurface(unittest.TestCase):
                     "XDG_CACHE_HOME": os.path.join(self.dir, "cache"), "HOME": self.dir}
 
     def test_print_config_lists_external(self):
-        write_script(self.segs, "sysmem", "#!/bin/sh\n# ai-kit-segment: line=1 end\necho hi\n")
+        write_script(self.segs, "system_memory",
+                     "#!/bin/sh\n# ai-kit-segment: line=1 end\necho hi\n")
         cfg = sl.cfg_load_config(self.env)
         blob = json.loads(doctor.cmd_print_config(cfg, self.env))
-        self.assertEqual(blob["external"]["providers"][0]["id"], "sysmem")
+        self.assertEqual(blob["external"]["providers"][0]["id"], "system_memory")
         self.assertIn("ttl", blob["external"])
         # `dir` is the PROVIDERS directory, not the XDG cache dir.
         self.assertEqual(blob["external"]["dir"], self.segs)
 
     def test_validate_accepts_external_id_in_segments(self):
-        write_script(self.segs, "sysmem", "#!/bin/sh\necho hi\n")
+        write_script(self.segs, "system_memory", "#!/bin/sh\necho hi\n")
         with open(self.cfg, "w") as f:
-            f.write("[segments]\nsysmem = false\n")
+            f.write("[segments]\nsystem_memory = false\n")
         self.assertEqual(doctor.validate_config_file(self.cfg, self.env), [])
 
     def test_validate_flags_unknown_external_key(self):
@@ -465,18 +466,18 @@ class TestCliSurface(unittest.TestCase):
 
 
 class TestSampleProvider(unittest.TestCase):
-    PATH = os.path.join(_HERE, "..", "examples", "segments", "sysmem")
+    PATH = os.path.join(_HERE, "..", "examples", "segments", "system_memory")
 
     def test_is_executable_with_header(self):
-        self.assertTrue(os.access(self.PATH, os.X_OK), "sysmem must be chmod +x")
+        self.assertTrue(os.access(self.PATH, os.X_OK), "system_memory must be chmod +x")
         with open(self.PATH, encoding="utf-8") as f:
             head = [f.readline() for _ in range(10)]
         self.assertIsNotNone(sl.core_parse_segment_header(head))
 
     def test_runs_and_emits_one_sgr_line(self):
-        spec = sl.ExtSpec(id="sysmem", path=os.path.abspath(self.PATH), line=1,
+        spec = sl.ExtSpec(id="system_memory", path=os.path.abspath(self.PATH), line=1,
                           position=("after", "context"), timeout=3.0, ttl=0,
-                          cache_path=os.path.join(tempfile.mkdtemp(), "sysmem"))
+                          cache_path=os.path.join(tempfile.mkdtemp(), "system_memory"))
         data = types.SimpleNamespace(raw={}, work_dir=".")
         out = sl.core_run_external(spec, data, 40)
         # Renders on Linux/macOS; on an unsupported platform it cleanly drops (None).
@@ -485,9 +486,9 @@ class TestSampleProvider(unittest.TestCase):
             self.assertLessEqual(sl.util_visible_width(out), 40)
 
     def test_short_budget_tiers_down_or_drops(self):
-        spec = sl.ExtSpec(id="sysmem", path=os.path.abspath(self.PATH), line=1,
+        spec = sl.ExtSpec(id="system_memory", path=os.path.abspath(self.PATH), line=1,
                           position=("end", ""), timeout=3.0, ttl=0,
-                          cache_path=os.path.join(tempfile.mkdtemp(), "sysmem"))
+                          cache_path=os.path.join(tempfile.mkdtemp(), "system_memory"))
         out = sl.core_run_external(spec, types.SimpleNamespace(raw={}, work_dir="."), 4)
         if out is not None:
             self.assertLessEqual(sl.util_visible_width(out), 4)
