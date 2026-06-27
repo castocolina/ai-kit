@@ -459,14 +459,24 @@ def write_toml_preserving(path, text, statusline_doctor):
         return False
     env = dict(os.environ)
     env["CC_AI_KIT_CONFIG_FILE"] = path
+    reason = ""
     try:
         proc = subprocess.run([sys.executable, "-S", statusline_doctor, "--doctor"],
                               capture_output=True, text=True, env=env, timeout=10,
                               check=False)
         ok = proc.returncode == 0
-    except (OSError, subprocess.SubprocessError):
+        if not ok:
+            reason = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    except (OSError, subprocess.SubprocessError) as exc:
         ok = False
+        reason = str(exc)
     if not ok:
+        if reason:
+            # Surface WHY the doctor rejected it — a swallowed reason left the
+            # user (and the install summary) with no clue what to fix.
+            print("doctor rejected the status-line config:", file=sys.stderr)
+            for line in reason.splitlines():
+                print(f"  {line}", file=sys.stderr)
         if prev is None:
             os.unlink(path)
         else:

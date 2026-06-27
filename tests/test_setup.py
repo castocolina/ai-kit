@@ -345,6 +345,24 @@ class TestWritePreserving(unittest.TestCase):
             with open(path) as f:
                 self.assertEqual(f.read(), "# good original\n")   # reverted
 
+    def test_reject_surfaces_doctor_reason(self):
+        # The doctor's actual complaint must reach stderr — a swallowed reason
+        # left users unable to tell WHY the config was rejected.
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "statusline.toml")
+            with open(path, "w") as f:
+                f.write("# good original\n")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                ok = setup.write_toml_preserving(
+                    path, "[segments]\nbogus_key = true\n", self._statusline_doctor())
+            self.assertFalse(ok)
+            out = err.getvalue()
+            self.assertIn("doctor rejected", out)
+            self.assertIn("bogus_key", out)   # the specific offending key is shown
+
 
 def _diff_lines(a, b):
     al, bl = a.splitlines(), b.splitlines()
