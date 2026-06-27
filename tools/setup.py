@@ -1720,6 +1720,43 @@ def _persist_layout(paths, state, dry):
                                   paths.statusline_doctor)
 
 
+def _recover_incompatible_config(paths, dry):
+    """If an existing statusline.toml is rejected by the doctor (e.g. it carries
+    stale segment keys from a pre-rename ai-kit), back it up to ``<file>.bak`` and
+    regenerate a fresh one from the recipe so the wizard's choices apply on a
+    valid base. Returns True when a recovery happened.
+
+    Uses the doctor's structural ``--check`` (not ``--doctor``) so an
+    environment-specific render failure never triggers a reset — only an
+    actually-incompatible file does."""
+    cfg = paths.config_toml
+    if not os.path.isfile(cfg) or not os.path.isfile(paths.sample):
+        return False
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-S", paths.statusline_doctor, "--check", cfg],
+            capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode == 0:
+        return False                      # valid — keep the user's config as-is
+    bak = cfg + ".bak"
+    if dry:
+        print(f"[dry-run] would back up incompatible {cfg} -> {bak} and "
+              "regenerate from the recipe", file=sys.stderr)
+        return True
+    try:
+        shutil.copyfile(cfg, bak)
+        shutil.copyfile(paths.sample, cfg)
+    except OSError as exc:
+        print(f"warn: could not reset incompatible config ({exc})", file=sys.stderr)
+        return False
+    print("note: your status-line config was incompatible with this ai-kit "
+          "version and has been reset to defaults.\n"
+          f"      your previous file is preserved at {bak}", file=sys.stderr)
+    return True
+
+
 def persist_statusline(paths, state, adopt, dry, tty=None):
     """Conditionally persist the status-line config + wire settings.json.
 
@@ -1741,6 +1778,9 @@ def persist_statusline(paths, state, adopt, dry, tty=None):
     # copy-if-absent is gated here (NOT pre-wizard) so a non-adopting run never
     # materializes a statusline.toml (Task 10 constraint 1).
     copy_recipe_if_absent(paths.sample, paths.config_toml, dry)
+    # An existing config from an incompatible (e.g. pre-rename) ai-kit would be
+    # rejected by the doctor and block the whole persist; recover it first.
+    _recover_incompatible_config(paths, dry)
     if not _persist_layout(paths, state, dry):
         return False
     if detect_statusline(paths)["state"] == "ours":

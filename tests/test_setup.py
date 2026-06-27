@@ -1947,6 +1947,67 @@ class TestLayoutModel(unittest.TestCase):
         self.assertIn("model", setup.off_tray(st2))
 
 
+class TestRecoverIncompatibleConfig(unittest.TestCase):
+    """_recover_incompatible_config backs up + regenerates a doctor-rejected config
+    (e.g. a pre-rename ai-kit config with stale segment keys), and leaves a valid
+    config untouched."""
+
+    _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def _paths(self, cfg):
+        import types as _types
+        return _types.SimpleNamespace(
+            config_toml=cfg,
+            sample=os.path.join(self._REPO, "tools", "statusline.toml.sample"),
+            statusline_doctor=os.path.join(self._REPO, "tools", "statusline-doctor.py"),
+        )
+
+    def _tmp_cfg(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return os.path.join(d, "statusline.toml")
+
+    @staticmethod
+    def _read(path):
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    @staticmethod
+    def _write(path, text):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_valid_config_is_left_untouched(self):
+        cfg = self._tmp_cfg()
+        shutil.copy(self._paths(cfg).sample, cfg)
+        before = self._read(cfg)
+        self.assertFalse(setup._recover_incompatible_config(self._paths(cfg), dry=False))
+        self.assertFalse(os.path.exists(cfg + ".bak"))
+        self.assertEqual(self._read(cfg), before)
+
+    def test_incompatible_config_backed_up_and_regenerated(self):
+        import subprocess
+        cfg = self._tmp_cfg()
+        stale = "[segments]\nbranch = true\ndirty = false\n"   # pre-rename keys
+        self._write(cfg, stale)
+        self.assertTrue(setup._recover_incompatible_config(self._paths(cfg), dry=False))
+        self.assertEqual(self._read(cfg + ".bak"), stale)     # original preserved
+        rc = subprocess.run([sys.executable, "-S", self._paths(cfg).statusline_doctor,
+                             "--check", cfg], check=False).returncode
+        self.assertEqual(rc, 0)   # regenerated config is valid
+
+    def test_missing_config_is_noop(self):
+        cfg = self._tmp_cfg()
+        self.assertFalse(setup._recover_incompatible_config(self._paths(cfg), dry=False))
+
+    def test_dry_run_does_not_mutate(self):
+        cfg = self._tmp_cfg()
+        self._write(cfg, "[segments]\nbranch = true\n")
+        self.assertTrue(setup._recover_incompatible_config(self._paths(cfg), dry=True))
+        self.assertFalse(os.path.exists(cfg + ".bak"))     # dry: no write
+        self.assertIn("branch", self._read(cfg))           # unchanged
+
+
 class TestPersistRoundTrip(unittest.TestCase):
     """T3.4: _persist_layout writes the minimal diff through save_statusline_config
     (doctor-validated path), and the written result round-trips correctly."""
