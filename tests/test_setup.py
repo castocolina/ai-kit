@@ -2008,6 +2008,79 @@ class TestRecoverIncompatibleConfig(unittest.TestCase):
         self.assertIn("branch", self._read(cfg))           # unchanged
 
 
+class TestExternalSegmentToggle(unittest.TestCase):
+    """User drop-in externals: discovered default-ON (mirroring the renderer),
+    disable persists `<id> = false`, bundled-not-installed never written."""
+
+    _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    @staticmethod
+    def _write(path, text):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def _paths_with_user_ext(self):
+        home = tempfile.mkdtemp()
+        xdg = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, xdg, ignore_errors=True)
+        paths = setup.resolve_paths({"HOME": home, "AI_KIT_DIR": self._REPO,
+                                     "XDG_CONFIG_HOME": xdg})
+        os.makedirs(paths.segments_dir, exist_ok=True)
+        prov = os.path.join(paths.segments_dir, "weather")
+        self._write(prov, '#!/usr/bin/env bash\n'
+                          '# ai-kit-segment: id=weather name="Weather" line=1\necho x\n')
+        os.chmod(prov, 0o755)
+        return paths
+
+    def test_enabled_in_toml_respects_default_on(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = os.path.join(d, "s.toml")
+            self._write(cfg, "")
+            self.assertTrue(setup._external_enabled_in_toml(cfg, "x", default_on=True))
+            self.assertFalse(setup._external_enabled_in_toml(cfg, "x", default_on=False))
+            self._write(cfg, "[segments]\nx = false\n")
+            self.assertFalse(setup._external_enabled_in_toml(cfg, "x", default_on=True))
+            self._write(cfg, "[segments]\nx = true\n")
+            self.assertTrue(setup._external_enabled_in_toml(cfg, "x", default_on=False))
+
+    @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+    def test_user_external_defaults_on_bundled_off_in_context(self):
+        wa = _import_wizard_app()
+        paths = self._paths_with_user_ext()
+        entries = setup.enumerate_entries(paths.install_dir)
+        ctx = setup._build_wizard_context(
+            paths, entries, {c: set() for c in setup.CATEGORIES}, "{}", wa)
+        by_id = {e["id"]: (e["provenance"], ctx.state["segments"][e["id"]])
+                 for e in ctx.external_segments}
+        self.assertEqual(by_id.get("weather"), ("user", True))   # on disk → ON
+        if "system_memory" in by_id:                              # bundled offer → OFF
+            self.assertEqual(by_id["system_memory"][1], False)
+
+    def test_disable_user_external_persists_false(self):
+        paths = self._paths_with_user_ext()
+        setup.copy_recipe_if_absent(paths.sample, paths.config_toml, False)
+        st = {"segments": dict(setup.current_segments(paths.config_toml)),
+              "layout": setup.current_layout(paths.config_toml), "dirty": True}
+        st["segments"]["weather"] = False
+        with mock.patch.dict(os.environ,
+                             {"CC_AI_KIT_EXTERNAL_DIR": paths.segments_dir}):
+            self.assertTrue(setup._persist_layout(paths, st, dry=False))
+        self.assertFalse(
+            setup._external_enabled_in_toml(paths.config_toml, "weather", default_on=True))
+
+    def test_bundled_not_installed_external_never_written(self):
+        paths = self._paths_with_user_ext()
+        setup.copy_recipe_if_absent(paths.sample, paths.config_toml, False)
+        st = {"segments": dict(setup.current_segments(paths.config_toml)),
+              "layout": setup.current_layout(paths.config_toml), "dirty": True}
+        st["segments"]["system_memory"] = False     # a bundled offer, not on disk
+        with mock.patch.dict(os.environ,
+                             {"CC_AI_KIT_EXTERNAL_DIR": paths.segments_dir}):
+            self.assertTrue(setup._persist_layout(paths, st, dry=False))
+        self.assertNotIn("system_memory", setup.current_segments(paths.config_toml))
+
+
 class TestPersistRoundTrip(unittest.TestCase):
     """T3.4: _persist_layout writes the minimal diff through save_statusline_config
     (doctor-validated path), and the written result round-trips correctly."""
@@ -2026,6 +2099,8 @@ class TestPersistRoundTrip(unittest.TestCase):
         return _types.SimpleNamespace(
             config_toml=cfg_path,
             statusline_doctor=self._statusline_doctor(),
+            # _persist_layout scans this for on-disk externals; empty sibling dir.
+            segments_dir=os.path.join(os.path.dirname(cfg_path), "segments"),
         )
 
     def _seed_recipe(self):
@@ -2543,7 +2618,7 @@ class TestWizardContextPopulation(unittest.TestCase):
         env = {"HOME": home, "AI_KIT_DIR": repo}
         return env, setup.resolve_paths(env)
 
-    def test_context_shape_and_external_off_by_default(self):
+    def test_context_shape_and_user_external_on_by_default(self):
         _env, paths = self._env()
         os.makedirs(paths.segments_dir, exist_ok=True)
         # a fresh user external segment NOT mentioned in statusline.toml
@@ -2588,9 +2663,12 @@ class TestWizardContextPopulation(unittest.TestCase):
         ids = {e["id"]: e for e in ctx.external_segments}
         self.assertIn("freshseg", ids)
         self.assertEqual(ids["freshseg"]["provenance"], "user")
-        # the fresh external is OFF in the wizard's segment state (not pre-checked)
+        # A user drop-in present in the segments dir renders by default, so the
+        # wizard shows it ON (mirroring the renderer) unless statusline.toml
+        # disables it. (Bundled-but-not-installed examples stay OFF — they are
+        # offers.)
         self.assertIn("freshseg", ctx.state["segments"])
-        self.assertFalse(ctx.state["segments"]["freshseg"])
+        self.assertTrue(ctx.state["segments"]["freshseg"])
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")

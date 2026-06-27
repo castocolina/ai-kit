@@ -158,22 +158,24 @@ def _statusline_icon_line_overrides(config_toml):
     return out
 
 
-def _external_enabled_in_toml(config_toml, ext_id):
-    """True iff the user's statusline.toml enables external segment `ext_id`.
+def _external_enabled_in_toml(config_toml, ext_id, default_on=False):
+    """Whether the user's statusline.toml enables external segment `ext_id`.
 
-    Externals default OFF in the wizard (spec: enabling requires statusline.toml
-    /env, never default_on). An external is ON only when the file has either
-    `segments.<id> = true` (bool) or `[segments.<id>] enabled = true`. Anything
-    else — absent, false, non-bool — is OFF."""
+    `default_on` is the value when the file says nothing about this id — it should
+    mirror the RENDERER's default: a provider present in the segments dir renders
+    by default (default_on=True), while a not-yet-installed bundled example is an
+    offer (default_on=False). An explicit `segments.<id> = true|false` (bool) or
+    `[segments.<id>] enabled = true|false` always wins over the default."""
     seg = read_toml(config_toml).get("segments")
     if not isinstance(seg, dict):
-        return False
+        return default_on
     val = seg.get(ext_id)
     if isinstance(val, bool):
         return val
     if isinstance(val, dict):
-        return val.get("enabled") is True
-    return False
+        e = val.get("enabled")
+        return e if isinstance(e, bool) else default_on
+    return default_on
 
 
 def read_toml(path):
@@ -1723,6 +1725,18 @@ def _persist_layout(paths, state, dry):
               file=sys.stderr)
         return True
     seg_changes = _segment_changes_vs_recipe(paths.config_toml, state["segments"])
+    # External toggles: only providers PRESENT in the segments dir are known to the
+    # doctor (it rejects unknown [segments] keys), so only those may be written.
+    # A not-yet-installed bundled example is handled by install_example_segments
+    # (it copies the file → the renderer shows it by default) — never written here.
+    # Write an explicit `<id> = bool` only when the desired state differs from the
+    # renderer default (present → ON), e.g. to hide a provider with `<id> = false`.
+    for ext_id in {e["id"] for e in _discover_user_segments(paths.segments_dir)}:
+        if ext_id not in state["segments"]:
+            continue
+        desired = bool(state["segments"][ext_id])
+        if desired != _external_enabled_in_toml(paths.config_toml, ext_id, default_on=True):
+            seg_changes[ext_id] = desired
     layout = state["layout"] if state["layout"] != current_layout(paths.config_toml) \
         else None
     if not (seg_changes or layout is not None):
@@ -1883,11 +1897,15 @@ def _build_wizard_context(  # pylint: disable=too-many-locals
     external = discover_external_segments(paths, examples_dir)
 
     # Wizard segment state = built-in defaults/recipe, plus every discovered
-    # external keyed by id. Externals default OFF unless the user's statusline.toml
-    # enables them — NEVER pre-checked via default_on (Task 10 constraint).
+    # external keyed by id. A discovered external's default mirrors the renderer:
+    # provenance "user" means it lives in the segments dir and renders by default
+    # (default ON, unless statusline.toml disables it); a "bundled" example is only
+    # in examples/ and not yet installed, so it is an OFF offer until chosen.
     segments = current_segments(paths.config_toml)
     for e in external:
-        segments[e["id"]] = _external_enabled_in_toml(paths.config_toml, e["id"])
+        on_by_default = e["provenance"] == "user"   # "user" = present in segments dir
+        segments[e["id"]] = _external_enabled_in_toml(
+            paths.config_toml, e["id"], default_on=on_by_default)
 
     component_meta = {
         name: _read_component_desc(abspath)
