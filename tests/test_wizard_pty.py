@@ -287,14 +287,16 @@ class TestPhase1E2E(unittest.TestCase):
         startup_output = b""
         all_captured: list[bytes] = []
         try:
-            # Wait until the Choose screen is FULLY painted. The picksbox border
-            # title ("select components") paints a frame after the body, so wait
-            # for it specifically — stopping at an earlier marker (◉/ANSI) can
-            # capture an intermediate paint that lacks the border title (flaky).
+            # Wait until the Choose screen is FULLY painted. Panels paint
+            # top-to-bottom across frames, so wait for the LAST asserted string —
+            # the pick-count line ("components selected"), which renders in the
+            # #picksCount widget below the picksbox. Stopping at an earlier marker
+            # (◉/ANSI, or even the picksbox border title) can capture an
+            # intermediate paint missing the later widgets (flaky).
             boot_deadline = time.time() + _BOOT_WAIT
             try:
                 startup_output = drive_until(
-                    master_fd, b"select components", boot_deadline, captured=all_captured
+                    master_fd, b"components selected", boot_deadline, captured=all_captured
                 )
             except AssertionError:
                 startup_output = b"".join(all_captured)  # let the assertions report clearly
