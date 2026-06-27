@@ -18,7 +18,8 @@ from __future__ import annotations
 import shutil
 from typing import NamedTuple
 
-from textual import events
+from rich.markup import escape
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static
@@ -111,6 +112,10 @@ class WizardContext(NamedTuple):
     external_segments: list     # [{id, name, path, default_on, description,
                                 #   icon, sample, line, provenance}, …]
     component_meta: dict          # {name: description} across all CATEGORIES
+    # Injected by launch_wizard: commit(selection, state) -> {"ok", "adopt", "log"}.
+    # Runs the real install (symlinks + doctor-validated status-line write) IN-UI on
+    # Review-confirm. None in unit fixtures → the view falls back to a no-op commit.
+    commit: object = None
 
 
 class WizardCrash(Exception):
@@ -186,6 +191,11 @@ class WizardApp(App):
         self._exception: BaseException | None = None
         self.step = STEP_CHOOSE
         self.help_open = False
+        # In-UI commit state (Done screen): committing → "Installing…"; outcome
+        # holds the commit callback's result {"ok","adopt","log"} once it finishes.
+        self._committing = False
+        self._commit_outcome: dict | None = None
+        self._commit_state: dict | None = None
         # adoption gate: 'ours' adopts silently; otherwise the gate is shown on Arrange entry
         self.gate_done = ctx.status_line.get("state") == "ours"
         if self.gate_done:
@@ -352,11 +362,30 @@ class WizardApp(App):
         if self.help_open:
             self._render_help()
             return
-        color = GREEN if self.step == STEP_DONE else "#f0f6fc"
-        title_w.update(f"[{color}]{TITLES[self.step]}[/]")
+        done_failed = (self._commit_outcome is not None
+                       and not self._commit_outcome.get("ok", True))
+        if self.step == STEP_DONE and self._committing:
+            title_color = ACCENT
+        elif self.step == STEP_DONE and done_failed:
+            title_color = WARN
+        elif self.step == STEP_DONE:
+            title_color = GREEN
+        else:
+            title_color = "#f0f6fc"
+        done_title = TITLES[self.step]
+        if self.step == STEP_DONE and self._committing:
+            done_title = "Installing…"
+        elif self.step == STEP_DONE and done_failed:
+            done_title = "⚠ install incomplete"
+        title_w.update(f"[{title_color}]{done_title}[/]")
         if self.step == STEP_DONE:
             ncomp = sum(1 for _c, _n, on in self.sel.items if on)
-            if self.state.get("adopt", False):
+            if self._committing:
+                sub_w.update(f"[{DIM}]writing your selection…[/]")
+            elif done_failed:
+                sub_w.update(f"[{WARN}]components installed · status line "
+                             "could not be configured[/]")
+            elif self.state.get("adopt", False):
                 nseg = sum(len(line) for line in self.lines)
                 nlines = sum(1 for line in self.lines if line)
                 sub_w.update(f"[{DIM}]{ncomp} components · {nseg} segments · "
@@ -541,8 +570,24 @@ class WizardApp(App):
             f"{seg_note}[/]   [#d6ffe4 on #10421f] Enter [/]")
 
     def _render_done(self) -> None:
-        self.query_one("#done-art", Static).update(
-            f"[{GREEN}]┌─┐ ┬[/]\n[{GREEN}]├─┤ │[/]\n[{GREEN}]┴ ┴ ┴[/] ─kit")
+        art = self.query_one("#done-art", Static)
+        nxt_w = self.query_one("#done-next", Static)
+        if self._committing:
+            art.update(f"[{ACCENT}]Installing…[/]")
+            nxt_w.update(f"[{DIM}]Writing component symlinks and validating the "
+                         "status-line config with the doctor…[/]")
+            return
+        outcome = self._commit_outcome
+        if outcome is not None and not outcome.get("ok", True):
+            art.update(f"[{WARN}]⚠  install incomplete[/]")
+            reason = escape((outcome.get("log") or "").strip()) \
+                or "the status-line config was rejected by the doctor."
+            nxt_w.update(
+                f"[{WARN}]Components were installed, but the status line could "
+                f"not be configured:[/]\n[{DIM}]{reason}[/]\n\n"
+                f"[{DIM}]Re-run  uv run tools/setup.py  to try again.[/]")
+            return
+        art.update(f"[{GREEN}]┌─┐ ┬[/]\n[{GREEN}]├─┤ │[/]\n[{GREEN}]┴ ┴ ┴[/] ─kit")
         if self.state.get("adopt", False):
             nxt = (f"[{DIM}]•[/] Open a new Claude Code session to see your "
                    f"status line.\n"
@@ -555,7 +600,7 @@ class WizardApp(App):
                    f"change picks.\n"
                    f"[{DIM}]•[/] Want a status line? Run it again and choose "
                    f"Yes at the status-line gate.")
-        self.query_one("#done-next", Static).update(nxt)
+        nxt_w.update(nxt)
 
     # ---- input -----------------------------------------------------------
     def on_key(self, event: events.Key) -> None:
@@ -714,8 +759,21 @@ class WizardApp(App):
                 # call _render_review and overwrite this #cta message with the
                 # install CTA. Step stays REVIEW; the warning persists.
                 return False
-            self.result = WizardResult(self.sel, self._serialize_state())
+            state = self._serialize_state()
+            if self.ctx.commit is None:
+                # No commit injected (unit fixtures): keep the legacy behavior —
+                # stash the result and show the Done screen without installing.
+                self.result = WizardResult(self.sel, state)
+                self.step = STEP_DONE
+                return True
+            # Full in-UI commit: advance to Done in a "committing" state and run
+            # the real install in a worker thread (it touches files + a doctor
+            # subprocess; doing it on the event loop would freeze the UI).
+            self._commit_state = state
+            self._committing = True
+            self._commit_outcome = None
             self.step = STEP_DONE
+            self._run_commit()
             return True
         if event.key == "escape":
             # Declining skipped Arrange, so step back to Choose rather than a
@@ -748,7 +806,28 @@ class WizardApp(App):
         st["dirty"] = True
         return st
 
+    @work(thread=True, exclusive=True)
+    def _run_commit(self) -> None:
+        """Worker: run the injected commit (real install) off the event loop, then
+        update the Done screen with the outcome. Any failure is captured so the UI
+        never hangs in the 'Installing…' state."""
+        try:
+            outcome = self.ctx.commit(self.sel, self._commit_state)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            outcome = {"ok": False,
+                       "adopt": bool((self._commit_state or {}).get("adopt")),
+                       "log": f"commit failed: {exc}"}
+        state = dict(self._commit_state or {})
+        state["_commit_log"] = outcome.get("log", "")
+        state["_commit_ok"] = outcome.get("ok", True)
+        self.result = WizardResult(self.sel, state)
+        self._commit_outcome = outcome
+        self._committing = False
+        self.call_from_thread(self._render)
+
     def _key_done(self, event: events.Key) -> bool:
+        if self._committing:
+            return True            # ignore keys until the install finishes
         if event.key == "enter":
             self.exit()
             return True

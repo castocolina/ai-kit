@@ -2082,6 +2082,36 @@ class TestPersistRoundTrip(unittest.TestCase):
         self.assertEqual(proc.returncode, 0,
                          f"doctor failed:\n{proc.stdout.decode()}\n{proc.stderr.decode()}")
 
+    def test_external_keys_excluded_from_segment_patch(self):
+        """External segment keys (not in the recipe) must never be written into
+        the [segments] table — the doctor rejects unknown keys there. They live
+        in state['segments'] only for the examples installer."""
+        import subprocess
+        cfg = self._seed_recipe()
+        segs = dict(setup.current_segments(cfg))
+        builtin = next(iter(segs))
+        segs[builtin] = not segs[builtin]      # a real built-in change
+        segs["system_memory"] = True           # external — must be ignored here
+
+        changes = setup._segment_changes_vs_recipe(cfg, segs)
+        self.assertIn(builtin, changes)
+        self.assertNotIn("system_memory", changes)
+
+        # And the full persist still produces a doctor-valid file.
+        ok = setup._persist_layout(
+            self._paths(cfg),
+            {"segments": segs, "layout": setup.current_layout(cfg), "dirty": True},
+            dry=False)
+        self.assertTrue(ok)
+        proc = subprocess.run(
+            [sys.executable, "-S", self._statusline_doctor(), "--check", cfg],
+            capture_output=True, check=False)
+        self.assertEqual(proc.returncode, 0,
+                         f"doctor failed:\n{proc.stdout.decode()}\n{proc.stderr.decode()}")
+        # system_memory must not be an active [segments] KEY (the recipe only
+        # mentions it in comments / the [external] docs).
+        self.assertNotIn("system_memory", setup.current_segments(cfg))
+
     # ------------------------------------------------------------------
     # 2. Dry-run writes nothing
     # ------------------------------------------------------------------

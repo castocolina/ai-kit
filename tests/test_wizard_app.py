@@ -397,6 +397,96 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestInUICommit(unittest.IsolatedAsyncioTestCase):
+    """Review-confirm runs the injected commit IN-UI (worker), and the Done screen
+    reflects the real outcome."""
+
+    async def _confirm(self, commit, *, accept=True, sl_state="unset"):
+        """Drive Choose→gate→(board)→Review→confirm, wait for the commit worker,
+        and return a snapshot dict (widgets only live inside run_test)."""
+        ctx = make_ctx(sl_state=sl_state)._replace(commit=commit)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")              # choose → arrange (gate)
+            await pilot.press("y" if accept else "n")
+            if accept:
+                await pilot.press("enter")          # arrange → review
+            await pilot.press("enter")              # review → commit
+            await app.workers.wait_for_complete()   # let the worker finish
+            await pilot.pause()
+            return {
+                "step": app.step,
+                "committing": app._committing,
+                "outcome": app._commit_outcome,
+                "result": app.result,
+                "sel": app.sel,
+                "art": str(app.query_one("#done-art", Static).content),
+                "next": str(app.query_one("#done-next", Static).content),
+                "title": str(app.query_one("#step-title", Static).content),
+                "sub": str(app.query_one("#step-sub", Static).content),
+            }
+
+    async def test_commit_invoked_with_selection_and_state(self):
+        seen = {}
+
+        def commit(selection, state):
+            seen["selection"] = selection
+            seen["adopt"] = state.get("adopt")
+            return {"ok": True, "adopt": state.get("adopt"), "log": ""}
+
+        snap = await self._confirm(commit, accept=True)
+        self.assertIs(seen["selection"], snap["sel"])
+        self.assertIs(seen["adopt"], True)              # accepted at the gate
+        self.assertEqual(snap["step"], wa.STEP_DONE)
+        self.assertFalse(snap["committing"])
+
+    async def test_success_outcome_shows_success_done(self):
+        snap = await self._confirm(
+            lambda s, st: {"ok": True, "adopt": True, "log": ""}, accept=True)
+        self.assertIs(snap["result"].state["_commit_ok"], True)
+        self.assertIn("─kit", snap["art"])              # success art, not "Installing…"
+        self.assertIn("your status line is ready", snap["sub"])
+
+    async def test_failure_outcome_shows_failure_done_with_reason(self):
+        snap = await self._confirm(
+            lambda s, st: {"ok": False, "adopt": True,
+                           "log": "unknown [git] key: worktree"}, accept=True)
+        self.assertIs(snap["result"].state["_commit_ok"], False)
+        self.assertIn("incomplete", snap["title"])
+        self.assertIn("could not be configured", snap["next"])
+        self.assertIn("worktree", snap["next"])         # the doctor reason, escaped
+
+    async def test_decline_still_commits_in_ui(self):
+        seen = {}
+
+        def commit(selection, state):
+            seen["adopt"] = state.get("adopt")
+            return {"ok": True, "adopt": state.get("adopt"), "log": ""}
+
+        snap = await self._confirm(commit, accept=False, sl_state="foreign")
+        self.assertIs(seen["adopt"], False)             # declined at the gate
+        self.assertEqual(snap["step"], wa.STEP_DONE)
+        self.assertIs(snap["result"].state["_commit_ok"], True)
+
+    async def test_no_commit_injected_falls_back_to_legacy(self):
+        # make_ctx leaves commit=None → old behavior: result set, Done shown,
+        # no worker / outcome.
+        app = wa.WizardApp(make_ctx(sl_state="unset"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.press("y")
+            await pilot.press("enter")
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(app.step, wa.STEP_DONE)
+            self.assertIsInstance(app.result, wa.WizardResult)
+            self.assertIsNone(app._commit_outcome)
+            self.assertFalse(app._committing)
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestChrome(unittest.IsolatedAsyncioTestCase):
     """Header pips + footer key bar."""
 

@@ -1312,18 +1312,22 @@ def _write_json(path, data):
         f.write("\n")
 
 
-def wire_statusline(settings, status_line, tty, dry):
+def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
     """Point settings.json's statusLine.command at the bundled status-line.py
     (with `python3 -S`), preserving all other keys. FR-5.5 double-confirm:
       - absent / already ai-kit  → set/refresh silently
       - a DIFFERENT command      → show it and require an explicit 'y'; on a
                                    headless run (no tty) refuse and leave it.
-    Returns True when statusLine now points at ai-kit, False when left untouched."""
+    ``assume_overwrite`` short-circuits the foreign-command guard: the caller
+    (the in-UI adoption gate) already asked the user "replace it with ai-kit?"
+    and got a yes, so re-prompting on the terminal would be a redundant second
+    question. Returns True when statusLine now points at ai-kit, False when
+    left untouched."""
     desired = "python3 -S " + status_line
     data = _read_json(settings)
     cur = data.get("statusLine")
     cur_cmd = cur.get("command", "") if isinstance(cur, dict) else ""
-    if cur_cmd and status_line not in cur_cmd:
+    if cur_cmd and status_line not in cur_cmd and not assume_overwrite:
         # a foreign status line — guard it
         if not is_interactive(tty):
             print(f"warn: settings.json has a foreign statusLine ({cur_cmd}) — not wiring "
@@ -1406,9 +1410,16 @@ def _is_inside_str(install_dir, command):
 
 def _segment_changes_vs_recipe(path, segments):
     """The {key: bool} subset of `segments` that DIFFERS from what `path` currently
-    resolves to — the minimal set of segment keys to patch (key granularity)."""
+    resolves to — the minimal set of segment keys to patch (key granularity).
+
+    Only BUILT-IN segment keys (those present in the recipe) are considered:
+    external/drop-in segments (e.g. ``system_memory``) are persisted as their own
+    files, never as ``[segments]`` entries, and the doctor rejects an unknown key
+    in that table. ``state["segments"]`` carries external on/off state for the
+    examples installer, so it is filtered HERE rather than upstream."""
     current = current_segments(path)
-    return {k: v for k, v in segments.items() if current.get(k) != v}
+    return {k: v for k, v in segments.items()
+            if k in current and current.get(k) != v}
 
 
 def save_statusline_config(path, seg_changes, layout, statusline_doctor):
@@ -1757,7 +1768,9 @@ def _recover_incompatible_config(paths, dry):
     return True
 
 
-def persist_statusline(paths, state, adopt, dry, tty=None):
+def persist_statusline(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    paths, state, adopt, dry, tty=None, assume_overwrite=False,
+):
     """Conditionally persist the status-line config + wire settings.json.
 
     adopt is False  -> NO-OP: write neither statusline.toml nor settings.json's
@@ -1789,7 +1802,8 @@ def persist_statusline(paths, state, adopt, dry, tty=None):
     # statusLine now points at ai-kit, False when left untouched (declined /
     # headless-foreign). The config write already succeeded, so a declined wire
     # is not a hard failure — but the caller can see what happened.
-    return wire_statusline(paths.settings, paths.status_line, tty, dry)
+    return wire_statusline(paths.settings, paths.status_line, tty, dry,
+                           assume_overwrite=assume_overwrite)
 
 
 def _sample_input_path():
@@ -1896,6 +1910,35 @@ def _build_wizard_context(  # pylint: disable=too-many-locals
     )
 
 
+def _make_wizard_commit(paths, entries, dry, counts):
+    """Build the ``commit`` callable the wizard runs IN-UI on Review-confirm.
+
+    It performs the real install — component symlinks, then (if the user adopted
+    the status line at the gate) the doctor-validated config write + settings.json
+    wiring — honoring the adopt decision already made in the UI (``assume_overwrite``
+    so a foreign command isn't re-prompted on the terminal).
+
+    The callable is invoked from a Textual worker thread, so it must NOT print to
+    stdout/stderr (that would corrupt the alternate screen). All diagnostics the
+    inner functions emit (doctor rejection reason, incompatible-config reset note,
+    …) are captured into the returned ``log`` string; the caller prints it AFTER
+    the app exits. Returns an outcome dict the Done screen renders:
+    ``{"ok": bool, "adopt": bool, "log": str}``."""
+    def commit(selection, state):
+        sel = cast(Selection, selection)
+        adopt = bool(state.get("adopt"))
+        buf = io.StringIO()
+        ok = True
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            apply_selection(sel.category_sets(CATEGORIES), entries,
+                            paths.claude_dir, dry, counts)
+            if adopt:
+                ok = persist_statusline(paths, state, adopt, dry, tty=None,
+                                        assume_overwrite=True)
+        return {"ok": ok, "adopt": adopt, "log": buf.getvalue()}
+    return commit
+
+
 def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     paths, entries, installed, tty, dry, counts,
 ):
@@ -1930,6 +1973,11 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
     with open(_sample_input_path(), encoding="utf-8") as f:
         sample_json = f.read()
     ctx = _build_wizard_context(paths, entries, installed, sample_json, wizard_app)
+    # The real install (component symlinks + doctor-validated status-line write +
+    # settings.json wiring) now runs INSIDE the wizard on Review-confirm, so the
+    # Done screen reflects the actual result. Inject the commit callable here,
+    # where paths/entries/dry/counts are in scope.
+    ctx = ctx._replace(commit=_make_wizard_commit(paths, entries, dry, counts))
     try:
         # curl | bash inherits the script pipe as fd 0; Textual reads keys from
         # fd 0, so redirect it onto the controlling terminal for the run.
@@ -1941,23 +1989,17 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
         sys.exit(2)
     if result is None:
         return None
-    # wizard_app types selection as `object` to avoid a circular import; cast here.
-    sel = cast(Selection, result.selection)
-    # Component link/relink/unlink/prune runs UNCONDITIONALLY — independent of the
-    # status-line adoption decision (a components-only install is valid).
-    apply_selection(
-        sel.category_sets(CATEGORIES), entries, paths.claude_dir, dry, counts
-    )
-    # Status-line persistence is gated on the wizard's adopt decision. adopt=False
-    # (skip / components-only) is a NO-OP: no statusline.toml, no settings.json
-    # statusLine touched. This routes the REAL install flow through the single
-    # persist_statusline seam (Task 9) rather than calling _persist_layout/
-    # wire_statusline directly (Task 10 constraint 1).
-    adopt = bool(result.state.get("adopt"))
-    if not persist_statusline(paths, result.state, adopt, dry, tty):
+    # apply_selection + persist_statusline already ran in-UI via the commit
+    # callback (their counts mutations are reflected in `counts`). Surface the
+    # captured diagnostics now that the alternate screen is gone, and warn on a
+    # status-line write that the doctor rejected.
+    log = (result.state.get("_commit_log") or "").strip()
+    if log:
+        print(log, file=sys.stderr)
+    if result.state.get("_commit_ok") is False:
         print(
-            "warning: the doctor rejected the layout/segment change — "
-            "config file left unchanged (symlink selections already applied).",
+            "warning: the doctor rejected the status-line config — it was left "
+            "unchanged (component selections were still applied).",
             file=sys.stderr,
         )
     return result   # propagate wizard result to cmd_install (I-1)
