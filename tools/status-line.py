@@ -950,10 +950,11 @@ def probe_transcript_compaction(path: str, total_bytes: int) -> tuple[int, int]:
                         obj = json.loads(line)
                     except json.JSONDecodeError:
                         obj = None
-                    if (isinstance(obj, dict) and obj.get("type") == "system"
-                            and obj.get("subtype") == "compact_boundary"):
-                        last_offset = offset
-                        count += 1
+                    if isinstance(obj, dict):
+                        rec = cast(dict[str, Any], obj)
+                        if rec.get("type") == "system" and rec.get("subtype") == "compact_boundary":
+                            last_offset = offset
+                            count += 1
                 offset += len(raw_line)
     except OSError:
         return total_bytes, 0
