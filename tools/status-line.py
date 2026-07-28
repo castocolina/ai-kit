@@ -1126,6 +1126,16 @@ def probe_chat_size(ctx: "Context") -> int | None:
     return _memo(ctx, "chat_size", lambda: probe_transcript_bytes(ctx.transcript))
 
 
+def probe_chat_compaction(ctx: "Context") -> tuple[int, int] | None:
+    """Memoized (since_bytes, compact_count) for the transcript — None exactly
+    when probe_chat_size(ctx) is None (mirrors its 'no transcript' contract)."""
+    total = probe_chat_size(ctx)
+    if total is None:
+        return None
+    return _memo(ctx, "chat_compaction",
+                 lambda: probe_transcript_compaction(ctx.transcript, total))
+
+
 def probe_rss(ctx: "Context") -> int | None:
     """Memoized process RSS in bytes, or None."""
     return _memo(ctx, "rss", probe_rss_bytes)
@@ -2307,11 +2317,20 @@ def seg_context(ctx: "Context", avail: int, theme: "Theme") -> str | None:
 
 
 def seg_chat_size(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    n = probe_chat_size(ctx)
-    if n is None:
+    compaction = probe_chat_compaction(ctx)
+    if compaction is None:
         return None
-    color = util_pick_color(n, theme.ramps["chat_size"])
-    return util_first_fitting([util_icon("💾", f"{color}{fmt_bytes(n)}{RESET}")], avail)
+    since, count = compaction
+    # memoized — free, already computed above; probe_chat_compaction is None
+    # exactly when this is None, so it's safe to narrow here.
+    total = cast(int, probe_chat_size(ctx))
+    color = util_pick_color(since, theme.ramps["chat_size"])
+    if count == 0:
+        return util_first_fitting(
+            [util_icon("💾", f"{color}{fmt_bytes(since)}{RESET}")], avail)
+    rich = util_icon("💾", f"{color}{fmt_bytes(since)}/{fmt_bytes(total)} ({count}x){RESET}")
+    terse = util_icon("💾", f"{color}{fmt_bytes(since)}{RESET}")
+    return util_first_fitting([rich, terse], avail)
 
 
 def seg_alt_process_memory(ctx: "Context", avail: int, theme: "Theme") -> str | None:
@@ -2438,7 +2457,7 @@ def main() -> None:
 #                        SLO/SLA-colored via the shared slowest ramp
 #   alt_term_dimensions  terminal COLS×ROWS (off by default; debug)
 #   context              📊 context-window usage bar + percent         [pinned]
-#   chat_size            💾 transcript file size
+#   chat_size            💾 bytes since last compaction/total on disk (+ count)
 #   alt_process_memory   🧮 agent process memory (RSS)
 #   alt_h_rate_limit     ⚡ 5-hour rate-limit bucket (time-only reset)
 #   alt_w_rate_limit     ⚡ 7-day rate-limit bucket (weekday reset)

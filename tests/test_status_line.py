@@ -70,6 +70,7 @@ def _data(**over):
         "ago": "5m 0s ago", "effort_auto": False,
         "todo_state": None, "todo_text": None,
         "chat_bytes": 305000, "mem_bytes": 448_790_528,
+        "chat_since": None, "chat_compactions": 0,
     }
     # Route overrides: eager fields go to the constructor, probes go to probe_cache
     eager_over = {k: over.pop(k) for k in list(over) if k in eager}
@@ -85,6 +86,12 @@ def _data(**over):
     ctx.probe_cache["ago"] = probe_over["ago"]
     ctx.probe_cache["effort_auto"] = probe_over["effort_auto"]
     ctx.probe_cache["chat_size"] = probe_over["chat_bytes"]
+    if probe_over["chat_bytes"] is None:
+        ctx.probe_cache["chat_compaction"] = None
+    else:
+        since = (probe_over["chat_bytes"] if probe_over["chat_since"] is None
+                  else probe_over["chat_since"])
+        ctx.probe_cache["chat_compaction"] = (since, probe_over["chat_compactions"])
     ctx.probe_cache["rss"] = probe_over["mem_bytes"]
     if "failed" in over:                 # render-bookkeeping override (else fresh set)
         ctx.failed = over["failed"]
@@ -1284,6 +1291,31 @@ class TestChatSizeRamp(unittest.TestCase):
 
     def test_seg_chat_size_none_when_no_bytes(self):
         self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 40, THEME))
+
+    def test_never_compacted_shows_total_only_at_both_tiers(self):
+        out_wide = strip(sl.seg_chat_size(_data(chat_bytes=850_000), 200, THEME))
+        out_narrow = strip(sl.seg_chat_size(_data(chat_bytes=850_000), 40, THEME))
+        self.assertEqual(out_wide, out_narrow)
+        self.assertIn(sl.fmt_bytes(850_000), out_wide)
+        self.assertNotIn("/", out_wide)
+        self.assertNotIn("x)", out_wide)
+
+    def test_compacted_shows_since_over_total_with_count_when_room(self):
+        out = strip(sl.seg_chat_size(
+            _data(chat_bytes=4_200_000, chat_since=320_000, chat_compactions=3), 200, THEME))
+        self.assertIn(f"{sl.fmt_bytes(320_000)}/{sl.fmt_bytes(4_200_000)} (3x)", out)
+
+    def test_compacted_drops_to_since_only_when_narrow(self):
+        out = strip(sl.seg_chat_size(
+            _data(chat_bytes=4_200_000, chat_since=320_000, chat_compactions=3), 12, THEME))
+        self.assertEqual(out, f"💾 {sl.fmt_bytes(320_000)}")
+
+    def test_ramp_color_driven_by_since_not_total(self):
+        # 6 MB total but only 900 KB since last compaction -> CYAN band, not RED
+        out = sl.seg_chat_size(
+            _data(chat_bytes=6 * self.MB, chat_since=900 * self.KB, chat_compactions=1), 200, THEME)
+        self.assertIn(THEME.c("CYAN"), out)
+        self.assertNotIn(THEME.c("RED+bold"), out)
 
 
 class TestEffortAutoSetting(unittest.TestCase):

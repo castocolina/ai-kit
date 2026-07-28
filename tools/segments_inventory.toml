@@ -107,8 +107,8 @@ icon = "📊"
 line = 2
 
 [chat_size]
-description = "Transcript file size on disk"
-sample = "305k"
+description = "Bytes since last compaction/total on disk (+ compaction count)"
+sample = "320K/4.2M (3x)"
 icon = "💾"
 line = 2
 

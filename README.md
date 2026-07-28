@@ -182,6 +182,17 @@ the weekly segment adds a weekday + time stamp (`7d: 13% (↺ Sun 14:10)`). In t
 `alt_h_rate_limit` sits to the left of `alt_w_rate_limit`, so the weekly segment is always the
 first of the two dropped under column pressure.
 
+**`chat_size` vs `context`** — these answer different questions. `chat_size` (💾) reads the
+transcript `.jsonl` on disk, which is **append-only and never shrinks** — even a `/compact` only
+adds a boundary marker + summary to the file, it never removes anything. So `chat_size` shows
+bytes accumulated **since the last compaction** (falling back to the full total when there hasn't
+been one yet), plus the total and how many compactions have happened once there's been at least
+one: `320K/4.2M (3x)` — narrower terminals drop to just the "since" figure. `context` (📊,
+`seg_context`) is a *different* segment, unaffected by this: it reads Claude Code's own live
+`context_window.used_percentage`, which already reflects the real, current context sent to the
+model on the next turn. Use `chat_size` to gauge how much has piled up since your last compaction;
+use `context` for what's actually in play right now.
+
 **Shared git probe + cache TTL** — `git_branch`, `git_dirty`, and `alt_git_worktree`
 read from one shared `git` probe (no duplicate querying). `git_dirty` is always read
 fresh; the worktree `rev-parse` is cached (default **5 s**) because it rarely changes.

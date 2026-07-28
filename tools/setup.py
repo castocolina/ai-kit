@@ -292,7 +292,7 @@ _SEGMENT_NOTES = {
     "slowest": "🐌 slowest single segment this render (name + duration)",
     "alt_term_dimensions": "terminal size cols×lines (? if assumed)  (debug; OFF by default)",
     "context": "📊 context-window % used (and max) (pinned)",
-    "chat_size": "💾 transcript file size on disk",
+    "chat_size": "💾 bytes since last compaction/total on disk (+ compaction count)",
     "alt_process_memory": "🧮 agent process memory (RSS)",
     "alt_h_rate_limit": "⚡ 5-hour rate-limit bucket (time-only reset)",
     "alt_w_rate_limit": "⚡ 7-day rate-limit bucket (weekday reset)",

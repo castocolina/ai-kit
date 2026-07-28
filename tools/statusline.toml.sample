@@ -43,7 +43,7 @@
 # slowest = true             # 🐌 slowest single segment this render (name + duration)
 # alt_term_dimensions = false  # terminal size cols×lines (? if assumed)  (debug; OFF by default)
 # context = true             # 📊 context-window % used (and max) (pinned)
-# chat_size = true           # 💾 transcript file size on disk
+# chat_size = true           # 💾 bytes since last compaction/total on disk (+ compaction count)
 # alt_process_memory = false # 🧮 agent process memory (RSS)
 # alt_h_rate_limit = false   # ⚡ 5-hour rate-limit bucket (time-only reset)
 # alt_w_rate_limit = false   # ⚡ 7-day rate-limit bucket (weekday reset)
@@ -146,7 +146,7 @@
 # 80 = "YELLOW"
 # inf = "RED+bold"
 
-## ─── [ramp.chat_size] — transcript bytes -> color (k/M/G suffixes) ──────────
+## ─── [ramp.chat_size] — bytes since last compaction -> color (k/M/G suffixes) ──
 ## Byte thresholds must be quoted strings ("512k", "1M", …) so they parse as
 ## valid TOML keys; "inf" is the catch-all top band.
 # [ramp.chat_size]
