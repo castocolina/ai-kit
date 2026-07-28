@@ -144,7 +144,7 @@ Segment keys follow a **domain-family / dispensability** scheme: a `git_` or
 `system_` prefix names the domain, and an `alt_` prefix marks a *dispensable*
 segment (dropped first when the line is tight). The pre-2026-06 bare names
 (`cost`, `memory`, `branch`, `dirty`, `worktree`, `clock`, `time_ago`,
-`total_time`, `api_time`, `dimensions`, `rate_limits`) **still load** — each is
+`total_time`, `api_time`, `dimensions`) **still load** — each is
 forwarded to its new key with a one-time deprecation note, in both the TOML and
 the `CC_AI_KIT_SEGMENT_<KEY>` env form.
 
@@ -187,7 +187,7 @@ transcript `.jsonl` on disk, which is **append-only and never shrinks** — even
 adds a boundary marker + summary to the file, it never removes anything. So `chat_size` shows
 bytes accumulated **since the last compaction** (falling back to the full total when there hasn't
 been one yet), plus the total and how many compactions have happened once there's been at least
-one: `320K/4.2M (3x)` — narrower terminals drop to just the "since" figure. `context` (📊,
+one: `313KB/4.1MB (3x)` — narrower terminals drop to just the "since" figure. `context` (📊,
 `seg_context`) is a *different* segment, unaffected by this: it reads Claude Code's own live
 `context_window.used_percentage`, which already reflects the real, current context sent to the
 model on the next turn. Use `chat_size` to gauge how much has piled up since your last compaction;

@@ -479,13 +479,43 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertEqual(strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl_w), 200, THEME)),
                          "⚡️ 7d: 30%")
 
+    def test_h_rate_limit_shows_bucket_even_with_past_reset(self):
+        rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW - 1}}
+        out = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
+        self.assertIn("5h: 50%", out)
+
+    def test_w_rate_limit_shows_bucket_even_with_past_reset(self):
+        rl = {"seven_day": {"used_percentage": 50, "resets_at": NOW - 1}}
+        out = strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
+        self.assertIn("7d: 50%", out)
+
     def test_weekly_drops_before_hourly_under_column_pressure(self):
-        # Both fit at 200 cols; at a width that fits only ONE segment's terse
-        # form plus a separator, the packer keeps the hourly (leftmost) one —
-        # this is enforced by LAYOUT ordering, checked at the registry level.
-        idx_h = sl.LAYOUT[2].segments.index("alt_h_rate_limit")
-        idx_w = sl.LAYOUT[2].segments.index("alt_w_rate_limit")
-        self.assertLess(idx_h, idx_w, "alt_w_rate_limit must sit to the right (dropped first)")
+        # No resets_at, so each segment's terse form is its only form: "5h: 42%"
+        # / "7d: 13%" (7 chars of content) plus util_icon's "⚡️ "
+        # (2-wide glyph + 1 space) = 10 display cells each. Joined by SEP
+        # (" | " = 3 cells), both together need 23 cells.
+        #
+        # budget = cols - RIGHT_MARGIN(4). At budget=15 the hourly segment (built
+        # first, avail=15) fits in full (10 <= 15, used_est becomes 10); the
+        # weekly segment then gets avail = max(15 - 10 - 3, 0) = 2, which is
+        # below its 10-cell terse form, so it self-hides (returns None) and
+        # never reaches the assembled line. At budget=23 (cols=27) both fit —
+        # confirming this width genuinely distinguishes "only one fits" from
+        # "both fit" rather than being trivially large.
+        rl = {"five_hour": {"used_percentage": 42}, "seven_day": {"used_percentage": 13}}
+        ctx = _data(rate_limits=rl)
+        keys = ["alt_h_rate_limit", "alt_w_rate_limit"]
+        cfg = ctx.line_conf
+        cfg = cfg._replace(segments={**cfg.segments, "alt_h_rate_limit": True,
+                                      "alt_w_rate_limit": True})
+
+        tight = strip(_pack(keys, ctx, 19, cfg=cfg))  # budget = 19 - 4 = 15
+        self.assertIn("5h: 42%", tight)
+        self.assertNotIn("7d:", tight)
+
+        roomy = strip(_pack(keys, ctx, 27, cfg=cfg))  # budget = 27 - 4 = 23
+        self.assertIn("5h: 42%", roomy)
+        self.assertIn("7d: 13%", roomy)
 
     def test_model_and_clock(self):
         self.assertEqual(strip(sl.seg_model(_data(), 200, THEME)), "Opus 4.8")

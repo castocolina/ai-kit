@@ -108,7 +108,7 @@ line = 2
 
 [chat_size]
 description = "Bytes since last compaction/total on disk (+ compaction count)"
-sample = "320K/4.2M (3x)"
+sample = "313KB/4.1MB (3x)"
 icon = "💾"
 line = 2
 

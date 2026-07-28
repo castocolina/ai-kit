@@ -926,7 +926,7 @@ def probe_transcript_bytes(path: str) -> int | None:
         return None
 
 
-_COMPACT_BOUNDARY_RE = re.compile(r'"subtype"\s*:\s*"compact_boundary"')
+_COMPACT_BOUNDARY_MARKER = b'"compact_boundary"'
 
 
 def probe_transcript_compaction(path: str, total_bytes: int) -> tuple[int, int]:
@@ -944,21 +944,21 @@ def probe_transcript_compaction(path: str, total_bytes: int) -> tuple[int, int]:
         with open(path, "rb") as f:
             offset = 0
             for raw_line in f:
-                line = raw_line.decode("utf-8", errors="replace")
-                if _COMPACT_BOUNDARY_RE.search(line):
+                if _COMPACT_BOUNDARY_MARKER in raw_line:
                     try:
-                        obj = json.loads(line)
+                        obj = json.loads(raw_line)
                     except json.JSONDecodeError:
                         obj = None
                     if isinstance(obj, dict):
                         rec = cast(dict[str, Any], obj)
-                        if rec.get("type") == "system" and rec.get("subtype") == "compact_boundary":
+                        if (rec.get("type") == "system"
+                                and rec.get("subtype") == "compact_boundary"):
                             last_offset = offset
                             count += 1
                 offset += len(raw_line)
     except OSError:
         return total_bytes, 0
-    since = total_bytes - last_offset if last_offset is not None else total_bytes
+    since = max(0, total_bytes - last_offset) if last_offset is not None else total_bytes
     return since, count
 
 
@@ -1549,7 +1549,8 @@ def util_to_int(s: str | None) -> int | None:
 
 def _rate_bucket_hourly(key: str) -> bool:
     """True if `key` (e.g. 'five_hour') names an hourly bucket; False for
-    day/week/month buckets (e.g. 'seven_day')."""
+    anything else (day/week/month buckets, or any future unit Anthropic might
+    add — this is a catch-all, not an enumeration)."""
     _, _, unit = key.partition("_")
     return unit in ("hour", "hours")
 
@@ -1577,6 +1578,10 @@ def util_rate_group_str(
     when no matching bucket reports a percentage."""
     suffix_fn = util_hour_reset_suffix if hourly else util_week_reset_suffix
     parts: list[str] = []
+    # Visibility never depends on comparing resets_at against the clock: a bucket
+    # is shown whenever it reports a percentage, regardless of whether its reset
+    # is in the past or future, so a wrong system clock or timezone change can
+    # never hide a bucket.
     for key in sorted(rate_limits):
         if _rate_bucket_hourly(key) != hourly:
             continue
