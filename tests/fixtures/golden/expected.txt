@@ -1,19 +1,19 @@
 ### wide-200x50
 ~/project | [🌿 main] | ~
-Opus 4.8 | 📃 +128/-42
-📊 ██▌░░░░░░░ 23% of 200K | 💾 298KB
+Opus 4.8 | 📊 ██▌░░░░░░░ 23% of 200K
+💾 298KB
 
 ### medium-100x40
 ~/project | [🌿 main] | ~
-Sonnet 4.6 | 📃 +7/-0
-📊 █████░░░░░ 47% of 1M | 💾 298KB
+Sonnet 4.6 | 📊 █████░░░░░ 47% of 1M
+💾 298KB
 
 ### narrow-60x30
 ~/project | [🌿 main] | ~
-Opus | 📃 +1,200/-350
-📊 █████████░ 88% of 200K | 💾 298KB
+Opus | 📊 █████████░ 88% of 200K
+💾 298KB
 
 ### fresh-clear-120x45
 ~/project | [🌿 main] | ~
-Opus 4.8 | 📃 +0/-0
-📊 ░░░░░░░░░░ 0% of 0 | 💾 298KB
+Opus 4.8 | 📊 ░░░░░░░░░░ 0% of 0
+💾 298KB

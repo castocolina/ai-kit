@@ -1110,7 +1110,7 @@ class TestEndToEnd(unittest.TestCase):
         out = sl.core_render(data)
         self.assertEqual(len(out), 3)
         self.assertIn("Opus 4.8", strip(out[1]))
-        self.assertIn("47%", strip(out[2]))
+        self.assertIn("47%", strip(out[1]))
 
 
 class TestLazyCompute(unittest.TestCase):

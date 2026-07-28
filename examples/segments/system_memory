@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ai-kit-segment: id=system_memory name="System memory" description="System available RAM" sample="12.0 GiB free" icon=💻 line=1 after=context ttl=10
+# ai-kit-segment: id=system_memory name="System memory" description="System available RAM" sample="12.0 GiB free" icon=💻 line=3 after=chat_size ttl=10
 """ai-kit external status-line segment — system AVAILABLE memory (cross-platform).
 
 This is a copy-and-edit reference provider. It reports the machine's available

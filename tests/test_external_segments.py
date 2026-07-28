@@ -336,6 +336,19 @@ class TestPlace(unittest.TestCase):
                                           [self._spec("z", 2, ("end", ""))])
         self.assertEqual([ln.min_rows for ln in layout], [0, 20, 30])
 
+    def test_toml_placement_overrides_header_fallback(self):
+        # The user's statusline.toml already lists "temp" on row 0 via an
+        # explicit [[line]] override — the header's line=3/after=memory is a
+        # fallback only, and must NOT also insert a second copy on row 2.
+        layout = [sl.Line(0, ["path", "branch", "temp"]),
+                  sl.Line(20, ["model", "clock"]),
+                  sl.Line(30, ["context", "memory"])]
+        new_layout, final, _ = sl.cfg_place_external(
+            layout, [self._spec("temp", 3, ("after", "memory"))])
+        self.assertEqual(new_layout[0].segments, ["path", "branch", "temp"])
+        self.assertEqual(new_layout[2].segments, ["context", "memory"])
+        self.assertEqual(final[0].line, 1)         # reported at its actual (toml) row
+
 
 class TestLoadConfigExternal(unittest.TestCase):
     def setUp(self):

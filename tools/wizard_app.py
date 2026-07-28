@@ -794,12 +794,16 @@ class WizardApp(App):
             on.update(ln)
         segs = {k: (k in on) for k in self.state["segments"]}
         st["segments"] = segs
-        builtin = set(self.meta)
+        # Both built-ins AND externals go into the written layout: the whole
+        # point of letting the user drag an external segment's chip onto a
+        # line is that the resulting toml's explicit [[line]] placement then
+        # OVERRIDES that segment's own header line=/after=/before= fallback
+        # (cfg_place_external only falls back to the header when the id is
+        # absent from every row) — an arrangement the user made here must win.
         layout = []
         for i in range(3):
-            on_row = [s for s in self.lines[i] if s in builtin]
-            off_home = [s for s in self.tray
-                        if s in builtin and self.home_line.get(s, 2) == i]
+            on_row = list(self.lines[i])
+            off_home = [s for s in self.tray if self.home_line.get(s, 2) == i]
             layout.append({"min_rows": self._min_rows[i], "segments": on_row + off_home})
         st["layout"] = layout
         st["adopt"] = self.state.get("adopt", False)

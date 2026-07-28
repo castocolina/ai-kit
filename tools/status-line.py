@@ -72,13 +72,14 @@ Env = Mapping[str, str]
 SEGMENTS = {
     # identity line
     "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": False,
-    "todo": True,
-    # model row
-    "model": True, "alt_time_ago": False, "alt_time_clock": False, "effort": True,
-    "lines": True, "alt_cost": False, "alt_time_session": False, "alt_time_api": False,
+    # model row (kept lean by design — todo alone can eat the row's width, so
+    # every optional alt_ variant prefers the diagnostics row instead)
+    "model": True, "effort": True, "context": True, "todo": True,
+    "alt_time_ago": False, "alt_time_clock": False,
+    "alt_cost": False, "alt_time_session": False, "alt_time_api": False,
     # diagnostics row (alt_term_dimensions is a debug aid — off by default)
     "render_time": True, "slowest": True, "alt_term_dimensions": False,
-    "context": True,
+    "lines": False,
     "chat_size": True, "alt_process_memory": False,
     "alt_h_rate_limit": False, "alt_w_rate_limit": False,
 }
@@ -110,10 +111,11 @@ class Line(NamedTuple):
 
 
 LAYOUT = [
-    Line(0,  ["path", "git_branch", "alt_git_worktree", "git_dirty", "todo"]),
-    Line(20, ["model", "alt_time_ago", "alt_time_clock", "effort", "lines",
-              "alt_cost", "alt_time_session", "alt_time_api"]),
-    Line(30, ["render_time", "slowest", "alt_term_dimensions", "context",
+    Line(0,  ["path", "git_branch", "alt_git_worktree", "git_dirty"]),
+    Line(20, ["model", "effort", "context", "todo"]),
+    Line(30, ["render_time", "slowest", "alt_term_dimensions",
+              "alt_time_ago", "alt_time_clock", "lines", "alt_cost",
+              "alt_time_session", "alt_time_api",
               "chat_size", "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"]),
 ]
 
@@ -515,9 +517,13 @@ def cfg_place_external(
     layout: list[Line], specs: list["ExtSpec"]
 ) -> tuple[list[Line], list["ExtSpec"], list[str]]:
     """Insert each spec's id into the resolved layout at its row/position and
-    return (new_layout, finalized_specs, problems). Resolves line=0 to the last
-    row and clamps out-of-range rows. Specs are applied in their (filename, id)
-    sort order so same-slot externals are deterministic.
+    return (new_layout, finalized_specs, problems). The header's `line=`/
+    `after=`/`before=` is only a FALLBACK default: if the user's statusline.toml
+    already names this id in some row's `segments` list (an explicit `[[line]]`
+    override), that placement wins and the header's preference is ignored —
+    otherwise the spec would render twice. Resolves line=0 to the last row and
+    clamps out-of-range rows. Specs are applied in their (filename, id) sort
+    order so same-slot externals are deterministic.
 
     problems is a list of raw message strings (no ANSI); callers decide whether
     to print or discard them."""
@@ -528,6 +534,10 @@ def cfg_place_external(
     final: list[ExtSpec] = []
     problems: list[str] = []
     for spec in specs:
+        placed_idx = next((i for i, segs in enumerate(rows) if spec.id in segs), None)
+        if placed_idx is not None:
+            final.append(spec._replace(line=placed_idx + 1))
+            continue
         want = spec.line or nrows                      # 0 => last row
         idx = want - 1
         if idx < 0 or idx >= nrows:

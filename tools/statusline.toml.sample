@@ -28,21 +28,24 @@
 # git_branch = true          # git branch name
 # git_dirty = true           # working-tree dirty marker
 # alt_git_worktree = false   # ⎇ active linked-worktree name (struck ⎇ wt on main)
-# todo = true                # 📝 current TODO  (📝 in-progress / ⏸ pending)
-## model line (middle row)
+## model line (middle row) — kept lean by design: `todo` alone can eat most of
+## the row's width, so every optional alt_ variant below PREFERS the
+## diagnostics row instead (see [[line]] below). Turning one on here just
+## toggles it on — it still renders on whichever row its LAYOUT entry names.
 # model = true               # active model name (e.g. Opus)
-# alt_time_ago = false       # time since the session's first message
-# alt_time_clock = false     # ⏰ current wall-clock time
 # effort = true              # 🧠 reasoning-effort ladder + level ([auto] when auto)
-# lines = true               # 📃 lines added / removed this session
-# alt_cost = false           # 🪙 session cost in USD            (OFF by default)
-# alt_time_session = false   # 💬 total session duration
-# alt_time_api = false       # 📡 cumulative API response time
+# context = true             # 📊 context-window % used (and max) (pinned)
+# todo = true                # 📝 current TODO  (📝 in-progress / ⏸ pending)
 ## diagnostics line (bottom row)
 # render_time = true         # ⏱ status-line's own render time, SLO/SLA-colored
 # slowest = true             # 🐌 slowest single segment this render (name + duration)
 # alt_term_dimensions = false  # terminal size cols×lines (? if assumed)  (debug; OFF by default)
-# context = true             # 📊 context-window % used (and max) (pinned)
+# alt_time_ago = false       # time since the session's first message
+# alt_time_clock = false     # ⏰ current wall-clock time
+# lines = false              # 📃 lines added / removed this session   (OFF by default)
+# alt_cost = false           # 🪙 session cost in USD            (OFF by default)
+# alt_time_session = false   # 💬 total session duration
+# alt_time_api = false       # 📡 cumulative API response time
 # chat_size = true           # 💾 bytes since last compaction/total on disk (+ compaction count)
 # alt_process_memory = false # 🧮 agent process memory (RSS)
 # alt_h_rate_limit = false   # ⚡ 5-hour rate-limit bucket (time-only reset)
@@ -54,16 +57,19 @@
 ## `min_rows` gates a row by terminal height (the row is skipped on shorter
 ## terminals). Segment order is left -> right priority — the leftmost segments are
 ## kept first when horizontal space is tight. The three blocks below ARE the
-## current default layout; copy and reorder to taste.
+## current default layout; copy and reorder to taste. This is also where an
+## external drop-in segment's placement is decided FOR REAL: its own header's
+## `line=`/`after=`/`before=` is only a fallback used when you have NOT listed
+## its id in any `segments` list here — list it explicitly and that wins.
 # [[line]]
 # min_rows = 0
-# segments = ["path", "git_branch", "alt_git_worktree", "git_dirty", "todo"]
+# segments = ["path", "git_branch", "alt_git_worktree", "git_dirty"]
 # [[line]]
 # min_rows = 20
-# segments = ["model", "alt_time_ago", "alt_time_clock", "effort", "lines", "alt_cost", "alt_time_session", "alt_time_api"]
+# segments = ["model", "effort", "context", "todo"]
 # [[line]]
 # min_rows = 30
-# segments = ["render_time", "slowest", "alt_term_dimensions", "context", "chat_size", "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"]
+# segments = ["render_time", "slowest", "alt_term_dimensions", "alt_time_ago", "alt_time_clock", "lines", "alt_cost", "alt_time_session", "alt_time_api", "chat_size", "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"]
 
 ## ─── [git] — git probe tuning ────────────────────────────────────────────────
 ## Behaviour knobs for the git queries behind the `git_branch` / `git_dirty` /

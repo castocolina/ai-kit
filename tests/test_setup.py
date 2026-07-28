@@ -90,11 +90,12 @@ class TestTomlRead(unittest.TestCase):
     def test_current_layout_default_on_noop_recipe(self):
         layout = setup.current_layout(SAMPLE_RECIPE)
         self.assertEqual([r["segments"] for r in layout],
-                         [["path", "git_branch", "alt_git_worktree", "git_dirty", "todo"],
-                          ["model", "alt_time_ago", "alt_time_clock", "effort", "lines",
-                           "alt_cost", "alt_time_session", "alt_time_api"],
+                         [["path", "git_branch", "alt_git_worktree", "git_dirty"],
+                          ["model", "effort", "context", "todo"],
                           ["render_time", "slowest", "alt_term_dimensions",
-                           "context", "chat_size", "alt_process_memory",
+                           "alt_time_ago", "alt_time_clock", "lines", "alt_cost",
+                           "alt_time_session", "alt_time_api", "chat_size",
+                           "alt_process_memory",
                            "alt_h_rate_limit", "alt_w_rate_limit"]])
 
     def test_layout_defaults_match_status_line(self):
@@ -2582,7 +2583,7 @@ class TestBuildSegmentMeta(unittest.TestCase):
         # no overrides -> inventory defaults pass through
         meta = setup.build_segment_meta(inv, {})
         self.assertEqual(meta["alt_process_memory"]["icon"], "🧮")
-        self.assertEqual(meta["context"]["line"], 2)
+        self.assertEqual(meta["context"]["line"], 1)
         # toml override wins for icon + line
         meta = setup.build_segment_meta(inv, {"context": {"icon": "X", "line": 0}})
         self.assertEqual(meta["context"]["icon"], "X")

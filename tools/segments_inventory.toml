@@ -32,7 +32,7 @@ line = 0
 description = "Current TODO (in-progress / pending)"
 sample = "write tests"
 icon = "📝"
-line = 0
+line = 1
 
 [model]
 description = "Active model name"
@@ -44,13 +44,13 @@ line = 1
 description = "Time since the session's first message"
 sample = "12m ago"
 icon = ""
-line = 1
+line = 2
 
 [alt_time_clock]
 description = "Current wall-clock time"
 sample = "14:30"
 icon = "⏰"
-line = 1
+line = 2
 
 [effort]
 description = "Reasoning-effort ladder + level"
@@ -62,25 +62,25 @@ line = 1
 description = "Lines added / removed this session"
 sample = "+12 -3"
 icon = "📃"
-line = 1
+line = 2
 
 [alt_cost]
 description = "Session cost in USD"
 sample = "$0.50"
 icon = "🪙"
-line = 1
+line = 2
 
 [alt_time_session]
 description = "Total session duration"
 sample = "1h 04m"
 icon = "💬"
-line = 1
+line = 2
 
 [alt_time_api]
 description = "Cumulative API response time"
 sample = "42s"
 icon = "📡"
-line = 1
+line = 2
 
 [render_time]
 description = "Status line's own render time"
@@ -104,7 +104,7 @@ line = 2
 description = "Context-window % used (and max)"
 sample = "32%"
 icon = "📊"
-line = 2
+line = 1
 
 [chat_size]
 description = "Bytes since last compaction/total on disk (+ compaction count)"

@@ -74,22 +74,22 @@ def resolve_paths(env):
 # TestTomlRead.test_segment_defaults_match_recipe_drift pins these to the recipe.
 SEGMENT_DEFAULTS = {
     "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": False,
-    "todo": True,
-    "model": True, "alt_time_ago": False, "alt_time_clock": False, "effort": True,
-    "lines": True, "alt_cost": False, "alt_time_session": False, "alt_time_api": False,
+    "model": True, "effort": True, "context": True, "todo": True,
+    "alt_time_ago": False, "alt_time_clock": False,
+    "alt_cost": False, "alt_time_session": False, "alt_time_api": False,
     "render_time": True, "slowest": True, "alt_term_dimensions": False,
-    "context": True,
+    "lines": False,
     "chat_size": True, "alt_process_memory": False,
     "alt_h_rate_limit": False, "alt_w_rate_limit": False,
 }
 LAYOUT_DEFAULTS = [
     {"min_rows": 0,
-     "segments": ["path", "git_branch", "alt_git_worktree", "git_dirty", "todo"]},
-    {"min_rows": 20, "segments": ["model", "alt_time_ago", "alt_time_clock",
-                                  "effort", "lines", "alt_cost", "alt_time_session",
-                                  "alt_time_api"]},
+     "segments": ["path", "git_branch", "alt_git_worktree", "git_dirty"]},
+    {"min_rows": 20, "segments": ["model", "effort", "context", "todo"]},
     {"min_rows": 30, "segments": ["render_time", "slowest", "alt_term_dimensions",
-                                  "context", "chat_size", "alt_process_memory",
+                                  "alt_time_ago", "alt_time_clock", "lines",
+                                  "alt_cost", "alt_time_session", "alt_time_api",
+                                  "chat_size", "alt_process_memory",
                                   "alt_h_rate_limit", "alt_w_rate_limit"]},
 ]
 

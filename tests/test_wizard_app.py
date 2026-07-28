@@ -288,6 +288,26 @@ class TestExternal(unittest.IsolatedAsyncioTestCase):
             self.assertIs(
                 app._serialize_state()["segments"]["system_memory"], True)
 
+    async def test_external_moved_line_wins_over_header_fallback(self):
+        # The user drags system_memory's chip off its inventory "home" line
+        # onto Line 1 — that explicit arrangement must be written into the
+        # persisted layout's row 0, not silently dropped (which would leave
+        # only the segment's own header line=/after= fallback in force).
+        app = wa.WizardApp(make_ctx(with_external=True, sl_state="ours"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")          # choose → arrange
+            app.focus_zp = (3, app.tray.index("system_memory"))
+            await pilot.press("space")          # tray -> its home line
+            home = next(i for i in range(3) if "system_memory" in app.lines[i])
+            app.lines[home].remove("system_memory")
+            app.lines[0].append("system_memory")
+            app.focus_zp = (0, len(app.lines[0]) - 1)
+            st = app._serialize_state()
+            self.assertIn("system_memory", st["layout"][0]["segments"])
+            for i in range(1, 3):
+                self.assertNotIn("system_memory", st["layout"][i]["segments"])
+
     async def test_external_chip_has_diamond_marker(self):
         app = wa.WizardApp(make_ctx(with_external=True, sl_state="ours"))
         async with app.run_test() as pilot:
