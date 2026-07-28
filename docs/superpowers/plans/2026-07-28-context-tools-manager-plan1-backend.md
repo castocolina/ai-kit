@@ -9,15 +9,17 @@ today via a headless `--context-tools` CLI flag on `tools/setup.py`.
 **Architecture:** A new TOML catalog (`tools/context_tools_inventory.toml`,
 structurally parallel to `segments_inventory.toml`) is the single source of
 truth for each tool's detect/install/configure shell commands. A new stdlib-only
-module (`tools/context_tools.py`) parses it and wraps `subprocess` calls behind
-three functions (`detect_tool`, `install_tool`, `configure_tool`) plus a headless
-orchestrator (`run_context_tools_headless`). `tools/setup.py` gains a
-`--context-tools=all|none|<ids>` flag that drives the orchestrator with no TUI
-involved. **This plan does NOT touch the Textual wizard** (`tools/wizard_app.py`)
-at all — the interactive Step 0 screen is a separate follow-on plan, built once
-this module's API is locked and tested.
+module (`tools/context_tools.py`) parses it and wraps `subprocess` calls
+(always executed through a shell, since catalog commands are opaque shell
+command lines that may contain pipes/redirection/`&&` — e.g. rtk's install
+script) behind three functions (`detect_tool`, `install_tool`,
+`configure_tool`) plus a headless orchestrator (`run_context_tools_headless`).
+`tools/setup.py` gains a `--context-tools=all|none|<ids>` flag that drives the
+orchestrator with no TUI involved. **This plan does NOT touch the Textual
+wizard** (`tools/wizard_app.py`) at all — the interactive Step 0 screen is a
+separate follow-on plan, built once this module's API is locked and tested.
 
-**Tech Stack:** Python 3.11 stdlib only (`subprocess`, `shlex`, `tomllib`, `re`) —
+**Tech Stack:** Python 3.11 stdlib only (`subprocess`, `tomllib`, `re`) —
 no new dependencies. Matches `tools/status-line.py`'s "no non-stdlib import"
 philosophy; `tools/context_tools.py` is imported lazily by `setup.py` exactly
 the way `wizard_app` already is, so it never forces the `uv`/`textual`
@@ -32,6 +34,15 @@ re-exec path.
   `wizard_app.py` isolation rule ("imports NOTHING from setup.py").
 - No real subprocess/network call may execute during `make test` — every test
   in this plan mocks `subprocess.run`/`subprocess.Popen`.
+- `detect_tool`, `install_tool` (via `_run_streaming`), and `configure_tool`
+  (via `_run_streaming`) MUST execute their catalog command string through a
+  shell — `subprocess.run(cmd, shell=True, ...)` /
+  `subprocess.Popen(cmd, shell=True, ...)` — never `shlex.split(cmd)` fed to
+  a bare-argv exec. Catalog entries are free to use shell constructs (pipes,
+  redirection, `&&` chains — e.g. rtk's `curl -fsSL ... | sh`); a bare-argv
+  exec cannot interpret those as shell operators and would hand them to the
+  first program as literal arguments instead, silently breaking the entry.
+  This is the design doc's §4 binding execution-model requirement.
 - `context_tools.py` is imported **lazily** inside the function that needs it
   in `setup.py` (mirrors the existing `wizard_app` lazy-import pattern at
   `tools/setup.py`'s `launch_wizard`, including the `sys.path` guard) — never
@@ -207,12 +218,15 @@ intelligence" tools (rtk, codegraph, grapify, gitnexus) by shelling out to
 each tool's OWN install/setup command — this module never reimplements any
 tool's agent-wiring logic. `tools/context_tools_inventory.toml` is the single
 source of truth for which command to run; no tool-specific branching lives
-here. Installer/wizard-only concern: never imported by the status-line render
-path, and this module must never import from tools/setup.py (one-way
-dependency, mirrors wizard_app.py's isolation from setup.py)."""
+here. Catalog command strings are opaque shell command lines (may contain
+pipes, redirection, or `&&` chains — e.g. rtk's install command, a vendor
+curl script piped into `sh`) and are always executed via `shell=True`, never
+split into an argv list. Installer/wizard-only concern: never imported by
+the status-line render path, and this module must never import from
+tools/setup.py (one-way dependency, mirrors wizard_app.py's isolation from
+setup.py)."""
 import os
 import re
-import shlex
 import subprocess
 import tomllib
 from typing import Callable, NamedTuple
@@ -368,6 +382,17 @@ class TestDetectTool(unittest.TestCase):
         status = ct.detect_tool(self._spec())
         self.assertFalse(status.installed)
 
+    @mock.patch("subprocess.run")
+    def test_detect_runs_command_through_a_shell_not_bare_argv(self, run):
+        # Regression test: shlex.split(cmd) fed to a bare-argv exec cannot
+        # interpret shell operators. This asserts the command is passed as
+        # ONE string with shell=True, not split into an argv list.
+        run.return_value = mock.Mock(returncode=0, stdout="v1\n", stderr="")
+        ct.detect_tool(self._spec(detect="rtk --version"))
+        run.assert_called_once_with(
+            "rtk --version", shell=True, capture_output=True, text=True,
+            timeout=3.0, check=False)
+
 
 class TestInstallTool(unittest.TestCase):
     def _spec(self, install="echo hi"):
@@ -410,10 +435,29 @@ class TestInstallTool(unittest.TestCase):
         result = ct.install_tool(self._spec(), lines.append)
         self.assertFalse(result.ok)
         self.assertIn("failed to start", result.log)
+
+    @mock.patch("subprocess.Popen")
+    def test_install_runs_pipe_command_through_a_shell_not_bare_argv(self, popen):
+        # Regression test for the catalog's real rtk entry: a vendor curl
+        # script piped into `sh`. shlex.split() would tokenize this into
+        # ['curl', '-fsSL', 'https://...', '|', 'sh'] and hand '|'/'sh' to
+        # curl as literal extra arguments instead of a shell pipe. This
+        # asserts the command is passed as ONE string with shell=True.
+        proc = mock.Mock()
+        proc.stdout = iter([])
+        proc.wait.return_value = None
+        proc.returncode = 0
+        popen.return_value = proc
+        pipe_cmd = "curl -fsSL https://example.com/install.sh | sh"
+        ct.install_tool(self._spec(install=pipe_cmd), lambda _l: None)
+        popen.assert_called_once_with(
+            pipe_cmd, shell=True, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True)
 ```
 
 Add `import subprocess` to the test file's imports (needed for
-`subprocess.TimeoutExpired` in the mock `side_effect`).
+`subprocess.TimeoutExpired` in the mock `side_effect`, and for the
+`subprocess.PIPE`/`subprocess.STDOUT` constants asserted against above).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -429,12 +473,15 @@ Append to `tools/context_tools.py` (add `Callable` is already imported in Task 1
 def detect_tool(spec: ToolSpec, timeout: float = 3.0) -> ToolStatus:
     """Runs spec.detect (if any) with a short timeout. A tool with no detect
     command (gitnexus) is always "configure only" (installed=None) — there is
-    nothing to probe since it has no persistent global install."""
+    nothing to probe since it has no persistent global install. Runs through
+    a shell (shell=True) rather than shlex.split() + bare-argv exec, since
+    catalog command strings are opaque shell command lines (see module
+    docstring) — matches _run_streaming's execution model below."""
     if not spec.detect:
         return ToolStatus(installed=None, version=None)
     try:
         proc = subprocess.run(
-            shlex.split(spec.detect), capture_output=True, text=True,
+            spec.detect, shell=True, capture_output=True, text=True,
             timeout=timeout, check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -447,15 +494,21 @@ def detect_tool(spec: ToolSpec, timeout: float = 3.0) -> ToolStatus:
 
 
 def _run_streaming(cmd: str, on_output: Callable[[str], None]) -> CommandResult:
-    """Runs `cmd`, calling on_output once per stdout/stderr line as it
+    """Runs `cmd` through a shell (shell=True) — catalog command strings may
+    contain pipes, redirection, or `&&` chains (e.g. rtk's install command,
+    a vendor curl script piped into `sh`); shlex.split(cmd) fed to a
+    bare-argv exec cannot interpret those as shell operators and would hand
+    them to the first program as literal arguments instead, silently
+    breaking the entry. Calls on_output once per stdout/stderr line as it
     arrives (feeds a live log panel), and returns the joined log + exit
-    status. A failure to even start the process (bad command, not on PATH)
-    is caught and reported through on_output/the result rather than raised —
-    this is a UI-feeding helper, never a place to crash the caller."""
+    status. A failure to even start the process (bad command, shell itself
+    missing) is caught and reported through on_output/the result rather than
+    raised — this is a UI-feeding helper, never a place to crash the
+    caller."""
     lines: list[str] = []
     try:
         proc = subprocess.Popen(
-            shlex.split(cmd), stdout=subprocess.PIPE,
+            cmd, shell=True, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True,
         )
     except OSError as e:
@@ -484,7 +537,8 @@ def install_tool(spec: ToolSpec, on_output: Callable[[str], None]) -> CommandRes
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -S -m unittest tests.test_context_tools -v`
-Expected: all tests PASS (12 total so far).
+Expected: all tests PASS (18 total so far: 7 from Task 1 + 6 in
+`TestDetectTool` + 5 in `TestInstallTool`).
 
 - [ ] **Step 5: Commit**
 
@@ -631,7 +685,8 @@ def configure_tool(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -S -m unittest tests.test_context_tools -v`
-Expected: all tests PASS (19 total so far).
+Expected: all tests PASS (25 total so far: 18 from Tasks 1-2 + 7 in
+`TestConfigureTool`).
 
 - [ ] **Step 5: Commit**
 
@@ -766,8 +821,10 @@ Expected: FAIL — neither function defined yet.
 
 - [ ] **Step 3: Implement both functions**
 
-Append to `tools/context_tools.py` (add `import re` to the top-of-file imports
-alongside the existing `os`, `shlex`, `subprocess`, `tomllib`):
+Append to `tools/context_tools.py` (no new imports needed: `re` — used below
+by `resolve_context_tools_selection` to split on commas/whitespace — was
+already added to the top-of-file imports in Task 1 Step 4, alongside `os`,
+`subprocess`, `tomllib`):
 
 ```python
 def resolve_context_tools_selection(
@@ -832,7 +889,8 @@ def run_context_tools_headless(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -S -m unittest tests.test_context_tools -v`
-Expected: all tests PASS (30 total so far).
+Expected: all tests PASS (35 total so far: 25 from Tasks 1-3 + 5 in
+`TestResolveSelection` + 5 in `TestRunHeadless`).
 
 - [ ] **Step 5: Commit**
 
@@ -878,7 +936,25 @@ Add a new class to `tests/test_setup.py` (near `TestLaunchWizardCrash` —
 class TestContextToolsCli(unittest.TestCase):
     """cmd_install does a lazy `import context_tools` inside its own body
     (mirrors launch_wizard's lazy `import wizard_app`) — inject a fake module
-    into sys.modules so the function's own import resolves the fake."""
+    into sys.modules so the function's own import resolves the fake.
+
+    setUp/tearDown save and restore whatever was previously registered at
+    sys.modules["context_tools"], rather than unconditionally deleting the
+    key. This is NOT optional bookkeeping: cmd_install's own
+    `sys.path.insert(0, _tools_dir)` runs unconditionally before its
+    `import context_tools`, so once this class's tearDown ran, the REAL
+    tools/context_tools.py would become importable for real. If a later
+    test in the same process — tests.test_context_tools's own
+    TestConfigureTool/TestRunHeadless, which patch
+    "context_tools._run_streaming"/"detect_tool"/"install_tool"/
+    "configure_tool" by string name — triggered a fresh bare `import
+    context_tools` (e.g. via @mock.patch re-importing the target), it would
+    get a NEW module object distinct from the `ct` module those tests hold
+    (via their own load_module()), so the string-patches would patch the
+    wrong object and the REAL functions would run — a real subprocess/
+    network call, violating this plan's Global Constraint. Saving+restoring
+    whatever was there before (usually None, but the fix must not assume
+    that) keeps sys.modules exactly as this class found it."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -888,10 +964,14 @@ class TestContextToolsCli(unittest.TestCase):
         self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install,
                     "CLAUDE_CONFIG_DIR": self.claude,
                     "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config")}
+        self._prev_context_tools = sys.modules.get("context_tools")
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
-        sys.modules.pop("context_tools", None)
+        if self._prev_context_tools is None:
+            sys.modules.pop("context_tools", None)
+        else:
+            sys.modules["context_tools"] = self._prev_context_tools
 
     def _paths(self):
         paths = setup.resolve_paths(self.env)
@@ -1043,7 +1123,23 @@ Expected: all 3 tests PASS.
 Run: `python3 -S -m unittest tests.test_setup -v 2>&1 | tail -30`
 Expected: all tests PASS, no new failures.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Verify the sys.modules save/restore fix with the exact ordering that would have exposed the bug**
+
+Run: `python3 -S -m unittest tests.test_setup tests.test_context_tools -v 2>&1 | tail -60`
+Expected: all tests PASS, in this exact module order (`tests.test_setup`
+before `tests.test_context_tools` — the same relative order the Makefile's
+`test` target and Task 6 Step 3 use). This ordering matters: without the
+setUp/tearDown fix in Step 1, `TestContextToolsCli` running and tearing
+down first would leave a real, importable `tools/context_tools.py` on
+`sys.path` (from `cmd_install`'s unconditional `sys.path.insert`), and the
+later `tests.test_context_tools.TestConfigureTool`/`TestRunHeadless`
+string-based `@mock.patch("context_tools....")` decorators would then patch
+a fresh, wrong module object — silently letting the REAL
+`_run_streaming`/`detect_tool`/`install_tool`/`configure_tool` run (a real
+subprocess call). With the fix, this run must show all assertions passing
+and zero real subprocess/network activity.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add tools/setup.py tests/test_setup.py

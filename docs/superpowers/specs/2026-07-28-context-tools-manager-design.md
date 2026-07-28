@@ -54,6 +54,13 @@ Every catalog entry supports up to two actions, offered independently:
 For tools without scoping, the wizard skips the environment chip-picker
 entirely and just runs the tool's full auto-detect configure command.
 
+**Execution requirement**: catalog `install`/`configure` strings are opaque
+shell command lines, not argv lists — they may contain pipes, redirection, or
+`&&` chains (the rtk entry in §3, `curl -fsSL ... | sh`, is the canonical
+example: a vendor install script piped straight into `sh`). The wizard MUST
+execute them through a shell, never as a bare argv exec. See §4 for where
+this requirement binds in the module contract.
+
 ---
 
 ## 3. Catalog (`tools/context_tools_inventory.toml`)
@@ -136,6 +143,19 @@ def configure_tool(spec: ToolSpec, envs: list[str],
 existing `ExtSpec` pattern in `status-line.py`. `load_context_tools_inventory`
 mirrors `load_segment_inventory` in `setup.py` (same TOML-parsing helper,
 same missing-file -> `{}` fallback).
+
+**Execution requirement (binding on all three functions above)**: `detect_tool`,
+`install_tool`, and `configure_tool` MUST run their catalog command string
+through a shell — e.g. `subprocess.Popen(cmd, shell=True, ...)` or
+`subprocess.Popen(["sh", "-c", cmd], ...)` — not by splitting the string into
+an argv list and exec'ing it directly (e.g. `shlex.split(cmd)` fed to `Popen`
+with no shell). Catalog entries are free to use shell constructs — pipes,
+redirection, `&&` chains — per §2; a bare-argv exec cannot interpret `|` or
+`&&`, so it would hand those characters to the first program as literal
+arguments instead of honoring them as shell operators, silently breaking any
+entry that relies on them (starting with rtk's install command in §3). This
+is the authoritative execution model — the implementation plan must follow
+it, not the reverse.
 
 ---
 
