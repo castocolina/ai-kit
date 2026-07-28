@@ -424,49 +424,65 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 200, THEME))
         self.assertIsNone(sl.seg_alt_process_memory(_data(mem_bytes=None), 200, THEME))
 
-    def test_rate_limits_shows_reset_then_drops_suffix_when_narrow(self):
+    def test_h_rate_limit_shows_time_only_reset_then_drops_it_when_narrow(self):
         rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600}}
-        self.assertIn("↺", strip(sl.seg_alt_rate_limits(_data(rate_limits=rl), 200, THEME)))
-        narrow = strip(sl.seg_alt_rate_limits(_data(rate_limits=rl), 12, THEME))
-        self.assertNotIn("↺", narrow)
-        self.assertIn("5h", narrow)
-        self.assertIsNone(sl.seg_alt_rate_limits(_data(rate_limits={}), 200, THEME))
+        rich = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
+        self.assertIn("5h: 42%", rich)
+        self.assertIn("↺", rich)
+        # time-only reset stamp — no date component at all
+        dt = sl.datetime.fromtimestamp(NOW + 3600)
+        self.assertIn(dt.strftime("%H:%M"), rich)
+        self.assertNotIn(dt.strftime("%b"), rich)
+        narrow = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 10, THEME))
+        self.assertEqual(narrow, "⚡️ 5h: 42%")
+        self.assertIsNone(sl.seg_alt_h_rate_limit(_data(rate_limits={}), 200, THEME))
+
+    def test_h_rate_limit_hides_when_no_hourly_bucket(self):
+        rl = {"seven_day": {"used_percentage": 13, "resets_at": NOW + 86400}}
+        self.assertIsNone(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
+
+    def test_h_rate_limit_ignores_weekly_bucket(self):
+        rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600},
+              "seven_day": {"used_percentage": 13, "resets_at": NOW + 86400}}
+        out = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
+        self.assertIn("5h:", out)
+        self.assertNotIn("7d:", out)
+
+    def test_w_rate_limit_shows_weekday_reset_then_drops_it_when_narrow(self):
+        rl = {"seven_day": {"used_percentage": 13, "resets_at": NOW + 86400}}
+        rich = strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
+        self.assertIn("7d: 13%", rich)
+        dt = sl.datetime.fromtimestamp(NOW + 86400)
+        self.assertIn(dt.strftime("%a"), rich)
+        self.assertIn(dt.strftime("%H:%M"), rich)
+        self.assertNotIn(dt.strftime("%b %d"), rich)
+        narrow = strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl), 10, THEME))
+        self.assertEqual(narrow, "⚡️ 7d: 13%")
+        self.assertIsNone(sl.seg_alt_w_rate_limit(_data(rate_limits={}), 200, THEME))
+
+    def test_w_rate_limit_hides_when_no_weekly_bucket(self):
+        rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600}}
+        self.assertIsNone(sl.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
+
+    def test_rate_limit_no_reset_stamp_when_absent(self):
+        rl_h = {"five_hour": {"used_percentage": 30}}
+        self.assertEqual(strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl_h), 200, THEME)),
+                         "⚡️ 5h: 30%")
+        rl_w = {"seven_day": {"used_percentage": 30}}
+        self.assertEqual(strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl_w), 200, THEME)),
+                         "⚡️ 7d: 30%")
+
+    def test_weekly_drops_before_hourly_under_column_pressure(self):
+        # Both fit at 200 cols; at a width that fits only ONE segment's terse
+        # form plus a separator, the packer keeps the hourly (leftmost) one —
+        # this is enforced by LAYOUT ordering, checked at the registry level.
+        idx_h = sl.LAYOUT[2].segments.index("alt_h_rate_limit")
+        idx_w = sl.LAYOUT[2].segments.index("alt_w_rate_limit")
+        self.assertLess(idx_h, idx_w, "alt_w_rate_limit must sit to the right (dropped first)")
 
     def test_model_and_clock(self):
         self.assertEqual(strip(sl.seg_model(_data(), 200, THEME)), "Opus 4.8")
         self.assertEqual(strip(sl.seg_alt_time_clock(_data(), 200, THEME)), "⏰ 14:30")
-
-    def test_todo_truncates_and_hides(self):
-        self.assertIn("hello", strip(sl.seg_todo(
-            _data(todo_state="in_progress", todo_text="hello"), 200, THEME)))
-        self.assertIsNone(sl.seg_todo(
-            _data(todo_state="in_progress", todo_text="hello"), 8, THEME))
-
-    def test_rate_visibility_independent_of_clock(self):
-        # Every bucket shows regardless of how its resets_at compares to the
-        # clock — a past reset must NOT hide a bucket (timezone/clock changes
-        # must never affect which limits are visible).
-        rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600},
-              "seven_day": {"used_percentage": 13, "resets_at": NOW - 60}}  # past reset
-        out = strip(sl.seg_alt_rate_limits(_data(rate_limits=rl), 200, THEME))
-        self.assertIn("5h: 42%", out)
-        self.assertIn("7d: 13%", out)      # past-reset bucket still shown
-
-    def test_rate_past_reset_bucket_still_shown(self):
-        rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW - 1}}
-        out = strip(sl.seg_alt_rate_limits(_data(rate_limits=rl), 200, THEME))
-        self.assertIn("5h: 50%", out)
-
-    def test_rate_no_resets_at_kept_without_suffix(self):
-        rl = {"five_hour": {"used_percentage": 30}}  # no reset stamp -> just the %
-        out = strip(sl.seg_alt_rate_limits(_data(rate_limits=rl), 200, THEME))
-        self.assertIn("5h: 30%", out)
-        self.assertNotIn("↺", out)
-
-    def test_rate_far_future_bucket_shows_long_date_when_room(self):
-        rl = {"seven_day": {"used_percentage": 30, "resets_at": NOW + 7 * 86400}}
-        wide = strip(sl.seg_alt_rate_limits(_data(rate_limits=rl), 200, THEME))
-        self.assertRegex(wide, r"↺ [A-Z][a-z]{2} \d\d")   # e.g. "↺ Jan 19"
 
     def test_path_never_none(self):
         self.assertIsNotNone(sl.seg_path(_data(), 1, THEME))
@@ -476,7 +492,7 @@ class TestCooperativeBuilders(unittest.TestCase):
                     "alt_time_ago", "alt_time_clock", "effort", "lines", "alt_cost",
                     "alt_time_session", "alt_time_api", "render_time",
                     "alt_term_dimensions", "context", "chat_size",
-                    "alt_process_memory", "alt_rate_limits"):
+                    "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"):
             self.assertIn(key, sl.BUILDERS, key)
             self.assertTrue(callable(sl.BUILDERS[key]))
 

@@ -174,6 +174,14 @@ dimmed, struck-through `⎇ wt` placeholder; outside any git repo it's hidden. T
 segment. Toggle it like any other segment (`[segments] alt_git_worktree = false`, or
 `CC_AI_KIT_SEGMENT_ALT_GIT_WORKTREE=0`).
 
+**Rate-limit segments** — split into `alt_h_rate_limit` (5-hour bucket) and `alt_w_rate_limit`
+(7-day bucket), both **off by default**. Each renders `{Nh|Nd}: {pct}%` and degrades to that bare
+form when space is tight; with room, the hourly segment adds a time-only reset stamp
+(`5h: 42% (↺ 14:10)` — never a date, since a 5-hour window can't cross into a different day), and
+the weekly segment adds a weekday + time stamp (`7d: 13% (↺ Sun 14:10)`). In the diagnostics row,
+`alt_h_rate_limit` sits to the left of `alt_w_rate_limit`, so the weekly segment is always the
+first of the two dropped under column pressure.
+
 **Shared git probe + cache TTL** — `git_branch`, `git_dirty`, and `alt_git_worktree`
 read from one shared `git` probe (no duplicate querying). `git_dirty` is always read
 fresh; the worktree `rev-parse` is cached (default **5 s**) because it rarely changes.

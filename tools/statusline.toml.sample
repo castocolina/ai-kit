@@ -45,7 +45,8 @@
 # context = true             # 📊 context-window % used (and max) (pinned)
 # chat_size = true           # 💾 transcript file size on disk
 # alt_process_memory = false # 🧮 agent process memory (RSS)
-# alt_rate_limits = false    # ⚡ rate-limit buckets with reset time
+# alt_h_rate_limit = false   # ⚡ 5-hour rate-limit bucket (time-only reset)
+# alt_w_rate_limit = false   # ⚡ 7-day rate-limit bucket (weekday reset)
 
 ## ─── [[line]] — full layout override ─────────────────────────────────────────
 ## ALL-OR-NOTHING (unlike [segments], which merges): if you uncomment ANY [[line]]
@@ -62,7 +63,7 @@
 # segments = ["model", "alt_time_ago", "alt_time_clock", "effort", "lines", "alt_cost", "alt_time_session", "alt_time_api"]
 # [[line]]
 # min_rows = 30
-# segments = ["render_time", "slowest", "alt_term_dimensions", "context", "chat_size", "alt_process_memory", "alt_rate_limits"]
+# segments = ["render_time", "slowest", "alt_term_dimensions", "context", "chat_size", "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"]
 
 ## ─── [git] — git probe tuning ────────────────────────────────────────────────
 ## Behaviour knobs for the git queries behind the `git_branch` / `git_dirty` /

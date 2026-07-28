@@ -79,7 +79,8 @@ SEGMENTS = {
     # diagnostics row (alt_term_dimensions is a debug aid — off by default)
     "render_time": True, "slowest": True, "alt_term_dimensions": False,
     "context": True,
-    "chat_size": True, "alt_process_memory": False, "alt_rate_limits": False,
+    "chat_size": True, "alt_process_memory": False,
+    "alt_h_rate_limit": False, "alt_w_rate_limit": False,
 }
 
 
@@ -113,7 +114,7 @@ LAYOUT = [
     Line(20, ["model", "alt_time_ago", "alt_time_clock", "effort", "lines",
               "alt_cost", "alt_time_session", "alt_time_api"]),
     Line(30, ["render_time", "slowest", "alt_term_dimensions", "context",
-              "chat_size", "alt_process_memory", "alt_rate_limits"]),
+              "chat_size", "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"]),
 ]
 
 
@@ -1500,26 +1501,39 @@ def util_to_int(s: str | None) -> int | None:
         return None
 
 
-def util_reset_suffix(reset: int | None, detail: str) -> str:
-    """Reset stamp at the requested detail: 'long' | 'short' | 'none'.
-    Pure formatting of resets_at in local time — never compared against the
-    clock, so a wrong system time or a timezone change can't change what shows."""
-    if reset is None or detail == "none":
+def _rate_bucket_hourly(key: str) -> bool:
+    """True if `key` (e.g. 'five_hour') names an hourly bucket; False for
+    day/week/month buckets (e.g. 'seven_day')."""
+    _, _, unit = key.partition("_")
+    return unit in ("hour", "hours")
+
+
+def util_hour_reset_suffix(reset: int | None) -> str:
+    """Time-only reset stamp for the hourly bucket — never a date, since a
+    5-hour window can't meaningfully cross into a different day."""
+    if reset is None:
         return ""
-    dt = datetime.fromtimestamp(reset)
-    if detail == "long":
-        return f" (↺ {dt.strftime('%b %d %H:%M')})"   # e.g. Jun 07 14:10
-    return f" (↺ {dt.strftime('%m-%d %H:%M')})"        # e.g. 06-07 14:10
+    return f" (↺ {datetime.fromtimestamp(reset).strftime('%H:%M')})"
 
 
-def util_rate_str(rate_limits: dict[str, Any], detail: str, theme: "Theme") -> str | None:
-    """Format the rate-limit buckets into one icon string at the given detail
-    level ('long'/'short'/'none' reset stamp), or None when no bucket reports."""
-    # Show every bucket that reports a percentage. Visibility never depends on
-    # the clock — the reset stamp is shown only when there's room (via detail),
-    # so timezone shifts / clock skew can't make a bucket vanish.
+def util_week_reset_suffix(reset: int | None) -> str:
+    """Weekday + time reset stamp for the weekly bucket (e.g. 'Sun 14:10')."""
+    if reset is None:
+        return ""
+    return f" (↺ {datetime.fromtimestamp(reset).strftime('%a %H:%M')})"
+
+
+def util_rate_group_str(
+    rate_limits: dict[str, Any], hourly: bool, show_reset: bool, theme: "Theme",
+) -> str | None:
+    """Format only the buckets whose unit matches `hourly` (True: hour(s);
+    False: everything else — day/week/month) into one icon string, or None
+    when no matching bucket reports a percentage."""
+    suffix_fn = util_hour_reset_suffix if hourly else util_week_reset_suffix
     parts: list[str] = []
     for key in sorted(rate_limits):
+        if _rate_bucket_hourly(key) != hourly:
+            continue
         info: dict[str, Any] = cast(dict[str, Any], rate_limits[key] or {})
         pct_raw: Any = info.get("used_percentage")
         if pct_raw is None:
@@ -1528,7 +1542,7 @@ def util_rate_str(rate_limits: dict[str, Any], detail: str, theme: "Theme") -> s
         reset_raw: Any = info.get("resets_at")
         reset: int | None = int(reset_raw) if reset_raw is not None else None
         color = util_rate_color(pct, theme)
-        suffix = util_reset_suffix(reset, detail)
+        suffix = suffix_fn(reset) if show_reset else ""
         parts.append(f"{fmt_rate_key_label(key)}: {color}{round(pct)}%{RESET}{suffix}")
     return util_icon("⚡", " | ".join(parts)) if parts else None
 
@@ -2271,13 +2285,22 @@ def seg_alt_process_memory(ctx: "Context", avail: int, theme: "Theme") -> str | 
     return util_first_fitting([util_icon("🧮", fmt_bytes(n))], avail)
 
 
-def seg_alt_rate_limits(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    rate_limits = ctx.rate_limits
-    if not rate_limits:
+def seg_alt_h_rate_limit(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    rl = ctx.rate_limits
+    if not rl:
         return None
-    return util_first_fitting([util_rate_str(rate_limits, "long", theme),
-                           util_rate_str(rate_limits, "short", theme),
-                           util_rate_str(rate_limits, "none", theme)], avail)
+    return util_first_fitting(
+        [util_rate_group_str(rl, True, True, theme),
+         util_rate_group_str(rl, True, False, theme)], avail)
+
+
+def seg_alt_w_rate_limit(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    rl = ctx.rate_limits
+    if not rl:
+        return None
+    return util_first_fitting(
+        [util_rate_group_str(rl, False, True, theme),
+         util_rate_group_str(rl, False, False, theme)], avail)
 
 
 BUILDERS = core_discover_builders()   # module-level snapshot; same shape as the old literal

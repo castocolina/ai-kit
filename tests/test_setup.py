@@ -94,7 +94,7 @@ class TestTomlRead(unittest.TestCase):
                           ["model", "alt_time_ago", "alt_time_clock", "effort", "lines",
                            "alt_cost", "alt_time_session", "alt_time_api"],
                           ["render_time", "slowest", "alt_term_dimensions",
-                           "context", "chat_size", "alt_process_memory", "alt_rate_limits"]])
+                           "context", "chat_size", "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"]])
 
     def test_layout_defaults_match_status_line(self):
         # Drift guard: setup.LAYOUT_DEFAULTS must mirror the canonical default

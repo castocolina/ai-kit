@@ -79,7 +79,8 @@ SEGMENT_DEFAULTS = {
     "lines": True, "alt_cost": False, "alt_time_session": False, "alt_time_api": False,
     "render_time": True, "slowest": True, "alt_term_dimensions": False,
     "context": True,
-    "chat_size": True, "alt_process_memory": False, "alt_rate_limits": False,
+    "chat_size": True, "alt_process_memory": False,
+    "alt_h_rate_limit": False, "alt_w_rate_limit": False,
 }
 LAYOUT_DEFAULTS = [
     {"min_rows": 0,
@@ -89,7 +90,7 @@ LAYOUT_DEFAULTS = [
                                   "alt_time_api"]},
     {"min_rows": 30, "segments": ["render_time", "slowest", "alt_term_dimensions",
                                   "context", "chat_size", "alt_process_memory",
-                                  "alt_rate_limits"]},
+                                  "alt_h_rate_limit", "alt_w_rate_limit"]},
 ]
 
 # Fallback UI glyph for an external segment whose header omits `icon=`.
@@ -293,7 +294,8 @@ _SEGMENT_NOTES = {
     "context": "📊 context-window % used (and max) (pinned)",
     "chat_size": "💾 transcript file size on disk",
     "alt_process_memory": "🧮 agent process memory (RSS)",
-    "alt_rate_limits": "⚡ rate-limit buckets with reset time",
+    "alt_h_rate_limit": "⚡ 5-hour rate-limit bucket (time-only reset)",
+    "alt_w_rate_limit": "⚡ 7-day rate-limit bucket (weekday reset)",
 }
 
 # A managed key line, optionally commented, capturing key + trailing comment:
