@@ -926,6 +926,41 @@ def probe_transcript_bytes(path: str) -> int | None:
         return None
 
 
+_COMPACT_BOUNDARY_RE = re.compile(r'"subtype"\s*:\s*"compact_boundary"')
+
+
+def probe_transcript_compaction(path: str, total_bytes: int) -> tuple[int, int]:
+    """Scan the transcript for compact_boundary markers. Returns
+    (since_bytes, compact_count): since_bytes is the byte count from the start
+    of the LAST compact_boundary record's line to EOF (== total_bytes when none
+    found); compact_count is how many valid compact_boundary records were
+    found. The compaction-marker JSON shape is Claude Code's internal, version-
+    dependent format — a malformed/renamed shape (doesn't parse, or parses but
+    isn't {"type":"system","subtype":"compact_boundary"}) is silently skipped,
+    never raised; a missing/unreadable file degrades to (total_bytes, 0)."""
+    last_offset: int | None = None
+    count = 0
+    try:
+        with open(path, "rb") as f:
+            offset = 0
+            for raw_line in f:
+                line = raw_line.decode("utf-8", errors="replace")
+                if _COMPACT_BOUNDARY_RE.search(line):
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        obj = None
+                    if (isinstance(obj, dict) and obj.get("type") == "system"
+                            and obj.get("subtype") == "compact_boundary"):
+                        last_offset = offset
+                        count += 1
+                offset += len(raw_line)
+    except OSError:
+        return total_bytes, 0
+    since = total_bytes - last_offset if last_offset is not None else total_bytes
+    return since, count
+
+
 def probe_todo_from_tasks_dir(
     config_dir: str, session: Any
 ) -> tuple[str | None, str | None] | None:

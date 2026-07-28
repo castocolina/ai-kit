@@ -1196,6 +1196,69 @@ class TestBlueFix(unittest.TestCase):
         self.assertNotIn("\033[1;34m", out)
 
 
+class TestProbeTranscriptCompaction(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _write(self, lines):
+        path = os.path.join(self.tmp, "transcript.jsonl")
+        with open(path, "w", encoding="utf-8") as f:
+            for line in lines:
+                f.write(line + "\n")
+        return path
+
+    def test_no_boundary_since_equals_total(self):
+        path = self._write([
+            json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}}),
+            json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "hey"}}),
+        ])
+        total = os.path.getsize(path)
+        since, count = sl.probe_transcript_compaction(path, total)
+        self.assertEqual(count, 0)
+        self.assertEqual(since, total)
+
+    def test_one_boundary_since_is_tail_only(self):
+        pre = json.dumps({"type": "user", "message": {"role": "user", "content": "long history"}})
+        boundary = json.dumps({"type": "system", "subtype": "compact_boundary",
+                                "compactMetadata": {"trigger": "manual",
+                                                     "preTokens": 100000, "postTokens": 500}})
+        post = json.dumps({"type": "user", "message": {"role": "user", "content": "new turn"}})
+        path = self._write([pre, boundary, post])
+        total = os.path.getsize(path)
+        since, count = sl.probe_transcript_compaction(path, total)
+        self.assertEqual(count, 1)
+        # since = the boundary line + everything after it, not the pre-boundary line
+        expected_since = len((boundary + "\n" + post + "\n").encode("utf-8"))
+        self.assertEqual(since, expected_since)
+        self.assertLess(since, total)
+
+    def test_three_boundaries_counted(self):
+        boundary = json.dumps({"type": "system", "subtype": "compact_boundary",
+                                "compactMetadata": {"trigger": "auto"}})
+        path = self._write([boundary, "x", boundary, "y", boundary, "z"])
+        total = os.path.getsize(path)
+        since, count = sl.probe_transcript_compaction(path, total)
+        self.assertEqual(count, 3)
+        expected_since = len((boundary + "\nz\n").encode("utf-8"))
+        self.assertEqual(since, expected_since)
+
+    def test_malformed_boundary_shape_is_ignored(self):
+        # matches the substring but wrong "type", and a non-JSON line — neither counts
+        wrong_type = json.dumps({"type": "user", "subtype": "compact_boundary"})
+        not_json = '{"subtype":"compact_boundary", not valid json'
+        path = self._write([wrong_type, not_json])
+        total = os.path.getsize(path)
+        since, count = sl.probe_transcript_compaction(path, total)
+        self.assertEqual(count, 0)
+        self.assertEqual(since, total)
+
+    def test_missing_file_returns_total_zero(self):
+        since, count = sl.probe_transcript_compaction(
+            os.path.join(self.tmp, "nonexistent.jsonl"), 12345)
+        self.assertEqual((since, count), (12345, 0))
+
+
 class TestChatSizeRamp(unittest.TestCase):
     KB = 1024
     MB = 1024 * 1024
