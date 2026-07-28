@@ -597,7 +597,7 @@ class TestSegmentInventory(unittest.TestCase):
         "effort": "🧠", "lines": "📃", "alt_cost": "🪙", "alt_time_session": "💬",
         "alt_time_api": "📡", "render_time": "⏱", "slowest": "🐌",
         "alt_term_dimensions": "", "context": "📊", "chat_size": "💾",
-        "alt_process_memory": "🧮", "alt_rate_limits": "⚡",
+        "alt_process_memory": "🧮", "alt_h_rate_limit": "⚡", "alt_w_rate_limit": "⚡",
     }
     # Icon single-sourcing into the inventory is DEFERRED per the PRD; until then
     # the inventory icon is hand-mirrored and this test pins it to the reviewed map.

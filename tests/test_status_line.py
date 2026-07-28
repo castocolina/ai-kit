@@ -484,6 +484,12 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertEqual(strip(sl.seg_model(_data(), 200, THEME)), "Opus 4.8")
         self.assertEqual(strip(sl.seg_alt_time_clock(_data(), 200, THEME)), "⏰ 14:30")
 
+    def test_todo_truncates_and_hides(self):
+        self.assertIn("hello", strip(sl.seg_todo(
+            _data(todo_state="in_progress", todo_text="hello"), 200, THEME)))
+        self.assertIsNone(sl.seg_todo(
+            _data(todo_state="in_progress", todo_text="hello"), 8, THEME))
+
     def test_path_never_none(self):
         self.assertIsNotNone(sl.seg_path(_data(), 1, THEME))
 
@@ -800,7 +806,7 @@ class TestDocumentation(unittest.TestCase):
                     "alt_time_ago", "alt_time_clock", "effort", "lines",
                     "alt_time_session", "alt_time_api", "render_time",
                     "alt_term_dimensions", "context", "chat_size",
-                    "alt_process_memory", "alt_rate_limits"):
+                    "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"):
             self.assertIn(key, src, key)
 
     def test_has_customization_guide(self):

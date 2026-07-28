@@ -2404,7 +2404,8 @@ def main() -> None:
 #   context              📊 context-window usage bar + percent         [pinned]
 #   chat_size            💾 transcript file size
 #   alt_process_memory   🧮 agent process memory (RSS)
-#   alt_rate_limits      ⚡ rate-limit buckets (+ reset times when room)
+#   alt_h_rate_limit     ⚡ 5-hour rate-limit bucket (time-only reset)
+#   alt_w_rate_limit     ⚡ 7-day rate-limit bucket (weekday reset)
 #
 # Common edits:
 #   * Toggle a segment:       flip its SEGMENTS[...] value.

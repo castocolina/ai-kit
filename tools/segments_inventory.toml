@@ -118,8 +118,14 @@ sample = "428M"
 icon = "🧮"
 line = 2
 
-[alt_rate_limits]
-description = "Rate-limit buckets with reset time"
-sample = "80% 3h"
+[alt_h_rate_limit]
+description = "5-hour rate-limit bucket (time-only reset)"
+sample = "5h: 42%"
+icon = "⚡"
+line = 2
+
+[alt_w_rate_limit]
+description = "7-day rate-limit bucket (weekday reset)"
+sample = "7d: 13%"
 icon = "⚡"
 line = 2
