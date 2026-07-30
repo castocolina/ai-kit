@@ -1052,14 +1052,10 @@ def unlink_one(link_path, dry, counts):
         os.remove(link_path)
 
 
-def prune_stale(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    claude_dir, install_dir, present, tty, dry, counts,
-):
-    """B − A: ai-kit symlinks under ~/.claude whose repo entry no longer exists
+def stale_link_candidates(claude_dir, install_dir, present):
+    """B - A: ai-kit symlinks under ~/.claude whose repo entry no longer exists
     (deleted upstream). `present` maps cat -> set(names) still in the repo.
-    Interactive: warn by name, offer to prune (confirmed). Headless: auto-remove
-    the dead link + print a warning (§4). Returns the list of 'cat/name' pruned
-    (or, when the user declines, the list that WAS offered)."""
+    Pure detection — read-only, never mutates. Returns the 'cat/name' list."""
     installed = installed_links(claude_dir, install_dir)
     stale = []
     for cat in CATEGORIES:
@@ -1072,6 +1068,28 @@ def prune_stale(  # pylint: disable=too-many-arguments,too-many-positional-argum
             if os.path.exists(link):
                 continue
             stale.append(f"{cat}/{name}")
+    return stale
+
+
+def apply_stale_prune(claude_dir, stale, dry, counts):
+    """Remove each 'cat/name' stale link (mutating). Counts as pruned, not
+    unlinked — pruned/unlinked are distinct tallies."""
+    for item in stale:
+        cat, name = item.split("/", 1)
+        unlink_one(os.path.join(claude_dir, cat, name), dry, counts)
+        counts["pruned"] += 1
+        counts["unlinked"] -= 1
+
+
+def prune_stale(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    claude_dir, install_dir, present, tty, dry, counts,
+):
+    """B − A: ai-kit symlinks under ~/.claude whose repo entry no longer exists
+    (deleted upstream). `present` maps cat -> set(names) still in the repo.
+    Interactive: warn by name, offer to prune (confirmed). Headless: auto-remove
+    the dead link + print a warning (§4). Returns the list of 'cat/name' pruned
+    (or, when the user declines, the list that WAS offered)."""
+    stale = stale_link_candidates(claude_dir, install_dir, present)
     if not stale:
         return []
     if is_interactive(tty):
@@ -1084,11 +1102,7 @@ def prune_stale(  # pylint: disable=too-many-arguments,too-many-positional-argum
         for item in stale:
             print(f"warn: removing dead ai-kit link {item} (entry removed upstream)",
                   file=sys.stderr)
-    for item in stale:
-        cat, name = item.split("/", 1)
-        unlink_one(os.path.join(claude_dir, cat, name), dry, counts)
-        counts["pruned"] += 1
-        counts["unlinked"] -= 1  # pruned and unlinked are distinct tallies
+    apply_stale_prune(claude_dir, stale, dry, counts)
     return stale
 
 
@@ -1121,6 +1135,20 @@ def predecessor_candidates(claude_dir, install_dir, entries):
                 continue                       # nothing current to re-point to
             out.append((cat, name, old, by_name[name]))
     return out
+
+
+def apply_predecessor_links(claude_dir, cands, repoint, dry, counts):
+    """Apply the repoint/delete decision for each predecessor-link candidate
+    (mutating). `cands` is predecessor_candidates()'s output:
+    (cat, name, old, new_target)."""
+    for cat, name, _old, new_target in cands:
+        link = os.path.join(claude_dir, cat, name)
+        if not dry:
+            if os.path.lexists(link):
+                os.remove(link)
+            if repoint:
+                os.symlink(new_target, link)
+        counts["relinked" if repoint else "pruned"] += 1
 
 
 def adopt_predecessor_links(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -1156,14 +1184,7 @@ def adopt_predecessor_links(  # pylint: disable=too-many-arguments,too-many-posi
     prompt = (f"Re-point them to this install?  "
               f"{warn}(No DELETES the {n} stale link(s)){rst}")
     repoint = ask_yes_no(tty, prompt, default=True)
-    for cat, name, _old, new_target in cands:
-        link = os.path.join(claude_dir, cat, name)
-        if not dry:
-            if os.path.lexists(link):
-                os.remove(link)
-            if repoint:
-                os.symlink(new_target, link)
-        counts["relinked" if repoint else "pruned"] += 1
+    apply_predecessor_links(claude_dir, cands, repoint, dry, counts)
     return items
 
 

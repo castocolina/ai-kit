@@ -1101,6 +1101,37 @@ class TestPruneStale(unittest.TestCase):
         self.assertTrue(os.path.lexists(self.gone))
 
 
+class TestStaleLinkCandidatesPure(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.install = os.path.join(self.tmp, "ai-kit")
+        self.claude = os.path.join(self.tmp, ".claude")
+        os.makedirs(os.path.join(self.install, "skills"))
+        os.makedirs(os.path.join(self.claude, "skills"))
+        self.gone = os.path.join(self.claude, "skills", "gone")
+        os.symlink(os.path.join(self.install, "skills", "gone"), self.gone)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_detects_without_mutating(self):
+        stale = setup.stale_link_candidates(self.claude, self.install, present={})
+        self.assertEqual(stale, ["skills/gone"])
+        self.assertTrue(os.path.lexists(self.gone))   # detection never mutates
+
+    def test_apply_removes_and_counts(self):
+        c = setup.new_counts()
+        setup.apply_stale_prune(self.claude, ["skills/gone"], dry=False, counts=c)
+        self.assertFalse(os.path.lexists(self.gone))
+        self.assertEqual(c["pruned"], 1)
+
+    def test_apply_dry_run_leaves_link_but_counts(self):
+        c = setup.new_counts()
+        setup.apply_stale_prune(self.claude, ["skills/gone"], dry=True, counts=c)
+        self.assertTrue(os.path.lexists(self.gone))
+        self.assertEqual(c["pruned"], 1)
+
+
 class TestAdoptPredecessorLinks(unittest.TestCase):
     """Links left behind by a PREVIOUS ai-kit install (e.g. a renamed repo:
     uz-kit -> ai-kit). They are foreign to the current install_dir but carry the
@@ -1195,6 +1226,46 @@ class TestAdoptPredecessorLinks(unittest.TestCase):
         setup.adopt_predecessor_links(self.claude, self.install, self.entries(),
                                       tty=tty, dry=True, counts=c)
         self.assertEqual(os.readlink(self.link), os.path.join(self.old, "skills", "alpha"))
+
+
+class TestApplyPredecessorLinksPure(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.install = os.path.join(self.tmp, "ai-kit")
+        self.old = os.path.join(self.tmp, "uz-kit")
+        self.claude = os.path.join(self.tmp, ".claude")
+        for root in (self.install, self.old):
+            os.makedirs(os.path.join(root, "skills"))
+        os.makedirs(os.path.join(self.claude, "skills"))
+        self.link = os.path.join(self.claude, "skills", "alpha")
+        os.symlink(os.path.join(self.old, "skills", "alpha"), self.link)
+        self.new_target = os.path.join(self.install, "skills", "alpha")
+        self.cands = [("skills", "alpha",
+                       os.path.join(self.old, "skills", "alpha"), self.new_target)]
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_repoint_true_relinks_to_new_target(self):
+        c = setup.new_counts()
+        setup.apply_predecessor_links(self.claude, self.cands, repoint=True,
+                                      dry=False, counts=c)
+        self.assertEqual(os.readlink(self.link), self.new_target)
+        self.assertEqual(c["relinked"], 1)
+
+    def test_repoint_false_deletes_link(self):
+        c = setup.new_counts()
+        setup.apply_predecessor_links(self.claude, self.cands, repoint=False,
+                                      dry=False, counts=c)
+        self.assertFalse(os.path.lexists(self.link))
+        self.assertEqual(c["pruned"], 1)
+
+    def test_dry_run_mutates_nothing(self):
+        c = setup.new_counts()
+        setup.apply_predecessor_links(self.claude, self.cands, repoint=True,
+                                      dry=True, counts=c)
+        self.assertEqual(os.readlink(self.link), os.path.join(self.old, "skills", "alpha"))
+        self.assertEqual(c["relinked"], 1)   # still counted as intended
 
 
 class TestSelectionModel(unittest.TestCase):
