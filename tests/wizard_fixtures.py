@@ -36,6 +36,7 @@ def make_ctx(with_external=False, sl_state="unset"):
         state={"segments": segments, "layout": layout, "dirty": False,
                "adopt": sl_state == "ours", "_initial_enabled": initial},
         sample_json="{}", engine=None,
-        status_line={"state": sl_state, "current_command": None},
+        status_line=lambda: {"state": sl_state, "current_command": None},
         segment_meta=meta, external_segments=external,
-        component_meta={name: "" for _, name, _ in sel.items})
+        component_meta={name: "" for _, name, _ in sel.items},
+        housekeeping={"stale": [], "predecessors": []})

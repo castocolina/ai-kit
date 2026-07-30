@@ -107,15 +107,22 @@ class WizardContext(NamedTuple):
     sample_json: str            # rendered sample input JSON for preview
     engine: object                   # callables: render_preview, apply_command, groups, order
     # New Plan-A fields (Task 10) — always populated by setup.py.launch_wizard.
-    status_line: dict           # {"state": str, "current_command": str | None}
+    status_line: object         # callable () -> {"state": str, "current_command": str|None}
+                                #  — called fresh each read, never cached in the context.
     segment_meta: dict          # {key: {description, sample, icon, line}}
     external_segments: list     # [{id, name, path, default_on, description,
                                 #   icon, sample, line, provenance}, …]
     component_meta: dict          # {name: description} across all CATEGORIES
+    housekeeping: dict = {}     # {"stale": [...], "predecessors": [...]} — "cat/name"
+                                #  display strings; empty = nothing pending, gate skipped.
     # Injected by launch_wizard: commit(selection, state) -> {"ok", "adopt", "log"}.
     # Runs the real install (symlinks + doctor-validated status-line write) IN-UI on
     # Review-confirm. None in unit fixtures → the view falls back to a no-op commit.
     commit: object = None
+    # Injected by launch_wizard: apply_housekeeping(prune, repoint) ->
+    # {"selection", "initial_enabled"}. Runs IN-UI once the housekeeping gate is
+    # answered. None → legacy no-op (fine when housekeeping is empty).
+    apply_housekeeping: object = None
 
 
 class WizardCrash(Exception):
@@ -197,9 +204,18 @@ class WizardApp(App):
         self._commit_outcome: dict | None = None
         self._commit_state: dict | None = None
         # adoption gate: 'ours' adopts silently; otherwise the gate is shown on Arrange entry
-        self.gate_done = ctx.status_line.get("state") == "ours"
+        self.gate_done = ctx.status_line().get("state") == "ours"
         if self.gate_done:
             self.state["adopt"] = True
+        # housekeeping gate (Step 0): stale/predecessor link candidates, answered
+        # in sequence before the component picker is usable.
+        self.housekeeping = dict(ctx.housekeeping) if ctx.housekeeping else {}
+        self._hk_pending = [k for k in ("stale", "predecessors") if self.housekeeping.get(k)]
+        self._hk_stage = 0
+        self._hk_answers: dict = {}
+        self._hk_applying = False
+        self._hk_error: str | None = None
+        self.housekeeping_done = not self._hk_pending
         # min_rows per lane, captured from the initial layout (fallback 0/20/30)
         rows = [r.get("min_rows", 0) for r in self.state["layout"]]
         self._min_rows = [*rows, 0, 20, 30][:3]
@@ -420,6 +436,8 @@ class WizardApp(App):
         sep = f"   [{LINE}]│[/]   "
         if self.step == STEP_ARRANGE and not self.gate_done:
             keys = [("Yes", "Y", True), ("No", "N", False), ("Back", "Esc", False)]
+        elif self.step == STEP_CHOOSE and not self.housekeeping_done:
+            keys = [("Yes", "Y", True), ("No", "N", False)]
         else:
             keys = FOOTERS[self.step]
         left = sep.join(self._cap(*k) for k in keys)
@@ -433,7 +451,30 @@ class WizardApp(App):
         self.query_one("#help-box", Static).update(
             f"[bold {ACCENT}]{title} — keys[/]\n\n{rows}\n\n[{DIM}]? or Esc to close[/]")
 
+    def _render_housekeeping_gate(self) -> None:
+        picksbox = self.query_one("#picksbox", Static)
+        self.query_one("#picksCount", Static).update("")
+        if self._hk_applying:
+            picksbox.update(f"[{DIM}]Applying…[/]")
+            return
+        kind = self._hk_pending[self._hk_stage]
+        items = self.housekeeping.get(kind, [])
+        listing = "\n".join(f"  [{DIM}]-[/] {it}" for it in items)
+        if kind == "stale":
+            gate = (f"[b {WARN}]⚠  {len(items)} link(s) point at entries removed upstream[/]\n"
+                    f"{listing}\n\n"
+                    f"[#0d1117 on {WARN}] y = prune them · N / Enter = keep them [/]")
+        else:
+            gate = (f"[b {WARN}]⚠  {len(items)} link(s) point at a PREVIOUS ai-kit install[/]\n"
+                    f"{listing}\n\n"
+                    f"[{DIM}]No deletes them — this cannot be undone.[/]\n"
+                    f"[#0d1117 on {WARN}] Y / Enter = re-point to this install · n = delete them [/]")
+        picksbox.update(gate)
+
     def _render_choose(self) -> None:
+        if not self.housekeeping_done:
+            self._render_housekeeping_gate()
+            return
         items = self.sel.items
         cur_cat = items[self.sel.cursor][0] if items else None
         # category groups in first-appearance order over self.sel.items
@@ -480,7 +521,7 @@ class WizardApp(App):
     def _render_arrange(self) -> None:
         lane0 = self.query_one("#lane0", Static)
         if not self.gate_done:
-            sl = self.ctx.status_line
+            sl = self.ctx.status_line()
             if sl.get("state") == "foreign":
                 cmd = sl.get("current_command") or "(unknown)"
                 gate = (f"[b {WARN}]⚠  Existing status line detected[/]\n"
@@ -635,11 +676,13 @@ class WizardApp(App):
         # unless the user already opted in (adopt True) or the status line is
         # already ours — so a prior "decline" never lands on a stale board.
         if not self.state.get("adopt"):
-            self.gate_done = self.ctx.status_line.get("state") == "ours"
+            self.gate_done = self.ctx.status_line().get("state") == "ours"
         self.step = STEP_ARRANGE
         return True
 
     def _key_choose(self, event: events.Key) -> bool:
+        if not self.housekeeping_done:
+            return self._key_housekeeping(event)
         ch, k = event.character, event.key
         n = len(self.sel.items)
         if not n:
@@ -662,6 +705,58 @@ class WizardApp(App):
             return False
         return True
 
+    def _key_housekeeping(self, event: events.Key) -> bool:
+        if self._hk_applying:
+            return True             # ignore keys until the apply worker finishes
+        ch, k = event.character, event.key
+        kind = self._hk_pending[self._hk_stage]
+        default = kind != "stale"          # stale defaults to decline; predecessors to repoint
+        if ch == "y":
+            answer = True
+        elif ch == "n":
+            answer = False
+        elif k == "enter":
+            answer = default
+        else:
+            return False
+        self._hk_answers[kind] = answer
+        self._hk_stage += 1
+        if self._hk_stage >= len(self._hk_pending):
+            self._hk_applying = True
+            self._apply_housekeeping()
+        return True
+
+    @work(thread=True, exclusive=True)
+    def _apply_housekeeping(self) -> None:
+        """Worker: apply the housekeeping decision(s) off the event loop, then
+        refresh the Choose selection/state and unblock the gate. Any failure is
+        captured so the UI never hangs in the 'Applying…' state, mirroring how
+        _run_commit already guards ctx.commit() failures below."""
+        prune = self._hk_answers.get("stale", False)
+        repoint = self._hk_answers.get("predecessors", True)
+        try:
+            if self.ctx.apply_housekeeping is None:
+                outcome = {"selection": self.sel,
+                          "initial_enabled": self.state.get("_initial_enabled", {})}
+            else:
+                outcome = self.ctx.apply_housekeeping(prune, repoint)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            outcome = {}
+            self._hk_error = f"housekeeping failed: {exc}"
+        if outcome.get("selection") is not None:
+            self.sel = outcome["selection"]
+        self.state["_initial_enabled"] = outcome.get(
+            "initial_enabled", self.state.get("_initial_enabled", {}))
+        self.housekeeping_done = True
+        self._hk_applying = False
+        if self._hk_error:
+            # Surface the captured failure once, via Textual's own toast — the
+            # gate has already resolved (housekeeping_done=True, no hang), so
+            # there is no gate screen left to render it inline on; this runs
+            # on the main thread via call_from_thread, same as _render below.
+            self.call_from_thread(self.notify, self._hk_error, severity="error")
+        self.call_from_thread(self._render)
+
     def _key_arrange(self, event: events.Key) -> bool:
         if not self.gate_done:
             ch, k = event.character, event.key
@@ -673,7 +768,7 @@ class WizardApp(App):
             elif ch == "n":
                 self.state["adopt"] = False
             elif k == "enter":                 # follow the shown default
-                self.state["adopt"] = self.ctx.status_line.get("state") != "foreign"
+                self.state["adopt"] = self.ctx.status_line().get("state") != "foreign"
             else:
                 return False
             self.gate_done = True

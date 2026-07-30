@@ -12,6 +12,7 @@ every test class is guarded by ``@skipUnless(HAVE_TEXTUAL, ...)``.
 Static-content accessor in Textual 8.2.7 is ``str(widget.content)`` (not
 ``.render()``).
 """
+import threading
 import unittest
 
 try:
@@ -534,6 +535,114 @@ class TestChrome(unittest.IsolatedAsyncioTestCase):
             left = str(app.query_one("#footer-left", Static).content)
             for _label, cap, _primary in wa.FOOTERS[wa.STEP_CHOOSE]:
                 self.assertIn(cap, left)
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestHousekeepingGate(unittest.IsolatedAsyncioTestCase):
+    def _ctx(self, **housekeeping):
+        hk = {"stale": [], "predecessors": [], **housekeeping}
+        return make_ctx()._replace(housekeeping=hk)
+
+    async def test_no_candidates_skips_gate(self):
+        app = wa.WizardApp(self._ctx())
+        self.assertTrue(app.housekeeping_done)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.assertIn("of", str(app.query_one("#picksCount", Static).content))
+
+    async def test_stale_only_prune_on_yes(self):
+        seen = {}
+        def apply_hk(prune, repoint):
+            seen["prune"], seen["repoint"] = prune, repoint
+            return {"selection": None, "initial_enabled": {}}
+        ctx = self._ctx(stale=["skills/gone"])._replace(apply_housekeeping=apply_hk)
+        app = wa.WizardApp(ctx)
+        self.assertFalse(app.housekeeping_done)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("y")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertTrue(app.housekeeping_done)
+        self.assertEqual(seen["prune"], True)
+
+    async def test_stale_then_predecessors_sequenced(self):
+        seen = {}
+        def apply_hk(prune, repoint):
+            seen["prune"], seen["repoint"] = prune, repoint
+            return {"selection": None, "initial_enabled": {}}
+        ctx = self._ctx(stale=["skills/gone"], predecessors=["skills/alpha"]
+                        )._replace(apply_housekeeping=apply_hk)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.assertFalse(app.housekeeping_done)
+            await pilot.press("n")               # stale: decline prune
+            self.assertFalse(app.housekeeping_done)   # predecessors still pending
+            await pilot.press("y")               # predecessors: repoint
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertTrue(app.housekeeping_done)
+        self.assertEqual(seen["prune"], False)
+        self.assertEqual(seen["repoint"], True)
+
+    async def test_apply_housekeeping_none_falls_back_to_legacy(self):
+        # apply_housekeeping=None (unit fixtures without it) -> pressing an
+        # answer still resolves the gate using the existing selection/state.
+        ctx = self._ctx(stale=["skills/gone"])
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("y")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertTrue(app.housekeeping_done)
+
+    async def test_apply_housekeeping_raises_resolves_gate(self):
+        # apply_housekeeping raising must not leave the wizard stuck showing
+        # "Applying…" forever — the gate resolves and the failure is captured,
+        # not swallowed into a hang or an unhandled exception.
+        def apply_hk(prune, repoint):
+            raise OSError("disk exploded")
+
+        ctx = self._ctx(stale=["skills/gone"])._replace(apply_housekeeping=apply_hk)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("y")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertTrue(app.housekeeping_done)   # gate resolved, no hang
+        self.assertFalse(app._hk_applying)
+        self.assertIn("disk exploded", app._hk_error)
+
+    async def test_second_keypress_during_apply_is_noop(self):
+        # A keypress that arrives while the apply worker is still in flight
+        # (_hk_applying=True) must not re-enter _key_housekeeping's
+        # self._hk_pending[self._hk_stage] indexing — by the time the last
+        # pending answer is recorded, self._hk_stage == len(self._hk_pending),
+        # so an unguarded second read raises IndexError.
+        release = threading.Event()
+        seen = {"calls": 0}
+
+        def apply_hk(prune, repoint):
+            seen["calls"] += 1
+            release.wait(timeout=2)   # held open until the test releases it
+            return {"selection": None, "initial_enabled": {}}
+
+        ctx = self._ctx(stale=["skills/gone"])._replace(apply_housekeeping=apply_hk)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("y")             # kicks off the apply worker
+            self.assertTrue(app._hk_applying)  # still in flight (blocked on release)
+            await pilot.press("y")             # arrives mid-flight; must be a no-op
+            self.assertEqual(seen["calls"], 1)   # guard swallowed the second keypress
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertTrue(app.housekeeping_done)
+        self.assertEqual(seen["calls"], 1)
 
 
 if __name__ == "__main__":  # pragma: no cover
