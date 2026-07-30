@@ -24,7 +24,7 @@
 ## hides them entirely.)
 # [segments]
 ## identity line (top row)
-# path = true                # 📂 working directory, ~-relative   (pinned)
+# path = true                # 📂 project root name (main checkout, even inside a worktree)   (pinned)
 # git_branch = true          # git branch name
 # git_dirty = true           # working-tree dirty marker
 # alt_git_worktree = false   # ⎇ active linked-worktree name (struck ⎇ wt on main)

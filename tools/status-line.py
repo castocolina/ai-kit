@@ -86,7 +86,7 @@ SEGMENTS = {
 
 
 # Identity-line tuning.
-PATH_MAX_LEN = 20       # ~-collapsed path longer than this collapses to its basename
+PATH_MAX_LEN = 20       # ~-collapsed path or project-root name longer than this collapses/truncates
 
 
 CONTEXT_BAR_CELLS = 10  # context bar width; ▌ half-cells give 5% resolution
@@ -256,6 +256,7 @@ class GitSnapshot(NamedTuple):
     dirty: str
     is_worktree: bool
     wt_name: str
+    root_name: str = ""    # main checkout's dir basename; same across every worktree
 
 
 # ── External drop-in segments (E4c) ──────────────────────────────────────────
@@ -755,25 +756,43 @@ def probe_effort_setting_is_auto(work_dir: str, home: str) -> bool:
     return True
 
 
-def probe_git_worktree_info(work_dir: str) -> tuple[bool, bool, str]:
-    """(in_repo, is_worktree, name) from ONE `git rev-parse`. is_worktree is True
-    when work_dir sits in a linked worktree (git-dir != git-common-dir). name is
-    that worktree directory's basename (from --show-toplevel), only when in a
-    linked worktree; "" otherwise. Outside any repo → (False, False, "")."""
+def probe_git_worktree_info(work_dir: str) -> tuple[bool, bool, str, str]:
+    """(in_repo, is_worktree, wt_name, root_name) from ONE `git rev-parse`.
+    is_worktree is True when work_dir sits in a linked worktree (git-dir !=
+    git-common-dir). wt_name is that worktree directory's basename (from
+    --show-toplevel), only when in a linked worktree; "" otherwise. root_name
+    is the MAIN checkout's directory basename — dirname of --git-common-dir,
+    the one physical .git store every worktree of a repo shares, so it stays
+    the same no matter which worktree work_dir is in. --git-common-dir
+    normally ends in "/.git" and dirname() of that is the repo root; but a
+    bare repo (or an unusual layout) can report a --git-common-dir that does
+    NOT end in "/.git" — there, dirname() would walk one directory too far up
+    and report the repo's PARENT as root_name. Guard: only take dirname()
+    when the common-dir's basename is literally ".git"; otherwise the
+    common-dir IS the root, so use its own basename directly.
+    --path-format=absolute forces all three rev-parse outputs to be absolute
+    so this dirname()/basename() math is correct regardless of the caller's
+    cwd. Outside any repo → (False, False, "", "")."""
     out = subprocess.run(
-        ["git", "-C", work_dir, "rev-parse",
+        ["git", "-C", work_dir, "rev-parse", "--path-format=absolute",
          "--git-dir", "--git-common-dir", "--show-toplevel"],
         capture_output=True, text=True, check=False).stdout
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     if len(lines) < 2:
-        return False, False, ""                 # not a git repo
+        return False, False, "", ""                 # not a git repo
     is_worktree = lines[0] != lines[1]          # git-dir != git-common-dir
+    common_dir = lines[1].rstrip("/")
+    if os.path.basename(common_dir) == ".git":
+        root_dir = os.path.dirname(common_dir)
+    else:
+        root_dir = common_dir           # bare repo / unusual layout: no ".git" to strip
+    root_name = os.path.basename(root_dir)
     top = lines[2] if len(lines) >= 3 else ""
     name = os.path.basename(top.rstrip("/")) if (is_worktree and top) else ""
-    return True, is_worktree, name
+    return True, is_worktree, name, root_name
 
 
-def probe_worktree_info_cached(work_dir: str, ttl: int, cache_base: str) -> tuple[bool, bool, str]:
+def probe_worktree_info_cached(work_dir: str, ttl: int, cache_base: str) -> tuple[bool, bool, str, str]:
     """probe_git_worktree_info wrapped in an on-disk TTL cache — the worktree rev-parse
     rarely changes, so it is cached ~ttl s keyed by work_dir. The cache is active
     only when ttl > 0 AND a cache_base is resolved: ttl <= 0 forces a fresh
@@ -789,7 +808,7 @@ def probe_worktree_info_cached(work_dir: str, ttl: int, cache_base: str) -> tupl
             if time.time() - os.stat(path).st_mtime < ttl:
                 with open(path, encoding="utf-8") as f:
                     d = json.load(f)
-                return d["in_repo"], d["is_worktree"], d["wt_name"]
+                return d["in_repo"], d["is_worktree"], d["wt_name"], d.get("root_name", "")
         except (OSError, ValueError, KeyError):
             pass
     info = probe_git_worktree_info(work_dir)
@@ -797,7 +816,8 @@ def probe_worktree_info_cached(work_dir: str, ttl: int, cache_base: str) -> tupl
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
-                json.dump({"in_repo": info[0], "is_worktree": info[1], "wt_name": info[2]}, f)
+                json.dump({"in_repo": info[0], "is_worktree": info[1],
+                           "wt_name": info[2], "root_name": info[3]}, f)
         except OSError:
             pass
     return info
@@ -831,8 +851,8 @@ def probe_git_snapshot(work_dir: str, config: Optional["Config"] = None) -> "Git
         dirty = "modified"
     else:
         dirty = "clean"
-    in_repo, is_worktree, wt_name = probe_worktree_info_cached(work_dir, ttl, cache_base)
-    return GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name)
+    in_repo, is_worktree, wt_name, root_name = probe_worktree_info_cached(work_dir, ttl, cache_base)
+    return GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name, root_name)
 
 
 # ── Process RSS (cross-platform) ──────────────────────────────────────────────
@@ -2179,7 +2199,12 @@ def core_render(
 
 # ── identity line ────────────────────────────────────────────────────────────
 def seg_path(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    return f"{theme.c('BLUE')}{util_display_dir(ctx.work_dir, ctx.home)}{RESET}"  # floor
+    snap = probe_git_for(ctx)
+    if snap.in_repo and snap.root_name:
+        shown = util_trunc_cols(snap.root_name, PATH_MAX_LEN)
+    else:
+        shown = util_display_dir(ctx.work_dir, ctx.home)
+    return f"{theme.c('BLUE')}{shown}{RESET}"  # floor
 
 
 def seg_git_branch(ctx: "Context", avail: int, theme: "Theme") -> str | None:

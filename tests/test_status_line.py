@@ -66,7 +66,7 @@ def _data(**over):
     }
     probe_defaults = {
         "branch": "main", "dirty": "modified", "is_worktree": False,
-        "in_repo": False, "wt_name": "",
+        "in_repo": False, "wt_name": "", "root_name": "",
         "ago": "5m 0s ago", "effort_auto": False,
         "todo_state": None, "todo_text": None,
         "chat_bytes": 305000, "mem_bytes": 448_790_528,
@@ -81,7 +81,7 @@ def _data(**over):
     ctx.probe_cache["git"] = sl.GitSnapshot(
         in_repo=probe_over["in_repo"], branch=probe_over["branch"],
         dirty=probe_over["dirty"], is_worktree=probe_over["is_worktree"],
-        wt_name=probe_over["wt_name"])
+        wt_name=probe_over["wt_name"], root_name=probe_over["root_name"])
     ctx.probe_cache["todo"] = (probe_over["todo_state"], probe_over["todo_text"])
     ctx.probe_cache["ago"] = probe_over["ago"]
     ctx.probe_cache["effort_auto"] = probe_over["effort_auto"]
@@ -945,6 +945,50 @@ class TestProcAndGit(unittest.TestCase):
             self.assertTrue(snap.is_worktree)        # git-dir != git-common-dir
             self.assertTrue(snap.in_repo)
             self.assertEqual(snap.wt_name, "feat-x")  # basename of --show-toplevel
+            self.assertEqual(snap.root_name, "main")  # dirname of --git-common-dir
+
+    def test_git_snapshot_root_name_non_worktree(self):
+        def fake_run(cmd, **kw):
+            class R:
+                returncode = 0
+                stdout = ("## main\n" if "status" in cmd
+                          else "/repo/.git\n/repo/.git\n/repo\n")
+            return R()
+        env = self._home_env()
+        cfg = sl.cfg_default_config()._replace(cache_base=sl.cfg_cache_base(env))
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            snap = sl.probe_git_snapshot(".", cfg)
+            self.assertFalse(snap.is_worktree)
+            self.assertEqual(snap.root_name, "repo")
+
+    def test_probe_git_worktree_info_requests_absolute_paths(self):
+        # --git-common-dir must be absolute or root_name's dirname() math breaks.
+        seen = []
+        def fake_run(cmd, **kw):
+            seen.append(cmd)
+            class R:
+                returncode = 0
+                stdout = "/repo/.git\n/repo/.git\n/repo\n"
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            sl.probe_git_worktree_info(".")
+        self.assertIn("--path-format=absolute", seen[0])
+
+    def test_probe_git_worktree_info_bare_repo_common_dir_guard(self):
+        # --git-common-dir doesn't always end in "/.git" — a bare repo's
+        # common-dir IS the repo dir itself. root_name must not blindly take
+        # dirname() of a path that isn't "<root>/.git"; it should fall back
+        # to the common-dir's own basename instead of walking one level too
+        # far up (which would report the bare repo's PARENT dir as the name).
+        def fake_run(cmd, **kw):
+            class R:
+                returncode = 0
+                stdout = "/srv/bare-repo\n/srv/bare-repo\n/srv/bare-repo\n"
+            return R()
+        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+            in_repo, _is_worktree, _name, root_name = sl.probe_git_worktree_info(".")
+        self.assertTrue(in_repo)
+        self.assertEqual(root_name, "bare-repo")
 
     def test_worktree_info_cached_within_ttl(self):
         # Second call within the TTL must NOT re-run the rev-parse (cached on disk).
@@ -1231,6 +1275,50 @@ class TestBlueFix(unittest.TestCase):
         out = sl.seg_path(_data(), 80, THEME)
         self.assertIn("38;5;39", out)
         self.assertNotIn("\033[1;34m", out)
+
+
+class TestSegPathProjectRoot(unittest.TestCase):
+    def test_shows_root_name_inside_a_repo(self):
+        ctx = _data(in_repo=True, root_name="ai-kit",
+                    work_dir="/home/u/proj/.claude/worktrees/feat-x")
+        out = sl.seg_path(ctx, 80, THEME)
+        self.assertIn("ai-kit", out)
+        self.assertNotIn("feat-x", out)
+
+    def test_ignores_cwd_depth_inside_a_repo(self):
+        ctx = _data(in_repo=True, root_name="ai-kit",
+                    work_dir="/home/u/proj/very/deeply/nested/subdir")
+        out = sl.seg_path(ctx, 80, THEME)
+        self.assertIn("ai-kit", out)
+
+    def test_non_worktree_short_subdir_shows_root_not_old_cwd_display(self):
+        # Regression pin for the deliberately widened scope (confirmed with the
+        # user; see the plan's "Correction to / supersession of the sibling
+        # design spec" section): a short subdirectory of the MAIN checkout
+        # (not a worktree, and under PATH_MAX_LEN so the old code path never
+        # truncated it) used to render via util_display_dir as "~/proj/tools".
+        # It must now render the project root name instead, proving the
+        # substitution applies to every git-repo session, not only worktrees.
+        work_dir = "/home/u/proj/tools"
+        home = "/home/u"
+        old_display = sl.util_display_dir(work_dir, home)
+        self.assertEqual(old_display, "~/proj/tools")  # sanity: old behavior would show this
+        ctx = _data(in_repo=True, root_name="proj", work_dir=work_dir, home=home)
+        out = sl.seg_path(ctx, 80, THEME)
+        self.assertIn("proj", out)
+        self.assertNotIn(old_display, out)
+
+    def test_truncates_long_root_name(self):
+        long_name = "a" * 30
+        ctx = _data(in_repo=True, root_name=long_name)
+        out = sl.seg_path(ctx, 80, THEME)
+        self.assertIn("…", out)
+        self.assertNotIn(long_name, out)
+
+    def test_falls_back_to_cwd_outside_a_repo(self):
+        ctx = _data(in_repo=False, work_dir="/home/u/scratch", home="/home/u")
+        out = sl.seg_path(ctx, 80, THEME)
+        self.assertIn(sl.util_display_dir("/home/u/scratch", "/home/u"), out)
 
 
 class TestProbeTranscriptCompaction(unittest.TestCase):
@@ -2246,6 +2334,9 @@ class TestRenderDataLazy(unittest.TestCase):
     def test_disabled_git_segments_skip_the_probe(self):
         raw = {"workspace": {"current_dir": "/repo"}}
         cfg = sl.cfg_default_config()
+        # path is now also a git consumer (renders the project-root name), so
+        # zero git probes requires disabling it too, not just the git_* segments.
+        cfg.segments["path"] = False
         cfg.segments["git_branch"] = False
         cfg.segments["git_dirty"] = False
         cfg.segments["alt_git_worktree"] = False
@@ -2253,7 +2344,7 @@ class TestRenderDataLazy(unittest.TestCase):
         with mock.patch.object(sl, "probe_git_snapshot") as gs:
             data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
             sl.core_render(data, cfg, theme)
-            self.assertEqual(gs.call_count, 0, "no git segment enabled => no git probe")
+            self.assertEqual(gs.call_count, 0, "no git-consuming segment enabled => no git probe")
 
 
 class TestSlowestTruthful(unittest.TestCase):
@@ -2273,7 +2364,9 @@ class TestSlowestTruthful(unittest.TestCase):
             data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
             sl.core_render(data, cfg, theme)
         name, ns = data.slowest
-        self.assertIn(name, ("git_branch", "git_dirty", "alt_git_worktree"))  # a real git consumer
+        # path renders first in line order and is now also a git consumer, so
+        # it — not git_branch — is the one that actually pays the probe cost.
+        self.assertIn(name, ("path", "git_branch", "git_dirty", "alt_git_worktree"))
         self.assertGreater(ns, 1_000_000)                     # >1ms, not µs
 
 
