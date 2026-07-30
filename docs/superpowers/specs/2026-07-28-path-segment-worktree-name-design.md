@@ -1,7 +1,19 @@
 # Path Segment: Show Project Name Inside Worktrees (Design Spec)
 
-- **Status**: design draft — pending user review
+- **Status**: superseded — see note below
 - **Date**: 2026-07-28
+- **Superseded by**: `docs/superpowers/plans/2026-07-30-context-tools-worktree-ux-fixes.md` (2026-07-30).
+  In a follow-up session the user was asked directly whether `path`'s substitution should apply
+  only inside a worktree (this spec's §3.3/§6 recommendation) or always, in every git-repo
+  session regardless of cwd depth or worktree state — the user chose **always**, explicitly
+  overriding this spec's §6 scope boundary and Open Question 4. The superseding plan also
+  resolves this spec's Open Question 3 (absolute-path resolution) in favor of
+  `--path-format=absolute` (git ≥ 2.31), confirmed acceptable by the user as a version floor,
+  rather than the version-floor-free `os.path.normpath` approach proposed here. The field is
+  named `root_name` in the superseding plan, not `project_name`. Everything else here (the
+  `git-common-dir`-based resolution mechanism, the "no new subprocess call" analysis, the
+  worktree/non-worktree collision diagnosis in §2) remains accurate background reading — only
+  §3.3's scope gate and §5's absolute-path recommendation are overridden.
 - **Scope**: `tools/status-line.py` (+ `tests/test_status_line.py`) only. No wizard,
   installer, or PRD-index changes.
 - **Relates to**: FR-7.2 in `docs/prds/e7-install-ux-worktree-visibility-v1.0-prd.md`,
