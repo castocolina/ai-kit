@@ -1883,8 +1883,8 @@ def _engine_ns(paths, sample_json):
     )
 
 
-def _build_wizard_context(  # pylint: disable=too-many-locals
-    paths, entries, installed, sample_json, wizard_app_mod,
+def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
+    paths, entries, installed, sample_json, wizard_app_mod, stale=None, predecessor_cands=None,
 ):
     """Construct WizardContext for launch_wizard (extracted for testability).
 
@@ -1893,12 +1893,19 @@ def _build_wizard_context(  # pylint: disable=too-many-locals
     issues (the bare ``import wizard_app`` in launch_wizard is a different object
     than ``from tools import wizard_app``).
 
+    ``stale``/``predecessor_cands`` are launch_wizard's pre-computed detection
+    results (Task 3): supplying them here only shapes ``ctx.housekeeping``'s
+    display strings — defaulting to empty when omitted (existing callers that
+    don't care about housekeeping keep working unmodified).
+
     ``_initial_enabled`` is keyed by the INSTALLED state, not the wizard's
     visual pre-selection.  On a first run the wizard pre-checks everything, but
     nothing is installed yet — so the baseline must be all-False to let
     ``_has_net_change`` (Task 5) correctly detect that confirming the defaults
     IS a write.  On a reconfigure, installed state equals the pre-selection so
     both representations agree."""
+    stale = stale if stale is not None else []
+    predecessor_cands = predecessor_cands if predecessor_cands is not None else []
     default = _default_selection(entries, installed)
     sel = Selection(
         (cat, name, name in default[cat])
@@ -1936,6 +1943,11 @@ def _build_wizard_context(  # pylint: disable=too-many-locals
         for name, abspath in entries[cat]
     }
 
+    housekeeping = {
+        "stale": stale,
+        "predecessors": [f"{cat}/{name}" for cat, name, _old, _new in predecessor_cands],
+    }
+
     return wizard_app_mod.WizardContext(
         selection=sel,
         state={"segments": segments,
@@ -1944,10 +1956,13 @@ def _build_wizard_context(  # pylint: disable=too-many-locals
                "_initial_enabled": initial_enabled},
         sample_json=sample_json,
         engine=_engine_ns(paths, sample_json),
-        status_line=sl_state,
+        # Live callable, not a frozen dict — re-read fresh every time the
+        # wizard's gate needs it, mirroring status-line.py's own re-probing.
+        status_line=lambda: detect_statusline(paths),
         segment_meta=segment_meta,
         external_segments=external,
         component_meta=component_meta,
+        housekeeping=housekeeping,
     )
 
 
@@ -1978,6 +1993,36 @@ def _make_wizard_commit(paths, entries, dry, counts):
                                         assume_overwrite=True)
         return {"ok": ok, "adopt": adopt, "log": buf.getvalue()}
     return commit
+
+
+def _make_apply_housekeeping(paths, entries, stale, predecessor_cands, dry, counts):
+    """Build the apply_housekeeping(prune, repoint) callable the wizard runs
+    IN-UI right after its housekeeping gate is answered (before Choose becomes
+    usable). Applies the stale-prune and/or predecessor-repoint decision, then
+    rebuilds installed_links + the default component selection from scratch —
+    a repointed predecessor link becomes a current ai-kit link, which can
+    change which components default to pre-checked on Choose (mirrors the
+    ordering the old CLI-side prune_stale/adopt_predecessor_links ->
+    installed_links sequence relied on)."""
+    def apply_housekeeping(prune, repoint):
+        if stale and prune:
+            apply_stale_prune(paths.claude_dir, stale, dry, counts)
+        if predecessor_cands:
+            apply_predecessor_links(paths.claude_dir, predecessor_cands, repoint, dry, counts)
+        installed = installed_links(paths.claude_dir, paths.install_dir)
+        default = _default_selection(entries, installed)
+        sel = Selection(
+            (cat, name, name in default[cat])
+            for cat in CATEGORIES
+            for name, _ in entries[cat]
+        )
+        initial_enabled = {
+            (cat, name): (name in installed[cat])
+            for cat in CATEGORIES
+            for name, _ in entries[cat]
+        }
+        return {"selection": sel, "initial_enabled": initial_enabled}
+    return apply_housekeeping
 
 
 def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -2013,12 +2058,20 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
 
     with open(_sample_input_path(), encoding="utf-8") as f:
         sample_json = f.read()
-    ctx = _build_wizard_context(paths, entries, installed, sample_json, wizard_app)
+    present = {cat: {n for n, _ in entries[cat]} for cat in CATEGORIES}
+    stale = stale_link_candidates(paths.claude_dir, paths.install_dir, present)
+    predecessor_cands = predecessor_candidates(paths.claude_dir, paths.install_dir, entries)
+    ctx = _build_wizard_context(paths, entries, installed, sample_json, wizard_app,
+                                stale, predecessor_cands)
     # The real install (component symlinks + doctor-validated status-line write +
     # settings.json wiring) now runs INSIDE the wizard on Review-confirm, so the
-    # Done screen reflects the actual result. Inject the commit callable here,
-    # where paths/entries/dry/counts are in scope.
-    ctx = ctx._replace(commit=_make_wizard_commit(paths, entries, dry, counts))
+    # Done screen reflects the actual result. Inject the commit + housekeeping
+    # callables here, where paths/entries/dry/counts are in scope.
+    ctx = ctx._replace(
+        commit=_make_wizard_commit(paths, entries, dry, counts),
+        apply_housekeeping=_make_apply_housekeeping(
+            paths, entries, stale, predecessor_cands, dry, counts),
+    )
     try:
         # curl | bash inherits the script pipe as fd 0; Textual reads keys from
         # fd 0, so redirect it onto the controlling terminal for the run.
@@ -2055,22 +2108,12 @@ def cmd_install(env, tty, dry, examples_flag=None):
     paths = resolve_paths(env)
     entries = enumerate_entries(paths.install_dir)
     counts = new_counts()
-
-    # B − A: links whose repo entry vanished upstream — warn + prune
-    present = {cat: {n for n, _ in entries[cat]} for cat in CATEGORIES}
-    prune_stale(paths.claude_dir, paths.install_dir, present, tty, dry, counts)
-
-    # Links from a PREVIOUS ai-kit install (renamed repo) — offer re-point / drop.
-    # Re-pointed links become current ai-kit links, so refresh `installed` after.
-    adopt_predecessor_links(paths.claude_dir, paths.install_dir, entries, tty, dry, counts)
     installed = installed_links(paths.claude_dir, paths.install_dir)
 
-    # Status-line config + settings.json wiring is no longer done unconditionally
-    # here. It is gated on the wizard's adopt decision inside launch_wizard via
-    # persist_statusline (Task 10): a components-only / skipped run writes no
-    # statusline.toml and never touches settings.json's statusLine.
-
     # A: choose what to install + segment layout via Textual wizard (Task 2.1+).
+    # Stale-link pruning and predecessor-link repointing (previously raw
+    # pre-UI terminal prompts here) now happen INSIDE the wizard's housekeeping
+    # gate — see launch_wizard / _build_wizard_context / _make_apply_housekeeping.
     result = launch_wizard(paths, entries, installed, tty, dry, counts)
 
     # Example external segments (system_memory, …). Aborting the wizard

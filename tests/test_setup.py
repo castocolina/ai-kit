@@ -2722,10 +2722,11 @@ class TestWizardContextPopulation(unittest.TestCase):
                                 setup.new_counts())
 
         ctx = captured["ctx"]
-        # status_line shape
-        self.assertIn("state", ctx.status_line)
-        self.assertIn("current_command", ctx.status_line)
-        self.assertEqual(ctx.status_line["state"], "unset")
+        # status_line is now a live callable, not a frozen dict
+        sl_state = ctx.status_line()
+        self.assertIn("state", sl_state)
+        self.assertIn("current_command", sl_state)
+        self.assertEqual(sl_state["state"], "unset")
         # adopt derived from detection (unset -> False)
         self.assertFalse(ctx.state["adopt"])
         # segment_meta carries built-in inventory keys
@@ -2742,6 +2743,95 @@ class TestWizardContextPopulation(unittest.TestCase):
         # offers.)
         self.assertIn("freshseg", ctx.state["segments"])
         self.assertTrue(ctx.state["segments"]["freshseg"])
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestWizardHousekeeping(unittest.TestCase):
+    """launch_wizard surfaces stale/predecessor link candidates via
+    ctx.housekeeping and an apply_housekeeping callable, instead of
+    prune_stale/adopt_predecessor_links running raw-terminal prompts
+    pre-wizard."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install = os.path.join(self.tmp, "ai-kit")
+        self.old = os.path.join(self.tmp, "uz-kit")
+        self.claude = os.path.join(self.tmp, ".claude")
+        os.makedirs(os.path.join(self.install, "skills"))
+        os.makedirs(os.path.join(self.install, "tools"))
+        os.makedirs(os.path.join(self.old, "skills"))
+        skill_dir = os.path.join(self.install, "skills", "alpha")
+        os.makedirs(skill_dir)
+        with open(os.path.join(skill_dir, "SKILL.md"), "w") as f:
+            f.write("---\nname: alpha\n---\n")
+        open(os.path.join(self.install, "tools", "status-line.py"), "w").close()
+        with open(os.path.join(self.install, "tools", "statusline.toml.sample"), "w") as f:
+            f.write("# recipe\n")
+        for cat in setup.CATEGORIES:
+            os.makedirs(os.path.join(self.claude, cat), exist_ok=True)
+        # predecessor link: 'alpha' installed from the OLD (renamed) repo
+        os.symlink(os.path.join(self.old, "skills", "alpha"),
+                  os.path.join(self.claude, "skills", "alpha"))
+        self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install,
+                    "CLAUDE_CONFIG_DIR": self.claude,
+                    "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config")}
+
+    def _paths(self):
+        return setup.resolve_paths(self.env)
+
+    def test_housekeeping_lists_predecessor_candidate(self):
+        paths = self._paths()
+        entries = setup.enumerate_entries(paths.install_dir)
+        installed = setup.installed_links(paths.claude_dir, paths.install_dir)
+        wa = _import_wizard_app()
+        captured = {}
+
+        def _fake_run(ctx):
+            captured["ctx"] = ctx
+            return None
+
+        class _FakeTty:
+            def isatty(self):
+                return True
+
+        import contextlib
+        with mock.patch.object(wa, "run_wizard", _fake_run), \
+             mock.patch.object(setup, "stdin_on_tty", return_value=contextlib.nullcontext()):
+            setup.launch_wizard(paths, entries, installed, _FakeTty(), True,
+                                setup.new_counts())
+
+        ctx = captured["ctx"]
+        self.assertEqual(ctx.housekeeping["predecessors"], ["skills/alpha"])
+        self.assertEqual(ctx.housekeeping["stale"], [])
+
+    def test_apply_housekeeping_repoints_and_refreshes_selection(self):
+        paths = self._paths()
+        entries = setup.enumerate_entries(paths.install_dir)
+        installed = setup.installed_links(paths.claude_dir, paths.install_dir)
+        wa = _import_wizard_app()
+        captured = {}
+
+        def _fake_run(ctx):
+            captured["ctx"] = ctx
+            return None
+
+        class _FakeTty:
+            def isatty(self):
+                return True
+
+        import contextlib
+        with mock.patch.object(wa, "run_wizard", _fake_run), \
+             mock.patch.object(setup, "stdin_on_tty", return_value=contextlib.nullcontext()):
+            setup.launch_wizard(paths, entries, installed, _FakeTty(), False,
+                                setup.new_counts())
+
+        ctx = captured["ctx"]
+        outcome = ctx.apply_housekeeping(False, True)   # decline prune (none), repoint yes
+        link = os.path.join(self.claude, "skills", "alpha")
+        self.assertEqual(os.readlink(link), os.path.join(self.install, "skills", "alpha"))
+        # repointed link now counts as installed -> alpha defaults ON
+        self.assertTrue(outcome["initial_enabled"][("skills", "alpha")])
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
