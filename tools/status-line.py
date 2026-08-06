@@ -257,6 +257,7 @@ class GitSnapshot(NamedTuple):
     is_worktree: bool
     wt_name: str
     root_name: str = ""    # main checkout's dir basename; same across every worktree
+    root_path: str = ""    # main checkout's absolute dir path; root_name is its basename
 
 
 # ── External drop-in segments (E4c) ──────────────────────────────────────────
@@ -756,30 +757,32 @@ def probe_effort_setting_is_auto(work_dir: str, home: str) -> bool:
     return True
 
 
-def probe_git_worktree_info(work_dir: str) -> tuple[bool, bool, str, str]:
-    """(in_repo, is_worktree, wt_name, root_name) from ONE `git rev-parse`.
-    is_worktree is True when work_dir sits in a linked worktree (git-dir !=
-    git-common-dir). wt_name is that worktree directory's basename (from
-    --show-toplevel), only when in a linked worktree; "" otherwise. root_name
-    is the MAIN checkout's directory basename — dirname of --git-common-dir,
-    the one physical .git store every worktree of a repo shares, so it stays
-    the same no matter which worktree work_dir is in. --git-common-dir
-    normally ends in "/.git" and dirname() of that is the repo root; but a
-    bare repo (or an unusual layout) can report a --git-common-dir that does
-    NOT end in "/.git" — there, dirname() would walk one directory too far up
-    and report the repo's PARENT as root_name. Guard: only take dirname()
-    when the common-dir's basename is literally ".git"; otherwise the
-    common-dir IS the root, so use its own basename directly.
+def probe_git_worktree_info(work_dir: str) -> tuple[bool, bool, str, str, str]:
+    """(in_repo, is_worktree, wt_name, root_name, root_path) from ONE `git
+    rev-parse`. is_worktree is True when work_dir sits in a linked worktree
+    (git-dir != git-common-dir). wt_name is that worktree directory's
+    basename (from --show-toplevel), only when in a linked worktree; ""
+    otherwise. root_name/root_path are the MAIN checkout's directory
+    basename/absolute-path — dirname of --git-common-dir, the one physical
+    .git store every worktree of a repo shares, so both stay the same no
+    matter which worktree work_dir is in. --git-common-dir normally ends in
+    "/.git" and dirname() of that is the repo root; but a bare repo (or an
+    unusual layout) can report a --git-common-dir that does NOT end in
+    "/.git" — there, dirname() would walk one directory too far up and
+    report the repo's PARENT as root_name/root_path. Guard: only take
+    dirname() when the common-dir's basename is literally ".git"; otherwise
+    the common-dir IS the root, so use it directly.
     --path-format=absolute forces all three rev-parse outputs to be absolute
     so this dirname()/basename() math is correct regardless of the caller's
-    cwd. Outside any repo → (False, False, "", "")."""
+    cwd, and so root_path is always a usable absolute path. Outside any repo
+    -> (False, False, "", "", "")."""
     out = subprocess.run(
         ["git", "-C", work_dir, "rev-parse", "--path-format=absolute",
          "--git-dir", "--git-common-dir", "--show-toplevel"],
         capture_output=True, text=True, check=False).stdout
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     if len(lines) < 2:
-        return False, False, "", ""                 # not a git repo
+        return False, False, "", "", ""                 # not a git repo
     is_worktree = lines[0] != lines[1]          # git-dir != git-common-dir
     common_dir = lines[1].rstrip("/")
     if os.path.basename(common_dir) == ".git":
@@ -789,10 +792,10 @@ def probe_git_worktree_info(work_dir: str) -> tuple[bool, bool, str, str]:
     root_name = os.path.basename(root_dir)
     top = lines[2] if len(lines) >= 3 else ""
     name = os.path.basename(top.rstrip("/")) if (is_worktree and top) else ""
-    return True, is_worktree, name, root_name
+    return True, is_worktree, name, root_name, root_dir
 
 
-def probe_worktree_info_cached(work_dir: str, ttl: int, cache_base: str) -> tuple[bool, bool, str, str]:
+def probe_worktree_info_cached(work_dir: str, ttl: int, cache_base: str) -> tuple[bool, bool, str, str, str]:
     """probe_git_worktree_info wrapped in an on-disk TTL cache — the worktree rev-parse
     rarely changes, so it is cached ~ttl s keyed by work_dir. The cache is active
     only when ttl > 0 AND a cache_base is resolved: ttl <= 0 forces a fresh
@@ -808,7 +811,8 @@ def probe_worktree_info_cached(work_dir: str, ttl: int, cache_base: str) -> tupl
             if time.time() - os.stat(path).st_mtime < ttl:
                 with open(path, encoding="utf-8") as f:
                     d = json.load(f)
-                return d["in_repo"], d["is_worktree"], d["wt_name"], d.get("root_name", "")
+                return (d["in_repo"], d["is_worktree"], d["wt_name"],
+                        d.get("root_name", ""), d.get("root_path", ""))
         except (OSError, ValueError, KeyError):
             pass
     info = probe_git_worktree_info(work_dir)
@@ -817,7 +821,8 @@ def probe_worktree_info_cached(work_dir: str, ttl: int, cache_base: str) -> tupl
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({"in_repo": info[0], "is_worktree": info[1],
-                           "wt_name": info[2], "root_name": info[3]}, f)
+                           "wt_name": info[2], "root_name": info[3],
+                           "root_path": info[4]}, f)
         except OSError:
             pass
     return info
@@ -831,8 +836,8 @@ def probe_git_snapshot(work_dir: str, config: Optional["Config"] = None) -> "Git
     cache_base FROM it (never from env, never as bare args). config=None (direct/
     test calls with no Config) falls back to the built-in defaults.
 
-    Returns GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name). `branch`
-    and `dirty` come from one always-fresh `git status --porcelain --branch`
+    Returns GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name, root_name,
+    root_path). `branch` and `dirty` come from one always-fresh `git status --porcelain --branch`
     (full untracked walk); the worktree rev-parse is cached ~ttl s on disk under
     cache_base/git/ (it rarely changes). The probe owns its policy and always
     does the full work — there are no per-call gating knobs: laziness is the
@@ -851,8 +856,8 @@ def probe_git_snapshot(work_dir: str, config: Optional["Config"] = None) -> "Git
         dirty = "modified"
     else:
         dirty = "clean"
-    in_repo, is_worktree, wt_name, root_name = probe_worktree_info_cached(work_dir, ttl, cache_base)
-    return GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name, root_name)
+    in_repo, is_worktree, wt_name, root_name, root_path = probe_worktree_info_cached(work_dir, ttl, cache_base)
+    return GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name, root_name, root_path)
 
 
 # ── Process RSS (cross-platform) ──────────────────────────────────────────────

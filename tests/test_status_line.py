@@ -66,7 +66,7 @@ def _data(**over):
     }
     probe_defaults = {
         "branch": "main", "dirty": "modified", "is_worktree": False,
-        "in_repo": False, "wt_name": "", "root_name": "",
+        "in_repo": False, "wt_name": "", "root_name": "", "root_path": "",
         "ago": "5m 0s ago", "effort_auto": False,
         "todo_state": None, "todo_text": None,
         "chat_bytes": 305000, "mem_bytes": 448_790_528,
@@ -81,7 +81,8 @@ def _data(**over):
     ctx.probe_cache["git"] = sl.GitSnapshot(
         in_repo=probe_over["in_repo"], branch=probe_over["branch"],
         dirty=probe_over["dirty"], is_worktree=probe_over["is_worktree"],
-        wt_name=probe_over["wt_name"], root_name=probe_over["root_name"])
+        wt_name=probe_over["wt_name"], root_name=probe_over["root_name"],
+        root_path=probe_over["root_path"])
     ctx.probe_cache["todo"] = (probe_over["todo_state"], probe_over["todo_text"])
     ctx.probe_cache["ago"] = probe_over["ago"]
     ctx.probe_cache["effort_auto"] = probe_over["effort_auto"]
@@ -946,6 +947,7 @@ class TestProcAndGit(unittest.TestCase):
             self.assertTrue(snap.in_repo)
             self.assertEqual(snap.wt_name, "feat-x")  # basename of --show-toplevel
             self.assertEqual(snap.root_name, "main")  # dirname of --git-common-dir
+            self.assertEqual(snap.root_path, "/main")  # --git-common-dir's dirname, absolute
 
     def test_git_snapshot_root_name_non_worktree(self):
         def fake_run(cmd, **kw):
@@ -960,6 +962,7 @@ class TestProcAndGit(unittest.TestCase):
             snap = sl.probe_git_snapshot(".", cfg)
             self.assertFalse(snap.is_worktree)
             self.assertEqual(snap.root_name, "repo")
+            self.assertEqual(snap.root_path, "/repo")
 
     def test_probe_git_worktree_info_requests_absolute_paths(self):
         # --git-common-dir must be absolute or root_name's dirname() math breaks.
@@ -986,9 +989,10 @@ class TestProcAndGit(unittest.TestCase):
                 stdout = "/srv/bare-repo\n/srv/bare-repo\n/srv/bare-repo\n"
             return R()
         with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
-            in_repo, _is_worktree, _name, root_name = sl.probe_git_worktree_info(".")
+            in_repo, _is_worktree, _name, root_name, root_path = sl.probe_git_worktree_info(".")
         self.assertTrue(in_repo)
         self.assertEqual(root_name, "bare-repo")
+        self.assertEqual(root_path, "/srv/bare-repo")
 
     def test_worktree_info_cached_within_ttl(self):
         # Second call within the TTL must NOT re-run the rev-parse (cached on disk).
