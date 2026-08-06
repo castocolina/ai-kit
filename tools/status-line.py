@@ -2217,7 +2217,14 @@ def core_render(
 def seg_path(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     snap = probe_git_for(ctx)
     if snap.in_repo and snap.root_name:
-        shown = util_trunc_cols(snap.root_name, PATH_MAX_LEN)
+        if snap.root_path:
+            root = snap.root_path.rstrip("/")
+            full = ("~" + root[len(ctx.home):]) if (ctx.home and root.startswith(ctx.home)) else root
+            parent = os.path.basename(os.path.dirname(root))
+            structural = util_first_fitting([full, f"{parent}/{snap.root_name}"], PATH_MAX_LEN)
+            shown = structural if structural is not None else util_two_state_cap(snap.root_name, 30, 20)
+        else:
+            shown = util_two_state_cap(snap.root_name, 30, 20)   # root_path unknown -> name-only floor
     else:
         shown = util_display_dir(ctx.work_dir, ctx.home)
     return f"{theme.c('BLUE')}{shown}{RESET}"  # floor

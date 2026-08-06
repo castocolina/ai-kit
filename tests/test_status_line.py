@@ -1357,12 +1357,74 @@ class TestSegPathProjectRoot(unittest.TestCase):
         self.assertIn("proj", out)
         self.assertNotIn(old_display, out)
 
-    def test_truncates_long_root_name(self):
-        long_name = "a" * 30
+    def test_truncates_long_root_name_when_root_path_unknown(self):
+        # root_path unset (as every GitSnapshot built before Task 1 shipped,
+        # or cache read from a pre-Task-1 disk cache) -> no structural
+        # cascade is attempted; falls straight to the name floor
+        # (util_two_state_cap(root_name, 30, 20)), which clips a 60-col name.
+        long_name = "a" * 60
         ctx = _data(in_repo=True, root_name=long_name)
         out = sl.seg_path(ctx, 80, THEME)
         self.assertIn("…", out)
         self.assertNotIn(long_name, out)
+
+    def test_shows_full_home_relative_root_path_when_short(self):
+        ctx = _data(in_repo=True, root_name="proj", root_path="/home/u/proj", home="/home/u")
+        out = sl.seg_path(ctx, 80, THEME)
+        self.assertIn("~/proj", strip(out))
+
+    def test_falls_to_parent_slash_name_when_full_path_too_long(self):
+        # full (~/workspaces/very-long-organization-name-here/short-repo) is
+        # 56 cols, over the 50 structural cap -> falls to parent/name (43
+        # cols, fits).
+        root_path = "/home/u/workspaces/very-long-organization-name-here/short-repo"
+        ctx = _data(in_repo=True, root_name="short-repo", root_path=root_path, home="/home/u")
+        out = sl.seg_path(ctx, 80, THEME)
+        self.assertIn("very-long-organization-name-here/short-repo", strip(out))
+        self.assertNotIn("~/workspaces", strip(out))
+
+    def test_falls_to_root_name_unclipped_when_both_structural_forms_too_long(self):
+        # full (73 cols) and parent/name (71 cols) both exceed the 50
+        # structural cap; root_name alone ("short-name", 10 cols) fits the
+        # 30-col name-floor high threshold, so it's shown unclipped.
+        root_path = "/home/u/" + "a" * 60 + "/short-name"
+        ctx = _data(in_repo=True, root_name="short-name", root_path=root_path, home="/home/u")
+        out = sl.seg_path(ctx, 80, THEME)
+        self.assertIn("short-name", strip(out))
+        self.assertNotIn("…", strip(out))
+
+    def test_falls_to_root_name_clipped_when_over_30(self):
+        # full (88 cols) and parent/name (75 cols) both exceed the 50
+        # structural cap; root_name alone ("another-very-long-repository-name",
+        # 33 cols) exceeds the 30-col name-floor high threshold, so it's
+        # clipped to 20.
+        root_path = ("/home/u/workspaces/very-long-organization-name-here-extended"
+                     "/another-very-long-repository-name")
+        ctx = _data(in_repo=True, root_name="another-very-long-repository-name",
+                    root_path=root_path, home="/home/u")
+        out = sl.seg_path(ctx, 80, THEME)
+        self.assertIn("another-very-long-r…", strip(out))
+        self.assertNotIn("very-long-organization-name-here-extended/", strip(out))
+
+    def test_shows_raw_absolute_root_path_when_not_under_home(self):
+        # root_path doesn't start with ctx.home -> the home-relative "~"
+        # substitution is skipped and the raw absolute root_path is used
+        # verbatim as the first structural variant (design doc §3 edge case:
+        # "Repo root not under ctx.home" falls back to the raw absolute path).
+        ctx = _data(in_repo=True, root_name="proj", root_path="/mnt/other/proj", home="/home/u")
+        out = sl.seg_path(ctx, 80, THEME)
+        self.assertIn("/mnt/other/proj", strip(out))
+        self.assertNotIn("~", strip(out))
+
+    def test_falls_through_to_display_dir_when_root_name_empty(self):
+        # in_repo=True but root_name=="" fails the `if snap.in_repo and
+        # snap.root_name:` guard (pre-existing, unchanged by this plan) -> the
+        # non-repo util_display_dir branch runs instead, exactly as it did
+        # before this plan touched seg_path.
+        ctx = _data(in_repo=True, root_name="", root_path="/home/u/proj",
+                    work_dir="/home/u/proj", home="/home/u")
+        out = sl.seg_path(ctx, 80, THEME)
+        self.assertEqual(strip(out), sl.util_display_dir("/home/u/proj", "/home/u"))
 
     def test_falls_back_to_cwd_outside_a_repo(self):
         ctx = _data(in_repo=False, work_dir="/home/u/scratch", home="/home/u")
