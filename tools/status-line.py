@@ -1370,6 +1370,14 @@ def util_first_fitting(variants: Sequence[str | None], avail: int) -> str | None
     return None
 
 
+def util_two_state_cap(s: str, high: int, low: int) -> str:
+    """Return s unchanged if it fits `high` columns; otherwise ellipsis-
+    truncate it down to `low` columns via util_trunc_cols. A discrete jump,
+    not a continuous shrink — the value either shows in full up to a
+    comfortable width, or drops straight to a much shorter floor beyond it."""
+    return s if util_visible_width(s) <= high else util_trunc_cols(s, low)
+
+
 # Glyphs we model as wide (_WIDE_BMP) but that render NARROW bare on many
 # terminals. Forcing VS16 (emoji presentation) makes them render wide everywhere
 # so the single-space util_icon gap is always one clean column. ⏰ (U+23F0) is

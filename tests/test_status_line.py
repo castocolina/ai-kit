@@ -265,6 +265,29 @@ class TestFirstFitting(unittest.TestCase):
         self.assertEqual(sl.util_first_fitting([None, "", "ok"], 5), "ok")
 
 
+class TestTwoStateCap(unittest.TestCase):
+    def test_returns_unchanged_when_it_fits_high(self):
+        self.assertEqual(sl.util_two_state_cap("proj", 30, 20), "proj")
+
+    def test_boundary_exactly_at_high_is_unchanged(self):
+        s = "a" * 30
+        self.assertEqual(sl.util_two_state_cap(s, 30, 20), s)
+
+    def test_one_over_high_clips_to_low(self):
+        # 31 > high(30) -> util_trunc_cols(s, 20): limit-1=19 reserved for
+        # text, appends 19 'a's and stops (19+1>19) -> 19 a's + "…", 20
+        # display columns wide, matching low.
+        s = "a" * 31
+        out = sl.util_two_state_cap(s, 30, 20)
+        self.assertEqual(out, "a" * 19 + "…")
+        self.assertEqual(sl.util_visible_width(out), 20)
+
+    def test_far_over_high_still_clips_to_exactly_low(self):
+        out = sl.util_two_state_cap("a" * 40, 30, 20)
+        self.assertEqual(out, "a" * 19 + "…")
+        self.assertEqual(sl.util_visible_width(out), 20)
+
+
 class TestIconHelper(unittest.TestCase):
     def test_wide_emoji_gets_single_space(self):
         self.assertEqual(sl.util_icon("\U0001F4C3", "x"), "\U0001F4C3 x")  # 📃 x
