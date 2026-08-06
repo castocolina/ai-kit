@@ -411,12 +411,25 @@ class TestCooperativeBuilders(unittest.TestCase):
     def test_worktree_hidden_outside_repo(self):
         self.assertIsNone(sl.seg_alt_git_worktree(_data(in_repo=False), 100, THEME))
 
-    def test_worktree_name_truncated_to_20_cols(self):
+    def test_worktree_name_full_up_to_30_cols(self):
+        name = "a" * 28
         out = sl.seg_alt_git_worktree(
-            _data(in_repo=True, is_worktree=True, wt_name="a" * 40), 100, THEME)
-        self.assertIn("…", out)
-        # visible width (glyph + space + truncated name) stays within ~22 cols
-        self.assertLessEqual(sl.util_visible_width(strip(out)), 24)
+            _data(in_repo=True, is_worktree=True, wt_name=name), 100, THEME)
+        self.assertIn(name, strip(out))
+        self.assertNotIn("…", out)
+
+    def test_worktree_name_over_30_truncates_to_20(self):
+        name = "a" * 60
+        out = sl.seg_alt_git_worktree(
+            _data(in_repo=True, is_worktree=True, wt_name=name), 100, THEME)
+        expected = "a" * 19 + "…"   # util_trunc_cols(name, 20)
+        self.assertIn(expected, strip(out))
+        self.assertEqual(sl.util_visible_width(expected), 20)
+
+    def test_worktree_name_hides_when_even_20col_form_does_not_fit_avail(self):
+        name = "a" * 60
+        self.assertIsNone(sl.seg_alt_git_worktree(
+            _data(in_repo=True, is_worktree=True, wt_name=name), 5, THEME))
 
     def test_effort_full_then_compact_then_hide(self):
         self.assertIn("high", strip(sl.seg_effort(_data(effort="high"), 30, THEME)))

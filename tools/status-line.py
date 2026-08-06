@@ -2259,7 +2259,7 @@ def seg_alt_git_worktree(ctx: "Context", avail: int, theme: "Theme") -> str | No
         return None
     if not snap.is_worktree:
         return util_first_fitting([f"{theme.c('GREY')}\033[9m⎇ wt{RESET}"], avail)
-    name = util_trunc_cols(snap.wt_name or "", 20)
+    name = util_two_state_cap(snap.wt_name or "", 30, 20)
     return util_first_fitting([f"{theme.c('CYAN')}⎇ {name}{RESET}"], avail)
 
 
