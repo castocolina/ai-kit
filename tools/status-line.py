@@ -86,7 +86,7 @@ SEGMENTS = {
 
 
 # Identity-line tuning.
-PATH_MAX_LEN = 20       # ~-collapsed path or project-root name longer than this collapses/truncates
+PATH_MAX_LEN = 50      # fixed budget for path's two structural variants (full path, parent/name)
 
 
 CONTEXT_BAR_CELLS = 10  # context bar width; ▌ half-cells give 5% resolution
@@ -1547,13 +1547,16 @@ def util_safe_session(s: Any) -> bool:
 
 
 def util_display_dir(work_dir: str, home: str) -> str:
-    """Return work_dir with home replaced by '~'; truncate to basename if too long."""
-    shown = work_dir
-    if home and work_dir.startswith(home):
-        shown = "~" + work_dir[len(home):]
-    if len(shown) <= PATH_MAX_LEN:
-        return shown
-    return os.path.basename(work_dir.rstrip("/")) or shown
+    """Return work_dir tiered: try the full ~-relative (or absolute) path
+    and parent/basename against the PATH_MAX_LEN structural budget (richest
+    first); if neither fits, fall to the basename alone via
+    util_two_state_cap(name, 30, 20)."""
+    stripped = work_dir.rstrip("/")
+    full = ("~" + work_dir[len(home):]) if (home and work_dir.startswith(home)) else work_dir
+    parent = os.path.basename(os.path.dirname(stripped))
+    name = os.path.basename(stripped) or work_dir
+    structural = util_first_fitting([full, f"{parent}/{name}"], PATH_MAX_LEN)
+    return structural if structural is not None else util_two_state_cap(name, 30, 20)
 
 
 def util_dirty_mark(dirty: str, theme: "Theme") -> str:

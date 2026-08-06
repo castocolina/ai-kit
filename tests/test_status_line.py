@@ -575,13 +575,35 @@ class TestDisplayDir(unittest.TestCase):
     def test_short_path_kept_whole(self):
         self.assertEqual(sl.util_display_dir("/home/u/proj", "/home/u"), "~/proj")
 
-    def test_long_path_collapses_to_basename(self):
-        long = "/home/u/very/long/path/exceeding/twenty/chars"
-        self.assertEqual(sl.util_display_dir(long, "/home/u"), "chars")
+    def test_medium_path_collapses_to_parent_slash_name(self):
+        # full (~/workspaces/very-long-organization-name-here/short-repo) is
+        # 56 cols, over the 50 structural cap -> falls to parent/name, which
+        # is 43 cols, under the cap -> shown.
+        work_dir = "/home/u/workspaces/very-long-organization-name-here/short-repo"
+        self.assertEqual(sl.util_display_dir(work_dir, "/home/u"),
+                          "very-long-organization-name-here/short-repo")
 
-    def test_no_ellipsis_prefix(self):
-        long = "/home/u/very/long/path/exceeding/twenty/chars"
-        self.assertNotIn("/", sl.util_display_dir(long, "/home/u"))
+    def test_falls_to_basename_alone_when_both_structural_forms_too_long(self):
+        # full is 73 cols and parent/name is 71 cols, both over the 50
+        # structural cap -> falls to the basename alone; "short-name" (10
+        # cols) fits the 30-col name-floor high threshold, so it's shown
+        # unclipped.
+        work_dir = "/home/u/" + "a" * 60 + "/short-name"
+        self.assertEqual(sl.util_display_dir(work_dir, "/home/u"), "short-name")
+
+    def test_basename_clipped_to_20_when_over_30(self):
+        # full is 88 cols and parent/name is 75 cols, both over the 50
+        # structural cap; the basename alone ("another-very-long-repository-name",
+        # 33 cols) exceeds the 30-col name-floor high threshold, so it's
+        # clipped to 20 via util_two_state_cap.
+        work_dir = ("/home/u/workspaces/very-long-organization-name-here-extended"
+                    "/another-very-long-repository-name")
+        self.assertEqual(sl.util_display_dir(work_dir, "/home/u"),
+                          "another-very-long-r…")
+
+    def test_no_ellipsis_when_a_variant_fits_whole(self):
+        work_dir = "/home/u/workspaces/very-long-organization-name-here/short-repo"
+        self.assertNotIn("…", sl.util_display_dir(work_dir, "/home/u"))
 
 
 class TestPackLine(unittest.TestCase):
