@@ -378,6 +378,23 @@ class TestCooperativeBuilders(unittest.TestCase):
             outs.append(out)
         self.assertEqual(outs[0], outs[1])  # identical regardless of worktree state
 
+    def test_branch_full_up_to_30_cols(self):
+        branch = "feature/" + "x" * 20   # 28 cols, under the 30 cap
+        out = sl.seg_git_branch(_data(branch=branch), 100, THEME)
+        self.assertIn(branch, strip(out))
+        self.assertNotIn("…", out)
+
+    def test_branch_over_30_truncates_to_20(self):
+        branch = "feature/" + "x" * 50   # 58 cols, over the 30 cap
+        out = sl.seg_git_branch(_data(branch=branch), 100, THEME)
+        expected = "feature/" + "x" * 11 + "…"   # util_trunc_cols(branch, 20)
+        self.assertIn(expected, strip(out))
+        self.assertEqual(sl.util_visible_width(expected), 20)
+
+    def test_branch_hides_when_even_20col_form_does_not_fit_avail(self):
+        branch = "feature/" + "x" * 50
+        self.assertIsNone(sl.seg_git_branch(_data(branch=branch), 5, THEME))
+
     def test_worktree_active_shows_name_cyan(self):
         out = sl.seg_alt_git_worktree(
             _data(in_repo=True, is_worktree=True, wt_name="feat-x"), 100, THEME)

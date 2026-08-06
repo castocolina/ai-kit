@@ -2238,8 +2238,9 @@ def seg_git_branch(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     # (no 🌳) — that moved to the dedicated `alt_git_worktree` ⎇ segment (FR-7.2);
     # the leaf glyph here is purely "this is the branch". Falls back to the bare
     # name when too narrow for the icon, so the branch never drops just for it.
-    return util_first_fitting([f"{theme.c('GREY')}[{util_icon('🌿', branch)}]{RESET}",
-                           f"{theme.c('GREY')}[{branch}]{RESET}"], avail)
+    shown = util_two_state_cap(branch, 30, 20)
+    return util_first_fitting([f"{theme.c('GREY')}[{util_icon('🌿', shown)}]{RESET}",
+                           f"{theme.c('GREY')}[{shown}]{RESET}"], avail)
 
 
 def seg_git_dirty(ctx: "Context", avail: int, theme: "Theme") -> str | None:
