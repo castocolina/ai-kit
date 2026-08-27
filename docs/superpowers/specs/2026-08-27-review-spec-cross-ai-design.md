@@ -204,14 +204,17 @@ uses whatever `policy.mode` says.
 
 ---
 
-## 4. Source-model detection
+## 4. Source-vendor detection
 
-Default: the document's authoring vendor/model is assumed to be **the
-current session's own model** (the common case — `brainstorming`/
-`writing-plans` ran earlier in the same session that now invokes
-`/review-spec`). Override via `--source-model=<id>` for the case where the
-spec was authored elsewhere (a different session, a teammate, another
-tool) and the current session isn't the author.
+Default: the document's authoring vendor is assumed to be **the current
+session's own vendor** (the common case — `brainstorming`/`writing-plans`
+ran earlier in the same session that now invokes `/review-spec`). Override
+via `--source-vendor=<vendor>` for the case where the spec was authored
+elsewhere (a different session, a teammate, another tool) and the current
+session isn't the author. The flag takes a vendor directly (e.g. `openai`,
+`anthropic`) rather than a model id — deriving a vendor from an arbitrary
+model id string has no sanctioned mapping and would mean guessing, which
+this spec's own §1 rules out.
 
 Rejected: scanning the document's frontmatter or git commit trailers for
 authorship — this repo's commits don't carry such trailers today (verified:
@@ -310,8 +313,12 @@ interactive wrapper).
   content into every CLI's prompt). Output captured to
   `$RUN_TMP_DIR/iter<N>-<key>.md`.
 - **Step 1.5 (new, only when 2 reviewers ran)**: merge the two reports —
-  union of findings, deduplicated by (file, line, category), each finding
-  tagged with which reviewer `key`(s) surfaced it. No severity arbitration
+  union of findings, deduplicated by (severity, exact `Location` string) —
+  the reviewer output template's `### <SEVERITY>` heading plus its bullet's
+  `Location:` field are the only structured fields the template actually
+  guarantees; `file`/`line`/`category` aren't reliably parseable from free-text
+  findings, so dedup keys off what's really there. Each finding is tagged
+  with which reviewer `key`(s) surfaced it. No severity arbitration
   by the orchestrator (option **(c)** from the design discussion). Merged
   report becomes the input to Step 2/3, unchanged otherwise.
 - **Fixer (Step 3a/3b)**: unchanged, always Claude-native, always
@@ -346,9 +353,10 @@ one guaranteed-unique directory.
   document(s)**: treated identically to "no quota" for filtering purposes —
   skip and try the next candidate. (Exact context-length introspection
   mechanism is CLI-specific research, §5.)
-- **`--source-model` given but doesn't match any known vendor**: treat as
-  unknown vendor — `single`/`double` ladder walks still work (nothing to
-  "skip as same-vendor"), just without that one optimization.
+- **`--source-vendor` given but doesn't match any configured reviewer's
+  vendor**: treat as unknown vendor — `single`/`double` ladder walks still
+  work (nothing to "skip as same-vendor"), just without that one
+  optimization.
 - **Both local and global config missing entirely, and the user has never
   been asked**: live one-shot detection (§6), never blocks the review.
 - **`strategy = "local-only"` but the local file omits `[policy]`
