@@ -54,7 +54,7 @@ there is no stdlib writer and this repo has zero external dependencies;
 
 **Interfaces:**
 - Produces: the skill names `review-spec-checklist` and `review-spec-fixer`,
-  which Task 9's orchestrator changes reference directly.
+  which Task 11's orchestrator changes reference directly.
 
 - [ ] **Step 1: Move the directories**
 
@@ -111,14 +111,39 @@ and every `"applying-review-feedback"` (including the Constants section's
 `**Fixer skill:** \`applying-review-feedback\``) with
 `"review-spec-fixer"`.
 
-- [ ] **Step 4: Verify no stale references remain anywhere in the repo**
+- [ ] **Step 4: Verify no stale references remain — and fix the ones that need it**
 
 ```bash
-grep -rn "reviewing-specs\|applying-review-feedback" --include="*.md" .
+grep -rln "reviewing-specs\|applying-review-feedback" --include="*.md" .
 ```
 
-Expected: no matches (the moved directories themselves no longer exist
-under those names, and Step 3 fixed every reference).
+This currently matches **17 files**, not just `skills/review-spec/SKILL.md`.
+They split into three groups — handle each differently:
+
+1. **Live eval fixtures — MUST fix** (they describe/test current skill
+   behavior, not history):
+   `skills/review-spec/evals/01-superpowers-plan-routes-writing-plans.md`,
+   `skills/review-spec/evals/02-gsd-plan-routes-native-cmd.md`,
+   `skills/review-spec/evals/03-generic-doc-direct-edit.md`,
+   `skills/review-spec/evals/04-ambiguous-detection-fallback.md`,
+   `skills/review-spec-checklist/evals/orchestrator-integration.md`,
+   `skills/review-spec-checklist/evals/test-scenarios.md`,
+   `skills/review-spec-fixer/evals/test-scenarios.md`. Replace every
+   `reviewing-specs`/`applying-review-feedback` mention with the new names,
+   same as Step 3.
+2. **`README.md` — MUST fix** (current living documentation, not history):
+   replace its `reviewing-specs`/`applying-review-feedback` mentions the
+   same way.
+3. **Historical plans/PRDs — MUST NOT touch**: `docs/prds/000-ai-kit-overhaul-requirements.md`,
+   `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md`,
+   `docs/superpowers/plans/2026-06-24-wizard-redesign-B-ui.md`, and this
+   plan + its spec (`docs/superpowers/plans/2026-08-27-review-spec-cross-ai.md`,
+   `docs/superpowers/specs/2026-08-27-review-spec-cross-ai-design.md`) —
+   these are immutable historical record or documents *about* the rename
+   itself; leave their old-name mentions exactly as written.
+
+Re-run the grep after fixing groups 1–2 — it should now match only the
+group-3 paths (5 files), which is the expected final state, not zero.
 
 - [ ] **Step 5: Verify the moved skills' own internal `references/` paths still resolve**
 
@@ -166,7 +191,7 @@ EOF
 - Produces: `cfg_local_path(cwd: str) -> str`, `cfg_global_path(env: dict) -> str`,
   `cfg_load_toml(path: str) -> dict`, `cfg_merge_reviewers(global_list: list[dict], local_list: list[dict]) -> list[dict]`,
   `cfg_resolve(cwd: str, env: dict) -> dict` (returns `{"policy": {...}, "reviewers": [...]}`).
-  Consumed by Task 5 (policy resolution) and Task 8 (`review-spec-config`).
+  Consumed by Task 5 (policy resolution) and Task 10 (`review-spec-config`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -379,8 +404,8 @@ def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
         else:
             by_key[key] = dict(r)
     global_keys = [r["key"] for r in global_list]
-    new_local_keys = [r["key"] for r in local_list if r["key"] not in by_key or r["key"] not in global_keys]
-    order = global_keys + [k for k in new_local_keys if k not in global_keys]
+    new_local_keys = [r["key"] for r in local_list if r["key"] not in global_keys]
+    order = global_keys + new_local_keys
     return [by_key[k] for k in order]
 
 
@@ -527,7 +552,9 @@ class TestCacheStaleness(unittest.TestCase):
             self.assertTrue(rs.cache_is_stale(path, 3600))
 ```
 
-Add `import time` to the test file's imports (already listed at the top).
+Add `import time` to `tests/test_review_spec.py`'s import block at the top
+of the file (it is not there yet — Task 2's test file only imported
+`importlib.util`, `json`, `os`, `tempfile`, `unittest`).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -613,7 +640,7 @@ git commit -m "feat(review-spec): add JSON cache read/write with TTL staleness c
 - Produces: `KNOWN_CLIS: tuple[str, ...]`, `detect_installed_clis(which_fn=shutil.which) -> dict`,
   `detect_opencode_models(binary: str, run_fn=subprocess.run) -> list[str]`,
   `build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run) -> dict`.
-  Consumed by Task 8 (`review-spec-config`) and Task 9 (Step 0.7).
+  Consumed by Task 10 (`review-spec-config`) and Task 11 (Step 0.7).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -741,7 +768,25 @@ git commit -m "feat(review-spec): add CLI/model detection (detect_installed_clis
 
 ---
 
-### Task 5: Policy resolution — single/double ladder walk
+### Task 5: Policy resolution — unified ladder walk, tier-aware by construction
+
+**Design correction (caught by the cross-AI dry run, §below):** an earlier
+draft of this task modeled "the current session's own reviewer" as a fixed
+`CURRENT_SESSION` sentinel with a hardcoded `model` — which reintroduced
+exactly the "fixed model name" anti-pattern the spec's §1 opens by
+rejecting (Opus-when-available, cheaper-tier-under-budget, never a fixed
+name). The fix: there is no special sentinel. `policy.ladder` is one
+unified ordered list mixing native (`cli`-less) and external entries —
+e.g. `["claude-opus", "claude-sonnet", "codex-gpt", "grok-flagship"]`. The
+**best overall entry** (first with quota, ignoring vendor) is always tried
+first; this is what delivers tier-awareness, because the user's own
+config naturally orders their preferred Claude tier first, and a quota
+miss on `claude-opus` falls through to `claude-sonnet` (or the next
+configured entry) automatically — no special-casing needed. Only when
+*nothing at all* has quota (or no config exists) does resolution fall back
+to `NO_CONFIG_FALLBACK`, which dispatches via the `Agent` tool with **no
+`model` override at all** — inheriting whatever model this Claude Code
+session already runs as, rather than hardcoding `sonnet`.
 
 **Files:**
 - Modify: `tools/review-spec.py`
@@ -754,10 +799,11 @@ git commit -m "feat(review-spec): add CLI/model detection (detect_installed_clis
   `quota.json` — this task does not read the cache file itself, it takes
   the already-loaded dict as a parameter, keeping it pure/testable).
 - Produces: `ResolvedReviewer` (`NamedTuple`: `key, model, vendor, cli,
-  command, extra`), `CURRENT_SESSION: ResolvedReviewer`,
+  command, extra` — `model == ""` means "no override, inherit the current
+  session's default"), `NO_CONFIG_FALLBACK: ResolvedReviewer`,
   `resolve_ladder_pick(reviewers: list, ladder: list, skip_vendor: str, quota: dict) -> ResolvedReviewer | None`,
   `resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: bool) -> list[ResolvedReviewer]`.
-  Consumed by Task 9 (Step 0.7/Step 1 dispatch).
+  Consumed by Task 11 (Step 0.7/Step 1 dispatch).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -814,37 +860,68 @@ class TestResolveLadderPick(unittest.TestCase):
 class TestResolveReviewers(unittest.TestCase):
     def setUp(self):
         self.config = {
-            "policy": {"mode": "single", "ladder": ["codex-gpt"]},
-            "reviewers": [{"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai",
-                           "cli": "codex", "command": "codex exec -m {model} \"{prompt}\""}],
+            "policy": {"mode": "single", "ladder": ["claude-opus", "claude-sonnet", "codex-gpt"]},
+            "reviewers": [
+                {"key": "claude-opus", "model": "opus-5", "vendor": "anthropic"},
+                {"key": "claude-sonnet", "model": "sonnet-5", "vendor": "anthropic"},
+                {"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai",
+                 "cli": "codex", "command": "codex exec -m {model} \"{prompt}\""},
+            ],
         }
 
-    def test_no_cross_ai_returns_only_current_session(self):
+    def test_no_cross_ai_returns_only_the_no_config_fallback(self):
         result = rs.resolve_reviewers(self.config, quota={}, source_vendor="anthropic", cross_ai=False)
-        self.assertEqual(result, [rs.CURRENT_SESSION])
+        self.assertEqual(result, [rs.NO_CONFIG_FALLBACK])
 
-    def test_single_mode_returns_one_external_reviewer(self):
+    def test_no_config_at_all_falls_back_to_session_default(self):
+        config = {"policy": {"mode": "single", "ladder": []}, "reviewers": []}
+        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
+        self.assertEqual(result, [rs.NO_CONFIG_FALLBACK])
+
+    def test_single_mode_skips_same_vendor_as_source(self):
+        # single mode's whole point is an independent perspective, so the two
+        # same-vendor-as-source (anthropic) ladder entries are skipped even
+        # though they're earlier in the ladder
         result = rs.resolve_reviewers(self.config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].key, "codex-gpt")
 
-    def test_single_mode_falls_back_to_current_session_when_ladder_empty(self):
-        config = {"policy": {"mode": "single", "ladder": []}, "reviewers": []}
-        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
-        self.assertEqual(result, [rs.CURRENT_SESSION])
+    def test_single_mode_falls_through_tiers_when_flagship_lacks_quota(self):
+        quota = {"codex-gpt": {"available": False}}
+        result = rs.resolve_reviewers(self.config, quota=quota, source_vendor="anthropic", cross_ai=True)
+        # only same-vendor entries left with quota -> the vendor-skip fallback picks
+        # the ladder's best surviving entry, which is claude-opus (tier-aware: tried
+        # before claude-sonnet because it is earlier in the ladder)
+        self.assertEqual(result[0].key, "claude-opus")
 
-    def test_double_mode_returns_current_session_plus_one(self):
+    def test_double_mode_primary_is_best_overall_regardless_of_vendor(self):
         config = dict(self.config)
-        config["policy"] = {"mode": "double", "ladder": ["codex-gpt"]}
+        config["policy"] = {"mode": "double", "ladder": self.config["policy"]["ladder"]}
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(len(result), 2)
-        self.assertEqual(result[0], rs.CURRENT_SESSION)
+        self.assertEqual(result[0].key, "claude-opus")   # best overall = top of ladder, tier-aware
+        self.assertEqual(result[1].key, "codex-gpt")      # first DIFFERENT-vendor entry
+
+    def test_double_mode_primary_falls_through_tiers_when_flagship_lacks_quota(self):
+        config = dict(self.config)
+        config["policy"] = {"mode": "double", "ladder": self.config["policy"]["ladder"]}
+        quota = {"claude-opus": {"available": False}}
+        result = rs.resolve_reviewers(config, quota=quota, source_vendor="anthropic", cross_ai=True)
+        self.assertEqual(result[0].key, "claude-sonnet")  # falls through the tier ladder
         self.assertEqual(result[1].key, "codex-gpt")
 
-    def test_double_mode_with_empty_ladder_returns_only_current_session(self):
+    def test_double_mode_drops_to_single_when_no_other_vendor_has_quota(self):
+        config = dict(self.config)
+        config["policy"] = {"mode": "double", "ladder": self.config["policy"]["ladder"]}
+        quota = {"codex-gpt": {"available": False}}
+        result = rs.resolve_reviewers(config, quota=quota, source_vendor="anthropic", cross_ai=True)
+        self.assertEqual(len(result), 1)  # no cross-vendor survivor -> just the primary
+        self.assertEqual(result[0].key, "claude-opus")
+
+    def test_double_mode_with_empty_ladder_falls_back_to_session_default(self):
         config = {"policy": {"mode": "double", "ladder": []}, "reviewers": []}
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
-        self.assertEqual(result, [rs.CURRENT_SESSION])
+        self.assertEqual(result, [rs.NO_CONFIG_FALLBACK])
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -862,9 +939,11 @@ Append to `tools/review-spec.py`:
 
 class ResolvedReviewer(NamedTuple):
     """A reviewer chosen for this run. cli/command are None for native
-    (current-runtime) dispatch. extra holds any reviewer-entry fields
-    beyond key/model/vendor/cli/command (e.g. effort, service_tier) for the
-    caller to interpolate into `command`."""
+    (current-runtime) dispatch. model == "" means "no override — inherit
+    the current session's own default model" (never a hardcoded name).
+    extra holds any reviewer-entry fields beyond key/model/vendor/cli/
+    command (e.g. effort, service_tier) for the caller to interpolate into
+    `command`."""
 
     key: str
     model: str
@@ -874,8 +953,8 @@ class ResolvedReviewer(NamedTuple):
     extra: dict
 
 
-CURRENT_SESSION = ResolvedReviewer(key="current-session", model="", vendor="",
-                                    cli=None, command=None, extra={})
+NO_CONFIG_FALLBACK = ResolvedReviewer(key="session-default", model="", vendor="",
+                                       cli=None, command=None, extra={})
 
 _KNOWN_REVIEWER_FIELDS = {"key", "model", "vendor", "cli", "command"}
 
@@ -906,13 +985,18 @@ def _has_quota(quota: dict, key: str) -> bool:
 
 def resolve_ladder_pick(reviewers: list, ladder: list, skip_vendor: str, quota: dict) -> Optional[ResolvedReviewer]:
     """First ladder entry that (a) exists in `reviewers`, (b) has a
-    different vendor than skip_vendor, and (c) has quota. If nothing
-    survives both filters, retry ignoring the vendor filter (same-vendor
-    coverage beats no cross-AI reviewer at all). None only if every
-    candidate lacks quota or doesn't exist."""
+    different vendor than skip_vendor (empty skip_vendor disables this
+    filter — used for "best overall, any vendor"), and (c) has quota. If
+    nothing survives both filters, retry ignoring the vendor filter
+    (same-vendor coverage beats no reviewer at all). None only if every
+    candidate lacks quota or doesn't exist. This is where tier-awareness
+    comes from: a caller passing an ordered ladder like ["claude-opus",
+    "claude-sonnet", ...] gets the flagship tier whenever it has quota, and
+    falls through to the next configured tier automatically otherwise — no
+    separate "tier" concept needed."""
     for key in ladder:
         entry = _reviewer_by_key(reviewers, key)
-        if entry is None or entry.get("vendor") == skip_vendor or not _has_quota(quota, key):
+        if entry is None or (skip_vendor and entry.get("vendor") == skip_vendor) or not _has_quota(quota, key):
             continue
         return _to_resolved(entry)
     for key in ladder:
@@ -924,19 +1008,40 @@ def resolve_ladder_pick(reviewers: list, ladder: list, skip_vendor: str, quota: 
 
 
 def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: bool) -> list:
-    """The full policy decision (design spec §3). Returns 1 or 2
-    ResolvedReviewer entries; current-session dispatch mechanics are the
-    caller's concern (Task 9), this only decides WHO."""
+    """The full policy decision (design spec §3, as corrected during
+    planning — see Task 5's design-correction note). Returns 1 or 2
+    ResolvedReviewer entries; dispatch mechanics are the caller's concern
+    (Task 11), this only decides WHO.
+
+    single: one reviewer, preferring a vendor different from source_vendor
+    (independent perspective on the document), quota-aware, tier-aware via
+    ladder order.
+
+    double: `primary` is the best-quota-having ladder entry with NO vendor
+    filter (tier-aware "whatever's best" — typically same vendor as
+    source, since that's what most users list first); `secondary` is the
+    best entry with a vendor DIFFERENT from primary's, dropped if none
+    survives (a same-vendor-only ladder degrades to a single reviewer,
+    not an error).
+
+    Either mode falls back to NO_CONFIG_FALLBACK when --no-cross-ai was
+    passed, the ladder is empty, or nothing in it has quota."""
     if not cross_ai:
-        return [CURRENT_SESSION]
+        return [NO_CONFIG_FALLBACK]
     policy = config.get("policy", {})
     mode = policy.get("mode", "single")
     ladder = policy.get("ladder", [])
     reviewers = config.get("reviewers", [])
-    pick = resolve_ladder_pick(reviewers, ladder, source_vendor, quota)
     if mode == "double":
-        return [CURRENT_SESSION, pick] if pick else [CURRENT_SESSION]
-    return [pick] if pick else [CURRENT_SESSION]
+        primary = resolve_ladder_pick(reviewers, ladder, skip_vendor="", quota=quota)
+        if primary is None:
+            return [NO_CONFIG_FALLBACK]
+        secondary = resolve_ladder_pick(reviewers, ladder, skip_vendor=primary.vendor, quota=quota)
+        if secondary is None or secondary.key == primary.key:
+            return [primary]
+        return [primary, secondary]
+    pick = resolve_ladder_pick(reviewers, ladder, skip_vendor=source_vendor, quota=quota)
+    return [pick] if pick else [NO_CONFIG_FALLBACK]
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -954,19 +1059,241 @@ git commit -m "feat(review-spec): add single/double ladder policy resolution"
 
 ---
 
-### Task 6: Findings merge (Step 1.5 — double-review reconciliation)
+### Task 6: Quota probing (delivers spec §1's "quota-aware" goal)
+
+**Added during planning (caught by the cross-AI dry run — see Self-review
+notes at the end of this plan):** without this task, `quota.json` is never
+written by anything, so `_has_quota` (Task 5) always sees an empty dict and
+"quota-aware" is unimplemented. This task closes that gap with a generic,
+CLI-agnostic probe: run a trivial prompt through a reviewer's own `command`
+template and classify availability from the outcome (exit code / stderr
+content), rather than requiring a confirmed quota-subcommand per CLI (most
+of which are still "unconfirmed syntax" per the CLI profiles, Task 9). The
+one CLI with a confirmed richer signal (`codex`'s usage-limit error on a
+low-effort/fast-tier call — see `references/review-spec/cli-profiles/codex.md`)
+is covered by the same generic heuristic (its error text contains "usage
+limit", which the heuristic's substring check catches) — no special-casing
+needed.
 
 **Files:**
 - Modify: `tools/review-spec.py`
 - Test: `tests/test_review_spec.py`
 
 **Interfaces:**
-- Consumes: nothing from Tasks 2–5 (pure text-in/text-out, deliberately
+- Consumes: `ResolvedReviewer`/`_to_resolved` (Task 5), `cache_read_json`/
+  `cache_write_json`/`QUOTA_TTL_SECONDS` (Task 3).
+- Produces: `render_reviewer_command(resolved: ResolvedReviewer, prompt: str) -> str`,
+  `probe_reviewer_quota(resolved: ResolvedReviewer, run_fn=subprocess.run) -> dict`,
+  `refresh_quota_cache(config: dict, ladder_keys: list, existing: dict, ttl_seconds: int, run_fn=subprocess.run) -> dict`.
+  `render_reviewer_command` is also consumed by Task 11's Step 1 (real
+  dispatch) — the same template-filling logic backs both the quota probe
+  and the actual reviewer invocation, so they can never drift apart.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/test_review_spec.py`:
+
+```python
+class TestRenderReviewerCommand(unittest.TestCase):
+    def test_fills_model_and_prompt(self):
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex", command='codex exec -m {model} "{prompt}"',
+                                        extra={})
+        self.assertEqual(rs.render_reviewer_command(resolved, "hello"),
+                          'codex exec -m gpt-5.2 "hello"')
+
+    def test_fills_extra_fields(self):
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex",
+                                        command="codex exec -m {model} -c service_tier='\"{service_tier}\"' \"{prompt}\"",
+                                        extra={"service_tier": "fast"})
+        out = rs.render_reviewer_command(resolved, "hi")
+        self.assertIn("service_tier='\"fast\"'", out)
+
+
+class TestProbeReviewerQuota(unittest.TestCase):
+    def test_native_entry_is_always_available(self):
+        resolved = rs.ResolvedReviewer(key="claude-opus", model="opus-5", vendor="anthropic",
+                                        cli=None, command=None, extra={})
+        result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("should never shell out for a native entry")))
+        self.assertTrue(result["available"])
+
+    def test_successful_call_is_available(self):
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex", command="echo ok", extra={})
+        class FakeResult:
+            returncode = 0
+            stdout = "ok\n"
+            stderr = ""
+        result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
+        self.assertTrue(result["available"])
+
+    def test_nonzero_exit_is_unavailable(self):
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex", command="false", extra={})
+        class FakeResult:
+            returncode = 1
+            stdout = ""
+            stderr = "some error"
+        result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
+        self.assertFalse(result["available"])
+
+    def test_usage_limit_text_is_unavailable_even_on_exit_zero(self):
+        # confirmed live: codex can print a usage-limit message and still
+        # be worth treating as unavailable regardless of exit code
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.6-luna", vendor="openai",
+                                        cli="codex", command="echo 'usage limit reached'", extra={})
+        class FakeResult:
+            returncode = 0
+            stdout = "You have hit your usage limit.\n"
+            stderr = ""
+        result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
+        self.assertFalse(result["available"])
+
+    def test_timeout_is_unavailable(self):
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex", command="sleep 999", extra={})
+        def fake_run(*a, **k):
+            raise subprocess.TimeoutExpired(cmd="sleep 999", timeout=30)
+        result = rs.probe_reviewer_quota(resolved, run_fn=fake_run)
+        self.assertFalse(result["available"])
+
+
+class TestRefreshQuotaCache(unittest.TestCase):
+    def setUp(self):
+        self.config = {
+            "policy": {"mode": "single", "ladder": ["codex-gpt"]},
+            "reviewers": [{"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai",
+                           "cli": "codex", "command": "echo ok"}],
+        }
+
+    def test_probes_missing_entries(self):
+        class FakeResult:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+        updated = rs.refresh_quota_cache(self.config, ["codex-gpt"], existing={},
+                                          ttl_seconds=3600, run_fn=lambda *a, **k: FakeResult())
+        self.assertTrue(updated["codex-gpt"]["available"])
+
+    def test_skips_fresh_entries(self):
+        existing = {"codex-gpt": {"available": False, "checked_at": time.time()}}
+        def fail_if_called(*a, **k):
+            raise AssertionError("should not re-probe a fresh entry")
+        updated = rs.refresh_quota_cache(self.config, ["codex-gpt"], existing,
+                                          ttl_seconds=3600, run_fn=fail_if_called)
+        self.assertFalse(updated["codex-gpt"]["available"])  # untouched
+
+    def test_reprobes_stale_entries(self):
+        existing = {"codex-gpt": {"available": False, "checked_at": time.time() - 7200}}
+        class FakeResult:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+        updated = rs.refresh_quota_cache(self.config, ["codex-gpt"], existing,
+                                          ttl_seconds=3600, run_fn=lambda *a, **k: FakeResult())
+        self.assertTrue(updated["codex-gpt"]["available"])  # re-probed, flipped to available
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `.venv/bin/python3 -m unittest tests.test_review_spec.TestRenderReviewerCommand tests.test_review_spec.TestProbeReviewerQuota tests.test_review_spec.TestRefreshQuotaCache -v`
+
+Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'render_reviewer_command'`.
+
+- [ ] **Step 3: Implement**
+
+Append to `tools/review-spec.py`:
+
+```python
+# ── Quota probing ─────────────────────────────────────────────────────────
+
+_UNAVAILABLE_SIGNALS = ("usage limit", "quota", "rate limit", "rate_limit")
+
+
+def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> str:
+    """Fill a resolved reviewer's `command` template. {model} and {prompt}
+    are always available; any of the entry's extra fields (effort,
+    service_tier, ...) fill their own {placeholder} when the command
+    references it. Shared by probe_reviewer_quota (below) and Task 11's
+    real dispatch, so probing and dispatching can never drift apart."""
+    return resolved.command.format(model=resolved.model, prompt=prompt, **resolved.extra)
+
+
+def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) -> dict:
+    """Native (cli-less) entries are never probed — there is nothing to
+    shell out to, and dispatch mechanics there are the current session's
+    own concern, not a quota this module can observe. For CLI entries: run
+    a trivial prompt through the reviewer's own command and classify
+    availability generically — a nonzero exit code, or stdout/stderr
+    containing a case-insensitive usage/quota/rate-limit phrase, means
+    unavailable; anything else (including plain success) means available.
+    This generic heuristic is what makes the confirmed codex usage-limit
+    error (see references/review-spec/cli-profiles/codex.md) detectable
+    without a CLI-specific parser."""
+    if not resolved.cli or not resolved.command:
+        return {"available": True, "checked_at": time.time()}
+    filled = render_reviewer_command(resolved, "Only say: Hello world!")
+    try:
+        result = run_fn(filled, shell=True, capture_output=True, text=True,
+                         check=False, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"available": False, "checked_at": time.time()}
+    combined = (result.stdout + result.stderr).lower()
+    if result.returncode != 0 or any(s in combined for s in _UNAVAILABLE_SIGNALS):
+        return {"available": False, "checked_at": time.time()}
+    return {"available": True, "checked_at": time.time()}
+
+
+def refresh_quota_cache(config: dict, ladder_keys: list, existing: dict, ttl_seconds: int,
+                         run_fn=subprocess.run) -> dict:
+    """Returns an updated quota dict: probes only ladder_keys entries that
+    are missing or whose last probe is older than ttl_seconds; entries
+    still fresh are left untouched (no re-probe, no wasted quota-checking
+    quota)."""
+    reviewers = config.get("reviewers", [])
+    updated = dict(existing)
+    now = time.time()
+    for key in ladder_keys:
+        current = updated.get(key)
+        if current is not None and now - current.get("checked_at", 0) < ttl_seconds:
+            continue
+        entry = _reviewer_by_key(reviewers, key)
+        if entry is None:
+            continue
+        updated[key] = probe_reviewer_quota(_to_resolved(entry), run_fn=run_fn)
+    return updated
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `.venv/bin/python3 -m unittest tests.test_review_spec -v`
+
+Expected: PASS, all tests including Task 5's.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tools/review-spec.py tests/test_review_spec.py
+git commit -m "feat(review-spec): add quota probing (render_reviewer_command, probe_reviewer_quota, refresh_quota_cache)"
+```
+
+---
+
+### Task 7: Findings merge (Step 1.5 — double-review reconciliation)
+
+**Files:**
+- Modify: `tools/review-spec.py`
+- Test: `tests/test_review_spec.py`
+
+**Interfaces:**
+- Consumes: nothing from Tasks 2–6 (pure text-in/text-out, deliberately
   decoupled so it's testable with plain fixture strings).
 - Produces: `parse_findings(report_text: str) -> list[dict]`,
   `merge_findings(reports: list[tuple[str, str]]) -> list[dict]`,
   `render_merged_report(findings: list[dict], doc_paths: str) -> str`.
-  Consumed by Task 9 (Step 1.5).
+  Consumed by Task 11 (Step 1.5).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1139,25 +1466,36 @@ git commit -m "feat(review-spec): add double-review findings merge (union + revi
 
 ---
 
-### Task 7: CLI entrypoint (argparse subcommands)
+### Task 8: CLI entrypoint (argparse subcommands)
+
+**Bug fixed here (caught by the cross-AI dry run):** an earlier draft had
+`resolve-reviewers` take a single `--config <path>` and call
+`cfg_load_toml` directly — bypassing Task 2's `cfg_resolve` entirely, so
+the tested local/global `strategy` merge never actually ran in production.
+Fixed: `resolve-reviewers` takes `--cwd <path>` and calls `cfg_resolve(cwd,
+os.environ)`, exactly like every other consumer must.
 
 **Files:**
 - Modify: `tools/review-spec.py`
+- Modify: `Makefile` (add `tests.test_review_spec` to the `test:` target)
 - Test: `tests/test_review_spec.py`
 
 **Interfaces:**
-- Consumes: every function from Tasks 2–6.
+- Consumes: every function from Tasks 2–7.
 - Produces: a `main(argv: list) -> int` function and `if __name__ ==
   "__main__": sys.exit(main(sys.argv[1:]))`, with subcommands
-  `detect-runtimes`, `resolve-reviewers`, `merge-reports`, `render-toml`.
-  Consumed by Task 8 (`review-spec-config`) and Task 9 (orchestrator's
+  `detect-runtimes` (with `--save <path>`), `probe-quota`,
+  `resolve-reviewers`, `merge-reports`, `render-toml`.
+  Consumed by Task 10 (`review-spec-config`) and Task 11 (orchestrator's
   `Bash` calls), both of which shell out to `python3 tools/review-spec.py
   <subcommand> ...` rather than importing the module directly (they run
   from Claude Code's `Bash` tool, not from Python).
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `tests/test_review_spec.py`:
+Add `from unittest import mock` to `tests/test_review_spec.py`'s import
+block at the top (not there yet — needed by the `mock.patch.object` calls
+below). Then add to `tests/test_review_spec.py`:
 
 ```python
 class TestMainCli(unittest.TestCase):
@@ -1171,25 +1509,56 @@ class TestMainCli(unittest.TestCase):
         parsed = json.loads(buf.getvalue())
         self.assertIn("clis", parsed)
 
-    def test_resolve_reviewers_reads_config_and_quota_files(self):
+    def test_detect_runtimes_save_writes_cache_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            save_path = os.path.join(d, "runtimes.json")
+            code = rs.main(["detect-runtimes", "--save", save_path],
+                            which_fn=lambda n: None, run_fn=lambda *a, **k: None)
+            self.assertEqual(code, 0)
+            self.assertIn("clis", rs.cache_read_json(save_path))
+
+    def test_resolve_reviewers_uses_cfg_resolve_local_global_merge(self):
+        # regression test for the CRITICAL bug: resolve-reviewers must go
+        # through cfg_resolve (local/global + strategy), not a single
+        # --config path — write ONLY a local file that overrides one field
+        # of a global-declared reviewer, and confirm the override lands.
         import io
         from contextlib import redirect_stdout
-        with tempfile.TemporaryDirectory() as d:
-            config_path = os.path.join(d, "review-spec.toml")
-            rs.cfg_write_toml(config_path, {
+        with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".config", "ai-kit"))
+            rs.cfg_write_toml(os.path.join(home, ".config", "ai-kit", "review-spec.toml"), {
                 "policy": {"mode": "single", "ladder": ["codex-gpt"]},
                 "reviewers": [{"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai"}],
             })
-            quota_path = os.path.join(d, "quota.json")
+            os.makedirs(os.path.join(cwd, ".aikit"))
+            with open(os.path.join(cwd, ".aikit", "review-spec.toml"), "w", encoding="utf-8") as f:
+                f.write('[[reviewers]]\nkey = "codex-gpt"\nmodel = "gpt-5.2-mini"\n')
+            quota_path = os.path.join(cwd, "quota.json")
             rs.cache_write_json(quota_path, {})
             buf = io.StringIO()
-            with redirect_stdout(buf):
-                code = rs.main(["resolve-reviewers", "--config", config_path,
-                                 "--quota", quota_path, "--source-vendor", "anthropic",
-                                 "--cross-ai"])
+            env = {"HOME": home}
+            with mock.patch.object(rs.os, "environ", env), redirect_stdout(buf):
+                code = rs.main(["resolve-reviewers", "--cwd", cwd, "--quota", quota_path,
+                                 "--source-vendor", "anthropic", "--cross-ai"])
             self.assertEqual(code, 0)
             parsed = json.loads(buf.getvalue())
-            self.assertEqual(parsed[0]["key"], "codex-gpt")
+            self.assertEqual(parsed[0]["model"], "gpt-5.2-mini")  # local override applied
+
+    def test_probe_quota_refreshes_stale_entries_and_writes_cache(self):
+        with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".config", "ai-kit"))
+            rs.cfg_write_toml(os.path.join(home, ".config", "ai-kit", "review-spec.toml"), {
+                "policy": {"mode": "single", "ladder": ["codex-gpt"]},
+                "reviewers": [{"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai",
+                               "cli": "codex", "command": "echo ok"}],
+            })
+            quota_path = os.path.join(cwd, "quota.json")
+            env = {"HOME": home}
+            with mock.patch.object(rs.os, "environ", env):
+                code = rs.main(["probe-quota", "--cwd", cwd, "--quota-path", quota_path])
+            self.assertEqual(code, 0)
+            written = rs.cache_read_json(quota_path)
+            self.assertTrue(written["codex-gpt"]["available"])
 
     def test_merge_reports_reads_files_and_prints_markdown(self):
         import io
@@ -1228,10 +1597,15 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
     parser = argparse.ArgumentParser(prog="review-spec")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("detect-runtimes")
+    p_detect = sub.add_parser("detect-runtimes")
+    p_detect.add_argument("--save", default=None, help="write the snapshot to this path via cache_write_json")
+
+    p_quota = sub.add_parser("probe-quota")
+    p_quota.add_argument("--cwd", required=True)
+    p_quota.add_argument("--quota-path", required=True)
 
     p_resolve = sub.add_parser("resolve-reviewers")
-    p_resolve.add_argument("--config", required=True)
+    p_resolve.add_argument("--cwd", required=True)
     p_resolve.add_argument("--quota", required=True)
     p_resolve.add_argument("--source-vendor", default="")
     p_resolve.add_argument("--cross-ai", action="store_true")
@@ -1246,13 +1620,23 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "detect-runtimes":
-        print(json.dumps(build_runtimes_snapshot(which_fn=which_fn, run_fn=run_fn)))
+        snapshot = build_runtimes_snapshot(which_fn=which_fn, run_fn=run_fn)
+        if args.save:
+            cache_write_json(args.save, snapshot)
+        print(json.dumps(snapshot))
+        return 0
+
+    if args.command == "probe-quota":
+        config = cfg_resolve(args.cwd, dict(os.environ))
+        ladder = config.get("policy", {}).get("ladder", [])
+        existing = cache_read_json(args.quota_path) or {}
+        updated = refresh_quota_cache(config, ladder, existing, QUOTA_TTL_SECONDS, run_fn=run_fn)
+        cache_write_json(args.quota_path, updated)
+        print(json.dumps(updated))
         return 0
 
     if args.command == "resolve-reviewers":
-        config = cfg_load_toml(args.config) or {"policy": DEFAULT_POLICY, "reviewers": []}
-        config.setdefault("policy", DEFAULT_POLICY)
-        config.setdefault("reviewers", [])
+        config = cfg_resolve(args.cwd, dict(os.environ))
         quota = cache_read_json(args.quota) or {}
         reviewers = resolve_reviewers(config, quota, args.source_vendor, args.cross_ai)
         print(json.dumps([r._asdict() for r in reviewers]))
@@ -1287,16 +1671,34 @@ Run: `.venv/bin/python3 -m unittest tests.test_review_spec -v`
 
 Expected: PASS, all tests.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add the new test module to the Makefile's `test:` target**
+
+In `Makefile`, change:
+
+```makefile
+test:
+	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_system_memory_e2e
+	bash tests/test_install.sh
+```
+
+to:
+
+```makefile
+test:
+	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_system_memory_e2e tests.test_review_spec
+	bash tests/test_install.sh
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add tools/review-spec.py tests/test_review_spec.py
-git commit -m "feat(review-spec): add CLI entrypoint (detect-runtimes, resolve-reviewers, merge-reports, render-toml)"
+git add tools/review-spec.py tests/test_review_spec.py Makefile
+git commit -m "feat(review-spec): add CLI entrypoint (detect-runtimes, probe-quota, resolve-reviewers, merge-reports, render-toml); wire cfg_resolve; register with make test"
 ```
 
 ---
 
-### Task 8: CLI profile reference docs
+### Task 9: CLI profile reference docs
 
 **Files:**
 - Create: `references/review-spec/cli-profiles/claude.md`
@@ -1308,7 +1710,7 @@ git commit -m "feat(review-spec): add CLI entrypoint (detect-runtimes, resolve-r
 - Test: none (reference docs, not code)
 
 **Interfaces:**
-- Produces: the profile paths `review-spec-config` (Task 9) reads when
+- Produces: the profile paths `review-spec-config` (Task 10) reads when
   helping the user write `[[reviewers]]` entries.
 
 - [ ] **Step 1: Write `references/review-spec/cli-profiles/claude.md`**
@@ -1498,7 +1900,7 @@ git commit -m "docs(review-spec): add CLI profiles for claude, codex, opencode, 
 
 ---
 
-### Task 9: `review-spec-config` skill (new)
+### Task 10: `review-spec-config` skill (new)
 
 **Files:**
 - Create: `skills/review-spec-config/SKILL.md`
@@ -1507,10 +1909,10 @@ git commit -m "docs(review-spec): add CLI profiles for claude, codex, opencode, 
 
 **Interfaces:**
 - Consumes: `tools/review-spec.py`'s `detect-runtimes` and `render-toml`
-  subcommands (Task 7), the CLI profiles (Task 8).
+  subcommands (Task 8), the CLI profiles (Task 9).
 - Produces: writes `review-spec.toml` (global by default, `--local` for
   `./.aikit/review-spec.toml`) and `runtimes.json`. Consumed by
-  `review-spec`'s Step 0.7 (Task 10).
+  `review-spec`'s Step 0.7 (Task 11).
 
 - [ ] **Step 1: Write `skills/review-spec-config/SKILL.md`**
 
@@ -1527,12 +1929,15 @@ Set up (or refresh) `review-spec`'s cross-AI reviewer configuration.
 ### Step 1 — Detect
 
 ```bash
-.venv/bin/python3 tools/review-spec.py detect-runtimes
+.venv/bin/python3 tools/review-spec.py detect-runtimes --save ~/.cache/ai-kit/review-spec/runtimes.json
 ```
 
 (If not running from the ai-kit repo itself, use the installed copy's
-absolute path instead.) Parse the JSON: for each CLI marked
-`"installed": true`, note its path; for `opencode`, note its `models` list.
+absolute path instead.) `--save` persists the snapshot immediately (via
+`cache_write_json` — see Task 8), so `review-spec` doesn't have to
+re-detect next session; the command also prints the same JSON to stdout.
+Parse it: for each CLI marked `"installed": true`, note its path; for
+`opencode`, note its `models` list.
 
 If `--check-only` was passed: report which CLIs are installed, which have
 a `review-spec.toml` reviewer entry already, and stop — do not write
@@ -1572,13 +1977,8 @@ Write that output to the target path: `~/.config/ai-kit/review-spec.toml`
 by default, or `./.aikit/review-spec.toml` if `--local` was passed (and
 add a `strategy = "..."` line at the top if the user wants
 `local-only` — ask; default `global-merge`, which needs no explicit line).
-
-Also cache the detection snapshot from Step 1 so `review-spec` doesn't
-re-detect next session — write it to
-`~/.cache/ai-kit/review-spec/runtimes.json` via `tools/review-spec.py`'s
-`cache_write_json` (no dedicated subcommand needed; a one-line inline
-`python3 -c "..."` calling `cache_write_json` from the module is
-sufficient, matching this skill's already-scripted nature).
+(The runtimes snapshot was already persisted in Step 1 via `--save` — no
+separate write needed here.)
 
 ### Step 4 — Report
 
@@ -1595,7 +1995,7 @@ git commit -m "feat(review-spec-config): add interactive cross-AI reviewer setup
 
 ---
 
-### Task 10: Orchestrator integration — `review-spec/SKILL.md`
+### Task 11: Orchestrator integration — `review-spec/SKILL.md`
 
 **Files:**
 - Modify: `skills/review-spec/SKILL.md`
@@ -1603,10 +2003,30 @@ git commit -m "feat(review-spec-config): add interactive cross-AI reviewer setup
   run, listed in this task's steps)
 
 **Interfaces:**
-- Consumes: `tools/review-spec.py`'s `resolve-reviewers` and
-  `merge-reports` subcommands (Task 7), the renamed skills (Task 1).
+- Consumes: `tools/review-spec.py`'s `probe-quota`, `resolve-reviewers`,
+  and `merge-reports` subcommands (Task 8), the renamed skills (Task 1).
 
-- [ ] **Step 1: Add Step 0.7 after the existing Step 0.6**
+- [ ] **Step 1: Add `--cross-ai`/`--no-cross-ai`/`--source-vendor` to the Inputs section**
+
+In `skills/review-spec/SKILL.md`'s existing "## Inputs" section, extend
+the "Document path(s)" bullet to also parse three optional flags from the
+same invocation-arguments string (all three, unlike doc paths, have
+defaults — never block on their absence):
+
+```markdown
+- **Flags (optional, parsed from the same invocation arguments):**
+  `--cross-ai` (default) or `--no-cross-ai` — whether Step 0.7 attempts
+  cross-AI reviewer resolution at all. `--source-vendor=<vendor>` (default
+  `anthropic`, since this orchestrator only ever runs as a Claude Code
+  skill) — the document's authoring vendor, used by Step 0.7's ladder walk
+  to prefer an independent perspective. This is a **vendor** (`anthropic`,
+  `openai`, `xai`, ...), matching the `vendor` field in `review-spec.toml`
+  reviewer entries — not a model id, since deriving a vendor from an
+  arbitrary model-id string has no sanctioned mapping (model names churn
+  too fast to hardcode a lookup table).
+```
+
+- [ ] **Step 2: Add Step 0.7 after the existing Step 0.6**
 
 Insert into `skills/review-spec/SKILL.md`, immediately after Step 0.6's
 final paragraph (the one ending "...If no sibling context exists, pass
@@ -1622,29 +2042,48 @@ Runs once per invocation, after Step 0.6.
    under this one directory, replacing the old flat `/tmp/review-spec-*`
    paths (which collided across concurrent runs on different
    projects/worktrees — fixed here).
-2. Resolve the source vendor: `--source-model=<id>` if the user passed it,
-   else the current session's own vendor (`anthropic`, since this
-   orchestrator runs as a Claude Code skill).
-3. Resolve `--cross-ai`/`--no-cross-ai` from the invocation arguments
-   (default: `--cross-ai`).
-4. Load config and quota:
+2. If `--no-cross-ai`: skip straight to step 5 with an empty reviewer
+   list request (`resolve-reviewers` degrades to the session-default
+   fallback on its own when `--cross-ai` is omitted) — no detection, no
+   quota probing, minimal overhead, exactly the "skip it entirely" case
+   this flag exists for.
+3. Otherwise, check whether `~/.cache/ai-kit/review-spec/runtimes.json`
+   exists:
+   - **Missing, never asked before**: run
+     `python3 tools/review-spec.py detect-runtimes` live (do not `--save`
+     yet), print one line — "No hay config de cross-AI guardada — corré
+     `review-spec-config` para no repetir esto cada vez." — and continue
+     using this run's live detection only (not persisted).
+   - **Missing, but a decline was already recorded**: a prior run wrote a
+     stub `{"configured": false, "cross_ai": false}` there — treat this
+     exactly like `--no-cross-ai` (step 2) for the rest of this run,
+     silently, no repeated prompt.
+   - **Present**: nothing to do here — `resolve-reviewers` (step 5) reads
+     the real config independently.
+4. Refresh quota for anything the config's ladder might need:
+   ```bash
+   python3 tools/review-spec.py probe-quota --cwd <CODEBASE_ROOT> \
+     --quota-path ~/.cache/ai-kit/review-spec/quota.json
+   ```
+   (No-op — writes `{}` — when there is no config/ladder to probe.)
+5. Resolve the reviewer list:
    ```bash
    python3 tools/review-spec.py resolve-reviewers \
-     --config <resolved review-spec.toml path — local ./.aikit/ if present, else global> \
+     --cwd <CODEBASE_ROOT> \
      --quota ~/.cache/ai-kit/review-spec/quota.json \
-     --source-vendor <SOURCE_VENDOR> \
-     --cross-ai   # omit this flag entirely when --no-cross-ai was requested
+     --source-vendor <SOURCE_VENDOR from Step 1's flag parsing> \
+     --cross-ai   # omit this flag entirely when --no-cross-ai was requested (step 2)
    ```
-   If the config file resolved to nothing (both local and global missing):
-   print one line — "No hay config de cross-AI guardada — corré
-   `review-spec-config` para no repetir esto cada vez." — and continue
-   with whatever `resolve-reviewers` returned (it degrades to
-   `current-session` automatically when `reviewers`/`policy` are empty).
-5. The command prints a JSON array of 1 or 2 reviewer objects. Record it as
+   `resolve-reviewers` itself calls `cfg_resolve(cwd, env)` (Task 2),
+   which already handles the local-vs-global/`strategy` resolution — this
+   step never re-implements that logic, it only picks which `--cwd` to
+   pass (`CODEBASE_ROOT` from Step 0.1, so the resolved local config is
+   the one that actually owns the document under review).
+6. The command prints a JSON array of 1 or 2 reviewer objects. Record it as
    `REVIEWER_LIST`.
 ```
 
-- [ ] **Step 2: Rewrite Step 1 to branch on `REVIEWER_LIST`**
+- [ ] **Step 3: Rewrite Step 1 to branch on `REVIEWER_LIST`**
 
 Replace the existing "Step 1 — Dispatch reviewer (every iteration)"
 section's opening (the part before the reviewer prompt template) with:
@@ -1657,10 +2096,12 @@ For each entry in `REVIEWER_LIST`:
 - **`cli` is `null`** (native dispatch): use the `Agent` tool exactly as
   before —
   - `subagent_type`: `general-purpose`
-  - `model`: `sonnet` (or the entry's `model`, when the current session's
-    dispatch mechanism supports selecting it — Claude Code's `Agent` tool
-    is Claude-family only; a non-Claude `model` value here is a config
-    error, not something to silently substitute)
+  - `model`: the entry's `model`, **omitted entirely when `model == ""`**
+    (the `NO_CONFIG_FALLBACK`/session-default case — never substitute a
+    hardcoded name here; an empty `model` means "let the `Agent` tool use
+    its own default"). A non-empty, non-Claude `model` value is a config
+    error (Claude Code's `Agent` tool is Claude-family only) — surface it
+    rather than silently substituting.
   - `description`: `review-spec iter N reviewer (<key>)`
   - `prompt`: the template below, with the skill name updated to
     `review-spec-checklist` (was `reviewing-specs`)
@@ -1690,7 +2131,7 @@ Then continue with the existing reviewer prompt template (for the native
 case) unchanged below, except the skill name substitution above.
 ```
 
-- [ ] **Step 3: Add Step 1.5 after the new Step 1**
+- [ ] **Step 4: Add Step 1.5 after the new Step 1**
 
 ```markdown
 ### Step 1.5 — Merge reviewer reports (only when `REVIEWER_LIST` has 2 entries)
@@ -1710,16 +2151,31 @@ step — that entry's raw report (or the native `Agent` tool's output) is
 used directly, unchanged from today's behavior.
 ```
 
-- [ ] **Step 4: Update `/tmp/` references in Step 3 and Constants to use `$RUN_TMP_DIR`**
+- [ ] **Step 5: Replace every remaining `/tmp/review-spec` reference with `$RUN_TMP_DIR`**
 
-Replace `Save the reviewer's report to a temp file
-(\`/tmp/review-spec-report-iter<N>.md\`)` with `Save the reviewer's report
-to \`$RUN_TMP_DIR/iter<N>-fixer-input.md\``. Replace the Constants
-section's `**Loop state file (optional):**
-/tmp/review-spec-<doc-basename>-<timestamp>.log` line with `**Loop state
-file (optional):** \`$RUN_TMP_DIR/loop.log\``.
+Find every occurrence — there are more than the two obvious ones (the
+cross-AI dry run caught a missed one at the GSD-handoff Surface message):
 
-- [ ] **Step 5: Rewrite the Cleanup section**
+```bash
+grep -n "/tmp/review-spec" skills/review-spec/SKILL.md
+```
+
+Fix each:
+- Step 3's `Save the reviewer's report to a temp file
+  (\`/tmp/review-spec-report-iter<N>.md\`)` → `Save the reviewer's report
+  to \`$RUN_TMP_DIR/iter<N>-fixer-input.md\``.
+- The Constants section's `**Loop state file (optional):**
+  /tmp/review-spec-<doc-basename>-<timestamp>.log` → `**Loop state file
+  (optional):** \`$RUN_TMP_DIR/loop.log\``.
+- Step 5's "Native revise handed off" Surface row example (the GSD-handoff
+  message: `... (findings: /tmp/review-spec-report-iter<N>.md), then
+  re-run /review-spec.\``) → `... (findings:
+  \`$RUN_TMP_DIR/iter<N>-report.md\`), then re-run /review-spec.\`` — this
+  is the same string wherever it recurs in the Surface table/examples.
+
+Re-run the grep after fixing — expect zero matches.
+
+- [ ] **Step 6: Rewrite the Cleanup section**
 
 Replace:
 
@@ -1741,14 +2197,14 @@ replaces the old file-by-file `/tmp/review-spec-*` cleanup, and there's
 nothing to accidentally miss.
 ```
 
-- [ ] **Step 6: Update the Constants section's fixer/reviewer skill names**
+- [ ] **Step 7: Update the Constants section's fixer/reviewer skill names**
 
 Change `**Reviewer skill:** \`reviewing-specs\`` to `**Reviewer skill:**
 \`review-spec-checklist\`` and `**Fixer skill:** \`applying-review-feedback\``
 to `**Fixer skill:** \`review-spec-fixer\`` (if Task 1 hasn't already
 caught these specific lines — re-grep to confirm).
 
-- [ ] **Step 7: Manual dry run — verify `RUN_TMP_DIR` and merge wiring**
+- [ ] **Step 8: Manual dry run — verify `RUN_TMP_DIR` and merge wiring**
 
 Run `/review-spec` against a real spec/plan doc in this repo with
 `--no-cross-ai` first (fastest smoke test — confirms `RUN_TMP_DIR` is
@@ -1764,11 +2220,11 @@ runs — this is the closest this task gets to an automated test, per the
 design spec's §11 note that orchestration prose has no unit-test
 equivalent.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add skills/review-spec/SKILL.md
-git commit -m "feat(review-spec): wire cross-AI reviewer resolution, external CLI dispatch, double-review merge, and RUN_TMP_DIR"
+git commit -m "feat(review-spec): wire cross-AI reviewer resolution, quota probing, external CLI dispatch, double-review merge, and RUN_TMP_DIR"
 ```
 
 ---
@@ -1777,11 +2233,14 @@ git commit -m "feat(review-spec): wire cross-AI reviewer resolution, external CL
 
 - **Spec coverage**: every numbered section of
   `2026-08-27-review-spec-cross-ai-design.md` maps to a task — §2 renaming
-  → Task 1; §3 config → Tasks 2, 9; §5 CLI profiles → Task 8; §6 cache →
-  Task 3; §7 `review-spec-config` → Task 9; §8 orchestrator integration →
-  Task 10; §9 temp-file fix → Task 10 Step 1/5. §4 (source-model detection)
-  is folded into Task 10 Step 0.7 rather than its own task — it's a
-  three-line orchestrator decision, not a standalone deliverable.
+  → Task 1; §3 config → Tasks 2, 10; §5 CLI profiles → Task 9; §6 cache →
+  Task 3; §7 `review-spec-config` → Task 10; §8 orchestrator integration →
+  Task 11; §9 temp-file fix → Task 11 Step 2/6. §4 (source-vendor, renamed
+  from "source-model" — see cross-AI review below) is folded into Task 11
+  Steps 1/2 rather than its own task — it's a small orchestrator decision,
+  not a standalone deliverable. Quota-awareness (spec §1's headline goal)
+  is delivered by the new Task 6, absent from the first draft (caught by
+  the cross-AI review below).
 - **File-path correction from the spec**: the spec's illustrative paths
   said `scripts/review-spec/*.py` (several small files); this plan
   consolidates into one `tools/review-spec.py`, matching this repo's
@@ -1792,5 +2251,39 @@ git commit -m "feat(review-spec): wire cross-AI reviewer resolution, external CL
   contradiction of the spec's actual requirements.
 - **Type consistency**: `ResolvedReviewer` (Task 5) is the one shape
   produced by `resolve_reviewers`/`resolve_ladder_pick` and consumed by
-  Task 7's CLI entrypoint (`r._asdict()`) and Task 10's Step 1 — same
+  Task 8's CLI entrypoint (`r._asdict()`) and Task 11's Step 3 — same
   field names (`key, model, vendor, cli, command, extra`) throughout.
+
+### Cross-AI review of this plan (dogfooding, live)
+
+Before finishing this plan, it was reviewed by `opencode run -m
+opencode-go/kimi-k3` against both this document and its spec — a manual,
+one-off rehearsal of the exact mechanism this plan builds (see the CLI
+profile confirmed in Task 9's `opencode.md`). Kimi actually wrote the
+assembled module + tests to a scratch directory and ran the 53-test suite
+(all passed under Python 3.14) rather than just reading the prose, and
+cross-checked every file/path claim against the real repo. It found one
+CRITICAL and four HIGH issues, all fixed inline before this plan was
+finalized:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL | `resolve-reviewers` called `cfg_load_toml` on a single `--config` path — the tested local/global `strategy` merge (Task 2) was never actually invoked at runtime | Task 8's `resolve-reviewers` now takes `--cwd` and calls `cfg_resolve(cwd, env)` directly; regression test added |
+| HIGH | Nothing wrote `quota.json` — `_has_quota` always saw an empty dict, so "quota-aware" was unimplemented | New Task 6 (quota probing): `probe_reviewer_quota`, `refresh_quota_cache`, a `probe-quota` CLI subcommand, wired into Task 11's Step 0.7 before reviewer resolution |
+| HIGH | Task 11 Step 1 hardcoded `model: sonnet` for the native reviewer — the exact "fixed model name" anti-pattern the spec's §1 opens by rejecting | Task 5 redesigned: no `CURRENT_SESSION` sentinel; a unified ladder walk makes the best-quota-having entry win (tier-aware by construction), falling back to `NO_CONFIG_FALLBACK` (no `model` override at all, not a hardcoded name) only when nothing has quota |
+| HIGH | Task 1's grep verification (`grep -rn ... --include="*.md" .` expecting zero matches) is unsatisfiable — 17 files actually match, not just `review-spec/SKILL.md` | Task 1 Step 4 rewritten to enumerate all 17 into "must fix" (evals, README) vs. "must not touch" (historical plans/PRDs, this plan/spec) |
+| HIGH | `--source-model=<id>` implied deriving a vendor from a model id with no sanctioned mapping | Renamed to `--source-vendor=<vendor>` throughout (Task 11 Step 1), removing the need for any id→vendor guess |
+
+Also fixed at MEDIUM/LOW severity: `tests.test_review_spec` added to the
+`Makefile` `test:` target (Task 8 Step 5); the fragile `python3 -c`
+one-liner in `review-spec-config` replaced with a `detect-runtimes --save`
+flag (Task 8/10); the second, previously-missed `/tmp/review-spec-report`
+reference at the GSD-handoff Surface message (Task 11 Step 5); a dead
+condition in `cfg_merge_reviewers` simplified (Task 2); `import time`
+correctly flagged as a real addition rather than "already present" (Task
+3). Kimi's dedup-key observation (spec §8 said "(file, line, category)",
+Task 7 implements "(severity, exact Location string)") was resolved by
+correcting the design spec's own wording — the checklist output format
+has no separate file/line fields, only a free-text `Location:` string, so
+the spec's original phrasing was aspirational rather than achievable as
+written.
