@@ -4,7 +4,14 @@
 - **Date**: 2026-08-27
 - **Scope**: `skills/review-spec/`, `skills/reviewing-specs/` (renamed),
   `skills/applying-review-feedback/` (renamed), new `skills/review-spec-config/`,
-  new `scripts/review-spec/`, new `references/review-spec/cli-profiles/`.
+  new `tools/review-spec.py` (one stdlib-only module — matches this repo's
+  established `tools/status-line.py`/`tools/setup.py` single-flat-file
+  convention rather than a multi-file `scripts/` directory), new
+  `references/review-spec/cli-profiles/`. Neither `tools/review-spec.py`
+  nor `references/review-spec/cli-profiles/` lives inside an
+  individually-installed skill directory, so both consuming skills resolve
+  them at an absolute path derived from their own installed location
+  (§8) rather than a bare relative path.
 - **Relates to**: builds on the existing `review-spec` orchestrator
   (Step 0–0.6, the review↔fix loop) without changing its framework-detection
   or fixer-routing behavior — this spec only changes **who performs the
@@ -25,14 +32,19 @@ subagent running the `reviewing-specs` skill. Two problems:
    *different* vendor's flagship, when one is actually reachable and has
    quota to finish the job.
 
-**Goal**: make the reviewer selection **config-driven and quota-aware**,
-supporting three review modes: single same-vendor (today's behavior, tier
-picked dynamically), single cross-vendor (an alternate vendor's model
-reviews instead), and double review (the current session's own model
-*plus* one alternate, findings unioned and tagged by source). Selection
-must degrade gracefully — never block a review because cross-AI isn't
-configured or a candidate is out of quota — and must never guess specific
-model IDs, since availability shifts by subscription and by day.
+**Goal**: make the reviewer selection **config-driven and quota-aware**.
+`policy.mode` (§3) is the two-value knob that actually ships:
+`"single"` (one reviewer, preferring a vendor different from the
+document's own author, tier-aware, quota-aware) and `"double"` (a
+guaranteed native baseline reviewer *plus* one cross-vendor alternate,
+findings unioned and tagged by source). A third case —
+**today's exact behavior, unchanged: single reviewer, always same vendor,
+no ladder walk at all** — is reached via `--no-cross-ai`, not a third
+`policy.mode` value (§3); it is the "minimize effort" escape hatch from
+the original ask, not a tier a config author picks. Selection must degrade
+gracefully — never block a review because cross-AI isn't configured or a
+candidate is out of quota — and must never guess specific model IDs, since
+availability shifts by subscription and by day.
 
 **Out of scope**: the *fixer* stays Claude-only always (this spec only
 changes who reviews, not who edits files in place — an external CLI editing
@@ -116,7 +128,7 @@ ladder = ["codex-gpt", "grok-flagship", "claude-opus"]  # ordered candidates
 
 [[reviewers]]
 key = "claude-opus"
-model = "opus-5"                                   # runtime-native dispatch (no `cli`)
+model = "opus"                                     # runtime-native dispatch (no `cli`) — one of the Agent tool's 4 model aliases, never a full model id
 vendor = "anthropic"
 
 [[reviewers]]
@@ -124,7 +136,7 @@ key = "codex-gpt"
 cli = "codex"
 model = "gpt-5.2"
 vendor = "openai"
-command = "codex exec --sandbox read-only --skip-git-repo-check -m {model} -c model_reasoning_effort='\"{effort}\"' \"{prompt}\" 2>/dev/null"
+command = "codex exec --sandbox read-only --skip-git-repo-check -m {model} -c model_reasoning_effort='\"{effort}\"' {prompt} 2>/dev/null"
 effort = "high"
 
 [[reviewers]]
@@ -132,14 +144,14 @@ key = "grok-flagship"
 cli = "grok"
 model = "grok-4.6"
 vendor = "xai"
-command = "grok -m {model} --output-format json -p \"{prompt}\" 2>/dev/null"
+command = "grok -m {model} --output-format json -p {prompt} 2>/dev/null"
 
 [[reviewers]]
 key = "opencode-kimi"
 cli = "opencode"
 model = "opencode-go/kimi-k3"
 vendor = "moonshot"                                # explicit — opencode itself isn't a vendor
-command = "opencode run -m {model} \"{prompt}\""
+command = "opencode run -m {model} {prompt}"
 ```
 
 **Field semantics:**
@@ -150,7 +162,12 @@ command = "opencode run -m {model} \"{prompt}\""
   **Never assumed/hardcoded by review-spec** — always either detected via
   the CLI's own model-listing command (`opencode models`, etc. — §5) and
   confirmed by the user in `review-spec-config`, or typed by the user
-  directly.
+  directly. **Exception for native (`cli`-less) entries**: Claude Code's
+  `Agent` tool only accepts one of four model aliases —
+  `sonnet`/`opus`/`haiku`/`fable` — never a full model id like `"opus-5"`;
+  `review-spec-config` writes exactly one of those four for any native
+  entry, and a hand-written config with anything else there is a config
+  error (§8 surfaces it at dispatch rather than passing it through).
 - `vendor` (required): the model's actual maker (`anthropic`, `openai`,
   `xai`, `moonshot`, `alibaba`, `google`, …) — **independent of `cli`**,
   since a single CLI can host multiple vendors (confirmed: `opencode`
@@ -180,7 +197,15 @@ command = "opencode run -m {model} \"{prompt}\""
   (`service_tier`) as two independent `-c key='"value"'` flags — no single
   universal `{effort}` covers both, so a reviewer entry targeting codex's
   fast tier would add its own extra field, e.g. `service_tier = "fast"`,
-  and reference `{service_tier}` in `command`).
+  and reference `{service_tier}` in `command`). **Write `{prompt}` bare,
+  never wrapped in the template's own quotes** (no `"{prompt}"`/
+  `'{prompt}'`) — the dispatch mechanism (§8) always shell-escapes the
+  prompt text itself (`shlex.quote`) before substitution, since it's free
+  text built from document paths/content that must survive as exactly one
+  shell argument; `{model}` and every extra field stay unescaped, since a
+  CLI's own quoting idiom around them (`codex`'s `-c key='"{effort}"'`
+  above is the example) is the template author's responsibility and
+  auto-quoting would break it.
 - `effort` / any other extra key (optional): CLI-specific tuning, free-form,
   only meaningful if `command` references it as a placeholder.
 
@@ -192,9 +217,16 @@ command = "opencode run -m {model} \"{prompt}\""
   quota (per `quota.json`, §7), and use the first that survives both
   filters. If the ladder is exhausted, fall back to the current session's
   own native reviewer (never zero reviewers).
-- `"double"`: the current session's own native reviewer runs unconditionally
-  (baseline, guaranteed) **plus** the first `policy.ladder` entry that
-  passes the same vendor-difference-preferred + quota filters as above.
+- `"double"`: a **native** reviewer runs unconditionally as the guaranteed
+  baseline — walk `policy.ladder` restricted to its `cli`-less entries only
+  (tier-aware: the best-quota-having native entry wins, e.g. `claude-opus`
+  before `claude-sonnet` when both are configured and Opus has quota),
+  falling back to the current session's own default model (no config, or
+  no native entry has quota — never zero reviewers) — **plus** the best
+  entry anywhere in the full `policy.ladder` whose vendor differs from the
+  baseline's, quota-aware, dropped (not substituted) if none survives. The
+  baseline is always native/current-runtime; only the second slot may be
+  external.
 
 `--no-cross-ai` (on `/review-spec`) forces single-mode, current-session-only,
 and **skips the ladder walk and quota probe entirely** (the "minimize
@@ -262,34 +294,51 @@ orders of magnitude:
 - **`runtimes.json`** — which CLIs are installed, their versions, and their
   listed models. Near-static (changes only on install/uninstall). TTL ~30
   days, or refreshed on demand via `review-spec-config`.
-- **`quota.json`** — per reviewer `key`: remaining context window and
-  quota/usage headroom from the last probe. TTL ~1 hour, refreshed
-  automatically (no user interaction) whenever stale at dispatch time.
+- **`quota.json`** — per reviewer `key`: a boolean `available` from the
+  last probe (a trivial prompt run through the reviewer's own `command`,
+  classified by exit code / a usage-limit-shaped error signal — no
+  CLI-specific quota subcommand required), plus `checked_at`. TTL ~1 hour,
+  refreshed automatically (no user interaction) whenever stale at dispatch
+  time, and never re-probed more than once per TTL window regardless of
+  how many `/review-spec` invocations happen inside it. **Does not**
+  capture remaining context-window headroom — no CLI profile (§5) has a
+  confirmed mechanism for that today; §10's context-window edge case is
+  aspirational until one is found, not implemented by v1.
 
-**Missing `runtimes.json` at `/review-spec` invocation time**: detect live,
-for this run only, without persisting; print one line ("no hay config de
-cross-AI guardada — corré `review-spec-config` para no repetir esto cada
-vez") and proceed. If the user has previously been asked and explicitly
-declined cross-AI, a minimal stub (`{"configured": false, "cross_ai":
-false}`) is persisted so the question is never asked again automatically —
-only an explicit `review-spec-config` run or an explicit `--cross-ai` flag
-re-opens that decision.
+**Missing `runtimes.json` at `/review-spec` invocation time**: this is the
+first invocation ever (before `review-spec-config` has run, or before any
+prior `/review-spec` run reached this step). Detect live via the same
+`detect-runtimes --save <path>` call `review-spec-config` itself uses (§7)
+— this both produces the snapshot for informational use *and* persists it
+in the same step, so the hint below fires once, not on every invocation.
+Print one line ("No cross-AI config saved yet — run `review-spec-config`
+so this doesn't repeat every invocation") and proceed with reviewer
+resolution as normal — resolving against whatever `review-spec.toml` state
+actually exists (typically none yet, which degrades gracefully to the
+current-session-only fallback, §3). No separate "declined" stub is needed:
+once `runtimes.json` exists — whether written here or by an explicit
+`review-spec-config` run — Step 0.7 stops live-detecting and hinting
+regardless of whether the user ever configured any `[[reviewers]]`
+entries; an explicit `review-spec-config` run is what reopens that
+decision (it always re-detects and re-saves).
 
 ---
 
 ## 7. `review-spec-config` skill (new)
 
 Interactive setup, modeled on `gsd-config`/`gsd-settings`: runs
-`scripts/review-spec/detect-runtimes.sh`, shows what it found (installed
-CLIs, their listed models), and asks the user (via `AskUserQuestion`) to
-name/rank `[[reviewers]]` entries and set `[policy]` — writing the result to
-`review-spec.toml` (global by default; `--local` writes
-`./.aikit/review-spec.toml` instead). Also exposes a `--check-only` mode
-(no writes) that reports current cross-AI availability — this is the
+`tools/review-spec.py detect-runtimes` (resolved to an absolute path per
+§8's resolution mechanism, since this module lives at the repo root, not
+inside this skill's own installed directory), shows what it found
+(installed CLIs, their listed models), and asks the user (via
+`AskUserQuestion`) to name/rank `[[reviewers]]` entries and set `[policy]`
+— writing the result to `review-spec.toml` (global by default; `--local`
+writes `./.aikit/review-spec.toml` instead). Also exposes a `--check-only`
+mode (no writes) that reports current cross-AI availability — this is the
 "standalone availability check" the original ask wanted as a separate
-script, implemented here as a flag rather than a fifth skill to avoid skill
-sprawl (`scripts/review-spec/detect-runtimes.sh` remains independently
-callable too, for anyone who wants the raw script instead of the
+script, implemented here as a flag rather than a fifth skill to avoid
+skill sprawl (`tools/review-spec.py detect-runtimes` remains independently
+callable too, for anyone who wants the raw command instead of the
 interactive wrapper).
 
 ---
@@ -297,7 +346,25 @@ interactive wrapper).
 ## 8. Orchestrator integration (`review-spec/SKILL.md`)
 
 - **Step 0.7 (new)**, runs once per invocation, after Step 0.6:
-  1. `RUN_TMP_DIR=$(mktemp -d)` — see §9.
+  0. Resolve `KIT_ROOT` (the ai-kit repo root) from this skill's own
+     already-resolved `SKILL_DIR`: `realpath` it (following the
+     `~/.claude/skills/review-spec` symlink when installed that way) and
+     strip the trailing `/skills/review-spec`. Derive `TOOLS_PY =
+     $KIT_ROOT/tools/review-spec.py` and `CLI_PROFILES_DIR =
+     $KIT_ROOT/references/review-spec/cli-profiles` — neither lives inside
+     an installed skill directory (§3), so this is the only place that
+     reaches them reliably across every install shape (plugin,
+     `~/.claude/skills` symlink, direct dev checkout). Missing `TOOLS_PY`
+     at this resolved path degrades exactly like `--no-cross-ai`.
+  1. Run `mktemp -d`, capture its stdout, and record that absolute path as
+     `RUN_TMP_DIR` **in the skill's own working notes/context** — not as a
+     shell environment variable. Each `Bash` tool call in this harness runs
+     in its own fresh shell, so a variable assigned in one call does not
+     exist in the next; `RUN_TMP_DIR` must be substituted as a literal
+     absolute path into every later command and prose reference for the
+     rest of this run, exactly the way `CODEBASE_ROOT`/`SEEDS_DIR`/
+     `CACHE_DIR` are already resolved once and substituted literally
+     elsewhere in this skill. See §9.
   2. Resolve source vendor (§4).
   3. Load config (§3) and cache (§6); refresh `quota.json` entries that are
      stale for any ladder candidate actually needed this run.
@@ -337,9 +404,11 @@ per iteration): today's `Step 3` literally uses
 identifier. Two concurrent `/review-spec` runs (two different projects, or
 two worktrees of the same repo) on the same machine collide on that exact
 path. Fixed by resolving one `RUN_TMP_DIR` via `mktemp -d` at the very start
-of the loop (§8, Step 0.7) and writing every artifact for that run — every
-reviewer's raw report, the Step 1.5 merge, the fixer's report — under that
-one guaranteed-unique directory.
+of the loop (§8, Step 0.7) — captured as a literal absolute path substituted
+into every later reference, not a shell variable (Bash tool calls run in
+independent fresh shells with no shared state) — and writing every artifact
+for that run — every reviewer's raw report, the Step 1.5 merge, the fixer's
+report — under that one guaranteed-unique directory.
 
 ---
 
@@ -350,19 +419,38 @@ one guaranteed-unique directory.
   session's own reviewer, `double` mode effectively behaves like `single`
   (only the guaranteed baseline runs) — no error, no blocked review.
 - **A ladder candidate has quota but its context window can't fit the
-  document(s)**: treated identically to "no quota" for filtering purposes —
-  skip and try the next candidate. (Exact context-length introspection
-  mechanism is CLI-specific research, §5.)
+  document(s)**: **not implemented by v1** — `quota.json` only tracks a
+  boolean `available` (§6), not context-window headroom, since no CLI
+  profile (§5) has a confirmed introspection mechanism for it yet. Once one
+  is found for a given CLI, it would be treated identically to "no quota"
+  for filtering purposes (skip and try the next candidate); until then this
+  case simply isn't detected — an oversized document sent to a
+  small-context reviewer fails the same way it would today.
 - **`--source-vendor` given but doesn't match any configured reviewer's
   vendor**: treat as unknown vendor — `single`/`double` ladder walks still
   work (nothing to "skip as same-vendor"), just without that one
   optimization.
-- **Both local and global config missing entirely, and the user has never
-  been asked**: live one-shot detection (§6), never blocks the review.
+- **Both local and global config missing entirely, and `runtimes.json`
+  doesn't exist yet**: live one-shot detection + persist (§6), never
+  blocks the review — resolution still proceeds and degrades to the
+  current-session-only fallback since there's no `[[reviewers]]` config.
 - **`strategy = "local-only"` but the local file omits `[policy]`
   entirely**: falls back to review-spec's built-in default policy
   (`mode = "single"`, empty ladder → always current-session), never to the
   global file (that would silently contradict `local-only`).
+- **An external reviewer's `Bash` dispatch errors, times out, or produces
+  a non-conforming report** (no parseable `### Status:` line): in
+  `single` mode this is indistinguishable from any other missing-Status
+  failure — the existing orchestrator rule already applies ("No Status
+  line → Surface failure", unchanged by this spec). In `double` mode, the
+  merge step (§8) checks every report for a `### Status:` line *before*
+  merging and, if any is missing, emits no `### Status:` line of its own
+  rather than fabricating an `Approved`/`Issues Found` verdict from an
+  incomplete pair — the same existing "No Status line" rule then catches
+  it at the orchestrator level. A failed external reviewer never silently
+  degrades to "the surviving reviewer's verdict alone"; it surfaces as a
+  failure of the whole iteration, same as a single-reviewer failure would
+  today.
 
 ---
 
@@ -372,10 +460,11 @@ Given this touches orchestration prose (SKILL.md files) and shell/Python
 detection scripts rather than a single testable module, testing splits by
 artifact:
 
-- **`scripts/review-spec/detect-runtimes.sh`**: unit-testable — mock
-  `PATH`/binary presence, assert correct `runtimes.json` shape; assert
-  `opencode models` output parses into the expected provider/model list
-  shape (using the real captured output in §5 as a fixture).
+- **`tools/review-spec.py`'s runtime/CLI detection**: unit-testable — mock
+  `PATH`/binary presence (`which_fn`) and process execution (`run_fn`),
+  assert correct `runtimes.json` shape; assert `opencode models` output
+  parses into the expected provider/model list shape (using the real
+  captured output in §5 as a fixture).
 - **Config loading (TOML parse + local/global merge + `strategy`
   resolution)**: unit-testable in isolation — `local-only` ignores global
   entirely; `global-merge` merges `[[reviewers]]` by `key` and shallow-merges

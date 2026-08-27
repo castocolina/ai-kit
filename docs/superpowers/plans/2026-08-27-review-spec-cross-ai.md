@@ -7,8 +7,12 @@ and optionally cross-vendor, instead of hardcoded to a single Claude
 subagent.
 
 **Architecture:** One new stdlib-only Python module, `tools/review-spec.py`
-(mirrors `tools/status-line.py`'s style — one flat file, `importlib`-loaded
-by its test module since the filename is hyphenated), holds config
+(mirrors `tools/status-line.py`'s file layout and testing style — one flat
+file, `importlib`-loaded by its test module since the filename is
+hyphenated; unlike `status-line.py` this module imports `tomllib`
+unguarded at module scope rather than degrading to `{}` on import failure,
+since this repo's `.python-version` pins 3.12 and `tomllib` has been
+stdlib since 3.11 — no fallback path is reachable), holds config
 load/write, cache read/write, CLI/model detection, policy resolution, and
 cross-reviewer findings merge as pure, independently unit-tested functions.
 Two skills are renamed (`reviewing-specs` → `review-spec-checklist`,
@@ -111,30 +115,73 @@ and every `"applying-review-feedback"` (including the Constants section's
 `**Fixer skill:** \`applying-review-feedback\``) with
 `"review-spec-fixer"`.
 
-- [ ] **Step 4: Verify no stale references remain — and fix the ones that need it**
+- [ ] **Step 4: Fix the moved skills' own self-references**
+
+The two `git mv`s in Step 1 only moved directories — they didn't touch the
+*content* of the moved files, so each moved skill still mentions the
+*other* skill's old name in its own prose. Verified live against this
+repo (`grep -n "reviewing-specs\|applying-review-feedback"` inside each
+file) — fix every line below:
+
+- `skills/review-spec-checklist/SKILL.md` line 13: `task
+  (\`applying-review-feedback\`).` → `task (\`review-spec-fixer\`).`
+- `skills/review-spec-fixer/SKILL.md`:
+  - Frontmatter `description:` (line 3): both occurrences of
+    `reviewing-specs` (`"a review report from \`reviewing-specs\`"`, and
+    the orchestrator example) → `review-spec-checklist`.
+  - Line 8: `flagged by \`reviewing-specs\`.` → `flagged by
+    \`review-spec-checklist\`.`
+- `skills/review-spec-checklist/references/frameworks/SCHEMA.md` line 118:
+  `(\`applying-review-feedback\`).` → `(\`review-spec-fixer\`).`
+
+- [ ] **Step 5: Verify no stale references remain — and fix the ones that need it**
 
 ```bash
 grep -rln "reviewing-specs\|applying-review-feedback" --include="*.md" .
 ```
 
-This currently matches **17 files**, not just `skills/review-spec/SKILL.md`.
-They split into three groups — handle each differently:
+Run this **after** Steps 1–4. Verified live against this repo's actual
+current state (pre-rename), the full match set is these **17 files**:
 
-1. **Live eval fixtures — MUST fix** (they describe/test current skill
-   behavior, not history):
-   `skills/review-spec/evals/01-superpowers-plan-routes-writing-plans.md`,
-   `skills/review-spec/evals/02-gsd-plan-routes-native-cmd.md`,
-   `skills/review-spec/evals/03-generic-doc-direct-edit.md`,
-   `skills/review-spec/evals/04-ambiguous-detection-fallback.md`,
-   `skills/review-spec-checklist/evals/orchestrator-integration.md`,
-   `skills/review-spec-checklist/evals/test-scenarios.md`,
-   `skills/review-spec-fixer/evals/test-scenarios.md`. Replace every
-   `reviewing-specs`/`applying-review-feedback` mention with the new names,
-   same as Step 3.
-2. **`README.md` — MUST fix** (current living documentation, not history):
-   replace its `reviewing-specs`/`applying-review-feedback` mentions the
-   same way.
-3. **Historical plans/PRDs — MUST NOT touch**: `docs/prds/000-ai-kit-overhaul-requirements.md`,
+```
+docs/prds/000-ai-kit-overhaul-requirements.md
+docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md
+docs/superpowers/plans/2026-06-24-wizard-redesign-B-ui.md
+docs/superpowers/plans/2026-08-27-review-spec-cross-ai.md
+docs/superpowers/specs/2026-08-27-review-spec-cross-ai-design.md
+README.md
+skills/applying-review-feedback/evals/test-scenarios.md
+skills/applying-review-feedback/SKILL.md
+skills/reviewing-specs/evals/orchestrator-integration.md
+skills/reviewing-specs/evals/test-scenarios.md
+skills/reviewing-specs/references/frameworks/SCHEMA.md
+skills/reviewing-specs/SKILL.md
+skills/review-spec/evals/01-superpowers-plan-routes-writing-plans.md
+skills/review-spec/evals/02-gsd-plan-routes-native-cmd.md
+skills/review-spec/evals/03-generic-doc-direct-edit.md
+skills/review-spec/evals/04-ambiguous-detection-fallback.md
+skills/review-spec/SKILL.md
+```
+
+By the time you run the grep (after Steps 1–4), the paths have already
+moved and 6 of these are already fixed (`skills/review-spec/SKILL.md` by
+Step 3; the two self-reference files by Step 4), so what you'll actually
+see is the **16** post-move paths, split into two groups:
+
+1. **MUST fix (11 files)** — living documentation and active test
+   fixtures, not history:
+   - `README.md` lines 28, 29, 34 (three separate mentions — `reviewing-specs`→`review-spec-checklist`, `applying-review-feedback`→`review-spec-fixer`, including the one inside the `review-spec` row's description).
+   - `skills/review-spec/evals/01-superpowers-plan-routes-writing-plans.md`, `02-gsd-plan-routes-native-cmd.md`, `03-generic-doc-direct-edit.md`, `04-ambiguous-detection-fallback.md`
+   - `skills/review-spec-checklist/evals/orchestrator-integration.md`, `skills/review-spec-checklist/evals/test-scenarios.md`
+   - `skills/review-spec-fixer/evals/test-scenarios.md` — also fix its
+     relative fixture path `../../reviewing-specs/evals/fixtures/` →
+     `../../review-spec-checklist/evals/fixtures/` (it points at the
+     reviewer skill's shared fixtures directory).
+
+   Replace every `reviewing-specs`/`applying-review-feedback` mention in
+   these 11 files with the new names, same substitution as Step 3.
+
+2. **MUST NOT touch (5 files)**: `docs/prds/000-ai-kit-overhaul-requirements.md`,
    `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md`,
    `docs/superpowers/plans/2026-06-24-wizard-redesign-B-ui.md`, and this
    plan + its spec (`docs/superpowers/plans/2026-08-27-review-spec-cross-ai.md`,
@@ -142,10 +189,10 @@ They split into three groups — handle each differently:
    these are immutable historical record or documents *about* the rename
    itself; leave their old-name mentions exactly as written.
 
-Re-run the grep after fixing groups 1–2 — it should now match only the
-group-3 paths (5 files), which is the expected final state, not zero.
+Re-run the grep after fixing group 1 — it should now match exactly the
+5 group-2 paths, not zero.
 
-- [ ] **Step 5: Verify the moved skills' own internal `references/` paths still resolve**
+- [ ] **Step 6: Verify the moved skills' own internal `references/` paths still resolve**
 
 ```bash
 ls skills/review-spec-checklist/references/frameworks/SCHEMA.md
@@ -154,7 +201,7 @@ ls skills/review-spec-checklist/references/frameworks/SCHEMA.md
 Expected: file exists (the move preserved the directory's internal
 structure — only the top-level directory name changed).
 
-- [ ] **Step 6: Note for the user — local symlink refresh**
+- [ ] **Step 7: Note for the user — local symlink refresh**
 
 Add a one-line note to the commit message (Step 7) that
 `~/.claude/skills/reviewing-specs` and `~/.claude/skills/applying-review-feedback`
@@ -164,7 +211,7 @@ exists" — see `tools/setup.py`'s symlink-diff functions) removes them and
 creates `review-spec-checklist`/`review-spec-fixer` symlinks on the next
 `tools/setup.py` run. No new symlink code needed in this plan.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A
@@ -190,8 +237,12 @@ EOF
 **Interfaces:**
 - Produces: `cfg_local_path(cwd: str) -> str`, `cfg_global_path(env: dict) -> str`,
   `cfg_load_toml(path: str) -> dict`, `cfg_merge_reviewers(global_list: list[dict], local_list: list[dict]) -> list[dict]`,
-  `cfg_resolve(cwd: str, env: dict) -> dict` (returns `{"policy": {...}, "reviewers": [...]}`).
-  Consumed by Task 5 (policy resolution) and Task 10 (`review-spec-config`).
+  `cfg_resolve(cwd: str, env: dict) -> dict` (returns `{"policy": {...}, "reviewers": [...]}`),
+  `cfg_render_toml(config: dict) -> str`, `cfg_write_toml(path: str, config: dict) -> None`.
+  Consumed by Task 5 (policy resolution), Task 8 (`render-toml` subcommand
+  calls `cfg_render_toml` directly), and Task 10 (`review-spec-config`
+  shells out to the `render-toml` subcommand rather than importing this
+  module — see Task 8's Interfaces note on why).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -268,6 +319,14 @@ class TestMergeReviewers(unittest.TestCase):
         merged = rs.cfg_merge_reviewers(global_list, local_list)
         self.assertEqual([r["key"] for r in merged], ["a", "b"])
         self.assertEqual(merged[0]["model"], "m1-override")
+
+    def test_entry_with_no_key_is_skipped_not_raised(self):
+        # one hand-written mistake in review-spec.toml must not crash the
+        # whole orchestrator (matches cfg_load_toml's never-raises contract)
+        global_list = [{"key": "a", "model": "m1"}, {"model": "no-key-here"}]
+        local_list = [{"model": "also-no-key"}]
+        merged = rs.cfg_merge_reviewers(global_list, local_list)
+        self.assertEqual([r["key"] for r in merged], ["a"])
 
 
 class TestResolveConfig(unittest.TestCase):
@@ -357,6 +416,7 @@ merge. Stdlib-only, no external dependencies (see pyproject.toml)."""
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -395,7 +455,13 @@ def cfg_load_toml(path: str) -> dict:
 def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
     """Merge [[reviewers]] by key: local fields override/extend matching
     global entries; local-only keys are appended; global-only keys are
-    preserved unchanged. Order: global order first, then new local keys."""
+    preserved unchanged. Order: global order first, then new local keys.
+    A malformed entry with no `key` at all is silently skipped (never
+    raises) — matches cfg_load_toml's "never raises on bad input"
+    contract: one hand-written mistake in review-spec.toml must not crash
+    the whole orchestrator."""
+    global_list = [r for r in global_list if "key" in r]
+    local_list = [r for r in local_list if "key" in r]
     by_key = {r["key"]: dict(r) for r in global_list}
     for r in local_list:
         key = r["key"]
@@ -777,16 +843,34 @@ exactly the "fixed model name" anti-pattern the spec's §1 opens by
 rejecting (Opus-when-available, cheaper-tier-under-budget, never a fixed
 name). The fix: there is no special sentinel. `policy.ladder` is one
 unified ordered list mixing native (`cli`-less) and external entries —
-e.g. `["claude-opus", "claude-sonnet", "codex-gpt", "grok-flagship"]`. The
-**best overall entry** (first with quota, ignoring vendor) is always tried
-first; this is what delivers tier-awareness, because the user's own
-config naturally orders their preferred Claude tier first, and a quota
-miss on `claude-opus` falls through to `claude-sonnet` (or the next
-configured entry) automatically — no special-casing needed. Only when
-*nothing at all* has quota (or no config exists) does resolution fall back
-to `NO_CONFIG_FALLBACK`, which dispatches via the `Agent` tool with **no
-`model` override at all** — inheriting whatever model this Claude Code
-session already runs as, rather than hardcoding `sonnet`.
+e.g. `["claude-opus", "claude-sonnet", "codex-gpt", "grok-flagship"]`. In
+`single` mode, the **best overall entry** (first with quota, preferring a
+different vendor than the source) is always tried first; this is what
+delivers tier-awareness, because the user's own config naturally orders
+their preferred Claude tier first, and a quota miss on `claude-opus` falls
+through to `claude-sonnet` (or the next configured entry) automatically —
+no special-casing needed. Only when *nothing at all* has quota (or no
+config exists) does resolution fall back to `NO_CONFIG_FALLBACK`, which
+dispatches via the `Agent` tool with **no `model` override at all** —
+inheriting whatever model this Claude Code session already runs as, rather
+than hardcoding `sonnet`.
+
+**Second design correction (from the live Opus-5 re-review of this plan —
+see the Self-review notes at the end of this document):** the first draft
+of `double` mode reused the exact same "best overall entry, any vendor"
+walk for its primary slot — which could let an *external* ladder entry
+become the primary/baseline reviewer whenever it happened to rank above
+every native entry (e.g. `ladder = ["codex-gpt", "claude-opus"]`). That
+directly contradicts the design's own guarantee (spec §3): double mode's
+first slot is always the **native** reviewer, unconditionally. Fixed:
+`double` mode's primary walks `policy.ladder` **restricted to its
+`cli`-less entries only** (still tier-aware within that restricted set —
+`claude-opus` before `claude-sonnet` when both are native and Opus has
+quota), falling back to `NO_CONFIG_FALLBACK` only when no native entry is
+configured or none has quota — never by promoting an external entry into
+the baseline slot. The secondary slot is unrestricted (native or external,
+whichever ranks best with a different vendor than the primary) and is
+still simply dropped, not substituted, when nothing survives.
 
 **Files:**
 - Modify: `tools/review-spec.py`
@@ -856,16 +940,21 @@ class TestResolveLadderPick(unittest.TestCase):
                                        skip_vendor="anthropic", quota={})
         self.assertEqual(pick.key, "grok-flagship")
 
+    def test_entry_missing_model_resolves_to_empty_string_not_a_crash(self):
+        reviewers = [{"key": "no-model", "vendor": "openai"}]
+        pick = rs.resolve_ladder_pick(reviewers, ["no-model"], skip_vendor="anthropic", quota={})
+        self.assertEqual(pick.model, "")
+
 
 class TestResolveReviewers(unittest.TestCase):
     def setUp(self):
         self.config = {
             "policy": {"mode": "single", "ladder": ["claude-opus", "claude-sonnet", "codex-gpt"]},
             "reviewers": [
-                {"key": "claude-opus", "model": "opus-5", "vendor": "anthropic"},
-                {"key": "claude-sonnet", "model": "sonnet-5", "vendor": "anthropic"},
+                {"key": "claude-opus", "model": "opus", "vendor": "anthropic"},
+                {"key": "claude-sonnet", "model": "sonnet", "vendor": "anthropic"},
                 {"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai",
-                 "cli": "codex", "command": "codex exec -m {model} \"{prompt}\""},
+                 "cli": "codex", "command": "codex exec -m {model} {prompt}"},
             ],
         }
 
@@ -922,6 +1011,32 @@ class TestResolveReviewers(unittest.TestCase):
         config = {"policy": {"mode": "double", "ladder": []}, "reviewers": []}
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(result, [rs.NO_CONFIG_FALLBACK])
+
+    def test_double_mode_baseline_is_always_native_even_when_external_ranks_first(self):
+        # regression for the design's "double mode always runs a native
+        # baseline, guaranteed" guarantee (spec §3): an external entry
+        # ranked ABOVE every native entry in the ladder must never become
+        # the baseline — it can only ever take the second (cross-vendor)
+        # slot.
+        config = {
+            "policy": {"mode": "double", "ladder": ["codex-gpt", "claude-opus", "claude-sonnet"]},
+            "reviewers": self.config["reviewers"],
+        }
+        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
+        self.assertEqual(result[0].key, "claude-opus")   # native baseline, not codex-gpt
+        self.assertIsNone(result[0].cli)
+        self.assertEqual(result[1].key, "codex-gpt")     # external takes the secondary slot only
+
+    def test_double_mode_baseline_falls_back_to_session_default_when_no_native_entry_configured(self):
+        # ladder is entirely external -> the native-baseline guarantee still
+        # holds via NO_CONFIG_FALLBACK, never by promoting an external entry
+        config = {
+            "policy": {"mode": "double", "ladder": ["codex-gpt"]},
+            "reviewers": [self.config["reviewers"][2]],  # codex-gpt only, no native entries at all
+        }
+        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
+        self.assertEqual(result[0], rs.NO_CONFIG_FALLBACK)
+        self.assertEqual(result[1].key, "codex-gpt")
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -967,8 +1082,13 @@ def _reviewer_by_key(reviewers: list, key: str) -> Optional[dict]:
 
 
 def _to_resolved(entry: dict) -> ResolvedReviewer:
+    """entry["key"] is always present here — every caller reaches this via
+    _reviewer_by_key, which already filters by key. entry.get("model", "")
+    tolerates a config entry that forgot to set model (never raises); an
+    empty model is already a valid sentinel elsewhere in this module (see
+    ResolvedReviewer's docstring) — "no override"."""
     return ResolvedReviewer(
-        key=entry["key"], model=entry["model"], vendor=entry.get("vendor", ""),
+        key=entry["key"], model=entry.get("model", ""), vendor=entry.get("vendor", ""),
         cli=entry.get("cli"), command=entry.get("command"),
         extra={k: v for k, v in entry.items() if k not in _KNOWN_REVIEWER_FIELDS},
     )
@@ -1007,22 +1127,37 @@ def resolve_ladder_pick(reviewers: list, ladder: list, skip_vendor: str, quota: 
     return None
 
 
+def _native_ladder(reviewers: list, ladder: list) -> list:
+    """The sub-list of `ladder` whose keys resolve to a cli-less
+    (native/current-runtime) reviewer entry, order preserved. Used to keep
+    double mode's baseline guaranteed-native (see resolve_reviewers)."""
+    result = []
+    for key in ladder:
+        entry = _reviewer_by_key(reviewers, key)
+        if entry is not None and not entry.get("cli"):
+            result.append(key)
+    return result
+
+
 def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: bool) -> list:
     """The full policy decision (design spec §3, as corrected during
-    planning — see Task 5's design-correction note). Returns 1 or 2
-    ResolvedReviewer entries; dispatch mechanics are the caller's concern
-    (Task 11), this only decides WHO.
+    planning — see Task 5's design-correction notes, including the
+    live-review fix to double mode's native-baseline guarantee). Returns 1
+    or 2 ResolvedReviewer entries; dispatch mechanics are the caller's
+    concern (Task 11), this only decides WHO.
 
     single: one reviewer, preferring a vendor different from source_vendor
     (independent perspective on the document), quota-aware, tier-aware via
     ladder order.
 
-    double: `primary` is the best-quota-having ladder entry with NO vendor
-    filter (tier-aware "whatever's best" — typically same vendor as
-    source, since that's what most users list first); `secondary` is the
-    best entry with a vendor DIFFERENT from primary's, dropped if none
-    survives (a same-vendor-only ladder degrades to a single reviewer,
-    not an error).
+    double: `primary` walks ONLY the ladder's native (cli-less) entries —
+    tier-aware within that restricted set, guaranteed to never be an
+    external entry, falling back to NO_CONFIG_FALLBACK if no native entry
+    is configured or none has quota (never zero reviewers, and never a
+    promoted external entry standing in for the baseline). `secondary` is
+    the best entry anywhere in the FULL ladder with a vendor DIFFERENT
+    from primary's, dropped (not substituted) if none survives (a
+    native-only ladder degrades to a single reviewer, not an error).
 
     Either mode falls back to NO_CONFIG_FALLBACK when --no-cross-ai was
     passed, the ladder is empty, or nothing in it has quota."""
@@ -1033,9 +1168,10 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
     ladder = policy.get("ladder", [])
     reviewers = config.get("reviewers", [])
     if mode == "double":
-        primary = resolve_ladder_pick(reviewers, ladder, skip_vendor="", quota=quota)
+        primary = resolve_ladder_pick(reviewers, _native_ladder(reviewers, ladder),
+                                       skip_vendor="", quota=quota)
         if primary is None:
-            return [NO_CONFIG_FALLBACK]
+            primary = NO_CONFIG_FALLBACK
         secondary = resolve_ladder_pick(reviewers, ladder, skip_vendor=primary.vendor, quota=quota)
         if secondary is None or secondary.key == primary.key:
             return [primary]
@@ -1075,6 +1211,21 @@ is covered by the same generic heuristic (its error text contains "usage
 limit", which the heuristic's substring check catches) — no special-casing
 needed.
 
+**Cost bound, and scope narrower than the design's `quota.json` shape**:
+this probe only ever answers a boolean — `available` — from a real (if
+trivial) call to each CLI; it does **not** capture remaining context-window
+headroom, despite design §6/§10 describing `quota.json` as holding
+"remaining context window and quota/usage headroom" and an edge case
+("has quota but the window can't fit the document"). That headroom
+capture has no confirmed CLI mechanism today (every profile in Task 9
+marks context-window introspection "unconfirmed syntax — research during
+implementation"), so this task deliberately ships the boolean-only shape
+now and the design is corrected to match (see this plan's Self-review
+notes). On cost: each ladder entry is charged for **at most one** trivial
+probe call per `QUOTA_TTL_SECONDS` (1 hour) — `refresh_quota_cache` skips
+any entry whose cached `checked_at` is still fresh, regardless of how many
+`/review-spec` invocations happen inside that hour.
+
 **Files:**
 - Modify: `tools/review-spec.py`
 - Test: `tests/test_review_spec.py`
@@ -1097,23 +1248,39 @@ Add to `tests/test_review_spec.py`:
 class TestRenderReviewerCommand(unittest.TestCase):
     def test_fills_model_and_prompt(self):
         resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
-                                        cli="codex", command='codex exec -m {model} "{prompt}"',
+                                        cli="codex", command='codex exec -m {model} {prompt}',
                                         extra={})
         self.assertEqual(rs.render_reviewer_command(resolved, "hello"),
-                          'codex exec -m gpt-5.2 "hello"')
+                          'codex exec -m gpt-5.2 hello')
 
     def test_fills_extra_fields(self):
         resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
                                         cli="codex",
-                                        command="codex exec -m {model} -c service_tier='\"{service_tier}\"' \"{prompt}\"",
+                                        command="codex exec -m {model} -c service_tier='\"{service_tier}\"' {prompt}",
                                         extra={"service_tier": "fast"})
         out = rs.render_reviewer_command(resolved, "hi")
         self.assertIn("service_tier='\"fast\"'", out)
 
+    def test_prompt_is_shell_escaped_but_extra_fields_are_not(self):
+        # {prompt} is free text built from document paths/content signals —
+        # the one field that MUST survive as a single shell argument no
+        # matter what it contains. {model}/extra fields are short,
+        # human-typed config values whose own quoting idiom (e.g. codex's
+        # -c key='"value"') the template author controls directly — auto-
+        # quoting those would break that idiom, so only {prompt} is quoted.
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex", command="codex exec -m {model} {prompt}",
+                                        extra={})
+        dangerous_prompt = 'Read this; rm -rf / #'
+        out = rs.render_reviewer_command(resolved, dangerous_prompt)
+        import shlex as _shlex
+        tokens = _shlex.split(out)
+        self.assertEqual(tokens[-1], dangerous_prompt)  # survives as ONE argument
+
 
 class TestProbeReviewerQuota(unittest.TestCase):
     def test_native_entry_is_always_available(self):
-        resolved = rs.ResolvedReviewer(key="claude-opus", model="opus-5", vendor="anthropic",
+        resolved = rs.ResolvedReviewer(key="claude-opus", model="opus", vendor="anthropic",
                                         cli=None, command=None, extra={})
         result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: (_ for _ in ()).throw(
             AssertionError("should never shell out for a native entry")))
@@ -1217,8 +1384,22 @@ def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> str:
     are always available; any of the entry's extra fields (effort,
     service_tier, ...) fill their own {placeholder} when the command
     references it. Shared by probe_reviewer_quota (below) and Task 11's
-    real dispatch, so probing and dispatching can never drift apart."""
-    return resolved.command.format(model=resolved.model, prompt=prompt, **resolved.extra)
+    real dispatch, so probing and dispatching can never drift apart.
+
+    Only {prompt} is shell-escaped (via shlex.quote) before substitution —
+    it is free text built from document paths/content signals and MUST
+    survive as exactly one shell argument no matter what it contains (this
+    fixes a real command-injection risk: an unescaped {prompt} spliced into
+    a `shell=True` command string via a document path containing `"`, `$`,
+    or `` ` `` would corrupt or inject into the command). {model} and any
+    `extra` field are deliberately left unescaped — they're short,
+    human-typed config values, and some CLIs need their own literal
+    quoting idiom in the template around them (e.g. codex's `-c
+    key='"{effort}"'`), which auto-quoting would break. Command templates
+    must therefore write a bare `{prompt}` (never `"{prompt}"` or
+    `'{prompt}'` — the quoting is already applied here)."""
+    return resolved.command.format(model=resolved.model, prompt=shlex.quote(prompt),
+                                    **resolved.extra)
 
 
 def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) -> dict:
@@ -1291,9 +1472,12 @@ git commit -m "feat(review-spec): add quota probing (render_reviewer_command, pr
 - Consumes: nothing from Tasks 2–6 (pure text-in/text-out, deliberately
   decoupled so it's testable with plain fixture strings).
 - Produces: `parse_findings(report_text: str) -> list[dict]`,
+  `report_has_status(report_text: str) -> bool`,
   `merge_findings(reports: list[tuple[str, str]]) -> list[dict]`,
   `render_merged_report(findings: list[dict], doc_paths: str) -> str`.
-  Consumed by Task 11 (Step 1.5).
+  Consumed by Task 8 (`merge-reports` uses `report_has_status` to detect a
+  failed/non-conforming reviewer *before* merging — see that task's
+  "Bug fixed here" note) and Task 11 (Step 1.5).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1334,6 +1518,31 @@ class TestParseFindings(unittest.TestCase):
         approved = "## Review: spec.md\n### Status: Approved\n"
         self.assertEqual(rs.parse_findings(approved), [])
 
+    def test_cross_document_consistency_bullets_are_not_misattributed(self):
+        report = """## Review: a.md, b.md
+### HIGH
+- **Real high finding** — Location: §1. Required: fix it. Why: reasons.
+### Cross-Document Consistency
+- **Docs disagree** — Location: §2 vs §3. Required: reconcile. Why: contradiction.
+### Status: Issues Found — fix and re-invoke
+"""
+        findings = rs.parse_findings(report)
+        self.assertEqual(len(findings), 2)
+        self.assertEqual(findings[0]["severity"], "HIGH")
+        self.assertEqual(findings[1]["severity"], "CROSS-DOC")
+        self.assertEqual(findings[1]["title"], "Docs disagree")
+
+
+class TestReportHasStatus(unittest.TestCase):
+    def test_true_when_status_line_present(self):
+        self.assertTrue(rs.report_has_status(_REPORT_A))
+
+    def test_false_for_garbage_text(self):
+        self.assertFalse(rs.report_has_status("some random CLI error output, no status here"))
+
+    def test_false_for_empty_text(self):
+        self.assertFalse(rs.report_has_status(""))
+
 
 class TestMergeFindings(unittest.TestCase):
     def test_same_severity_and_location_merges_into_one_tagged_entry(self):
@@ -1354,6 +1563,24 @@ class TestMergeFindings(unittest.TestCase):
         self.assertEqual(len(merged), 2)
         self.assertTrue(all(f["reviewers"] == ["claude-opus"] for f in merged))
 
+    def test_two_distinct_findings_from_the_same_reviewer_at_the_same_location_both_survive(self):
+        # regression: a single report can legitimately raise two different
+        # findings at the same Location (e.g. two separate HIGH issues both
+        # in "§3") — these must never collapse into one just because their
+        # (severity, location) pair matches; only cross-reviewer matches at
+        # the same (severity, location) should merge.
+        report = """## Review: spec.md
+### HIGH
+- **First issue** — Location: §3. Required: fix A. Why: reason A.
+- **Second issue** — Location: §3. Required: fix B. Why: reason B.
+### Status: Issues Found — fix and re-invoke
+"""
+        merged = rs.merge_findings([("claude-opus", report)])
+        self.assertEqual(len(merged), 2)
+        titles = {f["title"] for f in merged}
+        self.assertEqual(titles, {"First issue", "Second issue"})
+        self.assertTrue(all(f["reviewers"] == ["claude-opus"] for f in merged))
+
 
 class TestRenderMergedReport(unittest.TestCase):
     def test_groups_by_severity_and_tags_reviewers(self):
@@ -1369,6 +1596,13 @@ class TestRenderMergedReport(unittest.TestCase):
         rendered = rs.render_merged_report([], "spec.md")
         self.assertIn("### Status: Approved", rendered)
         self.assertNotIn("Issues Found", rendered)
+
+    def test_cross_doc_findings_render_under_their_own_heading(self):
+        findings = [{"severity": "CROSS-DOC", "title": "Docs disagree", "location": "§2 vs §3",
+                     "required": "reconcile", "why": "contradiction", "reviewers": ["claude-opus"]}]
+        rendered = rs.render_merged_report(findings, "a.md, b.md")
+        self.assertIn("### Cross-Document Consistency", rendered)
+        self.assertNotIn("### CROSS-DOC", rendered)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1384,17 +1618,35 @@ Append to `tools/review-spec.py`:
 ```python
 # ── Findings merge (Step 1.5 double-review reconciliation) ──────────────
 
-_SEVERITY_RE = re.compile(r"^### (CRITICAL|HIGH|MEDIUM)\s*$", re.MULTILINE)
+_SEVERITY_HEADINGS = {
+    "CRITICAL": "CRITICAL", "HIGH": "HIGH", "MEDIUM": "MEDIUM",
+    "Cross-Document Consistency": "CROSS-DOC",
+}
+_SEVERITY_RE = re.compile(
+    r"^### (CRITICAL|HIGH|MEDIUM|Cross-Document Consistency)\s*$", re.MULTILINE)
 _BULLET_RE = re.compile(
     r"^- \*\*(.+?)\*\* — Location: (.+?)\. Required: (.+?)\. Why: (.+?)\.\s*$",
     re.MULTILINE)
 
 
+def report_has_status(report_text: str) -> bool:
+    """True iff report_text contains a `### Status:` line — the one thing
+    every conforming reviewer report guarantees (per review-spec-checklist's
+    output template). Used by the merge-reports CLI subcommand (Task 8) to
+    detect a failed/non-conforming/empty reviewer report BEFORE merging, so
+    a broken external CLI call can never silently read as a clean Approved
+    merge (it never produces findings, so an unguarded merge would treat it
+    as "zero issues")."""
+    return "### Status:" in report_text
+
+
 def parse_findings(report_text: str) -> list:
     """[{severity, title, location, required, why}] in document order, per
-    the reviewing-specs/review-spec-checklist output template (`## SEVERITY`
-    headings followed by `- **title** — Location: .... Required: .... Why:
-    ....` bullets)."""
+    the review-spec-checklist output template (`### SEVERITY` headings,
+    including the `### Cross-Document Consistency` section — normalized to
+    the `"CROSS-DOC"` severity tag — followed by `- **title** — Location:
+    .... Required: .... Why: ....` bullets). A bullet appearing before any
+    recognized heading (malformed input) gets severity None."""
     sev_matches = list(_SEVERITY_RE.finditer(report_text))
     findings = []
     for m in _BULLET_RE.finditer(report_text):
@@ -1403,7 +1655,7 @@ def parse_findings(report_text: str) -> list:
         for i, sm in enumerate(sev_matches):
             nxt = sev_matches[i + 1].start() if i + 1 < len(sev_matches) else len(report_text)
             if sm.start() <= pos < nxt:
-                severity = sm.group(1)
+                severity = _SEVERITY_HEADINGS[sm.group(1)]
                 break
         findings.append({"severity": severity, "title": m.group(1), "location": m.group(2),
                           "required": m.group(3), "why": m.group(4)})
@@ -1413,15 +1665,25 @@ def parse_findings(report_text: str) -> list:
 def merge_findings(reports: list) -> list:
     """reports: [(reviewer_key, report_text), ...]. Union of every finding,
     each tagged with which reviewer(s) surfaced it. Findings sharing the
-    exact same (severity, location) across reports are combined into one
-    entry with both reviewers tagged — deliberately NOT fuzzy title-text
-    matching (two models rarely word the same finding identically), so this
-    only merges the case where they flag literally the same passage."""
+    exact same (severity, location) ACROSS DIFFERENT reports are combined
+    into one entry with both reviewers tagged — deliberately NOT fuzzy
+    title-text matching (two models rarely word the same finding
+    identically), so this only merges the case where they flag literally
+    the same passage. Within a single report, two distinct findings that
+    happen to share a (severity, location) — e.g. two separate HIGH issues
+    both in "§3" — are never collapsed into each other: only the first
+    occurrence per report claims the bare (severity, location) key; any
+    later same-report finding at that same key is disambiguated by adding
+    its own title into the key, so it always survives as its own entry."""
     merged = {}
     order = []
     for key, text in reports:
+        seen_this_report = set()
         for f in parse_findings(text):
             dedup_key = (f["severity"], f["location"])
+            if dedup_key in seen_this_report:
+                dedup_key = (f["severity"], f["location"], f["title"])
+            seen_this_report.add((f["severity"], f["location"]))
             if dedup_key in merged:
                 merged[dedup_key]["reviewers"].append(key)
             else:
@@ -1433,16 +1695,30 @@ def merge_findings(reports: list) -> list:
 
 
 def render_merged_report(findings: list, doc_paths: str) -> str:
-    by_sev = {"CRITICAL": [], "HIGH": [], "MEDIUM": []}
+    """Renders CRITICAL/HIGH/MEDIUM under their own headings and CROSS-DOC
+    findings under the same `### Cross-Document Consistency` heading the
+    source reports use (never a raw `### CROSS-DOC`, which isn't part of
+    the output template). A finding whose severity didn't match any
+    recognized heading (malformed input) falls back to MEDIUM, tagged
+    exactly as parsed — this can only happen on non-conforming input,
+    since report_has_status (Task 8) already filters those out before this
+    function ever runs. Deliberately drops each source report's own
+    `### Document Type`/`### Files Read` lines — those describe a single
+    reviewer's run, not a property of the merge — in favor of a fixed
+    `cross-ai merged` marker."""
+    by_sev = {"CRITICAL": [], "HIGH": [], "MEDIUM": [], "CROSS-DOC": []}
     for f in findings:
-        by_sev.setdefault(f["severity"] or "MEDIUM", []).append(f)
+        sev = f["severity"] if f["severity"] in by_sev else "MEDIUM"
+        by_sev[sev].append(f)
     lines = [f"## Review: {doc_paths}", "### Document Type", "cross-ai merged"]
     any_issues = any(by_sev.values())
-    for sev in ("CRITICAL", "HIGH", "MEDIUM"):
+    heading_for = {"CRITICAL": "### CRITICAL", "HIGH": "### HIGH", "MEDIUM": "### MEDIUM",
+                   "CROSS-DOC": "### Cross-Document Consistency"}
+    for sev in ("CRITICAL", "HIGH", "MEDIUM", "CROSS-DOC"):
         items = by_sev.get(sev, [])
         if not items:
             continue
-        lines.append(f"### {sev}")
+        lines.append(heading_for[sev])
         for f in items:
             tag = ", ".join(f["reviewers"])
             lines.append(f"- **{f['title']}** — Location: {f['location']}. "
@@ -1475,6 +1751,18 @@ the tested local/global `strategy` merge never actually ran in production.
 Fixed: `resolve-reviewers` takes `--cwd <path>` and calls `cfg_resolve(cwd,
 os.environ)`, exactly like every other consumer must.
 
+**Second bug fixed here (caught by the live Opus-5 re-review — see this
+plan's Self-review notes):** `merge-reports`'s first draft unconditionally
+merged whatever it could read, so a failed/unreadable/non-conforming
+external reviewer report (a garbage CLI error, a truncated file) parsed as
+zero findings and merged into a false `### Status: Approved` for the whole
+run. Fixed: each report is checked via `report_has_status` (Task 7) before
+merging; if any is missing its `### Status:` line, `merge-reports` prints
+a plain diagnostic with **no** `### Status:` line of its own and returns 0
+— `review-spec/SKILL.md`'s existing Step 2 already treats "No Status
+line" as "surface a failure" (a rule that predates this plan), so this
+reuses that guard instead of inventing a new one.
+
 **Files:**
 - Modify: `tools/review-spec.py`
 - Modify: `Makefile` (add `tests.test_review_spec` to the `test:` target)
@@ -1485,7 +1773,11 @@ os.environ)`, exactly like every other consumer must.
 - Produces: a `main(argv: list) -> int` function and `if __name__ ==
   "__main__": sys.exit(main(sys.argv[1:]))`, with subcommands
   `detect-runtimes` (with `--save <path>`), `probe-quota`,
-  `resolve-reviewers`, `merge-reports`, `render-toml`.
+  `resolve-reviewers`, `merge-reports` (fails closed — see "Bug fixed
+  here" below — via `report_has_status`, Task 7), `render-toml`,
+  `render-command` (the orchestrator's only way to reach Task 6's
+  `render_reviewer_command` from a `Bash` dispatch, since it's Python —
+  see Task 11 Step 3).
   Consumed by Task 10 (`review-spec-config`) and Task 11 (orchestrator's
   `Bash` calls), both of which shell out to `python3 tools/review-spec.py
   <subcommand> ...` rather than importing the module directly (they run
@@ -1576,6 +1868,45 @@ class TestMainCli(unittest.TestCase):
                                  "claude-opus=" + path_a, "codex-gpt=" + path_b])
             self.assertEqual(code, 0)
             self.assertIn("### CRITICAL", buf.getvalue())
+
+    def test_merge_reports_fails_closed_on_a_non_conforming_report(self):
+        # regression: a garbage/failed external CLI report (no Status
+        # line) must never silently merge into a false Approved
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            path_a = os.path.join(d, "a.md")
+            path_b = os.path.join(d, "b.md")
+            with open(path_a, "w", encoding="utf-8") as f:
+                f.write(_REPORT_A)
+            with open(path_b, "w", encoding="utf-8") as f:
+                f.write("codex: error: usage limit exceeded\n")  # no ### Status: line
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["merge-reports", "--doc-paths", "spec.md",
+                                 "claude-opus=" + path_a, "codex-gpt=" + path_b])
+            self.assertEqual(code, 0)
+            self.assertNotIn("### Status:", buf.getvalue())
+            self.assertIn("codex-gpt", buf.getvalue())
+
+    def test_render_command_fills_the_indexed_reviewer(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            reviewers_path = os.path.join(d, "reviewers.json")
+            with open(reviewers_path, "w", encoding="utf-8") as f:
+                json.dump([{"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai",
+                            "cli": "codex", "command": "codex exec -m {model} {prompt}",
+                            "extra": {}}], f)
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("hello")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["render-command", "--reviewers-json", reviewers_path,
+                                 "--index", "0", "--prompt-file", prompt_path])
+            self.assertEqual(code, 0)
+            self.assertEqual(buf.getvalue().strip(), "codex exec -m gpt-5.2 hello")
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1617,6 +1948,13 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
     p_toml = sub.add_parser("render-toml")
     p_toml.add_argument("--json-config", required=True, help="path to a JSON file shaped like the TOML config")
 
+    p_render = sub.add_parser("render-command")
+    p_render.add_argument("--reviewers-json", required=True,
+                           help="path to resolve-reviewers' saved JSON array output")
+    p_render.add_argument("--index", type=int, required=True,
+                           help="0 for the primary/only reviewer, 1 for the secondary")
+    p_render.add_argument("--prompt-file", required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "detect-runtimes":
@@ -1644,10 +1982,29 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
 
     if args.command == "merge-reports":
         reports = []
+        unreadable = []
         for item in args.reports:
             key, _, path = item.partition("=")
-            with open(path, encoding="utf-8") as f:
-                reports.append((key, f.read()))
+            try:
+                with open(path, encoding="utf-8") as f:
+                    text = f.read()
+            except OSError:
+                unreadable.append(key)
+                continue
+            if not report_has_status(text):
+                unreadable.append(key)
+                continue
+            reports.append((key, text))
+        if unreadable:
+            # Deliberately prints NO "### Status:" line — review-spec/SKILL.md's
+            # existing Step 2 already treats "No Status line" as a failure to
+            # surface (its own long-standing rule, unrelated to this plan), so a
+            # failed/unreadable external reviewer can never silently merge into
+            # a false "### Status: Approved". No new orchestrator special-case
+            # needed.
+            print(f"merge-reports: reviewer(s) {', '.join(unreadable)} produced "
+                  f"no readable report with a Status line — cannot merge.")
+            return 0
         merged = merge_findings(reports)
         print(render_merged_report(merged, args.doc_paths))
         return 0
@@ -1656,6 +2013,17 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
         with open(args.json_config, encoding="utf-8") as f:
             config = json.load(f)
         print(cfg_render_toml(config))
+        return 0
+
+    if args.command == "render-command":
+        with open(args.reviewers_json, encoding="utf-8") as f:
+            reviewers = json.load(f)
+        r = reviewers[args.index]
+        resolved = ResolvedReviewer(key=r["key"], model=r["model"], vendor=r["vendor"],
+                                     cli=r["cli"], command=r["command"], extra=r["extra"])
+        with open(args.prompt_file, encoding="utf-8") as f:
+            prompt = f.read()
+        print(render_reviewer_command(resolved, prompt))
         return 0
 
     return 1
@@ -1926,18 +2294,36 @@ description: Interactive setup for review-spec's cross-AI reviewer config — de
 
 Set up (or refresh) `review-spec`'s cross-AI reviewer configuration.
 
+### Step 0 — Locate `tools/review-spec.py` and the CLI profiles
+
+`tools/review-spec.py` and `references/review-spec/cli-profiles/` live at
+the ai-kit repo root, not inside any individually-installed skill
+directory (`tools/setup.py` only symlinks `agents`/`commands`/`skills`),
+so resolve them the same way `review-spec/SKILL.md` resolves its own
+`TOOLS_PY`/`CLI_PROFILES_DIR` (see that skill's Step 0.7 point 0 — Task
+11): take the first existing of, in order, `${CLAUDE_PLUGIN_ROOT}` (when
+set), `~/.claude/skills/review-spec-config` (this skill's own installed
+symlink), or the directory containing this `SKILL.md` directly (dev
+checkout, no symlink); call that `SKILL_DIR`, then:
+
+```bash
+SKILL_DIR_REAL="$(realpath "$SKILL_DIR")"
+KIT_ROOT="${SKILL_DIR_REAL%/skills/*}"
+TOOLS_PY="$KIT_ROOT/tools/review-spec.py"
+CLI_PROFILES_DIR="$KIT_ROOT/references/review-spec/cli-profiles"
+```
+
 ### Step 1 — Detect
 
 ```bash
-.venv/bin/python3 tools/review-spec.py detect-runtimes --save ~/.cache/ai-kit/review-spec/runtimes.json
+python3 "$TOOLS_PY" detect-runtimes --save ~/.cache/ai-kit/review-spec/runtimes.json
 ```
 
-(If not running from the ai-kit repo itself, use the installed copy's
-absolute path instead.) `--save` persists the snapshot immediately (via
-`cache_write_json` — see Task 8), so `review-spec` doesn't have to
-re-detect next session; the command also prints the same JSON to stdout.
-Parse it: for each CLI marked `"installed": true`, note its path; for
-`opencode`, note its `models` list.
+`--save` persists the snapshot immediately (via `cache_write_json` — see
+Task 8), so `review-spec` doesn't have to re-detect next session; the
+command also prints the same JSON to stdout. Parse it: for each CLI marked
+`"installed": true`, note its path; for `opencode`, note its `models`
+list.
 
 If `--check-only` was passed: report which CLIs are installed, which have
 a `review-spec.toml` reviewer entry already, and stop — do not write
@@ -1949,15 +2335,20 @@ For each installed CLI (beyond the current session's own runtime), use
 `AskUserQuestion` to ask whether the user wants it available as a cross-AI
 reviewer. For `opencode`, additionally ask which of its listed models (if
 any) to register as reviewer entries — read
-`references/review-spec/cli-profiles/opencode.md` first so you know real
-vendor attributions for common model-id prefixes (Moonshot for `kimi-*`,
-Alibaba for `qwen*`, xAI for `grok-*`, etc.) rather than guessing.
+`$CLI_PROFILES_DIR/opencode.md` first so you know real vendor attributions
+for common model-id prefixes (Moonshot for `kimi-*`, Alibaba for `qwen*`,
+xAI for `grok-*`, etc.) rather than guessing.
 
 For each CLI the user wants, read its profile under
-`references/review-spec/cli-profiles/<id>.md` for the exact
-non-interactive command shape, and ask the user to confirm/adjust: model
-id, `vendor`, and any extra knobs (`effort`, `service_tier`, ...) that
-profile's `command` template needs.
+`$CLI_PROFILES_DIR/<id>.md` for the exact non-interactive command shape,
+and ask the user to confirm/adjust: model id, `vendor`, and any extra
+knobs (`effort`, `service_tier`, ...) that profile's `command` template
+needs. **For a native (cli-less) reviewer entry** — e.g. the current
+session's own runtime, or another Claude tier reachable without an
+external CLI — `model` must be one of the four `Agent`-tool aliases
+(`sonnet`/`opus`/`haiku`/`fable`), never a full model id like `"opus-5"`;
+ask the user to pick one of those four rather than typing a version
+string.
 
 Then ask: `policy.mode` (`single` or `double`) and the `policy.ladder`
 order (default to the order the user answered the per-CLI questions in,
@@ -1970,7 +2361,7 @@ expects (`{"policy": {...}, "reviewers": [...]}`), write it to a temp JSON
 file, then:
 
 ```bash
-.venv/bin/python3 tools/review-spec.py render-toml --json-config <temp.json>
+python3 "$TOOLS_PY" render-toml --json-config <temp.json>
 ```
 
 Write that output to the target path: `~/.config/ai-kit/review-spec.toml`
@@ -2037,11 +2428,47 @@ final paragraph (the one ending "...If no sibling context exists, pass
 
 Runs once per invocation, after Step 0.6.
 
-1. `RUN_TMP_DIR=$(mktemp -d)` — every artifact this run produces (raw
-   reviewer reports, the double-review merge, the fixer's report) lives
-   under this one directory, replacing the old flat `/tmp/review-spec-*`
-   paths (which collided across concurrent runs on different
-   projects/worktrees — fixed here).
+0. Resolve `KIT_ROOT`, `TOOLS_PY`, and `CLI_PROFILES_DIR` — needed because
+   `tools/review-spec.py` and `references/review-spec/cli-profiles/`
+   live at the ai-kit repo root, **not** inside any individually-installed
+   skill directory, so neither `tools/setup.py`'s symlinks (which only
+   cover `agents/commands/skills`, per its `CATEGORIES`) nor a
+   sibling-of-`SKILL_DIR` shortcut (the trick `SEEDS_DIR` above uses,
+   which only works because *both* `review-spec` and
+   `review-spec-checklist` are independently symlinked into the same
+   `~/.claude/skills/` tier) can reach them directly:
+   ```bash
+   # SKILL_DIR is already established above (the directory containing
+   # THIS SKILL.md, resolved via the same CLAUDE_PLUGIN_ROOT /
+   # ~/.claude/skills/review-spec / sibling-of-this-file fallback used for
+   # SEEDS_DIR). realpath follows the ~/.claude/skills/review-spec symlink
+   # (when installed) to the real repo checkout, so stripping the known
+   # "/skills/review-spec" suffix off the end reliably yields the repo root
+   # in every install shape: plugin, symlinked ~/.claude/skills, or a
+   # direct dev checkout with no symlink at all (realpath is then a no-op).
+   SKILL_DIR_REAL="$(realpath "$SKILL_DIR")"
+   KIT_ROOT="${SKILL_DIR_REAL%/skills/*}"
+   TOOLS_PY="$KIT_ROOT/tools/review-spec.py"
+   CLI_PROFILES_DIR="$KIT_ROOT/references/review-spec/cli-profiles"
+   ```
+   If `TOOLS_PY` does not exist at that resolved path, treat this exactly
+   like `--no-cross-ai` (skip straight to step 5's fallback) — cross-AI
+   support isn't installed, never block the review over it.
+1. Run `mktemp -d` via `Bash`, and record its printed absolute path as
+   `RUN_TMP_DIR` in this skill's own working notes — **not** a shell
+   environment variable. Every `Bash` tool call in this harness starts a
+   fresh shell, so a variable set in one call is gone by the next one;
+   from here on, substitute `RUN_TMP_DIR`'s literal absolute path into
+   every command and every prose reference below, exactly the way
+   `CODEBASE_ROOT` is already resolved once (Step 0.1) and substituted
+   literally everywhere after. (This doc keeps writing `$RUN_TMP_DIR` for
+   readability, matching how `<CODEBASE_ROOT>` reads elsewhere in this
+   skill — read every `$RUN_TMP_DIR` below as "the literal path captured
+   here", never as an actual shell variable reference.) Every artifact
+   this run produces (raw reviewer reports, the double-review merge, the
+   fixer's report) lives under this one directory, replacing the old flat
+   `/tmp/review-spec-*` paths (which collided across concurrent runs on
+   different projects/worktrees — fixed here).
 2. If `--no-cross-ai`: skip straight to step 5 with an empty reviewer
    list request (`resolve-reviewers` degrades to the session-default
    fallback on its own when `--cross-ai` is omitted) — no detection, no
@@ -2049,38 +2476,55 @@ Runs once per invocation, after Step 0.6.
    this flag exists for.
 3. Otherwise, check whether `~/.cache/ai-kit/review-spec/runtimes.json`
    exists:
-   - **Missing, never asked before**: run
-     `python3 tools/review-spec.py detect-runtimes` live (do not `--save`
-     yet), print one line — "No hay config de cross-AI guardada — corré
-     `review-spec-config` para no repetir esto cada vez." — and continue
-     using this run's live detection only (not persisted).
-   - **Missing, but a decline was already recorded**: a prior run wrote a
-     stub `{"configured": false, "cross_ai": false}` there — treat this
-     exactly like `--no-cross-ai` (step 2) for the rest of this run,
-     silently, no repeated prompt.
+   - **Missing**: this is the first invocation ever to reach this step (no
+     `review-spec-config` run yet, and no prior `/review-spec` run got
+     this far either). Run
+     ```bash
+     python3 "$TOOLS_PY" detect-runtimes \
+       --save ~/.cache/ai-kit/review-spec/runtimes.json
+     ```
+     — `--save` both prints the snapshot (unused here, informational only)
+     *and* persists it via `cache_write_json` in the same call, so this
+     branch never runs again after today: the next invocation finds the
+     file present and skips straight to the "Present" case below. Print
+     one line — "No cross-AI config saved yet — run `review-spec-config`
+     so this doesn't repeat every invocation." — then continue to step 4;
+     do NOT skip reviewer resolution (there's usually no
+     `review-spec.toml` yet either, so `resolve-reviewers` in step 5
+     degrades to `NO_CONFIG_FALLBACK` on its own — no special-casing
+     needed here beyond persisting the detection snapshot and printing the
+     hint).
    - **Present**: nothing to do here — `resolve-reviewers` (step 5) reads
-     the real config independently.
+     the real `review-spec.toml` config independently; `runtimes.json`'s
+     only consumer is `review-spec-config` (Task 10), which reads it to
+     avoid a redundant re-detection when the user runs that skill.
 4. Refresh quota for anything the config's ladder might need:
    ```bash
-   python3 tools/review-spec.py probe-quota --cwd <CODEBASE_ROOT> \
+   python3 "$TOOLS_PY" probe-quota --cwd <CODEBASE_ROOT> \
      --quota-path ~/.cache/ai-kit/review-spec/quota.json
    ```
    (No-op — writes `{}` — when there is no config/ladder to probe.)
-5. Resolve the reviewer list:
+5. Resolve the reviewer list, saving its output to a file (Step 1's
+   external dispatch needs a stable path to feed `render-command`, not
+   just the in-context text):
    ```bash
-   python3 tools/review-spec.py resolve-reviewers \
+   python3 "$TOOLS_PY" resolve-reviewers \
      --cwd <CODEBASE_ROOT> \
      --quota ~/.cache/ai-kit/review-spec/quota.json \
      --source-vendor <SOURCE_VENDOR from Step 1's flag parsing> \
-     --cross-ai   # omit this flag entirely when --no-cross-ai was requested (step 2)
+     --cross-ai \  # omit this flag entirely when --no-cross-ai was requested (step 2)
+     > "$RUN_TMP_DIR/reviewers.json"
    ```
    `resolve-reviewers` itself calls `cfg_resolve(cwd, env)` (Task 2),
    which already handles the local-vs-global/`strategy` resolution — this
    step never re-implements that logic, it only picks which `--cwd` to
    pass (`CODEBASE_ROOT` from Step 0.1, so the resolved local config is
    the one that actually owns the document under review).
-6. The command prints a JSON array of 1 or 2 reviewer objects. Record it as
-   `REVIEWER_LIST`.
+6. `$RUN_TMP_DIR/reviewers.json` holds a JSON array of 1 or 2 reviewer
+   objects. Record its contents as `REVIEWER_LIST` (index 0 = primary/only
+   reviewer, index 1 = the secondary in double mode) — Step 1 both reasons
+   over this in-context and passes the same file's path to `render-command`
+   for external dispatch.
 ```
 
 - [ ] **Step 3: Rewrite Step 1 to branch on `REVIEWER_LIST`**
@@ -2099,33 +2543,63 @@ For each entry in `REVIEWER_LIST`:
   - `model`: the entry's `model`, **omitted entirely when `model == ""`**
     (the `NO_CONFIG_FALLBACK`/session-default case — never substitute a
     hardcoded name here; an empty `model` means "let the `Agent` tool use
-    its own default"). A non-empty, non-Claude `model` value is a config
-    error (Claude Code's `Agent` tool is Claude-family only) — surface it
-    rather than silently substituting.
+    its own default"). A non-empty `model` value here **must be one of the
+    four `Agent`-tool model aliases** (`sonnet`/`opus`/`haiku`/`fable` —
+    Claude Code's `Agent` tool does not accept a full model id like
+    `"opus-5"`); `review-spec-config` (Task 10) is responsible for writing
+    exactly one of these four strings for every native reviewer entry, so
+    surface anything else as a config error rather than passing it through.
   - `description`: `review-spec iter N reviewer (<key>)`
   - `prompt`: the template below, with the skill name updated to
     `review-spec-checklist` (was `reviewing-specs`)
+  - After the `Agent` tool returns its report text, write it verbatim to
+    `$RUN_TMP_DIR/iter<N>-<key>.md` via the `Write` tool (mirroring the
+    external branch below, which redirects `Bash` stdout to the same
+    path). Step 1.5's merge reads both reviewers' reports from files
+    unconditionally — a native reviewer's report must land on disk exactly
+    like an external one's, or `merge-reports` (Task 8) has no file to
+    open for it and crashes the loop the first time `policy.mode =
+    "double"` actually runs.
 
-- **`cli` is set** (external CLI dispatch): use the `Bash` tool. Fill the
-  entry's `command` template (placeholders: `{model}`, `{prompt}`, and any
-  of the entry's `extra` fields the command references — e.g. `{effort}`)
-  where `{prompt}` is:
+- **`cli` is set** (external CLI dispatch):
+  1. Write the prompt text below to `$RUN_TMP_DIR/iter<N>-<key>-prompt.txt`
+     via the `Write` tool, with `{prompt}` filled in as:
 
-  ```
-  Read the file at <ABSOLUTE PATH to skills/review-spec-checklist/SKILL.md>
-  and follow it exactly, substituting:
-  - ARCHETYPE = <ARCHETYPE>
-  - FRAMEWORK_PROFILE_PATH = <FRAMEWORK_PROFILE_PATH>
-  Read every file under review fresh from disk: <DOC_PATHS>
-  Codebase root(s) for grounding: <CODEBASE_ROOT>
-  Emit the report following that skill's Output template strictly, ending
-  with the ### Status: line. Do not edit any file under review.
-  ```
+     ```
+     Read the file at <ABSOLUTE PATH to skills/review-spec-checklist/SKILL.md>
+     and follow it exactly, substituting:
+     - ARCHETYPE = <ARCHETYPE>
+     - FRAMEWORK_PROFILE_PATH = <FRAMEWORK_PROFILE_PATH>
+     Read every file under review fresh from disk: <DOC_PATHS>
+     Codebase root(s) for grounding: <CODEBASE_ROOT>
+     Emit the report following that skill's Output template strictly, ending
+     with the ### Status: line. Do not edit any file under review.
+     ```
 
-  (External CLIs can't call our `Skill` tool, but they can read a file
-  path — this keeps `review-spec-checklist` the single source of truth for
-  the checklist instead of duplicating its content into every CLI's
-  prompt.) Redirect stdout to `$RUN_TMP_DIR/iter<N>-<key>.md`.
+     (External CLIs can't call our `Skill` tool, but they can read a file
+     path — this keeps `review-spec-checklist` the single source of truth
+     for the checklist instead of duplicating its content into every
+     CLI's prompt.)
+  2. Fill the entry's `command` template via the `render-command`
+     subcommand (Task 8), which calls `render_reviewer_command` (Task 6)
+     internally — this is the ONLY way the orchestrator's `Bash`-tool
+     dispatch reaches that function, since it's Python and the
+     orchestrator dispatches via shell, not by importing the module:
+     ```bash
+     python3 "$TOOLS_PY" render-command \
+       --reviewers-json "$RUN_TMP_DIR/reviewers.json" \
+       --index <0 for the primary/single reviewer, 1 for the secondary> \
+       --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt"
+     ```
+     This prints the fully filled, shell-safe command string to stdout —
+     `{prompt}` already shell-escaped, per Task 6's `render_reviewer_command`
+     docstring. Never hand-splice the prompt into a command string
+     yourself.
+  3. Execute the printed command via the `Bash` tool with an explicit
+     timeout (e.g. 300000ms / 5 minutes — generous for a real review call,
+     distinct from the quota probe's 30s timeout since this is a full
+     document review, not a trivial probe), redirecting stdout to
+     `$RUN_TMP_DIR/iter<N>-<key>.md`.
 
 Then continue with the existing reviewer prompt template (for the native
 case) unchanged below, except the skill name substitution above.
@@ -2137,18 +2611,25 @@ case) unchanged below, except the skill name substitution above.
 ### Step 1.5 — Merge reviewer reports (only when `REVIEWER_LIST` has 2 entries)
 
 ```bash
-python3 tools/review-spec.py merge-reports --doc-paths "<DOC_PATHS>" \
+python3 "$TOOLS_PY" merge-reports --doc-paths "<DOC_PATHS>" \
   "<key1>=$RUN_TMP_DIR/iter<N>-<key1>.md" \
   "<key2>=$RUN_TMP_DIR/iter<N>-<key2>.md" \
   > "$RUN_TMP_DIR/iter<N>-merged.md"
 ```
 
-The merged report becomes the input to Step 2 (parse `### Status:`) exactly
-as a single reviewer's report would — the merge already reproduces that
-line (`Approved` when no findings survived the merge, `Issues Found — fix
-and re-invoke` otherwise). When `REVIEWER_LIST` has only 1 entry, skip this
-step — that entry's raw report (or the native `Agent` tool's output) is
-used directly, unchanged from today's behavior.
+Record `EFFECTIVE_REPORT_PATH`: `$RUN_TMP_DIR/iter<N>-merged.md` when
+`REVIEWER_LIST` had 2 entries, else `$RUN_TMP_DIR/iter<N>-<key>.md` (the
+single reviewer's own raw report) when it had 1. **Every later step reads
+`EFFECTIVE_REPORT_PATH` and only that name** — there is exactly one
+report artifact per iteration from Step 1.5 onward, never three or four
+different invented filenames for the same underlying thing. The merged
+report becomes the input to Step 2 (parse `### Status:`) exactly as a
+single reviewer's report would — the merge already reproduces that line
+(`Approved` when no findings survived the merge, `Issues Found — fix and
+re-invoke` otherwise). When `REVIEWER_LIST` has only 1 entry, skip the
+merge call — that entry's raw report (or the native `Agent` tool's output,
+written to the same `iter<N>-<key>.md` path per Step 1) is
+`EFFECTIVE_REPORT_PATH` directly, unchanged from today's behavior.
 ```
 
 - [ ] **Step 5: Replace every remaining `/tmp/review-spec` reference with `$RUN_TMP_DIR`**
@@ -2160,18 +2641,23 @@ cross-AI dry run caught a missed one at the GSD-handoff Surface message):
 grep -n "/tmp/review-spec" skills/review-spec/SKILL.md
 ```
 
-Fix each:
+Fix each — every one below points at the SAME `EFFECTIVE_REPORT_PATH`
+(Step 1.5) rather than inventing its own new filename, closing a bug the
+live re-review found (three different invented names —
+`fixer-input.md`/`report.md`/the raw per-key name — for what should be one
+path):
 - Step 3's `Save the reviewer's report to a temp file
-  (\`/tmp/review-spec-report-iter<N>.md\`)` → `Save the reviewer's report
-  to \`$RUN_TMP_DIR/iter<N>-fixer-input.md\``.
+  (\`/tmp/review-spec-report-iter<N>.md\`)` → `The reviewer's report is
+  already at \`EFFECTIVE_REPORT_PATH\` (Step 1.5) — no separate save
+  needed here.`
 - The Constants section's `**Loop state file (optional):**
   /tmp/review-spec-<doc-basename>-<timestamp>.log` → `**Loop state file
   (optional):** \`$RUN_TMP_DIR/loop.log\``.
 - Step 5's "Native revise handed off" Surface row example (the GSD-handoff
   message: `... (findings: /tmp/review-spec-report-iter<N>.md), then
-  re-run /review-spec.\``) → `... (findings:
-  \`$RUN_TMP_DIR/iter<N>-report.md\`), then re-run /review-spec.\`` — this
-  is the same string wherever it recurs in the Surface table/examples.
+  re-run /review-spec.\``) → `... (findings: \`EFFECTIVE_REPORT_PATH\`),
+  then re-run /review-spec.\`` — this is the same string wherever it
+  recurs in the Surface table/examples.
 
 Re-run the grep after fixing — expect zero matches.
 
@@ -2206,19 +2692,38 @@ caught these specific lines — re-grep to confirm).
 
 - [ ] **Step 8: Manual dry run — verify `RUN_TMP_DIR` and merge wiring**
 
-Run `/review-spec` against a real spec/plan doc in this repo with
-`--no-cross-ai` first (fastest smoke test — confirms `RUN_TMP_DIR` is
-created, Step 1 dispatches exactly as before via the renamed
-`review-spec-checklist`/`review-spec-fixer` skills, and cleanup removes the
-directory). Then run once with `--cross-ai` against a config with
-`policy.mode = "single"` pointing at an installed CLI (e.g. `codex`, once
-its usage limit clears) and confirm the external `Bash` dispatch path
-produces a parseable `### Status:` line. Then run once with `policy.mode =
-"double"` and confirm Step 1.5's merge produces a single well-formed
-report with `(Reviewers: ...)` tags. Report the outcome of all three dry
-runs — this is the closest this task gets to an automated test, per the
-design spec's §11 note that orchestration prose has no unit-test
-equivalent.
+This task's own automated tests (Task 8) only exercise `tools/review-spec.py`
+in isolation via fakes — they never invoke a real CLI. This step is the
+only check on the orchestration prose itself, so it must actually run,
+not be deferred on an external CLI's usage limit clearing:
+
+1. Run `/review-spec` against a real spec/plan doc in this repo with
+   `--no-cross-ai` first (fastest smoke test, and it is **always**
+   runnable regardless of any external CLI's quota state — confirms
+   `RUN_TMP_DIR` is created, Step 1 dispatches exactly as before via the
+   renamed `review-spec-checklist`/`review-spec-fixer` skills, and cleanup
+   removes the directory).
+2. Run `python3 "$TOOLS_PY" probe-quota --cwd <this-repo> --quota-path
+   <tmp path>` and inspect the result to find **whichever** configured CLI
+   currently has quota (of `claude`/`codex`/`opencode`/`grok` — do not
+   assume it's `codex` specifically; pick whichever the probe reports
+   `available: true`, and if none currently do, run this sub-step again
+   later rather than skipping it — it must eventually run once, not be
+   waived).
+3. With `policy.mode = "single"` pointing at that available CLI, run
+   `/review-spec --cross-ai` and confirm the external `Bash` dispatch path
+   (Step 1's `render-command` call, then executing the printed command)
+   produces a parseable `### Status:` line in
+   `$RUN_TMP_DIR/iter<N>-<key>.md`.
+4. With `policy.mode = "double"`, run `/review-spec --cross-ai` again and
+   confirm Step 1.5's merge produces a single well-formed report with
+   `(Reviewers: ...)` tags, and that the native reviewer's report was
+   also written to a file (the CRITICAL fix from the live re-review —
+   confirm `merge-reports` did NOT fail with a missing-file error).
+
+Report the outcome of all four dry runs — this is the closest this task
+gets to an automated test, per the design spec's §11 note that
+orchestration prose has no unit-test equivalent.
 
 - [ ] **Step 9: Commit**
 
@@ -2287,3 +2792,51 @@ correcting the design spec's own wording — the checklist output format
 has no separate file/line fields, only a free-text `Location:` string, so
 the spec's original phrasing was aspirational rather than achievable as
 written.
+
+### Second review: clean-context Opus 5 subagent (native, live)
+
+After the kimi round above, this plan (and the corrected spec) were
+reviewed a second time by a fresh, clean-context general-purpose subagent
+running Opus 5 natively (the `Agent` tool, no external CLI this time),
+following the `reviewing-specs` skill's own methodology — the same
+methodology `review-spec-checklist` will run under once Task 1's rename
+lands. Unlike the kimi round, this reviewer read the actual current repo
+state (via `Read`/`Grep`) rather than trusting the plan's prose, and it
+caught several bugs the first round missed entirely, plus a real
+first-round regression (the double-mode redesign from the kimi round
+broke the design's own "guaranteed native baseline" guarantee, and nobody
+propagated that fix back to the spec). It found 4 CRITICAL, 11 HIGH,
+6 MEDIUM, and 5 cross-document-consistency findings — every one fixed
+inline, listed by category:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL | `$RUN_TMP_DIR` was written as `RUN_TMP_DIR=$(mktemp -d)`, a shell variable — but every `Bash` tool call in this harness starts a fresh shell, so it was empty in every later reference (merge output, cleanup) | Step 0.7 point 1 now captures `mktemp -d`'s output as a literal absolute path substituted into every later reference, exactly like `CODEBASE_ROOT` already is |
+| CRITICAL | Task 1 Step 4's file enumeration didn't match the real repo — verified live via `grep`, the true set is 17 files, and 3 were missing entirely (the moved skills' own self-references to each other's old names) | New Step 4 fixes those 3 self-references explicitly; Step 5's enumeration now matches the real 17-file grep output exactly, verified against this repo |
+| CRITICAL | Double-review merge had no defined report file for a *native* reviewer — the `Agent` tool returns text, not a file, so `merge-reports` would crash on a missing path the first time `policy.mode = "double"` ran with a native primary (the common case) | Task 11 Step 3's native branch now writes the `Agent` tool's returned text to `$RUN_TMP_DIR/iter<N>-<key>.md` too, exactly like the external branch |
+| CRITICAL | `tools/review-spec.py` and `references/review-spec/cli-profiles/` live at the repo root, which `tools/setup.py` never symlinks (only `agents`/`commands`/`skills`) — unreachable from an installed skill | New `KIT_ROOT`/`TOOLS_PY`/`CLI_PROFILES_DIR` resolution (Task 11 Step 2 point 0, and independently in Task 10): `realpath` the skill's own resolved `SKILL_DIR` and strip the trailing `/skills/<name>` to derive the repo root reliably across every install shape |
+| HIGH | Merge could turn a failed/garbage external reviewer report into a false `### Status: Approved` (empty findings ≠ a clean pass) | New `report_has_status` (Task 7) checked by `merge-reports` (Task 8) before merging; on any missing/unreadable report it prints no `### Status:` line at all, reusing `review-spec/SKILL.md`'s existing "No Status line → Surface failure" rule instead of inventing a new one |
+| HIGH | Dedup key `(severity, location)` collapsed two DIFFERENT findings from the same reviewer at the same location into one, silently dropping the second's content | `merge_findings` now tracks per-report `seen` locations and only collapses across DIFFERENT reports; a second same-report finding at the same location is disambiguated by title |
+| HIGH | `parse_findings` had no notion of the `### Cross-Document Consistency` section — its bullets fell inside whichever severity heading preceded them | `_SEVERITY_RE` now recognizes that heading too, normalized to a `"CROSS-DOC"` tag; `render_merged_report` renders it under its own `### Cross-Document Consistency` heading, never a raw `### CROSS-DOC` |
+| HIGH | `render_reviewer_command`'s `{prompt}` was spliced unescaped into a `shell=True` command string — a `"`/`$`/backtick in a document path could corrupt or inject into the command; the real dispatch had no timeout either | `{prompt}` is now `shlex.quote`d before substitution (model/extra fields stay bare, since CLI-specific quoting idioms like codex's `-c key='"{effort}"'` are template-authored); Task 11 Step 3 now specifies an explicit 5-minute `Bash`-tool timeout for real dispatch |
+| HIGH | `render_reviewer_command` was declared "shared" with the real dispatch path but nothing in the orchestrator (which dispatches via `Bash`, not Python) could actually reach it | New `render-command` CLI subcommand (Task 8) — orchestrator writes the prompt to a file, calls `render-command`, executes the printed result |
+| HIGH | A native reviewer's `model` example (`"opus-5"`) isn't a value the `Agent` tool accepts (only `sonnet`/`opus`/`haiku`/`fable`) | Design §3 and all plan fixtures switched to the 4 real aliases; `review-spec-config` (Task 10) explicitly instructed to ask for one of those 4, never a version string |
+| HIGH | Step 0.7's "declined cross-AI, stub persisted" branch checked a file's existence and then read content from that same (missing) file — self-contradictory, and nothing ever wrote the stub | Redesigned: no separate "declined" concept. Missing `runtimes.json` → live-detect AND persist in the same `--save` call, so the hint fires exactly once; design §6 updated to match |
+| HIGH | The "missing, never asked" branch's live detection output had no consumer — printed and discarded | Same fix as above: it's now persisted via `--save`, which is itself the consumer (next invocation reads it back) |
+| HIGH | Config loading raised `KeyError` on a `[[reviewers]]` entry missing `key`/`model` — the only place in this module that didn't match `cfg_load_toml`'s documented "never raises" contract | `cfg_merge_reviewers` skips keyless entries; `_to_resolved` defaults a missing `model` to `""` (already a valid sentinel elsewhere in this module) |
+| HIGH | `quota.json`'s shape (boolean `available` only) is thinner than design §6/§10 promised (context-window headroom), with no stated cost bound on repeated probing | Design §6/§10 corrected to the boolean-only shape actually built (headroom capture has no confirmed CLI mechanism yet); Task 6 states the cost bound explicitly (≤1 probe per ladder entry per `QUOTA_TTL_SECONDS`) |
+| HIGH | Design §1 described three review modes; §3's schema only has two `policy.mode` values | §1 rewritten: two `policy.mode` values plus `--no-cross-ai` as the (non-config) third case, matching what the plan actually builds |
+| HIGH | Design has no stated behavior for a dispatched CLI erroring, timing out, or producing a non-conforming report | New §10 edge case: single mode falls through the existing "No Status line" rule unchanged; double mode's merge step surfaces the same rule rather than fabricating a verdict from an incomplete pair |
+| HIGH | Task 11 Step 8's only real (non-mocked) verification was gated on "once codex's usage limit clears" — a precondition the plan itself flagged as unmet, leaving the whole orchestrator change effectively untested | Step 8 rewritten: the `--no-cross-ai` leg is always runnable regardless of quota; the `--cross-ai` leg probes first and uses whichever CLI actually has quota, never assuming codex specifically |
+| CROSS-DOC | Double-mode semantics contradicted outright: design promised a guaranteed native baseline, but the kimi-round Task 5 redesign picked the best entry "any vendor", which could seat an external reviewer as primary | Task 5's `resolve_reviewers` now walks a `_native_ladder`-filtered list for the primary slot only (still tier-aware within it), guaranteeing the baseline is always native or `NO_CONFIG_FALLBACK`; design §3 updated to match; 2 new regression tests added |
+| CROSS-DOC | Design §3/§7/§11 still described a `scripts/review-spec/detect-runtimes.sh` shell script and its own unit tests — the plan builds none of that (one `tools/review-spec.py`) | Design §3 Scope, §7, and §11's testing section rewritten to the actual `tools/review-spec.py` shape |
+| CROSS-DOC | Design's example `policy.ladder` ordering only made sense under the old (incorrect) double-mode semantics | Resolved as a side effect of the double-mode fix above — the example's only native entry (`claude-opus`) now correctly becomes the primary regardless of its position in the ladder, verified by trace and by the new regression tests |
+
+MEDIUM findings (all fixed, no table): `cfg_render_toml`/`cfg_write_toml`
+added to Task 2's Interfaces (they were implemented and tested but never
+listed as produced); `parse_findings`'s docstring already matched its
+`### ` regex correctly by this point (left as-is, verified);
+`render_merged_report`'s docstring now states explicitly that it drops
+each source report's own `Document Type`/`Files Read` lines by design; the
+one remaining Spanish string (Step 0.7's hint message, and its design §6
+mirror) translated to English to match the rest of the skill.
