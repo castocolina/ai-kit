@@ -6,21 +6,32 @@
 and optionally cross-vendor, instead of hardcoded to a single Claude
 subagent.
 
-**Architecture:** One new stdlib-only Python module, `tools/review-spec.py`
-(mirrors `tools/status-line.py`'s file layout and testing style — one flat
-file, `importlib`-loaded by its test module since the filename is
-hyphenated; unlike `status-line.py` this module imports `tomllib`
-unguarded at module scope rather than degrading to `{}` on import failure,
-since this repo's `.python-version` pins 3.12 and `tomllib` has been
-stdlib since 3.11 — no fallback path is reachable), holds config
-load/write, cache read/write, CLI/model detection, policy resolution, and
-cross-reviewer findings merge as pure, independently unit-tested functions.
-Two skills are renamed (`reviewing-specs` → `review-spec-checklist`,
-`applying-review-feedback` → `review-spec-fixer`) and one is added
-(`review-spec-config`, an interactive setup wizard). `review-spec/SKILL.md`
-gains a new Step 0.7 and a Step 1.5, both driving `tools/review-spec.py`'s
-CLI entrypoint via `Bash`, and a `mktemp -d` fix for a pre-existing
-temp-file collision bug.
+**Architecture:** One new stdlib-only Python module,
+`skills/review-spec/review-spec.py` — **placed inside the `review-spec`
+skill's own directory, not a top-level `tools/`**, because that directory
+is the one thing `tools/setup.py` actually installs (its `CATEGORIES`
+symlink `agents`/`commands`/`skills` into `~/.claude`, never a top-level
+`tools/`); a real orchestrator invocation must reach this module from an
+installed skill, and the same three-candidate resolution pattern the
+skill already uses for `SEEDS_DIR` (`CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/
+sibling-of-this-file) is what makes that possible (see Task 11 Step 2
+point 0). Despite the different location, it still mirrors
+`tools/status-line.py`'s file layout and testing style — one flat file,
+`importlib`-loaded by its test module since the filename is hyphenated,
+and — matching `status-line.py`'s own precedent exactly, since this
+module also runs under the user's bare system `python3` (per the
+`Makefile`'s `test:` target and this repo's pre-commit config, which both
+run tests on system `python3`, not the `.venv`) — `tomllib` is imported
+inside a `try/except ModuleNotFoundError` guard, degrading to `tomllib =
+None` on Python <3.11 exactly like `status-line.py`'s `cfg_load_toml`
+does. Holds config load/write, cache read/write, CLI/model detection,
+policy resolution, and cross-reviewer findings merge as pure,
+independently unit-tested functions. Two skills are renamed
+(`reviewing-specs` → `review-spec-checklist`, `applying-review-feedback` →
+`review-spec-fixer`) and one is added (`review-spec-config`, an
+interactive setup wizard). `review-spec/SKILL.md` gains a new Step 0.7 and
+a Step 1.5, both driving `review-spec.py`'s CLI entrypoint via `Bash`, and
+a `mktemp -d` fix for a pre-existing temp-file collision bug.
 
 **Tech Stack:** Python 3.12 (`.venv`), stdlib only (`tomllib` for reading
 TOML — read-only, so this plan adds a small hand-rolled TOML writer since
@@ -134,14 +145,40 @@ file) — fix every line below:
 - `skills/review-spec-checklist/references/frameworks/SCHEMA.md` line 118:
   `(\`applying-review-feedback\`).` → `(\`review-spec-fixer\`).`
 
-- [ ] **Step 5: Verify no stale references remain — and fix the ones that need it**
+- [ ] **Step 5: Fix the two Python files that hardcode the old skill names — required before this task can even commit**
+
+```bash
+grep -rln "reviewing-specs\|applying-review-feedback" --include="*.py" .
+```
+
+Verified live against this repo's actual current state, this matches
+exactly:
+- `tests/test_framework_profiles.py:13` — builds a path via
+  `os.path.join(_HERE, "..", "skills", "reviewing-specs", "references",
+  "frameworks")`. Change `"reviewing-specs"` to `"review-spec-checklist"`.
+- `tests/test_wizard_pty.py:50` — `_KNOWN_SKILL = "applying-review-feedback"`.
+  Change to `_KNOWN_SKILL = "review-spec-fixer"`. Also fix its docstring
+  mention at line 358 ("the known skill \`\`applying-review-feedback\`\`
+  was symlinked").
+
+**This step cannot be skipped or deferred to Step 7**:
+`tests.test_wizard_pty` is both in the `Makefile`'s `test:` target and in
+`.pre-commit-config.yaml`'s `unittest-wizard` hook (`uv run python -m
+unittest tests.test_wizard_app tests.test_wizard_pty`) — after Step 1's
+`git mv`, that test's `_KNOWN_SKILL` constant points at a symlink name
+that no longer exists, so the repo's own commit gate fails and Step 8's
+commit cannot be made until this step runs.
+
+- [ ] **Step 6: Verify no stale references remain in Markdown — and fix the ones that need it**
 
 ```bash
 grep -rln "reviewing-specs\|applying-review-feedback" --include="*.md" .
 ```
 
-Run this **after** Steps 1–4. Verified live against this repo's actual
-current state (pre-rename), the full match set is these **17 files**:
+Run this **after** Steps 1–5. Verified live against this repo's actual
+current state (pre-rename), the full match set — Markdown and Python
+combined — is these **19 files** (17 `.md`, handled by this step, plus
+the 2 `.py` files Step 5 already fixed):
 
 ```
 docs/prds/000-ai-kit-overhaul-requirements.md
@@ -163,12 +200,14 @@ skills/review-spec/evals/04-ambiguous-detection-fallback.md
 skills/review-spec/SKILL.md
 ```
 
-By the time you run the grep (after Steps 1–4), the paths have already
-moved and 6 of these are already fixed (`skills/review-spec/SKILL.md` by
-Step 3; the two self-reference files by Step 4), so what you'll actually
-see is the **16** post-move paths, split into two groups:
+By the time you run this step's grep (after Steps 1–4), the paths have
+already moved and 4 of these 17 are already fixed —
+`skills/review-spec/SKILL.md` by Step 3, and the 3 self-references by
+Step 4 (`review-spec-checklist/SKILL.md`, `review-spec-fixer/SKILL.md`,
+`review-spec-checklist/references/frameworks/SCHEMA.md`) — so what you'll
+actually see is **13** post-move `.md` paths, split into two groups:
 
-1. **MUST fix (11 files)** — living documentation and active test
+1. **MUST fix (8 files)** — living documentation and active test
    fixtures, not history:
    - `README.md` lines 28, 29, 34 (three separate mentions — `reviewing-specs`→`review-spec-checklist`, `applying-review-feedback`→`review-spec-fixer`, including the one inside the `review-spec` row's description).
    - `skills/review-spec/evals/01-superpowers-plan-routes-writing-plans.md`, `02-gsd-plan-routes-native-cmd.md`, `03-generic-doc-direct-edit.md`, `04-ambiguous-detection-fallback.md`
@@ -179,7 +218,7 @@ see is the **16** post-move paths, split into two groups:
      reviewer skill's shared fixtures directory).
 
    Replace every `reviewing-specs`/`applying-review-feedback` mention in
-   these 11 files with the new names, same substitution as Step 3.
+   these 8 files with the new names, same substitution as Step 3.
 
 2. **MUST NOT touch (5 files)**: `docs/prds/000-ai-kit-overhaul-requirements.md`,
    `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md`,
@@ -192,7 +231,7 @@ see is the **16** post-move paths, split into two groups:
 Re-run the grep after fixing group 1 — it should now match exactly the
 5 group-2 paths, not zero.
 
-- [ ] **Step 6: Verify the moved skills' own internal `references/` paths still resolve**
+- [ ] **Step 7: Verify the moved skills' own internal `references/` paths still resolve**
 
 ```bash
 ls skills/review-spec-checklist/references/frameworks/SCHEMA.md
@@ -201,9 +240,9 @@ ls skills/review-spec-checklist/references/frameworks/SCHEMA.md
 Expected: file exists (the move preserved the directory's internal
 structure — only the top-level directory name changed).
 
-- [ ] **Step 7: Note for the user — local symlink refresh**
+- [ ] **Step 8: Note for the user — local symlink refresh**
 
-Add a one-line note to the commit message (Step 7) that
+Add a one-line note to the commit message (Step 9) that
 `~/.claude/skills/reviewing-specs` and `~/.claude/skills/applying-review-feedback`
 are stale symlinks now — `tools/setup.py`'s existing housekeeping/prune
 logic (it already detects "ai-kit symlinks whose repo entry no longer
@@ -211,7 +250,7 @@ exists" — see `tools/setup.py`'s symlink-diff functions) removes them and
 creates `review-spec-checklist`/`review-spec-fixer` symlinks on the next
 `tools/setup.py` run. No new symlink code needed in this plan.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add -A
@@ -231,7 +270,7 @@ EOF
 ### Task 2: Config module — TOML read + local/global resolve + `strategy` merge
 
 **Files:**
-- Create: `tools/review-spec.py`
+- Create: `skills/review-spec/review-spec.py`
 - Test: `tests/test_review_spec.py`
 
 **Interfaces:**
@@ -255,7 +294,7 @@ import os
 import tempfile
 import unittest
 
-_MODULE_PATH = os.path.join(os.path.dirname(__file__), "..", "tools", "review-spec.py")
+_MODULE_PATH = os.path.join(os.path.dirname(__file__), "..", "skills", "review-spec", "review-spec.py")
 
 
 def _load_module():
@@ -399,13 +438,13 @@ if __name__ == "__main__":
 
 Run: `.venv/bin/python3 -m unittest tests.test_review_spec -v`
 
-Expected: FAIL — `tools/review-spec.py` does not exist yet
+Expected: FAIL — `skills/review-spec/review-spec.py` does not exist yet
 (`FileNotFoundError` from `spec_from_file_location`/`exec_module`, or an
 `AttributeError` once the empty file exists).
 
 - [ ] **Step 3: Implement**
 
-Create `tools/review-spec.py`:
+Create `skills/review-spec/review-spec.py`:
 
 ```python
 #!/usr/bin/env python3
@@ -413,16 +452,13 @@ Create `tools/review-spec.py`:
 runtime/CLI detection, policy resolution, and cross-reviewer findings
 merge. Stdlib-only, no external dependencies (see pyproject.toml)."""
 
-import json
 import os
-import re
-import shlex
-import shutil
-import subprocess
-import sys
-import time
-import tomllib
-from typing import NamedTuple, Optional
+
+try:
+    import tomllib as _tomllib_impl
+    tomllib = _tomllib_impl
+except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only config.
+    tomllib = None  # type: ignore[assignment]  # stdlib boundary: optional module absent on <3.11
 
 
 # ── Config (TOML) ────────────────────────────────────────────────────────
@@ -442,7 +478,11 @@ def cfg_global_path(env: dict) -> str:
 
 
 def cfg_load_toml(path: str) -> dict:
-    """Parse the TOML at path. Missing/malformed -> {}. Never raises."""
+    """Parse the TOML at path. Missing/malformed/no-tomllib -> {}. Never
+    raises (mirrors tools/status-line.py's cfg_load_toml exactly, since
+    this module runs under the same bare system python3, not the .venv)."""
+    if tomllib is None:
+        return {}
     try:
         with open(path, "rb") as f:
             return tomllib.load(f)
@@ -540,7 +580,7 @@ Expected: PASS for every `TestConfigPaths`, `TestLoadToml`,
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/review-spec.py tests/test_review_spec.py
+git add skills/review-spec/review-spec.py tests/test_review_spec.py
 git commit -m "feat(review-spec): add TOML config load/write with local/global strategy merge"
 ```
 
@@ -549,7 +589,7 @@ git commit -m "feat(review-spec): add TOML config load/write with local/global s
 ### Task 3: Cache module — JSON read/write + TTL staleness
 
 **Files:**
-- Modify: `tools/review-spec.py`
+- Modify: `skills/review-spec/review-spec.py`
 - Test: `tests/test_review_spec.py`
 
 **Interfaces:**
@@ -630,7 +670,15 @@ Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'cache
 
 - [ ] **Step 3: Implement**
 
-Append to `tools/review-spec.py`:
+Add `import json`, `import time`, and `from typing import Optional` to
+`skills/review-spec/review-spec.py`'s import block at the top (below
+`import os`, above the `try: import tomllib` block) — Task 2 only needed
+`os`/`tomllib`, this task is the first to need JSON, mtimes, and
+`cache_read_json`'s `Optional[dict]` return type; keeping imports
+introduced only when a task first needs them avoids an unused-import
+failure from this repo's `ruff` pre-commit hook on an intermediate commit.
+
+Append to `skills/review-spec/review-spec.py`:
 
 ```python
 # ── Cache (JSON) ─────────────────────────────────────────────────────────
@@ -687,7 +735,7 @@ Expected: PASS, all tests including Task 2's.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/review-spec.py tests/test_review_spec.py
+git add skills/review-spec/review-spec.py tests/test_review_spec.py
 git commit -m "feat(review-spec): add JSON cache read/write with TTL staleness check"
 ```
 
@@ -696,7 +744,7 @@ git commit -m "feat(review-spec): add JSON cache read/write with TTL staleness c
 ### Task 4: Runtime/CLI detection
 
 **Files:**
-- Modify: `tools/review-spec.py`
+- Modify: `skills/review-spec/review-spec.py`
 - Test: `tests/test_review_spec.py`
 
 **Interfaces:**
@@ -775,7 +823,9 @@ Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'KNOWN
 
 - [ ] **Step 3: Implement**
 
-Append to `tools/review-spec.py`:
+Add `import shutil` and `import subprocess` to the top import block.
+
+Append to `skills/review-spec/review-spec.py`:
 
 ```python
 # ── Runtime/CLI detection ───────────────────────────────────────────────
@@ -828,7 +878,7 @@ Expected: PASS, all tests including Tasks 2–3's.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/review-spec.py tests/test_review_spec.py
+git add skills/review-spec/review-spec.py tests/test_review_spec.py
 git commit -m "feat(review-spec): add CLI/model detection (detect_installed_clis, build_runtimes_snapshot)"
 ```
 
@@ -873,7 +923,7 @@ whichever ranks best with a different vendor than the primary) and is
 still simply dropped, not substituted, when nothing survives.
 
 **Files:**
-- Modify: `tools/review-spec.py`
+- Modify: `skills/review-spec/review-spec.py`
 - Test: `tests/test_review_spec.py`
 
 **Interfaces:**
@@ -983,12 +1033,12 @@ class TestResolveReviewers(unittest.TestCase):
         # before claude-sonnet because it is earlier in the ladder)
         self.assertEqual(result[0].key, "claude-opus")
 
-    def test_double_mode_primary_is_best_overall_regardless_of_vendor(self):
+    def test_double_mode_primary_is_best_native_entry_tier_aware(self):
         config = dict(self.config)
         config["policy"] = {"mode": "double", "ladder": self.config["policy"]["ladder"]}
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(len(result), 2)
-        self.assertEqual(result[0].key, "claude-opus")   # best overall = top of ladder, tier-aware
+        self.assertEqual(result[0].key, "claude-opus")   # best NATIVE entry (guaranteed baseline), tier-aware
         self.assertEqual(result[1].key, "codex-gpt")      # first DIFFERENT-vendor entry
 
     def test_double_mode_primary_falls_through_tiers_when_flagship_lacks_quota(self):
@@ -1037,6 +1087,26 @@ class TestResolveReviewers(unittest.TestCase):
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(result[0], rs.NO_CONFIG_FALLBACK)
         self.assertEqual(result[1].key, "codex-gpt")
+
+    def test_double_mode_secondary_is_dropped_not_substituted_with_same_vendor(self):
+        # regression: the design's guarantee for the secondary slot is
+        # "cross-vendor alternate, DROPPED if none survives" — an earlier
+        # draft's resolve_ladder_pick fell back to a same-vendor pick
+        # instead (its generic same-vendor-fallback pass), so a ladder
+        # with a same-vendor EXTERNAL entry (e.g. an "anthropic"-vendor
+        # CLI profile) would incorrectly seat it as the secondary,
+        # running two same-vendor reviewers under "double review".
+        config = {
+            "policy": {"mode": "double", "ladder": ["claude-opus", "claude-cli-opus"]},
+            "reviewers": [
+                {"key": "claude-opus", "model": "opus", "vendor": "anthropic"},
+                {"key": "claude-cli-opus", "model": "opus", "vendor": "anthropic",
+                 "cli": "claude", "command": "claude -p --model {model} {prompt}"},
+            ],
+        }
+        result = rs.resolve_reviewers(config, quota={}, source_vendor="openai", cross_ai=True)
+        self.assertEqual(len(result), 1)  # secondary dropped, not substituted
+        self.assertEqual(result[0].key, "claude-opus")
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1047,7 +1117,10 @@ Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'resol
 
 - [ ] **Step 3: Implement**
 
-Append to `tools/review-spec.py`:
+Add `from typing import NamedTuple` to the top import block (`Optional`
+was already added in Task 3, for `cache_read_json`'s return type).
+
+Append to `skills/review-spec/review-spec.py`:
 
 ```python
 # ── Policy resolution ────────────────────────────────────────────────────
@@ -1103,22 +1176,36 @@ def _has_quota(quota: dict, key: str) -> bool:
     return entry.get("available", True)
 
 
-def resolve_ladder_pick(reviewers: list, ladder: list, skip_vendor: str, quota: dict) -> Optional[ResolvedReviewer]:
+def resolve_ladder_pick(reviewers: list, ladder: list, skip_vendor: str, quota: dict,
+                         allow_same_vendor_fallback: bool = True) -> Optional[ResolvedReviewer]:
     """First ladder entry that (a) exists in `reviewers`, (b) has a
     different vendor than skip_vendor (empty skip_vendor disables this
     filter — used for "best overall, any vendor"), and (c) has quota. If
-    nothing survives both filters, retry ignoring the vendor filter
-    (same-vendor coverage beats no reviewer at all). None only if every
-    candidate lacks quota or doesn't exist. This is where tier-awareness
-    comes from: a caller passing an ordered ladder like ["claude-opus",
-    "claude-sonnet", ...] gets the flagship tier whenever it has quota, and
-    falls through to the next configured tier automatically otherwise — no
-    separate "tier" concept needed."""
+    nothing survives both filters and `allow_same_vendor_fallback` is True
+    (the default), retry ignoring the vendor filter (same-vendor coverage
+    beats no reviewer at all) — this is `single` mode's behavior, and
+    `double` mode's PRIMARY slot (whose `skip_vendor` is always `""`
+    anyway, so the fallback never actually triggers there). None only if
+    every candidate lacks quota or doesn't exist.
+
+    Pass `allow_same_vendor_fallback=False` for `double` mode's SECONDARY
+    slot specifically: the design's guarantee for that slot is "a
+    cross-vendor alternate, dropped (not substituted) if none survives" —
+    silently degrading to a same-vendor pick there would run two
+    same-vendor reviewers under a "double review" banner while billing a
+    second CLI call for zero independent perspective.
+
+    This is where tier-awareness comes from: a caller passing an ordered
+    ladder like ["claude-opus", "claude-sonnet", ...] gets the flagship
+    tier whenever it has quota, and falls through to the next configured
+    tier automatically otherwise — no separate "tier" concept needed."""
     for key in ladder:
         entry = _reviewer_by_key(reviewers, key)
         if entry is None or (skip_vendor and entry.get("vendor") == skip_vendor) or not _has_quota(quota, key):
             continue
         return _to_resolved(entry)
+    if not allow_same_vendor_fallback:
+        return None
     for key in ladder:
         entry = _reviewer_by_key(reviewers, key)
         if entry is None or not _has_quota(quota, key):
@@ -1172,7 +1259,8 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
                                        skip_vendor="", quota=quota)
         if primary is None:
             primary = NO_CONFIG_FALLBACK
-        secondary = resolve_ladder_pick(reviewers, ladder, skip_vendor=primary.vendor, quota=quota)
+        secondary = resolve_ladder_pick(reviewers, ladder, skip_vendor=primary.vendor, quota=quota,
+                                         allow_same_vendor_fallback=False)
         if secondary is None or secondary.key == primary.key:
             return [primary]
         return [primary, secondary]
@@ -1189,7 +1277,7 @@ Expected: PASS, all tests including Tasks 2–4's.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/review-spec.py tests/test_review_spec.py
+git add skills/review-spec/review-spec.py tests/test_review_spec.py
 git commit -m "feat(review-spec): add single/double ladder policy resolution"
 ```
 
@@ -1206,7 +1294,7 @@ template and classify availability from the outcome (exit code / stderr
 content), rather than requiring a confirmed quota-subcommand per CLI (most
 of which are still "unconfirmed syntax" per the CLI profiles, Task 9). The
 one CLI with a confirmed richer signal (`codex`'s usage-limit error on a
-low-effort/fast-tier call — see `references/review-spec/cli-profiles/codex.md`)
+low-effort/fast-tier call — see `skills/review-spec/references/cli-profiles/codex.md`)
 is covered by the same generic heuristic (its error text contains "usage
 limit", which the heuristic's substring check catches) — no special-casing
 needed.
@@ -1227,7 +1315,7 @@ any entry whose cached `checked_at` is still fresh, regardless of how many
 `/review-spec` invocations happen inside that hour.
 
 **Files:**
-- Modify: `tools/review-spec.py`
+- Modify: `skills/review-spec/review-spec.py`
 - Test: `tests/test_review_spec.py`
 
 **Interfaces:**
@@ -1371,7 +1459,9 @@ Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'rende
 
 - [ ] **Step 3: Implement**
 
-Append to `tools/review-spec.py`:
+Add `import shlex` to the top import block.
+
+Append to `skills/review-spec/review-spec.py`:
 
 ```python
 # ── Quota probing ─────────────────────────────────────────────────────────
@@ -1411,7 +1501,7 @@ def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) ->
     containing a case-insensitive usage/quota/rate-limit phrase, means
     unavailable; anything else (including plain success) means available.
     This generic heuristic is what makes the confirmed codex usage-limit
-    error (see references/review-spec/cli-profiles/codex.md) detectable
+    error (see skills/review-spec/references/cli-profiles/codex.md) detectable
     without a CLI-specific parser."""
     if not resolved.cli or not resolved.command:
         return {"available": True, "checked_at": time.time()}
@@ -1456,7 +1546,7 @@ Expected: PASS, all tests including Task 5's.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/review-spec.py tests/test_review_spec.py
+git add skills/review-spec/review-spec.py tests/test_review_spec.py
 git commit -m "feat(review-spec): add quota probing (render_reviewer_command, probe_reviewer_quota, refresh_quota_cache)"
 ```
 
@@ -1465,7 +1555,7 @@ git commit -m "feat(review-spec): add quota probing (render_reviewer_command, pr
 ### Task 7: Findings merge (Step 1.5 — double-review reconciliation)
 
 **Files:**
-- Modify: `tools/review-spec.py`
+- Modify: `skills/review-spec/review-spec.py`
 - Test: `tests/test_review_spec.py`
 
 **Interfaces:**
@@ -1613,7 +1703,9 @@ Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'parse
 
 - [ ] **Step 3: Implement**
 
-Append to `tools/review-spec.py`:
+Add `import re` to the top import block.
+
+Append to `skills/review-spec/review-spec.py`:
 
 ```python
 # ── Findings merge (Step 1.5 double-review reconciliation) ──────────────
@@ -1736,7 +1828,7 @@ Expected: PASS, all tests including Tasks 2–5's.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/review-spec.py tests/test_review_spec.py
+git add skills/review-spec/review-spec.py tests/test_review_spec.py
 git commit -m "feat(review-spec): add double-review findings merge (union + reviewer tags)"
 ```
 
@@ -1764,7 +1856,7 @@ line" as "surface a failure" (a rule that predates this plan), so this
 reuses that guard instead of inventing a new one.
 
 **Files:**
-- Modify: `tools/review-spec.py`
+- Modify: `skills/review-spec/review-spec.py`
 - Modify: `Makefile` (add `tests.test_review_spec` to the `test:` target)
 - Test: `tests/test_review_spec.py`
 
@@ -1779,7 +1871,7 @@ reuses that guard instead of inventing a new one.
   `render_reviewer_command` from a `Bash` dispatch, since it's Python —
   see Task 11 Step 3).
   Consumed by Task 10 (`review-spec-config`) and Task 11 (orchestrator's
-  `Bash` calls), both of which shell out to `python3 tools/review-spec.py
+  `Bash` calls), both of which shell out to `python3 skills/review-spec/review-spec.py
   <subcommand> ...` rather than importing the module directly (they run
   from Claude Code's `Bash` tool, not from Python).
 
@@ -1917,7 +2009,10 @@ Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'main'
 
 - [ ] **Step 3: Implement**
 
-Append to `tools/review-spec.py`:
+Add `import sys` to the top import block (`argparse` is imported locally
+inside `main()` itself, below — no top-level import needed for it).
+
+Append to `skills/review-spec/review-spec.py`:
 
 ```python
 # ── CLI entrypoint ────────────────────────────────────────────────────────
@@ -2060,7 +2155,7 @@ test:
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tools/review-spec.py tests/test_review_spec.py Makefile
+git add skills/review-spec/review-spec.py tests/test_review_spec.py Makefile
 git commit -m "feat(review-spec): add CLI entrypoint (detect-runtimes, probe-quota, resolve-reviewers, merge-reports, render-toml); wire cfg_resolve; register with make test"
 ```
 
@@ -2069,19 +2164,19 @@ git commit -m "feat(review-spec): add CLI entrypoint (detect-runtimes, probe-quo
 ### Task 9: CLI profile reference docs
 
 **Files:**
-- Create: `references/review-spec/cli-profiles/claude.md`
-- Create: `references/review-spec/cli-profiles/codex.md`
-- Create: `references/review-spec/cli-profiles/opencode.md`
-- Create: `references/review-spec/cli-profiles/grok.md`
-- Create: `references/review-spec/cli-profiles/cursor-agent.md`
-- Create: `references/review-spec/cli-profiles/gemini.md`
+- Create: `skills/review-spec/references/cli-profiles/claude.md`
+- Create: `skills/review-spec/references/cli-profiles/codex.md`
+- Create: `skills/review-spec/references/cli-profiles/opencode.md`
+- Create: `skills/review-spec/references/cli-profiles/grok.md`
+- Create: `skills/review-spec/references/cli-profiles/cursor-agent.md`
+- Create: `skills/review-spec/references/cli-profiles/gemini.md`
 - Test: none (reference docs, not code)
 
 **Interfaces:**
 - Produces: the profile paths `review-spec-config` (Task 10) reads when
   helping the user write `[[reviewers]]` entries.
 
-- [ ] **Step 1: Write `references/review-spec/cli-profiles/claude.md`**
+- [ ] **Step 1: Write `skills/review-spec/references/cli-profiles/claude.md`**
 
 ```markdown
 ---
@@ -2108,7 +2203,7 @@ subcommand exists; otherwise rely on the same "low-effort call, detect a
 usage-limit error" mechanism confirmed for `codex` (below).
 ```
 
-- [ ] **Step 2: Write `references/review-spec/cli-profiles/codex.md`**
+- [ ] **Step 2: Write `skills/review-spec/references/cli-profiles/codex.md`**
 
 ```markdown
 ---
@@ -2145,7 +2240,7 @@ error" quota-check mechanism — parse the exit code / stderr for a
 usage-limit signal rather than looking for a dedicated quota subcommand.
 ```
 
-- [ ] **Step 3: Write `references/review-spec/cli-profiles/opencode.md`**
+- [ ] **Step 3: Write `skills/review-spec/references/cli-profiles/opencode.md`**
 
 ```markdown
 ---
@@ -2181,7 +2276,7 @@ introspection source; exact parseable shape unconfirmed, research during
 implementation.
 ```
 
-- [ ] **Step 4: Write `references/review-spec/cli-profiles/grok.md`**
+- [ ] **Step 4: Write `skills/review-spec/references/cli-profiles/grok.md`**
 
 ```markdown
 ---
@@ -2206,7 +2301,7 @@ Quota/context-window introspection: unconfirmed syntax — research during
 implementation.
 ```
 
-- [ ] **Step 5: Write `references/review-spec/cli-profiles/cursor-agent.md`**
+- [ ] **Step 5: Write `skills/review-spec/references/cli-profiles/cursor-agent.md`**
 
 ```markdown
 ---
@@ -2233,7 +2328,7 @@ Not yet verified against a real installation. Verify all of the above with
 `cursor-agent --help` before marking this profile `status: confirmed`.
 ```
 
-- [ ] **Step 6: Write `references/review-spec/cli-profiles/gemini.md`**
+- [ ] **Step 6: Write `skills/review-spec/references/cli-profiles/gemini.md`**
 
 ```markdown
 ---
@@ -2262,7 +2357,7 @@ implementation.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add references/review-spec/cli-profiles/
+git add skills/review-spec/references/cli-profiles/
 git commit -m "docs(review-spec): add CLI profiles for claude, codex, opencode, grok (confirmed) + cursor-agent, gemini (stub)"
 ```
 
@@ -2276,7 +2371,7 @@ git commit -m "docs(review-spec): add CLI profiles for claude, codex, opencode, 
   precedent for interactive/prose skills)
 
 **Interfaces:**
-- Consumes: `tools/review-spec.py`'s `detect-runtimes` and `render-toml`
+- Consumes: `skills/review-spec/review-spec.py`'s `detect-runtimes` and `render-toml`
   subcommands (Task 8), the CLI profiles (Task 9).
 - Produces: writes `review-spec.toml` (global by default, `--local` for
   `./.aikit/review-spec.toml`) and `runtimes.json`. Consumed by
@@ -2294,24 +2389,30 @@ description: Interactive setup for review-spec's cross-AI reviewer config — de
 
 Set up (or refresh) `review-spec`'s cross-AI reviewer configuration.
 
-### Step 0 — Locate `tools/review-spec.py` and the CLI profiles
+### Step 0 — Locate `review-spec.py` and the CLI profiles
 
-`tools/review-spec.py` and `references/review-spec/cli-profiles/` live at
-the ai-kit repo root, not inside any individually-installed skill
-directory (`tools/setup.py` only symlinks `agents`/`commands`/`skills`),
-so resolve them the same way `review-spec/SKILL.md` resolves its own
-`TOOLS_PY`/`CLI_PROFILES_DIR` (see that skill's Step 0.7 point 0 — Task
-11): take the first existing of, in order, `${CLAUDE_PLUGIN_ROOT}` (when
-set), `~/.claude/skills/review-spec-config` (this skill's own installed
-symlink), or the directory containing this `SKILL.md` directly (dev
-checkout, no symlink); call that `SKILL_DIR`, then:
+`review-spec.py` and its `references/cli-profiles/` live inside the
+**`review-spec`** skill's own directory (a sibling of this skill, not
+this skill's own directory, and not a top-level `tools/`/`references/` —
+see `review-spec/SKILL.md`'s Step 0.7 point 0 — Task 11 — for why).
+Resolve them the same three-candidate way `review-spec/SKILL.md` itself
+resolves `SEEDS_DIR` — and the identical way that skill resolves its own
+copy of these same two paths, so both skills agree on one procedure:
 
 ```bash
-SKILL_DIR_REAL="$(realpath "$SKILL_DIR")"
-KIT_ROOT="${SKILL_DIR_REAL%/skills/*}"
-TOOLS_PY="$KIT_ROOT/tools/review-spec.py"
-CLI_PROFILES_DIR="$KIT_ROOT/references/review-spec/cli-profiles"
+for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec}" \
+         "$HOME/.claude/skills/review-spec" \
+         "$(dirname "<absolute path to THIS SKILL.md>")/../review-spec"; do
+  [ -d "$d" ] && { REVIEW_SPEC_SKILL_DIR="$d"; break; }
+done
+TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/review-spec.py"
+CLI_PROFILES_DIR="$REVIEW_SPEC_SKILL_DIR/references/cli-profiles"
 ```
+
+(The third candidate is `review-spec-config`'s own sibling — matching
+`SEEDS_DIR`'s own third candidate — since this skill's directory and
+`review-spec`'s are installed alongside each other in every shape:
+plugin, `~/.claude/skills`, or a direct dev checkout.)
 
 ### Step 1 — Detect
 
@@ -2356,7 +2457,7 @@ but let them reorder).
 
 ### Step 3 — Write
 
-Build the JSON shape `tools/review-spec.py`'s `render-toml` subcommand
+Build the JSON shape `skills/review-spec/review-spec.py`'s `render-toml` subcommand
 expects (`{"policy": {...}, "reviewers": [...]}`), write it to a temp JSON
 file, then:
 
@@ -2394,7 +2495,7 @@ git commit -m "feat(review-spec-config): add interactive cross-AI reviewer setup
   run, listed in this task's steps)
 
 **Interfaces:**
-- Consumes: `tools/review-spec.py`'s `probe-quota`, `resolve-reviewers`,
+- Consumes: `skills/review-spec/review-spec.py`'s `probe-quota`, `resolve-reviewers`,
   and `merge-reports` subcommands (Task 8), the renamed skills (Task 1).
 
 - [ ] **Step 1: Add `--cross-ai`/`--no-cross-ai`/`--source-vendor` to the Inputs section**
@@ -2408,13 +2509,20 @@ defaults — never block on their absence):
 - **Flags (optional, parsed from the same invocation arguments):**
   `--cross-ai` (default) or `--no-cross-ai` — whether Step 0.7 attempts
   cross-AI reviewer resolution at all. `--source-vendor=<vendor>` (default
-  `anthropic`, since this orchestrator only ever runs as a Claude Code
-  skill) — the document's authoring vendor, used by Step 0.7's ladder walk
-  to prefer an independent perspective. This is a **vendor** (`anthropic`,
-  `openai`, `xai`, ...), matching the `vendor` field in `review-spec.toml`
-  reviewer entries — not a model id, since deriving a vendor from an
-  arbitrary model-id string has no sanctioned mapping (model names churn
-  too fast to hardcode a lookup table).
+  `anthropic`) — the document's authoring vendor, used by Step 0.7's
+  ladder walk to prefer an independent perspective. Design §4's default is
+  "the current session's own vendor"; `anthropic` is that default's
+  concrete value here specifically because this orchestrator has no
+  runtime introspection API telling it what vendor its own model actually
+  is — it can only assume the overwhelmingly common case (a native
+  Claude Code session). Design §3's caveat still applies: a session
+  pointed at a compatible third-party endpoint would make this default
+  wrong, which is exactly the escape hatch `--source-vendor` itself
+  exists for — pass the real vendor explicitly in that case. This is a
+  **vendor** (`anthropic`, `openai`, `xai`, ...), matching the `vendor`
+  field in `review-spec.toml` reviewer entries — not a model id, since
+  deriving a vendor from an arbitrary model-id string has no sanctioned
+  mapping (model names churn too fast to hardcode a lookup table).
 ```
 
 - [ ] **Step 2: Add Step 0.7 after the existing Step 0.6**
@@ -2428,32 +2536,37 @@ final paragraph (the one ending "...If no sibling context exists, pass
 
 Runs once per invocation, after Step 0.6.
 
-0. Resolve `KIT_ROOT`, `TOOLS_PY`, and `CLI_PROFILES_DIR` — needed because
-   `tools/review-spec.py` and `references/review-spec/cli-profiles/`
-   live at the ai-kit repo root, **not** inside any individually-installed
-   skill directory, so neither `tools/setup.py`'s symlinks (which only
-   cover `agents/commands/skills`, per its `CATEGORIES`) nor a
-   sibling-of-`SKILL_DIR` shortcut (the trick `SEEDS_DIR` above uses,
-   which only works because *both* `review-spec` and
-   `review-spec-checklist` are independently symlinked into the same
-   `~/.claude/skills/` tier) can reach them directly:
+0. Resolve `TOOLS_PY` and `CLI_PROFILES_DIR`. **`review-spec.py` and its
+   `references/cli-profiles/` live inside `skills/review-spec/` itself**
+   (not at a top-level `tools/`/`references/` — that placement was tried
+   in an earlier draft of this plan and rejected: neither location is
+   reachable from an installed skill, since `tools/setup.py`'s symlinks
+   only cover `agents/commands/skills`, per its `CATEGORIES`). Because
+   they're inside `review-spec`'s own skill directory, they resolve with
+   the **exact same three-candidate pattern this skill already uses for
+   `SEEDS_DIR`** above — no separate "resolve SKILL_DIR, then derive a
+   root" step, and nothing here depends on a `SKILL_DIR` variable (this
+   skill does not define one; `SEEDS_DIR`'s own resolution never names an
+   intermediate `SKILL_DIR`, it just tries three full candidate paths
+   directly):
    ```bash
-   # SKILL_DIR is already established above (the directory containing
-   # THIS SKILL.md, resolved via the same CLAUDE_PLUGIN_ROOT /
-   # ~/.claude/skills/review-spec / sibling-of-this-file fallback used for
-   # SEEDS_DIR). realpath follows the ~/.claude/skills/review-spec symlink
-   # (when installed) to the real repo checkout, so stripping the known
-   # "/skills/review-spec" suffix off the end reliably yields the repo root
-   # in every install shape: plugin, symlinked ~/.claude/skills, or a
-   # direct dev checkout with no symlink at all (realpath is then a no-op).
-   SKILL_DIR_REAL="$(realpath "$SKILL_DIR")"
-   KIT_ROOT="${SKILL_DIR_REAL%/skills/*}"
-   TOOLS_PY="$KIT_ROOT/tools/review-spec.py"
-   CLI_PROFILES_DIR="$KIT_ROOT/references/review-spec/cli-profiles"
+   for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec}" \
+            "$HOME/.claude/skills/review-spec" \
+            "$(dirname "<absolute path to THIS SKILL.md>")"; do
+     [ -d "$d" ] && { REVIEW_SPEC_SKILL_DIR="$d"; break; }
+   done
+   TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/review-spec.py"
+   CLI_PROFILES_DIR="$REVIEW_SPEC_SKILL_DIR/references/cli-profiles"
    ```
-   If `TOOLS_PY` does not exist at that resolved path, treat this exactly
-   like `--no-cross-ai` (skip straight to step 5's fallback) — cross-AI
-   support isn't installed, never block the review over it.
+   Resolve this once, in one `Bash` call, and — exactly like `RUN_TMP_DIR`
+   below — record `TOOLS_PY`/`CLI_PROFILES_DIR` as literal absolute paths
+   substituted into every later command and prose reference; they are
+   **not** shell environment variables that survive across separate `Bash`
+   tool calls (this bit a first draft of this very step — see this plan's
+   Self-review notes). If `TOOLS_PY` does not exist at the resolved path,
+   treat this exactly like `--no-cross-ai` (skip straight to step 5's
+   fallback) — cross-AI support isn't installed, never block the review
+   over it.
 1. Run `mktemp -d` via `Bash`, and record its printed absolute path as
    `RUN_TMP_DIR` in this skill's own working notes — **not** a shell
    environment variable. Every `Bash` tool call in this harness starts a
@@ -2506,13 +2619,19 @@ Runs once per invocation, after Step 0.6.
    (No-op — writes `{}` — when there is no config/ladder to probe.)
 5. Resolve the reviewer list, saving its output to a file (Step 1's
    external dispatch needs a stable path to feed `render-command`, not
-   just the in-context text):
+   just the in-context text). This point is only reached when cross-AI is
+   actually active — `--no-cross-ai` already short-circuited at step 2
+   above — so `--cross-ai` is always passed here, never conditionally
+   (fixing a broken shell line-continuation from an earlier draft: a
+   trailing `\` followed by an inline `#` comment escapes the *space*
+   before the comment, not the newline, so the redirect below it silently
+   became a separate command that truncated the file):
    ```bash
    python3 "$TOOLS_PY" resolve-reviewers \
      --cwd <CODEBASE_ROOT> \
      --quota ~/.cache/ai-kit/review-spec/quota.json \
      --source-vendor <SOURCE_VENDOR from Step 1's flag parsing> \
-     --cross-ai \  # omit this flag entirely when --no-cross-ai was requested (step 2)
+     --cross-ai \
      > "$RUN_TMP_DIR/reviewers.json"
    ```
    `resolve-reviewers` itself calls `cfg_resolve(cwd, env)` (Task 2),
@@ -2632,7 +2751,18 @@ written to the same `iter<N>-<key>.md` path per Step 1) is
 `EFFECTIVE_REPORT_PATH` directly, unchanged from today's behavior.
 ```
 
-- [ ] **Step 5: Replace every remaining `/tmp/review-spec` reference with `$RUN_TMP_DIR`**
+- [ ] **Step 5: Point Step 2 at `EFFECTIVE_REPORT_PATH`, then replace every remaining `/tmp/review-spec` reference with `$RUN_TMP_DIR`**
+
+First: `skills/review-spec/SKILL.md`'s `### Step 2 — Parse reviewer Status`
+currently opens with `Locate the line beginning \`### Status:\` in the
+reviewer's output.` — this assumed the reviewer's text is still in
+context, which is no longer true for ANY dispatch shape after Step 1/1.5
+(native reports are now written to disk too, per Step 3's native branch
+above; external reports always were; merged reports always were). Change
+it to `Read \`EFFECTIVE_REPORT_PATH\` (Step 1.5) from disk; locate the
+line beginning \`### Status:\` in it.` — otherwise a single-reviewer
+external-CLI run (the common `single`-mode cross-AI case) has nothing in
+context to parse and every such run falsely reads as "No Status line".
 
 Find every occurrence — there are more than the two obvious ones (the
 cross-AI dry run caught a missed one at the GSD-handoff Surface message):
@@ -2645,19 +2775,28 @@ Fix each — every one below points at the SAME `EFFECTIVE_REPORT_PATH`
 (Step 1.5) rather than inventing its own new filename, closing a bug the
 live re-review found (three different invented names —
 `fixer-input.md`/`report.md`/the raw per-key name — for what should be one
-path):
-- Step 3's `Save the reviewer's report to a temp file
-  (\`/tmp/review-spec-report-iter<N>.md\`)` → `The reviewer's report is
-  already at \`EFFECTIVE_REPORT_PATH\` (Step 1.5) — no separate save
-  needed here.`
+path). Verified live against the real current file — the exact locations
+are:
+- **Line 323** (Step 3): `Save the reviewer's report to a temp file
+  (\`/tmp/review-spec-report-iter<N>.md\`) so downstream subagents/skills
+  can \`Read\` it.` → `The reviewer's report is already at
+  \`EFFECTIVE_REPORT_PATH\` (Step 1.5) — no separate save needed here.`
+- **Every `<REPORT_TEMP_PATH>` placeholder that reads this saved report**
+  (lines 360, 383, 392, 430 — the fixer's prompt-template substitution
+  list and its two "Review report: ..." lines) — since Step 3's own save
+  is being removed by the bullet above, `<REPORT_TEMP_PATH>` is no longer
+  bound by anything. Rename every one of these four occurrences to
+  `<EFFECTIVE_REPORT_PATH>`, bound to the value Step 1.5 (Task 11 Step 4)
+  established — one name for the same path throughout the whole skill,
+  not two.
 - The Constants section's `**Loop state file (optional):**
   /tmp/review-spec-<doc-basename>-<timestamp>.log` → `**Loop state file
   (optional):** \`$RUN_TMP_DIR/loop.log\``.
-- Step 5's "Native revise handed off" Surface row example (the GSD-handoff
-  message: `... (findings: /tmp/review-spec-report-iter<N>.md), then
-  re-run /review-spec.\``) → `... (findings: \`EFFECTIVE_REPORT_PATH\`),
-  then re-run /review-spec.\`` — this is the same string wherever it
-  recurs in the Surface table/examples.
+- **Line 438** (Step 3b-surface's example sentence): `... run: /gsd-plan-phase 2 --reviews  (findings: /tmp/review-spec-report-iter<N>.md), then re-run /review-spec.\`` →
+  `... run: /gsd-plan-phase 2 --reviews  (findings: EFFECTIVE_REPORT_PATH), then re-run /review-spec.\`` —
+  note line 474's Surface table row already uses a generic `<report
+  path>` placeholder with no literal `/tmp/` string, so it needs no
+  change; only this one concrete example sentence does.
 
 Re-run the grep after fixing — expect zero matches.
 
@@ -2683,16 +2822,29 @@ replaces the old file-by-file `/tmp/review-spec-*` cleanup, and there's
 nothing to accidentally miss.
 ```
 
-- [ ] **Step 7: Update the Constants section's fixer/reviewer skill names**
+- [ ] **Step 7: Update the Constants section's fixer/reviewer skill names — and delete the hardcoded reviewer model line**
 
 Change `**Reviewer skill:** \`reviewing-specs\`` to `**Reviewer skill:**
 \`review-spec-checklist\`` and `**Fixer skill:** \`applying-review-feedback\``
 to `**Fixer skill:** \`review-spec-fixer\`` (if Task 1 hasn't already
 caught these specific lines — re-grep to confirm).
 
+Also replace line 153, `**Subagent model for both:** \`sonnet\` (Haiku
+misses subtle defects; Opus burns tokens for no extra review-quality
+signal)`, with `**Fixer subagent model:** \`sonnet\` (Haiku misses subtle
+defects; Opus burns tokens for no extra fix-quality signal — the fixer
+stays Claude-only and sonnet-pinned; design §1 explicitly puts changing
+who edits out of scope). The reviewer's model is no longer a Constant at
+all — it comes from `REVIEWER_LIST` (Step 5), set per-entry.`. **Verified
+live: this line is never touched by any other step in this task**, and
+left as-is it directly contradicts Step 3's dispatch rule (the entry's
+`model`, omitted only when empty) — two readings of the same skill with
+opposite outcomes, and a literal reintroduction of the exact
+hardcoded-model anti-pattern this whole plan exists to remove.
+
 - [ ] **Step 8: Manual dry run — verify `RUN_TMP_DIR` and merge wiring**
 
-This task's own automated tests (Task 8) only exercise `tools/review-spec.py`
+This task's own automated tests (Task 8) only exercise `skills/review-spec/review-spec.py`
 in isolation via fakes — they never invoke a real CLI. This step is the
 only check on the orchestration prose itself, so it must actually run,
 not be deferred on an external CLI's usage limit clearing:
@@ -2748,7 +2900,7 @@ git commit -m "feat(review-spec): wire cross-AI reviewer resolution, quota probi
   the cross-AI review below).
 - **File-path correction from the spec**: the spec's illustrative paths
   said `scripts/review-spec/*.py` (several small files); this plan
-  consolidates into one `tools/review-spec.py`, matching this repo's
+  consolidates into one `skills/review-spec/review-spec.py`, matching this repo's
   established single-flat-file-per-tool convention
   (`tools/status-line.py`, `tools/setup.py`) instead of introducing a new
   multi-file `scripts/` top-level directory. This is a plan-time
@@ -2814,7 +2966,7 @@ inline, listed by category:
 | CRITICAL | `$RUN_TMP_DIR` was written as `RUN_TMP_DIR=$(mktemp -d)`, a shell variable — but every `Bash` tool call in this harness starts a fresh shell, so it was empty in every later reference (merge output, cleanup) | Step 0.7 point 1 now captures `mktemp -d`'s output as a literal absolute path substituted into every later reference, exactly like `CODEBASE_ROOT` already is |
 | CRITICAL | Task 1 Step 4's file enumeration didn't match the real repo — verified live via `grep`, the true set is 17 files, and 3 were missing entirely (the moved skills' own self-references to each other's old names) | New Step 4 fixes those 3 self-references explicitly; Step 5's enumeration now matches the real 17-file grep output exactly, verified against this repo |
 | CRITICAL | Double-review merge had no defined report file for a *native* reviewer — the `Agent` tool returns text, not a file, so `merge-reports` would crash on a missing path the first time `policy.mode = "double"` ran with a native primary (the common case) | Task 11 Step 3's native branch now writes the `Agent` tool's returned text to `$RUN_TMP_DIR/iter<N>-<key>.md` too, exactly like the external branch |
-| CRITICAL | `tools/review-spec.py` and `references/review-spec/cli-profiles/` live at the repo root, which `tools/setup.py` never symlinks (only `agents`/`commands`/`skills`) — unreachable from an installed skill | New `KIT_ROOT`/`TOOLS_PY`/`CLI_PROFILES_DIR` resolution (Task 11 Step 2 point 0, and independently in Task 10): `realpath` the skill's own resolved `SKILL_DIR` and strip the trailing `/skills/<name>` to derive the repo root reliably across every install shape |
+| CRITICAL | `tools/review-spec.py` and `references/review-spec/cli-profiles/` (their location at the time of this first review round) live at the repo root, which `tools/setup.py` never symlinks (only `agents`/`commands`/`skills`) — unreachable from an installed skill | First fix: a `KIT_ROOT`/`TOOLS_PY`/`CLI_PROFILES_DIR` resolution deriving the repo root via `realpath`+suffix-strip. **This fix was itself superseded in the second review round below** — it reintroduced the exact fresh-shell-variable bug it was fixing for `RUN_TMP_DIR`, and depended on a `SKILL_DIR` variable this skill never actually defines. The real fix: relocate both artifacts inside `skills/review-spec/` itself and resolve them with the same three-candidate pattern already used for `SEEDS_DIR` — see the second table |
 | HIGH | Merge could turn a failed/garbage external reviewer report into a false `### Status: Approved` (empty findings ≠ a clean pass) | New `report_has_status` (Task 7) checked by `merge-reports` (Task 8) before merging; on any missing/unreadable report it prints no `### Status:` line at all, reusing `review-spec/SKILL.md`'s existing "No Status line → Surface failure" rule instead of inventing a new one |
 | HIGH | Dedup key `(severity, location)` collapsed two DIFFERENT findings from the same reviewer at the same location into one, silently dropping the second's content | `merge_findings` now tracks per-report `seen` locations and only collapses across DIFFERENT reports; a second same-report finding at the same location is disambiguated by title |
 | HIGH | `parse_findings` had no notion of the `### Cross-Document Consistency` section — its bullets fell inside whichever severity heading preceded them | `_SEVERITY_RE` now recognizes that heading too, normalized to a `"CROSS-DOC"` tag; `render_merged_report` renders it under its own `### Cross-Document Consistency` heading, never a raw `### CROSS-DOC` |
@@ -2829,7 +2981,7 @@ inline, listed by category:
 | HIGH | Design has no stated behavior for a dispatched CLI erroring, timing out, or producing a non-conforming report | New §10 edge case: single mode falls through the existing "No Status line" rule unchanged; double mode's merge step surfaces the same rule rather than fabricating a verdict from an incomplete pair |
 | HIGH | Task 11 Step 8's only real (non-mocked) verification was gated on "once codex's usage limit clears" — a precondition the plan itself flagged as unmet, leaving the whole orchestrator change effectively untested | Step 8 rewritten: the `--no-cross-ai` leg is always runnable regardless of quota; the `--cross-ai` leg probes first and uses whichever CLI actually has quota, never assuming codex specifically |
 | CROSS-DOC | Double-mode semantics contradicted outright: design promised a guaranteed native baseline, but the kimi-round Task 5 redesign picked the best entry "any vendor", which could seat an external reviewer as primary | Task 5's `resolve_reviewers` now walks a `_native_ladder`-filtered list for the primary slot only (still tier-aware within it), guaranteeing the baseline is always native or `NO_CONFIG_FALLBACK`; design §3 updated to match; 2 new regression tests added |
-| CROSS-DOC | Design §3/§7/§11 still described a `scripts/review-spec/detect-runtimes.sh` shell script and its own unit tests — the plan builds none of that (one `tools/review-spec.py`) | Design §3 Scope, §7, and §11's testing section rewritten to the actual `tools/review-spec.py` shape |
+| CROSS-DOC | Design §3/§7/§11 still described a `scripts/review-spec/detect-runtimes.sh` shell script and its own unit tests — the plan builds none of that (one `skills/review-spec/review-spec.py`) | Design §3 Scope, §7, and §11's testing section rewritten to the actual `skills/review-spec/review-spec.py` shape |
 | CROSS-DOC | Design's example `policy.ladder` ordering only made sense under the old (incorrect) double-mode semantics | Resolved as a side effect of the double-mode fix above — the example's only native entry (`claude-opus`) now correctly becomes the primary regardless of its position in the ladder, verified by trace and by the new regression tests |
 
 MEDIUM findings (all fixed, no table): `cfg_render_toml`/`cfg_write_toml`
@@ -2840,3 +2992,36 @@ listed as produced); `parse_findings`'s docstring already matched its
 each source report's own `Document Type`/`Files Read` lines by design; the
 one remaining Spanish string (Step 0.7's hint message, and its design §6
 mirror) translated to English to match the rest of the skill.
+
+### Third review: a second clean-context Opus 5 subagent (native, live)
+
+The second Opus 5 round's fixes were themselves reviewed by a THIRD
+clean-context Opus 5 subagent, run the same way and told explicitly not
+to trust the "already fixed" summary — read the current documents fresh.
+It found the second round's `KIT_ROOT` fix had reintroduced the exact bug
+it was fixing, plus a real Task 1 gap the first two rounds both missed
+(two Python files, not just Markdown), plus several more real defects.
+7 CRITICAL/HIGH findings, all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL | `TOOLS_PY`/`KIT_ROOT`/`CLI_PROFILES_DIR` were resolved in one `Bash` call (Task 11 Step 2 point 0) but then referenced via `"$TOOLS_PY"` from several LATER, separate `Bash` calls (probe-quota, resolve-reviewers, render-command, merge-reports, and independently in Task 10) — the exact fresh-shell-variable bug already fixed once for `RUN_TMP_DIR`, reintroduced one paragraph below it | Root-caused and fixed properly: `tools/review-spec.py` and `references/review-spec/cli-profiles/` relocated to `skills/review-spec/review-spec.py` and `skills/review-spec/references/cli-profiles/` — INSIDE the already-guaranteed-installed `review-spec` skill directory — so they resolve with the exact three-candidate pattern (`CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/sibling-of-this-file) the skill already uses for `SEEDS_DIR`, in one `Bash` call, substituted literally afterward exactly like `RUN_TMP_DIR` |
+| CRITICAL | The `KIT_ROOT` derivation depended on a `SKILL_DIR` variable the comment claimed was "already established above" — verified live, `review-spec/SKILL.md` never defines any such variable; `SEEDS_DIR` is resolved from three full candidate paths directly, with no intermediate name | Eliminated along with the `KIT_ROOT` mechanism above — the replacement resolves `REVIEW_SPEC_SKILL_DIR` directly via the same three literal candidates `SEEDS_DIR` uses, no intermediate "resolve my own directory first" step |
+| CRITICAL | Task 1's verification grep was scoped to `--include="*.md"` and missed `tests/test_framework_profiles.py:13` and `tests/test_wizard_pty.py:50/358`, which hardcode the old skill names — verified live via an unscoped repo grep | New Task 1 Step 5 fixes both Python files explicitly, BEFORE the Markdown sweep — `tests.test_wizard_pty` is in both the `Makefile` `test:` target and a `.pre-commit-config.yaml` hook, so skipping it would break this task's own commit gate |
+| CRITICAL | Task 1's old Step 5 file-count arithmetic was wrong (claimed 16 post-move/11-must-fix when the real numbers are 13 post-move/8-must-fix, and claimed "6 already fixed" when it's 4) | Recomputed against a live grep of the real repo and corrected throughout (now Task 1 Step 6) |
+| HIGH | Deleting Step 3's report-save sentence (round 2's `EFFECTIVE_REPORT_PATH` fix) left `<REPORT_TEMP_PATH>` — the fixer prompt's substitution placeholder, used at 4 separate lines — permanently undefined | Task 11 Step 5 now also renames every `<REPORT_TEMP_PATH>` occurrence to `<EFFECTIVE_REPORT_PATH>`, bound once, used everywhere |
+| HIGH | Constants line `**Subagent model for both:** \`sonnet\`` was never updated, directly contradicting Step 3's per-entry `model` dispatch rule — and reintroducing the exact hardcoded-model anti-pattern this plan exists to remove | Task 11 Step 7 now replaces it with a fixer-only `**Fixer subagent model:** \`sonnet\`` constant; the reviewer's model is no longer a Constant, it comes from `REVIEWER_LIST` |
+| HIGH | Step 2 ("Parse reviewer Status") still said "Locate the line... in the reviewer's output" — but every report is now written to disk, not left in context, so a single external-CLI reviewer run had nothing to parse | Task 11 Step 5 rewrites Step 2's opening to read `EFFECTIVE_REPORT_PATH` from disk first |
+| HIGH | Design's example `codex`/`grok` `command` templates ended in `2>/dev/null`, discarding the exact stderr signal `probe_reviewer_quota` depends on to detect a usage-limit error | Removed `2>/dev/null` from both example templates in design §3 |
+| HIGH | `tomllib` import-guard rationale claimed `.python-version` (3.12) governs the runtime, and cited the `Makefile`'s `test:` target as running `.venv/bin/python3` | Both claims were wrong — `.python-version` governs the `uv`-managed dev venv, and the `Makefile`/pre-commit both run bare system `python3`, exactly like `status-line.py`. Reverted to matching `status-line.py`'s actual guarded-import pattern (`try/except ModuleNotFoundError`, degrade to `tomllib = None`) instead of arguing the guard was unnecessary |
+| MEDIUM | Task 2's original Step 3 imported all 9 of this module's eventual dependencies (`json`, `re`, `shlex`, `shutil`, `subprocess`, `sys`, `time`, `tomllib`, `NamedTuple`/`Optional`) upfront — `ruff`'s `F401` would fail Task 2's own commit, since ~7 are unused until later tasks | Each task now adds only the import(s) it newly needs, in the order tasks are executed (`Optional` moved to Task 3, where `cache_read_json`'s return type first needs it) |
+| MEDIUM | Task 10's `SKILL_DIR` candidate list used a different, inconsistent form from Task 11's | Both now resolve the same way, pointed at `review-spec`'s directory either way (Task 10 as a sibling skill, Task 11 as itself) |
+| MEDIUM | A Task 5 test name/comment (`test_double_mode_primary_is_best_overall_regardless_of_vendor`, `# best overall = top of ladder`) still asserted the pre-native-baseline-fix semantics | Renamed to `test_double_mode_primary_is_best_native_entry_tier_aware`, comment updated |
+| MEDIUM | Task 11 Step 5's third `/tmp/review-spec` bullet mislabeled its own location ("Step 5's Surface row" when the literal string is actually in Step 3b-surface's example sentence; the Surface table row itself already uses a generic placeholder) | Corrected to name the real location (line 438's example sentence) |
+| MEDIUM | Task 1's old Step 7 said "Add a... note to the commit message (Step 7)" — self-referential, meant Step 8/9 | Fixed to reference the actual commit step (now Step 9) |
+| MEDIUM | Design §11's testing section didn't mention Tasks 6/7 (quota probing, findings merge) at all, and cited "the real captured output in §5 as a fixture" — §5 has no captured output, only a summary table | Added both tasks to §11; fixture reference corrected to "built from the model ids confirmed live in §5's table" |
+| CROSS-DOC | Double mode's SECONDARY slot could still be filled by a same-vendor reviewer: `resolve_ladder_pick`'s same-vendor-fallback pass (needed for `single` mode and the primary slot) also ran for the secondary slot, contradicting design §3's "dropped, not substituted" guarantee | `resolve_ladder_pick` gained an `allow_same_vendor_fallback` parameter, `False` for the secondary-slot call only; new regression test proves a same-vendor-only ladder now drops the secondary instead of duplicating the vendor |
+| CROSS-DOC | Design §8's dedup rule ("(severity, exact Location string)") read as the exact same-report-collision bug the second round's `merge_findings` fix exists to avoid | §8 now states the cross-report-only scope explicitly, matching the implementation |
+| CROSS-DOC | Design §4 described the source-vendor default as dynamically "the current session's own vendor"; the plan just hardcodes the literal `anthropic` | Both documents now state explicitly that `anthropic` is that abstract default's concrete value, chosen because the orchestrator has no runtime introspection API for its own vendor — not a contradiction, but previously stated inconsistently |
+
+A fourth review round should confirm this document reaches Approved before execution begins.

@@ -4,14 +4,19 @@
 - **Date**: 2026-08-27
 - **Scope**: `skills/review-spec/`, `skills/reviewing-specs/` (renamed),
   `skills/applying-review-feedback/` (renamed), new `skills/review-spec-config/`,
-  new `tools/review-spec.py` (one stdlib-only module — matches this repo's
-  established `tools/status-line.py`/`tools/setup.py` single-flat-file
-  convention rather than a multi-file `scripts/` directory), new
-  `references/review-spec/cli-profiles/`. Neither `tools/review-spec.py`
-  nor `references/review-spec/cli-profiles/` lives inside an
-  individually-installed skill directory, so both consuming skills resolve
-  them at an absolute path derived from their own installed location
-  (§8) rather than a bare relative path.
+  new `skills/review-spec/review-spec.py` (one stdlib-only module, file
+  layout/testing style matching this repo's established
+  `tools/status-line.py`/`tools/setup.py` single-flat-file convention —
+  but placed **inside `review-spec`'s own skill directory**, not a
+  top-level `tools/`, because that's the only placement reachable from an
+  installed skill: `tools/setup.py` symlinks only `agents`/`commands`/
+  `skills` into `~/.claude`, never a top-level `tools/`), new
+  `skills/review-spec/references/cli-profiles/` (same reasoning — inside
+  the skill directory, not a new top-level `references/`). Both resolve
+  via the exact same three-candidate pattern (`CLAUDE_PLUGIN_ROOT`/
+  `~/.claude/skills`/sibling-of-this-file) `review-spec/SKILL.md` already
+  uses for its own `SEEDS_DIR` (§8), so `review-spec-config` — a sibling
+  skill — reaches them the same way.
 - **Relates to**: builds on the existing `review-spec` orchestrator
   (Step 0–0.6, the review↔fix loop) without changing its framework-detection
   or fixer-routing behavior — this spec only changes **who performs the
@@ -136,7 +141,7 @@ key = "codex-gpt"
 cli = "codex"
 model = "gpt-5.2"
 vendor = "openai"
-command = "codex exec --sandbox read-only --skip-git-repo-check -m {model} -c model_reasoning_effort='\"{effort}\"' {prompt} 2>/dev/null"
+command = "codex exec --sandbox read-only --skip-git-repo-check -m {model} -c model_reasoning_effort='\"{effort}\"' {prompt}"
 effort = "high"
 
 [[reviewers]]
@@ -144,7 +149,7 @@ key = "grok-flagship"
 cli = "grok"
 model = "grok-4.6"
 vendor = "xai"
-command = "grok -m {model} --output-format json -p {prompt} 2>/dev/null"
+command = "grok -m {model} --output-format json -p {prompt}"
 
 [[reviewers]]
 key = "opencode-kimi"
@@ -240,7 +245,11 @@ uses whatever `policy.mode` says.
 
 Default: the document's authoring vendor is assumed to be **the current
 session's own vendor** (the common case — `brainstorming`/`writing-plans`
-ran earlier in the same session that now invokes `/review-spec`). Override
+ran earlier in the same session that now invokes `/review-spec`). The
+orchestrator has no runtime introspection API for its own model's real
+vendor, so this default is instantiated as the literal `anthropic` (a
+native Claude Code session is overwhelmingly the common case) rather than
+detected dynamically. Override
 via `--source-vendor=<vendor>` for the case where the spec was authored
 elsewhere (a different session, a teammate, another tool) and the current
 session isn't the author. The flag takes a vendor directly (e.g. `openai`,
@@ -256,7 +265,7 @@ right now.
 
 ---
 
-## 5. CLI profiles (`references/review-spec/cli-profiles/`)
+## 5. CLI profiles (`skills/review-spec/references/cli-profiles/`)
 
 One file per runtime, holding: how to detect the binary + version, how to
 list its available models, its non-interactive invocation flags, and
@@ -327,17 +336,18 @@ decision (it always re-detects and re-saves).
 ## 7. `review-spec-config` skill (new)
 
 Interactive setup, modeled on `gsd-config`/`gsd-settings`: runs
-`tools/review-spec.py detect-runtimes` (resolved to an absolute path per
-§8's resolution mechanism, since this module lives at the repo root, not
-inside this skill's own installed directory), shows what it found
-(installed CLIs, their listed models), and asks the user (via
-`AskUserQuestion`) to name/rank `[[reviewers]]` entries and set `[policy]`
-— writing the result to `review-spec.toml` (global by default; `--local`
-writes `./.aikit/review-spec.toml` instead). Also exposes a `--check-only`
-mode (no writes) that reports current cross-AI availability — this is the
+`review-spec.py detect-runtimes` (resolved to an absolute path per §8's
+resolution mechanism — this module lives inside the `review-spec` skill's
+own directory, a sibling of this skill, not inside this skill's own
+installed directory), shows what it found (installed CLIs, their listed
+models), and asks the user (via `AskUserQuestion`) to name/rank
+`[[reviewers]]` entries and set `[policy]` — writing the result to
+`review-spec.toml` (global by default; `--local` writes
+`./.aikit/review-spec.toml` instead). Also exposes a `--check-only` mode
+(no writes) that reports current cross-AI availability — this is the
 "standalone availability check" the original ask wanted as a separate
 script, implemented here as a flag rather than a fifth skill to avoid
-skill sprawl (`tools/review-spec.py detect-runtimes` remains independently
+skill sprawl (`review-spec.py detect-runtimes` remains independently
 callable too, for anyone who wants the raw command instead of the
 interactive wrapper).
 
@@ -346,15 +356,19 @@ interactive wrapper).
 ## 8. Orchestrator integration (`review-spec/SKILL.md`)
 
 - **Step 0.7 (new)**, runs once per invocation, after Step 0.6:
-  0. Resolve `KIT_ROOT` (the ai-kit repo root) from this skill's own
-     already-resolved `SKILL_DIR`: `realpath` it (following the
-     `~/.claude/skills/review-spec` symlink when installed that way) and
-     strip the trailing `/skills/review-spec`. Derive `TOOLS_PY =
-     $KIT_ROOT/tools/review-spec.py` and `CLI_PROFILES_DIR =
-     $KIT_ROOT/references/review-spec/cli-profiles` — neither lives inside
-     an installed skill directory (§3), so this is the only place that
-     reaches them reliably across every install shape (plugin,
-     `~/.claude/skills` symlink, direct dev checkout). Missing `TOOLS_PY`
+  0. Resolve `TOOLS_PY` and `CLI_PROFILES_DIR`. `review-spec.py` and its
+     `references/cli-profiles/` live inside this skill's **own**
+     directory (§3), so they resolve with the exact same three-candidate
+     pattern already used for `SEEDS_DIR` just above in this same skill
+     (`${CLAUDE_PLUGIN_ROOT}/skills/review-spec/…`, then
+     `~/.claude/skills/review-spec/…`, then the directory containing this
+     `SKILL.md` itself) — no separate "resolve a skill directory, then
+     derive a repo root" step, and no dependency on any `SKILL_DIR`
+     variable (this skill never defines one; `SEEDS_DIR` itself is
+     resolved from three full candidate paths directly, not derived from
+     an intermediate name). Record both as literal absolute paths, exactly
+     like `RUN_TMP_DIR` below — they are not shell variables that survive
+     across separate `Bash` tool calls. Missing `TOOLS_PY`
      at this resolved path degrades exactly like `--no-cross-ai`.
   1. Run `mktemp -d`, capture its stdout, and record that absolute path as
      `RUN_TMP_DIR` **in the skill's own working notes/context** — not as a
@@ -380,14 +394,20 @@ interactive wrapper).
   content into every CLI's prompt). Output captured to
   `$RUN_TMP_DIR/iter<N>-<key>.md`.
 - **Step 1.5 (new, only when 2 reviewers ran)**: merge the two reports —
-  union of findings, deduplicated by (severity, exact `Location` string) —
-  the reviewer output template's `### <SEVERITY>` heading plus its bullet's
-  `Location:` field are the only structured fields the template actually
-  guarantees; `file`/`line`/`category` aren't reliably parseable from free-text
-  findings, so dedup keys off what's really there. Each finding is tagged
-  with which reviewer `key`(s) surfaced it. No severity arbitration
-  by the orchestrator (option **(c)** from the design discussion). Merged
-  report becomes the input to Step 2/3, unchanged otherwise.
+  union of findings, deduplicated by (severity, exact `Location` string)
+  ACROSS the two reports only — the reviewer output template's `###
+  <SEVERITY>` heading plus its bullet's `Location:` field are the only
+  structured fields the template actually guarantees; `file`/`line`/
+  `category` aren't reliably parseable from free-text findings, so dedup
+  keys off what's really there. Two DIFFERENT findings from the SAME
+  report that happen to share a (severity, location) — e.g. two distinct
+  HIGH issues both in "§3" — are never collapsed into each other; only
+  the first such finding per report claims that dedup key, so this rule
+  only ever merges a genuine cross-reviewer duplicate, never two of one
+  reviewer's own distinct findings. Each finding is tagged with which
+  reviewer `key`(s) surfaced it. No severity arbitration by the
+  orchestrator (option **(c)** from the design discussion). Merged report
+  becomes the input to Step 2/3, unchanged otherwise.
 - **Fixer (Step 3a/3b)**: unchanged, always Claude-native, always
   `review-spec-fixer` (renamed).
 - **Cleanup**: `rm -rf "$RUN_TMP_DIR"` once, replacing today's ad hoc
@@ -460,11 +480,12 @@ Given this touches orchestration prose (SKILL.md files) and shell/Python
 detection scripts rather than a single testable module, testing splits by
 artifact:
 
-- **`tools/review-spec.py`'s runtime/CLI detection**: unit-testable — mock
+- **`review-spec.py`'s runtime/CLI detection**: unit-testable — mock
   `PATH`/binary presence (`which_fn`) and process execution (`run_fn`),
   assert correct `runtimes.json` shape; assert `opencode models` output
-  parses into the expected provider/model list shape (using the real
-  captured output in §5 as a fixture).
+  parses into the expected provider/model list shape (a fixture built
+  from the model ids confirmed live in §5's table —
+  `opencode-go/kimi-k3`, `opencode-go/qwen3.8-max`, etc.).
 - **Config loading (TOML parse + local/global merge + `strategy`
   resolution)**: unit-testable in isolation — `local-only` ignores global
   entirely; `global-merge` merges `[[reviewers]]` by `key` and shallow-merges
@@ -472,6 +493,17 @@ artifact:
 - **Policy resolution (`single`/`double` ladder walk, vendor-skip,
   quota-skip, fallback-to-current-session)**: unit-testable as pure
   functions over a fixture `policy` + fixture `quota.json`.
+- **Quota probing (`render_reviewer_command`, `probe_reviewer_quota`,
+  `refresh_quota_cache`)**: unit-testable — a fake `run_fn` simulates
+  success/nonzero-exit/usage-limit-text/timeout outcomes; the command
+  renderer is tested separately for correct `{model}`/`{prompt}`/extra
+  substitution and for `{prompt}` shell-escaping.
+- **Findings merge (`parse_findings`, `report_has_status`,
+  `merge_findings`, `render_merged_report`)**: unit-testable over fixture
+  report strings — severity/location extraction, the
+  `Cross-Document Consistency` section, cross-report dedup vs.
+  same-report distinctness, and the fail-closed path for a report with no
+  `### Status:` line.
 - **`review-spec/SKILL.md` orchestration changes**: no automated test
   (prose, not code) — validated the same way the existing skill is
   validated: a manual dry run reviewing a real spec/plan with `--cross-ai`
