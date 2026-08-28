@@ -18,19 +18,35 @@ sibling-of-this-file) is what makes that possible (see Task 11 Step 2
 point 0). **This repo already has a skill-local Python precedent** —
 `skills/mermaid-audit/scripts/mermaid_style.py` and
 `skills/markdown-to-pdf/scripts/markdown_to_pdf.py`, both under a
-`scripts/` subdirectory with underscore-safe names, plain-`import`ed by
-their tests (`tests/test_mermaid_style.py:5-7`'s `sys.path.insert` +
-`import mermaid_style`) — but that pattern doesn't fit here: those
-modules are library code, imported, never invoked directly as a
-standalone `python3 <path> <subcommand>` CLI from `Bash`. This module
-*is* invoked that way, by name, from two different skills' `Bash` calls
-(`review-spec/SKILL.md`'s Step 0.7/Step 1 and `review-spec-config`'s own
-Step 0/1/3) — matching `review-spec.py` to the skill directory's own name
-keeps that invocation path self-evident at the call site, at the cost of
-needing `importlib.util.spec_from_file_location` (not a plain `import`)
-from its own test module, since a hyphenated filename isn't a valid bare
-module name. This deviation is deliberate, not an oversight: it still
-mirrors `tools/status-line.py`'s file layout and testing style — one flat
+`scripts/` subdirectory with underscore-safe names. Verified live: both
+ARE invoked directly as standalone CLIs from `Bash` by their own skills
+(`skills/mermaid-audit/SKILL.md:55` runs `python3 scripts/mermaid_style.py
+<target>`; `skills/markdown-to-pdf/SKILL.md:36,65,72` runs `python3
+scripts/markdown_to_pdf.py <source.md>` with flags — both have their own
+`argparse`/`main()`), and are ALSO plain-`import`ed by their tests
+(`tests/test_mermaid_style.py:5-7`'s `sys.path.insert` + `import
+mermaid_style`) — the underscore/`scripts/` convention already covers
+CLI invocation, not just library use. `review-spec.py` still departs from
+it, but for a narrower, real reason: those two scripts are each invoked
+only from their *own* skill's instructions, at a fixed relative path
+(`scripts/<name>.py`) resolved implicitly against that skill's own
+directory. `review-spec.py` is invoked via `Bash` from **two different
+skills** (`review-spec/SKILL.md`'s Step 0.7/Step 1 and
+`review-spec-config`'s own Step 0/1/3), from whatever `CWD` the
+orchestrator happens to be running in — it needs the same explicit
+three-candidate absolute-path resolution `SEEDS_DIR` already uses, which
+a bare relative `scripts/<name>.py` path can't provide. Keeping the flat,
+skill-name-matching layout (rather than moving under a `scripts/`
+subdirectory) is a naming choice this plan makes for call-site legibility
+at that resolved absolute path, not a technical requirement — an
+underscore-named `review_spec.py` in the same flat location would work
+identically and avoid `importlib.util.spec_from_file_location` in favor
+of a plain `import`, matching `mermaid_style.py`'s test pattern exactly;
+this plan keeps the hyphenated name to match the skill directory's own
+name (`review-spec`) at the call site, accepting the `importlib.util`
+cost in the test module as the trade-off. This deviation is deliberate,
+not an oversight: it still mirrors `tools/status-line.py`'s file layout
+and testing style — one flat
 file, `importlib`-loaded by its test module for the same hyphenated-name
 reason `status-line.py`'s own tests already load it that way — and,
 matching `status-line.py`'s own precedent exactly, since this
@@ -2308,7 +2324,9 @@ class TestMainCli(unittest.TestCase):
             quota_path = os.path.join(cwd, "quota.json")
             env = {"HOME": home}
             fake_run = mock.Mock(
-                return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="ok")
+                return_value=subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout="ok", stderr=""
+                )
             )
             with mock.patch.object(rs.os, "environ", env):
                 code = rs.main(
@@ -2524,10 +2542,9 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
         if unreadable:
             # Deliberately prints NO "### Status:" line — review-spec/SKILL.md's
             # existing Step 2 already treats "No Status line" as a failure to
-            # surface (its own long-standing rule, unrelated to this plan), so a
-            # failed/unreadable external reviewer can never silently merge into
-            # a false "### Status: Approved". No new orchestrator special-case
-            # needed.
+            # surface (its own long-standing rule), so a failed/unreadable
+            # external reviewer can never silently merge into a false
+            # "### Status: Approved". No new orchestrator special-case needed.
             print(f"merge-reports: reviewer(s) {', '.join(unreadable)} produced "
                   f"no readable report with a Status line — cannot merge.")
             return 0
@@ -2613,8 +2630,9 @@ to:
         entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_review_spec
 ```
 
-`tests/test_review_spec.py` uses only `unittest`/`stdlib` (Task 1's design
-constraint carries through to its tests too), so it belongs in the bare
+`tests/test_review_spec.py` uses only `unittest`/`stdlib` (this plan's own
+Global Constraints — stdlib-only, zero new external dependencies —
+carries through to its tests too), so it belongs in the bare
 `python3` `unittest` hook, not the `uv run`-gated `unittest-wizard` hook —
 matching how `skills/review-spec/review-spec.py` itself runs on bare
 system `python3` (Task 8's own Interfaces), not the `uv`-managed dev venv.
@@ -3326,8 +3344,7 @@ For each entry in `REVIEWER_LIST`:
     exactly one of these four strings for every native reviewer entry, so
     surface anything else as a config error rather than passing it through.
   - `description`: `review-spec iter N reviewer (<key>)`
-  - `prompt`: the template below, with the skill name updated to
-    `review-spec-checklist` (was `reviewing-specs`)
+  - `prompt`: the template below, invoking the `review-spec-checklist` skill
   - After the `Agent` tool returns its report text, write it verbatim to
     `$RUN_TMP_DIR/iter<N>-<key>.md` via the `Write` tool (mirroring the
     external branch below, which redirects `Bash` stdout to the same
@@ -3403,9 +3420,11 @@ For each entry in `REVIEWER_LIST`:
      document review, not a trivial probe), redirecting stdout to
      `$RUN_TMP_DIR/iter<N>-<key>.md`.
 
-Then continue with the existing reviewer prompt template (for the native
-case) unchanged below, except the skill name substitution above.
 ````
+
+The existing reviewer prompt template that follows this section in
+`skills/review-spec/SKILL.md` (for the native case) stays unchanged —
+only the section's opening (replaced above) changes.
 
 - [ ] **Step 4: Add Step 1.5 after the new Step 1**
 
@@ -3571,7 +3590,9 @@ defects; Opus burns tokens for no extra fix-quality signal — the fixer
 stays Claude-only and sonnet-pinned; design §1 explicitly puts changing
 who edits out of scope). The reviewer's model is no longer a Constant at
 all — it comes from `REVIEWER_LIST` (this skill's own `Step 0.7`, points
-2/5/6 — not this task's plan-step numbering), set per-entry.`. **Verified
+2/5/6), set per-entry.`. (This task's own Step numbering is separate from
+`review-spec/SKILL.md`'s internal `Step 0.7`/`Step N` numbering — the
+parenthetical above refers to the latter.) **Verified
 live: this line is never touched by any other step in this task**, and
 left as-is it directly contradicts Step 3's dispatch rule (the entry's
 `model`, omitted only when empty) — two readings of the same skill with
@@ -3586,10 +3607,10 @@ which follows `## Constants` and `## NEVER`, and sits immediately above
 `### Step 1 — Dispatch reviewer (every iteration)`)
 still names a single `"Dispatch reviewer subagent (fresh)"` node feeding
 straight into `"Parse Status line"` — a single-reviewer flow. After Steps
-2–5 above, the real flow is 1 or 2 dispatches, an optional merge
-(`Step 1.5`, only when `REVIEWER_LIST` has 2 entries), then reading
-`EFFECTIVE_REPORT_PATH` — leaving the diagram as-is would ship a skill
-whose diagram contradicts its own prose.
+2–5 above, the real flow is 1 or 2 dispatches, then `Step 1.5` (runs every
+iteration; only its `merge-reports` call is conditional on 2 reviewers)
+binding `EFFECTIVE_REPORT_PATH` — leaving the diagram as-is would ship a
+skill whose diagram contradicts its own prose.
 
 Rename the node `"Dispatch reviewer subagent (fresh)"` to `"Dispatch
 reviewer(s) (fresh)"` everywhere it appears (every edge target/source
@@ -3994,3 +4015,22 @@ all fixed:
 | MEDIUM | `test_probe_quota_refreshes_stale_entries_and_writes_cache` called `rs.main(["probe-quota", ...])` with no `run_fn=`, so it shelled out to a real `echo ok` via `subprocess.run` — contradicting Task 6's/design §11's "unit-testable — a fake `run_fn` simulates outcomes" contract and every neighboring `TestMainCli` test's own pattern | Passes a `mock.Mock` `run_fn` returning a fake `CompletedProcess`; asserts it was actually called, so the test can never silently fall back to a real shell-out |
 
 A fourteenth review round should confirm this document reaches Approved before execution begins.
+
+### Fifteenth review: a fourteenth clean-context Opus 5 subagent (native, live)
+
+The fourteenth round's fixes were themselves reviewed by a FIFTEENTH
+clean-context Opus 5 subagent. 8 findings (1 CRITICAL, 2 HIGH, 3 MEDIUM,
+2 CROSS-DOC), all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL | The plan and design both claimed `skills/mermaid-audit/scripts/mermaid_style.py`/`skills/markdown-to-pdf/scripts/markdown_to_pdf.py` are "library code, never invoked directly as a CLI from Bash" — the sole justification for `review-spec.py` departing from that `scripts/`/underscore precedent. Verified live, this is false: both scripts run as standalone CLIs from their own SKILL.md (`mermaid-audit/SKILL.md:55`, `markdown-to-pdf/SKILL.md:36`), each with its own `argparse`/`main()` | Both documents corrected to state the true fact (the precedent already covers CLI invocation), with a narrower, true justification for keeping `review-spec.py` flat/hyphenated: it's invoked by name from **two different skills'** `Bash` calls at an absolute path resolved via the three-candidate pattern, unlike the two precedent scripts (each invoked only by their own skill at a fixed relative path) — a call-site-legibility choice, not a technical requirement, explicitly named as such |
+| HIGH | `test_probe_quota_refreshes_stale_entries_and_writes_cache`'s fake `run_fn` returned a `CompletedProcess` with no `stderr` (defaults to `None`); `probe_reviewer_quota` computes `(result.stdout + result.stderr).lower()` unconditionally — reproduced live as `TypeError`, uncaught by the surrounding `except (OSError, subprocess.TimeoutExpired)`, so Task 8's own "Expected: PASS" is unreachable | Fake now supplies `stderr=""` explicitly, matching every other fake `run_fn` in Tasks 6/8 |
+| HIGH | Two plan-meta fragments survived inside content that ships as `skills/review-spec/SKILL.md`: Task 11 Step 3's fenced block said "Then continue with the existing reviewer prompt template … except the skill name substitution above" (an editorial note about the diff, not skill prose) inside the fence; Task 11 Step 7's literal Constants replacement text contained "— not this task's plan-step numbering" inside the backtick-quoted string itself | The Step 3 note moved outside the fence as executor guidance; the Step 7 parenthetical removed from the quoted replacement text, with the disambiguation moved to surrounding plan prose instead |
+| MEDIUM | A stray "unrelated to this plan" comment survived inside `review-spec.py`'s own shipped source (Task 8 Step 3, the `merge-reports` no-Status-line comment) | Removed — the comment now describes the behavior without referencing the plan itself |
+| MEDIUM | Task 8 Step 6's rationale for `tests/test_review_spec.py` staying on bare `python3` still cited "Task 1's design constraint" — the previous round's table claimed this was fixed, but the edit had landed on a different occurrence, not this one | Corrected to cite this plan's own Global Constraints section (stdlib-only, zero new external dependencies) |
+| MEDIUM | Task 11 Step 8's diagram-update rationale still read "an optional merge (Step 1.5, only when REVIEWER_LIST has 2 entries)" — the exact framing Step 4 was rewritten two rounds ago specifically to stop | Reworded to match Step 4: Step 1.5 always runs; only its `merge-reports` call is conditional |
+| CROSS-DOC | Design §11's dry-run acceptance criterion still read "the merge step (§8) only runs when 2 reviewers actually ran" with no mention of `EFFECTIVE_REPORT_PATH` always being bound — contradicting §8's own corrected Step 1.5 framing and licensing an implementer to validate the wrong thing | §11 reworded to name both: the `merge-reports` call is conditional, `EFFECTIVE_REPORT_PATH` is bound in both cases |
+| CROSS-DOC | The false skill-local-Python-precedent claim (CRITICAL above) was duplicated verbatim in both the plan's Architecture paragraph and the design's Scope bullet — a shared wrong premise, not independent errors | Fixed in both documents together with matching corrected language, so no new contradiction was introduced by fixing only one |
+
+A fifteenth review round should confirm this document reaches Approved before execution begins.

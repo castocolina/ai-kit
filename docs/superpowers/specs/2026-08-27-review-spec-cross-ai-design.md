@@ -21,7 +21,7 @@
   also calls for fixing that bug, since the new resolution snippets are
   modeled directly on it. `review-spec-config` — a sibling skill — reaches
   `review-spec.py`/the CLI profiles the identical way, via its own
-  self-contained copy of the same three candidates. This repo also has a `skills/<skill>/scripts/<module_name>.py` precedent (`mermaid-audit`, `markdown-to-pdf`) for skill-local Python, but those modules are library code, plain-`import`ed by tests — never invoked directly as a `python3 <path> <subcommand>` CLI from `Bash` the way `review-spec.py` is, from two different skills' `Bash` calls. Matching the filename to the skill directory keeps that invocation self-evident at the call site; this plan's test module loads it via `importlib.util.spec_from_file_location` instead of a plain `import` for that reason, the same way `tools/status-line.py`'s own tests do.
+  self-contained copy of the same three candidates. This repo also has a `skills/<skill>/scripts/<module_name>.py` precedent (`mermaid-audit`, `markdown-to-pdf`) for skill-local Python. Verified live, both scripts ARE invoked as standalone CLIs from `Bash` by their own skills (`mermaid-audit/SKILL.md:55`, `markdown-to-pdf/SKILL.md:36`), not just imported by tests — the underscore/`scripts/` convention already covers CLI invocation. `review-spec.py` departs from it for a narrower reason: those two scripts are each invoked only from their own skill, at a fixed relative path resolved implicitly against that skill's own directory, whereas `review-spec.py` is invoked from two different skills' `Bash` calls from an unpredictable `CWD`, needing the same explicit three-candidate absolute-path resolution `SEEDS_DIR` already uses. Keeping the flat, skill-name-matching filename (rather than an underscore name under `scripts/`) is a call-site-legibility choice, not a technical requirement; this plan's test module loads it via `importlib.util.spec_from_file_location` instead of a plain `import` as the accepted cost of that choice, the same way `tools/status-line.py`'s own tests do.
 - **Relates to**: builds on the existing `review-spec` orchestrator
   (Step 0–0.6, the review↔fix loop) without changing its framework-detection
   or fixer-routing behavior — this spec only changes **who performs the
@@ -654,5 +654,7 @@ artifact:
   (prose, not code) — validated the same way the existing skill is
   validated: a manual dry run reviewing a real spec/plan with `--cross-ai`
   and `--no-cross-ai`, and with `policy.mode` set to each of `single`/
-  `double`, confirming `RUN_TMP_DIR` is created/cleaned and the merge step
-  (§8) only runs when 2 reviewers actually ran.
+  `double`, confirming `RUN_TMP_DIR` is created/cleaned, that the
+  `merge-reports` call (§8's Step 1.5) only runs when 2 reviewers actually
+  ran, and that `EFFECTIVE_REPORT_PATH` is bound in both the 1- and
+  2-reviewer case regardless.
