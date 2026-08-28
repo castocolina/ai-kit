@@ -676,7 +676,10 @@ class TestCacheStaleness(unittest.TestCase):
 
 Add `import time` to `tests/test_review_spec.py`'s import block at the top
 of the file (it is not there yet — Task 2's test file only imported
-`importlib.util`, `os`, `tempfile`, `unittest`).
+`importlib.util`, `os`, `tempfile`, `unittest`), in alphabetically sorted
+position: `importlib.util`, `os`, `tempfile`, `time`, `unittest` — this
+file is ruff-scoped (`.pre-commit-config.yaml`'s hook covers `tests/`) and
+ruff's `I001` fails an out-of-order import block, not just an unused one.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1380,7 +1383,10 @@ Add `import subprocess` to the test file's import block — this task's
 `test_timeout_is_unavailable` (below) constructs a
 `subprocess.TimeoutExpired`, and nothing earlier in the test file imports
 `subprocess` (the module itself gains it in Task 4, but the *test file*
-tracks its own imports task-by-task since it's ruff-scoped).
+tracks its own imports task-by-task since it's ruff-scoped). Insert it in
+alphabetically sorted position: `importlib.util`, `os`, `subprocess`,
+`tempfile`, `time`, `unittest` — ruff's `I001` fails an out-of-order
+import block.
 
 Add to `tests/test_review_spec.py`:
 
@@ -1726,6 +1732,20 @@ class TestParseFindings(unittest.TestCase):
         self.assertEqual(findings[1]["severity"], "CROSS-DOC")
         self.assertEqual(findings[1]["title"], "Docs disagree")
 
+    def test_low_severity_bullets_keep_their_own_tag_not_medium(self):
+        # regression: a plan-archetype review may legitimately emit a
+        # ### LOW heading (reviewing-specs's LOW/Tooling-Catchable tier);
+        # before this fix its bullets fell through to severity None and
+        # render_merged_report silently re-labeled them MEDIUM.
+        report = """## Review: plan.md
+### LOW
+- **Trailing whitespace** — Location: §4. Required: trim it. Why: lint noise.
+### Status: Issues Found — fix and re-invoke
+"""
+        findings = rs.parse_findings(report)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "LOW")
+
 
 class TestReportHasStatus(unittest.TestCase):
     def test_true_when_status_line_present(self):
@@ -1810,6 +1830,13 @@ class TestRenderMergedReport(unittest.TestCase):
         self.assertIn("### Cross-Document Consistency", rendered)
         self.assertNotIn("### CROSS-DOC", rendered)
 
+    def test_low_findings_render_under_their_own_heading_not_medium(self):
+        findings = [{"severity": "LOW", "title": "Trailing whitespace", "location": "§4",
+                     "required": "trim it", "why": "lint noise", "reviewers": ["claude-opus"]}]
+        rendered = rs.render_merged_report(findings, "plan.md")
+        self.assertIn("### LOW", rendered)
+        self.assertNotIn("### MEDIUM", rendered)
+
     def test_any_source_issues_prevents_false_approved_when_no_findings_parsed(self):
         # regression: a source report can say "Issues Found" while its
         # bullet(s) fail _BULLET_RE's strict single-line shape (e.g. a
@@ -1840,11 +1867,11 @@ Append to `skills/review-spec/review-spec.py`:
 # ── Findings merge (Step 1.5 double-review reconciliation) ──────────────
 
 _SEVERITY_HEADINGS = {
-    "CRITICAL": "CRITICAL", "HIGH": "HIGH", "MEDIUM": "MEDIUM",
+    "CRITICAL": "CRITICAL", "HIGH": "HIGH", "MEDIUM": "MEDIUM", "LOW": "LOW",
     "Cross-Document Consistency": "CROSS-DOC",
 }
 _SEVERITY_RE = re.compile(
-    r"^### (CRITICAL|HIGH|MEDIUM|Cross-Document Consistency)\s*$", re.MULTILINE)
+    r"^### (CRITICAL|HIGH|MEDIUM|LOW|Cross-Document Consistency)\s*$", re.MULTILINE)
 _BULLET_RE = re.compile(
     r"^- \*\*(.+?)\*\* — Location: (.+?)\. Required: (.+?)\. Why: (.+?)\.\s*$",
     re.MULTILINE)
@@ -1876,11 +1903,17 @@ def report_declares_issues(report_text: str) -> bool:
 
 def parse_findings(report_text: str) -> list:
     """[{severity, title, location, required, why}] in document order, per
-    the review-spec-checklist output template (`### SEVERITY` headings,
-    including the `### Cross-Document Consistency` section — normalized to
-    the `"CROSS-DOC"` severity tag — followed by `- **title** — Location:
-    .... Required: .... Why: ....` bullets). A bullet appearing before any
-    recognized heading (malformed input) gets severity None."""
+    the review-spec-checklist output template (`### SEVERITY` headings —
+    `CRITICAL`/`HIGH`/`MEDIUM`/`LOW`, plus `### Cross-Document Consistency`
+    normalized to the `"CROSS-DOC"` severity tag — followed by
+    `- **title** — Location: .... Required: .... Why: ....` bullets).
+    `LOW` is recognized because a plan-archetype review may legitimately
+    emit it (reviewing-specs's Plan checklist defines a LOW/Tooling-
+    Catchable tier); without recognizing it, its bullets would fall
+    through to severity None and get silently re-labeled MEDIUM by
+    `render_merged_report`, escalating severity that was never intended.
+    A bullet appearing before any recognized heading (malformed input)
+    still gets severity None."""
     sev_matches = list(_SEVERITY_RE.finditer(report_text))
     findings = []
     for m in _BULLET_RE.finditer(report_text):
@@ -1929,13 +1962,14 @@ def merge_findings(reports: list) -> list:
 
 
 def render_merged_report(findings: list, doc_paths: str, any_source_issues: bool = False) -> str:
-    """Renders CRITICAL/HIGH/MEDIUM under their own headings and CROSS-DOC
-    findings under the same `### Cross-Document Consistency` heading the
-    source reports use (never a raw `### CROSS-DOC`, which isn't part of
-    the output template). A finding whose severity didn't match any
-    recognized heading (malformed input) falls back to MEDIUM, tagged
-    exactly as parsed — this can only happen on non-conforming input,
-    since report_has_status (Task 8) already filters those out before this
+    """Renders CRITICAL/HIGH/MEDIUM/LOW under their own headings and
+    CROSS-DOC findings under the same `### Cross-Document Consistency`
+    heading the source reports use (never a raw `### CROSS-DOC`, which
+    isn't part of the output template). A finding whose severity didn't
+    match any recognized heading (malformed input — e.g. a bullet before
+    any `### SEVERITY` heading) falls back to MEDIUM, tagged exactly as
+    parsed — this can only happen on non-conforming input, since
+    report_has_status (Task 8) already filters those out before this
     function ever runs. Deliberately drops each source report's own
     `### Document Type`/`### Files Read` lines — those describe a single
     reviewer's run, not a property of the merge — in favor of a fixed
@@ -1947,15 +1981,15 @@ def render_merged_report(findings: list, doc_paths: str, any_source_issues: bool
     a bullet `_BULLET_RE` fails to parse (wrapped line, off-template
     punctuation), and without this the merge would silently downgrade that
     to "Approved" purely because no *parsed* finding survived."""
-    by_sev = {"CRITICAL": [], "HIGH": [], "MEDIUM": [], "CROSS-DOC": []}
+    by_sev = {"CRITICAL": [], "HIGH": [], "MEDIUM": [], "LOW": [], "CROSS-DOC": []}
     for f in findings:
         sev = f["severity"] if f["severity"] in by_sev else "MEDIUM"
         by_sev[sev].append(f)
     lines = [f"## Review: {doc_paths}", "### Document Type", "cross-ai merged"]
     any_issues = any(by_sev.values()) or any_source_issues
     heading_for = {"CRITICAL": "### CRITICAL", "HIGH": "### HIGH", "MEDIUM": "### MEDIUM",
-                   "CROSS-DOC": "### Cross-Document Consistency"}
-    for sev in ("CRITICAL", "HIGH", "MEDIUM", "CROSS-DOC"):
+                   "LOW": "### LOW", "CROSS-DOC": "### Cross-Document Consistency"}
+    for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "CROSS-DOC"):
         items = by_sev.get(sev, [])
         if not items:
             continue
@@ -2033,6 +2067,11 @@ calls below, and adding it earlier would be an unused import `ruff`
 would catch on an intermediate commit, since `tests/*.py` — unlike
 `skills/review-spec/review-spec.py` itself — is in `.pre-commit-config.yaml`'s
 ruff scope; `mock` is needed by the `mock.patch.object` calls below).
+Final sorted import block: `importlib.util`, `json`, `os`, `subprocess`,
+`tempfile`, `time`, `unittest`, then `from unittest import mock` last
+(ruff's `I001` groups straight imports before `from` imports of the same
+module) — an out-of-order block fails this task's own commit step, same
+as an unused one.
 Then add to `tests/test_review_spec.py`:
 
 ```python
@@ -2411,13 +2450,41 @@ git commit -m "feat(review-spec): add CLI entrypoint (detect-runtimes, probe-quo
 - Produces: the profile paths `review-spec-config` (Task 10) reads when
   helping the user write `[[reviewers]]` entries.
 
+**Read-only posture — required in every profile below.** Design §1 puts
+"an external CLI editing the working tree as a separate process" out of
+scope as "a different, riskier problem" — a reviewer must never be
+dispatched with real write access to the repo under review. Each profile
+below states its confirmed status:
+- `codex`: **confirmed** — `--sandbox read-only` in its own template.
+- `gemini`: **partial** — its template adds `--sandbox` (isolates writes
+  to an ephemeral container per the existing `gemini` skill's own flag
+  list; the container itself is still writable, but changes never reach
+  the real working tree), combined with `--approval-mode yolo` (required
+  for non-interactive dispatch — `default` hangs, per that skill).
+- `claude`, `opencode`, `grok`, `cursor-agent`: **unconfirmed** — none of
+  these CLIs' non-interactive/print modes are confirmed here to forbid
+  tool-driven writes; verify (and add the appropriate read-only/sandbox
+  flag, or a permission-mode flag if one exists) during
+  `review-spec-config`'s implementation (Task 10), before marking any of
+  them `status: confirmed` for real dispatch. Each profile below records
+  a `read_only:` frontmatter field with its current status so Task 10 can
+  warn the user when they configure a `[[reviewers]]` entry for a CLI
+  whose profile still says `unconfirmed`.
+
 - [ ] **Step 1: Write `skills/review-spec/references/cli-profiles/claude.md`**
 
-```markdown
+(Four backticks below — this file's own content contains a nested
+triple-backtick bash fence, and a 3-backtick outer fence would close early
+at that inner fence's closing marker per CommonMark's fence-matching
+rules. Every other profile block in this task uses the same 4-backtick
+outer fence for the same reason.)
+
+````markdown
 ---
 id: claude
 display_name: Claude Code CLI
 status: confirmed
+read_only: unconfirmed
 detect: "which claude"
 last_verified: 2026-08-27
 ---
@@ -2443,15 +2510,16 @@ Quota/context-window introspection: unconfirmed syntax — research during
 the `review-spec-config` implementation task if a dedicated Claude usage
 subcommand exists; otherwise rely on the same "low-effort call, detect a
 usage-limit error" mechanism confirmed for `codex` (below).
-```
+````
 
 - [ ] **Step 2: Write `skills/review-spec/references/cli-profiles/codex.md`**
 
-```markdown
+````markdown
 ---
 id: codex
 display_name: OpenAI Codex CLI
 status: confirmed
+read_only: "confirmed (--sandbox read-only)"
 detect: "which codex"
 last_verified: 2026-08-27
 ---
@@ -2489,15 +2557,16 @@ codex exec -m gpt-5.6-luna -c model_reasoning_effort='"low"' -c service_tier='"f
 This is the reference implementation for the "cheap probe, detect the
 error" quota-check mechanism — parse the exit code / stderr for a
 usage-limit signal rather than looking for a dedicated quota subcommand.
-```
+````
 
 - [ ] **Step 3: Write `skills/review-spec/references/cli-profiles/opencode.md`**
 
-```markdown
+````markdown
 ---
 id: opencode
 display_name: OpenCode CLI
 status: confirmed
+read_only: unconfirmed
 detect: "which opencode"
 last_verified: 2026-08-27
 ---
@@ -2529,15 +2598,16 @@ template placeholders, per the `claude` profile's note above.)
 `opencode stats` shows token usage/cost statistics — likely the quota
 introspection source; exact parseable shape unconfirmed, research during
 implementation.
-```
+````
 
 - [ ] **Step 4: Write `skills/review-spec/references/cli-profiles/grok.md`**
 
-```markdown
+````markdown
 ---
 id: grok
 display_name: Grok CLI (xAI)
 status: confirmed
+read_only: unconfirmed
 detect: "which grok"
 last_verified: 2026-08-27
 ---
@@ -2557,15 +2627,16 @@ the `claude` profile's note above.)
 
 Quota/context-window introspection: unconfirmed syntax — research during
 implementation.
-```
+````
 
 - [ ] **Step 5: Write `skills/review-spec/references/cli-profiles/cursor-agent.md`**
 
-```markdown
+````markdown
 ---
 id: cursor-agent
 display_name: Cursor Agent CLI
 status: stub (web-research only — not installed on the reference machine)
+read_only: unconfirmed
 detect: "which cursor-agent"
 last_verified: 2026-08-27
 source: https://cursor.com/docs/cli/overview , https://cursor.com/docs/cli/using
@@ -2587,15 +2658,16 @@ the `claude` profile's note above.)
 
 Not yet verified against a real installation. Verify all of the above with
 `cursor-agent --help` before marking this profile `status: confirmed`.
-```
+````
 
 - [ ] **Step 6: Write `skills/review-spec/references/cli-profiles/gemini.md`**
 
-```markdown
+````markdown
 ---
 id: gemini
 display_name: Gemini CLI
 status: stub (carried over from the existing `gemini` skill's documented flags — not installed on the reference machine)
+read_only: "partial (--sandbox isolates writes to an ephemeral container; not a true no-write guarantee)"
 detect: "which gemini"
 last_verified: 2026-08-27
 ---
@@ -2605,10 +2677,13 @@ last_verified: 2026-08-27
 Per the existing `gemini` skill (`~/.claude/skills/gemini/SKILL.md`):
 model via `-m/--model <MODEL>`; **background/non-interactive runs require
 `--approval-mode yolo`** (the `default` approval mode hangs indefinitely in
-a non-interactive shell — do not use it here).
+a non-interactive shell — do not use it here); `-s`/`--sandbox` runs the
+call in an isolated container, so `yolo`-approved writes never reach the
+real working tree — include it always, since `yolo` alone grants
+unrestricted write access to whatever it runs against.
 
 ```bash
-gemini -m {model} --approval-mode yolo {prompt}
+gemini -m {model} --sandbox --approval-mode yolo {prompt}
 ```
 
 (`{model}`/`{prompt}` are bare config `command` template placeholders, per
@@ -2616,7 +2691,7 @@ the `claude` profile's note above.)
 
 Quota/context-window introspection: unconfirmed syntax — research during
 implementation.
-```
+````
 
 - [ ] **Step 7: Commit**
 
@@ -2643,7 +2718,12 @@ git commit -m "docs(review-spec): add CLI profiles for claude, codex, opencode, 
 
 - [ ] **Step 1: Write `skills/review-spec-config/SKILL.md`**
 
-```markdown
+(Four backticks below — this file's own content contains several nested
+triple-backtick `bash`/`markdown` fences, and a 3-backtick outer fence
+would close early at the first inner closing marker per CommonMark's
+fence-matching rules.)
+
+````markdown
 ---
 name: review-spec-config
 description: Interactive setup for review-spec's cross-AI reviewer config — detects installed CLIs/models, asks which to use as reviewers and in what priority, writes review-spec.toml. Use when the user asks to configure cross-AI review, or when review-spec warns no config exists. Supports --check-only (report availability, no writes) and --local (write ./.aikit/review-spec.toml instead of the global config).
@@ -2713,7 +2793,14 @@ For each CLI the user wants, read its profile under
 `$CLI_PROFILES_DIR/<id>.md` for the exact non-interactive command shape,
 and ask the user to confirm/adjust: model id, `vendor`, and any extra
 knobs (`effort`, `service_tier`, ...) that profile's `command` template
-needs. **For a native (cli-less) reviewer entry** — e.g. the current
+needs. **If the profile's `read_only:` field says `unconfirmed`**, print
+one line before writing that entry: "Note: `<id>` has no confirmed
+read-only invocation — this reviewer runs with the CLI's normal write
+permissions against your working tree." (per design §5's read-only
+posture) — inform, don't block; the user is choosing to accept that CLI's
+default risk.
+
+**For a native (cli-less) reviewer entry** — e.g. the current
 session's own runtime, or another Claude tier reachable without an
 external CLI — `model` must be one of the four `Agent`-tool aliases
 (`sonnet`/`opus`/`haiku`/`fable`), never a full model id like `"opus-5"`;
@@ -2745,7 +2832,7 @@ separate write needed here.)
 
 Print a short summary: which reviewers are now configured, in what
 mode/order, and the path written to.
-```
+````
 
 - [ ] **Step 2: Commit**
 
@@ -2800,7 +2887,12 @@ Insert into `skills/review-spec/SKILL.md`, immediately after Step 0.6's
 final paragraph (the one ending "...If no sibling context exists, pass
 `none`."):
 
-```markdown
+(Four backticks below — this insertion contains several nested
+triple-backtick `bash` fences, and a 3-backtick outer fence would close
+early at the first inner closing marker per CommonMark's fence-matching
+rules, regardless of the inner fences' list-item indentation.)
+
+````markdown
 ## Step 0.7 — Resolve the reviewer list (cross-AI)
 
 Runs once per invocation, after Step 0.6.
@@ -2924,14 +3016,19 @@ Runs once per invocation, after Step 0.6.
    reviewer, index 1 = the secondary in double mode) — Step 1 both reasons
    over this in-context and passes the same file's path to `render-command`
    for external dispatch.
-```
+````
 
 - [ ] **Step 3: Rewrite Step 1 to branch on `REVIEWER_LIST`**
 
 Replace the existing "Step 1 — Dispatch reviewer (every iteration)"
 section's opening (the part before the reviewer prompt template) with:
 
-```markdown
+(Four backticks below — this insertion contains nested triple-backtick
+fences (the prompt-text block and the `render-command` bash block), and a
+3-backtick outer fence would close early at the first inner closing
+marker per CommonMark's fence-matching rules.)
+
+````markdown
 ### Step 1 — Dispatch reviewer(s) (every iteration)
 
 For each entry in `REVIEWER_LIST`:
@@ -2970,7 +3067,22 @@ For each entry in `REVIEWER_LIST`:
      - ARCHETYPE = <ARCHETYPE>
      - FRAMEWORK_PROFILE_PATH = <FRAMEWORK_PROFILE_PATH>
      Read every file under review fresh from disk: <DOC_PATHS>
+     Complementary grounding documents (Read for context — DO NOT review,
+     score, or emit findings about these): <GROUNDING_DOCS>
+     These are the upstream context/research the document under review is
+     derived from. Use them to detect drift — where the document under
+     review contradicts or omits what its own intent/research established —
+     and fold that into findings about the REVIEWED document only. If
+     "none", there are none.
      Codebase root(s) for grounding: <CODEBASE_ROOT>
+     The paths the document itself declares (worktree/target locations,
+     cross-repo references) are AUTHORITATIVE for this review — do not flag
+     them or "correct" them just because they differ from CLAUDE.md /
+     .claude/worktrees convention; only flag a path if it's internally
+     inconsistent or violates a hard constraint.
+     ARCHETYPE is the ceiling per document: judge an upstream doc (e.g.
+     intent) only at its own level — never demand downstream detail
+     (tasks, exact files, interfaces) it isn't meant to have.
      Emit the report following that skill's Output template strictly, ending
      with the ### Status: line. Do not edit any file under review.
      ```
@@ -2978,7 +3090,11 @@ For each entry in `REVIEWER_LIST`:
      (External CLIs can't call our `Skill` tool, but they can read a file
      path — this keeps `review-spec-checklist` the single source of truth
      for the checklist instead of duplicating its content into every
-     CLI's prompt.)
+     CLI's prompt. The substitutions and rules above mirror the native
+     template's `<GROUNDING_DOCS>`, declared-paths-authoritative, and
+     ARCHETYPE-ceiling clauses verbatim — see `skills/review-spec/SKILL.md`'s
+     Step 1 reviewer prompt template — so an external reviewer works from
+     the exact same contract a native one does, not a thinner one.)
   2. Fill the entry's `command` template via the `render-command`
      subcommand (Task 8), which calls `render_reviewer_command` (Task 6)
      internally — this is the ONLY way the orchestrator's `Bash`-tool
@@ -3009,11 +3125,14 @@ For each entry in `REVIEWER_LIST`:
 
 Then continue with the existing reviewer prompt template (for the native
 case) unchanged below, except the skill name substitution above.
-```
+````
 
 - [ ] **Step 4: Add Step 1.5 after the new Step 1**
 
-```markdown
+(Four backticks below — this insertion contains a nested triple-backtick
+`bash` fence.)
+
+````markdown
 ### Step 1.5 — Merge reviewer reports (only when `REVIEWER_LIST` has 2 entries)
 
 ```bash
@@ -3036,7 +3155,7 @@ re-invoke` otherwise). When `REVIEWER_LIST` has only 1 entry, skip the
 merge call — that entry's raw report (or the native `Agent` tool's output,
 written to the same `iter<N>-<key>.md` path per Step 1) is
 `EFFECTIVE_REPORT_PATH` directly, unchanged from today's behavior.
-```
+````
 
 - [ ] **Step 5: Point Step 2 at `EFFECTIVE_REPORT_PATH`, then replace every remaining `/tmp/review-spec` reference with `$RUN_TMP_DIR`**
 
@@ -3376,4 +3495,24 @@ Opus 5 subagent, run the same way. 9 findings, all fixed:
 | MEDIUM | Design's Scope bullet had a dangling clause ("...a pre-existing bug — so `review-spec-config` — a sibling skill — reaches them the same way") with no antecedent, and referred to itself as "this plan" inside a design spec | Rewritten as complete sentences, "this plan" → "this design" |
 | CROSS-DOC | Design §3's double-mode secondary-slot rule ("vendor differs from the baseline's") never covered the case where the baseline is the session-default fallback (`vendor == ""`) — the plan's actual `secondary_skip_vendor = primary.vendor or source_vendor` fix (round 3) has no counterpart in the design text | §3 now states the fallback-to-source-vendor case explicitly |
 
-A fifth review round should confirm this document reaches Approved before execution begins.
+### Sixth review: a fifth clean-context Opus 5 subagent (native, live)
+
+The fifth round's fixes were themselves reviewed by a SIXTH clean-context
+Opus 5 subagent. 6 findings, all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| HIGH | The external-CLI reviewer prompt (Task 11 Step 3) dropped `<GROUNDING_DOCS>`, the declared-paths-authoritative rule, and the ARCHETYPE-ceiling rule that the native prompt template carries — verified live against `skills/review-spec/SKILL.md` lines 263–305, the string "GROUNDING" appeared nowhere in either document, so an external reviewer couldn't detect plan/design drift (Step 0.6's whole purpose) and had no instruction suppressing findings about the grounding docs | The external prompt now carries `<GROUNDING_DOCS>` plus its drift-detection guidance, the declared-paths-authoritative rule, and the ARCHETYPE-ceiling rule — mirroring the native template's contract verbatim, with a note pointing at the source |
+| HIGH | No profile enforced a read-only constraint for external reviewer dispatch, and `gemini.md`'s template used `--approval-mode yolo` alone — fully-automated write access into the repo under review — contradicting design §1's own "external CLI editing the working tree... out of scope, a different riskier problem" | Every Task 9 profile now records a `read_only:` frontmatter field (`codex`: confirmed via `--sandbox read-only`; `gemini`: partial via a new `--sandbox` flag added to its template, isolating writes to an ephemeral container; `claude`/`opencode`/`grok`/`cursor-agent`: unconfirmed); a new Task 9 intro note and design §5 addition state the posture; Task 10 Step 2 now warns the user when configuring an `unconfirmed` CLI |
+| MEDIUM | `parse_findings`/`render_merged_report` silently re-labeled a `### LOW` severity heading as MEDIUM — a real risk since reviewing-specs's Plan checklist defines a LOW/Tooling-Catchable tier a plan-archetype reviewer can legitimately emit, silently escalating severity in the merged report | `_SEVERITY_HEADINGS`/`_SEVERITY_RE` now recognize `LOW` explicitly; `render_merged_report` renders it under its own `### LOW` heading; 2 new regression tests |
+| MEDIUM | Several outer ` ```markdown `/backtick blocks in Task 9 (all 6 profiles), Task 10 Step 1, and Task 11 Steps 2/3/4 contained their own nested triple-backtick fences — under CommonMark's fence-matching rules a 3-backtick outer fence closes at the FIRST inner closing marker, corrupting everything after it | Every affected outer fence bumped to 4 backticks (verified with a proper single-active-fence CommonMark trace across the whole file, not just a naive backtick-count parity check) |
+| MEDIUM | Task 3/6/8's instructions to add `import time`/`import subprocess`/`import json`+`from unittest import mock` to the ruff-scoped test file never specified sorted position — an out-of-order block fails ruff's `I001`, not just `F401` | Each instruction now states the exact sorted position in the growing import block |
+| CROSS-DOC | Design §1 called `--no-cross-ai` "today's exact behavior, unchanged" — but the plan removes `review-spec/SKILL.md`'s hardcoded `sonnet` pin, so the disabled path now inherits the session's own model instead of always running `sonnet` | §1 now scopes the "unchanged" claim to *selection* semantics only, and states explicitly that the model pin removal is a deliberate hardcoded-model-name bugfix applied everywhere, not just on cross-AI paths |
+
+Two non-blocking notes from this round were also applied: design §11's
+testing enumeration now lists `report_declares_issues` (previously
+omitted), and design §6/the plan's Step 0.7 point 3 now both describe the
+`detect-runtimes --if-stale` mechanism consistently (§6 previously still
+said plain `--save`).
+
+A sixth review round should confirm this document reaches Approved before execution begins.

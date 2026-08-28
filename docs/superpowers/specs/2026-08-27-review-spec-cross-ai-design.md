@@ -48,10 +48,16 @@ subagent running the `reviewing-specs` skill. Two problems:
 document's own author, tier-aware, quota-aware) and `"double"` (a
 guaranteed native baseline reviewer *plus* one cross-vendor alternate,
 findings unioned and tagged by source). A third case —
-**today's exact behavior, unchanged: single reviewer, always same vendor,
-no ladder walk at all** — is reached via `--no-cross-ai`, not a third
-`policy.mode` value (§3); it is the "minimize effort" escape hatch from
-the original ask, not a tier a config author picks. Selection must degrade
+**today's exact *selection* semantics, unchanged: single reviewer, always
+the current session's own vendor, no ladder walk at all** — is reached via
+`--no-cross-ai`, not a third `policy.mode` value (§3); it is the "minimize
+effort" escape hatch from the original ask, not a tier a config author
+picks. The one thing this path does change from today: it no longer pins
+a hardcoded model name (`review-spec/SKILL.md` previously pinned
+`sonnet`) — it inherits whatever model the current session runs as,
+consistent with this spec's own "never guess specific model IDs" rule
+below; that pin was a hardcoded-model bug this spec removes everywhere,
+not just on the cross-AI paths. Selection must degrade
 gracefully — never block a review because cross-AI isn't configured or a
 candidate is out of quota — and must never guess specific model IDs, since
 availability shifts by subscription and by day.
@@ -297,6 +303,17 @@ architecture change.
 | `cursor-agent` | stub (web research only, not installed here) | `-p/--print`, `--output-format json\|text`, `--model <name>`, `cursor-agent status` (auth/version; quota shape unconfirmed) |
 | `gemini` | stub (carried over from the existing `gemini` skill's documented flags) | — |
 
+**Read-only posture.** An external CLI must never be dispatched with real
+write access to the repo under review — see the Out-of-scope note below.
+`codex`'s profile confirms `--sandbox read-only`; `gemini`'s adds
+`--sandbox` (container isolation — writes never reach the real working
+tree, though the container itself remains writable) alongside the
+`--approval-mode yolo` non-interactive dispatch requires. `claude`,
+`opencode`, `grok`, and `cursor-agent` have no confirmed read-only
+invocation as of this session — each profile records this as
+`read_only: unconfirmed`, and `review-spec-config` warns the user when
+configuring one of them.
+
 Exact quota/context-window probe syntax for `claude`, `opencode`, `grok`,
 and `cursor-agent` is an explicit **research task per profile** during the
 implementation plan — do not fabricate flags beyond what's listed above.
@@ -328,12 +345,16 @@ orders of magnitude:
   confirmed mechanism for that today; §10's context-window edge case is
   aspirational until one is found, not implemented by v1.
 
-**Missing `runtimes.json` at `/review-spec` invocation time**: this is the
-first invocation ever (before `review-spec-config` has run, or before any
-prior `/review-spec` run reached this step). Detect live via the same
-`detect-runtimes --save <path>` call `review-spec-config` itself uses (§7)
-— this both produces the snapshot for informational use *and* persists it
-in the same step, so the hint below fires once, not on every invocation.
+**Missing or stale `runtimes.json` at `/review-spec` invocation time**:
+"missing" covers the first invocation ever (before `review-spec-config`
+has run, or before any prior `/review-spec` run reached this step);
+"stale" covers a snapshot older than the runtimes TTL (§6). Detect and
+refresh live via `detect-runtimes --if-stale <path>` — a no-op when the
+existing snapshot is still fresh, otherwise it detects and persists in the
+same call (the mechanism `review-spec-config` itself uses via a plain
+`--save <path>`, §7, since a first-time setup run always wants a fresh
+detection regardless of staleness). Either way the hint below fires only
+when this call actually did a fresh detection, not on every invocation.
 Print one line ("No cross-AI config saved yet — run `review-spec-config`
 so this doesn't repeat every invocation") and proceed with reviewer
 resolution as normal — resolving against whatever `review-spec.toml` state
@@ -519,7 +540,7 @@ artifact:
   renderer is tested separately for correct `{model}`/`{prompt}`/extra
   substitution and for `{prompt}` shell-escaping.
 - **Findings merge (`parse_findings`, `report_has_status`,
-  `merge_findings`, `render_merged_report`)**: unit-testable over fixture
+  `report_declares_issues`, `merge_findings`, `render_merged_report`)**: unit-testable over fixture
   report strings — severity/location extraction, the
   `Cross-Document Consistency` section, cross-report dedup vs.
   same-report distinctness, and the fail-closed path for a report with no
