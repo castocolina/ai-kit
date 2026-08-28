@@ -97,14 +97,40 @@ zero external dependencies; `json` for cache files), `unittest` (this repo's tes
 **Files:**
 - Move: `skills/reviewing-specs/` → `skills/review-spec-checklist/`
 - Move: `skills/applying-review-feedback/` → `skills/review-spec-fixer/`
-- Modify: `skills/review-spec-checklist/SKILL.md` (frontmatter `name:`)
-- Modify: `skills/review-spec-fixer/SKILL.md` (frontmatter `name:`)
+- Modify: `skills/review-spec-checklist/SKILL.md` (frontmatter `name:` and
+  its own self-reference, Step 4)
+- Modify: `skills/review-spec-fixer/SKILL.md` (frontmatter `name:` and
+  its own self-references, Step 4)
+- Modify: `skills/review-spec-checklist/references/frameworks/SCHEMA.md`
+  (self-reference, Step 4)
 - Modify: `skills/review-spec/SKILL.md` (every reference to the old names)
-- Test: none (mechanical rename + grep verification, no code)
+- Modify: `tests/test_framework_profiles.py`, `tests/test_wizard_pty.py`
+  (hardcoded old skill names — Step 5, required before this task's own
+  commit gate passes)
+- Modify: `README.md`, `skills/review-spec-checklist/evals/orchestrator-integration.md`,
+  `skills/review-spec-checklist/evals/test-scenarios.md`,
+  `skills/review-spec-fixer/evals/test-scenarios.md`,
+  `skills/review-spec/evals/01`–`04-*.md` (Step 6 — name substitution;
+  the eval docs also get content updates beyond the substitution that
+  depend on Task 11's Step 0.7/`REVIEWER_LIST`/`EFFECTIVE_REPORT_PATH`/
+  Step 1.5 design, described there and applied here since Step 6 is
+  where these files are touched — see Task 11's Interfaces for the
+  reverse-dependency note)
+- Test: none new (mechanical rename + grep verification), but Step 5
+  modifies two EXISTING test modules (`tests/test_framework_profiles.py`,
+  `tests/test_wizard_pty.py`) — not optional, see Step 5
 
 **Interfaces:**
 - Produces: the skill names `review-spec-checklist` and `review-spec-fixer`,
   which Task 11's orchestrator changes reference directly.
+- Consumes (reverse dependency, Step 6 only): Task 11's Step 0.7/
+  `REVIEWER_LIST`/`EFFECTIVE_REPORT_PATH`/Step 1.5 design, needed to write
+  the eval-doc content updates Step 6 group 1 makes beyond mechanical
+  renaming. This task can be executed before Task 11 exists in the repo
+  (the renames/grep-fixes don't need it), but Step 6's eval-content edits
+  specifically should be done last, once Task 11's design is settled —
+  or, if executed strictly in task order, revisited after Task 11 lands
+  to confirm the eval text still matches what actually shipped.
 
 - [ ] **Step 1: Move the directories**
 
@@ -200,7 +226,17 @@ exactly:
 - `tests/test_wizard_pty.py:50` — `_KNOWN_SKILL = "applying-review-feedback"`.
   Change to `_KNOWN_SKILL = "review-spec-fixer"`. Also fix its docstring
   mention at line 358 ("the known skill \`\`applying-review-feedback\`\`
-  was symlinked").
+  was symlinked"). **Also fix the now-false comment directly above the
+  constant** (lines 48–49: "A known skill that must be symlinked on a
+  fresh all-ON install (first entry alphabetically, confirmed by
+  enumerate_entries against the live repo)") — `applying-review-feedback`
+  really is alphabetically first among `skills/` today, but
+  `review-spec-fixer` is not (`commit-message` sorts before it); the
+  test's behavior doesn't depend on alphabetical order (verified: the
+  constant is only used for a symlink-existence assertion), so drop the
+  now-false "(first entry alphabetically...)" parenthetical rather than
+  re-verifying a new "first" claim: "A known skill that must be
+  symlinked on a fresh all-ON install."
 
 **This step cannot be skipped or deferred to Step 6**:
 `tests.test_wizard_pty` is both in the `Makefile`'s `test:` target and in
@@ -2732,7 +2768,8 @@ into a `command` field.
 Quota/context-window introspection: unconfirmed syntax — research
 whether a dedicated Claude usage
 subcommand exists; otherwise rely on the same "low-effort call, detect a
-usage-limit error" mechanism confirmed for `codex` (below).
+usage-limit error" mechanism confirmed for `codex` (`codex.md`, this same
+`cli-profiles/` directory).
 ````
 
 - [ ] **Step 2: Write `skills/review-spec/references/cli-profiles/codex.md`**
@@ -2889,10 +2926,9 @@ Non-interactive: `-p`/`--print`, combine with `--output-format json` (or
 `text`). Model: `--model <name>`. `cursor-agent ls` lists sessions,
 `cursor-agent resume` resumes one, `cursor-agent status` reports
 auth/version (possibly a quota source — unconfirmed). **Use
-`--output-format text` (or omit the flag), never `json`** — same reason
-as the `grok` profile above: `review-spec.py`'s report parsing expects
-the reviewer output template's raw markdown on stdout, not a JSON
-wrapper.
+`--output-format text` (or omit the flag), never `json`**:
+`review-spec.py`'s report parsing expects the reviewer output template's
+raw markdown on stdout, not a JSON wrapper.
 
 ```bash
 cursor-agent -p {prompt} --output-format text --model {model}
@@ -3003,7 +3039,9 @@ for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec}" \
 done
 TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/review-spec.py"
 CLI_PROFILES_DIR="$REVIEW_SPEC_SKILL_DIR/references/cli-profiles"
-RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
+if [ -f "$TOOLS_PY" ]; then
+  RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
+fi
 printf '%s\n' "$TOOLS_PY" "$CLI_PROFILES_DIR" "$RUNTIMES_JSON"
 ```
 
@@ -3026,7 +3064,10 @@ captured here", substituted directly, exactly the way `review-spec/SKILL.md`'s
 own `TOOLS_PY`/`RUN_TMP_DIR` work (its own Step 0.7 points 0/1) — this
 skill has its own separate `AskUserQuestion` interaction (Step 2) between
 this resolution and Step 3's write, guaranteeing at least one call
-boundary in between.
+boundary in between. If `TOOLS_PY` does not exist at the resolved path,
+stop and report: "review-spec's own `review-spec.py` module is missing —
+this skill configures cross-AI review for `review-spec`, which must
+already be installed."
 
 ### Step 1 — Detect
 
@@ -3222,8 +3263,10 @@ Runs once per invocation, after Step 0.6.
    done
    TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/review-spec.py"
    CHECKLIST_SKILL_MD="$(dirname "$REVIEW_SPEC_SKILL_DIR")/review-spec-checklist/SKILL.md"
-   RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
-   QUOTA_JSON="$(python3 "$TOOLS_PY" cache-path --kind quota)"
+   if [ -f "$TOOLS_PY" ]; then
+     RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
+     QUOTA_JSON="$(python3 "$TOOLS_PY" cache-path --kind quota)"
+   fi
    printf '%s\n' "$TOOLS_PY" "$CHECKLIST_SKILL_MD" "$RUNTIMES_JSON" "$QUOTA_JSON"
    ```
    `CHECKLIST_SKILL_MD` is the path Step 1's external-CLI dispatch tells
@@ -3410,9 +3453,9 @@ For each entry in `REVIEWER_LIST`:
      for the checklist instead of duplicating its content into every
      CLI's prompt. The substitutions and rules above mirror the native
      template's `<GROUNDING_DOCS>`, declared-paths-authoritative, and
-     ARCHETYPE-ceiling clauses verbatim — see `skills/review-spec/SKILL.md`'s
-     Step 1 reviewer prompt template — so an external reviewer works from
-     the exact same contract a native one does, not a thinner one.)
+     ARCHETYPE-ceiling clauses verbatim — see the native reviewer prompt
+     template later in this same Step 1 — so an external reviewer works
+     from the exact same contract a native one does, not a thinner one.)
   2. Fill the entry's `command` template via the `render-command`
      subcommand, which calls `render_reviewer_command`
      internally — this is the ONLY way the orchestrator's `Bash`-tool
@@ -4072,3 +4115,22 @@ CROSS-DOC — one CROSS-DOC restating the CRITICAL), all fixed:
 | CROSS-DOC | Design §8 point 0 enumerates exactly what Step 0.7 resolves (`TOOLS_PY`, `CHECKLIST_SKILL_MD`, explicitly NOT `CLI_PROFILES_DIR`) but never mentions `RUNTIMES_JSON`/`QUOTA_JSON`, which the plan's actual Step 0.7 point 0 resolves in the same `Bash` call and points 3-4 then consume — since the point deliberately lists both inclusions and exclusions, the omission reads as "not resolved here," contradicting the plan | §8 point 0 extended to state `RUNTIMES_JSON`/`QUOTA_JSON` are also resolved there, via `cache-path`, in the same call |
 
 A sixteenth review round should confirm this document reaches Approved before execution begins.
+
+### Seventeenth review: a sixteenth clean-context Opus 5 subagent (native, live)
+
+The sixteenth round's fixes were themselves reviewed by a SEVENTEENTH
+clean-context Opus 5 subagent. 8 findings (1 CRITICAL, 1 HIGH, 5 MEDIUM,
+1 CROSS-DOC — the CROSS-DOC restating the CRITICAL), all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL (+ CROSS-DOC) | Design §3 claimed "this repo has zero external dependencies" and that PyYAML would be new "for a project that has none today" — verified live, `pyproject.toml`'s `[dependency-groups] dev` already transitively resolves `pyyaml` via `pre-commit` (confirmed in `uv.lock`), and `tests/test_framework_profiles.py:9` already `import yaml`s for test fixtures. The plan's own Global Constraints correctly scopes the same claim to the *runtime*; the design dropped that scoping | Design §3 reworded to scope the claim to the ai-kit runtime specifically, matching the plan's already-correct wording and `pyproject.toml`'s own scoping comment |
+| HIGH | Task 1's `**Files:**` block said `Test: none` and listed only 3 modified files, contradicting its own Step 5 (which modifies `tests/test_framework_profiles.py`/`tests/test_wizard_pty.py` and is "required before this task can even commit") and Step 6 (which modifies `README.md` and 4 eval docs) — an executor working from the Files block alone would skip the edit that unblocks the task's own commit gate | Files block extended to list every file Steps 4–6 actually touch, replacing `Test: none` with an accurate note about Step 5's two existing test modules |
+| MEDIUM | `claude.md` referenced "the same ... mechanism confirmed for `codex` (below)" — no "below" exists once `claude.md` ships as its own standalone file | Named the sibling file explicitly: "`codex.md`, this same `cli-profiles/` directory" |
+| MEDIUM | `cursor-agent.md` referenced "same reason as the `grok` profile above" — same defect, a separately-installed file with no "above" referent | Dropped the cross-reference; the inline reason already stands alone |
+| MEDIUM | Step 0.7 point 0's (and `review-spec-config`'s own Step 0's) resolution snippet called `python3 "$TOOLS_PY" cache-path ...` unconditionally, before the prose's documented "if `TOOLS_PY` doesn't exist, degrade like `--no-cross-ai`" guard — when no candidate directory resolves, this emits `python3: can't open file` before any guard is consulted | Both snippets now guard the `cache-path` calls behind `if [ -f "$TOOLS_PY" ]; then ... fi`; `review-spec-config`'s own Step 0 also gained an explicit stop-and-report message for the missing-`TOOLS_PY` case (this skill requires `review-spec` to already be installed) |
+| MEDIUM | `tests/test_wizard_pty.py:48-49`'s comment above `_KNOWN_SKILL` claims it's "first entry alphabetically" — true today (`applying-review-feedback` sorts first among `skills/`) but false once renamed to `review-spec-fixer` (`commit-message` sorts before it), and Task 1 Step 5's `git grep` can't surface this line since it contains no old skill name | Step 5 extended to also drop the now-false "(first entry alphabetically...)" parenthetical from the comment, noting the test's behavior doesn't depend on alphabetical order |
+| MEDIUM | Task 1 committed eval-doc content updates (Step 6, describing Step 0.7/`REVIEWER_LIST`/`EFFECTIVE_REPORT_PATH`/Step 1.5) that depend on Task 11's design, with no declared dependency anywhere in Task 1 | Task 1's Interfaces gained an explicit reverse-dependency note naming what Step 6 needs from Task 11 and when to apply/revisit it |
+| MEDIUM | A sentence inside the 4-backtick block that ships as `skills/review-spec/SKILL.md`'s own Step 1 said "see `skills/review-spec/SKILL.md`'s Step 1 reviewer prompt template" — pointing at the file it is already inside, by path | Reworded to "the native reviewer prompt template later in this same Step 1" |
+
+A seventeenth review round should confirm this document reaches Approved before execution begins.

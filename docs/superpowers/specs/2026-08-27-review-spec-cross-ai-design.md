@@ -104,9 +104,14 @@ plan-phase task list, not enumerated exhaustively here.
 
 **Format**: TOML, matching the repo's existing convention
 (`tools/status-line.py`'s `statusline.toml` — `tomllib` is stdlib, already
-used; this repo has zero external dependencies and stays that way. YAML was
-considered and rejected — it would add `PyYAML` as a new dependency for a
-project that has none today.)
+used; the ai-kit *runtime* has zero external dependencies and stays that
+way, per `pyproject.toml`'s own "runtime is stdlib-only" scoping — the
+dev/lint env's `pyproject.toml` `[dependency-groups] dev` already
+transitively resolves `pyyaml` via `pre-commit`, and `tests/test_framework_profiles.py`
+already imports `yaml` for test-only fixture parsing, but neither is a
+*runtime* dependency. YAML was considered and rejected for this config
+anyway — it would add a new **runtime** dependency this project has none
+of today.)
 
 **Locations, resolved in this order:**
 
