@@ -379,8 +379,7 @@ anything, so it deliberately does not reopen this decision).
 
 ## 7. `review-spec-config` skill (new)
 
-Interactive setup, modeled on `gsd-config`/`gsd-settings`: runs
-`review-spec.py detect-runtimes` (resolved to an absolute path per §8's
+Interactive setup: runs `review-spec.py detect-runtimes` (resolved to an absolute path per §8's
 resolution mechanism — this module lives inside the `review-spec` skill's
 own directory, a sibling of this skill, not inside this skill's own
 installed directory), shows what it found (installed CLIs, their listed
@@ -437,19 +436,40 @@ interactive wrapper).
      rest of this run, exactly the way `CODEBASE_ROOT`/`SEEDS_DIR`/
      `CACHE_DIR` are already resolved once and substituted literally
      elsewhere in this skill. See §9.
-  2. Resolve source vendor (§4).
-  3. Load config (§3) and cache (§6); refresh `quota.json` entries that are
-     stale for any key in `policy.ladder` — the full configured ladder,
-     not a filtered subset. Which candidates the ladder walk will actually
-     pick isn't known until *after* quota is known (the walk itself
-     depends on it), so there's no cheaper "only what's needed" set to
-     compute; each stale entry is still charged at most one trivial probe
-     call per `QUOTA_TTL_SECONDS` (§6).
-  4. Resolve the effective reviewer list (1 or 2 entries) per `policy.mode`
-     (§3) and `--cross-ai`/`--no-cross-ai`.
+  2. **If `--no-cross-ai` was requested (or `TOOLS_PY` is missing, point 0
+     above)**: set the reviewer list directly, in-context, to
+     `NO_CONFIG_FALLBACK`'s single-entry shape (§3) — points 3–5 below
+     (runtimes refresh, quota probe, `resolve-reviewers`) are skipped
+     entirely, not just their side effects, and no `reviewers.json` is
+     written. This is the same case §3/§6 describe as skipping "the
+     ladder walk, quota probe, and runtimes detection/refresh entirely" —
+     go directly to Step 1. Source-vendor resolution (§4) happens earlier,
+     in the orchestrator's `## Inputs` flag parsing, not inside Step 0.7 —
+     Step 1's external-dispatch bullet below references it from there.
+  3. Refresh the runtimes snapshot (§6) if it's missing or older than
+     `RUNTIMES_TTL_SECONDS`; print the first-run hint only when the
+     snapshot was missing before this call (§6).
+  4. Refresh `quota.json` entries that are stale for any key in
+     `policy.ladder` (§6) — the full configured ladder, not a filtered
+     subset. Which candidates the ladder walk will actually pick isn't
+     known until *after* quota is known (the walk itself depends on it),
+     so there's no cheaper "only what's needed" set to compute; each stale
+     entry is still charged at most one trivial probe call per
+     `QUOTA_TTL_SECONDS` (§6).
+  5. Resolve the effective reviewer list (1 or 2 entries) per `policy.mode`
+     (§3), passing the source vendor resolved at point 2 above, and save
+     it to a file (`Step 1`'s external dispatch needs a stable path to
+     feed `render-command`, not just in-context text).
+  6. Record the resolved list's contents (index 0 = primary/only reviewer,
+     index 1 = the secondary in `double` mode) for Step 1 to reason over
+     and to pass to `render-command` for external dispatch.
 - **Step 1**, per resolved reviewer: `cli` absent → dispatch as today (the
   `Agent` tool, now running `review-spec-checklist` instead of
-  `reviewing-specs`); `cli` present → `Bash`, running the reviewer's
+  `reviewing-specs`), with `model` omitted entirely when it is `""` (the
+  `NO_CONFIG_FALLBACK`/session-default case) and otherwise required to be
+  one of the four `Agent`-tool aliases (`sonnet`/`opus`/`haiku`/`fable`,
+  §3) — anything else is surfaced as a config error at dispatch, never
+  passed through to the `Agent` tool as-is; `cli` present → `Bash`, running the reviewer's
   `command` (placeholders filled), with the prompt telling that CLI to
   **read `review-spec-checklist`'s `SKILL.md` from disk (at
   `CHECKLIST_SKILL_MD`, resolved once alongside `TOOLS_PY` in Step 0.7
@@ -601,6 +621,16 @@ artifact:
   between the module and both consuming skills (`review-spec/SKILL.md`,
   `review-spec-config/SKILL.md`), which shell out to it rather than
   import it.
+- **Orchestration prose (`review-spec/SKILL.md`, `review-spec-config/SKILL.md`)**:
+  not unit-testable — validated the way this repo's existing eval
+  convention already validates `review-spec`'s orchestration: the
+  checked-in `skills/*/evals/*.md` scenario docs
+  (`review-spec-checklist/evals/orchestrator-integration.md`'s "What the
+  user should look for" table, `review-spec/evals/01`–`04-*.md`'s
+  "Expected behavior" sequences), updated to describe Step 0.7/
+  `REVIEWER_LIST`/`EFFECTIVE_REPORT_PATH`/Step 1.5 instead of the
+  pre-cross-AI flow they currently record, plus a manual dry run against
+  a real document per those scenarios' "Pass criteria".
 - **`review-spec/SKILL.md` orchestration changes**: no automated test
   (prose, not code) — validated the same way the existing skill is
   validated: a manual dry run reviewing a real spec/plan with `--cross-ai`

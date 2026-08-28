@@ -231,6 +231,32 @@ actually see is **13** post-move `.md` paths, split into two groups:
    Replace every `reviewing-specs`/`applying-review-feedback` mention in
    these 8 files with the new names, same substitution as Step 3.
 
+   **Beyond the name substitution, three of these files also describe
+   orchestrator behavior this plan changes — a rename alone would leave
+   them asserting a contract Task 11 deletes:**
+   - `skills/review-spec-checklist/evals/orchestrator-integration.md`'s
+     "What the user should look for" table has a row: `Reviewer subagent
+     dispatched (visible as \`Agent\` tool call) | Yes, with \`model:
+     sonnet\`, paths only in prompt`. Task 11 Step 7 removes the hardcoded
+     sonnet pin — the reviewer's model now comes from `REVIEWER_LIST`
+     (Step 0.7). Change the expected value to: `Yes — native reviewers use
+     the model \`REVIEWER_LIST\` resolved (omitted/session-default unless
+     \`review-spec.toml\` pins one); external reviewers (if configured) run
+     via \`Bash\`, not the \`Agent\` tool; paths only in prompt`.
+   - `skills/review-spec/evals/01-superpowers-plan-routes-writing-plans.md`
+     and `skills/review-spec/evals/02-gsd-plan-routes-native-cmd.md` each
+     have an "Expected behavior" step ("Dispatches reviewer subagent…")
+     that predates Step 0.7/`REVIEWER_LIST`/`EFFECTIVE_REPORT_PATH`/
+     Step 1.5. Insert a step before it: "Runs Step 0.7 — resolves
+     `TOOLS_PY`/`CHECKLIST_SKILL_MD`, `RUN_TMP_DIR`, and `REVIEWER_LIST`
+     (1 entry unless `review-spec.toml` configures cross-AI `double`
+     mode; in this eval's default no-config state, `REVIEWER_LIST` is the
+     single-entry `NO_CONFIG_FALLBACK`)." and append to the existing
+     dispatch step: "; report written to
+     `$RUN_TMP_DIR/iter<N>-<key>.md`, read as `EFFECTIVE_REPORT_PATH` by
+     Step 2 (no merge — Step 1.5 only runs when `REVIEWER_LIST` has 2
+     entries)."
+
 2. **MUST NOT touch (5 files)**: `docs/prds/000-ai-kit-overhaul-requirements.md`,
    `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md`,
    `docs/superpowers/plans/2026-06-24-wizard-redesign-B-ui.md`, and this
@@ -2090,6 +2116,10 @@ reuses that guard instead of inventing a new one.
 **Files:**
 - Modify: `skills/review-spec/review-spec.py`
 - Modify: `Makefile` (add `tests.test_review_spec` to the `test:` target)
+- Modify: `.pre-commit-config.yaml` (add `tests.test_review_spec` to the
+  `unittest` hook's entry, so this new suite gates commits like every
+  other core suite — without this it only runs under `make test`, never
+  under `pre-commit`/`make validate`)
 - Test: `tests/test_review_spec.py`
 
 **Interfaces:**
@@ -2130,7 +2160,9 @@ class TestMainCli(unittest.TestCase):
         from contextlib import redirect_stdout
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(["detect-runtimes"], which_fn=lambda n: None, run_fn=lambda *a, **k: None)
+            code = rs.main(
+                ["detect-runtimes"], which_fn=lambda n: None, run_fn=lambda *a, **k: None
+            )
         self.assertEqual(code, 0)
         parsed = json.loads(buf.getvalue())
         self.assertIn("clis", parsed)
@@ -2506,11 +2538,35 @@ test:
 	bash tests/test_install.sh
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Add the new test module to the pre-commit `unittest` hook**
+
+In `.pre-commit-config.yaml`, change the `unittest` hook's `entry`:
+
+```yaml
+      - id: unittest
+        name: unittest (core)
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch
+```
+
+to:
+
+```yaml
+      - id: unittest
+        name: unittest (core)
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_review_spec
+```
+
+`tests/test_review_spec.py` uses only `unittest`/`stdlib` (Task 1's design
+constraint carries through to its tests too), so it belongs in the bare
+`python3` `unittest` hook, not the `uv run`-gated `unittest-wizard` hook —
+matching how `skills/review-spec/review-spec.py` itself runs on bare
+system `python3` (Task 8's own Interfaces), not the `uv`-managed dev venv.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add skills/review-spec/review-spec.py tests/test_review_spec.py Makefile
-git commit -m "feat(review-spec): add CLI entrypoint (detect-runtimes, probe-quota, resolve-reviewers, merge-reports, render-toml); wire cfg_resolve; register with make test"
+git add skills/review-spec/review-spec.py tests/test_review_spec.py Makefile .pre-commit-config.yaml
+git commit -m "feat(review-spec): add CLI entrypoint (detect-runtimes, probe-quota, resolve-reviewers, merge-reports, render-toml); wire cfg_resolve; register with make test and pre-commit"
 ```
 
 ---
@@ -3783,3 +3839,21 @@ fixed:
 | MEDIUM | Task 11 Step 5's description of the four `<REPORT_TEMP_PATH>` → `<EFFECTIVE_REPORT_PATH>` occurrences mislabeled line 383 as belonging to "the fixer's" template and undercounted the roles (3 instead of 4) | Corrected to precisely describe all four: 360 (Step 3a fixer prompt Inputs), 383 (Step 3b-skill prompt substitution list), 392 (Step 3b-skill's own Inputs list), 430 (Step 3b-cmd's trailing note) |
 
 An eleventh review round should confirm this document reaches Approved before execution begins.
+
+### Twelfth review: an eleventh clean-context Opus 5 subagent (native, live)
+
+The eleventh round's fixes were themselves reviewed by a TWELFTH
+clean-context Opus 5 subagent, which independently re-verified all prior
+grounding claims live and found no CRITICAL issues. 6 findings (1 HIGH, 3
+MEDIUM, 1 CROSS-DOC), all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| HIGH | Task 1 Step 6's mechanical name-substitution instruction was the only planned touch to `review-spec-checklist/evals/orchestrator-integration.md` and `review-spec/evals/01`–`04-*.md` — but these eval docs describe orchestrator *behavior* this plan changes: the table row asserting reviewers dispatch "with `model: sonnet`" (Task 11 Step 7 deletes that pin) and "Expected behavior" sequences with no Step 0.7/`REVIEWER_LIST`/`EFFECTIVE_REPORT_PATH`/Step 1.5. A rename-only pass would leave them asserting a contract this plan removes | Task 1 Step 6 group 1 extended with explicit content updates beyond the name substitution: corrects `orchestrator-integration.md`'s table row to describe `REVIEWER_LIST`-resolved models and the external-`Bash` path, and inserts a Step 0.7/`REVIEWER_LIST` step plus an `EFFECTIVE_REPORT_PATH`/Step 1.5 note into evals 01 and 02's "Expected behavior" |
+| MEDIUM | `tests/test_review_spec.py`'s `test_detect_runtimes_prints_json_snapshot` used a 101-char line (`code = rs.main(["detect-runtimes"], which_fn=lambda n: None, run_fn=lambda *a, **k: None)`), missed by the tenth round's reflow pass — the file is inside `.pre-commit-config.yaml`'s ruff scope (`^(tools\|tests)/.*\.py$`) with `line-length = 100` and no `E501` ignore for `tests/*` | Reflowed across two lines; re-scanned the whole test-context corpus (not just the previously-flagged 13 lines) and confirmed no other test-context block exceeds 100 chars |
+| MEDIUM | The new `tests/test_review_spec.py` suite was wired into `Makefile`'s `test:` target (Task 8 Step 5) but never into `.pre-commit-config.yaml`'s `unittest` hook, so `make validate`/`pre-commit`/every commit gate would never actually run it — unlike every other core suite this plan cites as precedent | New Task 8 Step 6 adds `tests.test_review_spec` to the `unittest (core)` hook's `entry` (bare `python3`, matching how `skills/review-spec/review-spec.py` itself runs); old Step 6 (commit) renumbered to Step 7, its `git add`/files list extended to include `.pre-commit-config.yaml` |
+| MEDIUM | Design §3's `model` field description forward-referenced "§8 surfaces it at dispatch rather than passing it through" for the native-alias config-error case, but §8's Step 1 bullet never actually described that behavior — a dangling cross-reference | §8's Step 1 bullet extended to state the `model` omitted-when-empty rule and the four-alias config-error check explicitly, matching the plan's own Task 11 Step 3 text |
+| MEDIUM | Design §7's opening sentence described `review-spec-config` as "modeled on `gsd-config`/`gsd-settings`" — neither skill exists anywhere in this repo or `~/.claude/skills/`, an unresolvable analogy for the section governing the entire interactive-setup skill | Dropped the analogy; §7 now opens directly with what the skill does |
+| CROSS-DOC | Design §8's Step 0.7 point list (0–4) didn't match the plan's actual Step 0.7 (Task 11 Step 2, points 0–6) beyond points 0–1: design point 2 was "resolve source vendor" (the plan resolves that in `## Inputs` instead, not inside Step 0.7 at all) and design had no point for the `--no-cross-ai` short-circuit (the plan's point 2) | Design §8's list renumbered to match the plan's actual 7 points (0: path resolution, 1: `RUN_TMP_DIR`, 2: `--no-cross-ai` short-circuit, 3: runtimes refresh, 4: quota refresh, 5: resolve + save reviewer list, 6: record `REVIEWER_LIST`), with source-vendor resolution correctly relocated to point 2's note about `## Inputs` |
+
+A twelfth review round should confirm this document reaches Approved before execution begins.
