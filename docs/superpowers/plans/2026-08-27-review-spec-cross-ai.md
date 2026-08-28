@@ -53,7 +53,7 @@ there is no stdlib writer and this repo has zero external dependencies;
   files.
 - Fixer stays Claude-only always — this plan never adds cross-AI dispatch
   for the fixer, only the reviewer.
-- Test runner for this repo: `.venv/bin/python3 -m unittest tests.test_review_spec[.Class[.test]] -v` (NOT pytest).
+- Test runner for this repo: `python3 -m unittest tests.test_review_spec[.Class[.test]] -v` (NOT pytest).
 
 ---
 
@@ -137,9 +137,11 @@ file) — fix every line below:
 - `skills/review-spec-checklist/SKILL.md` line 13: `task
   (\`applying-review-feedback\`).` → `task (\`review-spec-fixer\`).`
 - `skills/review-spec-fixer/SKILL.md`:
-  - Frontmatter `description:` (line 3): both occurrences of
-    `reviewing-specs` (`"a review report from \`reviewing-specs\`"`, and
-    the orchestrator example) → `review-spec-checklist`.
+  - Frontmatter `description:` (line 3): the single occurrence of
+    `reviewing-specs` (`"a review report from \`reviewing-specs\`"`) →
+    `review-spec-checklist`. **Leave the line's other backtick mention,
+    `` `/review-spec` `` (the orchestrator example), untouched** — that's
+    the public entrypoint skill, unaffected by this rename.
   - Line 8: `flagged by \`reviewing-specs\`.` → `flagged by
     \`review-spec-checklist\`.`
 - `skills/review-spec-checklist/references/frameworks/SCHEMA.md` line 118:
@@ -442,7 +444,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec -v`
+Run: `python3 -m unittest tests.test_review_spec -v`
 
 Expected: FAIL — `skills/review-spec/review-spec.py` does not exist yet
 (`FileNotFoundError` from `spec_from_file_location`/`exec_module`, or an
@@ -578,7 +580,7 @@ def cfg_write_toml(path: str, config: dict) -> None:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec -v`
+Run: `python3 -m unittest tests.test_review_spec -v`
 
 Expected: PASS for every `TestConfigPaths`, `TestLoadToml`,
 `TestMergeReviewers`, `TestResolveConfig`, `TestRenderAndWriteToml` test.
@@ -604,8 +606,16 @@ git commit -m "feat(review-spec): add TOML config load/write with local/global s
   `cache_quota_path(env: dict) -> str`, `cache_read_json(path: str) -> dict | None`,
   `cache_write_json(path: str, data: dict) -> None`, `cache_is_stale(path: str, ttl_seconds: int) -> bool`,
   `RUNTIMES_TTL_SECONDS: int`, `QUOTA_TTL_SECONDS: int`.
-  Consumed by Task 4 (detection writes `runtimes.json`) and Task 5 (policy
-  resolution reads `quota.json`).
+  `cache_read_json`/`cache_write_json` are consumed directly by Task 8's
+  `main()` on caller-supplied paths. `cache_base`/`cache_runtimes_path`/
+  `cache_quota_path`/`cache_is_stale`/`RUNTIMES_TTL_SECONDS` are consumed
+  by Task 8's new `cache-path` subcommand and `detect-runtimes --if-stale`
+  flag (see Task 8) — this is how callers outside Python (the orchestrator
+  in Task 11, `review-spec-config` in Task 10) resolve the
+  `${XDG_CACHE_HOME:-$HOME/.cache}`-aware cache paths and check runtimes
+  staleness without duplicating the formula in bash. Task 4/Task 5 do not
+  read the cache themselves — persistence is entirely the CLI entrypoint's
+  job (Task 8).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -666,11 +676,11 @@ class TestCacheStaleness(unittest.TestCase):
 
 Add `import time` to `tests/test_review_spec.py`'s import block at the top
 of the file (it is not there yet — Task 2's test file only imported
-`importlib.util`, `json`, `os`, `tempfile`, `unittest`).
+`importlib.util`, `os`, `tempfile`, `unittest`).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec.TestCachePaths tests.test_review_spec.TestCacheReadWrite tests.test_review_spec.TestCacheStaleness -v`
+Run: `python3 -m unittest tests.test_review_spec.TestCachePaths tests.test_review_spec.TestCacheReadWrite tests.test_review_spec.TestCacheStaleness -v`
 
 Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'cache_base'` (and similarly for the other new names).
 
@@ -739,7 +749,7 @@ def cache_is_stale(path: str, ttl_seconds: int) -> bool:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec -v`
+Run: `python3 -m unittest tests.test_review_spec -v`
 
 Expected: PASS, all tests including Task 2's.
 
@@ -828,7 +838,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec.TestDetectInstalledClis tests.test_review_spec.TestDetectOpencodeModels tests.test_review_spec.TestBuildRuntimesSnapshot -v`
+Run: `python3 -m unittest tests.test_review_spec.TestDetectInstalledClis tests.test_review_spec.TestDetectOpencodeModels tests.test_review_spec.TestBuildRuntimesSnapshot -v`
 
 Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'KNOWN_CLIS'` (and similarly for the functions).
 
@@ -882,7 +892,7 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run) -> dic
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec -v`
+Run: `python3 -m unittest tests.test_review_spec -v`
 
 Expected: PASS, all tests including Tasks 2–3's.
 
@@ -1141,7 +1151,7 @@ class TestResolveReviewers(unittest.TestCase):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec.TestResolveLadderPick tests.test_review_spec.TestResolveReviewers -v`
+Run: `python3 -m unittest tests.test_review_spec.TestResolveLadderPick tests.test_review_spec.TestResolveReviewers -v`
 
 Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'resolve_ladder_pick'`.
 
@@ -1306,7 +1316,7 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec -v`
+Run: `python3 -m unittest tests.test_review_spec -v`
 
 Expected: PASS, all tests including Tasks 2–4's.
 
@@ -1365,6 +1375,12 @@ any entry whose cached `checked_at` is still fresh, regardless of how many
   and the actual reviewer invocation, so they can never drift apart.
 
 - [ ] **Step 1: Write the failing tests**
+
+Add `import subprocess` to the test file's import block — this task's
+`test_timeout_is_unavailable` (below) constructs a
+`subprocess.TimeoutExpired`, and nothing earlier in the test file imports
+`subprocess` (the module itself gains it in Task 4, but the *test file*
+tracks its own imports task-by-task since it's ruff-scoped).
 
 Add to `tests/test_review_spec.py`:
 
@@ -1518,7 +1534,7 @@ class TestRefreshQuotaCache(unittest.TestCase):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec.TestRenderReviewerCommand tests.test_review_spec.TestProbeReviewerQuota tests.test_review_spec.TestRefreshQuotaCache -v`
+Run: `python3 -m unittest tests.test_review_spec.TestRenderReviewerCommand tests.test_review_spec.TestProbeReviewerQuota tests.test_review_spec.TestRefreshQuotaCache -v`
 
 Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'render_reviewer_command'`.
 
@@ -1625,7 +1641,7 @@ def refresh_quota_cache(config: dict, ladder_keys: list, existing: dict, ttl_sec
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec -v`
+Run: `python3 -m unittest tests.test_review_spec -v`
 
 Expected: PASS, all tests including Task 5's.
 
@@ -1649,10 +1665,12 @@ git commit -m "feat(review-spec): add quota probing (render_reviewer_command, pr
   decoupled so it's testable with plain fixture strings).
 - Produces: `parse_findings(report_text: str) -> list[dict]`,
   `report_has_status(report_text: str) -> bool`,
+  `report_declares_issues(report_text: str) -> bool`,
   `merge_findings(reports: list[tuple[str, str]]) -> list[dict]`,
-  `render_merged_report(findings: list[dict], doc_paths: str) -> str`.
+  `render_merged_report(findings: list[dict], doc_paths: str, any_source_issues: bool = False) -> str`.
   Consumed by Task 8 (`merge-reports` uses `report_has_status` to detect a
-  failed/non-conforming reviewer *before* merging — see that task's
+  failed/non-conforming reviewer *before* merging, and `report_declares_issues`
+  on every source report to compute `any_source_issues` — see that task's
   "Bug fixed here" note) and Task 11 (Step 1.5).
 
 - [ ] **Step 1: Write the failing tests**
@@ -1720,6 +1738,18 @@ class TestReportHasStatus(unittest.TestCase):
         self.assertFalse(rs.report_has_status(""))
 
 
+class TestReportDeclaresIssues(unittest.TestCase):
+    def test_true_for_issues_found_status(self):
+        self.assertTrue(rs.report_declares_issues(_REPORT_A))
+
+    def test_false_for_approved_status(self):
+        approved = "## Review: spec.md\n### Status: Approved\n"
+        self.assertFalse(rs.report_declares_issues(approved))
+
+    def test_false_for_garbage_text(self):
+        self.assertFalse(rs.report_declares_issues("no status line at all"))
+
+
 class TestMergeFindings(unittest.TestCase):
     def test_same_severity_and_location_merges_into_one_tagged_entry(self):
         merged = rs.merge_findings([("claude-opus", _REPORT_A), ("codex-gpt", _REPORT_B)])
@@ -1779,11 +1809,24 @@ class TestRenderMergedReport(unittest.TestCase):
         rendered = rs.render_merged_report(findings, "a.md, b.md")
         self.assertIn("### Cross-Document Consistency", rendered)
         self.assertNotIn("### CROSS-DOC", rendered)
+
+    def test_any_source_issues_prevents_false_approved_when_no_findings_parsed(self):
+        # regression: a source report can say "Issues Found" while its
+        # bullet(s) fail _BULLET_RE's strict single-line shape (e.g. a
+        # wrapped Required: clause) — parse_findings then returns nothing
+        # for it, but the merge must never report Approved in that case.
+        rendered = rs.render_merged_report([], "spec.md", any_source_issues=True)
+        self.assertIn("### Status: Issues Found — fix and re-invoke", rendered)
+        self.assertNotIn("### Status: Approved", rendered)
+
+    def test_any_source_issues_false_still_renders_approved_when_no_findings(self):
+        rendered = rs.render_merged_report([], "spec.md", any_source_issues=False)
+        self.assertIn("### Status: Approved", rendered)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec.TestParseFindings tests.test_review_spec.TestMergeFindings tests.test_review_spec.TestRenderMergedReport -v`
+Run: `python3 -m unittest tests.test_review_spec.TestParseFindings tests.test_review_spec.TestMergeFindings tests.test_review_spec.TestRenderMergedReport -v`
 
 Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'parse_findings'`.
 
@@ -1816,6 +1859,19 @@ def report_has_status(report_text: str) -> bool:
     merge (it never produces findings, so an unguarded merge would treat it
     as "zero issues")."""
     return "### Status:" in report_text
+
+
+def report_declares_issues(report_text: str) -> bool:
+    """True iff report_text's own Status line says Issues Found. A plain
+    substring check, deliberately independent of `_BULLET_RE`'s strict
+    per-bullet shape — `parse_findings` can miss a bullet that wraps across
+    lines or uses slightly different punctuation, but the report's own
+    Status line is a single fixed string every conforming report ends
+    with. Used as a second, structurally-independent signal alongside
+    parsed findings so a report that says "Issues Found" can never merge
+    into a false "Approved" just because none of its bullets happened to
+    match the strict bullet regex."""
+    return "### Status: Issues Found" in report_text
 
 
 def parse_findings(report_text: str) -> list:
@@ -1872,7 +1928,7 @@ def merge_findings(reports: list) -> list:
     return [merged[k] for k in order]
 
 
-def render_merged_report(findings: list, doc_paths: str) -> str:
+def render_merged_report(findings: list, doc_paths: str, any_source_issues: bool = False) -> str:
     """Renders CRITICAL/HIGH/MEDIUM under their own headings and CROSS-DOC
     findings under the same `### Cross-Document Consistency` heading the
     source reports use (never a raw `### CROSS-DOC`, which isn't part of
@@ -1883,13 +1939,20 @@ def render_merged_report(findings: list, doc_paths: str) -> str:
     function ever runs. Deliberately drops each source report's own
     `### Document Type`/`### Files Read` lines — those describe a single
     reviewer's run, not a property of the merge — in favor of a fixed
-    `cross-ai merged` marker."""
+    `cross-ai merged` marker.
+
+    `any_source_issues` (from `report_declares_issues` on each raw source
+    report, computed by the caller) is OR'd into the parsed-findings-based
+    status: a report can legitimately say "Issues Found" while containing
+    a bullet `_BULLET_RE` fails to parse (wrapped line, off-template
+    punctuation), and without this the merge would silently downgrade that
+    to "Approved" purely because no *parsed* finding survived."""
     by_sev = {"CRITICAL": [], "HIGH": [], "MEDIUM": [], "CROSS-DOC": []}
     for f in findings:
         sev = f["severity"] if f["severity"] in by_sev else "MEDIUM"
         by_sev[sev].append(f)
     lines = [f"## Review: {doc_paths}", "### Document Type", "cross-ai merged"]
-    any_issues = any(by_sev.values())
+    any_issues = any(by_sev.values()) or any_source_issues
     heading_for = {"CRITICAL": "### CRITICAL", "HIGH": "### HIGH", "MEDIUM": "### MEDIUM",
                    "CROSS-DOC": "### Cross-Document Consistency"}
     for sev in ("CRITICAL", "HIGH", "MEDIUM", "CROSS-DOC"):
@@ -1907,7 +1970,7 @@ def render_merged_report(findings: list, doc_paths: str) -> str:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec -v`
+Run: `python3 -m unittest tests.test_review_spec -v`
 
 Expected: PASS, all tests including Tasks 2–5's.
 
@@ -1991,6 +2054,50 @@ class TestMainCli(unittest.TestCase):
                             which_fn=lambda n: None, run_fn=lambda *a, **k: None)
             self.assertEqual(code, 0)
             self.assertIn("clis", rs.cache_read_json(save_path))
+
+    def test_cache_path_honors_xdg_cache_home(self):
+        import io
+        from contextlib import redirect_stdout
+        env = {"XDG_CACHE_HOME": "/x/cache"}
+        buf = io.StringIO()
+        with mock.patch.object(rs.os, "environ", env), redirect_stdout(buf):
+            code = rs.main(["cache-path", "--kind", "runtimes"])
+        self.assertEqual(code, 0)
+        self.assertEqual(buf.getvalue().strip(), "/x/cache/ai-kit/review-spec/runtimes.json")
+
+    def test_cache_path_quota_kind(self):
+        import io
+        from contextlib import redirect_stdout
+        env = {"HOME": "/home/u"}
+        buf = io.StringIO()
+        with mock.patch.object(rs.os, "environ", env), redirect_stdout(buf):
+            code = rs.main(["cache-path", "--kind", "quota"])
+        self.assertEqual(code, 0)
+        self.assertEqual(buf.getvalue().strip(), "/home/u/.cache/ai-kit/review-spec/quota.json")
+
+    def test_detect_runtimes_if_stale_skips_detection_when_fresh(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "runtimes.json")
+            rs.cache_write_json(path, {"clis": {}})  # just written -> fresh
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            probe_calls = []
+            with redirect_stdout(buf):
+                code = rs.main(["detect-runtimes", "--if-stale", path],
+                                which_fn=lambda n: probe_calls.append(n) or None,
+                                run_fn=lambda *a, **k: None)
+            self.assertEqual(code, 0)
+            self.assertEqual(probe_calls, [])  # detection never ran
+            self.assertEqual(json.loads(buf.getvalue()), {})
+
+    def test_detect_runtimes_if_stale_redetects_when_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "runtimes.json")  # never written -> stale
+            code = rs.main(["detect-runtimes", "--if-stale", path],
+                            which_fn=lambda n: None, run_fn=lambda *a, **k: None)
+            self.assertEqual(code, 0)
+            self.assertIn("clis", rs.cache_read_json(path))
 
     def test_resolve_reviewers_uses_cfg_resolve_local_global_merge(self):
         # regression test for the CRITICAL bug: resolve-reviewers must go
@@ -2107,7 +2214,7 @@ class TestMainCli(unittest.TestCase):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec.TestMainCli -v`
+Run: `python3 -m unittest tests.test_review_spec.TestMainCli -v`
 
 Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'main'`.
 
@@ -2127,8 +2234,14 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
     parser = argparse.ArgumentParser(prog="review-spec")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p_cache_path = sub.add_parser("cache-path")
+    p_cache_path.add_argument("--kind", choices=["runtimes", "quota"], required=True)
+
     p_detect = sub.add_parser("detect-runtimes")
     p_detect.add_argument("--save", default=None, help="write the snapshot to this path via cache_write_json")
+    p_detect.add_argument("--if-stale", default=None, metavar="PATH",
+                           help="skip detection entirely (print {} and exit 0) when PATH exists "
+                                "and is fresher than RUNTIMES_TTL_SECONDS; else detect and --save to PATH")
 
     p_quota = sub.add_parser("probe-quota")
     p_quota.add_argument("--cwd", required=True)
@@ -2156,10 +2269,19 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
 
     args = parser.parse_args(argv)
 
+    if args.command == "cache-path":
+        env = dict(os.environ)
+        print(cache_runtimes_path(env) if args.kind == "runtimes" else cache_quota_path(env))
+        return 0
+
     if args.command == "detect-runtimes":
+        if args.if_stale and not cache_is_stale(args.if_stale, RUNTIMES_TTL_SECONDS):
+            print(json.dumps({}))  # fresh — caller should treat this as "nothing to do"
+            return 0
         snapshot = build_runtimes_snapshot(which_fn=which_fn, run_fn=run_fn)
-        if args.save:
-            cache_write_json(args.save, snapshot)
+        save_path = args.if_stale or args.save
+        if save_path:
+            cache_write_json(save_path, snapshot)
         print(json.dumps(snapshot))
         return 0
 
@@ -2205,7 +2327,8 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
                   f"no readable report with a Status line — cannot merge.")
             return 0
         merged = merge_findings(reports)
-        print(render_merged_report(merged, args.doc_paths))
+        any_source_issues = any(report_declares_issues(text) for _, text in reports)
+        print(render_merged_report(merged, args.doc_paths, any_source_issues))
         return 0
 
     if args.command == "render-toml":
@@ -2242,7 +2365,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `.venv/bin/python3 -m unittest tests.test_review_spec -v`
+Run: `python3 -m unittest tests.test_review_spec -v`
 
 Expected: PASS, all tests.
 
@@ -2306,8 +2429,15 @@ Non-interactive: `-p`/`--print` (print response and exit). Model selection:
 with `--print`).
 
 ```bash
-claude -p --model <model> --output-format text "<prompt>"
+claude -p --model {model} --output-format text {prompt}
 ```
+
+`{model}`/`{prompt}` above are the literal config `command` template
+placeholders (§3) — written bare, never wrapped in extra quotes.
+`render_reviewer_command` (Task 6) applies `shlex.quote` to `{prompt}`
+itself before substitution, so a template that adds its own quotes around
+`{prompt}` ends up double-quoted. Copy this shape directly into a
+`command` field.
 
 Quota/context-window introspection: unconfirmed syntax — research during
 the `review-spec-config` implementation task if a dedicated Claude usage
@@ -2333,11 +2463,20 @@ service speed tier are SEPARATE knobs, each set via `-c key='"value"'`:
 
 ```bash
 codex exec --sandbox read-only --skip-git-repo-check \
-  -m <model> \
+  -m {model} \
   -c model_reasoning_effort='"<low|medium|high|xhigh>"' \
   -c service_tier='"<fast|...>"' \
-  "<prompt>" 2>/dev/null
+  {prompt}
 ```
+
+`{model}`/`{prompt}` above are the literal config `command` template
+placeholders (§3) — bare, unquoted (`render_reviewer_command` already
+`shlex.quote`s `{prompt}`); `model_reasoning_effort`/`service_tier` stay
+literal `<...>` since they're config-level `extra` fields, not filled by
+`render_reviewer_command` itself. **Do not append `2>/dev/null`** —
+`probe_reviewer_quota` (Task 6) classifies availability from
+`stdout + stderr` combined, so suppressing stderr hides the exact
+usage-limit signal the probe below depends on.
 
 **Quota probe — confirmed live**: a low-effort/fast-tier call against an
 exhausted quota returns a usage-limit error. Example that produced exactly
@@ -2380,8 +2519,12 @@ Non-interactive: `opencode run [message..]`. Model: `-m/--model
 <provider/model>`.
 
 ```bash
-opencode run -m <provider/model> "<prompt>"
+opencode run -m {model} {prompt}
 ```
+
+(`{model}` here is the full `<provider/model>` id, e.g.
+`opencode-go/kimi-k3` — `{model}`/`{prompt}` are bare config `command`
+template placeholders, per the `claude` profile's note above.)
 
 `opencode stats` shows token usage/cost statistics — likely the quota
 introspection source; exact parseable shape unconfirmed, research during
@@ -2406,8 +2549,11 @@ Model: `-m/--model <MODEL>`. Output shaping: `--output-format
 `--output-format json`).
 
 ```bash
-grok -m <model> --output-format json "<prompt>"
+grok -m {model} --output-format json {prompt}
 ```
+
+(`{model}`/`{prompt}` are bare config `command` template placeholders, per
+the `claude` profile's note above.)
 
 Quota/context-window introspection: unconfirmed syntax — research during
 implementation.
@@ -2433,8 +2579,11 @@ Non-interactive: `-p`/`--print`, combine with `--output-format json` (or
 auth/version (possibly a quota source — unconfirmed).
 
 ```bash
-cursor-agent -p "<prompt>" --output-format json --model <model>
+cursor-agent -p {prompt} --output-format json --model {model}
 ```
+
+(`{model}`/`{prompt}` are bare config `command` template placeholders, per
+the `claude` profile's note above.)
 
 Not yet verified against a real installation. Verify all of the above with
 `cursor-agent --help` before marking this profile `status: confirmed`.
@@ -2459,8 +2608,11 @@ model via `-m/--model <MODEL>`; **background/non-interactive runs require
 a non-interactive shell — do not use it here).
 
 ```bash
-gemini -m <model> --approval-mode yolo "<prompt>"
+gemini -m {model} --approval-mode yolo {prompt}
 ```
+
+(`{model}`/`{prompt}` are bare config `command` template placeholders, per
+the `claude` profile's note above.)
 
 Quota/context-window introspection: unconfirmed syntax — research during
 implementation.
@@ -2520,17 +2672,21 @@ for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec}" \
 done
 TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/review-spec.py"
 CLI_PROFILES_DIR="$REVIEW_SPEC_SKILL_DIR/references/cli-profiles"
+RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
 ```
 
 (The third candidate is `review-spec-config`'s own sibling — matching
 `SEEDS_DIR`'s own third candidate — since this skill's directory and
 `review-spec`'s are installed alongside each other in every shape:
-plugin, `~/.claude/skills`, or a direct dev checkout.)
+plugin, `~/.claude/skills`, or a direct dev checkout. `cache-path`
+resolves the `${XDG_CACHE_HOME:-$HOME/.cache}`-aware path through Task 3's
+`cache_runtimes_path` — the same call `review-spec/SKILL.md` itself uses
+— so both skills always agree on where this file lives.)
 
 ### Step 1 — Detect
 
 ```bash
-python3 "$TOOLS_PY" detect-runtimes --save ~/.cache/ai-kit/review-spec/runtimes.json
+python3 "$TOOLS_PY" detect-runtimes --save "$RUNTIMES_JSON"
 ```
 
 `--save` persists the snapshot immediately (via `cache_write_json` — see
@@ -2673,15 +2829,22 @@ Runs once per invocation, after Step 0.6.
    done
    TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/review-spec.py"
    CLI_PROFILES_DIR="$REVIEW_SPEC_SKILL_DIR/references/cli-profiles"
+   RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
+   QUOTA_JSON="$(python3 "$TOOLS_PY" cache-path --kind quota)"
    ```
-   Resolve this once, in one `Bash` call, and — exactly like `RUN_TMP_DIR`
-   below — record `TOOLS_PY`/`CLI_PROFILES_DIR` as literal absolute paths
-   substituted into every later command and prose reference; they are
-   **not** shell environment variables that survive across separate `Bash`
-   tool calls (this bit a first draft of this very step — see this plan's
-   Self-review notes). If `TOOLS_PY` does not exist at the resolved path,
-   treat this exactly like `--no-cross-ai` (point 2 below) — cross-AI
-   support isn't installed, never block the review over it.
+   `cache-path` (Task 8) resolves these through the module's own
+   `cache_runtimes_path`/`cache_quota_path` (Task 3) — the
+   `${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/review-spec/...` formula lives
+   in exactly one place, not duplicated as a bash literal here.
+   Resolve this whole block once, in one `Bash` call, and — exactly like
+   `RUN_TMP_DIR` below — record `TOOLS_PY`/`CLI_PROFILES_DIR`/
+   `RUNTIMES_JSON`/`QUOTA_JSON` as literal absolute paths substituted into
+   every later command and prose reference; they are **not** shell
+   environment variables that survive across separate `Bash` tool calls
+   (this bit a first draft of this very step — see this plan's Self-review
+   notes). If `TOOLS_PY` does not exist at the resolved path, treat this
+   exactly like `--no-cross-ai` (point 2 below) — cross-AI support isn't
+   installed, never block the review over it.
 1. Run `mktemp -d` via `Bash`, and record its printed absolute path as
    `RUN_TMP_DIR` in this skill's own working notes — **not** a shell
    environment variable. Every `Bash` tool call in this harness starts a
@@ -2709,34 +2872,27 @@ Runs once per invocation, after Step 0.6.
    never needs `reviewers.json` for it either (only the external branch
    reads that file), so nothing downstream is left dangling. Go directly
    to Step 1.
-3. Otherwise, check whether `~/.cache/ai-kit/review-spec/runtimes.json`
-   exists:
-   - **Missing**: this is the first invocation ever to reach this step (no
-     `review-spec-config` run yet, and no prior `/review-spec` run got
-     this far either). Run
-     ```bash
-     python3 "$TOOLS_PY" detect-runtimes \
-       --save ~/.cache/ai-kit/review-spec/runtimes.json
-     ```
-     — `--save` both prints the snapshot (unused here, informational only)
-     *and* persists it via `cache_write_json` in the same call, so this
-     branch never runs again after today: the next invocation finds the
-     file present and skips straight to the "Present" case below. Print
-     one line — "No cross-AI config saved yet — run `review-spec-config`
-     so this doesn't repeat every invocation." — then continue to step 4;
-     do NOT skip reviewer resolution (there's usually no
-     `review-spec.toml` yet either, so `resolve-reviewers` in step 5
-     degrades to `NO_CONFIG_FALLBACK` on its own — no special-casing
-     needed here beyond persisting the detection snapshot and printing the
-     hint).
-   - **Present**: nothing to do here — `resolve-reviewers` (step 5) reads
-     the real `review-spec.toml` config independently; `runtimes.json`'s
-     only consumer is `review-spec-config` (Task 10), which reads it to
-     avoid a redundant re-detection when the user runs that skill.
+3. Refresh the runtimes snapshot if it's missing or older than
+   `RUNTIMES_TTL_SECONDS` (~30 days — CLI/model presence rarely changes):
+   ```bash
+   python3 "$TOOLS_PY" detect-runtimes --if-stale "$RUNTIMES_JSON"
+   ```
+   `--if-stale` (Task 8) checks `cache_is_stale` itself and no-ops
+   (prints `{}`, doesn't touch the file) when the existing snapshot is
+   still fresh; when missing or stale it detects and saves in the same
+   call, so this is always safe to run. If this was the first-ever save
+   (i.e. `$RUNTIMES_JSON` didn't exist before this call — check with `[ ]`
+   before running it if you need to know), print one line — "No cross-AI
+   config saved yet — run `review-spec-config` so this doesn't repeat
+   every invocation." — then continue to step 4 regardless; do NOT skip
+   reviewer resolution (there's usually no `review-spec.toml` yet either,
+   so `resolve-reviewers` in step 5 degrades to `NO_CONFIG_FALLBACK` on
+   its own — no special-casing needed here beyond the detection call and
+   the hint).
 4. Refresh quota for anything the config's ladder might need:
    ```bash
    python3 "$TOOLS_PY" probe-quota --cwd <CODEBASE_ROOT> \
-     --quota-path ~/.cache/ai-kit/review-spec/quota.json
+     --quota-path "$QUOTA_JSON"
    ```
    (No-op — writes `{}` — when there is no config/ladder to probe.)
 5. Resolve the reviewer list, saving its output to a file (Step 1's
@@ -2751,7 +2907,7 @@ Runs once per invocation, after Step 0.6.
    ```bash
    python3 "$TOOLS_PY" resolve-reviewers \
      --cwd <CODEBASE_ROOT> \
-     --quota ~/.cache/ai-kit/review-spec/quota.json \
+     --quota "$QUOTA_JSON" \
      --source-vendor <SOURCE_VENDOR from Step 1's flag parsing> \
      --cross-ai \
      > "$RUN_TMP_DIR/reviewers.json"
@@ -2969,7 +3125,7 @@ to `**Fixer skill:** \`review-spec-fixer\`` (if Task 1 hasn't already
 caught these specific lines — re-grep to confirm).
 
 Also fix a real, pre-existing bug in the `SEEDS_DIR` resolution block
-(lines 162–167) directly above the `**Loop state file**` line — its
+(lines 156–169) directly below the `**Loop state file**` line — its
 third candidate references `$SKILL_DIR` (`"$SKILL_DIR/../reviewing-specs/references/frameworks"`),
 but nothing in this skill ever assigns that variable; the comment
 `# SKILL_DIR = the directory containing this SKILL.md` documents intent,
@@ -3200,4 +3356,24 @@ Opus 5 subagent, run the same way and told explicitly not to trust the
 | MEDIUM | Task 2's tests (`test_round_trips_through_tomllib`, `test_escapes_quotes_and_backslashes_in_strings`) did unguarded `import tomllib`, which would ImportError on an interpreter below 3.11 even though the module itself degrades gracefully | Both tests now `@unittest.skipIf(rs.tomllib is None, ...)` |
 | CROSS-DOC | Design §8 point 3 said quota is refreshed only "for any ladder candidate actually needed this run" — the actual implementation (`probe-quota`'s CLI handler) refreshes every stale key in the FULL `policy.ladder`, since which candidates the walk needs isn't known until quota is already known | Design §8 corrected to describe the real behavior and explain why a narrower "only what's needed" set isn't computable up front |
 
-A fourth review round should confirm this document reaches Approved before execution begins.
+### Fifth review: a fourth clean-context Opus 5 subagent (native, live)
+
+The fourth round's fixes were themselves reviewed by a FIFTH clean-context
+Opus 5 subagent, run the same way. 9 findings, all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL | Design §4's rejection of git-trailer-based authorship detection claimed "this repo's commits don't carry such trailers today (verified: `git log` shows none)" — verified live, `git log --format='%b' \| grep -c "Co-Authored-By"` returns 7, including on the three most recent commits | §4's rejection rewritten around the real reasons (a spec under review is frequently uncommitted; a commit trailer names whoever commits, not necessarily the authoring session) rather than the false "no trailers exist" claim |
+| CRITICAL | Task 1 Step 4 told the executor to rename "both occurrences" of `reviewing-specs` in `applying-review-feedback/SKILL.md`'s frontmatter description, but the line has exactly one `reviewing-specs` occurrence and one `` `/review-spec` `` mention — the public orchestrator entrypoint, which design §2 says stays unchanged | Step 4 now names the single real occurrence to rename and explicitly calls out `` `/review-spec` `` as untouched |
+| CRITICAL | Task 11 Step 7 said the `SEEDS_DIR` block sits "directly above" the `**Loop state file**` line — verified live against `skills/review-spec/SKILL.md`, the Loop state file line is 155 and the `SEEDS_DIR` block is 156–169, i.e. below it | Corrected to "directly below", with the right line range (156–169) |
+| HIGH | Task 6's `test_timeout_is_unavailable` uses `subprocess.TimeoutExpired`, but the test file only gains `import subprocess` in a task that doesn't exist yet — Task 4 adds it to the *module*, never to the test file | Task 6 Step 1 now instructs adding `import subprocess` to the test file |
+| HIGH | The double-review merge derived its `### Status:` purely from parsed findings — a source report that says "Issues Found" but whose bullet(s) don't match `_BULLET_RE`'s strict one-line shape would silently merge into a false "Approved" | New `report_declares_issues` (Task 7) checks each source report's own Status line directly; `render_merged_report` gained an `any_source_issues` parameter OR'd into its Approved/Issues-Found decision; `merge-reports` (Task 8) now computes and passes it; 2 new regression tests |
+| HIGH | Task 9's CLI profiles (the source `review-spec-config` copies `command` templates from) quoted `{prompt}` as `"{prompt}"` in every example — double-quoting once `render_reviewer_command`'s own `shlex.quote` runs — and `codex.md`'s example still ended in `2>/dev/null`, the exact stderr suppression round 3 removed from design §3 | All six profiles rewritten to bare `{model}`/`{prompt}` placeholders with an explanatory note (on the first profile); `2>/dev/null` removed from `codex.md` |
+| HIGH | `cache_base`/`cache_runtimes_path`/`cache_quota_path`/`cache_is_stale`/`RUNTIMES_TTL_SECONDS` (Task 3) had no real caller — Task 4/5 don't read the cache, and Task 11/Task 10 hardcoded `~/.cache/ai-kit/review-spec/...` literally, silently ignoring `XDG_CACHE_HOME` and never checking runtimes staleness | New `cache-path` CLI subcommand (Task 8) prints the XDG-aware path for `--kind runtimes\|quota`; new `detect-runtimes --if-stale PATH` flag uses `cache_is_stale`/`RUNTIMES_TTL_SECONDS` to skip re-detection when fresh; Task 11 Step 2 point 0 now resolves `RUNTIMES_JSON`/`QUOTA_JSON` once via `cache-path`, substituted literally like `RUN_TMP_DIR`; Task 10 does the same; 4 new tests |
+| MEDIUM | Global Constraints and every task's "Run:" step said `.venv/bin/python3`, contradicting the Architecture paragraph's (correct, verified) claim that the `Makefile`/pre-commit actually run bare system `python3` | All 15 command references switched to bare `python3`, matching the real `Makefile` `test:` target |
+| MEDIUM | Task 3 Step 3 told the executor Task 2's test file "only imported `importlib.util`, `json`, `os`, `tempfile`, `unittest`" — verified live, Task 2's actual test code never imports `json` (that's added in Task 8) | Dropped the false `json` claim from the list |
+| MEDIUM | Design §3's grok `command` example included a `-p` flag §5's confirmed grok flag list never mentions (`-p` is `claude`'s flag, not grok's) | Removed `-p` from the example, matching Task 9's own grok profile |
+| MEDIUM | Design's Scope bullet had a dangling clause ("...a pre-existing bug — so `review-spec-config` — a sibling skill — reaches them the same way") with no antecedent, and referred to itself as "this plan" inside a design spec | Rewritten as complete sentences, "this plan" → "this design" |
+| CROSS-DOC | Design §3's double-mode secondary-slot rule ("vendor differs from the baseline's") never covered the case where the baseline is the session-default fallback (`vendor == ""`) — the plan's actual `secondary_skip_vendor = primary.vendor or source_vendor` fix (round 3) has no counterpart in the design text | §3 now states the fallback-to-source-vendor case explicitly |
+
+A fifth review round should confirm this document reaches Approved before execution begins.

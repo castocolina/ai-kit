@@ -15,11 +15,13 @@
   the skill directory, not a new top-level `references/`). Both resolve
   via a self-contained three-candidate pattern (`CLAUDE_PLUGIN_ROOT`/
   `~/.claude/skills`/sibling-of-this-file) — the same shape
-  `review-spec/SKILL.md` uses for its own `SEEDS_DIR` (§8), which this
-  plan also fixes: `SEEDS_DIR`'s existing block references an
-  `$SKILL_DIR` its own code never assigns, a pre-existing bug — so
-  `review-spec-config` — a sibling
-  skill — reaches them the same way.
+  `review-spec/SKILL.md` already uses for its own `SEEDS_DIR` (§8).
+  `SEEDS_DIR`'s existing block has a real, pre-existing bug (it
+  references an `$SKILL_DIR` its own code never assigns); this design
+  also calls for fixing that bug, since the new resolution snippets are
+  modeled directly on it. `review-spec-config` — a sibling skill — reaches
+  `review-spec.py`/the CLI profiles the identical way, via its own
+  self-contained copy of the same three candidates.
 - **Relates to**: builds on the existing `review-spec` orchestrator
   (Step 0–0.6, the review↔fix loop) without changing its framework-detection
   or fixer-routing behavior — this spec only changes **who performs the
@@ -152,7 +154,7 @@ key = "grok-flagship"
 cli = "grok"
 model = "grok-4.6"
 vendor = "xai"
-command = "grok -m {model} --output-format json -p {prompt}"
+command = "grok -m {model} --output-format json {prompt}"
 
 [[reviewers]]
 key = "opencode-kimi"
@@ -232,9 +234,14 @@ command = "opencode run -m {model} {prompt}"
   falling back to the current session's own default model (no config, or
   no native entry has quota — never zero reviewers) — **plus** the best
   entry anywhere in the full `policy.ladder` whose vendor differs from the
-  baseline's, quota-aware, dropped (not substituted) if none survives. The
-  baseline is always native/current-runtime; only the second slot may be
-  external.
+  baseline's, quota-aware, dropped (not substituted) if none survives. When
+  the baseline fell all the way back to the current-session default (no
+  configured native entry had quota, so the baseline's own vendor is
+  unknown), the second slot is instead filtered against the document's
+  source vendor (§4) — the only vendor identity available in that case —
+  rather than against an unset baseline vendor, which would disable the
+  cross-vendor filter entirely. The baseline is always native/
+  current-runtime; only the second slot may be external.
 
 `--no-cross-ai` (on `/review-spec`) forces single-mode, current-session-only,
 and **skips the ladder walk and quota probe entirely** (the "minimize
@@ -261,10 +268,14 @@ model id string has no sanctioned mapping and would mean guessing, which
 this spec's own §1 rules out.
 
 Rejected: scanning the document's frontmatter or git commit trailers for
-authorship — this repo's commits don't carry such trailers today (verified:
-`git log` shows none), so that path would almost always fall through to the
-same session-based default anyway, adding complexity without a real payoff
-right now.
+authorship — a spec under review is frequently uncommitted (the whole
+point of review is to catch issues *before* it lands), so there's often no
+commit yet to carry a trailer; even where one exists it names whoever
+commits, not necessarily the session that authored the content now under
+review. Both signals are unreliable for the moment `/review-spec` actually
+runs, so this spec skips them rather than adding parsing complexity for a
+source of truth that would still frequently fall through to the same
+session-based default.
 
 ---
 
