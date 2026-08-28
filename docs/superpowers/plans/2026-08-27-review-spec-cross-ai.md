@@ -15,10 +15,25 @@ symlink `agents`/`commands`/`skills` into `~/.claude`, never a top-level
 installed skill, and the same three-candidate resolution pattern the
 skill already uses for `SEEDS_DIR` (`CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/
 sibling-of-this-file) is what makes that possible (see Task 11 Step 2
-point 0). Despite the different location, it still mirrors
-`tools/status-line.py`'s file layout and testing style — one flat file,
-`importlib`-loaded by its test module since the filename is hyphenated,
-and — matching `status-line.py`'s own precedent exactly, since this
+point 0). **This repo already has a skill-local Python precedent** —
+`skills/mermaid-audit/scripts/mermaid_style.py` and
+`skills/markdown-to-pdf/scripts/markdown_to_pdf.py`, both under a
+`scripts/` subdirectory with underscore-safe names, plain-`import`ed by
+their tests (`tests/test_mermaid_style.py:5-7`'s `sys.path.insert` +
+`import mermaid_style`) — but that pattern doesn't fit here: those
+modules are library code, imported, never invoked directly as a
+standalone `python3 <path> <subcommand>` CLI from `Bash`. This module
+*is* invoked that way, by name, from two different skills' `Bash` calls
+(`review-spec/SKILL.md`'s Step 0.7/Step 1 and `review-spec-config`'s own
+Step 0/1/3) — matching `review-spec.py` to the skill directory's own name
+keeps that invocation path self-evident at the call site, at the cost of
+needing `importlib.util.spec_from_file_location` (not a plain `import`)
+from its own test module, since a hyphenated filename isn't a valid bare
+module name. This deviation is deliberate, not an oversight: it still
+mirrors `tools/status-line.py`'s file layout and testing style — one flat
+file, `importlib`-loaded by its test module for the same hyphenated-name
+reason `status-line.py`'s own tests already load it that way — and,
+matching `status-line.py`'s own precedent exactly, since this
 module also runs under the user's bare system `python3` (per the
 `Makefile`'s `test:` target and this repo's pre-commit config, which both
 run tests on system `python3`, not the `.venv`) — `tomllib` is imported
@@ -242,7 +257,16 @@ actually see is **13** post-move `.md` paths, split into two groups:
      (Step 0.7). Change the expected value to: `Yes — native reviewers use
      the model \`REVIEWER_LIST\` resolved (omitted/session-default unless
      \`review-spec.toml\` pins one); external reviewers (if configured) run
-     via \`Bash\`, not the \`Agent\` tool; paths only in prompt`. Its
+     via \`Bash\`, not the \`Agent\` tool; paths only in prompt`. Add a new
+     row above it: `Step 0.7 resolves REVIEWER_LIST before the first
+     dispatch (1 entry unless review-spec.toml configures cross-AI double
+     mode) | Yes — visible as the Bash calls to review-spec.py
+     detect-runtimes/probe-quota/resolve-reviewers, before the first
+     reviewer Agent/Bash dispatch`, and one more row after it: `Step 1.5
+     binds EFFECTIVE_REPORT_PATH every iteration (merging two reports only
+     when REVIEWER_LIST has 2 entries) | Yes — Step 2 reads
+     EFFECTIVE_REPORT_PATH from disk, never text still in a subagent's
+     context`. Its
      "Known patch candidates" section also has a stale bullet — "The
      orchestrator may forget to delete the temp report file after the
      loop. Cleanup section is already explicit" — which describes the
@@ -954,8 +978,8 @@ def detect_opencode_models(binary: str, run_fn=subprocess.run) -> list:
 
 def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run) -> dict:
     """{"clis": {name: {"installed": bool, "path"?: str, "models"?: [str]}}}.
-    Pure function — the caller (Task 8's CLI entrypoint) decides whether/
-    where to persist this via cache_write_json."""
+    Pure function — the caller (this module's CLI entrypoint) decides
+    whether/where to persist this via cache_write_json."""
     installed = detect_installed_clis(which_fn=which_fn)
     snapshot = {"clis": {}}
     for cli, binpath in installed.items():
@@ -1351,11 +1375,10 @@ def _native_ladder(reviewers: list, ladder: list) -> list:
 
 
 def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: bool) -> list:
-    """The full policy decision (design spec §3, as corrected during
-    planning — see Task 5's design-correction notes, including the
-    live-review fix to double mode's native-baseline guarantee). Returns 1
-    or 2 ResolvedReviewer entries; dispatch mechanics are the caller's
-    concern (Task 11), this only decides WHO.
+    """The full policy decision (design spec §3), including double mode's
+    native-baseline guarantee. Returns 1 or 2 ResolvedReviewer entries;
+    dispatch mechanics are the caller's concern (review-spec/SKILL.md's
+    Step 1), this only decides WHO.
 
     single: one reviewer, preferring a vendor different from source_vendor
     (independent perspective on the document), quota-aware, tier-aware via
@@ -1652,8 +1675,9 @@ def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> str:
     """Fill a resolved reviewer's `command` template. {model} and {prompt}
     are always available; any of the entry's extra fields (effort,
     service_tier, ...) fill their own {placeholder} when the command
-    references it. Shared by probe_reviewer_quota (below) and Task 11's
-    real dispatch, so probing and dispatching can never drift apart.
+    references it. Shared by probe_reviewer_quota (below) and
+    review-spec/SKILL.md's real dispatch step (via the `render-command`
+    CLI subcommand), so probing and dispatching can never drift apart.
 
     Only {prompt} is shell-escaped (via shlex.quote) before substitution —
     it is free text built from document paths/content signals and MUST
@@ -1977,7 +2001,7 @@ _BULLET_RE = re.compile(
 def report_has_status(report_text: str) -> bool:
     """True iff report_text contains a `### Status:` line — the one thing
     every conforming reviewer report guarantees (per review-spec-checklist's
-    output template). Used by the merge-reports CLI subcommand (Task 8) to
+    output template). Used by the merge-reports CLI subcommand to
     detect a failed/non-conforming/empty reviewer report BEFORE merging, so
     a broken external CLI call can never silently read as a clean Approved
     merge (it never produces findings, so an unguarded merge would treat it
@@ -2066,8 +2090,9 @@ def render_merged_report(findings: list, doc_paths: str, any_source_issues: bool
     match any recognized heading (malformed input — e.g. a bullet before
     any `### SEVERITY` heading) falls back to MEDIUM, tagged exactly as
     parsed — this can only happen on non-conforming input, since
-    report_has_status (Task 8) already filters those out before this
-    function ever runs. Deliberately drops each source report's own
+    the merge-reports CLI subcommand already filters those out (via
+    report_has_status) before this function ever runs. Deliberately
+    drops each source report's own
     `### Document Type`/`### Files Read` lines — those describe a single
     reviewer's run, not a property of the merge — in favor of a fixed
     `cross-ai merged` marker.
@@ -2282,11 +2307,17 @@ class TestMainCli(unittest.TestCase):
             })
             quota_path = os.path.join(cwd, "quota.json")
             env = {"HOME": home}
+            fake_run = mock.Mock(
+                return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="ok")
+            )
             with mock.patch.object(rs.os, "environ", env):
-                code = rs.main(["probe-quota", "--cwd", cwd, "--quota-path", quota_path])
+                code = rs.main(
+                    ["probe-quota", "--cwd", cwd, "--quota-path", quota_path], run_fn=fake_run
+                )
             self.assertEqual(code, 0)
             written = rs.cache_read_json(quota_path)
             self.assertTrue(written["codex-gpt"]["available"])
+            fake_run.assert_called()  # never shells out to a real "echo ok"
 
     def test_merge_reports_reads_files_and_prints_markdown(self):
         import io
@@ -2526,9 +2557,9 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
             print(render_reviewer_command(resolved, prompt))
         except ValueError as exc:
             # Deliberately no "### Status:" substring — same fail-closed
-            # convention as merge-reports (Task 7/8): the orchestrator's
-            # existing "No Status line -> Surface failure" rule catches
-            # this without any new special-casing (Task 11 Step 3).
+            # convention as merge-reports: review-spec/SKILL.md's existing
+            # "No Status line -> Surface failure" rule catches this
+            # without any new special-casing at the dispatch step.
             print(f"render-command: {exc}", file=sys.stderr)
             return 1
         return 0
@@ -2666,13 +2697,13 @@ claude -p --model {model} --output-format text {prompt}
 
 `{model}`/`{prompt}` above are the literal config `command` template
 placeholders (§3) — written bare, never wrapped in extra quotes.
-`render_reviewer_command` (Task 6) applies `shlex.quote` to `{prompt}`
-itself before substitution, so a template that adds its own quotes around
-`{prompt}` ends up double-quoted. Copy this shape directly into a
-`command` field.
+`render_reviewer_command` (in `review-spec.py`) applies `shlex.quote` to
+`{prompt}` itself before substitution, so a template that adds its own
+quotes around `{prompt}` ends up double-quoted. Copy this shape directly
+into a `command` field.
 
-Quota/context-window introspection: unconfirmed syntax — research during
-the `review-spec-config` implementation task if a dedicated Claude usage
+Quota/context-window introspection: unconfirmed syntax — research
+whether a dedicated Claude usage
 subcommand exists; otherwise rely on the same "low-effort call, detect a
 usage-limit error" mechanism confirmed for `codex` (below).
 ````
@@ -2707,7 +2738,7 @@ placeholders (§3) — bare, unquoted (`render_reviewer_command` already
 `shlex.quote`s `{prompt}`); `model_reasoning_effort`/`service_tier` stay
 literal `<...>` since they're config-level `extra` fields, not filled by
 `render_reviewer_command` itself. **Do not append `2>/dev/null`** —
-`probe_reviewer_quota` (Task 6) classifies availability from
+`probe_reviewer_quota` classifies availability from
 `stdout + stderr` combined, so suppressing stderr hides the exact
 usage-limit signal the probe below depends on.
 
@@ -2781,10 +2812,18 @@ last_verified: 2026-08-27
 
 Model: `-m/--model <MODEL>`. Output shaping: `--output-format
 <OUTPUT_FORMAT>`; `--json-schema <SCHEMA>` for structured output (implies
-`--output-format json`).
+`--output-format json`). **Never use `--output-format json` or
+`--json-schema` here** — `review-spec.py`'s report parsing
+(`report_has_status`/`parse_findings`) expects the reviewer output
+template's raw markdown (`### Status:`, `### <SEVERITY>` headings,
+`- **title** — Location: ...` bullets) as plain text on stdout, not JSON;
+a JSON-wrapped response parses as zero findings and can bury the
+`### Status:` line inside an escaped string, silently degrading this
+reviewer. Omit `--output-format` entirely (its default is plain text) or
+pass `--output-format text` explicitly:
 
 ```bash
-grok -m {model} --output-format json {prompt}
+grok -m {model} --output-format text {prompt}
 ```
 
 (`{model}`/`{prompt}` are bare config `command` template placeholders, per
@@ -2812,10 +2851,14 @@ source: https://cursor.com/docs/cli/overview , https://cursor.com/docs/cli/using
 Non-interactive: `-p`/`--print`, combine with `--output-format json` (or
 `text`). Model: `--model <name>`. `cursor-agent ls` lists sessions,
 `cursor-agent resume` resumes one, `cursor-agent status` reports
-auth/version (possibly a quota source — unconfirmed).
+auth/version (possibly a quota source — unconfirmed). **Use
+`--output-format text` (or omit the flag), never `json`** — same reason
+as the `grok` profile above: `review-spec.py`'s report parsing expects
+the reviewer output template's raw markdown on stdout, not a JSON
+wrapper.
 
 ```bash
-cursor-agent -p {prompt} --output-format json --model {model}
+cursor-agent -p {prompt} --output-format text --model {model}
 ```
 
 (`{model}`/`{prompt}` are bare config `command` template placeholders, per
@@ -2874,6 +2917,7 @@ git commit -m "docs(review-spec): add CLI profiles for claude, codex, opencode, 
 
 **Files:**
 - Create: `skills/review-spec-config/SKILL.md`
+- Modify: `README.md` (add a Contents table row for the new skill)
 - Test: none (interactive skill, no automated test — matches this repo's
   precedent for interactive/prose skills)
 
@@ -2906,9 +2950,9 @@ Set up (or refresh) `review-spec`'s cross-AI reviewer configuration.
 `review-spec.py` and its `references/cli-profiles/` live inside the
 **`review-spec`** skill's own directory (a sibling of this skill, not
 this skill's own directory, and not a top-level `tools/`/`references/` —
-see `review-spec/SKILL.md`'s Step 0.7 point 0 — Task 11 — for why).
+see `review-spec/SKILL.md`'s Step 0.7 point 0 for why).
 Resolve them the identical way `review-spec/SKILL.md` itself resolves
-these same two paths (Task 11 Step 2 point 0) — same three candidates,
+these same two paths (its own Step 0.7 point 0) — same three candidates,
 self-contained, no shared variable between the two skills — so both
 agree on one procedure:
 
@@ -2928,8 +2972,9 @@ printf '%s\n' "$TOOLS_PY" "$CLI_PROFILES_DIR" "$RUNTIMES_JSON"
 `SEEDS_DIR`'s own third candidate — since this skill's directory and
 `review-spec`'s are installed alongside each other in every shape:
 plugin, `~/.claude/skills`, or a direct dev checkout. `cache-path`
-resolves the `${XDG_CACHE_HOME:-$HOME/.cache}`-aware path through Task 3's
-`cache_runtimes_path` — the same call `review-spec/SKILL.md` itself uses
+resolves the `${XDG_CACHE_HOME:-$HOME/.cache}`-aware path through
+`review-spec.py`'s own `cache_runtimes_path` — the same call
+`review-spec/SKILL.md` itself uses
 — so both skills always agree on where this file lives.)
 
 **Resolve this whole block once, in one `Bash` call, and record
@@ -2939,7 +2984,7 @@ tool call in this harness starts a fresh shell, so a variable assigned in
 one call is gone by the next; every `$TOOLS_PY`/`$CLI_PROFILES_DIR`/
 `$RUNTIMES_JSON` reference in Steps 1–3 below means "the literal path
 captured here", substituted directly, exactly the way `review-spec/SKILL.md`'s
-own `TOOLS_PY`/`RUN_TMP_DIR` work (Task 11 Step 2 point 0/point 1) — this
+own `TOOLS_PY`/`RUN_TMP_DIR` work (its own Step 0.7 points 0/1) — this
 skill has its own separate `AskUserQuestion` interaction (Step 2) between
 this resolution and Step 3's write, guaranteeing at least one call
 boundary in between.
@@ -2970,7 +3015,7 @@ above).
 python3 "$TOOLS_PY" detect-runtimes --save "$RUNTIMES_JSON"
 ```
 (re-running detection here is cheap and keeps this step's logic linear —
-`--save` persists via `cache_write_json`, Task 8, so `review-spec` doesn't
+`--save` persists via `cache_write_json`, so `review-spec` doesn't
 have to re-detect next session.)
 
 ### Step 2 — Ask
@@ -2999,7 +3044,7 @@ more **native** (`cli`-omitted) reviewer entries — e.g. the current
 session's own tier, or another Claude tier reachable without an external
 CLI. This is not optional to ask: `policy.mode = "double"`'s guaranteed
 baseline (§3) walks `policy.ladder` restricted to native entries only
-(Task 5's `_native_ladder`), so a config with zero native `[[reviewers]]`
+(`review-spec.py`'s `_native_ladder` helper), so a config with zero native `[[reviewers]]`
 entries can never seat a real native baseline — it always degrades to
 `NO_CONFIG_FALLBACK` — silently defeating design §1's "prefer the
 strongest available Claude tier" goal for anyone who only answered the
@@ -3042,10 +3087,21 @@ Print a short summary: which reviewers are now configured, in what
 mode/order, and the path written to.
 ````
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Register the new skill in `README.md`'s Contents table**
+
+`README.md`'s Contents table (verified live, lines 26-34) is a complete
+registry of every directory under `skills/` — Task 1 Step 6 already
+updates the two renamed rows, but adds no row for this new skill. Add,
+after the `review-spec` row (line 34):
+
+```markdown
+| [`review-spec-config`](skills/review-spec-config/SKILL.md) | skill | Interactive setup wizard for `review-spec`'s cross-AI reviewer config — detects installed CLIs/models, asks which to configure, writes `review-spec.toml`. |
+```
+
+- [ ] **Step 3: Commit**
 
 ```bash
-git add skills/review-spec-config/SKILL.md
+git add skills/review-spec-config/SKILL.md README.md
 git commit -m "feat(review-spec-config): add interactive cross-AI reviewer setup skill"
 ```
 
@@ -3107,20 +3163,18 @@ Runs once per invocation, after Step 0.6.
 
 0. Resolve `TOOLS_PY` and `CHECKLIST_SKILL_MD`. **`review-spec.py` lives
    inside `skills/review-spec/` itself** (not at a top-level `tools/` —
-   that placement was tried in an earlier draft of this plan and
-   rejected: it isn't reachable from an installed skill, since
+   that placement isn't reachable from an installed skill, since
    `tools/setup.py`'s symlinks only cover `agents/commands/skills`, per
    its `CATEGORIES`). Because it's inside `review-spec`'s own skill
    directory, it resolves the same way `SEEDS_DIR` (in the `## Constants`
-   section, below this Step 0.7 insertion point) is *meant* to (three
+   section, below this Step 0.7 insertion point) does (three
    candidates: `CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/
    sibling-of-this-file) — this snippet is **self-contained** and does
    not read any variable assigned elsewhere; it computes its own
-   directory inline via `$(dirname ...)`. (Task 11 Step 7 separately
-   fixes a real pre-existing bug in `SEEDS_DIR`'s own block — its third
-   candidate references an `$SKILL_DIR` that block never actually
-   assigns — bringing that block's behavior in line with what its
-   comment always claimed, and with this new snippet.):
+   directory inline via `$(dirname ...)`. (`SEEDS_DIR`'s own block below
+   assigns `SKILL_DIR="$(dirname "<path to this SKILL.md>")"` immediately
+   before its own `for` loop, so its third candidate resolves the same
+   way this snippet's does.):
    ```bash
    for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec}" \
             "$HOME/.claude/skills/review-spec" \
@@ -3134,14 +3188,14 @@ Runs once per invocation, after Step 0.6.
    printf '%s\n' "$TOOLS_PY" "$CHECKLIST_SKILL_MD" "$RUNTIMES_JSON" "$QUOTA_JSON"
    ```
    `CHECKLIST_SKILL_MD` is the path Step 1's external-CLI dispatch tells
-   the external reviewer to `Read` — `review-spec-checklist` (renamed
-   from `reviewing-specs` by Task 1) is always installed as
+   the external reviewer to `Read` — `review-spec-checklist` (the
+   reviewer skill) is always installed as
    `review-spec`'s own sibling, since both live under the same `skills/`
    tree in every installed shape (plugin, `~/.claude/skills`, or a dev
    checkout), so deriving it from `$REVIEW_SPEC_SKILL_DIR`'s own parent
-   needs no separate three-candidate search. `cache-path` (Task 8)
+   needs no separate three-candidate search. `cache-path`
    resolves `RUNTIMES_JSON`/`QUOTA_JSON` through the module's own
-   `cache_runtimes_path`/`cache_quota_path` (Task 3) — the
+   `cache_runtimes_path`/`cache_quota_path` — the
    `${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/review-spec/...` formula lives
    in exactly one place, not duplicated as a bash literal here.
    Resolve this whole block once, in one `Bash` call, and — exactly like
@@ -3149,11 +3203,19 @@ Runs once per invocation, after Step 0.6.
    `RUNTIMES_JSON`/`QUOTA_JSON` from the trailing `printf`'s stdout (four
    lines, in that order) as literal absolute paths substituted into every
    later command and prose reference; they are **not** shell environment
-   variables that survive across separate `Bash` tool calls (this bit a
-   first draft of this very step — see this plan's Self-review notes). If
+   variables that survive across separate `Bash` tool calls. If
    `TOOLS_PY` does not exist at the resolved path, treat this
    exactly like `--no-cross-ai` (point 2 below) — cross-AI support isn't
-   installed, never block the review over it.
+   installed, never block the review over it. If `TOOLS_PY` exists but
+   `CHECKLIST_SKILL_MD` does not (a broken/partial install —
+   `review-spec-checklist` missing while `review-spec` itself is
+   present), still proceed with native dispatch (`cli` absent entries
+   need no checklist path), but skip any reviewer entry whose `cli` is
+   set: an external CLI can't be told to `Read` a file that doesn't
+   exist, so treat that entry the way a config error is treated —
+   dropped from `REVIEWER_LIST`, never dispatched, and this iteration
+   surfaces via whatever entries remain (or `NO_CONFIG_FALLBACK` if none
+   do).
 1. Run `mktemp -d` via `Bash`, and record its printed absolute path as
    `RUN_TMP_DIR` in this skill's own working notes — **not** a shell
    environment variable. Every `Bash` tool call in this harness starts a
@@ -3172,8 +3234,9 @@ Runs once per invocation, after Step 0.6.
 2. **If `--no-cross-ai` was requested (or `TOOLS_PY` is missing, point 0
    above)**: set `REVIEWER_LIST` directly, in-context, to the single-entry
    array `[{"key": "session-default", "model": "", "vendor": "", "cli":
-   null, "command": null, "extra": {}}]` — `NO_CONFIG_FALLBACK`'s exact
-   shape (Task 5). **Do not run `resolve-reviewers`, `probe-quota`, or
+   null, "command": null, "extra": {}}]` — `review-spec.py`'s
+   `NO_CONFIG_FALLBACK` constant's exact shape. **Do not run
+   `resolve-reviewers`, `probe-quota`, or
    `detect-runtimes`, and do not write `$RUN_TMP_DIR/reviewers.json`** —
    points 3–5 below are entirely skipped, not just their side effects;
    this is the "skip it entirely, minimal overhead" case the flag exists
@@ -3186,7 +3249,7 @@ Runs once per invocation, after Step 0.6.
    ```bash
    python3 "$TOOLS_PY" detect-runtimes --if-stale "$RUNTIMES_JSON"
    ```
-   `--if-stale` (Task 8) checks `cache_is_stale` itself and no-ops
+   `--if-stale` checks `cache_is_stale` itself and no-ops
    (prints `{}`, doesn't touch the file) when the existing snapshot is
    still fresh; when missing or stale it detects and saves in the same
    call, so this is always safe to run. If this was the first-ever save
@@ -3208,20 +3271,20 @@ Runs once per invocation, after Step 0.6.
    external dispatch needs a stable path to feed `render-command`, not
    just the in-context text). This point is only reached when cross-AI is
    actually active — `--no-cross-ai` already short-circuited at step 2
-   above — so `--cross-ai` is always passed here, never conditionally
-   (fixing a broken shell line-continuation from an earlier draft: a
-   trailing `\` followed by an inline `#` comment escapes the *space*
-   before the comment, not the newline, so the redirect below it silently
-   became a separate command that truncated the file):
+   above — so `--cross-ai` is always passed here, never conditionally.
+   (Do not split this command across a trailing `\` followed by an
+   inline `#` comment — that escapes the *space* before the comment, not
+   the newline, so the redirect below silently becomes a separate command
+   that truncates the file.):
    ```bash
    python3 "$TOOLS_PY" resolve-reviewers \
      --cwd <CODEBASE_ROOT> \
      --quota "$QUOTA_JSON" \
-     --source-vendor <SOURCE_VENDOR from the "## Inputs" section's flag parsing, Task 11 Step 1> \
+     --source-vendor <SOURCE_VENDOR from the "## Inputs" section's flag parsing> \
      --cross-ai \
      > "$RUN_TMP_DIR/reviewers.json"
    ```
-   `resolve-reviewers` itself calls `cfg_resolve(cwd, env)` (Task 2),
+   `resolve-reviewers` itself calls `cfg_resolve(cwd, env)`,
    which already handles the local-vs-global/`strategy` resolution — this
    step never re-implements that logic, it only picks which `--cwd` to
    pass (`CODEBASE_ROOT` from Step 0.1, so the resolved local config is
@@ -3259,7 +3322,7 @@ For each entry in `REVIEWER_LIST`:
     its own default"). A non-empty `model` value here **must be one of the
     four `Agent`-tool model aliases** (`sonnet`/`opus`/`haiku`/`fable` —
     Claude Code's `Agent` tool does not accept a full model id like
-    `"opus-5"`); `review-spec-config` (Task 10) is responsible for writing
+    `"opus-5"`); `review-spec-config` is responsible for writing
     exactly one of these four strings for every native reviewer entry, so
     surface anything else as a config error rather than passing it through.
   - `description`: `review-spec iter N reviewer (<key>)`
@@ -3270,7 +3333,7 @@ For each entry in `REVIEWER_LIST`:
     external branch below, which redirects `Bash` stdout to the same
     path). Step 1.5's merge reads both reviewers' reports from files
     unconditionally — a native reviewer's report must land on disk exactly
-    like an external one's, or `merge-reports` (Task 8) has no file to
+    like an external one's, or `merge-reports` has no file to
     open for it and crashes the loop the first time `policy.mode =
     "double"` actually runs.
 
@@ -3313,7 +3376,7 @@ For each entry in `REVIEWER_LIST`:
      Step 1 reviewer prompt template — so an external reviewer works from
      the exact same contract a native one does, not a thinner one.)
   2. Fill the entry's `command` template via the `render-command`
-     subcommand (Task 8), which calls `render_reviewer_command` (Task 6)
+     subcommand, which calls `render_reviewer_command`
      internally — this is the ONLY way the orchestrator's `Bash`-tool
      dispatch reaches that function, since it's Python and the
      orchestrator dispatches via shell, not by importing the module:
@@ -3324,7 +3387,7 @@ For each entry in `REVIEWER_LIST`:
        --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt"
      ```
      This prints the fully filled, shell-safe command string to stdout —
-     `{prompt}` already shell-escaped, per Task 6's `render_reviewer_command`
+     `{prompt}` already shell-escaped, per `render_reviewer_command`'s own
      docstring. Never hand-splice the prompt into a command string
      yourself. **If this exits nonzero** (a malformed or missing `command`
      template on this reviewer entry — a config error, not a runtime
@@ -3910,3 +3973,24 @@ CROSS-DOC), all fixed:
 | CROSS-DOC | Task 6's "Cost bound" paragraph claimed the design describes `quota.json` as holding "remaining context window and quota/usage headroom", contradicting its own implementation — but verified live, design §6/§10 already say the opposite (`quota.json` explicitly does NOT capture context-window headroom, marked "not implemented by v1") and that exact phrase appears nowhere in the current design. The plan was arguing against a contradiction that no longer existed, pointing at unitemized "Self-review notes" as the reason | Rewritten to state the plan's boolean-only `quota.json` shape matches design §6/§10 exactly, with no claimed discrepancy |
 
 A thirteenth review round should confirm this document reaches Approved before execution begins.
+
+### Fourteenth review: a thirteenth clean-context Opus 5 subagent (native, live)
+
+The thirteenth round's fixes were themselves reviewed by a FOURTEENTH
+clean-context Opus 5 subagent, which re-verified every prior grounding
+claim live and found no CRITICAL issues. 9 findings (4 HIGH, 5 MEDIUM),
+all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| HIGH | ~20 references to this plan's own "Task N"/"Step M" numbering (and two unresolvable pointers, "an earlier draft of this plan" and "see this plan's Self-review notes") leaked into content that ships as the actual `skills/review-spec-config/SKILL.md`, `skills/review-spec/SKILL.md`, `review-spec.py`, and the CLI profile reference docs — none of that is readable by an agent following the installed skill at runtime | All ~20 occurrences rewritten to name the target directly (a function name, a subcommand, "this skill's own Step 0.7", a docstring's own module reference) instead of the plan's internal numbering; the two unresolvable pointers removed or replaced with the actual technical explanation |
+| HIGH | `grok`/`cursor-agent`'s profile command templates used `--output-format json`, but `report_has_status`/`parse_findings` (Task 7) require the raw markdown report template on stdout — `_SEVERITY_RE`/`_BULLET_RE` are line-anchored regexes that find nothing in a JSON-wrapped response, and the `### Status:` line can end up embedded in an escaped JSON string | Both profiles' templates changed to `--output-format text` (grok.md, cursor-agent.md), with an explicit "never json" warning in each; design §3's schema example and §5 gained a matching "Output format" note |
+| HIGH | Neither document acknowledged this repo's existing `skills/<skill>/scripts/<module_name>.py` precedent (`mermaid-audit`, `markdown-to-pdf`) for skill-local Python, or explained why `review-spec.py` deviates from it (hyphenated filename, `importlib.util` loader instead of a plain `import`) | Plan Architecture and design Scope both extended to name the precedent explicitly and explain the deviation: those modules are import-only library code, never invoked as a standalone `python3 <path> <subcommand>` CLI from `Bash` the way `review-spec.py` is |
+| HIGH | The new `review-spec-config` skill was never added to `README.md`'s Contents table — verified live, that table is a complete registry of exactly the 7 existing `skills/` directories, and Task 1 Step 6 only updates the two renamed rows, adding none for the new skill | New Task 10 Step 2 adds a Contents row for `review-spec-config`; old Step 2 (commit) renumbered to Step 3, its `git add` extended to include `README.md` |
+| MEDIUM | Design §3 cross-referenced "§6" for the built-in default policy (§6 is the cache section, defines no policy default) and "§7" for `quota.json` (§7 is the `review-spec-config` skill section, defines no cache file) | Corrected to §10 (the actual default-policy edge case) and §6 (the actual `quota.json` definition) respectively |
+| MEDIUM | `CHECKLIST_SKILL_MD` had no existence check or failure path — `TOOLS_PY` degrades like `--no-cross-ai` when missing, but a missing `review-spec-checklist/SKILL.md` (broken/partial install) left the external-CLI reviewer told to `Read` a file with no diagnostic | Task 11 Step 2 point 0 and design §8 point 0 both extended: native dispatch proceeds unaffected; any reviewer entry with `cli` set is dropped from `REVIEWER_LIST` instead, since an external CLI can't be told to read a file that isn't there |
+| MEDIUM | Task 11 Step 8 (diagram update) still described Step 1.5 as "only when `REVIEWER_LIST` has 2 entries" — the exact framing Step 4 was rewritten last round specifically to stop an executor reading that way | Step 8's wording matches Step 4's fix: an optional merge, `EFFECTIVE_REPORT_PATH` always bound |
+| MEDIUM | Task 8 Step 6's rationale for `tests/test_review_spec.py` staying on bare `python3` cited "Task 1's design constraint" — Task 1 is the mechanical skill rename and states no dependency constraint | Corrected to cite the plan's own Global Constraints section (stdlib-only, zero new external dependencies) |
+| MEDIUM | `test_probe_quota_refreshes_stale_entries_and_writes_cache` called `rs.main(["probe-quota", ...])` with no `run_fn=`, so it shelled out to a real `echo ok` via `subprocess.run` — contradicting Task 6's/design §11's "unit-testable — a fake `run_fn` simulates outcomes" contract and every neighboring `TestMainCli` test's own pattern | Passes a `mock.Mock` `run_fn` returning a fake `CompletedProcess`; asserts it was actually called, so the test can never silently fall back to a real shell-out |
+
+A fourteenth review round should confirm this document reaches Approved before execution begins.

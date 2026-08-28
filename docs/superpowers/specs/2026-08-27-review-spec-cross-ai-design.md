@@ -21,7 +21,7 @@
   also calls for fixing that bug, since the new resolution snippets are
   modeled directly on it. `review-spec-config` — a sibling skill — reaches
   `review-spec.py`/the CLI profiles the identical way, via its own
-  self-contained copy of the same three candidates.
+  self-contained copy of the same three candidates. This repo also has a `skills/<skill>/scripts/<module_name>.py` precedent (`mermaid-audit`, `markdown-to-pdf`) for skill-local Python, but those modules are library code, plain-`import`ed by tests — never invoked directly as a `python3 <path> <subcommand>` CLI from `Bash` the way `review-spec.py` is, from two different skills' `Bash` calls. Matching the filename to the skill directory keeps that invocation self-evident at the call site; this plan's test module loads it via `importlib.util.spec_from_file_location` instead of a plain `import` for that reason, the same way `tools/status-line.py`'s own tests do.
 - **Relates to**: builds on the existing `review-spec` orchestrator
   (Step 0–0.6, the review↔fix loop) without changing its framework-detection
   or fixer-routing behavior — this spec only changes **who performs the
@@ -126,7 +126,8 @@ strategy = "global-merge"   # "local-only" | "global-merge" (default if omitted:
 
 - `local-only`: the global file is ignored entirely; the local file must be
   self-sufficient (a missing `[policy]` falls back to built-in defaults —
-  §6 — not to the global file).
+  §10's edge-case default (`mode = "single"`, empty ladder) — not to the
+  global file).
 - `global-merge` (default): `[policy]` shallow-merges (local keys override
   global keys per-field; unspecified fields inherit from global).
   `[[reviewers]]` merges by `key` (a local entry with the same `key`
@@ -160,7 +161,7 @@ key = "grok-flagship"
 cli = "grok"
 model = "grok-4.6"
 vendor = "xai"
-command = "grok -m {model} --output-format json {prompt}"
+command = "grok -m {model} --output-format text {prompt}"
 
 [[reviewers]]
 key = "opencode-kimi"
@@ -230,7 +231,7 @@ command = "opencode run -m {model} {prompt}"
 - `"single"`: exactly one reviewer runs. Walk `policy.ladder` in order,
   skip any candidate whose vendor matches the source model's vendor (§4)
   *unless* skipping it would exhaust the ladder, skip any candidate without
-  quota (per `quota.json`, §7), and use the first that survives both
+  quota (per `quota.json`, §6), and use the first that survives both
   filters. If the ladder is exhausted, fall back to the current session's
   own native reviewer (never zero reviewers).
 - `"double"`: a **native** reviewer runs unconditionally as the guaranteed
@@ -304,6 +305,14 @@ architecture change.
 | `grok` | full profile | `-m/--model`, `--output-format`, `--json-schema` for structured output |
 | `cursor-agent` | stub (web research only, not installed here) | `-p/--print`, `--output-format json\|text`, `--model <name>`, `cursor-agent status` (auth/version; quota shape unconfirmed) |
 | `gemini` | stub (carried over from the existing `gemini` skill's documented flags) | — |
+
+**Output format.** `grok` and `cursor-agent` both support `--output-format
+json`, but their `command` templates must never use it: the reviewer
+output template's report parsing (`report_has_status`/`parse_findings`,
+read by the merge step, §8) expects the raw markdown report on stdout,
+and a JSON-wrapped response parses as zero findings — every `command`
+template for these two CLIs uses `--output-format text` (or omits the
+flag, whose default is plain text).
 
 **Read-only posture.** An external CLI must never be dispatched with real
 write access to the repo under review — see the Out-of-scope note below.
@@ -426,7 +435,11 @@ interactive wrapper).
      absolute paths, exactly like `RUN_TMP_DIR` below — they are not
      shell variables that survive across separate `Bash` tool calls.
      Missing `TOOLS_PY` at this resolved path degrades exactly like
-     `--no-cross-ai`.
+     `--no-cross-ai`. Missing `CHECKLIST_SKILL_MD` while `TOOLS_PY` exists
+     (a broken/partial install) doesn't block native dispatch — only
+     reviewer entries with `cli` set are dropped from the resolved list,
+     since an external CLI can't be told to `Read` a file that isn't
+     there.
   1. Run `mktemp -d`, capture its stdout, and record that absolute path as
      `RUN_TMP_DIR` **in the skill's own working notes/context** — not as a
      shell environment variable. Each `Bash` tool call in this harness runs
