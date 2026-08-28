@@ -3259,13 +3259,18 @@ for keys that also appeared in the raw-read listing above — drop any
 extra key the merge surfaced — so the two parts of this report describe
 the same set of reviewers instead of two different ones.
 
-The reverse can also happen: if `--local` was **not** passed (raw read
-above targeted the global file) but a local `review-spec.toml` exists
-with `strategy = "local-only"`, `cfg_resolve`'s merge returns only the
-local entries — none of the global keys the raw read just listed appear
-in the probed set at all. For any raw-read key with no matching entry in
-`probe-quota`'s output, report `available: unknown (shadowed by a local
-strategy = "local-only" config)` rather than silently omitting it.
+The reverse can also happen, for two distinct reasons: (1) if `--local`
+was **not** passed (raw read above targeted the global file) but a local
+`review-spec.toml` exists with `strategy = "local-only"`, `cfg_resolve`'s
+merge returns only the local entries — none of the global keys the raw
+read just listed appear in the probed set at all; or (2) `probe-quota`
+only probes keys reachable from `policy.ladder` — a `[[reviewers]]` entry
+the raw read lists but `policy.ladder` never references is never probed
+either, regardless of `strategy`. For any raw-read key with no matching
+entry in `probe-quota`'s output, report `available: unknown (not probed —
+either absent from policy.ladder, or shadowed by a local strategy =
+"local-only" config)` rather than silently omitting it or guessing which
+of the two applies.
 
 This still makes live probe calls to each configured CLI (the probe itself is a
 real trivial invocation, same as at dispatch time), but "no writes" here
@@ -4108,5 +4113,34 @@ hint check is now unconditional and ordered before the destructive
 `--if-stale` call; and the duplicated precedent argument now lives once
 in the plan's Architecture section, cited from the design.
 
-A nineteenth review round should confirm this document reaches Approved
-before execution begins.
+**Round 19** (a nineteenth clean-context Opus 5 subagent) confirmed
+every round-18 fix held up, then found 2 MEDIUM + 3 LOW: the stated
+final import block failed ruff's blank-lines-before-comment rule (fixed
+to one blank line, and the stale `E501` prediction removed); the
+`CODEBASE_ROOT` labeled-set case was unresolved for `probe-quota`/
+`resolve-reviewers`'s single `--cwd` (fixed — use the primary document's
+root); one unqualified `Step 1.5` reference leaked into shipped
+`review-spec.py` content (qualified to name the SKILL.md it belongs to);
+`--check-only`'s availability report didn't handle a local
+`strategy = "local-only"` config shadowing global entries out of the
+probed set (fixed to report those as unknown rather than drop them
+silently); and `--source-vendor`'s CLI default (`""`) vs. the
+orchestrator's documented default (`anthropic`) was unexplained (fixed
+with a note distinguishing the two). Committed as `bd3d3bb`.
+
+**Round 20** (a twentieth clean-context Opus 5 subagent) re-derived
+every round-19 fix independently rather than trusting the summary —
+assembled the full module and test file from every `review-spec.py`-/
+`tests/test_review_spec.py`-destined code block in task order and ran
+the repo's own `ruff check` and `unittest` against them for real (zero
+`I001`/`E501`, 103/103 tests pass), re-read `cfg_resolve`'s actual
+`strategy = "local-only"` semantics, and re-verified every line-numbered
+claim against the live files. Found only two non-blocking notes (the
+"shadowed" diagnostic naming only one of two possible causes for a
+raw-read key never appearing in `probe-quota`'s output — since
+`probe-quota` also only probes keys reachable from `policy.ladder`; and
+a stale backtick detail in one anchor-quote example) plus this section's
+own stale closing line. **Returned `### Status: Approved`.** The
+diagnostic-wording note is fixed above (now names both possible causes);
+the anchor-quote note doesn't affect correctness (the insertion point
+stays unambiguous) and is left as-is.
