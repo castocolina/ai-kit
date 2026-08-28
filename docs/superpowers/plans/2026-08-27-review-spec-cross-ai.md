@@ -33,10 +33,14 @@ interactive setup wizard). `review-spec/SKILL.md` gains a new Step 0.7 and
 a Step 1.5, both driving `review-spec.py`'s CLI entrypoint via `Bash`, and
 a `mktemp -d` fix for a pre-existing temp-file collision bug.
 
-**Tech Stack:** Python 3.12 (`.venv`), stdlib only (`tomllib` for reading
-TOML — read-only, so this plan adds a small hand-rolled TOML writer since
-there is no stdlib writer and this repo has zero external dependencies;
-`json` for cache files), `unittest` (this repo's test runner, not pytest —
+**Tech Stack:** bare system `python3` (unpinned version — the `Makefile`'s
+`test:` target and `.pre-commit-config.yaml`'s `unittest` hook both run
+it directly, not `.venv/bin/python3`; `.python-version` (3.12) governs
+only the separate `uv`-managed dev venv, which is why `tomllib` is
+imported behind a guard rather than assumed present), stdlib only
+(`tomllib` for reading TOML — read-only, so this plan adds a small
+hand-rolled TOML writer since there is no stdlib writer and this repo has
+zero external dependencies; `json` for cache files), `unittest` (this repo's test runner, not pytest —
 `Makefile`'s `test:` target confirms this).
 
 **Spec:** `docs/superpowers/specs/2026-08-27-review-spec-cross-ai-design.md`
@@ -286,9 +290,10 @@ EOF
   `cfg_resolve(cwd: str, env: dict) -> dict` (returns `{"policy": {...}, "reviewers": [...]}`),
   `cfg_render_toml(config: dict) -> str`, `cfg_write_toml(path: str, config: dict) -> None`.
   Consumed by Task 5 (policy resolution), Task 8 (`render-toml` subcommand
-  calls `cfg_render_toml` directly), and Task 10 (`review-spec-config`
-  shells out to the `render-toml` subcommand rather than importing this
-  module — see Task 8's Interfaces note on why).
+  calls `cfg_render_toml` directly and, when its `--out` flag is given,
+  `cfg_write_toml` too — see Task 8), and Task 10 (`review-spec-config`
+  shells out to the `render-toml --out <path>` subcommand rather than
+  importing this module — see Task 8's Interfaces note on why).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -437,6 +442,21 @@ class TestRenderAndWriteToml(unittest.TestCase):
         parsed = tomllib.loads(rendered)
         self.assertEqual(parsed["reviewers"][0]["command"], 'echo "hi" \\ done')
 
+    @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
+    def test_renders_top_level_strategy_when_present(self):
+        rendered = rs.cfg_render_toml({"strategy": "local-only", "policy": {"mode": "single"},
+                                        "reviewers": []})
+        import tomllib
+        parsed = tomllib.loads(rendered)
+        self.assertEqual(parsed["strategy"], "local-only")
+
+    @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
+    def test_omits_strategy_line_when_absent(self):
+        rendered = rs.cfg_render_toml({"policy": {"mode": "single"}, "reviewers": []})
+        import tomllib
+        parsed = tomllib.loads(rendered)
+        self.assertNotIn("strategy", parsed)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -553,11 +573,15 @@ def _toml_value(v) -> str:
 
 
 def cfg_render_toml(config: dict) -> str:
-    """Hand-rolled TOML serializer for this schema only (flat [policy] table
-    + array-of-tables [[reviewers]] with flat string/bool/list values) —
+    """Hand-rolled TOML serializer for this schema only (an optional
+    top-level `strategy` string, a flat [policy] table, and an
+    array-of-tables [[reviewers]] with flat string/bool/list values) —
     tomllib is read-only in stdlib, and adding a writer dependency would
     break this repo's zero-dependency runtime."""
     lines = []
+    if "strategy" in config:
+        lines.append(f"strategy = {_toml_value(config['strategy'])}")
+        lines.append("")
     policy = config.get("policy", {})
     if policy:
         lines.append("[policy]")
@@ -1441,6 +1465,17 @@ class TestRenderReviewerCommand(unittest.TestCase):
         with self.assertRaises(ValueError):
             rs.render_reviewer_command(resolved, "hello")
 
+    def test_extra_field_colliding_with_reserved_placeholder_raises_value_error(self):
+        # a hand-written config entry that defines extra={"prompt": ...} or
+        # extra={"model": ...} collides with the reserved keyword args
+        # passed to str.format, raising a TypeError that must not escape
+        # as a raw crash either
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex", command="codex -m {model} {prompt}",
+                                        extra={"prompt": "oops"})
+        with self.assertRaises(ValueError):
+            rs.render_reviewer_command(resolved, "hello")
+
 
 class TestProbeReviewerQuota(unittest.TestCase):
     def test_native_entry_is_always_available(self):
@@ -1577,18 +1612,23 @@ def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> str:
     `'{prompt}'` — the quoting is already applied here).
 
     Raises `ValueError` — never a raw `KeyError`/`AttributeError`/
-    `IndexError` — when `resolved.command` is missing (a `cli`-set entry
-    with no `command` is a malformed config, per the schema's "required
-    iff `cli` present") or the template references a placeholder that
-    isn't `{model}`/`{prompt}`/one of `extra`'s keys, or contains a
-    literal unescaped brace. A malformed `review-spec.toml` entry must
-    surface as a reportable config error, never crash the caller."""
+    `IndexError`/`TypeError` — when `resolved.command` is missing (a
+    `cli`-set entry with no `command` is a malformed config, per the
+    schema's "required iff `cli` present"), the template references a
+    placeholder that isn't `{model}`/`{prompt}`/one of `extra`'s keys,
+    contains a literal unescaped brace, or `extra` itself defines a
+    `model`/`prompt` key (a hand-written config collision with the two
+    reserved placeholder names — `str.format`'s duplicate-keyword-argument
+    `TypeError` in that case is exactly as much a malformed-config problem
+    as a bad placeholder, and gets the same treatment). A malformed
+    `review-spec.toml` entry must surface as a reportable config error,
+    never crash the caller."""
     if not resolved.command:
         raise ValueError(f"reviewer {resolved.key!r} has cli={resolved.cli!r} set but no command template")
     try:
         return resolved.command.format(model=resolved.model, prompt=shlex.quote(prompt),
                                         **resolved.extra)
-    except (KeyError, IndexError, ValueError) as exc:
+    except (KeyError, IndexError, ValueError, TypeError) as exc:
         raise ValueError(f"reviewer {resolved.key!r} has a malformed command template: {exc}") from exc
 
 
@@ -2249,6 +2289,31 @@ class TestMainCli(unittest.TestCase):
             code = rs.main(["render-command", "--reviewers-json", reviewers_path,
                              "--index", "0", "--prompt-file", prompt_path])
             self.assertEqual(code, 1)
+
+    def test_render_toml_prints_only_without_out(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            json_path = os.path.join(d, "config.json")
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump({"policy": {"mode": "single"}, "reviewers": []}, f)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["render-toml", "--json-config", json_path])
+            self.assertEqual(code, 0)
+            self.assertIn("mode", buf.getvalue())
+            self.assertFalse(os.path.exists(os.path.join(d, "review-spec.toml")))
+
+    def test_render_toml_with_out_writes_via_cfg_write_toml(self):
+        with tempfile.TemporaryDirectory() as d:
+            json_path = os.path.join(d, "config.json")
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump({"policy": {"mode": "double", "ladder": ["a"]}, "reviewers": []}, f)
+            out_path = os.path.join(d, "nested", "review-spec.toml")
+            code = rs.main(["render-toml", "--json-config", json_path, "--out", out_path])
+            self.assertEqual(code, 0)
+            written = rs.cfg_load_toml(out_path)
+            self.assertEqual(written["policy"]["mode"], "double")
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2298,6 +2363,9 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
 
     p_toml = sub.add_parser("render-toml")
     p_toml.add_argument("--json-config", required=True, help="path to a JSON file shaped like the TOML config")
+    p_toml.add_argument("--out", default=None,
+                         help="write the rendered TOML to this path via cfg_write_toml (creating parent dirs) "
+                              "instead of only printing it")
 
     p_render = sub.add_parser("render-command")
     p_render.add_argument("--reviewers-json", required=True,
@@ -2373,7 +2441,10 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
     if args.command == "render-toml":
         with open(args.json_config, encoding="utf-8") as f:
             config = json.load(f)
-        print(cfg_render_toml(config))
+        rendered = cfg_render_toml(config)
+        if args.out:
+            cfg_write_toml(args.out, config)
+        print(rendered)
         return 0
 
     if args.command == "render-command":
@@ -2809,24 +2880,30 @@ string.
 
 Then ask: `policy.mode` (`single` or `double`) and the `policy.ladder`
 order (default to the order the user answered the per-CLI questions in,
-but let them reorder).
+but let them reorder). If `--local` was passed, also ask whether this
+local config should be `local-only` or the default `global-merge` — set
+the JSON config's top-level `strategy` key to `"local-only"` if so
+(`cfg_render_toml` renders it as a bare `strategy = "..."` line at the
+top of the file, §3); omit the key entirely for the default (global
+default applies, no line needed).
 
 ### Step 3 — Write
 
 Build the JSON shape `skills/review-spec/review-spec.py`'s `render-toml` subcommand
-expects (`{"policy": {...}, "reviewers": [...]}`), write it to a temp JSON
-file, then:
+expects (`{"strategy": "...", "policy": {...}, "reviewers": [...]}` — the
+`strategy` key only when Step 2 asked for `local-only`), write it to a
+temp JSON file, then let `--out` do the write directly (via
+`cfg_write_toml`, creating parent dirs as needed) rather than piping
+stdout through a second write yourself:
 
 ```bash
-python3 "$TOOLS_PY" render-toml --json-config <temp.json>
+python3 "$TOOLS_PY" render-toml --json-config <temp.json> --out <target path>
 ```
 
-Write that output to the target path: `~/.config/ai-kit/review-spec.toml`
-by default, or `./.aikit/review-spec.toml` if `--local` was passed (and
-add a `strategy = "..."` line at the top if the user wants
-`local-only` — ask; default `global-merge`, which needs no explicit line).
-(The runtimes snapshot was already persisted in Step 1 via `--save` — no
-separate write needed here.)
+Target path: `~/.config/ai-kit/review-spec.toml` by default, or
+`./.aikit/review-spec.toml` if `--local` was passed. (The runtimes
+snapshot was already persisted in Step 1 via `--save` — no separate write
+needed here.)
 
 ### Step 4 — Report
 
@@ -3534,4 +3611,21 @@ Opus 5 subagent, which also independently re-verified the fifth round's
 | MEDIUM | Step 0.7 point 5's `--source-vendor <SOURCE_VENDOR from Step 1's flag parsing>` pointed at the wrong step — once inserted, "Step 1" inside `review-spec/SKILL.md` names `### Step 1 — Dispatch reviewer(s)`, which parses no flags and runs *after* Step 0.7, not the step that actually produced `SOURCE_VENDOR` | Corrected to reference the `## Inputs` section (extended by Task 11 Step 1), the step that actually parses `--source-vendor` |
 | CROSS-DOC | Design §6 said the runtimes-detection hint fires "when this call actually did a fresh detection" (covering both missing and stale-refresh cases), while the plan's Task 11 Step 2 point 3 fires it only on a true first-ever save — under the design's reading, a routine 30-day TTL refresh on a fully-configured install would falsely re-print "No cross-AI config saved yet", exactly the nagging the hint exists to prevent | Design §6 narrowed to state the plan's actual condition explicitly: the hint fires only when `runtimes.json` was missing before the call, never on a stale-but-present refresh |
 
-A seventh review round should confirm this document reaches Approved before execution begins.
+### Eighth review: a seventh clean-context Opus 5 subagent (native, live)
+
+The seventh round's fixes were themselves reviewed by an EIGHTH
+clean-context Opus 5 subagent, which re-verified every codebase-grounding
+claim in both documents fresh and found **zero CRITICAL findings** for the
+first time. 6 findings (1 HIGH cross-doc, 4 MEDIUM, 1 MEDIUM cross-doc),
+all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| HIGH (CROSS-DOC) | Design §8 point 0 still described resolving `TOOLS_PY`/`CLI_PROFILES_DIR` and never mentioned `CHECKLIST_SKILL_MD` — directly contradicting its own Step 1 bullet, which already claimed `CHECKLIST_SKILL_MD` is "resolved once alongside `TOOLS_PY` in Step 0.7 point 0". The plan's actual Step 0.7 point 0 resolves `TOOLS_PY`/`CHECKLIST_SKILL_MD` (no `CLI_PROFILES_DIR`) — design and plan described two different Step 0.7s | Design §8 point 0 rewritten to match the plan exactly: resolves `TOOLS_PY`/`CHECKLIST_SKILL_MD`, explicitly states `CLI_PROFILES_DIR` is deliberately not resolved there (no consumer in `review-spec/SKILL.md`; `review-spec-config` resolves its own copy) |
+| MEDIUM | Design §8 point 3's quota-probe cost bound cited "(§7)" for `QUOTA_TTL_SECONDS`, but §7 is the `review-spec-config` skill section and defines no TTL | Corrected to `(§6)`, the actual Cache section |
+| MEDIUM | Plan's Tech Stack line said "Python 3.12 (`.venv`)" — contradicting its own Architecture paragraph and every `Run:` step (all bare `python3`), and giving an executor grounds to drop the `tomllib` guard the plan elsewhere insists on | Rewritten to state the real runtime (bare system `python3`, unpinned; `.python-version` governs only the separate `uv` dev venv) |
+| MEDIUM | `cfg_write_toml` was produced (Task 2) but had no production consumer — Task 8's `render-toml` only printed via `cfg_render_toml`, and Task 10 wrote the file itself with the `Write` tool, bypassing it entirely; the same "produced but never consumed" defect class the fifth round flagged for `cache_base`/`cache_runtimes_path` | `render-toml` gained an `--out <path>` flag that calls `cfg_write_toml` directly; Task 10 Step 3 now uses `--out` instead of a separate `Write`-tool write; `cfg_render_toml` also gained support for an optional top-level `strategy` key (previously only prependable by hand, which `--out`'s single-write path couldn't do) — Task 10 Step 2 now asks for `local-only`/`global-merge` and sets it in the JSON config directly; 4 new tests |
+| MEDIUM | `render_reviewer_command`'s "never crashes the caller" contract didn't cover a reviewer's `extra` field colliding with the reserved `{model}`/`{prompt}` keyword names — `command.format(model=..., prompt=..., **extra)` raises a `TypeError` on the duplicate keyword, which the existing `except (KeyError, IndexError, ValueError)` doesn't catch | `TypeError` added to the caught exception tuple, wrapped into the same reportable `ValueError`; docstring updated; 1 new regression test |
+| MEDIUM (CROSS-DOC) | Design §3 said `--no-cross-ai` "skips the ladder walk and quota probe entirely" and §6's runtimes-detection rule was written as unconditional for every invocation — under that reading a `--no-cross-ai` run could still shell out to `detect-runtimes` and print the first-run hint, contradicting the plan's actual Step 0.7 point 2 (which explicitly skips `detect-runtimes` too) and the "zero detection overhead" property §1 promises | §3 now says `--no-cross-ai` skips "the ladder walk, quota probe, **and runtimes detection/refresh entirely**"; §6 now opens with "(cross-AI active only — `--no-cross-ai` skips this whole step, §3)" |
+
+An eighth review round should confirm this document reaches Approved before execution begins.

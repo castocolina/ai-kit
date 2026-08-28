@@ -250,8 +250,10 @@ command = "opencode run -m {model} {prompt}"
   current-runtime; only the second slot may be external.
 
 `--no-cross-ai` (on `/review-spec`) forces single-mode, current-session-only,
-and **skips the ladder walk and quota probe entirely** (the "minimize
-effort" case from the original ask — zero detection overhead when the user
+and **skips the ladder walk, quota probe, and runtimes detection/refresh
+entirely** — including the "no cross-AI config saved yet" first-run hint
+(§6) — not just the ladder walk and quota probe (the "minimize effort"
+case from the original ask — zero detection overhead when the user
 already knows there's no cross-AI quota available). `--cross-ai` (default)
 uses whatever `policy.mode` says.
 
@@ -345,7 +347,8 @@ orders of magnitude:
   confirmed mechanism for that today; §10's context-window edge case is
   aspirational until one is found, not implemented by v1.
 
-**Missing or stale `runtimes.json` at `/review-spec` invocation time**:
+**Missing or stale `runtimes.json` at `/review-spec` invocation time**
+(cross-AI active only — `--no-cross-ai` skips this whole step, §3):
 "missing" covers the first invocation ever (before `review-spec-config`
 has run, or before any prior `/review-spec` run reached this step);
 "stale" covers a snapshot older than the runtimes TTL (§6). Detect and
@@ -395,21 +398,29 @@ interactive wrapper).
 ## 8. Orchestrator integration (`review-spec/SKILL.md`)
 
 - **Step 0.7 (new)**, runs once per invocation, after Step 0.6:
-  0. Resolve `TOOLS_PY` and `CLI_PROFILES_DIR`. `review-spec.py` and its
-     `references/cli-profiles/` live inside this skill's **own**
-     directory (§3), so they resolve the same shape `SEEDS_DIR` just
-     above is meant to (`${CLAUDE_PLUGIN_ROOT}/skills/review-spec/…`,
-     then `~/.claude/skills/review-spec/…`, then the directory containing
-     this `SKILL.md` itself) — but this resolution is **self-contained**:
-     it computes its own directory inline and does not read any variable
+  0. Resolve `TOOLS_PY` and `CHECKLIST_SKILL_MD`. `review-spec.py` lives
+     inside this skill's **own** directory (§3), so it resolves the same
+     shape `SEEDS_DIR` just above is meant to
+     (`${CLAUDE_PLUGIN_ROOT}/skills/review-spec/…`, then
+     `~/.claude/skills/review-spec/…`, then the directory containing this
+     `SKILL.md` itself) — but this resolution is **self-contained**: it
+     computes its own directory inline and does not read any variable
      assigned elsewhere (unlike `SEEDS_DIR`'s existing block, whose third
      candidate references an `$SKILL_DIR` nothing in that block ever
      assigns — a pre-existing bug this plan also fixes, bringing that
-     block's actual behavior in line with what it always claimed). Record
-     `TOOLS_PY`/`CLI_PROFILES_DIR` as literal absolute paths, exactly like
-     `RUN_TMP_DIR` below — they are not shell variables that survive
-     across separate `Bash` tool calls. Missing `TOOLS_PY` at this
-     resolved path degrades exactly like `--no-cross-ai`.
+     block's actual behavior in line with what it always claimed).
+     `CHECKLIST_SKILL_MD` (the `review-spec-checklist` sibling skill's
+     `SKILL.md`, always installed alongside `review-spec` under the same
+     `skills/` tree) is derived from that same resolved directory, so the
+     external-CLI reviewer prompt (Step 1, below) never has to guess a
+     path at dispatch time. `CLI_PROFILES_DIR` is deliberately **not**
+     resolved here — nothing in `review-spec/SKILL.md` reads the CLI
+     profiles; `review-spec-config` (§7) resolves its own copy where it's
+     actually used. Record `TOOLS_PY`/`CHECKLIST_SKILL_MD` as literal
+     absolute paths, exactly like `RUN_TMP_DIR` below — they are not
+     shell variables that survive across separate `Bash` tool calls.
+     Missing `TOOLS_PY` at this resolved path degrades exactly like
+     `--no-cross-ai`.
   1. Run `mktemp -d`, capture its stdout, and record that absolute path as
      `RUN_TMP_DIR` **in the skill's own working notes/context** — not as a
      shell environment variable. Each `Bash` tool call in this harness runs
@@ -426,7 +437,7 @@ interactive wrapper).
      pick isn't known until *after* quota is known (the walk itself
      depends on it), so there's no cheaper "only what's needed" set to
      compute; each stale entry is still charged at most one trivial probe
-     call per `QUOTA_TTL_SECONDS` (§7).
+     call per `QUOTA_TTL_SECONDS` (§6).
   4. Resolve the effective reviewer list (1 or 2 entries) per `policy.mode`
      (§3) and `--cross-ai`/`--no-cross-ai`.
 - **Step 1**, per resolved reviewer: `cli` absent → dispatch as today (the
