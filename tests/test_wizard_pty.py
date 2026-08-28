@@ -45,9 +45,8 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # Prefer the uv on PATH; fall back to the standard astral install location.
 _UV_WHICH = shutil.which("uv") or os.path.expanduser("~/.local/bin/uv")
 
-# A known skill that must be symlinked on a fresh all-ON install (first entry
-# alphabetically, confirmed by enumerate_entries against the live repo).
-_KNOWN_SKILL = "applying-review-feedback"
+# A known skill that must be symlinked on a fresh all-ON install.
+_KNOWN_SKILL = "review-spec-fixer"
 
 
 def _uv_cmd():
@@ -355,7 +354,7 @@ class TestPhase2E2E(unittest.TestCase):
       2. On a fresh install all entries default to ON.
       3. Drive: wait for picks screen → send Enter (→ summary) → wait for
          summary screen → send Enter (→ confirm + apply_selection).
-      4. Assert: the known skill ``applying-review-feedback`` was symlinked under
+      4. Assert: the known skill ``review-spec-fixer`` was symlinked under
          ``<cfg>/skills/``.
 
     Timing strategy: ``drive_until`` polls the PTY master fd with ``select``

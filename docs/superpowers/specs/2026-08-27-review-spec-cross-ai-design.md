@@ -409,9 +409,16 @@ models), and asks the user (via `AskUserQuestion`) to name/rank
 installed CLI) and native (`cli`-omitted) entries (asked explicitly,
 never skipped — `double` mode's guaranteed baseline needs at least one
 native entry in `policy.ladder` or it always degrades to the
-current-session fallback) — and set `[policy]` — writing the result to
-`review-spec.toml` (global by default; `--local` writes
-`./.aikit/review-spec.toml` instead). Also exposes a `--check-only` mode
+current-session fallback) — and set `[policy]`, including the reviewer
+priority/fallback order (`policy.ladder`), echoed back as an explicit
+numbered list before and after writing — writing the result to
+`review-spec.toml`. Defaults to the per-project
+`./.aikit/review-spec.toml` (a global config already existing prompts
+the user to confirm before it would instead update
+`~/.config/ai-kit/review-spec.toml`); `--local`/`--global` force one or
+the other without asking. The resolved target path is always announced,
+both before the write (once resolved) and after (in the closing report).
+Also exposes a `--check-only` mode
 that reports which CLIs are installed, which already have a
 `review-spec.toml` reviewer entry, and each configured entry's quota
 **availability** (probed live, same mechanism as at dispatch time) —

@@ -1,11 +1,11 @@
 # /review-spec Orchestrator — Test Scenarios
 
-TDD record for the `/review-spec` slash command. The component subagents it dispatches (`reviewing-specs` reviewer and `applying-review-feedback` fixer) are tested independently in their own evals folders.
+TDD record for the `/review-spec` slash command. The component subagents it dispatches (`review-spec-checklist` reviewer and `review-spec-fixer` fixer) are tested independently in their own evals folders.
 
 ## Component evidence (already verified)
 
-- **Reviewer** — `~/.claude/skills/reviewing-specs/evals/test-scenarios.md` records 5 baseline RED scenarios + 2 REFACTOR verifications (grounding rule + no-downgrade clause). All passed.
-- **Fixer** — `~/.claude/skills/applying-review-feedback/evals/test-scenarios.md` records 3 baseline RED scenarios + 1 REFACTOR verification (all-or-nothing-per-finding). All passed.
+- **Reviewer** — `~/.claude/skills/review-spec-checklist/evals/test-scenarios.md` records 5 baseline RED scenarios + 2 REFACTOR verifications (grounding rule + no-downgrade clause). All passed.
+- **Fixer** — `~/.claude/skills/review-spec-fixer/evals/test-scenarios.md` records 3 baseline RED scenarios + 1 REFACTOR verification (all-or-nothing-per-finding). All passed.
 
 ## End-to-end attempt
 
@@ -29,7 +29,9 @@ This means the slash command cannot be TDD-verified end-to-end via a subagent si
 
 | Check | Expected |
 |---|---|
-| Reviewer subagent dispatched (visible as `Agent` tool call) | Yes, with `model: sonnet`, paths only in prompt |
+| Step 0.7 resolves REVIEWER_LIST before the first dispatch (1 entry unless review-spec.toml configures cross-AI double mode) | Yes — visible as the Bash calls to review-spec.py detect-runtimes/probe-quota/resolve-reviewers, before the first reviewer Agent/Bash dispatch |
+| Reviewer subagent dispatched (visible as `Agent` tool call) | Yes — native reviewers use the model `REVIEWER_LIST` resolved (omitted/session-default unless `review-spec.toml` pins one); external reviewers (if configured) run via `Bash`, not the `Agent` tool; paths only in prompt |
+| Step 1.5 binds EFFECTIVE_REPORT_PATH every iteration (merging two reports only when REVIEWER_LIST has 2 entries) | Yes — Step 2 reads EFFECTIVE_REPORT_PATH from disk, never text still in a subagent's context |
 | Each iteration is a NEW reviewer subagent | Yes, separate dispatches |
 | If Issues Found and iter < cap, fixer subagent dispatched | Yes, separate dispatch |
 | Reviewer and fixer never the same subagent | Yes |
@@ -43,4 +45,4 @@ If any of those fail on the first real run, the slash command body needs a patch
 These were not observed because the end-to-end couldn't be simulated, but are worth watching for in real use:
 
 - The orchestrator main-assistant may try to summarize the reviewer's report instead of parsing only the `Status:` line. If it does, tighten Step 2 with an example of the parse.
-- The orchestrator may forget to delete the temp report file after the loop. Cleanup section is already explicit; if it gets skipped, surface it more prominently.
+- Cleanup now removes the whole `$RUN_TMP_DIR` in one `rm -rf` rather than per-file — verify no per-run artifact survives outside that directory.

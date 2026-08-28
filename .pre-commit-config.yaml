@@ -15,9 +15,10 @@ repos:
         name: ruff
         entry: uv run ruff check
         language: system
-        # Scoped to the refactor's modules + tests. skills/ joins the gate later
-        # (the "enforce more after the refactor" expansion).
-        files: ^(tools|tests)/.*\.py$
+        # Scoped to the refactor's modules + tests, plus review-spec.py.
+        # The rest of skills/ joins the gate later (the "enforce more
+        # after the refactor" expansion).
+        files: ^((tools|tests)/.*|skills/review-spec/review-spec)\.py$
         require_serial: true
       - id: pylint
         name: pylint
@@ -44,12 +45,12 @@ repos:
         name: py-compile
         entry: python3 -m py_compile
         language: system
-        files: ^tools/(status-line|statusline-doctor|setup)\.py$
+        files: ^(tools/(status-line|statusline-doctor|setup)|skills/review-spec/review-spec)\.py$
       # Tests run on the user's real runtime (system python3, stdlib-only), matching
       # how the status line actually runs. Minimal core set for now; expands post-refactor.
       - id: unittest
         name: unittest (core)
-        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_review_spec
         language: system
         pass_filenames: false
         always_run: true

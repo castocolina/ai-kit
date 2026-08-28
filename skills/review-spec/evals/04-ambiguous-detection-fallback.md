@@ -18,10 +18,11 @@ user cannot or does not disambiguate.
 3. Framework detection is ambiguous: path matches no known seed's `detection_signals`; file contents don't clearly indicate a framework.
 4. Orchestrator asks user once to disambiguate.
 5. User responds "just use whatever" / does not specify.
-6. Orchestrator sets FRAMEWORK_PROFILE_PATH = `none`, routes ALL archetypes through `applying-review-feedback` (Step 3a per low-confidence rule).
-7. Reviewer dispatched with `FRAMEWORK_PROFILE_PATH = none`.
-8. If issues found: fixer dispatched via Step 3a.
-9. Surface message includes "Framework ambiguous — used the generic fixer." note.
+6. Orchestrator sets FRAMEWORK_PROFILE_PATH = `none`, routes ALL archetypes through `review-spec-fixer` (Step 3a per low-confidence rule).
+7. Runs Step 0.7 — resolves `TOOLS_PY`/`CHECKLIST_SKILL_MD`, `RUN_TMP_DIR`, and `REVIEWER_LIST` (1 entry unless `review-spec.toml` configures cross-AI `double` mode; in this eval's default no-config state, `REVIEWER_LIST` is the single-entry `NO_CONFIG_FALLBACK`).
+8. Reviewer dispatched with `FRAMEWORK_PROFILE_PATH = none`; report written to `$RUN_TMP_DIR/iter<N>-<key>.md`, read as `EFFECTIVE_REPORT_PATH` by Step 2 (Step 1.5 runs every iteration to bind that name; its merge call itself is skipped here since `REVIEWER_LIST` has only 1 entry).
+9. If issues found: fixer dispatched via Step 3a.
+10. Surface message includes "Framework ambiguous — used the generic fixer." note.
 
 ## Pass criteria
 

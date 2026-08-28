@@ -115,7 +115,7 @@ Route fields:
 - `notes` — why the native path is preferred.
 
 An archetype **without** a matching route falls back to the direct-edit fixer
-(`applying-review-feedback`). `mode: direct_edit` (or no `revise_protocol`) keeps the direct-edit
+(`review-spec-fixer`). `mode: direct_edit` (or no `revise_protocol`) keeps the direct-edit
 fixer for every archetype — most frameworks (generic) want this.
 
 **Shorthand (flat) form** — still accepted for single-archetype profiles and learned cache

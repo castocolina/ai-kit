@@ -10,7 +10,7 @@ import yaml
 
 _HERE = os.path.dirname(__file__)
 _FRAMEWORKS_DIR = os.path.join(
-    _HERE, "..", "skills", "reviewing-specs", "references", "frameworks"
+    _HERE, "..", "skills", "review-spec-checklist", "references", "frameworks"
 )
 
 _REQUIRED_FIELDS = ["id", "display_name", "doc_types", "lifecycle_order"]

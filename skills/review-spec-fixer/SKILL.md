@@ -1,11 +1,11 @@
 ---
-name: applying-review-feedback
-description: Use when a review report from `reviewing-specs` (or equivalent structured review feedback) has been produced for a design or plan document, and the document author needs to address each finding. Intended to be dispatched as a clean-context fixer subagent by an orchestrator (e.g. `/review-spec`). Edits the document in place, addresses every CRITICAL/HIGH finding, respects the source framework's conventions when a framework profile is provided, and produces a per-finding edit summary.
+name: review-spec-fixer
+description: Use when a review report from `review-spec-checklist` (or equivalent structured review feedback) has been produced for a design or plan document, and the document author needs to address each finding. Intended to be dispatched as a clean-context fixer subagent by an orchestrator (e.g. `/review-spec`). Edits the document in place, addresses every CRITICAL/HIGH finding, respects the source framework's conventions when a framework profile is provided, and produces a per-finding edit summary.
 ---
 
 # Applying Review Feedback
 
-Targeted editor for design/plan documents flagged by `reviewing-specs`. Reads the report, edits the document to satisfy each finding's `Required:` outcome, and reports back what was addressed and what was not.
+Targeted editor for design/plan documents flagged by `review-spec-checklist`. Reads the report, edits the document to satisfy each finding's `Required:` outcome, and reports back what was addressed and what was not.
 
 **Scope rule — never expand.** This skill only touches what the report flags. No drive-by refactors, no "while we're here" cleanup, no new features, no rewriting unrelated sections. The report is the contract.
 
@@ -20,6 +20,10 @@ The orchestrator (or invoking caller) must provide:
 **Refuse if any document is not on disk.** If the caller passed inline content for a "document to edit," respond with a Fix Summary using `### Status: Failure — document not on disk. Caller must persist the document and re-invoke with a path.` and emit no edits. Editing in-memory content produces a fix that vanishes the moment this subagent ends — the next iteration of review/fix will read the unfixed file and contradict itself.
 
 If any input is missing, stop and ask. Do not guess paths.
+
+## Before you touch anything, ask yourself
+
+For each finding in the report, before making any edit, ask: **does resolving this require a strategy or design judgment (something only the document's author or orchestrator should decide), or is it a mechanical text edit?** If the former, this is an escalation candidate (see *Escalation conditions* below) — do not guess the right answer and edit around it. If the latter, proceed with the editing rules below.
 
 ## Before editing
 
@@ -49,8 +53,9 @@ Stop and ask the caller (don't edit) when:
 - The fix would require introducing new components or scope not in the original document.
 - The report contradicts itself or contradicts the actual codebase you read.
 - Two findings have mutually exclusive `Required:` outcomes.
+- A finding's `Location:` spans or affects more than one document (cross-document consistency findings). Edits addressing such findings must be applied consistently across all affected documents in a single pass — do not partially fix one document and leave the other inconsistent, as that makes the problem worse.
 
-**All-or-nothing per finding.** If ANY part of a finding's `Required:` triggers escalation, escalate the WHOLE finding without performing any edit, even if other parts of the same finding look like trivial text fixes. Reason: a partial fix leaves the document in a half-resolved state — the caller cannot tell whether the text edit is correct without the strategy decision that was escalated. Findings are atomic units.
+**All-or-nothing per finding.** If ANY part of a finding's `Required:` triggers escalation, escalate the WHOLE finding without performing any edit, even if other parts of the same finding look like trivial text fixes. Reason: a partial fix leaves the document in a half-resolved state — the caller cannot tell whether the text edit is correct without the strategy decision that was escalated.
 
 Escalation output: a short message naming which finding, why it cannot be auto-fixed, and what decision the caller must make. No edit performed.
 
@@ -90,6 +95,6 @@ If `Status: Edits Applied` and the only un-addressed items are MEDIUM/LOW deferr
 | Silently dropping a finding you disagree with | Address it OR document disagreement in the skipped list — never silent. |
 | Editing the review report | Never. Report is read-only input. |
 | Auto-fixing a "re-evaluate X" finding | Escalate. That's a strategy call. |
-| Reformatting the whole document for "consistency" | Preserve the author's existing conventions. |
+| Reformatting the whole document for "consistency" | Never reformat outside the flagged `Location:`. If a finding requires format changes, apply them only to the sections named—don't use that finding as an excuse to fix style everywhere. |
 | Performing the fix without reading the file the finding references | A grounding fix needs the actual referenced file's content. Read first. |
 | Partial fix on a finding that has any escalation trigger | Findings are atomic. Any escalation trigger → escalate whole finding, no edits. |

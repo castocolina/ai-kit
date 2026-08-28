@@ -1,5 +1,5 @@
 ---
-name: reviewing-specs
+name: review-spec-checklist
 description: Use when a design, spec, requirements, or plan document has been produced and needs review before the next step. Framework-aware — classifies each document into one of four archetypes (intent, requirements, design, plan) and reviews it with the matching checklist plus the source framework's own conventions (EARS, RFC-2119 SHALL, Given/When/Then, OpenSpec delta sections, Spec Kit [NEEDS CLARIFICATION]/[P], constitutional gates). Works on superpowers, OpenSpec, GitHub Spec Kit, Kiro, BMAD, GSD, or generic (docs/rfcs, docs/designs). Accepts a pre-resolved FRAMEWORK_PROFILE_PATH + ARCHETYPE from the orchestrator; falls back to its own framework detection + archetype heuristics when none provided.
 ---
 
@@ -10,7 +10,7 @@ cannot: contradictions, omissions, wrong sequencing, missing definitions, untest
 requirements, spec-plan gaps — and violations of the *source framework's own rules*.
 
 **Audit only — never edit the document under review.** Report findings; fixes are a separate
-task (`applying-review-feedback`). The only "write" allowed is persisting an in-context
+task (`review-spec-fixer`). The only "write" allowed is persisting an in-context
 document to disk verbatim so you can `Read` it.
 
 This skill assumes you are a clean-context reviewer. If you wrote (or watched the writing of)
@@ -26,10 +26,13 @@ subagent first.
 2. `Read` every document under review fresh from disk. Re-read even if you wrote it moments ago.
 3. **Resolve framework + archetype.**
    - **If the orchestrator passed `FRAMEWORK_PROFILE_PATH` and `ARCHETYPE`** (the normal
-     path), `Read` the profile from disk and trust the archetype — the orchestrator has
-     project context you don't. Apply that archetype's checklist (below) **plus** the
-     framework conventions the profile encodes (see *Framework conventions*). For a `fused`
-     doc the orchestrator may pass several archetypes — apply each one's checklist.
+     path), **MANDATORY — READ IN FULL**: `Read` the entire profile file from disk before
+     applying any framework-specific convention below (in *Framework conventions*) — do not
+     skip or skim it, and do not proceed with generic checklists while a real profile path
+     was given. Trust the archetype — the orchestrator has project context you don't. Apply
+     that archetype's checklist (below) **plus** the framework conventions the profile encodes
+     (see *Framework conventions*). For a `fused` doc the orchestrator may pass several
+     archetypes — apply each one's checklist.
    - **Else (fallback)**: detect the framework from path markers and read its seed profile at
      `references/frameworks/<id>.md` **resolved against this skill's own directory** (the seeds
      ship with the skill; never against the CWD, which is the user's repo) if one matches;
@@ -86,6 +89,9 @@ existing requirement in the stable spec.
 
 A design's job is intent, architecture, and codebase grounding — not implementation detail.
 Missing file paths/code/step detail is **not** a defect here.
+
+Before flagging a finding, ask: is this genuinely a missing architectural decision, or just
+implementation detail this archetype isn't meant to have yet?
 
 **CRITICAL:** architecture components can't coexist (logical circularity); contradicts a hard
 codebase constraint (e.g. sync API where the layer is strictly async); contradicts an
@@ -150,7 +156,9 @@ repos — ground each claim against the specific root it belongs to.
   utilities, or conventions. Name the specific existing file/function/pattern → HIGH.
 - **Unverified factual claim** — the doc claims something about an existing file/function/
   skill (behavior, interface, location). You MUST `Read` the referenced file and confirm.
-  Confirming a file *exists* is not enough — read its content.
+  Confirming a file *exists* is not enough — read its content. Before writing a finding
+  about existing code, ask: have I actually read this file's content, not just confirmed it
+  exists?
 
   > **No downgrade on wrong factual claims.** A wrong premise about existing code → CRITICAL,
   > always. Do not demote to MEDIUM with "works regardless" / "logic still coherent" — a false
@@ -206,12 +214,12 @@ Approved shape — don't carry "previously flagged, now fixed" forward.
 
 | Mistake | Correction |
 |---|---|
-| Editing the document under review | Never. Audit only. |
+| Editing the document under review | Never — editing corrupts the audit trail and prevents re-review on the same state. Findings become proposals, not verification. |
 | Classifying by folder name | Use the profile's `doc_types`; folder names mislead (Spec Kit `plan.md` = design). |
 | Plan-level strictness on a design or intent | Missing code/file paths isn't a defect there. An `intent`/CONTEXT doc is judged on why/what clarity — never demand tasks or exact files. |
 | "Correcting" a declared worktree/target path to match `.claude/worktrees` / `CLAUDE.md` | The plan's declared paths win. Only flag internal inconsistency or hard-constraint violations. |
 | Ignoring the framework's requirement syntax | A non-EARS Kiro requirement / SHALL-less OpenSpec requirement is a real finding. |
-| Leaving `[NEEDS CLARIFICATION]` unflagged | Unresolved ambiguity marker → HIGH. |
+| Leaving `[NEEDS CLARIFICATION]` unflagged | Unresolved ambiguity marker → HIGH — the next reader inherits the same confusion, and no tooling can resolve it downstream. |
 | Confirming a referenced file exists without reading it | Read its content. Wrong claim → CRITICAL. |
 | Reviewing a `constitution`/`state` doc as if it were a spec | Those are context — read, don't review. |
 | Reviewing in the same context that wrote the doc | Stop. Clean-context reviewer only; dispatch via `/review-spec`. |

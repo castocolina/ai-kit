@@ -25,13 +25,14 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 
 | Name | Type | Use case |
 |---|---|---|
-| [`reviewing-specs`](skills/reviewing-specs/SKILL.md) | skill | Audit-only reviewer for design/plan documents. Framework-aware (EARS, RFC-2119, Given/When/Then, OpenSpec, Spec Kit, GSD, …). |
-| [`applying-review-feedback`](skills/applying-review-feedback/SKILL.md) | skill | Fixer that addresses each finding from a `reviewing-specs` report, in place. |
+| [`review-spec-checklist`](skills/review-spec-checklist/SKILL.md) | skill | Audit-only reviewer for design/plan documents. Framework-aware (EARS, RFC-2119, Given/When/Then, OpenSpec, Spec Kit, GSD, …). |
+| [`review-spec-fixer`](skills/review-spec-fixer/SKILL.md) | skill | Fixer that addresses each finding from a `review-spec-checklist` report, in place. |
 | [`commit-message`](skills/commit-message/SKILL.md) | skill | Generate a git commit message for staged/working changes, an amend, or a specific commit. |
 | [`cst-refactor`](skills/cst-refactor/SKILL.md) | skill | LibCST-based Python codemod helper — multi-file renames and signature changes that survive comments and formatting. |
 | [`mermaid-audit`](skills/mermaid-audit/SKILL.md) | skill | Render and review Mermaid diagrams embedded in Markdown — syntax, layout, **color palette, node shapes, and aspect ratio**; emits ready-to-paste `classDef` fixes and ships a consensus eval that checks the rules are reproducible across agents. |
 | [`markdown-to-pdf`](skills/markdown-to-pdf/SKILL.md) | skill | Convert a Markdown document with embedded mermaid diagrams into a **PDF** (or a **marp** slide deck) — every ` ```mermaid ` block is auto-rendered with `mmdc` and embedded; auto-selects the best installed backend (Typst/Pandoc, LaTeX, WeasyPrint, Chromium) and never auto-installs. |
-| [`review-spec`](skills/review-spec/SKILL.md) | skill | Orchestrates a clean-context review-and-fix loop: `reviewing-specs` to review, then routes the rewrite by framework (superpowers → `brainstorming`/`writing-plans`; GSD → `/gsd-plan-phase --reviews` + `gsd-plan-checker`; else `applying-review-feedback`). Loops until approved. |
+| [`review-spec`](skills/review-spec/SKILL.md) | skill | Orchestrates a clean-context review-and-fix loop: `review-spec-checklist` to review, then routes the rewrite by framework (superpowers → `brainstorming`/`writing-plans`; GSD → `/gsd-plan-phase --reviews` + `gsd-plan-checker`; else `review-spec-fixer`). Loops until approved. |
+| [`review-spec-config`](skills/review-spec-config/SKILL.md) | skill | Interactive setup wizard for `review-spec`'s cross-AI reviewer config — detects installed CLIs/models, asks which to configure, writes `review-spec.toml`. |
 
 ## How the installer works
 
