@@ -405,12 +405,17 @@ native entry in `policy.ladder` or it always degrades to the
 current-session fallback) — and set `[policy]` — writing the result to
 `review-spec.toml` (global by default; `--local` writes
 `./.aikit/review-spec.toml` instead). Also exposes a `--check-only` mode
-(no writes) that reports current cross-AI availability — this is the
-"standalone availability check" the original ask wanted as a separate
-script, implemented here as a flag rather than a fifth skill to avoid
-skill sprawl (`review-spec.py detect-runtimes` remains independently
-callable too, for anyone who wants the raw command instead of the
-interactive wrapper).
+that reports which CLIs are installed, which already have a
+`review-spec.toml` reviewer entry, and each configured entry's quota
+**availability** (probed live, same mechanism as at dispatch time) —
+this is the "standalone availability check" the original ask wanted as a
+separate script, implemented here as a flag rather than a fifth skill to
+avoid skill sprawl (`review-spec.py detect-runtimes` remains
+independently callable too, for anyone who wants the raw command instead
+of the interactive wrapper). "No writes" means no write to the real
+`review-spec.toml`/cache locations — the quota probe still makes live
+CLI calls (unavoidable to answer "available" honestly) and its own
+`quota.json` write lands on a discarded temp path, never the real cache.
 
 ---
 
