@@ -2824,6 +2824,7 @@ done
 TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/review-spec.py"
 CLI_PROFILES_DIR="$REVIEW_SPEC_SKILL_DIR/references/cli-profiles"
 RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
+printf '%s\n' "$TOOLS_PY" "$CLI_PROFILES_DIR" "$RUNTIMES_JSON"
 ```
 
 (The third candidate is `review-spec-config`'s own sibling — matching
@@ -2834,21 +2835,39 @@ resolves the `${XDG_CACHE_HOME:-$HOME/.cache}`-aware path through Task 3's
 `cache_runtimes_path` — the same call `review-spec/SKILL.md` itself uses
 — so both skills always agree on where this file lives.)
 
+**Resolve this whole block once, in one `Bash` call, and record
+`TOOLS_PY`/`CLI_PROFILES_DIR`/`RUNTIMES_JSON` from its `printf` output as
+literal absolute paths — not shell environment variables.** Every `Bash`
+tool call in this harness starts a fresh shell, so a variable assigned in
+one call is gone by the next; every `$TOOLS_PY`/`$CLI_PROFILES_DIR`/
+`$RUNTIMES_JSON` reference in Steps 1–3 below means "the literal path
+captured here", substituted directly, exactly the way `review-spec/SKILL.md`'s
+own `TOOLS_PY`/`RUN_TMP_DIR` work (Task 11 Step 2 point 0/point 1) — this
+skill has its own separate `AskUserQuestion` interaction (Step 2) between
+this resolution and Step 3's write, guaranteeing at least one call
+boundary in between.
+
 ### Step 1 — Detect
 
 ```bash
-python3 "$TOOLS_PY" detect-runtimes --save "$RUNTIMES_JSON"
+python3 "$TOOLS_PY" detect-runtimes
 ```
 
-`--save` persists the snapshot immediately (via `cache_write_json` — see
-Task 8), so `review-spec` doesn't have to re-detect next session; the
-command also prints the same JSON to stdout. Parse it: for each CLI marked
-`"installed": true`, note its path; for `opencode`, note its `models`
-list.
+Parse the printed JSON: for each CLI marked `"installed": true`, note its
+path; for `opencode`, note its `models` list.
 
-If `--check-only` was passed: report which CLIs are installed, which have
-a `review-spec.toml` reviewer entry already, and stop — do not write
-anything.
+**If `--check-only` was passed**: report which CLIs are installed, which
+have a `review-spec.toml` reviewer entry already, and stop here — do not
+persist the snapshot and do not write anything else, matching this
+skill's own `--check-only` contract (frontmatter `description:` above).
+
+**Otherwise**, persist the snapshot before continuing to Step 2:
+```bash
+python3 "$TOOLS_PY" detect-runtimes --save "$RUNTIMES_JSON"
+```
+(re-running detection here is cheap and keeps this step's logic linear —
+`--save` persists via `cache_write_json`, Task 8, so `review-spec` doesn't
+have to re-detect next session.)
 
 ### Step 2 — Ask
 
@@ -2980,8 +2999,9 @@ Runs once per invocation, after Step 0.6.
    rejected: it isn't reachable from an installed skill, since
    `tools/setup.py`'s symlinks only cover `agents/commands/skills`, per
    its `CATEGORIES`). Because it's inside `review-spec`'s own skill
-   directory, it resolves the same way `SEEDS_DIR` above is *meant* to
-   (three candidates: `CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/
+   directory, it resolves the same way `SEEDS_DIR` (in the `## Constants`
+   section, below this Step 0.7 insertion point) is *meant* to (three
+   candidates: `CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/
    sibling-of-this-file) — this snippet is **self-contained** and does
    not read any variable assigned elsewhere; it computes its own
    directory inline via `$(dirname ...)`. (Task 11 Step 7 separately
@@ -2999,6 +3019,7 @@ Runs once per invocation, after Step 0.6.
    CHECKLIST_SKILL_MD="$(dirname "$REVIEW_SPEC_SKILL_DIR")/review-spec-checklist/SKILL.md"
    RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
    QUOTA_JSON="$(python3 "$TOOLS_PY" cache-path --kind quota)"
+   printf '%s\n' "$TOOLS_PY" "$CHECKLIST_SKILL_MD" "$RUNTIMES_JSON" "$QUOTA_JSON"
    ```
    `CHECKLIST_SKILL_MD` is the path Step 1's external-CLI dispatch tells
    the external reviewer to `Read` — `review-spec-checklist` (renamed
@@ -3013,11 +3034,12 @@ Runs once per invocation, after Step 0.6.
    in exactly one place, not duplicated as a bash literal here.
    Resolve this whole block once, in one `Bash` call, and — exactly like
    `RUN_TMP_DIR` below — record `TOOLS_PY`/`CHECKLIST_SKILL_MD`/
-   `RUNTIMES_JSON`/`QUOTA_JSON` as literal absolute paths substituted into
-   every later command and prose reference; they are **not** shell
-   environment variables that survive across separate `Bash` tool calls
-   (this bit a first draft of this very step — see this plan's Self-review
-   notes). If `TOOLS_PY` does not exist at the resolved path, treat this
+   `RUNTIMES_JSON`/`QUOTA_JSON` from the trailing `printf`'s stdout (four
+   lines, in that order) as literal absolute paths substituted into every
+   later command and prose reference; they are **not** shell environment
+   variables that survive across separate `Bash` tool calls (this bit a
+   first draft of this very step — see this plan's Self-review notes). If
+   `TOOLS_PY` does not exist at the resolved path, treat this
    exactly like `--no-cross-ai` (point 2 below) — cross-AI support isn't
    installed, never block the review over it.
 1. Run `mktemp -d` via `Bash`, and record its printed absolute path as
@@ -3358,7 +3380,41 @@ left as-is it directly contradicts Step 3's dispatch rule (the entry's
 opposite outcomes, and a literal reintroduction of the exact
 hardcoded-model anti-pattern this whole plan exists to remove.
 
-- [ ] **Step 8: Manual dry run — verify `RUN_TMP_DIR` and merge wiring**
+- [ ] **Step 8: Update the loop diagram for 1–2 reviewer dispatches and the merge step**
+
+`skills/review-spec/SKILL.md`'s ` ```dot ` loop diagram (the `digraph
+review_spec { ... }` block, immediately above the Constants section)
+still names a single `"Dispatch reviewer subagent (fresh)"` node feeding
+straight into `"Parse Status line"` — a single-reviewer flow. After Steps
+2–5 above, the real flow is 1 or 2 dispatches, an optional merge
+(`Step 1.5`, only when `REVIEWER_LIST` has 2 entries), then reading
+`EFFECTIVE_REPORT_PATH` — leaving the diagram as-is would ship a skill
+whose diagram contradicts its own prose.
+
+Rename the node `"Dispatch reviewer subagent (fresh)"` to `"Dispatch
+reviewer(s) (fresh)"` everywhere it appears (every edge target/source
+using that exact string — there are several, feeding back into it from
+the fixer-loop nodes on the next iteration; keep every one of those edges
+pointed at the renamed node, just renamed). Insert one new node between
+it and `"Parse Status line"`:
+```dot
+"Read EFFECTIVE_REPORT_PATH" [shape=box];
+```
+with edges:
+```dot
+"Dispatch reviewer(s) (fresh)" -> "Read EFFECTIVE_REPORT_PATH";
+"Read EFFECTIVE_REPORT_PATH" -> "Parse Status line";
+```
+replacing the old direct `"Dispatch reviewer subagent (fresh)" -> "Parse
+Status line"` edge. This one box stands in for both the single-reviewer
+case (raw report) and the double-reviewer case (Step 1.5's merge already
+produced this same path) — the diagram is a coarse per-iteration overview
+(it doesn't branch on `policy.mode` today either, e.g. it doesn't show
+the fixer-route resolution's own internal branching in detail), so one
+node capturing "however many reviewers ran, this is what gets parsed" is
+consistent with its existing level of detail, not a gap.
+
+- [ ] **Step 9: Manual dry run — verify `RUN_TMP_DIR` and merge wiring**
 
 This task's own automated tests (Task 8) only exercise `skills/review-spec/review-spec.py`
 in isolation via fakes — they never invoke a real CLI. This step is the
@@ -3393,7 +3449,7 @@ Report the outcome of all four dry runs — this is the closest this task
 gets to an automated test, per the design spec's §11 note that
 orchestration prose has no unit-test equivalent.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add skills/review-spec/SKILL.md
@@ -3628,4 +3684,20 @@ all fixed:
 | MEDIUM | `render_reviewer_command`'s "never crashes the caller" contract didn't cover a reviewer's `extra` field colliding with the reserved `{model}`/`{prompt}` keyword names — `command.format(model=..., prompt=..., **extra)` raises a `TypeError` on the duplicate keyword, which the existing `except (KeyError, IndexError, ValueError)` doesn't catch | `TypeError` added to the caught exception tuple, wrapped into the same reportable `ValueError`; docstring updated; 1 new regression test |
 | MEDIUM (CROSS-DOC) | Design §3 said `--no-cross-ai` "skips the ladder walk and quota probe entirely" and §6's runtimes-detection rule was written as unconditional for every invocation — under that reading a `--no-cross-ai` run could still shell out to `detect-runtimes` and print the first-run hint, contradicting the plan's actual Step 0.7 point 2 (which explicitly skips `detect-runtimes` too) and the "zero detection overhead" property §1 promises | §3 now says `--no-cross-ai` skips "the ladder walk, quota probe, **and runtimes detection/refresh entirely**"; §6 now opens with "(cross-AI active only — `--no-cross-ai` skips this whole step, §3)" |
 
-An eighth review round should confirm this document reaches Approved before execution begins.
+### Ninth review: an eighth clean-context Opus 5 subagent (native, live)
+
+The eighth round's fixes were themselves reviewed by a NINTH clean-context
+Opus 5 subagent, which re-verified every codebase-grounding claim in both
+documents fresh. 6 findings (1 CRITICAL, 1 HIGH cross-doc, 4 MEDIUM), all
+fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL | `skills/review-spec-config/SKILL.md`'s own produced content (Task 10 Step 1) never told the agent following it to record `TOOLS_PY`/`CLI_PROFILES_DIR`/`RUNTIMES_JSON` as literal absolute paths across separate `Bash` calls — the exact fresh-shell defect the plan classifies as CRITICAL for the orchestrator (fixed there in Task 11), left unfixed in the shipped setup skill itself. Step 0 assigns the variables in one `bash` block; Step 1 (`detect-runtimes --save "$RUNTIMES_JSON"`) and Step 3 (`render-toml … --out …`) reference them from separate blocks, with a guaranteed `AskUserQuestion` call-boundary (Step 2) in between | Task 10 Step 1's SKILL.md content now includes the same literal-substitution instruction Task 11 gives its own orchestrator, with a `printf` added to Step 0's block so the values are actually capturable |
+| HIGH (CROSS-DOC) | Design §7 says `--check-only` means "(no writes)", but the plan's Task 10 Step 1 ran `detect-runtimes --save "$RUNTIMES_JSON"` (persisting the snapshot) BEFORE checking whether `--check-only` was passed — contradicting itself in adjacent sentences, and observably changing future `/review-spec` behavior since `runtimes.json`'s mere existence permanently suppresses the first-run hint (§6) | Task 10 Step 1 restructured: detection now runs without `--save` first (so `--check-only` truly writes nothing and reports-then-stops); the persisting `--save` call only runs in the non-`--check-only` branch |
+| MEDIUM | Both the plan's Task 11 Step 2 point 0 and Task 10 Step 0 path-resolution `bash` blocks ended in bare assignments with no output — an agent following the "record these as literal paths" instruction had nothing to actually capture | Both blocks gained a trailing `printf '%s\n' ...` line; the surrounding prose now says "from the trailing `printf`'s stdout" instead of just "record ... as literal absolute paths" |
+| MEDIUM | Both documents said `SEEDS_DIR` sits "above"/"just above" Step 0.7 — verified live, `SEEDS_DIR` lives in the `## Constants` section, which follows Step 0.7's insertion point (right after Step 0.6), not precedes it — the same stale-direction defect the fifth round already fixed once elsewhere in this same task (`SEEDS_DIR` "directly above" → "directly below" the Loop state file line) | Both documents corrected to describe `SEEDS_DIR` as being in Constants, below Step 0.7's insertion point |
+| MEDIUM | `review-spec/SKILL.md`'s existing `` ```dot `` loop diagram still named a single `"Dispatch reviewer subagent (fresh)"` node feeding straight into `"Parse Status line"` — a single-reviewer flow that no longer matches the real 1–2-dispatch-then-optional-merge-then-read-`EFFECTIVE_REPORT_PATH` flow Task 11 Steps 2–5 build | New Task 11 Step 8 renames the node to `"Dispatch reviewer(s) (fresh)"` and inserts a `"Read EFFECTIVE_REPORT_PATH"` node between it and `"Parse Status line"`, covering both the single- and double-reviewer cases at the diagram's existing level of detail; old Steps 8/9 renumbered to 9/10 |
+| MEDIUM | Design §11's testing enumeration never mentioned the CLI entrypoint (`main`, Task 8's `TestMainCli`, 16 tests) or the TOML writer (`cfg_render_toml`/`cfg_write_toml`, Task 2) — the only integration surface between the module and both consuming skills, and the same "produced but not covered in §11" class this document has already corrected twice | §11 gained two new bullets: TOML writer coverage, and CLI-entrypoint coverage naming every subcommand exercised through `main()`'s `argv` parsing |
+
+A ninth review round should confirm this document reaches Approved before execution begins.

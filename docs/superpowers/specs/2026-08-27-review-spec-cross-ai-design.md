@@ -400,7 +400,8 @@ interactive wrapper).
 - **Step 0.7 (new)**, runs once per invocation, after Step 0.6:
   0. Resolve `TOOLS_PY` and `CHECKLIST_SKILL_MD`. `review-spec.py` lives
      inside this skill's **own** directory (§3), so it resolves the same
-     shape `SEEDS_DIR` just above is meant to
+     shape `SEEDS_DIR` (in the Constants section, below Step 0.7's own
+     insertion point) is meant to
      (`${CLAUDE_PLUGIN_ROOT}/skills/review-spec/…`, then
      `~/.claude/skills/review-spec/…`, then the directory containing this
      `SKILL.md` itself) — but this resolution is **self-contained**: it
@@ -567,6 +568,21 @@ artifact:
   `Cross-Document Consistency` section, cross-report dedup vs.
   same-report distinctness, and the fail-closed path for a report with no
   `### Status:` line.
+- **TOML writer (`cfg_render_toml`, `cfg_write_toml`)**: unit-testable —
+  round-trips through `tomllib` (skipped where unavailable), quote/backslash
+  escaping, parent-directory creation, and the optional top-level
+  `strategy` key.
+- **CLI entrypoint (`main`)**: unit-testable — every subcommand
+  (`cache-path`, `detect-runtimes` including its `--if-stale` no-op/
+  refresh branches, `probe-quota`, `resolve-reviewers` going through
+  `cfg_resolve`'s local/global merge, `merge-reports`'s fail-closed path,
+  `render-toml` with and without `--out`, `render-command` and its
+  nonzero-exit-on-malformed-template path) exercised end-to-end through
+  `main()`'s `argv` parsing with fake `which_fn`/`run_fn`, not just the
+  underlying functions directly — this is the only integration surface
+  between the module and both consuming skills (`review-spec/SKILL.md`,
+  `review-spec-config/SKILL.md`), which shell out to it rather than
+  import it.
 - **`review-spec/SKILL.md` orchestration changes**: no automated test
   (prose, not code) — validated the same way the existing skill is
   validated: a manual dry run reviewing a real spec/plan with `--cross-ai`
