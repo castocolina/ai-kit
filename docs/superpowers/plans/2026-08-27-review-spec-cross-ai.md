@@ -231,7 +231,7 @@ actually see is **13** post-move `.md` paths, split into two groups:
    Replace every `reviewing-specs`/`applying-review-feedback` mention in
    these 8 files with the new names, same substitution as Step 3.
 
-   **Beyond the name substitution, three of these files also describe
+   **Beyond the name substitution, five of these files also describe
    orchestrator behavior this plan changes — a rename alone would leave
    them asserting a contract Task 11 deletes:**
    - `skills/review-spec-checklist/evals/orchestrator-integration.md`'s
@@ -242,7 +242,15 @@ actually see is **13** post-move `.md` paths, split into two groups:
      (Step 0.7). Change the expected value to: `Yes — native reviewers use
      the model \`REVIEWER_LIST\` resolved (omitted/session-default unless
      \`review-spec.toml\` pins one); external reviewers (if configured) run
-     via \`Bash\`, not the \`Agent\` tool; paths only in prompt`.
+     via \`Bash\`, not the \`Agent\` tool; paths only in prompt`. Its
+     "Known patch candidates" section also has a stale bullet — "The
+     orchestrator may forget to delete the temp report file after the
+     loop. Cleanup section is already explicit" — which describes the
+     pre-cross-AI per-file cleanup Task 11 Step 6 replaces with a single
+     `rm -rf "$RUN_TMP_DIR"`. Update it to: "Cleanup now removes the
+     whole `$RUN_TMP_DIR` in one `rm -rf` (Task 11 Step 6) rather than
+     per-file — verify no per-run artifact survives outside that
+     directory."
    - `skills/review-spec/evals/01-superpowers-plan-routes-writing-plans.md`
      and `skills/review-spec/evals/02-gsd-plan-routes-native-cmd.md` each
      have an "Expected behavior" step ("Dispatches reviewer subagent…")
@@ -254,8 +262,17 @@ actually see is **13** post-move `.md` paths, split into two groups:
      single-entry `NO_CONFIG_FALLBACK`)." and append to the existing
      dispatch step: "; report written to
      `$RUN_TMP_DIR/iter<N>-<key>.md`, read as `EFFECTIVE_REPORT_PATH` by
-     Step 2 (no merge — Step 1.5 only runs when `REVIEWER_LIST` has 2
-     entries)."
+     Step 2 (Step 1.5 runs every iteration to bind that name; its merge
+     call itself is skipped here since `REVIEWER_LIST` has only 1
+     entry)."
+   - `skills/review-spec/evals/03-generic-doc-direct-edit.md`'s step 4
+     ("Dispatcher reviewer subagent…") and
+     `skills/review-spec/evals/04-ambiguous-detection-fallback.md`'s step
+     7 ("Reviewer dispatched with `FRAMEWORK_PROFILE_PATH = none`") get
+     the same treatment: insert the Step 0.7/`REVIEWER_LIST` step before
+     each, and append the same `$RUN_TMP_DIR`/`EFFECTIVE_REPORT_PATH`/
+     Step 1.5 note to each dispatch step, worded identically to the 01/02
+     fix above.
 
 2. **MUST NOT touch (5 files)**: `docs/prds/000-ai-kit-overhaul-requirements.md`,
    `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md`,
@@ -281,11 +298,17 @@ structure — only the top-level directory name changed).
 
 Add a one-line note to the commit message (Step 9) that
 `~/.claude/skills/reviewing-specs` and `~/.claude/skills/applying-review-feedback`
-are stale symlinks now — `tools/setup.py`'s existing housekeeping/prune
-logic (it already detects "ai-kit symlinks whose repo entry no longer
-exists" — see `tools/setup.py`'s symlink-diff functions) removes them and
-creates `review-spec-checklist`/`review-spec-fixer` symlinks on the next
-`tools/setup.py` run. No new symlink code needed in this plan.
+are stale symlinks now — `tools/setup.py`'s existing `prune_stale` (verified
+live, `tools/setup.py:1084-1106`) already detects "ai-kit symlinks whose
+repo entry no longer exists" and, **in a headless run**, auto-removes
+them and prints a warning before `tools/setup.py` recreates the
+`review-spec-checklist`/`review-spec-fixer` symlinks in the same run.
+**In an interactive run it only offers to prune** (`ask_yes_no(...,
+default=False)`) — answering the default No leaves the two dead
+symlinks in place with no further action taken. State both outcomes in
+the note: run `tools/setup.py` and either accept the interactive prune
+prompt or re-run it headless; no new symlink code needed in this plan
+either way.
 
 - [ ] **Step 9: Commit**
 
@@ -1406,17 +1429,16 @@ is covered by the same generic heuristic (its error text contains "usage
 limit", which the heuristic's substring check catches) — no special-casing
 needed.
 
-**Cost bound, and scope narrower than the design's `quota.json` shape**:
-this probe only ever answers a boolean — `available` — from a real (if
-trivial) call to each CLI; it does **not** capture remaining context-window
-headroom, despite design §6/§10 describing `quota.json` as holding
-"remaining context window and quota/usage headroom" and an edge case
-("has quota but the window can't fit the document"). That headroom
-capture has no confirmed CLI mechanism today (every profile in Task 9
-marks context-window introspection "unconfirmed syntax — research during
-implementation"), so this task deliberately ships the boolean-only shape
-now and the design is corrected to match (see this plan's Self-review
-notes). On cost: each ladder entry is charged for **at most one** trivial
+**Cost bound**: this probe only ever answers a boolean — `available` —
+from a real (if trivial) call to each CLI; it does **not** capture
+remaining context-window headroom, matching design §6's `quota.json`
+shape exactly (a boolean `available` plus `checked_at`, no context-window
+field) and §10's edge case ("has quota but the window can't fit the
+document"), which the design itself already marks "not implemented by
+v1" for the same reason: no CLI profile (Task 9) has a confirmed
+mechanism for context-window introspection today (every profile marks it
+"unconfirmed syntax — research during implementation"). On cost: each
+ladder entry is charged for **at most one** trivial
 probe call per `QUOTA_TTL_SECONDS` (1 hour) — `refresh_quota_cache` skips
 any entry whose cached `checked_at` is still fresh, regardless of how many
 `/review-spec` invocations happen inside that hour.
@@ -1809,7 +1831,7 @@ class TestParseFindings(unittest.TestCase):
 
     def test_low_severity_bullets_keep_their_own_tag_not_medium(self):
         # regression: a plan-archetype review may legitimately emit a
-        # ### LOW heading (reviewing-specs's LOW/Tooling-Catchable tier);
+        # ### LOW heading (review-spec-checklist's LOW/Tooling-Catchable tier);
         # before this fix its bullets fell through to severity None and
         # render_merged_report silently re-labeled them MEDIUM.
         report = """## Review: plan.md
@@ -1983,7 +2005,7 @@ def parse_findings(report_text: str) -> list:
     normalized to the `"CROSS-DOC"` severity tag — followed by
     `- **title** — Location: .... Required: .... Why: ....` bullets).
     `LOW` is recognized because a plan-archetype review may legitimately
-    emit it (reviewing-specs's Plan checklist defines a LOW/Tooling-
+    emit it (review-spec-checklist's Plan checklist defines a LOW/Tooling-
     Catchable tier); without recognizing it, its bullets would fall
     through to severity None and get silently re-labeled MEDIUM by
     `render_merged_report`, escalating severity that was never intended.
@@ -2126,12 +2148,16 @@ reuses that guard instead of inventing a new one.
 - Consumes: every function from Tasks 2–7.
 - Produces: a `main(argv: list) -> int` function and `if __name__ ==
   "__main__": sys.exit(main(sys.argv[1:]))`, with subcommands
-  `detect-runtimes` (with `--save <path>`), `probe-quota`,
+  `detect-runtimes` (with `--save <path>` and `--if-stale <path>`),
+  `cache-path` (`--kind runtimes|quota` — the XDG-aware path Task 11
+  Step 2 point 0 and Task 10 Step 0 both resolve `RUNTIMES_JSON`/
+  `QUOTA_JSON` through, rather than hardcoding
+  `~/.cache/ai-kit/review-spec/...` literally), `probe-quota`,
   `resolve-reviewers`, `merge-reports` (fails closed — see "Bug fixed
-  here" below — via `report_has_status`, Task 7), `render-toml`,
-  `render-command` (the orchestrator's only way to reach Task 6's
-  `render_reviewer_command` from a `Bash` dispatch, since it's Python —
-  see Task 11 Step 3).
+  here" below — via `report_has_status`, Task 7), `render-toml`
+  (`--json-config`, `--out <path>`), `render-command` (the orchestrator's
+  only way to reach Task 6's `render_reviewer_command` from a `Bash`
+  dispatch, since it's Python — see Task 11 Step 3).
   Consumed by Task 10 (`review-spec-config`) and Task 11 (orchestrator's
   `Bash` calls), both of which shell out to `python3 skills/review-spec/review-spec.py
   <subcommand> ...` rather than importing the module directly (they run
@@ -2566,7 +2592,7 @@ system `python3` (Task 8's own Interfaces), not the `uv`-managed dev venv.
 
 ```bash
 git add skills/review-spec/review-spec.py tests/test_review_spec.py Makefile .pre-commit-config.yaml
-git commit -m "feat(review-spec): add CLI entrypoint (detect-runtimes, probe-quota, resolve-reviewers, merge-reports, render-toml); wire cfg_resolve; register with make test and pre-commit"
+git commit -m "feat(review-spec): add CLI entrypoint (detect-runtimes, cache-path, probe-quota, resolve-reviewers, merge-reports, render-toml, render-command); wire cfg_resolve; register with make test and pre-commit"
 ```
 
 ---
@@ -3324,7 +3350,15 @@ case) unchanged below, except the skill name substitution above.
 `bash` fence.)
 
 ````markdown
-### Step 1.5 — Merge reviewer reports (only when `REVIEWER_LIST` has 2 entries)
+### Step 1.5 — Merge reviewer reports, then bind `EFFECTIVE_REPORT_PATH` (runs every iteration — only the merge call itself is conditional)
+
+**This whole step always runs, in both the 1- and 2-reviewer cases** —
+only the `merge-reports` `Bash` call below is conditional on
+`REVIEWER_LIST` having 2 entries. Do not skip this step for a
+single-reviewer iteration: `EFFECTIVE_REPORT_PATH` is bound here either
+way, and Step 2/3a/3b below have no other source for it.
+
+When `REVIEWER_LIST` has 2 entries, run:
 
 ```bash
 python3 "$TOOLS_PY" merge-reports --doc-paths "<DOC_PATHS>" \
@@ -3857,3 +3891,22 @@ MEDIUM, 1 CROSS-DOC), all fixed:
 | CROSS-DOC | Design §8's Step 0.7 point list (0–4) didn't match the plan's actual Step 0.7 (Task 11 Step 2, points 0–6) beyond points 0–1: design point 2 was "resolve source vendor" (the plan resolves that in `## Inputs` instead, not inside Step 0.7 at all) and design had no point for the `--no-cross-ai` short-circuit (the plan's point 2) | Design §8's list renumbered to match the plan's actual 7 points (0: path resolution, 1: `RUN_TMP_DIR`, 2: `--no-cross-ai` short-circuit, 3: runtimes refresh, 4: quota refresh, 5: resolve + save reviewer list, 6: record `REVIEWER_LIST`), with source-vendor resolution correctly relocated to point 2's note about `## Inputs` |
 
 A twelfth review round should confirm this document reaches Approved before execution begins.
+
+### Thirteenth review: a twelfth clean-context Opus 5 subagent (native, live)
+
+The twelfth round's fixes were themselves reviewed by a THIRTEENTH
+clean-context Opus 5 subagent, which re-verified every prior grounding
+claim live and found no CRITICAL issues. 7 findings (3 HIGH, 2 MEDIUM, 2
+CROSS-DOC), all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| HIGH | Design §8's Step 0.7 point 5 said to pass "the source vendor resolved at point 2 above" — but point 2 (the twelfth round's own renumbering) is the `--no-cross-ai` short-circuit, which states source-vendor resolution happens in `## Inputs`, NOT at point 2 itself. Two points apart, the design contradicted itself | Point 5 corrected to reference point 2's note about `## Inputs` flag parsing, rather than implying point 2 itself resolves it |
+| HIGH | `EFFECTIVE_REPORT_PATH`'s binding lived entirely inside a section literally headed "only when `REVIEWER_LIST` has 2 entries" — an executor following that heading in the (default, common) 1-reviewer case would skip the whole section, leaving `EFFECTIVE_REPORT_PATH` undefined for Step 2/3a/3b, the exact "referenced but never defined" class the round-3 `<REPORT_TEMP_PATH>` fix existed to close | Task 11 Step 4's heading and opening sentence rewritten: the step always runs every iteration; only the `merge-reports` call itself is conditional on 2 reviewers. Design §8's matching Step 1.5 bullet updated the same way |
+| HIGH | Task 1 Step 8's symlink-refresh note claimed `tools/setup.py`'s prune logic unconditionally "removes them and creates ... symlinks on the next run" — verified live (`tools/setup.py:1084-1106`), `prune_stale` only auto-removes headless; interactively it offers via `ask_yes_no(..., default=False)` and, on the default No, leaves the dead symlinks in place with no further action stated | Step 8 rewritten to state both outcomes (headless auto-removes; interactive requires accepting the prompt) and what the user must do in each case |
+| MEDIUM | Task 7's new test comment and `report_declares_issues`/`parse_findings` docstring still said "reviewing-specs's LOW/Tooling-Catchable tier" in brand-new code introduced by this plan — shipping a stale name that would make Task 1's own verification grep (`git grep "reviewing-specs" -- "*.py"`) false again after Task 1 supposedly finished | Both occurrences corrected to `review-spec-checklist` |
+| MEDIUM | Task 8's Interfaces → Produces list omitted the `cache-path` subcommand it implements and that Task 11 Step 2 point 0 and Task 10 Step 0 both depend on (and omitted `render-toml`'s `--out`/`--json-config` flags) — breaking the plan's own interface-tracking convention | Added `cache-path` (`--kind runtimes\|quota`) and the flags to the Produces list; Step 7's commit message updated to name `cache-path` and `render-command` alongside the other subcommands |
+| CROSS-DOC | Design §11 required updating `review-spec/evals/01`–`04-*.md`, but the plan's Task 1 Step 6 only extended content updates (beyond mechanical renaming) to evals 01 and 02 — evals 03 and 04 (verified live: 03 step 4 "Dispatcher reviewer subagent", 04 step 7 "Reviewer dispatched with `FRAMEWORK_PROFILE_PATH = none`") would still describe the pre-cross-AI flow. Also found in the same area: `orchestrator-integration.md`'s "Known patch candidates" section has a stale bullet about per-file cleanup, contradicting Task 11 Step 6's `rm -rf "$RUN_TMP_DIR"` | Task 1 Step 6 extended to cover evals 03 and 04 with the same Step 0.7/`REVIEWER_LIST`/`EFFECTIVE_REPORT_PATH` note as 01/02, and to update `orchestrator-integration.md`'s stale cleanup bullet to describe the single `rm -rf` |
+| CROSS-DOC | Task 6's "Cost bound" paragraph claimed the design describes `quota.json` as holding "remaining context window and quota/usage headroom", contradicting its own implementation — but verified live, design §6/§10 already say the opposite (`quota.json` explicitly does NOT capture context-window headroom, marked "not implemented by v1") and that exact phrase appears nowhere in the current design. The plan was arguing against a contradiction that no longer existed, pointing at unitemized "Self-review notes" as the reason | Rewritten to state the plan's boolean-only `quota.json` shape matches design §6/§10 exactly, with no claimed discrepancy |
+
+A thirteenth review round should confirm this document reaches Approved before execution begins.

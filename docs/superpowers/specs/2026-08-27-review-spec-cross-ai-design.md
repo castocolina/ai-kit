@@ -457,9 +457,11 @@ interactive wrapper).
      entry is still charged at most one trivial probe call per
      `QUOTA_TTL_SECONDS` (§6).
   5. Resolve the effective reviewer list (1 or 2 entries) per `policy.mode`
-     (§3), passing the source vendor resolved at point 2 above, and save
-     it to a file (`Step 1`'s external dispatch needs a stable path to
-     feed `render-command`, not just in-context text).
+     (§3), passing the source vendor resolved earlier (point 2 above notes
+     this happens in the orchestrator's `## Inputs` flag parsing, not
+     inside Step 0.7 itself), and save it to a file (`Step 1`'s external
+     dispatch needs a stable path to feed `render-command`, not just
+     in-context text).
   6. Record the resolved list's contents (index 0 = primary/only reviewer,
      index 1 = the secondary in `double` mode) for Step 1 to reason over
      and to pass to `render-command` for external dispatch.
@@ -483,7 +485,11 @@ interactive wrapper).
   rule, and the ARCHETYPE-ceiling rule — the identical contract the native
   dispatch's prompt template gives, not a thinner one. Output captured to
   `$RUN_TMP_DIR/iter<N>-<key>.md`.
-- **Step 1.5 (new, only when 2 reviewers ran)**: merge the two reports —
+- **Step 1.5 (new; runs every iteration — only the merge call itself is
+  conditional on 2 reviewers having run)**: binds `EFFECTIVE_REPORT_PATH`
+  every time — the single-reviewer case skips the merge call and binds it
+  directly to that reviewer's raw report. When 2 reviewers ran, merge the
+  two reports —
   union of findings, deduplicated by (severity, exact `Location` string)
   ACROSS the two reports only — the reviewer output template's `###
   <SEVERITY>` heading plus its bullet's `Location:` field are the only
