@@ -2068,7 +2068,7 @@ Add `import re` to the top import block.
 Append to `skills/review-spec/review-spec.py`:
 
 ```python
-# ── Findings merge (Step 1.5 double-review reconciliation) ──────────────
+# ── Findings merge (review-spec/SKILL.md's Step 1.5 double-review reconciliation) ──
 
 _SEVERITY_HEADINGS = {
     "CRITICAL": "CRITICAL", "HIGH": "HIGH", "MEDIUM": "MEDIUM", "LOW": "LOW",
@@ -2545,7 +2545,7 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
     p_resolve = sub.add_parser("resolve-reviewers")
     p_resolve.add_argument("--cwd", required=True)
     p_resolve.add_argument("--quota-path", required=True)
-    p_resolve.add_argument("--source-vendor", default="")
+    p_resolve.add_argument("--source-vendor", default="")  # "" = no same-vendor skip
     p_resolve.add_argument("--cross-ai", action="store_true")
 
     p_merge = sub.add_parser("merge-reports")
@@ -2668,6 +2668,18 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
 ```
+
+`resolve-reviewers --source-vendor`'s CLI default (`""`, above) is
+deliberately different from the `anthropic` default design §4 and Task
+11 Step 1 document — `""` is `review-spec.py`'s own library-level
+default (no vendor to skip, since the module itself has no notion of
+"the current session's vendor"), while `anthropic` is the *orchestrator's*
+default: `review-spec/SKILL.md`'s Step 0.7 always passes an explicit
+`--source-vendor` value (defaulting to `anthropic` per Task 11 Step 1's
+Inputs section), never relying on this CLI default. A direct
+`review-spec.py resolve-reviewers` invocation outside the orchestrator
+gets `""` (no same-vendor skip) unless the caller passes the flag
+explicitly — expected, not a bug.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -2796,15 +2808,21 @@ except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only confi
     tomllib = None  # type: ignore[assignment]  # stdlib boundary: optional module absent on <3.11
 
 from typing import NamedTuple
+
+# ── Config (TOML) ────────────────────────────────────────────────────────
 ```
+(exactly one blank line between the import block and the following
+section comment, not two — ruff's `lines-after-imports` check wants one
+blank line before a following comment, two only before a `class`/`def`.
+The section comment itself is shown only to mark the boundary; it's
+already in the module from Task 2 Step 3, not something to add again
+here.)
 
 Run `uv run ruff check skills/review-spec/review-spec.py` and fix
-anything else it flags. Two things it will flag beyond import order:
-`E501` (line too long) on the module's few lines that run past 100
-chars — reflow each to fit, same as any other `E501` fix in this plan —
-and the module was otherwise written against this repo's existing `E`
-conventions throughout this plan, so beyond those two categories this
-should be a no-op. **Deliberately left out of scope**: `pylint`
+anything else it flags — this plan's own reflow of every
+`review-spec.py`-destined code block already eliminated every `E501`
+line, so `ruff check` should report clean once the import block above
+matches exactly. **Deliberately left out of scope**: `pylint`
 (`.pre-commit-config.yaml`) and `pyright`/`vulture`
 (`pyproject.toml`'s `[tool.pyright] include` / `[tool.vulture] paths`) —
 those enforce stricter design thresholds tuned specifically for the
@@ -3239,8 +3257,17 @@ from the level the raw read above didn't look at (e.g. a global entry
 when `--local` was passed). Report each `key`'s `available` boolean only
 for keys that also appeared in the raw-read listing above — drop any
 extra key the merge surfaced — so the two parts of this report describe
-the same set of reviewers instead of two different ones. This still
-makes live probe calls to each configured CLI (the probe itself is a
+the same set of reviewers instead of two different ones.
+
+The reverse can also happen: if `--local` was **not** passed (raw read
+above targeted the global file) but a local `review-spec.toml` exists
+with `strategy = "local-only"`, `cfg_resolve`'s merge returns only the
+local entries — none of the global keys the raw read just listed appear
+in the probed set at all. For any raw-read key with no matching entry in
+`probe-quota`'s output, report `available: unknown (shadowed by a local
+strategy = "local-only" config)` rather than silently omitting it.
+
+This still makes live probe calls to each configured CLI (the probe itself is a
 real trivial invocation, same as at dispatch time), but "no writes" here
 means no write to the real `quota.json`/`review-spec.toml` locations —
 the temp path this command wrote to is discarded, never reused. Then
@@ -3518,7 +3545,11 @@ Runs once per invocation, after Step 0.6.
    `review-spec.toml` yet either, so `resolve-reviewers` in step 5
    degrades to `NO_CONFIG_FALLBACK` on its own — no special-casing needed
    here beyond the detection call and the hint).
-4. Refresh quota for anything the config's ladder might need:
+4. Refresh quota for anything the config's ladder might need. `--cwd`
+   takes exactly one directory — when Step 0.1 recorded `CODEBASE_ROOT`
+   as a labeled set (cross-repo plans), use the root that owns the
+   primary document under review (the first entry in `<DOC_PATHS>`); the
+   same rule applies to `resolve-reviewers` at point 5 below:
    ```bash
    python3 "$TOOLS_PY" probe-quota --cwd <CODEBASE_ROOT> \
      --quota-path "$QUOTA_JSON"
@@ -3545,7 +3576,9 @@ Runs once per invocation, after Step 0.6.
    which already handles the local-vs-global/`strategy` resolution — this
    step never re-implements that logic, it only picks which `--cwd` to
    pass (`CODEBASE_ROOT` from Step 0.1, so the resolved local config is
-   the one that actually owns the document under review).
+   the one that actually owns the document under review — when
+   `CODEBASE_ROOT` is a labeled set, that means the root of `<DOC_PATHS>`'s
+   first entry, same rule as point 4 above).
 6. **(Active cross-AI path only — point 2's degraded path already set
    `REVIEWER_LIST` directly and skipped straight to Step 1.)**
    `$RUN_TMP_DIR/reviewers.json` holds a JSON array of 1 or 2 reviewer
