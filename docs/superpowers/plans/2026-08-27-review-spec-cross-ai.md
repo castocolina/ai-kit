@@ -2897,22 +2897,21 @@ rules, regardless of the inner fences' list-item indentation.)
 
 Runs once per invocation, after Step 0.6.
 
-0. Resolve `TOOLS_PY` and `CLI_PROFILES_DIR`. **`review-spec.py` and its
-   `references/cli-profiles/` live inside `skills/review-spec/` itself**
-   (not at a top-level `tools/`/`references/` — that placement was tried
-   in an earlier draft of this plan and rejected: neither location is
-   reachable from an installed skill, since `tools/setup.py`'s symlinks
-   only cover `agents/commands/skills`, per its `CATEGORIES`). Because
-   they're inside `review-spec`'s own skill directory, they resolve the
-   same way `SEEDS_DIR` above is *meant* to (three candidates:
-   `CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/sibling-of-this-file) — this
-   snippet is **self-contained** and does not read any variable assigned
-   elsewhere; it computes its own directory inline via `$(dirname ...)`.
-   (Task 11 Step 7 separately fixes a real pre-existing bug in
-   `SEEDS_DIR`'s own block — its third candidate references an
-   `$SKILL_DIR` that block never actually assigns — bringing that block's
-   behavior in line with what its comment always claimed, and with this
-   new snippet.):
+0. Resolve `TOOLS_PY` and `CHECKLIST_SKILL_MD`. **`review-spec.py` lives
+   inside `skills/review-spec/` itself** (not at a top-level `tools/` —
+   that placement was tried in an earlier draft of this plan and
+   rejected: it isn't reachable from an installed skill, since
+   `tools/setup.py`'s symlinks only cover `agents/commands/skills`, per
+   its `CATEGORIES`). Because it's inside `review-spec`'s own skill
+   directory, it resolves the same way `SEEDS_DIR` above is *meant* to
+   (three candidates: `CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/
+   sibling-of-this-file) — this snippet is **self-contained** and does
+   not read any variable assigned elsewhere; it computes its own
+   directory inline via `$(dirname ...)`. (Task 11 Step 7 separately
+   fixes a real pre-existing bug in `SEEDS_DIR`'s own block — its third
+   candidate references an `$SKILL_DIR` that block never actually
+   assigns — bringing that block's behavior in line with what its
+   comment always claimed, and with this new snippet.):
    ```bash
    for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec}" \
             "$HOME/.claude/skills/review-spec" \
@@ -2920,16 +2919,23 @@ Runs once per invocation, after Step 0.6.
      [ -d "$d" ] && { REVIEW_SPEC_SKILL_DIR="$d"; break; }
    done
    TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/review-spec.py"
-   CLI_PROFILES_DIR="$REVIEW_SPEC_SKILL_DIR/references/cli-profiles"
+   CHECKLIST_SKILL_MD="$(dirname "$REVIEW_SPEC_SKILL_DIR")/review-spec-checklist/SKILL.md"
    RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
    QUOTA_JSON="$(python3 "$TOOLS_PY" cache-path --kind quota)"
    ```
-   `cache-path` (Task 8) resolves these through the module's own
+   `CHECKLIST_SKILL_MD` is the path Step 1's external-CLI dispatch tells
+   the external reviewer to `Read` — `review-spec-checklist` (renamed
+   from `reviewing-specs` by Task 1) is always installed as
+   `review-spec`'s own sibling, since both live under the same `skills/`
+   tree in every installed shape (plugin, `~/.claude/skills`, or a dev
+   checkout), so deriving it from `$REVIEW_SPEC_SKILL_DIR`'s own parent
+   needs no separate three-candidate search. `cache-path` (Task 8)
+   resolves `RUNTIMES_JSON`/`QUOTA_JSON` through the module's own
    `cache_runtimes_path`/`cache_quota_path` (Task 3) — the
    `${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/review-spec/...` formula lives
    in exactly one place, not duplicated as a bash literal here.
    Resolve this whole block once, in one `Bash` call, and — exactly like
-   `RUN_TMP_DIR` below — record `TOOLS_PY`/`CLI_PROFILES_DIR`/
+   `RUN_TMP_DIR` below — record `TOOLS_PY`/`CHECKLIST_SKILL_MD`/
    `RUNTIMES_JSON`/`QUOTA_JSON` as literal absolute paths substituted into
    every later command and prose reference; they are **not** shell
    environment variables that survive across separate `Bash` tool calls
@@ -3000,7 +3006,7 @@ Runs once per invocation, after Step 0.6.
    python3 "$TOOLS_PY" resolve-reviewers \
      --cwd <CODEBASE_ROOT> \
      --quota "$QUOTA_JSON" \
-     --source-vendor <SOURCE_VENDOR from Step 1's flag parsing> \
+     --source-vendor <SOURCE_VENDOR from the "## Inputs" section's flag parsing, Task 11 Step 1> \
      --cross-ai \
      > "$RUN_TMP_DIR/reviewers.json"
    ```
@@ -3062,7 +3068,7 @@ For each entry in `REVIEWER_LIST`:
      via the `Write` tool, with `{prompt}` filled in as:
 
      ```
-     Read the file at <ABSOLUTE PATH to skills/review-spec-checklist/SKILL.md>
+     Read the file at <CHECKLIST_SKILL_MD (Step 0.7 point 0)>
      and follow it exactly, substituting:
      - ARCHETYPE = <ARCHETYPE>
      - FRAMEWORK_PROFILE_PATH = <FRAMEWORK_PROFILE_PATH>
@@ -3257,10 +3263,10 @@ for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec-checklist
 (the `for d in ...` line itself is already being rewritten by Task 1 Step
 3 to the new `review-spec-checklist` name — this just adds the missing
 `SKILL_DIR=` line immediately before it, in the same block). This bug
-predates this plan, but the new `TOOLS_PY`/`CLI_PROFILES_DIR` resolution
-(Step 2 point 0 below) is modeled directly on this exact block, so fixing
-it here keeps both resolutions genuinely consistent instead of one
-working and the other's precedent silently broken.
+predates this plan, but the new `TOOLS_PY`/`CHECKLIST_SKILL_MD`
+resolution (Step 2 point 0 below) is modeled directly on this exact
+block, so fixing it here keeps both resolutions genuinely consistent
+instead of one working and the other's precedent silently broken.
 
 Also replace line 153, `**Subagent model for both:** \`sonnet\` (Haiku
 misses subtle defects; Opus burns tokens for no extra review-quality
@@ -3515,4 +3521,17 @@ omitted), and design §6/the plan's Step 0.7 point 3 now both describe the
 `detect-runtimes --if-stale` mechanism consistently (§6 previously still
 said plain `--save`).
 
-A sixth review round should confirm this document reaches Approved before execution begins.
+### Seventh review: a sixth clean-context Opus 5 subagent (native, live)
+
+The sixth round's fixes were themselves reviewed by a SEVENTH clean-context
+Opus 5 subagent, which also independently re-verified the fifth round's
+4-backtick nested-fence fix holds (it does). 4 findings, all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| HIGH | The external-CLI reviewer prompt's `<ABSOLUTE PATH to skills/review-spec-checklist/SKILL.md>` placeholder was never bound by any earlier step — Step 0.7 point 0 only resolved `REVIEW_SPEC_SKILL_DIR`/`TOOLS_PY`/`CLI_PROFILES_DIR`, none of which name the sibling `review-spec-checklist` skill's `SKILL.md`, so the orchestrator had to guess this path at dispatch time for the feature's own headline path | Point 0 now also resolves `CHECKLIST_SKILL_MD="$(dirname "$REVIEW_SPEC_SKILL_DIR")/review-spec-checklist/SKILL.md"` (siblings under the same `skills/` tree in every installed shape, so no separate three-candidate search is needed) and the external prompt references `<CHECKLIST_SKILL_MD (Step 0.7 point 0)>` instead of an unbound guess; design §8 updated to match |
+| MEDIUM | `CLI_PROFILES_DIR` was resolved in `review-spec/SKILL.md`'s own Step 0.7 point 0 but nothing there ever reads it — the same "resolved but never consumed" defect class the fifth round flagged for `cache_base`/`cache_runtimes_path` | Dropped from Step 0.7 point 0 entirely (Task 10's `review-spec-config` already resolves its own copy for its own real use, at its own Step 0) |
+| MEDIUM | Step 0.7 point 5's `--source-vendor <SOURCE_VENDOR from Step 1's flag parsing>` pointed at the wrong step — once inserted, "Step 1" inside `review-spec/SKILL.md` names `### Step 1 — Dispatch reviewer(s)`, which parses no flags and runs *after* Step 0.7, not the step that actually produced `SOURCE_VENDOR` | Corrected to reference the `## Inputs` section (extended by Task 11 Step 1), the step that actually parses `--source-vendor` |
+| CROSS-DOC | Design §6 said the runtimes-detection hint fires "when this call actually did a fresh detection" (covering both missing and stale-refresh cases), while the plan's Task 11 Step 2 point 3 fires it only on a true first-ever save — under the design's reading, a routine 30-day TTL refresh on a fully-configured install would falsely re-print "No cross-AI config saved yet", exactly the nagging the hint exists to prevent | Design §6 narrowed to state the plan's actual condition explicitly: the hint fires only when `runtimes.json` was missing before the call, never on a stale-but-present refresh |
+
+A seventh review round should confirm this document reaches Approved before execution begins.

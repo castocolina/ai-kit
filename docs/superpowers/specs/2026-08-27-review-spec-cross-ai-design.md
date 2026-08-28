@@ -353,9 +353,13 @@ refresh live via `detect-runtimes --if-stale <path>` — a no-op when the
 existing snapshot is still fresh, otherwise it detects and persists in the
 same call (the mechanism `review-spec-config` itself uses via a plain
 `--save <path>`, §7, since a first-time setup run always wants a fresh
-detection regardless of staleness). Either way the hint below fires only
-when this call actually did a fresh detection, not on every invocation.
-Print one line ("No cross-AI config saved yet — run `review-spec-config`
+detection regardless of staleness). The hint below fires **only when
+`runtimes.json` was missing before this call — never on a routine TTL
+refresh of an already-present file.** A stale-but-present snapshot means
+`review-spec-config` (or a prior `/review-spec` run) already reached this
+step at least once; re-printing "no config saved yet" on every 30-day
+refresh of a fully-configured install would be both false and exactly the
+per-invocation nagging this hint exists to avoid. Print one line ("No cross-AI config saved yet — run `review-spec-config`
 so this doesn't repeat every invocation") and proceed with reviewer
 resolution as normal — resolving against whatever `review-spec.toml` state
 actually exists (typically none yet, which degrades gracefully to the
@@ -429,10 +433,17 @@ interactive wrapper).
   `Agent` tool, now running `review-spec-checklist` instead of
   `reviewing-specs`); `cli` present → `Bash`, running the reviewer's
   `command` (placeholders filled), with the prompt telling that CLI to
-  **read `review-spec-checklist`'s `SKILL.md` from disk and follow it**
-  (external CLIs can't call our `Skill` tool, but they can read a file path
-  — this preserves single-sourcing the checklist instead of duplicating its
-  content into every CLI's prompt). Output captured to
+  **read `review-spec-checklist`'s `SKILL.md` from disk (at
+  `CHECKLIST_SKILL_MD`, resolved once alongside `TOOLS_PY` in Step 0.7
+  point 0 — sibling-of-`review-spec` in every installed shape) and follow
+  it** (external CLIs can't call our `Skill` tool, but they can read a
+  file path — this preserves single-sourcing the checklist instead of
+  duplicating its content into every CLI's prompt, and every placeholder
+  in that prompt, including this one, is bound by an earlier step rather
+  than left for the orchestrator to guess at dispatch time). The same
+  prompt also carries `<GROUNDING_DOCS>`, the declared-paths-authoritative
+  rule, and the ARCHETYPE-ceiling rule — the identical contract the native
+  dispatch's prompt template gives, not a thinner one. Output captured to
   `$RUN_TMP_DIR/iter<N>-<key>.md`.
 - **Step 1.5 (new, only when 2 reviewers ran)**: merge the two reports —
   union of findings, deduplicated by (severity, exact `Location` string)
