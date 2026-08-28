@@ -251,7 +251,15 @@ actually see is **13** post-move `.md` paths, split into two groups:
 
 1. **MUST fix (8 files)** — living documentation and active test
    fixtures, not history:
-   - `README.md` lines 28, 29, 34 (three separate mentions — `reviewing-specs`→`review-spec-checklist`, `applying-review-feedback`→`review-spec-fixer`, including the one inside the `review-spec` row's description).
+   - `README.md` lines 28, 29, 34 — **7 tokens across 3 lines, not 3**:
+     line 28 has 2 `reviewing-specs` tokens (the row's link text and link
+     path); line 29 has 2 `applying-review-feedback` tokens (its own link
+     text and path) plus 1 `reviewing-specs` token (in its description,
+     "a `reviewing-specs` report"); line 34 (the `review-spec` row's
+     description) has 1 `reviewing-specs` and 1 `applying-review-feedback`
+     token, both prose mentions, no link tokens (`review-spec` itself is
+     unrenamed). Replace every one of the 7 with the new name, per line —
+     do not stop after the first substitution on a line.
    - `skills/review-spec/evals/01-superpowers-plan-routes-writing-plans.md`, `02-gsd-plan-routes-native-cmd.md`, `03-generic-doc-direct-edit.md`, `04-ambiguous-detection-fallback.md`
    - `skills/review-spec-checklist/evals/orchestrator-integration.md`, `skills/review-spec-checklist/evals/test-scenarios.md`
    - `skills/review-spec-fixer/evals/test-scenarios.md` — also fix its
@@ -1391,7 +1399,7 @@ def _native_ladder(reviewers: list, ladder: list) -> list:
 
 
 def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: bool) -> list:
-    """The full policy decision (design spec §3), including double mode's
+    """The full policy decision, including double mode's
     native-baseline guarantee. Returns 1 or 2 ResolvedReviewer entries;
     dispatch mechanics are the caller's concern (review-spec/SKILL.md's
     Step 1), this only decides WHO.
@@ -2713,8 +2721,9 @@ with `--print`).
 claude -p --model {model} --output-format text {prompt}
 ```
 
-`{model}`/`{prompt}` above are the literal config `command` template
-placeholders (§3) — written bare, never wrapped in extra quotes.
+`{model}`/`{prompt}` above are the literal `command`-template
+placeholders every reviewer entry's `command` field can reference —
+written bare, never wrapped in extra quotes.
 `render_reviewer_command` (in `review-spec.py`) applies `shlex.quote` to
 `{prompt}` itself before substitution, so a template that adds its own
 quotes around `{prompt}` ends up double-quoted. Copy this shape directly
@@ -2746,16 +2755,23 @@ service speed tier are SEPARATE knobs, each set via `-c key='"value"'`:
 ```bash
 codex exec --sandbox read-only --skip-git-repo-check \
   -m {model} \
-  -c model_reasoning_effort='"<low|medium|high|xhigh>"' \
-  -c service_tier='"<fast|...>"' \
+  -c model_reasoning_effort='"{effort}"' \
+  -c service_tier='"{service_tier}"' \
   {prompt}
 ```
 
 `{model}`/`{prompt}` above are the literal config `command` template
-placeholders (§3) — bare, unquoted (`render_reviewer_command` already
-`shlex.quote`s `{prompt}`); `model_reasoning_effort`/`service_tier` stay
-literal `<...>` since they're config-level `extra` fields, not filled by
-`render_reviewer_command` itself. **Do not append `2>/dev/null`** —
+placeholders — bare, unquoted (`render_reviewer_command` already
+`shlex.quote`s `{prompt}`). `{effort}`/`{service_tier}` are also literal
+`command`-template placeholders, but filled from the reviewer entry's own
+`extra` table (e.g. `effort = "high"`, `service_tier = "fast"` in
+`review-spec.toml`), not from `{model}`/`{prompt}` — `render_reviewer_command`
+fills every placeholder the template references via
+`resolved.command.format(model=..., prompt=..., **resolved.extra)`, so an
+entry that omits `effort`/`service_tier` from its `extra` table and still
+references them here fails to render (a config error, surfaced at
+dispatch — see `review-spec/SKILL.md`'s reviewer dispatch step). **Do not
+append `2>/dev/null`** —
 `probe_reviewer_quota` classifies availability from
 `stdout + stderr` combined, so suppressing stderr hides the exact
 usage-limit signal the probe below depends on.
@@ -2807,7 +2823,9 @@ opencode run -m {model} {prompt}
 
 (`{model}` here is the full `<provider/model>` id, e.g.
 `opencode-go/kimi-k3` — `{model}`/`{prompt}` are bare config `command`
-template placeholders, per the `claude` profile's note above.)
+template placeholders, unquoted; `{prompt}` is `shlex.quote`d by
+`render_reviewer_command` before substitution, so never wrap it in your
+own quotes here.)
 
 `opencode stats` shows token usage/cost statistics — likely the quota
 introspection source; exact parseable shape unconfirmed, research during
@@ -2844,8 +2862,9 @@ pass `--output-format text` explicitly:
 grok -m {model} --output-format text {prompt}
 ```
 
-(`{model}`/`{prompt}` are bare config `command` template placeholders, per
-the `claude` profile's note above.)
+(`{model}`/`{prompt}` are bare config `command` template placeholders,
+unquoted; `{prompt}` is `shlex.quote`d by `render_reviewer_command`
+before substitution, so never wrap it in your own quotes here.)
 
 Quota/context-window introspection: unconfirmed syntax — research during
 implementation.
@@ -2879,8 +2898,9 @@ wrapper.
 cursor-agent -p {prompt} --output-format text --model {model}
 ```
 
-(`{model}`/`{prompt}` are bare config `command` template placeholders, per
-the `claude` profile's note above.)
+(`{model}`/`{prompt}` are bare config `command` template placeholders,
+unquoted; `{prompt}` is `shlex.quote`d by `render_reviewer_command`
+before substitution, so never wrap it in your own quotes here.)
 
 Not yet verified against a real installation. Verify all of the above with
 `cursor-agent --help` before marking this profile `status: confirmed`.
@@ -2915,8 +2935,9 @@ confirmed`.
 gemini -m {model} --sandbox --approval-mode yolo {prompt}
 ```
 
-(`{model}`/`{prompt}` are bare config `command` template placeholders, per
-the `claude` profile's note above.)
+(`{model}`/`{prompt}` are bare config `command` template placeholders,
+unquoted; `{prompt}` is `shlex.quote`d by `render_reviewer_command`
+before substitution, so never wrap it in your own quotes here.)
 
 Quota/context-window introspection: unconfirmed syntax — research during
 implementation.
@@ -3019,8 +3040,9 @@ path; for `opencode`, note its `models` list.
 **If `--check-only` was passed**: report which CLIs are installed. To
 also report which already have a `review-spec.toml` reviewer entry,
 `Read` the config file directly — `./.aikit/review-spec.toml` if
-`--local` was passed, else `~/.config/ai-kit/review-spec.toml` (§3's
-local/global paths) — if it exists, and note each `[[reviewers]]`
+`--local` was passed, else `~/.config/ai-kit/review-spec.toml` (the same
+local/global locations `review-spec` itself resolves) — if it exists,
+and note each `[[reviewers]]`
 entry's `key`/`cli`. (This is a raw read for reporting only, not
 `cfg_resolve`'s local/global merge — `--check-only` is describing what's
 on disk, not resolving an effective policy.) Then stop here — do not
@@ -3053,19 +3075,18 @@ knobs (`effort`, `service_tier`, ...) that profile's `command` template
 needs. **If the profile's `read_only:` field says `unconfirmed`**, print
 one line before writing that entry: "Note: `<id>` has no confirmed
 read-only invocation — this reviewer runs with the CLI's normal write
-permissions against your working tree." (per design §5's read-only
-posture) — inform, don't block; the user is choosing to accept that CLI's
-default risk.
+permissions against your working tree." — inform, don't block; the user
+is choosing to accept that CLI's default risk.
 
 **Also ask, explicitly — do not skip this**: whether to register one or
 more **native** (`cli`-omitted) reviewer entries — e.g. the current
 session's own tier, or another Claude tier reachable without an external
 CLI. This is not optional to ask: `policy.mode = "double"`'s guaranteed
-baseline (§3) walks `policy.ladder` restricted to native entries only
+baseline walks `policy.ladder` restricted to native entries only
 (`review-spec.py`'s `_native_ladder` helper), so a config with zero native `[[reviewers]]`
 entries can never seat a real native baseline — it always degrades to
-`NO_CONFIG_FALLBACK` — silently defeating design §1's "prefer the
-strongest available Claude tier" goal for anyone who only answered the
+`NO_CONFIG_FALLBACK` — silently defeating the goal of preferring the
+strongest available Claude tier for anyone who only answered the
 per-CLI questions above. For each native entry the user wants, `model`
 must be one of the four `Agent`-tool aliases (`sonnet`/`opus`/`haiku`/
 `fable`), never a full model id like `"opus-5"`; ask the user to pick one
@@ -3078,7 +3099,7 @@ was passed, also ask whether this
 local config should be `local-only` or the default `global-merge` — set
 the JSON config's top-level `strategy` key to `"local-only"` if so
 (`cfg_render_toml` renders it as a bare `strategy = "..."` line at the
-top of the file, §3); omit the key entirely for the default (global
+top of the file); omit the key entirely for the default (global
 default applies, no line needed).
 
 ### Step 3 — Write
@@ -3148,15 +3169,15 @@ defaults — never block on their absence):
   `--cross-ai` (default) or `--no-cross-ai` — whether Step 0.7 attempts
   cross-AI reviewer resolution at all. `--source-vendor=<vendor>` (default
   `anthropic`) — the document's authoring vendor, used by Step 0.7's
-  ladder walk to prefer an independent perspective. Design §4's default is
-  "the current session's own vendor"; `anthropic` is that default's
-  concrete value here specifically because this orchestrator has no
-  runtime introspection API telling it what vendor its own model actually
-  is — it can only assume the overwhelmingly common case (a native
-  Claude Code session). Design §3's caveat still applies: a session
-  pointed at a compatible third-party endpoint would make this default
-  wrong, which is exactly the escape hatch `--source-vendor` itself
-  exists for — pass the real vendor explicitly in that case. This is a
+  ladder walk to prefer an independent perspective. The default is meant
+  to mean "the current session's own vendor"; `anthropic` is that
+  default's concrete value here specifically because this orchestrator
+  has no runtime introspection API telling it what vendor its own model
+  actually is — it can only assume the overwhelmingly common case (a
+  native Claude Code session). A session pointed at a compatible
+  third-party endpoint would make this default wrong, which is exactly
+  the escape hatch `--source-vendor` itself exists for — pass the real
+  vendor explicitly in that case. This is a
   **vendor** (`anthropic`, `openai`, `xai`, ...), matching the `vendor`
   field in `review-spec.toml` reviewer entries — not a model id, since
   deriving a vendor from an arbitrary model-id string has no sanctioned
@@ -4034,3 +4055,20 @@ clean-context Opus 5 subagent. 8 findings (1 CRITICAL, 2 HIGH, 3 MEDIUM,
 | CROSS-DOC | The false skill-local-Python-precedent claim (CRITICAL above) was duplicated verbatim in both the plan's Architecture paragraph and the design's Scope bullet — a shared wrong premise, not independent errors | Fixed in both documents together with matching corrected language, so no new contradiction was introduced by fixing only one |
 
 A fifteenth review round should confirm this document reaches Approved before execution begins.
+
+### Sixteenth review: a fifteenth clean-context Opus 5 subagent (native, live)
+
+The fifteenth round's fixes were themselves reviewed by a SIXTEENTH
+clean-context Opus 5 subagent. 8 findings (1 CRITICAL, 4 MEDIUM, 2
+CROSS-DOC — one CROSS-DOC restating the CRITICAL), all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL (+ CROSS-DOC) | `codex.md`'s command template used literal placeholder text (`-c model_reasoning_effort='"<low\|medium\|high\|xhigh>"'`) instead of brace placeholders, with a sentence claiming `extra` fields are "not filled by `render_reviewer_command` itself" — contradicting design §3's own codex schema example (`-c model_reasoning_effort='"{effort}"'`, `effort = "high"`) and `render_reviewer_command`'s actual implementation (`resolved.command.format(model=..., prompt=..., **resolved.extra)`), verified against Task 6's own `test_fills_extra_fields`. Following the profile as written would ship a `[[reviewers]]` entry whose command contains the literal string `<low\|medium\|high\|xhigh>`, executed verbatim | `codex.md`'s template changed to `{effort}`/`{service_tier}` brace placeholders matching design §3 exactly, with the sentence corrected to explain these ARE filled from the reviewer entry's own `extra` table, and what happens when they're missing (a config error at dispatch) |
+| MEDIUM | ~9 dangling `§N`/`design §N` cross-references survived inside content that ships as `skills/review-spec-config/SKILL.md`, `skills/review-spec/SKILL.md`'s `## Inputs` addition, the `claude.md`/`codex.md` CLI profiles, and `review-spec.py`'s `resolve_reviewers` docstring — none of these ship alongside the design spec, so an agent reading the installed artifact can't resolve them | All ~9 rewritten to state the constraint inline or name the actual artifact, matching the thirteenth/fourteenth rounds' equivalent "Task N" scrub |
+| MEDIUM | Four CLI profiles (`opencode.md`, `grok.md`, `cursor-agent.md`, `gemini.md`) each said "per the `claude` profile's note above" for the bare-placeholder/`shlex.quote` rule — each is installed as its own separate file with no "above" referent | All four now restate the rule inline instead of cross-referencing a sibling file |
+| MEDIUM | Design §5's read-only-posture paragraph pointed at "the Out-of-scope note below" — the only Out of scope note is in §1, which precedes §5, not follows it — the same stale-direction defect class hit repeatedly earlier in this document | Corrected to "§1's Out of scope note above" |
+| MEDIUM | Task 1 Step 6's README bullet said `README.md` lines 28/29/34 need "three separate mentions" renamed — verified live, the actual count is 7 tokens across those 3 lines (line 28: 2 `reviewing-specs` tokens; line 29: 2 `applying-review-feedback` + 1 `reviewing-specs`; line 34: 1 of each), so an executor stopping after one substitution per line would leave 4 stale tokens | Rewritten to itemize the exact 7 tokens per line, with an explicit "do not stop after the first substitution on a line" instruction |
+| CROSS-DOC | Design §8 point 0 enumerates exactly what Step 0.7 resolves (`TOOLS_PY`, `CHECKLIST_SKILL_MD`, explicitly NOT `CLI_PROFILES_DIR`) but never mentions `RUNTIMES_JSON`/`QUOTA_JSON`, which the plan's actual Step 0.7 point 0 resolves in the same `Bash` call and points 3-4 then consume — since the point deliberately lists both inclusions and exclusions, the omission reads as "not resolved here," contradicting the plan | §8 point 0 extended to state `RUNTIMES_JSON`/`QUOTA_JSON` are also resolved there, via `cache-path`, in the same call |
+
+A sixteenth review round should confirm this document reaches Approved before execution begins.

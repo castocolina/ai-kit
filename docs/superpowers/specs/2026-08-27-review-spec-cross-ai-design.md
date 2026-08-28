@@ -315,7 +315,7 @@ template for these two CLIs uses `--output-format text` (or omits the
 flag, whose default is plain text).
 
 **Read-only posture.** An external CLI must never be dispatched with real
-write access to the repo under review — see the Out-of-scope note below.
+write access to the repo under review — see §1's Out of scope note above.
 `codex`'s profile confirms `--sandbox read-only`; `gemini`'s adds
 `--sandbox` (the `gemini` skill's own flag list documents only "run in
 sandbox mode for isolation" — no stronger container/no-write guarantee is
@@ -431,7 +431,10 @@ interactive wrapper).
      path at dispatch time. `CLI_PROFILES_DIR` is deliberately **not**
      resolved here — nothing in `review-spec/SKILL.md` reads the CLI
      profiles; `review-spec-config` (§7) resolves its own copy where it's
-     actually used. Record `TOOLS_PY`/`CHECKLIST_SKILL_MD` as literal
+     actually used. This same point also resolves `RUNTIMES_JSON`/
+     `QUOTA_JSON` via `review-spec.py`'s `cache-path` subcommand (§6),
+     in the same `Bash` call. Record `TOOLS_PY`/`CHECKLIST_SKILL_MD`/
+     `RUNTIMES_JSON`/`QUOTA_JSON` as literal
      absolute paths, exactly like `RUN_TMP_DIR` below — they are not
      shell variables that survive across separate `Bash` tool calls.
      Missing `TOOLS_PY` at this resolved path degrades exactly like
