@@ -333,11 +333,10 @@ actually see is **13** post-move `.md` paths, split into two groups:
      "Known patch candidates" section also has a stale bullet — "The
      orchestrator may forget to delete the temp report file after the
      loop. Cleanup section is already explicit" — which describes the
-     pre-cross-AI per-file cleanup Task 11 Step 6 replaces with a single
+     pre-cross-AI per-file cleanup this plan replaces with a single
      `rm -rf "$RUN_TMP_DIR"`. Update it to: "Cleanup now removes the
-     whole `$RUN_TMP_DIR` in one `rm -rf` (Task 11 Step 6) rather than
-     per-file — verify no per-run artifact survives outside that
-     directory."
+     whole `$RUN_TMP_DIR` in one `rm -rf` rather than per-file — verify
+     no per-run artifact survives outside that directory."
    - `skills/review-spec/evals/01-superpowers-plan-routes-writing-plans.md`
      and `skills/review-spec/evals/02-gsd-plan-routes-native-cmd.md` each
      have an "Expected behavior" step ("Dispatches reviewer subagent…")
@@ -695,7 +694,9 @@ def cfg_resolve(cwd: str, env: dict) -> dict:
                 "reviewers": local.get("reviewers", [])}
     global_cfg = cfg_load_toml(cfg_global_path(env))
     merged_policy = {**DEFAULT_POLICY, **global_cfg.get("policy", {}), **local.get("policy", {})}
-    merged_reviewers = cfg_merge_reviewers(global_cfg.get("reviewers", []), local.get("reviewers", []))
+    merged_reviewers = cfg_merge_reviewers(
+        global_cfg.get("reviewers", []), local.get("reviewers", [])
+    )
     return {"policy": merged_policy, "reviewers": merged_reviewers}
 
 
@@ -852,18 +853,21 @@ Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'cache
 
 - [ ] **Step 3: Implement**
 
-Add `import json`, `import time`, and `from typing import Optional` to
+Add `import json` and `import time` to
 `skills/review-spec/review-spec.py`'s import block at the top (below
 `import os`, above the `try: import tomllib` block) — Task 2 only needed
-`os`/`tomllib`, this task is the first to need JSON, mtimes, and
-`cache_read_json`'s `Optional[dict]` return type. `.pre-commit-config.yaml`'s
-ruff hook only scopes `^(tools|tests)/.*\.py$`, so this file itself
-(`skills/review-spec/review-spec.py`) is never ruff-linted at all —
-introducing imports incrementally here is simply good hygiene, not a
-lint-gate requirement. `tests/test_review_spec.py` **is** ruff-scoped,
-though (it's under `tests/`), which is why the same incremental
-discipline is load-bearing for that file specifically (see Task 8 Step 1
-for the concrete case this avoids).
+`os`/`tomllib`, this task is the first to need JSON and mtimes.
+`cache_read_json`'s return type is written `dict | None` (PEP 604 union
+syntax, no `typing` import needed — this repo's ruff config targets
+`py312`, which enables `UP007`, so this plan uses `X | None` everywhere
+instead of `Optional[X]`). At this point in the plan,
+`.pre-commit-config.yaml`'s ruff hook does not yet scope
+`skills/review-spec/review-spec.py` at all (Task 8 Step 7 extends it
+later) — introducing imports incrementally here is simply good hygiene,
+not a lint-gate requirement yet. `tests/test_review_spec.py` **is**
+ruff-scoped from the start, though (it's under `tests/`), which is why
+the same incremental discipline is load-bearing for that file
+specifically (see Task 8 Step 1 for the concrete case this avoids).
 
 Append to `skills/review-spec/review-spec.py`:
 
@@ -888,7 +892,7 @@ def cache_quota_path(env: dict) -> str:
     return os.path.join(cache_base(env), "quota.json")
 
 
-def cache_read_json(path: str) -> Optional[dict]:
+def cache_read_json(path: str) -> dict | None:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
@@ -1330,8 +1334,10 @@ Expected: FAIL — `AttributeError: module 'review_spec' has no attribute 'resol
 
 - [ ] **Step 3: Implement**
 
-Add `from typing import NamedTuple` to the top import block (`Optional`
-was already added in Task 3, for `cache_read_json`'s return type).
+Add `from typing import NamedTuple` to the top import block (`ResolvedReviewer`
+below needs it; every `X | None` return type in this module, including
+`cache_read_json`'s from Task 3, uses PEP 604 union syntax, no `typing`
+import needed for those).
 
 Append to `skills/review-spec/review-spec.py`:
 
@@ -1349,8 +1355,8 @@ class ResolvedReviewer(NamedTuple):
     key: str
     model: str
     vendor: str
-    cli: Optional[str]
-    command: Optional[str]
+    cli: str | None
+    command: str | None
     extra: dict
 
 
@@ -1360,7 +1366,7 @@ NO_CONFIG_FALLBACK = ResolvedReviewer(key="session-default", model="", vendor=""
 _KNOWN_REVIEWER_FIELDS = {"key", "model", "vendor", "cli", "command"}
 
 
-def _reviewer_by_key(reviewers: list, key: str) -> Optional[dict]:
+def _reviewer_by_key(reviewers: list, key: str) -> dict | None:
     for r in reviewers:
         if r.get("key") == key:
             return r
@@ -1390,7 +1396,7 @@ def _has_quota(quota: dict, key: str) -> bool:
 
 
 def resolve_ladder_pick(reviewers: list, ladder: list, skip_vendor: str, quota: dict,
-                         allow_same_vendor_fallback: bool = True) -> Optional[ResolvedReviewer]:
+                         allow_same_vendor_fallback: bool = True) -> ResolvedReviewer | None:
     """First ladder entry that (a) exists in `reviewers`, (b) has a
     different vendor than skip_vendor (empty skip_vendor disables this
     filter — used for "best overall, any vendor"), and (c) has quota. If
@@ -1414,7 +1420,9 @@ def resolve_ladder_pick(reviewers: list, ladder: list, skip_vendor: str, quota: 
     tier automatically otherwise — no separate "tier" concept needed."""
     for key in ladder:
         entry = _reviewer_by_key(reviewers, key)
-        if entry is None or (skip_vendor and entry.get("vendor") == skip_vendor) or not _has_quota(quota, key):
+        if entry is None or not _has_quota(quota, key):
+            continue
+        if skip_vendor and entry.get("vendor") == skip_vendor:
             continue
         return _to_resolved(entry)
     if not allow_same_vendor_fallback:
@@ -1477,8 +1485,10 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
         if primary is None:
             primary = NO_CONFIG_FALLBACK
         secondary_skip_vendor = primary.vendor or source_vendor
-        secondary = resolve_ladder_pick(reviewers, ladder, skip_vendor=secondary_skip_vendor, quota=quota,
-                                         allow_same_vendor_fallback=False)
+        secondary = resolve_ladder_pick(
+            reviewers, ladder, skip_vendor=secondary_skip_vendor, quota=quota,
+            allow_same_vendor_fallback=False,
+        )
         if secondary is None or secondary.key == primary.key:
             return [primary]
         return [primary, secondary]
@@ -1773,12 +1783,17 @@ def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> str:
     `review-spec.toml` entry must surface as a reportable config error,
     never crash the caller."""
     if not resolved.command:
-        raise ValueError(f"reviewer {resolved.key!r} has cli={resolved.cli!r} set but no command template")
+        raise ValueError(
+            f"reviewer {resolved.key!r} has cli={resolved.cli!r} set but no command template"
+        )
     try:
-        return resolved.command.format(model=resolved.model, prompt=shlex.quote(prompt),
-                                        **resolved.extra)
+        return resolved.command.format(
+            model=resolved.model, prompt=shlex.quote(prompt), **resolved.extra
+        )
     except (KeyError, IndexError, ValueError, TypeError) as exc:
-        raise ValueError(f"reviewer {resolved.key!r} has a malformed command template: {exc}") from exc
+        raise ValueError(
+            f"reviewer {resolved.key!r} has a malformed command template: {exc}"
+        ) from exc
 
 
 def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) -> dict:
@@ -2188,7 +2203,9 @@ def render_merged_report(findings: list, doc_paths: str, any_source_issues: bool
             tag = ", ".join(f["reviewers"])
             lines.append(f"- **{f['title']}** — Location: {f['location']}. "
                           f"Required: {f['required']}. Why: {f['why']}. (Reviewers: {tag})")
-    lines.append("### Status: Issues Found — fix and re-invoke" if any_issues else "### Status: Approved")
+    lines.append(
+        "### Status: Issues Found — fix and re-invoke" if any_issues else "### Status: Approved"
+    )
     return "\n".join(lines) + "\n"
 ```
 
@@ -2359,7 +2376,7 @@ class TestMainCli(unittest.TestCase):
             buf = io.StringIO()
             env = {"HOME": home}
             with mock.patch.object(rs.os, "environ", env), redirect_stdout(buf):
-                code = rs.main(["resolve-reviewers", "--cwd", cwd, "--quota", quota_path,
+                code = rs.main(["resolve-reviewers", "--cwd", cwd, "--quota-path", quota_path,
                                  "--source-vendor", "anthropic", "--cross-ai"])
             self.assertEqual(code, 0)
             parsed = json.loads(buf.getvalue())
@@ -2510,10 +2527,16 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
     p_cache_path.add_argument("--kind", choices=["runtimes", "quota"], required=True)
 
     p_detect = sub.add_parser("detect-runtimes")
-    p_detect.add_argument("--save", default=None, help="write the snapshot to this path via cache_write_json")
-    p_detect.add_argument("--if-stale", default=None, metavar="PATH",
-                           help="skip detection entirely (print {} and exit 0) when PATH exists "
-                                "and is fresher than RUNTIMES_TTL_SECONDS; else detect and --save to PATH")
+    p_detect.add_argument(
+        "--save", default=None, help="write the snapshot to this path via cache_write_json"
+    )
+    p_detect.add_argument(
+        "--if-stale", default=None, metavar="PATH",
+        help=(
+            "skip detection entirely (print {} and exit 0) when PATH exists "
+            "and is fresher than RUNTIMES_TTL_SECONDS; else detect and --save to PATH"
+        ),
+    )
 
     p_quota = sub.add_parser("probe-quota")
     p_quota.add_argument("--cwd", required=True)
@@ -2521,7 +2544,7 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
 
     p_resolve = sub.add_parser("resolve-reviewers")
     p_resolve.add_argument("--cwd", required=True)
-    p_resolve.add_argument("--quota", required=True)
+    p_resolve.add_argument("--quota-path", required=True)
     p_resolve.add_argument("--source-vendor", default="")
     p_resolve.add_argument("--cross-ai", action="store_true")
 
@@ -2530,10 +2553,16 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
     p_merge.add_argument("reports", nargs="+", help="key=path/to/report.md")
 
     p_toml = sub.add_parser("render-toml")
-    p_toml.add_argument("--json-config", required=True, help="path to a JSON file shaped like the TOML config")
-    p_toml.add_argument("--out", default=None,
-                         help="write the rendered TOML to this path via cfg_write_toml (creating parent dirs) "
-                              "instead of only printing it")
+    p_toml.add_argument(
+        "--json-config", required=True, help="path to a JSON file shaped like the TOML config"
+    )
+    p_toml.add_argument(
+        "--out", default=None,
+        help=(
+            "write the rendered TOML to this path via cfg_write_toml (creating parent dirs) "
+            "instead of only printing it"
+        ),
+    )
 
     p_render = sub.add_parser("render-command")
     p_render.add_argument("--reviewers-json", required=True,
@@ -2571,7 +2600,7 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
 
     if args.command == "resolve-reviewers":
         config = cfg_resolve(args.cwd, dict(os.environ))
-        quota = cache_read_json(args.quota) or {}
+        quota = cache_read_json(args.quota_path) or {}
         reviewers = resolve_reviewers(config, quota, args.source_vendor, args.cross_ai)
         print(json.dumps([r._asdict() for r in reviewers]))
         return 0
@@ -2702,17 +2731,26 @@ also match it:
         name: ruff
         entry: uv run ruff check
         language: system
+        # Scoped to the refactor's modules + tests. skills/ joins the gate later
+        # (the "enforce more after the refactor" expansion).
         files: ^(tools|tests)/.*\.py$
+        require_serial: true
 ```
 
-to:
+to (widen the existing `(tools|tests)/.*` alternative, add the new file
+as a second alternative — **do not drop the trailing `/.*`**, or every
+existing file under `tools/`/`tests/` silently stops being linted):
 
 ```yaml
       - id: ruff
         name: ruff
         entry: uv run ruff check
         language: system
-        files: ^(tools|tests|skills/review-spec/review-spec)\.py$
+        # Scoped to the refactor's modules + tests, plus review-spec.py.
+        # The rest of skills/ joins the gate later (the "enforce more
+        # after the refactor" expansion).
+        files: ^((tools|tests)/.*|skills/review-spec/review-spec)\.py$
+        require_serial: true
 ```
 
 and:
@@ -2735,10 +2773,38 @@ to:
         files: ^(tools/(status-line|statusline-doctor|setup)|skills/review-spec/review-spec)\.py$
 ```
 
-Run `uv run ruff check skills/review-spec/review-spec.py` once here and
-fix anything it flags (the module was written against this repo's
-existing `E`/`I001` conventions throughout this plan, so this should be a
-no-op or near-no-op). **Deliberately left out of scope**: `pylint`
+Before running ruff, reorder the top import block into the following
+(this is the accumulated result of every earlier task's "add import X"
+instruction — Task 2's `os`, Task 3's `json`/`time`, Task 4's
+`shutil`/`subprocess`, Task 5's `NamedTuple`, Task 6's `shlex`, Task 7's
+`re`, Task 8's `sys` — collected here once and sorted per `I001`):
+
+```python
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+
+try:
+    import tomllib as _tomllib_impl
+    tomllib = _tomllib_impl
+except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only config.
+    tomllib = None  # type: ignore[assignment]  # stdlib boundary: optional module absent on <3.11
+
+from typing import NamedTuple
+```
+
+Run `uv run ruff check skills/review-spec/review-spec.py` and fix
+anything else it flags. Two things it will flag beyond import order:
+`E501` (line too long) on the module's few lines that run past 100
+chars — reflow each to fit, same as any other `E501` fix in this plan —
+and the module was otherwise written against this repo's existing `E`
+conventions throughout this plan, so beyond those two categories this
+should be a no-op. **Deliberately left out of scope**: `pylint`
 (`.pre-commit-config.yaml`) and `pyright`/`vulture`
 (`pyproject.toml`'s `[tool.pyright] include` / `[tool.vulture] paths`) —
 those enforce stricter design thresholds tuned specifically for the
@@ -3158,11 +3224,22 @@ entry's `key`/`cli`. (This is a raw read for reporting only, not
 on disk, not resolving an effective policy.) If the config has any
 `[[reviewers]]` entries, also report **quota availability** — the actual
 "standalone availability check" this flag exists to provide — by probing
-into a throwaway path that is never persisted anywhere real:
+into a throwaway path that is never persisted anywhere real. This skill
+has no `CODEBASE_ROOT` variable of its own (that is a
+`review-spec/SKILL.md`-only concept, resolved in that skill's own Step
+0.1) — `--cwd` here is just this skill's own current working directory,
+the same directory whose `./.aikit/review-spec.toml` Step 0/1 already
+read from:
 ```bash
-python3 "$TOOLS_PY" probe-quota --cwd <CODEBASE_ROOT> --quota-path "$(mktemp)"
+python3 "$TOOLS_PY" probe-quota --cwd "$(pwd)" --quota-path "$(mktemp)"
 ```
-report each `key`'s `available` boolean from the printed JSON. This still
+`probe-quota` has no `--local` flag — internally it always runs
+`cfg_resolve`'s local+global merge, so its printed JSON may include keys
+from the level the raw read above didn't look at (e.g. a global entry
+when `--local` was passed). Report each `key`'s `available` boolean only
+for keys that also appeared in the raw-read listing above — drop any
+extra key the merge surfaced — so the two parts of this report describe
+the same set of reviewers instead of two different ones. This still
 makes live probe calls to each configured CLI (the probe itself is a
 real trivial invocation, same as at dispatch time), but "no writes" here
 means no write to the real `quota.json`/`review-spec.toml` locations —
@@ -3418,7 +3495,14 @@ Runs once per invocation, after Step 0.6.
    never needs `reviewers.json` for it either (only the external branch
    reads that file), so nothing downstream is left dangling. Go directly
    to Step 1.
-3. Refresh the runtimes snapshot if it's missing or older than
+3. **Required — check before the call below, not optionally**: the
+   `--if-stale` call immediately after this destroys the evidence a
+   missing-file check would find (it creates the file), so this order is
+   fixed — check first, save second:
+   ```bash
+   [ -f "$RUNTIMES_JSON" ] || echo "no-runtimes-snapshot-yet"
+   ```
+   Then refresh the runtimes snapshot if it's missing or older than
    `RUNTIMES_TTL_SECONDS` (~30 days — CLI/model presence rarely changes):
    ```bash
    python3 "$TOOLS_PY" detect-runtimes --if-stale "$RUNTIMES_JSON"
@@ -3426,15 +3510,14 @@ Runs once per invocation, after Step 0.6.
    `--if-stale` checks `cache_is_stale` itself and no-ops
    (prints `{}`, doesn't touch the file) when the existing snapshot is
    still fresh; when missing or stale it detects and saves in the same
-   call, so this is always safe to run. If this was the first-ever save
-   (i.e. `$RUNTIMES_JSON` didn't exist before this call — check with `[ ]`
-   before running it if you need to know), print one line — "No cross-AI
-   config saved yet — run `review-spec-config` so this doesn't repeat
-   every invocation." — then continue to step 4 regardless; do NOT skip
-   reviewer resolution (there's usually no `review-spec.toml` yet either,
-   so `resolve-reviewers` in step 5 degrades to `NO_CONFIG_FALLBACK` on
-   its own — no special-casing needed here beyond the detection call and
-   the hint).
+   call, so this is always safe to run. If the check above printed
+   `no-runtimes-snapshot-yet` (this was the first-ever save), print one
+   line — "No cross-AI config saved yet — run `review-spec-config` so
+   this doesn't repeat every invocation." — then continue to step 4
+   regardless; do NOT skip reviewer resolution (there's usually no
+   `review-spec.toml` yet either, so `resolve-reviewers` in step 5
+   degrades to `NO_CONFIG_FALLBACK` on its own — no special-casing needed
+   here beyond the detection call and the hint).
 4. Refresh quota for anything the config's ladder might need:
    ```bash
    python3 "$TOOLS_PY" probe-quota --cwd <CODEBASE_ROOT> \
@@ -3453,7 +3536,7 @@ Runs once per invocation, after Step 0.6.
    ```bash
    python3 "$TOOLS_PY" resolve-reviewers \
      --cwd <CODEBASE_ROOT> \
-     --quota "$QUOTA_JSON" \
+     --quota-path "$QUOTA_JSON" \
      --source-vendor <SOURCE_VENDOR from the "## Inputs" section's flag parsing> \
      --cross-ai \
      > "$RUN_TMP_DIR/reviewers.json"
@@ -3479,8 +3562,10 @@ section's opening — everything from that heading through the existing
 "Use the `Agent` tool with these exact parameters:" bullet list —
 **stopping before, and NOT including**, the lead-in sentence "Reviewer
 prompt template — use VERBATIM, substitute only `<DOC_PATHS>`, ..."
-(currently line 263 of `skills/review-spec/SKILL.md`, immediately before
-the fenced prompt template) — with:
+(line 263 in the file as it reads before this task's own Steps 1-2
+touch it — those steps insert lines above this point, so re-grep for the
+quoted lead-in sentence rather than trusting the line number by the time
+you reach this step; the quoted text is the real anchor) — with:
 
 (Four backticks below — this insertion contains nested triple-backtick
 fences (the prompt-text block and the `render-command` bash block), and a
@@ -3583,8 +3668,9 @@ For each entry in `REVIEWER_LIST`:
 
 ````
 
-The lead-in sentence at line 263 and the fenced reviewer prompt template
-that follows it in `skills/review-spec/SKILL.md` (for the native case)
+The lead-in sentence ("Reviewer prompt template — use VERBATIM...", line
+263 pre-Task-11 — same re-grep caveat as above) and the fenced reviewer
+prompt template that follows it in `skills/review-spec/SKILL.md` (for the native case)
 both stay unchanged, exactly as they read today — only the section's
 opening (replaced above) changes.
 
@@ -3623,7 +3709,13 @@ single reviewer's report would — the merge already reproduces that line
 re-invoke` otherwise). When `REVIEWER_LIST` has only 1 entry, skip the
 merge call — that entry's raw report (or the native `Agent` tool's output,
 written to the same `iter<N>-<key>.md` path per Step 1) is
-`EFFECTIVE_REPORT_PATH` directly, unchanged from today's behavior.
+`EFFECTIVE_REPORT_PATH` directly, unchanged from today's behavior. If
+`EFFECTIVE_REPORT_PATH` does not exist on disk at all — the single-mode
+case of Step 1's "render-command exits nonzero" dispatch failure, which
+deliberately leaves that path unwritten — treat it exactly like a
+report that lacks a `### Status:` line: Step 2's existing "No Status
+line -> Surface failure" rule applies unchanged, there is no separate
+"missing file" case to handle.
 ````
 
 - [ ] **Step 5: Point Step 2 at `EFFECTIVE_REPORT_PATH`, then replace every remaining `/tmp/review-spec` reference with `$RUN_TMP_DIR`**
@@ -3650,8 +3742,11 @@ Fix each — every one below points at the SAME `EFFECTIVE_REPORT_PATH`
 (Step 1.5) rather than inventing its own new filename, closing a bug the
 live re-review found (three different invented names —
 `fixer-input.md`/`report.md`/the raw per-key name — for what should be one
-path). Verified live against the real current file — the exact locations
-are:
+path). Verified live against the file as it read before this task's own
+Steps 1-2 inserted lines above these locations — by the time you reach
+this step those line numbers have shifted, so use the `grep` above and
+the quoted text below to relocate each one; the numbers are given only
+as a cross-check, not the primary way to find them:
 - **Line 323** (Step 3): `Save the reviewer's report to a temp file
   (\`/tmp/review-spec-report-iter<N>.md\`) so downstream subagents/skills
   can \`Read\` it.` → `The reviewer's report is already at
@@ -3749,12 +3844,13 @@ Also replace line 153, `**Subagent model for both:** \`sonnet\` (Haiku
 misses subtle defects; Opus burns tokens for no extra review-quality
 signal)`, with `**Fixer subagent model:** \`sonnet\` (Haiku misses subtle
 defects; Opus burns tokens for no extra fix-quality signal — the fixer
-stays Claude-only and sonnet-pinned; design §1 explicitly puts changing
-who edits out of scope). The reviewer's model is no longer a Constant at
-all — it comes from `REVIEWER_LIST` (this skill's own `Step 0.7`, points
-2/5/6), set per-entry.`. (This task's own Step numbering is separate from
-`review-spec/SKILL.md`'s internal `Step 0.7`/`Step N` numbering — the
-parenthetical above refers to the latter.) **Verified
+stays Claude-only and sonnet-pinned; who edits the document under review
+is out of scope for this skill). The reviewer's model is no longer a
+Constant at all — it comes from `REVIEWER_LIST` (this skill's own
+`Step 0.7`, points 2/5/6), set per-entry.`. (This task's own Step
+numbering is separate from `review-spec/SKILL.md`'s internal
+`Step 0.7`/`Step N` numbering — the parenthetical above refers to the
+latter.) **Verified
 live: this line is never touched by any other step in this task**, and
 left as-is it directly contradicts Step 3's dispatch rule (the entry's
 `model`, omitted only when empty) — two readings of the same skill with
@@ -3937,4 +4033,47 @@ explicitly deferred and why; and Task 11 Step 1 now updates the
 frontmatter `description:` alongside the Inputs-section flags.
 
 An eighteenth review round should confirm this document reaches Approved
+before execution begins.
+
+**Round 18** (an eighteenth clean-context Opus 5 subagent) found 2
+CRITICAL, 4 HIGH, 5 MEDIUM, and 1 cross-document issue — the largest set
+yet, several introduced by round 17's own fixes. CRITICAL: the new Task
+8 ruff-scope regex dropped the `/.*` wildcard, which would have silently
+un-scoped all of `tools/`/`tests/` from linting; and `review-spec-config`'s
+new `--check-only` quota probe called `--cwd <CODEBASE_ROOT>`, a variable
+that skill never defines (it's `review-spec/SKILL.md`-only). HIGH: the
+"near-no-op" ruff claim was false (10 real `E501` lines across the
+module, plus an unstated final import order); `--quota-path` and
+`--quota` named the same flag differently on two subcommands; Task 11's
+line-number anchors (e.g. "line 263") go stale once that task's own
+earlier steps insert lines above them; and shipped SKILL.md replacement
+text in two places referenced this plan's own "design §1" / "(Task 11
+Step 6)", unresolvable from the installed file. MEDIUM: the same
+`--quota-path`/`--quota` mismatch on `resolve-reviewers`; `--check-only`'s
+reported reviewer set (raw file read) could diverge from its probed set
+(`cfg_resolve`'s merge); design §11 promised an eval doc for
+`review-spec-config` that Task 10 never creates; no documented behavior
+when `render-command` fails in single-mode (report file never written);
+and Step 0.7's first-run-hint precondition check was phrased as optional
+when it must run unconditionally, before `--if-stale` destroys the
+missing-file evidence. Cross-document: the mermaid-audit/markdown-to-pdf
+skill-local-Python precedent was duplicated at length in both documents.
+All 12 fixed: the ruff regex restored to `^((tools|tests)/.*|skills/review-spec/review-spec)\.py$`;
+the quota probe now uses `--cwd "$(pwd)"` with an explanatory note, and
+its reported set is filtered to the raw-read keys; Task 8 Step 7 now
+states the definitive final sorted import block and requires an `E501`
+pass, and every over-100-char line in every `review-spec.py`-destined
+code block was reflowed; both subcommands now share `--quota-path`;
+Task 11's stale line numbers are now explicitly flagged as pre-Task-11,
+re-grep-before-trusting, with the actual `grep`/quoted-text anchors
+already primary; both leaked self-references were replaced with
+self-contained text; design §11 now excludes `review-spec-config` from
+the eval-doc claim and adds a manual-dry-run bullet for it instead; a
+missing `EFFECTIVE_REPORT_PATH` file is now explicitly documented as
+falling through to the existing "No Status line" rule; the first-run
+hint check is now unconditional and ordered before the destructive
+`--if-stale` call; and the duplicated precedent argument now lives once
+in the plan's Architecture section, cited from the design.
+
+A nineteenth review round should confirm this document reaches Approved
 before execution begins.

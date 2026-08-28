@@ -21,7 +21,14 @@
   also calls for fixing that bug, since the new resolution snippets are
   modeled directly on it. `review-spec-config` — a sibling skill — reaches
   `review-spec.py`/the CLI profiles the identical way, via its own
-  self-contained copy of the same three candidates. This repo also has a `skills/<skill>/scripts/<module_name>.py` precedent (`mermaid-audit`, `markdown-to-pdf`) for skill-local Python. Verified live, both scripts ARE invoked as standalone CLIs from `Bash` by their own skills (`mermaid-audit/SKILL.md:55`, `markdown-to-pdf/SKILL.md:36`), not just imported by tests — the underscore/`scripts/` convention already covers CLI invocation. `review-spec.py` departs from it for a narrower reason: those two scripts are each invoked only from their own skill, at a fixed relative path resolved implicitly against that skill's own directory, whereas `review-spec.py` is invoked from two different skills' `Bash` calls from an unpredictable `CWD`, needing the same explicit three-candidate absolute-path resolution `SEEDS_DIR` already uses. Keeping the flat, skill-name-matching filename (rather than an underscore name under `scripts/`) is a call-site-legibility choice, not a technical requirement; this plan's test module loads it via `importlib.util.spec_from_file_location` instead of a plain `import` as the accepted cost of that choice, the same way `tools/status-line.py`'s own tests do.
+  self-contained copy of the same three candidates. This repo also has a
+`skills/<skill>/scripts/<module_name>.py` precedent (`mermaid-audit`,
+`markdown-to-pdf`) for skill-local Python that `review-spec.py`'s flat,
+hyphenated naming departs from — see the plan's Architecture section for
+the verified-live detail on both scripts and the narrower reason
+(two-skill call sites from an unpredictable `CWD`, vs. each precedent
+script's single fixed-relative-path call site) `review-spec.py` doesn't
+follow that convention.
 - **Relates to**: builds on the existing `review-spec` orchestrator
   (Step 0–0.6, the review↔fix loop) without changing its framework-detection
   or fixer-routing behavior — this spec only changes **who performs the
@@ -653,16 +660,18 @@ artifact:
   between the module and both consuming skills (`review-spec/SKILL.md`,
   `review-spec-config/SKILL.md`), which shell out to it rather than
   import it.
-- **Orchestration prose (`review-spec/SKILL.md`, `review-spec-config/SKILL.md`)**:
-  not unit-testable — validated the way this repo's existing eval
-  convention already validates `review-spec`'s orchestration: the
-  checked-in `skills/*/evals/*.md` scenario docs
+- **Orchestration prose (`review-spec/SKILL.md`)**: not unit-testable —
+  validated the way this repo's existing eval convention already
+  validates `review-spec`'s orchestration: the checked-in
+  `skills/*/evals/*.md` scenario docs
   (`review-spec-checklist/evals/orchestrator-integration.md`'s "What the
   user should look for" table, `review-spec/evals/01`–`04-*.md`'s
   "Expected behavior" sequences), updated to describe Step 0.7/
   `REVIEWER_LIST`/`EFFECTIVE_REPORT_PATH`/Step 1.5 instead of the
   pre-cross-AI flow they currently record, plus a manual dry run against
-  a real document per those scenarios' "Pass criteria".
+  a real document per those scenarios' "Pass criteria". `review-spec-config/SKILL.md`
+  is new — it has no pre-existing eval scenario doc to update, and this
+  plan does not add one; it is validated by manual dry run only (below).
 - **`review-spec/SKILL.md` orchestration changes**: no automated test
   (prose, not code) — validated the same way the existing skill is
   validated: a manual dry run reviewing a real spec/plan with `--cross-ai`
@@ -671,3 +680,8 @@ artifact:
   `merge-reports` call (§8's Step 1.5) only runs when 2 reviewers actually
   ran, and that `EFFECTIVE_REPORT_PATH` is bound in both the 1- and
   2-reviewer case regardless.
+- **`review-spec-config/SKILL.md`**: no automated test and no eval
+  scenario doc (see above) — validated by a manual dry run: run it once
+  with `--check-only` against a repo with an existing config, once
+  without any flags to walk the interactive setup end-to-end, and confirm
+  the written `review-spec.toml` round-trips through `resolve-reviewers`.
