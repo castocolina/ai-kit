@@ -13,9 +13,12 @@
   `skills` into `~/.claude`, never a top-level `tools/`), new
   `skills/review-spec/references/cli-profiles/` (same reasoning — inside
   the skill directory, not a new top-level `references/`). Both resolve
-  via the exact same three-candidate pattern (`CLAUDE_PLUGIN_ROOT`/
-  `~/.claude/skills`/sibling-of-this-file) `review-spec/SKILL.md` already
-  uses for its own `SEEDS_DIR` (§8), so `review-spec-config` — a sibling
+  via a self-contained three-candidate pattern (`CLAUDE_PLUGIN_ROOT`/
+  `~/.claude/skills`/sibling-of-this-file) — the same shape
+  `review-spec/SKILL.md` uses for its own `SEEDS_DIR` (§8), which this
+  plan also fixes: `SEEDS_DIR`'s existing block references an
+  `$SKILL_DIR` its own code never assigns, a pre-existing bug — so
+  `review-spec-config` — a sibling
   skill — reaches them the same way.
 - **Relates to**: builds on the existing `review-spec` orchestrator
   (Step 0–0.6, the review↔fix loop) without changing its framework-detection
@@ -358,18 +361,19 @@ interactive wrapper).
 - **Step 0.7 (new)**, runs once per invocation, after Step 0.6:
   0. Resolve `TOOLS_PY` and `CLI_PROFILES_DIR`. `review-spec.py` and its
      `references/cli-profiles/` live inside this skill's **own**
-     directory (§3), so they resolve with the exact same three-candidate
-     pattern already used for `SEEDS_DIR` just above in this same skill
-     (`${CLAUDE_PLUGIN_ROOT}/skills/review-spec/…`, then
-     `~/.claude/skills/review-spec/…`, then the directory containing this
-     `SKILL.md` itself) — no separate "resolve a skill directory, then
-     derive a repo root" step, and no dependency on any `SKILL_DIR`
-     variable (this skill never defines one; `SEEDS_DIR` itself is
-     resolved from three full candidate paths directly, not derived from
-     an intermediate name). Record both as literal absolute paths, exactly
-     like `RUN_TMP_DIR` below — they are not shell variables that survive
-     across separate `Bash` tool calls. Missing `TOOLS_PY`
-     at this resolved path degrades exactly like `--no-cross-ai`.
+     directory (§3), so they resolve the same shape `SEEDS_DIR` just
+     above is meant to (`${CLAUDE_PLUGIN_ROOT}/skills/review-spec/…`,
+     then `~/.claude/skills/review-spec/…`, then the directory containing
+     this `SKILL.md` itself) — but this resolution is **self-contained**:
+     it computes its own directory inline and does not read any variable
+     assigned elsewhere (unlike `SEEDS_DIR`'s existing block, whose third
+     candidate references an `$SKILL_DIR` nothing in that block ever
+     assigns — a pre-existing bug this plan also fixes, bringing that
+     block's actual behavior in line with what it always claimed). Record
+     `TOOLS_PY`/`CLI_PROFILES_DIR` as literal absolute paths, exactly like
+     `RUN_TMP_DIR` below — they are not shell variables that survive
+     across separate `Bash` tool calls. Missing `TOOLS_PY` at this
+     resolved path degrades exactly like `--no-cross-ai`.
   1. Run `mktemp -d`, capture its stdout, and record that absolute path as
      `RUN_TMP_DIR` **in the skill's own working notes/context** — not as a
      shell environment variable. Each `Bash` tool call in this harness runs
@@ -381,7 +385,12 @@ interactive wrapper).
      elsewhere in this skill. See §9.
   2. Resolve source vendor (§4).
   3. Load config (§3) and cache (§6); refresh `quota.json` entries that are
-     stale for any ladder candidate actually needed this run.
+     stale for any key in `policy.ladder` — the full configured ladder,
+     not a filtered subset. Which candidates the ladder walk will actually
+     pick isn't known until *after* quota is known (the walk itself
+     depends on it), so there's no cheaper "only what's needed" set to
+     compute; each stale entry is still charged at most one trivial probe
+     call per `QUOTA_TTL_SECONDS` (§7).
   4. Resolve the effective reviewer list (1 or 2 entries) per `policy.mode`
      (§3) and `--cross-ai`/`--no-cross-ai`.
 - **Step 1**, per resolved reviewer: `cli` absent → dispatch as today (the

@@ -148,8 +148,12 @@ file) — fix every line below:
 - [ ] **Step 5: Fix the two Python files that hardcode the old skill names — required before this task can even commit**
 
 ```bash
-grep -rln "reviewing-specs\|applying-review-feedback" --include="*.py" .
+git grep -l "reviewing-specs\|applying-review-feedback" -- "*.py"
 ```
+
+(`git grep`, not plain `grep -r` — scopes to tracked files only. A plain
+recursive grep also matches stale copies under `.claude/worktrees/` and
+other gitignored paths, which `grep -r` doesn't skip; `git grep` does.)
 
 Verified live against this repo's actual current state, this matches
 exactly:
@@ -172,10 +176,11 @@ commit cannot be made until this step runs.
 - [ ] **Step 6: Verify no stale references remain in Markdown — and fix the ones that need it**
 
 ```bash
-grep -rln "reviewing-specs\|applying-review-feedback" --include="*.md" .
+git grep -l "reviewing-specs\|applying-review-feedback" -- "*.md"
 ```
 
-Run this **after** Steps 1–5. Verified live against this repo's actual
+(Same `git grep` scoping as Step 5, for the same reason.) Run this
+**after** Steps 1–5. Verified live against this repo's actual
 current state (pre-rename), the full match set — Markdown and Python
 combined — is these **19 files** (17 `.md`, handled by this step, plus
 the 2 `.py` files Step 5 already fixed):
@@ -289,7 +294,6 @@ Create `tests/test_review_spec.py`:
 
 ```python
 import importlib.util
-import json
 import os
 import tempfile
 import unittest
@@ -406,6 +410,7 @@ class TestResolveConfig(unittest.TestCase):
 
 
 class TestRenderAndWriteToml(unittest.TestCase):
+    @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
     def test_round_trips_through_tomllib(self):
         import tomllib
         config = {"policy": {"mode": "double", "ladder": ["a", "b"]},
@@ -422,6 +427,7 @@ class TestRenderAndWriteToml(unittest.TestCase):
             rs.cfg_write_toml(path, {"policy": {"mode": "single"}, "reviewers": []})
             self.assertTrue(os.path.exists(path))
 
+    @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
     def test_escapes_quotes_and_backslashes_in_strings(self):
         rendered = rs.cfg_render_toml({"policy": {}, "reviewers": [
             {"key": "a", "command": 'echo "hi" \\ done'}]})
@@ -674,9 +680,14 @@ Add `import json`, `import time`, and `from typing import Optional` to
 `skills/review-spec/review-spec.py`'s import block at the top (below
 `import os`, above the `try: import tomllib` block) — Task 2 only needed
 `os`/`tomllib`, this task is the first to need JSON, mtimes, and
-`cache_read_json`'s `Optional[dict]` return type; keeping imports
-introduced only when a task first needs them avoids an unused-import
-failure from this repo's `ruff` pre-commit hook on an intermediate commit.
+`cache_read_json`'s `Optional[dict]` return type. `.pre-commit-config.yaml`'s
+ruff hook only scopes `^(tools|tests)/.*\.py$`, so this file itself
+(`skills/review-spec/review-spec.py`) is never ruff-linted at all —
+introducing imports incrementally here is simply good hygiene, not a
+lint-gate requirement. `tests/test_review_spec.py` **is** ruff-scoped,
+though (it's under `tests/`), which is why the same incremental
+discipline is load-bearing for that file specifically (see Task 8 Step 1
+for the concrete case this avoids).
 
 Append to `skills/review-spec/review-spec.py`:
 
@@ -1107,6 +1118,25 @@ class TestResolveReviewers(unittest.TestCase):
         result = rs.resolve_reviewers(config, quota={}, source_vendor="openai", cross_ai=True)
         self.assertEqual(len(result), 1)  # secondary dropped, not substituted
         self.assertEqual(result[0].key, "claude-opus")
+
+    def test_double_mode_secondary_dropped_when_no_native_entry_and_only_source_vendor_available(self):
+        # regression: when NO native entry is configured at all, primary
+        # is NO_CONFIG_FALLBACK (vendor == "") -- an empty skip_vendor
+        # disables resolve_ladder_pick's vendor filter entirely, so the
+        # secondary walk must fall back to filtering against source_vendor
+        # instead, or a same-source-vendor external entry (e.g. another
+        # "anthropic"-vendor CLI) would wrongly fill the "cross-vendor"
+        # slot opposite a native anthropic baseline.
+        config = {
+            "policy": {"mode": "double", "ladder": ["claude-cli-opus"]},
+            "reviewers": [
+                {"key": "claude-cli-opus", "model": "opus", "vendor": "anthropic",
+                 "cli": "claude", "command": "claude -p --model {model} {prompt}"},
+            ],
+        }
+        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
+        self.assertEqual(len(result), 1)  # secondary dropped, not substituted
+        self.assertEqual(result[0], rs.NO_CONFIG_FALLBACK)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1243,8 +1273,13 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
     is configured or none has quota (never zero reviewers, and never a
     promoted external entry standing in for the baseline). `secondary` is
     the best entry anywhere in the FULL ladder with a vendor DIFFERENT
-    from primary's, dropped (not substituted) if none survives (a
-    native-only ladder degrades to a single reviewer, not an error).
+    from primary's — or, when primary is NO_CONFIG_FALLBACK (whose vendor
+    is unknown, `""`), different from `source_vendor` instead, since an
+    unknown-vendor filter is no filter at all and would defeat the
+    cross-vendor guarantee exactly when there's no configured native
+    entry to compare against — dropped (not substituted) if none
+    survives (a native-only, or all-same-vendor, ladder degrades to a
+    single reviewer, not an error).
 
     Either mode falls back to NO_CONFIG_FALLBACK when --no-cross-ai was
     passed, the ladder is empty, or nothing in it has quota."""
@@ -1259,7 +1294,8 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
                                        skip_vendor="", quota=quota)
         if primary is None:
             primary = NO_CONFIG_FALLBACK
-        secondary = resolve_ladder_pick(reviewers, ladder, skip_vendor=primary.vendor, quota=quota,
+        secondary_skip_vendor = primary.vendor or source_vendor
+        secondary = resolve_ladder_pick(reviewers, ladder, skip_vendor=secondary_skip_vendor, quota=quota,
                                          allow_same_vendor_fallback=False)
         if secondary is None or secondary.key == primary.key:
             return [primary]
@@ -1365,6 +1401,24 @@ class TestRenderReviewerCommand(unittest.TestCase):
         tokens = _shlex.split(out)
         self.assertEqual(tokens[-1], dangerous_prompt)  # survives as ONE argument
 
+    def test_missing_command_raises_value_error_not_attribute_error(self):
+        # a cli-set entry with no command is a malformed config (schema:
+        # command is "required iff cli present") — must be a reportable
+        # ValueError, never a raw AttributeError from `None.format(...)`
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex", command=None, extra={})
+        with self.assertRaises(ValueError):
+            rs.render_reviewer_command(resolved, "hello")
+
+    def test_malformed_template_raises_value_error_not_key_error(self):
+        # {unknown_field} isn't {model}/{prompt}/in extra -> str.format
+        # raises KeyError; must surface as a reportable ValueError instead
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex", command="codex -m {model} {unknown_field} {prompt}",
+                                        extra={})
+        with self.assertRaises(ValueError):
+            rs.render_reviewer_command(resolved, "hello")
+
 
 class TestProbeReviewerQuota(unittest.TestCase):
     def test_native_entry_is_always_available(self):
@@ -1412,6 +1466,17 @@ class TestProbeReviewerQuota(unittest.TestCase):
         def fake_run(*a, **k):
             raise subprocess.TimeoutExpired(cmd="sleep 999", timeout=30)
         result = rs.probe_reviewer_quota(resolved, run_fn=fake_run)
+        self.assertFalse(result["available"])
+
+    def test_cli_entry_with_missing_command_is_unavailable_not_true(self):
+        # regression: a cli-set entry with no command template can never
+        # actually be dispatched — must classify as unavailable, not
+        # silently `available: True` (which would let it win a ladder
+        # walk and only fail later, in real dispatch)
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex", command=None, extra={})
+        result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("should never shell out for a malformed command")))
         self.assertFalse(result["available"])
 
 
@@ -1487,9 +1552,22 @@ def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> str:
     quoting idiom in the template around them (e.g. codex's `-c
     key='"{effort}"'`), which auto-quoting would break. Command templates
     must therefore write a bare `{prompt}` (never `"{prompt}"` or
-    `'{prompt}'` — the quoting is already applied here)."""
-    return resolved.command.format(model=resolved.model, prompt=shlex.quote(prompt),
-                                    **resolved.extra)
+    `'{prompt}'` — the quoting is already applied here).
+
+    Raises `ValueError` — never a raw `KeyError`/`AttributeError`/
+    `IndexError` — when `resolved.command` is missing (a `cli`-set entry
+    with no `command` is a malformed config, per the schema's "required
+    iff `cli` present") or the template references a placeholder that
+    isn't `{model}`/`{prompt}`/one of `extra`'s keys, or contains a
+    literal unescaped brace. A malformed `review-spec.toml` entry must
+    surface as a reportable config error, never crash the caller."""
+    if not resolved.command:
+        raise ValueError(f"reviewer {resolved.key!r} has cli={resolved.cli!r} set but no command template")
+    try:
+        return resolved.command.format(model=resolved.model, prompt=shlex.quote(prompt),
+                                        **resolved.extra)
+    except (KeyError, IndexError, ValueError) as exc:
+        raise ValueError(f"reviewer {resolved.key!r} has a malformed command template: {exc}") from exc
 
 
 def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) -> dict:
@@ -1502,10 +1580,18 @@ def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) ->
     unavailable; anything else (including plain success) means available.
     This generic heuristic is what makes the confirmed codex usage-limit
     error (see skills/review-spec/references/cli-profiles/codex.md) detectable
-    without a CLI-specific parser."""
-    if not resolved.cli or not resolved.command:
+    without a CLI-specific parser. A `cli`-set entry with a missing or
+    malformed `command` template is deliberately classified `available:
+    False` here rather than skipped/True — it can never actually be
+    dispatched, so reporting it as available would let a broken config
+    entry win the ladder walk and fail later, in real dispatch, instead
+    of here where the failure is cheap and diagnosable."""
+    if not resolved.cli:
         return {"available": True, "checked_at": time.time()}
-    filled = render_reviewer_command(resolved, "Only say: Hello world!")
+    try:
+        filled = render_reviewer_command(resolved, "Only say: Hello world!")
+    except ValueError:
+        return {"available": False, "checked_at": time.time()}
     try:
         result = run_fn(filled, shell=True, capture_output=True, text=True,
                          check=False, timeout=30)
@@ -1877,9 +1963,14 @@ reuses that guard instead of inventing a new one.
 
 - [ ] **Step 1: Write the failing tests**
 
-Add `from unittest import mock` to `tests/test_review_spec.py`'s import
-block at the top (not there yet — needed by the `mock.patch.object` calls
-below). Then add to `tests/test_review_spec.py`:
+Add `import json` and `from unittest import mock` to
+`tests/test_review_spec.py`'s import block at the top (neither is there
+yet — `json` is first needed by this task's own `json.loads`/`json.dump`
+calls below, and adding it earlier would be an unused import `ruff`
+would catch on an intermediate commit, since `tests/*.py` — unlike
+`skills/review-spec/review-spec.py` itself — is in `.pre-commit-config.yaml`'s
+ruff scope; `mock` is needed by the `mock.patch.object` calls below).
+Then add to `tests/test_review_spec.py`:
 
 ```python
 class TestMainCli(unittest.TestCase):
@@ -1999,6 +2090,19 @@ class TestMainCli(unittest.TestCase):
                                  "--index", "0", "--prompt-file", prompt_path])
             self.assertEqual(code, 0)
             self.assertEqual(buf.getvalue().strip(), "codex exec -m gpt-5.2 hello")
+
+    def test_render_command_returns_nonzero_on_malformed_template(self):
+        with tempfile.TemporaryDirectory() as d:
+            reviewers_path = os.path.join(d, "reviewers.json")
+            with open(reviewers_path, "w", encoding="utf-8") as f:
+                json.dump([{"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai",
+                            "cli": "codex", "command": None, "extra": {}}], f)
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("hello")
+            code = rs.main(["render-command", "--reviewers-json", reviewers_path,
+                             "--index", "0", "--prompt-file", prompt_path])
+            self.assertEqual(code, 1)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2118,7 +2222,15 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
                                      cli=r["cli"], command=r["command"], extra=r["extra"])
         with open(args.prompt_file, encoding="utf-8") as f:
             prompt = f.read()
-        print(render_reviewer_command(resolved, prompt))
+        try:
+            print(render_reviewer_command(resolved, prompt))
+        except ValueError as exc:
+            # Deliberately no "### Status:" substring — same fail-closed
+            # convention as merge-reports (Task 7/8): the orchestrator's
+            # existing "No Status line -> Surface failure" rule catches
+            # this without any new special-casing (Task 11 Step 3).
+            print(f"render-command: {exc}", file=sys.stderr)
+            return 1
         return 0
 
     return 1
@@ -2395,9 +2507,10 @@ Set up (or refresh) `review-spec`'s cross-AI reviewer configuration.
 **`review-spec`** skill's own directory (a sibling of this skill, not
 this skill's own directory, and not a top-level `tools/`/`references/` —
 see `review-spec/SKILL.md`'s Step 0.7 point 0 — Task 11 — for why).
-Resolve them the same three-candidate way `review-spec/SKILL.md` itself
-resolves `SEEDS_DIR` — and the identical way that skill resolves its own
-copy of these same two paths, so both skills agree on one procedure:
+Resolve them the identical way `review-spec/SKILL.md` itself resolves
+these same two paths (Task 11 Step 2 point 0) — same three candidates,
+self-contained, no shared variable between the two skills — so both
+agree on one procedure:
 
 ```bash
 for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec}" \
@@ -2542,13 +2655,16 @@ Runs once per invocation, after Step 0.6.
    in an earlier draft of this plan and rejected: neither location is
    reachable from an installed skill, since `tools/setup.py`'s symlinks
    only cover `agents/commands/skills`, per its `CATEGORIES`). Because
-   they're inside `review-spec`'s own skill directory, they resolve with
-   the **exact same three-candidate pattern this skill already uses for
-   `SEEDS_DIR`** above — no separate "resolve SKILL_DIR, then derive a
-   root" step, and nothing here depends on a `SKILL_DIR` variable (this
-   skill does not define one; `SEEDS_DIR`'s own resolution never names an
-   intermediate `SKILL_DIR`, it just tries three full candidate paths
-   directly):
+   they're inside `review-spec`'s own skill directory, they resolve the
+   same way `SEEDS_DIR` above is *meant* to (three candidates:
+   `CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/sibling-of-this-file) — this
+   snippet is **self-contained** and does not read any variable assigned
+   elsewhere; it computes its own directory inline via `$(dirname ...)`.
+   (Task 11 Step 7 separately fixes a real pre-existing bug in
+   `SEEDS_DIR`'s own block — its third candidate references an
+   `$SKILL_DIR` that block never actually assigns — bringing that block's
+   behavior in line with what its comment always claimed, and with this
+   new snippet.):
    ```bash
    for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec}" \
             "$HOME/.claude/skills/review-spec" \
@@ -2564,9 +2680,8 @@ Runs once per invocation, after Step 0.6.
    **not** shell environment variables that survive across separate `Bash`
    tool calls (this bit a first draft of this very step — see this plan's
    Self-review notes). If `TOOLS_PY` does not exist at the resolved path,
-   treat this exactly like `--no-cross-ai` (skip straight to step 5's
-   fallback) — cross-AI support isn't installed, never block the review
-   over it.
+   treat this exactly like `--no-cross-ai` (point 2 below) — cross-AI
+   support isn't installed, never block the review over it.
 1. Run `mktemp -d` via `Bash`, and record its printed absolute path as
    `RUN_TMP_DIR` in this skill's own working notes — **not** a shell
    environment variable. Every `Bash` tool call in this harness starts a
@@ -2582,11 +2697,18 @@ Runs once per invocation, after Step 0.6.
    fixer's report) lives under this one directory, replacing the old flat
    `/tmp/review-spec-*` paths (which collided across concurrent runs on
    different projects/worktrees — fixed here).
-2. If `--no-cross-ai`: skip straight to step 5 with an empty reviewer
-   list request (`resolve-reviewers` degrades to the session-default
-   fallback on its own when `--cross-ai` is omitted) — no detection, no
-   quota probing, minimal overhead, exactly the "skip it entirely" case
-   this flag exists for.
+2. **If `--no-cross-ai` was requested (or `TOOLS_PY` is missing, point 0
+   above)**: set `REVIEWER_LIST` directly, in-context, to the single-entry
+   array `[{"key": "session-default", "model": "", "vendor": "", "cli":
+   null, "command": null, "extra": {}}]` — `NO_CONFIG_FALLBACK`'s exact
+   shape (Task 5). **Do not run `resolve-reviewers`, `probe-quota`, or
+   `detect-runtimes`, and do not write `$RUN_TMP_DIR/reviewers.json`** —
+   points 3–5 below are entirely skipped, not just their side effects;
+   this is the "skip it entirely, minimal overhead" case the flag exists
+   for. Because this entry's `cli` is always `null`, Step 1's dispatch
+   never needs `reviewers.json` for it either (only the external branch
+   reads that file), so nothing downstream is left dangling. Go directly
+   to Step 1.
 3. Otherwise, check whether `~/.cache/ai-kit/review-spec/runtimes.json`
    exists:
    - **Missing**: this is the first invocation ever to reach this step (no
@@ -2639,7 +2761,9 @@ Runs once per invocation, after Step 0.6.
    step never re-implements that logic, it only picks which `--cwd` to
    pass (`CODEBASE_ROOT` from Step 0.1, so the resolved local config is
    the one that actually owns the document under review).
-6. `$RUN_TMP_DIR/reviewers.json` holds a JSON array of 1 or 2 reviewer
+6. **(Active cross-AI path only — point 2's degraded path already set
+   `REVIEWER_LIST` directly and skipped straight to Step 1.)**
+   `$RUN_TMP_DIR/reviewers.json` holds a JSON array of 1 or 2 reviewer
    objects. Record its contents as `REVIEWER_LIST` (index 0 = primary/only
    reviewer, index 1 = the secondary in double mode) — Step 1 both reasons
    over this in-context and passes the same file's path to `render-command`
@@ -2713,7 +2837,14 @@ For each entry in `REVIEWER_LIST`:
      This prints the fully filled, shell-safe command string to stdout —
      `{prompt}` already shell-escaped, per Task 6's `render_reviewer_command`
      docstring. Never hand-splice the prompt into a command string
-     yourself.
+     yourself. **If this exits nonzero** (a malformed or missing `command`
+     template on this reviewer entry — a config error, not a runtime
+     failure), do not attempt to run anything: this reviewer's slot
+     failed to dispatch. Do not write `$RUN_TMP_DIR/iter<N>-<key>.md` for
+     it — leaving it absent is what makes Step 1.5's `merge-reports`
+     (double mode) or the missing-file case (single mode) fail closed
+     through the existing `### Status:`-line-based rules, with no new
+     special-casing needed here.
   3. Execute the printed command via the `Bash` tool with an explicit
      timeout (e.g. 300000ms / 5 minutes — generous for a real review call,
      distinct from the quota probe's 30s timeout since this is a full
@@ -2797,6 +2928,14 @@ are:
   note line 474's Surface table row already uses a generic `<report
   path>` placeholder with no literal `/tmp/` string, so it needs no
   change; only this one concrete example sentence does.
+- **Line 183** (the `NEVER` rule): `**NEVER run the generic fixer before
+  the reviewer's report is written to its temp file** (Step 3). The
+  fixer has nothing to \`Read\` otherwise.` → `**NEVER run the generic
+  fixer before \`EFFECTIVE_REPORT_PATH\` exists on disk** (Step 1.5).
+  The fixer has nothing to \`Read\` otherwise.` — the old wording still
+  named "Step 3" and "its temp file", both stale now that the save
+  happens at Step 1.5 (the merge/single-report step) and there's no
+  separate temp-file write.
 
 Re-run the grep after fixing — expect zero matches.
 
@@ -2828,6 +2967,25 @@ Change `**Reviewer skill:** \`reviewing-specs\`` to `**Reviewer skill:**
 \`review-spec-checklist\`` and `**Fixer skill:** \`applying-review-feedback\``
 to `**Fixer skill:** \`review-spec-fixer\`` (if Task 1 hasn't already
 caught these specific lines — re-grep to confirm).
+
+Also fix a real, pre-existing bug in the `SEEDS_DIR` resolution block
+(lines 162–167) directly above the `**Loop state file**` line — its
+third candidate references `$SKILL_DIR` (`"$SKILL_DIR/../reviewing-specs/references/frameworks"`),
+but nothing in this skill ever assigns that variable; the comment
+`# SKILL_DIR = the directory containing this SKILL.md` documents intent,
+not an assignment. **Verified live against the real file.** Add the
+missing assignment as the first line inside the `for d in ...` block:
+```bash
+SKILL_DIR="$(dirname "<absolute path to THIS SKILL.md>")"
+for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec-checklist/references/frameworks}" \
+```
+(the `for d in ...` line itself is already being rewritten by Task 1 Step
+3 to the new `review-spec-checklist` name — this just adds the missing
+`SKILL_DIR=` line immediately before it, in the same block). This bug
+predates this plan, but the new `TOOLS_PY`/`CLI_PROFILES_DIR` resolution
+(Step 2 point 0 below) is modeled directly on this exact block, so fixing
+it here keeps both resolutions genuinely consistent instead of one
+working and the other's precedent silently broken.
 
 Also replace line 153, `**Subagent model for both:** \`sonnet\` (Haiku
 misses subtle defects; Opus burns tokens for no extra review-quality
@@ -3023,5 +3181,23 @@ it was fixing, plus a real Task 1 gap the first two rounds both missed
 | CROSS-DOC | Double mode's SECONDARY slot could still be filled by a same-vendor reviewer: `resolve_ladder_pick`'s same-vendor-fallback pass (needed for `single` mode and the primary slot) also ran for the secondary slot, contradicting design §3's "dropped, not substituted" guarantee | `resolve_ladder_pick` gained an `allow_same_vendor_fallback` parameter, `False` for the secondary-slot call only; new regression test proves a same-vendor-only ladder now drops the secondary instead of duplicating the vendor |
 | CROSS-DOC | Design §8's dedup rule ("(severity, exact Location string)") read as the exact same-report-collision bug the second round's `merge_findings` fix exists to avoid | §8 now states the cross-report-only scope explicitly, matching the implementation |
 | CROSS-DOC | Design §4 described the source-vendor default as dynamically "the current session's own vendor"; the plan just hardcodes the literal `anthropic` | Both documents now state explicitly that `anthropic` is that abstract default's concrete value, chosen because the orchestrator has no runtime introspection API for its own vendor — not a contradiction, but previously stated inconsistently |
+
+### Fourth review: a third clean-context Opus 5 subagent (native, live)
+
+The third round's fixes were themselves reviewed by a FOURTH clean-context
+Opus 5 subagent, run the same way and told explicitly not to trust the
+"already fixed" summary. 9 findings, all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL | Step 0.7's `--no-cross-ai` path was internally contradictory across two points in the same step — one point said `resolve-reviewers` is never called when cross-AI is disabled, another still described it running | The disabled case now sets `REVIEWER_LIST` directly in-context to the `NO_CONFIG_FALLBACK`-shaped single entry, skips points 3-5 entirely, and goes straight to Step 1 — `resolve-reviewers`/`reviewers.json` are never touched on this path |
+| CRITICAL | The plan claimed (four separate locations) that `SEEDS_DIR`'s existing three-candidate pattern "never names an intermediate `SKILL_DIR`" — verified live against the real `skills/review-spec/SKILL.md`, its third candidate DOES reference `$SKILL_DIR`, and nothing anywhere assigns it; a genuine pre-existing bug, not a documentation error on my part | Corrected the false claim at all four locations (plan Architecture/Task 11/Task 10, design §3/§8); Task 11 Step 7 now also fixes the real bug by adding `SKILL_DIR="$(dirname "<path to this SKILL.md>")"` before `SEEDS_DIR`'s loop |
+| CRITICAL | Task 1's verification commands used plain `grep -rl`, which also matches gitignored paths (stale worktree copies, `.atl/`, `.superpowers/sdd/*`) — the file counts derived from it were unreliable | Switched every verification command to `git grep -l ... -- "*.py"` / `"*.md"`, scoped to tracked files only; re-verified live, restores the original correct 2-file/17-file counts |
+| CRITICAL | The stated rationale for `skills/review-spec/review-spec.py`'s incremental-import discipline (ruff would fail the commit) was wrong — verified live, `.pre-commit-config.yaml`'s ruff hook only covers `tools/`/`tests/`, not `skills/`; meanwhile a REAL ruff violation existed unnoticed: Task 2's test file imported `json` before it was used | Corrected the rationale (the module file isn't ruff-scoped; `tests/test_review_spec.py` is, and that's where the discipline is actually load-bearing); moved the `import json` from Task 2's test-file Step 1 to Task 8's, where it's first used |
+| HIGH | Double mode's secondary-slot cross-vendor guarantee silently disappeared whenever the primary resolved to `NO_CONFIG_FALLBACK` (`vendor == ""`) — an empty `skip_vendor` disables `resolve_ladder_pick`'s vendor filter entirely by its own documented contract, so the secondary could land on the same vendor as the document's author with no baseline to compare against | `resolve_reviewers` now computes `secondary_skip_vendor = primary.vendor or source_vendor`, falling back to the document's actual authoring vendor when there's no native baseline; new regression test `test_double_mode_secondary_dropped_when_no_native_entry_and_only_source_vendor_available` |
+| HIGH | `render_reviewer_command` raised raw `KeyError`/`AttributeError`/`IndexError` on a `cli`-set config entry with no `command`, or a malformed template — an unhandled traceback mid-dispatch, contradicting the design's "never blocks the whole run" promise; `probe_reviewer_quota`'s early-return also masked the missing-command case as `available: True` | `render_reviewer_command` now raises `ValueError` uniformly (wrapping the format-string failure) or when `command` is missing; `probe_reviewer_quota` only skips probing for truly native (`not resolved.cli`) entries and catches `ValueError` to report `available: False`; the `render-command` CLI subcommand catches `ValueError`, prints to stderr, exits 1 (no `### Status:` line, so the existing fail-closed convention catches it); Task 11 Step 3's orchestrator prose now explains a nonzero `render-command` exit means that slot failed to dispatch, so no report file is written for it and the existing fail-closed rules take over — no new special-casing |
+| MEDIUM | `skills/review-spec/SKILL.md`'s `NEVER` rule (line 183) still said "before the reviewer's report is written to its temp file (Step 3)" — stale since the temp-file save was removed in round 2's `EFFECTIVE_REPORT_PATH` fix | Task 11 Step 5 now also rewrites this rule to reference `EFFECTIVE_REPORT_PATH` existing on disk (Step 1.5), not a Step-3 temp file |
+| MEDIUM | Task 2's tests (`test_round_trips_through_tomllib`, `test_escapes_quotes_and_backslashes_in_strings`) did unguarded `import tomllib`, which would ImportError on an interpreter below 3.11 even though the module itself degrades gracefully | Both tests now `@unittest.skipIf(rs.tomllib is None, ...)` |
+| CROSS-DOC | Design §8 point 3 said quota is refreshed only "for any ladder candidate actually needed this run" — the actual implementation (`probe-quota`'s CLI handler) refreshes every stale key in the FULL `policy.ladder`, since which candidates the walk needs isn't known until quota is already known | Design §8 corrected to describe the real behavior and explain why a narrower "only what's needed" set isn't computable up front |
 
 A fourth review round should confirm this document reaches Approved before execution begins.
