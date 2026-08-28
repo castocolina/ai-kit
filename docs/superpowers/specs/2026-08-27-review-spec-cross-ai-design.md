@@ -371,7 +371,9 @@ once `runtimes.json` exists — whether written here or by an explicit
 `review-spec-config` run — Step 0.7 stops live-detecting and hinting
 regardless of whether the user ever configured any `[[reviewers]]`
 entries; an explicit `review-spec-config` run is what reopens that
-decision (it always re-detects and re-saves).
+decision (it always re-detects and re-saves — **except under
+`--check-only`**, §7, which reports availability without persisting
+anything, so it deliberately does not reopen this decision).
 
 ---
 

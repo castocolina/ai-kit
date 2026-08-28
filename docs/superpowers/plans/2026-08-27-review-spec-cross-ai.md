@@ -171,12 +171,12 @@ exactly:
   mention at line 358 ("the known skill \`\`applying-review-feedback\`\`
   was symlinked").
 
-**This step cannot be skipped or deferred to Step 7**:
+**This step cannot be skipped or deferred to Step 6**:
 `tests.test_wizard_pty` is both in the `Makefile`'s `test:` target and in
 `.pre-commit-config.yaml`'s `unittest-wizard` hook (`uv run python -m
 unittest tests.test_wizard_app tests.test_wizard_pty`) — after Step 1's
 `git mv`, that test's `_KNOWN_SKILL` constant points at a symlink name
-that no longer exists, so the repo's own commit gate fails and Step 8's
+that no longer exists, so the repo's own commit gate fails and Step 9's
 commit cannot be made until this step runs.
 
 - [ ] **Step 6: Verify no stale references remain in Markdown — and fix the ones that need it**
@@ -211,7 +211,7 @@ skills/review-spec/evals/04-ambiguous-detection-fallback.md
 skills/review-spec/SKILL.md
 ```
 
-By the time you run this step's grep (after Steps 1–4), the paths have
+By the time you run this step's grep (after Steps 1–5), the paths have
 already moved and 4 of these 17 are already fixed —
 `skills/review-spec/SKILL.md` by Step 3, and the 3 self-references by
 Step 4 (`review-spec-checklist/SKILL.md`, `review-spec-fixer/SKILL.md`,
@@ -1397,7 +1397,7 @@ any entry whose cached `checked_at` is still fresh, regardless of how many
 - Produces: `render_reviewer_command(resolved: ResolvedReviewer, prompt: str) -> str`,
   `probe_reviewer_quota(resolved: ResolvedReviewer, run_fn=subprocess.run) -> dict`,
   `refresh_quota_cache(config: dict, ladder_keys: list, existing: dict, ttl_seconds: int, run_fn=subprocess.run) -> dict`.
-  `render_reviewer_command` is also consumed by Task 11's Step 1 (real
+  `render_reviewer_command` is also consumed by Task 11's Step 3 (real
   dispatch) — the same template-filling logic backs both the quota probe
   and the actual reviewer invocation, so they can never drift apart.
 
@@ -2856,10 +2856,17 @@ python3 "$TOOLS_PY" detect-runtimes
 Parse the printed JSON: for each CLI marked `"installed": true`, note its
 path; for `opencode`, note its `models` list.
 
-**If `--check-only` was passed**: report which CLIs are installed, which
-have a `review-spec.toml` reviewer entry already, and stop here — do not
-persist the snapshot and do not write anything else, matching this
-skill's own `--check-only` contract (frontmatter `description:` above).
+**If `--check-only` was passed**: report which CLIs are installed. To
+also report which already have a `review-spec.toml` reviewer entry,
+`Read` the config file directly — `./.aikit/review-spec.toml` if
+`--local` was passed, else `~/.config/ai-kit/review-spec.toml` (§3's
+local/global paths) — if it exists, and note each `[[reviewers]]`
+entry's `key`/`cli`. (This is a raw read for reporting only, not
+`cfg_resolve`'s local/global merge — `--check-only` is describing what's
+on disk, not resolving an effective policy.) Then stop here — do not
+persist the runtimes snapshot and do not write anything else, matching
+this skill's own `--check-only` contract (frontmatter `description:`
+above).
 
 **Otherwise**, persist the snapshot before continuing to Step 2:
 ```bash
@@ -3363,9 +3370,10 @@ for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec-checklist
 3 to the new `review-spec-checklist` name — this just adds the missing
 `SKILL_DIR=` line immediately before it, in the same block). This bug
 predates this plan, but the new `TOOLS_PY`/`CHECKLIST_SKILL_MD`
-resolution (Step 2 point 0 below) is modeled directly on this exact
-block, so fixing it here keeps both resolutions genuinely consistent
-instead of one working and the other's precedent silently broken.
+resolution (this task's Step 2, point 0, above) is modeled directly on
+this exact block, so fixing it here keeps both resolutions genuinely
+consistent instead of one working and the other's precedent silently
+broken.
 
 Also replace line 153, `**Subagent model for both:** \`sonnet\` (Haiku
 misses subtle defects; Opus burns tokens for no extra review-quality
@@ -3373,7 +3381,8 @@ signal)`, with `**Fixer subagent model:** \`sonnet\` (Haiku misses subtle
 defects; Opus burns tokens for no extra fix-quality signal — the fixer
 stays Claude-only and sonnet-pinned; design §1 explicitly puts changing
 who edits out of scope). The reviewer's model is no longer a Constant at
-all — it comes from `REVIEWER_LIST` (Step 5), set per-entry.`. **Verified
+all — it comes from `REVIEWER_LIST` (this skill's own `Step 0.7`, points
+2/5/6 — not this task's plan-step numbering), set per-entry.`. **Verified
 live: this line is never touched by any other step in this task**, and
 left as-is it directly contradicts Step 3's dispatch rule (the entry's
 `model`, omitted only when empty) — two readings of the same skill with
@@ -3383,7 +3392,9 @@ hardcoded-model anti-pattern this whole plan exists to remove.
 - [ ] **Step 8: Update the loop diagram for 1–2 reviewer dispatches and the merge step**
 
 `skills/review-spec/SKILL.md`'s ` ```dot ` loop diagram (the `digraph
-review_spec { ... }` block, immediately above the Constants section)
+review_spec { ... }` block, lines 194–252 — inside the `## Loop` section,
+which follows `## Constants` and `## NEVER`, and sits immediately above
+`### Step 1 — Dispatch reviewer (every iteration)`)
 still names a single `"Dispatch reviewer subagent (fresh)"` node feeding
 straight into `"Parse Status line"` — a single-reviewer flow. After Steps
 2–5 above, the real flow is 1 or 2 dispatches, an optional merge
@@ -3700,4 +3711,20 @@ fixed:
 | MEDIUM | `review-spec/SKILL.md`'s existing `` ```dot `` loop diagram still named a single `"Dispatch reviewer subagent (fresh)"` node feeding straight into `"Parse Status line"` — a single-reviewer flow that no longer matches the real 1–2-dispatch-then-optional-merge-then-read-`EFFECTIVE_REPORT_PATH` flow Task 11 Steps 2–5 build | New Task 11 Step 8 renames the node to `"Dispatch reviewer(s) (fresh)"` and inserts a `"Read EFFECTIVE_REPORT_PATH"` node between it and `"Parse Status line"`, covering both the single- and double-reviewer cases at the diagram's existing level of detail; old Steps 8/9 renumbered to 9/10 |
 | MEDIUM | Design §11's testing enumeration never mentioned the CLI entrypoint (`main`, Task 8's `TestMainCli`, 16 tests) or the TOML writer (`cfg_render_toml`/`cfg_write_toml`, Task 2) — the only integration surface between the module and both consuming skills, and the same "produced but not covered in §11" class this document has already corrected twice | §11 gained two new bullets: TOML writer coverage, and CLI-entrypoint coverage naming every subcommand exercised through `main()`'s `argv` parsing |
 
-A ninth review round should confirm this document reaches Approved before execution begins.
+### Tenth review: a ninth clean-context Opus 5 subagent (native, live)
+
+The ninth round's fixes were themselves reviewed by a TENTH clean-context
+Opus 5 subagent, which explicitly confirmed the renumbered Task 11 steps
+(1–10) are internally sound — no duplicates, no gaps, every forward/
+backward reference resolves correctly except one. 5 findings (1 CRITICAL,
+4 MEDIUM), all fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL | The newly-added Task 11 Step 8 (diagram update) claimed the ` ```dot ` loop diagram sits "immediately above the Constants section" — verified live, it's actually ~45 lines *below* Constants and `## NEVER`, inside the `## Loop` section, immediately above `### Step 1 — Dispatch reviewer`. The same stale-direction defect class this task has now hit three times (`SEEDS_DIR` vs. the Loop-state-file line, `SEEDS_DIR` vs. the Step 0.7 insertion point), reintroduced by the step that just fixed the second instance | Corrected to the real location: lines 194–252, inside `## Loop`, above `### Step 1 — Dispatch reviewer` |
+| MEDIUM | Task 11 Step 7's replacement Constants text said the reviewer's model "comes from `REVIEWER_LIST` (Step 5)" — inside the shipped skill, `### Step 5` is "Surface to user", unrelated to reviewer resolution; the real source is `Step 0.7`'s points 2/5/6 (SKILL.md's own step numbering, not this task's plan-step numbering, which the two were conflated under). Also fixed the same conflation at Task 6's Interfaces ("Task 11's Step 1" → the real dispatch step, Task 11's plan-Step 3) and a stale "(Step 2 point 0 below)" in Task 11 Step 7 itself (Step 2 precedes Step 7 in this task, not follows it) | All three corrected to name the right step under the right numbering scheme, with an explicit note distinguishing "this task's plan-step numbering" from "this skill's own Step 0.7/Step N numbering" where the two could be confused |
+| MEDIUM | Task 1 Step 5's "cannot be skipped or deferred" note pointed at "Step 7" (the internal-`references/`-paths verification) instead of Step 6 (the Markdown sweep it's actually deferrable to), and said the repo's commit gate blocks "Step 8's commit" when Task 1's actual commit step is Step 9 (Step 8 is the local-symlink-refresh note). Also fixed Step 6's own "after Steps 1–4" (should read 1–5, since Step 5 already ran by the time Step 6's grep executes) | All three corrected to the real step numbers |
+| MEDIUM | Design §6's closing sentence asserted `review-spec-config` "always re-detects and re-saves" runtimes — but `--check-only` (§7, "no writes") deliberately does neither, contradicting this unconditional claim | Scoped explicitly: "except under `--check-only`, §7, which reports availability without persisting anything, so it deliberately does not reopen this decision" |
+| MEDIUM | Task 10 Step 1's `--check-only` branch said to report "which have a `review-spec.toml` reviewer entry already" with no stated mechanism — no `review-spec.py` subcommand resolves or prints config contents (`cache-path` covers cache files only), so an executor with zero project context had nothing concrete to do | Names the exact mechanism: `Read` the config file directly at its local/global path (§3), noting each `[[reviewers]]` entry's `key`/`cli` — explicitly a raw read for reporting, not `cfg_resolve`'s local/global merge |
+
+A tenth review round should confirm this document reaches Approved before execution begins.
