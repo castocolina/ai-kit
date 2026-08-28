@@ -305,7 +305,8 @@ import os
 import tempfile
 import unittest
 
-_MODULE_PATH = os.path.join(os.path.dirname(__file__), "..", "skills", "review-spec", "review-spec.py")
+_MODULE_PATH = os.path.join(os.path.dirname(__file__), "..", "skills",
+                             "review-spec", "review-spec.py")
 
 
 def _load_module():
@@ -404,7 +405,8 @@ class TestResolveConfig(unittest.TestCase):
             f.write('strategy = "local-only"\n[policy]\nmode = "double"\n')
         resolved = rs.cfg_resolve(self.tmp, self.env)
         self.assertEqual(resolved["policy"]["mode"], "double")
-        self.assertEqual(resolved["reviewers"], [])  # local declared no reviewers, global not consulted
+        # local declared no reviewers, global not consulted
+        self.assertEqual(resolved["reviewers"], [])
 
     def test_global_merge_is_the_default_strategy(self):
         os.makedirs(os.path.join(self.tmp, ".aikit"), exist_ok=True)
@@ -657,7 +659,8 @@ class TestCachePaths(unittest.TestCase):
 
     def test_runtimes_and_quota_paths(self):
         env = {"HOME": "/home/u"}
-        self.assertEqual(rs.cache_runtimes_path(env), "/home/u/.cache/ai-kit/review-spec/runtimes.json")
+        self.assertEqual(rs.cache_runtimes_path(env),
+                          "/home/u/.cache/ai-kit/review-spec/runtimes.json")
         self.assertEqual(rs.cache_quota_path(env), "/home/u/.cache/ai-kit/review-spec/quota.json")
 
 
@@ -1057,25 +1060,29 @@ class TestResolveReviewers(unittest.TestCase):
         }
 
     def test_no_cross_ai_returns_only_the_no_config_fallback(self):
-        result = rs.resolve_reviewers(self.config, quota={}, source_vendor="anthropic", cross_ai=False)
+        result = rs.resolve_reviewers(self.config, quota={}, source_vendor="anthropic",
+                                       cross_ai=False)
         self.assertEqual(result, [rs.NO_CONFIG_FALLBACK])
 
     def test_no_config_at_all_falls_back_to_session_default(self):
         config = {"policy": {"mode": "single", "ladder": []}, "reviewers": []}
-        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
+        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic",
+                                       cross_ai=True)
         self.assertEqual(result, [rs.NO_CONFIG_FALLBACK])
 
     def test_single_mode_skips_same_vendor_as_source(self):
         # single mode's whole point is an independent perspective, so the two
         # same-vendor-as-source (anthropic) ladder entries are skipped even
         # though they're earlier in the ladder
-        result = rs.resolve_reviewers(self.config, quota={}, source_vendor="anthropic", cross_ai=True)
+        result = rs.resolve_reviewers(self.config, quota={}, source_vendor="anthropic",
+                                       cross_ai=True)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].key, "codex-gpt")
 
     def test_single_mode_falls_through_tiers_when_flagship_lacks_quota(self):
         quota = {"codex-gpt": {"available": False}}
-        result = rs.resolve_reviewers(self.config, quota=quota, source_vendor="anthropic", cross_ai=True)
+        result = rs.resolve_reviewers(self.config, quota=quota, source_vendor="anthropic",
+                                       cross_ai=True)
         # only same-vendor entries left with quota -> the vendor-skip fallback picks
         # the ladder's best surviving entry, which is claude-opus (tier-aware: tried
         # before claude-sonnet because it is earlier in the ladder)
@@ -1086,7 +1093,8 @@ class TestResolveReviewers(unittest.TestCase):
         config["policy"] = {"mode": "double", "ladder": self.config["policy"]["ladder"]}
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(len(result), 2)
-        self.assertEqual(result[0].key, "claude-opus")   # best NATIVE entry (guaranteed baseline), tier-aware
+        # best NATIVE entry (guaranteed baseline), tier-aware
+        self.assertEqual(result[0].key, "claude-opus")
         self.assertEqual(result[1].key, "codex-gpt")      # first DIFFERENT-vendor entry
 
     def test_double_mode_primary_falls_through_tiers_when_flagship_lacks_quota(self):
@@ -1125,7 +1133,7 @@ class TestResolveReviewers(unittest.TestCase):
         self.assertIsNone(result[0].cli)
         self.assertEqual(result[1].key, "codex-gpt")     # external takes the secondary slot only
 
-    def test_double_mode_baseline_falls_back_to_session_default_when_no_native_entry_configured(self):
+    def test_double_mode_baseline_falls_back_to_default_when_no_native_entry(self):
         # ladder is entirely external -> the native-baseline guarantee still
         # holds via NO_CONFIG_FALLBACK, never by promoting an external entry
         config = {
@@ -1156,7 +1164,7 @@ class TestResolveReviewers(unittest.TestCase):
         self.assertEqual(len(result), 1)  # secondary dropped, not substituted
         self.assertEqual(result[0].key, "claude-opus")
 
-    def test_double_mode_secondary_dropped_when_no_native_entry_and_only_source_vendor_available(self):
+    def test_double_mode_secondary_dropped_when_no_native_and_only_source_vendor(self):
         # regression: when NO native entry is configured at all, primary
         # is NO_CONFIG_FALLBACK (vendor == "") -- an empty skip_vendor
         # disables resolve_ladder_pick's vendor filter entirely, so the
@@ -1424,9 +1432,9 @@ class TestRenderReviewerCommand(unittest.TestCase):
                           'codex exec -m gpt-5.2 hello')
 
     def test_fills_extra_fields(self):
+        cmd = "codex exec -m {model} -c service_tier='\"{service_tier}\"' {prompt}"
         resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
-                                        cli="codex",
-                                        command="codex exec -m {model} -c service_tier='\"{service_tier}\"' {prompt}",
+                                        cli="codex", command=cmd,
                                         extra={"service_tier": "fast"})
         out = rs.render_reviewer_command(resolved, "hi")
         self.assertIn("service_tier='\"fast\"'", out)
@@ -1460,7 +1468,8 @@ class TestRenderReviewerCommand(unittest.TestCase):
         # {unknown_field} isn't {model}/{prompt}/in extra -> str.format
         # raises KeyError; must surface as a reportable ValueError instead
         resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
-                                        cli="codex", command="codex -m {model} {unknown_field} {prompt}",
+                                        cli="codex",
+                                        command="codex -m {model} {unknown_field} {prompt}",
                                         extra={})
         with self.assertRaises(ValueError):
             rs.render_reviewer_command(resolved, "hello")
@@ -2527,11 +2536,14 @@ scope as "a different, riskier problem" — a reviewer must never be
 dispatched with real write access to the repo under review. Each profile
 below states its confirmed status:
 - `codex`: **confirmed** — `--sandbox read-only` in its own template.
-- `gemini`: **partial** — its template adds `--sandbox` (isolates writes
-  to an ephemeral container per the existing `gemini` skill's own flag
-  list; the container itself is still writable, but changes never reach
-  the real working tree), combined with `--approval-mode yolo` (required
-  for non-interactive dispatch — `default` hangs, per that skill).
+- `gemini`: **partial** — its template adds `--sandbox` (the existing
+  `gemini` skill's own flag list documents only "`-s, --sandbox` — Run in
+  sandbox mode for isolation"; it does not state that writes are confined
+  to an ephemeral container or that they never reach the real working
+  tree — that stronger characterization is unverified, consistent with
+  this profile's own `status: stub`), combined with `--approval-mode
+  yolo` (required for non-interactive dispatch — `default` hangs, per
+  that skill).
 - `claude`, `opencode`, `grok`, `cursor-agent`: **unconfirmed** — none of
   these CLIs' non-interactive/print modes are confirmed here to forbid
   tool-driven writes; verify (and add the appropriate read-only/sandbox
@@ -2738,7 +2750,7 @@ Not yet verified against a real installation. Verify all of the above with
 id: gemini
 display_name: Gemini CLI
 status: stub (carried over from the existing `gemini` skill's documented flags — not installed on the reference machine)
-read_only: "partial (--sandbox isolates writes to an ephemeral container; not a true no-write guarantee)"
+read_only: "partial (--sandbox per the gemini skill's own flag list, 'run in sandbox mode for isolation' — the container/no-write-to-real-tree characterization is unverified)"
 detect: "which gemini"
 last_verified: 2026-08-27
 ---
@@ -2748,10 +2760,13 @@ last_verified: 2026-08-27
 Per the existing `gemini` skill (`~/.claude/skills/gemini/SKILL.md`):
 model via `-m/--model <MODEL>`; **background/non-interactive runs require
 `--approval-mode yolo`** (the `default` approval mode hangs indefinitely in
-a non-interactive shell — do not use it here); `-s`/`--sandbox` runs the
-call in an isolated container, so `yolo`-approved writes never reach the
-real working tree — include it always, since `yolo` alone grants
-unrestricted write access to whatever it runs against.
+a non-interactive shell — do not use it here); that skill also documents
+`-s`/`--sandbox` as "run in sandbox mode for isolation" (no further detail
+on what's isolated) — include it always here regardless, since `yolo`
+alone grants unrestricted write access to whatever it runs against and
+`--sandbox` is the only mitigation this profile can point to; confirm its
+actual isolation scope live before marking this profile `status:
+confirmed`.
 
 ```bash
 gemini -m {model} --sandbox --approval-mode yolo {prompt}
@@ -2897,16 +2912,24 @@ permissions against your working tree." (per design §5's read-only
 posture) — inform, don't block; the user is choosing to accept that CLI's
 default risk.
 
-**For a native (cli-less) reviewer entry** — e.g. the current
-session's own runtime, or another Claude tier reachable without an
-external CLI — `model` must be one of the four `Agent`-tool aliases
-(`sonnet`/`opus`/`haiku`/`fable`), never a full model id like `"opus-5"`;
-ask the user to pick one of those four rather than typing a version
-string.
+**Also ask, explicitly — do not skip this**: whether to register one or
+more **native** (`cli`-omitted) reviewer entries — e.g. the current
+session's own tier, or another Claude tier reachable without an external
+CLI. This is not optional to ask: `policy.mode = "double"`'s guaranteed
+baseline (§3) walks `policy.ladder` restricted to native entries only
+(Task 5's `_native_ladder`), so a config with zero native `[[reviewers]]`
+entries can never seat a real native baseline — it always degrades to
+`NO_CONFIG_FALLBACK` — silently defeating design §1's "prefer the
+strongest available Claude tier" goal for anyone who only answered the
+per-CLI questions above. For each native entry the user wants, `model`
+must be one of the four `Agent`-tool aliases (`sonnet`/`opus`/`haiku`/
+`fable`), never a full model id like `"opus-5"`; ask the user to pick one
+of those four rather than typing a version string.
 
 Then ask: `policy.mode` (`single` or `double`) and the `policy.ladder`
-order (default to the order the user answered the per-CLI questions in,
-but let them reorder). If `--local` was passed, also ask whether this
+order (default to the order the user answered the per-CLI and
+native-entry questions in, combined, but let them reorder). If `--local`
+was passed, also ask whether this
 local config should be `local-only` or the default `global-merge` — set
 the JSON config's top-level `strategy` key to `"local-only"` if so
 (`cfg_render_toml` renders it as a bare `strategy = "..."` line at the
@@ -3300,13 +3323,23 @@ are:
   can \`Read\` it.` → `The reviewer's report is already at
   \`EFFECTIVE_REPORT_PATH\` (Step 1.5) — no separate save needed here.`
 - **Every `<REPORT_TEMP_PATH>` placeholder that reads this saved report**
-  (lines 360, 383, 392, 430 — the fixer's prompt-template substitution
-  list and its two "Review report: ..." lines) — since Step 3's own save
-  is being removed by the bullet above, `<REPORT_TEMP_PATH>` is no longer
-  bound by anything. Rename every one of these four occurrences to
-  `<EFFECTIVE_REPORT_PATH>`, bound to the value Step 1.5 (Task 11 Step 4)
-  established — one name for the same path throughout the whole skill,
-  not two.
+  — since Step 3's own save is being removed by the bullet above,
+  `<REPORT_TEMP_PATH>` is no longer bound by anything. Verified live,
+  there are exactly four occurrences, at four different roles:
+  - **Line 360** — Step 3a's (generic fixer) prompt-template Inputs list:
+    `Review report: <REPORT_TEMP_PATH>`.
+  - **Line 383** — Step 3b-skill's (native-revise) `prompt` substitution
+    list: `` substitute `<SKILL_NAME>` ..., `<DOC_PATHS>`,
+    `<REPORT_TEMP_PATH>`, `<CODEBASE_ROOT>` ``.
+  - **Line 392** — Step 3b-skill's own Inputs list inside that same
+    prompt: `Review report (the findings to resolve): <REPORT_TEMP_PATH>`.
+  - **Line 430** — Step 3b-cmd's (slash command / backing skill route)
+    trailing note when invoking without a `{report_path}` placeholder:
+    `` (findings: <REPORT_TEMP_PATH>) ``.
+
+  Rename every one of these four occurrences to `<EFFECTIVE_REPORT_PATH>`,
+  bound to the value Step 1.5 (Task 11 Step 4) established — one name for
+  the same path throughout the whole skill, not two.
 - The Constants section's `**Loop state file (optional):**
   /tmp/review-spec-<doc-basename>-<timestamp>.log` → `**Loop state file
   (optional):** \`$RUN_TMP_DIR/loop.log\``.
@@ -3361,7 +3394,10 @@ third candidate references `$SKILL_DIR` (`"$SKILL_DIR/../reviewing-specs/referen
 but nothing in this skill ever assigns that variable; the comment
 `# SKILL_DIR = the directory containing this SKILL.md` documents intent,
 not an assignment. **Verified live against the real file.** Add the
-missing assignment as the first line inside the `for d in ...` block:
+missing assignment on its own line, **immediately before** the
+`for d in ...` line — NOT inside the loop body, where it would execute
+after the candidate list is already expanded and leave `$SKILL_DIR`
+empty in the third candidate, reproducing the exact bug this fixes:
 ```bash
 SKILL_DIR="$(dirname "<absolute path to THIS SKILL.md>")"
 for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec-checklist/references/frameworks}" \
@@ -3619,7 +3655,7 @@ Opus 5 subagent, run the same way and told explicitly not to trust the
 | CRITICAL | The plan claimed (four separate locations) that `SEEDS_DIR`'s existing three-candidate pattern "never names an intermediate `SKILL_DIR`" — verified live against the real `skills/review-spec/SKILL.md`, its third candidate DOES reference `$SKILL_DIR`, and nothing anywhere assigns it; a genuine pre-existing bug, not a documentation error on my part | Corrected the false claim at all four locations (plan Architecture/Task 11/Task 10, design §3/§8); Task 11 Step 7 now also fixes the real bug by adding `SKILL_DIR="$(dirname "<path to this SKILL.md>")"` before `SEEDS_DIR`'s loop |
 | CRITICAL | Task 1's verification commands used plain `grep -rl`, which also matches gitignored paths (stale worktree copies, `.atl/`, `.superpowers/sdd/*`) — the file counts derived from it were unreliable | Switched every verification command to `git grep -l ... -- "*.py"` / `"*.md"`, scoped to tracked files only; re-verified live, restores the original correct 2-file/17-file counts |
 | CRITICAL | The stated rationale for `skills/review-spec/review-spec.py`'s incremental-import discipline (ruff would fail the commit) was wrong — verified live, `.pre-commit-config.yaml`'s ruff hook only covers `tools/`/`tests/`, not `skills/`; meanwhile a REAL ruff violation existed unnoticed: Task 2's test file imported `json` before it was used | Corrected the rationale (the module file isn't ruff-scoped; `tests/test_review_spec.py` is, and that's where the discipline is actually load-bearing); moved the `import json` from Task 2's test-file Step 1 to Task 8's, where it's first used |
-| HIGH | Double mode's secondary-slot cross-vendor guarantee silently disappeared whenever the primary resolved to `NO_CONFIG_FALLBACK` (`vendor == ""`) — an empty `skip_vendor` disables `resolve_ladder_pick`'s vendor filter entirely by its own documented contract, so the secondary could land on the same vendor as the document's author with no baseline to compare against | `resolve_reviewers` now computes `secondary_skip_vendor = primary.vendor or source_vendor`, falling back to the document's actual authoring vendor when there's no native baseline; new regression test `test_double_mode_secondary_dropped_when_no_native_entry_and_only_source_vendor_available` |
+| HIGH | Double mode's secondary-slot cross-vendor guarantee silently disappeared whenever the primary resolved to `NO_CONFIG_FALLBACK` (`vendor == ""`) — an empty `skip_vendor` disables `resolve_ladder_pick`'s vendor filter entirely by its own documented contract, so the secondary could land on the same vendor as the document's author with no baseline to compare against | `resolve_reviewers` now computes `secondary_skip_vendor = primary.vendor or source_vendor`, falling back to the document's actual authoring vendor when there's no native baseline; new regression test `test_double_mode_secondary_dropped_when_no_native_and_only_source_vendor` |
 | HIGH | `render_reviewer_command` raised raw `KeyError`/`AttributeError`/`IndexError` on a `cli`-set config entry with no `command`, or a malformed template — an unhandled traceback mid-dispatch, contradicting the design's "never blocks the whole run" promise; `probe_reviewer_quota`'s early-return also masked the missing-command case as `available: True` | `render_reviewer_command` now raises `ValueError` uniformly (wrapping the format-string failure) or when `command` is missing; `probe_reviewer_quota` only skips probing for truly native (`not resolved.cli`) entries and catches `ValueError` to report `available: False`; the `render-command` CLI subcommand catches `ValueError`, prints to stderr, exits 1 (no `### Status:` line, so the existing fail-closed convention catches it); Task 11 Step 3's orchestrator prose now explains a nonzero `render-command` exit means that slot failed to dispatch, so no report file is written for it and the existing fail-closed rules take over — no new special-casing |
 | MEDIUM | `skills/review-spec/SKILL.md`'s `NEVER` rule (line 183) still said "before the reviewer's report is written to its temp file (Step 3)" — stale since the temp-file save was removed in round 2's `EFFECTIVE_REPORT_PATH` fix | Task 11 Step 5 now also rewrites this rule to reference `EFFECTIVE_REPORT_PATH` existing on disk (Step 1.5), not a Step-3 temp file |
 | MEDIUM | Task 2's tests (`test_round_trips_through_tomllib`, `test_escapes_quotes_and_backslashes_in_strings`) did unguarded `import tomllib`, which would ImportError on an interpreter below 3.11 even though the module itself degrades gracefully | Both tests now `@unittest.skipIf(rs.tomllib is None, ...)` |
@@ -3728,3 +3764,22 @@ backward reference resolves correctly except one. 5 findings (1 CRITICAL,
 | MEDIUM | Task 10 Step 1's `--check-only` branch said to report "which have a `review-spec.toml` reviewer entry already" with no stated mechanism — no `review-spec.py` subcommand resolves or prints config contents (`cache-path` covers cache files only), so an executor with zero project context had nothing concrete to do | Names the exact mechanism: `Read` the config file directly at its local/global path (§3), noting each `[[reviewers]]` entry's `key`/`cli` — explicitly a raw read for reporting, not `cfg_resolve`'s local/global merge |
 
 A tenth review round should confirm this document reaches Approved before execution begins.
+
+### Eleventh review: a tenth clean-context Opus 5 subagent (native, live)
+
+The tenth round's fixes were themselves reviewed by an ELEVENTH clean-context
+Opus 5 subagent. 8 findings (1 CRITICAL, 1 HIGH, 5 MEDIUM, 1 CROSS-DOC), all
+fixed:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL | Design §8's fixer-routing bullet claimed dispatch "always" routes fixes to `review-spec-fixer` — false: only Step 3a (native path) uses the generic fixer; Step 3b-skill routes to the document's authoring skill, Step 3b-cmd to its authoring slash command, Step 3b-surface hands off to the user. The unconditional claim would mislead an implementer into wiring a single fixed fixer path | Corrected §8 to describe all four routing branches accurately, matching the plan's own Task 11 Step 3 structure |
+| HIGH | `review-spec-config`'s Step 2 never actually asked the user about native (`cli`-omitted) reviewer entries — only a formatting-constraint paragraph existed, with no real "ask" instruction, making `double` mode's native baseline unreachable via this skill despite the config schema supporting it | Added an explicit, non-skippable instruction in Task 10 Step 2 to ask about native entries; ladder-ordering line updated to reflect native-entry answers are part of the ordering too |
+| CROSS-DOC | Design §7 was silent on `review-spec-config` asking about native entries, consistent with the plan's own (now-fixed) gap — the two documents agreed on the omission, which is still wrong | Design §7 updated to state `[[reviewers]]` entries include both external-CLI and native (`cli`-omitted) entries, asked explicitly and never skipped |
+| MEDIUM | 13 lines of test code across Tasks 2/3/5/6 exceeded the 100-char `E501` limit ruff enforces on `tests/test_review_spec.py` (not on `skills/review-spec/review-spec.py`, which is unscoped) | Reflowed all 13 lines; renamed two overly-long test method names (`test_double_mode_baseline_falls_back_to_session_default_when_no_native_entry_configured` → `test_double_mode_baseline_falls_back_to_default_when_no_native_entry`; `test_double_mode_secondary_dropped_when_no_native_entry_and_only_source_vendor_available` → `test_double_mode_secondary_dropped_when_no_native_and_only_source_vendor`) via `replace_all`, which also updated the Self-review table's historical cross-reference |
+| MEDIUM | Task 11 Step 7's `SEEDS_DIR` fix said to add `SKILL_DIR="$(dirname ...)"` "inside the `for d in ...` loop" — ambiguous, and if taken literally would reassign the variable on every loop iteration | Clarified: add the assignment immediately before the loop, NOT inside its body |
+| MEDIUM | Design §11 (Testing) had no bullet covering the Cache module (`cache_base`/`cache_runtimes_path`/`cache_quota_path`/`cache_read_json`/`cache_write_json`/`cache_is_stale`), leaving Task 3's interface untested per the design's own testing section | Added a Cache module bullet to §11 |
+| MEDIUM | `gemini.md`'s `read_only:` frontmatter and body claimed the `--sandbox` flag guarantees an ephemeral container where writes never reach the real working tree — but the actual `gemini` skill only documents `-s, --sandbox — Run in sandbox mode for isolation`, with no such guarantee stated | Corrected frontmatter value, body text, Task 9's intro, and design §5 to attribute only the actually-documented flag description, dropping the unverified container/no-write claim |
+| MEDIUM | Task 11 Step 5's description of the four `<REPORT_TEMP_PATH>` → `<EFFECTIVE_REPORT_PATH>` occurrences mislabeled line 383 as belonging to "the fixer's" template and undercounted the roles (3 instead of 4) | Corrected to precisely describe all four: 360 (Step 3a fixer prompt Inputs), 383 (Step 3b-skill prompt substitution list), 392 (Step 3b-skill's own Inputs list), 430 (Step 3b-cmd's trailing note) |
+
+An eleventh review round should confirm this document reaches Approved before execution begins.

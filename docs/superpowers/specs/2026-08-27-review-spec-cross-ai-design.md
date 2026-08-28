@@ -308,13 +308,13 @@ architecture change.
 **Read-only posture.** An external CLI must never be dispatched with real
 write access to the repo under review — see the Out-of-scope note below.
 `codex`'s profile confirms `--sandbox read-only`; `gemini`'s adds
-`--sandbox` (container isolation — writes never reach the real working
-tree, though the container itself remains writable) alongside the
-`--approval-mode yolo` non-interactive dispatch requires. `claude`,
-`opencode`, `grok`, and `cursor-agent` have no confirmed read-only
-invocation as of this session — each profile records this as
-`read_only: unconfirmed`, and `review-spec-config` warns the user when
-configuring one of them.
+`--sandbox` (the `gemini` skill's own flag list documents only "run in
+sandbox mode for isolation" — no stronger container/no-write guarantee is
+confirmed) alongside the `--approval-mode yolo` non-interactive dispatch
+requires. `claude`, `opencode`, `grok`, and `cursor-agent` have no
+confirmed read-only invocation as of this session — each profile records
+this as `read_only: unconfirmed`, and `review-spec-config` warns the user
+when configuring one of them.
 
 Exact quota/context-window probe syntax for `claude`, `opencode`, `grok`,
 and `cursor-agent` is an explicit **research task per profile** during the
@@ -385,7 +385,11 @@ resolution mechanism — this module lives inside the `review-spec` skill's
 own directory, a sibling of this skill, not inside this skill's own
 installed directory), shows what it found (installed CLIs, their listed
 models), and asks the user (via `AskUserQuestion`) to name/rank
-`[[reviewers]]` entries and set `[policy]` — writing the result to
+`[[reviewers]]` entries — both external-CLI entries (one question per
+installed CLI) and native (`cli`-omitted) entries (asked explicitly,
+never skipped — `double` mode's guaranteed baseline needs at least one
+native entry in `policy.ladder` or it always degrades to the
+current-session fallback) — and set `[policy]` — writing the result to
 `review-spec.toml` (global by default; `--local` writes
 `./.aikit/review-spec.toml` instead). Also exposes a `--check-only` mode
 (no writes) that reports current cross-AI availability — this is the
@@ -474,8 +478,14 @@ interactive wrapper).
   reviewer `key`(s) surfaced it. No severity arbitration by the
   orchestrator (option **(c)** from the design discussion). Merged report
   becomes the input to Step 2/3, unchanged otherwise.
-- **Fixer (Step 3a/3b)**: unchanged, always Claude-native, always
-  `review-spec-fixer` (renamed).
+- **Fixer (Step 3a/3b)**: unchanged, always Claude-native. Only Step 3a
+  (the generic-fixer route) uses the renamed `review-spec-fixer`
+  (previously `applying-review-feedback`); Step 3b-skill dispatches the
+  route's own authoring skill instead (`skill:<name>`, e.g.
+  `superpowers:writing-plans`), Step 3b-cmd invokes the route's slash
+  command / backing skill, and Step 3b-surface hands off to the user with
+  no fixer dispatch at all — this design changes none of that routing,
+  only which reviewer(s) produced the report those routes consume.
 - **Cleanup**: `rm -rf "$RUN_TMP_DIR"` once, replacing today's ad hoc
   `/tmp/review-spec-*` file-by-file cleanup.
 
@@ -556,6 +566,12 @@ artifact:
   resolution)**: unit-testable in isolation — `local-only` ignores global
   entirely; `global-merge` merges `[[reviewers]]` by `key` and shallow-merges
   `[policy]`; missing `strategy` defaults to `global-merge`.
+- **Cache (`cache_base`/`cache_runtimes_path`/`cache_quota_path`,
+  `cache_read_json`/`cache_write_json`, `cache_is_stale` + the
+  `RUNTIMES_TTL_SECONDS`/`QUOTA_TTL_SECONDS` constants)**: unit-testable —
+  the `${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/review-spec/` path formula
+  over a fixture `env`, round-trip read/write over a temp file, and
+  staleness against a fixture mtime relative to each TTL.
 - **Policy resolution (`single`/`double` ladder walk, vendor-skip,
   quota-skip, fallback-to-current-session)**: unit-testable as pure
   functions over a fixture `policy` + fixture `quota.json`.
