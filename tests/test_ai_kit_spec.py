@@ -1559,6 +1559,19 @@ class TestMainCli(unittest.TestCase):
         self.assertTrue(json.loads(buf.getvalue())["available"])
 
 
+class TestMainCliDetectTools(unittest.TestCase):
+    def test_detect_tools_subcommand_prints_json(self):
+        import io, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["detect-tools"], which_fn=lambda name: "/usr/bin/x" if name == "rg" else None)
+        result = json.loads(buf.getvalue())
+        self.assertEqual(
+            result,
+            {"rg": True, "sd": False, "bat": False, "eza": False, "fd": False, "codegraph": False},
+        )
+
+
 class TestBuildToolingGuidance(unittest.TestCase):
     def test_empty_when_nothing_confirmed(self):
         result = tooling_guidance.build_tooling_guidance(

@@ -12,7 +12,7 @@ from ai_kit_spec.commands import (
 from ai_kit_spec.config_io import cfg_render_toml, cfg_resolve, cfg_write_toml
 from ai_kit_spec.detection import (
     RUNTIMES_TTL_SECONDS, build_runtimes_snapshot, cache_runtimes_path,
-    group_models_by_family,
+    detect_tool_availability, group_models_by_family,
 )
 from ai_kit_spec.quota import (
     QUOTA_TTL_SECONDS, cache_quota_path, probe_reviewer_quota,
@@ -33,6 +33,8 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
 
     p_cache_path = sub.add_parser("cache-path")
     p_cache_path.add_argument("--kind", choices=["runtimes", "quota"], required=True)
+
+    sub.add_parser("detect-tools")
 
     p_detect = sub.add_parser("detect-runtimes")
     p_detect.add_argument(
@@ -120,6 +122,10 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
     if args.command == "cache-path":
         env = dict(os.environ)
         print(cache_runtimes_path(env) if args.kind == "runtimes" else cache_quota_path(env))
+        return 0
+
+    if args.command == "detect-tools":
+        print(json.dumps(detect_tool_availability(which_fn=which_fn)))
         return 0
 
     if args.command == "detect-runtimes":

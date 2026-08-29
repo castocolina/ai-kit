@@ -1816,7 +1816,7 @@ implying otherwise.
   `json.dumps(detect_tool_availability())` — mirrors the existing `detect-runtimes` subcommand's
   shape (no flags needed, plain JSON to stdout).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 class TestMainCliDetectTools(unittest.TestCase):
@@ -1832,7 +1832,7 @@ class TestMainCliDetectTools(unittest.TestCase):
         )
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestMainCliDetectTools -v 2>&1 | tail -10
@@ -1840,7 +1840,7 @@ python3 -m unittest tests.test_ai_kit_spec.TestMainCliDetectTools -v 2>&1 | tail
 
 Expected: FAIL — `detect-tools` not a recognized subcommand.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `ai_kit_spec/cli.py`, add alongside the existing `detect-runtimes` subparser registration:
 
@@ -1862,7 +1862,7 @@ this is a NEW import added in this task, not already present from Task 2's move 
 imported the names `main()` called at that point, before Task 3 added `detect_tool_availability`
 to `detection.py`).
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestMainCliDetectTools -v 2>&1 | tail -10
@@ -1870,7 +1870,7 @@ python3 -m unittest tests.test_ai_kit_spec.TestMainCliDetectTools -v 2>&1 | tail
 
 Expected: PASS.
 
-- [ ] **Step 5: Wire into `ai-kit-spec-config`'s discovery step**
+- [x] **Step 5: Wire into `ai-kit-spec-config`'s discovery step**
 
 In `skills/ai-kit-spec-config/SKILL.md`'s Step 1 (Detect), add alongside the existing
 `detect-runtimes` call:
@@ -1884,7 +1884,7 @@ in the wizard, mention which of `rg`/`sd`/`bat`/`eza`/`fd`/`codegraph` are prese
 machine — informational only, this task does not add new wizard questions, just surfaces the
 data `ai-kit-spec-execute` (Plan 2/3) will need later.
 
-- [ ] **Step 6: Run the full suite and commit**
+- [x] **Step 6: Run the full suite and commit**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec 2>&1 | grep -E "^(Ran|OK|FAILED)"

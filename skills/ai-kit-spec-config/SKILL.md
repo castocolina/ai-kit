@@ -72,10 +72,17 @@ already be installed."
 
 ```bash
 python3 "$TOOLS_PY" detect-runtimes
+python3 "$TOOLS_PY" detect-tools
 ```
 
 Parse the printed JSON: for each CLI marked `"installed": true`, note its
 path; for `opencode`, note its `models` list.
+
+`detect-tools` prints `{"rg": bool, "sd": bool, "bat": bool, "eza": bool, "fd": bool,
+"codegraph": bool}` — informational only, this step does not add new wizard questions.
+When asking the user optional per-reviewer/per-executor questions later in the wizard,
+mention which of these are present on this machine — this is the data
+`ai-kit-spec-execute` (Plan 2/3) will need later; this step only surfaces it.
 
 **If `--check-only` was passed**, report which CLIs are installed. Then
 read the target config file (`~/.config/ai-kit/review-spec.toml` if
