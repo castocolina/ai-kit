@@ -250,7 +250,7 @@ separately via `grep -nE "^[A-Z_]+ *="`, every one below is real, on-disk, at th
 | `_DETAIL_MAX_CHARS` | 637 | `quota.py` |
 | `_SEVERITY_HEADINGS`, `_SEVERITY_RE`, `_BULLET_RE` | 768–774 | `review_reports.py` |
 
-- [ ] **Step 1: Create the package skeleton and move code verbatim, module by module**
+- [x] **Step 1: Create the package skeleton and move code verbatim, module by module**
 
 This is a pure move — copy each function/class from `review-spec.py` into its target module
 unchanged (no logic edits), fixing only intra-module references (e.g. `commands.py`'s
@@ -332,13 +332,13 @@ if __name__ == "__main__":
 
 `ai_kit_spec/__init__.py`: empty (marks the directory as a package).
 
-- [ ] **Step 2: Delete the old flat file**
+- [x] **Step 2: Delete the old flat file**
 
 ```bash
 git rm skills/ai-kit-spec-review/review-spec.py
 ```
 
-- [ ] **Step 3: Replace the module loader with explicit per-module imports**
+- [x] **Step 3: Replace the module loader with explicit per-module imports**
 
 `tests/test_ai_kit_spec.py`'s actual current loader (confirmed against the real file, not
 assumed) is:
@@ -460,7 +460,7 @@ its own import added to the matching module's import block above and its own ent
 `_name` tuple; the list shown here covers every name confirmed accessed as of this plan's
 writing, not a guarantee against every possible one.
 
-- [ ] **Step 4: Run the full test suite — must still be exactly 146 passing (cache-path assertions updated per Step 1's note, no other logic changes)**
+- [x] **Step 4: Run the full test suite — must still be exactly 146 passing (cache-path assertions updated per Step 1's note, no other logic changes)**
 
 ```bash
 cd /var/home/bazzite/git/personal/ai-kit
@@ -470,7 +470,7 @@ python3 -m unittest tests.test_ai_kit_spec -v 2>&1 | tail -5
 Expected: `Ran 146 tests ... OK`. Any failure here is a transcription bug introduced during the
 move (a missed import, a renamed variable) — fix it in the target module, never in the test.
 
-- [ ] **Step 5: Update every `TOOLS_PY` filename reference in the 4 skills' SKILL.md files**
+- [x] **Step 5: Update every `TOOLS_PY` filename reference in the 4 skills' SKILL.md files**
 
 ```bash
 grep -rln "review-spec\.py" skills/ai-kit-spec-review*/  skills/ai-kit-spec-config/
@@ -481,7 +481,7 @@ For each file listed, replace the literal filename `review-spec.py` → `ai-kit-
 the *directory*-resolution logic (`CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/sibling-of-this-file)
 untouched — Task 1 already renamed those directories.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
@@ -504,7 +504,7 @@ git commit -m "refactor(ai-kit-spec): split review-spec.py into the ai_kit_spec 
   - `_SUPPORTED_CODEGRAPH_CLIENTS: frozenset[str]` — the client names codegraph officially supports (`grok` deliberately absent, confirmed unsupported)
   - `check_codegraph_mcp_healthy(cli: str, run_fn=subprocess.run) -> bool` — checks REGISTRATION AND CURRENT CONNECTION HEALTH, not presence alone (confirmed live: a registered server can be currently disconnected). `False` immediately for any `cli` not in `_SUPPORTED_CODEGRAPH_CLIENTS`. For `claude`/`codex`: primary check is `mcp get codegraph` (exit 0 = registered, then its own output's status line is checked for a failure signal before declaring healthy); on nonzero exit, falls back to parsing `mcp list` before concluding not-registered (a nonzero `get` could mean something other than "not registered"). For `cursor-agent`/`opencode` (no `get` subcommand): `mcp list` is the only check, and the matched entry's own line is checked for a failure signal the same way. Never reads a config file directly — see Step 3's implementation, confirmed live against each installed CLI.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class TestDetectToolAvailability(unittest.TestCase):
@@ -649,7 +649,7 @@ class TestCheckCodegraphMcpHealthy(unittest.TestCase):
         self.assertFalse(result)
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestDetectToolAvailability \
@@ -660,7 +660,7 @@ python3 -m unittest tests.test_ai_kit_spec.TestDetectToolAvailability \
 Expected: FAIL — `detect_tool_availability`/`resolve_agents_tooling_path`/
 `check_codegraph_mcp_healthy` not defined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 def detect_tool_availability(which_fn=shutil.which) -> dict:
@@ -778,7 +778,7 @@ def check_codegraph_mcp_healthy(cli: str, run_fn=subprocess.run) -> bool:
 Add `import os` at the top of `detection.py` if not already present (it already imports
 `shutil`/`subprocess`/`json` per the existing module).
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestDetectToolAvailability \
@@ -788,7 +788,15 @@ python3 -m unittest tests.test_ai_kit_spec.TestDetectToolAvailability \
 
 Expected: PASS, all cases.
 
-- [ ] **Step 5: Live smoke test — verify all 4 commands against a real installed client, both states**
+- [x] **Step 5: Live smoke test — verify all 4 commands against a real installed client, both states**
+
+Partially closed 2026-08-29: "not registered" (`False`) state confirmed live for both a
+`get`-based client (`claude` — `claude mcp get codegraph` exits 1, falls through to
+`claude mcp list`, no `codegraph` entry, returns `False`) and a `list`-only client
+(`cursor-agent` — `cursor-agent mcp list` reports no MCP servers configured, returns `False`).
+`codex`/`opencode` also returned `False`, consistent with codegraph not being installed
+anywhere in this environment. The `True` (registered-and-healthy) state was NOT observed —
+that requires codegraph actually installed via Task 7, deferred until that task runs.
 
 The command choices above (`mcp get`/`mcp list`) are confirmed live against each CLI's own
 `--help` output, but never yet run against a real registered-vs-not comparison (design spec
@@ -812,7 +820,7 @@ re-run before moving on. Record which clients were confirmed (both states observ
 spot-checked — this closes design spec open risk #4 for whichever clients get fully verified
 here.
 
-- [ ] **Step 6: Run the full suite and commit**
+- [x] **Step 6: Run the full suite and commit**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec 2>&1 | grep -E "^(Ran|OK|FAILED)"
