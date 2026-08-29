@@ -40,13 +40,20 @@ class ResolvedReviewer(NamedTuple):
 def _build_codex_command(effort=None, service_tier=None, **_params):
     """No {prompt} in this template — confirmed live (codex --help): the
     positional PROMPT arg, when omitted, reads instructions from stdin.
-    Prompt delivery is stdin-only for every builder below except gemini's
-    (unverified, no installed CLI to confirm against) — see
-    probe_reviewer_quota's unconditional `input=` and review-spec/
+    Prompt delivery is stdin-only for every builder below except grok's —
+    see probe_reviewer_quota's unconditional `input=` and review-spec/
     SKILL.md's Step 1 external-CLI dispatch, which both redirect the
     already-on-disk prompt file as stdin regardless of whether a given
     template still inlines a literal {prompt} placeholder (the open
-    hand-written-command escape hatch, and gemini today, still can)."""
+    hand-written-command escape hatch, and grok's builder, still can).
+
+    `{model}` here MUST be codex's BARE model id (e.g. "gpt-5.6-sol"),
+    never suffixed with an effort/tier tag like "gpt-5.6-sol-high" —
+    confirmed live 2026-08-29: codex rejects a suffixed id outright
+    ("The 'gpt-5.6-sol-high' model is not supported..."). Unlike
+    cursor-agent (which bakes effort/fast/context into the model-id
+    string via build-model-id), codex takes effort/service_tier as these
+    SEPARATE `-c` flags below — never encode them into `{model}` itself."""
     parts = ["codex exec --sandbox read-only --skip-git-repo-check", "-m {model}"]
     if effort:
         parts.append(f"-c model_reasoning_effort='\"{effort}\"'")
@@ -71,10 +78,6 @@ def _build_grok_command(**_params):
     render_reviewer_command shlex.quotes it before substitution, delivered as a real
     positional argument value, never via stdin."""
     return "grok -p {prompt} -m {model} --output-format plain"
-
-
-def _build_gemini_command(**_params):
-    return "gemini -m {model} --sandbox --approval-mode yolo {prompt}"
 
 
 def _build_opencode_command(**_params):
@@ -105,7 +108,6 @@ _COMMAND_BUILDERS = {
     "codex": _build_codex_command,
     "claude": _build_claude_command,
     "grok": _build_grok_command,
-    "gemini": _build_gemini_command,
     "opencode": _build_opencode_command,
     "cursor-agent": _build_cursor_agent_command,
 }

@@ -10,7 +10,7 @@ RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-s
 
 # ── Runtime/CLI detection ───────────────────────────────────────────────
 
-KNOWN_CLIS = ("claude", "codex", "opencode", "grok", "cursor-agent", "gemini")
+KNOWN_CLIS = ("claude", "codex", "opencode", "grok", "cursor-agent")
 
 
 def cache_runtimes_path(env: dict) -> str:

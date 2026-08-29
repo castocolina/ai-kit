@@ -186,10 +186,10 @@ def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) ->
 
     The probe prompt is always piped via stdin (`input=`), never inlined
     as a shell argument — confirmed live against every known-CLI builder
-    (codex/claude/grok/opencode/cursor-agent all read a missing/`-`-value
-    prompt from stdin; see each `_build_*_command`'s docstring). This is
+    (codex/claude/opencode/cursor-agent all read a missing prompt from
+    stdin; see each `_build_*_command`'s docstring). This is
     unconditional, not gated on whether `resolved.command` happens to
-    still contain a literal `{prompt}` (gemini's builder, and any
+    still contain a literal `{prompt}` (grok's builder, and any
     hand-written open-hatch command, still can) — an unread stdin pipe is
     harmless to a CLI that takes its prompt inline instead, so one code
     path serves both without the caller needing to introspect the

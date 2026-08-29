@@ -794,11 +794,11 @@ class TestBuildReviewerCommand(unittest.TestCase):
         self.assertEqual(rs.build_reviewer_command("grok"),
                           "grok -p {prompt} -m {model} --output-format plain")
 
-    def test_gemini_command_shape(self):
-        # unverified live (no installed CLI) — kept on the legacy
-        # inline-{prompt} path deliberately, unlike the other 5 builders
-        self.assertEqual(rs.build_reviewer_command("gemini"),
-                          "gemini -m {model} --sandbox --approval-mode yolo {prompt}")
+    def test_gemini_no_longer_registered(self):
+        # removed 2026-08-29 -- Gemini CLI is deprecated; never fall back to
+        # a guessed shape for a CLI outside the registry
+        with self.assertRaises(ValueError):
+            rs.build_reviewer_command("gemini")
 
     def test_opencode_command_shape(self):
         # no {prompt} — confirmed live: `opencode run -m {model}` with no

@@ -523,19 +523,20 @@ For each entry in `REVIEWER_LIST`:
        > "$RUN_TMP_DIR/iter<N>-<key>.md"
      ```
      **Always redirect stdin this way, for every CLI, even one whose
-     `command` template still contains a literal `{prompt}`.** Five of the
-     six known builders (codex, claude, grok, opencode, cursor-agent) emit
+     `command` template still contains a literal `{prompt}`.** Four of the
+     five known builders (codex, claude, opencode, cursor-agent) emit
      a template with no `{prompt}` placeholder at all — confirmed live,
      each reads its prompt from stdin rather than a positional/flag
-     argument (see each CLI's profile under `$CLI_PROFILES_DIR`; e.g.
-     grok needs its `-p` flag's value to be the literal `-` to trigger
-     this). Only `gemini`'s builder (unverified — no installed CLI to
-     confirm against) and a hand-written open-hatch `command` still inline
-     `{prompt}` as a shell argument via `render-command`'s existing
-     shell-escaping. Redirecting stdin unconditionally, regardless of
-     which shape a given entry's `command` uses, means this step never has
-     to inspect the template to decide — an unread stdin pipe is harmless
-     to a CLI that already got its prompt inline.
+     argument (see each CLI's profile under `$CLI_PROFILES_DIR`). Only
+     `grok`'s builder (its `-p`/`--single` flag requires the prompt as a
+     real value, confirmed live — passing `-` there sends the literal
+     dash character as the prompt, not a stdin trigger) and a hand-written
+     open-hatch `command` inline `{prompt}` as a shell argument via
+     `render-command`'s existing shell-escaping. Redirecting stdin
+     unconditionally, regardless of which shape a given entry's `command`
+     uses, means this step never has to inspect the template to decide —
+     an unread stdin pipe is harmless to a CLI that already got its
+     prompt inline.
 
 Reviewer prompt template — use VERBATIM, substitute only `<DOC_PATHS>`, `<ARCHETYPE>`, `<FRAMEWORK_PROFILE_PATH>`, `<CODEBASE_ROOT>`, and `<GROUNDING_DOCS>`:
 
