@@ -39,7 +39,8 @@ from ai_kit_spec.cli import main
 # the module itself in scope, separately from the individual-function imports above (those only
 # feed the `rs.<name>` back-compat shim below). Tasks 4/6/8 add `execute_selection`, `dispatch`,
 # and `tooling_guidance` to this same line respectively, when those modules are created.
-from ai_kit_spec import cache, detection, vendor, commands, config_io, quota, review_reports, cli
+from ai_kit_spec import (cache, detection, vendor, commands, config_io, quota, review_reports,
+                          cli, execute_selection)
 
 
 # Back-compat shim so every existing `rs.<name>` call in this file keeps working verbatim --
@@ -1556,6 +1557,73 @@ class TestMainCli(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         self.assertTrue(json.loads(buf.getvalue())["available"])
+
+
+class TestFilterByAffinity(unittest.TestCase):
+    def test_keeps_only_matching_affinity_when_any_match_exists(self):
+        candidates = [{"key": "a", "task_affinity": "frontend"},
+                      {"key": "b", "task_affinity": "backend"}]
+        result = execute_selection.filter_by_affinity(candidates, "frontend", {})
+        self.assertEqual([c["key"] for c in result], ["a"])
+
+    def test_no_matching_affinity_returns_all_unfiltered(self):
+        candidates = [{"key": "a", "task_affinity": "backend"}]
+        result = execute_selection.filter_by_affinity(candidates, "frontend", {})
+        self.assertEqual([c["key"] for c in result], ["a"])
+
+    def test_candidates_with_no_declared_affinity_always_pass_through(self):
+        candidates = [{"key": "a", "task_affinity": None},
+                      {"key": "b", "task_affinity": "frontend"}]
+        result = execute_selection.filter_by_affinity(candidates, "frontend", {})
+        self.assertEqual({c["key"] for c in result}, {"a", "b"})
+
+    def test_mixed_untagged_and_wrong_tag_excludes_only_the_wrong_tag(self):
+        candidates = [{"key": "untagged", "task_affinity": None},
+                      {"key": "backend-tagged", "task_affinity": "backend"}]
+        result = execute_selection.filter_by_affinity(candidates, "frontend", {})
+        self.assertEqual([c["key"] for c in result], ["untagged"])
+
+
+class TestFilterByContext(unittest.TestCase):
+    def test_drops_candidates_below_required_context(self):
+        candidates = [{"key": "small", "context_limit": 100_000},
+                      {"key": "big", "context_limit": 1_000_000}]
+        result = execute_selection.filter_by_context(candidates, required_context=500_000)
+        self.assertEqual([c["key"] for c in result], ["big"])
+
+    def test_unknown_context_limit_passes_through_not_dropped(self):
+        candidates = [{"key": "unknown", "context_limit": None}]
+        result = execute_selection.filter_by_context(candidates, required_context=500_000)
+        self.assertEqual([c["key"] for c in result], ["unknown"])
+
+
+class TestResolveExecuteCandidates(unittest.TestCase):
+    def test_full_pipeline_ranks_top_n_first(self):
+        candidates = [
+            {"key": "c", "task_affinity": "backend", "context_limit": 1_000_000},
+            {"key": "a", "task_affinity": "backend", "context_limit": 1_000_000},
+            {"key": "b", "task_affinity": "backend", "context_limit": 1_000_000},
+        ]
+        result = execute_selection.resolve_execute_candidates(
+            candidates, task_type="backend", required_context=1000,
+            affinity_table={}, top_n_keys=["b", "a"])
+        self.assertEqual([c["key"] for c in result], ["b", "a", "c"])
+
+    def test_unknown_context_ranks_after_confirmed_sufficient(self):
+        candidates = [
+            {"key": "unknown", "task_affinity": "backend", "context_limit": None},
+            {"key": "confirmed", "task_affinity": "backend", "context_limit": 1_000_000},
+        ]
+        result = execute_selection.resolve_execute_candidates(
+            candidates, task_type="backend", required_context=1000,
+            affinity_table={}, top_n_keys=["unknown", "confirmed"])
+        self.assertEqual([c["key"] for c in result], ["confirmed", "unknown"])
+
+
+class TestCandidatesToLadder(unittest.TestCase):
+    def test_extracts_ordered_keys(self):
+        candidates = [{"key": "b/model"}, {"key": "a/model"}]
+        self.assertEqual(execute_selection.candidates_to_ladder(candidates), ["b/model", "a/model"])
 
 
 if __name__ == "__main__":
