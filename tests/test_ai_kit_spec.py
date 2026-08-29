@@ -395,6 +395,148 @@ class TestGroupModelsByFamily(unittest.TestCase):
         self.assertEqual(list(groups), ["b", "a"])
 
 
+class TestDetectToolAvailability(unittest.TestCase):
+    def test_reports_installed_and_missing_tools(self):
+        def fake_which(name):
+            return f"/usr/bin/{name}" if name in ("rg", "fd") else None
+        result = detection.detect_tool_availability(which_fn=fake_which)
+        self.assertEqual(result, {"rg": True, "sd": False, "bat": False,
+                                   "eza": False, "fd": True, "codegraph": False})
+
+
+class TestResolveAgentsToolingPath(unittest.TestCase):
+    def test_env_override_wins_when_it_exists(self):
+        env = {"AGENTS_TOOLING_PATH": "/custom/AGENTS-TOOLING.md", "HOME": "/home/u"}
+        with unittest.mock.patch("os.path.isfile", return_value=True):
+            self.assertEqual(detection.resolve_agents_tooling_path(env=env),
+                              "/custom/AGENTS-TOOLING.md")
+
+    def test_env_override_ignored_when_it_does_not_exist(self):
+        # never pass an unverified path into a dispatch prompt, even one the user configured
+        env = {"AGENTS_TOOLING_PATH": "/custom/AGENTS-TOOLING.md", "HOME": "/home/u"}
+        with unittest.mock.patch("os.path.isfile", return_value=False):
+            self.assertIsNone(detection.resolve_agents_tooling_path(env=env))
+
+    def test_falls_back_to_conventional_home_path_if_it_exists(self):
+        env = {"HOME": "/home/u"}
+        with unittest.mock.patch("os.path.isfile", return_value=True):
+            self.assertEqual(detection.resolve_agents_tooling_path(env=env),
+                              "/home/u/.agents/AGENTS-TOOLING.md")
+
+    def test_returns_none_when_nothing_found(self):
+        env = {"HOME": "/home/u"}
+        with unittest.mock.patch("os.path.isfile", return_value=False):
+            self.assertIsNone(detection.resolve_agents_tooling_path(env=env))
+
+
+class TestCheckCodegraphMcpHealthy(unittest.TestCase):
+    def test_grok_is_always_false_no_command_attempted(self):
+        # grok is confirmed unsupported by codegraph -- never even run a command for it
+        result = detection.check_codegraph_mcp_healthy(
+            "grok", run_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("must not run any command for grok")))
+        self.assertFalse(result)
+
+    def test_unknown_cli_is_false(self):
+        self.assertFalse(detection.check_codegraph_mcp_healthy("some-future-cli"))
+
+    def test_claude_true_when_mcp_get_exits_zero_and_status_is_connected(self):
+        # confirmed live (2026-08-30): `claude mcp get <name>` exits 0 and prints a
+        # "Status: ✔ Connected" line when the server is registered AND healthy
+        result = detection.check_codegraph_mcp_healthy(
+            "claude", run_fn=lambda *a, **k: unittest.mock.MagicMock(
+                returncode=0, stdout="codegraph:\n  Scope: user config\n  Status: ✔ Connected\n"))
+        self.assertTrue(result)
+
+    def test_claude_false_when_get_exits_zero_but_status_shows_failed_to_connect(self):
+        # confirmed live: a REGISTERED server can still be currently disconnected -- `claude
+        # mcp get` returned exit 0 with "Status: ✘ Failed to connect" observed live for a real
+        # server in this session. Registered-but-unhealthy must be treated as unusable, same as
+        # not-registered -- exit code 0 alone is NOT sufficient to declare it usable.
+        result = detection.check_codegraph_mcp_healthy(
+            "claude", run_fn=lambda *a, **k: unittest.mock.MagicMock(
+                returncode=0,
+                stdout="codegraph:\n  Scope: user config\n  Status: ✘ Failed to connect — CONNECTION_CLOSED\n"))
+        self.assertFalse(result)
+
+    def test_claude_false_when_get_and_list_fallback_both_say_not_registered(self):
+        # confirmed live: `claude mcp get nonexistent` exits 1 with "No MCP server named...";
+        # this must also cross-check `mcp list` (fallback) before concluding "not registered"
+        def fake_run(cmd, **k):
+            if "get" in cmd:
+                return unittest.mock.MagicMock(returncode=1)
+            return unittest.mock.MagicMock(returncode=0, stdout="other-tool: x - Connected\n")
+        result = detection.check_codegraph_mcp_healthy("claude", run_fn=fake_run)
+        self.assertFalse(result)
+
+    def test_claude_get_succeeds_never_calls_list_fallback(self):
+        # the fallback must be nonzero-exit-triggered only -- a successful get is the cheapest
+        # path and must not incur a second subprocess call
+        seen = []
+        detection.check_codegraph_mcp_healthy(
+            "claude",
+            run_fn=lambda cmd, **k: seen.append(cmd) or unittest.mock.MagicMock(
+                returncode=0, stdout="Status: ✔ Connected\n"))
+        self.assertEqual(seen, ["claude mcp get codegraph"])
+
+    def test_claude_get_fails_but_list_fallback_finds_it_registered_and_healthy(self):
+        # the exact resilience case this fallback exists for: `get` returns nonzero for some
+        # unrelated reason (CLI bug, auth hiccup) even though the server genuinely IS registered
+        def fake_run(cmd, **k):
+            if "get" in cmd:
+                return unittest.mock.MagicMock(returncode=1)
+            return unittest.mock.MagicMock(returncode=0, stdout="codegraph: x - ✔ Connected\n")
+        result = detection.check_codegraph_mcp_healthy("claude", run_fn=fake_run)
+        self.assertTrue(result)
+
+    def test_codex_true_when_mcp_get_exits_zero_and_healthy(self):
+        # confirmed live: codex mcp get <name> mirrors claude's exit-code contract exactly
+        result = detection.check_codegraph_mcp_healthy(
+            "codex", run_fn=lambda *a, **k: unittest.mock.MagicMock(
+                returncode=0, stdout="Status: ✔ Connected\n"))
+        self.assertTrue(result)
+
+    def test_cursor_agent_parses_mcp_list_for_an_actual_server_name_token(self):
+        # confirmed live: cursor-agent has no `mcp get`, only `mcp list` -- must parse output.
+        # "codegraph" must be the actual name token (text before the first ':'), never a
+        # substring match anywhere in the line
+        fake_list = "codegraph: some-command - ✔ Connected\nother-tool: x - ✔ Connected\n"
+        result = detection.check_codegraph_mcp_healthy(
+            "cursor-agent",
+            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
+        self.assertTrue(result)
+
+    def test_cursor_agent_false_when_codegraph_only_appears_outside_the_name_token(self):
+        fake_list = "other-tool: some codegraph-related command - ✔ Connected\n"
+        result = detection.check_codegraph_mcp_healthy(
+            "cursor-agent",
+            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
+        self.assertFalse(result)
+
+    def test_cursor_agent_false_when_codegraph_present_but_disconnected(self):
+        # present (name token matches) but its own line shows a failure signal -- must be
+        # treated the same as absent, not as usable
+        fake_list = "codegraph: some-command - ✘ Failed to connect\n"
+        result = detection.check_codegraph_mcp_healthy(
+            "cursor-agent",
+            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
+        self.assertFalse(result)
+
+    def test_opencode_parses_mcp_list_the_same_way_as_cursor_agent(self):
+        fake_list = "codegraph: ✔ connected\n"
+        result = detection.check_codegraph_mcp_healthy(
+            "opencode",
+            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
+        self.assertTrue(result)
+
+    def test_list_based_client_false_when_no_servers_configured(self):
+        result = detection.check_codegraph_mcp_healthy(
+            "cursor-agent",
+            run_fn=lambda *a, **k: unittest.mock.MagicMock(
+                returncode=0, stdout="No MCP servers configured (expected in .cursor/mcp.json or ~/.cursor/mcp.json)\n"))
+        self.assertFalse(result)
+
+
 class TestBuildRuntimesSnapshot(unittest.TestCase):
     def test_marks_missing_clis_not_installed(self):
         snapshot = rs.build_runtimes_snapshot(which_fn=lambda n: None,
