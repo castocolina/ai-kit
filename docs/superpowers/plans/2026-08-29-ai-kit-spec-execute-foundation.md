@@ -1899,7 +1899,7 @@ git commit -m "feat(ai-kit-spec-config): surface detect-tools output during disc
 **Files:**
 - No new files — verification-only task.
 
-- [ ] **Step 1: Run the full test suite one final time**
+- [x] **Step 1: Run the full test suite one final time**
 
 ```bash
 cd /var/home/bazzite/git/personal/ai-kit
@@ -1908,14 +1908,46 @@ python3 -m unittest tests.test_ai_kit_spec -v 2>&1 | tail -15
 
 Expected: `OK`, test count = 146 (Task 1–2 baseline) + every new test added in Tasks 3–9.
 
-- [ ] **Step 2: Run `skill-judge` against the 4 renamed skills**
+**Result (2026-08-29):** `Ran 198 tests in 0.045s` / `OK`, run from the worktree root with no
+`PYTHONPATH` override needed (the test file's own `sys.path` bootstrap handles it).
+
+- [x] **Step 2: Run `skill-judge` against the 4 renamed skills**
 
 Invoke the `skill-judge` skill against `ai-kit-spec-review`, `ai-kit-spec-review-checklist`,
 `ai-kit-spec-review-fixer`, `ai-kit-spec-config` — confirm the rename (Task 1) and the
 `TOOLS_PY` filename update (Task 2, Step 5) didn't regress any of the scores already achieved
 in the prior review-spec skill-judge pass. Fix any regression found before proceeding.
 
-- [ ] **Step 3: Confirm every open risk from the design spec that this plan could close is closed or explicitly still open**
+**Result (2026-08-29):** targeted regression check (a full from-scratch 8-dimension re-score was
+judged unnecessary for a pure rename with no content changes). Confirmed: all 4 `SKILL.md` files
+have valid frontmatter (`name` lowercase ≤64 chars, matching the directory name; `description`
+carries WHAT/WHEN/keywords, cross-referencing the other 3 skills' new names correctly, e.g.
+`ai-kit-spec-config` correctly says "when ai-kit-spec-review warns no config exists"). No stale
+bare `review-spec` mentions remain in any of the 4 `SKILL.md` files (`review-spec.toml` — the
+config file's own literal name — is the only surviving `review-spec` string, correctly
+preserved per Task 1's design). No regression found.
+
+- [x] **Step 3: Confirm every open risk from the design spec that this plan could close is closed or explicitly still open**
+
+**Result (2026-08-29):**
+- **Open risk #4** (MCP-config-file locations table) — CLOSED, and superseded rather than
+  fulfilled literally: no config-file-location table was built, because Task 3 replaced the
+  whole file-reading approach with real `mcp get`/`mcp list` commands per client, which needs
+  no such table. `claude` and `cursor-agent` (get-based and list-based respectively) were
+  live-verified for the not-registered state (Task 3 Step 5); `codex`/`opencode` also returned
+  correct not-registered results but weren't cross-checked against a real registered-and-healthy
+  state (codegraph was never actually installed in this environment) -- that half remains open
+  for whoever runs Task 7's `ensure_codegraph_registered` for real.
+- **Open risk #3** (execute-mode builders for grok/claude) — grok and claude remain explicitly
+  open, refusing loudly via `_unimplemented_execute_command` (never silently guessed at).
+  **codex is CLOSED** — live-verified real write confinement (Task 5 Step 5). **cursor-agent and
+  opencode are NOT closed** — both were implemented then demoted back to
+  `_unimplemented_execute_command` after their live confinement test FAILED (Task 5 Step 5):
+  `--workspace`/`--dir` are plain cwd defaults, not write sandboxes. Only codex has a real,
+  verified execute-mode builder shipped in this plan.
+- **Open risks #1, #2, #5** — untouched, as expected; entirely Plan 2 (GSD adapter)/Plan
+  3 (superpowers adapter) scope. This plan never touches GSD's `cross_ai_execution` hook or
+  context-size curated data collection.
 
 Re-read `docs/superpowers/specs/2026-08-28-ai-kit-spec-execute-design.md` §14. This plan
 addresses: open risk #4 (MCP registration detection — resolved by using each client's own real
@@ -1929,7 +1961,7 @@ negative test actually passed for each — if either failed that test and was de
 too, not closed). Open risks #1, #2, #5 remain entirely for Plan 2 (GSD adapter) — this plan
 never touches GSD.
 
-- [ ] **Step 4: Final commit**
+- [x] **Step 4: Final commit**
 
 ```bash
 git add -A
