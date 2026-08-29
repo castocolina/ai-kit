@@ -854,7 +854,7 @@ Before writing this task's tests, add `execute_selection` to the bare-module-imp
 top of `tests/test_ai_kit_spec.py` (Task 2 Step 3): `from ai_kit_spec import cache, detection,
 vendor, commands, config_io, quota, review_reports, cli, execute_selection`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class TestFilterByAffinity(unittest.TestCase):
@@ -933,7 +933,7 @@ class TestCandidatesToLadder(unittest.TestCase):
         self.assertEqual(execute_selection.candidates_to_ladder(candidates), ["b/model", "a/model"])
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestFilterByAffinity \
@@ -944,7 +944,7 @@ python3 -m unittest tests.test_ai_kit_spec.TestFilterByAffinity \
 
 Expected: FAIL — module `ai_kit_spec.execute_selection` not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 """Deterministic candidate resolution for ai-kit-spec-execute: task-type affinity + context-size
@@ -1011,7 +1011,7 @@ def candidates_to_ladder(candidates: list) -> list:
     return [c["key"] for c in candidates]
 ```
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestFilterByAffinity \
@@ -1022,7 +1022,7 @@ python3 -m unittest tests.test_ai_kit_spec.TestFilterByAffinity \
 
 Expected: PASS, all cases.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
