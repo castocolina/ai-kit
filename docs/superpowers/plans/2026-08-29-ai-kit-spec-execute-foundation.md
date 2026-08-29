@@ -1300,7 +1300,7 @@ Before writing this task's tests, add `dispatch` to the bare-module-import line 
 cache, detection, vendor, commands, config_io, quota, review_reports, cli, execute_selection,
 dispatch`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class TestDispatchWithHeartbeat(unittest.TestCase):
@@ -1390,7 +1390,7 @@ class TestDispatchWithHeartbeat(unittest.TestCase):
         self.assertEqual(result["stdout"], "partial output before kill")
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestDispatchWithHeartbeat -v 2>&1 | tail -20
@@ -1398,7 +1398,7 @@ python3 -m unittest tests.test_ai_kit_spec.TestDispatchWithHeartbeat -v 2>&1 | t
 
 Expected: FAIL — module `ai_kit_spec.dispatch` not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 """Generic process dispatcher shared by review's future JSONL-findings work and
@@ -1487,7 +1487,7 @@ def write_resumable_state(path: str, state: dict, write_fn=cache_write_json) -> 
     write_fn(path, state)
 ```
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestDispatchWithHeartbeat -v 2>&1 | tail -10
@@ -1495,7 +1495,7 @@ python3 -m unittest tests.test_ai_kit_spec.TestDispatchWithHeartbeat -v 2>&1 | t
 
 Expected: PASS, all cases.
 
-- [ ] **Step 5: Live smoke test against a real stdin-reading process — proves the deadlock fix, not just the mocks**
+- [x] **Step 5: Live smoke test against a real stdin-reading process — proves the deadlock fix, not just the mocks**
 
 The unit tests above use fakes and cannot, by construction, prove the real deadlock is gone —
 only a real OS-level process with real pipes can. Run:
@@ -1544,7 +1544,13 @@ If any assertion fails, the implementation still has a deadlock or a timeout-han
 it and re-run all three before proceeding; do not trust the mocked unit tests alone for this
 module.
 
-- [ ] **Step 6: Commit**
+**Result (2026-08-29, all 3 run live):** all three assertions passed on first run -- real stdin
+round-trip via `cat` succeeded, the 8 MiB large-prompt round-trip succeeded (output matched
+exactly, no deadlock), and the real `sleep 30`/`timeout=2` case printed two heartbeats then
+correctly reported `timed_out: True` with `communicate()` returning promptly (elapsed ~2.02s
+wall-clock, confirming the process group was actually killed rather than hanging).
+
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A

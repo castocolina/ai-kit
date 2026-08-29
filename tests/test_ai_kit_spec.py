@@ -40,7 +40,7 @@ from ai_kit_spec.cli import main
 # feed the `rs.<name>` back-compat shim below). Tasks 4/6/8 add `execute_selection`, `dispatch`,
 # and `tooling_guidance` to this same line respectively, when those modules are created.
 from ai_kit_spec import (cache, detection, vendor, commands, config_io, quota, review_reports,
-                          cli, execute_selection)
+                          cli, execute_selection, dispatch)
 
 
 # Back-compat shim so every existing `rs.<name>` call in this file keeps working verbatim --
@@ -1557,6 +1557,87 @@ class TestMainCli(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         self.assertTrue(json.loads(buf.getvalue())["available"])
+
+
+class TestDispatchWithHeartbeat(unittest.TestCase):
+    def test_prints_timestamped_heartbeat_while_process_runs(self):
+        class FakeProcess:
+            def __init__(self):
+                self.stdin = unittest.mock.MagicMock()
+                self.returncode = 0
+                self._attempts = 0
+
+            def communicate(self, input=None, timeout=None):
+                self._attempts += 1
+                if self._attempts < 3:
+                    raise subprocess.TimeoutExpired(cmd="x", timeout=timeout)
+                return ("done", "")
+
+        printed = []
+        fake_time = iter([0, 1, 2, 3]).__next__
+        dispatch.dispatch_with_heartbeat(
+            "echo hi", "prompt text", heartbeat_interval=1, timeout=30,
+            popen_fn=lambda *a, **k: FakeProcess(), time_fn=fake_time,
+            print_fn=printed.append)
+        self.assertTrue(any("still running" in line for line in printed))
+
+    def test_delivers_prompt_via_communicate_never_via_manual_stdin_write(self):
+        class FakeProcess:
+            returncode = 0
+            def __init__(self):
+                self.stdin = unittest.mock.MagicMock()
+            def communicate(self, input=None, timeout=None):
+                assert input == "the prompt", "prompt must be delivered via communicate(input=...)"
+                return ("done", "")
+        proc = FakeProcess()
+        dispatch.dispatch_with_heartbeat(
+            "cat", "the prompt", heartbeat_interval=60, timeout=30,
+            popen_fn=lambda *a, **k: proc, print_fn=lambda *a: None)
+        proc.stdin.write.assert_not_called()
+
+    def test_returns_stdout_stderr_and_returncode_on_clean_completion(self):
+        class FakeProcess:
+            returncode = 0
+            stdin = unittest.mock.MagicMock()
+
+            def communicate(self, input=None, timeout=None):
+                return ("all good", "")
+
+        result = dispatch.dispatch_with_heartbeat(
+            "echo hi", "prompt", heartbeat_interval=60, timeout=30,
+            popen_fn=lambda *a, **k: FakeProcess(), print_fn=lambda *a: None)
+        self.assertEqual(result, {"returncode": 0, "stdout": "all good",
+                                   "stderr": "", "timed_out": False})
+
+    def test_kills_process_group_and_still_returns_output_collected_before_the_kill(self):
+        class FakeProcess:
+            returncode = None
+            stdin = unittest.mock.MagicMock()
+            pid = 1234
+
+            def __init__(self):
+                self.killed = False
+
+            def communicate(self, input=None, timeout=None):
+                if self.killed:
+                    self.returncode = -9
+                    return ("partial output before kill", "")
+                raise subprocess.TimeoutExpired(cmd="x", timeout=timeout)
+
+        proc = FakeProcess()
+        killed_targets = []
+
+        def fake_kill_fn(p):
+            killed_targets.append(p)
+            p.killed = True
+
+        result = dispatch.dispatch_with_heartbeat(
+            "sleep 999", "prompt", heartbeat_interval=1000, timeout=1,
+            popen_fn=lambda *a, **k: proc, time_fn=iter([0, 2]).__next__,
+            kill_fn=fake_kill_fn, print_fn=lambda *a: None)
+        self.assertTrue(result["timed_out"])
+        self.assertEqual(killed_targets, [proc])
+        self.assertEqual(result["stdout"], "partial output before kill")
 
 
 class TestBuildExecuteCommand(unittest.TestCase):
