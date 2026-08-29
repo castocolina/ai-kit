@@ -502,7 +502,7 @@ git commit -m "refactor(ai-kit-spec): split review-spec.py into the ai_kit_spec 
   - `detect_tool_availability(which_fn=shutil.which) -> dict` — `{"rg": bool, "sd": bool, "bat": bool, "eza": bool, "fd": bool, "codegraph": bool}`
   - `resolve_agents_tooling_path(env=os.environ) -> str | None` — path to `AGENTS-TOOLING.md` if findable, else `None`
   - `_SUPPORTED_CODEGRAPH_CLIENTS: frozenset[str]` — the client names codegraph officially supports (`grok` deliberately absent, confirmed unsupported)
-  - `check_codegraph_mcp_registered(cli: str, run_fn=subprocess.run) -> bool` — `False` immediately for any `cli` not in `_SUPPORTED_CODEGRAPH_CLIENTS`. For `claude`/`codex`: primary check is `mcp get codegraph` (exit 0 = registered); on nonzero exit, falls back to parsing `mcp list` before concluding not-registered (a nonzero `get` could mean something other than "not registered"). For `cursor-agent`/`opencode` (no `get` subcommand): `mcp list` is the only check. Never reads a config file directly — see Step 3's implementation, confirmed live against each installed CLI.
+  - `check_codegraph_mcp_healthy(cli: str, run_fn=subprocess.run) -> bool` — checks REGISTRATION AND CURRENT CONNECTION HEALTH, not presence alone (confirmed live: a registered server can be currently disconnected). `False` immediately for any `cli` not in `_SUPPORTED_CODEGRAPH_CLIENTS`. For `claude`/`codex`: primary check is `mcp get codegraph` (exit 0 = registered, then its own output's status line is checked for a failure signal before declaring healthy); on nonzero exit, falls back to parsing `mcp list` before concluding not-registered (a nonzero `get` could mean something other than "not registered"). For `cursor-agent`/`opencode` (no `get` subcommand): `mcp list` is the only check, and the matched entry's own line is checked for a failure signal the same way. Never reads a config file directly — see Step 3's implementation, confirmed live against each installed CLI.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -541,23 +541,35 @@ class TestResolveAgentsToolingPath(unittest.TestCase):
             self.assertIsNone(detection.resolve_agents_tooling_path(env=env))
 
 
-class TestCheckCodegraphMcpRegistered(unittest.TestCase):
+class TestCheckCodegraphMcpHealthy(unittest.TestCase):
     def test_grok_is_always_false_no_command_attempted(self):
         # grok is confirmed unsupported by codegraph -- never even run a command for it
-        result = detection.check_codegraph_mcp_registered(
+        result = detection.check_codegraph_mcp_healthy(
             "grok", run_fn=lambda *a, **k: (_ for _ in ()).throw(
                 AssertionError("must not run any command for grok")))
         self.assertFalse(result)
 
     def test_unknown_cli_is_false(self):
-        self.assertFalse(detection.check_codegraph_mcp_registered("some-future-cli"))
+        self.assertFalse(detection.check_codegraph_mcp_healthy("some-future-cli"))
 
-    def test_claude_true_when_mcp_get_exits_zero(self):
-        # confirmed live (2026-08-30): `claude mcp get <name>` exits 0 when the server is
-        # registered, prints its details -- a real, direct name lookup, not a config-file read
-        result = detection.check_codegraph_mcp_registered(
-            "claude", run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0))
+    def test_claude_true_when_mcp_get_exits_zero_and_status_is_connected(self):
+        # confirmed live (2026-08-30): `claude mcp get <name>` exits 0 and prints a
+        # "Status: ✔ Connected" line when the server is registered AND healthy
+        result = detection.check_codegraph_mcp_healthy(
+            "claude", run_fn=lambda *a, **k: unittest.mock.MagicMock(
+                returncode=0, stdout="codegraph:\n  Scope: user config\n  Status: ✔ Connected\n"))
         self.assertTrue(result)
+
+    def test_claude_false_when_get_exits_zero_but_status_shows_failed_to_connect(self):
+        # confirmed live: a REGISTERED server can still be currently disconnected -- `claude
+        # mcp get` returned exit 0 with "Status: ✘ Failed to connect" observed live for a real
+        # server in this session. Registered-but-unhealthy must be treated as unusable, same as
+        # not-registered -- exit code 0 alone is NOT sufficient to declare it usable.
+        result = detection.check_codegraph_mcp_healthy(
+            "claude", run_fn=lambda *a, **k: unittest.mock.MagicMock(
+                returncode=0,
+                stdout="codegraph:\n  Scope: user config\n  Status: ✘ Failed to connect — CONNECTION_CLOSED\n"))
+        self.assertFalse(result)
 
     def test_claude_false_when_get_and_list_fallback_both_say_not_registered(self):
         # confirmed live: `claude mcp get nonexistent` exits 1 with "No MCP server named...";
@@ -566,31 +578,34 @@ class TestCheckCodegraphMcpRegistered(unittest.TestCase):
             if "get" in cmd:
                 return unittest.mock.MagicMock(returncode=1)
             return unittest.mock.MagicMock(returncode=0, stdout="other-tool: x - Connected\n")
-        result = detection.check_codegraph_mcp_registered("claude", run_fn=fake_run)
+        result = detection.check_codegraph_mcp_healthy("claude", run_fn=fake_run)
         self.assertFalse(result)
 
     def test_claude_get_succeeds_never_calls_list_fallback(self):
         # the fallback must be nonzero-exit-triggered only -- a successful get is the cheapest
         # path and must not incur a second subprocess call
         seen = []
-        detection.check_codegraph_mcp_registered(
-            "claude", run_fn=lambda cmd, **k: seen.append(cmd) or unittest.mock.MagicMock(returncode=0))
+        detection.check_codegraph_mcp_healthy(
+            "claude",
+            run_fn=lambda cmd, **k: seen.append(cmd) or unittest.mock.MagicMock(
+                returncode=0, stdout="Status: ✔ Connected\n"))
         self.assertEqual(seen, ["claude mcp get codegraph"])
 
-    def test_claude_get_fails_but_list_fallback_finds_it_registered(self):
+    def test_claude_get_fails_but_list_fallback_finds_it_registered_and_healthy(self):
         # the exact resilience case this fallback exists for: `get` returns nonzero for some
         # unrelated reason (CLI bug, auth hiccup) even though the server genuinely IS registered
         def fake_run(cmd, **k):
             if "get" in cmd:
                 return unittest.mock.MagicMock(returncode=1)
-            return unittest.mock.MagicMock(returncode=0, stdout="codegraph: x - Connected\n")
-        result = detection.check_codegraph_mcp_registered("claude", run_fn=fake_run)
+            return unittest.mock.MagicMock(returncode=0, stdout="codegraph: x - ✔ Connected\n")
+        result = detection.check_codegraph_mcp_healthy("claude", run_fn=fake_run)
         self.assertTrue(result)
 
-    def test_codex_true_when_mcp_get_exits_zero(self):
+    def test_codex_true_when_mcp_get_exits_zero_and_healthy(self):
         # confirmed live: codex mcp get <name> mirrors claude's exit-code contract exactly
-        result = detection.check_codegraph_mcp_registered(
-            "codex", run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0))
+        result = detection.check_codegraph_mcp_healthy(
+            "codex", run_fn=lambda *a, **k: unittest.mock.MagicMock(
+                returncode=0, stdout="Status: ✔ Connected\n"))
         self.assertTrue(result)
 
     def test_cursor_agent_parses_mcp_list_for_an_actual_server_name_token(self):
@@ -598,27 +613,36 @@ class TestCheckCodegraphMcpRegistered(unittest.TestCase):
         # "codegraph" must be the actual name token (text before the first ':'), never a
         # substring match anywhere in the line
         fake_list = "codegraph: some-command - ✔ Connected\nother-tool: x - ✔ Connected\n"
-        result = detection.check_codegraph_mcp_registered(
+        result = detection.check_codegraph_mcp_healthy(
             "cursor-agent",
             run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
         self.assertTrue(result)
 
     def test_cursor_agent_false_when_codegraph_only_appears_outside_the_name_token(self):
         fake_list = "other-tool: some codegraph-related command - ✔ Connected\n"
-        result = detection.check_codegraph_mcp_registered(
+        result = detection.check_codegraph_mcp_healthy(
+            "cursor-agent",
+            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
+        self.assertFalse(result)
+
+    def test_cursor_agent_false_when_codegraph_present_but_disconnected(self):
+        # present (name token matches) but its own line shows a failure signal -- must be
+        # treated the same as absent, not as usable
+        fake_list = "codegraph: some-command - ✘ Failed to connect\n"
+        result = detection.check_codegraph_mcp_healthy(
             "cursor-agent",
             run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
         self.assertFalse(result)
 
     def test_opencode_parses_mcp_list_the_same_way_as_cursor_agent(self):
-        fake_list = "codegraph: connected\n"
-        result = detection.check_codegraph_mcp_registered(
+        fake_list = "codegraph: ✔ connected\n"
+        result = detection.check_codegraph_mcp_healthy(
             "opencode",
             run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
         self.assertTrue(result)
 
     def test_list_based_client_false_when_no_servers_configured(self):
-        result = detection.check_codegraph_mcp_registered(
+        result = detection.check_codegraph_mcp_healthy(
             "cursor-agent",
             run_fn=lambda *a, **k: unittest.mock.MagicMock(
                 returncode=0, stdout="No MCP servers configured (expected in .cursor/mcp.json or ~/.cursor/mcp.json)\n"))
@@ -630,11 +654,11 @@ class TestCheckCodegraphMcpRegistered(unittest.TestCase):
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestDetectToolAvailability \
   tests.test_ai_kit_spec.TestResolveAgentsToolingPath \
-  tests.test_ai_kit_spec.TestCheckCodegraphMcpRegistered -v 2>&1 | tail -20
+  tests.test_ai_kit_spec.TestCheckCodegraphMcpHealthy -v 2>&1 | tail -20
 ```
 
 Expected: FAIL — `detect_tool_availability`/`resolve_agents_tooling_path`/
-`check_codegraph_mcp_registered` not defined.
+`check_codegraph_mcp_healthy` not defined.
 
 - [ ] **Step 3: Implement**
 
@@ -643,7 +667,7 @@ def detect_tool_availability(which_fn=shutil.which) -> dict:
     """Deterministic presence check for the token-efficient tooling AGENTS-TOOLING.md
     recommends. codegraph is included here (binary presence only, Tier 1 of the two-tier
     check design §9 established) -- MCP registration per-client is a separate concern,
-    see check_codegraph_mcp_registered below."""
+    see check_codegraph_mcp_healthy below."""
     return {name: which_fn(name) is not None
             for name in ("rg", "sd", "bat", "eza", "fd", "codegraph")}
 
@@ -679,6 +703,16 @@ def resolve_agents_tooling_path(env=None) -> str | None:
 #   ONLY check, not a fallback.
 # All `mcp list` parsing looks for a line whose name token (text before the first ':') is
 # exactly "codegraph"; every observed list format uses that "name: ..." convention.
+#
+# HEALTH, not just presence: confirmed live that a registered server can be currently
+# disconnected -- `claude mcp list` showed `plugin:playwright:playwright: ... - ✘ Failed to
+# connect — CONNECTION_CLOSED`, moments before `claude mcp get plugin:playwright:playwright`
+# printed `Status: ✔ Connected` for that same server (connection state visibly fluctuates
+# between calls). Registered-but-unhealthy must be treated the same as not-registered for the
+# purpose this check serves -- telling a subagent to use a currently-broken MCP tool wastes a
+# dispatch on a guaranteed failure. Both `get` and `list` output include a `Status:`/inline
+# health indicator; look for an explicit failure signal in the relevant text before declaring
+# healthy, never assume health from presence alone.
 _SUPPORTED_CODEGRAPH_CLIENTS = frozenset({"claude", "codex", "cursor-agent", "opencode"})
 
 _MCP_GET_COMMANDS = {"claude": "claude mcp get codegraph", "codex": "codex mcp get codegraph"}
@@ -687,37 +721,58 @@ _MCP_LIST_COMMANDS = {
     "cursor-agent": "cursor-agent mcp list", "opencode": "opencode mcp list",
 }
 
+# Confirmed live in claude's own output ("✔ Connected" / "✘ Failed to connect — ..."); codex/
+# cursor-agent/opencode not yet observed with a real failing entry (nothing was registered to
+# test against during this plan's own session) -- Task 3 Step 5's live smoke test must confirm
+# these same signals appear (or find and add the real ones) for whichever of those three CLIs
+# it tests against an actually-unhealthy server.
+_UNHEALTHY_SIGNALS = ("✘", "failed to connect", "not connected")
 
-def _list_output_has_codegraph(stdout: str) -> bool:
-    return any(line.split(":", 1)[0].strip() == "codegraph" for line in stdout.splitlines())
+
+def _text_is_healthy(text: str) -> bool:
+    lowered = text.lower()
+    return not any(signal.lower() in lowered for signal in _UNHEALTHY_SIGNALS)
 
 
-def check_codegraph_mcp_registered(cli: str, run_fn=subprocess.run) -> bool:
+def _codegraph_entry_healthy_in_list_output(stdout: str) -> bool:
+    """False if no 'codegraph' entry is found at all (not registered). False if found but its
+    own line shows a failure signal (registered but unhealthy -- treated the same as absent for
+    this check's purpose). True only if found AND healthy."""
+    for line in stdout.splitlines():
+        name = line.split(":", 1)[0].strip()
+        if name == "codegraph":
+            return _text_is_healthy(line)
+    return False
+
+
+def check_codegraph_mcp_healthy(cli: str, run_fn=subprocess.run) -> bool:
     """Cheap, run every session, scoped to the one client about to be dispatched (never a
     one-time-ever check -- a client installed after codegraph's own setup would otherwise
     never get detected). Uses each client's own real MCP-inspection command, confirmed live
     against the actual installed CLI -- never reads a config file directly (a prior revision of
-    this function did that and produced weak substring-match false positives).
+    this function did that and produced weak substring-match false positives). Verifies HEALTH,
+    not just presence -- a registered-but-currently-disconnected server returns False here,
+    same as if it were never registered at all (see the module-level note above for why).
 
     Where `mcp get <name>` exists (claude, codex), it is the primary, cheapest check -- one
-    subprocess call, deterministic exit code, no output parsing. Only on a NONZERO `get` exit
-    does this fall back to `mcp list` for that same client: a nonzero `get` exit usually means
-    "not registered," but could also mean the `get` invocation itself hit an unrelated problem
-    (a CLI bug, an auth hiccup) -- cross-checking via `list` before concluding "not registered"
-    is one extra call in the uncommon case, in exchange for not trusting a single command's exit
-    code as the only signal. cursor-agent/opencode have no `get` at all, so `list` is their only
-    (not a fallback) check."""
+    subprocess call, deterministic exit code, then a health-signal check on its own stdout.
+    Only on a NONZERO `get` exit does this fall back to `mcp list` for that same client: a
+    nonzero `get` exit usually means "not registered," but could also mean the `get` invocation
+    itself hit an unrelated problem (a CLI bug, an auth hiccup) -- cross-checking via `list`
+    before concluding "not registered" is one extra call in the uncommon case, in exchange for
+    not trusting a single command's exit code as the only signal. cursor-agent/opencode have no
+    `get` at all, so `list` is their only (not a fallback) check."""
     if cli not in _SUPPORTED_CODEGRAPH_CLIENTS:
         return False
     get_command = _MCP_GET_COMMANDS.get(cli)
     if get_command is not None:
         result = run_fn(get_command, shell=True, capture_output=True, text=True, check=False)
         if result.returncode == 0:
-            return True
+            return _text_is_healthy(result.stdout)
         # nonzero exit -- cross-check via `mcp list` before concluding "not registered"
     list_result = run_fn(_MCP_LIST_COMMANDS[cli], shell=True, capture_output=True, text=True,
                           check=False)
-    return _list_output_has_codegraph(list_result.stdout)
+    return _codegraph_entry_healthy_in_list_output(list_result.stdout)
 ```
 
 Add `import os` at the top of `detection.py` if not already present (it already imports
@@ -728,7 +783,7 @@ Add `import os` at the top of `detection.py` if not already present (it already 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestDetectToolAvailability \
   tests.test_ai_kit_spec.TestResolveAgentsToolingPath \
-  tests.test_ai_kit_spec.TestCheckCodegraphMcpRegistered -v 2>&1 | tail -10
+  tests.test_ai_kit_spec.TestCheckCodegraphMcpHealthy -v 2>&1 | tail -10
 ```
 
 Expected: PASS, all cases.
@@ -742,8 +797,8 @@ registered:
 
 ```bash
 PYTHONPATH=skills/ai-kit-spec-review python3 -c "
-from ai_kit_spec.detection import check_codegraph_mcp_registered
-print(check_codegraph_mcp_registered('claude'))
+from ai_kit_spec.detection import check_codegraph_mcp_healthy
+print(check_codegraph_mcp_healthy('claude'))
 "
 ```
 
@@ -1473,9 +1528,9 @@ git commit -m "feat(ai-kit-spec): add dispatch.py (heartbeat-emitting process di
 - Test: `tests/test_ai_kit_spec.py`
 
 **Interfaces:**
-- Consumes: `check_codegraph_mcp_registered` (Task 3), `run_fn=subprocess.run` (existing convention).
+- Consumes: `check_codegraph_mcp_healthy` (Task 3), `run_fn=subprocess.run` (existing convention).
 - Produces:
-  - `ensure_codegraph_registered(cli: str, run_fn=subprocess.run, check_fn=check_codegraph_mcp_registered) -> bool` — returns whether the client is registered after this call (runs `codegraph install --target=<cli> --location=global --yes --init` only if `check_fn(cli)` was `False`; never re-installs an already-registered client; still returns `False` for `grok`/unsupported clients without attempting anything)
+  - `ensure_codegraph_registered(cli: str, run_fn=subprocess.run, check_fn=check_codegraph_mcp_healthy) -> bool` — returns whether the client is registered after this call (runs `codegraph install --target=<cli> --location=global --yes --init` only if `check_fn(cli)` was `False`; never re-installs an already-registered client; still returns `False` for `grok`/unsupported clients without attempting anything)
   - `build_codegraph_index_command(target_dir: str) -> str` — `f"cd {target_dir} && (codegraph sync || codegraph init)"`
   - `CODEGRAPH_INDEX_TIMEOUT_SECONDS = 15` (module constant — the agreed minimum, regardless of the typically-faster real runtime)
 
@@ -1544,7 +1599,7 @@ CODEGRAPH_INDEX_TIMEOUT_SECONDS = 15  # agreed minimum, safety margin over the t
 
 
 def ensure_codegraph_registered(cli: str, run_fn=subprocess.run,
-                                 check_fn=check_codegraph_mcp_registered) -> bool:
+                                 check_fn=check_codegraph_mcp_healthy) -> bool:
     """Runs every session, scoped to `cli` -- never a one-time-ever check (design spec §9,
     corrected during brainstorming: a client installed after codegraph's own setup would
     otherwise never get detected). Only `install` itself is conditional on check_fn's result."""
@@ -1593,7 +1648,7 @@ git commit -m "feat(ai-kit-spec): add codegraph install/init orchestration helpe
 
 **Interfaces:**
 - Consumes: `detect_tool_availability`, `resolve_agents_tooling_path`,
-  `check_codegraph_mcp_registered` (all Task 3).
+  `check_codegraph_mcp_healthy` (all Task 3).
 - Produces:
   - `build_tooling_guidance(cli: str, tool_availability: dict, agents_tooling_path: str | None, codegraph_registered: bool) -> str` — returns the exact prose block to append to a dispatch prompt, or `""` when nothing confirmed applies (never a guess-inducing partial mention). codegraph guidance requires BOTH `tool_availability.get("codegraph")` truthy AND `codegraph_registered` truthy — either signal alone is insufficient (binary presence without MCP registration, or a registration claim without a confirmed-installed binary, are each an inconsistent/stale-input scenario this function must not act on).
 
