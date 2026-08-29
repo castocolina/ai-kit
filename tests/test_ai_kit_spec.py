@@ -40,7 +40,7 @@ from ai_kit_spec.cli import main
 # feed the `rs.<name>` back-compat shim below). Tasks 4/6/8 add `execute_selection`, `dispatch`,
 # and `tooling_guidance` to this same line respectively, when those modules are created.
 from ai_kit_spec import (cache, detection, vendor, commands, config_io, quota, review_reports,
-                          cli, execute_selection, dispatch)
+                          cli, execute_selection, dispatch, tooling_guidance)
 
 
 # Back-compat shim so every existing `rs.<name>` call in this file keeps working verbatim --
@@ -1557,6 +1557,43 @@ class TestMainCli(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         self.assertTrue(json.loads(buf.getvalue())["available"])
+
+
+class TestBuildToolingGuidance(unittest.TestCase):
+    def test_empty_when_nothing_confirmed(self):
+        result = tooling_guidance.build_tooling_guidance(
+            "grok", tool_availability={}, agents_tooling_path=None, codegraph_registered=False)
+        self.assertEqual(result, "")
+
+    def test_points_to_agents_tooling_file_when_present(self):
+        result = tooling_guidance.build_tooling_guidance(
+            "claude", tool_availability={}, agents_tooling_path="/home/u/.agents/AGENTS-TOOLING.md",
+            codegraph_registered=False)
+        self.assertIn("/home/u/.agents/AGENTS-TOOLING.md", result)
+
+    def test_mentions_codegraph_explore_only_when_registered(self):
+        result = tooling_guidance.build_tooling_guidance(
+            "claude", tool_availability={"codegraph": True}, agents_tooling_path=None,
+            codegraph_registered=True)
+        self.assertIn("codegraph_explore", result)
+
+    def test_omits_codegraph_explore_when_not_registered_even_if_binary_present(self):
+        result = tooling_guidance.build_tooling_guidance(
+            "grok", tool_availability={"codegraph": True}, agents_tooling_path=None,
+            codegraph_registered=False)
+        self.assertNotIn("codegraph_explore", result)
+
+    def test_omits_codegraph_explore_when_registered_but_binary_not_detected(self):
+        result = tooling_guidance.build_tooling_guidance(
+            "claude", tool_availability={"codegraph": False}, agents_tooling_path=None,
+            codegraph_registered=True)
+        self.assertNotIn("codegraph_explore", result)
+
+    def test_grok_never_gets_codegraph_explore_even_with_inconsistent_true_inputs(self):
+        result = tooling_guidance.build_tooling_guidance(
+            "grok", tool_availability={"codegraph": True}, agents_tooling_path=None,
+            codegraph_registered=True)
+        self.assertNotIn("codegraph_explore", result)
 
 
 class TestEnsureCodegraphRegistered(unittest.TestCase):

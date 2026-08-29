@@ -1693,7 +1693,7 @@ git commit -m "feat(ai-kit-spec): add codegraph install/init orchestration helpe
 Before writing this task's tests, add `tooling_guidance` to the bare-module-import line at the
 top of `tests/test_ai_kit_spec.py` (Task 2 Step 3, already extended by Tasks 4 and 6).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class TestBuildToolingGuidance(unittest.TestCase):
@@ -1738,7 +1738,7 @@ class TestBuildToolingGuidance(unittest.TestCase):
         self.assertNotIn("codegraph_explore", result)
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestBuildToolingGuidance -v 2>&1 | tail -20
@@ -1746,7 +1746,7 @@ python3 -m unittest tests.test_ai_kit_spec.TestBuildToolingGuidance -v 2>&1 | ta
 
 Expected: FAIL — module `ai_kit_spec.tooling_guidance` not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 """Builds the tool-preference prose appended to a dispatch prompt -- never includes anything
@@ -1772,7 +1772,7 @@ def build_tooling_guidance(cli: str, tool_availability: dict, agents_tooling_pat
     return "\n".join(lines)
 ```
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestBuildToolingGuidance -v 2>&1 | tail -10
@@ -1780,7 +1780,7 @@ python3 -m unittest tests.test_ai_kit_spec.TestBuildToolingGuidance -v 2>&1 | ta
 
 Expected: PASS, all cases.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
