@@ -1,5 +1,5 @@
 ---
-name: review-spec-checklist
+name: ai-kit-spec-review-checklist
 description: Use when a design, spec, requirements, or plan document has been produced and needs review before the next step. Framework-aware — classifies each document into one of four archetypes (intent, requirements, design, plan) and reviews it with the matching checklist plus the source framework's own conventions (EARS, RFC-2119 SHALL, Given/When/Then, OpenSpec delta sections, Spec Kit [NEEDS CLARIFICATION]/[P], constitutional gates). Works on superpowers, OpenSpec, GitHub Spec Kit, Kiro, BMAD, GSD, or generic (docs/rfcs, docs/designs). Accepts a pre-resolved FRAMEWORK_PROFILE_PATH + ARCHETYPE from the orchestrator; falls back to its own framework detection + archetype heuristics when none provided.
 ---
 
@@ -10,11 +10,11 @@ cannot: contradictions, omissions, wrong sequencing, missing definitions, untest
 requirements, spec-plan gaps — and violations of the *source framework's own rules*.
 
 **Audit only — never edit the document under review.** Report findings; fixes are a separate
-task (`review-spec-fixer`). The only "write" allowed is persisting an in-context
+task (`ai-kit-spec-review-fixer`). The only "write" allowed is persisting an in-context
 document to disk verbatim so you can `Read` it.
 
 This skill assumes you are a clean-context reviewer. If you wrote (or watched the writing of)
-the document, don't invoke it yourself — the orchestrator (`/review-spec`) dispatches a fresh
+the document, don't invoke it yourself — the orchestrator (`/ai-kit-spec-review`) dispatches a fresh
 subagent first.
 
 ## Before reviewing
@@ -222,4 +222,4 @@ Approved shape — don't carry "previously flagged, now fixed" forward.
 | Leaving `[NEEDS CLARIFICATION]` unflagged | Unresolved ambiguity marker → HIGH — the next reader inherits the same confusion, and no tooling can resolve it downstream. |
 | Confirming a referenced file exists without reading it | Read its content. Wrong claim → CRITICAL. |
 | Reviewing a `constitution`/`state` doc as if it were a spec | Those are context — read, don't review. |
-| Reviewing in the same context that wrote the doc | Stop. Clean-context reviewer only; dispatch via `/review-spec`. |
+| Reviewing in the same context that wrote the doc | Stop. Clean-context reviewer only; dispatch via `/ai-kit-spec-review`. |

@@ -27,7 +27,7 @@ not "helpfully" add `agent` as an alias anywhere in this design.
 than the generic `--sandbox <enabled|disabled>` flag (which only
 "explicitly enable or disable sandbox mode (overrides config)" — no
 read-only guarantee documented on its own). Use `--mode plan` for review
-dispatch; `review-spec.py`'s `build_reviewer_command("cursor-agent",
+dispatch; `ai-kit-spec.py`'s `build_reviewer_command("cursor-agent",
 mode=...)` builder refuses any other mode with a `ValueError` rather
 than building a write-capable command.
 
@@ -80,21 +80,21 @@ each, `-fast` variants, some with `1M`/thinking context variants),
 standalone `grok` CLI), `composer-2.5*` (Cursor's own model),
 `gemini-3.7-flash-high` (Google), `glm-5.2-high`/`glm-5.2-max` (Zhipu),
 `kimi-k3-low`/`-high`/`-max`, `kimi-k2.7-code` (Moonshot). Vendor
-attribution for all of these is in `review-spec.py`'s
+attribution for all of these is in `ai-kit-spec.py`'s
 `_MODEL_VENDOR_PREFIXES` table (`infer-vendor` CLI subcommand) — do not
 re-infer it by reading model names.
 
 **Effort/fast/context tuning is encoded in the `--model` argument
 itself, not a separate flag** — confirmed live (`--help`): "Parameterized
 models accept quoted bracket overrides, e.g.
-`claude-opus-4-8[context=1m,effort=high,fast=false]`". `review-spec.py`'s
+`claude-opus-4-8[context=1m,effort=high,fast=false]`". `ai-kit-spec.py`'s
 `build_reviewer_model_id("cursor-agent", base_model, effort=...,
 fast=..., context=...)` builds this string for the reviewer entry's own
 `model` field — never hand-write the bracket syntax in
 `review-spec.toml` directly.
 
 Non-interactive: `-p`/`--print`. **Use `--output-format text` (or omit
-the flag — `text` is the default), never `json`**: `review-spec.py`'s
+the flag — `text` is the default), never `json`**: `ai-kit-spec.py`'s
 report parsing expects the reviewer output template's raw markdown on
 stdout, not a JSON wrapper. `status`/`whoami` reports auth status
 (confirmed live: `✓ Logged in as <email>`).
@@ -112,7 +112,7 @@ the dispatch step.
 cursor-agent -p --output-format text --mode plan --model {model}
 ```
 
-(`review-spec.py`'s `build_reviewer_command("cursor-agent", mode="plan")`
+(`ai-kit-spec.py`'s `build_reviewer_command("cursor-agent", mode="plan")`
 returns exactly this template — do not hand-write it; `{model}` is a bare
 config `command` template placeholder, unquoted. `render_reviewer_command`
 still accepts a `{prompt}` placeholder too, `shlex.quote`d, for a

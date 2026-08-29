@@ -1,6 +1,6 @@
 # Reviewing-Plans Skill — Test Scenarios
 
-This is the TDD record for the `review-spec-checklist` skill. Each scenario dispatches a fresh `general-purpose` Sonnet subagent. Fixtures live in `./fixtures/`. Results captured below in summary form.
+This is the TDD record for the `ai-kit-spec-review-checklist` skill. Each scenario dispatches a fresh `general-purpose` Sonnet subagent. Fixtures live in `./fixtures/`. Results captured below in summary form.
 
 ## Fixtures
 

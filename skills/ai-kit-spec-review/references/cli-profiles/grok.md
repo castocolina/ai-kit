@@ -36,7 +36,7 @@ the kind of nonzero-exit failure `probe_reviewer_quota`'s generic
 classification already catches, so a wrong value here silently reads as
 "reviewer unavailable" rather than surfacing the real cause). **Never use
 `--output-format json`/`streaming-json`/`streaming-messages-json` or
-`--json-schema` here either** — `review-spec.py`'s report parsing
+`--json-schema` here either** — `ai-kit-spec.py`'s report parsing
 (`report_has_status`/`parse_findings`) expects the reviewer output
 template's raw markdown (`### Status:`, `### <SEVERITY>` headings,
 `- **title** — Location: ...` bullets) as plain text on stdout, not JSON;

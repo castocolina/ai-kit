@@ -1,24 +1,70 @@
-import importlib.util
 import json
 import os
+import shlex
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from unittest import mock
 
-_MODULE_PATH = os.path.join(os.path.dirname(__file__), "..", "skills",
-                             "ai-kit-spec-review", "review-spec.py")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
+
+from ai_kit_spec.cache import cache_base, cache_read_json, cache_write_json, cache_is_stale
+from ai_kit_spec.detection import (
+    cache_runtimes_path, detect_installed_clis, detect_opencode_models,
+    detect_cursor_agent_models, group_models_by_family, build_runtimes_snapshot, KNOWN_CLIS,
+)
+from ai_kit_spec.vendor import infer_vendor_from_model
+from ai_kit_spec.quota import (
+    resolve_ladder_pick, resolve_reviewers, cache_quota_path,
+    probe_reviewer_quota, refresh_quota_cache, NO_CONFIG_FALLBACK,
+)
+from ai_kit_spec.commands import (
+    ResolvedReviewer, build_reviewer_command, build_cursor_agent_model_id,
+    build_reviewer_model_id, render_reviewer_command,
+)
+from ai_kit_spec.config_io import (
+    cfg_local_path, cfg_global_path, cfg_load_toml, cfg_merge_reviewers, cfg_resolve,
+    cfg_render_toml, cfg_write_toml, tomllib,
+)
+from ai_kit_spec.review_reports import (
+    report_has_status, report_declares_issues, parse_findings, merge_findings,
+    render_merged_report,
+)
+from ai_kit_spec.cli import main
+
+# Bare module imports too -- test classes in this file call module-qualified names like
+# `detection.detect_tool_availability(...)`, `commands.build_execute_command(...)`, which need
+# the module itself in scope, separately from the individual-function imports above (those only
+# feed the `rs.<name>` back-compat shim below). Tasks 4/6/8 add `execute_selection`, `dispatch`,
+# and `tooling_guidance` to this same line respectively, when those modules are created.
+from ai_kit_spec import cache, detection, vendor, commands, config_io, quota, review_reports, cli
 
 
-def _load_module():
-    spec = importlib.util.spec_from_file_location("review_spec", _MODULE_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+# Back-compat shim so every existing `rs.<name>` call in this file keeps working verbatim --
+# avoids touching 146 existing test bodies for a pure module-boundary change. Explicit name
+# list, not dir()-based reflection: a missing/misspelled export raises KeyError here (from
+# globals()[_name]), at import time, instead of silently disappearing from `rs`.
+class _RS:
+    pass
 
 
-rs = _load_module()
+rs = _RS()
+for _name in (
+    "cache_base", "cache_read_json", "cache_write_json", "cache_is_stale",
+    "cache_runtimes_path", "detect_installed_clis", "detect_opencode_models",
+    "detect_cursor_agent_models", "group_models_by_family", "build_runtimes_snapshot",
+    "KNOWN_CLIS", "infer_vendor_from_model", "ResolvedReviewer", "resolve_ladder_pick",
+    "resolve_reviewers", "cache_quota_path", "probe_reviewer_quota", "refresh_quota_cache",
+    "NO_CONFIG_FALLBACK", "build_reviewer_command", "build_cursor_agent_model_id",
+    "build_reviewer_model_id", "render_reviewer_command", "cfg_local_path", "cfg_global_path",
+    "cfg_load_toml", "cfg_merge_reviewers", "cfg_resolve", "cfg_render_toml", "cfg_write_toml",
+    "report_has_status", "report_declares_issues", "parse_findings", "merge_findings",
+    "render_merged_report", "main",
+    "tomllib", "os",
+):
+    setattr(rs, _name, globals()[_name])
 
 
 class TestConfigPaths(unittest.TestCase):
@@ -192,17 +238,17 @@ class TestRenderAndWriteToml(unittest.TestCase):
 class TestCachePaths(unittest.TestCase):
     def test_base_uses_xdg_cache_home(self):
         env = {"XDG_CACHE_HOME": "/x/cache"}
-        self.assertEqual(rs.cache_base(env), "/x/cache/ai-kit/review-spec")
+        self.assertEqual(rs.cache_base(env), "/x/cache/ai-kit/spec")
 
     def test_base_falls_back_to_home_dot_cache(self):
         env = {"HOME": "/home/u"}
-        self.assertEqual(rs.cache_base(env), "/home/u/.cache/ai-kit/review-spec")
+        self.assertEqual(rs.cache_base(env), "/home/u/.cache/ai-kit/spec")
 
     def test_runtimes_and_quota_paths(self):
         env = {"HOME": "/home/u"}
         self.assertEqual(rs.cache_runtimes_path(env),
-                          "/home/u/.cache/ai-kit/review-spec/runtimes.json")
-        self.assertEqual(rs.cache_quota_path(env), "/home/u/.cache/ai-kit/review-spec/quota.json")
+                          "/home/u/.cache/ai-kit/spec/runtimes.json")
+        self.assertEqual(rs.cache_quota_path(env), "/home/u/.cache/ai-kit/spec/quota.json")
 
 
 class TestCacheReadWrite(unittest.TestCase):
@@ -1045,7 +1091,7 @@ class TestMainCli(unittest.TestCase):
         with mock.patch.object(rs.os, "environ", env), redirect_stdout(buf):
             code = rs.main(["cache-path", "--kind", "runtimes"])
         self.assertEqual(code, 0)
-        self.assertEqual(buf.getvalue().strip(), "/x/cache/ai-kit/review-spec/runtimes.json")
+        self.assertEqual(buf.getvalue().strip(), "/x/cache/ai-kit/spec/runtimes.json")
 
     def test_cache_path_quota_kind(self):
         import io
@@ -1055,7 +1101,7 @@ class TestMainCli(unittest.TestCase):
         with mock.patch.object(rs.os, "environ", env), redirect_stdout(buf):
             code = rs.main(["cache-path", "--kind", "quota"])
         self.assertEqual(code, 0)
-        self.assertEqual(buf.getvalue().strip(), "/home/u/.cache/ai-kit/review-spec/quota.json")
+        self.assertEqual(buf.getvalue().strip(), "/home/u/.cache/ai-kit/spec/quota.json")
 
     def test_detect_runtimes_if_stale_skips_detection_when_fresh(self):
         with tempfile.TemporaryDirectory() as d:

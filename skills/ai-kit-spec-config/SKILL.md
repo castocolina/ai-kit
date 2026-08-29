@@ -1,30 +1,30 @@
 ---
-name: review-spec-config
-description: Sets up cross-AI reviewer config by detecting installed CLIs/models, asking which to use as reviewers and priority order, then writing review-spec.toml. Writes per-project ./.aikit/review-spec.toml by default (always announces the exact path), asks before updating an existing global config. Use when the user requests cross-AI review setup or when review-spec warns no config exists. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force ~/.config/ai-kit/review-spec.toml directly).
+name: ai-kit-spec-config
+description: Sets up cross-AI reviewer config by detecting installed CLIs/models, asking which to use as reviewers and priority order, then writing review-spec.toml. Writes per-project ./.aikit/review-spec.toml by default (always announces the exact path), asks before updating an existing global config. Use when the user requests cross-AI review setup or when ai-kit-spec-review warns no config exists. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force ~/.config/ai-kit/review-spec.toml directly).
 ---
 
 ## Your task
 
-Set up (or refresh) `review-spec`'s cross-AI reviewer configuration.
+Set up (or refresh) `ai-kit-spec-review`'s cross-AI reviewer configuration.
 
-### Step 0 — Locate `review-spec.py` and the CLI profiles
+### Step 0 — Locate `ai-kit-spec.py` and the CLI profiles
 
-`review-spec.py` and its `references/cli-profiles/` live inside the
-**`review-spec`** skill's own directory (a sibling of this skill, not
+`ai-kit-spec.py` and its `references/cli-profiles/` live inside the
+**`ai-kit-spec-review`** skill's own directory (a sibling of this skill, not
 this skill's own directory, and not a top-level `tools/`/`references/` —
-see `review-spec/SKILL.md`'s Step 0.7 point 0 for why).
-Resolve them the identical way `review-spec/SKILL.md` itself resolves
+see `ai-kit-spec-review/SKILL.md`'s Step 0.7 point 0 for why).
+Resolve them the identical way `ai-kit-spec-review/SKILL.md` itself resolves
 these same two paths (its own Step 0.7 point 0) — same three candidates,
 self-contained, no shared variable between the two skills — so both
 agree on one procedure:
 
 ```bash
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec}" \
-         "$HOME/.claude/skills/review-spec" \
-         "$(dirname "<absolute path to THIS SKILL.md>")/../review-spec"; do
+for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
+         "$HOME/.claude/skills/ai-kit-spec-review" \
+         "$(dirname "<absolute path to THIS SKILL.md>")/../ai-kit-spec-review"; do
   [ -d "$d" ] && { REVIEW_SPEC_SKILL_DIR="$d"; break; }
 done
-TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/review-spec.py"
+TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/ai-kit-spec.py"
 CLI_PROFILES_DIR="$REVIEW_SPEC_SKILL_DIR/references/cli-profiles"
 if [ -f "$TOOLS_PY" ]; then
   RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
@@ -32,13 +32,13 @@ fi
 printf '%s\n' "$TOOLS_PY" "$CLI_PROFILES_DIR" "$RUNTIMES_JSON"
 ```
 
-(The third candidate is `review-spec-config`'s own sibling — matching
+(The third candidate is `ai-kit-spec-config`'s own sibling — matching
 `SEEDS_DIR`'s own third candidate — since this skill's directory and
-`review-spec`'s are installed alongside each other in every shape:
+`ai-kit-spec-review`'s are installed alongside each other in every shape:
 plugin, `~/.claude/skills`, or a direct dev checkout. `cache-path`
 resolves the `${XDG_CACHE_HOME:-$HOME/.cache}`-aware path through
-`review-spec.py`'s own `cache_runtimes_path` — the same call
-`review-spec/SKILL.md` itself uses
+`ai-kit-spec.py`'s own `cache_runtimes_path` — the same call
+`ai-kit-spec-review/SKILL.md` itself uses
 — so both skills always agree on where this file lives.)
 
 **Resolve this whole block once, in one `Bash` call, and record
@@ -47,13 +47,13 @@ literal absolute paths — not shell environment variables.** Every `Bash`
 tool call in this harness starts a fresh shell, so a variable assigned in
 one call is gone by the next; every `$TOOLS_PY`/`$CLI_PROFILES_DIR`/
 `$RUNTIMES_JSON` reference in Steps 1–3 below means "the literal path
-captured here", substituted directly, exactly the way `review-spec/SKILL.md`'s
+captured here", substituted directly, exactly the way `ai-kit-spec-review/SKILL.md`'s
 own `TOOLS_PY`/`RUN_TMP_DIR` work (its own Step 0.7 points 0/1) — this
 skill has its own separate `AskUserQuestion` interaction (Step 2) between
 this resolution and Step 3's write, guaranteeing at least one call
 boundary in between. If `TOOLS_PY` does not exist at the resolved path,
-stop and report: "review-spec's own `review-spec.py` module is missing —
-this skill configures cross-AI review for `review-spec`, which must
+stop and report: "ai-kit-spec-review's own `ai-kit-spec.py` module is missing —
+this skill configures cross-AI review for `ai-kit-spec-review`, which must
 already be installed."
 
 ## NEVER
@@ -111,7 +111,7 @@ skill's `--check-only` contract.
 python3 "$TOOLS_PY" detect-runtimes --save "$RUNTIMES_JSON"
 ```
 (re-running detection here is cheap and keeps this step's logic linear —
-`--save` persists via `cache_write_json`, so `review-spec` doesn't
+`--save` persists via `cache_write_json`, so `ai-kit-spec-review` doesn't
 have to re-detect next session.)
 
 ### Step 2 — Ask
@@ -155,11 +155,11 @@ This prints `{"<family>": ["<variant-id>", ...], ...}` — one entry per base mo
 ```bash
 python3 "$TOOLS_PY" infer-vendor --model <model-id>
 ```
-When this prints `{"vendor": null}` (no known prefix — e.g. an `ollama-cloud/*` id, or a genuinely new model this table hasn't seen yet), ask the user directly for the real vendor rather than guessing — this is the one case a human still has to supply the answer, and it should be rare (the table in `review-spec.py`'s `_MODEL_VENDOR_PREFIXES` already covers every model family confirmed live in the CLI profiles).
+When this prints `{"vendor": null}` (no known prefix — e.g. an `ollama-cloud/*` id, or a genuinely new model this table hasn't seen yet), ask the user directly for the real vendor rather than guessing — this is the one case a human still has to supply the answer, and it should be rare (the table in `ai-kit-spec.py`'s `_MODEL_VENDOR_PREFIXES` already covers every model family confirmed live in the CLI profiles).
 
 #### Step 2.4 — Build the command and model id
 
-For each CLI the user wants, read its profile under `$CLI_PROFILES_DIR/<id>.md` for anything CLI-specific this step doesn't already cover (prerequisites, known quirks, plan/entitlement gating — `cursor-agent.md` documents several). **Prefer the factory subcommands below over hand-writing a `command` template or a bracket-parameter model string** — for the CLIs `build_reviewer_command`/`build_reviewer_model_id` already know (`review-spec.py`'s `_COMMAND_BUILDERS` registry — currently codex, claude, grok, gemini, opencode, cursor-agent), the factory encodes verified quoting a hand-written template is easy to get wrong:
+For each CLI the user wants, read its profile under `$CLI_PROFILES_DIR/<id>.md` for anything CLI-specific this step doesn't already cover (prerequisites, known quirks, plan/entitlement gating — `cursor-agent.md` documents several). **Prefer the factory subcommands below over hand-writing a `command` template or a bracket-parameter model string** — for the CLIs `build_reviewer_command`/`build_reviewer_model_id` already know (`ai-kit-spec.py`'s `_COMMAND_BUILDERS` registry — currently codex, claude, grok, gemini, opencode, cursor-agent), the factory encodes verified quoting a hand-written template is easy to get wrong:
 ```bash
 python3 "$TOOLS_PY" build-command --cli <id> \
   [--effort <e>] [--service-tier <t>] [--mode plan|ask]
@@ -191,7 +191,7 @@ This makes one real call through the CLI (the same mechanism `probe-quota` uses 
 
 #### Step 2.7 — Ask about native reviewer entries
 
-**Also ask, explicitly — do not skip this**: whether to register one or more **native** (`cli`-omitted) reviewer entries — e.g. the current session's own tier, or another Claude tier reachable without an external CLI. This is not optional to ask: `policy.mode = "double"`'s guaranteed baseline walks `policy.ladder` restricted to native entries only (`review-spec.py`'s `_native_ladder` helper), so a config with zero native `[[reviewers]]` entries can never seat a real native baseline — it always degrades to `NO_CONFIG_FALLBACK` — silently defeating the goal of preferring the strongest available Claude tier for anyone who only answered the per-CLI questions above. For each native entry the user wants, `model` must be one of the four `Agent`-tool aliases (`sonnet`/`opus`/`haiku`/`fable`), never a full model id like `"opus-5"`; ask the user to pick one of those four rather than typing a version string.
+**Also ask, explicitly — do not skip this**: whether to register one or more **native** (`cli`-omitted) reviewer entries — e.g. the current session's own tier, or another Claude tier reachable without an external CLI. This is not optional to ask: `policy.mode = "double"`'s guaranteed baseline walks `policy.ladder` restricted to native entries only (`ai-kit-spec.py`'s `_native_ladder` helper), so a config with zero native `[[reviewers]]` entries can never seat a real native baseline — it always degrades to `NO_CONFIG_FALLBACK` — silently defeating the goal of preferring the strongest available Claude tier for anyone who only answered the per-CLI questions above. For each native entry the user wants, `model` must be one of the four `Agent`-tool aliases (`sonnet`/`opus`/`haiku`/`fable`), never a full model id like `"opus-5"`; ask the user to pick one of those four rather than typing a version string.
 
 #### Step 2.8 — Set policy.mode, policy.ladder order, and strategy
 
@@ -199,7 +199,7 @@ Then ask: `policy.mode` (`single` or `double`) and the `policy.ladder` order —
 
 ### Step 3 — Write
 
-Build the JSON shape `skills/review-spec/review-spec.py`'s `render-toml` subcommand
+Build the JSON shape `skills/ai-kit-spec-review/ai-kit-spec.py`'s `render-toml` subcommand
 expects (`{"strategy": "...", "policy": {...}, "reviewers": [...]}` — the
 `strategy` key only when Step 2 asked for `local-only`), write it to a
 temp JSON file, then let `--out` do the write directly (via

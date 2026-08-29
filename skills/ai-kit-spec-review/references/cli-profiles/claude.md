@@ -29,7 +29,7 @@ claude -p --model {model} --output-format text
 
 `{model}` above is the literal `command`-template placeholder every
 reviewer entry's `command` field can reference — written bare, never
-wrapped in extra quotes. `render_reviewer_command` (in `review-spec.py`)
+wrapped in extra quotes. `render_reviewer_command` (in `ai-kit-spec.py`)
 still accepts a `{prompt}` placeholder too — `shlex.quote`d before
 substitution — for a hand-written open-hatch `command` that prefers to
 inline the prompt as a shell argument instead of relying on stdin; this

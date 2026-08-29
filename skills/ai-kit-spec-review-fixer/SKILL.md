@@ -1,11 +1,11 @@
 ---
-name: review-spec-fixer
-description: Use when a review report from `review-spec-checklist` (or equivalent structured review feedback) has been produced for a design or plan document, and the document author needs to address each finding. Intended to be dispatched as a clean-context fixer subagent by an orchestrator (e.g. `/review-spec`). Edits the document in place, addresses every CRITICAL/HIGH finding, respects the source framework's conventions when a framework profile is provided, and produces a per-finding edit summary.
+name: ai-kit-spec-review-fixer
+description: Use when a review report from `ai-kit-spec-review-checklist` (or equivalent structured review feedback) has been produced for a design or plan document, and the document author needs to address each finding. Intended to be dispatched as a clean-context fixer subagent by an orchestrator (e.g. `/ai-kit-spec-review`). Edits the document in place, addresses every CRITICAL/HIGH finding, respects the source framework's conventions when a framework profile is provided, and produces a per-finding edit summary.
 ---
 
 # Applying Review Feedback
 
-Targeted editor for design/plan documents flagged by `review-spec-checklist`. Reads the report, edits the document to satisfy each finding's `Required:` outcome, and reports back what was addressed and what was not.
+Targeted editor for design/plan documents flagged by `ai-kit-spec-review-checklist`. Reads the report, edits the document to satisfy each finding's `Required:` outcome, and reports back what was addressed and what was not.
 
 **Scope rule — never expand.** This skill only touches what the report flags. No drive-by refactors, no "while we're here" cleanup, no new features, no rewriting unrelated sections. The report is the contract.
 

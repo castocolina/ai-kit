@@ -1,11 +1,11 @@
 ---
-name: review-spec
-description: Use when a design, spec, requirements, or plan document needs review-and-fix before the next step. Orchestrates a reviewer and routes fixes via the appropriate handler (native framework skill, slash command, or direct-edit fixer), with optional cross-AI reviewer dispatch via `--cross-ai`/`--no-cross-ai`. Respects worktrees, scopes to lifecycle stage, loops until approved or iteration cap. Triggered by "review-spec", "review my spec/plan", or passing document path(s).
+name: ai-kit-spec-review
+description: Use when a design, spec, requirements, or plan document needs review-and-fix before the next step. Orchestrates a reviewer and routes fixes via the appropriate handler (native framework skill, slash command, or direct-edit fixer), with optional cross-AI reviewer dispatch via `--cross-ai`/`--no-cross-ai`. Respects worktrees, scopes to lifecycle stage, loops until approved or iteration cap. Triggered by "ai-kit-spec-review", "review my spec/plan", or passing document path(s).
 ---
 
 ## Your Task
 
-You are the orchestrator running as the `review-spec` skill (invocable via `/review-spec`, by asking to review a spec/plan, or programmatically). You were given one or more document paths. Your job: drive a review-and-fix loop using clean-context subagents (a reviewer, and a rewrite handler chosen by framework), surface the outcome to the user, and never edit the document yourself.
+You are the orchestrator running as the `ai-kit-spec-review` skill (invocable via `/ai-kit-spec-review`, by asking to review a spec/plan, or programmatically). You were given one or more document paths. Your job: drive a review-and-fix loop using clean-context subagents (a reviewer, and a rewrite handler chosen by framework), surface the outcome to the user, and never edit the document yourself.
 
 ## Inputs
 
@@ -37,7 +37,7 @@ Before any subagent dispatch, every document under review **must exist on disk**
 |---|---|
 | User passed real file path(s) that exist on disk | Continue to Step 1. |
 | Doc was just produced in this session by `brainstorming` / `writing-plans` and SAVED to a path | Confirm the file exists on disk via a `Read` call before Step 1. Do not assume. |
-| Doc only exists in chat (in-memory, not yet persisted) | STOP. Tell the user: "The document is not on disk. To run `/review-spec` I need to persist it first to a stable path." Offer a default location appropriate to the framework in use (superpowers → `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` or `.../plans/YYYY-MM-DD-<feature>.md`; Spec Kit → `specs/<NNN>-<feature>/spec.md` or `plan.md`; OpenSpec → `openspec/changes/<id>/proposal.md` or `tasks.md`; otherwise ask). After the user confirms, write the document verbatim to the chosen path, then continue. |
+| Doc only exists in chat (in-memory, not yet persisted) | STOP. Tell the user: "The document is not on disk. To run `/ai-kit-spec-review` I need to persist it first to a stable path." Offer a default location appropriate to the framework in use (superpowers → `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` or `.../plans/YYYY-MM-DD-<feature>.md`; Spec Kit → `specs/<NNN>-<feature>/spec.md` or `plan.md`; OpenSpec → `openspec/changes/<id>/proposal.md` or `tasks.md`; otherwise ask). After the user confirms, write the document verbatim to the chosen path, then continue. |
 | Path was given but file does not exist | STOP. Surface a Failure: `Path does not exist: <path>. Persist the document first.` |
 
 Do not paraphrase the document into the subagent prompt as a workaround — that defeats the clean-context guarantee. The subagent must `Read` the file from disk.
@@ -117,7 +117,7 @@ table) or ask. Record as `ARCHETYPE` (one or more of: `intent`, `requirements`, 
 
 **Low-confidence detection → generic.** If the framework stays ambiguous and the user cannot
 disambiguate, set `FRAMEWORK_PROFILE_PATH = none` and route every archetype through the generic
-`review-spec-fixer` fixer (Step 3a). State this in the final Surface message ("Framework
+`ai-kit-spec-review-fixer` fixer (Step 3a). State this in the final Surface message ("Framework
 ambiguous — used the generic fixer.") so routing stays transparent.
 
 Pass both `FRAMEWORK_PROFILE_PATH` and `ARCHETYPE` to the reviewer and fixer below.
@@ -166,11 +166,11 @@ at its archetype and list the gaps.
 
 Runs once per invocation, after Step 0.6. Before resolving the reviewer list, ask: is cross-AI support actually installed and requested, or should this degrade cleanly to native-only?
 
-0. Resolve `TOOLS_PY` and `CHECKLIST_SKILL_MD`. **`review-spec.py` lives
-   inside `skills/review-spec/` itself** (not at a top-level `tools/` —
+0. Resolve `TOOLS_PY` and `CHECKLIST_SKILL_MD`. **`ai-kit-spec.py` lives
+   inside `skills/ai-kit-spec-review/` itself** (not at a top-level `tools/` —
    that placement isn't reachable from an installed skill, since
    `tools/setup.py`'s symlinks only cover `agents/commands/skills`, per
-   its `CATEGORIES`). Because it's inside `review-spec`'s own skill
+   its `CATEGORIES`). Because it's inside `ai-kit-spec-review`'s own skill
    directory, it resolves the same way `SEEDS_DIR` (in the `## Constants`
    section, below this Step 0.7 insertion point) does (three
    candidates: `CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/
@@ -181,13 +181,13 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
    before its own `for` loop, so its third candidate resolves the same
    way this snippet's does.):
    ```bash
-   for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec}" \
-            "$HOME/.claude/skills/review-spec" \
+   for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
+            "$HOME/.claude/skills/ai-kit-spec-review" \
             "$(dirname "<absolute path to THIS SKILL.md>")"; do
      [ -d "$d" ] && { REVIEW_SPEC_SKILL_DIR="$d"; break; }
    done
-   TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/review-spec.py"
-   CHECKLIST_SKILL_MD="$(dirname "$REVIEW_SPEC_SKILL_DIR")/review-spec-checklist/SKILL.md"
+   TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/ai-kit-spec.py"
+   CHECKLIST_SKILL_MD="$(dirname "$REVIEW_SPEC_SKILL_DIR")/ai-kit-spec-review-checklist/SKILL.md"
    if [ -f "$TOOLS_PY" ]; then
      RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
      QUOTA_JSON="$(python3 "$TOOLS_PY" cache-path --kind quota)"
@@ -195,15 +195,15 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
    printf '%s\n' "$TOOLS_PY" "$CHECKLIST_SKILL_MD" "$RUNTIMES_JSON" "$QUOTA_JSON"
    ```
    `CHECKLIST_SKILL_MD` is the path Step 1's external-CLI dispatch tells
-   the external reviewer to `Read` — `review-spec-checklist` (the
+   the external reviewer to `Read` — `ai-kit-spec-review-checklist` (the
    reviewer skill) is always installed as
-   `review-spec`'s own sibling, since both live under the same `skills/`
+   `ai-kit-spec-review`'s own sibling, since both live under the same `skills/`
    tree in every installed shape (plugin, `~/.claude/skills`, or a dev
    checkout), so deriving it from `$REVIEW_SPEC_SKILL_DIR`'s own parent
    needs no separate three-candidate search. `cache-path`
    resolves `RUNTIMES_JSON`/`QUOTA_JSON` through the module's own
    `cache_runtimes_path`/`cache_quota_path` — the
-   `${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/review-spec/...` formula lives
+   `${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/ai-kit-spec-review/...` formula lives
    in exactly one place, not duplicated as a bash literal here.
    Resolve this whole block once, in one `Bash` call, and — exactly like
    `RUN_TMP_DIR` below — record `TOOLS_PY`/`CHECKLIST_SKILL_MD`/
@@ -215,7 +215,7 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
    exactly like `--no-cross-ai` (point 2 below) — cross-AI support isn't
    installed, never block the review over it. If `TOOLS_PY` exists but
    `CHECKLIST_SKILL_MD` does not (a broken/partial install —
-   `review-spec-checklist` missing while `review-spec` itself is
+   `ai-kit-spec-review-checklist` missing while `ai-kit-spec-review` itself is
    present), still proceed with native dispatch (`cli` absent entries
    need no checklist path), but skip any reviewer entry whose `cli` is
    set: an external CLI can't be told to `Read` a file that doesn't
@@ -236,12 +236,12 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
    here", never as an actual shell variable reference.) Every artifact
    this run produces (raw reviewer reports, the double-review merge, the
    fixer's report) lives under this one directory, replacing the old flat
-   `/tmp/review-spec-*` paths (which collided across concurrent runs on
+   `/tmp/ai-kit-spec-review-*` paths (which collided across concurrent runs on
    different projects/worktrees — fixed here).
 2. **If `--no-cross-ai` was requested (or `TOOLS_PY` is missing, point 0
    above)**: set `REVIEWER_LIST` directly, in-context, to the single-entry
    array `[{"key": "session-default", "model": "", "vendor": "", "cli":
-   null, "command": null, "extra": {}}]` — `review-spec.py`'s
+   null, "command": null, "extra": {}}]` — `ai-kit-spec.py`'s
    `NO_CONFIG_FALLBACK` constant's exact shape. **Do not run
    `resolve-reviewers`, `probe-quota`, or
    `detect-runtimes`, and do not write `$RUN_TMP_DIR/reviewers.json`** —
@@ -268,7 +268,7 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
    still fresh; when missing or stale it detects and saves in the same
    call, so this is always safe to run. If the check above printed
    `no-runtimes-snapshot-yet` (this was the first-ever save), print one
-   line — "No cross-AI config saved yet — run `review-spec-config` so
+   line — "No cross-AI config saved yet — run `ai-kit-spec-config` so
    this doesn't repeat every invocation." — then continue to step 4
    regardless; do NOT skip reviewer resolution (there's usually no
    `review-spec.toml` yet either, so `resolve-reviewers` in step 5
@@ -318,28 +318,28 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
 
 ## Constants
 
-- **Reviewer skill:** `review-spec-checklist`
-- **Fixer skill:** `review-spec-fixer`
+- **Reviewer skill:** `ai-kit-spec-review-checklist`
+- **Fixer skill:** `ai-kit-spec-review-fixer`
 - **Subagent type for both:** `general-purpose`
 - **Fixer subagent model:** `sonnet` (Haiku misses subtle defects; Opus burns tokens for no extra fix-quality signal — the fixer stays Claude-only and sonnet-pinned; who edits the document under review is out of scope for this skill). The reviewer's model is no longer a Constant at all — it comes from `REVIEWER_LIST` (this skill's own `Step 0.7`, points 2/5/6), set per-entry.
 - **Iteration cap:** 3 (configurable per invocation if user requests)
 - **Loop state file (optional):** `$RUN_TMP_DIR/loop.log` — append iter# + status line each round, for debugging only.
 - **Framework profile seeds dir** (`SEEDS_DIR`) — resolve once to an **absolute** path. As a skill
   you are not guaranteed a `CLAUDE_PLUGIN_ROOT`; take the **first existing** of, in order:
-  1. `${CLAUDE_PLUGIN_ROOT}/skills/review-spec-checklist/references/frameworks/` (when set)
-  2. `~/.claude/skills/review-spec-checklist/references/frameworks/` (symlinked install — what `tools/install.sh` creates)
-  3. the sibling of this skill: `<dir-of-this-SKILL.md>/../review-spec-checklist/references/frameworks/`
+  1. `${CLAUDE_PLUGIN_ROOT}/skills/ai-kit-spec-review-checklist/references/frameworks/` (when set)
+  2. `~/.claude/skills/ai-kit-spec-review-checklist/references/frameworks/` (symlinked install — what `tools/install.sh` creates)
+  3. the sibling of this skill: `<dir-of-this-SKILL.md>/../ai-kit-spec-review-checklist/references/frameworks/`
 
   ```bash
-  # SKILL_DIR = the directory containing this SKILL.md (the review-spec skill)
+  # SKILL_DIR = the directory containing this SKILL.md (the ai-kit-spec-review skill)
   SKILL_DIR="$(dirname "<absolute path to THIS SKILL.md>")"
-  for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/review-spec-checklist/references/frameworks}" \
-           "$HOME/.claude/skills/review-spec-checklist/references/frameworks" \
-           "$SKILL_DIR/../review-spec-checklist/references/frameworks"; do
+  for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review-checklist/references/frameworks}" \
+           "$HOME/.claude/skills/ai-kit-spec-review-checklist/references/frameworks" \
+           "$SKILL_DIR/../ai-kit-spec-review-checklist/references/frameworks"; do
     [ -d "$d" ] && { SEEDS_DIR="$d"; break; }
   done
   ```
-  If none of the three fallbacks resolves to an existing directory, STOP and surface to the user: `The review-spec-checklist skill is not installed (no framework profiles found). Install ai-kit and re-invoke.` — do not invent a path or proceed.
+  If none of the three fallbacks resolves to an existing directory, STOP and surface to the user: `The ai-kit-spec-review-checklist skill is not installed (no framework profiles found). Install ai-kit and re-invoke.` — do not invent a path or proceed.
 
   It holds the curated seed profiles `<id>.md` and `SCHEMA.md`. **Never reference these as a bare
   relative `references/frameworks/…`** — your CWD is the user's repo (often a worktree), not the kit.
@@ -438,11 +438,11 @@ For each entry in `REVIEWER_LIST`:
     its own default"). A non-empty `model` value here **must be one of the
     four `Agent`-tool model aliases** (`sonnet`/`opus`/`haiku`/`fable` —
     Claude Code's `Agent` tool does not accept a full model id like
-    `"opus-5"`); `review-spec-config` is responsible for writing
+    `"opus-5"`); `ai-kit-spec-config` is responsible for writing
     exactly one of these four strings for every native reviewer entry, so
     surface anything else as a config error rather than passing it through.
-  - `description`: `review-spec iter N reviewer (<key>)`
-  - `prompt`: the template below, invoking the `review-spec-checklist` skill
+  - `description`: `ai-kit-spec-review iter N reviewer (<key>)`
+  - `prompt`: the template below, invoking the `ai-kit-spec-review-checklist` skill
   - After the `Agent` tool returns its report text, write it verbatim to
     `$RUN_TMP_DIR/iter<N>-<key>.md` via the `Write` tool (mirroring the
     external branch below, which redirects `Bash` stdout to the same
@@ -483,7 +483,7 @@ For each entry in `REVIEWER_LIST`:
      ```
 
      (External CLIs can't call our `Skill` tool, but they can read a file
-     path — this keeps `review-spec-checklist` the single source of truth
+     path — this keeps `ai-kit-spec-review-checklist` the single source of truth
      for the checklist instead of duplicating its content into every
      CLI's prompt. The substitutions and rules above mirror the native
      template's `<GROUNDING_DOCS>`, declared-paths-authoritative, and
@@ -542,7 +542,7 @@ Reviewer prompt template — use VERBATIM, substitute only `<DOC_PATHS>`, `<ARCH
 ```
 You are the reviewer.
 
-Step 1: Invoke the Skill tool with skill name "review-spec-checklist" and follow it exactly.
+Step 1: Invoke the Skill tool with skill name "ai-kit-spec-review-checklist" and follow it exactly.
 
 Step 2: The orchestrator has pre-resolved:
 - ARCHETYPE = <ARCHETYPE>  (one or more of: intent, requirements, design, plan)
@@ -642,7 +642,7 @@ Dispatch per the route's `invoke`:
 
 | `invoke` | Handler |
 |---|---|
-| (direct edit / archetype not covered) | **Step 3a** — generic `review-spec-fixer` fixer |
+| (direct edit / archetype not covered) | **Step 3a** — generic `ai-kit-spec-review-fixer` fixer |
 | `skill:<name>` | **Step 3b-skill** — hybrid native-skill revise; surface if it stalls |
 | `slash_command` | **Step 3b-cmd** — invoke it if the command/backing skill is installed this session (e.g. global GSD), else surface |
 | `surface` | **Step 3b-surface** — always hand the user the pre-filled command, then stop |
@@ -670,12 +670,12 @@ Emit one short message in the user's terminal. Do NOT paste full reports unless 
 | Approved after N iters | `Approved after N iteration(s). Doc edited and re-reviewed clean.` |
 | Cap reached | `Hit iteration cap (N). Last review still has issues. Final report:\n\n<paste full last reviewer report>\n\nDecide manually.` |
 | Escalation Required | `Fixer escalated on iter N. Reason: <fixer's escalation message>. Decide manually.` |
-| Native revise handed off | `Findings ready. This <archetype> is owned by <framework>'s planner — run: <pre-filled command>  (findings: <report path>), then re-run /review-spec.` |
+| Native revise handed off | `Findings ready. This <archetype> is owned by <framework>'s planner — run: <pre-filled command>  (findings: <report path>), then re-run /ai-kit-spec-review.` |
 | Insufficient info (stage gap) | `Only <existing docs> exist; project is at the <stage> stage. No <requested archetype> to review yet. Reviewed <existing> as <archetype>; produce <next stage> before reviewing it.` |
-| Validator blocked (Step 3c) | `Regenerated <archetype> was rejected by <validator> — <reasons>. Findings: <report path>. Fix manually and re-run /review-spec.` |
+| Validator blocked (Step 3c) | `Regenerated <archetype> was rejected by <validator> — <reasons>. Findings: <report path>. Fix manually and re-run /ai-kit-spec-review.` |
 | Failure | `<failure mode message>. Last available output: <quote brief>.` |
 
-After surfacing, the orchestrator's job is done. Do NOT continue to "next steps" — the user decides whether to invoke `writing-plans`, edit manually, or re-invoke `/review-spec` after their own edits.
+After surfacing, the orchestrator's job is done. Do NOT continue to "next steps" — the user decides whether to invoke `writing-plans`, edit manually, or re-invoke `/ai-kit-spec-review` after their own edits.
 
 ## Hard rules for the orchestrator
 
@@ -698,11 +698,11 @@ Routing is data-driven from each profile's `revise_protocol.routes`. Seed-profil
 | superpowers | design | `brainstorming` skill | hybrid subagent → surface if it stalls (Step 3b-skill) |
 | superpowers | plan | `writing-plans` skill | hybrid subagent → surface if it stalls (Step 3b-skill) |
 | GSD | plan | `/gsd-plan-phase {phase_id} --reviews`, then `gsd-plan-checker` | slash-command or surface (3b-cmd) + validate (3c) |
-| GSD | intent / requirements / design | `review-spec-fixer` | direct edit (3a) |
-| any other framework, generic, or `none` | all | `review-spec-fixer` | direct edit (3a) |
-| ambiguous / low-confidence detection | all | `review-spec-fixer` | direct edit (3a) — Surface notes the ambiguity |
+| GSD | intent / requirements / design | `ai-kit-spec-review-fixer` | direct edit (3a) |
+| any other framework, generic, or `none` | all | `ai-kit-spec-review-fixer` | direct edit (3a) |
+| ambiguous / low-confidence detection | all | `ai-kit-spec-review-fixer` | direct edit (3a) — Surface notes the ambiguity |
 
-The reviewer (`review-spec-checklist`) is identical for every framework; only the **rewrite** stage is
+The reviewer (`ai-kit-spec-review-checklist`) is identical for every framework; only the **rewrite** stage is
 routed. To change routing, edit the framework profile's `revise_protocol.routes` — never hard-code
 tools here.
 
@@ -713,5 +713,5 @@ tools here.
 After the loop ends (any outcome): `rm -rf "$RUN_TMP_DIR"`. Every artifact
 this run produced (reviewer reports, the double-review merge, fixer
 reports, the loop log) lives under that one directory — a single command
-replaces the old file-by-file `/tmp/review-spec-*` cleanup, and there's
+replaces the old file-by-file `/tmp/ai-kit-spec-review-*` cleanup, and there's
 nothing to accidentally miss.

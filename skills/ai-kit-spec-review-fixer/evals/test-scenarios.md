@@ -1,11 +1,11 @@
 # Applying-Review-Feedback Skill — Test Scenarios
 
-TDD record for the `review-spec-fixer` skill. Fixtures live in `../../review-spec-checklist/evals/fixtures/` (shared with the reviewer skill since the fixer consumes a reviewer's report on the same document set).
+TDD record for the `ai-kit-spec-review-fixer` skill. Fixtures live in `../../ai-kit-spec-review-checklist/evals/fixtures/` (shared with the reviewer skill since the fixer consumes a reviewer's report on the same document set).
 
 ## Fixtures used
 
 - `design-good.md` — original design with an unintended factual bug in its Context section (claims `commit-message` skill "stages immediately" but it does not).
-- `sample-review-report.md` — Variant B report from `review-spec-checklist` flagging that bug as CRITICAL with `Required:` text "Once the Context is corrected, re-evaluate whether `--draft` remains warranted."
+- `sample-review-report.md` — Variant B report from `ai-kit-spec-review-checklist` flagging that bug as CRITICAL with `Required:` text "Once the Context is corrected, re-evaluate whether `--draft` remains warranted."
 - `design-to-fix-baseline.md`, `design-to-fix-skill.md`, `design-to-fix-pressure.md` — fresh copies of `design-good.md` so each scenario edits its own working copy.
 
 ## Scenarios
