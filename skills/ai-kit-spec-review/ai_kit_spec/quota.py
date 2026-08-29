@@ -96,21 +96,8 @@ def resolve_ladder_pick(reviewers: list, ladder: list, skip_vendor: str, quota: 
     return None
 
 
-def _native_ladder(reviewers: list, ladder: list) -> list:
-    """The sub-list of `ladder` whose keys resolve to a cli-less
-    (native/current-runtime) reviewer entry, order preserved. Used to keep
-    double mode's baseline guaranteed-native (see resolve_reviewers)."""
-    result = []
-    for key in ladder:
-        entry = _reviewer_by_key(reviewers, key)
-        if entry is not None and not entry.get("cli"):
-            result.append(key)
-    return result
-
-
 def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: bool) -> list:
-    """The full policy decision, including double mode's
-    native-baseline guarantee. Returns 1 or 2 ResolvedReviewer entries;
+    """The full policy decision. Returns 1 or 2 ResolvedReviewer entries;
     dispatch mechanics are the caller's concern (review-spec/SKILL.md's
     Step 1), this only decides WHO.
 
@@ -118,19 +105,28 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
     (independent perspective on the document), quota-aware, tier-aware via
     ladder order.
 
-    double: `primary` walks ONLY the ladder's native (cli-less) entries —
-    tier-aware within that restricted set, guaranteed to never be an
-    external entry, falling back to NO_CONFIG_FALLBACK if no native entry
-    is configured or none has quota (never zero reviewers, and never a
-    promoted external entry standing in for the baseline). `secondary` is
-    the best entry anywhere in the FULL ladder with a vendor DIFFERENT
-    from primary's — or, when primary is NO_CONFIG_FALLBACK (whose vendor
-    is unknown, `""`), different from `source_vendor` instead, since an
-    unknown-vendor filter is no filter at all and would defeat the
-    cross-vendor guarantee exactly when there's no configured native
-    entry to compare against — dropped (not substituted) if none
-    survives (a native-only, or all-same-vendor, ladder degrades to a
-    single reviewer, not an error).
+    double: `primary` walks the FULL ladder in order, any vendor, native or
+    external alike — the user's configured ladder position is the sole
+    priority signal, never overridden by a native-precedence rule. Falls
+    back to NO_CONFIG_FALLBACK only when nothing in the ladder has quota
+    (or the ladder is empty). CHANGED 2026-08-29 (explicit user request,
+    superseding docs/superpowers/specs/2026-08-27-review-spec-cross-ai-
+    design.md §3's "native reviewer runs unconditionally as the guaranteed
+    baseline" rule): a native entry (e.g. the current session's own tier)
+    is no longer forced to primary regardless of its ladder position —
+    live-observed real-world case that prompted this change: a ladder
+    ordered [external-A, external-B, native] with mode="double" was
+    silently reordered to seat native as primary and external-A as
+    secondary, permanently starving external-B, when the user's actual
+    intent was "try A, then B, fall back to native only if both lack
+    quota." `secondary` is the best entry anywhere in the FULL ladder with
+    a vendor DIFFERENT from primary's — or, when primary is
+    NO_CONFIG_FALLBACK (whose vendor is unknown, `""`), different from
+    `source_vendor` instead, since an unknown-vendor filter is no filter
+    at all and would defeat the cross-vendor guarantee exactly when
+    nothing in the ladder has quota — dropped (not substituted) if none
+    survives (an all-same-vendor ladder degrades to a single reviewer,
+    not an error).
 
     Either mode falls back to NO_CONFIG_FALLBACK when --no-cross-ai was
     passed, the ladder is empty, or nothing in it has quota."""
@@ -141,8 +137,7 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
     ladder = policy.get("ladder", [])
     reviewers = config.get("reviewers", [])
     if mode == "double":
-        primary = resolve_ladder_pick(reviewers, _native_ladder(reviewers, ladder),
-                                       skip_vendor="", quota=quota)
+        primary = resolve_ladder_pick(reviewers, ladder, skip_vendor="", quota=quota)
         if primary is None:
             primary = NO_CONFIG_FALLBACK
         secondary_skip_vendor = primary.vendor or source_vendor

@@ -669,12 +669,13 @@ class TestResolveReviewers(unittest.TestCase):
         # before claude-sonnet because it is earlier in the ladder)
         self.assertEqual(result[0].key, "claude-opus")
 
-    def test_double_mode_primary_is_best_native_entry_tier_aware(self):
+    def test_double_mode_primary_is_first_ladder_entry_tier_aware(self):
         config = dict(self.config)
         config["policy"] = {"mode": "double", "ladder": self.config["policy"]["ladder"]}
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(len(result), 2)
-        # best NATIVE entry (guaranteed baseline), tier-aware
+        # first ladder entry, regardless of native/external (here it happens
+        # to also be native, since claude-opus leads the ladder)
         self.assertEqual(result[0].key, "claude-opus")
         self.assertEqual(result[1].key, "codex-gpt")      # first DIFFERENT-vendor entry
 
@@ -699,33 +700,35 @@ class TestResolveReviewers(unittest.TestCase):
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(result, [rs.NO_CONFIG_FALLBACK])
 
-    def test_double_mode_baseline_is_always_native_even_when_external_ranks_first(self):
-        # regression for the design spec's "double mode always runs a
-        # native baseline, guaranteed" guarantee
-        # (docs/superpowers/specs/2026-08-27-review-spec-cross-ai-design.md
-        # §3): an external entry ranked ABOVE every native entry in the
-        # ladder must never become
-        # the baseline — it can only ever take the second (cross-vendor)
-        # slot.
+    def test_double_mode_primary_is_external_when_it_leads_the_ladder(self):
+        # CHANGED 2026-08-29: native entries are no longer given automatic
+        # precedence over ladder position (superseding the old "double mode
+        # always runs a native baseline, guaranteed" rule from
+        # docs/superpowers/specs/2026-08-27-review-spec-cross-ai-design.md
+        # §3). An external entry ranked ABOVE every native entry in the
+        # ladder now DOES become primary — ladder position is the only
+        # priority signal.
         config = {
             "policy": {"mode": "double", "ladder": ["codex-gpt", "claude-opus", "claude-sonnet"]},
             "reviewers": self.config["reviewers"],
         }
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
-        self.assertEqual(result[0].key, "claude-opus")   # native baseline, not codex-gpt
-        self.assertIsNone(result[0].cli)
-        self.assertEqual(result[1].key, "codex-gpt")     # external takes the secondary slot only
+        self.assertEqual(result[0].key, "codex-gpt")      # first ladder entry, external
+        self.assertEqual(result[0].cli, "codex")
+        self.assertEqual(result[1].key, "claude-opus")    # first different-vendor entry
 
-    def test_double_mode_baseline_falls_back_to_default_when_no_native_entry(self):
-        # ladder is entirely external -> the native-baseline guarantee still
-        # holds via NO_CONFIG_FALLBACK, never by promoting an external entry
+    def test_double_mode_with_only_external_entry_picks_it_as_primary_and_drops_secondary(self):
+        # ladder is entirely external -> primary is that external entry
+        # itself (no more forced NO_CONFIG_FALLBACK just because nothing
+        # native is configured), and secondary is dropped since nothing
+        # else in the ladder has a different vendor.
         config = {
             "policy": {"mode": "double", "ladder": ["codex-gpt"]},
             "reviewers": [self.config["reviewers"][2]],  # codex-gpt only, no native entries at all
         }
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
-        self.assertEqual(result[0], rs.NO_CONFIG_FALLBACK)
-        self.assertEqual(result[1].key, "codex-gpt")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].key, "codex-gpt")
 
     def test_double_mode_secondary_is_dropped_not_substituted_with_same_vendor(self):
         # regression: the design's guarantee for the secondary slot is
@@ -747,14 +750,13 @@ class TestResolveReviewers(unittest.TestCase):
         self.assertEqual(len(result), 1)  # secondary dropped, not substituted
         self.assertEqual(result[0].key, "claude-opus")
 
-    def test_double_mode_secondary_dropped_when_no_native_and_only_source_vendor(self):
-        # regression: when NO native entry is configured at all, primary
-        # is NO_CONFIG_FALLBACK (vendor == "") -- an empty skip_vendor
-        # disables resolve_ladder_pick's vendor filter entirely, so the
-        # secondary walk must fall back to filtering against source_vendor
-        # instead, or a same-source-vendor external entry (e.g. another
-        # "anthropic"-vendor CLI) would wrongly fill the "cross-vendor"
-        # slot opposite a native anthropic baseline.
+    def test_double_mode_single_external_entry_becomes_primary_secondary_dropped(self):
+        # CHANGED 2026-08-29: a ladder holding a single external (cli-set)
+        # entry and no native entry now seats that entry as primary itself
+        # (ladder position is the only priority signal — see
+        # resolve_reviewers' docstring) rather than forcing NO_CONFIG_FALLBACK.
+        # secondary still has nothing cross-vendor to pick from, so it's
+        # dropped, not substituted with a same-vendor entry.
         config = {
             "policy": {"mode": "double", "ladder": ["claude-cli-opus"]},
             "reviewers": [
@@ -764,7 +766,7 @@ class TestResolveReviewers(unittest.TestCase):
         }
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(len(result), 1)  # secondary dropped, not substituted
-        self.assertEqual(result[0], rs.NO_CONFIG_FALLBACK)
+        self.assertEqual(result[0].key, "claude-cli-opus")
 
 
 class TestBuildReviewerCommand(unittest.TestCase):
