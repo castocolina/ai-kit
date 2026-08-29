@@ -1559,6 +1559,49 @@ class TestMainCli(unittest.TestCase):
         self.assertTrue(json.loads(buf.getvalue())["available"])
 
 
+class TestBuildExecuteCommand(unittest.TestCase):
+    def test_codex_uses_workspace_write_sandbox_with_target_dir(self):
+        cmd = commands.build_execute_command("codex", target_dir="/scratch/run1")
+        self.assertIn("--sandbox workspace-write", cmd)
+        self.assertIn("-C /scratch/run1", cmd)
+        self.assertIn("-m {model}", cmd)
+
+    def test_cursor_agent_not_yet_implemented(self):
+        # demoted 2026-08-29: live confinement smoke test proved --workspace is a plain cwd
+        # default, not a write sandbox -- a write outside target_dir succeeded
+        with self.assertRaises(ValueError) as ctx:
+            commands.build_execute_command("cursor-agent")
+        self.assertIn("not yet verified", str(ctx.exception).lower())
+
+    def test_opencode_not_yet_implemented(self):
+        # demoted 2026-08-29: live confinement smoke test proved --dir is a plain cwd default,
+        # not a write sandbox -- a write outside target_dir succeeded
+        with self.assertRaises(ValueError) as ctx:
+            commands.build_execute_command("opencode")
+        self.assertIn("not yet verified", str(ctx.exception).lower())
+
+    def test_codex_requires_target_dir(self):
+        with self.assertRaises(ValueError):
+            commands.build_execute_command("codex")
+
+    def test_target_dir_with_shell_metacharacters_is_quoted(self):
+        cmd = commands.build_execute_command("codex", target_dir="/tmp/a b$(x)")
+        self.assertIn(shlex.quote("/tmp/a b$(x)"), cmd)
+
+    def test_grok_not_yet_implemented(self):
+        with self.assertRaises(ValueError) as ctx:
+            commands.build_execute_command("grok")
+        self.assertIn("not yet verified", str(ctx.exception).lower())
+
+    def test_claude_not_yet_implemented(self):
+        with self.assertRaises(ValueError):
+            commands.build_execute_command("claude")
+
+    def test_unknown_cli_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            commands.build_execute_command("nonexistent-cli")
+
+
 class TestFilterByAffinity(unittest.TestCase):
     def test_keeps_only_matching_affinity_when_any_match_exists(self):
         candidates = [{"key": "a", "task_affinity": "frontend"},

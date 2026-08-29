@@ -1047,7 +1047,7 @@ git commit -m "feat(ai-kit-spec): add execute_selection.py (task-affinity + cont
   - `build_execute_command(cli: str, **params) -> str` — same shape/error contract as
     `build_reviewer_command`: `ValueError` for an unregistered `cli`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class TestBuildExecuteCommand(unittest.TestCase):
@@ -1103,7 +1103,7 @@ class TestBuildExecuteCommand(unittest.TestCase):
             commands.build_execute_command("nonexistent-cli")
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestBuildExecuteCommand -v 2>&1 | tail -20
@@ -1111,7 +1111,12 @@ python3 -m unittest tests.test_ai_kit_spec.TestBuildExecuteCommand -v 2>&1 | tai
 
 Expected: FAIL — `build_execute_command` not defined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
+
+The code below is the initial implementation as first written. **See Step 5 for the actual
+final state**: cursor-agent's and opencode's builders below were removed and demoted to
+`_unimplemented_execute_command` after their live confinement test failed -- only codex's
+builder survives in the shipped `_EXECUTE_COMMAND_BUILDERS`.
 
 ```python
 def _require_target_dir(cli_name, target_dir):
@@ -1179,7 +1184,7 @@ def build_execute_command(cli: str, **params) -> str:
     return builder(**params)
 ```
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestBuildExecuteCommand -v 2>&1 | tail -10
@@ -1187,7 +1192,26 @@ python3 -m unittest tests.test_ai_kit_spec.TestBuildExecuteCommand -v 2>&1 | tai
 
 Expected: PASS, all cases.
 
-- [ ] **Step 5: Live smoke test each implemented builder against the real CLI**
+- [x] **Step 5: Live smoke test each implemented builder against the real CLI**
+
+**Result (2026-08-29, all 3 tested live):**
+- **codex**: confinement HOLDS for a target_dir outside `/tmp` -- write inside succeeded, write
+  outside failed with a real `Read-only file system` error, read elsewhere succeeded. CAVEAT
+  found: codex's `workspace-write` sandbox always additionally grants `/tmp`+`$TMPDIR` write
+  access regardless of `-C`, so confinement only holds when `target_dir` is itself outside
+  `/tmp` (true for the real worktree paths this plan actually dispatches into). Documented in
+  the builder's own docstring.
+- **cursor-agent**: confinement FAILS -- `--workspace` is a plain cwd default, not a write
+  sandbox. A file written to an explicit path outside `target_dir` succeeded with no error.
+  Per this step's escalation clause, demoted to `_unimplemented_execute_command("cursor-agent")`.
+- **opencode**: confinement FAILS -- `--dir` is a plain cwd default, not a write sandbox. Same
+  outcome as cursor-agent: an explicit out-of-target_dir write succeeded with no error. Demoted
+  to `_unimplemented_execute_command("opencode")`.
+
+`_EXECUTE_COMMAND_BUILDERS` now only has a real implementation for `codex`; `cursor-agent`,
+`opencode`, `grok`, and `claude` all refuse loudly. Tests updated: `test_cursor_agent_...`/
+`test_opencode_...` moved from confinement-shape assertions to the `test_..._not_yet_
+implemented` pattern (matching grok/claude).
 
 Do not skip — this is the exact check that caught 2 real bugs in the review family's grok
 builder. For each of codex, cursor-agent, opencode:
@@ -1220,7 +1244,7 @@ match (move that CLI's "requires target_dir"/flag-shape tests to the `test_..._n
 implemented` pattern instead) and note the finding in this plan before proceeding. Do not proceed
 to Task 6 with any unverified — or falsely-verified — execute-mode builder.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A

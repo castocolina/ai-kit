@@ -205,3 +205,60 @@ def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> str:
         raise ValueError(
             f"reviewer {resolved.key!r} has a malformed command template: {exc}"
         ) from exc
+
+
+def _require_target_dir(cli_name, target_dir):
+    if not target_dir:
+        raise ValueError(
+            f"execute-mode dispatch for {cli_name!r} requires target_dir -- a write-capable "
+            f"CLI invoked without an explicit scratch directory would write to the "
+            f"orchestrator's own cwd instead, which is never the intended target."
+        )
+    return shlex.quote(target_dir)
+
+
+def _build_codex_execute_command(target_dir=None, **_params):
+    """--sandbox workspace-write -C <target_dir> -- confirmed live 2026-08-29: reads broadly
+    (any absolute path, unrestricted), writes ONLY within target_dir -- a write attempt outside
+    target_dir failed with a real "Read-only file system" error.
+
+    CAVEAT, also confirmed live: codex's workspace-write sandbox additionally, always grants
+    write access to /tmp and $TMPDIR regardless of -C. If target_dir itself is under /tmp, an
+    out-of-target_dir write inside /tmp still succeeds -- confinement only holds when target_dir
+    is OUTSIDE /tmp (e.g. a real project/worktree path), which is the intended real-world usage
+    here. Never pass a target_dir under /tmp expecting confinement from this builder."""
+    quoted = _require_target_dir("codex", target_dir)
+    return f"codex exec --sandbox workspace-write -C {quoted} -m {{model}}"
+
+
+def _unimplemented_execute_command(cli_name):
+    def _builder(**_params):
+        raise ValueError(
+            f"no execute-mode (write-capable) command builder for {cli_name!r} yet -- "
+            f"mechanism not yet verified live (design spec open risk). Refusing rather "
+            f"than guessing at an untested invocation."
+        )
+    return _builder
+
+
+_EXECUTE_COMMAND_BUILDERS = {
+    "codex": _build_codex_execute_command,
+    # cursor-agent and opencode: demoted 2026-08-29 after Task 5's live confinement smoke test
+    # (Step 5) -- `--workspace`/`--dir` are BOTH plain cwd defaults, not write sandboxes. Both
+    # CLIs successfully wrote a file OUTSIDE target_dir when explicitly asked to, confirming no
+    # real confinement guarantee exists for either. Per this task's own escalation clause, they
+    # are refused loudly (same as grok/claude) rather than shipped with a false promise.
+    "cursor-agent": _unimplemented_execute_command("cursor-agent"),
+    "opencode": _unimplemented_execute_command("opencode"),
+    "grok": _unimplemented_execute_command("grok"),
+    "claude": _unimplemented_execute_command("claude"),
+}
+
+
+def build_execute_command(cli: str, **params) -> str:
+    """Factory entry point for write-capable execute dispatch -- parallel to, and never
+    merged with, build_reviewer_command's read-only catalog."""
+    builder = _EXECUTE_COMMAND_BUILDERS.get(cli)
+    if builder is None:
+        raise ValueError(f"no execute-mode command builder registered for cli={cli!r}")
+    return builder(**params)
