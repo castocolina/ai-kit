@@ -8,7 +8,7 @@ import unittest
 from unittest import mock
 
 _MODULE_PATH = os.path.join(os.path.dirname(__file__), "..", "skills",
-                             "review-spec", "review-spec.py")
+                             "ai-kit-spec-review", "review-spec.py")
 
 
 def _load_module():
