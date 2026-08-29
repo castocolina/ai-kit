@@ -788,10 +788,11 @@ class TestBuildReviewerCommand(unittest.TestCase):
                           "claude -p --model {model} --output-format text")
 
     def test_grok_command_shape(self):
-        # `-p -` (dash-as-value) forces stdin; grok's -p requires *some*
-        # value and won't accept a bare {prompt}-less flag
+        # corrected 2026-08-29: `-p -` does NOT read from stdin -- it sends the literal
+        # string "-" as the prompt (confirmed live). {prompt} is the correct placeholder,
+        # shlex-quoted by render_reviewer_command like every other builder.
         self.assertEqual(rs.build_reviewer_command("grok"),
-                          "grok -p - -m {model} --output-format plain")
+                          "grok -p {prompt} -m {model} --output-format plain")
 
     def test_gemini_command_shape(self):
         # unverified live (no installed CLI) — kept on the legacy

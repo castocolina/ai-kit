@@ -62,11 +62,15 @@ def _build_claude_command(**_params):
 
 
 def _build_grok_command(**_params):
-    """`-p -` (dash-as-value), not bare `-p` — confirmed live: grok's
-    `-p`/`--single <PROMPT>` requires a value; only literal `-` makes it
-    read that value from stdin instead of a positional arg. No {prompt}
-    placeholder — see _build_codex_command's docstring."""
-    return "grok -p - -m {model} --output-format plain"
+    """Corrected 2026-08-29 by live re-reproduction: `-p -` does NOT read the prompt from
+    stdin -- `-p`/`--single <PROMPT>` is a required VALUE, and passing a literal `-` sends
+    the two-character string "-" as the prompt itself (confirmed live: grok replied "A
+    single dash is too little to act on"). The `-p -` design here was an earlier unverified
+    assumption inherited from this builder before it was ever run against a real grok CLI.
+    Correct form uses the {prompt} placeholder like every other builder in this module --
+    render_reviewer_command shlex.quotes it before substitution, delivered as a real
+    positional argument value, never via stdin."""
+    return "grok -p {prompt} -m {model} --output-format plain"
 
 
 def _build_gemini_command(**_params):
