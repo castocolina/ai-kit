@@ -1559,6 +1559,48 @@ class TestMainCli(unittest.TestCase):
         self.assertTrue(json.loads(buf.getvalue())["available"])
 
 
+class TestEnsureCodegraphRegistered(unittest.TestCase):
+    def test_skips_install_when_already_registered(self):
+        calls = []
+        detection.ensure_codegraph_registered(
+            "claude", run_fn=lambda *a, **k: calls.append(a) or unittest.mock.MagicMock(returncode=0),
+            check_fn=lambda cli: True)
+        self.assertEqual(calls, [])
+
+    def test_installs_when_not_registered(self):
+        calls = []
+        def fake_run(cmd, **k):
+            calls.append(cmd)
+            return unittest.mock.MagicMock(returncode=0)
+        detection.ensure_codegraph_registered("claude", run_fn=fake_run, check_fn=lambda cli: False)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--location=global", calls[0])
+        self.assertIn("--target=claude", calls[0])
+        self.assertIn("--yes", calls[0])
+
+    def test_grok_never_attempts_install(self):
+        calls = []
+        result = detection.ensure_codegraph_registered(
+            "grok", run_fn=lambda *a, **k: calls.append(a),
+            check_fn=lambda cli: False)
+        self.assertEqual(calls, [])
+        self.assertFalse(result)
+
+
+class TestBuildCodegraphIndexCommand(unittest.TestCase):
+    def test_tries_sync_then_init(self):
+        cmd = detection.build_codegraph_index_command("/repo/root")
+        self.assertIn("cd /repo/root", cmd)
+        self.assertIn("codegraph sync || codegraph init", cmd)
+
+    def test_target_dir_with_shell_metacharacters_is_quoted(self):
+        cmd = detection.build_codegraph_index_command("/tmp/a b$(x)")
+        self.assertIn(shlex.quote("/tmp/a b$(x)"), cmd)
+
+    def test_minimum_timeout_constant(self):
+        self.assertEqual(detection.CODEGRAPH_INDEX_TIMEOUT_SECONDS, 15)
+
+
 class TestDispatchWithHeartbeat(unittest.TestCase):
     def test_prints_timestamped_heartbeat_while_process_runs(self):
         class FakeProcess:

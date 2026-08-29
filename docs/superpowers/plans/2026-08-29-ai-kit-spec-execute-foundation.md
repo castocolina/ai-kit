@@ -1572,7 +1572,7 @@ git commit -m "feat(ai-kit-spec): add dispatch.py (heartbeat-emitting process di
   - `build_codegraph_index_command(target_dir: str) -> str` — `f"cd {target_dir} && (codegraph sync || codegraph init)"`
   - `CODEGRAPH_INDEX_TIMEOUT_SECONDS = 15` (module constant — the agreed minimum, regardless of the typically-faster real runtime)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class TestEnsureCodegraphRegistered(unittest.TestCase):
@@ -1617,7 +1617,7 @@ class TestBuildCodegraphIndexCommand(unittest.TestCase):
         self.assertEqual(detection.CODEGRAPH_INDEX_TIMEOUT_SECONDS, 15)
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestEnsureCodegraphRegistered \
@@ -1626,7 +1626,7 @@ python3 -m unittest tests.test_ai_kit_spec.TestEnsureCodegraphRegistered \
 
 Expected: FAIL — `ensure_codegraph_registered`/`build_codegraph_index_command` not defined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add `import shlex` to `detection.py`'s existing top-of-file imports (it already has `shutil`,
 `subprocess`, `json`, `os` from Tasks 2–3) — needed for `build_codegraph_index_command`'s path
@@ -1660,7 +1660,7 @@ def build_codegraph_index_command(target_dir: str) -> str:
     return f"cd {shlex.quote(target_dir)} && (codegraph sync || codegraph init)"
 ```
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 ```bash
 python3 -m unittest tests.test_ai_kit_spec.TestEnsureCodegraphRegistered \
@@ -1669,7 +1669,7 @@ python3 -m unittest tests.test_ai_kit_spec.TestEnsureCodegraphRegistered \
 
 Expected: PASS, all cases.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A

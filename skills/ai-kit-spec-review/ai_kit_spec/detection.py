@@ -1,4 +1,5 @@
 import os
+import shlex
 import shutil
 import subprocess
 
@@ -210,3 +211,30 @@ def check_codegraph_mcp_healthy(cli: str, run_fn=subprocess.run) -> bool:
     list_result = run_fn(_MCP_LIST_COMMANDS[cli], shell=True, capture_output=True, text=True,
                           check=False)
     return _codegraph_entry_healthy_in_list_output(list_result.stdout)
+
+
+CODEGRAPH_INDEX_TIMEOUT_SECONDS = 15  # agreed minimum, safety margin over the typical <5s runtime
+
+
+def ensure_codegraph_registered(cli: str, run_fn=subprocess.run,
+                                 check_fn=check_codegraph_mcp_healthy) -> bool:
+    """Runs every session, scoped to `cli` -- never a one-time-ever check (design spec §9,
+    corrected during brainstorming: a client installed after codegraph's own setup would
+    otherwise never get detected). Only `install` itself is conditional on check_fn's result."""
+    if check_fn(cli):
+        return True
+    if cli not in _SUPPORTED_CODEGRAPH_CLIENTS:
+        return False  # grok and any other unsupported client -- never attempt install
+    run_fn(f"codegraph install --target={cli} --location=global --yes --init",
+           shell=True, capture_output=True, text=True, check=False)
+    return check_fn(cli)
+
+
+def build_codegraph_index_command(target_dir: str) -> str:
+    """sync first (fast, incremental), init as fallback (first-ever index for this repo) --
+    confirmed real usage from the design discussion. Caller (the orchestrator, never the
+    sandboxed reviewer/executor subagent) runs this with a minimum
+    CODEGRAPH_INDEX_TIMEOUT_SECONDS timeout, before dispatch. target_dir is shell-quoted --
+    this string is built for shell=True execution, same as every other command builder in this
+    package; an unquoted path with a space or shell metacharacter would break or inject."""
+    return f"cd {shlex.quote(target_dir)} && (codegraph sync || codegraph init)"
