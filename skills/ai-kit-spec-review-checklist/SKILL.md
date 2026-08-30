@@ -170,6 +170,31 @@ repos — ground each claim against the specific root it belongs to.
 Acceptable only when the justification explains *why the rule doesn't apply* (e.g. `# nosec
 B310` on a URL from app config, not user input). "Required for functionality" or no comment → HIGH.
 
+## Operating under a turn/token budget (external CLI dispatch)
+
+When you were dispatched via a headless CLI (`codex exec`, `grok`, etc.) rather than as a
+native subagent, your transcript itself consumes the same limited budget you're reviewing
+against — verbose narration or full-file echoes can burn enough of it that you never reach
+`### Status:`, silently losing the whole review. Two rules, load-bearing for exactly this
+failure mode (confirmed live: an unconstrained run produced ~8000 lines and still hit a
+provider usage-limit wall before synthesizing a report; a budget-unaware run separately ran out
+of turns mid-review with no final report at all):
+
+1. **Minimize output tokens.** A tool `Read`/`codegraph_explore`/`rg` call is enough — don't
+   also restate or re-print what it returned. Progress updates are a single short line ("reading
+   Task 4...") never a paragraph. Prefer targeted reads (line ranges, `codegraph_explore`
+   queries, `rg` matches) over reading whole files when only one section is needed.
+2. **Print each finding the moment you're confident in it**, in the exact one-line format it
+   will have in the final report, then keep reviewing — don't hold findings back "for the
+   summary." If you run out of budget before `### Status:`, these inline prints are the only
+   recoverable signal of the review; withholding them to polish the final report loses the work
+   entirely. The final report should still restate/finalize everything printed inline plus
+   anything else found.
+
+**When budget is visibly tight, prioritize reaching `### Status:` over deriving additional
+low-severity findings** — a review that stops after CRITICAL/HIGH with a real Status line beats
+a longer one that never concludes.
+
 ## Output
 
 Minimal and structured — the reader may be an agent. No narration or summaries. State required
