@@ -947,7 +947,7 @@ git commit -m "feat(ai-kit-spec-execute-gsd): add ai-kit-spec-gsd.py import-boot
 
 **Interfaces:**
 - Consumes: `ai_kit_spec.commands.build_execute_command` (Plan 1), `ai_kit_spec.dispatch.dispatch_with_heartbeat` (Plan 1, Branch A's wrapper only), `ai_kit_spec_gsd.gsd_config.NATIVE_TIER_VENDORS` (Task 2).
-- Produces: `build_cross_ai_dispatch(resolved_candidate: dict, target_dir: str, ...) -> dict | None` — BRANCH-SPECIFIC signature (iteration-5 review finding 14 — a single shared signature previously claimed the same `execute_command_fn` parameter for both branches, but Branch B's real implementation never takes one; each branch's own Step 1A/1B and Step 3A/3B below states its own exact signature, which is authoritative over this line): returns a dispatch plan `{"mode": "cross_ai_hook", "cross_ai_command": str, "cli": str, "key": str, "model": str}` (Branch A) or `{"mode": "native_enum", "provider": str, "message": str, "cli": str, "key": str, "model": str}` (Branch B) or `None` when cross-provider dispatch isn't usable for this candidate at all (caller falls back to Task 4's native-tier/fallback path). `target_dir` is the real, already-resolved project/worktree directory the execute command must confine writes to — no caller of this function ever leaves a literal `{target_dir}` placeholder unfilled. (`gsd_config` was dropped from this signature — Branch A/B's logic never actually reads it; see MEDIUM-severity note removed by this revision.) **`cli`/`key`/`model` are always the SELECTED CANDIDATE's own values** (`resolved_candidate["cli"]`/`["key"]`/`["model"]`, copied through verbatim, never re-derived) — iteration-4 review finding 4: every dispatch-result shape this task and Task 4 produce must carry enough provenance for Task 5's tool-detection step to know which CLI it's preparing guidance for, since none of these dicts otherwise expose it.
+- Produces: `build_cross_ai_dispatch(resolved_candidate: dict, target_dir: str, ...) -> dict | None` — BRANCH-SPECIFIC signature (iteration-5 review finding 14 — a single shared signature previously claimed the same `execute_command_fn` parameter for both branches, but Branch B's real implementation never takes one; each branch's own Step 1A/1B and Step 3A/3B below states its own exact signature, which is authoritative over this line): returns a dispatch plan `{"mode": "cross_ai_hook", "cross_ai_command": str, "cli": str, "key": str, "model": str, "provenance": str}` (Branch A) or `{"mode": "native_enum", "provider": str, "message": str, "cli": str, "key": str, "model": str, "provenance": str}` (Branch B) or `None` when cross-provider dispatch isn't usable for this candidate at all (caller falls back to Task 4's native-tier/fallback path). `target_dir` is the real, already-resolved project/worktree directory the execute command must confine writes to — no caller of this function ever leaves a literal `{target_dir}` placeholder unfilled. (`gsd_config` was dropped from this signature — Branch A/B's logic never actually reads it; see MEDIUM-severity note removed by this revision.) **`cli`/`key`/`model` are always the SELECTED CANDIDATE's own values** (`resolved_candidate["cli"]`/`["key"]`/`["model"]`, copied through verbatim, never re-derived) — iteration-4 review finding 4: every dispatch-result shape this task and Task 4 produce must carry enough provenance for Task 5's tool-detection step to know which CLI it's preparing guidance for, since none of these dicts otherwise expose it. **`provenance` is always the literal string `"resolved_candidate"`** (iteration-7 review finding 1) — both branches only ever fire for a candidate that just won live-quota-checked ladder resolution, the exact same condition `adapter.resolve_gsd_dispatch`'s own `native_tier`/`written=True` case labels `"resolved_candidate"` (Task 4/Task 5's common result contract requires every `resolve-dispatch` mode to carry `mode`/`key`/`cli`/`provenance`/`run_id` — omitting `provenance` here would make Task 5's unconditional `result["provenance"]` extraction (Step 1) silently read an absent key as `None` instead of the real, meaningful value).
 
 This task's implementation body is written AFTER Task 1 completes, using whichever branch below
 matches Task 1's recorded finding. Both branches are specified now so the plan is complete
@@ -1031,6 +1031,10 @@ class TestBuildCrossAiDispatchGeneralHook(unittest.TestCase):
         self.assertEqual(result["cli"], "future-cli")
         self.assertEqual(result["key"], "future-cli/gpt-5.6-terra")
         self.assertEqual(result["model"], "gpt-5.6-terra")
+        # iteration-7 review finding 1: every resolve-dispatch mode (native_tier, cross_ai_hook,
+        # native_enum, fallback_notice alike) MUST carry provenance -- Task 5's SKILL.md Step 1
+        # extracts result["provenance"] unconditionally.
+        self.assertEqual(result["provenance"], "resolved_candidate")
 ```
 
 - [ ] **Step 2A: Run to verify failure**
@@ -1096,7 +1100,12 @@ def build_cross_ai_dispatch(resolved_candidate: dict, target_dir: str,
     )
     return {"mode": "cross_ai_hook", "cross_ai_command": wrapper_cmd,
             "cli": resolved_candidate["cli"], "key": resolved_candidate["key"],
-            "model": resolved_candidate["model"]}
+            "model": resolved_candidate["model"],
+            # iteration-7 review finding 1: every resolve-dispatch mode this plan produces MUST
+            # carry provenance -- this branch only ever fires for a candidate that just won
+            # live-quota-checked ladder resolution, the same condition adapter.py's own
+            # native_tier/written=True case labels "resolved_candidate".
+            "provenance": "resolved_candidate"}
 ```
 
 - [ ] **Step 4A: Run tests to verify pass**
@@ -1272,6 +1281,8 @@ class TestBuildCrossAiDispatchClosedEnum(unittest.TestCase):
             self.assertEqual(result["cli"], provider)
             self.assertEqual(result["key"], f"{provider}/m-1")
             self.assertEqual(result["model"], "m-1")
+            # iteration-7 review finding 1: every resolve-dispatch mode MUST carry provenance.
+            self.assertEqual(result["provenance"], "resolved_candidate")
 
     def test_returns_none_for_a_provider_outside_the_confirmed_set(self):
         candidate = {"cli": "definitely-not-a-real-provider", "model": "m-1",
@@ -1312,6 +1323,11 @@ def build_cross_ai_dispatch(resolved_candidate: dict, target_dir: str):
         "cli": resolved_candidate["cli"],
         "key": resolved_candidate["key"],
         "model": resolved_candidate["model"],
+        # iteration-7 review finding 1: every resolve-dispatch mode this plan produces MUST carry
+        # provenance -- this branch only ever fires for a candidate that just won live-quota-
+        # checked ladder resolution, the same condition adapter.py's own native_tier/written=True
+        # case labels "resolved_candidate".
+        "provenance": "resolved_candidate",
         "message": (
             f"Dispatching via GSD's native-runtime-enum for {provider!r} -- this is a coarse, "
             f"precision-losing substitution: GSD recognizes {provider!r} as a runtime identity, "
@@ -1348,7 +1364,12 @@ git commit -m "feat(ai-kit-spec-execute-gsd): add gsd_cross_ai.py (closed-enum c
   - `resolve_gsd_dispatch(candidates: list, top_n_keys: list, phase_type: str, gsd_config: dict, gsd_config_path: str, target_dir: str, required_context: int = 0, quota: dict | None = None, exclude_keys: list | None = None, run_id: str | None = None, write_fn=write_native_tier_override, write_runtime_fn=write_active_runtime, resolve_ladder_pick_fn=resolve_ladder_pick) -> dict` — returns exactly one of:
     - `{"mode": "native_tier", "model": str, "written": bool, "cli": str | None, "key": str | None, "provenance": str}` — `written=False`/`provenance="existing_gsd_config"`/`key=None` when GSD's own config already has a genuine PER-PHASE `model_overrides[phase_type]` entry (iteration-5 review finding 10 — the short-circuit checks `model_overrides[phase_type]` specifically, NOT `resolve_native_tier`'s broader `model_overrides`→`models`→`model_profile` precedence, since `models`/`model_profile` are coarse project-WIDE defaults with no per-phase granularity — a project that only ever set one of those, with no per-phase `model_overrides` entry, must NOT permanently short-circuit selection for every phase type) AND that override is NOT adapter-owned (`gsd_config.override_is_adapter_owned` returns `False` — a genuine prior user choice, never overridden or re-derived). In this case `cli` is the ACTUAL configured runtime identity — `gsd_config.resolve_active_runtime(gsd_config) or "claude"` (never a fabricated/hardcoded `None` — iteration-5 review finding 10's second half: an unset `runtime` key still means "the current session", i.e. `"claude"`, design spec §6) — so Task 5 Step 3 prepares tooling guidance for the REAL runtime this phase will actually execute through, never assuming Claude by omission. When the existing override IS adapter-owned (a prior run of THIS adapter wrote it — iteration-4 review finding 6), resolution proceeds exactly as if nothing were configured, so a stale prior pick can be re-resolved against current quota rather than permanently pinning the project. `written=True`/`provenance="resolved_candidate"`/`cli`/`key` set to the winning candidate's own values when a live-quota-checked candidate is natively reachable (`cli` in `NATIVE_TIER_VENDORS`, OR `cli is None` — the current-runtime/native-dispatch case, see Global Constraints) and this call just persisted its model into `model_overrides` via `write_fn` — AND, whenever the winning candidate's `cli` differs from `gsd_config.resolve_active_runtime(gsd_config)`'s current value (or `cli is None`, treated as `"claude"` — the current session's own identity), also calls `write_runtime_fn` to switch GSD's active runtime to match (iteration-4 review finding 5 — a model override alone does not establish which vendor runtime executes it).
     - `{"mode": "cross_ai_hook" | "native_enum", "cli": str, "key": str, ...}` from Task 3 (already carries `cli`/`key`/`model`, see Task 3's revised Interfaces), when a live-quota-checked candidate isn't natively reachable but cross-AI dispatch can carry it.
-    - `{"mode": "fallback_notice", "message": str}` when no live-quota-checked candidate (native, native-current-runtime, or cross-AI) can be carried at all — never fabricates a vendor it did not actually enforce; `message` explicitly states the original top choice, why every quota-available candidate was tried and failed, and that no configuration change was made (GSD's own currently-active default, whatever it is, will run unmodified). Also returned, with a distinct message, when `read_gsd_config`'s caller (Task 4's `cli.py`, below) found `status == "malformed"` — this function itself never reads config off disk, but its caller MUST short-circuit to an equivalent fallback rather than call this function with a config it knows is broken (iteration-4 review finding 7).
+    - `{"mode": "fallback_notice", "key": str | None, "cli": None, "provenance": "fallback", "reason": str, "message": str}` when no live-quota-checked candidate (native, native-current-runtime, or cross-AI) can be carried at all — never fabricates a vendor it did not actually enforce; `message` explicitly states the original top choice, why every quota-available candidate was tried and failed, and that no configuration change was made (GSD's own currently-active default, whatever it is, will run unmodified). **`reason` is a machine-readable code, distinct from `message`'s human-readable prose (iteration-7 review finding 2)** — Task 5's SKILL.md branches its auto-wake decision on `reason`, never on substring-matching `message`, because two of these codes look identical in prose ("no quota-available candidate...") but require OPPOSITE handling: one means "wait an hour and retry genuinely could work," the other means "no candidate in the ladder has a dispatch mechanism at all, and waiting will never fix that." Exactly one of:
+      - `"no_configured_candidate"` — `review-spec.toml` has zero `[[reviewers]]` entries (the raw `candidates` list `assemble_candidates` produced is itself empty); nothing was ever available to try. Never schedule an auto-wake for this (there is nothing to wait FOR). **Distinct from, and checked strictly before, `"all_candidates_context_rejected"` below (iteration-9 review, HIGH finding 2) — this code's defining fact is that `candidates` itself is empty, never that a post-filter result happened to be empty.**
+      - `"all_candidates_context_rejected"` — `candidates` was NON-empty (real `[[reviewers]]` entries exist) but `execute_selection.resolve_execute_candidates`'s internal `filter_by_context` call rejected every single one, because each candidate's curated `context_limit` is smaller than this phase's `required_context`. This is NOT the same fact as `no_configured_candidate` — candidates existed, none merely lacked quota or a dispatch mechanism, every one was ruled out purely on context-size fit — so it gets its own distinguishable code rather than conflating "nothing was ever configured" with "everything configured is provably too small for this phase." The fix a user needs also differs: `no_configured_candidate` means "run ai-kit-spec-config"; this means "raise a `context_limit`, or add a bigger-context reviewer to the ladder — every configured reviewer is confirmed too small for this specific phase's prompt." Per design intent, this must NOT silently fall through and let GSD's own default run against a phase prompt already known to be oversized for every configured candidate — Task 5's SKILL.md treats this the same as `no_usable_dispatch` (print the message, proceed to Step 3 with no candidate resolved, no auto-wake — context size does not change by waiting an hour, any more than a missing dispatch mechanism does). Never scheduled for auto-wake.
+      - `"quota_exhausted"` — the ladder walk stopped because nothing LEFT in the ladder currently has quota (`resolve_ladder_pick_fn` returned `None`), AND at least one of the candidates still sitting unreached in the ladder at that point (i.e. never actually walked, because quota alone blocked reaching it) has a genuine native/cross-AI dispatch mechanism — so it is only quota, not a permanent no-dispatch-mechanism problem, standing between the ladder and success. This is the ONLY reason code that should ever schedule an hourly `CronCreate` auto-wake — quota is time-bound and waiting genuinely can resolve it. **(iteration-8 review finding 1, HIGH — corrected: a prior revision made ANY earlier no-dispatch-mechanism candidate permanently poison the whole run's reason code, even when a LATER, still-unreached candidate is a real native/cross-AI-capable one purely blocked by quota — e.g. ladder `[grok (no dispatch builder), codex (native, but currently quota-exhausted)]` must resolve `quota_exhausted`, not `no_usable_dispatch`, since codex recovering its own quota would make dispatch succeed on the next wake. The decision is evaluated ONCE, after the walk ends, over whichever candidates the walk never got to dispatch — never accumulated eagerly candidate-by-candidate during the walk.)**
+      - `"no_usable_dispatch"` — either (a) the walk consumed every candidate in the ladder by removing each one for lacking a usable dispatch mechanism (never breaking early for lack of quota), or (b) the walk stopped on lack of quota, but NONE of the candidates still unreached at that point has a genuine native/cross-AI dispatch mechanism either — so even unlimited quota would never make this wave dispatchable. A permanent, non-time-bound condition (this repo's own `grok` entry, real currently: no execute-mode builder exists for it at all). Scheduling an hourly auto-wake here is always futile — the exact bug this reason code exists to prevent (iteration-7 review finding 2).
+      - `"malformed_config"` — set by `cli.py`'s `resolve-dispatch` subcommand's own early-return (not by this function directly — this function itself never reads config off disk), when `read_gsd_config`'s caller found `status == "malformed"` and short-circuited rather than calling this function with a config it knows is broken (iteration-4 review finding 7). Never schedule an auto-wake — the user must fix the file by hand first.
   - `resolve_gsd_dispatch` **live-quota-checks and escalates past more than just `ranked[0]`**: it walks `resolve_execute_candidates`'s ranked output (now passing `estimate_required_context`'s real value as `required_context`, never a hardcoded `0`) through `candidates_to_ladder` + `resolve_ladder_pick_fn` (never taking `ranked[0]` unconditionally, per `execute_selection.resolve_execute_candidates`'s own docstring: "this function only narrows and ranks, it never itself probes quota" — the caller MUST feed its output through `candidates_to_ladder()` into `quota.resolve_ladder_pick()`), and on finding a quota-available candidate that turns out to have no usable native/cross-AI dispatch path, removes it from the ladder and retries the NEXT quota-available candidate, so a later native-reachable candidate is never blocked by an earlier unusable external one. **`exclude_keys`** (iteration-4 review finding 2) is folded into the effective `quota` dict BEFORE the ladder walk (each key in it is forced to `{"available": False, "detail": "excluded: prior runtime dispatch attempt in this same wave failed with a quota signal"}`, overriding whatever the real probe-based `quota` dict said) — this is how Task 5's SKILL.md escalates past a candidate whose PROBE said available but whose REAL dispatch attempt then hit a live quota wall, without a second, separate resolution function.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1616,6 +1637,12 @@ class TestResolveGsdDispatch(unittest.TestCase):
     def test_falls_back_with_explicit_reason_and_no_fabricated_vendor_when_nothing_can_carry_it(self):
         # real (unmocked) gsd_cross_ai.build_cross_ai_dispatch: grok is not in
         # NATIVE_TIER_VENDORS and has no live-verified execute builder -- returns None for real.
+        # This is the "candidate HAS quota but has no usable dispatch mechanism at all" case
+        # (iteration-7 review finding 2) -- grok has quota (no quota dict passed -> _has_quota's
+        # own default is "assume available"), but build_cross_ai_dispatch legitimately returns
+        # None for it, so this must resolve to reason "no_usable_dispatch", NEVER
+        # "quota_exhausted" -- an hourly auto-wake would be permanently futile here since grok
+        # will never gain a dispatch mechanism just by waiting.
         candidates = [{"cli": "grok", "model": "grok-4-fast", "key": "grok/grok-4-fast",
                        "vendor": "xai", "task_affinity": None, "context_limit": None}]
         result = adapter.resolve_gsd_dispatch(candidates, ["grok/grok-4-fast"], "backend", {},
@@ -1625,6 +1652,15 @@ class TestResolveGsdDispatch(unittest.TestCase):
         self.assertIn("grok/grok-4-fast", result["message"])
         self.assertIn("backend", result["message"])
         self.assertIn("no configuration change", result["message"].lower())
+        self.assertEqual(result["reason"], "no_usable_dispatch")
+        # iteration-8 review, HIGH finding 4: a fallback's `key` names the top choice that was
+        # NEVER actually dispatched -- `provenance` MUST stay "fallback" (never
+        # "resolved_candidate", the value every REAL dispatch mode uses), so Task 5's SKILL.md
+        # can gate "was this candidate actually attempted" on `provenance ==
+        # "resolved_candidate"` alone, never on "is `key` non-empty" (a fallback's `key` is
+        # non-empty too, but was never dispatched).
+        self.assertEqual(result["provenance"], "fallback")
+        self.assertNotEqual(result["provenance"], "resolved_candidate")
 
     def test_every_candidate_lacks_quota_at_initial_probe_time_falls_back(self):
         # iteration-5 review finding 2: this is the "still no quota anywhere in the ladder"
@@ -1632,7 +1668,10 @@ class TestResolveGsdDispatch(unittest.TestCase):
         # single candidate's RUNTIME dispatch failure (see
         # test_exclude_keys_forces_a_runtime_quota_failed_candidate_to_the_next_one above, which
         # covers the latter) -- here EVERY candidate is already unavailable at probe time, before
-        # any dispatch is even attempted.
+        # any dispatch is even attempted. Both candidates DO have real dispatch mechanisms
+        # (codex is NATIVE_TIER_VENDORS-eligible) -- the only reason nothing resolves is quota,
+        # so this MUST be reason "quota_exhausted" (iteration-7 review finding 2), the one case
+        # where Task 5's hourly auto-wake is actually worth scheduling.
         candidates = [
             {"cli": "grok", "model": "grok-4-fast", "key": "grok/grok-4-fast", "vendor": "xai",
              "task_affinity": None, "context_limit": None},
@@ -1645,6 +1684,76 @@ class TestResolveGsdDispatch(unittest.TestCase):
             candidates, ["grok/grok-4-fast", "codex/gpt-5.6-sol"], "backend", {},
             "/repo/.planning/config.json", "/repo", quota=quota)
         self.assertEqual(result["mode"], "fallback_notice")
+        self.assertEqual(result["reason"], "quota_exhausted")
+
+    def test_reason_is_no_usable_dispatch_even_when_a_later_candidate_also_lacks_quota(self):
+        # iteration-7 review finding 2: once ANY quota-available candidate along the walk turns
+        # out to have no usable dispatch mechanism, the overall reason MUST stay
+        # "no_usable_dispatch" -- even though grok (the SECOND candidate reached) also lacks
+        # quota, scheduling an hourly auto-wake would still be futile because the FIRST
+        # candidate's problem (no dispatch mechanism) can never be fixed by waiting, and grok
+        # itself has no dispatch mechanism either (real, unmocked build_cross_ai_dispatch).
+        candidates = [
+            {"cli": "no-dispatch-vendor", "model": "m-1", "key": "no-dispatch-vendor/m-1",
+             "vendor": "acme", "task_affinity": None, "context_limit": None},
+            {"cli": "grok", "model": "grok-4-fast", "key": "grok/grok-4-fast", "vendor": "xai",
+             "task_affinity": None, "context_limit": None},
+        ]
+        quota = {"grok/grok-4-fast": {"available": False}}
+        result = adapter.resolve_gsd_dispatch(
+            candidates, ["no-dispatch-vendor/m-1", "grok/grok-4-fast"], "backend", {},
+            "/repo/.planning/config.json", "/repo", quota=quota)
+        self.assertEqual(result["mode"], "fallback_notice")
+        self.assertEqual(result["reason"], "no_usable_dispatch")
+
+    def test_reason_is_quota_exhausted_when_a_later_unreached_candidate_is_purely_quota_blocked(
+            self):
+        # iteration-8 review, HIGH finding 1: grok (first in the ladder) has no dispatch
+        # mechanism at all (real, unmocked build_cross_ai_dispatch returns None for it) and gets
+        # dropped -- but codex (second, native, NATIVE_TIER_VENDORS-eligible) is only blocked by
+        # quota. The overall reason MUST be "quota_exhausted" (retryable), NEVER
+        # "no_usable_dispatch", even though an earlier candidate in the same walk already failed
+        # for lack of a dispatch mechanism -- codex regaining quota would make this dispatchable
+        # on the very next auto-wake, so scheduling one is NOT futile here.
+        candidates = [
+            {"cli": "grok", "model": "grok-4-fast", "key": "grok/grok-4-fast", "vendor": "xai",
+             "task_affinity": None, "context_limit": None},
+            {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+             "vendor": "openai", "task_affinity": None, "context_limit": None},
+        ]
+        quota = {"codex/gpt-5.6-sol": {"available": False}}
+        result = adapter.resolve_gsd_dispatch(
+            candidates, ["grok/grok-4-fast", "codex/gpt-5.6-sol"], "backend", {},
+            "/repo/.planning/config.json", "/repo", quota=quota)
+        self.assertEqual(result["mode"], "fallback_notice")
+        self.assertEqual(result["reason"], "quota_exhausted")
+
+    def test_no_configured_candidate_at_all_has_its_own_distinct_reason_code(self):
+        result = adapter.resolve_gsd_dispatch([], [], "backend", {},
+                                               "/repo/.planning/config.json", "/repo")
+        self.assertEqual(result["mode"], "fallback_notice")
+        self.assertEqual(result["reason"], "no_configured_candidate")
+
+    def test_all_candidates_present_but_context_rejected_gets_a_distinct_reason_code(self):
+        # iteration-9 review, HIGH finding 2: candidates DID exist here (2 real [[reviewers]]
+        # entries, each with a real curated context_limit) -- the empty post-filter result comes
+        # entirely from execute_selection.filter_by_context rejecting both for insufficient
+        # context_limit relative to a deliberately huge required_context, never from "nothing was
+        # ever configured". The reason code must be distinguishable from no_configured_candidate,
+        # proving this does not silently proceed with GSD's own default given the phase prompt is
+        # already known oversized for every configured candidate.
+        candidates = [
+            {"cli": "grok", "model": "grok-4-fast", "key": "grok/grok-4-fast", "vendor": "xai",
+             "task_affinity": None, "context_limit": 1000},
+            {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+             "vendor": "openai", "task_affinity": None, "context_limit": 2000},
+        ]
+        result = adapter.resolve_gsd_dispatch(
+            candidates, ["grok/grok-4-fast", "codex/gpt-5.6-sol"], "backend", {},
+            "/repo/.planning/config.json", "/repo", required_context=1_000_000)
+        self.assertEqual(result["mode"], "fallback_notice")
+        self.assertEqual(result["reason"], "all_candidates_context_rejected")
+        self.assertNotEqual(result["reason"], "no_configured_candidate")
 
     def test_real_nonempty_phase_prompt_with_uncurated_candidates_still_resolves(self):
         # iteration-6 review, CRITICAL finding (two independent reviewers): a prior revision
@@ -1764,7 +1873,7 @@ def _runtime_identity(cli) -> str:
     return cli if cli is not None else "claude"
 
 
-def _fallback_notice(phase_type: str, top_choice_key, reason: str) -> dict:
+def _fallback_notice(phase_type: str, top_choice_key, reason_code: str, reason_prose: str) -> dict:
     # iteration-6 review, CRITICAL finding, two independent reviewers: EVERY mode this function
     # (and the whole resolve_gsd_dispatch/cli.py result surface) can return MUST carry the SAME
     # base keys (mode, key, cli, provenance) -- Task 5's SKILL.md accesses result["key"] etc.
@@ -1772,14 +1881,22 @@ def _fallback_notice(phase_type: str, top_choice_key, reason: str) -> dict:
     # to happen on exactly the fallback path Task 5's escalation loop terminates on. key is the
     # top choice that COULDN'T be dispatched (or None if there was no candidate at all); cli/
     # provenance are always None/"fallback" here since nothing was ever selected or written.
+    #
+    # iteration-7 review finding 2: `reason_code` is a machine-readable field, SEPARATE from the
+    # human-readable `reason_prose` folded into `message` below -- Task 5's SKILL.md branches its
+    # auto-wake decision on `reason_code` alone, never on substring-matching `message`, because
+    # "quota_exhausted" and "no_usable_dispatch" require OPPOSITE handling despite producing
+    # similar-looking prose (see this function's callers below and the Interfaces block's own
+    # documented reason-code table).
     top_choice = top_choice_key or "no candidate resolved"
     return {
         "mode": "fallback_notice",
         "key": top_choice_key,
         "cli": None,
         "provenance": "fallback",
+        "reason": reason_code,
         "message": (
-            f"ai-kit-spec-execute chose {top_choice} for this task, but {reason}. No "
+            f"ai-kit-spec-execute chose {top_choice} for this task, but {reason_prose}. No "
             f"configuration change was made to GSD's config for phase type {phase_type!r} -- "
             f"GSD's own currently-active default (unmodified by ai-kit-spec-execute) will run "
             f"instead. Update .planning/config.json's model_overrides directly to carry your "
@@ -1825,12 +1942,32 @@ def resolve_gsd_dispatch(candidates: list, top_n_keys: list, phase_type: str, gs
     # phase_type here would silently conflate the two; None is the honest, stated scope decision
     # (see Global Constraints). required_context IS a real measurement (estimate_required_context),
     # never a hardcoded 0.
+    # iteration-9 review, HIGH finding 2: these are two DIFFERENT empty-list facts and must not
+    # share a reason code. Checked in this order, over two DIFFERENT lists:
+    #  1. `candidates` itself (the raw, pre-filter list assemble_candidates produced from
+    #     review-spec.toml) -- empty here means nothing was EVER configured.
+    #  2. `ranked` (candidates AFTER resolve_execute_candidates' internal filter_by_context call)
+    #     -- empty here, with `candidates` non-empty, means real candidates existed but every one
+    #     was rejected for having a curated context_limit smaller than required_context. Silently
+    #     treating this the same as "nothing configured" would misreport a context-fit problem as
+    #     a missing-configuration problem, AND (per design intent) must never let this fall
+    #     through to _fallback_notice's caller proceeding as if GSD's own default is fine to run
+    #     unmodified against a phase prompt already confirmed too large for every candidate.
+    if not candidates:
+        return _fallback_notice(
+            phase_type, None, "no_configured_candidate",
+            "ai-kit-spec-execute has no configured candidate at all (review-spec.toml has no "
+            "[[reviewers]] entries) -- nothing to select from")
+
     ranked = resolve_execute_candidates(candidates, None, required_context, {}, top_n_keys)
     if not ranked:
         return _fallback_notice(
-            phase_type, None,
-            "ai-kit-spec-execute has no configured candidate at all (review-spec.toml has no "
-            "[[reviewers]] entries) -- nothing to select from")
+            phase_type, None, "all_candidates_context_rejected",
+            f"every one of the {len(candidates)} configured candidate(s) was rejected on context "
+            f"size for phase type {phase_type!r} -- each candidate's curated context_limit is "
+            f"smaller than this phase's estimated required_context of {required_context}; none "
+            f"merely lacked quota or a dispatch mechanism, all were ruled out purely on "
+            f"context-size fit")
 
     by_key = {c["key"]: c for c in ranked}
     remaining_ladder = candidates_to_ladder(ranked)
@@ -1839,7 +1976,7 @@ def resolve_gsd_dispatch(candidates: list, top_n_keys: list, phase_type: str, gs
     while remaining_ladder:
         pick = resolve_ladder_pick_fn(ranked, remaining_ladder, skip_vendor="", quota=quota)
         if pick is None:
-            break  # nothing left in the ladder has quota
+            break  # nothing left in remaining_ladder currently has quota
         candidate = by_key[pick.key]
         if _is_native(candidate["cli"]):
             runtime_identity = _runtime_identity(candidate["cli"])
@@ -1853,12 +1990,40 @@ def resolve_gsd_dispatch(candidates: list, top_n_keys: list, phase_type: str, gs
         cross_ai = build_cross_ai_dispatch(candidate, target_dir)
         if cross_ai is not None:
             return cross_ai
+        # This quota-available candidate has no dispatch mechanism at all -- permanently drop it
+        # from the ladder and keep walking. It does NOT, by itself, decide the eventual reason
+        # code (iteration-8 review, HIGH finding 1) -- that decision is made ONCE, below, after
+        # the walk ends, by inspecting whichever candidates the walk never got to (never
+        # accumulated eagerly here), because a later candidate that's purely quota-blocked can
+        # still make this run genuinely worth retrying even though this one wasn't.
         remaining_ladder = [k for k in remaining_ladder if k != pick.key]
 
-    return _fallback_notice(
-        phase_type, top_key,
+    # iteration-8 review, HIGH finding 1: the reason code must reflect whether ANY candidate the
+    # walk never got to dispatch (i.e. still sitting in remaining_ladder when the loop ended --
+    # either because resolve_ladder_pick_fn found no quota left, or because every candidate was
+    # consumed above) has a genuine dispatch mechanism. A prior revision instead used a sticky
+    # "saw_usable_dispatch_failure" flag that, once set by ANY earlier no-dispatch-mechanism
+    # candidate, permanently forced "no_usable_dispatch" for the whole run -- even when a LATER,
+    # never-reached candidate was purely quota-blocked and would dispatch fine once quota
+    # recovers (example: ladder [grok (no dispatch builder), codex (native, but currently
+    # quota-exhausted)] must resolve "quota_exhausted", not "no_usable_dispatch", since codex
+    # regaining quota would make dispatch succeed on the next auto-wake). A candidate counts as
+    # "has a dispatch mechanism" here independent of its current quota state -- native/cli=None
+    # candidates always do; others are asked via build_cross_ai_dispatch, which is a pure
+    # command-string builder with no dispatch side effects, safe to call purely for this
+    # classification.
+    has_retryable_remaining = any(
+        _is_native(by_key[k]["cli"]) or build_cross_ai_dispatch(by_key[k], target_dir) is not None
+        for k in remaining_ladder
+    )
+    reason_code = "quota_exhausted" if has_retryable_remaining else "no_usable_dispatch"
+    reason_prose = (
+        f"every candidate in the ladder is quota-exhausted for phase type {phase_type!r}"
+        if reason_code == "quota_exhausted" else
         f"no quota-available candidate in the ladder has a usable native or cross-AI dispatch "
-        f"path for phase type {phase_type!r}")
+        f"path for phase type {phase_type!r}"
+    )
+    return _fallback_notice(phase_type, top_key, reason_code, reason_prose)
 ```
 
 - [ ] **Step 4: Run tests to verify pass**
@@ -1967,6 +2132,9 @@ class TestCliResolveDispatch(unittest.TestCase):
         result = json.loads(stdout.getvalue())
         self.assertEqual(result["mode"], "fallback_notice")
         self.assertIn("malformed", result["message"].lower())
+        # iteration-7 review finding 2: a machine-readable reason, never message-substring
+        # matching -- Task 5's SKILL.md branches on this field.
+        self.assertEqual(result["reason"], "malformed_config")
         self.assertEqual(write_calls, [])  # never attempted a write over a broken config
 
     def test_resolve_dispatch_preserves_command_field_for_quota_probing(self):
@@ -2194,6 +2362,46 @@ class TestCliPrepareTooling(unittest.TestCase):
             run_fn=failing_run, stdout=stdout)
         self.assertNotIn("codegraph_explore", stdout.getvalue())
 
+    def test_prepare_tooling_degrades_to_generic_guidance_when_index_build_times_out(self):
+        # iteration-7 review finding 6: the implementation wraps run_fn(index_cmd, ...) in
+        # try/except (subprocess.TimeoutExpired, OSError) -- this test is what actually exercises
+        # that handler by making run_fn raise TimeoutExpired, so the TDD gate would fail if that
+        # except clause were ever removed. Must degrade to generic/unregistered guidance, never
+        # propagate the exception and crash this subcommand's stdout-is-JSON-parseable contract.
+        import io
+        import subprocess
+        def timing_out_run(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout", 15))
+        stdout = io.StringIO()
+        exit_code = cli.main(
+            ["prepare-tooling", "--cli", "codex", "--target-dir", "/repo"],
+            detect_tool_availability_fn=lambda **k: {"codegraph": True, "rg": True},
+            resolve_agents_tooling_path_fn=lambda **k: "/home/u/.agents/AGENTS-TOOLING.md",
+            ensure_codegraph_registered_fn=lambda cli, **k: True,
+            build_codegraph_index_command_fn=lambda target_dir: "cd /repo && codegraph sync",
+            run_fn=timing_out_run, stdout=stdout)
+        self.assertEqual(exit_code, 0)  # no uncaught exception
+        self.assertNotIn("codegraph_explore", stdout.getvalue())  # never claim readiness
+        self.assertIn("AGENTS-TOOLING.md", stdout.getvalue())  # still valid generic guidance
+
+    def test_prepare_tooling_degrades_to_generic_guidance_when_codegraph_binary_is_unexecutable(self):
+        # iteration-7 review finding 6: same handler, the OSError branch specifically (e.g. the
+        # codegraph binary vanished or lost its execute bit between detection and index-build).
+        import io
+        def raising_run(cmd, **kw):
+            raise OSError("codegraph: command not found")
+        stdout = io.StringIO()
+        exit_code = cli.main(
+            ["prepare-tooling", "--cli", "codex", "--target-dir", "/repo"],
+            detect_tool_availability_fn=lambda **k: {"codegraph": True, "rg": True},
+            resolve_agents_tooling_path_fn=lambda **k: "/home/u/.agents/AGENTS-TOOLING.md",
+            ensure_codegraph_registered_fn=lambda cli, **k: True,
+            build_codegraph_index_command_fn=lambda target_dir: "cd /repo && codegraph sync",
+            run_fn=raising_run, stdout=stdout)
+        self.assertEqual(exit_code, 0)  # no uncaught exception
+        self.assertNotIn("codegraph_explore", stdout.getvalue())  # never claim readiness
+        self.assertIn("AGENTS-TOOLING.md", stdout.getvalue())  # still valid generic guidance
+
 
 class TestCliWriteResumableState(unittest.TestCase):
     def test_write_resumable_state_subcommand_writes_the_given_state_json(self):
@@ -2417,6 +2625,12 @@ def main(argv: list, assemble_candidates_fn=assemble_candidates,
             # instead, even though nothing is actually written on this path).
             result = {"mode": "fallback_notice", "key": None, "cli": None,
                       "provenance": "fallback",
+                      # iteration-7 review finding 2: a machine-readable reason, distinguishable
+                      # from "quota_exhausted"/"no_usable_dispatch" -- Task 5's SKILL.md branches
+                      # its auto-wake decision on this field, never on substring-matching
+                      # `message` (which happens to also contain the word "malformed" today, but
+                      # that was never a stable machine-readable contract).
+                      "reason": "malformed_config",
                       "message": f"{args.config_path} is malformed/unreadable -- refusing to "
                                  f"write over it. Fix or remove it by hand, then re-run.",
                       "run_id": args.run_id if args.run_id else generate_run_id()}
@@ -2643,6 +2857,15 @@ This skill is not guaranteed a `CLAUDE_PLUGIN_ROOT` — take the FIRST existing 
 three-candidate pattern `ai-kit-spec-review/SKILL.md`'s Step 0.7 point 0 already uses for its own
 `ai-kit-spec.py`):
 
+**Also resolve `ai-kit-spec-review`'s own shim in the SAME call** (iteration-5 review finding 9 —
+a prior revision of this step left a bracketed placeholder, `<ai-kit-spec-review shim, Step 0.7>`,
+in two later load-bearing commands instead of an actually-resolved path; iteration-9 review, HIGH
+finding 1 — a prior revision of THIS revision resolved `$GSD_SHIM` and `$TOOLS_PY` in two separate
+`Bash` calls and then referenced both from Step 1 onward as if they had persisted, which they
+never do across a call boundary — see the persistence-rules paragraph below). Both resolutions
+run in ONE `Bash` call, ending with a `printf` of both resolved paths so Steps 1–4 have a literal
+value to re-read, exactly like every other cross-call value in this skill:
+
 ```bash
 for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-execute-gsd}" \
          "$HOME/.claude/skills/ai-kit-spec-execute-gsd" \
@@ -2650,45 +2873,114 @@ for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-execute-g
   [ -d "$d" ] && { GSD_SKILL_DIR="$d"; break; }
 done
 GSD_SHIM="$GSD_SKILL_DIR/ai-kit-spec-gsd.py"
-```
-
-Every later step's `python3 $GSD_SHIM <subcommand> ...` invocation in this skill uses this
-resolved `$GSD_SHIM` path — never a bare `python3 -m ai_kit_spec_gsd.cli` (iteration-4 review
-finding 1: that only resolves when `ai_kit_spec_gsd` already happens to be on `sys.path`, which
-running from an arbitrary GSD project cwd never guarantees).
-
-**Also resolve `ai-kit-spec-review`'s own shim here** (iteration-5 review finding 9 — a prior
-revision of this step left a bracketed placeholder, `<ai-kit-spec-review shim, Step 0.7>`, in two
-later load-bearing commands instead of an actually-resolved path). This is the SAME literal
-three-candidate discovery loop `skills/ai-kit-spec-review/SKILL.md`'s own Step 0.7 point 0 uses
-for its own `ai-kit-spec.py`, run here a second time (a separate skill directory, a separate
-resolution) with the SAME real variable names that skill's own body already uses:
-
-```bash
+# SAME literal three-candidate discovery loop skills/ai-kit-spec-review/SKILL.md's own Step 0.7
+# point 0 uses for its own ai-kit-spec.py, run here a second time (a separate skill directory, a
+# separate resolution) with the SAME real variable names that skill's own body already uses:
 for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
          "$HOME/.claude/skills/ai-kit-spec-review" \
          "$(dirname "$GSD_SKILL_DIR")/ai-kit-spec-review"; do
   [ -d "$d" ] && { REVIEW_SPEC_SKILL_DIR="$d"; break; }
 done
 TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/ai-kit-spec.py"
+printf 'GSD_SHIM=%s\nTOOLS_PY=%s\n' "$GSD_SHIM" "$TOOLS_PY"
 ```
 
-Every later step's reference to "the `ai-kit-spec-review` shim" means `python3 "$TOOLS_PY"
-cache-path --kind quota` — this exact, resolved command, never a bracketed placeholder.
+**Record both printed lines as this wave's own literal values.** Every later step's
+`python3 $GSD_SHIM <subcommand> ...` invocation in this skill uses this resolved `$GSD_SHIM`
+path — never a bare `python3 -m ai_kit_spec_gsd.cli` (iteration-4 review finding 1: that only
+resolves when `ai_kit_spec_gsd` already happens to be on `sys.path`, which running from an
+arbitrary GSD project cwd never guarantees). Every later step's reference to "the
+`ai-kit-spec-review` shim" means `python3 "$TOOLS_PY" cache-path --kind quota` — this exact,
+resolved command, never a bracketed placeholder. **Both `$GSD_SHIM` and `$TOOLS_PY` are re-supplied
+as literal text, copy-pasted from this printf's output, into every single Bash call in Steps 1–4
+below (iteration-9 review, HIGH finding 1) — they are used far too pervasively (every subcommand
+invocation in every step) to justify re-deriving the discovery loop each time; treat their
+resolved values exactly like `$RUN_ID` or any other value this document says to carry forward
+literally.**
+
+**How every `$VAR` in Steps 1–4 below actually works (iteration-8 review, HIGH finding 3 —
+required reading before executing any step below).** This repo's own
+`skills/ai-kit-spec-review/SKILL.md` (Step 0.7 point 1) documents the same constraint this skill
+is bound by: **every separate `Bash` tool call in this harness starts a fresh shell — a variable
+set in one `Bash` call is gone by the next one.** Steps 1 through 4 below are written, and MUST be
+executed, as a sequence of SEPARATE `Bash` tool calls (dispatching GSD's own execution in Step 3
+alone can run up to 30 minutes, and Step 4's escalation loop re-invokes Step 1 an unbounded number
+of times — none of this can be one shell process). Every `$CWD`, `$PHASE_ID`, `$RUN_ID`,
+`$RESULT_MODE`, `$CANDIDATES_TRIED_JSON`, etc. written below therefore denotes **the literal
+value most recently captured for it** — a string this skill records from a prior command's
+printed output (or from its own entry-precondition inputs) and re-substitutes, verbatim, as
+literal text into every later command and prose reference — **never an actual persisting shell
+variable reference across a call boundary.** (This document keeps writing `$NAME` throughout for
+readability, exactly like `ai-kit-spec-review/SKILL.md` does for `$RUN_TMP_DIR`/`$TOOLS_PY` — read
+every occurrence below as "the literal value captured here", never as a live shell variable.)
+Where a genuinely single logical operation needs several commands to run in strict sequence
+sharing real variable state (e.g. deriving `$GSD_CONFIG_PATH` and then feeding it straight into
+`resolve-dispatch`), those commands are combined into ONE `Bash` call below, using real shell
+`VAR=` assignment WITHIN that one call — that pattern is confined to inside a single fenced block;
+it never spans two separate blocks/steps.
+
+`$CWD`, `$PHASE_ID`, `$PHASE_TYPE`, and `$PHASE_PROMPT_FILE` (bound in Step 1 immediately below)
+are **inputs this skill is invoked WITH, never values it invents or infers on its own.** The
+caller that dispatches `ai-kit-spec-execute-gsd` — today, `ai-kit-spec-execute`'s router (Task 6)
+after `detect_framework` resolves `"gsd"`, or a user invoking this skill directly — MUST supply
+`cwd` and `phase_id` explicitly as part of that dispatch (this skill's own **entry precondition**,
+stated above); `$PHASE_TYPE` is then read from that phase's own `NN-CONTEXT.md` (or equivalent)
+doc, and `$PHASE_PROMPT_FILE` from that same phase's own prompt/context file path, both still
+supplied or locatable via the caller-given `cwd`/`phase_id`, never guessed. If this skill is ever
+invoked without `cwd` and `phase_id` available from its caller, STOP and ask the user for them
+rather than defaulting either to the current working directory or the most-recently-touched phase.
 
 ## Step 1: Resolve the dispatch decision via the CLI entrypoint
 
-Run (concrete, runnable command — never call the underlying Python functions directly from this
-skill's own prose):
+**One `Bash` call, combining this wave's one-time initialization with the first dispatch-decision
+request (iteration-7 review finding 3; iteration-8 review, HIGH finding 3 — real `VAR=`
+assignment is safe here because everything in this block runs inside ONE call):**
 
 ```bash
-GSD_CONFIG_PATH="$(python3 "$GSD_SHIM" config-path --cwd <cwd>)"
-RESULT_JSON="$(python3 "$GSD_SHIM" resolve-dispatch --cwd <cwd> --phase-type <phase_type> \
-  --config-path "$GSD_CONFIG_PATH" --target-dir <cwd> \
+CWD="<this skill's own entry-precondition project root -- supplied by the caller, see the note
+above this step>"
+PHASE_ID="<this skill's own entry-precondition phase id -- supplied by the caller>"
+PHASE_TYPE="<this phase's own declared category, read from its NN-CONTEXT.md doc -- planning/
+discuss/research/execution/verification/completion per design spec §7; infer it there, never
+guess>"
+PHASE_PROMPT_FILE="<this phase's own prompt/context file path -- located via CWD/PHASE_ID>"
+ITERATION=0  # this wave's escalation-attempt counter, starts at 0 -- Step 4's quota-retry loop
+             # increments this by 1 each time it re-invokes resolve-dispatch; it is the
+             # "iteration" field written into resumable state below. Carried forward as a
+             # LITERAL integer on every retry (see Step 4) -- never reset mid-wave.
+CANDIDATES_TRIED_JSON="[]"  # accumulated across this whole wave, starting empty -- Step 4 (never
+             # this step) appends to it, exactly once per candidate whose OWN dispatch attempt
+             # actually failed with a quota reason. Carried forward as a LITERAL JSON array on
+             # every retry (see Step 4) -- never reset mid-wave, never pre-seeded with a
+             # candidate this call is only ABOUT to try.
+GSD_CONFIG_PATH="$(python3 "$GSD_SHIM" config-path --cwd "$CWD")"
+RESULT_JSON="$(python3 "$GSD_SHIM" resolve-dispatch --cwd "$CWD" --phase-type "$PHASE_TYPE" \
+  --config-path "$GSD_CONFIG_PATH" --target-dir "$CWD" \
   --quota-path "$(python3 "$TOOLS_PY" cache-path --kind quota)" \
-  --phase-prompt-file <phase's own prompt/context file path>)"
+  --phase-prompt-file "$PHASE_PROMPT_FILE")"
 RUN_ID="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<< "$RESULT_JSON")"
+RESULT_MODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])' <<< "$RESULT_JSON")"
+RESULT_KEY="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("key") or "")' <<< "$RESULT_JSON")"
+RESULT_CLI="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("cli") or "")' <<< "$RESULT_JSON")"
+RESULT_PROVENANCE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("provenance") or "")' <<< "$RESULT_JSON")"
+RESULT_REASON="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("reason") or "")' <<< "$RESULT_JSON")"
+RESULT_MESSAGE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or "")' <<< "$RESULT_JSON")"
+# mode-specific fields -- empty string when the current mode doesn't carry them, never an error:
+RESULT_CROSS_AI_COMMAND="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("cross_ai_command") or "")' <<< "$RESULT_JSON")"
+RESULT_PROVIDER="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("provider") or "")' <<< "$RESULT_JSON")"
+printf 'CWD=%s\nPHASE_ID=%s\nPHASE_TYPE=%s\nPHASE_PROMPT_FILE=%s\nITERATION=%s\nCANDIDATES_TRIED_JSON=%s\nGSD_CONFIG_PATH=%s\nRUN_ID=%s\nRESULT_MODE=%s\nRESULT_KEY=%s\nRESULT_CLI=%s\nRESULT_PROVENANCE=%s\nRESULT_REASON=%s\nRESULT_MESSAGE=%s\nRESULT_CROSS_AI_COMMAND=%s\nRESULT_PROVIDER=%s\n' \
+  "$CWD" "$PHASE_ID" "$PHASE_TYPE" "$PHASE_PROMPT_FILE" "$ITERATION" "$CANDIDATES_TRIED_JSON" \
+  "$GSD_CONFIG_PATH" "$RUN_ID" "$RESULT_MODE" "$RESULT_KEY" "$RESULT_CLI" "$RESULT_PROVENANCE" \
+  "$RESULT_REASON" "$RESULT_MESSAGE" "$RESULT_CROSS_AI_COMMAND" "$RESULT_PROVIDER"
 ```
+
+**Record every line of that trailing `printf`'s output as this wave's own literal values** — this
+is the mechanism (per the note above this step) that carries state from this `Bash` call into
+Steps 2, 3, and 4's own SEPARATE calls. `$CANDIDATES_TRIED_JSON`/`$ITERATION` from this printed
+output are `"[]"`/`0` on a wave's FIRST pass through this step; Step 4's quota-retry loop re-runs
+the `resolve-dispatch`/extraction portion of this same block with the ACCUMULATED literal values
+it produced instead (never resetting them back to `"[]"`/`0`) — see Step 4 below for the exact
+re-invocation.
 
 **Capture `$RUN_ID` here** (iteration-5 review finding 5) — `resolve-dispatch` generates exactly
 one `run_id` for this whole invocation (threaded through every write it makes) and returns it as
@@ -2698,16 +2990,16 @@ own — so a runtime-quota-hook write and this wave's resolve-dispatch write, if
 exactly one backup file, not two.
 
 Where:
-- `<cwd>` is this skill's own entry-precondition project root (see above). `target_dir` is the
+- `$CWD` is this skill's own entry-precondition project root, bound above. `--target-dir` is the
   SAME value — GSD's own project working tree is the write-confinement target for any
   execute-mode CLI dispatch (Task 3's `build_cross_ai_dispatch`).
 - `$GSD_CONFIG_PATH` comes from the `config-path` subcommand (Task 4), never a hand-written
   `.planning/config.json` string — once Task 1/Task 2 Step 0 confirms GSD's workstream-scoped
   path convention, pass `--workstream-id <id>` to this same subcommand instead of changing this
   step's own logic.
-- `<phase_type>` is read from the GSD phase's own docs (e.g. its `NN-CONTEXT.md`'s declared
+- `$PHASE_TYPE` is read from the GSD phase's own docs (e.g. its `NN-CONTEXT.md`'s declared
   category — planning/discuss/research/execution/verification/completion per design spec §7);
-  infer it there, never guess.
+  infer it there, never guess. Bound above.
 - `--quota-path` loads/refreshes LIVE quota before resolving (iteration-4 review finding 2) — the
   `resolve-dispatch` subcommand itself calls `refresh_quota_cache` and passes the result into
   `resolve_gsd_dispatch`'s `quota=` argument; this skill never has to do that separately.
@@ -2720,25 +3012,17 @@ Where:
 iteration-6 review finding — every mode, including both `fallback_notice` reasons, always carries
 all three, `None` where not applicable, so unconditional extraction below never `KeyError`s) plus
 this wave's own `run_id` (iteration-5 review finding 5). If `mode == "fallback_notice"` and
-`message` mentions "malformed" (iteration-4 review finding 7 — `resolve-dispatch` aborts rather
-than mutating a broken config), print the message and STOP — do not proceed to Step 2/3 at all for
-that case.
+`reason == "malformed_config"` (iteration-4 review finding 7 — `resolve-dispatch` aborts rather
+than mutating a broken config; iteration-7 review finding 2 — checked via the machine-readable
+`reason` field extracted below, never by matching "malformed" as a substring of `message`), print
+the message and STOP — do not proceed to Step 2/3 at all for that case.
 
-**Extract every field this skill's later steps reference into real shell variables here
-(iteration-6 review, HIGH finding — corrected: no bracketed placeholder like
-`<result.cross_ai_command>` may survive into the shipped SKILL.md; every reference below is one of
-these real variables)**:
-```bash
-RESULT_MODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])' <<< "$RESULT_JSON")"
-RESULT_KEY="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("key") or "")' <<< "$RESULT_JSON")"
-RESULT_CLI="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("cli") or "")' <<< "$RESULT_JSON")"
-RESULT_PROVENANCE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("provenance") or "")' <<< "$RESULT_JSON")"
-RESULT_MESSAGE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or "")' <<< "$RESULT_JSON")"
-# mode-specific fields -- empty string when the current mode doesn't carry them, never an error:
-RESULT_CROSS_AI_COMMAND="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("cross_ai_command") or "")' <<< "$RESULT_JSON")"
-RESULT_PROVIDER="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("provider") or "")' <<< "$RESULT_JSON")"
-```
-Its `$RESULT_MODE` drives Step 2 below.
+Every field this skill's later steps reference (`$RESULT_MODE`, `$RESULT_KEY`, `$RESULT_CLI`,
+`$RESULT_PROVENANCE`, `$RESULT_REASON`, `$RESULT_MESSAGE`, `$RESULT_CROSS_AI_COMMAND`,
+`$RESULT_PROVIDER`) was already extracted inside this same step's one combined `Bash` call above
+and recorded via its trailing `printf` — no separate extraction call is needed or correct here
+(a second call would no longer see `$RESULT_JSON`, per the persistence note above this step). Its
+`$RESULT_MODE` (and, for `fallback_notice`, `$RESULT_REASON`) drives Step 2 below.
 
 ## Step 2: Act on the dispatch mode
 
@@ -2765,26 +3049,37 @@ Its `$RESULT_MODE` drives Step 2 below.
   11 — two writes against the same stale snapshot can have the second discard the first's key).
   `--value-json` takes a JSON literal, not a bare string (iteration-5 review finding 6 — a plain
   `--value` would write the Python string `"true"` for a boolean flag instead of the real JSON
-  `true`), and `--run-id "$RUN_ID"` is the SAME id Step 1 captured (iteration-5 review finding 5):
+  `true`), and `--run-id "$RUN_ID"` is the SAME id Step 1 captured (iteration-5 review finding 5).
+  **Both writes below are a single logical operation and MUST run in ONE `Bash` call (iteration-9
+  review, HIGH finding 1 — a prior revision split them into two fenced blocks and threaded
+  `$UPDATED` between them with no `printf` capture, which cannot survive a call boundary), ending
+  with a `printf` of the final config JSON so Step 3 has a literal value to read:**
   ```bash
   UPDATED="$(python3 "$GSD_SHIM" write-workflow-key --config-path "$GSD_CONFIG_PATH" \
     --config-json "$(cat "$GSD_CONFIG_PATH" 2>/dev/null || echo '{}')" \
     --key cross_ai_command --run-id "$RUN_ID" \
     --value-json "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$RESULT_CROSS_AI_COMMAND")")"
-  ```
-  (exact key name confirmed by Task 1 Step 2 — update this line if Task 1 found a different
-  name). If Task 1 Step 2 found `workflow.cross_ai_execution` is a SEPARATE required enable flag
-  (not just the presence of `cross_ai_command`), ALSO run:
-  ```bash
+  # (exact key name confirmed by Task 1 Step 2 -- update this line if Task 1 found a different
+  # name.) -- WRITE-TIME DECISION (Task 5's own implementation step, not the executing agent's):
+  # if Task 1 Step 2 found `workflow.cross_ai_execution` is a SEPARATE required enable flag (not
+  # just the presence of cross_ai_command), keep the second write below; otherwise DELETE it
+  # entirely from the shipped SKILL.md rather than leaving it as a runtime "if Task 1 found ..."
+  # branch, since whether it exists is settled once, permanently, at authoring time, not per-run.
   UPDATED="$(python3 "$GSD_SHIM" write-workflow-key --config-path "$GSD_CONFIG_PATH" \
     --config-json "$UPDATED" --key cross_ai_execution --run-id "$RUN_ID" --value-json true)"
+  printf 'UPDATED_CONFIG_JSON=%s\n' "$UPDATED"
   ```
-  — note `--config-json "$UPDATED"` is the FIRST call's own output, not a re-read of
-  `$GSD_CONFIG_PATH` from disk (which may not reflect the first write yet if the write is
-  buffered) and never the ORIGINAL pre-write config either. Until Task 1 confirms one way or the
-  other, run both defensively: setting an already-true/unused flag is harmless, but leaving a
-  required one unset would silently drop the whole cross-AI dispatch path. `result["cli"]`/
-  `result["key"]` name the winning external candidate for Step 3's tooling detection.
+  Note `--config-json "$UPDATED"` on the second write is the FIRST write's own output, not a
+  re-read of `$GSD_CONFIG_PATH` from disk (which may not reflect the first write yet if the write
+  is buffered) and never the ORIGINAL pre-write config either — which is exactly why both must
+  stay in the same call sharing real `VAR=` state, per the persistence-rules paragraph in Step 0.
+  Until Task 1 confirms one way or the other, ship both writes defensively: setting an
+  already-true/unused flag is harmless, but leaving a required one unset would silently drop the
+  whole cross-AI dispatch path. `result["cli"]`/`result["key"]` name the winning external
+  candidate for Step 3's tooling detection. (The mode-transition cleanup below does NOT apply to
+  this mode — see its own "whenever the resolved mode is `native_tier` or `fallback_notice`"
+  scoping — so `$UPDATED_CONFIG_JSON` has no further consumer in this step; it is printed here
+  only so this call's own two writes can share real state, per Step 0's persistence rules.)
 - `native_enum`: print `result["message"]` (the precision-loss notice from Task 3 Branch B) to
   the user, then write `result["provider"]` via the SAME threaded `write-workflow-key` pattern
   above (`--value-json "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$RESULT_PROVIDER")"`,
@@ -2792,30 +3087,74 @@ Its `$RESULT_MODE` drives Step 2 below.
   design spec §7 confirms this is a *different* key than `cross_ai_command` above; never conflate
   the two. `result["cli"]`/`result["key"]` still name the winning candidate for Step 3.
 - `fallback_notice`: **iteration-6 review, CRITICAL finding, two independent reviewers — this
-  mode's TWO possible reasons need DIFFERENT handling; the previous revision treated both
-  identically and silently skipped the resumable-state/auto-wake path for genuine quota
-  exhaustion discovered at PROBE time (Step 1), not just for a runtime dispatch failure (Step
-  4).** Check `result["message"]` for which reason `resolve_gsd_dispatch` gave:
-  - Message contains `"no configured candidate at all"`: the config genuinely has zero
-    `[[reviewers]]` entries — nothing was ever available to try, this is NOT a quota-exhaustion
-    case. Print the message to the user, proceed to Step 3 (generic tool detection only, no
-    resumable state, no wake — there is nothing to wait FOR).
-  - Message contains `"no quota-available candidate in the ladder"`: this IS a genuine
-    quota-exhaustion case — every configured candidate was already unavailable at PROBE time,
-    before any real dispatch was even attempted. This is functionally identical to Step 4's
-    "every candidate in the ladder has now been tried and excluded" terminal case, just reached
-    one step earlier (at Step 1/2 instead of after a runtime failure) — treat it EXACTLY the
-    same way: skip Step 3's dispatch entirely, write resumable state via `write-resumable-state`
-    (Task 4) with `candidates_tried: []` (nothing was ever dispatched this wave — the exhaustion
-    was discovered at the probe, not mid-escalation) and the SAME `--run-id "$RUN_ID"`, then
-    schedule the SAME hourly `CronCreate` auto-wake job Step 4 describes below. Do NOT proceed to
-    Step 3 or let GSD's default silently run in this case — design spec §10/§12 requires the
+  mode's possible reasons need DIFFERENT handling; a prior revision treated them identically and
+  silently skipped the resumable-state/auto-wake path for genuine quota exhaustion discovered at
+  PROBE time (Step 1), not just for a runtime dispatch failure (Step 4). iteration-7 review
+  finding 2 — branch on the machine-readable `$RESULT_REASON` extracted in Step 1, NEVER on
+  substring-matching `result["message"]`; the "no quota-available candidate..." prose historically
+  looked identical for two reasons that require opposite handling.** Branch on `$RESULT_REASON`:
+  - `"no_configured_candidate"`: the config genuinely has zero `[[reviewers]]` entries — nothing
+    was ever available to try, this is NOT a quota-exhaustion case. Print the message to the
+    user, proceed to Step 3 (generic tool detection only, no resumable state, no wake — there is
+    nothing to wait FOR).
+  - `"all_candidates_context_rejected"` (iteration-9 review, HIGH finding 2): real
+    `[[reviewers]]` entries exist, but every one was rejected on context-size fit — each
+    candidate's curated `context_limit` is smaller than this phase's `required_context`. This is
+    a DIFFERENT fact than `no_configured_candidate` (candidates existed; the problem is size, not
+    absence) and requires the SAME non-quota handling as `no_usable_dispatch` below, for the same
+    underlying reason — a context-fit rejection does not change by waiting an hour, any more than
+    a missing dispatch mechanism does. Print the message to the user, proceed to Step 3 (GSD's own
+    currently-active default runs unmodified against this phase's prompt — do NOT reinterpret this
+    as "nothing configured" and suggest re-running `ai-kit-spec-config`; the message already names
+    the real cause). Do NOT write resumable state or schedule a `CronCreate` auto-wake for this
+    case — the phase prompt is already known too large for every configured candidate, and
+    waiting never shrinks a prompt.
+  - `"no_usable_dispatch"`: NONE of the candidates the ladder walk never got to dispatch has a
+    usable native/cross-AI dispatch mechanism at all (iteration-7 review finding 2 — e.g. this
+    repo's own `grok` entry today, which has no execute-mode builder; iteration-8 review finding
+    1 — `adapter.resolve_gsd_dispatch` makes this determination once, over the candidates it
+    never reached, not by sticking on the first no-dispatch-mechanism candidate it happens to
+    encounter mid-walk). This is a PERMANENT condition — waiting an hour changes nothing about
+    whether a CLI has a dispatch mechanism. Print the message to the user, proceed to Step 3
+    (GSD's own currently-active default runs unmodified). Do NOT write resumable state or
+    schedule a `CronCreate` auto-wake for this case — that would be a futile hourly retry against
+    a problem waiting can never fix, exactly the bug this reason code exists to prevent.
+  - `"quota_exhausted"`: this IS a genuine quota-exhaustion case — at least one candidate the
+    ladder walk never got to dispatch has a real native/cross-AI dispatch mechanism, and the only
+    thing standing between it and success is quota, discovered at PROBE time, before any real
+    dispatch was even attempted (iteration-8 review finding 1 — this still applies even when an
+    EARLIER candidate in the same ladder walk separately failed for lacking a dispatch mechanism
+    entirely; that earlier candidate's permanent problem does not poison a later, genuinely
+    quota-blocked candidate's retryability). This is functionally identical to
+    Step 4's "every candidate in the ladder has now been tried and excluded" terminal case, just
+    reached one step earlier (at Step 1/2 instead of after a runtime failure) — treat it EXACTLY
+    the same way: skip Step 3's dispatch entirely, write resumable state via
+    `write-resumable-state` (Task 4) with `candidates_tried: []` (nothing was ever dispatched
+    this wave — the exhaustion was discovered at the probe, not mid-escalation; see this
+    subcommand's own real signature below — it does NOT take a `--run-id`), then schedule the
+    SAME hourly `CronCreate` auto-wake job Step 4 describes below. Do NOT proceed to Step 3 or
+    let GSD's default silently run in this case — design spec §10/§12 requires the
     all-candidates-exhausted case to always resolve to a wait-and-retry, never a silent
     fall-through to GSD's default, regardless of which step in this skill discovers the
-    exhaustion.
-  Either way: there is no candidate to resolve `cli` from in this mode. This mode is also NOT a
-  cross-AI mode — run the mode-transition cleanup below before whichever of the two paths above
-  applies.
+    exhaustion. Concrete invocation (iteration-7 review finding 3 — every value below is one of
+    the real shell variables bound in Step 1, never a bracketed placeholder; `$CANDIDATES_TRIED_JSON`
+    is still `"[]"` and `$ITERATION` still `0` here, since nothing was dispatched this wave):
+    ```bash
+    PROJECT_KEY="$(python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:12])" "$CWD")"
+    RESUME_STATE_PATH="$(dirname "$(python3 "$TOOLS_PY" cache-path --kind quota)")/gsd-resume-${PROJECT_KEY}-${PHASE_ID}.json"
+    STATE_JSON="$(python3 -c '
+    import json, sys
+    print(json.dumps({
+        "framework": "gsd", "project_path": sys.argv[1], "config_path": sys.argv[2],
+        "phase_id": sys.argv[3], "candidates_tried": json.loads(sys.argv[4]),
+        "iteration": int(sys.argv[5]),
+    }))' "$CWD" "$GSD_CONFIG_PATH" "$PHASE_ID" "$CANDIDATES_TRIED_JSON" "$ITERATION")"
+    python3 "$GSD_SHIM" write-resumable-state --path "$RESUME_STATE_PATH" --state-json "$STATE_JSON"
+    ```
+    Then schedule the `CronCreate` job described below.
+  In every case: there is no candidate to resolve `cli` from in this mode. This mode is also NOT
+  a cross-AI mode — run the mode-transition cleanup below before whichever of the three paths
+  above applies.
 
 **Mode-transition cleanup (iteration-5 review finding 6)** — run this whenever the resolved
 `mode` is `native_tier` or `fallback_notice` (i.e. NOT `cross_ai_hook`/`native_enum`), BEFORE
@@ -2860,50 +3199,73 @@ process to detect):
   subcommand still runs generic `rg`/`fd`/`bat`/`eza`/`AGENTS-TOOLING.md` detection with no
   CLI-specific CodeGraph guidance, since there is no CLI identity to check registration for).
 
+**Compute the actual `--cli` value from these rules (iteration-7 review finding 4) — a prior
+revision of this step described the branching above in prose but then always passed
+`--cli "$RESULT_CLI"` verbatim regardless of mode, which silently sent an EMPTY string for the
+native/current-runtime `cli=None` candidate case (`adapter.resolve_gsd_dispatch` copies the
+candidate's own `cli` field through unchanged, and `RESULT_CLI`'s own extraction in Step 1 turns
+a JSON `null` into `""`) — that candidate should get Claude-specific CodeGraph tooling guidance,
+never the same empty-string/generic-only treatment as a genuine `fallback_notice`.**
+
+**Everything from here through the dispatch itself is ONE `Bash` call (iteration-9 review, HIGH
+finding 1 — a prior revision split "compute `--cli`/run `prepare-tooling`", "idempotently append
+the guidance", and "build `$DISPATCH_COMMAND`/run `dispatch-phase`" into three separate fenced
+blocks, each silently depending on a variable — `$GUIDANCE`, then `$DISPATCH_COMMAND` — assigned
+in a PRIOR block that was never printed for reuse; per Step 0's persistence rules, a value not
+captured via `printf` does not survive to the next `Bash` call). This is a genuinely single
+logical operation (prepare tooling → append it once → dispatch), so it stays one call, using real
+shell `VAR=` state throughout, ending with a `printf` of `$DISPATCH_RESULT_JSON` so Step 4 — a
+separate call, since dispatch here can run up to 30 minutes and Step 4's own retry loop must be
+free to re-invoke Step 1 afterward — has a literal value to read:**
+
 ```bash
-GUIDANCE="$(python3 "$GSD_SHIM" prepare-tooling --cli "$RESULT_CLI" --target-dir <cwd>)"  # RESULT_CLI is "" (empty) for fallback_notice -- prepare-tooling treats an empty/absent --cli exactly like an omitted one (generic detection only)
+if [ "$RESULT_MODE" = "fallback_notice" ]; then
+  PREPARE_CLI=""   # no candidate at all -- generic detection only, no CLI-specific guidance
+elif [ -z "$RESULT_CLI" ]; then
+  PREPARE_CLI="claude"   # native_tier with cli=None (either provenance) -- current session IS claude
+else
+  PREPARE_CLI="$RESULT_CLI"   # every other mode/provenance -- the real configured/resolved cli
+fi
+GUIDANCE="$(python3 "$GSD_SHIM" prepare-tooling --cli "$PREPARE_CLI" --target-dir "$CWD")"
+# Append $GUIDANCE to the phase's own prompt/context FILE on disk IDEMPOTENTLY (iteration-4
+# review finding 12 -- every prior revision of this step appended unconditionally, corrupting the
+# phase file with duplicate guidance blocks on a retried/resumed run). Before appending, check for
+# a marker this skill itself owns:
+MARKER="<!-- ai-kit-spec-execute-gsd:tooling-guidance -->"
+if ! grep -qF "$MARKER" "$PHASE_PROMPT_FILE"; then
+  printf '\n%s\n%s\n' "$MARKER" "$GUIDANCE" >> "$PHASE_PROMPT_FILE"
+fi
+# Dispatch GSD's own execution entry point (the command Task 1 Step 4.5 confirmed FOR BOTH
+# BRANCHES, e.g. "gsd-execute-phase <phase_id>") via the dispatch-phase subcommand (Task 4,
+# iteration-5 review finding 7 -- never call ai_kit_spec.dispatch.dispatch_with_heartbeat as a
+# bare Python function from this skill's own prose, exactly like every other operation in this
+# plan). $PHASE_ID here is the SAME literal value Step 1 was invoked with (per Step 0's
+# persistence rules, re-substituted verbatim into every later command) -- this line is filled
+# in, once, at Task 5's own SKILL.md-authoring time with Task 1 Step 4.5's real confirmed
+# command shape; "gsd-execute-phase $PHASE_ID" below is that confirmed shape as of this plan
+# (REPLACE the literal command name if Task 1 found a different one -- keep the $PHASE_ID
+# interpolation either way):
+DISPATCH_COMMAND="gsd-execute-phase $PHASE_ID"
+DISPATCH_RESULT_JSON="$(python3 "$GSD_SHIM" dispatch-phase \
+  --dispatch-command "$DISPATCH_COMMAND" \
+  --prompt-file "$PHASE_PROMPT_FILE" \
+  --heartbeat-interval 30 --timeout 1800)"
+printf 'DISPATCH_RESULT_JSON=%s\n' "$DISPATCH_RESULT_JSON"
 ```
 
-This one subcommand call (Task 4) runs, in order: `detect_tool_availability()`,
+This one `prepare-tooling` subcommand call (Task 4) runs, in order: `detect_tool_availability()`,
 `resolve_agents_tooling_path()`, `ensure_codegraph_registered(cli)` (skipped when `--cli` is
 omitted), and — only if that confirms registration — `build_codegraph_index_command(target_dir)`
 with a minimum `CODEGRAPH_INDEX_TIMEOUT_SECONDS` (15s) timeout, THEN
 `build_tooling_guidance(...)`, printing the resulting guidance text to stdout. Design spec §9's
 ordering guarantee (the orchestrator builds the index BEFORE dispatch, the dispatched subagent
 only ever reads it via `codegraph_explore`) is preserved because this all happens before the
-dispatch below.
-
-**Append `$GUIDANCE` to the phase's own prompt/context FILE on disk IDEMPOTENTLY** (iteration-4
-review finding 12 — every prior revision of this step appended unconditionally, corrupting the
-phase file with duplicate guidance blocks on a retried/resumed run). Before appending, check for
-a marker this skill itself owns:
-
-```bash
-MARKER="<!-- ai-kit-spec-execute-gsd:tooling-guidance -->"
-if ! grep -qF "$MARKER" "<phase prompt/context file path>"; then
-  printf '\n%s\n%s\n' "$MARKER" "$GUIDANCE" >> "<phase prompt/context file path>"
-fi
-```
-
-Writing it into the file (not passing it as a separate dispatch parameter) is what guarantees it
-reaches the phase content regardless of which dispatch mode Step 2 chose (`native_tier` runs
-through GSD's own subagent mechanism, which reads this same file; `cross_ai_hook` delivers this
-same file's content to `cross_ai_wrapper.py`'s stdin, per Task 1's confirmed prompt-delivery
-contract). Never fabricate guidance for a tool/registration that wasn't confirmed present this
-session — `prepare-tooling` already enforces that.
-
-Dispatch GSD's own execution entry point (the command Task 1 Step 4.5 confirmed FOR BOTH
-BRANCHES, e.g. `gsd-execute-phase <phase_id>`) via the `dispatch-phase` subcommand (Task 4,
-iteration-5 review finding 7 — never call `ai_kit_spec.dispatch.dispatch_with_heartbeat` as a
-bare Python function from this skill's own prose, exactly like every other operation in this
-plan):
-
-```bash
-DISPATCH_RESULT_JSON="$(python3 "$GSD_SHIM" dispatch-phase \
-  --dispatch-command "<GSD's own execution command for phase_id, e.g. gsd-execute-phase <phase_id>>" \
-  --prompt-file "<phase prompt/context file path>" \
-  --heartbeat-interval 30 --timeout 1800)"
-```
+dispatch. Writing the guidance into the phase file itself (not passing it as a separate dispatch
+parameter) is what guarantees it reaches the phase content regardless of which dispatch mode
+Step 2 chose (`native_tier` runs through GSD's own subagent mechanism, which reads this same
+file; `cross_ai_hook` delivers this same file's content to `cross_ai_wrapper.py`'s stdin, per
+Task 1's confirmed prompt-delivery contract). Never fabricate guidance for a tool/registration
+that wasn't confirmed present this session — `prepare-tooling` already enforces that.
 
 `--prompt-file` is the phase's own prompt/context file (now including this step's
 idempotently-appended guidance) — its content is piped to the dispatched command's stdin. Run
@@ -2913,15 +3275,32 @@ outside of) whatever `cross_ai_wrapper.py` does internally when GSD's own `cross
 later shells out to it. The `30`/`1800` defaults match `cross_ai_wrapper.py`'s own defaults (Task
 3) — keep them in sync if either changes. `$DISPATCH_RESULT_JSON` is the exact
 `{"returncode", "stdout", "stderr", "timed_out"}` dict `dispatch_with_heartbeat` itself returns —
-parse it; Step 4 below refers to its fields as `result["..."]`.
+**record the `DISPATCH_RESULT_JSON=...` line this call's own trailing `printf` produced; Step 4
+below (a separate call) parses that captured literal value, referring to its fields as
+`result["..."]`.**
 
 ## Step 4: Classify dispatch outcome; escalate a runtime quota failure within the same wave BEFORE writing resumable state or scheduling any wake
 
-`$DISPATCH_RESULT_JSON` (Step 3) is `{"returncode", "stdout", "stderr", "timed_out"}`. Maintain a
-running `candidates_tried` list for this wave, starting with `[result["key"]]` from Step 1/2's
-resolved candidate (skip this whole step's escalation loop, proceeding straight to success/failure
-handling, when `result["key"]` is `None` — the `existing_gsd_config`/`fallback_notice` cases have
-no candidate to exclude and retry). Classify, in this order:
+`$DISPATCH_RESULT_JSON` (Step 3) is `{"returncode", "stdout", "stderr", "timed_out"}`.
+`$CANDIDATES_TRIED_JSON` and `$ITERATION` are the literal values Step 1 printed for this attempt
+(either the wave's initial `"[]"`/`0`, or the accumulated values a prior pass through this same
+step's own quota branch produced — see that branch below; this step NEVER re-initializes either
+of them here). **Gate this whole step's escalation logic on `$RESULT_PROVENANCE ==
+"resolved_candidate"`, NEVER on "is `$RESULT_KEY` empty" (iteration-8 review, HIGH finding 4)** —
+`resolved_candidate` is the ONLY provenance value a mode that actually attempted a dispatch ever
+carries (`native_tier` with `written=True`, `cross_ai_hook`, `native_enum` — see Task 4's
+Interfaces block and `gsd_cross_ai.build_cross_ai_dispatch`'s own contract); `existing_gsd_config`
+(an already-configured override, never dispatched by this run) and `fallback` (`_fallback_notice`'s
+own provenance — a candidate resolution NEVER carried out, see Task 4 Step 3's implementation)
+both carry a non-empty `$RESULT_KEY` too (the fallback case names the top choice that COULD NOT be
+dispatched), so a key-non-empty check would wrongly treat either as an attempted-and-failed
+candidate to exclude/record. When `$RESULT_PROVENANCE != "resolved_candidate"`, skip this whole
+step's escalation loop and proceed straight to success/failure handling — there is no dispatched
+candidate to exclude or retry (worked example: a `no_usable_dispatch` `fallback_notice` result,
+followed by GSD's own default itself then failing at Step 3's dispatch — `$RESULT_PROVENANCE` is
+`"fallback"` there, so this step must NOT append the fallback's `top_choice_key`
+[`$RESULT_KEY`] to `$CANDIDATES_TRIED_JSON`, and must NOT pass it as an `--exclude-key` on any
+retry, since it was never actually dispatched in the first place). Classify, in this order:
 
 1. `timed_out` is True: a real failure, never a quota signal — surface it to the user directly
    and stop (design spec §12: never silently retry a non-quota failure disguised as quota-wait).
@@ -2948,34 +3327,80 @@ no candidate to exclude and retry). Classify, in this order:
    - `"auth"`: a persistent, never-retry-worthy failure — surface it to the user directly and
      stop. Never write resumable state or schedule a wake for this case.
    - `"quota"` (iteration-4 review finding 2 — escalate WITHIN the wave before ever writing
-     resumable state): append the just-failed candidate's key to `candidates_tried`, then
-     RE-RUN Step 1's `resolve-dispatch` call with `--exclude-key <that key>` appended (repeat
-     `--exclude-key` for every key accumulated so far across this loop) AND **`--run-id "$RUN_ID"`
-     — the SAME id Step 1 originally captured, never omitted** (iteration-6 review, HIGH finding —
-     omitting it here makes `resolve-dispatch` generate a NEW run_id for this re-invocation,
-     silently producing a second backup file within what is still logically one wave/run, exactly
-     the "one run_id, one backup per run" violation the shared-`run_id` mechanism exists to
-     prevent) and repeat Steps 2-4 for the newly-resolved candidate. Only once a re-run itself
-     returns `mode == "fallback_notice"`
-     (every quota-available candidate in the ladder has now been tried and excluded — Task 4's
+     resumable state): **one `Bash` call, combining this candidate's own history append with the
+     re-run and re-extraction, exactly like Step 1's own combined block (iteration-8 review, HIGH
+     finding 2 — the list starts empty in Step 1 and grows by exactly one key per genuinely-failed
+     candidate, right here, never pre-seeded before the failure is even known, and never reset on
+     a subsequent pass through this same branch):**
+     ```bash
+     CANDIDATES_TRIED_JSON="$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); a.append(sys.argv[2]); print(json.dumps(a))' "$CANDIDATES_TRIED_JSON" "$RESULT_KEY")"
+     ITERATION=$((ITERATION + 1))
+     EXCLUDE_ARGS=()
+     while IFS= read -r key; do EXCLUDE_ARGS+=(--exclude-key "$key"); done \
+       < <(python3 -c 'import json,sys; print("\n".join(json.loads(sys.argv[1])))' "$CANDIDATES_TRIED_JSON")
+     QUOTA_PATH="$(python3 "$TOOLS_PY" cache-path --kind quota)"
+     RESULT_JSON="$(python3 "$GSD_SHIM" resolve-dispatch --cwd "$CWD" --phase-type "$PHASE_TYPE" \
+       --config-path "$GSD_CONFIG_PATH" --target-dir "$CWD" --quota-path "$QUOTA_PATH" \
+       --phase-prompt-file "$PHASE_PROMPT_FILE" --run-id "$RUN_ID" "${EXCLUDE_ARGS[@]}")"
+     RESULT_MODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])' <<< "$RESULT_JSON")"
+     RESULT_KEY="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("key") or "")' <<< "$RESULT_JSON")"
+     RESULT_CLI="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("cli") or "")' <<< "$RESULT_JSON")"
+     RESULT_PROVENANCE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("provenance") or "")' <<< "$RESULT_JSON")"
+     RESULT_REASON="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("reason") or "")' <<< "$RESULT_JSON")"
+     RESULT_MESSAGE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or "")' <<< "$RESULT_JSON")"
+     RESULT_CROSS_AI_COMMAND="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("cross_ai_command") or "")' <<< "$RESULT_JSON")"
+     RESULT_PROVIDER="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("provider") or "")' <<< "$RESULT_JSON")"
+     printf 'CANDIDATES_TRIED_JSON=%s\nITERATION=%s\nRESULT_MODE=%s\nRESULT_KEY=%s\nRESULT_CLI=%s\nRESULT_PROVENANCE=%s\nRESULT_REASON=%s\nRESULT_MESSAGE=%s\nRESULT_CROSS_AI_COMMAND=%s\nRESULT_PROVIDER=%s\n' \
+       "$CANDIDATES_TRIED_JSON" "$ITERATION" "$RESULT_MODE" "$RESULT_KEY" "$RESULT_CLI" \
+       "$RESULT_PROVENANCE" "$RESULT_REASON" "$RESULT_MESSAGE" "$RESULT_CROSS_AI_COMMAND" \
+       "$RESULT_PROVIDER"
+     ```
+     `--run-id "$RUN_ID"` is **the SAME id Step 1 originally captured, never omitted**
+     (iteration-6 review, HIGH finding — omitting it here makes `resolve-dispatch` generate a NEW
+     run_id for this re-invocation, silently producing a second backup file within what is still
+     logically one wave/run, exactly the "one run_id, one backup per run" violation the
+     shared-`run_id` mechanism exists to prevent). `$EXCLUDE_ARGS` repeats `--exclude-key` once
+     per key in the FULL accumulated `$CANDIDATES_TRIED_JSON` (never just the latest attempt) —
+     `$CWD`/`$PHASE_TYPE`/`$GSD_CONFIG_PATH`/`$PHASE_PROMPT_FILE`/`$RUN_ID` here are the SAME
+     literal values Step 1 originally captured and printed, substituted verbatim (per the
+     persistence note above Step 1 — this is still logically the same wave, just a later `Bash`
+     call). **Record this block's own trailing `printf` output the same way as Step 1's** — its
+     `$CANDIDATES_TRIED_JSON`/`$ITERATION` are what a FURTHER pass through this same quota branch
+     (or the eventual `write-resumable-state` call below) must use, and its `$RESULT_*` fields are
+     what Steps 2-4 use when repeated for the newly-resolved candidate. Repeat Steps 2-4 for that
+     candidate. Only once a re-run itself returns `mode == "fallback_notice"` (every
+     quota-available candidate in the ladder has now been tried and excluded — Task 4's
      `resolve_gsd_dispatch` already walks the whole ladder per call, so THIS loop only needs to
      fire once per genuinely EXHAUSTED wave, not once per candidate) does this skill write
-     resumable state and schedule a wake:
-     write resumable state via the `write-resumable-state` subcommand (Task 4) to
-     `--path "$(python3 "$TOOLS_PY" cache-path --kind quota | xargs dirname)/gsd-resume-${PROJECT_KEY}-${phase_id}.json"`
-     where `PROJECT_KEY` is a filesystem-safe identifier derived from `cwd` (e.g.
-     `python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:12])" "$cwd"`)
+     resumable state and schedule a wake.
+
+     **Concrete invocation (iteration-7 review finding 3 — every value below is one of the real
+     shell variables already bound in Step 1/maintained by this loop; `write-resumable-state`'s
+     own real CLI signature (Task 4) is `--path`/`--state-json` ONLY — it never takes a `--run-id`
+     at all, unlike the config-mutating subcommands above, because it is not subject to the
+     per-run config-backup mechanism `run_id` exists for; a prior revision of this SKILL.md
+     incorrectly passed one)**:
+     ```bash
+     PROJECT_KEY="$(python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:12])" "$CWD")"
+     RESUME_STATE_PATH="$(dirname "$(python3 "$TOOLS_PY" cache-path --kind quota)")/gsd-resume-${PROJECT_KEY}-${PHASE_ID}.json"
+     STATE_JSON="$(python3 -c '
+     import json, sys
+     print(json.dumps({
+         "framework": "gsd", "project_path": sys.argv[1], "config_path": sys.argv[2],
+         "phase_id": sys.argv[3], "candidates_tried": json.loads(sys.argv[4]),
+         "iteration": int(sys.argv[5]),
+     }))' "$CWD" "$GSD_CONFIG_PATH" "$PHASE_ID" "$CANDIDATES_TRIED_JSON" "$ITERATION")"
+     python3 "$GSD_SHIM" write-resumable-state --path "$RESUME_STATE_PATH" --state-json "$STATE_JSON"
+     ```
      — deriving the resume-state directory from the quota cache path's own directory reuses
      `ai_kit_spec.cache.cache_base`'s already-correct `$HOME`/`XDG_CACHE_HOME` resolution with no
      hand-written `"~"` literal, and the `PROJECT_KEY` prefix keeps two different projects with
-     the same `phase_id` from colliding on one state file. State content (the `--state-json`
-     argument): `{"framework": "gsd", "project_path": cwd, "config_path": gsd_config_path,
-     "phase_id": phase_id, "candidates_tried": [...the FULL accumulated list from this wave...],
-     "iteration": ...}`. Then schedule a `CronCreate` job: hourly interval, prompt `"re-check
-     quota via probe-quota and, once restored, resume ai-kit-spec-execute-gsd from <resume state
-     path>"`. `CronCreate` jobs are session-scoped (confirmed, design spec §10) — they vanish if
-     the session exits, only fire while the session is idle, and recurring jobs auto-expire after
-     7 days; tell the user this explicitly, it is not a true shutdown-and-resume mechanism.
+     the same `phase_id` from colliding on one state file. Then schedule a `CronCreate` job:
+     hourly interval, prompt `"re-check quota via probe-quota and, once restored, resume
+     ai-kit-spec-execute-gsd from $RESUME_STATE_PATH"`. `CronCreate` jobs are session-scoped
+     (confirmed, design spec §10) — they vanish if the session exits, only fire while the session
+     is idle, and recurring jobs auto-expire after 7 days; tell the user this explicitly, it is
+     not a true shutdown-and-resume mechanism.
    - `"other"`: a real, non-quota, non-auth failure — surface it directly, never write resumable
      state or schedule a wake for this case.
 3. `returncode == 0`: success.
@@ -3237,6 +3662,19 @@ real execute-mode CLI, or whether Foundation shipped one in the meantime and thi
 was re-run against it — do not silently drop this note if that hasn't happened yet). Do not
 consider this plan complete if the live run diverges from Task 1's recorded contract and that
 divergence isn't both fixed and noted here.
+
+**iteration-7 review finding 5 — state this explicitly in the recorded note, not just implicitly
+via cross-reference:** this smoke test's proof of external-CLI/cross-AI coverage is
+**non-deterministic and best-effort for the `cross_ai_hook` path specifically** — Step 1 alone
+(a real, naturally-ranked candidate resolving through `resolve_gsd_dispatch`) does NOT by itself
+prove full end-to-end coverage of the `cross_ai_hook`/`native_enum` modes, because (per Step 1.5's
+"Explicit, permanent scope statement" above) `codex` — this repo's only live-verified execute-mode
+builder — is also `NATIVE_TIER_VENDORS`-eligible, so real selection against today's code
+structurally always resolves to `native_tier`, never `cross_ai_hook`, regardless of which real
+GSD phase or environment this task runs against. The recorded note MUST say so in those terms
+(referencing Step 1.5's scope-statement reasoning by name, not re-deriving it), rather than
+phrasing the outcome as if Step 1's success alone closes out design spec §13's full-loop
+requirement for every dispatch mode.
 
 - [ ] **Step 3: Final commit**
 
