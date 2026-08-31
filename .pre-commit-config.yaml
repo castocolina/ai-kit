@@ -18,7 +18,7 @@ repos:
         # Scoped to the refactor's modules + tests, plus review-spec.py.
         # The rest of skills/ joins the gate later (the "enforce more
         # after the refactor" expansion).
-        files: ^((tools|tests)/.*|skills/ai-kit-spec-review/ai-kit-spec-review)\.py$
+        files: ^((tools|tests)/.*|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*)\.py$
         require_serial: true
       - id: pylint
         name: pylint
@@ -45,12 +45,12 @@ repos:
         name: py-compile
         entry: python3 -m py_compile
         language: system
-        files: ^(tools/(status-line|statusline-doctor|setup)|skills/ai-kit-spec-review/ai-kit-spec-review)\.py$
+        files: ^(tools/(status-line|statusline-doctor|setup)|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*)\.py$
       # Tests run on the user's real runtime (system python3, stdlib-only), matching
       # how the status line actually runs. Minimal core set for now; expands post-refactor.
       - id: unittest
         name: unittest (core)
-        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_ai_kit_spec
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd
         language: system
         pass_filenames: false
         always_run: true

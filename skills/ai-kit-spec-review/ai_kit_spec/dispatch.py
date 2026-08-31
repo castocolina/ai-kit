@@ -6,9 +6,23 @@ import datetime
 import os
 import signal
 import subprocess
+import sys
 import time
 
 from ai_kit_spec.cache import cache_write_json
+
+
+def _default_print_fn(*args) -> None:
+    """Reads sys.stderr at CALL time, not at import/bind time -- a plain
+    `functools.partial(print, file=sys.stderr)` captures whatever object sys.stderr referred to
+    when this module was first imported, so a caller that later redirects sys.stderr (e.g. a
+    test's `redirect_stderr`, or a harness reassigning it) would be silently ignored. Heartbeat is
+    diagnostic/progress text, never part of the dispatched command's own output -- a caller piping
+    this function's caller (e.g. dispatch-execute's own --stdout-only mode, used as a drop-in GSD
+    workflow.cross_ai_command value) captures ONLY the dispatched CLI's stdout as a real artifact
+    (GSD's own $CANDIDATE_SUMMARY); a heartbeat line landing on stdout by default would corrupt
+    that capture the moment a dispatch ran long enough to tick even once."""
+    print(*args, file=sys.stderr)
 
 
 def _default_kill_process_group(proc) -> None:
@@ -24,7 +38,8 @@ def _default_kill_process_group(proc) -> None:
 
 def dispatch_with_heartbeat(command: str, prompt: str, heartbeat_interval: int, timeout: int,
                              popen_fn=subprocess.Popen, time_fn=time.time,
-                             kill_fn=_default_kill_process_group, print_fn=print) -> dict:
+                             kill_fn=_default_kill_process_group,
+                             print_fn=_default_print_fn) -> dict:
     """Runs `command` (shell=True, in its own process group via start_new_session=True).
 
     Deadlock-safe by construction: `prompt` is delivered via `communicate(input=prompt,

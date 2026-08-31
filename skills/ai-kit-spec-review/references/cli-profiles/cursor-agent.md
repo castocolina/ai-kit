@@ -44,6 +44,17 @@ dispatch fails with an error mentioning `~/.cursor/`, this is the cause
 — it is not a signal about model/quota availability and should not be
 treated as one.
 
+**Fresh/unseen directories require `--trust` — confirmed live 2026-08-31.**
+A `target_dir`/workspace cursor-agent has never run against before (e.g. a
+freshly created worktree) fails with `Workspace Trust Required` before
+`--mode`'s own read-only guarantee or `--force` even come into play —
+this makes `probe-quota`/`check-reviewer` falsely report the candidate
+unavailable on a brand-new project. `--help`: "Trust the current
+workspace without prompting" — it only skips that interactive
+confirmation, it grants no additional write capability beyond what
+`--mode`/`--force` already control, so both `build_reviewer_command` and
+`build_execute_command` always include it now.
+
 **Free-plan model gating — confirmed live, and it looks like a bug if
 you don't know about it.** On a Cursor Free plan, only `--model auto`
 works; any named model (`glm-5.2-high`, `kimi-k3-high`, `claude-...`,

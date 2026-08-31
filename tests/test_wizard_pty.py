@@ -46,7 +46,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _UV_WHICH = shutil.which("uv") or os.path.expanduser("~/.local/bin/uv")
 
 # A known skill that must be symlinked on a fresh all-ON install.
-_KNOWN_SKILL = "review-spec-fixer"
+_KNOWN_SKILL = "ai-kit-spec-review-fixer"
 
 
 def _uv_cmd():

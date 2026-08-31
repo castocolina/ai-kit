@@ -10,37 +10,75 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec.cache import cache_base, cache_read_json, cache_write_json, cache_is_stale
-from ai_kit_spec.detection import (
-    cache_runtimes_path, detect_installed_clis, detect_opencode_models,
-    detect_cursor_agent_models, group_models_by_family, build_runtimes_snapshot, KNOWN_CLIS,
-)
-from ai_kit_spec.vendor import infer_vendor_from_model
-from ai_kit_spec.quota import (
-    resolve_ladder_pick, resolve_reviewers, cache_quota_path,
-    probe_reviewer_quota, refresh_quota_cache, NO_CONFIG_FALLBACK,
-)
-from ai_kit_spec.commands import (
-    ResolvedReviewer, build_reviewer_command, build_cursor_agent_model_id,
-    build_reviewer_model_id, render_reviewer_command,
-)
-from ai_kit_spec.config_io import (
-    cfg_local_path, cfg_global_path, cfg_load_toml, cfg_merge_reviewers, cfg_resolve,
-    cfg_render_toml, cfg_write_toml, tomllib,
-)
-from ai_kit_spec.review_reports import (
-    report_has_status, report_declares_issues, parse_findings, merge_findings,
-    render_merged_report,
-)
-from ai_kit_spec.cli import main
-
-# Bare module imports too -- test classes in this file call module-qualified names like
+# Bare module imports -- test classes in this file call module-qualified names like
 # `detection.detect_tool_availability(...)`, `commands.build_execute_command(...)`, which need
-# the module itself in scope, separately from the individual-function imports above (those only
-# feed the `rs.<name>` back-compat shim below). Tasks 4/6/8 add `execute_selection`, `dispatch`,
-# and `tooling_guidance` to this same line respectively, when those modules are created.
-from ai_kit_spec import (cache, detection, vendor, commands, config_io, quota, review_reports,
-                          cli, execute_selection, dispatch, tooling_guidance)
+# the module itself in scope, separately from the individual-function imports below. Only the
+# modules actually referenced qualified (`module.attr(...)`) somewhere in this file belong here --
+# a module whose members are ALL reached only via the individually-named imports below (and thus
+# only via the `rs.<name>` shim) has no reason to be re-imported bare too.
+from ai_kit_spec import (
+    cli,
+    commands,
+    detection,
+    dispatch,
+    dispatch_guidance,
+    execute_dispatch,
+    execute_selection,
+    tooling_guidance,
+)
+
+# Every name imported below is used only reflectively (see the `globals()[_name]` loop building
+# `rs` further down) -- ruff's static analysis cannot see that use and flags all of them F401;
+# `noqa: F401` on each is therefore intentional, not an oversight.
+from ai_kit_spec.cache import (  # noqa: F401
+    cache_base,
+    cache_is_stale,
+    cache_read_json,
+    cache_write_json,
+)
+from ai_kit_spec.cli import main  # noqa: F401
+from ai_kit_spec.commands import (  # noqa: F401
+    ResolvedReviewer,
+    build_cursor_agent_model_id,
+    build_reviewer_command,
+    build_reviewer_model_id,
+    render_reviewer_command,
+)
+from ai_kit_spec.config_io import (  # noqa: F401
+    cfg_global_path,
+    cfg_load_toml,
+    cfg_local_path,
+    cfg_merge_reviewers,
+    cfg_render_toml,
+    cfg_resolve,
+    cfg_write_toml,
+    tomllib,
+)
+from ai_kit_spec.detection import (  # noqa: F401
+    KNOWN_CLIS,
+    build_runtimes_snapshot,
+    cache_runtimes_path,
+    detect_cursor_agent_models,
+    detect_installed_clis,
+    detect_opencode_models,
+    group_models_by_family,
+)
+from ai_kit_spec.quota import (  # noqa: F401
+    NO_CONFIG_FALLBACK,
+    cache_quota_path,
+    probe_reviewer_quota,
+    refresh_quota_cache,
+    resolve_ladder_pick,
+    resolve_reviewers,
+)
+from ai_kit_spec.review_reports import (  # noqa: F401
+    merge_findings,
+    parse_findings,
+    render_merged_report,
+    report_declares_issues,
+    report_has_status,
+)
+from ai_kit_spec.vendor import infer_vendor_from_model  # noqa: F401
 
 
 # Back-compat shim so every existing `rs.<name>` call in this file keeps working verbatim --
@@ -170,7 +208,7 @@ class TestResolveConfig(unittest.TestCase):
 class TestRenderAndWriteToml(unittest.TestCase):
     @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
     def test_round_trips_through_tomllib(self):
-        import tomllib
+        import tomllib  # noqa: F811 -- local re-import shadows the reflection-only module-level one
         config = {"policy": {"mode": "double", "ladder": ["a", "b"]},
                   "reviewers": [{"key": "a", "model": "m1", "vendor": "openai"}]}
         rendered = rs.cfg_render_toml(config)
@@ -189,7 +227,7 @@ class TestRenderAndWriteToml(unittest.TestCase):
     def test_escapes_quotes_and_backslashes_in_strings(self):
         rendered = rs.cfg_render_toml({"policy": {}, "reviewers": [
             {"key": "a", "command": 'echo "hi" \\ done'}]})
-        import tomllib
+        import tomllib  # noqa: F811 -- local re-import shadows the reflection-only module-level one
         parsed = tomllib.loads(rendered)
         self.assertEqual(parsed["reviewers"][0]["command"], 'echo "hi" \\ done')
 
@@ -197,14 +235,14 @@ class TestRenderAndWriteToml(unittest.TestCase):
     def test_renders_top_level_strategy_when_present(self):
         rendered = rs.cfg_render_toml({"strategy": "local-only", "policy": {"mode": "single"},
                                         "reviewers": []})
-        import tomllib
+        import tomllib  # noqa: F811 -- local re-import shadows the reflection-only module-level one
         parsed = tomllib.loads(rendered)
         self.assertEqual(parsed["strategy"], "local-only")
 
     @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
     def test_omits_strategy_line_when_absent(self):
         rendered = rs.cfg_render_toml({"policy": {"mode": "single"}, "reviewers": []})
-        import tomllib
+        import tomllib  # noqa: F811 -- local re-import shadows the reflection-only module-level one
         parsed = tomllib.loads(rendered)
         self.assertNotIn("strategy", parsed)
 
@@ -217,7 +255,7 @@ class TestRenderAndWriteToml(unittest.TestCase):
         self.assertIn("# Priority fallback order", rendered)
         self.assertIn("#   1. codex-gpt", rendered)
         self.assertIn("#   2. sonnet-native", rendered)
-        import tomllib
+        import tomllib  # noqa: F811 -- local re-import shadows the reflection-only module-level one
         parsed = tomllib.loads(rendered)  # comment must not break parsing
         self.assertEqual(parsed["policy"]["ladder"], ["codex-gpt", "sonnet-native"])
 
@@ -457,7 +495,8 @@ class TestCheckCodegraphMcpHealthy(unittest.TestCase):
         result = detection.check_codegraph_mcp_healthy(
             "claude", run_fn=lambda *a, **k: unittest.mock.MagicMock(
                 returncode=0,
-                stdout="codegraph:\n  Scope: user config\n  Status: ✘ Failed to connect — CONNECTION_CLOSED\n"))
+                stdout="codegraph:\n  Scope: user config\n  Status: ✘ Failed to connect — "
+                        "CONNECTION_CLOSED\n"))
         self.assertFalse(result)
 
     def test_claude_false_when_get_and_list_fallback_both_say_not_registered(self):
@@ -534,7 +573,9 @@ class TestCheckCodegraphMcpHealthy(unittest.TestCase):
         result = detection.check_codegraph_mcp_healthy(
             "cursor-agent",
             run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="No MCP servers configured (expected in .cursor/mcp.json or ~/.cursor/mcp.json)\n"))
+                returncode=0,
+                stdout="No MCP servers configured (expected in .cursor/mcp.json or "
+                       "~/.cursor/mcp.json)\n"))
         self.assertFalse(result)
 
 
@@ -811,6 +852,7 @@ class TestBuildReviewerCommand(unittest.TestCase):
     def test_cursor_agent_defaults_to_plan_mode(self):
         cmd = rs.build_reviewer_command("cursor-agent")
         self.assertIn("--mode plan", cmd)
+        self.assertIn("--trust", cmd)
         self.assertIn("--model {model}", cmd)
         # no {prompt} — confirmed live: cursor-agent's -p/--print is a
         # boolean flag; with it set the process reads stdin instead
@@ -1229,6 +1271,168 @@ class TestMainCli(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("clis", rs.cache_read_json(save_path))
 
+    def test_dispatch_execute_reads_prompt_file_and_prints_json_result(self):
+        import io
+        from contextlib import redirect_stdout
+        captured = {}
+        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
+            captured["candidate"] = candidate
+            captured["prompt"] = prompt
+            captured["target_dir"] = target_dir
+            captured["heartbeat_interval"] = heartbeat_interval
+            captured["timeout"] = timeout
+            captured["kw"] = kw
+            return {"cli": candidate["cli"], "model": candidate["model"], "command": "x",
+                    "returncode": 0, "stdout": "done", "stderr": "", "timed_out": False}
+        with tempfile.TemporaryDirectory() as d:
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("do the phase task")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["dispatch-execute", "--cli", "codex", "--model", "gpt-5.6-sol",
+                     "--target-dir", "/scratch/run1", "--prompt-file", prompt_path,
+                     "--timeout", "600"],
+                    dispatch_execute_fn=fake_dispatch)
+        self.assertEqual(code, 0)
+        result = json.loads(buf.getvalue())
+        self.assertEqual(result["stdout"], "done")
+        self.assertEqual(captured["candidate"],
+                          {"cli": "codex", "model": "gpt-5.6-sol", "effort": None,
+                           "service_tier": None})
+        self.assertEqual(captured["prompt"], "do the phase task")
+        self.assertEqual(captured["target_dir"], "/scratch/run1")
+        self.assertEqual(captured["heartbeat_interval"], 30)  # default
+        self.assertEqual(captured["timeout"], 600)
+        self.assertIsNone(captured["kw"]["format_block"])
+
+    def test_dispatch_execute_reads_optional_format_block_file(self):
+        import io
+        from contextlib import redirect_stdout
+        captured = {}
+        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
+            captured["kw"] = kw
+            return {"cli": candidate["cli"], "model": candidate["model"], "command": "x",
+                    "returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+        with tempfile.TemporaryDirectory() as d:
+            prompt_path = os.path.join(d, "prompt.txt")
+            format_path = os.path.join(d, "format.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("task")
+            with open(format_path, "w", encoding="utf-8") as f:
+                f.write("FORMAT-BLOCK-MARKER")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["dispatch-execute", "--cli", "grok", "--model", "grok-4.6",
+                     "--target-dir", "/scratch/run1", "--prompt-file", prompt_path,
+                     "--timeout", "600", "--format-block-file", format_path],
+                    dispatch_execute_fn=fake_dispatch)
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["kw"]["format_block"], "FORMAT-BLOCK-MARKER")
+
+    def test_dispatch_execute_passes_effort_and_service_tier_into_the_candidate(self):
+        import io
+        from contextlib import redirect_stdout
+        captured = {}
+        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
+            captured["candidate"] = candidate
+            return {"cli": candidate["cli"], "model": candidate["model"], "command": "x",
+                    "returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+        with tempfile.TemporaryDirectory() as d:
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("task")
+            with redirect_stdout(io.StringIO()):
+                code = rs.main(
+                    ["dispatch-execute", "--cli", "codex", "--model", "gpt-5.6-sol",
+                     "--target-dir", "/scratch/run1", "--prompt-file", prompt_path,
+                     "--timeout", "600", "--effort", "high", "--service-tier", "priority"],
+                    dispatch_execute_fn=fake_dispatch)
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["candidate"]["effort"], "high")
+        self.assertEqual(captured["candidate"]["service_tier"], "priority")
+
+    def test_dispatch_execute_surfaces_value_error_on_stderr(self):
+        import io
+        from contextlib import redirect_stderr
+        def raising_dispatch(*a, **kw):
+            raise ValueError("no execute-mode command builder for 'gemini' yet")
+        with tempfile.TemporaryDirectory() as d:
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("task")
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                code = rs.main(
+                    ["dispatch-execute", "--cli", "gemini", "--model", "gemini-3.1-pro",
+                     "--target-dir", "/scratch/run1", "--prompt-file", prompt_path,
+                     "--timeout", "600"],
+                    dispatch_execute_fn=raising_dispatch)
+        self.assertEqual(code, 1)
+        self.assertIn("no execute-mode command builder", buf.getvalue())
+
+    def test_dispatch_execute_prompt_file_dash_reads_stdin(self):
+        # The exact shape needed to drop this subcommand into GSD's own workflow.cross_ai_command,
+        # which always pipes its task prompt into that hook's stdin.
+        import io
+        from contextlib import redirect_stdout
+        captured = {}
+        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
+            captured["prompt"] = prompt
+            return {"cli": candidate["cli"], "model": candidate["model"], "command": "x",
+                    "returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+        buf = io.StringIO()
+        with mock.patch.object(cli.sys, "stdin", io.StringIO("piped prompt text")), \
+             redirect_stdout(buf):
+            code = rs.main(
+                ["dispatch-execute", "--cli", "grok", "--model", "grok-4.6",
+                 "--target-dir", "/scratch/run1", "--prompt-file", "-", "--timeout", "600"],
+                dispatch_execute_fn=fake_dispatch)
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["prompt"], "piped prompt text")
+
+    def test_dispatch_execute_stdout_only_prints_raw_stdout_and_real_returncode(self):
+        import io
+        from contextlib import redirect_stdout
+        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
+            return {"cli": candidate["cli"], "model": candidate["model"], "command": "x",
+                    "returncode": 0, "stdout": "# Phase Summary\n...", "stderr": "diagnostics",
+                    "timed_out": False}
+        with tempfile.TemporaryDirectory() as d:
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("task")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["dispatch-execute", "--cli", "codex", "--model", "gpt-5.6-sol",
+                     "--target-dir", "/scratch/run1", "--prompt-file", prompt_path,
+                     "--timeout", "600", "--stdout-only"],
+                    dispatch_execute_fn=fake_dispatch)
+        self.assertEqual(code, 0)
+        self.assertEqual(buf.getvalue(), "# Phase Summary\n...")
+        self.assertNotIn("diagnostics", buf.getvalue())  # stderr never leaks into this stream
+
+    def test_dispatch_execute_stdout_only_propagates_nonzero_returncode(self):
+        import io
+        from contextlib import redirect_stdout
+        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
+            return {"cli": candidate["cli"], "model": candidate["model"], "command": "x",
+                    "returncode": 3, "stdout": "partial", "stderr": "", "timed_out": False}
+        with tempfile.TemporaryDirectory() as d:
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("task")
+            with redirect_stdout(io.StringIO()):
+                code = rs.main(
+                    ["dispatch-execute", "--cli", "codex", "--model", "gpt-5.6-sol",
+                     "--target-dir", "/scratch/run1", "--prompt-file", prompt_path,
+                     "--timeout", "600", "--stdout-only"],
+                    dispatch_execute_fn=fake_dispatch)
+        self.assertEqual(code, 3)
+
     def test_cache_path_honors_xdg_cache_home(self):
         import io
         from contextlib import redirect_stdout
@@ -1564,7 +1768,8 @@ class TestMainCli(unittest.TestCase):
 
 class TestMainCliDetectTools(unittest.TestCase):
     def test_detect_tools_subcommand_prints_json(self):
-        import io, contextlib
+        import contextlib
+        import io
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             cli.main(["detect-tools"], which_fn=lambda name: "/usr/bin/x" if name == "rg" else None)
@@ -1612,11 +1817,144 @@ class TestBuildToolingGuidance(unittest.TestCase):
         self.assertNotIn("codegraph_explore", result)
 
 
+class TestDispatchGuidance(unittest.TestCase):
+    def test_model_selection_override_names_the_resolved_dispatch(self):
+        result = dispatch_guidance.build_model_selection_override_guidance(
+            "codex, model gpt-5.6-sol")
+        self.assertIn("codex, model gpt-5.6-sol", result)
+        self.assertIn("do not re-select", result)
+
+    def test_incremental_progress_guidance_is_nonempty_and_stable(self):
+        result = dispatch_guidance.build_incremental_progress_guidance()
+        self.assertIn("incrementally", result)
+
+    def test_failure_reporting_guidance_forbids_false_success(self):
+        result = dispatch_guidance.build_failure_reporting_guidance()
+        self.assertIn("never report success", result)
+
+    def test_output_format_guidance_wraps_the_given_block_verbatim(self):
+        result = dispatch_guidance.build_output_format_guidance("---\nphase: x\n---")
+        self.assertIn("---\nphase: x\n---", result)
+        self.assertIn("MUST match this exact", result)
+
+    def test_composed_guidance_includes_all_four_sections_when_format_block_given(self):
+        result = dispatch_guidance.build_dispatch_reinforcement_guidance(
+            "codex, model gpt-5.6-sol", "FORMAT-BLOCK-MARKER")
+        self.assertIn("codex, model gpt-5.6-sol", result)
+        self.assertIn("incrementally", result)
+        self.assertIn("never report success", result)
+        self.assertIn("FORMAT-BLOCK-MARKER", result)
+
+    def test_composed_guidance_omits_output_format_section_when_block_is_none(self):
+        result = dispatch_guidance.build_dispatch_reinforcement_guidance(
+            "claude, tier opus", None)
+        self.assertIn("claude, tier opus", result)
+        self.assertNotIn("MUST match this exact", result)
+
+
+class TestBuildSoftConfinementGuidance(unittest.TestCase):
+    def test_names_target_dir_as_the_only_writable_location(self):
+        result = execute_dispatch.build_soft_confinement_guidance("/scratch/run1")
+        self.assertIn("/scratch/run1", result)
+        self.assertIn("NO operating-system-level write confinement", result)
+
+
+class TestDispatchExecute(unittest.TestCase):
+    def test_native_candidate_raises_rather_than_dispatch(self):
+        candidate = {"cli": None, "model": "opus", "key": "opus-native"}
+        with self.assertRaises(ValueError) as ctx:
+            execute_dispatch.dispatch_execute(candidate, "do the task", "/scratch/run1", 30, 600)
+        self.assertIn("native", str(ctx.exception).lower())
+
+    def test_builds_real_command_and_dispatches_with_composed_prompt(self):
+        candidate = {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
+        captured = {}
+        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
+            captured["command"] = command
+            captured["prompt"] = prompt
+            captured["heartbeat_interval"] = heartbeat_interval
+            captured["timeout"] = timeout
+            return {"returncode": 0, "stdout": "done", "stderr": "", "timed_out": False}
+        result = execute_dispatch.dispatch_execute(
+            candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch)
+        self.assertEqual(
+            captured["command"],
+            "codex exec --sandbox workspace-write --skip-git-repo-check -C /scratch/run1 "
+            "-m gpt-5.6-sol")
+        self.assertIn("codex, model gpt-5.6-sol", captured["prompt"])
+        self.assertIn("do not re-select", captured["prompt"])
+        self.assertIn("incrementally", captured["prompt"])
+        self.assertTrue(captured["prompt"].endswith("do the task"))
+        self.assertEqual(captured["heartbeat_interval"], 30)
+        self.assertEqual(captured["timeout"], 600)
+        self.assertEqual(result["cli"], "codex")
+        self.assertEqual(result["model"], "gpt-5.6-sol")
+        self.assertEqual(result["stdout"], "done")
+
+    def test_no_hard_sandbox_cli_gets_soft_confinement_guidance_appended(self):
+        candidate = {"cli": "cursor-agent", "model": "auto", "key": "cursor-agent/auto"}
+        captured = {}
+        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
+            captured["prompt"] = prompt
+            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+        execute_dispatch.dispatch_execute(
+            candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch)
+        self.assertIn("NO operating-system-level write confinement", captured["prompt"])
+        self.assertIn("/scratch/run1", captured["prompt"])
+
+    def test_hard_sandbox_cli_gets_no_soft_confinement_guidance(self):
+        candidate = {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
+        captured = {}
+        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
+            captured["prompt"] = prompt
+            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+        execute_dispatch.dispatch_execute(
+            candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch)
+        self.assertNotIn("NO operating-system-level write confinement", captured["prompt"])
+
+    def test_includes_tool_guidance_when_provided(self):
+        candidate = {"cli": "claude", "model": "sonnet", "key": "claude/sonnet"}
+        captured = {}
+        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
+            captured["prompt"] = prompt
+            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+        execute_dispatch.dispatch_execute(
+            candidate, "do the task", "/scratch/run1", 30, 600,
+            tool_availability={"codegraph": True}, agents_tooling_path="/repo/AGENTS-TOOLING.md",
+            codegraph_registered=True, dispatch_fn=fake_dispatch)
+        self.assertIn("/repo/AGENTS-TOOLING.md", captured["prompt"])
+        self.assertIn("codegraph_explore", captured["prompt"])
+
+    def test_includes_output_format_block_when_given(self):
+        candidate = {"cli": "grok", "model": "grok-4.6", "key": "grok/grok-4.6"}
+        captured = {}
+        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
+            captured["prompt"] = prompt
+            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+        execute_dispatch.dispatch_execute(
+            candidate, "do the task", "/scratch/run1", 30, 600,
+            format_block="FORMAT-BLOCK-MARKER", dispatch_fn=fake_dispatch)
+        self.assertIn("FORMAT-BLOCK-MARKER", captured["prompt"])
+
+    def test_threads_effort_and_service_tier_from_the_candidate_into_the_real_builder(self):
+        candidate = {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+                     "effort": "high", "service_tier": "priority"}
+        captured = {}
+        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
+            captured["command"] = command
+            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+        execute_dispatch.dispatch_execute(
+            candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch)
+        self.assertIn("-c model_reasoning_effort='\"high\"'", captured["command"])
+        self.assertIn("-c service_tier='\"priority\"'", captured["command"])
+
+
 class TestEnsureCodegraphRegistered(unittest.TestCase):
     def test_skips_install_when_already_registered(self):
         calls = []
         detection.ensure_codegraph_registered(
-            "claude", run_fn=lambda *a, **k: calls.append(a) or unittest.mock.MagicMock(returncode=0),
+            "claude",
+            run_fn=lambda *a, **k: calls.append(a) or unittest.mock.MagicMock(returncode=0),
             check_fn=lambda cli: True)
         self.assertEqual(calls, [])
 
@@ -1655,6 +1993,34 @@ class TestBuildCodegraphIndexCommand(unittest.TestCase):
 
 
 class TestDispatchWithHeartbeat(unittest.TestCase):
+    def test_default_print_fn_writes_heartbeat_to_stderr_not_stdout(self):
+        # A caller capturing stdout as a real artifact (e.g. dispatch-execute's --stdout-only
+        # mode, used as a drop-in GSD workflow.cross_ai_command) must never see heartbeat text
+        # mixed into it -- the default print_fn must write to stderr, never stdout.
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        class FakeProcess:
+            def __init__(self):
+                self.stdin = unittest.mock.MagicMock()
+                self.returncode = 0
+                self._attempts = 0
+
+            def communicate(self, input=None, timeout=None):
+                self._attempts += 1
+                if self._attempts < 2:
+                    raise subprocess.TimeoutExpired(cmd="x", timeout=timeout)
+                return ("done", "")
+
+        fake_time = iter([0, 1, 2]).__next__
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            dispatch.dispatch_with_heartbeat(
+                "echo hi", "prompt text", heartbeat_interval=1, timeout=30,
+                popen_fn=lambda *a, **k: FakeProcess(), time_fn=fake_time)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("still running", err.getvalue())
+
     def test_prints_timestamped_heartbeat_while_process_runs(self):
         class FakeProcess:
             def __init__(self):
@@ -1739,22 +2105,39 @@ class TestBuildExecuteCommand(unittest.TestCase):
     def test_codex_uses_workspace_write_sandbox_with_target_dir(self):
         cmd = commands.build_execute_command("codex", target_dir="/scratch/run1")
         self.assertIn("--sandbox workspace-write", cmd)
+        self.assertIn("--skip-git-repo-check", cmd)
         self.assertIn("-C /scratch/run1", cmd)
         self.assertIn("-m {model}", cmd)
 
-    def test_cursor_agent_not_yet_implemented(self):
-        # demoted 2026-08-29: live confinement smoke test proved --workspace is a plain cwd
-        # default, not a write sandbox -- a write outside target_dir succeeded
-        with self.assertRaises(ValueError) as ctx:
-            commands.build_execute_command("cursor-agent")
-        self.assertIn("not yet verified", str(ctx.exception).lower())
+    def test_codex_execute_honors_effort_and_service_tier(self):
+        # Fixed 2026-08-31: the execute builder used to silently drop these via its own bare
+        # **_params while the review builder honored them -- a real asymmetry the unified
+        # (kind, cli) registry exists specifically to prevent.
+        cmd = commands.build_execute_command("codex", target_dir="/scratch/run1", effort="high",
+                                              service_tier="priority")
+        self.assertIn("-c model_reasoning_effort='\"high\"'", cmd)
+        self.assertIn("-c service_tier='\"priority\"'", cmd)
 
-    def test_opencode_not_yet_implemented(self):
-        # demoted 2026-08-29: live confinement smoke test proved --dir is a plain cwd default,
-        # not a write sandbox -- a write outside target_dir succeeded
-        with self.assertRaises(ValueError) as ctx:
-            commands.build_execute_command("opencode")
-        self.assertIn("not yet verified", str(ctx.exception).lower())
+    def test_cursor_agent_execute_has_no_hard_sandbox_but_is_dispatchable(self):
+        # Accepted-risk decision (2026-08-30): no CLI flag genuinely confines cursor-agent's
+        # writes (re-confirmed live even with --sandbox enabled) -- it's registered anyway,
+        # marked in NO_HARD_SANDBOX_CLIS so callers know to add soft-confinement prompt guidance.
+        cmd = commands.build_execute_command("cursor-agent", target_dir="/scratch/run1")
+        self.assertIn("--sandbox enabled", cmd)
+        self.assertIn("--workspace /scratch/run1", cmd)
+        self.assertIn("--force", cmd)
+        self.assertIn("--trust", cmd)
+        self.assertIn("--model {model}", cmd)
+        self.assertIn("cursor-agent", commands.NO_HARD_SANDBOX_CLIS)
+
+    def test_opencode_execute_has_no_hard_sandbox_but_is_dispatchable(self):
+        # Accepted-risk decision (2026-08-30): no CLI flag confines opencode's writes at all
+        # (re-confirmed live with --dir + --auto) -- registered anyway, same as cursor-agent.
+        cmd = commands.build_execute_command("opencode", target_dir="/scratch/run1")
+        self.assertIn("--dir /scratch/run1", cmd)
+        self.assertIn("--auto", cmd)
+        self.assertIn("-m {model}", cmd)
+        self.assertIn("opencode", commands.NO_HARD_SANDBOX_CLIS)
 
     def test_codex_requires_target_dir(self):
         with self.assertRaises(ValueError):
@@ -1764,12 +2147,38 @@ class TestBuildExecuteCommand(unittest.TestCase):
         cmd = commands.build_execute_command("codex", target_dir="/tmp/a b$(x)")
         self.assertIn(shlex.quote("/tmp/a b$(x)"), cmd)
 
-    def test_grok_not_yet_implemented(self):
-        with self.assertRaises(ValueError) as ctx:
-            commands.build_execute_command("grok")
-        self.assertIn("not yet verified", str(ctx.exception).lower())
+    def test_grok_uses_workspace_sandbox_with_stdin_bridge(self):
+        # Live-verified 2026-08-30: --sandbox workspace confines writes to --cwd; --always-approve
+        # is required for a headless run (no interactive terminal to approve tool-use); the
+        # sh -c '... "$(cat)"' wrapper bridges GSD's stdin-only prompt delivery into grok's
+        # positional -p/--single value requirement -- confirmed live end-to-end with a piped prompt.
+        cmd = commands.build_execute_command("grok", target_dir="/scratch/run1")
+        self.assertIn("--sandbox workspace", cmd)
+        self.assertIn("--cwd /scratch/run1", cmd)
+        self.assertIn("--always-approve", cmd)
+        self.assertIn("-m {model}", cmd)
+        self.assertIn('"$(cat)"', cmd)
+        self.assertTrue(cmd.startswith("sh -c '") and cmd.endswith("'"))
 
-    def test_claude_not_yet_implemented(self):
+    def test_grok_execute_requires_target_dir(self):
+        with self.assertRaises(ValueError):
+            commands.build_execute_command("grok")
+
+    def test_claude_uses_restricted_mode_with_cd_wrapper(self):
+        # Live-verified 2026-08-30: --restricted + --permission-mode acceptEdits genuinely
+        # confines file-tool writes to the working directory (a write outside it was refused
+        # with the CLI's own real error). claude has no -C/--cwd flag, so this wraps the whole
+        # invocation in sh -c 'cd <dir> && exec claude ...' -- confirmed live end-to-end with a
+        # piped prompt, matching how GSD actually invokes this command.
+        cmd = commands.build_execute_command("claude", target_dir="/scratch/run1")
+        self.assertIn("--restricted", cmd)
+        self.assertIn("--permission-mode acceptEdits", cmd)
+        self.assertIn("cd /scratch/run1", cmd)
+        self.assertIn("exec claude", cmd)
+        self.assertIn("--model {model}", cmd)
+        self.assertTrue(cmd.startswith("sh -c '") and cmd.endswith("'"))
+
+    def test_claude_execute_requires_target_dir(self):
         with self.assertRaises(ValueError):
             commands.build_execute_command("claude")
 

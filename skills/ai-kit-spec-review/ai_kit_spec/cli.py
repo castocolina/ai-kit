@@ -6,26 +6,38 @@ import sys
 
 from ai_kit_spec.cache import cache_is_stale, cache_read_json, cache_write_json
 from ai_kit_spec.commands import (
-    ResolvedReviewer, build_reviewer_command, build_reviewer_model_id,
+    ResolvedReviewer,
+    build_reviewer_command,
+    build_reviewer_model_id,
     render_reviewer_command,
 )
 from ai_kit_spec.config_io import cfg_render_toml, cfg_resolve, cfg_write_toml
 from ai_kit_spec.detection import (
-    RUNTIMES_TTL_SECONDS, build_runtimes_snapshot, cache_runtimes_path,
-    detect_tool_availability, group_models_by_family,
+    RUNTIMES_TTL_SECONDS,
+    build_runtimes_snapshot,
+    cache_runtimes_path,
+    detect_tool_availability,
+    group_models_by_family,
 )
+from ai_kit_spec.execute_dispatch import dispatch_execute
 from ai_kit_spec.quota import (
-    QUOTA_TTL_SECONDS, cache_quota_path, probe_reviewer_quota,
-    refresh_quota_cache, resolve_reviewers,
+    QUOTA_TTL_SECONDS,
+    cache_quota_path,
+    probe_reviewer_quota,
+    refresh_quota_cache,
+    resolve_reviewers,
 )
 from ai_kit_spec.review_reports import (
-    merge_findings, render_merged_report, report_declares_issues,
+    merge_findings,
+    render_merged_report,
+    report_declares_issues,
     report_has_status,
 )
 from ai_kit_spec.vendor import infer_vendor_from_model
 
 
-def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
+def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
+         dispatch_execute_fn=dispatch_execute) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(prog="review-spec")
@@ -105,6 +117,42 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
     )
     p_group.add_argument("--cli", required=True,
                           help="which CLI's models array to group, e.g. opencode, cursor-agent")
+
+    p_dispatch = sub.add_parser("dispatch-execute")
+    p_dispatch.add_argument("--cli", required=True,
+                             help="never 'native'/None here -- a native candidate executes "
+                                  "in-process and never reaches this subcommand at all")
+    p_dispatch.add_argument("--model", required=True)
+    p_dispatch.add_argument("--effort", default=None,
+                             help="structural param a builder may or may not use, same as "
+                                  "build-command's own --effort -- codex's execute builder "
+                                  "honors it, others silently ignore it")
+    p_dispatch.add_argument("--service-tier", default=None)
+    p_dispatch.add_argument("--target-dir", required=True)
+    p_dispatch.add_argument("--prompt-file", required=True,
+                             help="the phase task prompt -- kept as a file (like render-command's "
+                                  "own --prompt-file) since a real prompt can be large; pass '-' "
+                                  "to read the prompt from this process's own stdin instead -- "
+                                  "the shape needed to drop this subcommand straight into a "
+                                  "target framework's own stdin-piping hook (e.g. GSD's "
+                                  "workflow.cross_ai_command, which always pipes its task prompt "
+                                  "via stdin into whatever command that key names)")
+    p_dispatch.add_argument("--heartbeat-interval", type=int, default=30)
+    p_dispatch.add_argument("--timeout", type=int, required=True)
+    p_dispatch.add_argument("--format-block-file", default=None,
+                             help="e.g. GSD's own real SUMMARY.md shape -- omit for a dispatch "
+                                  "mode whose caller already knows its own output convention")
+    p_dispatch.add_argument("--tool-availability-json", default=None)
+    p_dispatch.add_argument("--agents-tooling-path", default=None)
+    p_dispatch.add_argument("--codegraph-registered", action="store_true")
+    p_dispatch.add_argument(
+        "--stdout-only", action="store_true",
+        help="print ONLY the dispatched CLI's own stdout (result['stdout'], verbatim, no JSON "
+             "envelope) and exit with its own returncode, instead of printing the full JSON "
+             "result and always exiting 0/1 -- the exact contract a caller capturing this "
+             "subcommand's stdout as a real artifact needs (e.g. GSD's own cross_ai_delegation "
+             "step, which redirects workflow.cross_ai_command's raw stdout straight into a "
+             "SUMMARY.md candidate file and inspects the real exit code, never a JSON wrapper)")
 
     p_check = sub.add_parser("check-reviewer")
     p_check.add_argument("--key", default="candidate")
@@ -241,6 +289,40 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run) -> int:
         snapshot = cache_read_json(args.runtimes_json) or {}
         models = snapshot.get("clis", {}).get(args.cli, {}).get("models", [])
         print(json.dumps(group_models_by_family(models)))
+        return 0
+
+    if args.command == "dispatch-execute":
+        if args.prompt_file == "-":
+            prompt = sys.stdin.read()
+        else:
+            with open(args.prompt_file, encoding="utf-8") as f:
+                prompt = f.read()
+        format_block = None
+        if args.format_block_file:
+            with open(args.format_block_file, encoding="utf-8") as f:
+                format_block = f.read()
+        tool_availability = (json.loads(args.tool_availability_json)
+                              if args.tool_availability_json else {})
+        candidate = {"cli": args.cli, "model": args.model, "effort": args.effort,
+                     "service_tier": args.service_tier}
+        try:
+            result = dispatch_execute_fn(
+                candidate, prompt, args.target_dir, args.heartbeat_interval, args.timeout,
+                format_block=format_block, tool_availability=tool_availability,
+                agents_tooling_path=args.agents_tooling_path,
+                codegraph_registered=args.codegraph_registered)
+        except ValueError as exc:
+            print(f"dispatch-execute: {exc}", file=sys.stderr)
+            return 1
+        if args.stdout_only:
+            sys.stdout.write(result["stdout"])
+            # Propagate the dispatched CLI's own real returncode (not a collapsed 0/1) -- GSD's
+            # own cross_ai_delegation step only ever checks nonzero-vs-zero, but the real code is
+            # more diagnosable than a flattened one when things go wrong. A timeout kill can leave
+            # returncode negative (signal) or None depending on the platform; 1 covers both, since
+            # any nonzero reads as failure either way.
+            return result["returncode"] if result["returncode"] is not None else 1
+        print(json.dumps(result))
         return 0
 
     if args.command == "check-reviewer":

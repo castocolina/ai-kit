@@ -33,6 +33,8 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`markdown-to-pdf`](skills/markdown-to-pdf/SKILL.md) | skill | Convert a Markdown document with embedded mermaid diagrams into a **PDF** (or a **marp** slide deck) — every ` ```mermaid ` block is auto-rendered with `mmdc` and embedded; auto-selects the best installed backend (Typst/Pandoc, LaTeX, WeasyPrint, Chromium) and never auto-installs. |
 | [`ai-kit-spec-review`](skills/ai-kit-spec-review/SKILL.md) | skill | Orchestrates a clean-context review-and-fix loop: `ai-kit-spec-review-checklist` to review, then routes the rewrite by framework (superpowers → `brainstorming`/`writing-plans`; GSD → `/gsd-plan-phase --reviews` + `gsd-plan-checker`; else `ai-kit-spec-review-fixer`). Loops until approved. |
 | [`ai-kit-spec-config`](skills/ai-kit-spec-config/SKILL.md) | skill | Interactive setup wizard for `ai-kit-spec-review`'s cross-AI reviewer config — detects installed CLIs/models, asks which to configure, writes `review-spec.toml`. |
+| [`ai-kit-spec-execute`](skills/ai-kit-spec-execute/SKILL.md) | skill | Router: detects which framework (GSD, superpowers, …) generated a plan/phase, then delegates execution to that framework's `ai-kit-spec-execute-*` adapter. |
+| [`ai-kit-spec-execute-gsd`](skills/ai-kit-spec-execute-gsd/SKILL.md) | skill | Resolves the best available model/CLI for a GSD phase, prepares GSD's own `.planning/config.json` (native `runtime`/`model_profile_overrides`, or `workflow.cross_ai_command`), then hands off to GSD's own `/gsd-execute-phase` skill — never subprocess-dispatches GSD itself. |
 
 ## How the installer works
 
