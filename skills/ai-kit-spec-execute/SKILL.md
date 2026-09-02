@@ -12,4 +12,4 @@ description: Routes execution of an already-generated plan/phase to the framewor
    any>, conversation_signal=CONVERSATION_SIGNAL)` from `detect_framework.py`.
 3. `"gsd"` → delegate to `ai-kit-spec-execute-gsd`.
 4. `"superpowers"` → delegate to `ai-kit-spec-execute-superpowers` (see that skill's own SKILL.md).
-5. `"unknown"` → ask the user which framework generated this plan; do not guess.
+5. `"unknown"` → ask the user which framework generated this plan; do not guess (guessing risks silent routing to the wrong framework's adapter, breaking the user's explicit intent).
