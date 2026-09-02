@@ -1,3 +1,5 @@
+import io
+import json
 import os
 import sys
 import tempfile
@@ -14,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute"))
 
 from ai_kit_spec_superpowers import dispatch_injection, task_classification
+from ai_kit_spec_superpowers import cli as superpowers_cli
 
 
 class TestClassifyTask(unittest.TestCase):
@@ -492,3 +495,428 @@ class TestClassifyDispatchFailure(unittest.TestCase):
         self.assertEqual(dispatch_injection.classify_dispatch_failure(
             {"returncode": -9, "stdout": "rate limit", "stderr": "", "timed_out": True}),
             "real_error")
+
+
+class TestCliResolveInjection(unittest.TestCase):
+    def test_resolve_injection_prints_native_claude_json(self):
+        candidates = [{"key": "claude/opus-5", "model": "opus", "cli": None,
+                        "vendor": "anthropic", "task_affinity": None, "context_limit": None}]
+
+        def fake_assemble(cwd, env):
+            return candidates, ["claude/opus-5"]
+
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w") as f:
+                f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
+            quota_path = os.path.join(tmp, "quota.json")
+            rc = superpowers_cli.main(
+                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                 "--quota-path", quota_path],
+                assemble_candidates_fn=fake_assemble,
+                cache_read_json_fn=lambda path: {},
+                cache_write_json_fn=lambda path, data: None,
+                refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                stdout=out)
+        self.assertEqual(rc, 0)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result, {"mode": "native_claude", "model": "opus",
+                                   "key": "claude/opus-5",
+                                   "ladder_keys": ["claude/opus-5"]})
+
+    def test_resolve_injection_prints_quota_exhausted_json_with_reasons(self):
+        candidates = [{"key": "claude/opus-5", "model": "opus", "cli": None,
+                        "vendor": "anthropic", "task_affinity": None, "context_limit": None}]
+
+        def fake_assemble(cwd, env):
+            return candidates, ["claude/opus-5"]
+
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w") as f:
+                f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
+            quota_path = os.path.join(tmp, "quota.json")
+            rc = superpowers_cli.main(
+                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                 "--quota-path", quota_path],
+                assemble_candidates_fn=fake_assemble,
+                cache_read_json_fn=lambda path: {},
+                cache_write_json_fn=lambda path, data: None,
+                refresh_quota_cache_fn=lambda config, keys, existing, ttl: (
+                    {"claude/opus-5": {"available": False, "detail": "usage limit reached"}}),
+                stdout=out)
+        self.assertEqual(rc, 0)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["mode"], "quota_exhausted")
+        self.assertEqual(result["tried"], ["claude/opus-5"])
+        self.assertEqual(result["reasons"], {"claude/opus-5": "quota"})
+        self.assertFalse(result["all_auth_failures"])
+        # HIGH finding: any_quota_recoverable, not all_auth_failures, is the real gate Task 4's
+        # SKILL.md now uses to decide whether an hourly CronCreate wake accomplishes anything.
+        self.assertTrue(result["any_quota_recoverable"])
+        # CRITICAL finding (Rounds 4-5 capability escalation): ladder_keys must be present even on
+        # the quota_exhausted branch -- Step 2's own resumable-state persistence path is exactly
+        # where a struggling candidate is first discovered, and Step 3's mid-dispatch "quota"
+        # branch reads this same field shape.
+        self.assertEqual(result["ladder_keys"], ["claude/opus-5"])
+
+    def test_resolve_injection_derives_real_file_sizes_from_cwd(self):
+        # CRITICAL finding: resolve-injection must derive files_touched_sizes itself (never rely
+        # on a caller-supplied, always-empty default) so context-size filtering is actually live.
+        candidates = [{"key": "claude/opus-5", "model": "opus", "cli": None,
+                        "vendor": "anthropic", "task_affinity": None, "context_limit": None}]
+        captured = {}
+
+        def fake_build_dispatch_injection(task_markdown, cands, sizes, affinity, top_n, **kwargs):
+            captured["sizes"] = sizes
+            return {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "big.py"), "w") as f:
+                f.write("x" * 4000)
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w") as f:
+                f.write("### Task 1\n**Files:**\n- Modify: `big.py`\n")
+            quota_path = os.path.join(tmp, "quota.json")
+            superpowers_cli.main(
+                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                 "--quota-path", quota_path],
+                assemble_candidates_fn=lambda cwd, env: (candidates, ["claude/opus-5"]),
+                build_dispatch_injection_fn=fake_build_dispatch_injection,
+                cache_read_json_fn=lambda path: {},
+                cache_write_json_fn=lambda path, data: None,
+                refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                stdout=io.StringIO())
+        self.assertEqual(captured["sizes"], {"big.py": 4000})
+
+    def test_resolve_injection_emits_controlled_quota_exhausted_when_every_candidate_already_excluded(self):
+        # CRITICAL finding: a single-candidate ladder, already excluded by --exclude-keys-json
+        # (e.g. a mid-dispatch "quota" failure caught in Step 3, re-running resolve-injection with
+        # that SAME candidate excluded) previously reached build_dispatch_injection_fn with an
+        # EMPTY candidates list, which raised its own "no candidate survived narrowing" ValueError
+        # -- the WRONG exception (a real curation-gap signal, never "we already tried everything")
+        # -- UNCAUGHT here, crashing the whole resolve-injection call instead of reporting a
+        # controlled quota_exhausted result the SKILL.md's own branch-on-mode logic already
+        # handles. --excluded-reasons-json carries this wave's own already-known reason forward.
+        candidates = [{"key": "claude/opus-5", "model": "opus", "cli": None,
+                        "vendor": "anthropic", "task_affinity": None, "context_limit": None}]
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w") as f:
+                f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
+            quota_path = os.path.join(tmp, "quota.json")
+            rc = superpowers_cli.main(
+                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                 "--quota-path", quota_path, "--exclude-keys-json",
+                 json.dumps(["claude/opus-5"]), "--excluded-reasons-json",
+                 json.dumps({"claude/opus-5": "quota"})],
+                assemble_candidates_fn=lambda cwd, env: (candidates, ["claude/opus-5"]),
+                cache_read_json_fn=lambda path: {},
+                cache_write_json_fn=lambda path, data: None,
+                refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                stdout=out)
+        self.assertEqual(rc, 0)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["mode"], "quota_exhausted")
+        self.assertEqual(result["tried"], ["claude/opus-5"])
+        self.assertEqual(result["reasons"], {"claude/opus-5": "quota"})
+        self.assertTrue(result["any_quota_recoverable"])
+        self.assertEqual(result["ladder_keys"], ["claude/opus-5"])
+
+    def test_resolve_injection_reports_no_candidate_when_narrowing_drops_every_candidate(self):
+        # HIGH finding: `candidates` is non-empty here (never excluded down to empty -- that's the
+        # separate "every configured candidate already excluded" case above) but every one gets
+        # dropped by affinity/context narrowing itself (a context_limit below this task's
+        # required_context) -- build_dispatch_injection_fn's own "no candidate survived narrowing"
+        # ValueError, previously uncaught, must never crash this command. It is a genuine curation
+        # gap, never a quota-availability problem, so it gets its own "no_candidate" mode -- never
+        # folded into "quota_exhausted", which would wrongly imply a CronCreate wake could help.
+        candidates = [{"key": "small-context/model", "model": "opus", "cli": None,
+                        "vendor": "anthropic", "task_affinity": None, "context_limit": 10}]
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "big.py"), "w") as f:
+                f.write("x" * 4000)
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w") as f:
+                f.write("### Task 1\n**Files:**\n- Modify: `big.py`\n")
+            quota_path = os.path.join(tmp, "quota.json")
+            rc = superpowers_cli.main(
+                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                 "--quota-path", quota_path],
+                assemble_candidates_fn=lambda cwd, env: (candidates, ["small-context/model"]),
+                cache_read_json_fn=lambda path: {},
+                cache_write_json_fn=lambda path, data: None,
+                refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                stdout=out)
+        self.assertEqual(rc, 0)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["mode"], "no_candidate")
+        self.assertIn("no execute candidate survived", result["detail"])
+        # ladder_keys is computed via the SAME affinity/context narrowing (compute_ladder_keys
+        # shares _narrow_and_rank with build_dispatch_injection) -- the one candidate that failed
+        # context narrowing for the dispatch call fails it here too, so the full ranked ladder is
+        # also empty. This is consistent, not a second bug: ladder_keys never claims a candidate
+        # narrowing already rejected is somehow still ranked.
+        self.assertEqual(result["ladder_keys"], [])
+
+    def test_resolve_injection_merges_wave_excluded_reasons_with_this_calls_own_quota_exhaustion(self):
+        # CRITICAL finding: mixed quota/auth case -- a caller re-resolving mid-wave (one candidate
+        # already excluded for a KNOWN reason from an earlier call, another going quota-exhausted
+        # fresh THIS call) must see BOTH reasons in the final output, never just this call's own
+        # narrower remaining-ladder walk (which never even visits an already-excluded candidate).
+        candidates = [
+            {"key": "claude/opus-5", "model": "opus", "cli": None, "vendor": "anthropic",
+             "task_affinity": None, "context_limit": None},
+            {"key": "codex/terra", "model": "gpt-5.6-terra", "cli": "codex", "vendor": "openai",
+             "task_affinity": None, "context_limit": None},
+        ]
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w") as f:
+                f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
+            quota_path = os.path.join(tmp, "quota.json")
+            rc = superpowers_cli.main(
+                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                 "--quota-path", quota_path, "--exclude-keys-json",
+                 json.dumps(["codex/terra"]), "--excluded-reasons-json",
+                 json.dumps({"codex/terra": "auth"})],
+                assemble_candidates_fn=lambda cwd, env: (
+                    candidates, ["claude/opus-5", "codex/terra"]),
+                cache_read_json_fn=lambda path: {},
+                cache_write_json_fn=lambda path, data: None,
+                refresh_quota_cache_fn=lambda config, keys, existing, ttl: (
+                    {"claude/opus-5": {"available": False, "detail": "usage limit reached"}}),
+                stdout=out)
+        self.assertEqual(rc, 0)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["mode"], "quota_exhausted")
+        self.assertEqual(result["reasons"], {"claude/opus-5": "quota", "codex/terra": "auth"})
+        self.assertEqual(sorted(result["tried"]), ["claude/opus-5", "codex/terra"])
+        self.assertTrue(result["any_quota_recoverable"])
+        self.assertFalse(result["all_auth_failures"])
+        self.assertEqual(result["ladder_keys"], ["claude/opus-5", "codex/terra"])
+
+    def test_escalation_excluded_keys_never_get_a_reason_or_enter_tried(self):
+        # HIGH finding: a Rounds 4-5 capability-escalation exclusion is a healthy, NEVER-tried
+        # candidate dropped purely for ranking reasons -- it must never receive the
+        # "no_usable_dispatch" permanent-shaped fallback reason, must never appear in `tried`, and
+        # must never be counted toward any_quota_recoverable/all_auth_failures -- distinct from a
+        # genuine --exclude-keys-json member, which DOES get all of that. Here every real
+        # candidate is quota-exhausted (a real, recoverable reason) while one candidate is excluded
+        # ONLY via --escalation-excluded-keys-json.
+        candidates = [
+            {"key": "claude/opus-5", "model": "opus", "cli": None, "vendor": "anthropic",
+             "task_affinity": None, "context_limit": None},
+            {"key": "codex/terra", "model": "gpt-5.6-terra", "cli": "codex", "vendor": "openai",
+             "task_affinity": None, "context_limit": None},
+        ]
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w") as f:
+                f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
+            quota_path = os.path.join(tmp, "quota.json")
+            rc = superpowers_cli.main(
+                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                 "--quota-path", quota_path, "--exclude-keys-json", json.dumps(["codex/terra"]),
+                 "--excluded-reasons-json", json.dumps({"codex/terra": "quota"}),
+                 "--escalation-excluded-keys-json", json.dumps(["claude/opus-5"])],
+                assemble_candidates_fn=lambda cwd, env: (
+                    candidates, ["claude/opus-5", "codex/terra"]),
+                cache_read_json_fn=lambda path: {},
+                cache_write_json_fn=lambda path, data: None,
+                refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                stdout=out)
+        self.assertEqual(rc, 0)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["mode"], "quota_exhausted")
+        # claude/opus-5 was excluded ONLY for capability-escalation reasons -- it must be absent
+        # from both `tried` and `reasons` entirely, never defaulted to "no_usable_dispatch".
+        self.assertEqual(result["tried"], ["codex/terra"])
+        self.assertEqual(result["reasons"], {"codex/terra": "quota"})
+        self.assertTrue(result["any_quota_recoverable"])
+
+
+class TestCliDispatchTask(unittest.TestCase):
+    def test_preserves_implementer_authored_report_when_the_cli_writes_it_directly(self):
+        # CRITICAL finding (recurrence -- a prior revision's fix attempt did not close every
+        # path): the real superpowers implementer contract has the dispatched CLI write its OWN
+        # detailed report directly to --report-file (it has write access to target_dir, being an
+        # execute-mode dispatch) and return only a SHORT status separately (design spec's own
+        # "writes detailed evidence to the report file and returns a short status separately").
+        # dispatch-task must never overwrite that real, on-disk report with captured subprocess
+        # stdout -- this is the normal case, and it must be left completely untouched.
+        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
+                      "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
+
+        def fake_dispatch(injection_arg, prompt, target_dir, heartbeat_interval, timeout,
+                           format_block=None, tool_availability=None, agents_tooling_path=None,
+                           codegraph_registered=False):
+            # Simulates the real dispatched CLI: per the prompt's report-file-path instruction, it
+            # writes its OWN detailed report directly to disk and returns only a short status in
+            # stdout -- exactly the contract this test guards.
+            report_path = os.path.join(target_dir, "task-1-report.md")
+            with open(report_path, "w") as f:
+                f.write("## TDD Evidence\n\nfull detailed report with real test output...\n")
+            return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
+                     "returncode": 0, "stdout": "DONE", "stderr": "", "timed_out": False}
+
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = os.path.join(tmp, "prompt.txt")
+            with open(prompt_file, "w") as f:
+                f.write("do the task")
+            format_block_file = os.path.join(tmp, "format.md")
+            with open(format_block_file, "w") as f:
+                f.write("status: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED")
+            report_file = os.path.join(tmp, "task-1-report.md")
+            rc = superpowers_cli.main(
+                ["dispatch-task", "--injection-json", json.dumps(injection),
+                 "--prompt-file", prompt_file, "--target-dir", tmp,
+                 "--heartbeat-interval", "60", "--timeout", "900",
+                 "--format-block-file", format_block_file, "--report-file", report_file],
+                dispatch_superpowers_task_fn=fake_dispatch,
+                detect_tool_availability_fn=lambda: {},
+                resolve_agents_tooling_path_fn=lambda: None,
+                ensure_codegraph_registered_fn=lambda cli: False,
+                stdout=out)
+            self.assertEqual(rc, 0)
+            with open(report_file) as f:
+                content = f.read()
+        # The implementer's own detailed, on-disk report survives verbatim -- the short "DONE"
+        # status returned separately in stdout must NEVER have replaced it.
+        self.assertEqual(content, "## TDD Evidence\n\nfull detailed report with real test "
+                                   "output...\n")
+        self.assertNotIn("DONE", content)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["returncode"], 0)
+
+    def test_falls_back_to_labeled_stdout_only_when_the_cli_never_wrote_its_own_report(self):
+        # Degraded case: the dispatched CLI did not follow the report-file-path instruction and
+        # wrote nothing to disk -- something evidentiary must still survive, but clearly labeled
+        # as a fallback, never silently indistinguishable from a genuine implementer report.
+        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
+                      "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
+
+        def fake_dispatch(injection_arg, prompt, target_dir, heartbeat_interval, timeout,
+                           format_block=None, tool_availability=None, agents_tooling_path=None,
+                           codegraph_registered=False):
+            return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
+                     "returncode": 0, "stdout": "DONE\nonly stdout, no report file written",
+                     "stderr": "", "timed_out": False}
+
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = os.path.join(tmp, "prompt.txt")
+            with open(prompt_file, "w") as f:
+                f.write("do the task")
+            format_block_file = os.path.join(tmp, "format.md")
+            with open(format_block_file, "w") as f:
+                f.write("status: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED")
+            report_file = os.path.join(tmp, "task-1-report.md")
+            rc = superpowers_cli.main(
+                ["dispatch-task", "--injection-json", json.dumps(injection),
+                 "--prompt-file", prompt_file, "--target-dir", tmp,
+                 "--heartbeat-interval", "60", "--timeout", "900",
+                 "--format-block-file", format_block_file, "--report-file", report_file],
+                dispatch_superpowers_task_fn=fake_dispatch,
+                detect_tool_availability_fn=lambda: {},
+                resolve_agents_tooling_path_fn=lambda: None,
+                ensure_codegraph_registered_fn=lambda cli: False,
+                stdout=out)
+            self.assertEqual(rc, 0)
+            with open(report_file) as f:
+                content = f.read()
+        self.assertIn("no report file was written", content)
+        self.assertIn("only stdout, no report file written", content)
+
+    def test_report_mode_append_preserves_the_prior_rounds_report_in_the_fallback_case(self):
+        # CRITICAL finding: a fix-loop round must APPEND to the existing report file, never
+        # overwrite it -- subagent-driven-development's own "every round... appends its fix
+        # report to the same report file" contract is the harness's persistent memory for an
+        # external_cli task (there's no live subagent to hold context between rounds). Exercises
+        # the STDOUT-fallback branch specifically (the dispatched CLI here does not write its own
+        # report directly) -- even the degraded fallback must never destroy earlier rounds.
+        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
+                      "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
+
+        def fake_dispatch(injection_arg, prompt, target_dir, heartbeat_interval, timeout,
+                           format_block=None, tool_availability=None, agents_tooling_path=None,
+                           codegraph_registered=False):
+            return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
+                     "returncode": 0, "stdout": "fix round 1 report", "stderr": "",
+                     "timed_out": False}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = os.path.join(tmp, "prompt.txt")
+            with open(prompt_file, "w") as f:
+                f.write("fix it")
+            format_block_file = os.path.join(tmp, "format.md")
+            with open(format_block_file, "w") as f:
+                f.write("status: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED")
+            report_file = os.path.join(tmp, "task-1-report.md")
+            with open(report_file, "w") as f:
+                f.write("original implementer report")
+            rc = superpowers_cli.main(
+                ["dispatch-task", "--injection-json", json.dumps(injection),
+                 "--prompt-file", prompt_file, "--target-dir", tmp,
+                 "--heartbeat-interval", "60", "--timeout", "900",
+                 "--format-block-file", format_block_file, "--report-file", report_file,
+                 "--report-mode", "append"],
+                dispatch_superpowers_task_fn=fake_dispatch,
+                detect_tool_availability_fn=lambda: {},
+                resolve_agents_tooling_path_fn=lambda: None,
+                ensure_codegraph_registered_fn=lambda cli: False,
+                stdout=io.StringIO())
+            self.assertEqual(rc, 0)
+            with open(report_file) as f:
+                content = f.read()
+        self.assertIn("original implementer report", content)
+        self.assertIn("fix round 1 report", content)
+
+
+class TestCliClassifyDispatchFailure(unittest.TestCase):
+    def test_prints_the_classification_string(self):
+        out = io.StringIO()
+        result = {"returncode": 1, "stdout": "usage limit reached", "stderr": "",
+                  "timed_out": False}
+        rc = superpowers_cli.main(
+            ["classify-dispatch-failure", "--dispatch-result-json", json.dumps(result)],
+            stdout=out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue(), "quota")
+
+
+class TestCliResumeExclusions(unittest.TestCase):
+    def test_prints_only_permanent_exclusions(self):
+        # CRITICAL finding: the executable subcommand SKILL.md's resume/wake path calls -- proves
+        # the reason-based split (quota dropped, everything else kept) is real and testable, not
+        # just inline, untested bash arithmetic.
+        out = io.StringIO()
+        rc = superpowers_cli.main(
+            ["resume-exclusions",
+             "--tried-json", json.dumps(["claude/opus-5", "codex/terra"]),
+             "--reasons-json", json.dumps({"claude/opus-5": "quota", "codex/terra": "auth"}),
+             "--prior-excluded-keys-json", json.dumps([])],
+            stdout=out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out.getvalue()), ["codex/terra"])
+
+
+class TestCliWriteResumableState(unittest.TestCase):
+    def test_writes_state_and_confirms(self):
+        out = io.StringIO()
+        captured = {}
+        rc = superpowers_cli.main(
+            ["write-resumable-state", "--path", "/x/state.json",
+             "--state-json", json.dumps({"framework": "superpowers", "tried": []})],
+            write_resumable_state_fn=lambda path, state: captured.update(path=path, state=state),
+            stdout=out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(captured["path"], "/x/state.json")
+        self.assertEqual(json.loads(out.getvalue())["written"], True)
