@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-review-checklist
-description: Use when a design, spec, requirements, or plan document has been produced and needs review before the next step. Framework-aware — classifies each document into one of four archetypes (intent, requirements, design, plan) and reviews it with the matching checklist plus the source framework's own conventions (EARS, RFC-2119 SHALL, Given/When/Then, OpenSpec delta sections, Spec Kit [NEEDS CLARIFICATION]/[P], constitutional gates). Works on superpowers, OpenSpec, GitHub Spec Kit, Kiro, BMAD, GSD, or generic (docs/rfcs, docs/designs). Accepts a pre-resolved FRAMEWORK_PROFILE_PATH + ARCHETYPE from the orchestrator; falls back to its own framework detection + archetype heuristics when none provided.
+description: Framework-aware checklist reviewer for spec-driven-development documents — classifies each document into one of four archetypes (intent, requirements, design, plan) and reviews it with the matching checklist plus the source framework's own conventions (EARS, RFC-2119 SHALL, Given/When/Then, OpenSpec delta sections, Spec Kit [NEEDS CLARIFICATION]/[P], constitutional gates). Works on superpowers, OpenSpec, GitHub Spec Kit, Kiro, BMAD, GSD, or generic (docs/rfcs, docs/designs). Use when a design, spec, requirements, or plan document has been produced and needs review before the next step. Accepts a pre-resolved FRAMEWORK_PROFILE_PATH + ARCHETYPE from the orchestrator; falls back to its own framework detection + archetype heuristics when none provided.
 ---
 
 # Reviewing Specs
@@ -17,7 +17,13 @@ This skill assumes you are a clean-context reviewer. If you wrote (or watched th
 the document, don't invoke it yourself — the orchestrator (`/ai-kit-spec-review`) dispatches a fresh
 subagent first.
 
-## Before reviewing
+## Workflow
+
+Three phases: **(1) resolve** framework + archetype (below), **(2) apply** the matching
+archetype checklist(s) plus framework conventions, **(3) output** the structured report
+(*Output*, below).
+
+## Phase 1 — Before reviewing
 
 1. **Confirm every input is a real file path on disk.** If the caller passed inline content
    or a chat description, STOP: `### Status: Failure — input not on disk. Caller must persist
@@ -39,6 +45,10 @@ subagent first.
      classify the archetype from the profile's `doc_types` glob, or by content shape (below). If
      nothing resolves, ask the user.
 
+   In either case, load only the matched framework profile — do not load the other framework
+   profiles under `references/frameworks/`; they describe different frameworks and add nothing
+   to this review.
+
 Record framework + archetype(s) on the output's `### Document Type` line.
 
 ### Archetypes
@@ -55,6 +65,11 @@ review it against each fused checklist):
 
 `constitution` and `state` documents are **context** — `Read` them for grounding, don't
 review them.
+
+## Phase 2 — Apply the checklist
+
+Apply the matching archetype checklist(s) below, plus the framework conventions the resolved
+profile encodes (*Framework conventions*, further down).
 
 ## Intent checklist
 
@@ -114,15 +129,9 @@ opposite outcomes).
 error/failure paths; interface contracts unspecified; non-actionable steps ("handle errors
 appropriately"); a `[P]`/parallel-marked task that actually shares state or has an ordering
 dependency; material unstated assumption; scope creep.
-**MEDIUM (legacy-tool usage):** the plan references a legacy tool by literal command invocation
-(`grep`, `find`, `cat` for search/listing, `sed`) where the `TOOL_AVAILABILITY = {…}` line in
-your own dispatch prompt confirms the modern equivalent (`rg`/`fd`/`bat`/`sd`) is `true` on the
-target machine. Name the specific line and the exact modern replacement. Never flag this when
-the modern equivalent's presence is NOT confirmed `true` in `TOOL_AVAILABILITY` — an
-unconfirmed absence is not evidence of absence — and never flag it at all when no
-`TOOL_AVAILABILITY` line was given to you.
-**MEDIUM:** undefined success criteria, missing rollback, test-coverage gaps, cross-section
-inconsistency.
+**MEDIUM:** legacy-tool usage (literal `grep`/`find`/`cat`/`sed` where a confirmed modern
+equivalent exists — see *Tool preference during review* for the exact rule); undefined success
+criteria, missing rollback, test-coverage gaps, cross-section inconsistency.
 **LOW / Tooling-Catchable:** mechanical lint only. If it's actually a design decision (enums
 vs strings), rate HIGH — the agent is the only line of defense.
 
@@ -143,6 +152,10 @@ The profile turns generic checks into framework-specific ones. Key fields:
   holds *design* docs) — classify by the profile, not the folder name.
 
 If no profile is available, review with the generic archetype checklists and say so.
+
+Adding or updating a framework profile itself (new `references/frameworks/<id>.md`, new
+fields) is author-only work, not part of a live review — see
+`references/frameworks/SCHEMA.md`.
 
 ## Codebase grounding (Design & Requirements)
 
@@ -215,12 +228,20 @@ Your dispatch prompt carries these two named lines when the orchestrator resolve
   read it the same way.)
 - `TOOL_AVAILABILITY = {…}` — a compact JSON map of which of those tools are actually installed
   on this machine. This is the *only* authoritative source for the legacy-tool-usage finding
-  above; `SHARED_TOOLING_PATH`'s table lists preferences, not confirmed installs.
+  below; `SHARED_TOOLING_PATH`'s table lists preferences, not confirmed installs.
+
+**Legacy-tool-usage finding (Plan checklist, MEDIUM):** the plan references a legacy tool by
+literal command invocation (`grep`, `find`, `cat` for search/listing, `sed`) where
+`TOOL_AVAILABILITY` confirms the modern equivalent (`rg`/`fd`/`bat`/`sd`) is `true` on the
+target machine. Name the specific line and the exact modern replacement. Never flag this when
+the modern equivalent's presence is NOT confirmed `true` in `TOOL_AVAILABILITY` — an
+unconfirmed absence is not evidence of absence — and never flag it at all when no
+`TOOL_AVAILABILITY` line was given to you.
 
 When a line is absent, the orchestrator could not confirm it — proceed without it and do not
 raise findings that depend on it.
 
-## Output
+## Phase 3 — Output
 
 Minimal and structured — the reader may be an agent. No narration or summaries. State required
 *outcomes*, not suggested edits.

@@ -5,7 +5,7 @@ description: Use when a review report from `ai-kit-spec-review-checklist` (or eq
 
 # Applying Review Feedback
 
-Targeted editor for design/plan documents flagged by `ai-kit-spec-review-checklist`. Reads the report, edits the document to satisfy each finding's `Required:` outcome, and reports back what was addressed and what was not.
+Targeted editor for design/plan documents flagged by `ai-kit-spec-review-checklist`. Reads the report, edits the document to satisfy each finding's `Required:` outcome, and reports back what was addressed and what was not. This is a **process** skill: a fixed sequence — read, checklist, edit-or-escalate per finding, summarize — not a body of standing knowledge to browse.
 
 **Scope rule — never expand.** This skill only touches what the report flags. No drive-by refactors, no "while we're here" cleanup, no new features, no rewriting unrelated sections. The report is the contract.
 
@@ -23,7 +23,10 @@ If any input is missing, stop and ask. Do not guess paths.
 
 ## Before you touch anything, ask yourself
 
-For each finding in the report, before making any edit, ask: **does resolving this require a strategy or design judgment (something only the document's author or orchestrator should decide), or is it a mechanical text edit?** If the former, this is an escalation candidate (see *Escalation conditions* below) — do not guess the right answer and edit around it. If the latter, proceed with the editing rules below.
+For each finding in the report, before making any edit, ask:
+- **Does resolving this require a strategy or design judgment (something only the document's author or orchestrator should decide), or is it a mechanical text edit?** If the former, this is an escalation candidate (see *Escalation conditions* below) — do not guess the right answer and edit around it. If the latter, proceed with the editing rules below.
+- **Would this edit surprise the document's author** if they read the diff with no other context? A surprising edit (new claim, changed scope, reversed intent) is a signal you've drifted from "satisfy the finding" toward "rewrite what I'd have written" — narrow the edit back to the finding's `Required:` text.
+- **Does resolving this finding depend on information not in the report or in a file you've read?** If yes, do not infer or invent that information — either read the referenced file (step 3 below) or escalate; guessing produces a fix that looks plausible but may be wrong.
 
 ## Before editing
 
@@ -40,7 +43,7 @@ For each finding in the report, before making any edit, ask: **does resolving th
 | If a finding requires changing a load-bearing premise (e.g. "re-evaluate whether feature X is still warranted"), STOP and escalate to the caller before editing. | This is a design judgment, not a text edit. The author/orchestrator decides. |
 | Edit only the sections the finding's `Location:` field names (or strictly necessary sibling text for coherence). | No scope creep. |
 | Do not add features, components, or sections not present in the original document. | Design changes require a new design pass, not a fix pass. |
-| Do not re-format, re-style, or re-flow text outside the flagged location. | Style changes hide real edits in the diff. |
+| Do not re-format, re-style, or re-flow text outside the flagged location. | Style changes hide real edits in the diff. A fixer once reflowed an entire section's bullet punctuation "for consistency" alongside a one-line wording fix — the reviewer rejected the whole diff because the real change was buried in noise, forcing a full re-review of the section instead of a two-line check. |
 | Do not edit the review report itself. | Report is read-only input. |
 | If you disagree with a finding, do NOT silently ignore it. Address it AND note your disagreement in the output summary. | Disagreement is fine; silent rejection is not. |
 | Preserve existing formatting conventions (heading levels, list style, code fences) of the document. | The author chose them. |
@@ -86,6 +89,18 @@ After editing, emit a structured summary. The orchestrator parses this to decide
 
 If `Status: Edits Applied` and the only un-addressed items are MEDIUM/LOW deferrals, the orchestrator can re-invoke the reviewer. If `Escalation Required`, the orchestrator must surface to the human.
 
+### Worked example
+
+Finding from the report:
+> **Context section omits fallback behavior** — Severity: HIGH. Location: `## Context`, paragraph 2. Required: State that `commit-work` waits for explicit user authorization before running `git commit`; the current text implies it commits automatically.
+
+Edit made: in `## Context`, paragraph 2, changed "the skill commits the staged changes" to "the skill stages the changes and waits for explicit user authorization before running `git commit`" — matching the behavior read from `commit-work/SKILL.md` step 3.
+
+Resulting summary line:
+```
+- **Context section omits fallback behavior** — Severity: HIGH. Status: addressed. Edit: Rewrote Context paragraph 2 to state that commit-work waits for explicit user authorization before committing. Section: ## Context, paragraph 2.
+```
+
 ## Common Mistakes
 
 | Mistake | Correction |
@@ -95,6 +110,6 @@ If `Status: Edits Applied` and the only un-addressed items are MEDIUM/LOW deferr
 | Silently dropping a finding you disagree with | Address it OR document disagreement in the skipped list — never silent. |
 | Editing the review report | Never. Report is read-only input. |
 | Auto-fixing a "re-evaluate X" finding | Escalate. That's a strategy call. |
-| Reformatting the whole document for "consistency" | Never reformat outside the flagged `Location:`. If a finding requires format changes, apply them only to the sections named—don't use that finding as an excuse to fix style everywhere. |
+| Reformatting the whole document for "consistency" | Never reformat outside the flagged `Location:`. If a finding requires format changes, apply them only to the sections named—don't use that finding as an excuse to fix style everywhere. Concrete failure: a diff review got rejected outright because a scope-creeping "fix" (retitling every heading to Title Case) buried the actual one-line correction, so the reviewer had to re-diff the whole document to find what changed. |
 | Performing the fix without reading the file the finding references | A grounding fix needs the actual referenced file's content. Read first. |
 | Partial fix on a finding that has any escalation trigger | Findings are atomic. Any escalation trigger → escalate whole finding, no edits. |

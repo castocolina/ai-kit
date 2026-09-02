@@ -6,3 +6,4 @@ __pycache__
 # Local session artifacts — not part of the kit
 .atl/
 .claude/
+.codegraph/

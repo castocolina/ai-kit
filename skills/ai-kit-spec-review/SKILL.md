@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-review
-description: Use when a design, spec, requirements, or plan document needs review-and-fix before the next step. Orchestrates a reviewer and routes fixes via the appropriate handler (native framework skill, slash command, or direct-edit fixer), with optional cross-AI reviewer dispatch via `--cross-ai`/`--no-cross-ai`. Respects worktrees, scopes to lifecycle stage, loops until approved or iteration cap. Triggered by "ai-kit-spec-review", "review my spec/plan", or passing document path(s).
+description: Use when a design, spec, requirements, or plan document needs review-and-fix before the next step. Framework-aware across superpowers, GSD, OpenSpec, Spec Kit, Kiro, BMAD, and generic docs — orchestrates a reviewer and routes fixes via the appropriate handler (native framework skill, slash command, or direct-edit fixer), with optional cross-AI reviewer dispatch via `--cross-ai`/`--no-cross-ai`. Respects worktrees, scopes to lifecycle stage, loops until approved or iteration cap. Triggered by "ai-kit-spec-review", "review my spec/plan", naming one of these frameworks alongside a spec/plan/design review, or passing document path(s).
 ---
 
 ## Your Task
@@ -14,20 +14,13 @@ You are the orchestrator running as the `ai-kit-spec-review` skill (invocable vi
 - **Flags (optional, parsed from the same invocation arguments):**
   `--cross-ai` (default) or `--no-cross-ai` — whether Step 0.7 attempts
   cross-AI reviewer resolution at all. `--source-vendor=<vendor>` (default
-  `anthropic`) — the document's authoring vendor, used by Step 0.7's
-  ladder walk to prefer an independent perspective. The default is meant
-  to mean "the current session's own vendor"; `anthropic` is that
-  default's concrete value here specifically because this orchestrator
-  has no runtime introspection API telling it what vendor its own model
-  actually is — it can only assume the overwhelmingly common case (a
-  native Claude Code session). A session pointed at a compatible
-  third-party endpoint would make this default wrong, which is exactly
-  the escape hatch `--source-vendor` itself exists for — pass the real
-  vendor explicitly in that case. This is a
-  **vendor** (`anthropic`, `openai`, `xai`, ...), matching the `vendor`
-  field in `review-spec.toml` reviewer entries — not a model id, since
-  deriving a vendor from an arbitrary model-id string has no sanctioned
-  mapping (model names churn too fast to hardcode a lookup table).
+  `anthropic`) — the document's authoring vendor, used by Step 0.7's ladder
+  walk to prefer an independent perspective. Defaults to `anthropic` because
+  the orchestrator has no way to introspect its own model's vendor and a
+  native Claude Code session is the overwhelmingly common case; pass the
+  real vendor explicitly when running against a third-party endpoint. This
+  is a **vendor** (`anthropic`, `openai`, `xai`, ...) matching the `vendor`
+  field in `review-spec.toml` reviewer entries, not a model id.
 
 ## Step 0 — Persist before dispatch (ALWAYS)
 
@@ -81,6 +74,8 @@ across both. If the roots are unclear, run `git worktree list` in each repo and 
 Record the result as `CODEBASE_ROOT` (one root, or a labeled set for cross-repo plans).
 
 ## Step 0.5 — Detect framework, resolve its profile, classify archetype
+
+Before classifying, ask yourself: what stage-shaped artifact is this, really — an early why/what (intent), a testable requirement, a design, or a sequenced plan? Archetype is a ceiling on what the reviewer is allowed to demand; guessing "plan" for what is actually an intent doc invites findings the document was never meant to satisfy.
 
 The reviewer/fixer are clean-context subagents — give them the framework's rules as a **file
 path**, not prose. You (orchestrator, in the user's session, with web access) do the detection
@@ -164,170 +159,11 @@ at its archetype and list the gaps.
 
 ## Step 0.7 — Resolve the reviewer list (cross-AI)
 
-Runs once per invocation, after Step 0.6. Before resolving the reviewer list, ask: is cross-AI support actually installed and requested, or should this degrade cleanly to native-only?
+Runs once per invocation, after Step 0.6. Before walking the cross-AI ladder, ask yourself: is cross-AI support actually installed and requested here, or does this invocation degrade cleanly to native-only (`--no-cross-ai`, or `ai-kit-spec.py` simply not present)? Answering that first avoids resolving quota/runtime state nobody asked for.
 
-0. Resolve `TOOLS_PY` and `CHECKLIST_SKILL_MD`. **`ai-kit-spec.py` lives
-   inside `skills/ai-kit-spec-review/` itself** (not at a top-level `tools/` —
-   that placement isn't reachable from an installed skill, since
-   `tools/setup.py`'s symlinks only cover `agents/commands/skills`, per
-   its `CATEGORIES`). Because it's inside `ai-kit-spec-review`'s own skill
-   directory, it resolves the same way `SEEDS_DIR` (in the `## Constants`
-   section, below this Step 0.7 insertion point) does (three
-   candidates: `CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/
-   sibling-of-this-file) — this snippet is **self-contained** and does
-   not read any variable assigned elsewhere; it computes its own
-   directory inline via `$(dirname ...)`. (`SEEDS_DIR`'s own block below
-   assigns `SKILL_DIR="$(dirname "<path to this SKILL.md>")"` immediately
-   before its own `for` loop, so its third candidate resolves the same
-   way this snippet's does.):
-   ```bash
-   for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
-            "$HOME/.claude/skills/ai-kit-spec-review" \
-            "$(dirname "<absolute path to THIS SKILL.md>")"; do
-     [ -d "$d" ] && { REVIEW_SPEC_SKILL_DIR="$d"; break; }
-   done
-   TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/ai-kit-spec.py"
-   CHECKLIST_SKILL_MD="$(dirname "$REVIEW_SPEC_SKILL_DIR")/ai-kit-spec-review-checklist/SKILL.md"
-   if [ -f "$TOOLS_PY" ]; then
-     RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
-     QUOTA_JSON="$(python3 "$TOOLS_PY" cache-path --kind quota)"
-   fi
-   SHARED_TOOLING_PATH="$REVIEW_SPEC_SKILL_DIR/references/tooling-guidance.md"
-   printf '%s\n' "$TOOLS_PY" "$CHECKLIST_SKILL_MD" "$RUNTIMES_JSON" "$QUOTA_JSON" "$SHARED_TOOLING_PATH"
-   ```
-   `CHECKLIST_SKILL_MD` is the path Step 1's external-CLI dispatch tells
-   the external reviewer to `Read` — `ai-kit-spec-review-checklist` (the
-   reviewer skill) is always installed as
-   `ai-kit-spec-review`'s own sibling, since both live under the same `skills/`
-   tree in every installed shape (plugin, `~/.claude/skills`, or a dev
-   checkout), so deriving it from `$REVIEW_SPEC_SKILL_DIR`'s own parent
-   needs no separate three-candidate search. `cache-path`
-   resolves `RUNTIMES_JSON`/`QUOTA_JSON` through the module's own
-   `cache_runtimes_path`/`cache_quota_path` — the
-   `${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/ai-kit-spec-review/...` formula lives
-   in exactly one place, not duplicated as a bash literal here.
-   Resolve this whole block once, in one `Bash` call, and — exactly like
-   `RUN_TMP_DIR` below — record `TOOLS_PY`/`CHECKLIST_SKILL_MD`/
-   `RUNTIMES_JSON`/`QUOTA_JSON`/`SHARED_TOOLING_PATH` from the trailing
-   `printf`'s stdout (five lines, in that order) as literal absolute paths
-   substituted into every later command and prose reference; they are
-   **not** shell environment variables that survive across separate `Bash`
-   tool calls. If
-   `TOOLS_PY` does not exist at the resolved path, treat this
-   exactly like `--no-cross-ai` (point 2 below) — cross-AI support isn't
-   installed, never block the review over it. If `TOOLS_PY` exists but
-   `CHECKLIST_SKILL_MD` does not (a broken/partial install —
-   `ai-kit-spec-review-checklist` missing while `ai-kit-spec-review` itself is
-   present), still proceed with native dispatch (`cli` absent entries
-   need no checklist path), but skip any reviewer entry whose `cli` is
-   set: an external CLI can't be told to `Read` a file that doesn't
-   exist, so treat that entry the way a config error is treated —
-   dropped from `REVIEWER_LIST`, never dispatched, and this iteration
-   surfaces via whatever entries remain (or `NO_CONFIG_FALLBACK` if none
-   do).
+**MANDATORY — READ ENTIRE FILE**: Before running any command below, read [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md) completely — it has the exact VERBATIM bash snippets, resolution order, and fail-closed rules for resolving `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `RUNTIMES_JSON`, `QUOTA_JSON`, `SHARED_TOOLING_PATH`, `TOOL_AVAILABILITY_JSON`, `RUN_TMP_DIR`, and ultimately `REVIEWER_LIST`. Do not attempt to reconstruct these from memory. Skip loading it only when this run is already known to be `--no-cross-ai` with no config to consider (still confirm `TOOLS_PY`'s absence per the reference's point 0 if unsure).
 
-   Also call `detect-tools`, cached the same way `ai-kit-spec-config`'s own
-   Step 1 does it — but since this orchestrator has no long-lived cache
-   file for tool availability today, call it fresh each run (cheap — a
-   handful of `which` calls, no network, no TTL logic needed):
-   ```bash
-   TOOL_AVAILABILITY_JSON="$(python3 "$TOOLS_PY" detect-tools)"
-   ```
-   Record `TOOL_AVAILABILITY_JSON` as this run's literal tool-availability
-   JSON string, substituted into every later `--tool-availability-json`
-   reference.
-1. Run `mktemp -d` via `Bash`, and record its printed absolute path as
-   `RUN_TMP_DIR` in this skill's own working notes — **not** a shell
-   environment variable. Every `Bash` tool call in this harness starts a
-   fresh shell, so a variable set in one call is gone by the next one;
-   from here on, substitute `RUN_TMP_DIR`'s literal absolute path into
-   every command and every prose reference below, exactly the way
-   `CODEBASE_ROOT` is already resolved once (Step 0.1) and substituted
-   literally everywhere after. (This doc keeps writing `$RUN_TMP_DIR` for
-   readability, matching how `<CODEBASE_ROOT>` reads elsewhere in this
-   skill — read every `$RUN_TMP_DIR` below as "the literal path captured
-   here", never as an actual shell variable reference.) Every artifact
-   this run produces (raw reviewer reports, the double-review merge, the
-   fixer's report) lives under this one directory, replacing the old flat
-   `/tmp/ai-kit-spec-review-*` paths (which collided across concurrent runs on
-   different projects/worktrees — fixed here).
-2. **If `--no-cross-ai` was requested (or `TOOLS_PY` is missing, point 0
-   above)**: set `REVIEWER_LIST` directly, in-context, to the single-entry
-   array `[{"key": "session-default", "model": "", "vendor": "", "cli":
-   null, "command": null, "extra": {}}]` — `ai-kit-spec.py`'s
-   `NO_CONFIG_FALLBACK` constant's exact shape. **Do not run
-   `resolve-reviewers`, `probe-quota`, or
-   `detect-runtimes`, and do not write `$RUN_TMP_DIR/reviewers.json`** —
-   points 3–5 below are entirely skipped, not just their side effects;
-   this is the "skip it entirely, minimal overhead" case the flag exists
-   for. Because this entry's `cli` is always `null`, Step 1's dispatch
-   never needs `reviewers.json` for it either (only the external branch
-   reads that file), so nothing downstream is left dangling. Go directly
-   to Step 1.
-3. **Required — check before the call below, not optionally**: the
-   `--if-stale` call immediately after this destroys the evidence a
-   missing-file check would find (it creates the file), so this order is
-   fixed — check first, save second:
-   ```bash
-   [ -f "$RUNTIMES_JSON" ] || echo "no-runtimes-snapshot-yet"
-   ```
-   Then refresh the runtimes snapshot if it's missing or older than
-   `RUNTIMES_TTL_SECONDS` (~30 days — CLI/model presence rarely changes):
-   ```bash
-   python3 "$TOOLS_PY" detect-runtimes --if-stale "$RUNTIMES_JSON"
-   ```
-   `--if-stale` checks `cache_is_stale` itself and no-ops
-   (prints `{}`, doesn't touch the file) when the existing snapshot is
-   still fresh; when missing or stale it detects and saves in the same
-   call, so this is always safe to run. If the check above printed
-   `no-runtimes-snapshot-yet` (this was the first-ever save), print one
-   line — "No cross-AI config saved yet — run `ai-kit-spec-config` so
-   this doesn't repeat every invocation." — then continue to step 4
-   regardless; do NOT skip reviewer resolution (there's usually no
-   `review-spec.toml` yet either, so `resolve-reviewers` in step 5
-   degrades to `NO_CONFIG_FALLBACK` on its own — no special-casing needed
-   here beyond the detection call and the hint).
-4. Refresh quota for anything the config's ladder might need. `--cwd`
-   takes exactly one directory — when Step 0.1 recorded `CODEBASE_ROOT`
-   as a labeled set (cross-repo plans), use the root that owns the
-   primary document under review (the first entry in `<DOC_PATHS>`); the
-   same rule applies to `resolve-reviewers` at point 5 below:
-   ```bash
-   python3 "$TOOLS_PY" probe-quota --cwd <CODEBASE_ROOT> \
-     --quota-path "$QUOTA_JSON"
-   ```
-   (No-op — writes `{}` — when there is no config/ladder to probe.)
-5. Resolve the reviewer list, saving its output to a file (Step 1's
-   external dispatch needs a stable path to feed `dispatch-reviewer`,
-   not just the in-context text). This point is only reached when cross-AI is
-   actually active — `--no-cross-ai` already short-circuited at step 2
-   above — so `--cross-ai` is always passed here, never conditionally.
-   (Do not split this command across a trailing `\` followed by an
-   inline `#` comment — that escapes the *space* before the comment, not
-   the newline, so the redirect below silently becomes a separate command
-   that truncates the file.):
-   ```bash
-   python3 "$TOOLS_PY" resolve-reviewers \
-     --cwd <CODEBASE_ROOT> \
-     --quota-path "$QUOTA_JSON" \
-     --source-vendor <SOURCE_VENDOR from the "## Inputs" section's flag parsing> \
-     --cross-ai \
-     > "$RUN_TMP_DIR/reviewers.json"
-   ```
-   `resolve-reviewers` itself calls `cfg_resolve(cwd, env)`,
-   which already handles the local-vs-global/`strategy` resolution — this
-   step never re-implements that logic, it only picks which `--cwd` to
-   pass (`CODEBASE_ROOT` from Step 0.1, so the resolved local config is
-   the one that actually owns the document under review — when
-   `CODEBASE_ROOT` is a labeled set, that means the root of `<DOC_PATHS>`'s
-   first entry, same rule as point 4 above).
-6. **(Active cross-AI path only — point 2's degraded path already set
-   `REVIEWER_LIST` directly and skipped straight to Step 1.)**
-   `$RUN_TMP_DIR/reviewers.json` holds a JSON array of 1 or 2 reviewer
-   objects. Record its contents as `REVIEWER_LIST` (index 0 = primary/only
-   reviewer, index 1 = the secondary in double mode) — Step 1 both reasons
-   over this in-context and passes the same file's path (plus the entry's
-   index) to `dispatch-reviewer` for external dispatch.
+Once resolved, `REVIEWER_LIST`, `RUN_TMP_DIR`, `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `SHARED_TOOLING_PATH`, and `TOOL_AVAILABILITY_JSON` are consumed by Step 1 below exactly as named.
 
 ## Constants
 
@@ -362,81 +198,19 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
 
 ## NEVER (hard landmines)
 
-These are the failures that have actually bitten this loop. Violating any one silently corrupts the review:
+These are the failures that have actually bitten this loop; violating any one silently corrupts
+the review. Two that deserve a callout before you're even inside the loop:
 
 - **NEVER dispatch any subagent before every document under review is saved on disk** (Step 0). Subagents read via `Read`; an in-memory doc does not survive the dispatch boundary.
 - **NEVER run the generic fixer before `EFFECTIVE_REPORT_PATH` exists on disk** (Step 1.5). The fixer has nothing to `Read` otherwise.
-- **NEVER paraphrase the document (or prior reports, or the conversation) into a subagent prompt** as a workaround — pass paths only. Inlining defeats the clean-context guarantee.
-- **NEVER default `CODEBASE_ROOT` to your CWD.** Always derive it from the document's own worktree via `git` (Step 0.1); the wrong checkout yields phantom findings.
-- **NEVER edit the document yourself, and never reuse a subagent across iterations.** Orchestrator is dispatch + parse; a fresh subagent each round keeps the audit clean.
 
-The `## Hard rules for the orchestrator` table near the end carries the full list with reasons.
+The `## Hard rules for the orchestrator` table near the end carries the full list (these two plus
+paraphrasing-into-prompts, defaulting `CODEBASE_ROOT` to CWD, editing the document yourself, and
+reusing a subagent across iterations) with reasons for each.
 
 ## Loop
 
-Run this loop. Each iteration is one reviewer dispatch followed by (conditionally) one fixer dispatch.
-
-```dot
-digraph review_spec {
-    "Start" [shape=doublecircle];
-    "Dispatch reviewer(s) (fresh)" [shape=box];
-    "Read EFFECTIVE_REPORT_PATH" [shape=box];
-    "Parse Status line" [shape=diamond];
-    "Approved" [shape=box, style=filled, fillcolor=lightgreen];
-    "Issues Found?" [shape=diamond];
-    "Iter < cap?" [shape=diamond];
-    "Resolve route per archetype" [shape=diamond];
-    "Step 3a generic fixer" [shape=box];
-    "Parse fixer Status" [shape=diamond];
-    "Step 3b-skill native revise" [shape=box];
-    "Step 3b-cmd native command" [shape=box];
-    "Slash tool available?" [shape=diamond];
-    "Step 3b-surface" [shape=box];
-    "Native revise handed off" [shape=box, style=filled, fillcolor=orange];
-    "Step 3c validate?" [shape=diamond];
-    "Cap reached" [shape=box, style=filled, fillcolor=orange];
-    "Surface to user" [shape=doublecircle];
-
-    "Start" -> "Dispatch reviewer(s) (fresh)";
-    "Dispatch reviewer(s) (fresh)" -> "Read EFFECTIVE_REPORT_PATH";
-    "Read EFFECTIVE_REPORT_PATH" -> "Parse Status line";
-    "Parse Status line" -> "Approved" [label="Approved"];
-    "Parse Status line" -> "Issues Found?" [label="Issues Found"];
-    "Issues Found?" -> "Iter < cap?" [label="yes"];
-    "Issues Found?" -> "Surface to user" [label="no"];
-    "Iter < cap?" -> "Resolve route per archetype" [label="yes"];
-    "Iter < cap?" -> "Cap reached" [label="no"];
-
-    "Resolve route per archetype" -> "Step 3a generic fixer" [label="direct edit"];
-    "Resolve route per archetype" -> "Step 3b-skill native revise" [label="skill:<name>"];
-    "Resolve route per archetype" -> "Step 3b-cmd native command" [label="slash_command"];
-    "Resolve route per archetype" -> "Step 3b-surface" [label="surface"];
-
-    "Step 3a generic fixer" -> "Parse fixer Status";
-    "Parse fixer Status" -> "Dispatch reviewer(s) (fresh)" [label="Edits Applied (next iter)"];
-    "Parse fixer Status" -> "Surface to user" [label="Escalation Required"];
-    "Parse fixer Status" -> "Surface to user" [label="No Edits"];
-
-    "Step 3b-skill native revise" -> "Step 3c validate?" [label="Edits Applied (route has validate)"];
-    "Step 3b-skill native revise" -> "Dispatch reviewer(s) (fresh)" [label="Edits Applied (no validate, next iter)"];
-    "Step 3b-skill native revise" -> "Step 3b-surface" [label="Needs Input"];
-    "Step 3b-skill native revise" -> "Surface to user" [label="No Edits"];
-
-    "Step 3b-cmd native command" -> "Slash tool available?" ;
-    "Slash tool available?" -> "Step 3c validate?" [label="yes (route has validate)"];
-    "Slash tool available?" -> "Dispatch reviewer(s) (fresh)" [label="yes (no validate, next iter)"];
-    "Slash tool available?" -> "Step 3b-surface" [label="no"];
-
-    "Step 3c validate?" -> "Dispatch reviewer(s) (fresh)" [label="sound (next iter)"];
-    "Step 3c validate?" -> "Surface to user" [label="blocking"];
-
-    "Step 3b-surface" -> "Native revise handed off";
-    "Native revise handed off" -> "Surface to user";
-
-    "Approved" -> "Surface to user";
-    "Cap reached" -> "Surface to user";
-}
-```
+Run this loop. Each iteration is one reviewer dispatch followed by (conditionally) one fixer dispatch. Steps 1-5 below fully specify the branching; if you want a visual companion for tracing how the four Step 3 routes rejoin the loop, see [`references/loop-diagram.md`](references/loop-diagram.md) (optional — not required to execute the loop correctly).
 
 ### Step 1 — Dispatch reviewer(s) (every iteration)
 
@@ -524,39 +298,16 @@ For each entry in `REVIEWER_LIST`:
        --stdout-only \
        > "$RUN_TMP_DIR/iter<N>-<key>.md"
      ```
-     **Do not render the command yourself and pass it back in.** `dispatch-reviewer` takes the
-     reviewer entry (`--reviewers-json` + `--index`), not a pre-rendered command string, and
-     calls `render_reviewer_command` internally *after* it has prefixed the tooling guidance
-     onto the prompt. That ordering is load-bearing twice over: some CLIs (grok) inline the
-     prompt into their own command line via `{prompt}` rather than reading stdin, so guidance
-     composed after the render would never reach them; and a rendered command round-tripped
-     back through a `--command "<string>"` shell argument would be shell-evaluated twice,
-     reintroducing the `$`/backtick injection hazard `render_reviewer_command`'s escaping
-     exists to prevent. There is likewise **no** `--codegraph-registered` flag to compute:
-     `dispatch-reviewer` runs the same live `check_codegraph_mcp_healthy` check itself whenever
-     the entry has a `cli` (the same internal-resolution pattern the execute family's
-     `prepare-tooling` already uses), so the orchestrator never has to evaluate it.
-     `$SHARED_TOOLING_PATH` (resolved in Step 0.7) and `$TOOL_AVAILABILITY_JSON` are surfaced
-     to the reviewer as named `SHARED_TOOLING_PATH = …` / `TOOL_AVAILABILITY = …` lines at the
-     top of the composed prompt.
-
-     **Run this backgrounded or with an explicit near-cap `Bash` timeout — never on the default
-     one.** The tiers are cumulative, not a ceiling: the default `[600, 1200, 1800]` is up to
-     **60 minutes** of wall time in the worst case, and tier 1 alone (600s) already equals the
-     harness's own 600000ms maximum. A short default timeout kills the dispatch mid-tier and
-     throws away work that was still running. Either run the command with `run_in_background`
-     and then poll for `$RUN_TMP_DIR/iter<N>-<key>.md` to exist and stop growing before moving
-     on to Step 1.5, or (for a config whose tiers you know are short) pass an explicit
-     `timeout` close to the harness cap. Treat a dispatch that never produces the report file
-     exactly like a nonzero exit below — the file is absent, so the fail-closed rules apply
-     unchanged.
-
-     **If this exits nonzero** (a malformed or missing `command` template on this reviewer
-     entry, or an empty `timeout_tiers` — config errors, not runtime failures), this reviewer's
-     slot failed to dispatch. Do not write or keep `$RUN_TMP_DIR/iter<N>-<key>.md` for it —
-     leaving it absent is what makes Step 1.5's `merge-reports` (double mode) or the
-     missing-file case (single mode) fail closed through the existing `### Status:`-line-based
-     rules, with no new special-casing needed here.
+     **Two hard rules, no exceptions:** (1) do not render the command yourself and pass it back
+     in — hand `dispatch-reviewer` the reviewer entry and let it render internally; and (2) run
+     this backgrounded or with an explicit near-cap `Bash` timeout, never the tool default (the
+     tiers are cumulative and can reach 60 minutes of wall time). A dispatch that exits nonzero,
+     or never produces the report file, leaves this reviewer's slot undispatched — do not write
+     or keep `$RUN_TMP_DIR/iter<N>-<key>.md` for it, so Step 1.5's fail-closed `### Status:`
+     handling applies unchanged. **MANDATORY before deviating from either rule**: read
+     [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md)'s "Step 1 external-CLI
+     dispatch" section for the full rationale — it explains the injection/escaping hazard rule
+     (1) prevents and the tier-math behind rule (2).
 
 Reviewer prompt template — use VERBATIM, substitute only `<DOC_PATHS>`, `<ARCHETYPE>`, `<FRAMEWORK_PROFILE_PATH>`, `<CODEBASE_ROOT>`, `<GROUNDING_DOCS>`, `<SHARED_TOOLING_PATH>`, and `<TOOL_AVAILABILITY_JSON>` (both resolved in Step 0.7 point 0):
 
@@ -681,6 +432,12 @@ Dispatch per the route's `invoke`:
 
 *(Reached only from Step 3a — the generic direct-edit fixer. The native-revise paths 3b-skill / 3b-cmd parse their own status inline and do not pass through here.)*
 
+Before treating `No Edits` as equivalent to `Escalation Required`, notice the table below already
+does — both end the loop and go to Surface. The distinction that matters is not to the loop but
+to the user reading Step 5's message: "fixer looked and genuinely found nothing fixable" reads
+very differently from "fixer tried and gave up," so carry the fixer's own stated reason into the
+Surface message rather than collapsing both to a generic "escalation."
+
 Locate the `### Status:` line in the fixer's Fix Summary.
 
 | Status | Action |
@@ -691,6 +448,11 @@ Locate the `### Status:` line in the fixer's Fix Summary.
 | No Status line | Loop ends. Surface failure: "Fixer did not emit a Status line." |
 
 ### Step 5 — Surface to user
+
+Before writing the message, ask: does the user need to *decide* something here, or just be
+*informed*? Cap-reached and escalation outcomes need a decision, so they earn the full report;
+a clean approval needs only a one-line confirmation. Over-pasting a report nobody has to act on
+buries the signal as much as under-informing does.
 
 Emit one short message in the user's terminal. Do NOT paste full reports unless the user is at cap or escalation.
 
@@ -721,22 +483,11 @@ After surfacing, the orchestrator's job is done. Do NOT continue to "next steps"
 
 ## Routing table — who rewrites what
 
-Routing is data-driven from each profile's `revise_protocol.routes`. Seed-profile snapshot (FR-1.5):
-
-| Framework (detected) | Archetype | Rewrite handled by | Mechanism |
-|---|---|---|---|
-| superpowers | design | `brainstorming` skill | hybrid subagent → surface if it stalls (Step 3b-skill) |
-| superpowers | plan | `writing-plans` skill | hybrid subagent → surface if it stalls (Step 3b-skill) |
-| GSD | plan | `/gsd-plan-phase {phase_id} --reviews`, then `gsd-plan-checker` | slash-command or surface (3b-cmd) + validate (3c) |
-| GSD | intent / requirements / design | `ai-kit-spec-review-fixer` | direct edit (3a) |
-| any other framework, generic, or `none` | all | `ai-kit-spec-review-fixer` | direct edit (3a) |
-| ambiguous / low-confidence detection | all | `ai-kit-spec-review-fixer` | direct edit (3a) — Surface notes the ambiguity |
-
-The reviewer (`ai-kit-spec-review-checklist`) is identical for every framework; only the **rewrite** stage is
-routed. To change routing, edit the framework profile's `revise_protocol.routes` — never hard-code
-tools here.
-
-**This table is a convenience snapshot. The authoritative routing is each framework profile's `revise_protocol.routes` — when in doubt, read the profile, not this table.** Adding a framework or changing a route means editing its profile, after which this snapshot may lag.
+Routing is data-driven from each profile's `revise_protocol.routes` — that profile is always the
+authoritative source; consult it, not a cached mental table, whenever routing is in doubt. For a
+convenience snapshot of the seed profiles' routes (FR-1.5), see
+[`references/routing-table.md`](references/routing-table.md) — useful for a quick sanity check,
+but it may lag a profile that's since been edited.
 
 ## Cleanup
 

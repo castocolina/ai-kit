@@ -1,5 +1,9 @@
 # Framework profiles
 
+> **Author-only reference.** This file documents the profile format for whoever is adding or
+> updating a framework profile. It is not part of the live-review flow — a reviewer/fixer
+> subagent never needs to load it; SKILL.md's checklists and the resolved profile are enough.
+
 A **framework profile** tells the spec-review system how a given spec-driven-development
 framework lays its documents on disk, which **archetype** each document is, and the
 review-relevant **conventions** that framework uses. The orchestrator resolves a profile,

@@ -1,11 +1,18 @@
 ---
 name: ai-kit-spec-config
-description: Sets up cross-AI reviewer config by detecting installed CLIs/models, asking which to use as reviewers and priority order, then writing review-spec.toml. Writes per-project ./.aikit/review-spec.toml by default (always announces the exact path), asks before updating an existing global config. Use when the user requests cross-AI review setup or when ai-kit-spec-review warns no config exists. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force ~/.config/ai-kit/review-spec.toml directly).
+description: Cross-AI reviewer config setup — detects installed CLIs/models, asks which to use as reviewers and in what priority order, then writes review-spec.toml. Writes per-project ./.aikit/review-spec.toml by default (always announces the exact path), asks before updating an existing global config. Use when the user requests cross-AI review setup or when ai-kit-spec-review warns no config exists. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force ~/.config/ai-kit/review-spec.toml directly).
 ---
 
 ## Your task
 
 Set up (or refresh) `ai-kit-spec-review`'s cross-AI reviewer configuration.
+
+This skill is a **Process** (a fixed Step 0→4 sequence: locate, detect,
+ask, write, report) executed with **Tool-level rigor** at each step — every
+CLI call, model id, and TOML field goes through the `ai-kit-spec.py`
+factory subcommands rather than being hand-typed, because a wrong quote or
+guessed model id fails silently or errors out at dispatch time far from
+where the mistake was made.
 
 ### Step 0 — Locate `ai-kit-spec.py` and the CLI profiles
 
@@ -125,6 +132,16 @@ have to re-detect next session.)
 
 This step gathers reviewer configuration through a series of prompts: starting with the write target (local vs. global), then asking which CLIs and models to register, resolving vendor details, building commands, testing them, and finally setting policy priorities and strategy options.
 
+Before registering any candidate, weigh it against two judgment calls, not
+just the mechanics below: **is this CLI's quota reliable enough to be a
+primary pick, or only worth keeping as a fallback?** (a CLI with a tight
+free-tier limit belongs low in the ladder, not first) — and **does this
+model's strength (planning vs. execution-oriented, per Step 2.2's
+research) actually match what the user reviews most?** Registering every
+available CLI/model indiscriminately produces a bloated, hard-to-reason-about
+ladder; the goal is a config the user can predict the fallback behavior of
+at a glance.
+
 | I want to... | Go to |
 |---|---|
 | Decide where the config gets written | Step 2.1 |
@@ -154,7 +171,14 @@ python3 "$TOOLS_PY" group-models --runtimes-json "$RUNTIMES_JSON" --cli <id>
 ```
 This prints `{"<family>": ["<variant-id>", ...], ...}` — one entry per base model family, each holding its own tier/effort/fast variants (the grouping is a plain suffix-stripping heuristic, not a quality judgment; an id it can't confidently collapse just becomes its own single-member family, which is fine). Present the **families**, not the raw ids, as the first choice — then let the user drill into a chosen family's variant list only if they want a specific tier rather than the default.
 
-**This rule applies to single-provider CLIs too, not just a multi-provider CLI's grouped catalog above** — e.g. codex/grok have no `models` list to group at all, so an unfamiliar model id for them (its exact string shape, whether effort/tier belongs in the id or a separate flag) must still be researched the same way before it's proposed to the user; confirmed live 2026-08-28 that guessing here (`gpt-5.6-sol-high` instead of the real `gpt-5.6-sol`) produces a candidate that fails outright at Step 2.5's live test. **For any family/model name you don't confidently recognize, research it before asking the user to choose — do not guess or rely solely on training knowledge, which is very likely stale for this.** Frontier models and CLI catalogs change faster than any model's training cutoff; this instruction applies whenever this skill actually runs, for whichever CLIs and catalogs exist at that time — never assume a name from today's session (or from this doc's own examples) is still current. Use `WebSearch` to find out, for an unfamiliar family: how recent it is relative to the vendor's other offerings (so the user can tell a superseded generation from the current one), and — where discoverable — whether it's positioned as a reasoning/planning-oriented model (better suited for analyzing or authoring specs/plans) or an instruction-following/tool-use-oriented model (better suited for well-scoped execution work with clear direction) — this maps to the `strength` question below, so raise it there informed by what you found rather than guessing blind. Summarize what you found for the user in a line or two per unfamiliar family before they choose — do not silently pre-filter families out on your own judgment; the user makes the final call on what's current/worth keeping, informed by your research.
+**This rule applies to single-provider CLIs too, not just a multi-provider CLI's grouped catalog above** — e.g. codex/grok have no `models` list to group at all, so an unfamiliar model id for them (its exact string shape, whether effort/tier belongs in the id or a separate flag) must still be researched the same way before it's proposed to the user; confirmed live 2026-08-28 that guessing here (`gpt-5.6-sol-high` instead of the real `gpt-5.6-sol`) produces a candidate that fails outright at Step 2.5's live test.
+
+**For any family/model name you don't confidently recognize, follow this before asking the user to choose** — never guess or rely solely on training knowledge, which is very likely stale for this (frontier models and CLI catalogs change faster than any model's training cutoff; never assume a name from today's session, or from this doc's own examples, is still current):
+
+1. **Recognize** — flag any family/model name in the grouped output you can't confidently place.
+2. **WebSearch** it for two things: how recent it is relative to the vendor's other offerings (so the user can tell a superseded generation from the current one), and — where discoverable — whether it's positioned as reasoning/planning-oriented (better suited for analyzing or authoring specs/plans) or instruction-following/tool-use-oriented (better suited for well-scoped execution work with clear direction).
+3. **Summarize** what you found in a line or two per unfamiliar family — never silently pre-filter families out on your own judgment.
+4. **Ask** the user to choose, informed by that summary; the `strength` question at Step 2.6 is where the reasoning-vs-execution finding gets recorded, so raise it there rather than guessing blind.
 
 **Before finalizing a CLI outside codegraph support (today: `grok`), check for a
 codegraph-capable alternative.** For each model being registered on such a CLI, run:
@@ -180,7 +204,7 @@ When this prints `{"vendor": null}` (no known prefix — e.g. an `ollama-cloud/*
 
 #### Step 2.4 — Build the command and model id
 
-For each CLI the user wants, read its profile under `$CLI_PROFILES_DIR/<id>.md` for anything CLI-specific this step doesn't already cover (prerequisites, known quirks, plan/entitlement gating — `cursor-agent.md` documents several). **Prefer the factory subcommands below over hand-writing a `command` template or a bracket-parameter model string** — for the CLIs `build_reviewer_command`/`build_reviewer_model_id` already know (`ai-kit-spec.py`'s `_COMMAND_BUILDERS` registry — currently codex, claude, grok, opencode, cursor-agent), the factory encodes verified quoting a hand-written template is easy to get wrong:
+For each CLI the user wants, read its profile under `$CLI_PROFILES_DIR/<id>.md` for anything CLI-specific this step doesn't already cover (prerequisites, known quirks, plan/entitlement gating — `cursor-agent.md` documents several). **Load only the profile(s) for CLIs actually selected at Step 2.2 — do NOT read the whole `$CLI_PROFILES_DIR` directory or preemptively load profiles for CLIs the user declined.** Each profile is a few KB of quirks relevant to exactly one CLI; loading unselected ones adds noise without informing any decision in this run. **Prefer the factory subcommands below over hand-writing a `command` template or a bracket-parameter model string** — for the CLIs `build_reviewer_command`/`build_reviewer_model_id` already know (`ai-kit-spec.py`'s `_COMMAND_BUILDERS` registry — currently codex, claude, grok, opencode, cursor-agent), the factory encodes verified quoting a hand-written template is easy to get wrong:
 ```bash
 python3 "$TOOLS_PY" build-command --cli <id> \
   [--effort <e>] [--service-tier <t>] [--mode plan|ask]

@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-execute-gsd
-description: Resolves the best available model/CLI for a GSD (Get Sh*t Done) phase, prepares GSD's own .planning/config.json (native runtime + model_profile_overrides, or workflow.cross_ai_command), then invokes GSD's own /gsd-execute-phase skill directly to perform the actual execution -- never subprocess-dispatches GSD itself. Use when ai-kit-spec-execute detects a GSD-managed plan (.planning/ directory present) and needs to run a phase with a resolved model.
+description: Resolves the best available model/CLI for a GSD (Get Sh*t Done) phase, prepares GSD's own .planning/config.json (native runtime + model_profile_overrides, or workflow.cross_ai_command), then invokes GSD's own /gsd-execute-phase skill directly to perform the actual execution -- never subprocess-dispatches GSD itself. Use when (1) ai-kit-spec-execute detects a GSD-managed plan (.planning/ directory present) and needs to run a phase with a resolved model, (2) a GSD phase needs a native-tier model pin (runtime + model_profile_overrides) written before execution, or (3) a GSD plan is opted into cross-AI delegation (frontmatter `cross_ai: true`) and needs workflow.cross_ai_command wired to this adapter's instrumented dispatch wrapper before /gsd-execute-phase runs.
 ---
 
 # ai-kit-spec-execute-gsd
@@ -101,6 +101,18 @@ default runs unmodified). Never schedule a wake for these.
 
 ## Step 2: Act on the dispatch mode
 
+**Mindset before writing anything here:**
+- Resolve dispatch mode fresh every run, never reuse a cached decision — quota state, installed
+  CLIs, and per-plan `cross_ai: true` opt-in can all change between runs, and a stale cached mode
+  would silently dispatch through the wrong path.
+- Before writing `workflow.cross_ai_command`, ask yourself: is this plan's frontmatter actually
+  opted in (`cross_ai: true`)? A workflow-level write alone never makes GSD delegate to cross-AI
+  (see the explicit scope-boundary note below) — writing the hook without checking the plan's own
+  opt-in would silently misconfigure a plan the user never asked to run cross-AI.
+- Run the mode-transition cleanup even when this run resolves a non-cross-AI mode — a stale
+  adapter-owned hook from a PRIOR run must never keep dispatching cross-AI just because THIS run
+  didn't touch it.
+
 - `native_tier` (either `written` value): the resolved mode is NOT cross-AI — run the
   mode-transition cleanup below before proceeding to Step 3, in case a PRIOR run of this project
   left an adapter-owned cross-AI hook active that this run's resolution superseded.
@@ -135,16 +147,8 @@ default runs unmodified). Never schedule a wake for these.
                                   # completes before GSD's blunt outer `timeout` SIGKILLs the
                                   # whole pipeline uncleanly (mid-write, no partial output saved)
   # NO manual quoting around $TOOLS_PY/$RESULT_CLI/$RESULT_MODEL/$CWD/$FORMAT_BLOCK_PATH below --
-  # GSD's own cross_ai_delegation step expands workflow.cross_ai_command's stored value as a bare
-  # `${CROSS_AI_CMD}` (word-split by whitespace only, never re-parsed as shell syntax, no `eval`).
-  # A quote character embedded in the stored string is NOT a quoting boundary at that point -- it
-  # is just another literal character stuck onto whichever word it falls inside, so `--cli
-  # \"$RESULT_CLI\"` would hand dispatch-execute the literal 8-character argument '"codex"'
-  # (quotes included) instead of the bare 5-character `codex` it needs. This means values with
-  # actual whitespace cannot be passed safely through this hook at all -- a real, structural
-  # limitation of GSD's own naive `${CROSS_AI_CMD}` expansion (not something this adapter can fix
-  # without editing GSD's own workflow prose), same as it already was for the raw external-CLI
-  # command string this replaces.
+  # this is deliberate, required by how GSD expands this value. Read only if you need to know why:
+  # references/dispatch-notes.md#why-no-manual-quoting-around-workflowcross_ai_commands-values
   WRAPPER_COMMAND="python3 $TOOLS_PY dispatch-execute --cli $RESULT_CLI --model $RESULT_MODEL --target-dir $CWD --prompt-file - --stdout-only --timeout $DISPATCH_TIMEOUT_SECONDS --format-block-file $FORMAT_BLOCK_PATH"
   UPDATED="$(python3 "$GSD_SHIM" write-workflow-key --config-path "$GSD_CONFIG_PATH" \
     --config-json "$(cat "$GSD_CONFIG_PATH" 2>/dev/null || echo '{}')" \
@@ -221,23 +225,10 @@ itself (idempotently, marker-guarded) means it reaches GSD's own execution regar
 dispatch mode Step 2 chose — GSD's own `/gsd-execute-phase` skill reads this same phase content
 whether it's running a native subagent or delegating through `cross_ai_command`.
 
-**`RESULT_MODE = "cross_ai_hook"` needs no separate guidance-append step here anymore.**
-(Superseded 2026-08-30 by Step 2's direct-dispatch wrapper — see its own note there for why.)
-Earlier, this step appended cross-AI dispatch reinforcement guidance directly to
-`$PHASE_PROMPT_FILE`, relying on GSD's own `cross_ai_delegation` step to carry that content
-through into the prompt it pipes to the external CLI. That worked in live testing, but rests on
-an assumption worth naming: GSD's own recipe extracts specific `<objective>`/`<tasks>` sections
-from the plan file to build its `$TASK_PROMPT`, not necessarily the whole file verbatim — so an
-appended block could in principle land outside what GSD actually extracts. Step 2's wrapper
-command sidesteps this: `dispatch-execute`'s own `--format-block-file` composes the SAME
-reinforcement guidance (model-selection override, incremental progress, honest failure
-reporting, and GSD's own real SUMMARY.md shape) directly INTO the dispatch itself, at the moment
-of the real subprocess call — guaranteed to reach the dispatched CLI regardless of what GSD's
-own extraction includes. The underlying guidance functions still live in
-`ai_kit_spec.dispatch_guidance` (framework-agnostic, shared with any future
-`ai-kit-spec-execute-<other-framework>` adapter) and `ai_kit_spec_gsd.cross_ai_guidance` (GSD's
-own real SUMMARY.md shape) — only WHERE they get composed changed, not what they say or that
-they stay out of GSD's own workflow/skill files entirely.
+**`RESULT_MODE = "cross_ai_hook"` needs no separate guidance-append step here anymore** (superseded
+2026-08-30 by Step 2's direct-dispatch wrapper). Read only if you need the history of why this
+step used to append guidance here and why that changed:
+`references/dispatch-notes.md#history-step-2s-wrapper-supersedes-the-old-guidance-append-step`.
 
 **Then invoke GSD's own `/gsd-execute-phase` skill directly, via the `Skill` tool, for `$PHASE_ID`
 — this is the entire remaining job of this skill.** There is no subprocess to run, no stdout to
@@ -249,3 +240,8 @@ configured. Concretely, the executing agent calls the `Skill` tool with the skil
 directly, not a shell command this document can show as a `bash` fence. After that call returns,
 this skill's own job is complete; any dispatch failure GSD's own skill surfaces (including its own
 cross-AI retry/skip/abort UI) is GSD's problem to handle and report, not this adapter's.
+
+If the `Skill` tool call itself fails to resolve — e.g. `gsd-execute-phase` isn't installed or its
+`SKILL.md` is missing/unreadable — that is a genuine environment problem, not a dispatch failure:
+STOP, do not retry, and report the exact resolution error to the user along with the path checked
+(`$HOME/.claude/skills/gsd-execute-phase/SKILL.md`) so they can reinstall or repair GSD.
