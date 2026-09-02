@@ -35,9 +35,10 @@ don't replace them).
 for choosing the best available model/CLI for a given execution task*
 (task-type affinity, context-size fit, user's ranked preferences, live
 quota) and *handing that choice to the right harness* — GSD's own
-config + `gsd-execute-phase`, or superpowers' `executing-plans`/
-`subagent-driven-development` — rather than reimplementing either
-framework's execution discipline.
+config + `gsd-execute-phase`, or superpowers' `subagent-driven-development`
+(see §8's scope correction: `executing-plans` runs every task inline with no
+subagent-dispatch point to inject into, so it is not a real target here) —
+rather than reimplementing either framework's execution discipline.
 
 ## 2. Family rename
 
@@ -210,21 +211,43 @@ knows Claude tiers dispatched via the native `Agent` tool, chosen by task
 complexity). There is nothing to *extend*; there is a real, good harness
 to *preserve*.
 
-The adapter invokes `superpowers:executing-plans` (or
-`subagent-driven-development`) as the actual execution methodology —
-same task-by-task discipline, TDD enforcement, fresh-subagent-per-task,
-review-between-tasks, commit cadence, all unchanged. The adapter is the
-one *invoking* that skill (as its orchestrator), and passes the
-already-resolved model/CLI choice as an explicit input at invocation
-time — same pattern `ai-kit-spec-review` already uses to hand
-pre-resolved `ARCHETYPE`/`FRAMEWORK_PROFILE_PATH` into
-`ai-kit-spec-review-checklist` rather than letting it re-detect. At each
-point that skill's own instructions call for "dispatch a subagent,"
-the adapter substitutes: native `Agent` tool if the resolved candidate is
-a Claude tier (unchanged from today), or `dispatch.py`'s external-CLI
-path if it's a non-Claude CLI — while every other structural guarantee
-(scope, TDD, review cadence) stays exactly as `executing-plans`/
-`subagent-driven-development` already define it.
+**Scope correction (this revision, sourced from the implementation plan's own
+verification against both skills' real SKILL.md text — cross-AI review flagged
+the original text below as narrowed by the plan without the design being
+updated to match; this is that update):** the adapter targets
+`subagent-driven-development` only, and only its one documented
+subagent-dispatch point ("1. Dispatch the implementer"). `superpowers:
+executing-plans`, read directly, runs every task inline in the controller's
+own session — "Follow each step exactly", no `Agent`-tool dispatch, no
+subagent, no report file anywhere in its process — so it has no extension
+point this adapter (or any adapter) could inject a resolved model/CLI into;
+this design's earlier phrasing ("invokes `executing-plans` (or
+`subagent-driven-development`)") was aspirational and unverified against that
+skill's actual text, not a real integration path. Likewise, substitution
+applies only at the implementer-dispatch point, not at every point
+`subagent-driven-development` happens to dispatch a subagent: that skill's
+own "3. Review the task" / "4. The fix loop" / final-review dispatches are
+answering a different question (which judgment tier should read this task's
+work, per that skill's own cost/complexity-tiered "Model Selection" section)
+than this adapter's live-quota execute-candidate ladder (which write-capable
+candidate can actually run the task) — folding review-model selection into
+the execute ladder would silently mix two unrelated policies, so those
+dispatches keep using `subagent-driven-development`'s own native
+model-selection logic, unmodified.
+
+The adapter invokes `subagent-driven-development` as the actual execution
+methodology — same task-by-task discipline, TDD enforcement,
+fresh-subagent-per-task, review-between-tasks, commit cadence, all unchanged.
+The adapter is the one *invoking* that skill (as its orchestrator), and
+passes the already-resolved model/CLI choice as an explicit input at its
+implementer-dispatch point — same pattern `ai-kit-spec-review` already uses
+to hand pre-resolved `ARCHETYPE`/`FRAMEWORK_PROFILE_PATH` into
+`ai-kit-spec-review-checklist` rather than letting it re-detect. At that one
+point, the adapter substitutes: native `Agent` tool if the resolved candidate
+is a Claude tier dispatched natively (unchanged from today), or
+`dispatch.py`'s external-CLI path otherwise — while every other structural
+guarantee (scope, TDD, review cadence, task/re-review/final-review dispatch)
+stays exactly as `subagent-driven-development` already defines it.
 
 ## 9. Codebase exploration tooling (applies to both review and execute)
 
