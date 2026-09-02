@@ -21,7 +21,10 @@ from ai_kit_spec.detection import (
 )
 from ai_kit_spec.dispatch import write_resumable_state as _write_resumable_state_default
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
-from ai_kit_spec.tooling_guidance import build_tooling_guidance
+from ai_kit_spec.tooling_guidance import (
+    build_tooling_guidance,
+    resolve_shared_tooling_reference_path,
+)
 
 from ai_kit_spec_gsd.adapter import (
     assemble_candidates,
@@ -189,8 +192,9 @@ def main(argv: list, assemble_candidates_fn=assemble_candidates,
                         codegraph_registered = False
                 except (subprocess.TimeoutExpired, OSError):
                     codegraph_registered = False
-        guidance = build_tooling_guidance(args.cli, tool_availability, agents_tooling_path,
-                                           codegraph_registered)
+        guidance = build_tooling_guidance(
+            args.cli, tool_availability, agents_tooling_path, codegraph_registered,
+            shared_reference_path=resolve_shared_tooling_reference_path())
         stdout.write(guidance)
         return 0
 

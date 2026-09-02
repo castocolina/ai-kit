@@ -8,7 +8,7 @@ except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only confi
 
 # ── Config (TOML) ────────────────────────────────────────────────────────
 
-DEFAULT_POLICY = {"mode": "single", "ladder": []}
+DEFAULT_POLICY = {"mode": "single", "ladder": [], "timeout_tiers": [600, 1200, 1800]}
 
 _KNOWN_REVIEWER_FIELDS = {"key", "model", "vendor", "cli", "command"}
 
@@ -130,3 +130,13 @@ def cfg_write_toml(path: str, config: dict) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(cfg_render_toml(config))
+
+
+def resolve_timeout_tiers(reviewer_entry: dict, policy: dict) -> list[int]:
+    """A reviewer's own `extra.timeout_tiers` (set via review-spec.toml, e.g. a known-slow
+    effort=high CLI/model combination) overrides the policy-wide default for that entry only.
+    `policy` is expected to already carry a real `timeout_tiers` list (DEFAULT_POLICY guarantees
+    this via cfg_resolve's own merge) -- this function never invents its own fallback constant,
+    single source of truth stays DEFAULT_POLICY."""
+    override = reviewer_entry.get("extra", {}).get("timeout_tiers")
+    return override if override else policy["timeout_tiers"]

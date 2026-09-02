@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
@@ -19,11 +20,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-k
 from ai_kit_spec import (
     cli,
     commands,
+    config_io,
     detection,
     dispatch,
     dispatch_guidance,
     execute_dispatch,
     execute_selection,
+    reviewer_dispatch,
     tooling_guidance,
 )
 
@@ -466,6 +469,35 @@ class TestResolveAgentsToolingPath(unittest.TestCase):
         env = {"HOME": "/home/u"}
         with unittest.mock.patch("os.path.isfile", return_value=False):
             self.assertIsNone(detection.resolve_agents_tooling_path(env=env))
+
+
+class TestFindCodegraphAlternative(unittest.TestCase):
+    def test_finds_grok_model_reachable_via_cursor_agent(self):
+        snapshot = {"clis": {
+            "cursor-agent": {"installed": True,
+                              "models": ["cursor-grok-4.6-high", "claude-opus-5-high"]},
+            "opencode": {"installed": True, "models": ["opencode-go/qwen3.8-max"]},
+        }}
+        result = detection.find_codegraph_alternative("grok", "grok-4.6", snapshot)
+        self.assertEqual(result, "cursor-agent")
+
+    def test_returns_none_when_cli_already_supports_codegraph(self):
+        snapshot = {"clis": {"cursor-agent": {"installed": True, "models": ["cursor-grok-4.6"]}}}
+        result = detection.find_codegraph_alternative("cursor-agent", "cursor-grok-4.6", snapshot)
+        self.assertIsNone(result)
+
+    def test_returns_none_when_no_matching_model_found_anywhere(self):
+        snapshot = {"clis": {
+            "cursor-agent": {"installed": True, "models": ["claude-opus-5-high"]},
+            "opencode": {"installed": True, "models": ["opencode-go/qwen3.8-max"]},
+        }}
+        result = detection.find_codegraph_alternative("grok", "grok-4.6", snapshot)
+        self.assertIsNone(result)
+
+    def test_skips_a_codegraph_capable_cli_that_is_not_installed(self):
+        snapshot = {"clis": {"cursor-agent": {"installed": False}}}
+        result = detection.find_codegraph_alternative("grok", "grok-4.6", snapshot)
+        self.assertIsNone(result)
 
 
 class TestCheckCodegraphMcpHealthy(unittest.TestCase):
@@ -1816,6 +1848,40 @@ class TestBuildToolingGuidance(unittest.TestCase):
             codegraph_registered=True)
         self.assertNotIn("codegraph_explore", result)
 
+    def test_resolve_shared_tooling_reference_path_points_to_a_real_file(self):
+        path = tooling_guidance.resolve_shared_tooling_reference_path()
+        self.assertTrue(path.endswith(
+            os.path.join("references", "tooling-guidance.md")))
+        self.assertTrue(os.path.isfile(path))
+
+    def test_build_tooling_guidance_always_includes_shared_reference_when_given(self):
+        guidance = tooling_guidance.build_tooling_guidance(
+            "grok", {}, None, False, shared_reference_path="/fake/tooling-guidance.md")
+        self.assertIn("Read /fake/tooling-guidance.md", guidance)
+
+    def test_build_tooling_guidance_omits_shared_reference_line_when_not_given(self):
+        guidance = tooling_guidance.build_tooling_guidance("grok", {}, None, False)
+        self.assertNotIn("tooling-guidance.md", guidance)
+
+    def test_surfaces_tool_availability_as_a_named_variable_the_reviewer_can_check(self):
+        # ai-kit-spec-review-checklist's legacy-tool-usage rule is gated on the modern
+        # equivalent being "confirmed in tool_availability" -- the map has to actually reach
+        # the dispatched reviewer under that name or the rule can never fire.
+        guidance = tooling_guidance.build_tooling_guidance(
+            "grok", {"rg": True, "fd": False}, None, False)
+        self.assertIn('TOOL_AVAILABILITY = {"fd":false,"rg":true}', guidance)
+
+    def test_omits_the_tool_availability_line_when_nothing_was_detected(self):
+        guidance = tooling_guidance.build_tooling_guidance("grok", {}, None, False)
+        self.assertNotIn("TOOL_AVAILABILITY", guidance)
+
+    def test_paths_are_emitted_as_named_variables_not_only_bare_paths(self):
+        guidance = tooling_guidance.build_tooling_guidance(
+            "claude", {}, "/home/u/.agents/AGENTS-TOOLING.md", False,
+            shared_reference_path="/fake/tooling-guidance.md")
+        self.assertIn("SHARED_TOOLING_PATH = /fake/tooling-guidance.md", guidance)
+        self.assertIn("AGENTS_TOOLING_PATH = /home/u/.agents/AGENTS-TOOLING.md", guidance)
+
 
 class TestDispatchGuidance(unittest.TestCase):
     def test_model_selection_override_names_the_resolved_dispatch(self):
@@ -2101,6 +2167,167 @@ class TestDispatchWithHeartbeat(unittest.TestCase):
         self.assertEqual(result["stdout"], "partial output before kill")
 
 
+class TestDispatchWithPolling(unittest.TestCase):
+    class _FakeProc:
+        def __init__(self, returncode_after_polls):
+            self._polls_left = returncode_after_polls
+            self.returncode = None
+            self.pid = 4242
+            self.killed = False
+
+        def poll(self):
+            if self._polls_left <= 0:
+                self.returncode = 0
+            else:
+                self._polls_left -= 1
+            return self.returncode
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    def _fake_kill(self, proc):
+        proc.killed = True
+        proc.returncode = -9
+
+    def test_single_tier_success_writes_prompt_and_returns_captured_output(self):
+        written = {}
+
+        def fake_popen(command, shell, stdin, stdout, stderr, start_new_session):
+            written["command"] = command
+            written["prompt"] = stdin.read()
+            # flush(): a REAL child writes straight to the dup'd fd, so its output is on
+            # disk the moment it is produced; a fake that writes through this Python file
+            # object has to flush to emulate that (dispatch_with_polling deliberately does
+            # not flush a handle it never writes to itself).
+            stdout.write(b"real report text")
+            stdout.flush()
+            stderr.write(b"")
+            return self._FakeProc(returncode_after_polls=1)
+
+        times = iter([0.0, 10.0, 20.0])
+        result = dispatch.dispatch_with_polling(
+            "echo hi", "the prompt", timeout_tiers=[600], poll_interval=50,
+            popen_fn=fake_popen, time_fn=lambda: next(times), sleep_fn=lambda s: None,
+            kill_fn=self._fake_kill, print_fn=lambda *a: None)
+
+        self.assertEqual(written["command"], "echo hi")
+        self.assertEqual(written["prompt"], b"the prompt")
+        self.assertEqual(result["stdout"], "real report text")
+        self.assertEqual(result["returncode"], 0)
+        self.assertFalse(result["timed_out"])
+        self.assertEqual(result["tiers_tried"], 1)
+        self.assertEqual(result["final_timeout"], 600)
+
+    def test_first_tier_times_out_and_escalates_to_second_tier_which_succeeds(self):
+        attempts = []
+        killed = []
+
+        def recording_kill(proc):
+            killed.append(proc)
+            self._fake_kill(proc)
+
+        def fake_popen(command, shell, stdin, stdout, stderr, start_new_session):
+            attempt_index = len(attempts)
+            attempts.append(attempt_index)
+            if attempt_index == 0:
+                # Never finishes within tier 1's budget -- polls_left huge.
+                return self._FakeProc(returncode_after_polls=10_000)
+            stdout.write(b"finished on tier 2")
+            stdout.flush()
+            return self._FakeProc(returncode_after_polls=0)
+
+        # Tier 1 (timeout=10): start=0.0, first poll check at elapsed=15 (>10 -> timeout).
+        # Tier 2 (timeout=600): start=15.0, next call elapsed=16 (<600 -> proceed), proc
+        # finishes on first poll() call (returncode_after_polls=0).
+        times = iter([0.0, 15.0, 15.0, 16.0])
+        result = dispatch.dispatch_with_polling(
+            "slow-cmd", "p", timeout_tiers=[10, 600], poll_interval=50,
+            popen_fn=fake_popen, time_fn=lambda: next(times), sleep_fn=lambda s: None,
+            kill_fn=recording_kill, print_fn=lambda *a: None)
+
+        self.assertEqual(len(attempts), 2)
+        # The tier-1 process must actually have been KILLED, not merely abandoned -- a killed
+        # process group is the whole point of the escalation (a survivor would keep burning
+        # quota against the same prompt while tier 2 runs).
+        self.assertEqual([p.killed for p in killed], [True])
+        self.assertFalse(result["timed_out"])
+        self.assertEqual(result["tiers_tried"], 2)
+        self.assertEqual(result["final_timeout"], 600)
+        self.assertEqual(result["stdout"], "finished on tier 2")
+
+    def test_all_tiers_exhausted_returns_timed_out_with_last_tier_partial_output(self):
+        def fake_popen(command, shell, stdin, stdout, stderr, start_new_session):
+            stdout.write(b"partial from last tier")
+            stdout.flush()
+            return self._FakeProc(returncode_after_polls=10_000)
+
+        times = iter([0.0, 15.0, 15.0, 25.0])
+        result = dispatch.dispatch_with_polling(
+            "never-finishes", "p", timeout_tiers=[10, 10], poll_interval=50,
+            popen_fn=fake_popen, time_fn=lambda: next(times), sleep_fn=lambda s: None,
+            kill_fn=self._fake_kill, print_fn=lambda *a: None)
+
+        self.assertTrue(result["timed_out"])
+        self.assertEqual(result["tiers_tried"], 2)
+        self.assertEqual(result["stdout"], "partial from last tier")
+
+    def test_progress_lines_report_byte_growth_between_polls(self):
+        printed = []
+
+        def fake_popen(command, shell, stdin, stdout, stderr, start_new_session):
+            stdout.write(b"x" * 100)
+            stdout.flush()
+            return self._FakeProc(returncode_after_polls=10_000)
+
+        # Two poll checks before the tier's own timeout hits.
+        times = iter([0.0, 5.0, 8.0, 12.0])
+        dispatch.dispatch_with_polling(
+            "cmd", "p", timeout_tiers=[10], poll_interval=3,
+            popen_fn=fake_popen, time_fn=lambda: next(times), sleep_fn=lambda s: None,
+            kill_fn=self._fake_kill, print_fn=lambda *a: printed.append(" ".join(map(str, a))))
+
+        self.assertTrue(any("100 bytes" in line or "total 100" in line for line in printed))
+
+    def test_finished_process_is_noticed_without_waiting_a_full_poll_interval(self):
+        # Regression: the loop used to sleep min(poll_interval, remaining) between poll()
+        # checks, so a child that exited in one second still went unnoticed for up to 150s.
+        # poll_interval must govern the PROGRESS LINE only, never completion detection.
+        sleeps = []
+        printed = []
+        ticks = {"t": 0.0}
+
+        def fake_time():
+            now = ticks["t"]
+            ticks["t"] += 1.0
+            return now
+
+        def fake_popen(command, shell, stdin, stdout, stderr, start_new_session):
+            stdout.write(b"done fast")
+            stdout.flush()
+            return self._FakeProc(returncode_after_polls=2)
+
+        result = dispatch.dispatch_with_polling(
+            "fast-cmd", "p", timeout_tiers=[600], poll_interval=150,
+            popen_fn=fake_popen, time_fn=fake_time, sleep_fn=sleeps.append,
+            kill_fn=self._fake_kill, print_fn=lambda *a: printed.append(" ".join(map(str, a))))
+
+        self.assertFalse(result["timed_out"])
+        self.assertEqual(result["stdout"], "done fast")
+        self.assertTrue(sleeps, "expected the loop to have slept at least once")
+        self.assertLessEqual(max(sleeps), 5, "each wait must be a short slice, not poll_interval")
+        self.assertLessEqual(sum(sleeps), 10,
+                             "a process finishing in seconds must not cost a whole poll_interval")
+        self.assertEqual(printed, [],
+                         "no progress line is due before poll_interval seconds have elapsed")
+
+    def test_empty_timeout_tiers_raises_value_error_instead_of_returning_none(self):
+        # Reachable from a config with `timeout_tiers = []`; returning None used to surface
+        # downstream as an opaque TypeError where the CLI subscripts result["stdout"].
+        with self.assertRaises(ValueError):
+            dispatch.dispatch_with_polling(
+                "cmd", "p", timeout_tiers=[], popen_fn=lambda *a, **k: None)
+
+
 class TestBuildExecuteCommand(unittest.TestCase):
     def test_codex_uses_workspace_write_sandbox_with_target_dir(self):
         cmd = commands.build_execute_command("codex", target_dir="/scratch/run1")
@@ -2252,6 +2479,235 @@ class TestCandidatesToLadder(unittest.TestCase):
     def test_extracts_ordered_keys(self):
         candidates = [{"key": "b/model"}, {"key": "a/model"}]
         self.assertEqual(execute_selection.candidates_to_ladder(candidates), ["b/model", "a/model"])
+
+
+class TestDispatchReviewer(unittest.TestCase):
+    def test_composes_tooling_guidance_and_dispatches_via_the_polling_engine(self):
+        captured = {}
+
+        def fake_dispatch(command, prompt, timeout_tiers, poll_interval=150, **kw):
+            captured["command"] = command
+            captured["prompt"] = prompt
+            captured["timeout_tiers"] = timeout_tiers
+            return {"returncode": 0, "stdout": "## Review\n### Status: Approved\n",
+                    "stderr": "", "timed_out": False, "tiers_tried": 1, "final_timeout": 600}
+
+        result = reviewer_dispatch.dispatch_reviewer(
+            {"key": "codex-sol", "model": "gpt-5.6-sol", "vendor": "openai", "cli": "codex",
+             "command": "codex exec --sandbox read-only -m {model}", "extra": {}},
+            "Read the checklist and review...",
+            timeout_tiers=[600, 1200], tool_availability={"rg": True},
+            agents_tooling_path=None,
+            dispatch_fn=fake_dispatch,
+            build_tooling_guidance_fn=lambda *a, **kw: "TOOLING GUIDANCE HERE",
+            resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
+            codegraph_health_fn=lambda cli: True)
+
+        self.assertEqual(captured["timeout_tiers"], [600, 1200])
+        self.assertIn("TOOLING GUIDANCE HERE", captured["prompt"])
+        self.assertIn("Read the checklist and review...", captured["prompt"])
+        self.assertEqual(captured["command"], "codex exec --sandbox read-only -m gpt-5.6-sol")
+        self.assertEqual(result["stdout"], "## Review\n### Status: Approved\n")
+
+    def test_command_line_prompt_cli_receives_the_tooling_guidance_prefix_too(self):
+        # The whole point of rendering INSIDE dispatch_reviewer: grok inlines {prompt} into its
+        # own command line and never reads stdin, so a guidance prefix applied only to stdin
+        # would be silently discarded for exactly the CLI that has no AGENTS.md ingestion.
+        captured = {}
+
+        def fake_dispatch(command, prompt, timeout_tiers, **kw):
+            captured["command"] = command
+            captured["prompt"] = prompt
+            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False,
+                    "tiers_tried": 1, "final_timeout": 600}
+
+        reviewer_dispatch.dispatch_reviewer(
+            {"key": "grok-flagship", "model": "grok-4.6", "vendor": "xai", "cli": "grok",
+             "command": "grok -p {prompt} -m {model}", "extra": {}},
+            "Read the checklist and review...",
+            timeout_tiers=[600], tool_availability={"rg": True}, agents_tooling_path=None,
+            dispatch_fn=fake_dispatch,
+            resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
+            codegraph_health_fn=lambda cli: False)
+
+        self.assertIn("SHARED_TOOLING_PATH = /fake/tooling-guidance.md", captured["command"])
+        self.assertIn("TOOL_AVAILABILITY = ", captured["command"])
+        self.assertIn("Read the checklist and review...", captured["command"])
+
+    def test_codegraph_health_is_resolved_internally_not_asked_of_the_caller(self):
+        asked = []
+
+        def fake_dispatch(command, prompt, timeout_tiers, **kw):
+            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False,
+                    "tiers_tried": 1, "final_timeout": 600}
+
+        def fake_health(cli):
+            asked.append(cli)
+            return True
+
+        captured_guidance_args = {}
+
+        def fake_guidance(cli, availability, agents_path, codegraph_registered, **kw):
+            captured_guidance_args["codegraph_registered"] = codegraph_registered
+            return ""
+
+        reviewer_dispatch.dispatch_reviewer(
+            {"key": "k", "model": "m", "vendor": "v", "cli": "codex",
+             "command": "codex exec -m {model}", "extra": {}},
+            "p", timeout_tiers=[600], tool_availability={"codegraph": True},
+            dispatch_fn=fake_dispatch, build_tooling_guidance_fn=fake_guidance,
+            resolve_shared_reference_fn=lambda: None, codegraph_health_fn=fake_health)
+
+        self.assertEqual(asked, ["codex"])
+        self.assertTrue(captured_guidance_args["codegraph_registered"])
+
+    def test_native_entry_with_no_cli_never_runs_the_codegraph_health_check(self):
+        asked = []
+
+        def fake_dispatch(command, prompt, timeout_tiers, **kw):
+            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False,
+                    "tiers_tried": 1, "final_timeout": 600}
+
+        reviewer_dispatch.dispatch_reviewer(
+            {"key": "custom", "model": "m", "vendor": "v", "cli": None,
+             "command": "my-script --model {model} --prompt {prompt}", "extra": {}},
+            "p", timeout_tiers=[600], tool_availability={},
+            dispatch_fn=fake_dispatch, resolve_shared_reference_fn=lambda: None,
+            codegraph_health_fn=lambda cli: asked.append(cli) or True)
+
+        self.assertEqual(asked, [])
+
+    def test_malformed_entry_without_a_command_template_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            reviewer_dispatch.dispatch_reviewer(
+                {"key": "broken", "model": "m", "vendor": "v", "cli": "codex",
+                 "command": None, "extra": {}},
+                "p", timeout_tiers=[600], tool_availability={},
+                resolve_shared_reference_fn=lambda: None,
+                codegraph_health_fn=lambda cli: False)
+
+    def test_dispatch_reviewer_cli_subcommand_stdout_only_prints_raw_report(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("review this plan")
+            reviewers_path = os.path.join(d, "reviewers.json")
+            with open(reviewers_path, "w", encoding="utf-8") as f:
+                json.dump([{"key": "grok-flagship", "model": "grok-4.6", "vendor": "xai",
+                            "cli": "grok", "command": "grok -p {prompt} -m {model}",
+                            "extra": {}}], f)
+            seen = {}
+
+            def fake_dispatch_reviewer(reviewer_entry, prompt, timeout_tiers, *a, **kw):
+                seen["entry"] = reviewer_entry
+                return {"returncode": 0, "stdout": "### Status: Approved\n", "stderr": "",
+                        "timed_out": False, "tiers_tried": 1, "final_timeout": 600}
+
+            with redirect_stdout(io.StringIO()) as out:
+                code = rs.main(
+                    ["dispatch-reviewer", "--reviewers-json", reviewers_path, "--index", "0",
+                     "--prompt-file", prompt_path, "--timeout-tiers", "600,1200",
+                     "--stdout-only"],
+                    dispatch_reviewer_fn=fake_dispatch_reviewer)
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue(), "### Status: Approved\n")
+        self.assertEqual(seen["entry"]["cli"], "grok")
+
+    def test_dispatch_reviewer_cli_subcommand_reports_a_malformed_entry_cleanly(self):
+        import io
+        from contextlib import redirect_stderr
+        with tempfile.TemporaryDirectory() as d:
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("review this plan")
+            reviewers_path = os.path.join(d, "reviewers.json")
+            with open(reviewers_path, "w", encoding="utf-8") as f:
+                json.dump([{"key": "broken", "model": "m", "vendor": "v", "cli": "codex",
+                            "command": None, "extra": {}}], f)
+            with redirect_stderr(io.StringIO()) as err:
+                code = rs.main(
+                    ["dispatch-reviewer", "--reviewers-json", reviewers_path, "--index", "0",
+                     "--prompt-file", prompt_path, "--timeout-tiers", "600"])
+        self.assertEqual(code, 1)
+        self.assertIn("dispatch-reviewer:", err.getvalue())
+        self.assertNotIn("### Status:", err.getvalue())
+
+    def test_dispatch_reviewer_cli_subcommand_reports_an_out_of_range_index(self):
+        import io
+        from contextlib import redirect_stderr
+        with tempfile.TemporaryDirectory() as d:
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("p")
+            reviewers_path = os.path.join(d, "reviewers.json")
+            with open(reviewers_path, "w", encoding="utf-8") as f:
+                json.dump([], f)
+            with redirect_stderr(io.StringIO()) as err:
+                code = rs.main(
+                    ["dispatch-reviewer", "--reviewers-json", reviewers_path, "--index", "0",
+                     "--prompt-file", prompt_path, "--timeout-tiers", "600"])
+        self.assertEqual(code, 1)
+        self.assertIn("no reviewer at index 0", err.getvalue())
+
+
+class TestTimeoutTiers(unittest.TestCase):
+    def test_default_policy_includes_the_10_20_30_minute_default(self):
+        self.assertEqual(config_io.DEFAULT_POLICY["timeout_tiers"], [600, 1200, 1800])
+
+    def test_cfg_resolve_surfaces_the_default_when_config_omits_it(self):
+        def fake_load(path):
+            return {}
+        with unittest.mock.patch.object(config_io, "cfg_load_toml", fake_load):
+            resolved = config_io.cfg_resolve("/nonexistent", {})
+        self.assertEqual(resolved["policy"]["timeout_tiers"], [600, 1200, 1800])
+
+    def test_resolve_timeout_tiers_uses_reviewer_override_when_present(self):
+        reviewer = {"key": "codex-sol", "extra": {"timeout_tiers": [900, 1800]}}
+        policy = {"timeout_tiers": [600, 1200, 1800]}
+        self.assertEqual(config_io.resolve_timeout_tiers(reviewer, policy), [900, 1800])
+
+    def test_resolve_timeout_tiers_falls_back_to_policy_default(self):
+        reviewer = {"key": "grok-flagship", "extra": {}}
+        policy = {"timeout_tiers": [600, 1200, 1800]}
+        self.assertEqual(config_io.resolve_timeout_tiers(reviewer, policy), [600, 1200, 1800])
+
+    def test_resolve_timeout_tiers_cli_subcommand_uses_reviewer_override(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, ".aikit"))
+            with open(os.path.join(d, ".aikit", "review-spec.toml"), "w", encoding="utf-8") as f:
+                f.write('[policy]\nmode = "single"\nladder = []\n')
+            reviewers_path = os.path.join(d, "reviewers.json")
+            with open(reviewers_path, "w", encoding="utf-8") as f:
+                json.dump([{"key": "codex-sol", "model": "gpt-5.6-sol", "vendor": "openai",
+                            "cli": "codex", "command": "codex exec -m {model}",
+                            "extra": {"timeout_tiers": [900, 1800]}}], f)
+            with redirect_stdout(io.StringIO()) as out:
+                code = rs.main(
+                    ["resolve-timeout-tiers", "--cwd", d, "--reviewers-json", reviewers_path,
+                     "--index", "0"])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue().strip(), "900,1800")
+
+    def test_resolve_timeout_tiers_cli_subcommand_falls_back_to_policy_default(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            # No .aikit/review-spec.toml at all -- cfg_resolve degrades to DEFAULT_POLICY.
+            reviewers_path = os.path.join(d, "reviewers.json")
+            with open(reviewers_path, "w", encoding="utf-8") as f:
+                json.dump([{"key": "grok-flagship", "model": "grok-4.6", "vendor": "xai",
+                            "cli": "grok", "command": "grok -p {prompt} -m {model}",
+                            "extra": {}}], f)
+            with redirect_stdout(io.StringIO()) as out:
+                code = rs.main(
+                    ["resolve-timeout-tiers", "--cwd", d, "--reviewers-json", reviewers_path,
+                     "--index", "0"])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue().strip(), "600,1200,1800")
 
 
 if __name__ == "__main__":

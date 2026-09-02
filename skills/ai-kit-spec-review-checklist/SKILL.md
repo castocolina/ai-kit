@@ -114,6 +114,13 @@ opposite outcomes).
 error/failure paths; interface contracts unspecified; non-actionable steps ("handle errors
 appropriately"); a `[P]`/parallel-marked task that actually shares state or has an ordering
 dependency; material unstated assumption; scope creep.
+**MEDIUM (legacy-tool usage):** the plan references a legacy tool by literal command invocation
+(`grep`, `find`, `cat` for search/listing, `sed`) where the `TOOL_AVAILABILITY = {…}` line in
+your own dispatch prompt confirms the modern equivalent (`rg`/`fd`/`bat`/`sd`) is `true` on the
+target machine. Name the specific line and the exact modern replacement. Never flag this when
+the modern equivalent's presence is NOT confirmed `true` in `TOOL_AVAILABILITY` — an
+unconfirmed absence is not evidence of absence — and never flag it at all when no
+`TOOL_AVAILABILITY` line was given to you.
 **MEDIUM:** undefined success criteria, missing rollback, test-coverage gaps, cross-section
 inconsistency.
 **LOW / Tooling-Catchable:** mechanical lint only. If it's actually a design decision (enums
@@ -194,6 +201,24 @@ of turns mid-review with no final report at all):
 **When budget is visibly tight, prioritize reaching `### Status:` over deriving additional
 low-severity findings** — a review that stops after CRITICAL/HIGH with a real Status line beats
 a longer one that never concludes.
+
+## Tool preference during review
+
+Your dispatch prompt carries these two named lines when the orchestrator resolved them:
+
+- `SHARED_TOOLING_PATH = <path>` — `Read` it once before your first search/listing/edit-adjacent
+  tool call. It names this repo's confirmed modern tool replacements (`rg`/`fd`/`bat`/`sd`/`eza`)
+  and, separately, when `codegraph_explore` is preferred over broad reads. Apply it to your OWN
+  grounding work during this review, the same way you already apply `FRAMEWORK_PROFILE_PATH` —
+  this is a `Read`-and-apply reference, never inlined prose repeated here. (An
+  `AGENTS_TOOLING_PATH = <path>` line may appear alongside it for machine-level preferences;
+  read it the same way.)
+- `TOOL_AVAILABILITY = {…}` — a compact JSON map of which of those tools are actually installed
+  on this machine. This is the *only* authoritative source for the legacy-tool-usage finding
+  above; `SHARED_TOOLING_PATH`'s table lists preferences, not confirmed installs.
+
+When a line is absent, the orchestrator could not confirm it — proceed without it and do not
+raise findings that depend on it.
 
 ## Output
 

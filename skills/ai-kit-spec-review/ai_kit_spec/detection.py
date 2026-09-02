@@ -213,6 +213,32 @@ def check_codegraph_mcp_healthy(cli: str, run_fn=subprocess.run) -> bool:
     return _codegraph_entry_healthy_in_list_output(list_result.stdout)
 
 
+# The two multi-provider CLIs with their own per-model catalog (KNOWN_CLIS' other three --
+# claude, codex, grok -- have no "models" list in build_runtimes_snapshot's own output at all,
+# so they can never be a *target* alternative here; only a *source* cli being checked).
+_CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS = ("cursor-agent", "opencode")
+
+
+def find_codegraph_alternative(cli: str, model: str, runtimes_snapshot: dict) -> str | None:
+    """Best-effort only (design spec §8, §14): when `cli` has no codegraph/MCP support (not in
+    _SUPPORTED_CODEGRAPH_CLIENTS) but a substring match suggests the SAME base model is also
+    reachable through a codegraph-capable CLI's own model catalog, return that CLI's name --
+    informational only, never a hard filter. Model-id naming conventions differ across CLIs
+    (e.g. "grok-4.6" vs. "cursor-grok-4.6-high") so this is a substring heuristic, not a
+    guarantee; a missed match degrades silently to None, never a false claim."""
+    if cli in _SUPPORTED_CODEGRAPH_CLIENTS:
+        return None
+    needle = model.lower()
+    for candidate_cli in _CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS:
+        entry = runtimes_snapshot.get("clis", {}).get(candidate_cli, {})
+        if not entry.get("installed"):
+            continue
+        for candidate_model in entry.get("models", []):
+            if needle in candidate_model.lower():
+                return candidate_cli
+    return None
+
+
 CODEGRAPH_INDEX_TIMEOUT_SECONDS = 15  # agreed minimum, safety margin over the typical <5s runtime
 
 

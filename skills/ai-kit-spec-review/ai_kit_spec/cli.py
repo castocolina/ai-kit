@@ -11,12 +11,18 @@ from ai_kit_spec.commands import (
     build_reviewer_model_id,
     render_reviewer_command,
 )
-from ai_kit_spec.config_io import cfg_render_toml, cfg_resolve, cfg_write_toml
+from ai_kit_spec.config_io import (
+    cfg_render_toml,
+    cfg_resolve,
+    cfg_write_toml,
+    resolve_timeout_tiers,
+)
 from ai_kit_spec.detection import (
     RUNTIMES_TTL_SECONDS,
     build_runtimes_snapshot,
     cache_runtimes_path,
     detect_tool_availability,
+    find_codegraph_alternative,
     group_models_by_family,
 )
 from ai_kit_spec.execute_dispatch import dispatch_execute
@@ -33,11 +39,12 @@ from ai_kit_spec.review_reports import (
     report_declares_issues,
     report_has_status,
 )
+from ai_kit_spec.reviewer_dispatch import dispatch_reviewer
 from ai_kit_spec.vendor import infer_vendor_from_model
 
 
 def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
-         dispatch_execute_fn=dispatch_execute) -> int:
+         dispatch_execute_fn=dispatch_execute, dispatch_reviewer_fn=dispatch_reviewer) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(prog="review-spec")
@@ -93,6 +100,12 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
                            help="0 for the primary/only reviewer, 1 for the secondary")
     p_render.add_argument("--prompt-file", required=True)
 
+    p_tiers = sub.add_parser("resolve-timeout-tiers")
+    p_tiers.add_argument("--cwd", required=True)
+    p_tiers.add_argument("--reviewers-json", required=True,
+                          help="path to resolve-reviewers' saved JSON array output")
+    p_tiers.add_argument("--index", type=int, required=True)
+
     p_vendor = sub.add_parser("infer-vendor")
     p_vendor.add_argument("--model", required=True)
 
@@ -117,6 +130,11 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
     )
     p_group.add_argument("--cli", required=True,
                           help="which CLI's models array to group, e.g. opencode, cursor-agent")
+
+    p_alt = sub.add_parser("check-codegraph-alternative")
+    p_alt.add_argument("--cli", required=True)
+    p_alt.add_argument("--model", required=True)
+    p_alt.add_argument("--runtimes-json", required=True)
 
     p_dispatch = sub.add_parser("dispatch-execute")
     p_dispatch.add_argument("--cli", required=True,
@@ -153,6 +171,29 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
              "subcommand's stdout as a real artifact needs (e.g. GSD's own cross_ai_delegation "
              "step, which redirects workflow.cross_ai_command's raw stdout straight into a "
              "SUMMARY.md candidate file and inspects the real exit code, never a JSON wrapper)")
+
+    p_dispatch_reviewer = sub.add_parser("dispatch-reviewer")
+    p_dispatch_reviewer.add_argument(
+        "--reviewers-json", required=True,
+        help="path to resolve-reviewers' saved JSON array output -- this subcommand renders "
+             "the entry's own command template itself (never take a pre-rendered --command "
+             "string: the render must happen AFTER the tooling-guidance prefix is composed, "
+             "or a CLI that inlines {prompt} into its command line never receives it)")
+    p_dispatch_reviewer.add_argument(
+        "--index", type=int, required=True,
+        help="0 for the primary/only reviewer, 1 for the secondary")
+    p_dispatch_reviewer.add_argument("--prompt-file", required=True,
+                                      help="pass '-' to read the prompt from this process's "
+                                           "own stdin")
+    p_dispatch_reviewer.add_argument(
+        "--timeout-tiers", required=True,
+        help="comma-separated seconds, e.g. '600,1200,1800' -- escalation order")
+    p_dispatch_reviewer.add_argument("--tool-availability-json", default=None)
+    p_dispatch_reviewer.add_argument("--agents-tooling-path", default=None)
+    p_dispatch_reviewer.add_argument(
+        "--stdout-only", action="store_true",
+        help="print ONLY the dispatched reviewer's own stdout and exit with its real "
+             "returncode, same contract as dispatch-execute's own --stdout-only")
 
     p_check = sub.add_parser("check-reviewer")
     p_check.add_argument("--key", default="candidate")
@@ -260,6 +301,15 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
             return 1
         return 0
 
+    if args.command == "resolve-timeout-tiers":
+        with open(args.reviewers_json, encoding="utf-8") as f:
+            reviewers = json.load(f)
+        r = reviewers[args.index]
+        config = cfg_resolve(args.cwd, dict(os.environ))
+        tiers = resolve_timeout_tiers(r, config.get("policy", {}))
+        print(",".join(str(t) for t in tiers))
+        return 0
+
     if args.command == "infer-vendor":
         print(json.dumps({"vendor": infer_vendor_from_model(args.model)}))
         return 0
@@ -289,6 +339,12 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
         snapshot = cache_read_json(args.runtimes_json) or {}
         models = snapshot.get("clis", {}).get(args.cli, {}).get("models", [])
         print(json.dumps(group_models_by_family(models)))
+        return 0
+
+    if args.command == "check-codegraph-alternative":
+        snapshot = cache_read_json(args.runtimes_json) or {}
+        alternative = find_codegraph_alternative(args.cli, args.model, snapshot)
+        print(json.dumps({"alternative_cli": alternative}))
         return 0
 
     if args.command == "dispatch-execute":
@@ -321,6 +377,39 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
             # more diagnosable than a flattened one when things go wrong. A timeout kill can leave
             # returncode negative (signal) or None depending on the platform; 1 covers both, since
             # any nonzero reads as failure either way.
+            return result["returncode"] if result["returncode"] is not None else 1
+        print(json.dumps(result))
+        return 0
+
+    if args.command == "dispatch-reviewer":
+        with open(args.reviewers_json, encoding="utf-8") as f:
+            reviewers = json.load(f)
+        if not -len(reviewers) <= args.index < len(reviewers):
+            print(f"dispatch-reviewer: no reviewer at index {args.index} "
+                  f"({len(reviewers)} entries)", file=sys.stderr)
+            return 1
+        if args.prompt_file == "-":
+            prompt = sys.stdin.read()
+        else:
+            with open(args.prompt_file, encoding="utf-8") as f:
+                prompt = f.read()
+        timeout_tiers = [int(t) for t in args.timeout_tiers.split(",") if t.strip()]
+        tool_availability = (json.loads(args.tool_availability_json)
+                              if args.tool_availability_json else {})
+        try:
+            result = dispatch_reviewer_fn(
+                reviewers[args.index], prompt, timeout_tiers, tool_availability,
+                args.agents_tooling_path)
+        except ValueError as exc:
+            # Deliberately no "### Status:" substring -- same fail-closed convention
+            # render-command uses: a malformed reviewer entry (bad/missing command template,
+            # empty timeout tiers) leaves this reviewer's report file absent/statusless, which
+            # ai-kit-spec-review/SKILL.md's existing "No Status line -> Surface failure" rule
+            # already handles with no new special-casing.
+            print(f"dispatch-reviewer: {exc}", file=sys.stderr)
+            return 1
+        if args.stdout_only:
+            sys.stdout.write(result["stdout"])
             return result["returncode"] if result["returncode"] is not None else 1
         print(json.dumps(result))
         return 0

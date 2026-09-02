@@ -10,7 +10,10 @@ here -- it has no subprocess to dispatch at all; the caller executes it in-proce
 from ai_kit_spec.commands import NO_HARD_SANDBOX_CLIS, build_execute_command
 from ai_kit_spec.dispatch import dispatch_with_heartbeat
 from ai_kit_spec.dispatch_guidance import build_dispatch_reinforcement_guidance
-from ai_kit_spec.tooling_guidance import build_tooling_guidance
+from ai_kit_spec.tooling_guidance import (
+    build_tooling_guidance,
+    resolve_shared_tooling_reference_path,
+)
 
 
 def build_soft_confinement_guidance(target_dir: str) -> str:
@@ -57,8 +60,9 @@ def dispatch_execute(candidate: dict, prompt: str, target_dir: str, heartbeat_in
     command = command_template.format(model=candidate["model"])
     resolved_label = f"{cli}, model {candidate['model']}"
     guidance_sections = [build_reinforcement_fn(resolved_label, format_block)]
-    tool_guidance = build_tooling_guidance_fn(cli, tool_availability or {}, agents_tooling_path,
-                                               codegraph_registered)
+    tool_guidance = build_tooling_guidance_fn(
+        cli, tool_availability or {}, agents_tooling_path, codegraph_registered,
+        shared_reference_path=resolve_shared_tooling_reference_path())
     if tool_guidance:
         guidance_sections.append(tool_guidance)
     if cli in NO_HARD_SANDBOX_CLIS:

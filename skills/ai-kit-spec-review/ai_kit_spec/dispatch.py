@@ -4,12 +4,19 @@ output, process-GROUP timeout enforcement. Never CLI-specific -- takes an alread
 string as an opaque unit."""
 import datetime
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 from ai_kit_spec.cache import cache_write_json
+
+# How long dispatch_with_polling waits between proc.poll() checks. Deliberately NOT
+# configurable and deliberately NOT poll_interval: this is completion-detection latency
+# (how late we notice a finished child), whereas poll_interval is progress-reporting cadence.
+_POLL_SLICE_SECONDS = 1
 
 
 def _default_print_fn(*args) -> None:
@@ -89,6 +96,106 @@ def dispatch_with_heartbeat(command: str, prompt: str, heartbeat_interval: int, 
             continue
         return {"returncode": proc.returncode, "stdout": stdout, "stderr": stderr,
                 "timed_out": False}
+
+
+def dispatch_with_polling(command: str, prompt: str, timeout_tiers: list[int],
+                           poll_interval: int = 150, popen_fn=subprocess.Popen,
+                           time_fn=time.time, sleep_fn=time.sleep,
+                           kill_fn=_default_kill_process_group, print_fn=_default_print_fn,
+                           tmp_dir_fn=tempfile.mkdtemp, rmtree_fn=shutil.rmtree) -> dict:
+    """Escalates across `timeout_tiers` (seconds, in order), each tier a FRESH process -- a
+    killed CLI cannot resume its own reasoning state, so a tier restart is a real, accepted
+    cost (design spec §4/§14), not an oversight. `stdout`/`stderr` are redirected to real
+    files (never PIPE): this removes the deadlock condition `dispatch_with_heartbeat`'s own
+    docstring documents (stdin fill racing an undrained stdout pipe) because nothing routes
+    through our own process's pipes here, so `prompt` is delivered via a plain file handed to
+    the child as its own stdin (`stdin=<open file>`) -- no manual write, no blocking-write risk
+    on our side at all. The same file-backed stdout also makes real interim progress
+    inspectable while the subprocess is alive: `print_fn` gets a one-line size-delta report
+    every `poll_interval` seconds. Informational ONLY -- never aborts an attempt early, even at
+    zero growth (design decision: a false "stalled" verdict on a genuinely slow-but-working
+    model is worse than the wasted wait).
+
+    `poll_interval` governs ONLY how often that progress line is emitted (and how often the
+    size delta is measured) -- never how often the child is checked for completion. The wait
+    itself is sliced into `_POLL_SLICE_SECONDS` chunks with a `proc.poll()` between each, so a
+    process that exits in one second is noticed in about one second instead of up to
+    `poll_interval` (150s) later. Without that split, a fast-failing dispatch (bad model id,
+    auth error -- the CLI exits immediately) would cost the caller a full poll interval of dead
+    time for nothing, and every normal review would pay it once at the end.
+
+    Raises `ValueError` for an empty `timeout_tiers`: with no tier there is nothing to run and
+    no result to return, and silently returning None would surface downstream as an opaque
+    TypeError in whichever caller subscripts the result."""
+    if not timeout_tiers:
+        raise ValueError("timeout_tiers must name at least one tier -- got an empty list")
+    tmp_dir = tmp_dir_fn(prefix="ai-kit-spec-dispatch-")
+    try:
+        prompt_path = os.path.join(tmp_dir, "prompt")
+        with open(prompt_path, "w", encoding="utf-8") as f:
+            f.write(prompt)
+        stdout_path = os.path.join(tmp_dir, "stdout")
+        stderr_path = os.path.join(tmp_dir, "stderr")
+        last_result = None
+        for tier_index, tier_timeout in enumerate(timeout_tiers, start=1):
+            start = time_fn()
+            last_size = 0
+            next_report_at = poll_interval
+            # "rb": the child never sees this Python file object at all -- Popen dups its
+            # fileno() -- so text decoding here would be pure overhead on a prompt we only
+            # ever hand over as a raw file descriptor.
+            with open(prompt_path, "rb") as in_f, \
+                 open(stdout_path, "wb") as out_f, \
+                 open(stderr_path, "wb") as err_f:
+                proc = popen_fn(command, shell=True, stdin=in_f, stdout=out_f, stderr=err_f,
+                                 start_new_session=True)
+                timed_out = False
+                while proc.poll() is None:
+                    elapsed = time_fn() - start
+                    remaining = tier_timeout - elapsed
+                    if remaining <= 0:
+                        kill_fn(proc)
+                        try:
+                            proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            pass
+                        timed_out = True
+                        break
+                    # Short slice, NOT poll_interval -- see the docstring: this is the
+                    # completion-detection latency, and it must stay small regardless of how
+                    # rarely we report progress.
+                    sleep_fn(min(_POLL_SLICE_SECONDS, remaining))
+                    if elapsed < next_report_at:
+                        continue
+                    next_report_at = elapsed + poll_interval
+                    # No out_f.flush() here: nothing is ever written through THIS file object
+                    # (the child writes to the dup'd fd directly), so our own buffer is always
+                    # empty and getsize() already sees everything the child has flushed.
+                    size = os.path.getsize(stdout_path) if os.path.exists(stdout_path) else 0
+                    delta = size - last_size
+                    ts_elapsed = int(elapsed)
+                    if delta:
+                        print_fn(f"tier {tier_index} ({tier_timeout}s): +{delta} bytes "
+                                 f"since last check (total {size}, {ts_elapsed}s elapsed)")
+                    else:
+                        print_fn(f"tier {tier_index} ({tier_timeout}s): no growth "
+                                 f"({ts_elapsed}s elapsed)")
+                    last_size = size
+            with open(stdout_path, "rb") as f:
+                stdout = f.read().decode("utf-8", errors="replace")
+            with open(stderr_path, "rb") as f:
+                stderr = f.read().decode("utf-8", errors="replace")
+            last_result = {"returncode": proc.returncode, "stdout": stdout, "stderr": stderr,
+                            "timed_out": timed_out, "tiers_tried": tier_index,
+                            "final_timeout": tier_timeout}
+            if not timed_out:
+                return last_result
+            if tier_index < len(timeout_tiers):
+                print_fn(f"tier {tier_index} ({tier_timeout}s) timed out -- escalating to "
+                         f"tier {tier_index + 1} ({timeout_tiers[tier_index]}s)")
+        return last_result
+    finally:
+        rmtree_fn(tmp_dir, ignore_errors=True)
 
 
 def write_resumable_state(path: str, state: dict, write_fn=cache_write_json) -> None:

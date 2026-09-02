@@ -156,6 +156,20 @@ This prints `{"<family>": ["<variant-id>", ...], ...}` — one entry per base mo
 
 **This rule applies to single-provider CLIs too, not just a multi-provider CLI's grouped catalog above** — e.g. codex/grok have no `models` list to group at all, so an unfamiliar model id for them (its exact string shape, whether effort/tier belongs in the id or a separate flag) must still be researched the same way before it's proposed to the user; confirmed live 2026-08-28 that guessing here (`gpt-5.6-sol-high` instead of the real `gpt-5.6-sol`) produces a candidate that fails outright at Step 2.5's live test. **For any family/model name you don't confidently recognize, research it before asking the user to choose — do not guess or rely solely on training knowledge, which is very likely stale for this.** Frontier models and CLI catalogs change faster than any model's training cutoff; this instruction applies whenever this skill actually runs, for whichever CLIs and catalogs exist at that time — never assume a name from today's session (or from this doc's own examples) is still current. Use `WebSearch` to find out, for an unfamiliar family: how recent it is relative to the vendor's other offerings (so the user can tell a superseded generation from the current one), and — where discoverable — whether it's positioned as a reasoning/planning-oriented model (better suited for analyzing or authoring specs/plans) or an instruction-following/tool-use-oriented model (better suited for well-scoped execution work with clear direction) — this maps to the `strength` question below, so raise it there informed by what you found rather than guessing blind. Summarize what you found for the user in a line or two per unfamiliar family before they choose — do not silently pre-filter families out on your own judgment; the user makes the final call on what's current/worth keeping, informed by your research.
 
+**Before finalizing a CLI outside codegraph support (today: `grok`), check for a
+codegraph-capable alternative.** For each model being registered on such a CLI, run:
+```bash
+python3 "$TOOLS_PY" check-codegraph-alternative --cli <id> --model <model-id> \
+  --runtimes-json "$RUNTIMES_JSON"
+```
+When `alternative_cli` is non-null, tell the user in one line before they confirm: `"<model> is
+also reachable via <alternative_cli>, which supports codegraph_explore (grok CLI does not) —
+consider registering it through <alternative_cli> instead for grounding-heavy review/execute
+work."` This is informational only (best-effort substring match, per
+`find_codegraph_alternative`'s own docstring) — the user still makes the final call; never
+silently substitute the CLI or drop the original option.
+
+
 #### Step 2.3 — Resolve vendor attribution
 
 **Vendor attribution is deterministic — never infer it from the model name yourself.** For every model id (whether picked from a multi-provider CLI's list or typed by the user for a single-provider CLI), resolve `vendor` by calling:
@@ -206,7 +220,22 @@ Worth asking regardless of `policy.mode`, since it's the only zero-external-depe
 
 #### Step 2.8 — Set policy.mode, policy.ladder order, and strategy
 
-Then ask: `policy.mode` (`single` or `double`) and the `policy.ladder` order — this is the **priority fallback list**: the order reviewers are tried in, first available wins the primary slot (`double` mode also seats an independent secondary). Default the order to the order the user answered the per-CLI and native-entry questions in, combined, but let them reorder; once confirmed, echo it back as a numbered list so the user sees the exact fallback order before it's written (`cfg_render_toml` also writes this same list as a `#`-comment above `[policy]` in the file itself, so it stays readable to anyone opening `review-spec.toml` directly later, not just at setup time). If the resolved write target (above) is **local**, also ask whether this local config should be `local-only` or the default `global-merge` — set the JSON config's top-level `strategy` key to `"local-only"` if so (`cfg_render_toml` renders it as a bare `strategy = "..."` line at the top of the file); omit the key entirely for the default (global-merge applies, no line needed). This question does not apply when the resolved target is global — `strategy` only ever describes how a *local* config relates to the global one.
+Then ask: `policy.mode` (`single` or `double`) and the `policy.ladder` order — this is the **priority fallback list**: the order reviewers are tried in, first available wins the primary slot (`double` mode also seats an independent secondary). Default the order to the order the user answered the per-CLI and native-entry questions in, combined, but let them reorder; once confirmed, echo it back as a numbered list so the user sees the exact fallback order before it's written (`cfg_render_toml` also writes this same list as a `#`-comment above `[policy]` in the file itself, so it stays readable to anyone opening `review-spec.toml` directly later, not just at setup time). If the resolved write target (above) is **local**, also ask whether this local config should be `local-only` or the default `global-merge` — set the JSON config's top-level `strategy` key to `"local-only"` if so (`cfg_render_toml` renders it as a bare `strategy = "..."` line at the top of the file); omit the key entirely for the default (global-merge applies, no line needed).
+
+The `strategy` question does not apply when the resolved target is global — `strategy` only ever describes how a *local* config relates to the global one.
+
+**When at least one external-CLI reviewer is being registered** (native-only configs have no
+subprocess to time out), also ask whether to customize `policy.timeout_tiers` from its default
+`[600, 1200, 1800]` — 10, then 20, then 30 minutes, each tier a fresh attempt after the previous
+one is killed, so the tiers are **cumulative**: the worst case is their sum (60 minutes), not a
+30-minute ceiling. Most users should keep the default; only ask this as an offer, don't require
+an answer. If the user wants a specific reviewer entry to use different tiers (e.g. a known-slow
+`effort=high` combination), that goes in a flat `timeout_tiers = [900, 1800]` key directly on
+that `[[reviewers]]` entry, instead of the policy-wide default. It must be a **flat** key on the
+entry — this config format has no nested-object support (`extra` is derived at read time from
+every `[[reviewers]]` key the schema doesn't recognize, and the TOML writer has no dict branch),
+so a nested `extra = { timeout_tiers = [...] }` would be written out as a string and silently
+fall back to the policy default.
 
 ### Step 3 — Write
 

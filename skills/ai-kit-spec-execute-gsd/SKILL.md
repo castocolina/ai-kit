@@ -244,7 +244,7 @@ they stay out of GSD's own workflow/skill files entirely.
 capture, no heartbeat to route (Task 1 finding 3) — GSD's own workflow performs the actual
 dispatch, heartbeating, and completion end-to-end in-session, using whichever mechanism Step 2 just
 configured. Concretely, the executing agent calls the `Skill` tool with the skill name confirmed by
-`/run/media/system/home/user-zero/.claude/skills/gsd-execute-phase/SKILL.md`'s own frontmatter
+`$HOME/.claude/skills/gsd-execute-phase/SKILL.md`'s own frontmatter
 (`gsd-execute-phase`), passing `$PHASE_ID` as its argument — this is a tool call the agent makes
 directly, not a shell command this document can show as a `bash` fence. After that call returns,
 this skill's own job is complete; any dispatch failure GSD's own skill surfaces (including its own

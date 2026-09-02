@@ -192,7 +192,8 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
      RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
      QUOTA_JSON="$(python3 "$TOOLS_PY" cache-path --kind quota)"
    fi
-   printf '%s\n' "$TOOLS_PY" "$CHECKLIST_SKILL_MD" "$RUNTIMES_JSON" "$QUOTA_JSON"
+   SHARED_TOOLING_PATH="$REVIEW_SPEC_SKILL_DIR/references/tooling-guidance.md"
+   printf '%s\n' "$TOOLS_PY" "$CHECKLIST_SKILL_MD" "$RUNTIMES_JSON" "$QUOTA_JSON" "$SHARED_TOOLING_PATH"
    ```
    `CHECKLIST_SKILL_MD` is the path Step 1's external-CLI dispatch tells
    the external reviewer to `Read` — `ai-kit-spec-review-checklist` (the
@@ -207,10 +208,11 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
    in exactly one place, not duplicated as a bash literal here.
    Resolve this whole block once, in one `Bash` call, and — exactly like
    `RUN_TMP_DIR` below — record `TOOLS_PY`/`CHECKLIST_SKILL_MD`/
-   `RUNTIMES_JSON`/`QUOTA_JSON` from the trailing `printf`'s stdout (four
-   lines, in that order) as literal absolute paths substituted into every
-   later command and prose reference; they are **not** shell environment
-   variables that survive across separate `Bash` tool calls. If
+   `RUNTIMES_JSON`/`QUOTA_JSON`/`SHARED_TOOLING_PATH` from the trailing
+   `printf`'s stdout (five lines, in that order) as literal absolute paths
+   substituted into every later command and prose reference; they are
+   **not** shell environment variables that survive across separate `Bash`
+   tool calls. If
    `TOOLS_PY` does not exist at the resolved path, treat this
    exactly like `--no-cross-ai` (point 2 below) — cross-AI support isn't
    installed, never block the review over it. If `TOOLS_PY` exists but
@@ -223,6 +225,17 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
    dropped from `REVIEWER_LIST`, never dispatched, and this iteration
    surfaces via whatever entries remain (or `NO_CONFIG_FALLBACK` if none
    do).
+
+   Also call `detect-tools`, cached the same way `ai-kit-spec-config`'s own
+   Step 1 does it — but since this orchestrator has no long-lived cache
+   file for tool availability today, call it fresh each run (cheap — a
+   handful of `which` calls, no network, no TTL logic needed):
+   ```bash
+   TOOL_AVAILABILITY_JSON="$(python3 "$TOOLS_PY" detect-tools)"
+   ```
+   Record `TOOL_AVAILABILITY_JSON` as this run's literal tool-availability
+   JSON string, substituted into every later `--tool-availability-json`
+   reference.
 1. Run `mktemp -d` via `Bash`, and record its printed absolute path as
    `RUN_TMP_DIR` in this skill's own working notes — **not** a shell
    environment variable. Every `Bash` tool call in this harness starts a
@@ -285,8 +298,8 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
    ```
    (No-op — writes `{}` — when there is no config/ladder to probe.)
 5. Resolve the reviewer list, saving its output to a file (Step 1's
-   external dispatch needs a stable path to feed `render-command`, not
-   just the in-context text). This point is only reached when cross-AI is
+   external dispatch needs a stable path to feed `dispatch-reviewer`,
+   not just the in-context text). This point is only reached when cross-AI is
    actually active — `--no-cross-ai` already short-circuited at step 2
    above — so `--cross-ai` is always passed here, never conditionally.
    (Do not split this command across a trailing `\` followed by an
@@ -313,8 +326,8 @@ Runs once per invocation, after Step 0.6. Before resolving the reviewer list, as
    `$RUN_TMP_DIR/reviewers.json` holds a JSON array of 1 or 2 reviewer
    objects. Record its contents as `REVIEWER_LIST` (index 0 = primary/only
    reviewer, index 1 = the secondary in double mode) — Step 1 both reasons
-   over this in-context and passes the same file's path to `render-command`
-   for external dispatch.
+   over this in-context and passes the same file's path (plus the entry's
+   index) to `dispatch-reviewer` for external dispatch.
 
 ## Constants
 
@@ -490,55 +503,62 @@ For each entry in `REVIEWER_LIST`:
      ARCHETYPE-ceiling clauses verbatim — see the native reviewer prompt
      template later in this same Step 1 — so an external reviewer works
      from the exact same contract a native one does, not a thinner one.)
-  2. Fill the entry's `command` template via the `render-command`
-     subcommand, which calls `render_reviewer_command`
-     internally — this is the ONLY way the orchestrator's `Bash`-tool
-     dispatch reaches that function, since it's Python and the
-     orchestrator dispatches via shell, not by importing the module:
+  2. Resolve this entry's timeout tiers via the `resolve-timeout-tiers` subcommand (the entry's
+     own flat `timeout_tiers` key if `$RUN_TMP_DIR/reviewers.json`'s entry at this index has
+     one, else the config's own `policy.timeout_tiers`):
      ```bash
-     python3 "$TOOLS_PY" render-command \
+     TIMEOUT_TIERS="$(python3 "$TOOLS_PY" resolve-timeout-tiers --cwd <CODEBASE_ROOT> \
+       --reviewers-json "$RUN_TMP_DIR/reviewers.json" --index <0 for primary, 1 for secondary>)"
+     ```
+  3. Dispatch via `dispatch-reviewer` — **one** call, no separate render step, instead of a
+     hand-built `nohup`/redirect pipeline. One tested Python path composes the prompt, renders
+     the entry's `command` template against it, and runs it; never ad hoc shell assembled fresh
+     per run:
+     ```bash
+     python3 "$TOOLS_PY" dispatch-reviewer \
        --reviewers-json "$RUN_TMP_DIR/reviewers.json" \
        --index <0 for the primary/single reviewer, 1 for the secondary> \
-       --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt"
-     ```
-     This prints the fully filled, shell-safe command string to stdout —
-     `{prompt}` already shell-escaped, per `render_reviewer_command`'s own
-     docstring. Never hand-splice the prompt into a command string
-     yourself. **If this exits nonzero** (a malformed or missing `command`
-     template on this reviewer entry — a config error, not a runtime
-     failure), do not attempt to run anything: this reviewer's slot
-     failed to dispatch. Do not write `$RUN_TMP_DIR/iter<N>-<key>.md` for
-     it — leaving it absent is what makes Step 1.5's `merge-reports`
-     (double mode) or the missing-file case (single mode) fail closed
-     through the existing `### Status:`-line-based rules, with no new
-     special-casing needed here.
-  3. Execute the printed command via the `Bash` tool with an explicit
-     timeout (e.g. 300000ms / 5 minutes — generous for a real review call,
-     distinct from the quota probe's 30s timeout since this is a full
-     document review, not a trivial probe), redirecting **both** stdin
-     from the prompt file written in point 1 **and** stdout to
-     `$RUN_TMP_DIR/iter<N>-<key>.md`:
-     ```bash
-     <printed command> < "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt" \
+       --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt" \
+       --timeout-tiers "$TIMEOUT_TIERS" \
+       --tool-availability-json "$TOOL_AVAILABILITY_JSON" \
+       --stdout-only \
        > "$RUN_TMP_DIR/iter<N>-<key>.md"
      ```
-     **Always redirect stdin this way, for every CLI, even one whose
-     `command` template still contains a literal `{prompt}`.** Four of the
-     five known builders (codex, claude, opencode, cursor-agent) emit
-     a template with no `{prompt}` placeholder at all — confirmed live,
-     each reads its prompt from stdin rather than a positional/flag
-     argument (see each CLI's profile under `$CLI_PROFILES_DIR`). Only
-     `grok`'s builder (its `-p`/`--single` flag requires the prompt as a
-     real value, confirmed live — passing `-` there sends the literal
-     dash character as the prompt, not a stdin trigger) and a hand-written
-     open-hatch `command` inline `{prompt}` as a shell argument via
-     `render-command`'s existing shell-escaping. Redirecting stdin
-     unconditionally, regardless of which shape a given entry's `command`
-     uses, means this step never has to inspect the template to decide —
-     an unread stdin pipe is harmless to a CLI that already got its
-     prompt inline.
+     **Do not render the command yourself and pass it back in.** `dispatch-reviewer` takes the
+     reviewer entry (`--reviewers-json` + `--index`), not a pre-rendered command string, and
+     calls `render_reviewer_command` internally *after* it has prefixed the tooling guidance
+     onto the prompt. That ordering is load-bearing twice over: some CLIs (grok) inline the
+     prompt into their own command line via `{prompt}` rather than reading stdin, so guidance
+     composed after the render would never reach them; and a rendered command round-tripped
+     back through a `--command "<string>"` shell argument would be shell-evaluated twice,
+     reintroducing the `$`/backtick injection hazard `render_reviewer_command`'s escaping
+     exists to prevent. There is likewise **no** `--codegraph-registered` flag to compute:
+     `dispatch-reviewer` runs the same live `check_codegraph_mcp_healthy` check itself whenever
+     the entry has a `cli` (the same internal-resolution pattern the execute family's
+     `prepare-tooling` already uses), so the orchestrator never has to evaluate it.
+     `$SHARED_TOOLING_PATH` (resolved in Step 0.7) and `$TOOL_AVAILABILITY_JSON` are surfaced
+     to the reviewer as named `SHARED_TOOLING_PATH = …` / `TOOL_AVAILABILITY = …` lines at the
+     top of the composed prompt.
 
-Reviewer prompt template — use VERBATIM, substitute only `<DOC_PATHS>`, `<ARCHETYPE>`, `<FRAMEWORK_PROFILE_PATH>`, `<CODEBASE_ROOT>`, and `<GROUNDING_DOCS>`:
+     **Run this backgrounded or with an explicit near-cap `Bash` timeout — never on the default
+     one.** The tiers are cumulative, not a ceiling: the default `[600, 1200, 1800]` is up to
+     **60 minutes** of wall time in the worst case, and tier 1 alone (600s) already equals the
+     harness's own 600000ms maximum. A short default timeout kills the dispatch mid-tier and
+     throws away work that was still running. Either run the command with `run_in_background`
+     and then poll for `$RUN_TMP_DIR/iter<N>-<key>.md` to exist and stop growing before moving
+     on to Step 1.5, or (for a config whose tiers you know are short) pass an explicit
+     `timeout` close to the harness cap. Treat a dispatch that never produces the report file
+     exactly like a nonzero exit below — the file is absent, so the fail-closed rules apply
+     unchanged.
+
+     **If this exits nonzero** (a malformed or missing `command` template on this reviewer
+     entry, or an empty `timeout_tiers` — config errors, not runtime failures), this reviewer's
+     slot failed to dispatch. Do not write or keep `$RUN_TMP_DIR/iter<N>-<key>.md` for it —
+     leaving it absent is what makes Step 1.5's `merge-reports` (double mode) or the
+     missing-file case (single mode) fail closed through the existing `### Status:`-line-based
+     rules, with no new special-casing needed here.
+
+Reviewer prompt template — use VERBATIM, substitute only `<DOC_PATHS>`, `<ARCHETYPE>`, `<FRAMEWORK_PROFILE_PATH>`, `<CODEBASE_ROOT>`, `<GROUNDING_DOCS>`, `<SHARED_TOOLING_PATH>`, and `<TOOL_AVAILABILITY_JSON>` (both resolved in Step 0.7 point 0):
 
 ```
 You are the reviewer.
@@ -553,6 +573,15 @@ detection/classification. If FRAMEWORK_PROFILE_PATH is a path, Read it: it encod
 framework's doc archetypes and review conventions (requirement syntax, delta sections,
 ambiguity/parallel markers, constitutional gates) — apply them. If "none", use the generic
 archetype checklists.
+
+Step 2b: The orchestrator has also pre-resolved this machine's tooling facts:
+- SHARED_TOOLING_PATH = <SHARED_TOOLING_PATH>
+- TOOL_AVAILABILITY = <TOOL_AVAILABILITY_JSON>
+Read SHARED_TOOLING_PATH for this repo's confirmed tool preferences and apply them during your
+own grounding work (prefer rg/fd/bat/sd/eza and codegraph_explore where confirmed available,
+over broad reads/legacy tools). TOOL_AVAILABILITY is the authoritative map of which of those
+tools are actually installed here — it is what the checklist's legacy-tool-usage rule is gated
+on, so never flag a legacy invocation whose modern replacement is not `true` in it.
 
 Step 3: Read every file under review fresh from disk:
 <DOC_PATHS>
@@ -616,7 +645,7 @@ merge call — that entry's raw report (or the native `Agent` tool's output,
 written to the same `iter<N>-<key>.md` path per Step 1) is
 `EFFECTIVE_REPORT_PATH` directly, unchanged from today's behavior. If
 `EFFECTIVE_REPORT_PATH` does not exist on disk at all — the single-mode
-case of Step 1's "render-command exits nonzero" dispatch failure, which
+case of Step 1's "dispatch-reviewer exits nonzero" dispatch failure, which
 deliberately leaves that path unwritten — treat it exactly like a
 report that lacks a `### Status:` line: Step 2's existing "No Status
 line -> Surface failure" rule applies unchanged, there is no separate
