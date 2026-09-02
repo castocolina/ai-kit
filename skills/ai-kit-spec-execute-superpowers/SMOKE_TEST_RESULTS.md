@@ -123,9 +123,71 @@ Step 3 PASS: low-context_limit candidate rejected, high-context_limit candidate 
 `big-context/model` (context_limit=5,000,000) won, driven by the real derived byte count of the
 4MB file on disk, not a caller-supplied fixture.
 
-## Step 1b, 4b, 4c (CONTROLLER-PERFORMED)
+## Step 1b: Full-loop smoke test — real native `Agent`-tool dispatch through `subagent-driven-development`'s own contract (CONTROLLER-PERFORMED) — PASS
 
-Not attempted by this implementer, per "Execution ownership" in `task-6-brief.md`. `$SMOKE_HOME`
-and `$SMOKE_CWD` above are left on disk for the controller to re-export and use. This section will
-be appended to by the controller after Step 1b completes (Step 4b), and the scratch directories
-will be removed by the controller afterward (Step 4c).
+Performed directly in the controller's own session, against the still-live `$SMOKE_HOME`/
+`$SMOKE_CWD` re-exported from the values recorded above (Step 4a's implementer left both
+directories untouched, confirmed present via `ls -la` before this step began).
+
+Uses Step 1's SAME resolved candidate (`model="opus"`, `mode="native_claude"`) and SAME brief
+(`$SMOKE_CWD/task-1-brief.md`).
+
+### 1. Real implementer dispatch — a genuine `Agent` tool call, `model="opus"`
+
+Prompt: "Read the task brief at `$SMOKE_CWD/task-1-brief.md`. Implement it: create
+`smoke_widget.py` in `$SMOKE_CWD` containing a single function `def smoke_widget(): return 'ok'`.
+Write a detailed report of what you did to `$SMOKE_CWD/task-1-native-report.md`... Reply with ONLY
+a short status line at the very end."
+
+Real reply text (verbatim, trailing status line included):
+
+```
+Created `/tmp/claude-1000/tmp.FxVDBF2gc8/smoke_widget.py` with the single `smoke_widget()`
+function, verified it imports and returns 'ok' via an asserted `python3 -c` run, and wrote the
+detailed evidence report to `/tmp/claude-1000/tmp.FxVDBF2gc8/task-1-native-report.md`.
+
+DONE
+```
+
+### 2. Status extraction — SAME `rg` pattern Task 4's SKILL.md Step 3 defines
+
+```
+$ printf '%s\n' "$AGENT_REPLY_TEXT" | rg -o '\b(DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED|DONE)\b' | tail -1
+DONE
+```
+
+Extracted status is `DONE` against a REAL model reply — not a hand-authored fixture string.
+
+### 3. Report handling confirmed
+
+```
+$ python3 -c "... assert getsize(report) > 0 ... assert 'smoke_widget' in open(widget).read() ..."
+Step 1b dispatch PASS: real Agent-tool implementer wrote its report and deliverable
+```
+
+`$SMOKE_CWD/task-1-native-report.md` exists and is non-empty; `$SMOKE_CWD/smoke_widget.py` exists
+and contains `smoke_widget` — the real deliverable, not simulated.
+
+### 4. Task review — a SECOND, independent real `Agent` tool call, `model="opus"`
+
+Prompt: "Read `task-1-brief.md`, `task-1-native-report.md`, and `smoke_widget.py`. Confirm the
+deliverable satisfies the brief's own `**Files:**` block. Reply with exactly one word at the end:
+`APPROVED` or `CHANGES_NEEDED`."
+
+Real reply (excerpted, final word verbatim): "...No extra imports, guards, or helpers — scope
+stayed literal to the brief... The report's one flagged deviation (body on an indented line rather
+than inline on the `def`) is cosmetic and semantically identical... **APPROVED**"
+
+Final word extracted: `APPROVED`.
+
+**Step 1b PASS overall**: a real implementer dispatch (native `Agent` tool, `model="opus"`), real
+report-file handling, and a real independent review pass, all driven by this adapter's own
+`resolve-injection` output — never simulated. This closes the "adapter's own
+`subagent-driven-development` integration was never verified" gap design spec §13 calls out; Steps
+1–3 proved `resolve-injection`/`dispatch-task`'s own behavior in isolation, and this step proves the
+harness-integration contract on top of it.
+
+## Step 4c: Scratch environment cleanup (CONTROLLER-PERFORMED)
+
+`$SMOKE_HOME` and `$SMOKE_CWD` removed after Step 1b and this append (Step 4b) were both complete —
+nothing further needs them.
