@@ -5,7 +5,11 @@ description: Routes execution of an already-generated plan/phase to the framewor
 
 # ai-kit-spec-execute
 
-1. Run `detect_framework(cwd)` from `detect_framework.py`.
-2. `"gsd"` → delegate to `ai-kit-spec-execute-gsd`.
-3. `"superpowers"` → delegate to `ai-kit-spec-execute-superpowers` (see that skill's own SKILL.md).
-4. `"unknown"` → ask the user which framework generated this plan; do not guess.
+1. If the user just invoked a framework's own planning skill in this conversation (superpowers
+   `writing-plans`/`brainstorming`, or a GSD planning skill), note it as `CONVERSATION_SIGNAL`
+   (`"superpowers"`/`"gsd"`) — otherwise `CONVERSATION_SIGNAL` is unset.
+2. Run `detect_framework(cwd, document_path=<the plan/phase path the user asked to execute, if
+   any>, conversation_signal=CONVERSATION_SIGNAL)` from `detect_framework.py`.
+3. `"gsd"` → delegate to `ai-kit-spec-execute-gsd`.
+4. `"superpowers"` → delegate to `ai-kit-spec-execute-superpowers` (see that skill's own SKILL.md).
+5. `"unknown"` → ask the user which framework generated this plan; do not guess.
