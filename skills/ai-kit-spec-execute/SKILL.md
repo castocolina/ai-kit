@@ -7,11 +7,13 @@ description: Routes execution of an already-generated plan/phase to the framewor
 
 ## Dependencies
 
-This skill requires `detect_framework.py`, located in the skill's own directory (`skills/ai-kit-spec-execute/detect_framework.py`). Import as:
+This skill requires `detect_framework.py`, located in the skill's own directory (`skills/ai-kit-spec-execute/detect_framework.py`). The caller's bootstrap block (Task 1) adds `skills/ai-kit-spec-execute` to sys.path, so import as a bare top-level module:
 ```python
-from skills.ai-kit-spec_execute.detect_framework import detect_framework
+import detect_framework
 ```
-The function has already been added to sys.path by the skill bootstrap block (Task 1). No additional setup required.
+Then call: `detect_framework.detect_framework(cwd, document_path=..., conversation_signal=...)`
+
+No additional path setup required — the bootstrap already handles sys.path.
 
 ## Routing Procedure
 
