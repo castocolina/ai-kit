@@ -67,7 +67,7 @@ class QuotaExhaustedError(RuntimeError):
     mechanism for this task. `tried` carries every candidate key the walk actually visited, in
     ladder order, so a caller can persist the complete excluded set verbatim into resumable state
     (design spec Section 10, HIGH finding) -- never a bare string a caller has to re-parse.
-    `reasons` maps each tried key to why it was skipped -- one of SIX typed reasons (HIGH finding:
+    `reasons` maps each tried key to why it was skipped -- one of SEVEN typed reasons (HIGH finding:
     a real probe/dispatch failure has more shapes than "quota" vs "auth", and only one of them is
     ever worth an hourly wait):
       - "quota": a genuine, time-bound rate/usage-limit signal -- worth the hourly wake.
@@ -190,15 +190,6 @@ def derive_files_touched_sizes(task_markdown: str, cwd: str, isfile_fn=os.path.i
         full_path = os.path.join(cwd, _strip_line_qualifier(path))
         sizes[path] = getsize_fn(full_path) if isfile_fn(full_path) else 0
     return sizes
-
-
-def _has_quota(quota: dict, key: str) -> bool:
-    """Mirrors ai_kit_spec.quota's own private _has_quota (no entry -> never probed -> assume
-    available, never block resolution on the ABSENCE of quota data)."""
-    entry = quota.get(key)
-    if entry is None:
-        return True
-    return entry.get("available", True)
 
 
 def _unavailability_reason(quota: dict, key: str) -> str:

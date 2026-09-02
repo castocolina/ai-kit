@@ -13,8 +13,8 @@ markers are supporting evidence only, never the primary signal):
      both are present -- the more specific, harder-to-fake signal, so it wins ties AT THIS
      FALLBACK TIER ONLY; it never overrides an explicit document_path/conversation_signal above.
 
-Also runnable directly: `python3 detect_framework.py <cwd> [document_path]` prints the result on
-stdout."""
+Also runnable directly: `python3 detect_framework.py <cwd> [document_path] [conversation_signal]`
+prints the result on stdout."""
 import os
 import sys
 
@@ -46,4 +46,6 @@ def detect_framework(cwd: str, document_path: str | None = None,
 
 if __name__ == "__main__":
     doc_path = sys.argv[2] if len(sys.argv) > 2 else None
-    print(detect_framework(sys.argv[1], document_path=doc_path))
+    conv_signal = sys.argv[3] if len(sys.argv) > 3 else None
+    print(detect_framework(sys.argv[1], document_path=doc_path,
+                            conversation_signal=conv_signal))

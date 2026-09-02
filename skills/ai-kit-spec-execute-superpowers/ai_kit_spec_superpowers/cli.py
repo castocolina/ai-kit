@@ -34,13 +34,13 @@ from ai_kit_spec_superpowers.dispatch_injection import (
     assemble_candidates,
     build_dispatch_injection,
     classify_dispatch_failure,
-    classify_task,
     compute_ladder_keys,
     compute_resume_exclusions,
     derive_files_touched_sizes,
     dispatch_superpowers_task,
     reasons_summary,
 )
+from ai_kit_spec_superpowers.task_classification import classify_task
 
 # Prefixes a fallback report so it is never mistaken for a genuine implementer-authored one
 # (CRITICAL finding, recurrence guard).
@@ -265,6 +265,17 @@ def main(argv: list, assemble_candidates_fn=assemble_candidates,
 
     if args.command == "dispatch-task":
         injection = json.loads(args.injection_json)
+        # HIGH finding: dispatch-task is the only real entry point that ever calls
+        # dispatch_superpowers_task_fn -- a native_claude injection must fail here with the same
+        # clear ValueError dispatch_superpowers_task itself raises ("a native_claude injection
+        # dispatches via the Agent tool directly..."), BEFORE any tooling-detection code below
+        # (which indexes injection["cli"] -- absent on a native_claude injection) runs and dies
+        # with an unexplained bare KeyError instead.
+        if injection.get("mode") != "external_cli":
+            raise ValueError(
+                f"dispatch-task only handles mode='external_cli' injections, got "
+                f"mode={injection.get('mode')!r}; a native_claude injection dispatches via the "
+                f"Agent tool directly, never through this CLI subprocess path")
         with open(args.prompt_file, encoding="utf-8") as f:
             prompt = f.read()
         with open(args.format_block_file, encoding="utf-8") as f:

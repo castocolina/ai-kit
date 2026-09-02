@@ -628,7 +628,7 @@ resumable state and the auto-wake.** Read `any_quota_recoverable` from that resu
   come back empty by design (escalation-excluded keys never get a reason), so there is nothing to
   read off the result.** In that case, report instead that no candidate ranked above `$INJECTION_KEY`
   on the ladder is available for a fresh (non-escalation) pick — name the excluded keys from
-  `$ESCALATION_EXCLUDE_JSON` (the same ladder keys Step 2 above passed as
+  `$ESCALATION_EXCLUDE_JSON` (the same ladder keys this step passed as
   `--escalation-excluded-keys-json`) explicitly, so the user sees which candidates were excluded and
   why even though the result's own `reasons` map is empty.
 

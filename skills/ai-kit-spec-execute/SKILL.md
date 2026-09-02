@@ -5,15 +5,39 @@ description: Routes execution of an already-generated plan/phase to the framewor
 
 # ai-kit-spec-execute
 
-## Dependencies
+## Step 0: Resolve detect_framework.py's path
 
-This skill requires `detect_framework.py`, located in the skill's own directory (`skills/ai-kit-spec-execute/detect_framework.py`). The caller's bootstrap block (Task 1) adds `skills/ai-kit-spec-execute` to sys.path, so import as a bare top-level module:
-```python
-import detect_framework
+Same pattern `ai-kit-spec-execute-superpowers/SKILL.md` uses for its own shim — take the FIRST
+existing of, in order, in the same `Bash` call. Every branch is a real, executable check: no
+branch here is an instruction for the reading agent to manually substitute a path; a git-checkout
+(this repo cloned or worktree-added, not plugin- or user-globally-installed) is resolved by
+searching from the real git toplevel and, failing that, from the current working directory —
+covering every supported installation shape (plugin install, user-global install, dev/worktree
+checkout) with plain, portable shell:
+
+```bash
+for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-execute}" \
+         "$HOME/.claude/skills/ai-kit-spec-execute" \
+         "$(git rev-parse --show-toplevel 2>/dev/null)/skills/ai-kit-spec-execute" \
+         "$(pwd)/skills/ai-kit-spec-execute"; do
+  [ -n "$d" ] && [ -d "$d" ] && { SKILL_DIR="$d"; break; }
+done
+if [ -z "$SKILL_DIR" ]; then
+  printf 'ERROR: could not resolve skills/ai-kit-spec-execute under any known installation shape '
+  printf '(CLAUDE_PLUGIN_ROOT, ~/.claude/skills, git toplevel, or cwd) -- STOP and tell the user '
+  printf 'rather than guessing a path.\n'
+  exit 1
+fi
+DETECT_FRAMEWORK_PY="$SKILL_DIR/detect_framework.py"
+printf 'DETECT_FRAMEWORK_PY=%s\n' "$DETECT_FRAMEWORK_PY"
 ```
-Then call: `detect_framework.detect_framework(cwd, document_path=..., conversation_signal=...)`
 
-No additional path setup required — the bootstrap already handles sys.path.
+**Record the printed line as this wave's own literal value.** Every later invocation below uses
+this resolved `$DETECT_FRAMEWORK_PY` path. Either invoke it as a subprocess (`python3
+$DETECT_FRAMEWORK_PY <cwd> [document_path] [conversation_signal]`, which prints the result on
+stdout) or, from Python already running with `$SKILL_DIR` on `sys.path`, `import
+detect_framework` as a bare top-level module and call
+`detect_framework.detect_framework(cwd, document_path=..., conversation_signal=...)` directly.
 
 ## Routing Procedure
 
@@ -21,7 +45,7 @@ No additional path setup required — the bootstrap already handles sys.path.
    `writing-plans`/`brainstorming`, or a GSD planning skill), note it as `CONVERSATION_SIGNAL`
    (`"superpowers"`/`"gsd"`) — otherwise `CONVERSATION_SIGNAL` is unset.
 2. Extract the plan/phase path from the user's request if explicitly provided (e.g., "execute `/path/to/plan.md`" or referencing a file path in the conversation). If no explicit path, document_path is None.
-3. Run `detect_framework(cwd, document_path=document_path, conversation_signal=CONVERSATION_SIGNAL)` from `detect_framework.py`.
+3. Run `detect_framework(cwd, document_path=document_path, conversation_signal=CONVERSATION_SIGNAL)` from `$DETECT_FRAMEWORK_PY` (Step 0), passing `CONVERSATION_SIGNAL` through — never omit it, it is the strongest signal (see Anti-Patterns).
 4. Based on result:
    - `"gsd"` → delegate to `ai-kit-spec-execute-gsd`.
    - `"superpowers"` → delegate to `ai-kit-spec-execute-superpowers` (see that skill's own SKILL.md).
