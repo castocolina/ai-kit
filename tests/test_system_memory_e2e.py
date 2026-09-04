@@ -19,6 +19,7 @@ The render assertion needs a platform whose available memory the provider can
 read (Linux /proc/meminfo); it is skipped elsewhere. The install/executable
 assertions are platform-independent.
 """
+import contextlib
 import fcntl
 import json
 import os
@@ -107,7 +108,7 @@ def _run_wizard_install(argv, env, timeout=45):
                 os.close(slave_fd)
             os.execvpe(argv[0], argv, env)
         except Exception:  # pylint: disable=broad-exception-caught
-            os._exit(127)  # noqa: SLF001 - unreachable except on exec failure
+            os._exit(127)
     os.close(slave_fd)
 
     buf = [b""]
@@ -132,10 +133,8 @@ def _run_wizard_install(argv, env, timeout=45):
             reaped, status = os.waitpid(pid, os.WNOHANG)
             if reaped == pid:
                 return status
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         for _ in range(40):  # up to ~2s of bounded polling, never unbounded
             reaped, status = os.waitpid(pid, os.WNOHANG)
             if reaped == pid:
