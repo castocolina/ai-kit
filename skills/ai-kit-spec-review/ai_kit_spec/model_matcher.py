@@ -52,7 +52,8 @@ def _fuzzy_candidate_indices(target: str, normalized_options: list) -> list:
             (ranked[0][0] - score) < _FUZZY_MARGIN]
 
 
-def match_models_dev(cli_model_id: str, models_dev_data: dict) -> dict | None:
+def match_models_dev(cli_model_id: str, models_dev_data: dict,
+                      provider_hint: str | None = None) -> dict | None:
     """Three-step lookup: (1) if cli_model_id has a "<hint>/<model>" shape, try
     models_dev_data[hint]["models"][model] directly -- an exact hinted hit is always
     unambiguous and returned immediately, no collision to consider. (2) Only when step 1
@@ -61,10 +62,13 @@ def match_models_dev(cli_model_id: str, models_dev_data: dict) -> dict | None:
     namespaces differently than models.dev does). (3) CRITICAL finding: only when step 2 finds
     NOTHING AT ALL does a fuzzy fallback run -- normalized-string similarity across every
     provider's every model id, via _fuzzy_candidate_indices. COLLISION-SAFE at every step: if
-    more than one provider's model matches (exact OR fuzzy), that's ambiguous -- returns None
-    rather than "whichever came first in dict-iteration order" (a naive first-match would
-    silently attach one vendor's fields to a different vendor's model). Returns the matched
-    model's own dict with a "provider" key added, or None."""
+    more than one provider's model matches (exact OR fuzzy), `provider_hint` (when provided) is
+    used to pick the one whose provider_key normalizes to the same value -- never "whichever
+    came first in dict-iteration order" (a naive first-match would silently attach one vendor's
+    fields to a different vendor's model). If more than one candidate remains ambiguous (no
+    hint, or the hint doesn't disambiguate), returns None rather than guess. A SINGLE match
+    (exact or fuzzy) always wins regardless of hint. Returns the matched model's own dict with
+    a "provider" key added, or None."""
     bare = bare_model_part(cli_model_id)
     if "/" in cli_model_id:
         hint = cli_model_id.split("/", 1)[0]
@@ -83,6 +87,13 @@ def match_models_dev(cli_model_id: str, models_dev_data: dict) -> dict | None:
     if len(matches) == 1:
         provider_key, model = matches[0]
         return {**model, "provider": provider_key}
+    if provider_hint:
+        hint = _normalize(provider_hint)
+        provider_matches = [(provider_key, model) for provider_key, model in matches
+                            if _normalize(provider_key) == hint]
+        if len(provider_matches) == 1:
+            provider_key, model = provider_matches[0]
+            return {**model, "provider": provider_key}
     return None
 
 

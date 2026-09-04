@@ -3338,27 +3338,65 @@ class TestScoreCandidates(unittest.TestCase):
         ranked = model_ranker.score_candidates(entries, "review", self.weights)
         self.assertEqual([e["key"] for e in ranked], ["high", "low"])
 
-    def test_missing_axis_excluded_never_zeroes_the_score(self):
-        # "no_scores" has NO scores dict at all -- must not be treated as 0 on every axis;
-        # its score comes only from whatever axes it does have (tool_calling here).
+    def test_missing_axis_defaults_to_49_not_excluded_or_zeroed(self):
+        # A candidate with NO scores dict at all (every AA-index axis genuinely missing)
+        # must score meaningfully above 0 (its missing axes default to 49.0, not 0) --
+        # but a real, low intelligence_index of 1 (present, genuinely bad) should score
+        # LOWER than the missing-axis default of 49.0 once normalized, since normalizing a
+        # lone real value of 1 against nothing else still yields 100 for that single
+        # present point... use a THIRD anchor candidate with a much higher real score so
+        # the low real score normalizes down near 0, clearly below the 49.0 default.
         entries = [
+            {"key": "anchor", "scores": {"intelligence_index": 100, "coding_index": 100,
+                                          "agentic_index": 100}},
             {"key": "no_scores", "tool_calling": True},
-            {"key": "has_scores", "scores": {"intelligence_index": 1, "coding_index": 1,
-                                              "agentic_index": 1}, "tool_calling": False},
+            {"key": "low_real_scores", "scores": {"intelligence_index": 1, "coding_index": 1,
+                                                    "agentic_index": 1}, "tool_calling": False},
         ]
         ranked = model_ranker.score_candidates(entries, "review", self.weights)
         by_key = {e["key"]: e["score"] for e in ranked}
         self.assertGreater(by_key["no_scores"], 0)
+        order = [e["key"] for e in ranked]
+        self.assertLess(order.index("no_scores"), order.index("low_real_scores"))
 
-    def test_batch_mode_bonus_can_flip_the_ranking(self):
+    def test_a_real_flagship_now_outranks_a_data_free_candidate_with_favorable_price(self):
+        # This is the exact live-production bug this fix round exists to close: a data-
+        # free candidate whose ONLY signal is a favorable ($0) price must no longer beat a
+        # real flagship with genuine (if comparatively unremarkable, ~60-range) AA scores
+        # and a real, non-zero price. Before this fix, the free candidate's single present
+        # axis (price) normalized to 100 and its weighted average was 100 outright (nothing
+        # else to drag it down); the flagship's weighted average, diluted across several
+        # real-but-imperfect axes, lost. Verified against a real production catalog
+        # (2026-09-04) that this exact shape of comparison was failing before this fix.
         entries = [
-            {"key": "no_batch", "scores": {"intelligence_index": 50, "coding_index": 50,
-                                            "agentic_index": 50}, "batch_mode": False},
-            {"key": "batch", "scores": {"intelligence_index": 48, "coding_index": 48,
-                                         "agentic_index": 48}, "batch_mode": True},
+            {"key": "flagship", "scores": {"intelligence_index": 62, "coding_index": 58,
+                                            "agentic_index": 55},
+             "pricing": {"input_per_1m": 15.0}},
+            {"key": "mid_tier", "scores": {"intelligence_index": 45, "coding_index": 42,
+                                            "agentic_index": 40},
+             "pricing": {"input_per_1m": 20.0}},
+            {"key": "free_no_data", "pricing": {"input_per_1m": 0.0}},
         ]
         ranked = model_ranker.score_candidates(entries, "review", self.weights)
-        self.assertEqual(ranked[0]["key"], "batch")
+        self.assertEqual(ranked[0]["key"], "flagship")
+
+    def test_batch_mode_bonus_can_flip_the_ranking(self):
+        # A 3rd "anchor" candidate establishes a real spread for the now-normalized
+        # intelligence/coding/agentic axes -- with only 2 candidates, a small raw gap
+        # (50 vs 48) would min-max-normalize to the FULL 0-100 range and swamp the
+        # capped +8 bonus. The anchor compresses no_batch/batch's normalized gap down
+        # to something the bonus can still flip, same intent as the original test.
+        entries = [
+            {"key": "anchor", "scores": {"intelligence_index": 100, "coding_index": 100,
+                                          "agentic_index": 100}},
+            {"key": "no_batch", "scores": {"intelligence_index": 52, "coding_index": 52,
+                                            "agentic_index": 52}, "batch_mode": False},
+            {"key": "batch", "scores": {"intelligence_index": 50, "coding_index": 50,
+                                         "agentic_index": 50}, "batch_mode": True},
+        ]
+        ranked = model_ranker.score_candidates(entries, "review", self.weights)
+        order = [e["key"] for e in ranked]
+        self.assertLess(order.index("batch"), order.index("no_batch"))
 
     def test_bonus_is_capped(self):
         entries = [{"key": "everything", "scores": {"intelligence_index": 100,
@@ -3381,6 +3419,27 @@ class TestScoreCandidates(unittest.TestCase):
                     "batch_mode": True, "fallback_quota": True}]
         ranked = model_ranker.score_candidates(entries, "execute", self.weights)
         self.assertLessEqual(ranked[0]["score"], 100.0)
+
+    def test_intelligence_index_is_normalized_within_the_candidate_set(self):
+        # Mirrors the existing test_price_is_normalized_within_the_candidate_set_and_inverted
+        # -- same contract, applied to intelligence_index instead of price: raw AA indices
+        # (which top out ~55-65 in live production data) now get min-max normalized onto the
+        # same 0-100 scale price/context/speed already use, instead of feeding a raw ~60 into
+        # a scale where the other axes routinely hit 100. NOTE: this alone does not fully
+        # guarantee a real flagship outranks a data-free candidate with a favorable price --
+        # a candidate present on FEWER axes can still win if every axis it does have
+        # normalizes favorably (weight_sum only sums over present axes, per the existing
+        # "missing axis excluded, never zeroed" contract) -- that is a separate, deeper
+        # design question (how missing-axis weight-renormalization interacts with a
+        # data-completeness signal) flagged for the human, not fixed by this normalization.
+        entries = [
+            {"key": "low", "scores": {"intelligence_index": 30, "coding_index": 30,
+                                       "agentic_index": 30}},
+            {"key": "high", "scores": {"intelligence_index": 65, "coding_index": 65,
+                                        "agentic_index": 65}},
+        ]
+        ranked = model_ranker.score_candidates(entries, "review", self.weights)
+        self.assertEqual(ranked[0]["key"], "high")
 
 
 class TestLoadSecret(unittest.TestCase):
@@ -3635,6 +3694,33 @@ class TestMatchModelsDev(unittest.TestCase):
         result = model_matcher.match_models_dev("openai/sol", collision_data)
         self.assertIsNotNone(result)
         self.assertEqual(result["cost"]["input"], 3.5)
+
+    def test_provider_hint_disambiguates_a_multi_provider_bare_id_collision(self):
+        models_dev_data = {
+            "openai": {"models": {"gpt-5.2": {"id": "gpt-5.2", "reasoning": True}}},
+            "some-reseller": {"models": {"gpt-5.2": {"id": "gpt-5.2", "reasoning": False}}},
+        }
+        result = model_matcher.match_models_dev("gpt-5.2", models_dev_data,
+                                                   provider_hint="openai")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["provider"], "openai")
+
+    def test_provider_hint_that_matches_nothing_still_returns_none_on_collision(self):
+        models_dev_data = {
+            "openai": {"models": {"gpt-5.2": {"id": "gpt-5.2"}}},
+            "some-reseller": {"models": {"gpt-5.2": {"id": "gpt-5.2"}}},
+        }
+        result = model_matcher.match_models_dev("gpt-5.2", models_dev_data,
+                                                   provider_hint="nonexistent-vendor")
+        self.assertIsNone(result)
+
+    def test_no_provider_hint_still_returns_none_on_collision_unchanged_behavior(self):
+        models_dev_data = {
+            "openai": {"models": {"gpt-5.2": {"id": "gpt-5.2"}}},
+            "some-reseller": {"models": {"gpt-5.2": {"id": "gpt-5.2"}}},
+        }
+        result = model_matcher.match_models_dev("gpt-5.2", models_dev_data)
+        self.assertIsNone(result)
 
 
 class TestMatchArtificialAnalysis(unittest.TestCase):

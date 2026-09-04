@@ -23,6 +23,17 @@ DEFAULT_WEIGHTS = {
     "bonuses": {"batch_mode": 8, "fallback_quota": 5, "bonus_cap": 15},
 }
 
+# A missing axis no longer excludes itself from the weighted average -- it defaults to
+# just below the midpoint of the 0-100 scale (max/2 - 1 = 49.0), so a candidate present on
+# only a few axes -- even if every one of those few axes normalizes favorably (e.g. a $0
+# price) -- can no longer trivially outrank a candidate with real, comparatively weaker
+# data spread across many axes. User-directed design change, 2026-09-04 -- supersedes the
+# design spec's original "missing axis excluded from the weighted sum, never zeroed"
+# contract (docs/superpowers/specs/2026-09-02-model-discovery-curation-design.md,
+# Section 6), after live verification against a real catalog showed that contract let
+# data-free candidates dominate the top ranks over real flagships.
+_MISSING_AXIS_DEFAULT = 49.0
+
 _REQUIRED_AXES = {"intelligence_index", "coding_index", "agentic_index", "context_window",
                    "tool_calling", "price", "speed"}
 _REQUIRED_BONUS_FIELDS = {"batch_mode", "fallback_quota", "bonus_cap"}
@@ -111,20 +122,27 @@ def score_candidates(entries: list, purpose: str, weights: dict) -> list:
     ctx_raw = {e["key"]: (math.log10(w) if (w := _max_context_window(e)) else None)
                for e in entries}
     ctx_norm = _normalize_minmax(ctx_raw)
+    intelligence_norm = _normalize_minmax(
+        {e["key"]: e.get("scores", {}).get("intelligence_index") for e in entries})
+    coding_norm = _normalize_minmax(
+        {e["key"]: e.get("scores", {}).get("coding_index") for e in entries})
+    agentic_norm = _normalize_minmax(
+        {e["key"]: e.get("scores", {}).get("agentic_index") for e in entries})
 
     scored = []
     for e in entries:
         tool_call = e.get("tool_calling")
         axis_values = {
-            "intelligence_index": e.get("scores", {}).get("intelligence_index"),
-            "coding_index": e.get("scores", {}).get("coding_index"),
-            "agentic_index": e.get("scores", {}).get("agentic_index"),
+            "intelligence_index": intelligence_norm[e["key"]],
+            "coding_index": coding_norm[e["key"]],
+            "agentic_index": agentic_norm[e["key"]],
             "tool_calling": 100.0 if tool_call is True else (0.0 if tool_call is False else None),
             "context_window": ctx_norm[e["key"]],
             "price": price_norm[e["key"]],
             "speed": speed_norm[e["key"]],
         }
-        present = {a: v for a, v in axis_values.items() if v is not None}
+        present = {a: (v if v is not None else _MISSING_AXIS_DEFAULT)
+                   for a, v in axis_values.items()}
         weight_sum = sum(axis_weights[a] for a in present)
         base = (sum(axis_weights[a] * v for a, v in present.items()) / weight_sum
                 if weight_sum else 0.0)
