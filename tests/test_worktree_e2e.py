@@ -60,6 +60,14 @@ class TestWorktreeDisplayE2E(unittest.TestCase):
         cls.outside = os.path.join(cls.tmp, "outside")
         os.makedirs(cls.outside, exist_ok=True)
 
+        # `alt_git_worktree` defaults OFF (since edfe690's "lean baseline" change), so
+        # explicitly opt it in via a real config file: [segments] alt_git_worktree =
+        # true (cfg_resolve_segments in tools/status-line.py reads segment toggles
+        # from the [segments] table, keyed by segment id).
+        cls.config_file = os.path.join(cls.tmp, "cc-ai-kit.toml")
+        with open(cls.config_file, "w") as f:
+            f.write("[segments]\nalt_git_worktree = true\n")
+
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
@@ -75,7 +83,9 @@ class TestWorktreeDisplayE2E(unittest.TestCase):
             **os.environ,
             "HOME": self.home,
             "XDG_CACHE_HOME": os.path.join(self.home, ".cache"),
-            "CC_AI_KIT_CONFIG_FILE": "/no/such.toml",   # built-in defaults (worktree ON)
+            # alt_git_worktree defaults OFF since edfe690; this config explicitly
+            # turns it on for the test via [segments] alt_git_worktree = true.
+            "CC_AI_KIT_CONFIG_FILE": self.config_file,
             "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50",
         }
         p = subprocess.run([sys.executable, _STATUS_LINE], input=sample,
