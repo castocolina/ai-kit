@@ -72,21 +72,38 @@ Runs once per invocation, after Step 0.6.
    Record `TOOL_AVAILABILITY_JSON` as this run's literal tool-availability
    JSON string, substituted into every later `--tool-availability-json`
    reference.
-1. Run `mktemp -d` via `Bash`, and record its printed absolute path as
-   `RUN_TMP_DIR` in this skill's own working notes — **not** a shell
-   environment variable. Every `Bash` tool call in this harness starts a
-   fresh shell, so a variable set in one call is gone by the next one;
-   from here on, substitute `RUN_TMP_DIR`'s literal absolute path into
-   every command and every prose reference below, exactly the way
-   `CODEBASE_ROOT` is already resolved once (Step 0.1) and substituted
-   literally everywhere after. (This doc keeps writing `$RUN_TMP_DIR` for
-   readability, matching how `<CODEBASE_ROOT>` reads elsewhere in this
-   skill — read every `$RUN_TMP_DIR` below as "the literal path captured
-   here", never as an actual shell variable reference.) Every artifact
-   this run produces (raw reviewer reports, the double-review merge, the
-   fixer's report) lives under this one directory, replacing the old flat
-   `/tmp/ai-kit-spec-review-*` paths (which collided across concurrent runs on
-   different projects/worktrees — fixed here).
+1. Build an IDENTIFIABLE temp-dir name before creating it — a bare `mktemp -d`
+   (`/tmp/tmp.XXXXXXXXXX`) is indistinguishable from any other process's temp dir once
+   several review runs (or fix rounds within one run, or concurrent runs across projects)
+   have piled up in `/tmp`, making it impossible to tell after the fact which directory
+   belongs to which repo/branch/document — a real, observed problem: a multi-round review
+   that spanned several orchestrator invocations left two unlabeled `tmp.XXXXXXXXXX` dirs
+   with no way to tell which round produced which without opening each one. Resolve, in
+   order:
+   ```bash
+   REPO_NAME="$(basename "$(git -C <CODEBASE_ROOT> rev-parse --show-toplevel)")"
+   BRANCH_SLUG="$(git -C <CODEBASE_ROOT> branch --show-current 2>/dev/null || \
+     git -C <CODEBASE_ROOT> rev-parse --short HEAD)"
+   BRANCH_SLUG="$(printf '%s' "$BRANCH_SLUG" | tr -c 'A-Za-z0-9' '-' | sed 's/-\+/-/g;s/^-//;s/-$//')"
+   # <DOC_PATHS>'s first entry, basename, date-prefix and extension stripped, slugified --
+   # the "feature" component. E.g. "2026-09-02-ai-kit-model-discovery-config.md" ->
+   # "ai-kit-model-discovery-config".
+   FEATURE_SLUG="$(basename "<first DOC_PATHS entry>" .md | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}-//')"
+   RUN_TMP_DIR="$(mktemp -d -t "${REPO_NAME}-${BRANCH_SLUG}-${FEATURE_SLUG}-iter-XXXXXX")"
+   ```
+   Record `RUN_TMP_DIR`'s printed absolute path in this skill's own working notes — **not** a
+   shell environment variable. Every `Bash` tool call in this harness starts a fresh shell, so
+   a variable set in one call is gone by the next one; from here on, substitute `RUN_TMP_DIR`'s
+   literal absolute path into every command and every prose reference below, exactly the way
+   `CODEBASE_ROOT` is already resolved once (Step 0.1) and substituted literally everywhere
+   after. (This doc keeps writing `$RUN_TMP_DIR` for readability, matching how `<CODEBASE_ROOT>`
+   reads elsewhere in this skill — read every `$RUN_TMP_DIR` below as "the literal path captured
+   here", never as an actual shell variable reference.) Every artifact this run produces (raw
+   reviewer reports, the double-review merge, the fixer's report) lives under this one
+   directory, replacing both the old flat `/tmp/ai-kit-spec-review-*` paths (which collided
+   across concurrent runs on different projects/worktrees) and a bare `mktemp -d`'s unlabeled
+   `tmp.XXXXXXXXXX` (unidentifiable after the fact, and see the Cleanup section for when this
+   directory is actually removed — not simply "after this loop ends" any more).
 2. **If `--no-cross-ai` was requested (or `TOOLS_PY` is missing, point 0
    above)**: set `REVIEWER_LIST` directly, in-context, to the single-entry
    array `[{"key": "session-default", "model": "", "vendor": "", "cli":

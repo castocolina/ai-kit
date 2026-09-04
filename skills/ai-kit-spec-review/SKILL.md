@@ -491,8 +491,25 @@ but it may lag a profile that's since been edited.
 
 ## Cleanup
 
-After the loop ends (any outcome): `rm -rf "$RUN_TMP_DIR"`. Every artifact
-this run produced (reviewer reports, the double-review merge, fixer
-reports, the loop log) lives under that one directory — a single command
-replaces the old file-by-file `/tmp/ai-kit-spec-review-*` cleanup, and there's
-nothing to accidentally miss.
+**Only remove `$RUN_TMP_DIR` when this Surface outcome is `Approved`** (Step 5's
+"Approved on first review" / "Approved after N iteration(s)" rows) — `rm -rf
+"$RUN_TMP_DIR"` there, same as before. Every artifact this run produced (reviewer
+reports, the double-review merge, fixer reports, the loop log) lives under that one
+directory, so this one command is still everything needed.
+
+**Every other outcome (cap reached, escalation, insufficient info, failure) leaves
+`$RUN_TMP_DIR` on disk — do not delete it.** A real multi-round review commonly spans
+more than one orchestrator invocation (a cap-reached round handed back to the user,
+a fix applied out of band, then a fresh `/ai-kit-spec-review` call to re-check it) —
+deleting the evidence the moment any one round's loop merely *ends*, rather than when
+the document is actually approved, is what silently destroyed the per-iteration
+reports from an earlier real run of this exact skill (nothing left to inspect
+afterward, even though the review process as a whole was still open). The
+identifiable naming from Step 0.7 point 1 (`<repo>-<branch>-<feature>-iter-XXXXXX`,
+not a bare `mktemp -d`) is what makes leaving these directories around safe and
+useful instead of accumulating anonymous clutter — a later invocation, or the user
+directly, can identify and inspect exactly which run produced which directory. If a
+non-approved `$RUN_TMP_DIR` from an earlier invocation is found stale (the document
+was since approved through a different run, or the user explicitly abandons that
+review line), it is safe to remove by hand — this skill just never does it
+automatically on anything short of `Approved`.
