@@ -1,10 +1,12 @@
 import os
 import subprocess
+import sys
 import time
 
 from ai_kit_spec.cache import cache_base
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
 from ai_kit_spec.config_io import _KNOWN_REVIEWER_FIELDS
+from ai_kit_spec.execute_selection import purpose_matches
 
 QUOTA_TTL_SECONDS = 3600                 # 1 hour: quota/context headroom is highly dynamic
 
@@ -96,10 +98,40 @@ def resolve_ladder_pick(reviewers: list, ladder: list, skip_vendor: str, quota: 
     return None
 
 
-def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: bool) -> list:
+def _filter_ladder_by_purpose(reviewers: list, ladder: list, purpose: str) -> tuple:
+    """Ladder-key-list-shaped sibling of execute_selection.filter_by_purpose (candidate-dict
+    shaped) -- same never-empty-on-curation-gap contract and the SAME matching predicate
+    (purpose_matches, imported, never reimplemented here), just adapted to a different input
+    shape (a plain ordered key list, not a list of candidate dicts) -- kept as its own small
+    function because the shapes differ, not because the logic does. A key with no reviewer
+    entry at all (should not happen given cfg_merge_reviewers' own invariants, but never raise
+    on it) is treated as unset -- passes through, same as an entry that exists but omits
+    `purpose`. Returns (resulting_ladder, fell_back) -- fell_back is True exactly when
+    narrowing would have emptied the ladder and the unfiltered one was returned instead, so
+    the caller (resolve_reviewers) never has to re-derive that from the result alone."""
+    purpose_by_key = {r["key"]: r.get("purpose") for r in reviewers if "key" in r}
+    matching = [k for k in ladder if purpose_matches(purpose_by_key.get(k), purpose)]
+    if matching:
+        return matching, False
+    return list(ladder), bool(ladder)
+
+
+def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: bool,
+                       warn_fn=lambda msg: print(msg, file=sys.stderr)) -> list:
     """The full policy decision. Returns 1 or 2 ResolvedReviewer entries;
     dispatch mechanics are the caller's concern (review-spec/SKILL.md's
     Step 1), this only decides WHO.
+
+    Narrows `ladder` to purpose in {"review", "both", None} first
+    (2026-09-02 design, spec Section 7) -- falls back to the full ladder if
+    that empties it, and calls `warn_fn` exactly once in that fallback case
+    (spec Section 7: "falls back to the unfiltered ladder with a one-time
+    warning") since an execute-only-curated config silently reviewing with
+    the wrong ladder is a real misconfiguration worth surfacing. No warning
+    when nothing was excluded (a ladder with no purpose-tagged entries at
+    all, including today's every pre-migration review-spec.toml, behaves
+    identically to before this change -- no fallback ever triggers for it,
+    so nothing to warn about).
 
     single: one reviewer, preferring a vendor different from source_vendor
     (independent perspective on the document), quota-aware, tier-aware via
@@ -136,6 +168,11 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
     mode = policy.get("mode", "single")
     ladder = policy.get("ladder", [])
     reviewers = config.get("reviewers", [])
+    ladder, fell_back = _filter_ladder_by_purpose(reviewers, ladder, "review")
+    if fell_back:
+        warn_fn("ai-kit-spec-review: no reviewer entry matches purpose='review' in the "
+                "configured ladder -- falling back to the full, unfiltered ladder. Curate "
+                "`purpose` on your review-spec.toml reviewer entries to fix this.")
     if mode == "double":
         primary = resolve_ladder_pick(reviewers, ladder, skip_vendor="", quota=quota)
         if primary is None:

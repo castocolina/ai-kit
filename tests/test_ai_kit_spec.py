@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 import unittest.mock
+import urllib.error
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
@@ -26,6 +27,13 @@ from ai_kit_spec import (
     dispatch_guidance,
     execute_dispatch,
     execute_selection,
+    local_secrets,
+    model_catalog,
+    model_heuristics,
+    model_matcher,
+    model_ranker,
+    model_sources,
+    quota,
     reviewer_dispatch,
     tooling_guidance,
 )
@@ -275,6 +283,360 @@ class TestRenderAndWriteToml(unittest.TestCase):
         )
         self.assertIn("# Priority fallback order", rendered)
         self.assertNotIn("secondary", rendered)
+
+    def test_render_toml_rejects_invalid_purpose_value(self):
+        config = {"policy": {}, "reviewers": [
+            {"key": "a", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"}]}
+        output = config_io.cfg_render_toml(config)
+        self.assertNotIn("not-a-real-purpose", output)
+
+    def test_render_toml_rejects_non_string_purpose_without_raising(self):
+        # HIGH finding: a non-string (unhashable) purpose value must be REJECTED, never crash
+        # cfg_render_toml with an unhandled TypeError from a bare `in <set>` membership test.
+        config = {"policy": {}, "reviewers": [
+            {"key": "a", "model": "m", "vendor": "v", "purpose": ["review", "execute"]}]}
+        output = config_io.cfg_render_toml(config)  # must not raise
+        self.assertNotIn("[[reviewers]]", output)
+
+    def test_render_toml_keeps_valid_purpose_value(self):
+        config = {"policy": {}, "reviewers": [
+            {"key": "a", "model": "m", "vendor": "v", "purpose": "execute"}]}
+        output = config_io.cfg_render_toml(config)
+        self.assertIn('purpose = "execute"', output)
+
+    def test_render_toml_rejects_non_bool_is_router(self):
+        config = {"policy": {}, "reviewers": [
+            {"key": "a", "model": "m", "vendor": "v", "is_router": "yes"}]}
+        output = config_io.cfg_render_toml(config)
+        self.assertNotIn("is_router", output)
+
+    def test_render_toml_drops_rejected_reviewer_from_the_ladder_too(self):
+        # HIGH finding: a dangling policy.ladder reference to a dropped reviewer key produces
+        # a config that LOOKS valid (parses fine) but resolve_ladder_pick can never satisfy.
+        config = {"policy": {"mode": "single", "ladder": ["bad", "good"]}, "reviewers": [
+            {"key": "bad", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"},
+            {"key": "good", "model": "m2", "vendor": "v2"},
+        ]}
+        output = config_io.cfg_render_toml(config)
+        self.assertNotIn('"bad"', output)
+        ladder_line = next(line for line in output.splitlines() if line.startswith("ladder"))
+        self.assertNotIn("bad", ladder_line)
+        self.assertIn("good", ladder_line)
+
+    def test_render_toml_no_dangling_ladder_warning_when_rejected_key_not_in_ladder(self):
+        # MEDIUM finding: a rejected reviewer whose key was never referenced in policy.ladder
+        # at all must not trigger the "dropped dangling reference" stderr warning -- only an
+        # actual ladder/reviewers divergence should. cfg_render_toml prints rejections to
+        # stderr (Step 5's implementation), not into its returned string, so capture stderr.
+        config = {"policy": {"mode": "single", "ladder": ["good"]}, "reviewers": [
+            {"key": "bad", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"},
+            {"key": "good", "model": "m2", "vendor": "v2"},
+        ]}
+        import io
+        from contextlib import redirect_stderr
+        captured = io.StringIO()
+        with redirect_stderr(captured):
+            config_io.cfg_render_toml(config)
+        self.assertNotIn("dangling", captured.getvalue())
+
+    def test_render_toml_result_resolves_cleanly_through_cfg_resolve(self):
+        # The dropped-entry write must be USABLE, not just superficially valid TOML -- round-trip
+        # it through cfg_write_toml + cfg_resolve (this repo's real resolution path) and confirm
+        # the ladder cfg_resolve sees contains no reference to the dropped key.
+        config = {"policy": {"mode": "single", "ladder": ["bad", "good"]}, "reviewers": [
+            {"key": "bad", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"},
+            {"key": "good", "model": "m2", "vendor": "v2", "cli": "opencode",
+             "command": "opencode run -m {model}"},
+        ]}
+        with tempfile.TemporaryDirectory() as d:
+            path = config_io.cfg_local_path(d)  # ./.aikit/review-spec.toml under d
+            config_io.cfg_write_toml(path, config)
+            resolved = config_io.cfg_resolve(d, {"HOME": d})
+            self.assertNotIn("bad", resolved["policy"]["ladder"])
+            self.assertIn("good", resolved["policy"]["ladder"])
+
+
+class TestCacheCatalogPath(unittest.TestCase):
+    def test_uses_cache_base_convention(self):
+        path = model_catalog.cache_catalog_path({"HOME": "/home/u"})
+        self.assertEqual(path, "/home/u/.cache/ai-kit/spec/model-catalog.json")
+
+
+class TestCanonicalKey(unittest.TestCase):
+    def test_builds_vendor_slash_model(self):
+        self.assertEqual(model_catalog.canonical_key("openai", "gpt-5.6-sol"),
+                          "openai/gpt-5.6-sol")
+
+
+class TestValidateCatalogEntry(unittest.TestCase):
+    def _valid_entry(self, **overrides):
+        entry = {"provider": "openai", "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}},
+                  "source": {"models_dev": True}, "confidence": "high",
+                  "last_verified": "2026-09-02"}
+        entry.update(overrides)
+        return entry
+
+    def test_valid_entry_returns_none(self):
+        self.assertIsNone(model_catalog.validate_catalog_entry(
+            "openai/gpt-5.6-sol", self._valid_entry()))
+
+    def test_missing_mandatory_field_is_rejected(self):
+        entry = {"provider": "openai", "runtimes": {"opencode": {}}}
+        reason = model_catalog.validate_catalog_entry("openai/gpt-5.6-sol", entry)
+        self.assertIsNotNone(reason)
+        self.assertIn("source", reason)
+
+    def test_empty_runtimes_is_rejected(self):
+        entry = {"provider": "openai", "runtimes": {}, "source": {}, "confidence": "low",
+                  "last_verified": "2026-09-02"}
+        reason = model_catalog.validate_catalog_entry("x", entry)
+        self.assertIsNotNone(reason)
+
+    def test_none_on_a_mandatory_field_is_rejected(self):
+        # Important finding: the None-skip meant for OPTIONAL fields (a signal to clear the
+        # field on merge) must never extend to a mandatory field -- a mandatory field present
+        # with value None is still missing its required value.
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(provider=None))
+        self.assertIsNotNone(reason)
+        self.assertIn("provider", reason)
+
+    def test_missing_optional_fields_never_rejected(self):
+        entry = {"provider": "openai", "runtimes": {"opencode": {}}, "source": {},
+                  "confidence": "low", "last_verified": "2026-09-02"}
+        self.assertIsNone(model_catalog.validate_catalog_entry("x", entry))
+
+    def test_wrong_type_provider_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(provider=123))
+        self.assertIsNotNone(reason)
+        self.assertIn("provider", reason)
+
+    def test_non_dict_runtimes_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(runtimes=["opencode"]))
+        self.assertIsNotNone(reason)
+
+    def test_unrecognized_confidence_value_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(confidence="very-sure"))
+        self.assertIsNotNone(reason)
+        self.assertIn("confidence", reason)
+
+    def test_wrong_type_optional_field_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(batch_mode="yes"))
+        self.assertIsNotNone(reason)
+        self.assertIn("batch_mode", reason)
+
+    def test_wrong_type_scores_subfield_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(scores={"intelligence_index": "high"}))
+        self.assertIsNotNone(reason)
+        self.assertIn("scores", reason)
+
+    def test_correct_type_optional_fields_pass(self):
+        entry = self._valid_entry(batch_mode=True, is_router=False, fallback_quota=False,
+                                   tokens_per_sec=142.3, native=False,
+                                   reasoning_modes=["low", "medium", "high"], fast_mode=False,
+                                   speed_tier="standard",
+                                   scores={"intelligence_index": 68.4, "coding_index": 74.1,
+                                           "agentic_index": 61.2},
+                                   pricing={"input_per_1m": 3.5, "output_per_1m": 14.0})
+        self.assertIsNone(model_catalog.validate_catalog_entry("x", entry))
+
+    def test_wrong_type_reasoning_modes_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(reasoning_modes="high"))
+        self.assertIsNotNone(reason)
+        self.assertIn("reasoning_modes", reason)
+
+    def test_reasoning_modes_with_a_non_string_element_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(reasoning_modes=["low", 3]))
+        self.assertIsNotNone(reason)
+        self.assertIn("reasoning_modes", reason)
+
+    def test_wrong_type_fast_mode_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(fast_mode="no"))
+        self.assertIsNotNone(reason)
+        self.assertIn("fast_mode", reason)
+
+    def test_wrong_type_speed_tier_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(speed_tier=3))
+        self.assertIsNotNone(reason)
+        self.assertIn("speed_tier", reason)
+
+    def test_malformed_last_verified_date_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(last_verified="09/02/2026"))
+        self.assertIsNotNone(reason)
+        self.assertIn("last_verified", reason)
+
+    def test_runtime_entry_wrong_type_model_id_is_rejected(self):
+        entry = self._valid_entry(runtimes={"opencode": {"model_id": 123}})
+        reason = model_catalog.validate_catalog_entry("x", entry)
+        self.assertIsNotNone(reason)
+        self.assertIn("model_id", reason)
+
+    def test_runtime_entry_wrong_type_ctx_window_is_rejected(self):
+        entry = self._valid_entry(runtimes={"opencode": {"model_id": "m", "ctx_window": "big"}})
+        reason = model_catalog.validate_catalog_entry("x", entry)
+        self.assertIsNotNone(reason)
+        self.assertIn("ctx_window", reason)
+
+    def test_runtime_entry_correct_types_pass(self):
+        entry = self._valid_entry(
+            runtimes={"opencode": {"model_id": "openai/gpt-5.6-sol", "ctx_window": 400000}})
+        self.assertIsNone(model_catalog.validate_catalog_entry("x", entry))
+
+
+class TestMergeCatalogEntry(unittest.TestCase):
+    def test_valid_entry_is_added(self):
+        entry = {"provider": "openai", "runtimes": {"opencode": {}}, "source": {},
+                  "confidence": "high", "last_verified": "2026-09-02"}
+        catalog, reason = model_catalog.merge_catalog_entry({}, "openai/gpt-5.6-sol", entry)
+        self.assertIsNone(reason)
+        self.assertIn("openai/gpt-5.6-sol", catalog)
+
+    def test_invalid_entry_is_rejected_and_catalog_unchanged(self):
+        catalog, reason = model_catalog.merge_catalog_entry({"existing": {}}, "bad", {})
+        self.assertIsNotNone(reason)
+        self.assertEqual(catalog, {"existing": {}})
+
+    def test_incoming_none_on_mandatory_field_is_rejected_not_silently_merged(self):
+        # Important finding: an incoming entry that would strip a mandatory field to None via
+        # the merge's None-clears-existing-field behavior must be rejected outright, never
+        # persisted as a catalog entry missing a mandatory field.
+        existing_entry = {"provider": "p", "runtimes": {"c": {}}, "source": {},
+                           "confidence": "high", "last_verified": "2026-09-02"}
+        catalog = {"k": existing_entry}
+        entry = {"provider": None, "runtimes": {"c": {}}, "source": {}, "confidence": "high",
+                  "last_verified": "2026-09-02"}
+        catalog, reason = model_catalog.merge_catalog_entry(catalog, "k", entry)
+        self.assertIsNotNone(reason)
+        self.assertIn("provider", reason)
+        self.assertEqual(catalog["k"]["provider"], "p")  # unchanged -- rejected merge never applied
+
+    def test_does_not_mutate_input_catalog(self):
+        original = {"existing": {}}
+        entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
+                 "last_verified": "2026-09-02"}
+        model_catalog.merge_catalog_entry(original, "new", entry)
+        self.assertNotIn("new", original)
+
+    def test_runtimes_merge_across_two_cli_writes_for_the_same_key(self):
+        entry_a = {"provider": "openai", "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}},
+                   "source": {}, "confidence": "high", "last_verified": "2026-09-02"}
+        catalog, _ = model_catalog.merge_catalog_entry({}, "openai/gpt-5.6-sol", entry_a)
+        entry_b = {"provider": "openai", "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
+                   "source": {}, "confidence": "high", "last_verified": "2026-09-02"}
+        catalog, reason = model_catalog.merge_catalog_entry(catalog, "openai/gpt-5.6-sol", entry_b)
+        self.assertIsNone(reason)
+        self.assertIn("opencode", catalog["openai/gpt-5.6-sol"]["runtimes"])
+        self.assertIn("codex", catalog["openai/gpt-5.6-sol"]["runtimes"])
+
+    def test_explicit_none_in_the_incoming_entry_clears_the_existing_field(self):
+        # CRITICAL finding: a source's provenance flipping to false must actually clear the
+        # field it used to own, not leave it behind under plain dict-spread's "absent key
+        # means preserve" semantics.
+        existing_entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
+                           "last_verified": "2026-09-02", "scores": {"intelligence_index": 91.0}}
+        catalog = {"k": existing_entry}
+        entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
+                  "last_verified": "2026-09-02", "scores": None}
+        catalog, reason = model_catalog.merge_catalog_entry(catalog, "k", entry)
+        self.assertIsNone(reason)
+        self.assertNotIn("scores", catalog["k"])
+
+    def test_key_absent_from_incoming_entry_still_preserves_the_existing_value(self):
+        # Contrast with the test above: OMITTING a key (a source that's simply down this run,
+        # never claiming anything about the field) must still preserve the cached value --
+        # only an explicit None is a clear signal.
+        existing_entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
+                           "last_verified": "2026-09-02", "scores": {"intelligence_index": 91.0}}
+        catalog = {"k": existing_entry}
+        entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
+                  "last_verified": "2026-09-02"}  # no "scores" key at all
+        catalog, reason = model_catalog.merge_catalog_entry(catalog, "k", entry)
+        self.assertIsNone(reason)
+        self.assertEqual(catalog["k"]["scores"], {"intelligence_index": 91.0})
+
+
+class TestCurrentCandidateKeys(unittest.TestCase):
+    def test_keeps_only_keys_with_a_currently_discovered_runtime(self):
+        catalog = {
+            "openai/gpt-5.6-sol": {"runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}}},
+            "xai/grok-old": {"runtimes": {"opencode": {"model_id": "xai/grok-old"}}},
+        }
+        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        self.assertEqual(model_catalog.current_candidate_keys(catalog, discovered),
+                          {"openai/gpt-5.6-sol"})
+
+
+class TestApplyHeuristicCorrections(unittest.TestCase):
+    def test_merges_corrected_fields_into_existing_entry(self):
+        catalog = {"router-env/x": {"provider": "router-env", "runtimes": {"opencode": {}},
+                                     "source": {}, "confidence": "low",
+                                     "last_verified": "2026-09-02", "is_router": True}}
+        updated, reason = model_catalog.apply_heuristic_corrections(
+            catalog, "router-env/x", {"is_router": False, "batch_mode": True})
+        self.assertIsNone(reason)
+        self.assertFalse(updated["router-env/x"]["is_router"])
+        self.assertTrue(updated["router-env/x"]["batch_mode"])
+
+    def test_marks_every_corrected_field_confirmed_even_when_value_is_unchanged(self):
+        # HIGH finding: the wizard must be able to tell "never asked" apart from "asked, and
+        # the user's answer happened to match the heuristic's own guess" -- so a field must
+        # be recorded as confirmed even when the "correction" leaves its value unchanged.
+        catalog = {"router-env/x": {"provider": "router-env", "runtimes": {"opencode": {}},
+                                     "source": {}, "confidence": "low",
+                                     "last_verified": "2026-09-02", "is_router": True}}
+        updated, reason = model_catalog.apply_heuristic_corrections(
+            catalog, "router-env/x", {"is_router": True})  # confirmed as-is, not corrected
+        self.assertIsNone(reason)
+        self.assertTrue(updated["router-env/x"]["is_router"])
+        self.assertEqual(updated["router-env/x"]["heuristic_confirmed"], ["is_router"])
+
+    def test_heuristic_confirmed_accumulates_across_separate_calls(self):
+        catalog = {"router-env/x": {"provider": "router-env", "runtimes": {"opencode": {}},
+                                     "source": {}, "confidence": "low",
+                                     "last_verified": "2026-09-02", "is_router": True,
+                                     "heuristic_confirmed": ["is_router"]}}
+        updated, reason = model_catalog.apply_heuristic_corrections(
+            catalog, "router-env/x", {"batch_mode": False})
+        self.assertIsNone(reason)
+        self.assertEqual(updated["router-env/x"]["heuristic_confirmed"],
+                          ["batch_mode", "is_router"])
+
+    def test_unknown_key_is_a_no_op(self):
+        catalog = {"existing": {}}
+        updated, reason = model_catalog.apply_heuristic_corrections(
+            catalog, "nonexistent", {"is_router": True})
+        self.assertIsNone(reason)
+        self.assertEqual(updated, catalog)
+
+    def test_does_not_mutate_input_catalog(self):
+        catalog = {"k": {"provider": "p", "runtimes": {"c": {}}, "source": {},
+                          "confidence": "high", "last_verified": "2026-09-02", "is_router": True}}
+        model_catalog.apply_heuristic_corrections(catalog, "k", {"is_router": False})
+        self.assertTrue(catalog["k"]["is_router"])
+
+    def test_correction_that_would_produce_a_schema_invalid_entry_is_rejected(self):
+        # CRITICAL finding: apply_heuristic_corrections must not bypass the same type-checked
+        # schema validation merge_catalog_entry already enforces -- cache_write_json only writes
+        # atomically, it never validates, so this is the ONLY gate before a bad correction reaches
+        # the cache.
+        catalog = {"router-env/x": {"provider": "router-env", "runtimes": {"opencode": {}},
+                                     "source": {}, "confidence": "low",
+                                     "last_verified": "2026-09-02", "is_router": True}}
+        updated, reason = model_catalog.apply_heuristic_corrections(
+            catalog, "router-env/x", {"is_router": "not-a-bool"})
+        self.assertIsNotNone(reason)
+        self.assertIn("is_router", reason)
+        self.assertTrue(updated["router-env/x"]["is_router"])  # unchanged -- rejected correction never applied
 
 
 class TestCachePaths(unittest.TestCase):
@@ -840,6 +1202,81 @@ class TestResolveReviewers(unittest.TestCase):
         result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(len(result), 1)  # secondary dropped, not substituted
         self.assertEqual(result[0].key, "claude-cli-opus")
+
+    def test_resolve_reviewers_filters_ladder_to_review_purpose(self):
+        config = {
+            "policy": {"mode": "single", "ladder": ["execute-only", "both-ok"]},
+            "reviewers": [
+                {"key": "execute-only", "model": "m1", "vendor": "openai", "purpose": "execute"},
+                {"key": "both-ok", "model": "m2", "vendor": "xai", "purpose": "both"},
+            ],
+        }
+        result = quota.resolve_reviewers(config, quota={}, source_vendor="", cross_ai=True)
+        self.assertEqual([r.key for r in result], ["both-ok"])
+
+    def test_resolve_reviewers_falls_back_to_full_ladder_when_purpose_filter_empties_it(self):
+        config = {
+            "policy": {"mode": "single", "ladder": ["execute-only"]},
+            "reviewers": [
+                {"key": "execute-only", "model": "m1", "vendor": "openai", "purpose": "execute"},
+            ],
+        }
+        result = quota.resolve_reviewers(config, quota={}, source_vendor="", cross_ai=True)
+        self.assertEqual([r.key for r in result], ["execute-only"])
+
+    def test_resolve_reviewers_missing_purpose_field_always_included(self):
+        config = {
+            "policy": {"mode": "single", "ladder": ["legacy-entry"]},
+            "reviewers": [{"key": "legacy-entry", "model": "m1", "vendor": "openai"}],
+        }
+        result = quota.resolve_reviewers(config, quota={}, source_vendor="", cross_ai=True)
+        self.assertEqual([r.key for r in result], ["legacy-entry"])
+
+    def test_resolve_reviewers_warns_on_fallback_but_not_otherwise(self):
+        warnings = []
+        config_fallback = {
+            "policy": {"mode": "single", "ladder": ["execute-only"]},
+            "reviewers": [
+                {"key": "execute-only", "model": "m1", "vendor": "openai", "purpose": "execute"},
+            ],
+        }
+        quota.resolve_reviewers(config_fallback, quota={}, source_vendor="", cross_ai=True,
+                                 warn_fn=warnings.append)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("purpose", warnings[0].lower())
+
+        warnings.clear()
+        config_no_fallback = {
+            "policy": {"mode": "single", "ladder": ["both-ok"]},
+            "reviewers": [{"key": "both-ok", "model": "m2", "vendor": "xai", "purpose": "both"}],
+        }
+        quota.resolve_reviewers(config_no_fallback, quota={}, source_vendor="", cross_ai=True,
+                                 warn_fn=warnings.append)
+        self.assertEqual(warnings, [])
+
+
+class TestFilterLadderByPurpose(unittest.TestCase):
+    def test_uses_the_shared_purpose_matches_predicate(self):
+        # A direct check that this ladder-shaped filter is NOT a reimplementation of the
+        # matching logic -- it must agree with execute_selection.purpose_matches exactly,
+        # including for a value purpose_matches alone decides (e.g. "both").
+        reviewers = [{"key": "a", "purpose": "both"}]
+        result, fell_back = quota._filter_ladder_by_purpose(reviewers, ["a"], "review")
+        self.assertEqual(result, ["a"])
+        self.assertFalse(fell_back)
+        self.assertTrue(execute_selection.purpose_matches("both", "review"))
+
+    def test_reports_fell_back_true_only_when_narrowing_emptied_the_ladder(self):
+        reviewers = [{"key": "a", "purpose": "execute"}]
+        result, fell_back = quota._filter_ladder_by_purpose(reviewers, ["a"], "review")
+        self.assertEqual(result, ["a"])  # unfiltered fallback
+        self.assertTrue(fell_back)
+
+    def test_reports_fell_back_false_when_nothing_needed_excluding(self):
+        reviewers = [{"key": "a"}]  # no purpose set -- always passes, nothing excluded
+        result, fell_back = quota._filter_ladder_by_purpose(reviewers, ["a"], "review")
+        self.assertEqual(result, ["a"])
+        self.assertFalse(fell_back)
 
 
 class TestBuildReviewerCommand(unittest.TestCase):
@@ -2439,6 +2876,37 @@ class TestFilterByAffinity(unittest.TestCase):
         self.assertEqual([c["key"] for c in result], ["untagged"])
 
 
+class TestFilterByPurpose(unittest.TestCase):
+    def test_keeps_only_matching_purpose_when_any_match_exists(self):
+        candidates = [{"key": "a", "purpose": "execute"},
+                      {"key": "b", "purpose": "review"}]
+        result = execute_selection.filter_by_purpose(candidates, "execute")
+        self.assertEqual([c["key"] for c in result], ["a"])
+
+    def test_both_purpose_always_matches(self):
+        candidates = [{"key": "a", "purpose": "both"},
+                      {"key": "b", "purpose": "review"}]
+        result = execute_selection.filter_by_purpose(candidates, "execute")
+        self.assertEqual([c["key"] for c in result], ["a"])
+
+    def test_candidates_with_no_declared_purpose_always_pass_through(self):
+        candidates = [{"key": "a", "purpose": None},
+                      {"key": "b", "purpose": "execute"}]
+        result = execute_selection.filter_by_purpose(candidates, "execute")
+        self.assertEqual({c["key"] for c in result}, {"a", "b"})
+
+    def test_no_matching_purpose_returns_all_unfiltered(self):
+        candidates = [{"key": "a", "purpose": "review"}]
+        result = execute_selection.filter_by_purpose(candidates, "execute")
+        self.assertEqual([c["key"] for c in result], ["a"])
+
+    def test_missing_purpose_key_entirely_treated_as_no_preference(self):
+        # pre-migration review-spec.toml: the field is absent, not None
+        candidates = [{"key": "a"}]
+        result = execute_selection.filter_by_purpose(candidates, "execute")
+        self.assertEqual([c["key"] for c in result], ["a"])
+
+
 class TestFilterByContext(unittest.TestCase):
     def test_drops_candidates_below_required_context(self):
         candidates = [{"key": "small", "context_limit": 100_000},
@@ -2473,6 +2941,65 @@ class TestResolveExecuteCandidates(unittest.TestCase):
             candidates, task_type="backend", required_context=1000,
             affinity_table={}, top_n_keys=["unknown", "confirmed"])
         self.assertEqual([c["key"] for c in result], ["confirmed", "unknown"])
+
+    def test_purpose_filter_excludes_review_only_candidates(self):
+        candidates = [
+            {"key": "reviewer-only", "purpose": "review",
+             "task_affinity": "backend", "context_limit": 1_000_000},
+            {"key": "both-ok", "purpose": "both",
+             "task_affinity": "backend", "context_limit": 1_000_000},
+        ]
+        result = execute_selection.resolve_execute_candidates(
+            candidates, task_type="backend", required_context=1000,
+            affinity_table={}, top_n_keys=[])
+        self.assertEqual([c["key"] for c in result], ["both-ok"])
+
+
+class TestTaskAffinityMatchBonus(unittest.TestCase):
+    # Cross-Document Consistency CRITICAL finding (round 3): the design's task_affinity_match=2
+    # bonus (spec §6) is additive on a 0-100 score, capped at +15 COMBINED with every other
+    # bonus -- it can never be large enough to flip an arbitrarily-large explicit rank
+    # distance. Placed BEFORE top_n_keys rank in the sort key (an earlier draft's ordering),
+    # the bonus was effectively unbounded: it could outrank a top_n_keys #1 candidate with a
+    # last-place, merely-tagged one, which is not what "capped at +15" means. The bonus is
+    # therefore ranked AFTER top_n_keys rank in the sort key below -- a genuine tie-break that
+    # only ever matters among candidates the ladder itself treats as equally ranked (both
+    # explicitly tied, or both absent from top_n_keys and sharing the same fallback rank),
+    # never an override of a real, distinguishing rank.
+    def test_exact_affinity_match_ranks_above_an_untagged_candidate_at_equal_top_n_rank(self):
+        candidates = [
+            {"key": "untagged", "context_limit": 1_000_000},
+            {"key": "exact-match", "task_affinity": "backend", "context_limit": 1_000_000},
+        ]
+        result = execute_selection.resolve_execute_candidates(
+            candidates, task_type="backend", required_context=1000,
+            affinity_table={}, top_n_keys=[])  # neither is in top_n_keys -- both share the
+            # same fallback rank (len(top_n_keys)), so this IS a genuine rank tie.
+        self.assertEqual([c["key"] for c in result], ["exact-match", "untagged"])
+
+    def test_top_n_rank_still_wins_when_no_affinity_tag_is_involved(self):
+        # The bonus never overrides an EXPLICIT top_n_keys preference between two candidates
+        # that are equally untagged -- it only ever breaks a tie in favor of an exact match.
+        candidates = [{"key": "a", "context_limit": 1_000_000},
+                      {"key": "b", "context_limit": 1_000_000}]
+        result = execute_selection.resolve_execute_candidates(
+            candidates, task_type="backend", required_context=1000,
+            affinity_table={}, top_n_keys=["b", "a"])
+        self.assertEqual([c["key"] for c in result], ["b", "a"])
+
+    def test_explicit_top_n_rank_always_wins_over_the_affinity_tie_break(self):
+        # CRITICAL finding: the bonus is a BOUNDED tie-break only -- it must never override a
+        # real, explicit ladder-rank distance (the spec's bonus is capped at +15 on a 0-100
+        # score, never large enough to flip a top_n_keys preference between two DIFFERENTLY
+        # ranked candidates just because one happens to carry a matching task_affinity tag).
+        candidates = [
+            {"key": "top-ranked-untagged", "context_limit": 1_000_000},
+            {"key": "low-ranked-match", "task_affinity": "backend", "context_limit": 1_000_000},
+        ]
+        result = execute_selection.resolve_execute_candidates(
+            candidates, task_type="backend", required_context=1000,
+            affinity_table={}, top_n_keys=["top-ranked-untagged", "low-ranked-match"])
+        self.assertEqual([c["key"] for c in result], ["top-ranked-untagged", "low-ranked-match"])
 
 
 class TestCandidatesToLadder(unittest.TestCase):
@@ -2708,6 +3235,1110 @@ class TestTimeoutTiers(unittest.TestCase):
                      "--index", "0"])
         self.assertEqual(code, 0)
         self.assertEqual(out.getvalue().strip(), "600,1200,1800")
+
+
+class TestLoadRankingWeights(unittest.TestCase):
+    def test_loads_the_real_bundled_weights_file(self):
+        weights = model_ranker.load_ranking_weights()
+        self.assertAlmostEqual(weights["review"]["intelligence_index"], 0.30)
+        self.assertAlmostEqual(weights["execute"]["coding_index"], 0.30)
+        self.assertEqual(weights["bonuses"]["batch_mode"], 8)
+        self.assertEqual(weights["bonuses"]["bonus_cap"], 15)
+
+    def test_missing_file_falls_back_to_default_weights(self):
+        weights = model_ranker.load_ranking_weights("/nonexistent/path.toml")
+        self.assertIn("review", weights)
+        self.assertIn("execute", weights)
+        self.assertIn("bonuses", weights)
+
+    def test_fallback_returns_an_independent_copy_each_call(self):
+        # HIGH finding: a caller mutating one fallback result must never corrupt the next.
+        w1 = model_ranker.load_ranking_weights("/nonexistent/path.toml")
+        w1["review"]["intelligence_index"] = 999.0
+        w2 = model_ranker.load_ranking_weights("/nonexistent/path.toml")
+        self.assertEqual(w2["review"]["intelligence_index"], 0.30)
+
+    def test_syntactically_valid_toml_missing_a_purpose_section_falls_back(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[bonuses]\nbatch_mode = 8\nfallback_quota = 5\nbonus_cap = 15\n")
+            path = f.name
+        try:
+            weights = model_ranker.load_ranking_weights(path)
+            self.assertIn("review", weights)
+            self.assertIn("execute", weights)
+        finally:
+            os.remove(path)
+
+    def test_syntactically_valid_toml_missing_an_axis_falls_back(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[review]\nintelligence_index = 0.99\n"  # missing every other axis --
+                    # MEDIUM finding (round-4): deliberately 0.99, NOT 0.30 (the real default's
+                    # own value) -- an earlier draft used 0.30 here too, so this assertion could
+                    # pass whether load_ranking_weights actually fell back OR just happened to
+                    # read this partial file's own intelligence_index value back verbatim,
+                    # proving nothing about the fallback path actually running.
+                    "[execute]\nintelligence_index = 0.15\ncoding_index = 0.30\n"
+                    "agentic_index = 0.25\ncontext_window = 0.10\ntool_calling = 0.15\n"
+                    "price = 0.15\nspeed = 0.10\n"
+                    "[bonuses]\nbatch_mode = 8\nfallback_quota = 5\nbonus_cap = 15\n")
+            path = f.name
+        try:
+            weights = model_ranker.load_ranking_weights(path)
+            # Asserting the REAL default's value (0.30), distinguishable from the fixture's
+            # own 0.99, is what actually proves the fallback path discarded the incomplete
+            # file rather than silently using its partial values as-is.
+            self.assertAlmostEqual(weights["review"]["intelligence_index"], 0.30)
+        finally:
+            os.remove(path)
+
+    def test_syntactically_valid_toml_with_a_non_numeric_axis_falls_back(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write('[review]\nintelligence_index = "high"\ncoding_index = 0.10\n'
+                    "agentic_index = 0.15\ncontext_window = 0.15\ntool_calling = 0.05\n"
+                    "price = 0.15\nspeed = 0.05\n"
+                    "[execute]\nintelligence_index = 0.15\ncoding_index = 0.30\n"
+                    "agentic_index = 0.25\ncontext_window = 0.10\ntool_calling = 0.15\n"
+                    "price = 0.15\nspeed = 0.10\n"
+                    "[bonuses]\nbatch_mode = 8\nfallback_quota = 5\nbonus_cap = 15\n")
+            path = f.name
+        try:
+            weights = model_ranker.load_ranking_weights(path)
+            self.assertIsInstance(weights["review"]["intelligence_index"], (int, float))
+        finally:
+            os.remove(path)
+
+    def test_syntactically_valid_toml_missing_a_bonus_field_falls_back(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[review]\nintelligence_index = 0.30\ncoding_index = 0.10\n"
+                    "agentic_index = 0.15\ncontext_window = 0.15\ntool_calling = 0.05\n"
+                    "price = 0.15\nspeed = 0.05\n"
+                    "[execute]\nintelligence_index = 0.15\ncoding_index = 0.30\n"
+                    "agentic_index = 0.25\ncontext_window = 0.10\ntool_calling = 0.15\n"
+                    "price = 0.15\nspeed = 0.10\n"
+                    "[bonuses]\nbatch_mode = 8\n")  # missing fallback_quota/bonus_cap
+            path = f.name
+        try:
+            weights = model_ranker.load_ranking_weights(path)
+            self.assertIn("bonus_cap", weights["bonuses"])
+        finally:
+            os.remove(path)
+
+
+class TestScoreCandidates(unittest.TestCase):
+    def setUp(self):
+        self.weights = model_ranker.load_ranking_weights()
+
+    def test_higher_intelligence_index_ranks_first_for_review(self):
+        entries = [
+            {"key": "low", "scores": {"intelligence_index": 40, "coding_index": 40,
+                                       "agentic_index": 40}},
+            {"key": "high", "scores": {"intelligence_index": 90, "coding_index": 40,
+                                        "agentic_index": 40}},
+        ]
+        ranked = model_ranker.score_candidates(entries, "review", self.weights)
+        self.assertEqual([e["key"] for e in ranked], ["high", "low"])
+
+    def test_missing_axis_excluded_never_zeroes_the_score(self):
+        # "no_scores" has NO scores dict at all -- must not be treated as 0 on every axis;
+        # its score comes only from whatever axes it does have (tool_calling here).
+        entries = [
+            {"key": "no_scores", "tool_calling": True},
+            {"key": "has_scores", "scores": {"intelligence_index": 1, "coding_index": 1,
+                                              "agentic_index": 1}, "tool_calling": False},
+        ]
+        ranked = model_ranker.score_candidates(entries, "review", self.weights)
+        by_key = {e["key"]: e["score"] for e in ranked}
+        self.assertGreater(by_key["no_scores"], 0)
+
+    def test_batch_mode_bonus_can_flip_the_ranking(self):
+        entries = [
+            {"key": "no_batch", "scores": {"intelligence_index": 50, "coding_index": 50,
+                                            "agentic_index": 50}, "batch_mode": False},
+            {"key": "batch", "scores": {"intelligence_index": 48, "coding_index": 48,
+                                         "agentic_index": 48}, "batch_mode": True},
+        ]
+        ranked = model_ranker.score_candidates(entries, "review", self.weights)
+        self.assertEqual(ranked[0]["key"], "batch")
+
+    def test_bonus_is_capped(self):
+        entries = [{"key": "everything", "scores": {"intelligence_index": 100,
+                                                      "coding_index": 100, "agentic_index": 100},
+                    "batch_mode": True, "fallback_quota": True}]
+        ranked = model_ranker.score_candidates(entries, "review", self.weights)
+        self.assertLessEqual(ranked[0]["score"], 100.0)
+
+    def test_price_is_normalized_within_the_candidate_set_and_inverted(self):
+        entries = [
+            {"key": "cheap", "pricing": {"input_per_1m": 1.0}},
+            {"key": "expensive", "pricing": {"input_per_1m": 100.0}},
+        ]
+        ranked = model_ranker.score_candidates(entries, "review", self.weights)
+        self.assertEqual(ranked[0]["key"], "cheap")
+
+    def test_score_never_exceeds_100_even_with_full_axes_and_bonuses(self):
+        entries = [{"key": "maxed", "scores": {"intelligence_index": 100, "coding_index": 100,
+                                                 "agentic_index": 100}, "tool_calling": True,
+                    "batch_mode": True, "fallback_quota": True}]
+        ranked = model_ranker.score_candidates(entries, "execute", self.weights)
+        self.assertLessEqual(ranked[0]["score"], 100.0)
+
+
+class TestLoadSecret(unittest.TestCase):
+    def test_env_var_takes_precedence(self):
+        env = {"ARTIFICIAL_ANALYSIS_API_KEY": "from-env"}
+        self.assertEqual(
+            local_secrets.load_secret(env, "ARTIFICIAL_ANALYSIS_API_KEY"), "from-env")
+
+    def test_reads_from_secrets_file_when_env_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg_dir = os.path.join(d, ".config", "ai-kit")
+            os.makedirs(cfg_dir)
+            with open(os.path.join(cfg_dir, "secrets.env"), "w", encoding="utf-8") as f:
+                f.write("# comment\nARTIFICIAL_ANALYSIS_API_KEY=from-file\nOTHER=ignored\n")
+            env = {"HOME": d}
+            self.assertEqual(
+                local_secrets.load_secret(env, "ARTIFICIAL_ANALYSIS_API_KEY"), "from-file")
+
+    def test_missing_file_returns_none(self):
+        env = {"HOME": "/nonexistent-home-dir-xyz"}
+        self.assertIsNone(local_secrets.load_secret(env, "ARTIFICIAL_ANALYSIS_API_KEY"))
+
+    def test_missing_key_in_existing_file_returns_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg_dir = os.path.join(d, ".config", "ai-kit")
+            os.makedirs(cfg_dir)
+            with open(os.path.join(cfg_dir, "secrets.env"), "w", encoding="utf-8") as f:
+                f.write("OTHER=ignored\n")
+            env = {"HOME": d}
+            self.assertIsNone(local_secrets.load_secret(env, "ARTIFICIAL_ANALYSIS_API_KEY"))
+
+
+class TestHttpGetJson(unittest.TestCase):
+    # CRITICAL finding: models.dev returns HTTP 403 to urllib's default "Python-urllib/3.x"
+    # User-Agent (confirmed live), so _http_get_json must send a real one -- assert against a
+    # fake urlopen/Request capture, never a real network call.
+    def test_sends_non_default_user_agent(self):
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def fake_urlopen(req, timeout=None):
+            captured["headers"] = dict(req.headers)
+            return FakeResponse()
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            model_sources._http_get_json("https://example.test/x", {})
+        ua = captured["headers"].get("User-agent") or captured["headers"].get("User-Agent")
+        self.assertIsNotNone(ua)
+        self.assertNotIn("python-urllib", ua.lower())
+
+    def test_merges_caller_headers_rather_than_replacing_them(self):
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def fake_urlopen(req, timeout=None):
+            captured["headers"] = dict(req.headers)
+            return FakeResponse()
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            model_sources._http_get_json("https://example.test/x", {"X-Api-Key": "secret"})
+        self.assertEqual(captured["headers"].get("X-api-key"), "secret")
+        ua = captured["headers"].get("User-agent") or captured["headers"].get("User-Agent")
+        self.assertIsNotNone(ua)
+        self.assertNotIn("python-urllib", ua.lower())
+
+
+class TestFetchModelsDev(unittest.TestCase):
+    def test_returns_parsed_json_and_ok_true_on_success(self):
+        def fake_fetch(url, headers):
+            self.assertEqual(url, model_sources.MODELS_DEV_URL)
+            return {"openai": {"models": {"gpt-4o": {"id": "gpt-4o"}}}}
+        data, ok = model_sources.fetch_models_dev(fetch_fn=fake_fetch)
+        self.assertTrue(ok)
+        self.assertEqual(data["openai"]["models"]["gpt-4o"]["id"], "gpt-4o")
+
+    def test_fetch_failure_returns_empty_dict_and_ok_false(self):
+        def failing_fetch(url, headers):
+            raise urllib.error.URLError("no network")
+        data, ok = model_sources.fetch_models_dev(fetch_fn=failing_fetch)
+        self.assertEqual(data, {})
+        self.assertFalse(ok)
+
+
+class TestFetchArtificialAnalysis(unittest.TestCase):
+    def test_no_api_key_returns_empty_list_and_ok_true_without_fetching(self):
+        def should_not_be_called(url, headers):
+            self.fail("must not fetch with no api key")
+        data, ok = model_sources.fetch_artificial_analysis(None, fetch_fn=should_not_be_called)
+        self.assertEqual(data, [])
+        self.assertTrue(ok)  # deliberately skipped is NOT a failure -- nothing to preserve/lose
+
+    def test_single_page_response(self):
+        def fake_fetch(url, headers):
+            self.assertEqual(headers, {"x-api-key": "aa_test"})
+            return {"data": [{"id": "1", "name": "Model A"}],
+                    "pagination": {"has_more": False}}
+        data, ok = model_sources.fetch_artificial_analysis("aa_test", fetch_fn=fake_fetch)
+        self.assertTrue(ok)
+        self.assertEqual([m["id"] for m in data], ["1"])
+
+    def test_paginates_until_has_more_is_false(self):
+        pages = {
+            1: {"data": [{"id": "1"}], "pagination": {"has_more": True}},
+            2: {"data": [{"id": "2"}], "pagination": {"has_more": False}},
+        }
+        def fake_fetch(url, headers):
+            page = 1 if "page=1" in url else 2
+            return pages[page]
+        data, ok = model_sources.fetch_artificial_analysis("aa_test", fetch_fn=fake_fetch)
+        self.assertTrue(ok)
+        self.assertEqual(sorted(m["id"] for m in data), ["1", "2"])
+
+    def test_fetch_failure_returns_ok_false_and_whatever_was_collected_so_far(self):
+        def failing_fetch(url, headers):
+            raise urllib.error.URLError("no network")
+        data, ok = model_sources.fetch_artificial_analysis("aa_test", fetch_fn=failing_fetch)
+        self.assertEqual(data, [])
+        self.assertFalse(ok)
+
+    def test_mid_pagination_failure_returns_ok_false_even_with_partial_data(self):
+        def flaky_fetch(url, headers):
+            if "page=1" in url:
+                return {"data": [{"id": "1"}], "pagination": {"has_more": True}}
+            raise urllib.error.URLError("dropped mid-pagination")
+        data, ok = model_sources.fetch_artificial_analysis("aa_test", fetch_fn=flaky_fetch)
+        self.assertFalse(ok)  # partial data exists but is NOT trustworthy -- caller must not use it
+
+
+class TestInferIsRouter(unittest.TestCase):
+    def test_router_env_provider_name_matches(self):
+        self.assertTrue(model_heuristics.infer_is_router("router-env"))
+
+    def test_plain_vendor_name_does_not_match(self):
+        self.assertFalse(model_heuristics.infer_is_router("openai"))
+
+    def test_case_insensitive(self):
+        self.assertTrue(model_heuristics.infer_is_router("Router-Env"))
+
+
+class TestInferBatchMode(unittest.TestCase):
+    def test_flash_suffix_matches(self):
+        self.assertTrue(model_heuristics.infer_batch_mode("gemini-3.5-flash"))
+
+    def test_batch_suffix_matches(self):
+        self.assertTrue(model_heuristics.infer_batch_mode("gpt-5.6-batch"))
+
+    def test_mini_suffix_matches(self):
+        self.assertTrue(model_heuristics.infer_batch_mode("gpt-5-mini"))
+
+    def test_flagship_model_does_not_match(self):
+        self.assertFalse(model_heuristics.infer_batch_mode("gpt-5.6-sol"))
+
+
+class TestInferFallbackQuota(unittest.TestCase):
+    def test_matches_wherever_is_router_matches(self):
+        self.assertTrue(model_heuristics.infer_fallback_quota("router-env"))
+
+    def test_plain_vendor_name_does_not_match(self):
+        self.assertFalse(model_heuristics.infer_fallback_quota("openai"))
+
+
+class TestMatchModelsDev(unittest.TestCase):
+    def setUp(self):
+        self.data = {
+            "openai": {"models": {"gpt-5.6-sol": {"id": "gpt-5.6-sol", "reasoning": True,
+                                                    "tool_call": True,
+                                                    "limit": {"context": 400000, "output": 128000},
+                                                    "cost": {"input": 3.5, "output": 14.0}}}},
+            "xai": {"models": {"grok-4.6": {"id": "grok-4.6", "tool_call": True,
+                                             "limit": {"context": 256000}}}},
+        }
+
+    def test_matches_provider_prefixed_id_exactly(self):
+        result = model_matcher.match_models_dev("openai/gpt-5.6-sol", self.data)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["provider"], "openai")
+        self.assertEqual(result["cost"]["input"], 3.5)
+
+    def test_matches_bare_id_by_searching_all_providers(self):
+        result = model_matcher.match_models_dev("gpt-5.6-sol", self.data)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["provider"], "openai")
+
+    def test_no_match_returns_none(self):
+        self.assertIsNone(model_matcher.match_models_dev("nonexistent-model", self.data))
+
+    def test_provider_hint_wrong_still_falls_back_to_bare_search(self):
+        # opencode namespaces as "<provider>/<model>" but the provider label opencode uses
+        # isn't guaranteed to equal models.dev's own provider key -- must not give up early.
+        result = model_matcher.match_models_dev("some-other-vendor/grok-4.6", self.data)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["provider"], "xai")
+
+    def test_bare_id_collision_across_two_providers_returns_none_rather_than_guess(self):
+        # HIGH finding: "first provider in dict-iteration order wins" would silently attach
+        # one vendor's fields (pricing/context/tool_calling) to a DIFFERENT vendor's model.
+        collision_data = {
+            "openai": {"models": {"sol": {"id": "sol", "cost": {"input": 3.5}}}},
+            "xai": {"models": {"sol": {"id": "sol", "cost": {"input": 1.0}}}},
+        }
+        self.assertIsNone(model_matcher.match_models_dev("sol", collision_data))
+
+    def test_fuzzy_match_finds_a_near_spelling_when_exact_lookup_finds_nothing(self):
+        # CRITICAL finding: the design mandates a normalization + FUZZY-MATCH step, not just
+        # direct/near-exact string equality -- a CLI's own id can differ from models.dev's id
+        # by a short version token (here: a trailing "-2" models.dev carries that the CLI's own
+        # id doesn't) that pure normalization (case/separator folding) alone never closes.
+        fuzzy_data = {"openai": {"models": {"gpt-5.6-sol-2": {
+            "id": "gpt-5.6-sol-2", "cost": {"input": 3.5}}}}}
+        result = model_matcher.match_models_dev("openai/gpt-5.6-sol", fuzzy_data)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["cost"]["input"], 3.5)
+
+    def test_fuzzy_match_returns_none_when_no_candidate_is_close_enough(self):
+        fuzzy_data = {"openai": {"models": {"gpt-5.6-sol-2": {"id": "gpt-5.6-sol-2"}}}}
+        self.assertIsNone(model_matcher.match_models_dev("totally-different-vendor-model", fuzzy_data))
+
+    def test_fuzzy_match_with_two_equally_close_candidates_returns_none_rather_than_guess(self):
+        # Collision-safety extends to the fuzzy path too -- two near-ties (both an equally
+        # plausible "-a"/"-b" variant of the target) must not silently pick either one.
+        fuzzy_collision = {
+            "openai": {"models": {"gpt-5.6-sola": {"id": "gpt-5.6-sola"}}},
+            "xai": {"models": {"gpt-5.6-solb": {"id": "gpt-5.6-solb"}}},
+        }
+        self.assertIsNone(model_matcher.match_models_dev("gpt-5.6-sol", fuzzy_collision))
+
+    def test_hinted_provider_prefix_disambiguates_a_bare_id_collision(self):
+        # The SAME collision as above, but the caller gave a "<hint>/<model>" shaped id --
+        # step-1 lookup already resolves this unambiguously, no fallback search needed.
+        collision_data = {
+            "openai": {"models": {"sol": {"id": "sol", "cost": {"input": 3.5}}}},
+            "xai": {"models": {"sol": {"id": "sol", "cost": {"input": 1.0}}}},
+        }
+        result = model_matcher.match_models_dev("openai/sol", collision_data)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["cost"]["input"], 3.5)
+
+
+class TestMatchArtificialAnalysis(unittest.TestCase):
+    def setUp(self):
+        self.models = [
+            {"id": "abc", "name": "GPT-5.6 Sol", "slug": "gpt-5-6-sol",
+             "model_creator": {"name": "OpenAI"},
+             "evaluations": {"artificial_analysis_intelligence_index": 68.4,
+                              "artificial_analysis_coding_index": 74.1,
+                              "artificial_analysis_agentic_index": 61.2},
+             "performance": {"median_output_tokens_per_second": 142.3}},
+        ]
+
+    def test_matches_by_normalized_slug(self):
+        result = model_matcher.match_artificial_analysis("openai/gpt-5.6-sol", self.models)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["evaluations"]["artificial_analysis_coding_index"], 74.1)
+
+    def test_no_match_returns_none(self):
+        self.assertIsNone(
+            model_matcher.match_artificial_analysis("totally-unknown-model", self.models))
+
+    def test_fuzzy_match_finds_a_near_spelling_when_exact_lookup_finds_nothing(self):
+        # CRITICAL finding: same fuzzy fallback as match_models_dev, applied to AA's own
+        # slug/name fields -- a short version token difference must not fall through to
+        # "unmatched" when normalization + fuzzy similarity would confidently resolve it.
+        near_models = [{"id": "1", "name": "GPT-5.6 Sol V2", "slug": "gpt-5-6-sol-v2",
+                        "model_creator": {"name": "OpenAI"},
+                        "evaluations": {"artificial_analysis_coding_index": 74.1}}]
+        result = model_matcher.match_artificial_analysis("openai/gpt-5.6-sol", near_models)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["id"], "1")
+
+    def test_collision_disambiguated_by_provider_hint_via_model_creator(self):
+        # Two different vendors' models normalize to the SAME slug ("sol") -- a naive
+        # "first normalized match wins" would silently pick whichever is listed first.
+        collision_models = [
+            {"id": "1", "name": "Sol", "slug": "sol", "model_creator": {"name": "Xai"},
+             "evaluations": {"artificial_analysis_coding_index": 10.0}},
+            {"id": "2", "name": "Sol", "slug": "sol", "model_creator": {"name": "OpenAI"},
+             "evaluations": {"artificial_analysis_coding_index": 90.0}},
+        ]
+        result = model_matcher.match_artificial_analysis(
+            "openai/sol", collision_models, provider_hint="openai")
+        self.assertEqual(result["id"], "2")
+
+    def test_collision_with_no_provider_hint_returns_none_rather_than_guess(self):
+        collision_models = [
+            {"id": "1", "name": "Sol", "slug": "sol", "model_creator": {"name": "Xai"}},
+            {"id": "2", "name": "Sol", "slug": "sol", "model_creator": {"name": "OpenAI"}},
+        ]
+        self.assertIsNone(model_matcher.match_artificial_analysis("sol", collision_models))
+
+    def test_provider_hint_with_no_creator_match_falls_back_to_the_sole_name_match(self):
+        # Only one normalized match exists at all -- provider_hint has nothing to disambiguate,
+        # so the single match still wins (matches today's real-data behavior: most models have
+        # no collision).
+        result = model_matcher.match_artificial_analysis(
+            "openai/gpt-5.6-sol", self.models, provider_hint="some-unrelated-vendor")
+        self.assertIsNotNone(result)
+
+    def test_none_slug_and_name_do_not_crash_and_fall_through_to_no_match(self):
+        # Important finding: a key present with an explicit `null` value (not merely absent)
+        # must not reach _normalize's .lower() call unguarded -- one malformed AA record must
+        # not abort the whole match_artificial_analysis batch.
+        malformed_models = [{"id": "bad", "slug": None, "name": None,
+                              "model_creator": {"name": "OpenAI"}}]
+        result = model_matcher.match_artificial_analysis(
+            "openai/gpt-5.6-sol", malformed_models + self.models)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["id"], "abc")
+
+    def test_none_model_creator_does_not_crash_the_vendor_derivation_path(self):
+        # Important finding: `m.get("model_creator", {})` returns None (not {}) when the key is
+        # present with an explicit `null` value -- `.get("name", "")` on None then raises.
+        collision_models = [
+            {"id": "1", "name": "Sol", "slug": "sol", "model_creator": None},
+            {"id": "2", "name": "Sol", "slug": "sol", "model_creator": {"name": "OpenAI"}},
+        ]
+        result = model_matcher.match_artificial_analysis(
+            "openai/sol", collision_models, provider_hint="openai")
+        self.assertEqual(result["id"], "2")
+
+
+class TestBuildModelCatalog(unittest.TestCase):
+    def test_matched_candidate_is_enriched_and_added(self):
+        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        models_dev_data = {"openai": {"models": {"gpt-5.6-sol": {
+            "id": "gpt-5.6-sol", "tool_call": True, "structured_output": True,
+            "limit": {"context": 400000, "output": 128000},
+            "cost": {"input": 3.5, "output": 14.0}}}}}
+        catalog, rejections, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, [], True, {})
+        self.assertEqual(rejections, [])
+        self.assertEqual(unmatched, [])
+        self.assertIn("openai/gpt-5.6-sol", catalog)
+        entry = catalog["openai/gpt-5.6-sol"]
+        self.assertEqual(entry["provider"], "openai")
+        self.assertTrue(entry["source"]["models_dev"])
+        self.assertFalse(entry["source"]["artificial_analysis"])
+        self.assertIn("opencode", entry["runtimes"])
+
+    def test_unmatched_new_candidate_is_reported_but_never_persisted(self):
+        # CRITICAL: an unmatched, never-before-seen candidate must NOT land in the catalog
+        # automatically -- it needs research + user confirmation first (Task 8's wizard).
+        discovered = [{"cli": "opencode", "model_id": "vendor/totally-unknown"}]
+        catalog, rejections, unmatched = cli.build_model_catalog(discovered, {}, True, [], True, {})
+        self.assertEqual(rejections, [])
+        self.assertNotIn("vendor/totally-unknown", catalog)
+        self.assertEqual(len(unmatched), 1)
+        self.assertEqual(unmatched[0]["model_id"], "vendor/totally-unknown")
+        self.assertEqual(unmatched[0]["cli"], "opencode")
+
+    def test_unmatched_candidate_carries_heuristic_fields_for_wizard_confirmation(self):
+        # CRITICAL finding: an earlier draft returned unmatched candidates with NO heuristic
+        # fields at all, and its own confirmation-payload test looked them up in `catalog`
+        # (a KeyError, since unmatched entries are never added to catalog) -- both bugs fixed
+        # here: heuristics are computed for unmatched candidates too, and returned inline on
+        # the unmatched dict itself, never via a catalog lookup that can't succeed.
+        discovered = [{"cli": "opencode", "model_id": "router-env/totally-unknown"}]
+        _, _, unmatched = cli.build_model_catalog(discovered, {}, True, [], True, {})
+        self.assertEqual(len(unmatched), 1)
+        self.assertTrue(unmatched[0]["is_router"])
+        self.assertTrue(unmatched[0]["fallback_quota"])
+        self.assertIn("batch_mode", unmatched[0])
+
+    def test_already_confirmed_manual_entry_is_not_re_reported_as_unmatched(self):
+        # A candidate already persisted (via confirm-catalog-entry, a previous run) is known --
+        # re-running discovery on it must refresh its runtimes, not flag it as needing
+        # confirmation again every single run.
+        existing = {"vendor/totally-unknown": {"provider": "vendor", "runtimes": {},
+                                                 "source": {"manual": True}, "confidence": "low",
+                                                 "last_verified": "2026-08-01"}}
+        discovered = [{"cli": "opencode", "model_id": "vendor/totally-unknown"}]
+        catalog, rejections, unmatched = cli.build_model_catalog(
+            discovered, {}, True, [], True, existing)
+        self.assertEqual(unmatched, [])
+        self.assertIn("opencode", catalog["vendor/totally-unknown"]["runtimes"])
+        self.assertEqual(catalog["vendor/totally-unknown"]["confidence"], "low")
+
+    def test_router_batch_and_fallback_quota_heuristics_are_applied(self):
+        # HIGH finding: a candidate that matches NEITHER external source is, by this function's
+        # own contract, never added to `catalog` -- it goes to `unmatched` instead (see the
+        # dedicated unmatched-candidate tests above). Asserting on catalog[key] for such a
+        # candidate is a KeyError by construction. Give this candidate a real models.dev match
+        # so it actually lands in `catalog`, exercising the heuristics on the MATCHED path
+        # (the unmatched path's own heuristic fields are already covered separately, above).
+        discovered = [{"cli": "opencode", "model_id": "router-env/my-plan-review"}]
+        models_dev_data = {"router-env": {"models": {"my-plan-review": {"id": "my-plan-review"}}}}
+        catalog, _, unmatched = cli.build_model_catalog(discovered, models_dev_data, True, [], True, {})
+        self.assertEqual(unmatched, [])
+        entry = catalog["router-env/my-plan-review"]
+        self.assertTrue(entry["is_router"])
+        self.assertTrue(entry["fallback_quota"])
+
+    def test_existing_catalog_entries_are_preserved_when_not_rediscovered(self):
+        existing = {"stale/model": {"provider": "p", "runtimes": {"c": {}}, "source": {},
+                                     "confidence": "high", "last_verified": "2026-01-01"}}
+        catalog, _, _ = cli.build_model_catalog([], {}, True, [], True, existing)
+        self.assertIn("stale/model", catalog)
+
+    def test_two_clis_reporting_the_same_model_merge_into_one_canonical_entry(self):
+        # HIGH finding: catalog identity must not lose runtime mappings across CLIs.
+        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"},
+                      {"cli": "codex", "model_id": "gpt-5.6-sol"}]
+        models_dev_data = {"openai": {"models": {"gpt-5.6-sol": {"id": "gpt-5.6-sol"}}}}
+        catalog, _, _ = cli.build_model_catalog(discovered, models_dev_data, True, [], True, {})
+        self.assertEqual(len(catalog), 1)
+        entry = catalog["openai/gpt-5.6-sol"]
+        self.assertIn("opencode", entry["runtimes"])
+        self.assertIn("codex", entry["runtimes"])
+
+    def test_models_dev_fetch_failure_preserves_cached_models_dev_fields(self):
+        # CRITICAL finding: a network failure must never overwrite already-cached enrichment.
+        existing = {"openai/gpt-5.6-sol": {
+            "provider": "openai", "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}},
+            "source": {"models_dev": True, "artificial_analysis": False}, "confidence": "high",
+            "last_verified": "2026-08-01", "tool_calling": True,
+            "pricing": {"input_per_1m": 3.5, "output_per_1m": 14.0}}}
+        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, {}, False, [], True, existing)  # models_dev_ok=False: source is DOWN
+        self.assertEqual(unmatched, [])
+        entry = catalog["openai/gpt-5.6-sol"]
+        self.assertTrue(entry["tool_calling"])
+        self.assertEqual(entry["pricing"]["input_per_1m"], 3.5)
+        self.assertTrue(entry["source"]["models_dev"])  # still true -- not silently downgraded
+
+    def test_total_source_failure_leaves_a_cached_entry_completely_unchanged_except_runtimes(self):
+        existing = {"openai/gpt-5.6-sol": {
+            "provider": "openai", "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}},
+            "source": {"models_dev": True, "artificial_analysis": True}, "confidence": "high",
+            "last_verified": "2026-08-01", "scores": {"intelligence_index": 91.0}}}
+        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        catalog, _, _ = cli.build_model_catalog(discovered, {}, False, [], False, existing)
+        entry = catalog["openai/gpt-5.6-sol"]
+        self.assertEqual(entry["scores"]["intelligence_index"], 91.0)
+        self.assertEqual(entry["confidence"], "high")
+        self.assertEqual(entry["last_verified"], "2026-08-01")  # unchanged -- nothing re-verified
+
+    def test_artificial_analysis_pricing_fills_in_when_models_dev_has_no_match(self):
+        # HIGH finding: AA pricing must not be discarded when models.dev has no match.
+        aa_models = [{"id": "1", "slug": "totally-unknown", "name": "Totally Unknown",
+                      "model_creator": {"name": "Vendor"},
+                      "pricing": {"price_1m_input_tokens": 2.0, "price_1m_output_tokens": 8.0}}]
+        discovered = [{"cli": "opencode", "model_id": "vendor/totally-unknown"}]
+        catalog, _, _ = cli.build_model_catalog(discovered, {}, True, aa_models, True, {})
+        entry = catalog["vendor/totally-unknown"]
+        self.assertEqual(entry["pricing"]["input_per_1m"], 2.0)
+        self.assertEqual(entry["pricing"]["output_per_1m"], 8.0)
+
+    def test_models_dev_fetch_failure_preserves_cached_runtime_ctx_window(self):
+        # CRITICAL finding: a models.dev outage must not blank out an already-cached
+        # runtime's ctx_window by unconditionally recomputing it from a (necessarily absent)
+        # md_match -- that silently corrupts ranking's context_window axis.
+        existing = {"openai/gpt-5.6-sol": {
+            "provider": "openai",
+            "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol", "ctx_window": 400000}},
+            "source": {"models_dev": True, "artificial_analysis": False}, "confidence": "high",
+            "last_verified": "2026-08-01"}}
+        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        catalog, _, _ = cli.build_model_catalog(discovered, {}, False, [], True, existing)
+        self.assertEqual(
+            catalog["openai/gpt-5.6-sol"]["runtimes"]["opencode"]["ctx_window"], 400000)
+
+    def test_missing_api_key_preserves_cached_aa_fields_rather_than_wiping_them(self):
+        # CRITICAL finding: no API key configured (aa_ok=True, aa_models=[] per Task 4's own
+        # "deliberately skipped is not a failure" contract) must NOT be treated identically to
+        # "AA was queried and genuinely found no match" -- the CLI wiring in Step 5 passes
+        # aa_ok=False to THIS function whenever no key was available, specifically so this
+        # preserve-not-wipe path runs; this test exercises that resulting contract directly.
+        existing = {"openai/gpt-5.6-sol": {
+            "provider": "openai", "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}},
+            "source": {"models_dev": True, "artificial_analysis": True}, "confidence": "high",
+            "last_verified": "2026-08-01",
+            "scores": {"intelligence_index": 91.0, "coding_index": 88.0, "agentic_index": 84.0},
+            "tokens_per_sec": 142.3}}
+        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        catalog, _, _ = cli.build_model_catalog(discovered, {}, True, [], False, existing)
+        entry = catalog["openai/gpt-5.6-sol"]
+        self.assertEqual(entry["scores"]["intelligence_index"], 91.0)
+        self.assertEqual(entry["tokens_per_sec"], 142.3)
+        self.assertTrue(entry["source"]["artificial_analysis"])
+
+    def test_genuine_no_match_with_a_working_key_clears_aa_fields_and_flips_source_false(self):
+        # The OTHER transition (contrast with the no-key test above): AA genuinely queried,
+        # genuinely found no match for THIS candidate -- fields and provenance are cleared
+        # together, consistently, not left stale.
+        existing = {"openai/gpt-5.6-sol": {
+            "provider": "openai", "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}},
+            "source": {"models_dev": True, "artificial_analysis": True}, "confidence": "high",
+            "last_verified": "2026-08-01",
+            "scores": {"intelligence_index": 91.0, "coding_index": 88.0, "agentic_index": 84.0}}}
+        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        catalog, _, _ = cli.build_model_catalog(discovered, {}, True, [], True, existing)
+        entry = catalog["openai/gpt-5.6-sol"]
+        self.assertNotIn("scores", entry)
+        self.assertFalse(entry["source"]["artificial_analysis"])
+
+    def test_partial_aa_match_with_no_performance_data_clears_stale_tokens_per_sec(self):
+        # MEDIUM finding (round-4): a PARTIAL match -- AA matched this candidate this run
+        # (source.artificial_analysis is about to read True again) but this match's own
+        # payload has no performance/median_output_tokens_per_second -- must clear a stale
+        # cached tokens_per_sec, exactly like the full no-match case above. An earlier draft
+        # only ever set "tokens_per_sec" in the returned fields dict when perf data existed,
+        # silently retaining the old value via merge_catalog_entry's omission-preserves rule
+        # even though this run's genuine query found nothing for it.
+        existing = {"openai/gpt-5.6-sol": {
+            "provider": "openai", "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}},
+            "source": {"models_dev": True, "artificial_analysis": True}, "confidence": "high",
+            "last_verified": "2026-08-01",
+            "scores": {"intelligence_index": 91.0, "coding_index": 88.0, "agentic_index": 84.0},
+            "tokens_per_sec": 142.3}}
+        aa_models = [{"id": "1", "slug": "gpt-5-6-sol", "name": "GPT-5.6 Sol",
+                      "model_creator": {"name": "OpenAI"},
+                      "evaluations": {"artificial_analysis_intelligence_index": 91.0}}]
+        # no "performance" key at all -- a genuine partial match
+        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        catalog, _, _ = cli.build_model_catalog(discovered, {}, True, aa_models, True, existing)
+        entry = catalog["openai/gpt-5.6-sol"]
+        self.assertNotIn("tokens_per_sec", entry)
+        self.assertTrue(entry["source"]["artificial_analysis"])
+
+    def test_heuristic_correction_survives_a_later_catalog_rebuild(self):
+        # HIGH finding: every refresh recomputed is_router/batch_mode/fallback_quota fresh
+        # from the naming heuristic, silently overwriting a user's prior correction
+        # (apply_heuristic_corrections, Task 2) on the very next run.
+        existing = {"router-env/my-plan-review": {
+            "provider": "router-env", "runtimes": {"opencode": {"model_id": "router-env/my-plan-review"}},
+            "source": {}, "confidence": "low", "last_verified": "2026-08-01",
+            "is_router": False}}  # user corrected this away from the heuristic default (True)
+        discovered = [{"cli": "opencode", "model_id": "router-env/my-plan-review"}]
+        catalog, _, _ = cli.build_model_catalog(discovered, {}, True, [], True, existing)
+        self.assertFalse(catalog["router-env/my-plan-review"]["is_router"])
+
+    def test_bare_model_matched_only_via_artificial_analysis_derives_vendor_from_model_creator(self):
+        # HIGH finding: a bare model id (codex-style, no "<vendor>/" prefix) with NO
+        # models.dev match must not become its own vendor ("gpt-5.6-sol/gpt-5.6-sol") just
+        # because model_id.split("/", 1)[0] has nothing to split -- when Artificial Analysis
+        # matched, its model_creator is the real vendor signal.
+        aa_models = [{"id": "1", "slug": "gpt-5-6-sol", "name": "GPT-5.6 Sol",
+                      "model_creator": {"name": "OpenAI"},
+                      "evaluations": {"artificial_analysis_intelligence_index": 91.0}}]
+        discovered = [{"cli": "codex", "model_id": "gpt-5.6-sol"}]
+        catalog, _, unmatched = cli.build_model_catalog(discovered, {}, True, aa_models, True, {})
+        self.assertEqual(unmatched, [])
+        self.assertIn("openai/gpt-5.6-sol", catalog)
+        self.assertEqual(catalog["openai/gpt-5.6-sol"]["provider"], "openai")
+
+    def test_discovered_candidates_include_single_provider_and_extra_candidates(self):
+        # CRITICAL cross-doc finding: Task 8's ranking step must be able to reconstruct the
+        # FULL candidate set (not just runtimes-with-a-"models"-array) without recomputing
+        # cfg_resolve/--extra-candidate parsing itself -- build_model_catalog is given the
+        # already-fully-reconciled `discovered_models` list by its caller (the CLI command,
+        # Step 5) and this test only confirms it treats every one of them uniformly,
+        # regardless of whether the candidate came from a runtimes snapshot, review-spec.toml,
+        # or --extra-candidate -- there's no special-casing by origin inside this function.
+        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"},
+                      {"cli": "codex", "model_id": "gpt-5.6-alt"}]  # e.g. from --extra-candidate
+        catalog, _, unmatched = cli.build_model_catalog(discovered, {}, True, [], True, {})
+        self.assertEqual({u["cli"] for u in unmatched}, {"opencode", "codex"})
+
+    def test_bare_id_with_both_sources_unavailable_recovers_key_from_existing_catalog(self):
+        # CRITICAL/HIGH fix (round-2 native-opus review): this is the `--if-stale` DEFAULT
+        # path -- both sources skipped (models_dev_ok=False, aa_ok=False), a bare CLI-native
+        # id (codex-style, no "<vendor>/" prefix) that was already matched and persisted on a
+        # PRIOR run. Before the fix, this fell through to `provider = model_id`, minting an
+        # unstable "gpt-5.6-sol/gpt-5.6-sol" key every such run -- never matching the real
+        # cached entry, permanently orphaning it, and reclassifying an already-known model as
+        # `unmatched` (needing manual research) on every single --if-stale run.
+        existing = {"openai/gpt-5.6-sol": {
+            "provider": "openai",
+            "runtimes": {"codex": {"model_id": "gpt-5.6-sol", "ctx_window": 400000}},
+            "source": {"models_dev": True, "artificial_analysis": False}, "confidence": "high",
+            "last_verified": "2026-08-01",
+            "scores": {"intelligence_index": 91.0}}}
+        discovered = [{"cli": "codex", "model_id": "gpt-5.6-sol"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, {}, False, [], False, existing)
+        self.assertEqual(unmatched, [])
+        self.assertEqual(len(catalog), 1)
+        self.assertIn("openai/gpt-5.6-sol", catalog)
+        self.assertNotIn("gpt-5.6-sol/gpt-5.6-sol", catalog)
+        entry = catalog["openai/gpt-5.6-sol"]
+        self.assertEqual(entry["provider"], "openai")
+        self.assertEqual(entry["scores"]["intelligence_index"], 91.0)  # preserved, not wiped
+
+    def test_a_mis_keyed_entry_self_heals_once_a_real_match_comes_back(self):
+        # Important finding (#2, coordinator review): `existing_key` recovery must ONLY apply
+        # when this run genuinely has no signal of its own (md_match AND aa_match both None) --
+        # the function's own docstring already said "neither source matched THIS run", but the
+        # original code consulted `existing_key` for the final `key` UNCONDITIONALLY, so a
+        # catalog entry that got mis-keyed while a source was down (e.g. self-referential
+        # "gpt-5.6-sol/gpt-5.6-sol", minted during an earlier outage) could never self-heal --
+        # even once the source came back with a real, authoritative match, the stale key kept
+        # winning forever. Here "gpt-5.6-sol/gpt-5.6-sol" is the pre-existing (wrong) entry;
+        # models.dev is back up this run and genuinely matches "gpt-5.6-sol" to "openai" --
+        # the fresh match must win, landing under "openai/gpt-5.6-sol", not the stale key.
+        existing = {"gpt-5.6-sol/gpt-5.6-sol": {
+            "provider": "gpt-5.6-sol",
+            "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
+            "source": {"models_dev": False, "artificial_analysis": False}, "confidence": "low",
+            "last_verified": "2026-08-01"}}
+        models_dev_data = {"openai": {"models": {"gpt-5.6-sol": {"id": "gpt-5.6-sol"}}}}
+        discovered = [{"cli": "codex", "model_id": "gpt-5.6-sol"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, [], True, existing)
+        self.assertEqual(unmatched, [])
+        self.assertIn("openai/gpt-5.6-sol", catalog)
+        self.assertEqual(catalog["openai/gpt-5.6-sol"]["provider"], "openai")
+
+    def test_brand_new_unmatched_bare_id_with_no_vendor_signal_gets_provider_none(self):
+        # Important finding (#4, coordinator review): a brand-new (never-cached) bare id (no
+        # "<vendor>/" prefix) with BOTH sources down and NO existing catalog entry to recover
+        # from has genuinely zero vendor signal -- falling back to `provider = model_id` used to
+        # mint a plausible-looking but entirely fabricated self-referential "model_id/model_id"
+        # key on the UNMATCHED candidate payload surfaced to the wizard (Task 8), which could
+        # be accidentally trusted and persisted as-is later. `provider=None` +
+        # `vendor_unknown=True` forces whatever confirms this candidate later to supply a real
+        # vendor. Distinct from the recoverable case above (test_bare_id_with_both_sources_
+        # unavailable_recovers_key_from_existing_catalog), which still gets its real recovered
+        # provider, not None.
+        discovered = [{"cli": "codex", "model_id": "totally-unknown-bare-id"}]
+        _, _, unmatched = cli.build_model_catalog(discovered, {}, False, [], False, {})
+        self.assertEqual(len(unmatched), 1)
+        self.assertIsNone(unmatched[0]["provider"])
+        self.assertTrue(unmatched[0]["vendor_unknown"])
+        self.assertIsNone(unmatched[0]["key"])
+
+    def test_recoverable_unmatched_candidate_is_not_flagged_vendor_unknown(self):
+        # Contrast case for the above: when `existing_key` recovery succeeds, `vendor_unknown`
+        # must read False and `provider` must be the real recovered vendor, not None.
+        existing = {"vendor/totally-unknown": {"provider": "vendor",
+                                                 "runtimes": {"codex": {"model_id": "bare-id"}},
+                                                 "source": {}, "confidence": "low",
+                                                 "last_verified": "2026-08-01"}}
+        discovered = [{"cli": "codex", "model_id": "bare-id"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, {}, False, [], False, existing)
+        self.assertEqual(unmatched, [])
+        self.assertIn("vendor/totally-unknown", catalog)
+        self.assertEqual(catalog["vendor/totally-unknown"]["provider"], "vendor")
+
+    def test_aa_match_with_no_usable_model_creator_name_routes_to_unmatched_without_crashing(self):
+        # Important finding (round-2 re-review): a bare id (no "<vendor>/" prefix) that matches
+        # Artificial Analysis (aa_match IS truthy) but whose own `model_creator` is missing/empty
+        # used to fall through to the matched/enrichment branch with `provider=None` -- because
+        # the old unmatched-routing check was `md_match is None and aa_match is None and
+        # existing_entry is None`, which is False here (aa_match is not None) even though
+        # `provider` itself ended up None. That reached an unguarded
+        # `_infer_heuristics(provider, model_id)` call in the matched path and raised
+        # `AttributeError: 'NoneType' object has no attribute 'lower'`, aborting the ENTIRE
+        # build_model_catalog run (losing every other candidate in the same batch, not just this
+        # one). Must instead land safely in `unmatched` with provider=None/vendor_unknown=True,
+        # exactly like the zero-signal case, and must NOT raise.
+        aa_models = [{"id": "1", "slug": "gpt-5-6-sol", "name": "GPT-5.6 Sol",
+                      "model_creator": {},  # no "name" at all
+                      "evaluations": {"artificial_analysis_intelligence_index": 91.0}}]
+        discovered = [{"cli": "codex", "model_id": "gpt-5.6-sol"}]
+        catalog, rejections, unmatched = cli.build_model_catalog(
+            discovered, {}, False, aa_models, True, {})  # models_dev_ok=False -> md_match None
+        self.assertEqual(rejections, [])
+        self.assertEqual(len(unmatched), 1)
+        self.assertIsNone(unmatched[0]["provider"])
+        self.assertTrue(unmatched[0]["vendor_unknown"])
+        self.assertEqual(catalog, {})  # never silently added to the catalog either
+
+
+class TestFetchModelCatalogCli(unittest.TestCase):
+    def _write_runtimes(self, d, clis):
+        path = os.path.join(d, "runtimes.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"clis": clis}, f)
+        return path
+
+    def _write_fresh_fetch_meta(self, catalog_path):
+        # Important finding (coordinator review): freshness for `--if-stale` is now tracked via
+        # a dedicated `<catalog_path>.fetch-meta.json` sidecar (mtime-based, same cache_is_stale
+        # mechanism, but written ONLY on a real fetch -- never on every catalog write) rather
+        # than the catalog file's own mtime. Every test below that wants to stay network-free
+        # under `--if-stale` must seed THIS file fresh, not just the catalog file.
+        with open(catalog_path + ".fetch-meta.json", "w", encoding="utf-8") as f:
+            json.dump({"last_fetched": time.time()}, f)
+
+    def _never_fetch_models_dev(self):
+        self.fail("fetch_models_dev_fn should not be called on a skip_fetch run")
+
+    def _never_fetch_aa(self, api_key):
+        self.fail("fetch_artificial_analysis_fn should not be called on a skip_fetch run")
+
+    def test_if_stale_with_a_fresh_catalog_skips_fetch_but_still_reports_new_candidates(self):
+        # CRITICAL finding: freshness must gate the network fetch only, never candidate
+        # discovery -- a brand-new model must still surface as `unmatched`, not be silently
+        # missed until the cache goes stale.
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            self._write_fresh_fetch_meta(catalog_path)
+            runtimes_path = self._write_runtimes(
+                d, {"opencode": {"installed": True, "models": ["vendor/brand-new"]}})
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path, "--if-stale"],
+                    fetch_models_dev_fn=self._never_fetch_models_dev,
+                    fetch_artificial_analysis_fn=self._never_fetch_aa)
+            self.assertEqual(code, 0)
+            result = json.loads(buf.getvalue())
+            self.assertTrue(result["fetch_skipped"])
+            self.assertEqual(len(result["unmatched"]), 1)
+            self.assertEqual(result["unmatched"][0]["model_id"], "vendor/brand-new")
+
+    def test_if_stale_skip_never_touches_the_fetch_freshness_marker(self):
+        # Important finding (coordinator review): a skip_fetch run must leave the fetch-meta
+        # sidecar file completely untouched (content AND mtime) -- otherwise a subsequent
+        # --if-stale run would (wrongly) see it as freshly re-verified and keep extending the
+        # TTL window forever without ever actually re-fetching. Seed a meta file with an old
+        # `last_fetched` epoch (already outside CATALOG_TTL_SECONDS, so a real fetch WOULD be
+        # warranted by that timestamp) but a very recent mtime (so cache_is_stale's mtime check
+        # alone would call it fresh) -- proving staleness is judged by the file's mtime here
+        # (same cache_is_stale mechanism as everywhere else in this codebase), and that a
+        # skipped run leaves that mtime/content alone rather than refreshing it.
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            meta_path = catalog_path + ".fetch-meta.json"
+            original_marker = {"last_fetched": 12345.0}
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(original_marker, f)
+            before_mtime = os.stat(meta_path).st_mtime
+            runtimes_path = self._write_runtimes(d, {})
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path, "--if-stale"],
+                    fetch_models_dev_fn=self._never_fetch_models_dev,
+                    fetch_artificial_analysis_fn=self._never_fetch_aa)
+            self.assertEqual(code, 0)
+            result = json.loads(buf.getvalue())
+            self.assertTrue(result["fetch_skipped"])  # mtime is fresh -> still skipped
+            self.assertEqual(os.stat(meta_path).st_mtime, before_mtime)  # untouched
+            self.assertEqual(cache_read_json(meta_path), original_marker)  # content untouched
+
+    def test_a_real_fetch_updates_the_freshness_marker_only_when_a_source_answered(self):
+        # Important finding (coordinator review): the freshness marker must be written when a
+        # real fetch runs and at least one source came back ok=True -- exercising the injectable
+        # fetch_models_dev_fn/fetch_artificial_analysis_fn hooks (Important finding #3: the real
+        # fetch branch previously had no injection point at all and was never covered by tests).
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            runtimes_path = self._write_runtimes(d, {})
+            meta_path = catalog_path + ".fetch-meta.json"
+            self.assertFalse(os.path.exists(meta_path))
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path],  # no --if-stale -- always fetches
+                    fetch_models_dev_fn=lambda: ({}, True),
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    load_secret_fn=lambda env, key: None)
+            self.assertEqual(code, 0)
+            result = json.loads(buf.getvalue())
+            self.assertTrue(result["models_dev_ok"])
+            self.assertTrue(os.path.exists(meta_path))
+            self.assertIsInstance(cache_read_json(meta_path)["last_fetched"], float)
+
+    def test_no_api_key_is_treated_as_source_skipped_not_a_genuine_no_match(self):
+        # CRITICAL finding (#3, coordinator review): this is the line that was never actually
+        # exercised by any test before -- `aa_ok = aa_fetch_ok and bool(api_key)`. Inject a
+        # fetch_artificial_analysis_fn that WOULD succeed (ok=True, real data) to prove the
+        # missing API key -- not a fetch failure -- is what collapses aa_ok to False here.
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            runtimes_path = self._write_runtimes(d, {})
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path],
+                    fetch_models_dev_fn=lambda: ({}, True),
+                    fetch_artificial_analysis_fn=lambda api_key: (
+                        [{"id": "1", "slug": "x"}], True),  # source itself would have succeeded
+                    load_secret_fn=lambda env, key: None)  # ...but no key is configured
+            self.assertEqual(code, 0)
+            result = json.loads(buf.getvalue())
+            self.assertFalse(result["artificial_analysis_ok"])
+
+    def test_extra_candidate_flag_is_included_in_discovery(self):
+        # --if-stale + a fresh fetch-meta sidecar keeps this test network-free (see the
+        # skip-fetch test above) while still proving --extra-candidate reaches `discovered` --
+        # discovery/reconciliation runs unconditionally, network fetching is what's gated.
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            self._write_fresh_fetch_meta(catalog_path)
+            runtimes_path = self._write_runtimes(d, {})
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path, "--if-stale",
+                     "--extra-candidate", "codex:vendor/typed-in-model"],
+                    fetch_models_dev_fn=self._never_fetch_models_dev,
+                    fetch_artificial_analysis_fn=self._never_fetch_aa)
+            self.assertEqual(code, 0)
+            result = json.loads(buf.getvalue())
+            self.assertIn({"cli": "codex", "model_id": "vendor/typed-in-model"},
+                           result["discovered"])
+
+    def test_single_provider_cli_candidate_pulled_from_review_spec_toml(self):
+        # Same network-free technique as above (--if-stale + a fresh fetch-meta sidecar).
+        # HIGH finding: this resolves review-spec.toml's global-merge path too (cfg_resolve),
+        # so `env_fn` MUST point HOME at this tempdir -- never the real dict(os.environ) --
+        # or this test would silently read whatever global config exists on the machine
+        # actually running the suite.
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            self._write_fresh_fetch_meta(catalog_path)
+            runtimes_path = self._write_runtimes(
+                d, {"codex": {"installed": True}})  # no "models" key -- single-provider
+            local_cfg = os.path.join(d, ".aikit", "review-spec.toml")
+            os.makedirs(os.path.dirname(local_cfg))
+            with open(local_cfg, "w", encoding="utf-8") as f:
+                f.write('[[reviewers]]\nkey = "codex-primary"\nmodel = "vendor/already-registered"\n'
+                        'vendor = "vendor"\ncli = "codex"\n')
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path, "--cwd", d, "--if-stale"],
+                    env_fn=lambda: {"HOME": d},
+                    fetch_models_dev_fn=self._never_fetch_models_dev,
+                    fetch_artificial_analysis_fn=self._never_fetch_aa)
+            self.assertEqual(code, 0)
+            result = json.loads(buf.getvalue())
+            self.assertIn({"cli": "codex", "model_id": "vendor/already-registered"},
+                           result["discovered"])
+
+    def test_confirm_catalog_entry_rejects_invalid_entry_with_nonzero_exit(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            entry_path = os.path.join(d, "entry.json")
+            with open(entry_path, "w", encoding="utf-8") as f:
+                json.dump({"model_id": "vendor/x", "entry": {"provider": "vendor"}}, f)  # missing fields
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["confirm-catalog-entry", "--catalog-path", catalog_path,
+                                 "--entry-json", entry_path])
+            self.assertEqual(code, 1)
+            result = json.loads(buf.getvalue())
+            self.assertFalse(result["confirmed"])
+            self.assertEqual(cache_read_json(catalog_path), {})  # unchanged, no partial write
+
+    def test_confirm_catalog_entry_rejects_malformed_payload_without_raising(self):
+        # Important finding (#5, coordinator review): a missing/malformed --entry-json used to
+        # raise a bare KeyError traceback (payload["model_id"]/payload["entry"] unguarded) --
+        # unlike every other failure path across these three subcommands, which return
+        # structured JSON + exit 1. Covers both "model_id" and "entry" missing entirely.
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            entry_path = os.path.join(d, "entry.json")
+            with open(entry_path, "w", encoding="utf-8") as f:
+                json.dump({"model_id": "vendor/x"}, f)  # "entry" entirely missing
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["confirm-catalog-entry", "--catalog-path", catalog_path,
+                                 "--entry-json", entry_path])
+            self.assertEqual(code, 1)
+            result = json.loads(buf.getvalue())
+            self.assertFalse(result["confirmed"])
+            self.assertIn("reason", result)
+            self.assertEqual(cache_read_json(catalog_path), {})  # unchanged, no partial write
+
+    def test_apply_heuristic_correction_writes_through_the_atomic_cache_api(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            existing = {"router-env/x": {"provider": "router-env", "runtimes": {"opencode": {}},
+                                          "source": {}, "confidence": "low",
+                                          "last_verified": "2026-09-02", "is_router": True}}
+            cache_write_json(catalog_path, existing)
+            corrections_path = os.path.join(d, "corrections.json")
+            with open(corrections_path, "w", encoding="utf-8") as f:
+                json.dump({"is_router": False}, f)
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["apply-heuristic-correction", "--catalog-path", catalog_path,
+                                 "--model-id", "router-env/x",
+                                 "--corrections-json", corrections_path])
+            self.assertEqual(code, 0)
+            self.assertFalse(cache_read_json(catalog_path)["router-env/x"]["is_router"])
+
+    def test_apply_heuristic_correction_rejects_invalid_correction_with_nonzero_exit(self):
+        # CRITICAL finding: a correction that would make the merged entry schema-invalid must
+        # be rejected (nonzero exit, no write) -- cache_write_json alone never validates.
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            existing = {"router-env/x": {"provider": "router-env", "runtimes": {"opencode": {}},
+                                          "source": {}, "confidence": "low",
+                                          "last_verified": "2026-09-02", "is_router": True}}
+            cache_write_json(catalog_path, existing)
+            corrections_path = os.path.join(d, "corrections.json")
+            with open(corrections_path, "w", encoding="utf-8") as f:
+                json.dump({"is_router": "not-a-bool"}, f)
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["apply-heuristic-correction", "--catalog-path", catalog_path,
+                                 "--model-id", "router-env/x",
+                                 "--corrections-json", corrections_path])
+            self.assertEqual(code, 1)
+            result = json.loads(buf.getvalue())
+            self.assertFalse(result["applied"])
+            self.assertTrue(cache_read_json(catalog_path)["router-env/x"]["is_router"])  # unchanged
 
 
 if __name__ == "__main__":

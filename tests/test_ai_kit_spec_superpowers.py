@@ -118,6 +118,29 @@ class TestAssembleCandidates(unittest.TestCase):
             task, candidates, {}, {}, top_n_keys, quota={})
         self.assertEqual(result, {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"})
 
+    def test_purpose_field_is_threaded_through_from_config(self):
+        def fake_cfg_resolve(cwd, env):
+            return {
+                "policy": {"ladder": ["a"]},
+                "reviewers": [
+                    {"key": "a", "model": "m", "cli": "codex", "vendor": "openai",
+                     "command": "codex exec -m {model}", "purpose": "execute"},
+                ],
+            }
+        candidates, top_n_keys = dispatch_injection.assemble_candidates(
+            "/fake/cwd", {}, cfg_resolve_fn=fake_cfg_resolve)
+        self.assertEqual(candidates[0]["purpose"], "execute")
+
+    def test_missing_purpose_field_comes_back_none(self):
+        def fake_cfg_resolve(cwd, env):
+            return {
+                "policy": {"ladder": ["a"]},
+                "reviewers": [{"key": "a", "model": "m", "cli": "codex", "vendor": "openai"}],
+            }
+        candidates, _ = dispatch_injection.assemble_candidates(
+            "/fake/cwd", {}, cfg_resolve_fn=fake_cfg_resolve)
+        self.assertIsNone(candidates[0]["purpose"])
+
 
 class TestDeriveFilesTouchedSizes(unittest.TestCase):
     def test_stats_real_existing_files_and_zeros_missing_ones(self):

@@ -93,19 +93,72 @@ def _toml_value(v) -> str:
     return f'"{escaped}"'
 
 
+_VALID_PURPOSE = {"review", "execute", "both"}
+
+
+def validate_reviewer_fields(entry: dict) -> str | None:
+    """The review-spec.toml-side sibling of model_catalog.validate_catalog_entry (design spec
+    2026-09-02 Section 5: "enforced in both render-toml and the new fetch-model-catalog
+    subcommand"). Only checks the THREE fields this design adds -- purpose/is_router/
+    fallback_quota -- when present; every pre-existing field's validation is unchanged.
+    Absent is always valid (pre-migration configs keep working exactly as before)."""
+    key = entry.get("key", "<unknown>")
+    # HIGH finding: `entry["purpose"] not in _VALID_PURPOSE` raises TypeError when `purpose` is
+    # an unhashable value (a list/dict) rather than rejecting it as a schema-validation error --
+    # the type check MUST run first, short-circuiting before the set-membership test ever sees
+    # an unhashable value (spec Section 8: "schema-invalid... entry is rejected and reported",
+    # never an unhandled exception).
+    if "purpose" in entry and (
+            not isinstance(entry["purpose"], str) or entry["purpose"] not in _VALID_PURPOSE):
+        return f"{key}: 'purpose' must be one of {sorted(_VALID_PURPOSE)}"
+    for field in ("is_router", "fallback_quota"):
+        if field in entry and not isinstance(entry[field], bool):
+            return f"{key}: '{field}' must be a boolean"
+    return None
+
+
 def cfg_render_toml(config: dict) -> str:
     """Hand-rolled TOML serializer for this schema only (an optional
     top-level `strategy` string, a flat [policy] table, and an
     array-of-tables [[reviewers]] with flat string/bool/list values) —
     tomllib is read-only in stdlib, and adding a writer dependency would
-    break this repo's zero-dependency runtime."""
+    break this repo's zero-dependency runtime.
+
+    A reviewer entry that fails validate_reviewer_fields is dropped individually (never
+    aborts the rest of the write) AND removed from policy.ladder -- a valid-looking ladder
+    that references a key with no corresponding [[reviewers]] entry is unusable
+    (resolve_ladder_pick can never satisfy it), so the two must never diverge."""
     lines = []
+    rejections = []
+    reviewers = config.get("reviewers", [])
+    valid_reviewers = []
+    dropped_keys = set()
+    for r in reviewers:
+        reason = validate_reviewer_fields(r)
+        if reason:
+            rejections.append(reason)
+            if "key" in r:
+                dropped_keys.add(r["key"])
+            continue
+        valid_reviewers.append(r)
+
     if "strategy" in config:
         lines.append(f"strategy = {_toml_value(config['strategy'])}")
         lines.append("")
     policy = config.get("policy", {})
     if policy:
-        ladder = policy.get("ladder") or []
+        raw_ladder = policy.get("ladder") or []
+        ladder = [key for key in raw_ladder if key not in dropped_keys]
+        # MEDIUM finding: a rejected reviewer's key that was never actually referenced in
+        # policy.ladder must never trigger this warning -- `dropped_keys` alone doesn't mean
+        # the ladder had a dangling reference, only their INTERSECTION does. Computing it once
+        # avoids both the false-positive-on-empty-intersection bug and a redundant second
+        # `dropped_keys & set(raw_ladder)` computation on the line below.
+        dangling = dropped_keys & set(raw_ladder)
+        if dangling:
+            rejections.append(
+                f"policy.ladder: dropped dangling reference(s) to rejected reviewer key(s) "
+                f"{sorted(dangling)}")
         if ladder:
             lines.append("# Priority fallback order (first available reviewer wins the")
             if policy.get("mode") == "double":
@@ -116,13 +169,18 @@ def cfg_render_toml(config: dict) -> str:
                 lines.append(f"#   {i}. {key}")
         lines.append("[policy]")
         for k, v in policy.items():
+            v = ladder if k == "ladder" else v
             lines.append(f"{k} = {_toml_value(v)}")
         lines.append("")
-    for r in config.get("reviewers", []):
+    for r in valid_reviewers:
         lines.append("[[reviewers]]")
         for k, v in r.items():
             lines.append(f"{k} = {_toml_value(v)}")
         lines.append("")
+    if rejections:
+        import sys
+        print(f"WARNING: {len(rejections)} issue(s) found and NOT written: "
+              f"{'; '.join(rejections)}", file=sys.stderr)
     return "\n".join(lines).rstrip("\n") + "\n"
 
 

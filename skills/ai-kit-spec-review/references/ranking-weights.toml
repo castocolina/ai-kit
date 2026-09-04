@@ -1,0 +1,31 @@
+# Default weighted-ranking configuration for ai-kit-spec-config's model discovery
+# (docs/superpowers/specs/2026-09-02-model-discovery-curation-design.md, Section 6).
+# Fixed defaults -- the user is never asked to tune these per wizard run.
+
+[review]
+intelligence_index = 0.30
+coding_index = 0.10
+agentic_index = 0.15
+context_window = 0.15
+tool_calling = 0.05
+price = 0.15
+speed = 0.05
+
+[execute]
+intelligence_index = 0.15
+coding_index = 0.30
+agentic_index = 0.25
+context_window = 0.10
+tool_calling = 0.15
+price = 0.15
+speed = 0.10
+
+[bonuses]
+# Applied additively to the 0-100 weighted score, capped combined at bonus_cap.
+# NOTE: design spec 2026-09-02 Section 6 also names a task_affinity_match=2 bonus, scoped to
+# a specific plan/doc's task_affinity -- that context does not exist at this wizard's
+# config-time ranking (Task 8), so it is deliberately omitted here rather than wired to a
+# fabricated always-None input (see the plan's Global Constraints for the full rationale).
+batch_mode = 8
+fallback_quota = 5
+bonus_cap = 15

@@ -137,7 +137,7 @@ just the mechanics below: **is this CLI's quota reliable enough to be a
 primary pick, or only worth keeping as a fallback?** (a CLI with a tight
 free-tier limit belongs low in the ladder, not first) — and **does this
 model's strength (planning vs. execution-oriented, per Step 2.2's
-research) actually match what the user reviews most?** Registering every
+purpose-weighted ranking) actually match what the user reviews most?** Registering every
 available CLI/model indiscriminately produces a bloated, hard-to-reason-about
 ladder; the goal is a config the user can predict the fallback behavior of
 at a glance.
@@ -163,36 +163,273 @@ at a glance.
 
 #### Step 2.2 — Pick which CLIs and models to register
 
-For each installed CLI (beyond the current session's own runtime), use `AskUserQuestion` to ask whether the user wants it available as a cross-AI reviewer. For a multi-provider CLI (`opencode`, `cursor-agent`, or any future CLI `build_runtimes_snapshot` lists a `models` array for — this applies uniformly, not just to the two known today), additionally ask which of its listed models to register as reviewer entries.
+For every CLI the user wants to consider (from Step 1's detection), build the ranked
+candidate list via the model-discovery catalog rather than guessing or searching per model.
+**Order matters here: unmatched candidates are researched and confirmed BEFORE anything is
+ranked** — an unconfirmed guess must never appear in a ranked list the user is about to trust.
 
-**A multi-provider CLI's raw model list can be very long** (confirmed live: cursor-agent's catalog is ~200 ids — a handful of base model families each multiplied out by effort/thinking/fast-tier variants, e.g. `claude-opus-5-thinking-high-fast`). Never paste the raw list at the user as-is. Group it first:
-```bash
-python3 "$TOOLS_PY" group-models --runtimes-json "$RUNTIMES_JSON" --cli <id>
-```
-This prints `{"<family>": ["<variant-id>", ...], ...}` — one entry per base model family, each holding its own tier/effort/fast variants (the grouping is a plain suffix-stripping heuristic, not a quality judgment; an id it can't confidently collapse just becomes its own single-member family, which is fine). Present the **families**, not the raw ids, as the first choice — then let the user drill into a chosen family's variant list only if they want a specific tier rather than the default.
+1. Ensure a runtimes snapshot exists (Step 1 already produces one via `detect-runtimes
+   --save`) — reuse `$RUNTIMES_JSON` from Step 0. Resolve the catalog cache path (no manual
+   path-string surgery — a dedicated `--kind` exists precisely so this skill never has to
+   derive one cache filename from another):
+   ```bash
+   CATALOG_JSON="$(python3 "$TOOLS_PY" cache-path --kind catalog)"
+   ```
+   **Ask which CLIs to consider, and group each multi-provider CLI's raw model list, BEFORE
+   any of it is discovered/matched/ranked.** For each installed CLI (beyond the current
+   session's own runtime), use `AskUserQuestion` to ask whether the user wants it available as
+   a cross-AI reviewer at all — registering every installed CLI indiscriminately is exactly
+   what this step's own opening framing at the top of Step 2 warns against. For each CLI the
+   user keeps, if it's multi-provider (`models` array present — e.g. `opencode`,
+   `cursor-agent`), **never hand its raw model list to `fetch-model-catalog` as-is** — a
+   multi-provider CLI's raw list can be very long (confirmed live: cursor-agent's catalog is
+   ~200 ids, a handful of base model families each multiplied out by effort/thinking/fast-tier
+   variants, e.g. `claude-opus-5-thinking-high-fast`), and most of those tier variants will not
+   exact-match models.dev/Artificial Analysis, which would otherwise turn item 4 below into
+   hundreds of individual unmatched searches and confirmation prompts for what is really only a
+   handful of base families. Group it first:
+   ```bash
+   python3 "$TOOLS_PY" group-models --runtimes-json "$RUNTIMES_JSON" --cli <id>
+   ```
+   This prints `{"<family>": ["<variant-id>", ...], ...}` — one entry per base model family,
+   each holding its own tier/effort/fast variants (the grouping is a plain suffix-stripping
+   heuristic, not a quality judgment; an id it can't confidently collapse just becomes its own
+   single-member family, which is fine). Present the **families**, not the raw ids, and let the
+   user pick a family (defaulting to its base id) or drill into a specific tier/effort variant
+   only if they want one. Collect the chosen model id(s) per CLI, then write a FILTERED runtimes
+   snapshot — a copy of `$RUNTIMES_JSON` whose `clis.<cli>.models` arrays are narrowed to only
+   the CLIs kept and models chosen above (single-provider CLIs, which have no `models` array to
+   narrow, pass through unchanged) — and use that filtered file, not the raw `$RUNTIMES_JSON`,
+   as `--runtimes-json` in item 3's `fetch-model-catalog` call below:
+   ```bash
+   FILTERED_RUNTIMES_JSON="/tmp/filtered-runtimes.json"
+   python3 -c "
+import json
+snap = json.load(open('$RUNTIMES_JSON'))
+kept_clis = {<CLI names the user kept>}
+chosen = {<cli>: [<chosen model id(s)>], ...}  # only for multi-provider CLIs
+snap['clis'] = {name: ({**data, 'models': chosen[name]} if name in chosen else data)
+                for name, data in snap.get('clis', {}).items() if name in kept_clis}
+json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
+"
+   ```
+   This is deliberate: `fetch-model-catalog` has no per-CLI/model selection flag of its own, and
+   doesn't need one — its contract (discover everything a runtimes snapshot lists) is unchanged;
+   this step scopes discovery upstream, at the input snapshot, before the subcommand ever runs,
+   rather than duplicating the family-grouping judgment call this step already makes with the
+   user.
+2. **For any single-provider CLI (no `models` array — e.g. codex, grok) the user wants to
+   consider that has NO existing `review-spec.toml` entry yet** (first-time setup): ask the user
+   for a candidate model id now (never guess or trust training knowledge — WebSearch it for
+   recency first, per this skill's `NEVER` list; confirmed live 2026-08-28 that guessing here,
+   `gpt-5.6-sol-high` instead of the real `gpt-5.6-sol`, produces a candidate that fails
+   outright at Step 2.5's live test). Collect these as `--extra-candidate <cli>:<model-id>`
+   flags (repeatable) for the next command — this is what lets a brand-new
+   single-provider-CLI candidate flow through the SAME matching/enrichment/ranking path as
+   everything else, instead of being registered blind.
+3. Refresh the catalog (this also picks up anything already in `review-spec.toml` for an
+   already-configured single-provider CLI automatically). **Capture its printed JSON to a
+   file** — `fetch-model-catalog` prints the FULL reconciled `discovered` candidate list
+   (runtimes snapshot + registered single-provider-CLI models + `--extra-candidate`, exactly
+   what the subcommand itself used) alongside `unmatched`/`rejections`, so this step never has
+   to recompute a partial version of that list later (rebuilding `discovered` from
+   `$RUNTIMES_JSON`'s own `models` arrays alone would silently exclude codex/grok/every
+   single-provider-CLI candidate from ranking):
+   ```bash
+   python3 "$TOOLS_PY" fetch-model-catalog --runtimes-json "$FILTERED_RUNTIMES_JSON" \
+     --catalog-path "$CATALOG_JSON" --cwd "$(pwd)" --if-stale \
+     [--extra-candidate <cli>:<model-id> ...] > /tmp/fetch-model-catalog-result.json
+   ```
+   `--if-stale` here gates the models.dev/Artificial Analysis NETWORK calls only — candidate
+   discovery/reconciliation always runs, so a brand-new model is reflected in this run's
+   `unmatched`/`discovered` output even when the catalog itself is still fresh and nothing was
+   re-fetched (see the flag's own help text).
+   If this is the very first run (no catalog existed at `cache-path --kind catalog` before this
+   command ran) and the printed JSON's `artificial_analysis_ok` is `false` with
+   `rejections`/`unmatched` non-trivial, or the user asks about richer scores, mention:
+   "Artificial Analysis (artificialanalysis.ai) adds intelligence/coding/agentic index scores
+   and speed data to model ranking — optional, models.dev alone still gives context window,
+   pricing, and tool-calling data. If you have a key, add
+   `ARTIFICIAL_ANALYSIS_API_KEY=<key>` to `~/.config/ai-kit/secrets.env` yourself (this skill
+   never writes that file), then re-run the command above without `--if-stale` so the fresh key
+   gets used." **Never write, create, or edit `secrets.env` from this skill** — reading it is
+   `local_secrets.load_secret`'s job; writing it is out of scope everywhere in this design.
+   The printed JSON's `unmatched` list drives the next item (item 4 below). `rejections` is not
+   currently consumed anywhere in this wizard flow — it's diagnostic output from
+   `fetch-model-catalog` only; there is no step today that reads or acts on it.
+4. **Unmatched-candidate research and confirmation — BEFORE ranking, never after.** For every
+   entry in the captured JSON's `unmatched` list (a candidate that matched neither models.dev
+   nor Artificial Analysis and has no prior catalog entry — each entry already carries its own
+   locally-inferred `is_router`/`batch_mode`/`fallback_quota`, computed by `fetch-model-catalog`
+   itself even though the candidate isn't in the catalog yet): do ONE targeted WebSearch for
+   that specific model id + vendor name, summarize what you find in one line, and use
+   `AskUserQuestion` to have the user confirm or correct the provider AND the three heuristic
+   fields before any of it is ever persisted — this is the only per-model search this step ever
+   does now, reserved for genuinely new/unrecognized models (e.g. one released after
+   models.dev/Artificial Analysis last indexed it). Never auto-persist an unmatched candidate.
 
-**This rule applies to single-provider CLIs too, not just a multi-provider CLI's grouped catalog above** — e.g. codex/grok have no `models` list to group at all, so an unfamiliar model id for them (its exact string shape, whether effort/tier belongs in the id or a separate flag) must still be researched the same way before it's proposed to the user; confirmed live 2026-08-28 that guessing here (`gpt-5.6-sol-high` instead of the real `gpt-5.6-sol`) produces a candidate that fails outright at Step 2.5's live test.
+   **The catalog key MUST be re-derived from whatever provider the user actually confirms,
+   never reused from `unmatched.key`** (which was computed from the PRE-confirmation provider
+   GUESS). If the user corrects the provider, `unmatched.key` and the confirmed `provider`
+   would otherwise disagree — violating the catalog's own `vendor/model` key invariant.
+   Recompute the key the same way `fetch-model-catalog` itself would, via
+   `canonical_key(confirmed_provider, bare_model_id)` — `bare_model_id` is `unmatched.model_id`
+   with any `"<cli-provider-label>/"` prefix stripped (the same split `bare_model_part` uses:
+   everything after the first `/`, or the whole string if there's no `/`). Do this with the same
+   inline `python3 -c` `sys.path.insert` convention item 5 below uses (no separate CLI
+   subcommand needed for a pure string computation):
+   ```bash
+   CONFIRMED_KEY="$(python3 -c "
+import sys
+sys.path.insert(0, '$(dirname "$TOOLS_PY")')
+from ai_kit_spec.model_catalog import canonical_key
+bare = '<unmatched.model_id>'.split('/', 1)[-1]
+print(canonical_key('<confirmed provider>', bare))
+")"
+   ```
+   Once confirmed, persist it under `$CONFIRMED_KEY` — never under the stale `unmatched.key`.
+   This is the ONLY path that ever writes an unmatched candidate to the catalog
+   (`fetch-model-catalog` itself deliberately never does):
+   ```bash
+   cat > /tmp/confirm-entry.json <<'JSON'
+{"model_id": "<value of $CONFIRMED_KEY>",
+ "entry": {"provider": "<confirmed provider>",
+           "runtimes": {"<cli>": {"model_id": "<unmatched.model_id>"}},
+           "source": {"models_dev": false, "artificial_analysis": false, "manual": true},
+           "confidence": "low", "last_verified": "<today, YYYY-MM-DD>",
+           "is_router": <confirmed is_router>, "batch_mode": <confirmed batch_mode>,
+           "fallback_quota": <confirmed fallback_quota>,
+           "heuristic_confirmed": ["is_router", "batch_mode", "fallback_quota"]}}
+JSON
+   python3 "$TOOLS_PY" confirm-catalog-entry --catalog-path "$CATALOG_JSON" \
+     --entry-json /tmp/confirm-entry.json
+   ```
+   `heuristic_confirmed` records that the user was JUST asked to confirm all three fields
+   above, in this same step — without it, Step 8 later in this same wizard run would re-ask
+   `is_router`/`batch_mode`/`fallback_quota` for this same candidate, since it has no other way
+   to know those three fields were already confirmed here.
+   (When the user does NOT correct the provider — the common case — `$CONFIRMED_KEY` always
+   equals `unmatched.key` exactly, since both are `canonical_key` applied to the same provider
+   and bare model id; nothing changes for that path.)
+5. **Rank only what's actually installed right now** — load the catalog, filter to
+   `current_candidate_keys` using the SAME `discovered` list item 3's captured JSON already has
+   (never recomputed from `$RUNTIMES_JSON` alone — that would silently drop every
+   single-provider-CLI candidate), THEN rank per purpose. A catalog entry for a CLI/model no
+   longer present in the current snapshot is excluded from ranking and from anything shown to
+   the user, without being deleted from the cache. This is a Python call, not a subcommand; run
+   it inline via `python3 -c` — note the explicit `sys.path.insert`, required because this runs
+   from an arbitrary cwd, not from inside `ai-kit-spec-review`'s own directory the way `python3
+   "$TOOLS_PY"` does (that script's own directory is added to `sys.path` automatically by the
+   interpreter; a `python3 -c` snippet gets no such help):
+   ```bash
+   python3 -c "
+import json, sys
+sys.path.insert(0, '$(dirname "$TOOLS_PY")')
+from ai_kit_spec.model_catalog import current_candidate_keys
+from ai_kit_spec.model_ranker import load_ranking_weights, score_candidates
+catalog = json.load(open('$CATALOG_JSON'))
+fetch_result = json.load(open('/tmp/fetch-model-catalog-result.json'))
+discovered = fetch_result['discovered']
+current = current_candidate_keys(catalog, discovered)
+entries = [{'key': k, **v} for k, v in catalog.items() if k in current]
+weights = load_ranking_weights()
+def field(e, path, label):
+    v = e.get('scores', {}).get(path) if path in ('intelligence_index', 'coding_index', 'agentic_index') else e.get(path)
+    if v is None:
+        return None
+    aa_sourced = path in ('intelligence_index', 'coding_index', 'agentic_index', 'tokens_per_sec')
+    tag = ' [via Artificial Analysis]' if aa_sourced and e.get('source', {}).get('artificial_analysis') else ''
+    return f'{label} {v}{tag}'
 
-**For any family/model name you don't confidently recognize, follow this before asking the user to choose** — never guess or rely solely on training knowledge, which is very likely stale for this (frontier models and CLI catalogs change faster than any model's training cutoff; never assume a name from today's session, or from this doc's own examples, is still current):
+for purpose in ('review', 'execute'):
+    ranked = score_candidates(entries, purpose, weights)[:5]
+    print(purpose.upper())
+    for i, e in enumerate(ranked, 1):
+        ctx = max((rt.get('ctx_window') for rt in e.get('runtimes', {}).values()
+                   if rt.get('ctx_window')), default=None)
+        parts = [field(e, 'intelligence_index', 'intelligence'),
+                 field(e, 'coding_index', 'coding'),
+                 field(e, 'agentic_index', 'agentic'),
+                 field(e, 'tokens_per_sec', 'speed'),
+                 (f'ctx {ctx}' if ctx else None),
+                 ('tool_call✓' if e.get('tool_calling') else None),
+                 ('batch✓' if e.get('batch_mode') else None),
+                 ('fallback✓' if e.get('fallback_quota') else None)]
+        detail = ', '.join(p for p in parts if p)
+        print(f\"  {i}. {e['key']}  score {e['score']}\" + (f'  ({detail})' if detail else ''))
+"
+   ```
+   (The per-field breakdown is deliberate: each field is tagged individually, because `ctx` is
+   always models.dev-sourced while `intelligence`/`coding`/`agentic`/`speed` are Artificial
+   Analysis-sourced — a single whole-entry tag on the score line could not express that. `coding`
+   in particular carries EXECUTE's largest weight, so it must be visible.)
+6. Present the top candidates per purpose to the user in this shape (adapt scores/labels to what
+   the catalog actually returned — illustrative, not literal output; the exact field set shown
+   for a given candidate always matches whatever the `field()` calls above actually found
+   non-`None` for it, never more than that). **Any field sourced from Artificial Analysis
+   (scores, speed, or its pricing when models.dev had no match) carries the
+   `[via Artificial Analysis]` tag verbatim, every time it's shown — this is a hard requirement,
+   not a nicety: Artificial Analysis's API terms require attribution wherever its data is
+   presented.**
+   ```
+   REVIEW (flagship/reasoning) — top candidates:
+     1. gpt-5.6-sol             score 87  (intelligence 91 [via Artificial Analysis], batch✓, ctx 400k)
+     2. grok-4.6                score 79  (intelligence 85 [via Artificial Analysis], agentic 88 [via Artificial Analysis])
+     3. router-env (fallback✓)  score 74
 
-1. **Recognize** — flag any family/model name in the grouped output you can't confidently place.
-2. **WebSearch** it for two things: how recent it is relative to the vendor's other offerings (so the user can tell a superseded generation from the current one), and — where discoverable — whether it's positioned as reasoning/planning-oriented (better suited for analyzing or authoring specs/plans) or instruction-following/tool-use-oriented (better suited for well-scoped execution work with clear direction).
-3. **Summarize** what you found in a line or two per unfamiliar family — never silently pre-filter families out on your own judgment.
-4. **Ask** the user to choose, informed by that summary; the `strength` question at Step 2.6 is where the reasoning-vs-execution finding gets recorded, so raise it there rather than guessing blind.
-
-**Before finalizing a CLI outside codegraph support (today: `grok`), check for a
-codegraph-capable alternative.** For each model being registered on such a CLI, run:
-```bash
-python3 "$TOOLS_PY" check-codegraph-alternative --cli <id> --model <model-id> \
-  --runtimes-json "$RUNTIMES_JSON"
-```
-When `alternative_cli` is non-null, tell the user in one line before they confirm: `"<model> is
-also reachable via <alternative_cli>, which supports codegraph_explore (grok CLI does not) —
-consider registering it through <alternative_cli> instead for grounding-heavy review/execute
-work."` This is informational only (best-effort substring match, per
-`find_codegraph_alternative`'s own docstring) — the user still makes the final call; never
-silently substitute the CLI or drop the original option.
-
+   EXECUTE (coding-agent) — top candidates:
+     1. router-env (fallback✓)  score 90  (coding 89 [via Artificial Analysis], tool_call✓)
+     2. gpt-5.6-sol             score 81
+   Any preference not listed, or confirm this order for the ladder?
+   ```
+   Ask the user to confirm or adjust. **Record, for every confirmed candidate, which list(s) it
+   was confirmed from** — REVIEW only, EXECUTE only, or both — this becomes that entry's
+   `purpose` value (`"review"`, `"execute"`, or `"both"`) carried forward into Step 2.4's
+   command-building and Step 3's write below. **A candidate that comes through this ranked flow
+   always gets an explicit `purpose` written — never left absent.** Absent `purpose` is reserved
+   strictly for a pre-migration `review-spec.toml` entry that predates this design; every NEW
+   entry this wizard writes, from this step or from Step 2.7's native-entry flow below, states
+   its `purpose` explicitly (an absent `purpose` reads as "matches both roles" on the consumer
+   side, which must never be an accident of a newly-written entry, only the documented
+   legacy-compat default). This IS the answer to what used to be a separate `purpose`
+   question — see Step 2.6 below.
+7. **Before finalizing a CLI outside codegraph support (today: `grok`), check for a
+   codegraph-capable alternative.** For each model confirmed onto such a CLI in the previous
+   item, run:
+   ```bash
+   python3 "$TOOLS_PY" check-codegraph-alternative --cli <id> --model <model-id> \
+     --runtimes-json "$RUNTIMES_JSON"
+   ```
+   When `alternative_cli` is non-null, tell the user in one line before they finalize: `"<model>
+   is also reachable via <alternative_cli>, which supports codegraph_explore (grok CLI does
+   not) — consider registering it through <alternative_cli> instead for grounding-heavy
+   review/execute work."` This is informational only (best-effort substring match, per
+   `find_codegraph_alternative`'s own docstring) — the user still makes the final call; never
+   silently substitute the CLI or drop the original option.
+8. Confirm `is_router`/`batch_mode`/`fallback_quota` for any candidate where the catalog set them
+   via naming heuristic (never an external source, per the design) — **but skip any field
+   already listed in that entry's `heuristic_confirmed` array** (a plain bool alone cannot
+   distinguish "the heuristic's own untouched guess" from "the user already confirmed this exact
+   value"; `heuristic_confirmed` is the provenance record that makes "don't ask again" actually
+   work). For every field NOT yet in `heuristic_confirmed`, ask one line each: "`router-env`
+   looks like a router with fallback — correct?" / "`gpt-5-mini` looks batch-suitable —
+   correct?" **Persist the answer back to the catalog cache immediately — whether the user
+   corrects the value OR simply confirms the heuristic's guess as-is** (so the NEXT run of this
+   wizard doesn't ask again either way; calling this only on an actual *change* would leave a
+   confirmed-but-unchanged field looking identical to a never-asked one), via the
+   `apply-heuristic-correction` subcommand — never a raw `json.dump`/`open`, which bypasses this
+   repo's atomic, validated cache-write path:
+   ```bash
+   cat > /tmp/heuristic-correction.json <<'JSON'
+{"is_router": false}
+JSON
+   python3 "$TOOLS_PY" apply-heuristic-correction --catalog-path "$CATALOG_JSON" \
+     --model-id "<key>" --corrections-json /tmp/heuristic-correction.json
+   ```
+   This call marks `is_router` confirmed in the catalog entry's `heuristic_confirmed` list
+   regardless of whether `false` differs from the heuristic's original guess — the JSON body
+   above always carries the field's FINAL value (corrected or reconfirmed), and
+   `apply_heuristic_corrections` records every key present in that body as confirmed.
 
 #### Step 2.3 — Resolve vendor attribution
 
@@ -232,15 +469,19 @@ This makes one real call through the CLI (the same mechanism `probe-quota` uses 
 
 **If the profile's `read_only:` field says `unconfirmed`**, print one line before writing that entry: "Note: `<id>` has no confirmed read-only invocation — this reviewer runs with the CLI's normal write permissions against your working tree." — inform, don't block; the user is choosing to accept that CLI's default risk.
 
-#### Step 2.6 — Ask about the optional strength attribute
+#### Step 2.6 — Ask about the optional strength attribute; `purpose` comes from Step 2.2
 
 **Also ask, for every entry (CLI or native), an optional `strength`**: `"ui"`, `"coding"`, `"planning"`, or left unset — free text otherwise, not validated. This is informational only — captured in `review-spec.toml` for a human (or a future version of this design) to read, but **not yet consumed by any resolution logic today** (`resolve_reviewers`/`resolve_ladder_pick` ignore it completely). Tell the user this plainly if they ask what it does: it doesn't change dispatch behavior yet, it just gets saved.
+
+**`purpose` is NOT asked here** — it was already captured at Step 2.2 (which ranked list(s), REVIEW/EXECUTE/both, the user confirmed each candidate from). Carry that value forward unchanged into this entry's fields; do not re-ask, and do not silently drop it.
 
 #### Step 2.7 — Ask about native reviewer entries
 
 **Also ask, explicitly — do not skip this**: whether to register one or more **native** (`cli`-omitted) reviewer entries — dispatched via whatever runtime is hosting *this* session, not any one specific model or vendor. Today that host is Claude Code, whose own dispatch mechanism is the `Agent` tool's four tier aliases (`sonnet`/`opus`/`haiku`/`fable`) — but "native" itself is a runtime-agnostic concept: the same config shape (`cli` omitted) is what a future opencode-hosted or Antigravity-hosted run of this same skill would use for *its* own current-session model, whatever that host's own alias/selection mechanism turns out to be. Don't imply in prose or example keys that native means "Claude" or "opus" specifically — call it the current-runtime/native entry, and let its `key` describe the tier (e.g. `native-primary`, `native-fallback`), not the vendor.
 
 Worth asking regardless of `policy.mode`, since it's the only zero-external-dependency reviewer option available (never rate-limited/API-gated the way an external CLI can be) — useful as either a primary pick or a pure fallback, depending on where the user places it in `policy.ladder` at Step 2.8. **A native entry is never automatically prioritized over external ones** — `resolve_reviewers` (`ai-kit-spec.py`) treats every ladder entry identically regardless of native/external; only its position in `policy.ladder` decides priority, and quota/availability failures (never native-vs-external status) decide fallback (changed 2026-08-29 — an earlier design gave native entries an automatic guaranteed-baseline slot in `double` mode regardless of ladder position; a real config hit this and got a silently reordered ladder, so it was removed). If the user wants a native entry as pure fallback, place it LAST in the ladder order at Step 2.8. For each native entry the user wants **on this Claude-Code-hosted run**, `model` must be one of the four `Agent`-tool aliases (`sonnet`/`opus`/`haiku`/`fable`), never a full model id like `"opus-5"`; ask the user to pick one of those four rather than typing a version string. (A different host runtime would substitute its own alias set here — this constraint is Claude Code's dispatch mechanism, not a property of "native" itself.)
+
+**Also ask, for each native entry, the same `purpose` question Step 2.2 answers for CLI-sourced candidates**: should this native entry be used for review, execute, or both? (`"review"` | `"execute"` | `"both"`.) A native entry never goes through Step 2.2's catalog/ranking flow — there is no CLI model id to look up in models.dev/Artificial Analysis for a `sonnet`/`opus`/`haiku`/`fable` alias — so without this question it would get no `purpose` at all, and the consumer side reads an absent `purpose` as "matches both review and execute": an assumption that must be a deliberate, documented legacy-compat default, never an accident of how a brand-new entry happened to get written. A native entry is a real, always-available reviewer/executor choice — it deserves the same explicit curation as any ranked CLI candidate, not a silent default. Carry the answer into this entry's `purpose` field at Step 3's write, exactly like a Step 2.2-sourced entry — never leave it unset for a newly-registered native entry.
 
 #### Step 2.8 — Set policy.mode, policy.ladder order, and strategy
 
@@ -265,13 +506,24 @@ fall back to the policy default.
 
 Build the JSON shape `skills/ai-kit-spec-review/ai-kit-spec.py`'s `render-toml` subcommand
 expects (`{"strategy": "...", "policy": {...}, "reviewers": [...]}` — the
-`strategy` key only when Step 2 asked for `local-only`), write it to a
+`strategy` key only when Step 2 asked for `local-only`). **Each object in
+`reviewers` now also carries `purpose` (`"review"`/`"execute"`/`"both"`, from
+Step 2.2 for a CLI-sourced entry or Step 2.7 for a native one — every entry
+this wizard newly registers gets an explicit `purpose`, CLI-sourced or native
+alike; absent `purpose` is reserved for a pre-migration entry this run is
+merely carrying forward unchanged, never for a brand-new one), and
+`is_router`/`fallback_quota` when Step 2.2/2.7 confirmed either as `true`**
+(omit when `false`/unknown rather than writing a redundant `false` for every
+entry — the consumer side already treats an absent field as "no preference,"
+exactly like today's `task_affinity`; that fallback exists for legacy
+compatibility, not as this wizard's normal path for a new entry). Write it to a
 temp JSON file, then let `--out` do the write directly (via
 `cfg_write_toml`, creating parent dirs as needed) rather than piping
 stdout through a second write yourself:
 
 ```bash
-python3 "$TOOLS_PY" render-toml --json-config <temp.json> --out <target path>
+python3 "$TOOLS_PY" render-toml --json-config <temp.json> --out <target path> \
+  2> /tmp/render-toml-stderr.txt
 ```
 
 `<target path>` is the write target Step 2 resolved and already
@@ -281,16 +533,31 @@ because the user picked "update the existing global config" at Step 2's
 ask. Never re-derive the target here independently of what Step 2
 already resolved and told the user. (The runtimes snapshot was already
 persisted in Step 1 via `--save` — no separate write needed here.)
+**Capture stderr to `/tmp/render-toml-stderr.txt`** — `cfg_render_toml`
+prints a `WARNING:` line there for every `[[reviewers]]` entry it
+rejected-and-dropped instead of writing (e.g. a malformed entry), and
+this is the ONLY place that warning is ever emitted — Step 4 below reads
+this file to decide whether to surface it.
 
 ### Step 4 — Report
 
-Print a summary confirming the write, always including the exact
-absolute path (repeat it even though Step 2 already announced it — this
-is the confirmation that the write actually happened, not just the plan
-to do it): "Config written to: `<target path>`." Then the resolved
-`policy.mode`, and the **priority fallback order** as its own explicit
-numbered list (the same list already echoed back during Step 2, now
-confirmed as written) — e.g.:
+**First, check `/tmp/render-toml-stderr.txt` for any `WARNING:`-prefixed
+line.** If one or more are present, the write still succeeded but
+`cfg_render_toml` silently dropped at least one `[[reviewers]]` entry —
+never report a plain success in this case. Surface it clearly, e.g.:
+```
+Config written to: `<target path>` — but with warnings:
+  WARNING: 1 issue(s) found and NOT written: <reviewer detail>
+One or more reviewer entries were rejected and are NOT in the ladder above. Review them and re-run if this wasn't intended.
+```
+Only when the captured file has no `WARNING:` lines, print a plain
+summary confirming the write, always including the exact absolute path
+(repeat it even though Step 2 already announced it — this is the
+confirmation that the write actually happened, not just the plan to do
+it): "Config written to: `<target path>`." Then, either way, the
+resolved `policy.mode`, and the **priority fallback order** as its own
+explicit numbered list (the same list already echoed back during Step 2,
+now confirmed as written) — e.g.:
 ```
 Priority fallback order:
   1. codex-gpt

@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-spec-execute"))
 
 import detect_framework
+from ai_kit_spec import execute_selection
 from ai_kit_spec_gsd import adapter, cli, cross_ai_guidance, gsd_config, gsd_cross_ai
 
 
@@ -805,4 +806,33 @@ class TestCliPrintSummaryFormatBlock(unittest.TestCase):
         exit_code = cli.main(["print-summary-format-block"], stdout=stdout)
         self.assertEqual(exit_code, 0)
         self.assertEqual(stdout.getvalue(), cross_ai_guidance.GSD_SUMMARY_FORMAT_BLOCK)
+
+
+class TestGsdPurposeFilterInertness(unittest.TestCase):
+    def test_purpose_filter_is_inert_for_gsd_while_purpose_stays_unset(self):
+        # GSD's candidates never carry a "purpose" key (adapter.py's assemble_candidates
+        # does not set one) -- purpose_matches treats an absent field as "no preference",
+        # so resolve_execute_candidates' new purpose-narrowing step (Task 1) must never
+        # exclude a GSD candidate on that basis alone. This pins down the load-bearing
+        # coincidence noted in this plan's Global Constraints: if GSD's adapter ever starts
+        # writing "purpose" onto its candidate dicts, this test's assumption (both
+        # candidates pass through unfiltered) breaks and must be revisited deliberately,
+        # not silently.
+        candidates = [
+            {"key": "review-only-tagged", "purpose": "review", "context_limit": 1_000_000},
+            {"key": "gsd-style-untagged", "context_limit": 1_000_000},
+        ]
+        result = execute_selection.resolve_execute_candidates(
+            candidates, task_type=None, required_context=1000,
+            affinity_table={}, top_n_keys=[])
+        # Only the untagged candidate survives -- resolve_execute_candidates wants
+        # purpose="execute", and an entry explicitly tagged purpose="review" correctly
+        # does NOT match that (this is filter_by_purpose working as intended, not a bug).
+        # The untagged candidate matches "no preference" and survives -- this is the
+        # exact shape GSD's real candidates take (assemble_candidates never sets
+        # "purpose"), so GSD's execute-candidate resolution stays unaffected today. The
+        # non-empty result also means filter_by_purpose's never-empty fallback never
+        # engages here -- if a future change starts writing "purpose" onto GSD's
+        # candidate dicts, this test's assumption should be revisited deliberately.
+        self.assertEqual({c["key"] for c in result}, {"gsd-style-untagged"})
 

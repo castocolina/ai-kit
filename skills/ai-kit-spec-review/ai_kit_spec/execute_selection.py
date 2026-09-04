@@ -3,6 +3,24 @@ fit. Never LLM judgment per-execution -- both signals come from data curated onc
 ai-kit-spec-config time (design spec Section 5)."""
 
 
+def purpose_matches(purpose: str | None, wanted: str) -> bool:
+    """A candidate's `purpose` ("review" | "execute" | "both" | None) matches a consumer's
+    `wanted` role ("review" or "execute") when it's unset (no preference declared -- the
+    field did not exist before this design, spec 2026-09-02), equals `wanted` exactly, or is
+    the explicit "both" value. Shared by filter_by_purpose (execute-side, candidate-dict
+    shape) and quota.py's own ladder-key-list-shaped filter -- one predicate, two shapes."""
+    return purpose is None or purpose == wanted or purpose == "both"
+
+
+def filter_by_purpose(candidates: list, purpose: str) -> list:
+    """Same never-empty-on-curation-gap contract as filter_by_affinity: an entry with no
+    `purpose` set always passes (no preference declared); if the matching-or-unset subset is
+    empty, every candidate is returned unfiltered rather than starving the whole pipeline over
+    a config that simply hasn't been curated with `purpose` yet."""
+    matching = [c for c in candidates if purpose_matches(c.get("purpose"), purpose)]
+    return matching if matching else list(candidates)
+
+
 def filter_by_affinity(candidates: list, task_type: str, affinity_table: dict) -> list:
     """Affinity is a preference, never a hard requirement. Precise rule (a mixed candidate set
     of tagged + untagged behaves differently from an all-mismatched set, by design -- read
@@ -43,13 +61,31 @@ def resolve_execute_candidates(candidates: list, task_type: str, required_contex
 
     Ranks confirmed-sufficient-context candidates before unknown-context ones -- "unknown" must
     never look like "fits great" (matches filter_by_context's own never-drop-on-missing-data
-    rule: unknown is passed through, but ranked conservatively, not favorably)."""
+    rule: unknown is passed through, but ranked conservatively, not favorably).
+
+    Purpose narrowing runs FIRST (2026-09-02 design): an execute consumer only wants
+    purpose in {"execute", "both", None} candidates before task_affinity/context even apply.
+
+    Ranking also applies the design's `task_affinity_match` bonus (spec §6) as a BOUNDED
+    TIE-BREAK, ordered AFTER top_n_keys rank in the sort key (CRITICAL finding, round 3: an
+    earlier draft placed it BEFORE rank, which is not "capped at +15" at all -- it let an
+    exact-affinity, dead-last candidate outrank an explicit top_n_keys #1 pick, an unbounded
+    override rather than a small additive bonus on a 0-100 score). Placed after rank, the
+    bonus only ever matters among candidates the ladder itself treats as equally ranked --
+    both explicitly tied, or (the common real case) both absent from top_n_keys and sharing
+    the same fallback rank -- never a real, distinguishing rank difference. This is where that
+    bonus actually applies -- it needs a real task_type, which only exists here, at real
+    dispatch time, never at Plan A's generic wizard-time ranking (see that plan's Global
+    Constraints)."""
     narrowed = filter_by_context(
-        filter_by_affinity(candidates, task_type, affinity_table), required_context)
+        filter_by_affinity(filter_by_purpose(candidates, "execute"), task_type, affinity_table),
+        required_context)
     rank = {key: i for i, key in enumerate(top_n_keys)}
     return sorted(
         narrowed,
-        key=lambda c: (c.get("context_limit") is None, rank.get(c["key"], len(top_n_keys))),
+        key=lambda c: (c.get("context_limit") is None,
+                        rank.get(c["key"], len(top_n_keys)),
+                        c.get("task_affinity") != task_type),
     )
 
 

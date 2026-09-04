@@ -142,8 +142,9 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
     GSD's .planning/config.json, which genuinely doesn't exist; it is not about this shared
     roster, which every ai-kit-spec-execute-* adapter reads identically. Duplicated here (not
     imported from ai_kit_spec_gsd.adapter) to keep the two sibling adapters independent -- neither
-    should import the other's package. `task_affinity`/`context_limit` come back `None` for
-    today's real ai-kit-spec-config output (Global Constraints) -- `.get()`, never `KeyError`."""
+    should import the other's package. `task_affinity`/`context_limit`/`purpose` come back `None`
+    for a pre-2026-09-02 ai-kit-spec-config output (Global Constraints) -- `.get()`, never
+    `KeyError`."""
     resolved = cfg_resolve_fn(cwd, env)
     candidates = []
     for r in resolved.get("reviewers", []):
@@ -153,6 +154,7 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
             "key": r["key"], "model": r.get("model", ""), "cli": r.get("cli"),
             "vendor": r.get("vendor", ""), "command": r.get("command"),
             "task_affinity": r.get("task_affinity"), "context_limit": r.get("context_limit"),
+            "purpose": r.get("purpose"),
             "effort": r.get("effort"), "service_tier": r.get("service_tier"),
         })
     top_n_keys = resolved.get("policy", {}).get("ladder", [])
