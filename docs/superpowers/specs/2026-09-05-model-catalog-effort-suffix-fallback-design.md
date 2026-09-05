@@ -27,16 +27,35 @@ candidate matched Artificial Analysis (which encodes reasoning effort in its
 own model slugs, e.g. `claude-opus-5-high`) but never matched models.dev,
 which does **not** model reasoning effort as a distinct `model_id` at all —
 Anthropic's real API takes effort as a request parameter, not a model
-selector, so models.dev lists a single bare `anthropic/claude-opus-5`
-entry covering every effort level. `match_models_dev`'s existing fuzzy
-fallback (`difflib.SequenceMatcher`, threshold 0.82, margin 0.05) very
-nearly bridges this gap — `ratio("claudeopus5high", "claudeopus5") = 0.846`
-clears the threshold — but the pool-wide search (every provider, every
-model) finds a near-tied competing candidate (`claude-opus-4-5`, ratio
-0.815, inside the 0.05 margin) and refuses to guess between them, exactly
-as designed. No `provider_hint` is available at that point in `cli.py` to
-break the tie, because `match_models_dev` is called *before*
-`match_artificial_analysis` resolves a vendor.
+selector, so models.dev lists a single bare `claude-opus-5` entry (no
+effort suffix) covering every effort level — but that same bare id is
+listed under **16 different providers** (`anthropic`, `abacus`,
+`agentrouter`, `aihubmix`, `azure`, `azure-cognitive-services`, `cortecs`,
+`github-copilot`, `kenari`, `llmgateway`, `neon`, `opencode`, `pioneer`,
+`requesty`, `snowflake-cortex`, `venice` — confirmed live, 2026-09-05).
+
+**Correction (round-3 review caught this — the mechanism below was
+previously misdescribed):** `match_models_dev`'s existing fuzzy fallback
+(`difflib.SequenceMatcher`, threshold 0.82, margin 0.05) very nearly
+bridges this gap on its own — `ratio("claudeopus5high", "claudeopus5") =
+0.846` clears the threshold — but the pool-wide search (every provider,
+every model) returns **all 16** of those identically-scored
+`claude-opus-5` rows (one per provider, each an exact string match against
+the fuzzy target, so all tied at precisely 0.846 — well within the 0.05
+margin of *each other*, since they're identical), not a near-miss against
+a *different* model name. (An earlier draft of this document claimed the
+competing candidate was `claude-opus-4-5` at ratio 0.815 — that number is
+correct, but 0.815 is *below* the 0.82 threshold, so
+`_fuzzy_candidate_indices` excludes it outright; it was never a real
+competitor and never entered the tied set. Verified directly against
+`_fuzzy_candidate_indices` and a live models.dev fetch before writing this
+correction, to avoid repeating the same mistake.) `match_models_dev`
+refuses to guess among 16 tied, same-named, different-provider candidates
+— exactly as designed, this is precisely the ambiguity
+`provider_hint`-based disambiguation exists for. No `provider_hint` is
+available at the point `cli.py:219` calls `match_models_dev`, though,
+because that call happens *before* `match_artificial_analysis` resolves a
+vendor.
 
 **Confirmed id shape (closes an ambiguity raised during review):** the
 candidate's raw `model_id`, as `cursor-agent` reports it, is the *bare*
@@ -242,20 +261,23 @@ call site (§3.2's enrichment block) and can only ever populate
 `md_enrich_match` — there is no code path by which it can reach `md_match`
 for any id shape, prefixed or bare.
 
-Excluding fuzzy matching from the stripped-id attempt (`allow_fuzzy=False`)
-is deliberate: the strip itself is already an inference, and compounding
-it with `difflib`'s fuzzy fallback would re-open the exact false-match
-hazard `_fuzzy_candidate_indices`'s threshold/margin exist to close (a
-stripped `claudeopus5` fuzzed pool-wide would itself surface
-`claude-opus-4-5` and other siblings) — two stacked inferences is a guess,
-not a recovery.
+Excluding fuzzy matching from both retry attempts (`allow_fuzzy=False`) is
+deliberate defense-in-depth, not something this spec's own motivating case
+happens to require (see §3.2 below — that case resolves via an *exact*
+match once stripped and hinted, fuzzy never enters into it): the strip
+itself is already an inference, and compounding it with `difflib`'s fuzzy
+fallback on top would re-open the exact false-match hazard
+`_fuzzy_candidate_indices`'s threshold/margin exist to close, for
+*whatever other* model family's naming this fallback eventually
+encounters — two stacked inferences is a guess, not a recovery, even when
+today's one confirmed example doesn't happen to trigger it.
 
 ### 3.2 Retry orchestration (`cli.py`)
 
 `build_model_catalog`'s per-candidate loop calls `match_models_dev` before
 `match_artificial_analysis` resolves a vendor, so the first call has no
 `provider_hint` to break a cross-provider collision (confirmed: even after
-stripping the effort suffix, "claude-opus-5" bare-matches dozens of
+stripping the effort suffix, `claude-opus-5` exact-matches **16** different
 providers on models.dev — a hint is required, stripping alone is
 insufficient; and per §1, this candidate's raw id carries no `"/"` prefix
 of its own to fall back on either). One new block, after `aa_match` is
@@ -282,16 +304,18 @@ if models_dev_ok and md_match is None and aa_match:
         # Attempt 1: exact id, now with a hint the unhinted primary call
         # (cli.py:219) didn't have -- covers a same-id collision across
         # providers that only needed a vendor hint, no stripping at all.
-        # allow_fuzzy=False here too (round-2 finding): letting THIS attempt
-        # fall through to pool-fuzzy would let a hint that narrows -- but
-        # doesn't fully resolve -- a fuzzy near-tie (e.g. this spec's own
-        # motivating case: "claude-opus-5" vs "claude-opus-4-5" are BOTH
-        # listed under the SAME "anthropic" provider, so the hint alone
-        # never disambiguates them) silently attach a neighboring
-        # generation's data before ever reaching Attempt 2's more
-        # conservative, exact-only stripped-id path. Every step in this
-        # enrichment block is exact-only; fuzzy matching is never used
-        # anywhere in the retry, only (unchanged) in the primary call.
+        # For THIS spec's own motivating case this attempt still returns
+        # None -- not because the hint fails to disambiguate anything, but
+        # because "claude-opus-5-high" (unstripped) has no EXACT match
+        # under any provider at all, and allow_fuzzy=False keeps this
+        # attempt from reaching outside that (deliberately -- see §3.1's
+        # defense-in-depth rationale, corrected after round-3 review: the
+        # candidate that made the unhinted PRIMARY call ambiguous was a
+        # genuine ~16-way tie of providers all listing the identical exact
+        # string "claude-opus-5", not a fuzzy near-miss against a
+        # different model name -- see §1). Every step in this enrichment
+        # block is exact-only; fuzzy matching is never used anywhere in
+        # the retry, only (unchanged) in the primary call.
         md_enrich_match = match_models_dev(model_id, models_dev_data,
                                             provider_hint=aa_provider_hint,
                                             allow_fuzzy=False)
@@ -436,13 +460,16 @@ not-yet-scoped) inferred-search idea.
   returns `None` under `allow_fuzzy=False` but the same non-`None` match
   under the default.
 - **`cli.py`'s new retry block, exercising both attempts explicitly**:
-  Attempt 1 (exact id + hint) resolves an inter-provider exact-id
-  collision the primary call couldn't (no stripping involved); Attempt 1
-  does *not* resolve an intra-provider fuzzy near-tie even with a hint
-  (mirrors this spec's own motivating case — `claude-opus-5` and
-  `claude-opus-4-5` both list under `anthropic`, so a hint alone can't
-  separate them) and correctly falls through to Attempt 2; Attempt 2
-  (stripped id, exact-only) succeeds where Attempt 1 didn't; a case that
+  Attempt 1 (exact id + hint, no stripping) resolves an inter-provider
+  exact-id collision the primary call couldn't; Attempt 1 correctly
+  returns `None` and falls through to Attempt 2 when the *unstripped* id
+  has no exact match anywhere (mirrors this spec's own motivating case —
+  `claude-opus-5-high` itself, unstripped, matches nothing exactly under
+  any provider, and `allow_fuzzy=False` keeps this attempt from reaching
+  for a fuzzy hit); Attempt 2 (stripped id, exact-only) succeeds where
+  Attempt 1 didn't, filtered from a real multi-provider exact-id
+  collision (16 providers list the bare stripped id in the live
+  fixture's shape) down to one via the hint; a case that
   would only resolve via fuzzy on the *stripped* id is asserted to return
   `None` (never reached — fuzzy is excluded from both attempts, per
   §3.1/§3.2). All four recovered fields (`context_window`, `tool_calling`,
