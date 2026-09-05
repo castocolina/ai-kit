@@ -39,9 +39,12 @@ but that same bare id is listed under **16 different providers**
 universality):** models.dev's handling of reasoning effort is
 **inconsistent across vendors**, not uniformly absent. A live fetch (same
 date) also finds ~125 effort-suffixed rows elsewhere in the catalog —
-e.g. `abacus/gpt-5.3-codex-xhigh`, `google/gemini-3.1-pro-preview-high`,
-`google/gemini-3.1-pro-preview-low`, and roughly 40 `*-thinking` rows
-across several providers. So this spec's fallback is not "recovering a gap
+e.g. `abacus/gpt-5.3-codex-xhigh`, `nano-gpt/gemini-3.1-pro-preview-high`,
+`nano-gpt/gemini-3.1-pro-preview-low` (both `nano-gpt`'s own model ids,
+not distinct rows under provider `google`, which has no effort-suffixed
+rows at all), and 106 rows whose id ends in `-thinking` across several
+providers — the 125-row total breaks down as 106 `thinking`, 10 `high`,
+4 `low`, 4 `medium`, 1 `xhigh`. So this spec's fallback is not "recovering a gap
 models.dev never has" in general — it recovers the specific, common shape
 where the CLI/AA-reported id carries an effort suffix models.dev's entry
 for that same family omits (true for `claude-opus-5-*` and several other
@@ -57,10 +60,31 @@ previously misdescribed):** `match_models_dev`'s existing fuzzy fallback
 bridges this gap on its own — `ratio("claudeopus5high", "claudeopus5") =
 0.846` clears the threshold — but the pool-wide search (every provider,
 every model) returns **all 16** of those identically-scored
-`claude-opus-5` rows (one per provider, each identical to every other and
-each scoring exactly 0.846 against the fuzzy target `claudeopus5high` —
-well within the 0.05 margin of *each other*, since they're identical to
-one another), not a near-miss against a *different* model name. (An earlier draft of this document claimed the
+`claude-opus-5` rows (one per provider, each **identical only as an id
+string** — that's why they all score exactly 0.846 against the fuzzy
+target `claudeopus5high`, well within the 0.05 margin of *each other* —
+not a near-miss against a *different* model name.
+
+**Round-6 correction (native-opus caught this — a load-bearing safety
+assumption was never stated):** those 16 rows are **not** identical as
+*payloads*. Verified live: across the 16 `claude-opus-5` rows,
+`structured_output` is `True` on 7 providers and simply absent on the
+other 9; `limit.output` is `64000` on `github-copilot` vs. `128000`
+everywhere else. The same divergence recurs across the wider class of
+base models this fallback resolves to — e.g. `claude-opus-4-8` reports
+`context=1000000` on 18 providers but `context=200000` on `aihubmix`/
+`xpersona`; `claude-sonnet-5` reports `tool_call=False`/
+`limit.output=1000000` on `llmgateway` vs. `tool_call=True`/
+`limit.output=128000` on `anthropic`. Picking the wrong provider's row out
+of one of these collisions would backfill a wrong value onto a real
+ranking axis — e.g. `tool_calling: false` for a genuinely tool-capable
+model. This is why `provider_hint` in Attempt 2 (§3.2) is not a
+tiebreaker of convenience: the mechanism is only correct because
+`aa_provider_hint` is derived from Artificial Analysis's own
+`model_creator.name` — the model's actual foundation-model owner (e.g.
+"Anthropic", "OpenAI") — which slugifies to the **first-party** models.dev
+provider key for that vendor, not an arbitrary reseller. §3.3 states this
+explicitly as a safety property, not merely an implementation detail. (An earlier draft of this document claimed the
 competing candidate was `claude-opus-4-5` at ratio 0.815 — that number is
 correct, but 0.815 is *below* the 0.82 threshold, so
 `_fuzzy_candidate_indices` excludes it outright; it was never a real
@@ -496,6 +520,29 @@ still ambiguous even with a hint) is left exactly as today —
 ranking. Closing that residual gap is deferred to the (separate,
 not-yet-scoped) inferred-search idea.
 
+**Round-6 addition (native-opus caught this — a load-bearing safety
+property was implicit, not stated): the 16-way-collision case (and every
+case like it) is safe only because the resolving row is picked by
+`provider_hint`, never arbitrarily.** A stripped base id routinely
+resolves to *multiple* provider rows that genuinely disagree on the exact
+fields this fallback recovers (verified live: `structured_output` present
+on 7 of the 16 `claude-opus-5` rows and absent on 9; `claude-opus-4-8`'s
+`context` is `1000000` on 18 providers but `200000` on two resellers;
+`claude-sonnet-5`'s `tool_call` is `True` on `anthropic` but `False` on
+`llmgateway`) — these are per-provider payload differences, not
+per-model constants. Attempt 2's `provider_hint=aa_provider_hint`
+(§3.2) is what makes this safe: `aa_provider_hint` is derived from
+Artificial Analysis's own `model_creator.name` — the model's real
+foundation-model owner — which slugifies to the **first-party** models.dev
+provider key (`"anthropic"`, `"openai"`, …), not an arbitrary reseller
+row from the same collision. If `_slugify(model_creator.name)` ever
+resolved to a *non*-first-party provider key that also happened to carry
+a same-named row, the recovered fields would silently come from the
+wrong provider — this fallback has no independent check that the hinted
+provider is actually first-party, and relies entirely on AA's
+`model_creator.name` already naming the real vendor (true for every
+model family checked in this spec's own examples).
+
 ## 4. Testing
 
 - **`_strip_known_effort_suffix`** (pure, `model_matcher.py`): single
@@ -530,6 +577,13 @@ not-yet-scoped) inferred-search idea.
   `None` (never reached — fuzzy is excluded from both attempts, per
   §3.1/§3.2). All four recovered fields (`context_window`, `tool_calling`,
   `structured_output`, `max_output_tokens`) are asserted on a successful
+  retry — **and, per the round-6 safety property in §3.3, the fixture's
+  collision set includes at least two providers whose rows for the same
+  stripped id genuinely disagree on one of these four fields (e.g. one
+  provider's row has `structured_output=True`, another's is absent) — the
+  test asserts the recovered value matches specifically the `provider_hint`-
+  named row, not merely "a" row from the collision, proving the
+  disambiguation is load-bearing and not incidentally correct.**
   retry, not just two of them.
 - **The lifecycle across runs, including the accepted round-3 tradeoff**:
   run 1 (both sources up) — retry succeeds, all four fields backfilled and
