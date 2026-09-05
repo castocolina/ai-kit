@@ -39,12 +39,13 @@ but that same bare id is listed under **16 different providers**
 universality):** models.dev's handling of reasoning effort is
 **inconsistent across vendors**, not uniformly absent. A live fetch (same
 date) also finds ~125 effort-suffixed rows elsewhere in the catalog —
-e.g. `abacus/gpt-5.3-codex-xhigh`, `nano-gpt/gemini-3.1-pro-preview-high`,
-`nano-gpt/gemini-3.1-pro-preview-low` (both `nano-gpt`'s own model ids,
-not distinct rows under provider `google`, which has no effort-suffixed
-rows at all), and 106 rows whose id ends in `-thinking` across several
-providers — the 125-row total breaks down as 106 `thinking`, 10 `high`,
-4 `low`, 4 `medium`, 1 `xhigh`. So this spec's fallback is not "recovering a gap
+e.g. `abacus/gpt-5.3-codex-xhigh`, provider `nano-gpt`'s model ids
+`google/gemini-3.1-pro-preview-high` and `google/gemini-3.1-pro-preview-low`
+(the model id itself carries a `"google/"` segment, but the row lives
+under provider `nano-gpt` — provider `google` itself has no
+effort-suffixed rows at all), and 106 rows whose id ends in `-thinking`
+across several providers — the 125-row total breaks down as 106
+`thinking`, 10 `high`, 4 `low`, 4 `medium`, 1 `xhigh`. So this spec's fallback is not "recovering a gap
 models.dev never has" in general — it recovers the specific, common shape
 where the CLI/AA-reported id carries an effort suffix models.dev's entry
 for that same family omits (true for `claude-opus-5-*` and several other
@@ -584,7 +585,6 @@ model family checked in this spec's own examples).
   test asserts the recovered value matches specifically the `provider_hint`-
   named row, not merely "a" row from the collision, proving the
   disambiguation is load-bearing and not incidentally correct.**
-  retry, not just two of them.
 - **The lifecycle across runs, including the accepted round-3 tradeoff**:
   run 1 (both sources up) — retry succeeds, all four fields backfilled and
   persisted to the catalog under some key `K`. Run 2 (`aa_ok=False` or
