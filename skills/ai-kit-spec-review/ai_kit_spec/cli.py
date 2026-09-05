@@ -245,8 +245,18 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
         # unmodified match_models_dev (no effort-awareness lives inside that function at
         # all). Consumed exclusively by the two field-preservation helpers below; never read
         # by provider/key/pricing derivation.
+        # When the retry's lookup resolves to a single models.dev row, that row's fields are
+        # used even if its provider disagrees with aa_provider_hint -- match_models_dev only
+        # consults provider_hint to disambiguate an actual multi-row collision. This is
+        # accepted: a lone row is still better signal than no signal (fields would otherwise
+        # stay null).
         md_enrich_match = None
         if models_dev_ok and md_match is None and aa_match:
+            # Deliberate: aa_provider_hint is derived from Artificial Analysis's own
+            # model_creator.name (the first-party/creator row), not from the CLI-reported id's
+            # own vendor prefix (e.g. for "github-copilot/claude-opus-5-high" the hint used is
+            # "anthropic", not "github-copilot"). The spec treats the creator row as more
+            # authoritative than a reseller's own prefix.
             aa_provider_hint = _slugify(
                 (aa_match.get("model_creator") or {}).get("name", "")) or None
             if aa_provider_hint:
@@ -274,7 +284,7 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
             provider = md_match["provider"]
         elif provider_hint:
             provider = provider_hint
-        elif aa_match and aa_match.get("model_creator", {}).get("name"):
+        elif aa_match and (aa_match.get("model_creator") or {}).get("name"):
             provider = _slugify(aa_match["model_creator"]["name"])
         elif no_signal_this_run and existing_key:
             # CRITICAL/HIGH fix: neither source matched this run (most commonly both were
@@ -288,7 +298,7 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
             # this covers BOTH "no match at all this run, no '<vendor>/' prefix on the raw id,
             # and no existing catalog entry to recover from" AND (round-2 re-review finding)
             # "aa_match exists but its own model_creator.name is missing/empty," which reaches
-            # this same `else` since the `aa_match and aa_match.get("model_creator", {}).get(
+            # this same `else` since the `aa_match and (aa_match.get("model_creator") or {}).get(
             # "name")` elif above requires BOTH truthy. Either way there is no real vendor to
             # report. Falling back to `provider = model_id` used to mint a plausible-looking but
             # entirely fabricated self-referential "model_id/model_id" key on the UNMATCHED

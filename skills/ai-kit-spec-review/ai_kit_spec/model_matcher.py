@@ -70,7 +70,12 @@ def _strip_known_effort_suffix(bare: str) -> str | None:
     only ever pops a token it positively recognizes as a reasoning-effort word, and stops at
     the first token that isn't one -- a service-tier suffix (`-fast`), a real size/tier
     designation that is simply part of the base model's own name (`-mini`, `-flash`), or
-    anything unrecognized is left exactly where it was, never stripped away."""
+    anything unrecognized is left exactly where it was, never stripped away.
+
+    A single call strips down to the FULLY stripped form, not a ladder of intermediate
+    attempts -- e.g. for "claude-opus-5-thinking-high" it returns "claude-opus-5" directly,
+    popping "high" then "thinking" in the same call; a caller wanting to also try the
+    intermediate "claude-opus-5-thinking" form would need to call it differently."""
     parts = bare.split("-")
     stripped_any = False
     while len(parts) > 1:

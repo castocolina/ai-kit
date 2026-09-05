@@ -4323,8 +4323,8 @@ class TestBuildModelCatalog(unittest.TestCase):
         # ("claude-opus-5-thinking-xhigh") whose fuzzy ratio against the single stripped-form
         # candidate ("claude-opus-5") is ~0.63 -- well under the PRIMARY call's own 0.82
         # threshold -- so the primary call cannot resolve this on its own; only the retry's
-        # exact match on the STRIPPED id (Attempt 2) can. (Verified against a real 16-provider
-        # single-row-per-provider case would behave the same way, but a single provider is
+        # exact match on the STRIPPED id (Attempt 2) can. (A real 16-provider
+        # single-row-per-provider case would behave the same way; a single provider here is
         # enough to isolate this specific invariant.)
         models_dev_data = {"some-other-provider": {"models": {"claude-opus-5": {
             "id": "claude-opus-5", "tool_call": True, "structured_output": True,
