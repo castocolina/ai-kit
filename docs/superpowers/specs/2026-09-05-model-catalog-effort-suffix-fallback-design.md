@@ -22,7 +22,7 @@ ranks #41/188 despite carrying the catalog's single highest
 `tool_calling` — are `null` and fall to the 49.0 default, dragging its
 otherwise-excellent weighted score down.
 
-Root cause (confirmed against a live models.dev fetch, 2026-09-04): this
+Root cause (confirmed against a live models.dev fetch, 2026-09-05): this
 candidate matched Artificial Analysis (which encodes reasoning effort in its
 own model slugs, e.g. `claude-opus-5-high`) but never matched models.dev,
 which does **not** model reasoning effort as a distinct `model_id` at all —
@@ -384,7 +384,12 @@ def _preserved_or_fresh_md_fields(md_match, models_dev_ok, existing_entry,
 (`_preserved_or_fresh_ctx_window` follows the identical pattern for
 `ctx_window`, reading `existing_entry.get("runtimes", {}).get(cli_name,
 {}).get("ctx_window")` in the "preserve" branch, same as its existing
-`not models_dev_ok` case.) Everywhere else in `build_model_catalog` —
+`not models_dev_ok` case.) Their call sites (`cli.py:284`'s
+`md_fields = _preserved_or_fresh_md_fields(...)` and `cli.py:307`'s
+`ctx_window = _preserved_or_fresh_ctx_window(...)`) both gain
+`md_enrich_match=md_enrich_match` as an added keyword argument — an
+implementation-level detail left to the eventual plan, not spelled out
+further here. Everywhere else in `build_model_catalog` —
 `provider` derivation (the full expression, including its
 `provider_hint`/`model_creator.name`/`existing_key`-recovery branches at
 `cli.py:237-247`, unabridged and unaffected by any of this), `key =
@@ -477,18 +482,31 @@ not-yet-scoped) inferred-search idea.
   retry, not just two of them.
 - **The lifecycle across runs, including the accepted round-3 tradeoff**:
   run 1 (both sources up) — retry succeeds, all four fields backfilled and
-  persisted to the catalog; run 2 (`aa_ok=False` or `aa_match=None`,
-  `models_dev_ok=True`, same candidate, no `existing_key`/`md_match`
-  recovery) — asserts the four previously recovered fields are **cleared**,
-  matching today's existing contract for any candidate whose primary
-  match disappears (this is the documented, accepted limitation from
-  §3.2's round-3 correction, not a bug — a dedicated regression test
+  persisted to the catalog under some key `K`. Run 2 (`aa_ok=False` or
+  `aa_match=None`, `models_dev_ok=True`, **same `(cli_name, model_id)`
+  pair, run-1's persisted entry still present in `existing_catalog`**):
+  `_find_existing_key_for_runtime` recovers `existing_key=K` (this is
+  *required* for the candidate to reach the field-rebuild path at all —
+  per `cli.py:278`, with `md_match`/`aa_match` both `None` this run, a
+  candidate that *couldn't* recover an `existing_key` would have
+  `provider is None` and route to `unmatched` instead, leaving the old
+  entry completely untouched rather than exercising any clearing logic;
+  round-4 review caught an earlier draft describing this fixture
+  backwards, as lacking that recovery), so `provider`/`key`/`existing_entry`
+  all resolve — and *because* `md_match` and `md_enrich_match` are both
+  `None` this run, the entry is rebuilt with `md_fields = {"tool_calling":
+  None, "structured_output": None, "max_output_tokens": None}` (and
+  `ctx_window = None`), asserting the four previously recovered fields are
+  **cleared**. This matches today's existing contract for any candidate
+  whose primary match disappears — the documented, accepted limitation
+  from §3.2's round-3 correction, not a bug; a dedicated regression test
   exists specifically so a future change doesn't accidentally "fix" this
-  into the broader staleness bug round 3 found and reverted). A second,
+  into the broader staleness bug round 3 found and reverted. A second,
   unrelated candidate in the *same* two-run fixture — one whose fields
-  came from a genuine primary `md_match` on run 1 that disappears on run 2
-  — must also clear identically, proving the enrichment mechanism doesn't
-  special-case or protect fields it never touched.
+  came from a genuine primary `md_match` on run 1 (never touched
+  `md_enrich_match` at all) that disappears on run 2 — must also clear
+  identically, proving the enrichment mechanism doesn't special-case or
+  protect fields it never touched.
 - **The invariants most at risk, tested directly** (per review — these
   were previously asserted in prose but not exercised): (a) a case where
   `md_enrich_match`'s own resolved `provider` field *differs* from
@@ -501,8 +519,13 @@ not-yet-scoped) inferred-search idea.
   effort-specific price, never the models.dev base model's `cost`; (c) a
   case with a vendor-*prefixed* id carrying an effort suffix (e.g.
   `openai/gpt-5-high`) — asserts the primary call still yields `md_match
-  is None` (step 1's exact lookup misses the suffix exactly as the bare
-  case does) and the retry populates `md_enrich_match` the same way.
+  is None`: step 1's exact lookup misses the suffix exactly as the bare
+  case does, *and* the pool-fuzzy step also finds nothing for this
+  example (`ratio("gpt5high", "gpt5") ≈ 0.667`, well under the 0.82
+  threshold) — both conditions are asserted, not just the first, since
+  a real fuzzy hit on the unstripped prefixed id would populate `md_match`
+  even though step 1 missed — and the retry populates `md_enrich_match`
+  the same way as the bare case.
 - **Regression test, end-to-end**: a small `models_dev_data`/`aa_models`
   fixture mirroring the real `claude-opus-5-high` / `venice/claude-opus-5-high-fast`
   shape — asserts the base-model candidate's `context_window`/
