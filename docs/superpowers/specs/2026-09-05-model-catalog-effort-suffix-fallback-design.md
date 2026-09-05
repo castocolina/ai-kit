@@ -157,18 +157,30 @@ def _strip_known_effort_suffix(bare: str) -> str | None:
     stripped. Vendor-agnostic: OpenAI's own reasoning-effort models use the
     same minimal/low/medium/high vocabulary.
 
-    Safety is structural, not a separate denylist: the loop only ever pops
-    a token it POSITIVELY recognizes as a reasoning-effort word, and stops
-    at the first token that isn't one -- a service-tier suffix (`-fast`),
-    a real size/tier designation that is simply part of the base model's
-    own name (`-mini`, `-flash`), or anything unrecognized is left exactly
-    where it was, never stripped away. This is why a candidate like
-    `claude-opus-5-thinking-low-fast` is never touched at all (`fast` is
-    the very first trailing token and isn't an effort word, so the loop
-    never starts), while `o3-mini-high` correctly strips to `o3-mini`
-    (only `high` is popped; `mini` is preserved verbatim in the returned
-    id, so a subsequent models.dev lookup finds -- or fails to find --
-    `o3-mini`'s own real, tier-specific entry, never a different tier's)."""
+    Safety against crossing a SERVICE-TIER boundary is structural, not a
+    denylist: the loop only ever pops a token it positively recognizes as
+    a reasoning-effort word, and stops at the first token that isn't one
+    -- a service-tier suffix (`-fast`), a real size/tier designation that
+    is simply part of the base model's own name (`-mini`, `-flash`), or
+    anything unrecognized is left exactly where it was, never stripped
+    away. This is why a candidate like `claude-opus-5-thinking-low-fast`
+    is never touched at all (`fast` is the very first trailing token and
+    isn't an effort word, so the loop never starts), while `o3-mini-high`
+    correctly strips to `o3-mini` (only `high` is popped; `mini` is
+    preserved verbatim in the returned id, so a subsequent models.dev
+    lookup finds -- or fails to find -- `o3-mini`'s own real,
+    tier-specific entry, never a different tier's).
+
+    Collision-freedom of the vocabulary ITSELF is a heuristic, not a
+    proof, for six of these seven tokens (accepted, per review): `max` is
+    demonstrably excluded from bare stripping because a concrete
+    real-world collision is known (`qwen-max`/`qwen3-max`); no equivalent
+    audit was done to confirm no real base-model id ends in
+    `minimal`/`low`/`medium`/`high`/`xhigh`/`thinking` as its OWN name
+    rather than an effort suffix. This is the same category of accepted
+    risk `_fuzzy_candidate_indices`'s own threshold/margin already carry
+    (a heuristic tuned against known cases, not a guarantee against every
+    unknown one) -- not a new, unmitigated exposure this spec introduces."""
     parts = bare.split("-")
     stripped_any = False
     while len(parts) > 1:
@@ -259,15 +271,14 @@ aa_match = (match_artificial_analysis(model_id, aa_models, provider_hint=provide
 # (`md_enrich_match`), never assigned into `md_match` itself, and using
 # ONLY the ordinary, unmodified `match_models_dev` (see §3.1's "revised
 # again" note -- no effort-awareness lives inside that function at all).
-# `enrich_attempted` records whether this block actually ran a models.dev
-# query this run (see the field-preservation logic below) -- distinct from
-# "ran and found nothing" vs. "never got a chance to run this time".
+# When this block finds nothing (or never runs -- AA down/unmatched this
+# run), the field-preservation logic below clears any previously-fresh
+# fields exactly like today's existing contract; see §3.2's round-3 note
+# for why a smarter preserve-on-AA-outage mechanism was tried and reverted.
 md_enrich_match = None
-enrich_attempted = False
 if models_dev_ok and md_match is None and aa_match:
     aa_provider_hint = _slugify((aa_match.get("model_creator") or {}).get("name", "")) or None
     if aa_provider_hint:
-        enrich_attempted = True
         # Attempt 1: exact id, now with a hint the unhinted primary call
         # (cli.py:219) didn't have -- covers a same-id collision across
         # providers that only needed a vendor hint, no stripping at all.
@@ -295,41 +306,55 @@ if models_dev_ok and md_match is None and aa_match:
                                                     allow_fuzzy=False)
 ```
 
-`_preserved_or_fresh_md_fields` and `_preserved_or_fresh_ctx_window` each
-gain two new optional parameters, `md_enrich_match=None` and
-`enrich_attempted=False`, consulted **only** when the primary `md_match`
-is `None` — never when `md_match` is truthy, and never as a substitute for
-`md_match` anywhere else in the function. Three-way outcome when
-`md_match` is `None` and the source is genuinely up (`models_dev_ok=True`):
-(1) the enrichment retry found something this run → use it (fresh); (2)
-the retry genuinely ran and found nothing → a real negative signal, clear
-stale fields (matches the function's existing "source was queried, found
-nothing, so stale fields must go" philosophy); (3) the retry **never ran**
-this time (`enrich_attempted=False` — AA itself is down/unconfigured this
-run, or matched but with no usable `model_creator.name`) → we did not
-actually re-verify these fields against models.dev at all this run, so
-**preserve** whatever was cached, exactly like the existing
-`not models_dev_ok` branch already does for a models.dev outage. This is
-what closes the round-2 HIGH finding: a temporary Artificial Analysis
-outage on a *later* run no longer silently erases context/tool-calling
-data this fallback already recovered on an earlier run.
+**Round-3 correction — the preserve-across-an-AA-outage mechanism in an
+earlier draft is dropped entirely.** That draft added an `enrich_attempted`
+flag, `True` only when the enrichment block actually ran, and preserved
+cached fields whenever it was `False` — intending to cover "Artificial
+Analysis is down this run." Native-opus's third-round review found this
+reintroduces the exact staleness bug the existing clear-on-fresh-no-match
+contract exists to prevent, for a *much broader* class of candidates than
+intended: `enrich_attempted` is `False` for **every** candidate where
+`aa_match` is falsy for *any* reason — including an ordinary candidate
+that has nothing to do with effort suffixes at all, whose *primary*
+`md_match` genuinely disappeared on this run (`models_dev_ok=True`,
+`md_match is None`, `aa_match` also `None` or unmatched). The "preserve"
+branch cannot distinguish "these cached fields came from a real match that
+is now stale" from "these cached fields came from a prior enrichment
+recovery" — and this spec's own Non-goals deliberately declines to add
+the provenance tracking (a dedicated "inferred" marker) that would be
+needed to make that distinction. Attempting the preserve logic without
+that provenance is worse than not attempting it at all.
+
+**Accepted, documented limitation instead:** `_preserved_or_fresh_md_fields`
+and `_preserved_or_fresh_ctx_window` gain exactly **one** new optional
+parameter, `md_enrich_match=None`, consulted only when the primary
+`md_match` is `None`. Whenever neither the primary match nor the
+enrichment retry finds anything this run (`models_dev_ok=True`), the
+existing contract applies unchanged: clear the stale fields. This means a
+run where Artificial Analysis is transiently down (or matches nothing for
+this candidate) *does* clear any previously effort-suffix-recovered
+`context_window`/`tool_calling`/`structured_output`/`max_output_tokens` —
+identical to how any other candidate's stale fields are already treated
+today. This is a real, accepted tradeoff (the round-2 HIGH finding this
+was meant to close is not fully closed), not a silent gap: fixing it
+properly needs cross-run provenance this spec's Non-goals explicitly
+opt out of, and is left to a future spec if the tradeoff proves costly in
+practice. Self-heal still happens the moment both sources are up together
+on some later run (§5).
 
 ```python
 def _preserved_or_fresh_md_fields(md_match, models_dev_ok, existing_entry,
-                                   md_enrich_match=None, enrich_attempted=False):
+                                   md_enrich_match=None):
     if not models_dev_ok:
         ...  # unchanged: preserve from existing_entry (source itself down)
     if md_match:
         ...  # unchanged: fresh fields from the primary match
-    if md_enrich_match:
-        return {"tool_calling": md_enrich_match.get("tool_call"),
-                "structured_output": md_enrich_match.get("structured_output"),
-                "max_output_tokens": md_enrich_match.get("limit", {}).get("output")}
-    if enrich_attempted:
+    source = md_enrich_match
+    if not source:
         return {"tool_calling": None, "structured_output": None, "max_output_tokens": None}
-    existing_entry = existing_entry or {}
-    return {k: existing_entry[k] for k in
-            ("tool_calling", "structured_output", "max_output_tokens") if k in existing_entry}
+    return {"tool_calling": source.get("tool_call"),
+            "structured_output": source.get("structured_output"),
+            "max_output_tokens": source.get("limit", {}).get("output")}
 ```
 
 (`_preserved_or_fresh_ctx_window` follows the identical pattern for
@@ -423,15 +448,20 @@ not-yet-scoped) inferred-search idea.
   §3.1/§3.2). All four recovered fields (`context_window`, `tool_calling`,
   `structured_output`, `max_output_tokens`) are asserted on a successful
   retry, not just two of them.
-- **The lifecycle across runs (per round-2 review — this needs its own
-  two-run test, not just single-run assertions)**: run 1 (both sources up)
-  — retry succeeds, all four fields backfilled and persisted to the
-  catalog; run 2 (`aa_ok=False`, `models_dev_ok=True`, same candidate) —
-  `enrich_attempted` stays `False` this run, and the four previously
-  recovered fields are asserted **preserved** from `existing_entry`, not
-  cleared; a third variant — run where `aa_match` is present but
-  `model_creator.name` is empty/missing (`enrich_attempted=False` for a
-  different reason) — also preserves rather than clears.
+- **The lifecycle across runs, including the accepted round-3 tradeoff**:
+  run 1 (both sources up) — retry succeeds, all four fields backfilled and
+  persisted to the catalog; run 2 (`aa_ok=False` or `aa_match=None`,
+  `models_dev_ok=True`, same candidate, no `existing_key`/`md_match`
+  recovery) — asserts the four previously recovered fields are **cleared**,
+  matching today's existing contract for any candidate whose primary
+  match disappears (this is the documented, accepted limitation from
+  §3.2's round-3 correction, not a bug — a dedicated regression test
+  exists specifically so a future change doesn't accidentally "fix" this
+  into the broader staleness bug round 3 found and reverted). A second,
+  unrelated candidate in the *same* two-run fixture — one whose fields
+  came from a genuine primary `md_match` on run 1 that disappears on run 2
+  — must also clear identically, proving the enrichment mechanism doesn't
+  special-case or protect fields it never touched.
 - **The invariants most at risk, tested directly** (per review — these
   were previously asserted in prose but not exercised): (a) a case where
   `md_enrich_match`'s own resolved `provider` field *differs* from
