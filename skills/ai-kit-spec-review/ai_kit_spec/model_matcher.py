@@ -89,22 +89,26 @@ def _strip_known_effort_suffix(bare: str) -> str | None:
 
 
 def match_models_dev(cli_model_id: str, models_dev_data: dict,
-                      provider_hint: str | None = None) -> dict | None:
+                      provider_hint: str | None = None,
+                      allow_fuzzy: bool = True) -> dict | None:
     """Three-step lookup: (1) if cli_model_id has a "<hint>/<model>" shape, try
     models_dev_data[hint]["models"][model] directly -- an exact hinted hit is always
     unambiguous and returned immediately, no collision to consider. (2) Only when step 1
     didn't hit, search every provider's models dict for an EXACT bare-id match (a CLI's own
     provider label is not guaranteed to equal models.dev's provider key -- e.g. opencode
     namespaces differently than models.dev does). (3) CRITICAL finding: only when step 2 finds
-    NOTHING AT ALL does a fuzzy fallback run -- normalized-string similarity across every
-    provider's every model id, via _fuzzy_candidate_indices. COLLISION-SAFE at every step: if
-    more than one provider's model matches (exact OR fuzzy), `provider_hint` (when provided) is
-    used to pick the one whose provider_key normalizes to the same value -- never "whichever
-    came first in dict-iteration order" (a naive first-match would silently attach one vendor's
-    fields to a different vendor's model). If more than one candidate remains ambiguous (no
-    hint, or the hint doesn't disambiguate), returns None rather than guess. A SINGLE match
-    (exact or fuzzy) always wins regardless of hint. Returns the matched model's own dict with
-    a "provider" key added, or None."""
+    NOTHING AT ALL, AND allow_fuzzy is True (default), does a fuzzy fallback run --
+    normalized-string similarity across every provider's every model id, via
+    _fuzzy_candidate_indices. Pass allow_fuzzy=False to force exact-only matching (steps 1-2
+    only) -- used by the effort-suffix enrichment retry (cli.py) to avoid compounding an
+    already-inferred effort-stripped id with a second, fuzzy inference. COLLISION-SAFE at
+    every step: if more than one provider's model matches (exact OR fuzzy), `provider_hint`
+    (when provided) is used to pick the one whose provider_key normalizes to the same value --
+    never "whichever came first in dict-iteration order" (a naive first-match would silently
+    attach one vendor's fields to a different vendor's model). If more than one candidate
+    remains ambiguous (no hint, or the hint doesn't disambiguate), returns None rather than
+    guess. A SINGLE match (exact or fuzzy) always wins regardless of hint. Returns the
+    matched model's own dict with a "provider" key added, or None."""
     bare = bare_model_part(cli_model_id)
     if "/" in cli_model_id:
         hint = cli_model_id.split("/", 1)[0]
@@ -115,7 +119,7 @@ def match_models_dev(cli_model_id: str, models_dev_data: dict,
             for provider_key, provider_entry in models_dev_data.items()
             for model_id, model in provider_entry.get("models", {}).items()]
     matches = [(provider_key, model) for provider_key, model_id, model in pool if model_id == bare]
-    if not matches:
+    if not matches and allow_fuzzy:
         normalized_bare = _normalize(bare)
         normalized_ids = [_normalize(model_id) for _, model_id, _ in pool]
         matches = [(pool[i][0], pool[i][2]) for i in

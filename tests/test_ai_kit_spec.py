@@ -3757,6 +3757,24 @@ class TestMatchModelsDev(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestMatchModelsDevAllowFuzzy(unittest.TestCase):
+    def test_default_preserves_existing_fuzzy_behavior_unchanged(self):
+        # The primary call site in build_model_catalog never passes allow_fuzzy -- the
+        # default must keep resolving a fuzzy-only match exactly as it did before this spec.
+        fuzzy_data = {"openai": {"models": {"gpt-5.6-sol-2": {
+            "id": "gpt-5.6-sol-2", "cost": {"input": 3.5}}}}}
+        result = model_matcher.match_models_dev("openai/gpt-5.6-sol", fuzzy_data)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["cost"]["input"], 3.5)
+
+    def test_allow_fuzzy_false_skips_the_pool_fuzzy_step(self):
+        fuzzy_data = {"openai": {"models": {"gpt-5.6-sol-2": {
+            "id": "gpt-5.6-sol-2", "cost": {"input": 3.5}}}}}
+        result = model_matcher.match_models_dev(
+            "openai/gpt-5.6-sol", fuzzy_data, allow_fuzzy=False)
+        self.assertIsNone(result)
+
+
 class TestMatchArtificialAnalysis(unittest.TestCase):
     def setUp(self):
         self.models = [
