@@ -3875,6 +3875,121 @@ class TestBuildModelCatalog(unittest.TestCase):
         self.assertFalse(entry["source"]["artificial_analysis"])
         self.assertIn("opencode", entry["runtimes"])
 
+    def test_attempt_1_exact_id_with_hint_resolves_a_cross_provider_collision(self):
+        # No effort suffix at all here -- Attempt 1 (exact id + hint) must resolve this on
+        # its own, without ever reaching Attempt 2's effort-stripping.
+        models_dev_data = {
+            "openai": {"models": {"sol": {
+                "id": "sol", "tool_call": True, "structured_output": True,
+                "limit": {"context": 400000, "output": 128000}}}},
+            "some-reseller": {"models": {"sol": {
+                "id": "sol", "tool_call": False, "structured_output": None,
+                "limit": {"context": 400000, "output": 128000}}}},
+        }
+        aa_models = [{"id": "1", "slug": "sol", "name": "Sol",
+                      "model_creator": {"name": "OpenAI"},
+                      "evaluations": {"artificial_analysis_intelligence_index": 70.0}}]
+        discovered = [{"cli": "codex", "model_id": "sol"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, aa_models, True, {})
+        self.assertEqual(unmatched, [])
+        entry = next(iter(catalog.values()))
+        self.assertTrue(entry["tool_calling"])          # openai's row, not some-reseller's
+        self.assertTrue(entry["structured_output"])
+
+    def test_attempt_2_strips_the_effort_suffix_and_picks_the_hinted_provider_row(self):
+        # Mirrors this spec's own motivating case: the raw id ("claude-opus-5-high") has no
+        # exact match anywhere (Attempt 1 -> None, both providers tie on the UNSTRIPPED id
+        # only via fuzzy which the primary call also can't use unambiguously), but its
+        # effort-stripped base id ("claude-opus-5") collides across two providers whose
+        # payloads genuinely disagree on structured_output -- proving the hint picks a
+        # SPECIFIC row, not just "a" row from the collision (spec's round-6 safety property).
+        models_dev_data = {
+            "anthropic": {"models": {"claude-opus-5": {
+                "id": "claude-opus-5", "tool_call": True, "structured_output": True,
+                "limit": {"context": 1000000, "output": 128000}}}},
+            "some-reseller": {"models": {"claude-opus-5": {
+                "id": "claude-opus-5", "tool_call": True, "structured_output": None,
+                "limit": {"context": 1000000, "output": 128000}}}},
+        }
+        aa_models = [{"id": "1", "slug": "claude-opus-5-high", "name": "Claude Opus 5 High",
+                      "model_creator": {"name": "Anthropic"},
+                      "evaluations": {"artificial_analysis_intelligence_index": 61.5}}]
+        discovered = [{"cli": "cursor-agent", "model_id": "claude-opus-5-high"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, aa_models, True, {})
+        self.assertEqual(unmatched, [])
+        entry = catalog["anthropic/claude-opus-5-high"]
+        self.assertTrue(entry["structured_output"])         # anthropic's row, not the reseller's
+        self.assertTrue(entry["tool_calling"])
+        self.assertEqual(entry["max_output_tokens"], 128000)
+        self.assertEqual(entry["runtimes"]["cursor-agent"]["ctx_window"], 1000000)
+        self.assertFalse(entry["source"]["models_dev"])     # enrichment, not an exact match
+
+    def test_attempt_2_never_falls_back_to_fuzzy_matching(self):
+        # The stripped id here only fuzzy-matches (a trailing version-token difference) --
+        # allow_fuzzy=False on both retry attempts means this must stay unresolved, never a
+        # guessed match.
+        models_dev_data = {"anthropic": {"models": {"claude-opus-5-2": {
+            "id": "claude-opus-5-2", "tool_call": True, "structured_output": True,
+            "limit": {"context": 1000000, "output": 128000}}}}}
+        aa_models = [{"id": "1", "slug": "claude-opus-5-high", "name": "Claude Opus 5 High",
+                      "model_creator": {"name": "Anthropic"},
+                      "evaluations": {"artificial_analysis_intelligence_index": 61.5}}]
+        discovered = [{"cli": "cursor-agent", "model_id": "claude-opus-5-high"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, aa_models, True, {})
+        self.assertEqual(unmatched, [])
+        entry = catalog["anthropic/claude-opus-5-high"]
+        self.assertNotIn("tool_calling", entry)
+        self.assertNotIn("structured_output", entry)
+        self.assertNotIn("max_output_tokens", entry)
+        self.assertIsNone(entry["runtimes"]["cursor-agent"]["ctx_window"])
+
+    def test_lifecycle_across_runs_clears_previously_recovered_fields_on_a_later_no_signal_run(
+            self):
+        # Round-3's accepted, documented tradeoff (spec Section 3.2): an Artificial Analysis
+        # outage on a LATER run clears fields this spec's own enrichment retry recovered on
+        # an earlier run -- exactly like today's existing contract for any candidate whose
+        # primary match disappears. A second, unrelated candidate whose fields came from a
+        # genuine PRIMARY match (never touched md_enrich_match at all) must clear identically,
+        # proving the enrichment mechanism doesn't special-case fields it never touched.
+        models_dev_data_run1 = {
+            "anthropic": {"models": {"claude-opus-5": {
+                "id": "claude-opus-5", "tool_call": True, "structured_output": True,
+                "limit": {"context": 1000000, "output": 128000}}}},
+            "some-reseller": {"models": {"claude-opus-5": {
+                "id": "claude-opus-5", "tool_call": True, "structured_output": None,
+                "limit": {"context": 1000000, "output": 128000}}}},
+            "openai": {"models": {"gpt-5.6-sol": {
+                "id": "gpt-5.6-sol", "tool_call": True, "structured_output": True,
+                "limit": {"context": 400000, "output": 128000}}}},
+        }
+        aa_models = [{"id": "1", "slug": "claude-opus-5-high", "name": "Claude Opus 5 High",
+                      "model_creator": {"name": "Anthropic"},
+                      "evaluations": {"artificial_analysis_intelligence_index": 61.5}}]
+        discovered = [{"cli": "cursor-agent", "model_id": "claude-opus-5-high"},
+                      {"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        catalog_run1, _, unmatched_run1 = cli.build_model_catalog(
+            discovered, models_dev_data_run1, True, aa_models, True, {})
+        self.assertEqual(unmatched_run1, [])
+        enriched_key = "anthropic/claude-opus-5-high"      # recovered via this spec's retry
+        primary_key = "openai/gpt-5.6-sol"           # recovered via the ordinary primary match
+        self.assertTrue(catalog_run1[enriched_key]["structured_output"])
+        self.assertTrue(catalog_run1[primary_key]["structured_output"])
+
+        # Run 2: Artificial Analysis is down (aa_ok=False) and models.dev genuinely no longer
+        # lists either model (models_dev_ok=True -- a real, empty re-query, not a skip).
+        catalog_run2, _, unmatched_run2 = cli.build_model_catalog(
+            discovered, {}, True, [], False, catalog_run1)
+        self.assertEqual(unmatched_run2, [])
+        for key, cli_name in ((enriched_key, "cursor-agent"), (primary_key, "opencode")):
+            entry = catalog_run2[key]
+            self.assertNotIn("tool_calling", entry)
+            self.assertNotIn("structured_output", entry)
+            self.assertNotIn("max_output_tokens", entry)
+            self.assertIsNone(entry["runtimes"][cli_name]["ctx_window"])
+
     def test_unmatched_new_candidate_is_reported_but_never_persisted(self):
         # CRITICAL: an unmatched, never-before-seen candidate must NOT land in the catalog
         # automatically -- it needs research + user confirmation first (Task 8's wizard).

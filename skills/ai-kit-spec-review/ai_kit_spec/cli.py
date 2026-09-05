@@ -31,7 +31,12 @@ from ai_kit_spec.execute_dispatch import dispatch_execute
 from ai_kit_spec.local_secrets import load_secret
 from ai_kit_spec.model_catalog import canonical_key, merge_catalog_entry
 from ai_kit_spec.model_heuristics import infer_batch_mode, infer_fallback_quota, infer_is_router
-from ai_kit_spec.model_matcher import bare_model_part, match_artificial_analysis, match_models_dev
+from ai_kit_spec.model_matcher import (
+    _strip_known_effort_suffix,
+    bare_model_part,
+    match_artificial_analysis,
+    match_models_dev,
+)
 from ai_kit_spec.model_sources import fetch_artificial_analysis, fetch_models_dev
 from ai_kit_spec.quota import (
     QUOTA_TTL_SECONDS,
@@ -95,7 +100,8 @@ def _infer_heuristics(provider: str, model_id: str) -> dict:
 
 
 def _preserved_or_fresh_md_fields(md_match: dict | None, models_dev_ok: bool,
-                                   existing_entry: dict | None) -> dict:
+                                   existing_entry: dict | None,
+                                   md_enrich_match: dict | None = None) -> dict:
     """CRITICAL: a models.dev fetch failure must never overwrite already-cached models.dev-
     sourced fields. If the source is down (models_dev_ok=False), copy whatever the existing
     entry already had for these fields verbatim (a key simply absent here is left absent from
@@ -110,30 +116,43 @@ def _preserved_or_fresh_md_fields(md_match: dict | None, models_dev_ok: bool,
     each is what tells merge_catalog_entry's clear-on-None contract to actually drop them,
     instead of silently retaining last run's values via plain dict-spread. `pricing` is
     deliberately NOT included here -- build_model_catalog owns pricing's combined
-    models.dev-or-Artificial-Analysis fallback logic itself, since either source can supply it."""
+    models.dev-or-Artificial-Analysis fallback logic itself, since either source can supply it.
+
+    NEW (design spec 2026-09-05): md_enrich_match is this spec's effort-suffix enrichment
+    retry result (cli.py's build_model_catalog loop) -- consulted ONLY when the PRIMARY
+    md_match found nothing this run. It never overrides a real md_match."""
     if not models_dev_ok:
         existing_entry = existing_entry or {}
         return {k: existing_entry[k] for k in
                 ("tool_calling", "structured_output", "max_output_tokens")
                 if k in existing_entry}
-    if not md_match:
+    if md_match:
+        return {"tool_calling": md_match.get("tool_call"),
+                "structured_output": md_match.get("structured_output"),
+                "max_output_tokens": md_match.get("limit", {}).get("output")}
+    source = md_enrich_match
+    if not source:
         return {"tool_calling": None, "structured_output": None, "max_output_tokens": None}
-    return {"tool_calling": md_match.get("tool_call"),
-            "structured_output": md_match.get("structured_output"),
-            "max_output_tokens": md_match.get("limit", {}).get("output")}
+    return {"tool_calling": source.get("tool_call"),
+            "structured_output": source.get("structured_output"),
+            "max_output_tokens": source.get("limit", {}).get("output")}
 
 
 def _preserved_or_fresh_ctx_window(md_match: dict | None, models_dev_ok: bool,
-                                    existing_entry: dict | None, cli_name: str):
+                                    existing_entry: dict | None, cli_name: str,
+                                    md_enrich_match: dict | None = None):
     """CRITICAL: same preserve-on-source-down contract as _preserved_or_fresh_md_fields, but for
     a RUNTIME-level field (ctx_window lives inside runtimes[cli_name], not at the entry's top
     level) -- an earlier draft always recomputed this from `md_match`, which is unconditionally
     None whenever models_dev_ok is False, silently blanking an already-cached runtime's
-    ctx_window on every models.dev outage."""
+    ctx_window on every models.dev outage.
+
+    NEW (design spec 2026-09-05): falls back to md_enrich_match's own context limit only when
+    md_match itself is falsy."""
     if not models_dev_ok:
         existing_entry = existing_entry or {}
         return existing_entry.get("runtimes", {}).get(cli_name, {}).get("ctx_window")
-    return (md_match or {}).get("limit", {}).get("context")
+    return (md_match or md_enrich_match or {}).get("limit", {}).get("context")
 
 
 def _preserved_or_fresh_aa_fields(aa_match: dict | None, aa_ok: bool,
@@ -221,6 +240,25 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
             model_id.split("/", 1)[0] if "/" in model_id else None)
         aa_match = (match_artificial_analysis(model_id, aa_models, provider_hint=provider_hint)
                     if aa_ok else None)
+        # NEW: an ENRICHMENT-ONLY retry (design spec 2026-09-05) -- deliberately kept in its
+        # own variable, never assigned into md_match itself, and using ONLY the ordinary,
+        # unmodified match_models_dev (no effort-awareness lives inside that function at
+        # all). Consumed exclusively by the two field-preservation helpers below; never read
+        # by provider/key/pricing derivation.
+        md_enrich_match = None
+        if models_dev_ok and md_match is None and aa_match:
+            aa_provider_hint = _slugify(
+                (aa_match.get("model_creator") or {}).get("name", "")) or None
+            if aa_provider_hint:
+                md_enrich_match = match_models_dev(model_id, models_dev_data,
+                                                    provider_hint=aa_provider_hint,
+                                                    allow_fuzzy=False)
+                if md_enrich_match is None:
+                    stripped = _strip_known_effort_suffix(bare_model_part(model_id))
+                    if stripped:
+                        md_enrich_match = match_models_dev(stripped, models_dev_data,
+                                                            provider_hint=aa_provider_hint,
+                                                            allow_fuzzy=False)
         existing_key = _find_existing_key_for_runtime(existing_catalog, cli_name, model_id)
         # Important finding (coordinator review): `existing_key` recovery must ONLY apply when
         # this run genuinely has no signal of its own (md_match is None AND aa_match is None) --
@@ -281,7 +319,8 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
                                **_infer_heuristics(provider or "", model_id)})
             continue
 
-        md_fields = _preserved_or_fresh_md_fields(md_match, models_dev_ok, existing_entry)
+        md_fields = _preserved_or_fresh_md_fields(md_match, models_dev_ok, existing_entry,
+                                                   md_enrich_match=md_enrich_match)
         aa_fields = _preserved_or_fresh_aa_fields(aa_match, aa_ok, existing_entry)
         aa_pricing = aa_fields.pop("aa_pricing", None)
         # CRITICAL finding (fresh-source no-match / pricing can come from EITHER source): a
@@ -305,7 +344,7 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
                 # merge_catalog_entry's clear-on-None contract then actually drops.
                 clear_pricing = True
         ctx_window = _preserved_or_fresh_ctx_window(md_match, models_dev_ok, existing_entry,
-                                                      cli_name)
+                                                      cli_name, md_enrich_match=md_enrich_match)
         # MEDIUM finding: this used to reimplement _infer_heuristics' own three-line body
         # inline (a second, separately-maintained copy of the exact same heuristic calls),
         # contradicting that function's own docstring claim that both paths call it. Calling
