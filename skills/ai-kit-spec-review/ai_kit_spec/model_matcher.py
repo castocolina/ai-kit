@@ -52,6 +52,42 @@ def _fuzzy_candidate_indices(target: str, normalized_options: list) -> list:
             (ranked[0][0] - score) < _FUZZY_MARGIN]
 
 
+_EFFORT_TOKENS = {"minimal", "low", "medium", "high", "xhigh", "thinking"}
+# "max" is deliberately NOT a standalone effort token -- it collides with real base-model
+# names that end in "-max" (e.g. Alibaba's qwen-max / qwen3-max, a genuinely different,
+# smaller-catalog model). It is only ever stripped as part of the two-token compound
+# "thinking-max" (Anthropic's own reasoning-effort naming, e.g. "claude-opus-5-thinking-max"),
+# never as a bare trailing "-max".
+
+
+def _strip_known_effort_suffix(bare: str) -> str | None:
+    """Repeatedly strips trailing reasoning-EFFORT tokens from a bare model id -- a single
+    token from _EFFORT_TOKENS, or the two-token compound "thinking-max". Returns the
+    stripped id, or None when nothing was stripped. Vendor-agnostic: OpenAI's own
+    reasoning-effort models use the same minimal/low/medium/high vocabulary.
+
+    Safety against crossing a SERVICE-TIER boundary is structural, not a denylist: the loop
+    only ever pops a token it positively recognizes as a reasoning-effort word, and stops at
+    the first token that isn't one -- a service-tier suffix (`-fast`), a real size/tier
+    designation that is simply part of the base model's own name (`-mini`, `-flash`), or
+    anything unrecognized is left exactly where it was, never stripped away."""
+    parts = bare.split("-")
+    stripped_any = False
+    while len(parts) > 1:
+        last = parts[-1].lower()
+        if last == "max" and len(parts) > 2 and parts[-2].lower() == "thinking":
+            parts.pop()
+            parts.pop()
+            stripped_any = True
+            continue
+        if last in _EFFORT_TOKENS:
+            parts.pop()
+            stripped_any = True
+            continue
+        break
+    return "-".join(parts) if stripped_any else None
+
+
 def match_models_dev(cli_model_id: str, models_dev_data: dict,
                       provider_hint: str | None = None) -> dict | None:
     """Three-step lookup: (1) if cli_model_id has a "<hint>/<model>" shape, try

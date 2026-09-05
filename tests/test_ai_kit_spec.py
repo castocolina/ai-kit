@@ -3619,6 +3619,40 @@ class TestInferFallbackQuota(unittest.TestCase):
         self.assertFalse(model_heuristics.infer_fallback_quota("openai"))
 
 
+class TestStripKnownEffortSuffix(unittest.TestCase):
+    def test_strips_a_single_trailing_effort_token(self):
+        self.assertEqual(
+            model_matcher._strip_known_effort_suffix("claude-opus-5-high"),
+            "claude-opus-5")
+
+    def test_strips_a_two_token_effort_compound(self):
+        self.assertEqual(
+            model_matcher._strip_known_effort_suffix("claude-opus-5-thinking-xhigh"),
+            "claude-opus-5")
+
+    def test_strips_the_thinking_max_compound(self):
+        self.assertEqual(
+            model_matcher._strip_known_effort_suffix("claude-opus-5-thinking-max"),
+            "claude-opus-5")
+
+    def test_no_strippable_trailing_token_returns_none(self):
+        self.assertIsNone(model_matcher._strip_known_effort_suffix("claude-opus-5"))
+
+    def test_a_service_tier_suffix_as_trailing_token_is_never_touched(self):
+        # "fast" is not a recognized effort word -- the loop never even starts, so this is
+        # untouched for a structural reason, not a separate tier denylist.
+        self.assertIsNone(
+            model_matcher._strip_known_effort_suffix("claude-opus-5-thinking-low-fast"))
+
+    def test_bare_max_without_a_preceding_thinking_token_is_not_stripped(self):
+        # Real base model qwen3-max must never be misattributed to "qwen3".
+        self.assertIsNone(model_matcher._strip_known_effort_suffix("qwen3-max"))
+
+    def test_a_real_base_model_ending_in_an_effort_word_is_preserved_after_stripping(self):
+        # o3-mini-high is a genuine, different-from-o3 model -- "mini" must survive the strip.
+        self.assertEqual(model_matcher._strip_known_effort_suffix("o3-mini-high"), "o3-mini")
+
+
 class TestMatchModelsDev(unittest.TestCase):
     def setUp(self):
         self.data = {
