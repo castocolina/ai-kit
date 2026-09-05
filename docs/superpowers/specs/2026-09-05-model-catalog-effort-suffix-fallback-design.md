@@ -49,10 +49,19 @@ if "/" in model_id else None`) therefore yields `None` for this candidate
 `match_models_dev` call. The retry mechanism in §3.2, which sources its
 hint from Artificial Analysis's *own* independent resolution instead of
 the raw id, is what supplies a hint where the id itself carries none — it
-is necessary for this exact case, not incidental scope creep. (A CLI that
-*does* report a vendor-prefixed id, e.g. `anthropic/claude-opus-5-high`,
-would already resolve via `match_models_dev` step 1 without needing §3.2
-at all — §3.2 only ever activates for the bare-id case.)
+is necessary for this exact case, not incidental scope creep.
+
+**Correction (round-2 review caught this):** a vendor-prefixed id (e.g.
+`anthropic/claude-opus-5-high`) does **not** skip the need for §3.2
+either. `match_models_dev` step 1 is an *exact* lookup of the bare token
+under the prefix (`model_matcher.py:73-77`) — it has no effort-awareness
+at all, so a prefixed id carrying an effort suffix misses step 1 exactly
+as a bare one misses the pool-exact step, for the identical reason
+(models.dev's entry has no suffix to match against). §3.2's retry is
+therefore needed whenever an effort suffix is present, regardless of
+whether the raw id happens to carry a vendor prefix — the prefix only
+ever helps the (unrelated) case of an exact id colliding across
+providers, which isn't this spec's concern.
 
 This is a data-completeness gap, not a ranking-math bug — the 49.0 default
 fix from the prior round is working correctly on incomplete inputs. This
@@ -107,10 +116,20 @@ suffix that AA/CLIs encode but models.dev doesn't.
   models for ranking purposes, sharing only their base context/tool-calling
   capability).
 - A UI/wizard-facing "this value was inferred" indicator. Discussed and
-  deliberately deferred (YAGNI) — `source.models_dev` stays a plain
-  boolean meaning "models.dev contributed data to this entry," which
-  remains true and honest whether the contribution came from an exact
-  hit or a safely-scoped effort-suffix fallback.
+  deliberately deferred (YAGNI). **Correction (both reviewers caught this
+  stated two contradictory ways in an earlier draft):** `source.models_dev`
+  is computed from `md_match is not None` only, unaffected by
+  `md_enrich_match` — it is **`False`** for an enrichment-only backfill,
+  exactly as it is today for any candidate models.dev didn't exactly
+  match. This is intentional, not a gap: `source.models_dev=False` already
+  and correctly means "no exact models.dev id match for this candidate,"
+  which remains true for the enrichment case — the candidate's id
+  genuinely isn't in models.dev, only its effort-stripped base is. A
+  reader should understand a `False` `source.models_dev` alongside a
+  non-null `context_window`/`tool_calling` as "recovered via this spec's
+  effort-suffix fallback," not as a data-integrity anomaly — exactly the
+  UI-indicator role this bullet already declines to add a dedicated flag
+  for.
 
 ## 3. Design
 
@@ -185,23 +204,39 @@ Worked examples:
   stripped — this is a genuine, different-from-`o3` model in its own
   right, and models.dev is queried for exactly that id).
 
-`match_models_dev` gains an internal fallback stage: if its existing three
-steps (hinted exact / pool exact / pool fuzzy — **only the pool-exact and
-pool-fuzzy steps consult `provider_hint` for collision disambiguation; the
-first, hinted-exact step is unambiguous by construction and never needs
-it** — corrected wording per review, see §3.1 note above) produce no
-single match for the given id, and `_strip_known_effort_suffix` returns a
-non-`None` value, retry — but **only the two exact steps (hinted-exact,
-pool-exact), never the pool-fuzzy step** — against the stripped id (same
-`provider_hint`, if any, still applies). Excluding fuzzy matching from the
-stripped-id retry is deliberate: the strip itself is already an inference,
-and compounding it with `difflib`'s fuzzy fallback would re-open the exact
-false-match hazard `_fuzzy_candidate_indices`'s threshold/margin exist to
-close (a stripped `claudeopus5` fuzzed pool-wide would itself surface
-`claude-opus-4-5` and other siblings) — two stacked inferences is a
-guess, not a recovery. This keeps the effort-aware retry entirely
-self-contained: any caller that already passes a `provider_hint` benefits
-automatically, with no caller-side changes.
+**Revised again after round-2 review** (native-opus's second CRITICAL: the
+previous draft embedded the effort-strip retry as an internal fallback
+*inside* `match_models_dev` itself — meaning it also fired on the
+*primary*, unhinted call at `cli.py:219` for any vendor-prefixed id, e.g.
+`openai/gpt-5-high`, letting the base model's entry become `md_match`
+itself rather than `md_enrich_match`, and reopening the exact same
+pricing/provider leak the round-1 fix closed — just for a different id
+shape. Confining the stripping logic to `match_models_dev`'s own control
+flow made it impossible to guarantee which variable it would ever
+populate.)
+
+**`match_models_dev` itself is not given any effort-awareness at all.**
+It gains exactly one new parameter, `allow_fuzzy: bool = True` (default
+preserves today's behavior for every existing call site, including the
+primary call at `cli.py:219`, which never passes it) — when `False`, only
+its existing hinted-exact and pool-exact steps run; the pool-fuzzy step is
+skipped. `_strip_known_effort_suffix` (§3.1 above) is a standalone
+utility with no relationship to `match_models_dev` — it is called only
+from the §3.2 orchestration below, which explicitly builds the
+effort-stripped *string* and passes it as an ordinary `cli_model_id`
+argument to an ordinary, unmodified `match_models_dev` call. This means
+the entire effort-suffix fallback mechanism is reachable from exactly one
+call site (§3.2's enrichment block) and can only ever populate
+`md_enrich_match` — there is no code path by which it can reach `md_match`
+for any id shape, prefixed or bare.
+
+Excluding fuzzy matching from the stripped-id attempt (`allow_fuzzy=False`)
+is deliberate: the strip itself is already an inference, and compounding
+it with `difflib`'s fuzzy fallback would re-open the exact false-match
+hazard `_fuzzy_candidate_indices`'s threshold/margin exist to close (a
+stripped `claudeopus5` fuzzed pool-wide would itself surface
+`claude-opus-4-5` and other siblings) — two stacked inferences is a guess,
+not a recovery.
 
 ### 3.2 Retry orchestration (`cli.py`)
 
@@ -221,81 +256,123 @@ provider_hint = (md_match or {}).get("provider") or (
 aa_match = (match_artificial_analysis(model_id, aa_models, provider_hint=provider_hint)
             if aa_ok else None)
 # NEW: an ENRICHMENT-ONLY retry, deliberately kept in its own variable
-# (`md_enrich_match`), never assigned into `md_match` itself. This is the
-# load-bearing fix from cross-AI review: an earlier draft reassigned
-# `md_match` directly, which -- because `provider`, canonical `key`, and
-# `pricing` below are ALL derived from `md_match` when it's truthy (`if
-# md_match: provider = md_match["provider"]`; `key =
-# canonical_key(provider, bare_model_part(model_id))`; `pricing =
-# md_pricing or aa_pricing` where `md_pricing` reads `md_match["cost"]`)
-# -- would have silently let a models.dev-sourced price/provider override
-# AA's effort-specific ones, contradicting this spec's own Non-goals.
-# Keeping `md_enrich_match` a distinct name makes that impossible: nothing
-# below this block reads it except the two calls that consume it
-# explicitly (below).
+# (`md_enrich_match`), never assigned into `md_match` itself, and using
+# ONLY the ordinary, unmodified `match_models_dev` (see §3.1's "revised
+# again" note -- no effort-awareness lives inside that function at all).
+# `enrich_attempted` records whether this block actually ran a models.dev
+# query this run (see the field-preservation logic below) -- distinct from
+# "ran and found nothing" vs. "never got a chance to run this time".
 md_enrich_match = None
+enrich_attempted = False
 if models_dev_ok and md_match is None and aa_match:
     aa_provider_hint = _slugify((aa_match.get("model_creator") or {}).get("name", "")) or None
     if aa_provider_hint:
-        md_enrich_match = match_models_dev(model_id, models_dev_data, provider_hint=aa_provider_hint)
+        enrich_attempted = True
+        # Attempt 1: exact id, now with a hint the unhinted primary call
+        # (cli.py:219) didn't have -- covers a same-id collision across
+        # providers that only needed a vendor hint, no stripping at all.
+        # allow_fuzzy=False here too (round-2 finding): letting THIS attempt
+        # fall through to pool-fuzzy would let a hint that narrows -- but
+        # doesn't fully resolve -- a fuzzy near-tie (e.g. this spec's own
+        # motivating case: "claude-opus-5" vs "claude-opus-4-5" are BOTH
+        # listed under the SAME "anthropic" provider, so the hint alone
+        # never disambiguates them) silently attach a neighboring
+        # generation's data before ever reaching Attempt 2's more
+        # conservative, exact-only stripped-id path. Every step in this
+        # enrichment block is exact-only; fuzzy matching is never used
+        # anywhere in the retry, only (unchanged) in the primary call.
+        md_enrich_match = match_models_dev(model_id, models_dev_data,
+                                            provider_hint=aa_provider_hint,
+                                            allow_fuzzy=False)
+        if md_enrich_match is None:
+            stripped = _strip_known_effort_suffix(bare_model_part(model_id))
+            if stripped:
+                # Attempt 2: the effort-stripped id, exact-only (no fuzzy --
+                # see §3.1). This is the ONLY place `_strip_known_effort_suffix`
+                # is ever called.
+                md_enrich_match = match_models_dev(stripped, models_dev_data,
+                                                    provider_hint=aa_provider_hint,
+                                                    allow_fuzzy=False)
 ```
 
 `_preserved_or_fresh_md_fields` and `_preserved_or_fresh_ctx_window` each
-gain one new optional parameter, `md_enrich_match=None`, consulted **only**
-when the primary `md_match` is `None` (source genuinely found no exact
-match) — never when `md_match` is truthy, and never as a substitute for
-`md_match` anywhere else in the function. Sketch (existing `not
-models_dev_ok` and genuinely-no-match-at-all branches are unchanged):
+gain two new optional parameters, `md_enrich_match=None` and
+`enrich_attempted=False`, consulted **only** when the primary `md_match`
+is `None` — never when `md_match` is truthy, and never as a substitute for
+`md_match` anywhere else in the function. Three-way outcome when
+`md_match` is `None` and the source is genuinely up (`models_dev_ok=True`):
+(1) the enrichment retry found something this run → use it (fresh); (2)
+the retry genuinely ran and found nothing → a real negative signal, clear
+stale fields (matches the function's existing "source was queried, found
+nothing, so stale fields must go" philosophy); (3) the retry **never ran**
+this time (`enrich_attempted=False` — AA itself is down/unconfigured this
+run, or matched but with no usable `model_creator.name`) → we did not
+actually re-verify these fields against models.dev at all this run, so
+**preserve** whatever was cached, exactly like the existing
+`not models_dev_ok` branch already does for a models.dev outage. This is
+what closes the round-2 HIGH finding: a temporary Artificial Analysis
+outage on a *later* run no longer silently erases context/tool-calling
+data this fallback already recovered on an earlier run.
 
 ```python
 def _preserved_or_fresh_md_fields(md_match, models_dev_ok, existing_entry,
-                                   md_enrich_match=None):
+                                   md_enrich_match=None, enrich_attempted=False):
     if not models_dev_ok:
-        ...  # unchanged
-    source = md_match or md_enrich_match
-    if not source:
+        ...  # unchanged: preserve from existing_entry (source itself down)
+    if md_match:
+        ...  # unchanged: fresh fields from the primary match
+    if md_enrich_match:
+        return {"tool_calling": md_enrich_match.get("tool_call"),
+                "structured_output": md_enrich_match.get("structured_output"),
+                "max_output_tokens": md_enrich_match.get("limit", {}).get("output")}
+    if enrich_attempted:
         return {"tool_calling": None, "structured_output": None, "max_output_tokens": None}
-    return {"tool_calling": source.get("tool_call"),
-            "structured_output": source.get("structured_output"),
-            "max_output_tokens": source.get("limit", {}).get("output")}
+    existing_entry = existing_entry or {}
+    return {k: existing_entry[k] for k in
+            ("tool_calling", "structured_output", "max_output_tokens") if k in existing_entry}
 ```
 
 (`_preserved_or_fresh_ctx_window` follows the identical pattern for
-`ctx_window`.) Everywhere else in `build_model_catalog` — `provider`
-derivation, `key = canonical_key(...)`, and `md_cost`/`md_pricing` —
-continues to read `md_match` alone, completely untouched by
-`md_enrich_match`'s existence.
+`ctx_window`, reading `existing_entry.get("runtimes", {}).get(cli_name,
+{}).get("ctx_window")` in the "preserve" branch, same as its existing
+`not models_dev_ok` case.) Everywhere else in `build_model_catalog` —
+`provider` derivation (the full expression, including its
+`provider_hint`/`model_creator.name`/`existing_key`-recovery branches at
+`cli.py:237-247`, unabridged and unaffected by any of this), `key =
+(existing_key if no_signal_this_run and existing_key else
+(canonical_key(provider, bare_model_part(model_id)) if provider is not
+None else None))` (the full expression, `cli.py:263-265`), and
+`md_cost = (md_match or {}).get("cost", {}) if models_dev_ok and md_match
+else {}` (the full expression, `cli.py:290`) — continues to read
+`md_match` alone. `md_enrich_match` is never passed to, or read by, any of
+these three; it is consumed exclusively by the two field-preservation
+helpers above.
 
-Why this now genuinely holds (re-verified line-by-line against
-`cli.py` after the fix above, per review feedback that the original
-claims were asserted, not verified):
-- **Canonical key unchanged**: `key = canonical_key(provider,
-  bare_model_part(model_id))` reads `provider` (derived from `md_match`,
-  never `md_enrich_match`) and the CLI's *original* `model_id` — every
-  effort variant keeps its own catalog entry, exactly as today (confirmed
-  live: `-low`/`-medium`/`-high` are already three separate canonical keys
-  with three different AA scores).
-- **Provider unchanged**: `provider = md_match["provider"]` only fires
-  when the *primary* `md_match` is truthy — `md_enrich_match` is never
-  read by this branch at all, so the retry cannot move provider
-  derivation onto a different branch than today, regardless of whether
-  the retry's own resolved provider happens to agree with
-  `aa_provider_hint` or not.
-- **Pricing unchanged**: `md_cost = (md_match or {}).get("cost", {})`
-  reads `md_match`, never `md_enrich_match` — a successful enrichment
-  retry cannot override AA's effort-specific price with the base model's
-  price, closing the CRITICAL finding directly.
-- **`source.models_dev` stays accurate**: it's computed from `md_match is
-  not None`, unaffected by `md_enrich_match` — an enrichment-only backfill
-  does not claim a "real" models.dev match happened for this exact id (it
-  didn't); `confidence`/`last_verified`'s `matched_this_run` already
-  becomes `True` via `aa_match` regardless, so no behavior changes there.
-- **Composes with the existing preserve-on-source-down contract**:
-  `_preserved_or_fresh_md_fields`/`_preserved_or_fresh_ctx_window` already
-  handle `not models_dev_ok` (preserve cached fields) vs a genuine
-  no-match-anywhere (clear stale fields) vs a real match (fresh fields) —
-  `md_enrich_match` only ever substitutes inside the "no match" case's
-  `source` lookup, never replaces the other two branches.
+Why this now genuinely holds (re-verified against the **full**,
+unabridged expressions in `cli.py`, per round-2 feedback that quoting
+partial expressions as "verified line-by-line" wasn't actually
+sufficient):
+- **Canonical key unchanged**: the full `key = (...)` expression above
+  reads `provider` and the CLI's *original* `model_id` — neither of which
+  `md_enrich_match` ever touches — so every effort variant keeps its own
+  catalog entry, exactly as today (confirmed live: `-low`/`-medium`/`-high`
+  are already three separate canonical keys with three different AA
+  scores).
+- **Provider unchanged**: none of `provider`'s branches (`md_match`
+  truthy, `provider_hint`, AA `model_creator.name`, `existing_key`
+  recovery) ever reads `md_enrich_match` — it is simply not a name that
+  appears anywhere in that derivation.
+- **Pricing unchanged**: the full `md_cost = (...)` expression reads
+  `md_match`, never `md_enrich_match` — a successful enrichment retry
+  cannot override AA's effort-specific price with the base model's price.
+- **`source.models_dev` is `False` for an enrichment-only backfill** — see
+  the corrected Non-goals bullet above; this is now stated as a fact, not
+  asserted two different ways.
+- **Cost is bounded**: at most two additional `match_models_dev` calls per
+  candidate, and only for candidates where the primary attempt found
+  nothing *and* Artificial Analysis resolved a usable vendor name this
+  run — never for an already-matched or already-unmatchable-anywhere
+  candidate.
 
 ### 3.3 Safety rule (restated plainly)
 
@@ -326,23 +403,36 @@ not-yet-scoped) inferred-search idea.
   model whose own name happens to end in what could look like a
   tier/size word, correctly preserved after an effort strip (`o3-mini-high`
   → `o3-mini`, not `o3` and not refused).
-- **`match_models_dev`'s new fallback stage**: direct id fails but
-  stripped id succeeds unambiguously via an exact step (with and without
-  `provider_hint`); stripped id still collides across providers with no
-  hint (→ `None`, never guesses); stripped id resolves via `provider_hint`
-  after an unhinted collision (mirrors the real `claude-opus-5-high`
-  scenario); a stripped id that would only resolve via the pool-*fuzzy*
-  step is explicitly asserted to return `None` (fuzzy is excluded from
-  the retry — see §3.1).
-- **`cli.py`'s new retry block**: `aa_match` present with a usable
-  `model_creator.name` → `md_enrich_match` populated, backfills
-  `ctx_window`/`tool_calling` only; `aa_match` present but
-  `model_creator.name` missing/empty → `md_enrich_match` stays `None`;
-  first (unhinted) `md_match` already succeeded → retry never attempted
-  (`md_enrich_match` stays `None`, no wasted second lookup);
-  `models_dev_ok=False` → retry never attempted (respects the existing
-  source-down contract).
-- **The two invariants most at risk, tested directly** (per review — these
+- **`match_models_dev`'s new `allow_fuzzy` parameter**: default (omitted)
+  preserves today's behavior exactly, including the pool-fuzzy step, for
+  every existing call site (in particular, the primary call at
+  `cli.py:219` must be asserted unchanged by this spec); `allow_fuzzy=False`
+  skips pool-fuzzy, so a case that would only resolve via that step
+  returns `None` under `allow_fuzzy=False` but the same non-`None` match
+  under the default.
+- **`cli.py`'s new retry block, exercising both attempts explicitly**:
+  Attempt 1 (exact id + hint) resolves an inter-provider exact-id
+  collision the primary call couldn't (no stripping involved); Attempt 1
+  does *not* resolve an intra-provider fuzzy near-tie even with a hint
+  (mirrors this spec's own motivating case — `claude-opus-5` and
+  `claude-opus-4-5` both list under `anthropic`, so a hint alone can't
+  separate them) and correctly falls through to Attempt 2; Attempt 2
+  (stripped id, exact-only) succeeds where Attempt 1 didn't; a case that
+  would only resolve via fuzzy on the *stripped* id is asserted to return
+  `None` (never reached — fuzzy is excluded from both attempts, per
+  §3.1/§3.2). All four recovered fields (`context_window`, `tool_calling`,
+  `structured_output`, `max_output_tokens`) are asserted on a successful
+  retry, not just two of them.
+- **The lifecycle across runs (per round-2 review — this needs its own
+  two-run test, not just single-run assertions)**: run 1 (both sources up)
+  — retry succeeds, all four fields backfilled and persisted to the
+  catalog; run 2 (`aa_ok=False`, `models_dev_ok=True`, same candidate) —
+  `enrich_attempted` stays `False` this run, and the four previously
+  recovered fields are asserted **preserved** from `existing_entry`, not
+  cleared; a third variant — run where `aa_match` is present but
+  `model_creator.name` is empty/missing (`enrich_attempted=False` for a
+  different reason) — also preserves rather than clears.
+- **The invariants most at risk, tested directly** (per review — these
   were previously asserted in prose but not exercised): (a) a case where
   `md_enrich_match`'s own resolved `provider` field *differs* from
   `aa_provider_hint` (a models.dev provider key that doesn't match
@@ -351,14 +441,19 @@ not-yet-scoped) inferred-search idea.
   all, proving `md_enrich_match` is structurally inert for those two
   fields, not merely coincidentally equal; (b) a case where the retry
   succeeds — asserts the entry's `pricing` still equals AA's
-  effort-specific price, never the models.dev base model's `cost`.
+  effort-specific price, never the models.dev base model's `cost`; (c) a
+  case with a vendor-*prefixed* id carrying an effort suffix (e.g.
+  `openai/gpt-5-high`) — asserts the primary call still yields `md_match
+  is None` (step 1's exact lookup misses the suffix exactly as the bare
+  case does) and the retry populates `md_enrich_match` the same way.
 - **Regression test, end-to-end**: a small `models_dev_data`/`aa_models`
   fixture mirroring the real `claude-opus-5-high` / `venice/claude-opus-5-high-fast`
   shape — asserts the base-model candidate's `context_window`/
-  `tool_calling` get backfilled from the bare `anthropic/claude-opus-5`
-  models.dev entry, while a `-fast`-suffixed sibling candidate's own
-  (different) context window is used for its own entry, unaffected by the
-  fallback, and canonical keys/AA scores/pricing are unchanged for both.
+  `tool_calling`/`structured_output`/`max_output_tokens` get backfilled
+  from the bare `anthropic/claude-opus-5` models.dev entry, while a
+  `-fast`-suffixed sibling candidate's own (different) context window is
+  used for its own entry, unaffected by the fallback, and canonical
+  keys/AA scores/pricing are unchanged for both.
 
 ## 5. Rollout
 
