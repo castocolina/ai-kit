@@ -24,15 +24,32 @@ otherwise-excellent weighted score down.
 
 Root cause (confirmed against a live models.dev fetch, 2026-09-05): this
 candidate matched Artificial Analysis (which encodes reasoning effort in its
-own model slugs, e.g. `claude-opus-5-high`) but never matched models.dev,
-which does **not** model reasoning effort as a distinct `model_id` at all —
-Anthropic's real API takes effort as a request parameter, not a model
-selector, so models.dev lists a single bare `claude-opus-5` entry (no
-effort suffix) covering every effort level — but that same bare id is
-listed under **16 different providers** (`anthropic`, `abacus`,
-`agentrouter`, `aihubmix`, `azure`, `azure-cognitive-services`, `cortecs`,
-`github-copilot`, `kenari`, `llmgateway`, `neon`, `opencode`, `pioneer`,
-`requesty`, `snowflake-cortex`, `venice` — confirmed live, 2026-09-05).
+own model slugs, e.g. `claude-opus-5-high`) but never matched models.dev.
+For **this specific model family**, models.dev does not model reasoning
+effort as a distinct `model_id` at all — Anthropic's real API takes effort
+as a request parameter, not a model selector, so models.dev lists a single
+bare `claude-opus-5` entry (no effort suffix) covering every effort level —
+but that same bare id is listed under **16 different providers**
+(`anthropic`, `abacus`, `agentrouter`, `aihubmix`, `azure`,
+`azure-cognitive-services`, `cortecs`, `github-copilot`, `kenari`,
+`llmgateway`, `neon`, `opencode`, `pioneer`, `requesty`,
+`snowflake-cortex`, `venice` — confirmed live, 2026-09-05).
+
+**Round-5 correction (native-opus caught this — the prior draft overclaimed
+universality):** models.dev's handling of reasoning effort is
+**inconsistent across vendors**, not uniformly absent. A live fetch (same
+date) also finds ~125 effort-suffixed rows elsewhere in the catalog —
+e.g. `abacus/gpt-5.3-codex-xhigh`, `google/gemini-3.1-pro-preview-high`,
+`google/gemini-3.1-pro-preview-low`, and roughly 40 `*-thinking` rows
+across several providers. So this spec's fallback is not "recovering a gap
+models.dev never has" in general — it recovers the specific, common shape
+where the CLI/AA-reported id carries an effort suffix models.dev's entry
+for that same family omits (true for `claude-opus-5-*` and several other
+families), while for a family models.dev *does* suffix (e.g. Gemini's
+`-high`/`-low`), the primary `match_models_dev` call may already succeed
+without ever reaching this fallback at all — which is fine; §3.2's retry
+only ever fires when the primary call returns `None`, and does nothing
+otherwise.
 
 **Correction (round-3 review caught this — the mechanism below was
 previously misdescribed):** `match_models_dev`'s existing fuzzy fallback
@@ -40,10 +57,10 @@ previously misdescribed):** `match_models_dev`'s existing fuzzy fallback
 bridges this gap on its own — `ratio("claudeopus5high", "claudeopus5") =
 0.846` clears the threshold — but the pool-wide search (every provider,
 every model) returns **all 16** of those identically-scored
-`claude-opus-5` rows (one per provider, each an exact string match against
-the fuzzy target, so all tied at precisely 0.846 — well within the 0.05
-margin of *each other*, since they're identical), not a near-miss against
-a *different* model name. (An earlier draft of this document claimed the
+`claude-opus-5` rows (one per provider, each identical to every other and
+each scoring exactly 0.846 against the fuzzy target `claudeopus5high` —
+well within the 0.05 margin of *each other*, since they're identical to
+one another), not a near-miss against a *different* model name. (An earlier draft of this document claimed the
 competing candidate was `claude-opus-4-5` at ratio 0.815 — that number is
 correct, but 0.815 is *below* the 0.82 threshold, so
 `_fuzzy_candidate_indices` excludes it outright; it was never a real
@@ -87,6 +104,28 @@ fix from the prior round is working correctly on incomplete inputs. This
 spec closes the gap for the specific, common case of a reasoning-effort
 suffix that AA/CLIs encode but models.dev doesn't.
 
+**Round-5 known limitation (native-opus caught this — an unstated material
+assumption):** §3.2's retry only ever runs when the *primary*, unhinted
+`match_models_dev` call at `cli.py:219` returns `None`. Live-checked
+against the 217 cursor-agent-reported ids and current models.dev data:
+most effort-suffixed ids do return `None` primarily (as the motivating
+case does), but a real minority instead get a **single, wrong** fuzzy
+match on the primary call — e.g. `claude-opus-5-thinking-xhigh` fuzzy-hits
+`nano-gpt/claude-opus-4-thinking` (a different generation), and
+`gpt-5.3-codex-high` fuzzy-hits `abacus/gpt-5.3-codex-xhigh` (a different
+effort level) — because exactly one candidate clears the 0.82 threshold
+with no tied runner-up, so `_fuzzy_candidate_indices` returns it instead
+of the empty/ambiguous set the motivating case produces. For these ids,
+`md_match` is already non-`None`, so §3.2's `if ... md_match is None`
+gate never fires — the candidate keeps the wrong models.dev-sourced
+fields (from a different generation or effort level) rather than the
+correct ones from its own true base model, and this spec's retry does
+nothing for it either way. **This spec does not close that gap** — it is
+a pre-existing property of the primary fuzzy step, orthogonal to whether
+this spec's enrichment retry exists at all, and fixing it (e.g. tightening
+the primary call's fuzzy behavior for effort-suffixed ids) is deferred to
+a future spec rather than folded into this one.
+
 **Explicitly out of scope for this spec** (raised during design, deferred):
 - A general "any missing axis, any source" backfill mechanism. This spec
   is scoped to `context_window`/`tool_calling`/`structured_output`/
@@ -100,13 +139,25 @@ suffix that AA/CLIs encode but models.dev doesn't.
   inferred search" idea.
 - Purpose-weighted axis re-tuning (a separate, already-deferred spec).
 - Reseller/service-tier catalog-key deduplication in general (e.g.
-  collapsing `venice/claude-opus-5-high-fast` into `anthropic/claude-opus-5-high`).
+  collapsing a `-fast`-suffixed candidate into its non-`-fast` base model).
   This spec deliberately does **not** merge across service tiers — see §3,
-  Safety rule — because a tier variant (e.g. `-fast`) can carry a
-  genuinely different `context_window` than the base model (confirmed:
-  models.dev lists `venice/claude-opus-5-fast` as a distinct row from
-  `venice/claude-opus-5`, with its own context/pricing). Conflating them
-  would trade one silent inaccuracy for another.
+  Safety rule.
+  **Round-5 correction (native-opus caught this — the prior draft's own
+  cited evidence contradicted the claim):** the example previously used
+  here (`venice/claude-opus-5-fast` vs. `venice/claude-opus-5`) actually
+  shares the identical `context=1000000` with its base row live — those
+  two differ in **pricing only** (`input 12/output 60` vs. `input
+  6/output 30`), not context. The real, live-confirmed evidence for
+  "a service-tier suffix can carry a genuinely different `context_window`"
+  is a *different* pair: `zenmux`'s `x-ai/grok-4-fast` reports
+  `context=2000000` against `x-ai/grok-4`'s `context=256000` — nearly an
+  8x difference under the same `-fast` suffix pattern. The safety rule
+  therefore rests on two independent, real risks, not one: (1) price can
+  differ by tier even when context happens not to (the venice case), and
+  (2) context itself can differ by tier when the underlying serving
+  infrastructure genuinely changes (the zenmux case). Either risk alone is
+  sufficient justification for never merging across a service-tier
+  boundary; conflating them would trade one silent inaccuracy for another.
 
 ## 2. Goals / Non-goals
 
@@ -527,13 +578,29 @@ not-yet-scoped) inferred-search idea.
   even though step 1 missed — and the retry populates `md_enrich_match`
   the same way as the bare case.
 - **Regression test, end-to-end**: a small `models_dev_data`/`aa_models`
-  fixture mirroring the real `claude-opus-5-high` / `venice/claude-opus-5-high-fast`
-  shape — asserts the base-model candidate's `context_window`/
-  `tool_calling`/`structured_output`/`max_output_tokens` get backfilled
-  from the bare `anthropic/claude-opus-5` models.dev entry, while a
-  `-fast`-suffixed sibling candidate's own (different) context window is
-  used for its own entry, unaffected by the fallback, and canonical
-  keys/AA scores/pricing are unchanged for both.
+  fixture mirroring the real `claude-opus-5-high` shape — asserts the
+  base-model candidate's `context_window`/`tool_calling`/
+  `structured_output`/`max_output_tokens` get backfilled from the bare
+  `anthropic/claude-opus-5` models.dev entry via §3.2's retry, and that
+  canonical key/AA score/pricing are unchanged.
+  **Round-5 correction (native-opus caught this — the prior draft's
+  sibling-candidate half of this test was wrong on two counts): the real
+  CLI-reported `-fast` sibling is the bare `claude-opus-5-high-fast`
+  (cursor-agent), and models.dev has no row for that exact suffixed id —
+  but its *primary*, unhinted `match_models_dev` call already fuzzy-matches
+  `venice/claude-opus-5-fast` directly (`ratio ≈ 0.882`, a single
+  candidate, no tie), so `md_match` is non-`None` and this spec's §3.2
+  retry never runs for it at all — it is not "unaffected by the fallback"
+  because the fallback declines to touch it, but because it never reaches
+  the fallback's gate in the first place.** A second fixture entry
+  therefore exercises the *actual* tier-safety property: assert that this
+  `-fast` candidate's own resolved fields (from its own primary match) are
+  used for its own entry and are never backfilled from, or replaced by,
+  the non-`-fast` base model's entry — in particular its **price** (per
+  live data, `venice/claude-opus-5-fast` and `venice/claude-opus-5` share
+  identical `context=1000000` but differ in cost:
+  `input 12/output 60` vs. `input 6/output 30`), proving the two service
+  tiers are never conflated even where their context happens to coincide.
 
 ## 5. Rollout
 
