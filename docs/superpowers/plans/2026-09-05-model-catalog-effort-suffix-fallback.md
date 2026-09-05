@@ -309,6 +309,8 @@ In `tests/test_ai_kit_spec.py`, add these test methods to `class TestBuildModelC
         self.assertEqual(unmatched, [])
         entry = catalog["anthropic/claude-opus-5-high"]
         self.assertTrue(entry["structured_output"])         # anthropic's row, not the reseller's
+        self.assertTrue(entry["tool_calling"])
+        self.assertEqual(entry["max_output_tokens"], 128000)
         self.assertEqual(entry["runtimes"]["cursor-agent"]["ctx_window"], 1000000)
         self.assertFalse(entry["source"]["models_dev"])     # enrichment, not an exact match
 
@@ -369,17 +371,18 @@ In `tests/test_ai_kit_spec.py`, add these test methods to `class TestBuildModelC
         catalog_run2, _, unmatched_run2 = cli.build_model_catalog(
             discovered, {}, True, [], False, catalog_run1)
         self.assertEqual(unmatched_run2, [])
-        for key in (enriched_key, primary_key):
+        for key, cli_name in ((enriched_key, "cursor-agent"), (primary_key, "opencode")):
             entry = catalog_run2[key]
             self.assertNotIn("tool_calling", entry)
             self.assertNotIn("structured_output", entry)
             self.assertNotIn("max_output_tokens", entry)
+            self.assertIsNone(entry["runtimes"][cli_name]["ctx_window"])
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run python3 -m unittest tests.test_ai_kit_spec.TestBuildModelCatalog -v`
-Expected: 3 of the 4 new tests FAIL (`test_attempt_1_exact_id_with_hint_resolves_a_cross_provider_collision`, `test_attempt_2_strips_the_effort_suffix_and_picks_the_hinted_provider_row`, `test_lifecycle_across_runs_clears_previously_recovered_fields_on_a_later_no_signal_run`) with e.g. `KeyError: 'structured_output'` or a `KeyError` on `catalog["anthropic/claude-opus-5-high"]`, since the enrichment retry doesn't exist yet and these candidates currently route to `unmatched` or a different key. `test_attempt_2_never_falls_back_to_fuzzy_matching` is a **guard/regression test, not a red-phase test** — it already passes against the current, unpatched `cli.py` (the fixture's candidate is already unresolved either way, before or after this task's change) — its value is catching a FUTURE regression that makes this fallback wrongly start fuzzy-matching, not proving Step 3's edit did something. Do not treat this one test passing before Step 3 as a sign of a mis-applied edit. The pre-existing tests in this class must still pass throughout.
+Expected: 3 of the 4 new tests FAIL (`test_attempt_1_exact_id_with_hint_resolves_a_cross_provider_collision`, `test_attempt_2_strips_the_effort_suffix_and_picks_the_hinted_provider_row`, `test_lifecycle_across_runs_clears_previously_recovered_fields_on_a_later_no_signal_run`) — but NOT because these candidates route to `unmatched` or a different key: `aa_match` alone (unaffected by whether the retry exists) already resolves `provider`/canonical `key` in all three fixtures, so each candidate already lands under its EXPECTED key (`"openai/sol"`, `"anthropic/claude-opus-5-high"`, and (for the lifecycle test's run 1) the same two keys) even before this task's change. The failure is that `_preserved_or_fresh_md_fields`'s pre-existing "no match" branch (`if not md_match: return {"tool_calling": None, ...}`) returns explicit `None`s that `merge_catalog_entry` then strips from a brand-new entry entirely — so the assertions fail with `KeyError: 'tool_calling'` / `KeyError: 'structured_output'` (a missing key), not a `KeyError` on the catalog dict itself. `test_attempt_2_never_falls_back_to_fuzzy_matching` is a **guard/regression test, not a red-phase test** — it already passes against the current, unpatched `cli.py` (the fixture's candidate is already unresolved either way, before or after this task's change) — its value is catching a FUTURE regression that makes this fallback wrongly start fuzzy-matching, not proving Step 3's edit did something. Do not treat this one test passing before Step 3 as a sign of a mis-applied edit. The pre-existing tests in this class must still pass throughout.
 
 - [ ] **Step 3: Implement the retry block and wire it into the field-preservation helpers**
 
@@ -405,9 +408,25 @@ from ai_kit_spec.model_matcher import (
 def _preserved_or_fresh_md_fields(md_match: dict | None, models_dev_ok: bool,
                                    existing_entry: dict | None,
                                    md_enrich_match: dict | None = None) -> dict:
-    """... (existing docstring, plus:) NEW: md_enrich_match is this spec's effort-suffix
-    enrichment retry result (cli.py's build_model_catalog loop) -- consulted ONLY when the
-    PRIMARY md_match found nothing this run. It never overrides a real md_match."""
+    """CRITICAL: a models.dev fetch failure must never overwrite already-cached models.dev-
+    sourced fields. If the source is down (models_dev_ok=False), copy whatever the existing
+    entry already had for these fields verbatim (a key simply absent here is left absent from
+    the returned dict, which merge_catalog_entry then treats as "preserve" -- correct, since a
+    down source made no claim either way); only ever compute fresh values when the source
+    actually answered this run.
+
+    CRITICAL finding (Cross-Document Consistency / fresh-source no-match): when the source WAS
+    queried genuinely this run (models_dev_ok=True) but found no match for this candidate
+    (md_match is None), any fields it previously owned are now stale under a provenance that
+    is about to flip to source.models_dev=False -- returning explicit None (not omission) for
+    each is what tells merge_catalog_entry's clear-on-None contract to actually drop them,
+    instead of silently retaining last run's values via plain dict-spread. `pricing` is
+    deliberately NOT included here -- build_model_catalog owns pricing's combined
+    models.dev-or-Artificial-Analysis fallback logic itself, since either source can supply it.
+
+    NEW (design spec 2026-09-05): md_enrich_match is this spec's effort-suffix enrichment
+    retry result (cli.py's build_model_catalog loop) -- consulted ONLY when the PRIMARY
+    md_match found nothing this run. It never overrides a real md_match."""
     if not models_dev_ok:
         existing_entry = existing_entry or {}
         return {k: existing_entry[k] for k in
@@ -431,8 +450,14 @@ def _preserved_or_fresh_md_fields(md_match: dict | None, models_dev_ok: bool,
 def _preserved_or_fresh_ctx_window(md_match: dict | None, models_dev_ok: bool,
                                     existing_entry: dict | None, cli_name: str,
                                     md_enrich_match: dict | None = None):
-    """... (existing docstring, plus:) NEW: falls back to md_enrich_match's own context
-    limit only when md_match itself is falsy."""
+    """CRITICAL: same preserve-on-source-down contract as _preserved_or_fresh_md_fields, but for
+    a RUNTIME-level field (ctx_window lives inside runtimes[cli_name], not at the entry's top
+    level) -- an earlier draft always recomputed this from `md_match`, which is unconditionally
+    None whenever models_dev_ok is False, silently blanking an already-cached runtime's
+    ctx_window on every models.dev outage.
+
+    NEW (design spec 2026-09-05): falls back to md_enrich_match's own context limit only when
+    md_match itself is falsy."""
     if not models_dev_ok:
         existing_entry = existing_entry or {}
         return existing_entry.get("runtimes", {}).get(cli_name, {}).get("ctx_window")
@@ -508,7 +533,7 @@ No production code changes in this task — these tests exercise invariants the 
 **Interfaces:**
 - Consumes: `cli.build_model_catalog` (Task 3), `model_catalog.canonical_key` (existing).
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the regression/invariant tests**
 
 Add these test methods to `class TestBuildModelCatalog(unittest.TestCase):` in `tests/test_ai_kit_spec.py`:
 
@@ -632,6 +657,8 @@ Add these test methods to `class TestBuildModelCatalog(unittest.TestCase):` in `
 
         base = catalog["anthropic/claude-opus-5-high"]
         self.assertTrue(base["structured_output"])          # anthropic's row, not the reseller's
+        self.assertTrue(base["tool_calling"])
+        self.assertEqual(base["max_output_tokens"], 128000)
         self.assertEqual(base["runtimes"]["cursor-agent"]["ctx_window"], 1000000)
         self.assertFalse(base["source"]["models_dev"])          # enrichment, not an exact match
         self.assertEqual(base["scores"]["intelligence_index"], 61.5)
@@ -644,11 +671,11 @@ Add these test methods to `class TestBuildModelCatalog(unittest.TestCase):` in `
                                                                   # base model's 6.0
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 2: Run tests to verify they pass**
 
 Run: `uv run python3 -m unittest tests.test_ai_kit_spec.TestBuildModelCatalog -v`
 
-If Task 3 was implemented exactly as specified, these should actually all **pass already** (this task adds coverage, not new behavior). Run them first to confirm; if any fails, that's a real gap in Task 3's implementation to fix now — do not weaken these assertions to make them pass.
+These are regression/invariant tests, not red-phase tests — no new production code was added in Step 1, so every one of them should **pass immediately** if Task 3 was implemented exactly as specified (this task adds coverage, not new behavior). Run them to confirm; if any fails, that's a real gap in Task 3's implementation to fix now — do not weaken these assertions to make them pass.
 
 - [ ] **Step 3: (Only if Step 2 found a real gap) fix `cli.py`**
 
@@ -679,13 +706,14 @@ the real claude-opus-5-high / claude-opus-5-high-fast shape."
 
 - [ ] **Step 1: Run the full `ai_kit_spec` test file**
 
-Run: `uv run python3 -m unittest tests.test_ai_kit_spec -v 2>&1 | tail -40`
-Expected: `OK`, with the total test count higher than before this plan (Task 1: +7, Task 2: +2, Task 3: +4, Task 4: +4 = 17 new tests) and zero failures/errors anywhere in the file (not just the classes touched by this plan — a regression in an unrelated class would mean an import or shared-fixture mistake).
+Run: `set -o pipefail; uv run python3 -m unittest tests.test_ai_kit_spec -v 2>&1 | tail -40; echo "exit=$?"`
+(`set -o pipefail` is required here — without it, a plain `| tail -N` pipeline reports `tail`'s own exit status, which is always 0, silently masking a nonzero `unittest` failure.)
+Expected: the final `exit=0` line, `OK` in the tail output, with the total test count higher than before this plan (Task 1: +7, Task 2: +2, Task 3: +4, Task 4: +4 = 17 new tests) and zero failures/errors anywhere in the file (not just the classes touched by this plan — a regression in an unrelated class would mean an import or shared-fixture mistake).
 
 - [ ] **Step 2: Run the project's full test suite**
 
-Run: `uv run make test 2>&1 | tail -60`
-Expected: `OK` across every test module the Makefile's `test` target runs (`test_setup`, `test_status_line`, `test_external_segments`, `test_statusline_doctor`, `test_arch`, `test_markdown_to_pdf`, `test_worktree_e2e`, `test_wizard_pty`, `test_system_memory_e2e`, `test_ai_kit_spec`, `test_ai_kit_spec_gsd`, plus `bash tests/test_install.sh` which the same target also runs) — confirms this plan's changes to shared modules (`model_matcher.py`, `cli.py`) haven't broken anything outside `ai_kit_spec`'s own test file.
+Run: `set -o pipefail; uv run make test 2>&1 | tail -60; echo "exit=$?"`
+Expected: the final `exit=0` line, `OK` across every test module the Makefile's `test` target runs (`test_setup`, `test_status_line`, `test_external_segments`, `test_statusline_doctor`, `test_arch`, `test_markdown_to_pdf`, `test_worktree_e2e`, `test_wizard_pty`, `test_system_memory_e2e`, `test_ai_kit_spec`, `test_ai_kit_spec_gsd`, plus `bash tests/test_install.sh` which the same target also runs) — confirms this plan's changes to shared modules (`model_matcher.py`, `cli.py`) haven't broken anything outside `ai_kit_spec`'s own test file.
 
 - [ ] **Step 3: Manual smoke check against a bare-metal invocation (optional but recommended)**
 
