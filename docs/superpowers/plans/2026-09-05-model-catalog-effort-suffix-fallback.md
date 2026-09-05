@@ -182,7 +182,24 @@ In `skills/ai-kit-spec-review/ai_kit_spec/model_matcher.py`, change `match_model
 def match_models_dev(cli_model_id: str, models_dev_data: dict,
                       provider_hint: str | None = None,
                       allow_fuzzy: bool = True) -> dict | None:
-    """... (existing docstring, unchanged) ..."""
+    """Three-step lookup: (1) if cli_model_id has a "<hint>/<model>" shape, try
+    models_dev_data[hint]["models"][model] directly -- an exact hinted hit is always
+    unambiguous and returned immediately, no collision to consider. (2) Only when step 1
+    didn't hit, search every provider's models dict for an EXACT bare-id match (a CLI's own
+    provider label is not guaranteed to equal models.dev's provider key -- e.g. opencode
+    namespaces differently than models.dev does). (3) CRITICAL finding: only when step 2 finds
+    NOTHING AT ALL, AND allow_fuzzy is True (default), does a fuzzy fallback run --
+    normalized-string similarity across every provider's every model id, via
+    _fuzzy_candidate_indices. Pass allow_fuzzy=False to force exact-only matching (steps 1-2
+    only) -- used by the effort-suffix enrichment retry (cli.py) to avoid compounding an
+    already-inferred effort-stripped id with a second, fuzzy inference. COLLISION-SAFE at
+    every step: if more than one provider's model matches (exact OR fuzzy), `provider_hint`
+    (when provided) is used to pick the one whose provider_key normalizes to the same value --
+    never "whichever came first in dict-iteration order" (a naive first-match would silently
+    attach one vendor's fields to a different vendor's model). If more than one candidate
+    remains ambiguous (no hint, or the hint doesn't disambiguate), returns None rather than
+    guess. A SINGLE match (exact or fuzzy) always wins regardless of hint. Returns the
+    matched model's own dict with a "provider" key added, or None."""
     bare = bare_model_part(cli_model_id)
     if "/" in cli_model_id:
         hint = cli_model_id.split("/", 1)[0]
@@ -315,7 +332,8 @@ In `tests/test_ai_kit_spec.py`, add these test methods to `class TestBuildModelC
         self.assertNotIn("max_output_tokens", entry)
         self.assertIsNone(entry["runtimes"]["cursor-agent"]["ctx_window"])
 
-    def test_lifecycle_across_runs_clears_previously_recovered_fields_on_a_later_no_signal_run(self):
+    def test_lifecycle_across_runs_clears_previously_recovered_fields_on_a_later_no_signal_run(
+            self):
         # Round-3's accepted, documented tradeoff (spec Section 3.2): an Artificial Analysis
         # outage on a LATER run clears fields this spec's own enrichment retry recovered on
         # an earlier run -- exactly like today's existing contract for any candidate whose
@@ -342,7 +360,7 @@ In `tests/test_ai_kit_spec.py`, add these test methods to `class TestBuildModelC
             discovered, models_dev_data_run1, True, aa_models, True, {})
         self.assertEqual(unmatched_run1, [])
         enriched_key = "anthropic/claude-opus-5-high"      # recovered via this spec's retry
-        primary_key = "openai/gpt-5.6-sol"                 # recovered via the ordinary primary match
+        primary_key = "openai/gpt-5.6-sol"           # recovered via the ordinary primary match
         self.assertTrue(catalog_run1[enriched_key]["structured_output"])
         self.assertTrue(catalog_run1[primary_key]["structured_output"])
 
@@ -361,13 +379,16 @@ In `tests/test_ai_kit_spec.py`, add these test methods to `class TestBuildModelC
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run python3 -m unittest tests.test_ai_kit_spec.TestBuildModelCatalog -v`
-Expected: FAIL — the new assertions fail (e.g. `KeyError: 'structured_output'` or a `KeyError` on `catalog["anthropic/claude-opus-5-high"]`, since the enrichment retry doesn't exist yet and these candidates currently route to `unmatched` or a different key). The pre-existing tests in this class must still pass.
+Expected: 3 of the 4 new tests FAIL (`test_attempt_1_exact_id_with_hint_resolves_a_cross_provider_collision`, `test_attempt_2_strips_the_effort_suffix_and_picks_the_hinted_provider_row`, `test_lifecycle_across_runs_clears_previously_recovered_fields_on_a_later_no_signal_run`) with e.g. `KeyError: 'structured_output'` or a `KeyError` on `catalog["anthropic/claude-opus-5-high"]`, since the enrichment retry doesn't exist yet and these candidates currently route to `unmatched` or a different key. `test_attempt_2_never_falls_back_to_fuzzy_matching` is a **guard/regression test, not a red-phase test** — it already passes against the current, unpatched `cli.py` (the fixture's candidate is already unresolved either way, before or after this task's change) — its value is catching a FUTURE regression that makes this fallback wrongly start fuzzy-matching, not proving Step 3's edit did something. Do not treat this one test passing before Step 3 as a sign of a mis-applied edit. The pre-existing tests in this class must still pass throughout.
 
 - [ ] **Step 3: Implement the retry block and wire it into the field-preservation helpers**
 
 In `skills/ai-kit-spec-review/ai_kit_spec/cli.py`:
 
-**3a.** Add `_strip_known_effort_suffix` to the existing import (line ~34):
+**3a.** Replace the existing single-line import at `cli.py:34` with a parenthesized multi-line
+form that adds `_strip_known_effort_suffix` (the current line reads `from ai_kit_spec.model_matcher
+import bare_model_part, match_artificial_analysis, match_models_dev` — replace that whole line
+with the block below, not an in-place edit):
 
 ```python
 from ai_kit_spec.model_matcher import (
@@ -566,6 +587,11 @@ Add these test methods to `class TestBuildModelCatalog(unittest.TestCase):` in `
         entry = catalog["openai/gpt-5-high"]
         self.assertTrue(entry["structured_output"])
         self.assertEqual(entry["runtimes"]["opencode"]["ctx_window"], 400000)
+        # Discriminates the retry path from an (incorrect) primary fuzzy match: if the
+        # primary call ever started resolving "openai/gpt-5-high" directly, source.models_dev
+        # would read True and this assertion would catch it -- the two asserts above alone
+        # would still pass either way, so they can't guard this invariant on their own.
+        self.assertFalse(entry["source"]["models_dev"])
 
     def test_end_to_end_regression_claude_opus_5_high_shape_and_its_fast_sibling(self):
         # Regression fixture mirroring the real motivating case: claude-opus-5-high
@@ -605,7 +631,7 @@ Add these test methods to `class TestBuildModelCatalog(unittest.TestCase):` in `
         self.assertEqual(unmatched, [])
 
         base = catalog["anthropic/claude-opus-5-high"]
-        self.assertTrue(base["structured_output"])              # anthropic's row, not the reseller's
+        self.assertTrue(base["structured_output"])          # anthropic's row, not the reseller's
         self.assertEqual(base["runtimes"]["cursor-agent"]["ctx_window"], 1000000)
         self.assertFalse(base["source"]["models_dev"])          # enrichment, not an exact match
         self.assertEqual(base["scores"]["intelligence_index"], 61.5)
@@ -659,7 +685,7 @@ Expected: `OK`, with the total test count higher than before this plan (Task 1: 
 - [ ] **Step 2: Run the project's full test suite**
 
 Run: `uv run make test 2>&1 | tail -60`
-Expected: `OK` across every test module the Makefile's `test` target runs (`test_setup`, `test_status_line`, `test_external_segments`, `test_statusline_doctor`, `test_arch`, `test_markdown_to_pdf`, `test_worktree_e2e`, `test_wizard_pty`, `test_system_memory_e2e`, `test_ai_kit_spec`, `test_ai_kit_spec_gsd`) — confirms this plan's changes to shared modules (`model_matcher.py`, `cli.py`) haven't broken anything outside `ai_kit_spec`'s own test file.
+Expected: `OK` across every test module the Makefile's `test` target runs (`test_setup`, `test_status_line`, `test_external_segments`, `test_statusline_doctor`, `test_arch`, `test_markdown_to_pdf`, `test_worktree_e2e`, `test_wizard_pty`, `test_system_memory_e2e`, `test_ai_kit_spec`, `test_ai_kit_spec_gsd`, plus `bash tests/test_install.sh` which the same target also runs) — confirms this plan's changes to shared modules (`model_matcher.py`, `cli.py`) haven't broken anything outside `ai_kit_spec`'s own test file.
 
 - [ ] **Step 3: Manual smoke check against a bare-metal invocation (optional but recommended)**
 
