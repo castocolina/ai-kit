@@ -4315,6 +4315,138 @@ class TestBuildModelCatalog(unittest.TestCase):
         self.assertTrue(unmatched[0]["vendor_unknown"])
         self.assertEqual(catalog, {})  # never silently added to the catalog either
 
+    def test_md_enrich_match_provider_field_never_influences_provider_or_key_derivation(self):
+        # md_enrich_match's OWN "provider" field can legitimately differ from
+        # aa_provider_hint (a single, non-colliding models.dev row always wins regardless of
+        # hint) -- this must never leak into provider/key derivation, which read only
+        # md_match/provider_hint/AA's model_creator.name. Uses a raw id
+        # ("claude-opus-5-thinking-xhigh") whose fuzzy ratio against the single stripped-form
+        # candidate ("claude-opus-5") is ~0.63 -- well under the PRIMARY call's own 0.82
+        # threshold -- so the primary call cannot resolve this on its own; only the retry's
+        # exact match on the STRIPPED id (Attempt 2) can. (Verified against a real 16-provider
+        # single-row-per-provider case would behave the same way, but a single provider is
+        # enough to isolate this specific invariant.)
+        models_dev_data = {"some-other-provider": {"models": {"claude-opus-5": {
+            "id": "claude-opus-5", "tool_call": True, "structured_output": True,
+            "limit": {"context": 1000000, "output": 128000}}}}}
+        aa_models = [{"id": "1", "slug": "claude-opus-5-thinking-xhigh",
+                      "name": "Claude Opus 5 Thinking XHigh",
+                      "model_creator": {"name": "Anthropic"},
+                      "evaluations": {"artificial_analysis_intelligence_index": 61.5}}]
+        discovered = [{"cli": "cursor-agent", "model_id": "claude-opus-5-thinking-xhigh"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, aa_models, True, {})
+        self.assertEqual(unmatched, [])
+        self.assertIn("anthropic/claude-opus-5-thinking-xhigh", catalog)
+        entry = catalog["anthropic/claude-opus-5-thinking-xhigh"]
+        self.assertEqual(entry["provider"], "anthropic")   # from AA's model_creator, not
+        self.assertTrue(entry["structured_output"])        # "some-other-provider"
+
+    def test_pricing_after_a_successful_retry_still_comes_from_aa_never_the_base_models_cost(self):
+        # A real multi-provider collision on the STRIPPED id ("claude-opus-5") is required
+        # so the PRIMARY call (no hint, fuzzy-enabled) can't resolve the raw suffixed id on
+        # its own -- with only one provider, a single fuzzy match would win regardless of
+        # hint AT THE PRIMARY STAGE, meaning pricing would legitimately come from that
+        # primary match's own models.dev cost instead of exercising this spec's
+        # enrichment-only retry at all.
+        models_dev_data = {
+            "anthropic": {"models": {"claude-opus-5": {
+                "id": "claude-opus-5", "tool_call": True, "structured_output": True,
+                "limit": {"context": 1000000, "output": 128000},
+                "cost": {"input": 6.0, "output": 30.0}}}},
+            "some-reseller": {"models": {"claude-opus-5": {
+                "id": "claude-opus-5", "tool_call": True, "structured_output": None,
+                "limit": {"context": 1000000, "output": 128000},
+                "cost": {"input": 0.0, "output": 0.0}}}},
+        }
+        aa_models = [{"id": "1", "slug": "claude-opus-5-high", "name": "Claude Opus 5 High",
+                      "model_creator": {"name": "Anthropic"},
+                      "evaluations": {"artificial_analysis_intelligence_index": 61.5},
+                      "pricing": {"price_1m_input_tokens": 15.0,
+                                  "price_1m_output_tokens": 75.0}}]
+        discovered = [{"cli": "cursor-agent", "model_id": "claude-opus-5-high"}]
+        catalog, _, _ = cli.build_model_catalog(
+            discovered, models_dev_data, True, aa_models, True, {})
+        entry = catalog["anthropic/claude-opus-5-high"]
+        self.assertEqual(entry["pricing"]["input_per_1m"], 15.0)   # AA's effort-specific price
+        self.assertEqual(entry["pricing"]["output_per_1m"], 75.0)  # never the base model's 6.0/30.0
+
+    def test_vendor_prefixed_id_with_an_effort_suffix_also_reaches_the_retry(self):
+        # A prefixed id doesn't skip the need for this fallback either -- step 1's exact
+        # lookup misses the suffix exactly as the bare case does, and the pool-fuzzy step
+        # also finds nothing for this example (ratio("gpt5high","gpt5") ~= 0.667, well under
+        # the 0.82 threshold).
+        models_dev_data = {"openai": {"models": {"gpt-5": {
+            "id": "gpt-5", "tool_call": True, "structured_output": True,
+            "limit": {"context": 400000, "output": 128000}}}}}
+        aa_models = [{"id": "1", "slug": "gpt-5-high", "name": "GPT-5 High",
+                      "model_creator": {"name": "OpenAI"},
+                      "evaluations": {"artificial_analysis_intelligence_index": 70.0}}]
+        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5-high"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, aa_models, True, {})
+        self.assertEqual(unmatched, [])
+        entry = catalog["openai/gpt-5-high"]
+        self.assertTrue(entry["structured_output"])
+        self.assertEqual(entry["runtimes"]["opencode"]["ctx_window"], 400000)
+        # Discriminates the retry path from an (incorrect) primary fuzzy match: if the
+        # primary call ever started resolving "openai/gpt-5-high" directly, source.models_dev
+        # would read True and this assertion would catch it -- the two asserts above alone
+        # would still pass either way, so they can't guard this invariant on their own.
+        self.assertFalse(entry["source"]["models_dev"])
+
+    def test_end_to_end_regression_claude_opus_5_high_shape_and_its_fast_sibling(self):
+        # Regression fixture mirroring the real motivating case: claude-opus-5-high
+        # backfills via this spec's retry; its -fast-suffixed sibling
+        # (claude-opus-5-high-fast) resolves via the PRIMARY call's own fuzzy step directly
+        # (never reaching this spec's retry at all) and must never have its price/context
+        # conflated with the non-fast base model's.
+        models_dev_data = {
+            "anthropic": {"models": {"claude-opus-5": {
+                "id": "claude-opus-5", "tool_call": True, "structured_output": True,
+                "limit": {"context": 1000000, "output": 128000},
+                "cost": {"input": 6.0, "output": 30.0}}}},
+            "some-reseller": {"models": {"claude-opus-5": {
+                "id": "claude-opus-5", "tool_call": True, "structured_output": None,
+                "limit": {"context": 1000000, "output": 128000},
+                "cost": {"input": 0.0, "output": 0.0}}}},
+            "venice": {"models": {"claude-opus-5-fast": {
+                "id": "claude-opus-5-fast", "tool_call": True, "structured_output": True,
+                "limit": {"context": 1000000, "output": 128000},
+                "cost": {"input": 12.0, "output": 60.0}}}},
+        }
+        aa_models = [
+            {"id": "1", "slug": "claude-opus-5-high", "name": "Claude Opus 5 High",
+             "model_creator": {"name": "Anthropic"},
+             "evaluations": {"artificial_analysis_intelligence_index": 61.5},
+             "pricing": {"price_1m_input_tokens": 15.0, "price_1m_output_tokens": 75.0}},
+            {"id": "2", "slug": "claude-opus-5-high-fast", "name": "Claude Opus 5 High Fast",
+             "model_creator": {"name": "Anthropic"},
+             "evaluations": {"artificial_analysis_intelligence_index": 61.5},
+             "pricing": {"price_1m_input_tokens": 30.0, "price_1m_output_tokens": 150.0}},
+        ]
+        discovered = [{"cli": "cursor-agent", "model_id": "claude-opus-5-high"},
+                      {"cli": "cursor-agent", "model_id": "claude-opus-5-high-fast"}]
+        catalog, rejections, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, aa_models, True, {})
+        self.assertEqual(rejections, [])
+        self.assertEqual(unmatched, [])
+
+        base = catalog["anthropic/claude-opus-5-high"]
+        self.assertTrue(base["structured_output"])          # anthropic's row, not the reseller's
+        self.assertTrue(base["tool_calling"])
+        self.assertEqual(base["max_output_tokens"], 128000)
+        self.assertEqual(base["runtimes"]["cursor-agent"]["ctx_window"], 1000000)
+        self.assertFalse(base["source"]["models_dev"])          # enrichment, not an exact match
+        self.assertEqual(base["scores"]["intelligence_index"], 61.5)
+        self.assertEqual(base["pricing"]["input_per_1m"], 15.0)  # AA's, never models.dev's 6.0
+
+        fast = catalog["venice/claude-opus-5-high-fast"]
+        self.assertTrue(fast["source"]["models_dev"])           # resolved by the PRIMARY fuzzy step
+        self.assertEqual(fast["runtimes"]["cursor-agent"]["ctx_window"], 1000000)
+        self.assertEqual(fast["pricing"]["input_per_1m"], 12.0)  # its own tier's price, not the
+                                                                  # base model's 6.0
+
 
 class TestFetchModelCatalogCli(unittest.TestCase):
     def _write_runtimes(self, d, clis):
