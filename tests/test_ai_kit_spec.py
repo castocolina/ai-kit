@@ -3946,6 +3946,137 @@ class TestBuildModelCatalog(unittest.TestCase):
         self.assertFalse(entry["source"]["artificial_analysis"])
         self.assertIn("opencode", entry["runtimes"])
 
+    def test_router_candidate_with_coding_hint_never_calls_external_matching(self):
+        # models_dev_data/aa_models both contain an EXACT match for this candidate's bare id --
+        # if match_models_dev/match_artificial_analysis were called, source.models_dev and
+        # source.artificial_analysis would come back True and tool_calling/scores would be
+        # populated. Proving they stay False/absent proves the lookup never ran.
+        models_dev_data = {"opencode-go": {"models": {"router-env-coding": {
+            "id": "router-env-coding", "tool_call": True, "structured_output": True,
+            "limit": {"context": 128000, "output": 8000}}}}}
+        aa_models = [{"id": "1", "slug": "router-env-coding", "name": "Router Env Coding",
+                      "model_creator": {"name": "SomeVendor"},
+                      "evaluations": {"artificial_analysis_coding_index": 89.0}}]
+        discovered = [{"cli": "opencode", "model_id": "opencode-go/router-env-coding"}]
+        catalog, rejections, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, aa_models, True, {})
+        self.assertEqual(rejections, [])
+        self.assertEqual(unmatched, [])
+        entry = catalog["opencode-go/router-env-coding"]
+        self.assertEqual(entry["name_declared_purpose"], "execute")
+        self.assertFalse(entry["source"]["models_dev"])
+        self.assertFalse(entry["source"]["artificial_analysis"])
+        self.assertNotIn("tool_calling", entry)
+        self.assertNotIn("scores", entry)
+
+    def test_router_candidate_with_review_hint_gets_review_purpose(self):
+        discovered = [{"cli": "opencode", "model_id": "opencode-go/router-env-plan-review"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, {}, True, [], True, {})
+        self.assertEqual(unmatched, [])
+        entry = catalog["opencode-go/router-env-plan-review"]
+        self.assertEqual(entry["name_declared_purpose"], "review")
+
+    def test_router_candidate_with_no_purpose_word_takes_the_unchanged_normal_path(self):
+        # "router-env-fast" is a router (infer_is_router matches "-env") but has no purpose
+        # word -- infer_purpose_from_name returns None, so this must fall through to ordinary
+        # md_match/aa_match matching, unaffected by this feature.
+        models_dev_data = {"opencode-go": {"models": {"router-env-fast": {
+            "id": "router-env-fast", "tool_call": True, "structured_output": True,
+            "limit": {"context": 128000, "output": 8000}}}}}
+        discovered = [{"cli": "opencode", "model_id": "opencode-go/router-env-fast"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, [], True, {})
+        self.assertEqual(unmatched, [])
+        entry = catalog["opencode-go/router-env-fast"]
+        self.assertNotIn("name_declared_purpose", entry)
+        self.assertTrue(entry["source"]["models_dev"])   # normal matching DID run
+        self.assertTrue(entry["tool_calling"])
+
+    def test_non_router_candidate_with_a_purpose_word_in_its_name_is_unaffected(self):
+        # A real vendor model whose name happens to contain "coding" must never trigger this
+        # heuristic -- infer_is_router gates it, and this id matches none of
+        # _ROUTER_NAME_HINTS ("router", "-env", "local-llm").
+        models_dev_data = {"openai": {"models": {"gpt-5-coding-assistant": {
+            "id": "gpt-5-coding-assistant", "tool_call": True, "structured_output": True,
+            "limit": {"context": 128000, "output": 8000}}}}}
+        discovered = [{"cli": "codex", "model_id": "openai/gpt-5-coding-assistant"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, [], True, {})
+        self.assertEqual(unmatched, [])
+        entry = catalog["openai/gpt-5-coding-assistant"]
+        self.assertNotIn("name_declared_purpose", entry)
+        self.assertTrue(entry["source"]["models_dev"])
+        self.assertTrue(entry["tool_calling"])
+
+    def test_lifecycle_preserves_prior_cached_fields_across_a_later_name_declared_run(self):
+        # A candidate already in the catalog (e.g. from before this feature existed, or from a
+        # manual correction) keeps its cached ctx_window/pricing/tool_calling when a LATER run
+        # recognizes it as name-declared-purpose -- the new code path must never clear fields
+        # it didn't itself populate, exactly like every other preserve-on-not-queried path in
+        # this function.
+        existing_catalog = {"opencode-go/router-env-coding": {
+            "provider": "opencode-go",
+            "runtimes": {"opencode": {"model_id": "opencode-go/router-env-coding",
+                                       "ctx_window": 128000}},
+            "is_router": True, "batch_mode": False, "fallback_quota": True,
+            "tool_calling": True, "structured_output": True, "max_output_tokens": 8000,
+            "pricing": {"input_per_1m": 1.0, "output_per_1m": 2.0},
+            "source": {"models_dev": True, "artificial_analysis": False, "manual": False},
+            "confidence": "high", "last_verified": "2026-08-01"}}
+        # models_dev_data/aa_models both WOULD match if queried -- proving they weren't.
+        models_dev_data = {"opencode-go": {"models": {"router-env-coding": {
+            "id": "router-env-coding", "tool_call": False, "structured_output": False,
+            "limit": {"context": 9999, "output": 9999}}}}}
+        discovered = [{"cli": "opencode", "model_id": "opencode-go/router-env-coding"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, [], True, existing_catalog)
+        self.assertEqual(unmatched, [])
+        entry = catalog["opencode-go/router-env-coding"]
+        self.assertEqual(entry["name_declared_purpose"], "execute")
+        self.assertEqual(entry["runtimes"]["opencode"]["ctx_window"], 128000)
+        self.assertTrue(entry["tool_calling"])
+        self.assertTrue(entry["structured_output"])
+        self.assertEqual(entry["max_output_tokens"], 8000)
+        self.assertEqual(entry["pricing"]["input_per_1m"], 1.0)
+        self.assertTrue(entry["source"]["models_dev"])   # preserved from cache, not re-derived
+
+    def test_router_candidate_with_contradictory_purpose_words_falls_through(self):
+        # design spec Section 5(c): a naming CONTRADICTION (both a review word and an execute
+        # word present) must fall through to the unchanged md_match/aa_match path, exactly like
+        # the no-purpose-word case above -- verified here at the WIRING level (build_model_catalog
+        # itself), not just at infer_purpose_from_name's own unit level (Task 1), since it's the
+        # wiring's job to actually route on the heuristic's None result.
+        models_dev_data = {"opencode-go": {"models": {"router-env-coding-review": {
+            "id": "router-env-coding-review", "tool_call": True, "structured_output": True,
+            "limit": {"context": 128000, "output": 8000}}}}}
+        discovered = [{"cli": "opencode", "model_id": "opencode-go/router-env-coding-review"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, [], True, {})
+        self.assertEqual(unmatched, [])
+        entry = catalog["opencode-go/router-env-coding-review"]
+        self.assertNotIn("name_declared_purpose", entry)
+        self.assertTrue(entry["source"]["models_dev"])   # normal matching DID run
+        self.assertTrue(entry["tool_calling"])
+
+    def test_name_declared_bare_id_with_no_provider_lands_in_unmatched_with_purpose_carried(self):
+        # The short-circuit's only failure path: a name-declared router candidate reported as a
+        # BARE id (no "<vendor>/" prefix -- e.g. a CLI that reports its own raw model name) with
+        # no existing catalog entry to recover a provider from. It must land in `unmatched` with
+        # `vendor_unknown: True` (same convention as the ordinary unmatched path), AND it must
+        # still carry `name_declared_purpose` on that payload -- otherwise the wizard's Task 4
+        # partition, which only inspects catalog entries, would silently lose the declaration
+        # for any candidate that never makes it into the catalog.
+        discovered = [{"cli": "customcli", "model_id": "router-env-coding"}]
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, {}, True, [], True, {})
+        self.assertEqual(catalog, {})
+        self.assertEqual(len(unmatched), 1)
+        candidate = unmatched[0]
+        self.assertTrue(candidate["vendor_unknown"])
+        self.assertIsNone(candidate["provider"])
+        self.assertEqual(candidate["name_declared_purpose"], "execute")
+
     def test_attempt_1_exact_id_with_hint_resolves_a_cross_provider_collision(self):
         # No effort suffix at all here -- Attempt 1 (exact id + hint) must resolve this on
         # its own, without ever reaching Attempt 2's effort-stripping.

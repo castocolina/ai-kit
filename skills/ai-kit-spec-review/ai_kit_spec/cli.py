@@ -30,7 +30,12 @@ from ai_kit_spec.detection import (
 from ai_kit_spec.execute_dispatch import dispatch_execute
 from ai_kit_spec.local_secrets import load_secret
 from ai_kit_spec.model_catalog import canonical_key, merge_catalog_entry
-from ai_kit_spec.model_heuristics import infer_batch_mode, infer_fallback_quota, infer_is_router
+from ai_kit_spec.model_heuristics import (
+    infer_batch_mode,
+    infer_fallback_quota,
+    infer_is_router,
+    infer_purpose_from_name,
+)
 from ai_kit_spec.model_matcher import (
     _strip_known_effort_suffix,
     bare_model_part,
@@ -235,6 +240,77 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
     for candidate in discovered_models:
         model_id = candidate["model_id"]
         cli_name = candidate["cli"]
+        provider_hint = model_id.split("/", 1)[0] if "/" in model_id else None
+        # Gate on infer_is_router(model_id) alone -- provider_hint is always a prefix of
+        # model_id and infer_is_router is a plain substring test (model_heuristics.py), so
+        # infer_is_router(provider_hint or "") can never be true when infer_is_router(model_id)
+        # is false. A two-argument OR here would be redundant, not defensive.
+        name_purpose = (infer_purpose_from_name(model_id)
+                        if infer_is_router(model_id)
+                        else None)
+        if name_purpose:
+            # Skip match_models_dev/match_artificial_analysis ENTIRELY for this candidate --
+            # its purpose is unambiguous from its own name, and neither external source
+            # models a router's operator-assigned routing label as a scorable capability
+            # anyway, so querying either would spend a network call (Artificial Analysis:
+            # quota-limited) for data this candidate will never use to decide its role.
+            existing_key = _find_existing_key_for_runtime(existing_catalog, cli_name, model_id)
+            provider = (existing_catalog[existing_key]["provider"] if existing_key
+                        else provider_hint)
+            if provider is None:
+                # HIGH-adjacent fix (review MEDIUM finding): a bare id with no existing catalog
+                # entry to recover a provider from still has a real, unambiguous
+                # name_declared_purpose -- carry it onto the unmatched payload rather than
+                # silently discarding it, since Task 4's wizard partition can only act on a
+                # field it can actually see. `_infer_heuristics("", model_id)` is unchanged from
+                # the existing unmatched-path convention (an empty provider is the existing
+                # convention for "no vendor to infer from," used identically by the ordinary
+                # unmatched path a few lines below in the function's existing body).
+                unmatched.append({"cli": cli_name, "model_id": model_id, "provider": None,
+                                   "key": None, "vendor_unknown": True,
+                                   "name_declared_purpose": name_purpose,
+                                   **_infer_heuristics("", model_id)})
+                continue
+            key = existing_key or canonical_key(provider, bare_model_part(model_id))
+            existing_entry = catalog.get(key)
+            heuristics = {field: (existing_entry or {}).get(field, inferred)
+                          for field, inferred in _infer_heuristics(provider, model_id).items()}
+            # Reuses the EXISTING preserve-on-source-down contract by passing
+            # models_dev_ok=False / aa_ok=False for THIS candidate specifically -- exactly
+            # matches that contract's own semantics ("the source wasn't queried this run,
+            # keep whatever's cached"), which is literally true here: neither source was
+            # ever called. No new field-preservation helper needed.
+            md_fields = _preserved_or_fresh_md_fields(None, False, existing_entry)
+            # NOTE: no `aa_fields.pop("aa_pricing", None)` here (an earlier draft had one) --
+            # `_preserved_or_fresh_aa_fields(None, False, existing_entry)` always takes its
+            # `not aa_ok` branch, which returns only cached `scores`/`tokens_per_sec` and can
+            # never contain an `aa_pricing` key, so the pop would always be a no-op.
+            aa_fields = _preserved_or_fresh_aa_fields(None, False, existing_entry)
+            ctx_window = _preserved_or_fresh_ctx_window(None, False, existing_entry, cli_name)
+            entry = {
+                "provider": (existing_entry or {}).get("provider", provider),
+                "runtimes": {cli_name: {"model_id": model_id, "ctx_window": ctx_window}},
+                **heuristics,
+                "name_declared_purpose": name_purpose,
+                "source": {
+                    "models_dev": (existing_entry or {}).get("source", {}).get(
+                        "models_dev", False),
+                    "artificial_analysis": (existing_entry or {}).get("source", {}).get(
+                        "artificial_analysis", False),
+                    "manual": (existing_entry or {}).get("source", {}).get("manual", False),
+                },
+                "confidence": (existing_entry or {}).get("confidence", "low"),
+                "last_verified": (existing_entry or {}).get("last_verified", today),
+                **md_fields,
+            }
+            entry.update(aa_fields)
+            pricing = (existing_entry or {}).get("pricing")
+            if pricing:
+                entry["pricing"] = pricing
+            catalog, reason = merge_catalog_entry(catalog, key, entry)
+            if reason:
+                rejections.append(reason)
+            continue
         md_match = match_models_dev(model_id, models_dev_data) if models_dev_ok else None
         provider_hint = (md_match or {}).get("provider") or (
             model_id.split("/", 1)[0] if "/" in model_id else None)
