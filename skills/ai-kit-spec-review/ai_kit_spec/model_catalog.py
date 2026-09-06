@@ -20,7 +20,7 @@ _FIELD_TYPES = {
     "batch_mode": bool, "is_router": bool, "fallback_quota": bool,
     "tokens_per_sec": (int, float), "max_output_tokens": int, "structured_output": bool,
     "tool_calling": bool, "native": bool, "reasoning_modes": list, "fast_mode": bool,
-    "speed_tier": str,
+    "speed_tier": str, "name_declared_purpose": str,
     # HIGH finding: is_router/batch_mode/fallback_quota have no external source (spec §3) --
     # they are ALWAYS either a naming heuristic's guess or a user's explicit confirmation of
     # that guess, and a plain bool alone cannot tell those two provenances apart. This list
@@ -35,6 +35,7 @@ _NUMERIC_SUBFIELD_TABLES = {
     "pricing": {"input_per_1m", "output_per_1m"},
 }
 _RUNTIME_FIELD_TYPES = {"model_id": str, "ctx_window": (int, float)}
+_VALID_NAME_DECLARED_PURPOSE = {"review", "execute"}
 
 
 def cache_catalog_path(env: dict) -> str:
@@ -88,6 +89,10 @@ def validate_catalog_entry(model_id: str, entry: dict) -> str | None:
             continue
         if not isinstance(entry[field], expected_type):
             return f"{model_id}: '{field}' must be of type {expected_type}"
+    if "name_declared_purpose" in entry and entry["name_declared_purpose"] is not None \
+            and entry["name_declared_purpose"] not in _VALID_NAME_DECLARED_PURPOSE:
+        return (f"{model_id}: 'name_declared_purpose' must be one of "
+                f"{sorted(_VALID_NAME_DECLARED_PURPOSE)}")
     if "reasoning_modes" in entry and isinstance(entry["reasoning_modes"], list) and \
             not all(isinstance(m, str) for m in entry["reasoning_modes"]):
         return f"{model_id}: 'reasoning_modes' must be a list of strings"

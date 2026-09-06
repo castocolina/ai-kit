@@ -429,6 +429,26 @@ class TestValidateCatalogEntry(unittest.TestCase):
         self.assertIsNotNone(reason)
         self.assertIn("batch_mode", reason)
 
+    def test_unrecognized_name_declared_purpose_value_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(name_declared_purpose="planning"))
+        self.assertIsNotNone(reason)
+        self.assertIn("name_declared_purpose", reason)
+
+    def test_review_name_declared_purpose_is_accepted(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(name_declared_purpose="review"))
+        self.assertIsNone(reason)
+
+    def test_execute_name_declared_purpose_is_accepted(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(name_declared_purpose="execute"))
+        self.assertIsNone(reason)
+
+    def test_absent_name_declared_purpose_is_never_rejected(self):
+        reason = model_catalog.validate_catalog_entry("x", self._valid_entry())
+        self.assertIsNone(reason)
+
     def test_wrong_type_scores_subfield_is_rejected(self):
         reason = model_catalog.validate_catalog_entry(
             "x", self._valid_entry(scores={"intelligence_index": "high"}))
