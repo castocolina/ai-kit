@@ -340,6 +340,8 @@ fetch_result = json.load(open('/tmp/fetch-model-catalog-result.json'))
 discovered = fetch_result['discovered']
 current = current_candidate_keys(catalog, discovered)
 entries = [{'key': k, **v} for k, v in catalog.items() if k in current]
+name_declared = [e for e in entries if e.get('name_declared_purpose')]
+scored = [e for e in entries if not e.get('name_declared_purpose')]
 weights = load_ranking_weights()
 def field(e, path, label):
     v = e.get('scores', {}).get(path) if path in ('intelligence_index', 'coding_index', 'agentic_index') else e.get(path)
@@ -350,8 +352,11 @@ def field(e, path, label):
     return f'{label} {v}{tag}'
 
 for purpose in ('review', 'execute'):
-    ranked = score_candidates(entries, purpose, weights)[:5]
+    ranked = score_candidates(scored, purpose, weights)[:5]
     print(purpose.upper())
+    for e in [d for d in name_declared if d.get('name_declared_purpose') == purpose]:
+        runtimes_str = '/'.join(e.get('runtimes', {}).keys())
+        print(f\"  • {e['key']}  via {runtimes_str}  (declared by name -- not scored)\")
     for i, e in enumerate(ranked, 1):
         ctx = max((rt.get('ctx_window') for rt in e.get('runtimes', {}).values()
                    if rt.get('ctx_window')), default=None)
@@ -382,13 +387,24 @@ for purpose in ('review', 'execute'):
    `[via Artificial Analysis]` tag verbatim, every time it's shown — this is a hard requirement,
    not a nicety: Artificial Analysis's API terms require attribution wherever its data is
    presented.**
+   **Before printing each purpose's ranked block, first list any `name_declared` entries
+   whose `name_declared_purpose` matches that purpose** (e.g. `"review"` entries prepend
+   to the REVIEW block, `"execute"` entries prepend to the EXECUTE block), each on its own
+   bullet line marked `(declared by name -- not scored)`, showing its runtime/CLI the same
+   way a scored candidate does. A name-declared entry never appears in the other purpose's
+   block, never gets a numbered rank, and is never annotated with a cross-reference to the
+   other list (unlike a genuine scored "combo" model, which can legitimately appear in
+   both -- see below) -- its position is fixed by its own declared purpose, not earned by a
+   score.
    ```
    REVIEW (flagship/reasoning) — top candidates:
+     • router-env-plan-review  via opencode  (declared by name -- not scored)
      1. openai/gpt-5.6-sol     via codex     score 87  (intelligence 91 [via Artificial Analysis], batch✓, ctx 400k)
      2. xai/grok-4.6           via grok      score 79  (intelligence 85 [via Artificial Analysis], agentic 88 [via Artificial Analysis])
      3. anthropic/router-env   via opencode  score 74  (fallback✓)
 
    EXECUTE (coding-agent) — top candidates:
+     • router-env-coding       via opencode  (declared by name -- not scored)
      1. anthropic/router-env   via opencode  score 90  (coding 89 [via Artificial Analysis], tool_call✓)  — also ranked #3 in REVIEW above
      2. openai/gpt-5.6-sol     via codex     score 81  — also ranked #1 in REVIEW above
    Any preference not listed, or confirm this order for the ladder?
@@ -401,28 +417,7 @@ for purpose in ('review', 'execute'):
    among today's frontier models) can legitimately score well under both weightings at once. When
    one key shows up in both lists, **always annotate it** (`— also ranked #N in <OTHER_PURPOSE>
    above`, as above) so the user sees it's the same entry ranked twice on purpose, not a
-   coincidence.
-
-   **A DIFFERENT failure mode, and the more important one to catch: two DISTINCT keys landing in
-   the WRONG or SAME list because the ranking axes couldn't tell them apart.** This happens for a
-   router/gateway-style CLI whose own model id already declares its intended purpose in plain
-   words — e.g. a provider exposing separate `<name>-plan-review` and `<name>-coding` (or
-   `-review`/`-execute`) endpoints — where models.dev/Artificial Analysis has no distinct entry
-   for each variant, so both resolve (exact or fuzzy) to the same generic source data and end up
-   with near-identical `intelligence_index`/`coding_index`/`agentic_index` scores. The purpose
-   the CLI's own name declares then has NO influence on the weighted score at all, and both
-   variants can rank into the same list — or the wrong one — even though the CLI operator clearly
-   intended them for different roles (confirmed live: a `-plan-review`-suffixed key and a
-   `-coding`-suffixed key from the same router both ranked into EXECUTE, when only the
-   `-coding` one belonged there). **Before presenting either list, check every candidate's raw
-   CLI-reported model id for an explicit purpose word** (`review`, `plan-review`, `coding`,
-   `execute`, or similarly unambiguous — not a generic effort/tier token like `high`/`fast`,
-   which `_MODEL_TIER_SUFFIXES` already handles separately). If that word contradicts the list
-   the axis-based score placed it in (a `-coding` id inside REVIEW, a `-review`/`-plan-review` id
-   inside EXECUTE), **do not present it there** — move it to the list its own name declares, and
-   say so explicitly to the user (e.g. `"<key> excluded from EXECUTE despite scoring #2 — its own
-   name declares it a review-only endpoint"`), rather than trusting the generic score over the
-   CLI's own explicit labeling. Ask the user to confirm or adjust. **Record, for every confirmed
+   coincidence. Ask the user to confirm or adjust. **Record, for every confirmed
    candidate, which list(s) it
    was confirmed from** — REVIEW only, EXECUTE only, or both — this becomes that entry's
    `purpose` value (`"review"`, `"execute"`, or `"both"`) carried forward into Step 2.4's
