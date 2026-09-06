@@ -3619,6 +3619,57 @@ class TestInferFallbackQuota(unittest.TestCase):
         self.assertFalse(model_heuristics.infer_fallback_quota("openai"))
 
 
+class TestInferPurposeFromName(unittest.TestCase):
+    def test_review_hint_matches(self):
+        self.assertEqual(
+            model_heuristics.infer_purpose_from_name("router-env-review"), "review")
+
+    def test_plan_review_hint_matches(self):
+        self.assertEqual(
+            model_heuristics.infer_purpose_from_name("router-env-plan-review"), "review")
+
+    def test_coding_hint_matches(self):
+        self.assertEqual(
+            model_heuristics.infer_purpose_from_name("router-env-coding"), "execute")
+
+    def test_execute_hint_matches(self):
+        self.assertEqual(
+            model_heuristics.infer_purpose_from_name("router-env-execute"), "execute")
+
+    def test_no_hint_returns_none(self):
+        self.assertIsNone(model_heuristics.infer_purpose_from_name("router-env-fast"))
+
+    def test_both_groups_matching_is_a_contradiction_returns_none(self):
+        # A naming contradiction (both a review word and an execute word) must never be
+        # silently resolved by picking one.
+        self.assertIsNone(
+            model_heuristics.infer_purpose_from_name("router-env-coding-review"))
+
+    def test_case_insensitive(self):
+        self.assertEqual(
+            model_heuristics.infer_purpose_from_name("Router-Env-Coding"), "execute")
+
+    def test_hint_word_need_not_be_trailing(self):
+        # A router operator's naming convention isn't guaranteed to put the purpose word
+        # last -- token match anywhere in the id, not suffix-only.
+        self.assertEqual(
+            model_heuristics.infer_purpose_from_name("review-router-env"), "review")
+
+    def test_review_does_not_match_inside_preview(self):
+        # Delimiter-boundary pin: "review" is a substring of "preview", but the "r" in
+        # "review" is preceded by "p" (a word character), so no \b boundary exists there --
+        # this must NOT match. Without the \b-bounded fix, this would wrongly return
+        # "review", silently discarding a legitimate router-exposed model's real enrichment.
+        self.assertIsNone(
+            model_heuristics.infer_purpose_from_name("router-env/gemini-3-pro-preview"))
+
+    def test_coding_does_not_match_inside_encoding(self):
+        # Same class of false positive for the execute group: "coding" is a substring of
+        # "encoding" but not a delimiter-bounded token there.
+        self.assertIsNone(
+            model_heuristics.infer_purpose_from_name("router-env/some-encoding-model"))
+
+
 class TestStripKnownEffortSuffix(unittest.TestCase):
     def test_strips_a_single_trailing_effort_token(self):
         self.assertEqual(
