@@ -84,10 +84,20 @@ A new pure heuristic, same shape and file as the three existing ones
 (`infer_is_router`, `infer_batch_mode`, `infer_fallback_quota`):
 
 ```python
+import re
+
 _PURPOSE_NAME_HINTS = {
     "review": ("review", "plan-review"),
     "execute": ("coding", "execute"),
 }
+
+
+def _hint_matches(hint: str, lowered: str) -> bool:
+    """Delimiter-bounded match: `hint` must not be embedded inside a larger
+    alphanumeric run. Plain substring matching would let "review" fire on
+    "preview" or "coding" fire on "encoding" -- both real router/gateway
+    naming collisions, not purpose declarations."""
+    return re.search(rf"\b{re.escape(hint)}\b", lowered) is not None
 
 
 def infer_purpose_from_name(model_id: str) -> str | None:
@@ -95,18 +105,30 @@ def infer_purpose_from_name(model_id: str) -> str | None:
     infer_is_router -- this function does not check is_router itself (keeps the two
     heuristics independently testable/composable; every caller gates on infer_is_router
     first, exactly like build_model_catalog's wiring below). Checks for an explicit,
-    unambiguous purpose word in the id: "review"/"plan-review" -> "review";
-    "coding"/"execute" -> "execute". Returns None when neither group matches, OR when
-    both do (a genuine naming contradiction must never be silently resolved by picking
-    one) -- callers that get None fall through to the ordinary external-matching path,
-    exactly as if this heuristic didn't exist."""
+    unambiguous purpose word in the id, as a delimiter-bounded token (never a raw
+    substring): "review"/"plan-review" -> "review"; "coding"/"execute" -> "execute".
+    Returns None when neither group matches, OR when both do (a genuine naming
+    contradiction must never be silently resolved by picking one) -- callers that get
+    None fall through to the ordinary external-matching path, exactly as if this
+    heuristic didn't exist."""
     lowered = model_id.lower()
-    is_review = any(h in lowered for h in _PURPOSE_NAME_HINTS["review"])
-    is_execute = any(h in lowered for h in _PURPOSE_NAME_HINTS["execute"])
+    is_review = any(_hint_matches(h, lowered) for h in _PURPOSE_NAME_HINTS["review"])
+    is_execute = any(_hint_matches(h, lowered) for h in _PURPOSE_NAME_HINTS["execute"])
     if is_review == is_execute:   # neither matched, or both did (contradiction) -> None
         return None
     return "review" if is_review else "execute"
 ```
+
+**Why `\b`-bounded, not raw substring:** `\b` matches at a transition
+between a word character (`[A-Za-z0-9_]`) and a non-word character (or
+string start/end). Router/gateway ids in this codebase delimit words with
+`-`/`/`/`.`, none of which are word characters, so a genuine hyphen- or
+slash-delimited purpose token (`router-env-plan-review`,
+`router-env/coding`) still matches — but `"review"` no longer fires
+inside `"gemini-3-pro-preview"` (the `r` in `review` is preceded by `p`,
+a word character, so no boundary exists there) and `"coding"` no longer
+fires inside `"encoding"`. This replaces the plain-`in` check from an
+earlier draft of this spec, which had exactly this false-positive gap.
 
 **Why gate on `infer_is_router` externally, not internally:** a real vendor
 model's name is not a reliable purpose signal (nothing stops a future
@@ -116,12 +138,19 @@ already independently confirmed to be a router/gateway by name. Mirrors
 `infer_fallback_quota`'s existing pattern of delegating to
 `infer_is_router` rather than re-deriving router-ness itself.
 
-**Why substring, not suffix-only:** `_ROUTER_NAME_HINTS`/`_MODEL_TIER_SUFFIXES`
-already use substring/suffix checks elsewhere in this codebase for the same
-class of naming heuristic; a substring check here is consistent and simpler
-than requiring a trailing-position match, since a router operator's naming
-convention isn't guaranteed to put the purpose word at the very end (e.g.
-`review-router-env` vs `router-env-review`).
+**Why token match, not suffix-only or raw substring:** a router operator's
+naming convention isn't guaranteed to put the purpose word at the very
+end (e.g. `review-router-env` vs `router-env-review`), so this can't be
+suffix-only like `_MODEL_TIER_SUFFIXES`. It also can't be a raw substring
+check like `_ROUTER_NAME_HINTS` uses, because raw substring matching is
+exactly what let `"review"` fire inside `"preview"` in an earlier draft
+of this spec (caught in review) — `_ROUTER_NAME_HINTS`'s own hints
+(`"router"`, `"-env"`, `"local-llm"`) don't happen to collide with common
+model-name words the way `"review"`/`"coding"` do, so that risk was latent
+there but never triggered. The delimiter-bounded match in §4.1 is the
+minimal fix: still a substring-family check (consistent with the rest of
+this file), just anchored to word boundaries so it can't match inside a
+larger word.
 
 ### 4.2 Wiring into `build_model_catalog` (`cli.py`)
 
@@ -296,7 +325,11 @@ set, or it goes through scoring; never both).
 - `model_heuristics.py`: new `TestInferPurposeFromName` class (pattern:
   `TestInferIsRouter`, `tests/test_ai_kit_spec.py:3589`) — covers both
   hint groups, the both-match contradiction (`None`), the neither-match
-  case (`None`), and case-insensitivity.
+  case (`None`), case-insensitivity, AND a pinning test for the
+  delimiter-boundary fix: `infer_purpose_from_name("router-env/gemini-3-pro-preview")`
+  must be `None` (embedded `"review"` inside `"preview"` must NOT match),
+  and `infer_purpose_from_name("router-env/some-encoding-model")` must
+  also be `None` (embedded `"coding"` inside `"encoding"` must NOT match).
 - `cli.py`'s `build_model_catalog`: new tests in the existing
   `TestBuildModelCatalog` class covering: (a) a router-named candidate
   with an unambiguous purpose word never calls `match_models_dev`/
@@ -327,6 +360,10 @@ set, or it goes through scoring; never both).
 - `_PURPOSE_NAME_HINTS` is exactly `{"review": ("review", "plan-review"),
   "execute": ("coding", "execute")}` — no additional tokens without a new
   round of design.
+- Every hint match in `infer_purpose_from_name` MUST be delimiter-bounded
+  (`\b`-anchored regex, per §4.1's `_hint_matches`), never a raw `in`
+  substring check — a raw substring check is the exact defect this round
+  of design fixed (`"review"` was matching inside `"preview"`).
 - `build_model_catalog`'s existing body (from `md_match = ...` onward) is
   never modified — only prepended to. The effort-suffix-fallback logic
   (`md_enrich_match`) must remain byte-for-byte unchanged by this feature.
