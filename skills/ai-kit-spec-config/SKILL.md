@@ -74,6 +74,7 @@ already be installed."
 - **Never skip asking about native reviewer entries** — the only zero-external-dependency reviewer option, worth having available as a fallback (placed last in `policy.ladder`) even when the user primarily wants external CLI reviewers.
 - **Never skip announcing the target path before asking reviewer questions** — user must know where config is headed from the start.
 - **Never re-derive the write target at Step 3** — use what Step 2 already resolved and announced (consistency guarantee).
+- **Never translate literal identifiers** — `purpose` values (REVIEW/EXECUTE), model ids, catalog keys, CLI/runtime names, and field labels stay in their literal, invariant form regardless of what language the rest of this conversation is in. Narrate and explain in the user's own language, but never garble an identifier a user or this skill needs to match against config values by translating it.
 
 ### Step 1 — Detect
 
@@ -196,7 +197,14 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
    heuristic, not a quality judgment; an id it can't confidently collapse just becomes its own
    single-member family, which is fine). Present the **families**, not the raw ids, and let the
    user pick a family (defaulting to its base id) or drill into a specific tier/effort variant
-   only if they want one. Collect the chosen model id(s) per CLI, then write a FILTERED runtimes
+   only if they want one. **Always ask this via `AskUserQuestion` with `multiSelect: true`,
+   consistently across every multi-provider CLI (opencode, cursor-agent, claude, or any other) —
+   never single-select here, and never decide select-mode per CLI on your own judgment.** A user
+   may legitimately want more than one family registered from the same CLI (e.g. both a flagship
+   and a fast tier); deciding single- vs multi-select per CLI case-by-case has been observed in
+   practice to produce inconsistent behavior across CLIs in the same run (confirmed live: one run
+   presented opencode as multi-select and claude as single-select with no principled reason for
+   the difference). Collect the chosen model id(s) per CLI, then write a FILTERED runtimes
    snapshot — a copy of `$RUNTIMES_JSON` whose `clis.<cli>.models` arrays are narrowed to only
    the CLIs kept and models chosen above (single-provider CLIs, which have no `models` array to
    narrow, pass through unchanged) — and use that filtered file, not the raw `$RUNTIMES_JSON`,
@@ -366,23 +374,56 @@ for purpose in ('review', 'execute'):
 6. Present the top candidates per purpose to the user in this shape (adapt scores/labels to what
    the catalog actually returned — illustrative, not literal output; the exact field set shown
    for a given candidate always matches whatever the `field()` calls above actually found
-   non-`None` for it, never more than that). **Any field sourced from Artificial Analysis
-   (scores, speed, or its pricing when models.dev had no match) carries the
+   non-`None` for it, never more than that). **Every candidate line must also show which
+   runtime(s)/CLI(s) it's reachable through** — read this from the entry's own `runtimes` dict
+   keys (e.g. `codex`, `opencode`) — never omit it; a user picking a candidate needs to know which
+   installed CLI would actually run it, not just its catalog key. **Any field sourced from
+   Artificial Analysis (scores, speed, or its pricing when models.dev had no match) carries the
    `[via Artificial Analysis]` tag verbatim, every time it's shown — this is a hard requirement,
    not a nicety: Artificial Analysis's API terms require attribution wherever its data is
    presented.**
    ```
    REVIEW (flagship/reasoning) — top candidates:
-     1. gpt-5.6-sol             score 87  (intelligence 91 [via Artificial Analysis], batch✓, ctx 400k)
-     2. grok-4.6                score 79  (intelligence 85 [via Artificial Analysis], agentic 88 [via Artificial Analysis])
-     3. router-env (fallback✓)  score 74
+     1. openai/gpt-5.6-sol     via codex     score 87  (intelligence 91 [via Artificial Analysis], batch✓, ctx 400k)
+     2. xai/grok-4.6           via grok      score 79  (intelligence 85 [via Artificial Analysis], agentic 88 [via Artificial Analysis])
+     3. anthropic/router-env   via opencode  score 74  (fallback✓)
 
    EXECUTE (coding-agent) — top candidates:
-     1. router-env (fallback✓)  score 90  (coding 89 [via Artificial Analysis], tool_call✓)
-     2. gpt-5.6-sol             score 81
+     1. anthropic/router-env   via opencode  score 90  (coding 89 [via Artificial Analysis], tool_call✓)  — also ranked #3 in REVIEW above
+     2. openai/gpt-5.6-sol     via codex     score 81  — also ranked #1 in REVIEW above
    Any preference not listed, or confirm this order for the ladder?
    ```
-   Ask the user to confirm or adjust. **Record, for every confirmed candidate, which list(s) it
+   **The SAME catalog key appearing in both lists is expected, not a mistake** — REVIEW and
+   EXECUTE score the exact same candidate pool with genuinely different weight profiles
+   (`references/ranking-weights.toml`: `coding_index` weight triples for EXECUTE, 0.10→0.30,
+   while `intelligence_index` is halved, 0.30→0.15 — see `model_ranker.py`'s `DEFAULT_WEIGHTS`
+   for the full table), and a model that's strong across every axis (a "combo" flagship, common
+   among today's frontier models) can legitimately score well under both weightings at once. When
+   one key shows up in both lists, **always annotate it** (`— also ranked #N in <OTHER_PURPOSE>
+   above`, as above) so the user sees it's the same entry ranked twice on purpose, not a
+   coincidence.
+
+   **A DIFFERENT failure mode, and the more important one to catch: two DISTINCT keys landing in
+   the WRONG or SAME list because the ranking axes couldn't tell them apart.** This happens for a
+   router/gateway-style CLI whose own model id already declares its intended purpose in plain
+   words — e.g. a provider exposing separate `<name>-plan-review` and `<name>-coding` (or
+   `-review`/`-execute`) endpoints — where models.dev/Artificial Analysis has no distinct entry
+   for each variant, so both resolve (exact or fuzzy) to the same generic source data and end up
+   with near-identical `intelligence_index`/`coding_index`/`agentic_index` scores. The purpose
+   the CLI's own name declares then has NO influence on the weighted score at all, and both
+   variants can rank into the same list — or the wrong one — even though the CLI operator clearly
+   intended them for different roles (confirmed live: a `-plan-review`-suffixed key and a
+   `-coding`-suffixed key from the same router both ranked into EXECUTE, when only the
+   `-coding` one belonged there). **Before presenting either list, check every candidate's raw
+   CLI-reported model id for an explicit purpose word** (`review`, `plan-review`, `coding`,
+   `execute`, or similarly unambiguous — not a generic effort/tier token like `high`/`fast`,
+   which `_MODEL_TIER_SUFFIXES` already handles separately). If that word contradicts the list
+   the axis-based score placed it in (a `-coding` id inside REVIEW, a `-review`/`-plan-review` id
+   inside EXECUTE), **do not present it there** — move it to the list its own name declares, and
+   say so explicitly to the user (e.g. `"<key> excluded from EXECUTE despite scoring #2 — its own
+   name declares it a review-only endpoint"`), rather than trusting the generic score over the
+   CLI's own explicit labeling. Ask the user to confirm or adjust. **Record, for every confirmed
+   candidate, which list(s) it
    was confirmed from** — REVIEW only, EXECUTE only, or both — this becomes that entry's
    `purpose` value (`"review"`, `"execute"`, or `"both"`) carried forward into Step 2.4's
    command-building and Step 3's write below. **A candidate that comes through this ranked flow
