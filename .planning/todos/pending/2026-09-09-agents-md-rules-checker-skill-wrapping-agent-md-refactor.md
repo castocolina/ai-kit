@@ -125,6 +125,28 @@ Required rule content for the checker:
      checker should have agents note that fact and explain how to use it if present —
      mirroring the CodeGraph rule's shape — but should not claim MCP-tool-equivalent
      integration it doesn't currently have on this host.
+   - **Coexistence is the expected/default posture, not a special case** — the checker
+     should tell agents to use both when both are present: CodeGraph for fast code-structure
+     lookups, graphify for doc-aware indexing, per the split above.
+   - **Agents must trigger indexing proactively, not rely on the hook alone.** The
+     post-commit hook (standalone) or the `auto_update` HEAD-advance hook (GSD-managed) both
+     assume merges to the default/main branch happen as part of the normal local workflow —
+     that's not always true (e.g. local feature-branch work that doesn't merge to main
+     often, or a branch merged remotely instead of locally). An agent that only relies on
+     the hook can end up working against a stale graph without knowing it. So: run
+     `graphify update` (or check `graphify status` and update if stale) directly after
+     making non-trivial changes, rather than assuming the hook already covered it — same
+     spirit as rule 14's "verify, don't assume" for stale knowledge, applied to the graph
+     itself.
+   - **When the repo is under open-GSD, target `.planning/graphs/`, not `./graphify-out/`.**
+     If `.planning/` exists and GSD is managing the repo, agents should not run bare
+     `graphify update .` and let it default to `./graphify-out/` — that produces a second,
+     disconnected index GSD's own tooling never reads. Instead: confirm `graphify.enabled`
+     is set in `.planning/config.json` (enable it if graphify is present and it isn't), and
+     let GSD's own `graphify update` path write to `.planning/graphs/graph.json` — the same
+     location `gsd-planner`/`gsd-phase-researcher` read from. Only fall back to the
+     standalone `./graphify-out/` default when the repo genuinely has no GSD planning
+     directory.
 
 9. **No orphaned ephemeral processes/windows from e2e verification.** Any agent driving
    e2e verification that spawns ephemeral processes or windows — terminals, browsers, or
