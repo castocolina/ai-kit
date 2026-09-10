@@ -1,9 +1,11 @@
+import ast
 import json
 import os
 import re
 import shutil
 import sqlite3
 import stat
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -2149,6 +2151,417 @@ class TestDashboard(unittest.TestCase):
         self.assertIn("<\\/script", embedded)
 
 
+_DASHBOARD_PY = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "skills",
+    "ai-kit-usage-metrics",
+    "ai_kit_usage_metrics",
+    "dashboard.py",
+)
+
+# Markers wrapping the shipped pure JS functions so tests can extract them.
+_JS_PURE_START = "/* PURE_FUNCTIONS_START */"
+_JS_PURE_END = "/* PURE_FUNCTIONS_END */"
+
+_FULL_SCHEMA_COLUMNS = (
+    "id",
+    "raw_ref",
+    "runtime",
+    "session_id",
+    "turn_id",
+    "date",
+    "timestamp",
+    "model",
+    "command_text",
+    "family",
+    "command_shape",
+    "step_index",
+    "step_count",
+    "operator",
+    "execution_certain",
+    "resolved_cwd",
+    "source_confidence",
+    "tokens_input",
+    "tokens_output",
+    "price",
+    "price_confidence",
+    "rtk_input_tokens",
+    "rtk_output_tokens",
+    "rtk_saved_tokens",
+    "rtk_savings_pct",
+    "rtk_rewrote",
+    "inferred_family",
+    "inferred_confidence",
+    "exec_duration_ms",
+)
+
+
+def _dashboard_row(**overrides):
+    row = {
+        "raw_ref": "claude:/a.jsonl:1",
+        "runtime": "claude",
+        "session_id": "sess-a",
+        "turn_id": "turn-a",
+        "date": "2026-09-10",
+        "timestamp": TS_USE,
+        "model": MODEL,
+        "command_text": "rg TODO",
+        "family": "grep",
+        "command_shape": "simple",
+        "step_index": 0,
+        "step_count": 1,
+        "operator": None,
+        "execution_certain": True,
+        "resolved_cwd": CWD,
+        "source_confidence": "high",
+        "tokens_input": 100,
+        "tokens_output": 50,
+        "price": 0.01,
+        "price_confidence": "unknown",
+        "rtk_input_tokens": None,
+        "rtk_output_tokens": None,
+        "rtk_saved_tokens": None,
+        "rtk_savings_pct": None,
+        "rtk_rewrote": None,
+        "inferred_family": None,
+        "inferred_confidence": None,
+        "exec_duration_ms": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def _this_month_prefix():
+    return datetime.now().strftime("%Y-%m")
+
+
+def _this_month_day(day=10):
+    return f"{_this_month_prefix()}-{day:02d}"
+
+
+def _last_month_day(day=10):
+    year, month = datetime.now().year, datetime.now().month
+    if month == 1:
+        year, month = year - 1, 12
+    else:
+        month -= 1
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def _parse_embedded_rows(html):
+    start = html.find('<script type="application/json" id="usage-metrics-data">')
+    if start < 0:
+        raise AssertionError("embedded JSON script tag missing")
+    open_end = html.find(">", start)
+    close = html.find("</script>", open_end)
+    payload = html[open_end + 1 : close].replace("<\\/script", "</script")
+    return json.loads(payload)
+
+
+def _extract_pure_js(html):
+    # Marker convention: dashboard.py wraps filterRows/sortRows/groupBySession/
+    # displayFamily between PURE_FUNCTIONS_START and PURE_FUNCTIONS_END comments.
+    start = html.find(_JS_PURE_START)
+    end = html.find(_JS_PURE_END)
+    if start < 0 or end < 0 or end <= start:
+        raise AssertionError("pure-function markers missing from generated HTML")
+    return html[start + len(_JS_PURE_START) : end]
+
+
+class TestDashboardFull(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="ai-kit-um-dash-full-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.env = _scratch_env(self.root)
+        self.this_month = _this_month_day(10)
+        self.last_month = _last_month_day(10)
+        self.rows = [
+            _dashboard_row(
+                raw_ref="claude:/a.jsonl:1",
+                session_id="sess-grep-a",
+                turn_id="turn-grep-a",
+                date=self.this_month,
+                command_text="rg TODO",
+                family="grep",
+                tokens_input=100,
+                tokens_output=50,
+                price=0.01,
+            ),
+            _dashboard_row(
+                raw_ref="claude:/a.jsonl:2",
+                session_id="sess-grep-b",
+                turn_id="turn-grep-b",
+                date=self.this_month,
+                command_text="rg FIXME",
+                family="grep",
+                tokens_input=80,
+                tokens_output=20,
+                price=0.008,
+            ),
+            _dashboard_row(
+                raw_ref="claude:/a.jsonl:3",
+                session_id="sess-ls",
+                turn_id="turn-ls",
+                date=self.this_month,
+                command_text="ls -la",
+                family="ls",
+                model="claude-sonnet-4-5",
+                tokens_input=10,
+                tokens_output=5,
+                price=0.001,
+            ),
+            _dashboard_row(
+                raw_ref="claude:/a.jsonl:4",
+                session_id="sess-old",
+                turn_id="turn-old",
+                date=self.last_month,
+                command_text="rg OLD",
+                family="grep",
+                tokens_input=40,
+                tokens_output=10,
+                price=0.004,
+            ),
+            _dashboard_row(
+                raw_ref="claude:/a.jsonl:5",
+                session_id="sess-inferred",
+                turn_id="turn-inferred",
+                date=self.this_month,
+                command_text='for f in *.py; do rg pattern "$f"; done',
+                family="",
+                command_shape="control_flow_script",
+                inferred_family="grep",
+                inferred_confidence="LOW",
+                tokens_input=200,
+                tokens_output=30,
+                price=0.02,
+            ),
+            _dashboard_row(
+                raw_ref="cursor:/t.jsonl:1",
+                runtime="cursor",
+                session_id="sess-cursor",
+                turn_id="turn-cursor",
+                date=self.this_month,
+                command_text="cat notes.md",
+                family="cat",
+                model="cursor-composer",
+                source_confidence="low",
+                tokens_input=None,
+                tokens_output=None,
+                price=None,
+            ),
+            _dashboard_row(
+                raw_ref="claude:/a.jsonl:6",
+                session_id="sess-compound",
+                turn_id="turn-compound",
+                date=self.this_month,
+                command_text="cd src",
+                family="cd",
+                step_index=0,
+                step_count=2,
+                operator=None,
+                execution_certain=True,
+                tokens_input=300,
+                tokens_output=100,
+                price=0.05,
+            ),
+            _dashboard_row(
+                raw_ref="claude:/a.jsonl:6",
+                session_id="sess-compound",
+                turn_id="turn-compound",
+                date=self.this_month,
+                command_text="rg TODO",
+                family="grep",
+                step_index=1,
+                step_count=2,
+                operator="&&",
+                execution_certain=False,
+                tokens_input=300,
+                tokens_output=100,
+                price=0.05,
+            ),
+        ]
+
+    def _seed_and_generate(self):
+        conn = refined_store.open_refined_db(self.env)
+        refined_store.insert_commands(conn, self.rows)
+        conn.close()
+        ro = refined_store.open_refined_db_readonly(self.env)
+        self.addCleanup(ro.close)
+        out = os.path.join(self.root, "dashboard.html")
+        generate(ro, out)
+        with open(out, encoding="utf-8") as handle:
+            html = handle.read()
+        return html, out
+
+    def test_readonly_generate_roundtrips_full_schema(self):
+        html, _out = self._seed_and_generate()
+        embedded = _parse_embedded_rows(html)
+        self.assertEqual(len(embedded), len(self.rows))
+        for col in _FULL_SCHEMA_COLUMNS:
+            self.assertTrue(
+                any(col in row for row in embedded),
+                f"column {col!r} missing from embedded JSON",
+            )
+        inferred = [row for row in embedded if row.get("inferred_family") == "grep"]
+        self.assertEqual(len(inferred), 1)
+        self.assertEqual(inferred[0]["inferred_confidence"], "LOW")
+        cursor_rows = [row for row in embedded if row.get("runtime") == "cursor"]
+        self.assertEqual(len(cursor_rows), 1)
+        self.assertEqual(cursor_rows[0]["source_confidence"], "low")
+
+    def test_each_mvp_axis_has_filter_and_sortable_header(self):
+        html, _out = self._seed_and_generate()
+        axes = {
+            "date": ("filter-date-preset", "date"),
+            "model": ("filter-model", "model"),
+            "family": ("filter-family", "family"),
+            "tokens": ("filter-tokens-min", "tokens_input"),
+            "price": ("filter-price-min", "price"),
+        }
+        self.assertIn('id="filter-command"', html)
+        self.assertIn('data-sort-key="command_text"', html)
+        self.assertIn('data-sort-key="tokens_output"', html)
+        self.assertIn('id="filter-tokens-max"', html)
+        self.assertIn('id="filter-price-max"', html)
+        self.assertIn('id="group-by-session"', html)
+        for axis, (filter_id, sort_key) in axes.items():
+            self.assertIn(
+                f'id="{filter_id}"',
+                html,
+                f"{axis} filter control missing",
+            )
+            self.assertIn(
+                f'data-sort-key="{sort_key}"',
+                html,
+                f"{axis} sortable header missing",
+            )
+
+    def test_inferred_family_and_source_confidence_and_conditional_markers(self):
+        html, _out = self._seed_and_generate()
+        self.assertIn("(inferred,", html)
+        self.assertIn("LOW", html)
+        self.assertIn("source_confidence", html)
+        self.assertIn("(conditional)", html)
+
+    def test_group_by_session_dedups_turn_tokens(self):
+        html, _out = self._seed_and_generate()
+        pure = _extract_pure_js(html)
+        rows = _parse_embedded_rows(html)
+        compound = [r for r in rows if r.get("session_id") == "sess-compound"]
+        self.assertEqual(len(compound), 2)
+        wrapper = os.path.join(self.root, "group_check.js")
+        fixture = os.path.join(self.root, "compound.json")
+        with open(fixture, "w", encoding="utf-8") as handle:
+            json.dump(compound, handle)
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconst rows = require("
+                + json.dumps(fixture)
+                + ");\n"
+                + "const grouped = groupBySession(rows);\n"
+                + "console.log(JSON.stringify(grouped));\n"
+            )
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        proc = subprocess.run(
+            ["node", wrapper], capture_output=True, text=True, check=True
+        )
+        grouped = json.loads(proc.stdout)
+        self.assertEqual(len(grouped), 1)
+        session = grouped[0]
+        self.assertEqual(session["count"], 2)
+        self.assertEqual(session["tokens_input"], 300)
+        self.assertEqual(session["tokens_output"], 100)
+        self.assertEqual(session["price"], 0.05)
+
+    def test_no_data_driven_innerhtml_assignment(self):
+        html, _out = self._seed_and_generate()
+        script_start = html.find("<script>\n")
+        self.assertNotEqual(script_start, -1)
+        script = html[script_start:]
+        self.assertIsNone(re.search(r"innerHTML\s*=\s*[`]", script))
+        self.assertIsNone(re.search(r"innerHTML\s*=\s*.*\brow\b", script))
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIsNone(re.search(r"innerHTML\s*=\s*[`]", source))
+        self.assertEqual(
+            len(re.findall(r"\.innerHTML\s*=", source)),
+            0,
+        )
+
+    def test_shipped_js_canonical_query_via_node(self):
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        pure = _extract_pure_js(html)
+        rows = _parse_embedded_rows(html)
+        wrapper = os.path.join(self.root, "canonical.js")
+        fixture = os.path.join(self.root, "rows.json")
+        with open(fixture, "w", encoding="utf-8") as handle:
+            json.dump(rows, handle)
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconst rows = require("
+                + json.dumps(fixture)
+                + ");\n"
+                + "const filtered = filterRows(rows, "
+                "{family: 'grep', datePreset: 'current_month'});\n"
+                + "const grouped = groupBySession(filtered);\n"
+                + "console.log(JSON.stringify({filtered: filtered.length, grouped: grouped}));\n"
+            )
+        proc = subprocess.run(
+            ["node", wrapper], capture_output=True, text=True, check=True
+        )
+        result = json.loads(proc.stdout)
+        # grep-family this month: sess-grep-a, sess-grep-b, sess-compound (rg step).
+        # last-month rg OLD is excluded. inferred-family row has family="" so
+        # the mechanical family filter does not match it.
+        self.assertEqual(result["filtered"], 3)
+        by_session = {item["session_id"]: item for item in result["grouped"]}
+        self.assertEqual(set(by_session), {"sess-grep-a", "sess-grep-b", "sess-compound"})
+        self.assertEqual(by_session["sess-grep-a"]["count"], 1)
+        self.assertEqual(by_session["sess-grep-b"]["count"], 1)
+        self.assertEqual(by_session["sess-compound"]["count"], 1)
+        self.assertEqual(by_session["sess-compound"]["tokens_input"], 300)
+        self.assertEqual(by_session["sess-compound"]["tokens_output"], 100)
+        self.assertEqual(by_session["sess-compound"]["price"], 0.05)
+
+    def test_generate_ignores_missing_raw_jsonl(self):
+        conn = refined_store.open_refined_db(self.env)
+        refined_store.insert_commands(conn, self.rows)
+        conn.close()
+        raw = paths.raw_dir(self.env)
+        os.makedirs(raw, exist_ok=True)
+        dummy = os.path.join(raw, "claude.jsonl")
+        with open(dummy, "w", encoding="utf-8") as handle:
+            handle.write("{}\n")
+        os.unlink(dummy)
+        ro = refined_store.open_refined_db_readonly(self.env)
+        self.addCleanup(ro.close)
+        out = os.path.join(self.root, "dashboard.html")
+        generate(ro, out)
+        with open(out, encoding="utf-8") as handle:
+            html = handle.read()
+        embedded = _parse_embedded_rows(html)
+        self.assertEqual(len(embedded), len(self.rows))
+
+    def test_dashboard_py_imports_no_network_modules(self):
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read())
+        forbidden = {"urllib", "http", "requests", "socket"}
+        found = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    found.add(alias.name.split(".", 1)[0])
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                found.add(node.module.split(".", 1)[0])
+        self.assertEqual(found & forbidden, set())
+
+
 class TestPermissions(unittest.TestCase):
     def test_run_creates_private_dirs_and_files(self):
         root = tempfile.mkdtemp(prefix="ai-kit-um-perm-")
@@ -2611,6 +3024,52 @@ class TestPhaseGateRegistration(unittest.TestCase):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         self.assertIn("skills/ai-kit-usage-metrics", data["tool"]["pyright"]["include"])
+
+
+_SKILL_MD = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "skills",
+    "ai-kit-usage-metrics",
+    "SKILL.md",
+)
+_REFINED_STORE_PY = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "skills",
+    "ai-kit-usage-metrics",
+    "ai_kit_usage_metrics",
+    "refined_store.py",
+)
+
+
+def _schema_column_names():
+    with open(_REFINED_STORE_PY, encoding="utf-8") as handle:
+        source = handle.read()
+    match = re.search(
+        r"CREATE TABLE IF NOT EXISTS refined_commands \((.*?)UNIQUE",
+        source,
+        re.DOTALL,
+    )
+    if match is None:
+        raise AssertionError("CREATE TABLE statement not found in refined_store.py")
+    names = []
+    for line in match.group(1).splitlines():
+        stripped = line.strip().rstrip(",")
+        if not stripped:
+            continue
+        names.append(stripped.split()[0])
+    return names
+
+
+class TestSkillDocumentation(unittest.TestCase):
+    def test_skill_md_documents_every_schema_column_and_classify_loop(self):
+        with open(_SKILL_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        for col in _schema_column_names():
+            self.assertIn(col, text, f"SKILL.md missing column {col!r}")
+        self.assertIn("classify", text)
+        self.assertIn("trigger", text)
 
 
 if __name__ == "__main__":

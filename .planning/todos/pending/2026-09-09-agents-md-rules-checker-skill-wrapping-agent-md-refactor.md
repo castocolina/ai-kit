@@ -77,6 +77,23 @@ Required rule content for the checker:
    exploration; recommend `codegraph init -i` when entering a workspace with no existing
    `.codegraph/` index, and `codegraph sync` after code changes.
 
+8. **No orphaned ephemeral processes/windows from e2e verification.** Any agent driving
+   e2e verification that spawns ephemeral processes or windows — terminals, browsers, or
+   anything under a hub/daemon process — must kill/stop what it spawned when done. No
+   orphan processes left alive after the agent finishes.
+
+9. **Ephemeral files land under `./tmp/` (gitignored), not scattered around the repo.**
+   Scripts or files created just to check/probe something, with no lasting value as a
+   project asset, must live under `./tmp/` — e.g. `./tmp/scripts/{kind}/`, `./tmp/docs/`.
+   When a script turns out to be genuinely useful to the project, it graduates out of
+   `./tmp/` into the conventional location for the stack: `./scripts`, `./tools`,
+   `./src/main/scripts/`, etc., whichever matches the language/stack's own convention.
+   - Documents sometimes need diagrams (not just simple flowcharts) embedded via Mermaid —
+     use the `mermaid-diagrams` skill when a doc needs one.
+
+10. **README currency rule**: after adding, removing, or refactoring any significant
+    feature, the README must be updated, using the `crafting-effective-readmes` skill.
+
 ## Solution
 
 TBD — scaffold via `/superpowers:writing-skills`, evaluate with `/skill-judge`, then run

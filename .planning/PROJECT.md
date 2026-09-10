@@ -73,9 +73,11 @@ verified live rather than assumed from a catalog.
 - A SessionStart-equivalent hook for opencode — opencode has no documented
   injection point today; the gap is accepted and documented, not silently
   absent, pending upstream support.
-- A hosted-database capability behind the usage-metrics dashboard Artifact —
-  session data must never leave the local machine; the dashboard reads a
-  local export only.
+- A hosted-database capability pointed at usage-metrics session content —
+  session data must never leave the local machine; the dashboard is a
+  pipeline-regenerated static HTML file with refined data embedded
+  directly (no export/import step, no browser-sandboxed Artifact
+  mechanism).
 - Presenting opencode's "session retention" as a real, settable config value
   in config doctor — no such setting exists upstream; shown informational-only,
   never offered as an apply action.

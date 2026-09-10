@@ -9,3 +9,4 @@ __pycache__
 .codegraph/
 .aikit/
 .planning/phases/*/.review-diagnostics/
+.planning/phases/*/.execution-diagnostics/
