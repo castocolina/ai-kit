@@ -94,6 +94,7 @@ def _toml_value(v) -> str:
 
 
 _VALID_PURPOSE = {"review", "execute", "both"}
+_VALID_NATIVE_RUNTIME = {"claude", "opencode", "codex", "cursor", "unknown"}
 
 
 def validate_reviewer_fields(entry: dict) -> str | None:
@@ -111,6 +112,13 @@ def validate_reviewer_fields(entry: dict) -> str | None:
     if "purpose" in entry and (
             not isinstance(entry["purpose"], str) or entry["purpose"] not in _VALID_PURPOSE):
         return f"{key}: 'purpose' must be one of {sorted(_VALID_PURPOSE)}"
+    if "native_runtime" in entry and (
+            not isinstance(entry["native_runtime"], str)
+            or entry["native_runtime"] not in _VALID_NATIVE_RUNTIME):
+        return f"{key}: 'native_runtime' must be one of {sorted(_VALID_NATIVE_RUNTIME)}"
+    if "native_runtime" in entry and entry.get("native_runtime") is not None \
+            and entry.get("cli") is not None:
+        return f"{key}: 'native_runtime' must not be set on an entry with a non-null 'cli'"
     for field in ("is_router", "fallback_quota"):
         if field in entry and not isinstance(entry[field], bool):
             return f"{key}: '{field}' must be a boolean"

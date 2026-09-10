@@ -1,0 +1,31 @@
+{
+  "source_path": "/var/home/bazzite/git/personal/ai-kit/docs/prds/ai-kit-multi-cli-runtime-support-v1.0-prd.md",
+  "type": "PRD",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "AI-Kit Multi-CLI Runtime Support - Product Requirements Document (PRD)",
+  "summary": "Requirements for multi-CLI runtime detection in ai-kit, install.sh hardening, and opencode UI plugin research.",
+  "scope": [
+    "runtime detection",
+    "multi-CLI support",
+    "install.sh",
+    "model catalog",
+    "native runtime",
+    "Claude Code",
+    "opencode",
+    "codex",
+    "plugin hooks"
+  ],
+  "cross_refs": [
+    "tools/install.sh",
+    "skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py",
+    "skills/ai-kit-spec-review/ai_kit_spec/model_heuristics.py",
+    "skills/ai-kit-spec-review/ai_kit_spec/execute_dispatch.py",
+    "skills/ai-kit-spec-review/ai_kit_spec/detection.py",
+    "ai-kit-spec-config/SKILL.md",
+    "tests/test_install.sh",
+    "tests/test_ai_kit_spec.py"
+  ],
+  "locked": false,
+  "precedence": null
+}

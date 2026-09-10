@@ -1,0 +1,12 @@
+{
+  "source_path": "/var/home/bazzite/git/personal/ai-kit/docs/prds/ai-kit-opencode-provider-management-v1.0-prd.md",
+  "type": "PRD",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "AI-Kit opencode Provider Management - Product Requirements Document (PRD)",
+  "summary": "Defines requirements for an ai-kit skill to safely list and remove opencode's config-based custom providers with cross-reference warnings.",
+  "scope": ["opencode provider management", "config-based providers", "ai-kit skill", "cross-reference checking", "atomic file operations", "JSONC editing"],
+  "cross_refs": ["ai-kit-multi-cli-runtime-support"],
+  "locked": false,
+  "precedence": null
+}

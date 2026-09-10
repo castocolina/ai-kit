@@ -1,0 +1,43 @@
+{
+  "contract": "1.0.0",
+  "flavor": "core",
+  "milestone": "v1.0",
+  "phases": [
+    {
+      "number": "1.1",
+      "name": "Autonomous-Run Infrastructure (INSERTED)",
+      "status": "complete"
+    },
+    {
+      "number": "1.2",
+      "name": "Multi-CLI Runtime Foundation",
+      "status": "in_progress"
+    },
+    {
+      "number": "2",
+      "name": "Opencode Provider Management",
+      "status": "pending"
+    },
+    {
+      "number": "3",
+      "name": "Tool-Substitution Awareness Hook",
+      "status": "pending"
+    },
+    {
+      "number": "4",
+      "name": "Config Doctor",
+      "status": "pending"
+    },
+    {
+      "number": "5",
+      "name": "Usage Metrics Dashboard",
+      "status": "pending"
+    }
+  ],
+  "next": {
+    "command": "/gsd:progress --next",
+    "label": "Advance to the next step",
+    "reason": "executing"
+  },
+  "updated_at": "2026-09-09T18:09:25.370Z"
+}

@@ -22,6 +22,55 @@ def detect_installed_clis(which_fn=shutil.which) -> dict:
     return {cli: which_fn(cli) for cli in KNOWN_CLIS}
 
 
+# Fixed check order (D-02). Label "cursor" differs from KNOWN_CLIS's "cursor-agent"
+# binary-name entry on purpose (D-09) — this tuple never normalizes KNOWN_CLIS.
+_RUNTIME_ENV_SIGNALS = (
+    ("claude", "CLAUDECODE"),
+    ("opencode", "OPENCODE"),
+    ("cursor", "CURSOR_AGENT"),
+    ("codex", "CODEX_VERSION"),
+)
+
+
+def detect_current_runtime(env: dict | None = None) -> str:
+    """Which CLI is hosting THIS process right now.
+
+    Walks `_RUNTIME_ENV_SIGNALS` in the documented fixed order and returns the
+    first label whose env var is truthy, or `"unknown"` when none match
+    (D-04: never silently omitted). A present-but-empty value (e.g.
+    `CLAUDECODE=""`) is treated as falsy/absent — implemented via a plain
+    truthiness check (`if env.get(var):`, never a bare `var in env` presence
+    check). That is a deliberate contract matching ordinary env-var
+    conventions, not an accident of `if env.get(var):`'s default behavior.
+
+    Unlike `detect_installed_clis`/`build_runtimes_snapshot`, this is never
+    cached or TTL'd (D-01/D-03): which CLI hosts a process is fixed for that
+    process's whole lifetime, cheap to recompute, and never needs
+    cross-process persistence. Nested-subprocess env vars accumulate, so
+    two signals may both be set; the function never claims to resolve "true
+    immediate parent" beyond what the fixed order establishes (D-02/D-03).
+
+    Signal verification is NOT uniform — never treat all four as equally
+    confirmed (AGENTS.md certainty-labeling; 01.2-RESEARCH.md Common Pitfall 2):
+
+    - claude (`CLAUDECODE`): live-verified this session via this process's
+      own env dump.
+    - opencode (`OPENCODE`/`OPENCODE_PID`): live-verified this session via a
+      live spawned `opencode run` subprocess.
+    - cursor (`CURSOR_AGENT`): source-inspected-only — confirmed via the
+      actually-installed cursor-agent bundle's own `index.js`, not a live
+      subprocess (blocked by exhausted quota this session).
+    - codex (`CODEX_VERSION`): source-inspected-only — confirmed via
+      openai/codex's open-source `exec_env.rs`, not a live subprocess
+      (blocked by expired auth this session).
+    """
+    env = env if env is not None else os.environ
+    for label, var in _RUNTIME_ENV_SIGNALS:
+        if env.get(var):
+            return label
+    return "unknown"
+
+
 def detect_opencode_models(binary: str, run_fn=subprocess.run) -> list:
     """Runs `<binary> models`; one model id per non-blank line. opencode is
     the only known-installed multi-provider CLI today (confirmed live:

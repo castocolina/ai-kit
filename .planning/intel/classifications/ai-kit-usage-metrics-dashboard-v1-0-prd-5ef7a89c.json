@@ -1,0 +1,28 @@
+{
+  "source_path": "/var/home/bazzite/git/personal/ai-kit/docs/prds/ai-kit-usage-metrics-dashboard-v1.0-prd.md",
+  "type": "PRD",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "AI-Kit Cross-Runtime Usage Metrics & Dashboard - Product Requirements Document (PRD)",
+  "summary": "Cross-runtime usage metrics pipeline collecting logs from 4 AI runtimes into unified queryable format with local interactive dashboard for filtering by date, model, commands, tokens, price.",
+  "scope": [
+    "Claude Code",
+    "opencode",
+    "Codex",
+    "Cursor",
+    "session logs",
+    "usage metrics",
+    "interactive dashboard",
+    "command decomposition",
+    "working directory resolution",
+    "tokens",
+    "cost estimation",
+    "command families"
+  ],
+  "cross_refs": [
+    "ai-kit-config-doctor",
+    "ai-kit-tool-substitution-awareness-hook"
+  ],
+  "locked": false,
+  "precedence": null
+}

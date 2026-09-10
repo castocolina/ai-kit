@@ -105,24 +105,26 @@ check "--branch= (equals form) consumed, not forwarded to setup.py" \
   bash -c '[ "'"$out"'" = "SETUP_RAN install" ]'
 
 # --- 4c. --branch drives the BOOTSTRAP clone (repo from default / AI_KIT_REPO)
-# A fake `git` records the clone's URL+branch and materializes a marker checkout
-# so the bootstrap continues; assert the branch reached the fetch and that a fork
-# is still selectable via the AI_KIT_REPO env var (no --repo flag needed).
+# A fake `git` records the clone's URL+branch+single-branch flag and materializes
+# a marker checkout so the bootstrap continues; assert the branch reached the
+# fetch, that --single-branch was on the invoked argv, and that a fork is still
+# selectable via the AI_KIT_REPO env var (no --repo flag needed).
 FAKEGIT="$WORK/fakegitbin"; mkdir -p "$FAKEGIT"
 cat > "$FAKEGIT/git" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = clone ]; then
-  shift; br=""; url=""; dir=""
+  shift; br=""; url=""; dir=""; sb=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --branch) br="$2"; shift ;;
       --depth)  shift ;;
+      --single-branch) sb=1 ;;
       http*|git@*) url="$1" ;;
       *) dir="$1" ;;
     esac
     shift
   done
-  printf '%s %s\n' "$url" "$br" > "$AIKIT_FETCH_MARKER"
+  printf '%s %s %s\n' "$url" "$br" "$sb" > "$AIKIT_FETCH_MARKER"
   mkdir -p "$dir/tools"
   printf 'import sys\nprint("FETCHED_SETUP " + " ".join(sys.argv[1:]))\n' > "$dir/tools/setup.py"
 fi
@@ -139,7 +141,7 @@ out="$(env -i HOME="$WORK" PATH="$FAKEGIT:$PATH" AI_KIT_DIR="$WORK/fetchdir" \
        bash "$BOOT/install.sh" install --branch featbr 2>/dev/null)"
 fetched="$(cat "$MARKER" 2>/dev/null || true)"
 check "--branch drives the clone branch (default repo)" \
-  bash -c '[ "'"$fetched"'" = "https://github.com/castocolina/ai-kit.git featbr" ]'
+  bash -c '[ "'"$fetched"'" = "https://github.com/castocolina/ai-kit.git featbr 1" ]'
 check "fetched setup.py runs with --branch stripped" \
   bash -c '[ "'"$out"'" = "FETCHED_SETUP install" ]'
 # A fork is still selectable via AI_KIT_REPO (no --repo flag needed).
@@ -148,7 +150,7 @@ out="$(env -i HOME="$WORK" PATH="$FAKEGIT:$PATH" AI_KIT_DIR="$WORK/fetchdir2" \
        bash "$BOOT/install.sh" install --branch wip 2>/dev/null)"
 fetched="$(cat "$MARKER" 2>/dev/null || true)"
 check "AI_KIT_REPO env selects a fork; --branch sets the branch" \
-  bash -c '[ "'"$fetched"'" = "https://github.com/someone/forked.git wip" ]'
+  bash -c '[ "'"$fetched"'" = "https://github.com/someone/forked.git wip 1" ]'
 
 # --- 5. shellcheck stays clean ----------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then

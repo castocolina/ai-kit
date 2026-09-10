@@ -23,6 +23,7 @@ from ai_kit_spec.detection import (
     RUNTIMES_TTL_SECONDS,
     build_runtimes_snapshot,
     cache_runtimes_path,
+    detect_current_runtime,
     detect_tool_availability,
     find_codegraph_alternative,
     group_models_by_family,
@@ -486,6 +487,7 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
     p_cache_path.add_argument("--kind", choices=["runtimes", "quota", "catalog"], required=True)
 
     sub.add_parser("detect-tools")
+    sub.add_parser("detect-current-runtime")
 
     p_detect = sub.add_parser("detect-runtimes")
     p_detect.add_argument(
@@ -699,6 +701,10 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
 
     if args.command == "detect-tools":
         print(json.dumps(detect_tool_availability(which_fn=which_fn)))
+        return 0
+
+    if args.command == "detect-current-runtime":
+        print(json.dumps({"native_runtime": detect_current_runtime(env_fn())}))
         return 0
 
     if args.command == "detect-runtimes":

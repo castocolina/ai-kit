@@ -1,0 +1,36 @@
+{
+  "source_path": "/var/home/bazzite/git/personal/ai-kit/docs/prds/ai-kit-config-doctor-v1.0-prd.md",
+  "type": "PRD",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "AI-Kit Config Doctor - Product Requirements Document (PRD)",
+  "summary": "Configuration diagnostic tool auditing and applying recommended settings across Claude Code, opencode, and Codex runtimes.",
+  "scope": [
+    "Claude Code",
+    "opencode",
+    "Codex",
+    "configuration settings",
+    "diagnostic tool",
+    "settings audit",
+    "runtime configuration"
+  ],
+  "cross_refs": [
+    "tools/statusline-doctor.py",
+    "tools-installer",
+    "catalog_tui.py",
+    "ai-kit-spec-config",
+    "ai-kit-opencode-provider-management",
+    "ai-kit-tool-substitution-awareness-hook",
+    "opencode issue #22110",
+    "https://code.claude.com/docs/en/data-usage",
+    "https://code.claude.com/docs/en/prompt-caching",
+    "https://code.claude.com/docs/en/sandboxing",
+    "https://code.claude.com/docs/en/monitoring-usage",
+    "https://opencode.ai/docs/permissions/",
+    "https://opencode.ai/docs/share/",
+    "https://learn.chatgpt.com/docs/config-file/config-reference",
+    "https://codex.danielvaughan.com/2026/03/27/reasoning-effort-tuning/"
+  ],
+  "locked": false,
+  "precedence": null
+}
