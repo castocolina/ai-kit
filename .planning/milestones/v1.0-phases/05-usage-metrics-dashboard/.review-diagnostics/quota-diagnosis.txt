@@ -1,0 +1,1 @@
+usage-limit probe: 429 usage_limit_reached, x-codex-credits-balance=0, x-codex-primary-used-percent=100, resets_in_seconds=10731 (~2h59m), captured 2026-09-10T08:47:43Z

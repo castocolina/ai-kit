@@ -1,0 +1,9 @@
+{
+  "slug": "opencode",
+  "ok": true,
+  "stubbed": false,
+  "model": {
+    "value": "openai/gpt-5.6-sol (reasoning=high)",
+    "source": "pinned"
+  }
+}
