@@ -8,9 +8,15 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tomllib
 
 UNKNOWN = object()
+
+RTK_PROBE_TIMEOUT_SECONDS = 2.0
+RTK_SIGNAL_CONFIRMED = "registered"
+RTK_SIGNAL_NOT_REGISTERED = "not-registered"
+RTK_SIGNAL_UNREADABLE = "unreadable"
 
 KIND_CODE = "code"
 KIND_STRING = "string"
@@ -185,3 +191,41 @@ def get_nested(data, *keys, default=UNKNOWN):
             return default
         current = current[key]
     return current
+
+
+def _probe_rtk_cursor_hook(rtk_path, runner):
+    """Classify rtk's Cursor hook from ``rtk init --show`` stdout. Never raises.
+
+    Line text sourced from 03-RESEARCH.md:527-540's verbatim output block:
+    ``[ok] Cursor hook: registered in hooks.json`` (lowercase ``hook``),
+    distinct from ``[ok] Hook: rtk hook claude (native binary command)``.
+    Matcher requires ``"Cursor"`` and lowercase ``"hook"``, never a
+    case-sensitive ``"Hook"``. 04-RESEARCH.md row 12: point-in-time —
+    re-probe at build/verify time, not fixed by this research session. A
+    future rtk release could reword this line; classification degrades to
+    unreadable on no match rather than raise or assume.
+    """
+    if runner is None:
+        runner = subprocess.run
+    try:
+        proc = runner(
+            [rtk_path, "init", "--show"],
+            capture_output=True,
+            text=True,
+            timeout=RTK_PROBE_TIMEOUT_SECONDS,
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+    except Exception:
+        return RTK_SIGNAL_UNREADABLE
+    stdout = proc.stdout or ""
+    for line in stdout.splitlines():
+        if "Cursor" not in line or "hook" not in line:
+            continue
+        stripped = line.lstrip()
+        if stripped.startswith("[ok]"):
+            return RTK_SIGNAL_CONFIRMED
+        if stripped.startswith("[--]"):
+            return RTK_SIGNAL_NOT_REGISTERED
+        return RTK_SIGNAL_UNREADABLE
+    return RTK_SIGNAL_UNREADABLE
