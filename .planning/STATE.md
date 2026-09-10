@@ -3,31 +3,31 @@ gsd_state_version: "1.0"
 milestone: v1.1
 milestone_name: Agent Workflow Hygiene & Tooling Polish
 status: planning
-last_updated: "2026-09-10T21:59:34.756Z"
+last_updated: "2026-09-10T22:30:00.000Z"
 last_activity: 2026-09-10
 progress:
-  total_phases: 0
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 9
+  completed_phases: 6
+  total_plans: 18
+  completed_plans: 18
+  percent: 67
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-09-07)
+See: .planning/PROJECT.md (updated 2026-09-10)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 1.2 - Multi-CLI Runtime Foundation
+**Current focus:** Phase 6 - AGENTS.md Rules Checker Skill (v1.1 ROADMAP.md created; Phases 6-8 ready to plan, mutually independent)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Not started (Phase 6 ready to plan — Phases 7 and 8 also ready, independent of Phase 6 and each other)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-09-10 — Milestone v1.1 started
+Status: Roadmap created — awaiting `/gsd-plan-phase 6` (or 7/8)
+Last activity: 2026-09-10 — v1.1 ROADMAP.md created (Phases 6-8), REQUIREMENTS.md traceability updated with the 10 v1.1 requirement IDs
 
 ## Performance Metrics
 
@@ -42,61 +42,58 @@ Last activity: 2026-09-10 — Milestone v1.1 started
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1.1 Autonomous-Run Infrastructure | 1 | ~50min | ~50min |
-| 1.2 Multi-CLI Runtime Foundation | 1/4 | 9 min | 9 min |
-| 1.2 | 4 | - | - |
-| 02 | 2 | - | - |
-| 03 | 2 | - | - |
-| 04 | 3 | - | - |
-| 05 | 6 | - | - |
+| 1.2 Multi-CLI Runtime Foundation | 4 | - | - |
+| 2 Opencode Provider Management | 2 | - | - |
+| 3 Tool-Substitution Awareness Hook | 2 | - | - |
+| 4 Config Doctor | 3 | - | - |
+| 5 Usage Metrics Dashboard | 6 | - | - |
+| 6 AGENTS.md Rules Checker Skill | 0 | - | - |
+| 7 Curated GSD Config Skill | 0 | - | - |
+| 8 Status-line Quota Color Refactor | 0 | - | - |
 
 **Recent Trend:**
 
-- Last 5 plans: 01.1-01 (~50 min), 01.2-01 (9 min)
-- Trend: -
+- Last 5 plans: 05-06, 05-05, 05-04, 05-03, 05-02 (v1.0 close-out)
+- Trend: v1.0 complete; v1.1 not yet planned
 
 *Updated after each plan completion*
-**Per-Plan Metrics:**
-
-| Plan | Duration | Tasks | Files |
-|------|----------|-------|-------|
-| Phase 1.2 P01 | 9 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table. None locked yet —
-all 5 source PRDs are proposals, not ADR-accepted; roadmap approval is the
-acceptance step for this milestone's scope.
+Decisions are logged in PROJECT.md Key Decisions table.
 
-- 01.1-01: Deliberately did NOT add `--no-cache` to the Makefile's `e2e-docker`
-  target — `run.sh`'s new preflight check is the real, unconditional guarantee
-  of container freshness; ordinary layer-cache reuse for unrelated RUN steps
-  is not a clean-room violation.
-- 01.1-01: The PTY-deadline-flake's root cause was not purely container CPU
-  slowness (RESEARCH.md Pitfall 2) — a second, independent, genuine bug in
-  `tools/setup.py`'s wizard-commit ordering (self-validating doctor call ran
-  before `install_example_segments`) was masked on the executor's dev machine
-  by real prior `~/.config/ai-kit/segments/` state. Fixed with a
-  known_ext_ids pre-install-snapshot pattern; see 01.1-01-SUMMARY.md.
-- 01.1-01: ROADMAP.md Success Criterion 1's cross-AI route language changed
-  from unconditional "live-verified" to "correctly-configured... plus a
-  documented, exercised Rule 2 fallback" — route reachability is inherently
-  transient (evidenced by 01.1-REVIEWS.md's two review cycles).
-- [Phase 1.2]: The --single-branch token is explicitness/defensiveness, not a fetch-behavior bugfix: --depth 1 already implies --single-branch per git-scm.com/docs/git-clone unless --no-single-branch is given. — 01.2-RESEARCH.md critical finding; never claim this fixes a bug that did not exist.
+- v1.0: All 5 ingested proposal PRDs (Phases 1.1-5) shipped 2026-09-09/10; no
+  ADR locks any of them — roadmap approval was the acceptance step.
+- v1.1: Phase numbering continues from v1.0's last phase (Phase 6 starts
+  right after Phase 5) rather than resetting to 1, per `ROADMAP.md`'s Phase
+  Numbering convention (2026-09-10).
+- v1.1: Phases 6-8 map 1:1 to the 3 pending todos that seeded this
+  milestone's scope (AGENTS.md checker, curated config skill, status-line
+  color refactor) — no additional phases created, none merged, since each
+  already forms a coherent, independently-deliverable unit.
+- [Phase 1.2]: The --single-branch token is explicitness/defensiveness, not
+  a fetch-behavior bugfix: --depth 1 already implies --single-branch per
+  git-scm.com/docs/git-clone unless --no-single-branch is given.
 
 ### Pending Todos
 
-- AGENTS.md rules checker skill (wrapper for /agent-md-refactor) — major — `.planning/todos/pending/2026-09-09-agents-md-rules-checker-skill-wrapping-agent-md-refactor.md`
-- Curated GSD config skill (replace gsd-settings/gsd-config prompting) — minor — `.planning/todos/pending/2026-09-09-curated-gsd-config-skill-replacing-gsd-settings-prompts.md`
+None outstanding. The 3 pending todos that seeded v1.1
+(`.planning/todos/pending/2026-09-09-agents-md-rules-checker-skill-wrapping-agent-md-refactor.md`,
+`.planning/todos/pending/2026-09-09-curated-gsd-config-skill-replacing-gsd-settings-prompts.md`,
+`.planning/todos/pending/2026-09-10-refactor-status-line-quota-percentage-and-colors-to-be-relat.md`)
+have been promoted into ROADMAP.md Phases 6, 7, and 8 respectively; their
+files are left in place under `todos/pending/` for reference until each
+phase completes.
 
 ### Blockers/Concerns
 
-None yet. Ingest note for future phases: Phase 4 (Config Doctor) reuses
-Phase 2's atomic-write/surgical-edit pattern and folds in Phase 3's
-Non-Goals note; Phase 5 (Usage Metrics Dashboard) mirrors Phase 3's curated
-tool-substitution set. Plan Phases 2 and 3 before Phase 4/5 land on the
-patterns they reuse.
+None currently blocking. Note for planners: Phases 6-8 are mutually
+independent and independent of the completed v1.0 phases — any order is
+fine. Phases 6 and 7 both end with the same skill-authoring pipeline
+(`/superpowers:writing-skills` → `/skill-judge` → `/naming-analyzer`);
+consider whether to plan/execute them together or sequentially.
 
 ## Deferred Items
 
@@ -108,6 +105,7 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-09T18:35:00.000Z
-Stopped at: Phase 05 complete — all phases complete
+Last session: 2026-09-10T22:30:00.000Z
+Stopped at: v1.1 ROADMAP.md and STATE.md written (Phases 6-8); REQUIREMENTS.md traceability updated — awaiting roadmap approval, then `/gsd-plan-phase`
 Resume file: None
+</content>

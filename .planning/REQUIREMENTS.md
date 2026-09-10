@@ -66,7 +66,7 @@ phase.
 
 ### Status-line Quota Color Refactor
 
-- [ ] **REQ-stln-time-relative-color**: Rate-limit bucket coloring in `tools/status-line.py` (`util_render_rate_limits` / `theme.ramps["rate"]`) is computed relative to time-remaining-in-window (using each bucket's `resets_at`), not raw `used_percentage` alone.
+- [ ] **REQ-stln-time-relative-color**: Rate-limit bucket coloring in `tools/status-line.py` (`util_render_rate_limits` / `theme.ramps["rate"]`) is computed relative to time-remaining-in-window (using each bucket's `resets_at`), not raw `used_percentage` alone. Color-only change: the displayed `used_percentage` value and `resets_at`-derived reset-time suffix are unchanged — only which ramp color is picked shifts. All window/reset timing values are read from the Claude-provided rate-limit context (`resets_at` etc.) on every render; nothing about window length or elapsed time is hardcoded. Example: identical 50%+ usage reads red near the start of a 5h window, but the same 30% usage late in the window (e.g. hour 4 of 5) can read green/blue — driven purely by (elapsed-fraction-of-window) vs. (usage-fraction), not a static percent-only threshold.
 - [ ] **REQ-stln-ramp-tests**: The existing SLO/SLA ramp test pattern in `tests/test_status_line.py` is extended to cover the new time-relative coloring formula.
 
 ## v2 Requirements
@@ -74,7 +74,9 @@ phase.
 None. All 14 requirements from the 5 ingested proposal PRDs are v1 scope for
 this milestone. (Codex/Cursor coverage inside `REQ-usage-metrics-raw-capture`
 is sequenced as later plans within its own phase, not deferred to a future
-milestone — see that requirement's acceptance criteria.)
+milestone — see that requirement's acceptance criteria.) v1.1's 10
+requirements (see above) are this milestone's own scope, sourced from the
+pending-todo backlog rather than from further PRD ingest.
 
 ## Out of Scope
 
@@ -106,13 +108,24 @@ milestone — see that requirement's acceptance criteria.)
 | REQ-usage-metrics-refinement-pipeline | Phase 5 | Done |
 | REQ-usage-metrics-dashboard-ui | Phase 5 | Done |
 | REQ-usage-metrics-classification-refinement-loop | Phase 5 | Done |
+| REQ-agtmd-wrapper | Phase 6 | Pending |
+| REQ-agtmd-makefile-rules | Phase 6 | Pending |
+| REQ-agtmd-workflow-rules | Phase 6 | Pending |
+| REQ-agtmd-skill-pipeline | Phase 6 | Pending |
+| REQ-cfg-curated-questions | Phase 7 | Pending |
+| REQ-cfg-writes-config | Phase 7 | Pending |
+| REQ-cfg-schema-validate | Phase 7 | Pending |
+| REQ-cfg-skill-pipeline | Phase 7 | Pending |
+| REQ-stln-time-relative-color | Phase 8 | Pending |
+| REQ-stln-ramp-tests | Phase 8 | Pending |
 
 **Coverage:**
 
-- v1 requirements: 14 total
-- Mapped to phases: 14
-- Unmapped: 0 ✓
+- v1 requirements: 14 total, mapped: 14, unmapped: 0 ✓
+- v1.1 requirements: 10 total, mapped: 10, unmapped: 0 ✓
+- Combined: 24 total, mapped: 24, unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-09-07*
-*Last updated: 2026-09-08 — amended REQ-usage-metrics-dashboard-ui wording and Out of Scope table per Phase 5 discussion (see `05-CONTEXT.md` D-10)*
+*Last updated: 2026-09-10 — added v1.1 Traceability rows (REQ-agtmd-*, REQ-cfg-*, REQ-stln-* -> Phases 6-8, Status: Pending) and updated Coverage; v1.0 rows/content unchanged.*
+</content>

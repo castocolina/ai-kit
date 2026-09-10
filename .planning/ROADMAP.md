@@ -15,6 +15,15 @@ Dashboard mirrors the same curated substitution list for command-family
 tagging. Approving this roadmap is this milestone's acceptance step for the 5
 proposals; no separate ADR exists for them (see PROJECT.md Key Decisions).
 
+**v1.1 addendum (Agent Workflow Hygiene & Tooling Polish):** Phases 6-8 below
+add this milestone's scope, sourced directly from 3 pending todos captured
+during v1.0 rather than new research. Two are new skills (an AGENTS.md house-
+rules checker, and a curated GSD config-writing skill) sharing the same
+skill-authoring pipeline (`/superpowers:writing-skills` → `/skill-judge` →
+`/naming-analyzer`); the third is a status-line coloring-formula refactor.
+All three are independent of each other and of the completed v1.0 phases
+above — see PROJECT.md's "Current Milestone" section for the v1.1 goal.
+
 ## Phases
 
 **Phase Numbering:**
@@ -29,6 +38,9 @@ proposals; no separate ADR exists for them (see PROJECT.md Key Decisions).
   1.1 → 1.2), rather than using `0.1`. Live-verified against `phase-id.cjs`'s
   `SENTINEL_RANGES = [0, 999]` before making this call — see Phase 1.1's own
   `1.1-DISCUSSION-LOG.md` for the investigation.
+- **Note (2026-09-10):** Phase numbering continues across milestone boundaries —
+  v1.1 starts at Phase 6, immediately after v1.0's last phase (Phase 5). Phase
+  numbers are never reset at a new milestone.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
@@ -38,6 +50,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Tool-Substitution Awareness Hook** - Inject a live-verified rtk tool-substitution briefing into Claude Code session starts (completed 2026-09-09)
 - [x] **Phase 4: Config Doctor** - One-screen, confidence-labeled config diagnostics across Claude Code/opencode/Codex with confirmed per-item apply (completed 2026-09-10)
 - [x] **Phase 5: Usage Metrics Dashboard** - Capture, refine, and locally visualize how uz actually uses AI CLIs (completed 2026-09-10)
+- [ ] **Phase 6: AGENTS.md Rules Checker Skill** - Wrap `/agent-md-refactor` with a house-ruleset checker for Makefile target shape and the accumulated workflow rules
+- [ ] **Phase 7: Curated GSD Config Skill** - Small curated question set that writes and schema-validates `.planning/config.json`, replacing `gsd-settings`/`gsd-config`'s full interrogation
+- [ ] **Phase 8: Status-line Quota Color Refactor** - Rate-limit bucket coloring becomes relative to time-left-in-window, not raw usage percentage
 
 ## Phase Details
 
@@ -168,10 +183,65 @@ Plans:
 
 **UI hint**: yes
 
+### Phase 6: AGENTS.md Rules Checker Skill
+
+**Goal**: Agents working against any repo's AGENTS.md/CLAUDE.md-style instruction file get an automated check against ai-kit's accumulated house ruleset, not just a generic progressive-disclosure refactor.
+**Depends on**: Nothing (independent of Phases 1.1-5 and of Phases 7-8)
+**Requirements**: REQ-agtmd-wrapper, REQ-agtmd-makefile-rules, REQ-agtmd-workflow-rules, REQ-agtmd-skill-pipeline
+**Success Criteria** (what must be TRUE):
+
+  1. Running the skill against a house AGENTS.md missing one or more required Makefile targets (`setup-env`, a target per pre-commit hook 1:1 with `.pre-commit-config.yaml`, a `validate` target chaining all hook targets lightest-first, `test`/`test-unit` alias, `test-integration`, `e2e-test`, `arch-test`) flags each gap by name, with a per-language tool recommendation (e.g. gofmt/black/prettier for formatting).
+  2. Running the skill against an AGENTS.md missing any of the accumulated workflow rules (English-only communication, per-plan commit compaction, cross-AI plan-review + path-agnostic cross-AI execution, rtk/modern-CLI/CodeGraph/graphify tool-awareness, no-absolute-paths, no-excuse-deflection, stale-knowledge verification, theory-hypothesis-spike methodology, no-orphaned-processes, `./tmp/` ephemeral-file convention, README/nested-docs currency, no-uncommitted-files-at-close, concise documentation) flags each missing rule individually rather than returning one generic pass/fail.
+  3. Invoking the new skill is observably distinct from invoking plain `/agent-md-refactor` directly — it wraps that skill's refactor pass and adds the house-rule check on top, rather than duplicating or replacing it.
+  4. The skill's SKILL.md is scaffolded via `/superpowers:writing-skills`, passes `/skill-judge` with no remaining Critical/Important finding, and carries the name chosen by `/naming-analyzer` — never assumed upfront.
+
+**Plans**: TBD
+
+Plans:
+
+- [ ] TBD (defined at `/gsd-plan-phase 6`)
+
+### Phase 7: Curated GSD Config Skill
+
+**Goal**: Setting up or refreshing `.planning/config.json` for a GSD project takes a short, curated question set instead of the full `gsd-config`/`gsd-settings` interrogation, while still producing a valid config.
+**Depends on**: Nothing (independent of Phases 1.1-6 and of Phase 8)
+**Requirements**: REQ-cfg-curated-questions, REQ-cfg-writes-config, REQ-cfg-schema-validate, REQ-cfg-skill-pipeline
+**Success Criteria** (what must be TRUE):
+
+  1. Running the new skill asks only a small, curated question set (not the full `gsd-config`/`gsd-settings` interrogation) and, without prompting for them, applies the preset defaults: high effort for analysis tasks, Haiku for execution tasks, cross-AI execution enabled, and plan-review convergence enabled.
+  2. The skill writes `.planning/config.json` in the same shape `gsd-settings`/`gsd-config` produce today — an existing GSD workflow that reads `config.json` accepts the generated file without modification.
+  3. When an open-GSD config JSON schema is present on the system, the generated config validates against it; when no schema is present, generation still succeeds without a hard failure.
+  4. The skill's SKILL.md is scaffolded via `/superpowers:writing-skills`, reviewed via `/skill-judge` (no remaining Critical/Important finding), and carries the name chosen by `/naming-analyzer`.
+
+**Plans**: TBD
+
+Plans:
+
+- [ ] TBD (defined at `/gsd-plan-phase 7`)
+
+### Phase 8: Status-line Quota Color Refactor
+
+**Goal**: The status line's rate-limit bucket coloring reflects real urgency — how much of the window's time is left versus how much quota is used — instead of raw usage percentage alone.
+**Depends on**: Nothing (independent of Phases 1.1-7)
+**Requirements**: REQ-stln-time-relative-color, REQ-stln-ramp-tests
+**Success Criteria** (what must be TRUE):
+
+  1. Two rate-limit buckets with identical `used_percentage` but different time remaining before `resets_at` render different colors — the bucket with less time left is flagged more urgently.
+  2. **Color-only change**: the displayed `used_percentage` number and the `resets_at`-derived reset-time suffix are byte-identical to today's output — only the ramp color selection changes. No other rendered value is touched.
+  3. **No hardcoded window/time values**: every timing input (window start/elapsed fraction, `resets_at`) is read from the Claude-provided rate-limit context on each render; nothing about the 5h/7d window length or "how much time has passed" is a hardcoded constant in the formula.
+  4. The color computation is derived from a formula comparing `used_percentage` against elapsed-fraction-of-window (a burn-rate signal) — e.g. 50%+ used early in a 5h window reads red, but 30% used at hour 4-of-5 of the same window can read green/blue for the same ramp — confirmed by a throwaway spike script before the formula is locked in, per the project's theory-to-hypothesis-to-spike convention.
+  5. `tests/test_status_line.py`'s existing ramp test pattern (`test_render_time_colors_by_slo_sla_ramp`) is extended with new cases covering the time-relative formula, including a case asserting the displayed percentage/reset-suffix text is unchanged, and the full suite passes.
+
+**Plans**: TBD
+
+Plans:
+
+- [ ] TBD (defined at `/gsd-plan-phase 8`)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5
+Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7 → 8 (Phases 6, 7, and 8 are mutually independent — v1.1 scope, order among them is a scheduling choice, not a dependency)
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -181,6 +251,9 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5
 | 3. Tool-Substitution Awareness Hook | 2/2 | Complete    | 2026-09-09 |
 | 4. Config Doctor | 3/3 | Complete    | 2026-09-10 |
 | 5. Usage Metrics Dashboard | 6/6 | Complete    | 2026-09-10 |
+| 6. AGENTS.md Rules Checker Skill | 0/TBD | Not started | - |
+| 7. Curated GSD Config Skill | 0/TBD | Not started | - |
+| 8. Status-line Quota Color Refactor | 0/TBD | Not started | - |
 
 ## Backlog
 
@@ -246,3 +319,4 @@ single-file, single-convention check. Raised while drafting this project's
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+</content>
