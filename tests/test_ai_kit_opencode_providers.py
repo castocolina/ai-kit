@@ -23,11 +23,21 @@ from ai_kit_opencode_providers.cli import (
     cmd_list,
     cmd_remove,
 )
+from ai_kit_opencode_providers.config_paths import (
+    catalog_path,
+    global_review_spec_path,
+)
+from ai_kit_opencode_providers.cross_reference import (
+    collect_references,
+    format_reference,
+    review_spec_strategy,
+    scan_catalog,
+    scan_review_spec,
+)
 
 FIXTURE_DIR = os.path.join(
     os.path.dirname(__file__), "e2e", "docker", "fixtures", "opencode"
 )
-SCRATCH_REVIEW_SPEC_RELPATH = ".aikit/review-spec.toml"
 SHIM = os.path.join(
     os.path.dirname(__file__),
     "..",
@@ -35,6 +45,7 @@ SHIM = os.path.join(
     "ai-kit-opencode-providers",
     "ai-kit-opencode-providers.py",
 )
+SCRATCH_REVIEW_SPEC_RELPATH = ".aikit/review-spec.toml"
 
 
 def run_cli(*args, cwd, env=None):
@@ -644,6 +655,393 @@ class TestListRedaction(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         combined = result.stdout + result.stderr
         self.assertEqual(combined.count(sentinel), 0)
+
+
+def _write_file(path, text):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def _reviewers_toml(key="synth-reviewer", cli="opencode", model="other/model", strategy=None):
+    lines = []
+    if strategy is not None:
+        lines.append(f'strategy = "{strategy}"')
+        lines.append("")
+    lines.extend(
+        [
+            "[[reviewers]]",
+            f'key = "{key}"',
+            f'cli = "{cli}"',
+            f'model = "{model}"',
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _audit_map(audit):
+    return dict(audit)
+
+
+class _XrefScratch(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.scratch, ignore_errors=True)
+        self.env = scratch_env(self.scratch)
+        self.local_spec = os.path.join(self.scratch, SCRATCH_REVIEW_SPEC_RELPATH)
+        self.global_spec = global_review_spec_path(self.env)
+        self.catalog = catalog_path(self.env)
+        self.config = os.path.join(self.scratch, "opencode.jsonc")
+
+
+class TestCrossReferenceReviewSpec(_XrefScratch):
+    def test_model_field_yields_reference(self):
+        _write_file(
+            self.local_spec,
+            _reviewers_toml(key="plan-reviewer", model="synth-router/demo-model"),
+        )
+        refs = scan_review_spec(self.local_spec, "synth-router")
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].source_path, self.local_spec)
+        self.assertEqual(refs[0].locator, "plan-reviewer")
+        self.assertEqual(refs[0].field, "model")
+        self.assertEqual(refs[0].value, "synth-router/demo-model")
+
+    def test_cli_field_yields_reference(self):
+        _write_file(
+            self.local_spec,
+            _reviewers_toml(key="cli-reviewer", cli="synth-router"),
+        )
+        refs = scan_review_spec(self.local_spec, "synth-router")
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].locator, "cli-reviewer")
+        self.assertEqual(refs[0].field, "cli")
+        self.assertEqual(refs[0].value, "synth-router")
+
+    def test_missing_file_is_empty(self):
+        self.assertEqual(scan_review_spec(self.local_spec, "synth-router"), [])
+
+    def test_invalid_toml_is_empty(self):
+        _write_file(self.local_spec, "[[reviewers]\nkey = ")
+        self.assertEqual(scan_review_spec(self.local_spec, "synth-router"), [])
+
+
+class TestCrossReferenceCatalog(_XrefScratch):
+    def test_provider_field_yields_reference(self):
+        _write_file(
+            self.catalog,
+            json.dumps(
+                {
+                    "synth-router/demo": {
+                        "provider": "synth-router",
+                        "runtimes": {},
+                    }
+                }
+            ),
+        )
+        refs = scan_catalog(self.catalog, "synth-router")
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].source_path, self.catalog)
+        self.assertEqual(refs[0].locator, "synth-router/demo")
+        self.assertEqual(refs[0].field, "provider")
+        self.assertEqual(refs[0].value, "synth-router")
+
+    def test_runtime_model_id_yields_reference(self):
+        _write_file(
+            self.catalog,
+            json.dumps(
+                {
+                    "other/demo": {
+                        "provider": "other",
+                        "runtimes": {
+                            "opencode": {"model_id": "synth-router/demo-model"},
+                        },
+                    }
+                }
+            ),
+        )
+        refs = scan_catalog(self.catalog, "synth-router")
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].locator, "other/demo")
+        self.assertEqual(refs[0].field, "runtimes.opencode.model_id")
+        self.assertEqual(refs[0].value, "synth-router/demo-model")
+
+    def test_missing_file_is_empty(self):
+        self.assertEqual(scan_catalog(self.catalog, "synth-router"), [])
+
+    def test_invalid_json_is_empty(self):
+        _write_file(self.catalog, "{not json")
+        self.assertEqual(scan_catalog(self.catalog, "synth-router"), [])
+
+    def test_top_level_list_is_empty(self):
+        _write_file(self.catalog, json.dumps([{"provider": "synth-router"}]))
+        self.assertEqual(scan_catalog(self.catalog, "synth-router"), [])
+
+    def test_non_dict_entry_is_skipped(self):
+        _write_file(
+            self.catalog,
+            json.dumps({"synth-router/demo": "not-a-dict", "ok": 1}),
+        )
+        self.assertEqual(scan_catalog(self.catalog, "synth-router"), [])
+
+    def test_dict_provider_is_not_stringified(self):
+        blob = {"name": "synth-router", "nested": ["synth-router"]}
+        _write_file(
+            self.catalog,
+            json.dumps({"weird/demo": {"provider": blob, "runtimes": {}}}),
+        )
+        refs = scan_catalog(self.catalog, "synth-router")
+        self.assertEqual(refs, [])
+        rendered = str(blob)
+        self.assertIn("synth-router", rendered)
+        for ref in refs:
+            self.assertNotIn(rendered, format_reference(ref))
+
+    def test_non_string_field_values_are_skipped(self):
+        _write_file(
+            self.catalog,
+            json.dumps(
+                {
+                    "num/demo": {"provider": 12, "runtimes": {}},
+                    "null/demo": {"provider": None, "runtimes": {}},
+                    "list/demo": {"provider": ["synth-router"], "runtimes": {}},
+                    "rt/demo": {
+                        "provider": "other",
+                        "runtimes": {
+                            "opencode": {"model_id": ["synth-router"]},
+                            "codex": {"model_id": 3},
+                            "claude": "not-a-dict",
+                        },
+                    },
+                }
+            ),
+        )
+        self.assertEqual(scan_catalog(self.catalog, "synth-router"), [])
+
+
+class TestCrossReferenceCombined(_XrefScratch):
+    def test_both_sources_return_both_references(self):
+        _write_file(
+            self.local_spec,
+            _reviewers_toml(key="plan-reviewer", model="synth-router/demo-model"),
+        )
+        _write_file(
+            self.catalog,
+            json.dumps(
+                {"synth-router/demo": {"provider": "synth-router", "runtimes": {}}}
+            ),
+        )
+        refs, audit = collect_references("synth-router", self.scratch, self.env)
+        self.assertGreaterEqual(len(refs), 2)
+        sources = {ref.source_path for ref in refs}
+        self.assertIn(self.local_spec, sources)
+        self.assertIn(self.catalog, sources)
+        statuses = _audit_map(audit)
+        self.assertEqual(statuses[self.local_spec], "scanned")
+        self.assertEqual(statuses[self.global_spec], "absent")
+        self.assertEqual(statuses[self.catalog], "scanned")
+
+    def test_neither_source_returns_empty(self):
+        _write_file(self.local_spec, _reviewers_toml())
+        _write_file(
+            self.catalog,
+            json.dumps({"other/demo": {"provider": "other", "runtimes": {}}}),
+        )
+        refs, audit = collect_references("synth-router", self.scratch, self.env)
+        self.assertEqual(refs, [])
+        statuses = _audit_map(audit)
+        self.assertEqual(statuses[self.local_spec], "scanned")
+        self.assertEqual(statuses[self.catalog], "scanned")
+
+    def test_all_absent_audit_and_cli_still_removes(self):
+        shutil.copy(os.path.join(FIXTURE_DIR, "opencode.jsonc"), self.config)
+        refs, audit = collect_references("beta-router", self.scratch, self.env)
+        self.assertEqual(refs, [])
+        self.assertEqual(
+            [status for _path, status in audit],
+            ["absent", "absent", "absent"],
+        )
+        code, out, err = _call_cmd_remove(self.config, "beta-router", self.scratch)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(err, "")
+        self.assertIn("removed provider", out)
+        with open(self.config, encoding="utf-8") as handle:
+            after = handle.read()
+        remaining = [e.provider_id for e in jsonc_edit.iter_provider_entries(after)]
+        self.assertNotIn("beta-router", remaining)
+
+    def test_malformed_sources_yield_zero_and_do_not_raise(self):
+        _write_file(self.local_spec, "[[reviewers]\nkey = ")
+        _write_file(self.global_spec, "not = [ toml")
+        _write_file(self.catalog, "{not json")
+        refs, audit = collect_references("synth-router", self.scratch, self.env)
+        self.assertEqual(refs, [])
+        statuses = _audit_map(audit)
+        self.assertEqual(statuses[self.local_spec], "scanned")
+        self.assertEqual(statuses[self.global_spec], "scanned")
+        self.assertEqual(statuses[self.catalog], "scanned")
+
+    def test_cmd_remove_prints_both_warnings_then_removes(self):
+        shutil.copy(os.path.join(FIXTURE_DIR, "opencode.jsonc"), self.config)
+        _write_file(
+            self.local_spec,
+            _reviewers_toml(key="plan-reviewer", model="beta-router/demo-model"),
+        )
+        _write_file(
+            self.catalog,
+            json.dumps(
+                {"beta-router/demo": {"provider": "beta-router", "runtimes": {}}}
+            ),
+        )
+        code, out, err = _call_cmd_remove(self.config, "beta-router", self.scratch)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(err, "")
+        self.assertIn(self.local_spec, out)
+        self.assertIn(self.catalog, out)
+        warning_lines = [ln for ln in out.splitlines() if ln.startswith("warning:")]
+        self.assertGreaterEqual(len(warning_lines), 2)
+        self.assertTrue(any(self.local_spec in ln for ln in warning_lines))
+        self.assertTrue(any(self.catalog in ln for ln in warning_lines))
+        self.assertTrue(any("not an object" not in ln for ln in warning_lines))
+        dict_blob = "{'name': 'beta-router'"
+        self.assertNotIn(dict_blob, out)
+        self.assertIn("removed provider", out)
+        with open(self.config, encoding="utf-8") as handle:
+            after = handle.read()
+        remaining = [e.provider_id for e in jsonc_edit.iter_provider_entries(after)]
+        self.assertNotIn("beta-router", remaining)
+
+    def test_dict_valued_catalog_provider_prints_no_blob(self):
+        shutil.copy(os.path.join(FIXTURE_DIR, "opencode.jsonc"), self.config)
+        blob = {"name": "beta-router", "nested": ["beta-router"]}
+        _write_file(
+            self.catalog,
+            json.dumps({"weird/demo": {"provider": blob, "runtimes": {}}}),
+        )
+        refs, _audit = collect_references("beta-router", self.scratch, self.env)
+        self.assertEqual(refs, [])
+        code, out, err = _call_cmd_remove(self.config, "beta-router", self.scratch)
+        self.assertEqual(code, 0, err)
+        warning_lines = [ln for ln in out.splitlines() if ln.startswith("warning:")]
+        self.assertEqual(warning_lines, [])
+        self.assertNotIn(str(blob), out)
+
+
+class TestCrossReferenceLocalOnlyStrategy(_XrefScratch):
+    def test_global_only_hit_is_returned_as_inactive(self):
+        _write_file(self.local_spec, _reviewers_toml(strategy="local-only"))
+        _write_file(
+            self.global_spec,
+            _reviewers_toml(key="global-reviewer", model="synth-router/demo-model"),
+        )
+        self.assertEqual(review_spec_strategy(self.local_spec), "local-only")
+        refs, audit = collect_references("synth-router", self.scratch, self.env)
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].source_path, self.global_spec)
+        self.assertEqual(refs[0].locator, "global-reviewer")
+        self.assertEqual(_audit_map(audit)[self.global_spec], "scanned-inactive")
+
+    def test_strategy_omitted_treats_global_as_active(self):
+        _write_file(self.local_spec, _reviewers_toml())
+        _write_file(
+            self.global_spec,
+            _reviewers_toml(key="global-reviewer", model="synth-router/demo-model"),
+        )
+        self.assertEqual(review_spec_strategy(self.local_spec), "global-merge")
+        refs, audit = collect_references("synth-router", self.scratch, self.env)
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(_audit_map(audit)[self.global_spec], "scanned")
+
+    def test_no_local_spec_treats_global_as_active(self):
+        _write_file(
+            self.global_spec,
+            _reviewers_toml(key="global-reviewer", model="synth-router/demo-model"),
+        )
+        refs, audit = collect_references("synth-router", self.scratch, self.env)
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(_audit_map(audit)[self.local_spec], "absent")
+        self.assertEqual(_audit_map(audit)[self.global_spec], "scanned")
+
+    def test_cmd_remove_prints_not_active_qualifier(self):
+        shutil.copy(os.path.join(FIXTURE_DIR, "opencode.jsonc"), self.config)
+        _write_file(self.local_spec, _reviewers_toml(strategy="local-only"))
+        _write_file(
+            self.global_spec,
+            _reviewers_toml(key="global-reviewer", model="beta-router/demo-model"),
+        )
+        code, out, err = _call_cmd_remove(self.config, "beta-router", self.scratch)
+        self.assertEqual(code, 0, err)
+        self.assertIn("scanned-inactive", out)
+        warning_lines = [ln for ln in out.splitlines() if ln.startswith("warning:")]
+        self.assertEqual(len(warning_lines), 1)
+        self.assertIn("not active", warning_lines[0])
+        self.assertIn('strategy = "local-only"', warning_lines[0])
+        self.assertIn("removed provider", out)
+
+    def test_cmd_remove_omitted_strategy_has_no_qualifier(self):
+        shutil.copy(os.path.join(FIXTURE_DIR, "opencode.jsonc"), self.config)
+        _write_file(self.local_spec, _reviewers_toml())
+        _write_file(
+            self.global_spec,
+            _reviewers_toml(key="global-reviewer", model="beta-router/demo-model"),
+        )
+        code, out, err = _call_cmd_remove(self.config, "beta-router", self.scratch)
+        self.assertEqual(code, 0, err)
+        audit_lines = [ln for ln in out.splitlines() if ln.startswith("cross-reference:")]
+        self.assertTrue(any("scanned" in ln and self.global_spec in ln for ln in audit_lines))
+        self.assertFalse(any("scanned-inactive" in ln for ln in audit_lines))
+        warning_lines = [ln for ln in out.splitlines() if ln.startswith("warning:")]
+        self.assertEqual(len(warning_lines), 1)
+        self.assertNotIn("not active", warning_lines[0])
+
+
+class TestCrossReferenceNonBlocking(_XrefScratch):
+    def test_remove_warns_and_proceeds_inside_scratch_tree(self):
+        shutil.copy(os.path.join(FIXTURE_DIR, "opencode.jsonc"), self.config)
+        _write_file(
+            self.local_spec,
+            _reviewers_toml(key="plan-reviewer", model="beta-router/demo-model"),
+        )
+        _write_file(
+            self.catalog,
+            json.dumps(
+                {"beta-router/demo": {"provider": "beta-router", "runtimes": {}}}
+            ),
+        )
+        real_home = os.path.expanduser("~")
+        result = run_cli(
+            "remove",
+            "beta-router",
+            "--config",
+            self.config,
+            cwd=self.scratch,
+            env=scratch_env(self.scratch),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        combined = result.stdout + result.stderr
+        self.assertIn("warning:", combined)
+        self.assertIn("removed provider", result.stdout)
+        with open(self.config, encoding="utf-8") as handle:
+            after = handle.read()
+        remaining = [e.provider_id for e in jsonc_edit.iter_provider_entries(after)]
+        self.assertNotIn("beta-router", remaining)
+        audit_lines = [
+            ln for ln in result.stdout.splitlines() if ln.startswith("cross-reference:")
+        ]
+        self.assertEqual(len(audit_lines), 3)
+        for line in audit_lines:
+            path = line[len("cross-reference:") :].strip().rsplit(" ", 1)[0]
+            self.assertTrue(
+                path.startswith(self.scratch),
+                f"audit path {path!r} is not inside {self.scratch!r}",
+            )
+            self.assertFalse(
+                path.startswith(real_home),
+                f"audit path {path!r} leaked under real HOME {real_home!r}",
+            )
 
 
 if __name__ == "__main__":

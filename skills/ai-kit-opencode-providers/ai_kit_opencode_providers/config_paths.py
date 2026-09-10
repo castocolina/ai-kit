@@ -27,3 +27,21 @@ def resolve_config_path(config_arg: str | None, env: dict) -> str:
 def local_review_spec_path(cwd: str) -> str:
     """`<cwd>/.aikit/review-spec.toml`."""
     return os.path.join(cwd, ".aikit", "review-spec.toml")
+
+
+def global_review_spec_path(env: dict) -> str:
+    """`${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/review-spec.toml`."""
+    if env.get("XDG_CONFIG_HOME"):
+        base = env["XDG_CONFIG_HOME"]
+    else:
+        base = os.path.join(env.get("HOME", ""), ".config")
+    return os.path.join(base, "ai-kit", "review-spec.toml")
+
+
+def catalog_path(env: dict) -> str:
+    """`${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/spec/model-catalog.json`."""
+    if env.get("XDG_CACHE_HOME"):
+        base = env["XDG_CACHE_HOME"]
+    else:
+        base = os.path.join(env.get("HOME", ""), ".cache")
+    return os.path.join(base, "ai-kit", "spec", "model-catalog.json")

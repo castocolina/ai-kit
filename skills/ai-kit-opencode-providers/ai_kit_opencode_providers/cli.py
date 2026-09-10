@@ -7,13 +7,10 @@ import os
 import sys
 
 from ai_kit_opencode_providers.atomic_write import write_preserving_mode
-from ai_kit_opencode_providers.config_paths import (
-    local_review_spec_path,
-    resolve_config_path,
-)
+from ai_kit_opencode_providers.config_paths import resolve_config_path
 from ai_kit_opencode_providers.cross_reference import (
+    collect_references,
     format_reference,
-    scan_review_spec,
 )
 from ai_kit_opencode_providers.jsonc_edit import (
     iter_provider_entries,
@@ -38,9 +35,20 @@ def cmd_remove(args, env, cwd, out, err) -> int:
     except (OSError, UnicodeDecodeError) as exc:
         print(f"error: could not read {path}: {exc}", file=err)
         return EXIT_ERROR
-    refs = scan_review_spec(local_review_spec_path(cwd), args.provider_id)
+    refs, audit = collect_references(args.provider_id, cwd, env)
+    inactive = {src for src, status in audit if status == "scanned-inactive"}
+    for audit_path, status in audit:
+        print(f"cross-reference: {audit_path} {status}", file=out)
     for ref in refs:
-        print(f"warning: {format_reference(ref)}", file=out)
+        line = (
+            f'warning: "{args.provider_id}" is referenced in '
+            f"{format_reference(ref)}"
+        )
+        if ref.source_path in inactive:
+            line += (
+                ' (not active: local review-spec sets strategy = "local-only")'
+            )
+        print(line, file=out)
     result = remove_provider(text, args.provider_id)
     if result is None:
         if args.provider_id in non_object_provider_keys(text):
