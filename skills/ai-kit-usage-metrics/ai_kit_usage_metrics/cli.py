@@ -56,8 +56,10 @@ def cmd_capture(env: dict) -> None:
 
 
 def cmd_refine(env: dict) -> None:
-    records = _read_raw_jsonl(paths.raw_jsonl_path(env, "claude"))
-    rows = refiner.refine_simple_commands(records, env)
+    records: list[dict] = []
+    for name in CAPTURE_SOURCES:
+        records.extend(_read_raw_jsonl(paths.raw_jsonl_path(env, name)))
+    rows = refiner.refine_all(records, env)
     conn = refined_store.open_refined_db(env)
     try:
         refined_store.insert_commands(conn, rows)

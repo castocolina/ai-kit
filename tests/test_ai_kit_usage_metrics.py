@@ -29,9 +29,11 @@ from ai_kit_usage_metrics import (
     refined_store,
 )
 from ai_kit_usage_metrics.cli import CAPTURE_SOURCES, main
+from ai_kit_usage_metrics.cwd_state import CwdState
 from ai_kit_usage_metrics.dashboard import generate
+from ai_kit_usage_metrics.decomposer import classify_segment, decompose, scan_command
 from ai_kit_usage_metrics.raw_store import CaptureResult
-from ai_kit_usage_metrics.refiner import refine_simple_commands
+from ai_kit_usage_metrics.refiner import refine_all, refine_simple_commands
 
 SIMPLE_COMMAND = "ls -la"
 COMPOUND_COMMAND = "ls && echo hi"
@@ -253,6 +255,224 @@ class TestFamily(unittest.TestCase):
 
     def test_unmatched_command_is_its_own_family(self):
         self.assertEqual(family.family_of("git status"), "git")
+
+
+class TestDecomposer(unittest.TestCase):
+    def test_scan_command_prd_compound_and(self):
+        result = scan_command("cd src && grep -r TODO .")
+        self.assertEqual(len(result.segments), 2)
+        self.assertEqual(result.segments[0], ("cd src", None))
+        self.assertEqual(result.segments[1], ("grep -r TODO .", "&&"))
+        self.assertFalse(result.unterminated_quote)
+        self.assertFalse(result.has_unsupported_shape)
+
+    def test_scan_command_does_not_split_inside_double_quotes(self):
+        result = scan_command('echo "a && b"')
+        self.assertEqual(len(result.segments), 1)
+        self.assertEqual(result.segments[0], ('echo "a && b"', None))
+        self.assertFalse(result.unterminated_quote)
+        self.assertFalse(result.has_unsupported_shape)
+
+    def test_scan_command_does_not_split_inside_single_quotes(self):
+        result = scan_command("echo 'a ; b'")
+        self.assertEqual(len(result.segments), 1)
+        self.assertEqual(result.segments[0], ("echo 'a ; b'", None))
+        self.assertFalse(result.unterminated_quote)
+        self.assertFalse(result.has_unsupported_shape)
+
+    def test_classify_segment_control_flow_keywords(self):
+        self.assertEqual(classify_segment("if true; then echo x; fi"), "control_flow_script")
+        self.assertEqual(classify_segment("for f in *.py; do rg x; done"), "control_flow_script")
+        self.assertEqual(classify_segment("while true; do echo x; done"), "control_flow_script")
+        self.assertEqual(classify_segment("case x in a) echo;; esac"), "control_flow_script")
+        self.assertEqual(classify_segment("until false; do echo x; done"), "control_flow_script")
+        self.assertEqual(classify_segment("select x in a b; do echo; done"), "control_flow_script")
+        self.assertEqual(classify_segment("grep -r TODO ."), "simple")
+        self.assertEqual(classify_segment("cd src"), "simple")
+
+    def test_decompose_simple_command(self):
+        steps = decompose("grep -r TODO .")
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["step_index"], 0)
+        self.assertEqual(steps[0]["text"], "grep -r TODO .")
+        self.assertIsNone(steps[0]["operator"])
+        self.assertEqual(steps[0]["command_shape"], "simple")
+
+    def test_decompose_prd_cd_and_grep(self):
+        steps = decompose("cd src && grep -r TODO .")
+        self.assertEqual(len(steps), 2)
+        self.assertEqual(steps[0]["step_index"], 0)
+        self.assertEqual(steps[0]["text"], "cd src")
+        self.assertIsNone(steps[0]["operator"])
+        self.assertEqual(steps[0]["command_shape"], "simple")
+        self.assertEqual(steps[1]["step_index"], 1)
+        self.assertEqual(steps[1]["text"], "grep -r TODO .")
+        self.assertEqual(steps[1]["operator"], "&&")
+        self.assertEqual(steps[1]["command_shape"], "simple")
+
+    def test_decompose_prd_for_loop_is_one_control_flow_script(self):
+        text = 'for f in *.py; do rg pattern "$f"; done'
+        steps = decompose(text)
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["text"], text)
+        self.assertIsNone(steps[0]["operator"])
+        self.assertEqual(steps[0]["command_shape"], "control_flow_script")
+
+    def test_decompose_prd_mixed_cd_and_for(self):
+        for_text = 'for f in *.py; do rg pattern "$f"; done'
+        steps = decompose(f"cd src && {for_text}")
+        self.assertEqual(len(steps), 2)
+        self.assertEqual(steps[0]["text"], "cd src")
+        self.assertEqual(steps[0]["command_shape"], "simple")
+        self.assertIsNone(steps[0]["operator"])
+        self.assertEqual(steps[1]["text"], for_text)
+        self.assertEqual(steps[1]["command_shape"], "control_flow_script")
+        self.assertEqual(steps[1]["operator"], "&&")
+
+    def test_decompose_or_is_unclassified(self):
+        steps = decompose("a || b")
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["text"], "a || b")
+        self.assertEqual(steps[0]["command_shape"], "unclassified")
+        self.assertIsNone(steps[0]["operator"])
+
+    def test_decompose_heredoc_is_unclassified(self):
+        text = "cat <<EOF\nhello\nEOF"
+        steps = decompose(text)
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["text"], text)
+        self.assertEqual(steps[0]["command_shape"], "unclassified")
+
+    def test_decompose_dollar_paren_subshell_is_unclassified(self):
+        steps = decompose("echo $(pwd)")
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["text"], "echo $(pwd)")
+        self.assertEqual(steps[0]["command_shape"], "unclassified")
+
+    def test_decompose_backtick_subshell_is_unclassified(self):
+        steps = decompose("echo `pwd`")
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["text"], "echo `pwd`")
+        self.assertEqual(steps[0]["command_shape"], "unclassified")
+
+    def test_decompose_parenthesized_subshell_is_unclassified(self):
+        steps = decompose("(echo hi)")
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["command_shape"], "unclassified")
+
+    def test_decompose_unterminated_quote_is_unclassified(self):
+        steps = decompose('echo "unterminated')
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["text"], 'echo "unterminated')
+        self.assertEqual(steps[0]["command_shape"], "unclassified")
+        self.assertNotEqual(steps[0]["command_shape"], "control_flow_script")
+
+    def test_decompose_empty_string(self):
+        self.assertEqual(decompose(""), [])
+
+    def test_decompose_nested_control_flow(self):
+        text = 'for f in *; do if [ -f "$f" ]; then rg x "$f"; fi; done'
+        steps = decompose(text)
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["text"], text)
+        self.assertEqual(steps[0]["command_shape"], "control_flow_script")
+
+    def test_decompose_until_and_select_are_control_flow(self):
+        until_text = "until false; do echo x; done"
+        until_steps = decompose(until_text)
+        self.assertEqual(len(until_steps), 1)
+        self.assertEqual(until_steps[0]["text"], until_text)
+        self.assertEqual(until_steps[0]["command_shape"], "control_flow_script")
+        select_text = "select x in a b; do echo $x; done"
+        select_steps = decompose(select_text)
+        self.assertEqual(len(select_steps), 1)
+        self.assertEqual(select_steps[0]["text"], select_text)
+        self.assertEqual(select_steps[0]["command_shape"], "control_flow_script")
+
+    def test_decompose_never_emits_compound_decomposed(self):
+        samples = [
+            "grep -r TODO .",
+            "cd src && grep -r TODO .",
+            'for f in *.py; do rg pattern "$f"; done',
+            "a || b",
+            "echo $(pwd)",
+            "",
+        ]
+        shapes = set()
+        for sample in samples:
+            for step in decompose(sample):
+                shapes.add(step["command_shape"])
+                self.assertNotEqual(step["command_shape"], "compound_decomposed")
+        self.assertTrue(shapes <= {"simple", "control_flow_script", "unclassified"})
+
+    def test_decompose_pipe_and_semicolon(self):
+        pipe_steps = decompose("ls | grep x")
+        self.assertEqual(len(pipe_steps), 2)
+        self.assertEqual(pipe_steps[0]["text"], "ls")
+        self.assertEqual(pipe_steps[1]["text"], "grep x")
+        self.assertEqual(pipe_steps[1]["operator"], "|")
+        self.assertEqual(pipe_steps[0]["command_shape"], "simple")
+        self.assertEqual(pipe_steps[1]["command_shape"], "simple")
+        semi_steps = decompose("cd src; ls")
+        self.assertEqual(len(semi_steps), 2)
+        self.assertEqual(semi_steps[0]["text"], "cd src")
+        self.assertEqual(semi_steps[1]["text"], "ls")
+        self.assertEqual(semi_steps[1]["operator"], ";")
+
+
+class TestCwdState(unittest.TestCase):
+    def test_constructs_with_initial_dir(self):
+        state = CwdState("/repo")
+        self.assertEqual(state.current, "/repo")
+
+    def test_prd_cd_then_grep_same_compound(self):
+        state = CwdState("/repo")
+        resolved = []
+        for step in ["cd src", "grep -r TODO ."]:
+            resolved.append(state.resolve_for(step))
+            state.observe(step)
+        self.assertEqual(resolved[0], "/repo")
+        self.assertEqual(resolved[1], "/repo/src")
+
+    def test_prd_later_separate_call_reuses_carried_cwd(self):
+        state = CwdState("/repo")
+        for step in ["cd src", "grep -r TODO ."]:
+            state.resolve_for(step)
+            state.observe(step)
+        later = "grep -r FIXME ."
+        self.assertEqual(state.resolve_for(later), "/repo/src")
+        state.observe(later)
+        self.assertEqual(state.current, "/repo/src")
+
+    def test_relative_vs_absolute_cd(self):
+        state = CwdState("/repo")
+        state.resolve_for("cd src")
+        state.observe("cd src")
+        self.assertEqual(state.current, "/repo/src")
+        state.resolve_for("cd /tmp/other")
+        state.observe("cd /tmp/other")
+        self.assertEqual(state.current, "/tmp/other")
+
+    def test_bare_cd_is_noop(self):
+        state = CwdState("/repo")
+        state.resolve_for("cd")
+        state.observe("cd")
+        self.assertEqual(state.current, "/repo")
+
+    def test_nonexistent_path_still_recorded(self):
+        state = CwdState("/repo")
+        missing = "/repo/does-not-exist-xyz"
+        self.assertFalse(os.path.exists(missing))
+        state.resolve_for("cd does-not-exist-xyz")
+        state.observe("cd does-not-exist-xyz")
+        self.assertEqual(state.current, missing)
+        self.assertFalse(os.path.exists(missing))
+
+    def test_quoted_cd_argument(self):
+        state = CwdState("/repo")
+        state.resolve_for('cd "my dir"')
+        state.observe('cd "my dir"')
+        self.assertEqual(state.current, "/repo/my dir")
 
 
 class TestCapture(unittest.TestCase):
@@ -1212,9 +1432,8 @@ class TestCaptureCursor(unittest.TestCase):
                     self.assertNotEqual(alias.name.split(".")[0], "sqlite3")
                 if isinstance(node, ast.ImportFrom) and node.module:
                     self.assertNotEqual(node.module.split(".")[0], "sqlite3")
-            if isinstance(node, ast.Attribute):
-                if isinstance(node.value, ast.Name):
-                    self.assertNotEqual(node.value.id, "sqlite3")
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                self.assertNotEqual(node.value.id, "sqlite3")
 
 
 class TestRawStore(unittest.TestCase):
@@ -1393,6 +1612,469 @@ class TestRefiner(unittest.TestCase):
         rows = refine_simple_commands(raw_records)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["command_text"], SIMPLE_COMMAND)
+
+
+class TestRefinerFull(unittest.TestCase):
+    def test_claude_cd_and_grep_two_steps_with_cwd(self):
+        rec = capture_claude._envelope(
+            "/a.jsonl",
+            1,
+            _assistant_bash_line("cd src && grep -r TODO .", cwd="/repo"),
+            datetime.now(UTC).isoformat(),
+        )
+        rows = refine_all([rec])
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["command_text"], "cd src")
+        self.assertEqual(rows[0]["resolved_cwd"], "/repo")
+        self.assertIsNone(rows[0]["operator"])
+        self.assertTrue(rows[0]["execution_certain"])
+        self.assertEqual(rows[1]["command_text"], "grep -r TODO .")
+        self.assertEqual(rows[1]["resolved_cwd"], "/repo/src")
+        self.assertEqual(rows[1]["operator"], "&&")
+        self.assertFalse(rows[1]["execution_certain"])
+        self.assertEqual(rows[0]["raw_ref"], rows[1]["raw_ref"])
+        self.assertEqual(rows[0]["step_count"], 2)
+        self.assertEqual(rows[1]["step_count"], 2)
+        self.assertEqual(rows[0]["step_index"], 0)
+        self.assertEqual(rows[1]["step_index"], 1)
+        self.assertEqual(rows[0]["command_shape"], "simple")
+        self.assertEqual(rows[1]["command_shape"], "simple")
+        self.assertEqual(rows[0]["family"], "cd")
+        self.assertEqual(rows[1]["family"], "grep")
+
+    def test_opencode_later_separate_call_reuses_cwd(self):
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = "ses_cwd"
+        message_id = "msg_cwd"
+        message = capture_opencode._base_envelope(
+            "/opencode.db",
+            "message",
+            message_id,
+            json.dumps(
+                {
+                    "role": "assistant",
+                    "tokens": {"input": 5, "output": 5},
+                    "modelID": MODEL,
+                    "providerID": "anthropic",
+                    "path": {"cwd": "/repo"},
+                }
+            ),
+            captured_at,
+            session_id,
+            None,
+            10,
+        )
+        cd_part = capture_opencode._base_envelope(
+            "/opencode.db",
+            "part",
+            "prt_cd",
+            json.dumps(
+                {
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {"input": {"command": "cd src"}},
+                }
+            ),
+            captured_at,
+            session_id,
+            message_id,
+            20,
+        )
+        grep_part = capture_opencode._base_envelope(
+            "/opencode.db",
+            "part",
+            "prt_grep",
+            json.dumps(
+                {
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {"input": {"command": "grep -r FIXME ."}},
+                }
+            ),
+            captured_at,
+            session_id,
+            message_id,
+            30,
+        )
+        rows = refine_all([message, cd_part, grep_part])
+        by_text = {row["command_text"]: row for row in rows}
+        self.assertEqual(by_text["cd src"]["resolved_cwd"], "/repo")
+        self.assertEqual(by_text["grep -r FIXME ."]["resolved_cwd"], "/repo/src")
+
+    def test_for_loop_is_one_control_flow_script_row(self):
+        command = 'for f in *.py; do rg pattern "$f"; done'
+        rec = capture_claude._envelope(
+            "/a.jsonl",
+            1,
+            _assistant_bash_line(command, cwd="/repo"),
+            datetime.now(UTC).isoformat(),
+        )
+        rows = refine_all([rec])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["command_text"], command)
+        self.assertEqual(rows[0]["command_shape"], "control_flow_script")
+        self.assertEqual(rows[0]["step_count"], 1)
+        self.assertEqual(rows[0]["family"], "for")
+
+    def test_opencode_workdir_rebase(self):
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = "ses_rebase"
+        message_id = "msg_rebase"
+        message = capture_opencode._base_envelope(
+            "/opencode.db",
+            "message",
+            message_id,
+            json.dumps({"path": {"cwd": "/repo"}}),
+            captured_at,
+            session_id,
+            None,
+            10,
+        )
+        with_workdir = capture_opencode._base_envelope(
+            "/opencode.db",
+            "part",
+            "prt_wd",
+            json.dumps(
+                {
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {
+                        "input": {"command": "echo hi", "workdir": "/rebased"},
+                    },
+                }
+            ),
+            captured_at,
+            session_id,
+            message_id,
+            20,
+        )
+        without_workdir = capture_opencode._base_envelope(
+            "/opencode.db",
+            "part",
+            "prt_later",
+            json.dumps(
+                {
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {"input": {"command": "grep -r TODO ."}},
+                }
+            ),
+            captured_at,
+            session_id,
+            message_id,
+            30,
+        )
+        rows = refine_all([message, with_workdir, without_workdir])
+        by_text = {row["command_text"]: row for row in rows}
+        self.assertEqual(by_text["echo hi"]["resolved_cwd"], "/rebased")
+        self.assertEqual(by_text["grep -r TODO ."]["resolved_cwd"], "/rebased")
+
+    def test_compound_steps_share_turn_id_and_tokens(self):
+        rec = capture_claude._envelope(
+            "/a.jsonl",
+            1,
+            _assistant_bash_line("cd src && grep -r TODO .", cwd="/repo"),
+            datetime.now(UTC).isoformat(),
+        )
+        rows = refine_all([rec], env={"HOME": "/no/such/home", "XDG_CACHE_HOME": "/no"})
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["turn_id"], rows[1]["turn_id"])
+        self.assertEqual(rows[0]["turn_id"], TURN_UUID)
+        self.assertEqual(rows[0]["tokens_input"], rows[1]["tokens_input"])
+        self.assertEqual(rows[0]["tokens_output"], rows[1]["tokens_output"])
+        self.assertEqual(rows[0]["price"], rows[1]["price"])
+        self.assertEqual(rows[0]["tokens_input"], 100)
+        self.assertEqual(rows[0]["tokens_output"], 50)
+        self.assertIsNone(rows[0]["price"])
+        self.assertEqual(rows[0]["price_confidence"], "unknown")
+
+    def test_codex_incremental_token_delta(self):
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = _CODEX_SESSION_UUID
+        path = f"/sessions/{_CODEX_ROLLOUT_NAME}"
+        meta = capture_codex._envelope(
+            path, 1, _codex_session_meta_line(), captured_at, session_id
+        )
+        token_a = capture_codex._envelope(
+            path,
+            2,
+            json.dumps(
+                {
+                    "timestamp": "2026-01-15T12:00:01Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "input_tokens": 80,
+                                "output_tokens": 20,
+                                "total_tokens": 100,
+                            }
+                        },
+                    },
+                }
+            ),
+            captured_at,
+            session_id,
+        )
+        cmd_a = capture_codex._envelope(
+            path, 3, _codex_function_call_line(), captured_at, session_id
+        )
+        token_b = capture_codex._envelope(
+            path,
+            4,
+            json.dumps(
+                {
+                    "timestamp": "2026-01-15T12:00:03Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "input_tokens": 180,
+                                "output_tokens": 70,
+                                "total_tokens": 250,
+                            }
+                        },
+                    },
+                }
+            ),
+            captured_at,
+            session_id,
+        )
+        cmd_b = capture_codex._envelope(
+            path,
+            5,
+            json.dumps(
+                {
+                    "timestamp": "2026-01-15T12:00:04Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "arguments": json.dumps({"cmd": "pwd"}),
+                        "call_id": "call_2",
+                    },
+                }
+            ),
+            captured_at,
+            session_id,
+        )
+        rows = refine_all([meta, token_a, cmd_a, token_b, cmd_b])
+        by_text = {row["command_text"]: row for row in rows}
+        self.assertEqual(by_text["ls -la"]["tokens_input"], 80)
+        self.assertEqual(by_text["ls -la"]["tokens_output"], 20)
+        self.assertEqual(by_text["pwd"]["tokens_input"], 100)
+        self.assertEqual(by_text["pwd"]["tokens_output"], 50)
+        self.assertNotEqual(by_text["pwd"]["tokens_input"], 180)
+        self.assertEqual(by_text["ls -la"]["turn_id"], 2)
+        self.assertEqual(by_text["pwd"]["turn_id"], 4)
+        self.assertEqual(by_text["ls -la"]["model"], "unknown")
+        self.assertIsNone(by_text["ls -la"]["rtk_input_tokens"])
+
+    def test_cursor_tokens_and_price_none(self):
+        line = _cursor_tool_use_line(
+            "Shell",
+            {"command": "ls -la", "working_directory": "/tmp/proj"},
+        )
+        rec = capture_cursor._envelope(
+            "/transcript.jsonl",
+            1,
+            line,
+            datetime.now(UTC).isoformat(),
+            _CURSOR_SESSION_UUID,
+        )
+        rows = refine_all([rec])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["command_text"], "ls -la")
+        self.assertIsNone(rows[0]["tokens_input"])
+        self.assertIsNone(rows[0]["tokens_output"])
+        self.assertIsNone(rows[0]["price"])
+        self.assertEqual(rows[0]["price_confidence"], "unknown")
+        self.assertEqual(rows[0]["source_confidence"], "low")
+        self.assertEqual(rows[0]["resolved_cwd"], "unknown")
+        self.assertIsNone(rows[0]["turn_id"])
+        self.assertIsNone(rows[0]["rtk_input_tokens"])
+
+    def test_rtk_history_populates_rtk_columns_tee_produces_none(self):
+        captured_at = datetime.now(UTC).isoformat()
+        history_payload = {
+            "source_type": "history",
+            "id": 1,
+            "original_cmd": "ls -la",
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "saved_tokens": 2,
+            "savings_pct": 20.0,
+        }
+        history = capture_rtk._envelope(
+            "/rtk/history.db",
+            "history",
+            "1",
+            history_payload,
+            captured_at,
+            json.dumps(history_payload),
+        )
+        tee_payload = {
+            "source_type": "tee",
+            "filename": "1_cmd.log",
+            "content": "ignored",
+        }
+        tee = capture_rtk._envelope(
+            "/rtk/tee/1_cmd.log",
+            "tee",
+            "1_cmd.log:abc",
+            tee_payload,
+            captured_at,
+            "ignored",
+        )
+        failure_payload = {"source_type": "parse_failure", "id": 1, "raw_command": "x"}
+        failure = capture_rtk._envelope(
+            "/rtk/history.db",
+            "parse_failure",
+            "1",
+            failure_payload,
+            captured_at,
+            json.dumps(failure_payload),
+        )
+        rows = refine_all([history, tee, failure])
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["runtime"], "rtk")
+        self.assertEqual(row["command_text"], "ls -la")
+        self.assertEqual(row["command_shape"], "simple")
+        self.assertEqual(row["step_count"], 1)
+        self.assertIsNone(row["operator"])
+        self.assertTrue(row["execution_certain"])
+        self.assertIsNone(row["model"])
+        self.assertIsNone(row["tokens_input"])
+        self.assertIsNone(row["tokens_output"])
+        self.assertEqual(row["rtk_input_tokens"], 10)
+        self.assertEqual(row["rtk_output_tokens"], 5)
+        self.assertEqual(row["rtk_saved_tokens"], 2)
+        self.assertEqual(row["rtk_savings_pct"], 20.0)
+        self.assertIsNone(row["price"])
+        self.assertEqual(row["price_confidence"], "not_applicable")
+        self.assertTrue(
+            (row["tokens_input"] is None) or (row["rtk_input_tokens"] is None)
+        )
+
+    def test_opencode_walk_orders_by_time_created_not_record_id(self):
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = "ses_chrono"
+        message_id = "msg_chrono"
+        message = capture_opencode._base_envelope(
+            "/opencode.db",
+            "message",
+            message_id,
+            json.dumps({"path": {"cwd": "/repo"}}),
+            captured_at,
+            session_id,
+            None,
+            1,
+        )
+        later_grep = capture_opencode._base_envelope(
+            "/opencode.db",
+            "part",
+            "b",
+            json.dumps(
+                {
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {"input": {"command": "grep -r TODO ."}},
+                }
+            ),
+            captured_at,
+            session_id,
+            message_id,
+            300,
+        )
+        middle = capture_opencode._base_envelope(
+            "/opencode.db",
+            "part",
+            "a",
+            json.dumps(
+                {
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {"input": {"command": "echo mid"}},
+                }
+            ),
+            captured_at,
+            session_id,
+            message_id,
+            200,
+        )
+        first_cd = capture_opencode._base_envelope(
+            "/opencode.db",
+            "part",
+            "c",
+            json.dumps(
+                {
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {"input": {"command": "cd src"}},
+                }
+            ),
+            captured_at,
+            session_id,
+            message_id,
+            100,
+        )
+        rows = refine_all([message, later_grep, middle, first_cd])
+        by_text = {row["command_text"]: row for row in rows}
+        self.assertEqual(by_text["grep -r TODO ."]["resolved_cwd"], "/repo/src")
+
+    def test_codex_malformed_arguments_does_not_abort(self):
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = _CODEX_SESSION_UUID
+        path = f"/sessions/{_CODEX_ROLLOUT_NAME}"
+        meta = capture_codex._envelope(
+            path, 1, _codex_session_meta_line(), captured_at, session_id
+        )
+        good_a = capture_codex._envelope(
+            path, 2, _codex_function_call_line(), captured_at, session_id
+        )
+        bad = capture_codex._envelope(
+            path,
+            3,
+            json.dumps(
+                {
+                    "timestamp": "2026-01-15T12:00:03Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "arguments": '{"cmd":',
+                        "call_id": "call_bad",
+                    },
+                }
+            ),
+            captured_at,
+            session_id,
+        )
+        good_b = capture_codex._envelope(
+            path,
+            4,
+            json.dumps(
+                {
+                    "timestamp": "2026-01-15T12:00:04Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "arguments": json.dumps({"cmd": "pwd"}),
+                        "call_id": "call_2",
+                    },
+                }
+            ),
+            captured_at,
+            session_id,
+        )
+        rows = refine_all([meta, good_a, bad, good_b])
+        texts = [row["command_text"] for row in rows]
+        self.assertEqual(texts, ["ls -la", "pwd"])
+        self.assertNotIn(None, texts)
 
 
 class TestPricing(unittest.TestCase):

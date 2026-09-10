@@ -1,4 +1,11 @@
-"""SQLite refined-commands store (full Wave-1 schema, UPSERT writes)."""
+"""SQLite refined-commands store (full Wave-1 schema, UPSERT writes).
+
+Token/price figures on `refined_commands` are turn-level values duplicated
+onto every step-row sharing a `(session_id, turn_id)`. Consumers computing
+a session or date total MUST `SELECT DISTINCT session_id, turn_id,
+tokens_input, tokens_output, price` before summing — never a raw per-row
+`SUM`.
+"""
 
 from __future__ import annotations
 
