@@ -94,6 +94,19 @@ Required rule content for the checker:
 10. **README currency rule**: after adding, removing, or refactoring any significant
     feature, the README must be updated, using the `crafting-effective-readmes` skill.
 
+11. **No absolute paths in project assets, source, or tests.** Final code, tests, configs,
+    and any other project asset must not hardcode absolute filesystem paths — they break
+    the moment the user switches machines. Use relative paths, repo-root-relative
+    resolution, or environment-provided roots instead.
+
+12. **No excuse-driven deflection on failing tests or bugs — mandatory.** Never blame
+    someone/something else for a failure, and never reach for phrases like "that's not my
+    fault," "that's a scope change," "that will be deferred," or "that's not my problem" as
+    a way to dodge a failing test or a bug. Every time a test fails or a bug surfaces, the
+    agent must work out the best strategy to actually address it — pre-existing
+    conditions are not an excuse to avoid the work. (Applies equally to bugs and to test
+    failures.)
+
 ## Solution
 
 TBD — scaffold via `/superpowers:writing-skills`, evaluate with `/skill-judge`, then run

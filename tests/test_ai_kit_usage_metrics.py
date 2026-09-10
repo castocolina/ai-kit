@@ -41,10 +41,9 @@ from ai_kit_usage_metrics.cwd_state import CwdState
 from ai_kit_usage_metrics.dashboard import generate
 from ai_kit_usage_metrics.decomposer import classify_segment, decompose, scan_command
 from ai_kit_usage_metrics.raw_store import CaptureResult
-from ai_kit_usage_metrics.refiner import refine_all, refine_simple_commands
+from ai_kit_usage_metrics.refiner import refine_all
 
 SIMPLE_COMMAND = "ls -la"
-COMPOUND_COMMAND = "ls && echo hi"
 SCRIPT_COMMAND = "</script>alert(1)</script>"
 SESSION_ID = "sess-simple-1"
 TURN_UUID = "turn-uuid-1"
@@ -263,6 +262,16 @@ class TestFamily(unittest.TestCase):
 
     def test_unmatched_command_is_its_own_family(self):
         self.assertEqual(family.family_of("git status"), "git")
+
+    def test_wrapper_and_env_assignment_prefixes_do_not_mask_family(self):
+        # WR-04 regression: sudo/env-var-assignment/wrapper-binary prefixes
+        # must not become the reported family instead of the real command.
+        self.assertEqual(family.family_of("sudo grep x"), "grep")
+        self.assertEqual(family.family_of("FOO=bar grep x"), "grep")
+        self.assertEqual(family.family_of("time grep x"), "grep")
+        self.assertEqual(family.family_of("nice -n10 rg x"), "grep")
+        self.assertEqual(family.family_of("env FOO=bar sudo grep x"), "grep")
+        self.assertEqual(family.family_of(""), "")
 
 
 class TestDecomposer(unittest.TestCase):
@@ -853,6 +862,84 @@ class TestCaptureOpencode(unittest.TestCase):
         second = capture_opencode.capture(self.env, first.cursor)
         self.assertEqual(second.records, [])
         self.assertEqual(second.stats["captured"], 0)
+
+    def test_null_time_created_rows_are_captured_not_dropped(self):
+        # CR-01 regression: a row whose time_created is SQL NULL must not be
+        # silently and permanently excluded by the cursor-pagination WHERE
+        # clause (NULL comparisons evaluate to NULL/false in SQLite).
+        def seed(conn):
+            conn.execute(
+                "INSERT INTO session (id, time_created, time_updated) "
+                "VALUES (?, ?, ?)",
+                ("ses_null", None, None),
+            )
+            conn.execute(
+                "INSERT INTO message (id, session_id, time_created, time_updated, data) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("msg_null", "ses_null", None, None, "{}"),
+            )
+            conn.execute(
+                "INSERT INTO part (id, message_id, session_id, time_created, "
+                "time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+                ("prt_null", "msg_null", "ses_null", None, None, "{}"),
+            )
+
+        _write_opencode_db(self.env, seed)
+        result = capture_opencode.capture(self.env, {})
+        record_ids = sorted(rec["record_id"] for rec in result.records)
+        self.assertEqual(record_ids, ["msg_null", "prt_null", "ses_null"])
+        self.assertEqual(result.stats["captured"], 3)
+        self.assertEqual(result.stats["null_time_created"], 3)
+        for rec in result.records:
+            self.assertIsNone(rec["time_created"])
+
+        # A row with a NULL time_created must not be re-yielded on a
+        # subsequent run once it has been captured (deduped via null_seen_ids,
+        # independent of the time-ordered cursor).
+        second = capture_opencode.capture(self.env, result.cursor)
+        self.assertEqual(second.records, [])
+        self.assertEqual(second.stats["captured"], 0)
+
+    def test_null_time_created_row_arriving_after_cursor_advances_is_captured(self):
+        # CR-01 residual regression (iteration 2): a NULL time_created row
+        # inserted AFTER the cursor has already advanced past a real
+        # (non-zero) timestamp for that table must still be captured on a
+        # later run, not permanently excluded by the time-ordered WHERE
+        # clause.
+        def seed(conn):
+            conn.execute(
+                "INSERT INTO session (id, time_created, time_updated) "
+                "VALUES (?, ?, ?)",
+                ("ses_a", _OPENCODE_TIME, _OPENCODE_TIME),
+            )
+
+        _write_opencode_db(self.env, seed)
+        first = capture_opencode.capture(self.env, {})
+        self.assertEqual(
+            [rec["record_id"] for rec in first.records], ["ses_a"]
+        )
+        self.assertGreater(first.cursor["session"]["last_time_created"], 0)
+
+        db_path = paths.opencode_db_path(self.env)
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "INSERT INTO session (id, time_created, time_updated) "
+            "VALUES (?, ?, ?)",
+            ("ses_null_late", None, None),
+        )
+        conn.commit()
+        conn.close()
+
+        second = capture_opencode.capture(self.env, first.cursor)
+        self.assertEqual(
+            [rec["record_id"] for rec in second.records], ["ses_null_late"]
+        )
+        self.assertEqual(second.stats["captured"], 1)
+        self.assertEqual(second.stats["null_time_created"], 1)
+
+        third = capture_opencode.capture(self.env, second.cursor)
+        self.assertEqual(third.records, [])
+        self.assertEqual(third.stats["captured"], 0)
 
     def test_nested_storage_json_captured_losslessly(self):
         storage = paths.opencode_storage_dir(self.env)
@@ -1552,74 +1639,6 @@ class TestRefinedStore(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][0], "ls -la")
         self.assertEqual(rows[0][1], "files")
-
-
-class TestRefiner(unittest.TestCase):
-    def test_compound_commands_produce_no_row(self):
-        raw_records = [
-            {
-                "raw_ref": "claude:/a.jsonl:1",
-                "captured_at": datetime.now(UTC).isoformat(),
-                "runtime": "claude",
-                "source_file": "/a.jsonl",
-                "source_line": 1,
-                "parse_status": "ok",
-                "raw_text": _assistant_bash_line(COMPOUND_COMMAND),
-                "payload": json.loads(_assistant_bash_line(COMPOUND_COMMAND)),
-            },
-            {
-                "raw_ref": "claude:/a.jsonl:2",
-                "captured_at": datetime.now(UTC).isoformat(),
-                "runtime": "claude",
-                "source_file": "/a.jsonl",
-                "source_line": 2,
-                "parse_status": "ok",
-                "raw_text": _assistant_bash_line(SIMPLE_COMMAND, tool_id="toolu_simple"),
-                "payload": json.loads(
-                    _assistant_bash_line(SIMPLE_COMMAND, tool_id="toolu_simple")
-                ),
-            },
-        ]
-        rows = refine_simple_commands(raw_records)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["command_text"], SIMPLE_COMMAND)
-        self.assertEqual(rows[0]["command_shape"], "simple")
-        self.assertEqual(rows[0]["family"], "ls")
-        self.assertNotIn("&", rows[0]["command_text"])
-        self.assertNotIn(";", rows[0]["command_text"])
-        self.assertNotIn("|", rows[0]["command_text"])
-
-    def test_missing_input_command_produces_no_row(self):
-        ok_line = _assistant_bash_line(SIMPLE_COMMAND, tool_id="toolu_ok")
-        missing_payload = json.loads(
-            _assistant_bash_line(SIMPLE_COMMAND, tool_id="toolu_missing")
-        )
-        missing_payload["message"]["content"][0]["input"] = {}
-        raw_records = [
-            {
-                "raw_ref": "claude:/a.jsonl:1",
-                "captured_at": datetime.now(UTC).isoformat(),
-                "runtime": "claude",
-                "source_file": "/a.jsonl",
-                "source_line": 1,
-                "parse_status": "ok",
-                "raw_text": json.dumps(missing_payload),
-                "payload": missing_payload,
-            },
-            {
-                "raw_ref": "claude:/a.jsonl:2",
-                "captured_at": datetime.now(UTC).isoformat(),
-                "runtime": "claude",
-                "source_file": "/a.jsonl",
-                "source_line": 2,
-                "parse_status": "ok",
-                "raw_text": ok_line,
-                "payload": json.loads(ok_line),
-            },
-        ]
-        rows = refine_simple_commands(raw_records)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["command_text"], SIMPLE_COMMAND)
 
 
 class TestRefinerFull(unittest.TestCase):

@@ -11,8 +11,10 @@ import sqlite3
 
 from ai_kit_usage_metrics import family, refined_store
 
-# Documented placeholder, not a researched constant. The PRD's own framing is
-# "exact threshold TBD once real data volume is known."
+# A deliberately conservative default (mine any shape repeated at least
+# twice), not a researched constant. Overridable per-call because the right
+# threshold depends on how much history a given install has accumulated,
+# which this module has no way to know in advance.
 DEFAULT_MIN_OCCURRENCES = 2
 
 _VAR_RE = re.compile(r"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?")

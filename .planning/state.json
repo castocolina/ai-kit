@@ -31,13 +31,13 @@
     {
       "number": "5",
       "name": "Usage Metrics Dashboard",
-      "status": "pending"
+      "status": "complete"
     }
   ],
   "next": {
-    "command": "/gsd:progress --next",
-    "label": "Advance to the next step (plan phase 05)",
-    "reason": "Phase 05 of 6 — needs a plan"
+    "command": "/gsd:new-milestone",
+    "label": "Start a new milestone",
+    "reason": "All phases complete — start a new milestone"
   },
-  "updated_at": "2026-09-10T06:03:57.195Z"
+  "updated_at": "2026-09-10T12:49:28.468Z"
 }

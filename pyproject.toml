@@ -84,7 +84,7 @@ disable = [
 # ─────────────────────────── vulture ───────────────────────────
 [tool.vulture]
 min_confidence = 80
-paths = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py"]
+paths = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "skills/ai-kit-usage-metrics"]
 # signal-handler / context-manager params required by their signature
 ignore_names = ["signum", "frame", "offset", "whence"]
 

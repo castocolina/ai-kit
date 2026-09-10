@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Opencode Provider Management** - List and safely remove custom opencode providers via atomic, surgical JSONC edits (completed 2026-09-09)
 - [x] **Phase 3: Tool-Substitution Awareness Hook** - Inject a live-verified rtk tool-substitution briefing into Claude Code session starts (completed 2026-09-09)
 - [x] **Phase 4: Config Doctor** - One-screen, confidence-labeled config diagnostics across Claude Code/opencode/Codex with confirmed per-item apply (completed 2026-09-10)
-- [ ] **Phase 5: Usage Metrics Dashboard** - Capture, refine, and locally visualize how uz actually uses AI CLIs
+- [x] **Phase 5: Usage Metrics Dashboard** - Capture, refine, and locally visualize how uz actually uses AI CLIs (completed 2026-09-10)
 
 ## Phase Details
 
@@ -159,12 +159,12 @@ Plans:
 
 Plans:
 
-- [ ] 05-01-PLAN.md — Tracer: Claude Code raw capture -> minimal refined SQLite (simple commands) -> embedded static HTML dashboard, end to end (REQ-usage-metrics-raw-capture, REQ-usage-metrics-refinement-pipeline, REQ-usage-metrics-dashboard-ui)
-- [ ] 05-02-PLAN.md — opencode raw capture (session/message/part) plus rtk history.db + tee log ingestion (REQ-usage-metrics-raw-capture)
-- [ ] 05-03-PLAN.md — Codex + Cursor raw capture, Cursor flagged low-confidence (REQ-usage-metrics-raw-capture)
-- [ ] 05-04-PLAN.md — Full refinement pipeline: mechanical &&/;/| decomposer, cwd-resolution state machine, family tagging across all 5 sources (REQ-usage-metrics-refinement-pipeline)
-- [ ] 05-05-PLAN.md — Full dashboard UI: filter/sort across the 5 MVP axes, session grouping, SKILL.md + skill-judge (REQ-usage-metrics-dashboard-ui)
-- [ ] 05-06-PLAN.md — Classification refinement loop: pattern-mining pass, confidence-flagged inferred_family (REQ-usage-metrics-classification-refinement-loop)
+- [x] 05-01-PLAN.md — Tracer: Claude Code raw capture -> minimal refined SQLite (simple commands) -> embedded static HTML dashboard, end to end (REQ-usage-metrics-raw-capture, REQ-usage-metrics-refinement-pipeline, REQ-usage-metrics-dashboard-ui)
+- [x] 05-02-PLAN.md — opencode raw capture (session/message/part) plus rtk history.db + tee log ingestion (REQ-usage-metrics-raw-capture)
+- [x] 05-03-PLAN.md — Codex + Cursor raw capture, Cursor flagged low-confidence (REQ-usage-metrics-raw-capture)
+- [x] 05-04-PLAN.md — Full refinement pipeline: mechanical &&/;/| decomposer, cwd-resolution state machine, family tagging across all 5 sources (REQ-usage-metrics-refinement-pipeline)
+- [x] 05-05-PLAN.md — Full dashboard UI: filter/sort across the 5 MVP axes, session grouping, SKILL.md + skill-judge (REQ-usage-metrics-dashboard-ui)
+- [x] 05-06-PLAN.md — Classification refinement loop: pattern-mining pass, confidence-flagged inferred_family (REQ-usage-metrics-classification-refinement-loop)
 
 **UI hint**: yes
 
@@ -180,7 +180,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5
 | 2. Opencode Provider Management | 2/2 | Complete    | 2026-09-09 |
 | 3. Tool-Substitution Awareness Hook | 2/2 | Complete    | 2026-09-09 |
 | 4. Config Doctor | 3/3 | Complete    | 2026-09-10 |
-| 5. Usage Metrics Dashboard | 0/6 | Not started | - |
+| 5. Usage Metrics Dashboard | 6/6 | Complete    | 2026-09-10 |
 
 ## Backlog
 

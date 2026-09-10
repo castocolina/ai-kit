@@ -15,19 +15,43 @@ from ai_kit_usage_metrics.raw_store import CaptureResult
 _TABLES = ("session", "message", "part")
 # Literal table names kept in each query string so plan verification
 # (`grep FROM session|FROM message`) can prove all three tables are queried.
+#
+# A single monotonic (time_created, id) cursor cannot losslessly express
+# "capture everything not yet seen" when a table mixes NULL and non-NULL
+# time_created values: coalescing NULL to 0 ("oldest") only works for rows
+# seen *before* the cursor has ever advanced past a real timestamp. Once the
+# cursor advances past 0, a NULL-time_created row inserted afterward again
+# satisfies neither branch of the WHERE clause and is silently and
+# permanently dropped forever (see CR-01, iteration 2). So the two
+# populations are paginated independently:
+#   - _CURSOR_SQL only ever selects rows with a real (non-NULL) time_created,
+#     paginated by the normal monotonic (time_created, id) cursor.
+#   - _NULL_SQL selects every NULL-time_created row unconditionally; dedup
+#     against re-capture is done in Python via a per-table "already captured
+#     these ids" set (_table_cursor's null_seen_ids), independent of the
+#     time-ordered cursor, mirroring _capture_storage's ingested-files set.
 _CURSOR_SQL = {
     "session": (
-        "SELECT * FROM session WHERE time_created > ? OR "
-        "(time_created = ? AND id > ?) ORDER BY time_created, id"
+        "SELECT * FROM session WHERE time_created IS NOT NULL AND "
+        "(time_created > ? OR (time_created = ? AND id > ?)) "
+        "ORDER BY time_created, id"
     ),
     "message": (
-        "SELECT * FROM message WHERE time_created > ? OR "
-        "(time_created = ? AND id > ?) ORDER BY time_created, id"
+        "SELECT * FROM message WHERE time_created IS NOT NULL AND "
+        "(time_created > ? OR (time_created = ? AND id > ?)) "
+        "ORDER BY time_created, id"
     ),
     "part": (
-        "SELECT * FROM part WHERE time_created > ? OR "
-        "(time_created = ? AND id > ?) ORDER BY time_created, id"
+        "SELECT * FROM part WHERE time_created IS NOT NULL AND "
+        "(time_created > ? OR (time_created = ? AND id > ?)) "
+        "ORDER BY time_created, id"
     ),
+}
+
+_NULL_SQL = {
+    "session": "SELECT * FROM session WHERE time_created IS NULL ORDER BY id",
+    "message": "SELECT * FROM message WHERE time_created IS NULL ORDER BY id",
+    "part": "SELECT * FROM part WHERE time_created IS NULL ORDER BY id",
 }
 
 
@@ -37,6 +61,7 @@ def _empty_stats() -> dict:
         "malformed": 0,
         "recognized_no_data": 0,
         "unreadable_files": [],
+        "null_time_created": 0,
     }
 
 
@@ -53,13 +78,25 @@ def _row_dict(cursor: sqlite3.Cursor, row: tuple) -> dict:
     return {col[0]: row[i] for i, col in enumerate(cursor.description)}
 
 
-def _table_cursor(cursor: dict, table: str) -> tuple[int, str]:
+def _table_cursor(cursor: dict, table: str) -> tuple[int, str, set[str]]:
     sub = cursor.get(table) or {}
-    return int(sub.get("last_time_created") or 0), str(sub.get("last_id") or "")
+    null_seen_ids = {str(row_id) for row_id in (sub.get("null_seen_ids") or [])}
+    return int(sub.get("last_time_created") or 0), str(sub.get("last_id") or ""), null_seen_ids
 
 
-def _set_table_cursor(cursor: dict, table: str, time_created: int, row_id: str) -> None:
-    cursor[table] = {"last_time_created": int(time_created), "last_id": str(row_id)}
+def _set_table_cursor(
+    cursor: dict,
+    table: str,
+    time_created: int,
+    row_id: str,
+    null_seen_ids: set[str],
+) -> None:
+    cursor[table] = {
+        "last_time_created": int(time_created),
+        "last_id": str(row_id),
+        # Sorted for deterministic/diffable cursor JSON across runs.
+        "null_seen_ids": sorted(null_seen_ids),
+    }
 
 
 def _parse_data(raw_text: str) -> tuple[str, object | None]:
@@ -151,9 +188,9 @@ def _capture_table(
     stats: dict,
     captured_at: str,
 ) -> None:
-    last_time, last_id = _table_cursor(cursor, table)
+    last_time, last_id, null_seen_ids = _table_cursor(cursor, table)
+
     db_cursor = conn.execute(_CURSOR_SQL[table], (last_time, last_time, last_id))
-    last_row = None
     for row_tuple in db_cursor:
         row = _row_dict(db_cursor, row_tuple)
         rec = _envelope_from_row(db_path, table, row, captured_at)
@@ -161,9 +198,28 @@ def _capture_table(
         stats["captured"] += 1
         if rec["parse_status"] == "malformed":
             stats["malformed"] += 1
-        last_row = row
-    if last_row is not None:
-        _set_table_cursor(cursor, table, last_row["time_created"], last_row["id"])
+        last_time, last_id = row["time_created"], str(row["id"])
+
+    # NULL-time_created rows are paginated independently of the time-ordered
+    # cursor above (see _NULL_SQL comment): every such row is re-scanned
+    # each run and deduped against null_seen_ids, so a row that arrives
+    # after last_time has already advanced past 0 is still captured exactly
+    # once, instead of being permanently excluded by the WHERE clause.
+    null_cursor = conn.execute(_NULL_SQL[table])
+    for row_tuple in null_cursor:
+        row = _row_dict(null_cursor, row_tuple)
+        row_id = str(row["id"])
+        if row_id in null_seen_ids:
+            continue
+        rec = _envelope_from_row(db_path, table, row, captured_at)
+        records.append(rec)
+        stats["captured"] += 1
+        stats["null_time_created"] += 1
+        if rec["parse_status"] == "malformed":
+            stats["malformed"] += 1
+        null_seen_ids.add(row_id)
+
+    _set_table_cursor(cursor, table, last_time, last_id, null_seen_ids)
 
 
 def _capture_storage(

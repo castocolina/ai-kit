@@ -50,10 +50,23 @@ def cmd_capture(env: dict) -> None:
         try:
             cursor = raw_store.read_cursor(env, name)
             result = fn(env, cursor)
+        except Exception as exc:
+            # fn() itself failed (e.g. a malformed cursor entry or a
+            # mid-batch parsing error) -- nothing was returned to persist,
+            # so skip straight to the next source rather than also trying
+            # to write from an undefined `result`.
+            print(f"capture[{name}] failed: {exc}", file=sys.stderr)
+            continue
+        try:
             raw_store.append_records(paths.raw_jsonl_path(env, name), result.records)
             raw_store.write_cursor(env, name, result.cursor)
         except Exception as exc:
-            print(f"capture[{name}] failed: {exc}", file=sys.stderr)
+            # Persistence failed after a successful capture -- keep this
+            # separate from the capture-failure branch above (distinct
+            # error message) and, like it, must not abort the loop: one
+            # source's persistence failure must not prevent the remaining
+            # sources in CAPTURE_SOURCES from being captured this run.
+            print(f"capture[{name}] persist failed: {exc}", file=sys.stderr)
 
 
 def cmd_refine(env: dict) -> None:
