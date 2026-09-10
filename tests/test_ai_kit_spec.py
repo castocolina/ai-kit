@@ -304,6 +304,44 @@ class TestRenderAndWriteToml(unittest.TestCase):
         output = config_io.cfg_render_toml(config)
         self.assertIn('purpose = "execute"', output)
 
+    def test_render_toml_rejects_invalid_native_runtime_value(self):
+        config = {"policy": {}, "reviewers": [
+            {"key": "a", "model": "m", "vendor": "v",
+             "native_runtime": "planning"}]}
+        output = config_io.cfg_render_toml(config)
+        self.assertNotIn("planning", output)
+        self.assertNotIn("[[reviewers]]", output)
+
+    def test_render_toml_rejects_non_string_native_runtime_without_raising(self):
+        config = {"policy": {}, "reviewers": [
+            {"key": "a", "model": "m", "vendor": "v",
+             "native_runtime": ["claude"]}]}
+        output = config_io.cfg_render_toml(config)
+        self.assertNotIn("[[reviewers]]", output)
+
+    def test_render_toml_keeps_valid_native_runtime_value(self):
+        config = {"policy": {}, "reviewers": [
+            {"key": "a", "model": "m", "vendor": "v",
+             "native_runtime": "unknown"}]}
+        output = config_io.cfg_render_toml(config)
+        self.assertIn('native_runtime = "unknown"', output)
+
+    def test_render_toml_rejects_native_runtime_with_non_null_cli(self):
+        config = {"policy": {}, "reviewers": [
+            {"key": "a", "model": "m", "vendor": "v",
+             "native_runtime": "claude", "cli": "codex"}]}
+        output = config_io.cfg_render_toml(config)
+        self.assertNotIn("[[reviewers]]", output)
+        self.assertNotIn("native_runtime", output)
+
+    def test_render_toml_keeps_native_runtime_when_cli_is_absent(self):
+        config = {"policy": {}, "reviewers": [
+            {"key": "a", "model": "m", "vendor": "v",
+             "native_runtime": "claude"}]}
+        output = config_io.cfg_render_toml(config)
+        self.assertIn("[[reviewers]]", output)
+        self.assertIn('native_runtime = "claude"', output)
+
     def test_render_toml_rejects_non_bool_is_router(self):
         config = {"policy": {}, "reviewers": [
             {"key": "a", "model": "m", "vendor": "v", "is_router": "yes"}]}
@@ -448,6 +486,29 @@ class TestValidateCatalogEntry(unittest.TestCase):
     def test_absent_name_declared_purpose_is_never_rejected(self):
         reason = model_catalog.validate_catalog_entry("x", self._valid_entry())
         self.assertIsNone(reason)
+
+    def test_unrecognized_native_runtime_value_is_rejected(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(native_runtime="planning"))
+        self.assertIsNotNone(reason)
+        self.assertIn("native_runtime", reason)
+
+    def test_valid_native_runtime_values_are_accepted(self):
+        for value in ("claude", "opencode", "codex", "cursor", "unknown"):
+            reason = model_catalog.validate_catalog_entry(
+                "x", self._valid_entry(native_runtime=value))
+            self.assertIsNone(reason, msg=value)
+
+    def test_absent_native_runtime_is_never_rejected(self):
+        reason = model_catalog.validate_catalog_entry("x", self._valid_entry())
+        self.assertIsNone(reason)
+
+    def test_native_runtime_rejected_when_cli_is_present(self):
+        reason = model_catalog.validate_catalog_entry(
+            "x", self._valid_entry(native_runtime="claude", cli="codex"))
+        self.assertIsNotNone(reason)
+        self.assertIn("native_runtime", reason)
+        self.assertIn("cli", reason)
 
     def test_wrong_type_scores_subfield_is_rejected(self):
         reason = model_catalog.validate_catalog_entry(
@@ -724,6 +785,44 @@ class TestDetectInstalledClis(unittest.TestCase):
     def test_covers_all_known_clis(self):
         result = rs.detect_installed_clis(which_fn=lambda n: None)
         self.assertEqual(set(result.keys()), set(rs.KNOWN_CLIS))
+
+
+class TestDetectCurrentRuntime(unittest.TestCase):
+    def test_claudecode_signal_returns_claude(self):
+        self.assertEqual(
+            detection.detect_current_runtime(env={"CLAUDECODE": "1"}), "claude")
+
+    def test_opencode_signal_returns_opencode(self):
+        self.assertEqual(
+            detection.detect_current_runtime(
+                env={"OPENCODE": "1", "OPENCODE_PID": "12345"}),
+            "opencode")
+
+    def test_cursor_agent_signal_returns_cursor_not_cursor_agent(self):
+        self.assertEqual(
+            detection.detect_current_runtime(env={"CURSOR_AGENT": "1"}), "cursor")
+
+    def test_codex_version_signal_returns_codex(self):
+        self.assertEqual(
+            detection.detect_current_runtime(env={"CODEX_VERSION": "0.153.4"}),
+            "codex")
+
+    def test_empty_env_returns_unknown(self):
+        self.assertEqual(detection.detect_current_runtime(env={}), "unknown")
+
+    def test_empty_string_signal_is_falsy_and_falls_through(self):
+        self.assertEqual(
+            detection.detect_current_runtime(env={"CLAUDECODE": ""}), "unknown")
+
+    def test_nested_subprocess_fixed_order_winner_is_claude(self):
+        self.assertEqual(
+            detection.detect_current_runtime(
+                env={"OPENCODE": "1", "CLAUDECODE": "1"}),
+            "claude")
+
+    def test_env_none_reads_live_os_environ(self):
+        with unittest.mock.patch.dict(os.environ, {"CLAUDECODE": "1"}, clear=True):
+            self.assertEqual(detection.detect_current_runtime(env=None), "claude")
 
 
 class TestDetectOpencodeModels(unittest.TestCase):

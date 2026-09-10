@@ -61,6 +61,15 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 - A model-catalog entry with `cli: None` means "native" (host-agnostic
   wording — never Claude/opus-specific). `native_runtime` is only ever set
   on entries with `cli: None`.
+  > **Amended 2026-09-09** (Phase 1.2 plan 01.2-02): `cli: None`/`cli`-omitted
+  > semantics actually live in `review-spec.toml`'s native `[[reviewers]]`
+  > entries (and the candidate dicts `quota.py` builds from them) — not in
+  > `model_catalog.py`, whose catalog entries never carry a `cli` key at all.
+  > `native_runtime` schema validation exists in both files: `config_io.py`
+  > is the functionally-reachable path (native review-spec.toml entries),
+  > `model_catalog.py`'s is forward-compatible-only (no live producer sets a
+  > `cli` key there today). Both reject `native_runtime` co-present with a
+  > non-null `cli` on the same entry.
 - `tools/status-line.py` is organized into banner-delimited blocks
   (`# ═══ N. <ROLE> — ...`) with a role-prefix convention on top-level
   functions (`cfg_`/`probe_`/`fmt_`/`util_`/`core_`/`seg_`, plus the

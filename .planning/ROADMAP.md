@@ -67,16 +67,16 @@ Plans:
 **Success Criteria** (what must be TRUE):
 
   1. Running the installer only ever fetches the target branch's history (single-branch clone) via its primary git path, never pulling unrelated refs — while the tarball-fallback and already-cloned `git pull --ff-only` paths stay byte-identical.
-  2. Asking "which CLI is ai-kit running under right now" gets a reliable, empirically-confirmed answer (`claude`/`opencode`/`codex`/`cursor`/`unknown`) reflected in the model catalog's `native_runtime` field for entries with `cli: None` — never set on entries with a real `cli` value.
+  2. Asking "which CLI is ai-kit running under right now" gets a reliable, empirically-confirmed answer (`claude`/`opencode`/`codex`/`cursor`/`unknown`) reflected in the model catalog's `native_runtime` field for entries with `cli: None` — never set on entries with a real `cli` value. (Amended 2026-09-09: `cli: None`/`cli`-omitted semantics live in `review-spec.toml`'s native `[[reviewers]]` entries, not in `model_catalog.py` — plan 01.2-02 added `native_runtime` schema validation to both `config_io.py` (functionally-reachable) and `model_catalog.py` (forward-compatible only), each enforcing the "never set with a real `cli` value" invariant as a machine-checked rejection, not prose-only. See `01.2-02-PLAN.md`'s Open Question 1 resolution.)
   3. `ai-kit-spec-config`'s wizard visibly labels `native_runtime` in its ranked candidate output, and the change passes `skill-judge` review.
   4. A committed markdown research report exists enumerating opencode's documented plugin hooks, assessing each for sidebar/status-bar viability, cross-referencing `anomalyco/opencode#5971`, and giving an explicit recommendation.
 
-**Plans**: 1/4 plans executed
+**Plans**: 2/4 plans executed
 
 Plans:
 
 - [x] 01.2-01-PLAN.md — Harden tools/install.sh's primary git clone with `--single-branch` (REQ-multi-cli-install-single-branch)
-- [ ] 01.2-02-PLAN.md — Implement detect_current_runtime() + native_runtime schema validation in model_catalog.py/config_io.py, resolving RESEARCH.md's Open Question 1 (REQ-multi-cli-runtime-detection)
+- [x] 01.2-02-PLAN.md — Implement detect_current_runtime() + native_runtime schema validation in model_catalog.py/config_io.py, resolving RESEARCH.md's Open Question 1 (REQ-multi-cli-runtime-detection)
 - [ ] 01.2-03-PLAN.md — Write the opencode sidebar/status-bar plugin viability research report (REQ-multi-cli-opencode-ui-research)
 - [ ] 01.2-04-PLAN.md — Wire native_runtime into ai-kit-spec-config's wizard (Step 2.7/Step 3) and pass skill-judge review (REQ-multi-cli-runtime-detection)
 
