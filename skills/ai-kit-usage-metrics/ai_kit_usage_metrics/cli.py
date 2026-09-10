@@ -1,4 +1,4 @@
-"""argparse-free CLI: capture / refine / dashboard / run."""
+"""argparse-free CLI: capture / refine / dashboard / classify / run."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from ai_kit_usage_metrics import (
     capture_cursor,
     capture_opencode,
     capture_rtk,
+    classify_loop,
     dashboard,
     paths,
     raw_store,
@@ -67,6 +68,15 @@ def cmd_refine(env: dict) -> None:
         conn.close()
 
 
+def cmd_classify(env: dict) -> None:
+    conn = refined_store.open_refined_db(env)
+    try:
+        summary = classify_loop.run_classification(conn)
+        print(summary)
+    finally:
+        conn.close()
+
+
 def cmd_dashboard(env: dict) -> None:
     db_path = paths.refined_db_path(env)
     output = paths.dashboard_html_path(env)
@@ -83,22 +93,23 @@ def cmd_dashboard(env: dict) -> None:
 def main(argv, env=None) -> int:
     resolved: dict = dict(os.environ) if env is None else env
     if not argv or argv[0] in ("-h", "--help"):
-        print("usage: ai-kit-usage-metrics.py {capture|refine|dashboard|run}")
+        print("usage: ai-kit-usage-metrics.py {capture|refine|dashboard|classify|run}")
         return 0
     cmd = argv[0]
-    if cmd == "capture":
-        cmd_capture(resolved)
-        return 0
-    if cmd == "refine":
-        cmd_refine(resolved)
-        return 0
-    if cmd == "dashboard":
-        cmd_dashboard(resolved)
-        return 0
     if cmd == "run":
         cmd_capture(resolved)
         cmd_refine(resolved)
         cmd_dashboard(resolved)
         return 0
-    print(f"unknown subcommand: {cmd}", file=sys.stderr)
-    return 2
+    if cmd == "capture":
+        cmd_capture(resolved)
+    elif cmd == "refine":
+        cmd_refine(resolved)
+    elif cmd == "dashboard":
+        cmd_dashboard(resolved)
+    elif cmd == "classify":
+        cmd_classify(resolved)
+    else:
+        print(f"unknown subcommand: {cmd}", file=sys.stderr)
+        return 2
+    return 0

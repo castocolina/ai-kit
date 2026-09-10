@@ -28,6 +28,12 @@ from ai_kit_usage_metrics import (
     raw_store,
     refined_store,
 )
+from ai_kit_usage_metrics.classify_loop import (
+    infer_family_for_group,
+    mine_recurring_shapes,
+    normalize_skeleton,
+    run_classification,
+)
 from ai_kit_usage_metrics.cli import CAPTURE_SOURCES, main
 from ai_kit_usage_metrics.cwd_state import CwdState
 from ai_kit_usage_metrics.dashboard import generate
@@ -2252,12 +2258,293 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(_refined_row_count(self.env), 1)
 
 
+PRD_LOOP_RG_PY = 'for f in *.py; do rg pattern "$f"; done'
+PRD_LOOP_RG_MD = 'for x in *.md; do rg other "$x"; done'
+PRD_LOOP_GREP = 'for f in *.py; do grep pattern "$f"; done'
+PRD_SKELETON = "for <VAR> in <ARG>; do rg <ARG> <STR>; done"
+SINGLETON_LOOP = 'for z in *.txt; do echo hello "$z"; done'
+
+
+def _classify_row(raw_ref, command_text, command_shape="control_flow_script", family="for"):
+    return {
+        "raw_ref": raw_ref,
+        "runtime": "claude",
+        "session_id": SESSION_ID,
+        "turn_id": TURN_UUID,
+        "date": "2026-09-10",
+        "timestamp": TS_USE,
+        "model": MODEL,
+        "command_text": command_text,
+        "family": family,
+        "command_shape": command_shape,
+        "step_index": 0,
+        "step_count": 1,
+        "operator": None,
+        "execution_certain": True,
+        "resolved_cwd": CWD,
+        "source_confidence": "high",
+        "tokens_input": 100,
+        "tokens_output": 50,
+        "price": None,
+        "price_confidence": "unknown",
+        "rtk_input_tokens": None,
+        "rtk_output_tokens": None,
+        "rtk_saved_tokens": None,
+        "rtk_savings_pct": None,
+        "rtk_rewrote": None,
+        "inferred_family": None,
+        "inferred_confidence": None,
+        "exec_duration_ms": 1500,
+    }
+
+
+class TestClassifyLoop(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="ai-kit-um-classify-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.env = _scratch_env(self.root)
+
+    def _seed(self, rows):
+        conn = refined_store.open_refined_db(self.env)
+        self.addCleanup(conn.close)
+        refined_store.insert_commands(conn, rows)
+        return conn
+
+    def _fetch(self, conn, raw_ref):
+        return conn.execute(
+            "SELECT family, command_shape, inferred_family, inferred_confidence "
+            "FROM refined_commands WHERE raw_ref = ?",
+            (raw_ref,),
+        ).fetchone()
+
+    def test_normalize_skeleton_matches_prd_examples(self):
+        self.assertEqual(
+            normalize_skeleton(PRD_LOOP_RG_PY),
+            normalize_skeleton(PRD_LOOP_RG_MD),
+        )
+
+    def test_normalize_skeleton_does_not_rewrite_existing_placeholders(self):
+        self.assertEqual(normalize_skeleton(PRD_LOOP_RG_PY), PRD_SKELETON)
+        self.assertIn("<STR>", normalize_skeleton(PRD_LOOP_RG_PY))
+        self.assertNotIn(
+            "<ARG>; done",
+            normalize_skeleton(PRD_LOOP_RG_PY).replace("<ARG>; do", ""),
+        )
+
+    def test_infer_family_for_group_recognizes_literal_curated_member(self):
+        family_name, confidence = infer_family_for_group(
+            normalize_skeleton(PRD_LOOP_GREP),
+            PRD_LOOP_GREP,
+        )
+        self.assertEqual(family_name, "grep")
+        self.assertEqual(confidence, "LOW")
+
+    def test_infer_family_for_group_ambiguous_returns_none(self):
+        sample = 'for f in *.py; do grep pattern "$f"; cat "$f"; done'
+        family_name, confidence = infer_family_for_group(
+            normalize_skeleton(sample),
+            sample,
+        )
+        self.assertIsNone(family_name)
+        self.assertIsNone(confidence)
+
+    def test_mine_recurring_shapes_filters_by_min_occurrences(self):
+        rows = [
+            {"id": 1, "command_text": PRD_LOOP_RG_PY, "command_shape": "control_flow_script"},
+            {"id": 2, "command_text": PRD_LOOP_RG_MD, "command_shape": "control_flow_script"},
+            {"id": 3, "command_text": SINGLETON_LOOP, "command_shape": "control_flow_script"},
+        ]
+        groups = mine_recurring_shapes(rows, min_occurrences=2)
+        self.assertEqual(len(groups), 1)
+        skeleton, grouped = next(iter(groups.items()))
+        self.assertEqual(skeleton, PRD_SKELETON)
+        self.assertEqual(len(grouped), 2)
+
+    def test_prd_for_loop_attaches_low_confidence_grep(self):
+        conn = self._seed(
+            [
+                _classify_row("claude:/a.jsonl:1", PRD_LOOP_RG_PY),
+                _classify_row("claude:/a.jsonl:2", PRD_LOOP_RG_MD),
+                _classify_row("claude:/a.jsonl:3", SINGLETON_LOOP),
+            ]
+        )
+        summary = run_classification(conn)
+        self.assertEqual(summary["groups_found"], 1)
+        self.assertEqual(summary["rows_reclassified"], 2)
+        row1 = self._fetch(conn, "claude:/a.jsonl:1")
+        row2 = self._fetch(conn, "claude:/a.jsonl:2")
+        row3 = self._fetch(conn, "claude:/a.jsonl:3")
+        self.assertEqual(row1[2], "grep")
+        self.assertEqual(row1[3], "LOW")
+        self.assertEqual(row2[2], "grep")
+        self.assertEqual(row2[3], "LOW")
+        self.assertIsNone(row3[2])
+        self.assertIsNone(row3[3])
+
+    def test_family_and_command_shape_unchanged(self):
+        conn = self._seed(
+            [
+                _classify_row("claude:/a.jsonl:1", PRD_LOOP_RG_PY, family="for"),
+                _classify_row("claude:/a.jsonl:2", PRD_LOOP_RG_MD, family="for"),
+                _classify_row("claude:/a.jsonl:3", SINGLETON_LOOP, family="for"),
+            ]
+        )
+        before = conn.execute(
+            "SELECT raw_ref, family, command_shape FROM refined_commands ORDER BY id"
+        ).fetchall()
+        run_classification(conn)
+        after = conn.execute(
+            "SELECT raw_ref, family, command_shape FROM refined_commands ORDER BY id"
+        ).fetchall()
+        self.assertEqual(before, after)
+
+    def test_rollback_on_partial_failure(self):
+        conn = self._seed(
+            [
+                _classify_row("claude:/a.jsonl:1", PRD_LOOP_RG_PY),
+                _classify_row("claude:/a.jsonl:2", PRD_LOOP_RG_MD),
+                _classify_row(
+                    "claude:/a.jsonl:3",
+                    'for a in *.c; do cat "$a"; done',
+                ),
+                _classify_row(
+                    "claude:/a.jsonl:4",
+                    'for b in *.h; do cat "$b"; done',
+                ),
+            ]
+        )
+        calls = {"n": 0}
+
+        def _boom(conn, row_id, inferred_family, inferred_confidence):
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise RuntimeError("injected failure")
+            refined_store.update_inferred_family(
+                conn, row_id, inferred_family, inferred_confidence
+            )
+
+        with (
+            patch(
+                "ai_kit_usage_metrics.classify_loop.refined_store.update_inferred_family",
+                side_effect=_boom,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
+            run_classification(conn)
+        rows = conn.execute(
+            "SELECT inferred_family, inferred_confidence FROM refined_commands"
+        ).fetchall()
+        self.assertTrue(all(family_val is None and conf is None for family_val, conf in rows))
+
+    def test_idempotent_rerun(self):
+        conn = self._seed(
+            [
+                _classify_row("claude:/a.jsonl:1", PRD_LOOP_RG_PY),
+                _classify_row("claude:/a.jsonl:2", PRD_LOOP_RG_MD),
+                _classify_row("claude:/a.jsonl:3", SINGLETON_LOOP),
+            ]
+        )
+        first = run_classification(conn)
+        second = run_classification(conn)
+        self.assertEqual(first, second)
+        row1 = self._fetch(conn, "claude:/a.jsonl:1")
+        self.assertEqual(row1[2], "grep")
+        self.assertEqual(row1[3], "LOW")
+
+    def test_lower_threshold_reclassifies_below_threshold_group(self):
+        conn = self._seed(
+            [
+                _classify_row("claude:/a.jsonl:1", PRD_LOOP_RG_PY),
+                _classify_row("claude:/a.jsonl:2", SINGLETON_LOOP),
+            ]
+        )
+        first = run_classification(conn, min_occurrences=2)
+        self.assertEqual(first["rows_reclassified"], 0)
+        self.assertIsNone(self._fetch(conn, "claude:/a.jsonl:1")[2])
+        second = run_classification(conn, min_occurrences=1)
+        self.assertEqual(second["rows_reclassified"], 1)
+        self.assertEqual(self._fetch(conn, "claude:/a.jsonl:1")[2], "grep")
+        self.assertEqual(self._fetch(conn, "claude:/a.jsonl:1")[3], "LOW")
+
+    def test_higher_threshold_clears_stale_annotation(self):
+        conn = self._seed(
+            [
+                _classify_row("claude:/a.jsonl:1", PRD_LOOP_RG_PY),
+                _classify_row("claude:/a.jsonl:2", PRD_LOOP_RG_MD),
+            ]
+        )
+        run_classification(conn, min_occurrences=2)
+        self.assertEqual(self._fetch(conn, "claude:/a.jsonl:1")[2], "grep")
+        run_classification(conn, min_occurrences=3)
+        self.assertIsNone(self._fetch(conn, "claude:/a.jsonl:1")[2])
+        self.assertIsNone(self._fetch(conn, "claude:/a.jsonl:1")[3])
+        self.assertIsNone(self._fetch(conn, "claude:/a.jsonl:2")[2])
+        self.assertIsNone(self._fetch(conn, "claude:/a.jsonl:2")[3])
+
+    def test_unclassified_rows_are_mined(self):
+        conn = self._seed(
+            [
+                _classify_row(
+                    "claude:/a.jsonl:1",
+                    PRD_LOOP_RG_PY,
+                    command_shape="unclassified",
+                ),
+                _classify_row(
+                    "claude:/a.jsonl:2",
+                    PRD_LOOP_RG_MD,
+                    command_shape="unclassified",
+                ),
+            ]
+        )
+        summary = run_classification(conn)
+        self.assertEqual(summary["rows_reclassified"], 2)
+        self.assertEqual(self._fetch(conn, "claude:/a.jsonl:1")[2], "grep")
+        self.assertEqual(self._fetch(conn, "claude:/a.jsonl:1")[3], "LOW")
+
+    def test_cli_classify_subcommand_prints_summary(self):
+        conn = self._seed(
+            [
+                _classify_row("claude:/a.jsonl:1", PRD_LOOP_RG_PY),
+                _classify_row("claude:/a.jsonl:2", PRD_LOOP_RG_MD),
+            ]
+        )
+        conn.close()
+        from io import StringIO
+
+        buf = StringIO()
+        with patch("sys.stdout", buf):
+            rc = main(["classify"], env=self.env)
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("groups_found", out)
+        self.assertIn("rows_reclassified", out)
+
+    def test_run_subcommand_does_not_invoke_classify(self):
+        import inspect
+
+        from ai_kit_usage_metrics import cli as cli_mod
+
+        src = inspect.getsource(cli_mod.main)
+        run_idx = src.find('cmd == "run"')
+        classify_idx = src.find('cmd == "classify"')
+        self.assertNotEqual(run_idx, -1)
+        self.assertNotEqual(classify_idx, -1)
+        run_block = src[run_idx:src.find("return 0", run_idx) + len("return 0")]
+        self.assertNotIn("cmd_classify", run_block)
+        self.assertIn("cmd_capture", run_block)
+        self.assertIn("cmd_refine", run_block)
+        self.assertIn("cmd_dashboard", run_block)
+
+
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
 _PRECOMMIT_PATH = os.path.join(_REPO, ".pre-commit-config.yaml")
 _PYPROJECT_PATH = os.path.join(_REPO, "pyproject.toml")
 _PATHS_PY_CANDIDATE = (
     "skills/ai-kit-usage-metrics/ai_kit_usage_metrics/paths.py"
+)
+_CLASSIFY_LOOP_PY_CANDIDATE = (
+    "skills/ai-kit-usage-metrics/ai_kit_usage_metrics/classify_loop.py"
 )
 
 
@@ -2305,6 +2592,25 @@ class TestGateRegistration(unittest.TestCase):
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
         self.assertIn("skills/ai-kit-usage-metrics", include)
+
+
+class TestPhaseGateRegistration(unittest.TestCase):
+    """Regression: Task 1's classify_loop.py must stay inside Wave 1's gates."""
+
+    def test_classify_loop_module_matches_makefile_precommit_pyright(self):
+        with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
+            makefile = handle.read()
+        self.assertIn("tests.test_ai_kit_usage_metrics", makefile)
+        self.assertIn("skills/ai-kit-usage-metrics/", makefile)
+        for hook_id in ("ruff", "py-compile"):
+            regex = _precommit_hook_files_regex(hook_id)
+            self.assertIsNotNone(
+                re.match(regex, _CLASSIFY_LOOP_PY_CANDIDATE),
+                f"{_CLASSIFY_LOOP_PY_CANDIDATE} did not match {hook_id} files: {regex}",
+            )
+        with open(_PYPROJECT_PATH, "rb") as handle:
+            data = tomllib.load(handle)
+        self.assertIn("skills/ai-kit-usage-metrics", data["tool"]["pyright"]["include"])
 
 
 if __name__ == "__main__":

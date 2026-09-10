@@ -138,6 +138,18 @@ def insert_commands(conn: sqlite3.Connection, rows: list[dict]) -> None:
         raise
 
 
+def update_inferred_family(
+    conn: sqlite3.Connection,
+    row_id: int,
+    inferred_family: str | None,
+    inferred_confidence: str | None,
+) -> None:
+    conn.execute(
+        "UPDATE refined_commands SET inferred_family=?, inferred_confidence=? WHERE id=?",
+        (inferred_family, inferred_confidence, row_id),
+    )
+
+
 def open_refined_db(env: dict) -> sqlite3.Connection:
     db_path = paths.refined_db_path(env)
     _ensure_private_dir(os.path.dirname(db_path))
