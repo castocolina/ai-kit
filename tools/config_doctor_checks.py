@@ -189,9 +189,13 @@ def _apply_claude_sandbox_enabled(ctx, target, dry):
     path = _claude_settings_path(ctx)
     state, parsed = config_doctor_readers.read_json_checked(path)
     data = dict(parsed) if state == CONFIG_STATE_OK and isinstance(parsed, dict) else {}
-    if isinstance(data.get("sandbox"), dict):
-        data["sandbox"] = dict(data["sandbox"])
-    sandbox = data.setdefault("sandbox", {})
+    # Normalize a present-but-non-dict "sandbox" value (e.g. {"sandbox": "x"})
+    # to {} rather than letting it flow through: dict.setdefault only inserts
+    # when the key is ABSENT, so a stray non-dict value would otherwise
+    # survive setdefault unchanged and crash the next line's .get() call.
+    existing_sandbox = data.get("sandbox")
+    sandbox = dict(existing_sandbox) if isinstance(existing_sandbox, dict) else {}
+    data["sandbox"] = sandbox
     before = sandbox.get("enabled")
     sandbox["enabled"] = target
     if not dry:
@@ -247,11 +251,21 @@ def _apply_opencode_share_mode(ctx, target, dry):
 
 
 def _toml_table_span(text, table_name):
+    """Span of the table [table_name], matched only when it starts its own line.
+
+    Line-anchored (``^...$`` in MULTILINE mode) rather than a bare
+    ``text.find()`` substring search — a comment (``# ... [table_name] ...``)
+    or a string value elsewhere in the file that happens to contain the
+    literal text ``[table_name]`` can never be mistaken for the real table
+    header. A real TOML table header is always alone on its own line, so
+    this anchor is exact, not a heuristic.
+    """
     header = f"[{table_name}]"
-    start = text.find(header)
-    if start < 0:
+    match = re.search(rf"(?m)^{re.escape(header)}[ \t]*$", text)
+    if match is None:
         return None
-    body_start = start + len(header)
+    start = match.start()
+    body_start = match.end()
     nxt = text.find("\n[", body_start)
     end = len(text) if nxt < 0 else nxt
     return start, body_start, end

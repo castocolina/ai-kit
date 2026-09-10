@@ -62,49 +62,47 @@ def atomic_write_json(path, data):
 
 
 def write_toml_region_replace(path, new_text):
-    """Atomically write TOML text, then self-validate via tomllib.loads.
+    """Validate new_text via tomllib.loads BEFORE ever touching the target.
 
     Adapted from tools/setup.py::write_toml_preserving (lines 451-508) rather
     than imported. DIVERGES at the self-validation step: instead of shelling
     out to statusline-doctor.py --doctor (Config Doctor has no per-format
     external validator of its own), call tomllib.loads(new_text) directly.
-    On TOMLDecodeError, restore the previous content the same atomic way
-    (a second temp-file + os.replace) and return False; when there was no
-    previous content (prev is None) and validation fails, os.unlink the
-    just-written file instead of restoring. On OSError during the write,
-    unlink the temp file and return False rather than raising.
+
+    Validating first — not after writing — closes a crash window a
+    validate-after-write ordering would otherwise leave open: a process
+    killed between "write" and "restore-on-failure" would leave the real
+    target holding invalid TOML permanently, contradicting the byte-identical
+    refusal-on-malformed-input contract this writer must uphold. With
+    validate-first, invalid text is never written to the target at all, so
+    no restore step is needed. On OSError during the write, unlink the temp
+    file and return False rather than raising.
     """
-    prev = None
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as handle:
-            prev = handle.read()
+    try:
+        tomllib.loads(new_text)
+    except tomllib.TOMLDecodeError:
+        return False
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
+    dirname = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(new_text)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp, path)
     except OSError:
         if os.path.exists(tmp):
             os.unlink(tmp)
         return False
     try:
-        tomllib.loads(new_text)
-    except tomllib.TOMLDecodeError:
-        if prev is None:
-            os.unlink(path)
-        else:
-            rfd, rtmp = tempfile.mkstemp(
-                dir=os.path.dirname(path) or ".", suffix=".tmp"
-            )
-            try:
-                with os.fdopen(rfd, "w", encoding="utf-8") as handle:
-                    handle.write(prev)
-                os.replace(rtmp, path)
-            except OSError:
-                if os.path.exists(rtmp):
-                    os.unlink(rtmp)
-        return False
+        dir_fd = os.open(dirname, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        pass
     return True
 
 
@@ -113,7 +111,9 @@ def _atomic_write_text(path, text):
 
     Mirrors write_toml_region_replace's temp-file+replace mechanics but for
     already-serialized text that is not TOML (JSONC surgical output). No
-    parse-check of its own — the caller validates before committing.
+    parse-check of its own — the caller validates before committing. Fsyncs
+    the containing directory after replace, matching atomic_write_json's and
+    write_toml_region_replace's crash-durability guarantee.
     """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     target = os.path.realpath(path)
@@ -132,6 +132,14 @@ def _atomic_write_text(path, text):
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
+    try:
+        dir_fd = os.open(dirname, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        pass
 
 
 # JSONC surgical helpers, ported VERBATIM from the jsonc_edit module in the

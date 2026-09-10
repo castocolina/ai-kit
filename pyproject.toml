@@ -90,6 +90,6 @@ ignore_names = ["signum", "frame", "offset", "whence"]
 
 # ─────────────────────────── pyright ───────────────────────────
 [tool.pyright]
-include = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "tools/hooks", "tools/config_doctor_checks.py", "tools/config_doctor_readers.py", "tools/config_doctor_app.py", "tools/config_doctor_appliers.py"]
+include = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "tools/hooks", "tools/config_doctor_checks.py", "tools/config_doctor_readers.py", "tools/config_doctor_app.py", "tools/config_doctor_appliers.py", "skills/ai-kit-usage-metrics"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"

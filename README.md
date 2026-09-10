@@ -416,6 +416,14 @@ briefing of which curated `rtk` substitutions are actually on PATH. Claude Code
 and Cursor are wired; opencode has no documented injection point and that gap
 is accepted.
 
+`tools/setup.py --config-doctor` opens a read-only Checks Catalog for Claude
+Code, opencode, Codex, and Cursor — retention, sandboxing, telemetry, and
+permission settings across whichever of those runtimes have a config file on
+this machine, plus a cross-runtime `rtk`-Cursor-integration check. A handful of
+rows can be applied one at a time, each behind an explicit confirm screen that
+shows the literal resulting config for security-relevant settings; there is no
+bulk-apply.
+
 ## Layout
 
 ```

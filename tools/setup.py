@@ -2774,7 +2774,7 @@ def main(argv=None):
     parser.add_argument(
         "--config-doctor",
         action="store_true",
-        help="launch the config diagnostics TUI (read-only in this phase)",
+        help="launch the config diagnostics TUI (per-item apply, explicit confirm)",
     )
     args = parser.parse_args(argv)
     env = os.environ

@@ -48,8 +48,15 @@
     "plan_review_convergence": true
   },
   "review": {
-    "default_reviewers": ["opencode"],
-    "models": { "opencode": "router-env/my-plan-review" }
+    "default_reviewers": [
+      "opencode"
+    ],
+    "models": {
+      "opencode": "xai/grok-4.6"
+    },
+    "timeouts": {
+      "opencode": 1800
+    }
   },
   "ship": {
     "pr_body_sections": []

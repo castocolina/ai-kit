@@ -32,9 +32,9 @@ Decisions.
 
 ### Config Doctor
 
-- [ ] **REQ-config-doctor-diagnostic-checks**: A read-only Checks Catalog spans Claude Code, opencode, Codex, and Cursor settings (retention, cache TTL, sandboxing, telemetry, permissions, share mode, reasoning effort, history persistence) plus a folded-in cross-runtime `rtk`-Cursor-integration check; informational-only rows (e.g. opencode retention) are never offered as apply actions, lower-confidence rows are visibly labeled, and a runtime with no config file present has its whole section skipped rather than shown as failing. (Amended 2026-09-08: Cursor added as a 4th runtime — the original 12-row catalog covered only Claude Code/opencode/Codex; Cursor's equivalent checks (e.g. `~/.cursor/cli-config.json` permissions, `~/.cursor/sandbox-policies/`) need their own researched, cited rows before planning — this is new research work, not yet done. Row count is no longer fixed at 12 pending that research. Detection of "is this runtime's section shown" is by config-file presence, not by `detect_installed_clis()` binary-on-PATH — a diagnostics tool checks configuration, not CLI availability.)
-- [ ] **REQ-config-doctor-review-screen**: A dedicated interactive review screen (not folded into `tools/statusline-doctor.py`) shows every check's current value, recommended value, and citation across all installed runtimes in one command; an undeterminable value shows as "unknown," never silently pass/fail.
-- [ ] **REQ-config-doctor-apply-flow**: A per-item, explicitly confirmed apply step (reusing the opencode-provider-management atomic-write + surgical-edit pattern) names the exact change before writing; security-relevant applies show the literal resulting config; there is no bulk "apply all."
+- [x] **REQ-config-doctor-diagnostic-checks**: A read-only Checks Catalog spans Claude Code, opencode, Codex, and Cursor settings (retention, cache TTL, sandboxing, telemetry, permissions, share mode, reasoning effort, history persistence) plus a folded-in cross-runtime `rtk`-Cursor-integration check; informational-only rows (e.g. opencode retention) are never offered as apply actions, lower-confidence rows are visibly labeled, and a runtime with no config file present has its whole section skipped rather than shown as failing. (Amended 2026-09-08: Cursor added as a 4th runtime — the original 12-row catalog covered only Claude Code/opencode/Codex; Cursor's equivalent checks (e.g. `~/.cursor/cli-config.json` permissions, `~/.cursor/sandbox-policies/`) need their own researched, cited rows before planning — this is new research work, not yet done. Row count is no longer fixed at 12 pending that research. Detection of "is this runtime's section shown" is by config-file presence, not by `detect_installed_clis()` binary-on-PATH — a diagnostics tool checks configuration, not CLI availability.)
+- [x] **REQ-config-doctor-review-screen**: A dedicated interactive review screen (not folded into `tools/statusline-doctor.py`) shows every check's current value, recommended value, and citation across all installed runtimes in one command; an undeterminable value shows as "unknown," never silently pass/fail.
+- [x] **REQ-config-doctor-apply-flow**: A per-item, explicitly confirmed apply step (reusing the opencode-provider-management atomic-write + surgical-edit pattern) names the exact change before writing; security-relevant applies show the literal resulting config; there is no bulk "apply all."
 
 ### Usage Metrics Dashboard
 
@@ -73,9 +73,9 @@ milestone — see that requirement's acceptance criteria.)
 | REQ-opencode-provider-cross-reference-check | Phase 2 | Complete |
 | REQ-tool-substitution-detection-composition | Phase 3 | Complete |
 | REQ-tool-substitution-hook-wiring | Phase 3 | Complete |
-| REQ-config-doctor-diagnostic-checks | Phase 4 | Pending |
-| REQ-config-doctor-review-screen | Phase 4 | Pending |
-| REQ-config-doctor-apply-flow | Phase 4 | Pending |
+| REQ-config-doctor-diagnostic-checks | Phase 4 | Done |
+| REQ-config-doctor-review-screen | Phase 4 | Done |
+| REQ-config-doctor-apply-flow | Phase 4 | Done |
 | REQ-usage-metrics-raw-capture | Phase 5 | Pending |
 | REQ-usage-metrics-refinement-pipeline | Phase 5 | Pending |
 | REQ-usage-metrics-dashboard-ui | Phase 5 | Pending |

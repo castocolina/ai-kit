@@ -1235,6 +1235,27 @@ class TestApplyRows(_ScratchRuntimes):
         self.assertIs(data["sandbox"]["failIfUnavailable"], True)
         self.assertEqual(data["theme"], "dark")
 
+    def test_apply_claude_sandbox_enabled_normalizes_non_dict_sandbox_value(self):
+        """A present-but-non-dict "sandbox" value must not crash the applier.
+
+        dict.setdefault only inserts a default when the key is ABSENT; since
+        "sandbox" is already present here (as a string), a naive setdefault
+        would return that string unchanged and the next .get("enabled") call
+        would raise AttributeError. apply_row's generic except would still
+        catch that, but the applier should refuse cleanly / normalize instead
+        of surfacing a raw Python exception message as the refusal reason.
+        """
+        path = os.path.join(self.claude, "settings.json")
+        _write(path, json.dumps({"sandbox": "not-a-dict", "theme": "dark"}))
+        result = checks.apply_row("claude-sandbox-enabled", self._ctx(), dry=False)
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["before"])
+        self.assertIs(result["after"], True)
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertIs(data["sandbox"]["enabled"], True)
+        self.assertEqual(data["theme"], "dark")
+
     def test_apply_opencode_share_mode_sets_disabled_and_preserves_bytes(self):
         path = os.path.join(self.opencode, "opencode.jsonc")
         _write(path, _OPENCODE_JSONC_WITH_SHARE)
@@ -1301,6 +1322,35 @@ class TestApplyRows(_ScratchRuntimes):
         with open(path, encoding="utf-8") as handle:
             parsed = tomllib.loads(handle.read())
         self.assertEqual(parsed["history"]["persistence"], "none")
+        self.assertEqual(parsed["sandbox_mode"], "workspace-write")
+
+    def test_apply_codex_history_persistence_ignores_decoy_bracket_text_in_comment(self):
+        """A "[history]"-shaped comment before the real table must not divert the write.
+
+        _toml_table_span used to be a raw text.find("[history]") substring
+        search, so a comment like "# ... [history] ..." above the real
+        [history] table would be mistaken for the table header and the
+        splice would land in the wrong place. The line-anchored regex fix
+        must find the REAL table only.
+        """
+        path = os.path.join(self.codex, "config.toml")
+        decoy = (
+            'sandbox_mode = "workspace-write"\n'
+            "# see [history] below for persistence config\n"
+            "\n"
+            "[history]\n"
+            'max_bytes = 1048576\n'
+            'persistence = "save-all"\n'
+        )
+        _write(path, decoy)
+        result = checks.apply_row("codex-history-persistence", self._ctx(), dry=False)
+        self.assertTrue(result["ok"])
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("# see [history] below for persistence config", text)
+        parsed = tomllib.loads(text)
+        self.assertEqual(parsed["history"]["persistence"], "none")
+        self.assertEqual(parsed["history"]["max_bytes"], 1048576)
         self.assertEqual(parsed["sandbox_mode"], "workspace-write")
 
     def test_apply_row_dry_true_writes_nothing(self):
