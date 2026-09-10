@@ -1739,10 +1739,19 @@ def _term_dimensions(env):
 
 
 
-def _persist_layout(paths, state, dry):
+def _persist_layout(paths, state, dry, known_ext_ids=None):
     """Compute the minimal seg_changes + layout diff vs disk, then delegate to
     ``save_statusline_config`` for the atomic write + doctor validation + auto-
-    revert (FR-W.5).  Returns True on success (including no-op and dry-run)."""
+    revert (FR-W.5).  Returns True on success (including no-op and dry-run).
+
+    ``known_ext_ids``, when given, is the set of external segment ids to treat
+    as "already installed" for the boolean-toggle special-case below — it lets
+    a caller that pre-installs a bundled example ONLY to satisfy the doctor's
+    structural validation (see ``_make_wizard_commit`` in this module) still
+    have that example treated as "not yet installed" here, preserving the
+    original "no explicit boolean write → renderer shows it by default" outcome
+    for a first-time install. ``None`` (the default, used by every other
+    caller) falls back to a live disk scan exactly as before."""
     if dry:
         print("[dry-run] would write status-line config — no changes made",
               file=sys.stderr)
@@ -1754,7 +1763,11 @@ def _persist_layout(paths, state, dry):
     # (it copies the file → the renderer shows it by default) — never written here.
     # Write an explicit `<id> = bool` only when the desired state differs from the
     # renderer default (present → ON), e.g. to hide a provider with `<id> = false`.
-    for ext_id in {e["id"] for e in _discover_user_segments(paths.segments_dir)}:
+    if known_ext_ids is not None:
+        ext_ids_for_write = known_ext_ids
+    else:
+        ext_ids_for_write = {e["id"] for e in _discover_user_segments(paths.segments_dir)}
+    for ext_id in ext_ids_for_write:
         if ext_id not in state["segments"]:
             continue
         desired = bool(state["segments"][ext_id])
@@ -1806,7 +1819,7 @@ def _recover_incompatible_config(paths, dry):
 
 
 def persist_statusline(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    paths, state, adopt, dry, tty=None, assume_overwrite=False,
+    paths, state, adopt, dry, tty=None, assume_overwrite=False, known_ext_ids=None,
 ):
     """Conditionally persist the status-line config + wire settings.json.
 
@@ -1818,6 +1831,10 @@ def persist_statusline(  # pylint: disable=too-many-arguments,too-many-positiona
                        `python3 -S <status_line>` UNLESS it already points at ours
                        (reconfigure leaves a correct, possibly hand-edited command
                        in place). Returns True on success.
+
+    ``known_ext_ids`` is forwarded to ``_persist_layout`` unchanged — see its
+    own docstring; ``None`` (the default) preserves the original live-disk-scan
+    behavior for every caller that doesn't need the pre-install-snapshot fix.
 
     Component symlinking is the caller's concern and runs INDEPENDENTLY of this
     function (a components-only install never calls persist_statusline with adopt
@@ -1831,7 +1848,7 @@ def persist_statusline(  # pylint: disable=too-many-arguments,too-many-positiona
     # An existing config from an incompatible (e.g. pre-rename) ai-kit would be
     # rejected by the doctor and block the whole persist; recover it first.
     _recover_incompatible_config(paths, dry)
-    if not _persist_layout(paths, state, dry):
+    if not _persist_layout(paths, state, dry, known_ext_ids=known_ext_ids):
         return False
     if detect_statusline(paths)["state"] == "ours":
         return True
@@ -1989,13 +2006,50 @@ def _make_wizard_commit(paths, entries, dry, counts):
             apply_selection(sel.category_sets(CATEGORIES), entries,
                             paths.claude_dir, dry, counts)
             if adopt:
+                # A discovered bundled example segment (e.g. system_memory) must
+                # actually exist under paths.segments_dir before persist_statusline's
+                # self-validating doctor call runs below — otherwise the doctor
+                # rejects it as an unknown [[line]] segment, since cmd_install's own
+                # example-segment install step (install_example_segments) would
+                # otherwise only run AFTER the wizard returns. This applies
+                # regardless of the segment's enabled/disabled toggle: the Arrange
+                # board's state["layout"] places EVERY discovered segment somewhere
+                # (a disabled one lands in the tray line, not omitted from the
+                # layout array), and the doctor validates every id present anywhere
+                # in [[line]] segments, not just the enabled ones — so filtering to
+                # only toggled-on ids here would still leave a disabled-but-present
+                # example unvalidatable.
+                #
+                # Snapshot which external ids were ALREADY on disk before this
+                # install, then pass that snapshot as known_ext_ids to
+                # persist_statusline: without it, _persist_layout would see the
+                # example we're about to install as "already present" and write
+                # an explicit `segments.<id> = false` for an off-by-default
+                # example — masking it even for a caller (e.g. `--examples=all`,
+                # applied later in cmd_install) that intends it visible. Passing
+                # the pre-install snapshot preserves the original "not yet
+                # installed -> no explicit boolean, renderer shows it by default"
+                # outcome for a first-time install, while still letting the file
+                # physically exist in time for the doctor's structural check.
+                # install_example_segments is idempotent (skips unchanged
+                # content) and does not itself enable a segment, so installing
+                # every discovered example unconditionally here, and again,
+                # redundantly, from cmd_install after the wizard returns, is safe.
+                known_ext_ids = {e["id"] for e in _discover_user_segments(paths.segments_dir)}
+                examples_dir = os.path.join(paths.install_dir, "examples", "segments")
+                examples = discover_example_segments(examples_dir)
+                if examples and not dry:
+                    install_example_segments(examples, paths.config_dir)
                 ok = persist_statusline(paths, state, adopt, dry, tty=None,
-                                        assume_overwrite=True)
+                                        assume_overwrite=True,
+                                        known_ext_ids=known_ext_ids)
         return {"ok": ok, "adopt": adopt, "log": buf.getvalue()}
     return commit
 
 
-def _make_apply_housekeeping(paths, entries, stale, predecessor_cands, dry, counts):
+def _make_apply_housekeeping(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    paths, entries, stale, predecessor_cands, dry, counts,
+):
     """Build the apply_housekeeping(prune, repoint) callable the wizard runs
     IN-UI right after its housekeeping gate is answered (before Choose becomes
     usable). Applies the stale-prune and/or predecessor-repoint decision, then

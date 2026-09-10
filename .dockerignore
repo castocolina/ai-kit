@@ -1,0 +1,17 @@
+# Keeps the tests/e2e/docker build context small and clean-room — none of
+# this should leak into the container's copy of the repo.
+.venv
+.git
+.claude/worktrees
+__pycache__
+*.pyc
+.aikit
+uv.lock.bak
+
+# Untracked secret material must never enter a build context, even one that's
+# never had a real secret committed to git — git-hygiene alone can't catch a
+# file that was never staged in the first place.
+.env
+.env.*
+*.pem
+*.key
