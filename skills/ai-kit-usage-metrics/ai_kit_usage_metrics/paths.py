@@ -79,6 +79,30 @@ def rtk_tee_dir(env: dict) -> str:
     return os.path.join(_xdg_data_home(env), "rtk", "tee")
 
 
+def codex_sessions_dir(env: dict) -> str:
+    """`${CODEX_HOME:-$HOME/.codex}/sessions`."""
+    return os.path.join(
+        env.get("CODEX_HOME") or os.path.join(env.get("HOME", ""), ".codex"),
+        "sessions",
+    )
+
+
+def cursor_projects_dir(env: dict) -> str:
+    """`${CURSOR_CONFIG_DIR:-$HOME/.cursor}/projects`.
+
+    Two-step only: CURSOR_CONFIG_DIR then $HOME/.cursor. The
+    XDG_CONFIG_HOME/cursor leg of 04-01-PLAN.md's cli-config.json
+    precedence is deliberately not ported — no live evidence confirms
+    Cursor relocates SESSION data (projects/chats) the same way it
+    relocates its config file.
+    """
+    return os.path.join(
+        env.get("CURSOR_CONFIG_DIR")
+        or os.path.join(env.get("HOME", ""), ".cursor"),
+        "projects",
+    )
+
+
 def catalog_path(env: dict) -> str:
     """`${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/spec/model-catalog.json`.
 

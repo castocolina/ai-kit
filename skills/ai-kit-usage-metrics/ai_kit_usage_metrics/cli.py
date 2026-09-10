@@ -8,6 +8,8 @@ import sys
 
 from ai_kit_usage_metrics import (
     capture_claude,
+    capture_codex,
+    capture_cursor,
     capture_opencode,
     capture_rtk,
     dashboard,
@@ -21,6 +23,8 @@ CAPTURE_SOURCES = {
     "claude": capture_claude.capture,
     "opencode": capture_opencode.capture,
     "rtk": capture_rtk.capture,
+    "codex": capture_codex.capture,
+    "cursor": capture_cursor.capture,
 }
 
 

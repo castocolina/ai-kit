@@ -18,6 +18,8 @@ sys.path.insert(
 
 from ai_kit_usage_metrics import (
     capture_claude,
+    capture_codex,
+    capture_cursor,
     capture_opencode,
     capture_rtk,
     family,
@@ -26,7 +28,7 @@ from ai_kit_usage_metrics import (
     raw_store,
     refined_store,
 )
-from ai_kit_usage_metrics.cli import main
+from ai_kit_usage_metrics.cli import CAPTURE_SOURCES, main
 from ai_kit_usage_metrics.dashboard import generate
 from ai_kit_usage_metrics.raw_store import CaptureResult
 from ai_kit_usage_metrics.refiner import refine_simple_commands
@@ -208,6 +210,38 @@ class TestPaths(unittest.TestCase):
         self.assertEqual(
             paths.rtk_tee_dir(env),
             os.path.join("/scratch/home", ".local", "share", "rtk", "tee"),
+        )
+
+    def test_codex_sessions_dir_honors_codex_home(self):
+        env = {"CODEX_HOME": "/scratch/codex", "HOME": "/scratch/home"}
+        self.assertEqual(
+            paths.codex_sessions_dir(env),
+            os.path.join("/scratch/codex", "sessions"),
+        )
+        env = {"HOME": "/scratch/home"}
+        self.assertEqual(
+            paths.codex_sessions_dir(env),
+            os.path.join("/scratch/home", ".codex", "sessions"),
+        )
+
+    def test_cursor_projects_dir_honors_cursor_config_dir_not_xdg(self):
+        env = {
+            "CURSOR_CONFIG_DIR": "/scratch/cursor",
+            "HOME": "/scratch/home",
+            "XDG_CONFIG_HOME": "/scratch/xdg-config",
+        }
+        self.assertEqual(
+            paths.cursor_projects_dir(env),
+            os.path.join("/scratch/cursor", "projects"),
+        )
+        env = {"HOME": "/scratch/home", "XDG_CONFIG_HOME": "/scratch/xdg-config"}
+        self.assertEqual(
+            paths.cursor_projects_dir(env),
+            os.path.join("/scratch/home", ".cursor", "projects"),
+        )
+        self.assertNotEqual(
+            paths.cursor_projects_dir(env),
+            os.path.join("/scratch/xdg-config", "cursor", "projects"),
         )
 
 
@@ -785,6 +819,402 @@ class TestCaptureRtk(unittest.TestCase):
         self.assertEqual(second_tee[0]["payload"]["filename"], name)
         self.assertNotEqual(second_tee[0]["payload"]["sha256"], first_hash)
         self.assertEqual(second_tee[0]["payload"]["content"], "second content different\n")
+
+
+_CODEX_SESSION_UUID = "3f9a1c2e-8b4d-4e21-9c6a-7d1f2b3a4c5d"
+_CODEX_ROLLOUT_NAME = (
+    f"rollout-2026-01-15T12-00-00-{_CODEX_SESSION_UUID}.jsonl"
+)
+_CODEX_ENVELOPE_KEYS = (
+    "raw_ref",
+    "captured_at",
+    "runtime",
+    "source_file",
+    "source_line",
+    "parse_status",
+    "raw_text",
+    "payload",
+    "session_id",
+)
+
+
+def _codex_session_meta_line():
+    return json.dumps(
+        {
+            "timestamp": "2026-01-15T12:00:00Z",
+            "type": "session_meta",
+            "payload": {
+                "session_id": _CODEX_SESSION_UUID,
+                "cwd": "/tmp/proj",
+                "originator": "cli",
+                "cli_version": "0.1.0",
+                "model_provider": "openai",
+            },
+        }
+    )
+
+
+def _codex_token_count_line():
+    return json.dumps(
+        {
+            "timestamp": "2026-01-15T12:00:01Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": 10,
+                        "cached_input_tokens": 0,
+                        "cache_write_input_tokens": 0,
+                        "output_tokens": 5,
+                        "reasoning_output_tokens": 0,
+                        "total_tokens": 15,
+                    },
+                    "model_context_window": 128000,
+                },
+            },
+        }
+    )
+
+
+def _codex_function_call_line():
+    return json.dumps(
+        {
+            "timestamp": "2026-01-15T12:00:02Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": json.dumps({"cmd": "ls -la", "workdir": "/tmp/proj"}),
+                "call_id": "call_1",
+            },
+        }
+    )
+
+
+def _write_codex_rollout(env, relative_dirs, filename, lines):
+    directory = os.path.join(paths.codex_sessions_dir(env), *relative_dirs)
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, filename)
+    with open(path, "w", encoding="utf-8") as handle:
+        for line in lines:
+            handle.write(line if line.endswith("\n") else line + "\n")
+    return path
+
+
+class TestCaptureCodex(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="ai-kit-um-codex-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.env = _scratch_env(self.root)
+        self.env["CODEX_HOME"] = os.path.join(self.root, "codex")
+
+    def test_missing_directory_returns_empty_result(self):
+        result = capture_codex.capture(self.env, {})
+        self.assertIsInstance(result, CaptureResult)
+        self.assertEqual(result.records, [])
+        self.assertEqual(result.cursor, {})
+        self.assertEqual(result.stats["captured"], 0)
+        self.assertEqual(result.stats["malformed"], 0)
+        self.assertEqual(result.stats["unreadable_files"], [])
+
+    def test_rollout_verbatim_no_arguments_reparse_and_session_id(self):
+        path = _write_codex_rollout(
+            self.env,
+            ("2026", "01", "15"),
+            _CODEX_ROLLOUT_NAME,
+            [
+                _codex_session_meta_line(),
+                _codex_token_count_line(),
+                _codex_function_call_line(),
+            ],
+        )
+        result = capture_codex.capture(self.env, {})
+        self.assertIsInstance(result, CaptureResult)
+        self.assertEqual(len(result.records), 3)
+        self.assertEqual(result.stats["captured"], 3)
+        self.assertEqual(result.stats["malformed"], 0)
+        self.assertEqual(result.cursor[path], 3)
+        self.assertEqual(CAPTURE_SOURCES["codex"], capture_codex.capture)
+
+        session_ids = set()
+        function_call = None
+        for rec in result.records:
+            for key in _CODEX_ENVELOPE_KEYS:
+                self.assertIn(key, rec)
+            self.assertEqual(rec["runtime"], "codex")
+            self.assertEqual(rec["parse_status"], "ok")
+            self.assertEqual(rec["source_file"], path)
+            self.assertEqual(rec["session_id"], _CODEX_SESSION_UUID)
+            session_ids.add(rec["session_id"])
+            nested = rec["payload"]["payload"]
+            if isinstance(nested, dict) and nested.get("type") == "function_call":
+                function_call = rec
+
+        self.assertEqual(session_ids, {_CODEX_SESSION_UUID})
+        self.assertIsNotNone(function_call)
+        arguments = function_call["payload"]["payload"]["arguments"]
+        self.assertIsInstance(arguments, str)
+        self.assertNotIsInstance(arguments, dict)
+
+        types = {rec["payload"]["type"] for rec in result.records}
+        self.assertEqual(types, {"session_meta", "event_msg", "response_item"})
+
+    def test_malformed_line_mid_file_captured_losslessly(self):
+        malformed_text = "this is not json{{{"
+        path = _write_codex_rollout(
+            self.env,
+            ("2026", "01", "15"),
+            _CODEX_ROLLOUT_NAME,
+            [
+                _codex_session_meta_line(),
+                malformed_text,
+                _codex_token_count_line(),
+            ],
+        )
+        result = capture_codex.capture(self.env, {})
+        self.assertEqual(len(result.records), 3)
+        self.assertEqual(result.stats["captured"], 3)
+        self.assertEqual(result.stats["malformed"], 1)
+        self.assertEqual(result.cursor[path], 3)
+
+        malformed = [rec for rec in result.records if rec["parse_status"] == "malformed"]
+        self.assertEqual(len(malformed), 1)
+        self.assertIsNone(malformed[0]["payload"])
+        self.assertEqual(malformed[0]["raw_text"], malformed_text)
+        self.assertEqual(malformed[0]["session_id"], _CODEX_SESSION_UUID)
+        self.assertEqual(malformed[0]["source_line"], 2)
+
+        ok_recs = [rec for rec in result.records if rec["parse_status"] == "ok"]
+        self.assertEqual(len(ok_recs), 2)
+        for rec in result.records:
+            self.assertEqual(rec["session_id"], _CODEX_SESSION_UUID)
+
+    def test_unreadable_utf8_file_is_skipped_and_reported(self):
+        good_path = _write_codex_rollout(
+            self.env,
+            ("2026", "01", "15"),
+            _CODEX_ROLLOUT_NAME,
+            [_codex_session_meta_line()],
+        )
+        bad_dir = os.path.join(paths.codex_sessions_dir(self.env), "2026", "01", "16")
+        os.makedirs(bad_dir, exist_ok=True)
+        bad_path = os.path.join(bad_dir, f"rollout-2026-01-16T00-00-00-{_CODEX_SESSION_UUID}.jsonl")
+        with open(bad_path, "wb") as handle:
+            handle.write(b"\xff\xfe\x00\x01 not utf-8")
+        result = capture_codex.capture(self.env, {})
+        self.assertIn(bad_path, result.stats["unreadable_files"])
+        self.assertTrue(any(rec["source_file"] == good_path for rec in result.records))
+        self.assertFalse(any(rec["source_file"] == bad_path for rec in result.records))
+
+    def test_filename_without_uuid_degrades_session_id_to_none(self):
+        _write_codex_rollout(
+            self.env,
+            ("2026", "01", "15"),
+            "rollout-test.jsonl",
+            [_codex_session_meta_line()],
+        )
+        result = capture_codex.capture(self.env, {})
+        self.assertEqual(len(result.records), 1)
+        self.assertIsNone(result.records[0]["session_id"])
+
+
+_CURSOR_SESSION_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+_CURSOR_ENVELOPE_KEYS = (
+    "raw_ref",
+    "captured_at",
+    "runtime",
+    "source_file",
+    "source_line",
+    "parse_status",
+    "raw_text",
+    "payload",
+    "source_confidence",
+    "session_id",
+    "timestamp",
+)
+
+
+def _cursor_tool_use_line(name, tool_input):
+    return json.dumps(
+        {
+            "role": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": name,
+                        "input": tool_input,
+                    }
+                ]
+            },
+        }
+    )
+
+
+def _write_cursor_transcript(env, project, session_uuid, filename, lines):
+    directory = os.path.join(
+        paths.cursor_projects_dir(env),
+        project,
+        "agent-transcripts",
+        session_uuid,
+    )
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, filename)
+    with open(path, "w", encoding="utf-8") as handle:
+        for line in lines:
+            handle.write(line if line.endswith("\n") else line + "\n")
+    return path
+
+
+class TestCaptureCursor(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="ai-kit-um-cursor-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.env = _scratch_env(self.root)
+        self.env["CURSOR_CONFIG_DIR"] = os.path.join(self.root, "cursor")
+
+    def test_missing_directory_returns_empty_result(self):
+        result = capture_cursor.capture(self.env, {})
+        self.assertIsInstance(result, CaptureResult)
+        self.assertEqual(result.records, [])
+        self.assertEqual(result.cursor, {})
+        self.assertEqual(result.stats["captured"], 0)
+        self.assertEqual(result.stats["malformed"], 0)
+        self.assertEqual(result.stats["unreadable_files"], [])
+
+    def test_transcripts_low_confidence_session_id_and_direct_payload(self):
+        path = _write_cursor_transcript(
+            self.env,
+            "test-project",
+            _CURSOR_SESSION_UUID,
+            f"{_CURSOR_SESSION_UUID}.jsonl",
+            [
+                _cursor_tool_use_line(
+                    "Shell",
+                    {
+                        "command": "ls -la",
+                        "description": "list",
+                        "working_directory": "/tmp/proj",
+                    },
+                ),
+                _cursor_tool_use_line(
+                    "Shell",
+                    {"command": "pwd", "description": "print cwd"},
+                ),
+                _cursor_tool_use_line(
+                    "StrReplace",
+                    {"path": "/tmp/proj/a.py", "old_string": "x", "new_string": "y"},
+                ),
+            ],
+        )
+        result = capture_cursor.capture(self.env, {})
+        self.assertIsInstance(result, CaptureResult)
+        self.assertEqual(len(result.records), 3)
+        self.assertEqual(result.stats["captured"], 3)
+        self.assertEqual(result.stats["malformed"], 0)
+        self.assertEqual(result.cursor[path], 3)
+        self.assertEqual(CAPTURE_SOURCES["cursor"], capture_cursor.capture)
+        self.assertEqual(
+            set(CAPTURE_SOURCES),
+            {"claude", "opencode", "rtk", "codex", "cursor"},
+        )
+
+        names = []
+        for rec in result.records:
+            for key in _CURSOR_ENVELOPE_KEYS:
+                self.assertIn(key, rec)
+            self.assertEqual(rec["runtime"], "cursor")
+            self.assertEqual(rec["parse_status"], "ok")
+            self.assertEqual(rec["source_confidence"], "low")
+            self.assertEqual(rec["session_id"], _CURSOR_SESSION_UUID)
+            self.assertIsNone(rec["timestamp"])
+            self.assertNotIn("confidence", rec["payload"])
+            self.assertNotIn("line", rec["payload"])
+            self.assertEqual(rec["payload"]["role"], "assistant")
+            content = rec["payload"]["message"]["content"]
+            self.assertEqual(content[0]["type"], "tool_use")
+            names.append(content[0]["name"])
+
+        self.assertEqual(names, ["Shell", "Shell", "StrReplace"])
+        first_input = result.records[0]["payload"]["message"]["content"][0]["input"]
+        self.assertEqual(first_input["working_directory"], "/tmp/proj")
+        second_input = result.records[1]["payload"]["message"]["content"][0]["input"]
+        self.assertNotIn("working_directory", second_input)
+
+    def test_malformed_line_mid_file_captured_losslessly(self):
+        malformed_text = "this is not json{{{"
+        path = _write_cursor_transcript(
+            self.env,
+            "test-project",
+            _CURSOR_SESSION_UUID,
+            f"{_CURSOR_SESSION_UUID}.jsonl",
+            [
+                _cursor_tool_use_line("Shell", {"command": "ls"}),
+                malformed_text,
+                _cursor_tool_use_line("StrReplace", {"path": "a.py"}),
+            ],
+        )
+        result = capture_cursor.capture(self.env, {})
+        self.assertEqual(len(result.records), 3)
+        self.assertEqual(result.stats["captured"], 3)
+        self.assertEqual(result.stats["malformed"], 1)
+        self.assertEqual(result.cursor[path], 3)
+
+        malformed = [rec for rec in result.records if rec["parse_status"] == "malformed"]
+        self.assertEqual(len(malformed), 1)
+        self.assertIsNone(malformed[0]["payload"])
+        self.assertEqual(malformed[0]["raw_text"], malformed_text)
+        self.assertEqual(malformed[0]["source_confidence"], "low")
+        self.assertEqual(malformed[0]["session_id"], _CURSOR_SESSION_UUID)
+        self.assertIsNone(malformed[0]["timestamp"])
+
+    def test_unreadable_utf8_file_is_skipped_and_reported(self):
+        good_path = _write_cursor_transcript(
+            self.env,
+            "test-project",
+            _CURSOR_SESSION_UUID,
+            f"{_CURSOR_SESSION_UUID}.jsonl",
+            [_cursor_tool_use_line("Shell", {"command": "ls"})],
+        )
+        bad_uuid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        bad_dir = os.path.join(
+            paths.cursor_projects_dir(self.env),
+            "test-project",
+            "agent-transcripts",
+            bad_uuid,
+        )
+        os.makedirs(bad_dir, exist_ok=True)
+        bad_path = os.path.join(bad_dir, f"{bad_uuid}.jsonl")
+        with open(bad_path, "wb") as handle:
+            handle.write(b"\xff\xfe\x00\x01 not utf-8")
+        result = capture_cursor.capture(self.env, {})
+        self.assertIn(bad_path, result.stats["unreadable_files"])
+        self.assertTrue(any(rec["source_file"] == good_path for rec in result.records))
+        self.assertFalse(any(rec["source_file"] == bad_path for rec in result.records))
+
+    def test_no_sqlite3_import_or_attribute_access(self):
+        import ast
+
+        src_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "skills",
+            "ai-kit-usage-metrics",
+            "ai_kit_usage_metrics",
+            "capture_cursor.py",
+        )
+        with open(src_path, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in getattr(node, "names", []):
+                    self.assertNotEqual(alias.name.split(".")[0], "sqlite3")
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    self.assertNotEqual(node.module.split(".")[0], "sqlite3")
+            if isinstance(node, ast.Attribute):
+                if isinstance(node.value, ast.Name):
+                    self.assertNotEqual(node.value.id, "sqlite3")
 
 
 class TestRawStore(unittest.TestCase):

@@ -117,12 +117,14 @@ def _envelope_from_row(db_path: str, table: str, row: dict, captured_at: str) ->
             None,
             time_created,
         )
+    data_value = row.get("data")
+    raw_text = data_value if isinstance(data_value, str) else ""
     if table == "message":
         return _base_envelope(
             db_path,
             "message",
             record_id,
-            row.get("data") if isinstance(row.get("data"), str) else "",
+            raw_text,
             captured_at,
             row.get("session_id"),
             None,
@@ -132,7 +134,7 @@ def _envelope_from_row(db_path: str, table: str, row: dict, captured_at: str) ->
         db_path,
         "part",
         record_id,
-        row.get("data") if isinstance(row.get("data"), str) else "",
+        raw_text,
         captured_at,
         row.get("session_id"),
         row.get("message_id"),

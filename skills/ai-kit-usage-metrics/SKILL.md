@@ -1,6 +1,6 @@
 ---
 name: ai-kit-usage-metrics
-description: Build a local usage-metrics dashboard from AI CLI session logs. Use when the user asks about "usage metrics", "usage dashboard", "how do I use my AI CLIs", command history across Claude Code / opencode / rtk, or wants a static HTML view of captured shell commands. Wave 2 captures Claude Code, opencode, and rtk raw sources; refinement still covers Claude Code simple Bash only.
+description: Build a local usage-metrics dashboard from AI CLI session logs. Use when the user asks about "usage metrics", "usage dashboard", "how do I use my AI CLIs", command history across Claude Code / opencode / rtk / Codex / Cursor, or wants a static HTML view of captured shell commands. Wave 3 captures all 5 v1 raw sources; refinement still covers Claude Code simple Bash only.
 ---
 
 # ai-kit-usage-metrics
@@ -10,28 +10,33 @@ re-implement capture, refine, or dashboard generation in prose.
 
 ## Scope
 
-Wave 2 of the usage-metrics pipeline. Honest coverage:
+Wave 3 of the usage-metrics pipeline. Honest coverage:
 
-- **Raw capture runtimes (3):** Claude Code session JSONL under
+- **Raw capture runtimes (5):** Claude Code session JSONL under
   `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/*/*.jsonl`; opencode's
   `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db` (session /
   message / part) plus `storage/**/*.json`; rtk's
   `${XDG_DATA_HOME:-$HOME/.local/share}/rtk/history.db` (commands +
-  parse_failures) and `rtk/tee/*.log`.
+  parse_failures) and `rtk/tee/*.log`; Codex
+  `${CODEX_HOME:-$HOME/.codex}/sessions/**/rollout-*.jsonl`; Cursor
+  `${CURSOR_CONFIG_DIR:-$HOME/.cursor}/projects/*/agent-transcripts/*/*.jsonl`
+  only, every envelope flagged `source_confidence="low"` (community-
+  reverse-engineered format, no official docs). Cursor's `store.db` is
+  explicitly out of scope (opaque undocumented BLOB rows).
 - **Refined commands:** still Claude Code simple (non-compound) Bash
   `tool_use` entries only — a command whose text contains `&`, `;`, or `|`
   is captured losslessly in raw storage but is not refined this wave.
-  opencode / rtk envelopes are captured, not yet refined.
+  opencode / rtk / Codex / Cursor envelopes are captured, not yet refined.
 - **Outputs:** `${XDG_DATA_HOME:-$HOME/.local/share}/ai-kit/usage-metrics/`
-  holding `raw/{claude,opencode,rtk}.jsonl`, `refined/refined.db`, and
-  `dashboard.html`.
+  holding `raw/{claude,opencode,rtk,codex,cursor}.jsonl`,
+  `refined/refined.db`, and `dashboard.html`.
 
-Codex, Cursor, compound-command decomposition, and the full 5-axis
-dashboard UI are later waves (05-03+). Do not claim they work yet.
+Compound-command decomposition and the full 5-axis dashboard UI are later
+waves (05-04+). Do not claim they work yet.
 
 Never read or write the operator's real config to "just see real data"
 during development; tests and verification use scratch `XDG_DATA_HOME` /
-`CLAUDE_CONFIG_DIR` trees.
+`CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `CURSOR_CONFIG_DIR` trees.
 
 ## Resolve the entrypoint
 
