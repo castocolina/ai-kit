@@ -377,6 +377,23 @@ class TestRenderAndWriteToml(unittest.TestCase):
             config_io.cfg_render_toml(config)
         self.assertNotIn("dangling", captured.getvalue())
 
+    def test_render_toml_rejects_dict_valued_reviewer_field(self):
+        # WR-03 (code review, 01.2): `_toml_value` had no `dict` branch, so a dict-valued
+        # reviewer field (e.g. a hand-edited/generated `extra = { timeout_tiers = [...] }`,
+        # the exact failure mode SKILL.md documents as a known constraint) fell through to the
+        # final `str(v)` branch and rendered Python's str()-of-a-dict as a quoted TOML STRING
+        # (corrupted data, not a table) instead of being rejected like every other malformed
+        # reviewer field. Must be rejected via the same rejections/WARNING pathway -- the
+        # ENTIRE reviewer entry dropped, `[[reviewers]]` for it never emitted -- not silently
+        # written as corrupted TOML.
+        config = {"policy": {}, "reviewers": [
+            {"key": "a", "model": "m", "vendor": "v",
+             "extra": {"timeout_tiers": [900, 1800]}}]}
+        output = config_io.cfg_render_toml(config)  # must not raise
+        self.assertNotIn("[[reviewers]]", output)
+        self.assertNotIn("timeout_tiers", output)
+        self.assertNotIn("{'timeout_tiers'", output)  # the corrupted str(dict) rendering
+
     def test_render_toml_result_resolves_cleanly_through_cfg_resolve(self):
         # The dropped-entry write must be USABLE, not just superficially valid TOML -- round-trip
         # it through cfg_write_toml + cfg_resolve (this repo's real resolution path) and confirm
@@ -4635,6 +4652,32 @@ class TestBuildModelCatalog(unittest.TestCase):
         self.assertIsNone(unmatched[0]["provider"])
         self.assertTrue(unmatched[0]["vendor_unknown"])
         self.assertEqual(catalog, {})  # never silently added to the catalog either
+
+    def test_aa_match_with_creator_name_that_slugifies_empty_routes_to_unmatched(self):
+        # WR-01 (code review, 01.2): distinct from the case above -- here `model_creator.name`
+        # is present and NON-empty ("—", an em dash) so it passes the primary elif's raw
+        # truthiness check `(aa_match.get("model_creator") or {}).get("name")`, but it is
+        # entirely non-alphanumeric, so `_slugify()` (strips everything but [a-z0-9], then
+        # strip("-")) reduces it to "". The buggy code called `_slugify(...)` a SECOND time
+        # (for the assignment) without re-checking its result, so `provider` became "" -- a
+        # str, not None -- which passed the later `if provider is not None` gate and minted a
+        # malformed catalog key with an empty vendor segment (e.g. "/gpt-5.6-sol"), persisting
+        # `"provider": ""` into the catalog instead of routing to the existing
+        # vendor_unknown=True safeguard a few lines below (the guard that already exists for the
+        # sibling aa_provider_hint call site a few lines above this one). Must land safely in
+        # `unmatched` with provider=None/vendor_unknown=True, and must NEVER be added to the
+        # catalog under a malformed key.
+        aa_models = [{"id": "1", "slug": "gpt-5-6-sol", "name": "GPT-5.6 Sol",
+                      "model_creator": {"name": "—"},  # non-empty, slugifies to ""
+                      "evaluations": {"artificial_analysis_intelligence_index": 91.0}}]
+        discovered = [{"cli": "codex", "model_id": "gpt-5.6-sol"}]
+        catalog, rejections, unmatched = cli.build_model_catalog(
+            discovered, {}, False, aa_models, True, {})  # models_dev_ok=False -> md_match None
+        self.assertEqual(rejections, [])
+        self.assertEqual(catalog, {})  # never silently added under a malformed "/gpt-5.6-sol" key
+        self.assertEqual(len(unmatched), 1)
+        self.assertIsNone(unmatched[0]["provider"])
+        self.assertTrue(unmatched[0]["vendor_unknown"])
 
     def test_md_enrich_match_provider_field_never_influences_provider_or_key_derivation(self):
         # md_enrich_match's OWN "provider" field can legitimately differ from

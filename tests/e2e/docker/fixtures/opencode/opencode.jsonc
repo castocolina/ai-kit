@@ -1,0 +1,34 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "alpha-router": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://alpha.invalid/v1",
+        "apiKey": "alpha-DO-NOT-PRINT-key"
+      },
+      "models": {
+        "beta-router": {
+          "name": "nested-decoy"
+        }
+      }
+    },
+    // leftover { retired } unmatched " quote
+    "beta-router": {
+      "npm": "@ai-sdk/anthropic",
+        "options": {
+        "baseURL": "https://beta.invalid/v1/*path}{tail",
+        "apiKey": "beta-DO-NOT-PRINT-}{key"
+      }
+    } /* keep { this } comment */,
+    // decoy separator , between last two
+    "gamma-router": {
+       "npm": "@ai-sdk/openai-compatible",
+       "options": {
+          "baseURL": "https://gamma.invalid/v1",
+          "apiKey": "gamma-DO-NOT-PRINT-key"
+       }
+    }
+  } /* after provider { brace } */,
+  "model": "alpha-router/default"
+}

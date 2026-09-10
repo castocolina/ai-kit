@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "solo-router": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://solo.invalid/v1",
+        "apiKey": "solo-DO-NOT-PRINT-key"
+      }
+    }
+  },
+  // keep this comment for byte-identity
+  "model": "solo-router/default"
+}

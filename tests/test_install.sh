@@ -152,6 +152,33 @@ fetched="$(cat "$MARKER" 2>/dev/null || true)"
 check "AI_KIT_REPO env selects a fork; --branch sets the branch" \
   bash -c '[ "'"$fetched"'" = "https://github.com/someone/forked.git wip 1" ]'
 
+# --- 4d. tarball fetch failure leaves NO orphan temp dir behind -------------
+# Force the no-git tarball path (fake `git` absent from PATH) with a `curl`
+# that fails immediately; under `set -euo pipefail` this exits the script
+# before the swap logic runs. Assert `$parent/.ai-kit.*` is NOT left behind.
+NOGITBIN="$WORK/nogit_bin"; mkdir -p "$NOGITBIN"
+for b in bash dirname mkdir mktemp tar rm mv; do
+  ln -sf "$(command -v "$b")" "$NOGITBIN/$b"
+done
+cat > "$NOGITBIN/curl" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+chmod +x "$NOGITBIN/curl"
+FAILBOOT="$WORK/failboot"; mkdir -p "$FAILBOOT"
+cp "$INSTALL_SH" "$FAILBOOT/install.sh"
+FETCHPARENT="$WORK/fetchparent"
+rc=0
+env -i HOME="$WORK" PATH="$NOGITBIN" AI_KIT_DIR="$FETCHPARENT/ai-kit" \
+  bash "$FAILBOOT/install.sh" install >/dev/null 2>/dev/null || rc=$?
+check "tarball fetch failure exits non-zero" bash -c '[ "'"$rc"'" -ne 0 ]'
+no_orphan_tmp_dir() {
+  shopt -s nullglob
+  local f=("$FETCHPARENT"/.ai-kit.*)
+  [ "${#f[@]}" -eq 0 ]
+}
+check "tarball fetch failure leaves no orphan .ai-kit.* temp dir" no_orphan_tmp_dir
+
 # --- 5. shellcheck stays clean ----------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then
   check "shellcheck clean" shellcheck "$INSTALL_SH"

@@ -361,7 +361,13 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
             provider = md_match["provider"]
         elif provider_hint:
             provider = provider_hint
-        elif aa_match and (aa_match.get("model_creator") or {}).get("name"):
+        elif aa_match and (_slugify((aa_match.get("model_creator") or {}).get("name", "")) or None):
+            # WR-01 fix: guard on the SLUGIFIED result, not the raw name -- mirrors the
+            # already-guarded aa_provider_hint call site a few lines above. A raw name that is
+            # non-empty but entirely non-alphanumeric (e.g. "—") slugifies to "", and without
+            # this guard `provider` became "" (a str, not None), which passed the `if provider
+            # is not None` gate below and minted a malformed "/<model>" catalog key instead of
+            # routing to the vendor_unknown=True safeguard a few lines below.
             provider = _slugify(aa_match["model_creator"]["name"])
         elif no_signal_this_run and existing_key:
             # CRITICAL/HIGH fix: neither source matched this run (most commonly both were

@@ -112,12 +112,25 @@ fetch_repo() {
     # fail partway). Move the old tree aside first so a failure is recoverable.
     local parent; parent="$(dirname "$INSTALL_DIR")"
     mkdir -p "$parent"
-    local tmp; tmp="$(mktemp -d "$parent/.ai-kit.XXXXXX")"
+    # NOT `local`: a curl|tar or wget|tar failure here exits the whole script
+    # immediately via `set -e` (pipefail), before the swap logic below ever
+    # runs -- a RETURN trap would NOT fire in that case (set -e unwinds past a
+    # failing function body without running its pending RETURN traps), so this
+    # must be an EXIT trap. Confirmed empirically that bash also drops a
+    # FUNCTION-LOCAL variable's binding before running an EXIT trap that fires
+    # this way (the trap body sees $tmp as unbound under `set -u`) -- so `tmp`
+    # is deliberately function-global here, unset once the trap is cleared, so
+    # the cleanup trap reliably has the path it must remove. No other trap is
+    # registered anywhere else in this script, so scoping it to just the fetch
+    # (cleared right after a successful extract, before the swap) is safe.
+    tmp="$(mktemp -d "$parent/.ai-kit.XXXXXX")"
+    trap 'rm -rf "$tmp"' EXIT
     if have curl; then
       curl -fsSL "$tarball" | tar xz --strip-components=1 -C "$tmp"
     else
       wget -qO- "$tarball" | tar xz --strip-components=1 -C "$tmp"
     fi
+    trap - EXIT
     # atomic swap so deletions upstream propagate (no orphan files linger).
     local bak=""
     if [ -e "$INSTALL_DIR" ]; then
@@ -126,10 +139,12 @@ fetch_repo() {
     fi
     if mv "$tmp" "$INSTALL_DIR"; then
       [ -n "$bak" ] && rm -rf "$bak"
+      unset tmp
     else
       # restore the previous tree on failure, then surface the error.
       [ -n "$bak" ] && mv "$bak" "$INSTALL_DIR"
       rm -rf "$tmp"
+      unset tmp
       die "failed to swap fetched tarball into $INSTALL_DIR"
     fi
   else

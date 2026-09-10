@@ -104,6 +104,17 @@ def validate_reviewer_fields(entry: dict) -> str | None:
     fallback_quota -- when present; every pre-existing field's validation is unchanged.
     Absent is always valid (pre-migration configs keep working exactly as before)."""
     key = entry.get("key", "<unknown>")
+    # WR-03 fix: `_toml_value` (below) has no `dict` branch -- any dict-valued field falls
+    # through to its final `str(v)` branch and silently corrupts into a quoted TOML STRING
+    # (e.g. a hand-edited/generated `extra = { timeout_tiers = [...] }`, the exact failure
+    # mode SKILL.md documents as a known constraint of this schema) rather than being
+    # rejected. Reject it here, up front, for EVERY field (not just the four this design
+    # specifically added below) so it surfaces through the existing rejections/WARNING
+    # pathway instead of writing corrupted TOML.
+    for field, value in entry.items():
+        if isinstance(value, dict):
+            return (f"{key}: '{field}' has a nested-object value, which this TOML schema "
+                     "does not support (no dict branch in the writer)")
     # HIGH finding: `entry["purpose"] not in _VALID_PURPOSE` raises TypeError when `purpose` is
     # an unhashable value (a list/dict) rather than rejecting it as a schema-validation error --
     # the type check MUST run first, short-circuiting before the set-membership test ever sees
