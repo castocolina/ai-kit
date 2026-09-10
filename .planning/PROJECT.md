@@ -11,6 +11,15 @@ some skills" toward genuine multi-CLI support — runtime detection, opencode
 provider management, and cross-runtime config diagnostics are all in active
 proposal.
 
+## Current Milestone: v1.1 Agent Workflow Hygiene & Tooling Polish
+
+**Goal:** Ship two new agent-facing skills (an AGENTS.md rules checker, and a curated GSD config skill) plus a status-line coloring fix, closing out the current backlog.
+
+**Target features:**
+- AGENTS.md rules checker skill — wraps `/agent-md-refactor`; enforces the accumulated house rules (language discipline, Makefile/pre-commit parity, commit compaction, cross-AI review+execution, rtk/modern-CLI/CodeGraph/graphify tool-awareness, path portability, no-excuse-deflection, stale-knowledge verification, theory→hypothesis→spike, clean working tree at plan close, concise documentation)
+- Curated GSD config skill — small preference-driven question set that writes and schema-validates `.planning/config.json`, replacing `gsd-settings`/`gsd-config`'s full interrogation
+- Status-line quota-color refactor — rate-limit bucket coloring becomes relative to time-left-in-window, not raw usage percentage
+
 ## Core Value
 
 ai-kit must never corrupt uz's AI-CLI configuration and must never claim more
@@ -47,8 +56,11 @@ verified live rather than assumed from a catalog.
 
 ### Active
 
-<!-- Current milestone scope: 5 ingested proposal PRDs. Detailed, checkable
-     requirements live in REQUIREMENTS.md; this is the feature-level summary. -->
+<!-- v1.0 scope: 5 ingested proposal PRDs (all 6 phase directories complete;
+     formal move to Validated happens at /gsd-complete-milestone, not here).
+     v1.1 scope added below: 3 items pulled from the pending todo backlog.
+     Detailed, checkable requirements live in REQUIREMENTS.md; this is the
+     feature-level summary. -->
 
 - [ ] Multi-CLI runtime foundation — hardened installer fetch, runtime
       self-detection, opencode sidebar/status research
@@ -58,6 +70,12 @@ verified live rather than assumed from a catalog.
 - [ ] Config doctor — cross-runtime config diagnostics with confirmed apply
 - [ ] Usage metrics dashboard — local capture/refine/visualize of AI-CLI
       usage
+- [ ] AGENTS.md rules checker skill — wraps `/agent-md-refactor`, enforces
+      accumulated house rules
+- [ ] Curated GSD config skill — preference-driven `config.json` setup,
+      replacing `gsd-settings`/`gsd-config`'s full interrogation
+- [ ] Status-line quota-color refactor — rate-limit coloring relative to
+      time-left-in-window
 
 ### Out of Scope
 
@@ -144,5 +162,22 @@ introduced without an explicit, justified exception.
 | Adopt all 5 ingested proposal PRDs as this milestone's roadmap scope | 0 blockers, 0 competing variants after cycle resolution (`.planning/intel/SYNTHESIS.md`); each PRD already defines its own measurable acceptance criteria | — Pending (roadmap approval is the acceptance step; no PRD is ADR-locked) |
 | Sequence Multi-CLI Runtime Foundation, Opencode Provider Management, and Tool-Substitution Awareness Hook ahead of Config Doctor and Usage Metrics Dashboard | Real cross-PRD reuse dependencies found during ingest (surgical-edit pattern, curated substitution list) — see Context | — Pending |
 
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-09-07 after initial ingest of 5 proposal PRDs*
+*Last updated: 2026-09-10 after starting milestone v1.1*
