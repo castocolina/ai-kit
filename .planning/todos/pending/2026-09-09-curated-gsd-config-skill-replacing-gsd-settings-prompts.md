@@ -2,6 +2,7 @@
 created: 2026-09-10T00:43:39.014Z
 title: Curated GSD config skill (replace gsd-settings/gsd-config prompting)
 area: tooling
+resolves_phase: 7
 severity: minor
 files: []
 ---

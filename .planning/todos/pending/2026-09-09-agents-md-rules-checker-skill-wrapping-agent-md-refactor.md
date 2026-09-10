@@ -2,6 +2,7 @@
 created: 2026-09-10T00:43:39.014Z
 title: AGENTS.md rules checker skill (wrapper for /agent-md-refactor)
 area: tooling
+resolves_phase: 6
 severity: major
 files:
   - ../gitig/.pre-commit-config.yaml

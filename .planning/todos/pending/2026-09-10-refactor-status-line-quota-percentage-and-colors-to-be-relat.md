@@ -2,6 +2,7 @@
 created: 2026-09-10T00:00:00.000Z
 title: Refactor status line quota window percentage/colors to be time-left relative
 area: tooling
+resolves_phase: 8
 severity: minor
 files:
   - tools/status-line.py
