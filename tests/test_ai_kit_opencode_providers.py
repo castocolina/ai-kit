@@ -28,6 +28,8 @@ from ai_kit_opencode_providers.config_paths import (
     global_review_spec_path,
 )
 from ai_kit_opencode_providers.cross_reference import (
+    Reference,
+    SourceStatus,
     collect_references,
     format_reference,
     review_spec_strategy,
@@ -286,6 +288,72 @@ class TestRemoveEdgeCases(unittest.TestCase):
         self.assertEqual(after, text)
 
 
+class TestRemoveUnbalancedBraceGuard(unittest.TestCase):
+    """CR-01 regression: a missing `}` elsewhere in the document must never
+    cause `remove` to silently consume bytes belonging to the enclosing
+    `"provider"` object and report success anyway.
+    """
+
+    def setUp(self):
+        self.scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.scratch, ignore_errors=True)
+        self.config = os.path.join(self.scratch, "opencode.jsonc")
+
+    def test_unbalanced_brace_is_refused_not_written(self):
+        # "broken"'s value object never closes on its own — one `}` short.
+        # The brace-depth scanner walks through into the enclosing
+        # `"provider"` object's own closing brace and consumes it instead.
+        text = (
+            '{\n'
+            '  "provider": {\n'
+            '    "a": { "npm": "x" },\n'
+            '    "broken": { "npm": "y"\n'
+            '  }\n'
+            '}\n'
+        )
+        with open(self.config, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        code, out, err = _call_cmd_remove(self.config, "broken", self.scratch)
+        self.assertEqual(code, EXIT_ERROR)
+        self.assertNotIn("removed provider", out)
+        self.assertTrue(err.startswith("error:"), err)
+        self.assertIn(self.config, err)
+        with open(self.config, encoding="utf-8") as handle:
+            after = handle.read()
+        self.assertEqual(after, text, "config must be byte-identical — no write on a failed guard")
+
+    def test_validate_removal_rejects_span_that_escapes_provider_object(self):
+        text = (
+            '{\n'
+            '  "provider": {\n'
+            '    "a": { "npm": "x" },\n'
+            '    "broken": { "npm": "y"\n'
+            '  }\n'
+            '}\n'
+        )
+        result = jsonc_edit.remove_provider(text, "broken")
+        self.assertIsNotNone(result)
+        with self.assertRaises(json.JSONDecodeError):
+            json.loads(jsonc_edit.strip_trailing_commas(jsonc_edit.strip_jsonc_comments(result)))
+        self.assertFalse(jsonc_edit.validate_removal(text, result, "broken"))
+
+    def test_validate_removal_accepts_well_formed_edits(self):
+        original = _fixture_text()
+        result = jsonc_edit.remove_provider(original, "beta-router")
+        self.assertIsNotNone(result)
+        self.assertTrue(jsonc_edit.validate_removal(original, result, "beta-router"))
+
+    def test_validate_removal_survives_duplicate_ids(self):
+        text = (
+            '{ "provider": {\n'
+            '    "dup-router": { "npm": "first" },\n'
+            '    "dup-router": { "npm": "second" }\n'
+            "} }\n"
+        )
+        first = jsonc_edit.remove_provider(text, "dup-router")
+        self.assertTrue(jsonc_edit.validate_removal(text, first, "dup-router"))
+
+
 class TestWalkerStates(unittest.TestCase):
     def test_string_and_comment_are_mutually_suppressing(self):
         text = _fixture_text()
@@ -411,6 +479,69 @@ class TestAtomicWrite(unittest.TestCase):
             self.assertEqual(handle.read(), original)
         self.assertEqual(glob.glob(os.path.join(scratch, "*.tmp")), [])
 
+    def test_fsyncs_temp_file_before_and_directory_after_replace(self):
+        """WR-01 regression: `os.replace` alone gives no durability guarantee
+        against a crash immediately after it returns. The temp file's data
+        must be fsync'd before the replace, and the containing directory's
+        entry fsync'd after, or a crash-then-recovery can come back with a
+        truncated config despite a successful-looking `remove`.
+        """
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        path = os.path.join(scratch, "opencode.jsonc")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write('{ "ok": true }\n')
+        fsynced_fds = []
+        real_fsync = os.fsync
+
+        def spy_fsync(fd):
+            fsynced_fds.append(fd)
+            return real_fsync(fd)
+
+        with mock.patch.object(atomic_write.os, "fsync", side_effect=spy_fsync) as mock_fsync:
+            atomic_write.write_preserving_mode(path, '{ "ok": false }\n')
+        self.assertEqual(mock_fsync.call_count, 2)
+        with open(path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), '{ "ok": false }\n')
+
+    @unittest.skipUnless(hasattr(os, "chown"), "os.chown unavailable")
+    def test_chown_called_with_original_owner_before_replace(self):
+        """WR-02 regression: `mkstemp` creates the temp file owned by the
+        current process, so a plain `os.replace` silently hands the config's
+        ownership to whoever ran the tool. `os.chown` must be called with the
+        original file's uid/gid before the replace.
+        """
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        path = os.path.join(scratch, "opencode.jsonc")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write('{ "ok": true }\n')
+        original = os.stat(path)
+        with mock.patch.object(atomic_write.os, "chown") as mock_chown:
+            atomic_write.write_preserving_mode(path, '{ "ok": false }\n')
+        mock_chown.assert_called_once()
+        chown_args = mock_chown.call_args[0]
+        self.assertEqual(chown_args[1], original.st_uid)
+        self.assertEqual(chown_args[2], original.st_gid)
+
+    @unittest.skipUnless(hasattr(os, "chown"), "os.chown unavailable")
+    def test_chown_permission_error_does_not_abort_the_write(self):
+        """A non-root process cannot chown to an arbitrary uid/gid (EPERM).
+        That must degrade gracefully -- the edit still gets written -- rather
+        than failing the whole remove over an ownership-preservation nicety.
+        """
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        path = os.path.join(scratch, "opencode.jsonc")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write('{ "ok": true }\n')
+        with mock.patch.object(
+            atomic_write.os, "chown", side_effect=PermissionError("eperm")
+        ):
+            atomic_write.write_preserving_mode(path, '{ "ok": false }\n')
+        with open(path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), '{ "ok": false }\n')
+
 
 @unittest.skipUnless(hasattr(os, "symlink"), "os.symlink unavailable")
 class TestSymlinkedConfig(unittest.TestCase):
@@ -478,6 +609,38 @@ class TestWriteFailureExitCode(unittest.TestCase):
         self.assertIn(self.config, error_lines[0])
         self.assertNotIn("Traceback", err)
         self.assertNotIn("Traceback", out)
+
+
+class TestCliHelpText(unittest.TestCase):
+    """WR-04 regression: --help must actually document the CLI, notably that
+    --config wants a FILE, not a directory -- a distinction SKILL.md calls
+    out explicitly as easy to get wrong.
+    """
+
+    def setUp(self):
+        self.scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.scratch, ignore_errors=True)
+
+    def test_top_level_help_has_a_description(self):
+        result = run_cli("--help", cwd=self.scratch, env=scratch_env(self.scratch))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("provider", result.stdout.lower())
+        self.assertGreater(len(result.stdout.strip().splitlines()), 1)
+
+    def test_remove_help_documents_config_is_a_file_not_a_directory(self):
+        result = run_cli(
+            "remove", "--help", cwd=self.scratch, env=scratch_env(self.scratch)
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("not a directory", result.stdout)
+        self.assertIn("provider_id", result.stdout)
+
+    def test_list_help_documents_config_is_a_file_not_a_directory(self):
+        result = run_cli(
+            "list", "--help", cwd=self.scratch, env=scratch_env(self.scratch)
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("not a directory", result.stdout)
 
 
 def _call_cmd_list(config_path, cwd):
@@ -996,6 +1159,48 @@ class TestCrossReferenceLocalOnlyStrategy(_XrefScratch):
         warning_lines = [ln for ln in out.splitlines() if ln.startswith("warning:")]
         self.assertEqual(len(warning_lines), 1)
         self.assertNotIn("not active", warning_lines[0])
+
+
+class TestCrossReferenceInactiveReasonDecoupling(_XrefScratch):
+    """WR-03 regression: the "(not active: ...)" qualifier printed by
+    cmd_remove must come from the audit SourceStatus's own `.reason`, not a
+    string hardcoded in cli.py to the "local-only" case -- otherwise a new
+    conditionally-inactive source would silently get the wrong (or no)
+    explanation.
+    """
+
+    def test_cmd_remove_uses_audit_reason_text_not_a_hardcoded_string(self):
+        shutil.copy(os.path.join(FIXTURE_DIR, "opencode.jsonc"), self.config)
+        fake_refs = [
+            Reference(self.local_spec, "plan-reviewer", "model", "beta-router/demo-model")
+        ]
+        fake_audit = [
+            (
+                self.local_spec,
+                SourceStatus(
+                    "scanned-inactive", reason="a wholly different made-up reason"
+                ),
+            ),
+            (self.global_spec, SourceStatus("absent")),
+            (self.catalog, SourceStatus("absent")),
+        ]
+        with mock.patch(
+            "ai_kit_opencode_providers.cli.collect_references",
+            return_value=(fake_refs, fake_audit),
+        ):
+            code, out, err = _call_cmd_remove(self.config, "beta-router", self.scratch)
+        self.assertEqual(code, 0, err)
+        self.assertIn("a wholly different made-up reason", out)
+        self.assertNotIn('strategy = "local-only"', out)
+
+    def test_source_status_is_still_a_plain_string(self):
+        active = SourceStatus("scanned")
+        inactive = SourceStatus("scanned-inactive", reason="because")
+        self.assertEqual(active, "scanned")
+        self.assertEqual(inactive, "scanned-inactive")
+        self.assertIsNone(active.reason)
+        self.assertEqual(inactive.reason, "because")
+        self.assertEqual(f"cross-reference: /x {inactive}", "cross-reference: /x scanned-inactive")
 
 
 class TestCrossReferenceNonBlocking(_XrefScratch):

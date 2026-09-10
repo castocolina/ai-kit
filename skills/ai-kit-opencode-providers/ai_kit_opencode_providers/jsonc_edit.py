@@ -346,6 +346,73 @@ def provider_summary(text: str, entry: ProviderEntry) -> dict:
     }
 
 
+def _parse_pairs(text: str):
+    """Parse `text` (JSONC) via `object_pairs_hook=list`.
+
+    Every JSON object in the document — top-level and nested — decodes to a
+    `list[tuple[key, value]]` instead of a `dict`, preserving both key order
+    and duplicate keys exactly as written. A plain `dict` would silently
+    collapse duplicate provider ids to their last occurrence, which would
+    make `validate_removal` reject the legitimate "remove the first of two
+    duplicate ids, the second survives" case `remove_provider` itself
+    supports (see `TestDuplicateProviderId`). Raises `json.JSONDecodeError`
+    on invalid input — callers decide what "invalid" means for them.
+    """
+    cleaned = strip_trailing_commas(strip_jsonc_comments(text))
+    return json.loads(cleaned, object_pairs_hook=list)
+
+
+def validate_removal(before_text: str, after_text: str, provider_id: str) -> bool:
+    """Structural safety check for a `remove_provider` edit before it is written.
+
+    `find_object_span`/`find_provider_object` locate spans by pure brace-depth
+    counting with no awareness of whether those braces actually belong to the
+    entry being scanned. On unbalanced-brace input elsewhere in the document,
+    that counting can walk straight through the target entry's intended end
+    and consume a `}` that belongs to the enclosing `"provider"` object or the
+    document root — `remove_provider` would then delete the wrong span and
+    return text that looks plausible but is no longer valid JSON, or is valid
+    JSON with damage far outside the target entry. Trusting the same
+    brace-depth bookkeeping to also validate itself (e.g. checking the target
+    entry's computed end against the enclosing object's computed end) does not
+    catch this: both ends are wrong in lockstep, produced by the same flawed
+    scan.
+
+    This performs a full, independent JSON round-trip instead: both
+    `before_text` and `after_text` must parse as valid JSON once comments and
+    trailing commas are stripped, and `after_text` must equal `before_text`
+    with exactly the first depth-1 `provider_id` entry removed from the
+    `"provider"` object — nothing else may differ. Returns `False` (refuse to
+    write) on any parse failure or any other mismatch, including when
+    `before_text` was already malformed — this tool must never write on top
+    of a config it cannot fully verify.
+    """
+    try:
+        before_pairs = _parse_pairs(before_text)
+        after_pairs = _parse_pairs(after_text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(before_pairs, list):
+        return False
+    try:
+        expected_pairs = []
+        removed = False
+        for key, value in before_pairs:
+            if not removed and key == "provider" and isinstance(value, list):
+                new_value = list(value)
+                for i, (child_key, _child_value) in enumerate(new_value):
+                    if child_key == provider_id:
+                        del new_value[i]
+                        break
+                expected_pairs.append((key, new_value))
+                removed = True
+            else:
+                expected_pairs.append((key, value))
+    except (TypeError, ValueError):
+        return False
+    return after_pairs == expected_pairs
+
+
 def remove_provider(text: str, provider_id: str) -> str | None:
     """Return text with the first depth-1 `provider_id` entry removed, or None.
 

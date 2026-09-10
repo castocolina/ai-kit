@@ -28,6 +28,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -40,7 +41,7 @@ CATEGORIES = ("agents", "commands", "skills")
 Paths = namedtuple(
     "Paths",
     "install_dir claude_dir settings config_dir config_toml sample status_line "
-    "statusline_doctor segments_dir",
+    "statusline_doctor segments_dir claude_hook",
 )
 
 
@@ -65,6 +66,8 @@ def resolve_paths(env):
         status_line=os.path.join(install_dir, "tools", "status-line.py"),
         statusline_doctor=os.path.join(install_dir, "tools", "statusline-doctor.py"),
         segments_dir=os.path.join(config_dir, "segments"),
+        claude_hook=os.path.join(
+            install_dir, "tools", "hooks", "claude_session_start.py"),
     )
 
 
@@ -1337,6 +1340,178 @@ def _write_json(path, data):
         f.write("\n")
 
 
+JSON_STATE_ABSENT = "absent"
+JSON_STATE_OK = "ok"
+JSON_STATE_UNREADABLE = "unreadable"
+
+CLAUDE_HOOK_EVENT = "SessionStart"
+CLAUDE_HOOK_MATCHER = "startup|compact"
+CLAUDE_HOOK_MARKER = os.path.join("tools", "hooks", "claude_session_start.py")
+
+
+def _read_json_checked(path):
+    """Three-state JSON reader: absent / ok-dict / unreadable.
+
+    Distinct from `_read_json`, which collapses all three into `{}`. Treating
+    that `{}` as "fresh file, safe to create" would replace an existing but
+    unparseable settings.json with a brand-new file containing only ai-kit's
+    entry — the corruption PROJECT.md's core value forbids.
+    """
+    if not os.path.isfile(path):
+        return JSON_STATE_ABSENT, {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (ValueError, OSError):
+        return JSON_STATE_UNREADABLE, None
+    if not isinstance(data, dict):
+        return JSON_STATE_UNREADABLE, None
+    return JSON_STATE_OK, data
+
+
+def _atomic_write_json(path, data):
+    """Atomically write JSON with indent=2 + trailing newline.
+
+    Adapted from skills/ai-kit-opencode-providers/ai_kit_opencode_providers/atomic_write.py
+    rather than imported (a tools/ module importing a skills/ package would be a
+    layering violation). Fresh files get mode 0o600 — the mode both hosts' own
+    config files were measured to carry — rather than a umask-derived mode
+    (os.umask is process-global and not thread-safe; this runs on a Textual
+    worker thread). An existing target's real mode is copied, never overwritten.
+    Unlink-then-re-raise on OSError is the durability contract the
+    failure-injection test executes against.
+    """
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    target = os.path.realpath(path)
+    dirname = os.path.dirname(target) or "."
+    existed = os.path.isfile(target)
+    mode = stat.S_IMODE(os.stat(target).st_mode) if existed else 0o600
+    fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, target)
+        dir_fd = os.open(dirname, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def _hook_entries_shape_ok(entries, nested):
+    """Per-element guard: every array member (and nested hooks members) is a dict.
+
+    Returns (ok, reason) naming the first violation found.
+    """
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return False, "non-dict array element"
+        if nested and "hooks" in entry:
+            inner = entry["hooks"]
+            if not isinstance(inner, list):
+                return False, "hooks value is not a list of dicts"
+            for member in inner:
+                if not isinstance(member, dict):
+                    return False, "non-dict nested hook member"
+    return True, ""
+
+
+def _warn_hook_config(path, reason):
+    """Refuse a config we cannot fully interpret, naming path and reason."""
+    print(
+        f"warn: {path}: {reason} — ai-kit will not overwrite a config file "
+        "it cannot parse",
+        file=sys.stderr,
+    )
+
+
+def _hook_container_reason(data, event_key, nested):
+    """First container/element shape violation, or '' if the walk is safe."""
+    if "hooks" in data and not isinstance(data.get("hooks"), dict):
+        return "hooks is not an object"
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict) or event_key not in hooks:
+        return ""
+    entries = hooks[event_key]
+    if not isinstance(entries, list):
+        return f"hooks.{event_key} is not a list"
+    ok, reason = _hook_entries_shape_ok(entries, nested)
+    return "" if ok else reason
+
+
+def _load_hook_config(path, event_key, nested=False):
+    """Shared read-and-guard for both hosts' wiring routes.
+
+    Returns (ok, data, created). When ok is True, every element the caller
+    will walk is a dict, and on the nested side every member of every entry's
+    hooks list is a dict too.
+    """
+    state, data = _read_json_checked(path)
+    if state == JSON_STATE_UNREADABLE:
+        _warn_hook_config(path, "cannot parse as a JSON object")
+        return False, None, False
+    if state == JSON_STATE_ABSENT:
+        return True, {}, True
+    reason = _hook_container_reason(data, event_key, nested)
+    if reason:
+        _warn_hook_config(path, reason)
+        return False, None, False
+    return True, data, False
+
+
+def _refresh_or_append_claude_hook(entries, command):
+    """Replace an existing ai-kit SessionStart entry in place, or append one."""
+    new_entry = {
+        "matcher": CLAUDE_HOOK_MATCHER,
+        "hooks": [{"type": "command", "command": command}],
+    }
+    for index, entry in enumerate(entries):
+        for hook in entry.get("hooks") or []:
+            if CLAUDE_HOOK_MARKER in hook.get("command", ""):
+                entries[index] = new_entry
+                return True
+    entries.append(new_entry)
+    return False
+
+
+def wire_hook_claude(settings, hook_script, dry):
+    """Append-if-absent Claude Code SessionStart entry for the briefing wrapper.
+
+    Never materializes ~/.claude/settings.json when the parent directory does
+    not exist. Never overwrites a config it cannot fully interpret. Writes
+    through `_atomic_write_json`; an OSError leaves the target byte-identical
+    and returns False rather than aborting a wizard commit.
+    """
+    if not os.path.isdir(os.path.dirname(settings) or "."):
+        return False
+    ok, data, _ = _load_hook_config(
+        settings, CLAUDE_HOOK_EVENT, nested=True)
+    if not ok:
+        return False
+    hooks = data.setdefault("hooks", {})
+    entries = hooks.setdefault(CLAUDE_HOOK_EVENT, [])
+    command = "python3 -S " + hook_script
+    _refresh_or_append_claude_hook(entries, command)
+    if dry:
+        print(f"would wire SessionStart hook -> {command}")
+        return True
+    try:
+        _atomic_write_json(settings, data)
+    except OSError as exc:
+        print(f"warn: failed to write {settings}: {exc}", file=sys.stderr)
+        return False
+    print(f"wired SessionStart hook -> {command}")
+    return True
+
+
 def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
     """Point settings.json's statusLine.command at the bundled status-line.py
     (with `python3 -S`), preserving all other keys. FR-5.5 double-confirm:
@@ -2025,6 +2200,7 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             apply_selection(sel.category_sets(CATEGORIES), entries,
                             paths.claude_dir, dry, counts)
+            wire_hook_claude(paths.settings, paths.claude_hook, dry)
             if adopt:
                 # A discovered bundled example segment (e.g. system_memory) must
                 # actually exist under paths.segments_dir before persist_statusline's

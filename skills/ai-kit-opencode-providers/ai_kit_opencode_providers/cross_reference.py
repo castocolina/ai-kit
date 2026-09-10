@@ -115,12 +115,34 @@ def review_spec_strategy(path: str) -> str:
     return strategy
 
 
-def _source_status(path: str, inactive: bool) -> str:
+class SourceStatus(str):
+    """A `str` subclass -- every existing `status == "scanned-inactive"` (or
+    `"scanned"`/`"absent"`) comparison, `in` check, and f-string interpolation
+    keeps working completely unchanged, since this *is* a str.
+
+    WR-03: carries the human-readable reason a source is inactive (or `None`
+    when active/absent) as `.reason`, so a caller that wants to explain WHY a
+    source is inactive (`cmd_remove`'s "(not active: ...)" qualifier) can read
+    that reason from the audit entry itself instead of hardcoding the
+    `local-only` strategy wording as *the* explanation for every inactive
+    source. Without this, a future conditionally-active source added to
+    `collect_references` would need its own hardcoded wording bolted onto
+    `cmd_remove` to explain correctly -- or would silently get the wrong
+    explanation if a maintainer forgot.
+    """
+
+    def __new__(cls, value: str, reason: str | None = None) -> SourceStatus:
+        obj = str.__new__(cls, value)
+        obj.reason = reason
+        return obj
+
+
+def _source_status(path: str, reason: str | None) -> SourceStatus:
     if not os.path.exists(path):
-        return "absent"
-    if inactive:
-        return "scanned-inactive"
-    return "scanned"
+        return SourceStatus("absent")
+    if reason is not None:
+        return SourceStatus("scanned-inactive", reason=reason)
+    return SourceStatus("scanned")
 
 
 def collect_references(
@@ -131,15 +153,20 @@ def collect_references(
     global_path = global_review_spec_path(env)
     cat_path = catalog_path(env)
     strategy = review_spec_strategy(local_path)
+    global_inactive_reason = (
+        'local review-spec sets strategy = "local-only"'
+        if strategy == "local-only"
+        else None
+    )
     sources = (
-        (local_path, scan_review_spec, False),
-        (global_path, scan_review_spec, strategy == "local-only"),
-        (cat_path, scan_catalog, False),
+        (local_path, scan_review_spec, None),
+        (global_path, scan_review_spec, global_inactive_reason),
+        (cat_path, scan_catalog, None),
     )
     refs: list[Reference] = []
     audit: list[tuple[str, str]] = []
-    for path, scanner, inactive in sources:
-        audit.append((path, _source_status(path, inactive)))
+    for path, scanner, reason in sources:
+        audit.append((path, _source_status(path, reason)))
         refs.extend(scanner(path, provider_id))
     return refs, audit
 

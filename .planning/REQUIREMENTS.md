@@ -22,8 +22,8 @@ Decisions.
 
 ### Opencode Provider Management
 
-- [ ] **REQ-opencode-provider-list-remove**: New `ai-kit-opencode-providers` skill lists custom providers from `opencode.jsonc`'s `"provider"` block (id/npm/baseURL, never apiKey) and removes one by id via a string-literal-aware, brace-counting, byte-preserving, atomically-written edit; a non-existent id no-ops cleanly.
-- [ ] **REQ-opencode-provider-cross-reference-check**: Before removing a provider, warn (non-blocking) if its id is referenced in `.aikit/review-spec.toml` or the cached model catalog; `skills/ai-kit-opencode-providers/SKILL.md` documents both subcommands and passes `skill-judge` review.
+- [x] **REQ-opencode-provider-list-remove**: New `ai-kit-opencode-providers` skill lists custom providers from `opencode.jsonc`'s `"provider"` block (id/npm/baseURL, never apiKey) and removes one by id via a string-literal-aware, brace-counting, byte-preserving, atomically-written edit; a non-existent id no-ops cleanly. (Complete 2026-09-09 — see `02-01-PLAN.md`/`02-01-SUMMARY.md`.)
+- [x] **REQ-opencode-provider-cross-reference-check**: Before removing a provider, warn (non-blocking) if its id is referenced in `.aikit/review-spec.toml` or the cached model catalog; `skills/ai-kit-opencode-providers/SKILL.md` documents both subcommands and passes `skill-judge` review. (Complete 2026-09-09 — see `02-02-PLAN.md`/`02-02-SUMMARY.md`.)
 
 ### Tool-Substitution Awareness Hook
 
@@ -69,8 +69,8 @@ milestone — see that requirement's acceptance criteria.)
 | REQ-multi-cli-install-single-branch | Phase 1.2 | Complete |
 | REQ-multi-cli-runtime-detection | Phase 1.2 | Complete |
 | REQ-multi-cli-opencode-ui-research | Phase 1.2 | Complete |
-| REQ-opencode-provider-list-remove | Phase 2 | Pending |
-| REQ-opencode-provider-cross-reference-check | Phase 2 | Pending |
+| REQ-opencode-provider-list-remove | Phase 2 | Complete |
+| REQ-opencode-provider-cross-reference-check | Phase 2 | Complete |
 | REQ-tool-substitution-detection-composition | Phase 3 | Pending |
 | REQ-tool-substitution-hook-wiring | Phase 3 | Pending |
 | REQ-config-doctor-diagnostic-checks | Phase 4 | Pending |
