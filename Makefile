@@ -4,10 +4,7 @@
 INSTALL_SH := tools/install.sh
 SETUP_PY   := tools/setup.py
 
-.PHONY: install reconfigure uninstall doctor check test lint dev validate e2e-docker
-
-# Docker/podman auto-detect — prefers docker, falls back to podman.
-CONTAINER_ENGINE := $(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null)
+.PHONY: install reconfigure uninstall doctor check test lint dev validate
 
 install:
 	bash $(INSTALL_SH)
@@ -43,13 +40,3 @@ lint:
 # auto-syncs the dev env first.
 validate:
 	uv run pre-commit run --all-files
-
-# Clean-room E2E: builds a fresh container (no cached uv/textual, no
-# pre-existing ~/.claude/~/.cursor/~/.config/opencode/~/.codex) and runs the
-# full `make test`+`make lint` suite inside it — see tests/e2e/docker/.
-e2e-docker:
-	@if [ -z "$(CONTAINER_ENGINE)" ]; then \
-		echo "err: neither docker nor podman found on PATH" >&2; exit 1; \
-	fi
-	$(CONTAINER_ENGINE) build -f tests/e2e/docker/Dockerfile -t ai-kit-e2e .
-	$(CONTAINER_ENGINE) run --rm ai-kit-e2e

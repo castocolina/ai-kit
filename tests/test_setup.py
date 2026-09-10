@@ -1536,7 +1536,7 @@ class TestCmdInstall(unittest.TestCase):
         # status line (matching first-run all-on + adopt behaviour) WITHOUT the
         # Textual TUI. After Task 10 the statusLine wiring + recipe copy are gated
         # on the wizard's adopt decision via persist_statusline — not pre-wizard.
-        def _apply_defaults(paths, entries, installed, tty, dry, counts, examples_flag=None):
+        def _apply_defaults(paths, entries, installed, tty, dry, counts):
             default = setup._default_selection(entries, installed)
             setup.apply_selection(default, entries, paths.claude_dir, dry, counts)
             state = {"segments": dict(setup.SEGMENT_DEFAULTS),
@@ -1555,7 +1555,7 @@ class TestCmdInstall(unittest.TestCase):
         # Task 10 constraint 1: a wizard run that does NOT adopt (components-only)
         # must write no statusline.toml and never touch settings.json statusLine —
         # because cmd_install no longer wires the status line pre-wizard.
-        def _components_only(paths, entries, installed, tty, dry, counts, examples_flag=None):
+        def _components_only(paths, entries, installed, tty, dry, counts):
             default = setup._default_selection(entries, installed)
             setup.apply_selection(default, entries, paths.claude_dir, dry, counts)
             # no persist_statusline call — adopt is implicitly False
@@ -2152,90 +2152,6 @@ class TestExternalSegmentToggle(unittest.TestCase):
                              {"CC_AI_KIT_EXTERNAL_DIR": paths.segments_dir}):
             self.assertTrue(setup._persist_layout(paths, st, dry=False))
         self.assertNotIn("system_memory", setup.current_segments(paths.config_toml))
-
-    # ------------------------------------------------------------------
-    # CR-01/WR-01 regression: _make_wizard_commit's commit-time example
-    # install must still install every discovered example (doctor's
-    # structural [[line]] check needs the file to physically exist), but
-    # must NOT silently override a user's explicit decline (or a fresh
-    # `--examples=none` install) by leaving no explicit `false` behind.
-    # ------------------------------------------------------------------
-
-    def _paths_for_wizard_commit(self):
-        """A fresh, empty install/config tree pointed at this repo's real
-        examples/segments dir (so `system_memory` is discoverable), with no
-        pre-existing user segments and no pre-existing statusline.toml."""
-        home = tempfile.mkdtemp()
-        xdg = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
-        self.addCleanup(shutil.rmtree, xdg, ignore_errors=True)
-        return setup.resolve_paths(
-            {"HOME": home, "AI_KIT_DIR": self._REPO, "XDG_CONFIG_HOME": xdg})
-
-    def test_wizard_commit_declined_example_installed_but_explicitly_off(self):
-        """CR-01 regression: a bundled example the user explicitly turned OFF
-        in the Arrange board (state["segments"][id] = False, not-yet-installed)
-        must still be installed to disk (the doctor's structural check needs
-        it present), but the write must include an explicit `<id> = false` —
-        it must NOT be left to the renderer's present-on-disk-defaults-to-True
-        behavior, which would silently re-enable it."""
-        paths = self._paths_for_wizard_commit()
-        state = {
-            "adopt": True,
-            "segments": dict(setup.current_segments(paths.sample)),
-            "layout": setup.current_layout(paths.sample),
-            "dirty": True,
-        }
-        state["segments"]["system_memory"] = False   # explicit decline
-        entries = {cat: [] for cat in setup.CATEGORIES}
-        commit = setup._make_wizard_commit(paths, entries, dry=False,
-                                           counts=setup.new_counts())
-        # The doctor runs as a SUBPROCESS that inherits the real os.environ,
-        # not this test's paths — without this override it would validate
-        # against the real machine's ${XDG_CONFIG_HOME:-~/.config}/ai-kit/
-        # segments instead of this test's tmp dir (exactly the same
-        # test-isolation leak ce62d63 fixed for test_wizard_pty.py).
-        with mock.patch.dict(os.environ,
-                             {"CC_AI_KIT_EXTERNAL_DIR": paths.segments_dir}):
-            result = commit(setup.Selection([]), state)
-        self.assertTrue(result["ok"], result["log"])
-
-        installed_path = os.path.join(paths.segments_dir, "system_memory")
-        self.assertTrue(
-            os.path.isfile(installed_path),
-            "declined example must still be installed (doctor structural check)")
-        self.assertFalse(
-            setup._external_enabled_in_toml(paths.config_toml, "system_memory",
-                                            default_on=True),
-            "declined example must have an explicit `false` written, not be "
-            "left to silently render on by the present-on-disk default")
-
-    def test_wizard_commit_accepted_example_installed_and_no_explicit_write(self):
-        """Companion to the decline-path regression above: an example the
-        user left/turned ON keeps the original behavior — installed, and NO
-        explicit boolean write (it renders on by the present-on-disk
-        default, exactly as before this fix)."""
-        paths = self._paths_for_wizard_commit()
-        state = {
-            "adopt": True,
-            "segments": dict(setup.current_segments(paths.sample)),
-            "layout": setup.current_layout(paths.sample),
-            "dirty": True,
-        }
-        state["segments"]["system_memory"] = True   # explicit accept
-        entries = {cat: [] for cat in setup.CATEGORIES}
-        commit = setup._make_wizard_commit(paths, entries, dry=False,
-                                           counts=setup.new_counts())
-        with mock.patch.dict(os.environ,
-                             {"CC_AI_KIT_EXTERNAL_DIR": paths.segments_dir}):
-            result = commit(setup.Selection([]), state)
-        self.assertTrue(result["ok"], result["log"])
-
-        installed_path = os.path.join(paths.segments_dir, "system_memory")
-        self.assertTrue(os.path.isfile(installed_path))
-        self.assertNotIn("system_memory", setup.current_segments(paths.config_toml),
-                         "accepted-by-default example must not get an explicit "
-                         "boolean write — it renders on via the disk-present default")
 
 
 class TestPersistRoundTrip(unittest.TestCase):

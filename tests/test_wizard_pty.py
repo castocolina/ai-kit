@@ -385,45 +385,19 @@ class TestPhase2E2E(unittest.TestCase):
         """
         uv = _uv_cmd()
         config_dir = self._mk_config_dir()
-        xdg_config_home = self._mk_config_dir()
 
         # Point AI_KIT_DIR at the repo root so enumerate_entries finds the real
         # skills/ directory.  CLAUDE_CONFIG_DIR is the temp dir — symlinks land
-        # there, never touching the real ~/.claude. XDG_CONFIG_HOME is ALSO a
-        # fresh temp dir (mirrors TestPhase3E2E._base_env's established pattern)
-        # — resolve_paths() derives config_dir/segments_dir from XDG_CONFIG_HOME
-        # (falling back to $HOME/.config), not from CLAUDE_CONFIG_DIR; without
-        # this override the status-line self-validation below would silently
-        # read/write uz's REAL ~/.config/ai-kit/segments/, violating AGENTS.md's
-        # Testing section ("never use uz's real config files as a test fixture")
-        # and masking a genuine bug (a bundled example segment toggled ON for
-        # the first time — e.g. system_memory — must exist on disk before this
-        # commit's self-validating doctor call, see tools/setup.py's
-        # _make_wizard_commit) behind whatever real segments already happen to
-        # be installed on the machine running the test.
+        # there, never touching the real ~/.claude.
         env = dict(
             os.environ,
             CLAUDE_CONFIG_DIR=config_dir,
-            XDG_CONFIG_HOME=xdg_config_home,
             AI_KIT_DIR=_REPO_ROOT,
             AI_KIT_UV_REEXEC="1",
         )
 
         _BOOT_DEADLINE = 45.0   # generous: uv + textual init from warm cache
-        _SUMMARY_DEADLINE = 120.0  # widened from 30.0 (RESEARCH.md Pitfall 2: this
-        # container's CPU throughput is measurably slower than the host's — the
-        # live-reproduced full-suite time here was 75-135s vs. 11.5s on host).
-        # Note: the ORIGINAL failure this constant was widened for turned out to
-        # have a second, independent cause beyond raw CPU slowness — a real bug
-        # in tools/setup.py's _make_wizard_commit (fixed separately this same
-        # session: a bundled example segment toggled ON for the first time must
-        # be installed to disk before the self-validating doctor call runs, or
-        # the doctor rejects it as an unknown [[line]] segment). That bug was
-        # masked on dev machines with a pre-existing ~/.config/ai-kit/segments/
-        # entry and only surfaced in a genuinely clean container. This deadline
-        # widening is kept regardless, as a real, independently-verified margin
-        # for genuine container slowness; drive_until polls via select() rather
-        # than sleeping, so a wider ceiling costs nothing on a fast host.
+        _SUMMARY_DEADLINE = 30.0
         _DRAIN_DEADLINE = 30.0
 
         # Markers chosen from static text the re-ported app DEFINITELY renders:

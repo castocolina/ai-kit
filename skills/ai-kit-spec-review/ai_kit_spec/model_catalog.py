@@ -20,7 +20,7 @@ _FIELD_TYPES = {
     "batch_mode": bool, "is_router": bool, "fallback_quota": bool,
     "tokens_per_sec": (int, float), "max_output_tokens": int, "structured_output": bool,
     "tool_calling": bool, "native": bool, "reasoning_modes": list, "fast_mode": bool,
-    "speed_tier": str, "name_declared_purpose": str, "native_runtime": str,
+    "speed_tier": str, "name_declared_purpose": str,
     # HIGH finding: is_router/batch_mode/fallback_quota have no external source (spec §3) --
     # they are ALWAYS either a naming heuristic's guess or a user's explicit confirmation of
     # that guess, and a plain bool alone cannot tell those two provenances apart. This list
@@ -36,7 +36,6 @@ _NUMERIC_SUBFIELD_TABLES = {
 }
 _RUNTIME_FIELD_TYPES = {"model_id": str, "ctx_window": (int, float)}
 _VALID_NAME_DECLARED_PURPOSE = {"review", "execute"}
-_VALID_NATIVE_RUNTIME = {"claude", "opencode", "codex", "cursor", "unknown"}
 
 
 def cache_catalog_path(env: dict) -> str:
@@ -94,20 +93,6 @@ def validate_catalog_entry(model_id: str, entry: dict) -> str | None:
             and entry["name_declared_purpose"] not in _VALID_NAME_DECLARED_PURPOSE:
         return (f"{model_id}: 'name_declared_purpose' must be one of "
                 f"{sorted(_VALID_NAME_DECLARED_PURPOSE)}")
-    # Forward-compatible schema support only: no current code path in this
-    # codebase produces a model_catalog.py entry with a `cli` key at all
-    # (verified this phase: `cli` does not appear anywhere in `_FIELD_TYPES` /
-    # `_MANDATORY_CATALOG_FIELDS` / `_RUNTIME_FIELD_TYPES`). Satisfies
-    # REQUIREMENTS.md's literal "model-catalog entries" wording without
-    # claiming it is reachable by any live code path today.
-    if "native_runtime" in entry and entry["native_runtime"] is not None \
-            and entry["native_runtime"] not in _VALID_NATIVE_RUNTIME:
-        return (f"{model_id}: 'native_runtime' must be one of "
-                f"{sorted(_VALID_NATIVE_RUNTIME)}")
-    if "native_runtime" in entry and entry.get("native_runtime") is not None \
-            and entry.get("cli") is not None:
-        return (f"{model_id}: 'native_runtime' must not be set on an "
-                f"entry with a non-null 'cli'")
     if "reasoning_modes" in entry and isinstance(entry["reasoning_modes"], list) and \
             not all(isinstance(m, str) for m in entry["reasoning_modes"]):
         return f"{model_id}: 'reasoning_modes' must be a list of strings"

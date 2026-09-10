@@ -100,11 +100,7 @@ fetch_repo() {
     git -C "$INSTALL_DIR" pull --ff-only
   elif have git; then
     info "cloning $REPO_SLUG into $INSTALL_DIR"
-    # --depth 1 already implies --single-branch (git-scm.com/docs/git-clone) unless
-    # --no-single-branch is given. The explicit flag keeps that property from silently
-    # depending on an unstated default a future edit could break (e.g. adding
-    # --no-single-branch, or dropping --depth 1 for a --full-history debug flag).
-    git clone --single-branch --branch "$REPO_BRANCH" --depth 1 "$url" "$INSTALL_DIR"
+    git clone --branch "$REPO_BRANCH" --depth 1 "$url" "$INSTALL_DIR"
   elif have curl || have wget; then
     info "downloading tarball into $INSTALL_DIR (git not found)"
     # Stage into a temp dir ADJACENT to the target so the final swap is a
