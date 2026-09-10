@@ -58,7 +58,7 @@ repos:
       # Runs after the core suite so errors are easy to attribute.
       - id: unittest-wizard
         name: unittest (wizard — uv)
-        entry: uv run python -m unittest tests.test_wizard_app tests.test_wizard_pty
+        entry: uv run python -m unittest tests.test_wizard_app tests.test_wizard_pty tests.test_config_doctor
         language: system
         pass_filenames: false
         always_run: true

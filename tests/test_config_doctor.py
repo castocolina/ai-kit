@@ -11,6 +11,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
@@ -36,6 +37,18 @@ def load_checks():
     spec = importlib.util.spec_from_file_location("config_doctor_checks", path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["config_doctor_checks"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def load_appliers():
+    """Load config_doctor_appliers.py; insert tools/ on sys.path first."""
+    if _TOOLS_DIR not in sys.path:
+        sys.path.insert(0, _TOOLS_DIR)
+    path = os.path.join(_TOOLS_DIR, "config_doctor_appliers.py")
+    spec = importlib.util.spec_from_file_location("config_doctor_appliers", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["config_doctor_appliers"] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -120,7 +133,6 @@ class TestCatalogTracer(unittest.TestCase):
             json.dump({"cleanupPeriodDays": 15}, handle)
         catalog = checks.build_catalog(self._env())
         self.assertIn("claude", [s["runtime"] for s in catalog["sections"]])
-        section = next(s for s in catalog["sections"] if s["runtime"] == "claude")
         row = _row_by_id(catalog, "claude-retention")
         self.assertEqual(row["id"], "claude-retention")
         self.assertEqual(row["current_display"], "15")
@@ -146,6 +158,7 @@ _CONFIG_DOCTOR_PY = (
     "tools/config_doctor_checks.py",
     "tools/config_doctor_readers.py",
     "tools/config_doctor_app.py",
+    "tools/config_doctor_appliers.py",
 )
 
 
@@ -317,6 +330,7 @@ class TestGateRegistration(unittest.TestCase):
         include = data["tool"]["pyright"]["include"]
         for path in _CONFIG_DOCTOR_PY:
             self.assertIn(path, include)
+        self.assertIn("tools/config_doctor_appliers.py", include)
 
     def test_pylint_files_does_not_match_config_doctor(self):
         regex = precommit_hook_files_regex("pylint")
@@ -922,4 +936,645 @@ class TestFullCatalogRegression(_ScratchRuntimes):
                 self.assertTrue(display)
                 self.assertIsNot(row["current_value"], None)
                 self.assertNotIn("<object object", display)
+
+
+def _parse_jsonc_via_reader(text):
+    """Re-verify spliced JSONC through the reader's own strip+parse path."""
+    stripped = readers.strip_trailing_commas(readers.strip_jsonc_comments(text))
+    return json.loads(stripped)
+
+
+_OPENCODE_JSONC_WITH_SHARE = """\
+{
+  // keep this comment byte-identical
+  "share": "manual",
+  "theme": "system",
+  "nested": "value with { braces } and, commas"
+}
+"""
+
+_OPENCODE_JSONC_WITHOUT_SHARE = """\
+{
+  // keep this comment byte-identical
+  "theme": "system",
+  "nested": "value with { braces } and, commas"
+}
+"""
+
+_OPENCODE_JSONC_EMPTY = "{\n}\n"
+
+_OPENCODE_JSONC_SINGLE_KEY = """\
+{
+  "theme": "system"
+}
+"""
+
+
+class TestAppliers(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="ai-kit-cd-appliers-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.appliers = load_appliers()
+
+    def _path(self, name):
+        return os.path.join(self.tmp, name)
+
+    def _listing(self):
+        return sorted(os.listdir(self.tmp))
+
+    def test_atomic_write_json_round_trips_indent2_trailing_newline(self):
+        path = self._path("settings.json")
+        self.appliers.atomic_write_json(path, {"cleanupPeriodDays": 3650, "theme": "dark"})
+        with open(path, encoding="utf-8") as handle:
+            raw = handle.read()
+        self.assertTrue(raw.endswith("\n"))
+        self.assertEqual(json.loads(raw), {"cleanupPeriodDays": 3650, "theme": "dark"})
+        self.assertIn("\n  ", raw)
+
+    def test_atomic_write_json_preserves_existing_mode(self):
+        path = self._path("settings.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{}\n")
+        os.chmod(path, 0o640)
+        self.appliers.atomic_write_json(path, {"a": 1})
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o640)
+
+    def test_atomic_write_json_fresh_file_is_mode_0600(self):
+        path = self._path("settings.json")
+        self.appliers.atomic_write_json(path, {"a": 1})
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+
+    def test_atomic_write_json_failure_leaves_target_byte_identical(self):
+        path = self._path("settings.json")
+        original = b'{"keep": true}\n'
+        with open(path, "wb") as handle:
+            handle.write(original)
+        listing = self._listing()
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("injected replace failure")
+
+        with mock.patch.object(os, "replace", side_effect=_boom), self.assertRaises(OSError):
+            self.appliers.atomic_write_json(path, {"keep": False})
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), original)
+        self.assertEqual(self._listing(), listing)
+
+    def test_write_toml_region_replace_valid_round_trips(self):
+        path = self._path("config.toml")
+        new_text = 'sandbox_mode = "workspace-write"\n[history]\npersistence = "none"\n'
+        self.assertTrue(self.appliers.write_toml_region_replace(path, new_text))
+        with open(path, encoding="utf-8") as handle:
+            written = handle.read()
+        self.assertEqual(written, new_text)
+        self.assertEqual(tomllib.loads(written)["history"]["persistence"], "none")
+
+    def test_write_toml_region_replace_invalid_restores_original(self):
+        path = self._path("config.toml")
+        original = 'sandbox_mode = "workspace-write"\n'
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(original)
+        self.assertFalse(self.appliers.write_toml_region_replace(path, "[[[not toml"))
+        with open(path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), original)
+
+    def test_write_toml_region_replace_failure_leaves_target_byte_identical(self):
+        path = self._path("config.toml")
+        original = b'sandbox_mode = "workspace-write"\n'
+        with open(path, "wb") as handle:
+            handle.write(original)
+        listing = self._listing()
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("injected replace failure")
+
+        with mock.patch.object(os, "replace", side_effect=_boom):
+            result = self.appliers.write_toml_region_replace(path, 'x = 1\n')
+        self.assertFalse(result)
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), original)
+        self.assertEqual(self._listing(), listing)
+
+    def test_set_jsonc_value_replaces_existing_top_level_key(self):
+        text = _OPENCODE_JSONC_WITH_SHARE
+        result = self.appliers.set_jsonc_value(text, ("share",), "disabled")
+        parsed = _parse_jsonc_via_reader(result)
+        self.assertEqual(parsed["share"], "disabled")
+        self.assertIn("// keep this comment byte-identical", result)
+        self.assertIn('"theme": "system"', result)
+        self.assertIn('"nested": "value with { braces } and, commas"', result)
+        self.assertEqual(parsed["theme"], "system")
+        self.assertEqual(parsed["nested"], "value with { braces } and, commas")
+        tmp = self._path("opencode.jsonc")
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write(result)
+        state, data = readers.read_jsonc_checked(tmp)
+        self.assertEqual(state, "ok")
+        self.assertEqual(data["share"], "disabled")
+
+    def test_set_jsonc_value_inserts_missing_key_as_last(self):
+        text = _OPENCODE_JSONC_WITHOUT_SHARE
+        result = self.appliers.set_jsonc_value(text, ("share",), "disabled")
+        parsed = _parse_jsonc_via_reader(result)
+        self.assertEqual(parsed["share"], "disabled")
+        self.assertIn("// keep this comment byte-identical", result)
+        self.assertIn('"theme": "system"', result)
+        self.assertIn('"nested": "value with { braces } and, commas"', result)
+        tmp = self._path("opencode.jsonc")
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write(result)
+        state, data = readers.read_jsonc_checked(tmp)
+        self.assertEqual(state, "ok")
+        self.assertEqual(data["share"], "disabled")
+
+    def test_set_jsonc_value_inserts_into_empty_object(self):
+        result = self.appliers.set_jsonc_value(_OPENCODE_JSONC_EMPTY, ("share",), "disabled")
+        parsed = _parse_jsonc_via_reader(result)
+        self.assertEqual(parsed, {"share": "disabled"})
+        tmp = self._path("opencode.jsonc")
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write(result)
+        state, data = readers.read_jsonc_checked(tmp)
+        self.assertEqual(state, "ok")
+        self.assertEqual(data, {"share": "disabled"})
+
+    def test_set_jsonc_value_inserts_after_single_existing_key(self):
+        result = self.appliers.set_jsonc_value(
+            _OPENCODE_JSONC_SINGLE_KEY, ("share",), "disabled"
+        )
+        parsed = _parse_jsonc_via_reader(result)
+        self.assertEqual(parsed["share"], "disabled")
+        self.assertEqual(parsed["theme"], "system")
+
+    def test_set_jsonc_value_nested_path_raises_not_implemented(self):
+        with self.assertRaises(NotImplementedError) as ctx:
+            self.appliers.set_jsonc_value("{}", ("sandbox", "enabled"), True)
+        message = str(ctx.exception)
+        self.assertIn("nested key paths", message)
+        self.assertIn("depth 2", message)
+
+    def test_set_jsonc_value_does_not_touch_comment_or_in_string_braces(self):
+        text = _OPENCODE_JSONC_WITH_SHARE
+        result = self.appliers.set_jsonc_value(text, ("share",), "disabled")
+        comment_line = next(ln for ln in text.splitlines() if "keep this comment" in ln)
+        self.assertIn(comment_line, result)
+        self.assertIn("value with { braces } and, commas", result)
+        parsed = _parse_jsonc_via_reader(result)
+        self.assertEqual(parsed["nested"], "value with { braces } and, commas")
+
+
+class TestApplyRows(_ScratchRuntimes):
+    def _ctx(self):
+        return checks.ReadContext(data=None, env=self._env(), runner=None)
+
+    def test_checkrow_has_apply_target_and_security_relevant(self):
+        self.assertIn("apply_target", checks.CheckRow._fields)
+        self.assertIn("security_relevant", checks.CheckRow._fields)
+        self.assertEqual(checks.ReadContext._fields, ("data", "env", "runner"))
+        retention = next(r for r in checks.CONFIG_DOCTOR_ROWS if r.id == "claude-retention")
+        self.assertEqual(retention.apply_target, 3650)
+        self.assertFalse(retention.security_relevant)
+        sandbox = next(r for r in checks.CONFIG_DOCTOR_ROWS if r.id == "claude-sandbox-enabled")
+        self.assertIs(sandbox.apply_target, True)
+        self.assertTrue(sandbox.security_relevant)
+        unwired = next(r for r in checks.CONFIG_DOCTOR_ROWS if r.id == "opencode-retention")
+        self.assertIsNone(unwired.apply)
+        self.assertIsNone(unwired.apply_target)
+        self.assertFalse(unwired.security_relevant)
+
+    def test_evaluate_row_surfaces_apply_fields_without_changing_display(self):
+        _write(
+            os.path.join(self.claude, "settings.json"),
+            json.dumps({"cleanupPeriodDays": 15}),
+        )
+        catalog = checks.build_catalog(self._env())
+        row = _row_by_id(catalog, "claude-retention")
+        self.assertEqual(row["current_display"], "15")
+        self.assertEqual(row["recommended_display"], "3650")
+        self.assertEqual(row["apply_target"], 3650)
+        self.assertFalse(row["security_relevant"])
+        self.assertTrue(row["apply_eligible"])
+        sandbox = _row_by_id(catalog, "claude-sandbox-enabled")
+        self.assertTrue(sandbox["security_relevant"])
+
+    def test_apply_claude_retention_writes_3650_and_preserves_siblings(self):
+        path = os.path.join(self.claude, "settings.json")
+        _write(path, json.dumps({"cleanupPeriodDays": 5, "theme": "dark"}))
+        result = checks.apply_row("claude-retention", self._ctx(), dry=False)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["before"], 5)
+        self.assertEqual(result["after"], 3650)
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["cleanupPeriodDays"], 3650)
+        self.assertEqual(data["theme"], "dark")
+        self.assertNotIn("literal_resulting_config", result)
+
+    def test_apply_claude_retention_refuses_zero_without_writing(self):
+        path = os.path.join(self.claude, "settings.json")
+        original = json.dumps({"cleanupPeriodDays": 5})
+        _write(path, original)
+        result = checks._apply_claude_retention(self._ctx(), 0, dry=False)
+        self.assertFalse(result["ok"])
+        self.assertIn("cleanupPeriodDays 0 is never writable", result["reason"])
+        with open(path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), original)
+
+    def test_apply_row_converts_applier_exception(self):
+        def _boom(_ctx, _target, _dry):
+            raise RuntimeError("injected")
+
+        fake = checks.CheckRow(
+            id="fake-boom",
+            runtime="claude",
+            scope="runtime",
+            check="boom",
+            read=lambda _ctx: None,
+            recommended=None,
+            confidence="HIGH",
+            why="test",
+            source="test",
+            apply=_boom,
+        )
+        checks.CONFIG_DOCTOR_ROWS.append(fake)
+        try:
+            result = checks.apply_row("fake-boom", self._ctx(), dry=False)
+        finally:
+            checks.CONFIG_DOCTOR_ROWS.pop()
+        self.assertFalse(result["ok"])
+        self.assertIn("applier error", result["reason"])
+        self.assertIn("injected", result["reason"])
+
+    def test_apply_claude_sandbox_preserves_sibling_and_carries_literal(self):
+        path = os.path.join(self.claude, "settings.json")
+        _write(
+            path,
+            json.dumps({
+                "sandbox": {"enabled": False, "failIfUnavailable": True},
+                "theme": "dark",
+            }),
+        )
+        dry = checks.apply_row("claude-sandbox-enabled", self._ctx(), dry=True)
+        self.assertTrue(dry["ok"])
+        self.assertIn("literal_resulting_config", dry)
+        lit = dry["literal_resulting_config"]
+        if isinstance(lit, str):
+            lit = json.loads(lit)
+        self.assertIs(lit["sandbox"]["enabled"], True)
+        self.assertIs(lit["sandbox"]["failIfUnavailable"], True)
+        with open(path, encoding="utf-8") as handle:
+            on_disk = json.load(handle)
+        self.assertIs(on_disk["sandbox"]["enabled"], False)
+
+        result = checks.apply_row("claude-sandbox-enabled", self._ctx(), dry=False)
+        self.assertTrue(result["ok"])
+        self.assertIn("literal_resulting_config", result)
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertIs(data["sandbox"]["enabled"], True)
+        self.assertIs(data["sandbox"]["failIfUnavailable"], True)
+        self.assertEqual(data["theme"], "dark")
+
+    def test_apply_opencode_share_mode_sets_disabled_and_preserves_bytes(self):
+        path = os.path.join(self.opencode, "opencode.jsonc")
+        _write(path, _OPENCODE_JSONC_WITH_SHARE)
+        result = checks.apply_row("opencode-share-mode", self._ctx(), dry=False)
+        self.assertTrue(result["ok"])
+        with open(path, encoding="utf-8") as handle:
+            written = handle.read()
+        self.assertIn("// keep this comment byte-identical", written)
+        self.assertIn('"theme": "system"', written)
+        parsed = _parse_jsonc_via_reader(written)
+        self.assertEqual(parsed["share"], "disabled")
+
+        _write(path, _OPENCODE_JSONC_WITHOUT_SHARE)
+        result = checks.apply_row("opencode-share-mode", self._ctx(), dry=False)
+        self.assertTrue(result["ok"])
+        with open(path, encoding="utf-8") as handle:
+            written = handle.read()
+        self.assertIn("// keep this comment byte-identical", written)
+        self.assertEqual(_parse_jsonc_via_reader(written)["share"], "disabled")
+
+    def test_apply_opencode_share_mode_refuses_invalid_splice_without_write(self):
+        path = os.path.join(self.opencode, "opencode.jsonc")
+        _write(path, _OPENCODE_JSONC_WITH_SHARE)
+        with open(path, "rb") as handle:
+            before = handle.read()
+        with mock.patch.object(
+            checks.config_doctor_appliers, "set_jsonc_value", return_value="{not-json"
+        ), mock.patch.object(
+            checks.config_doctor_appliers, "_atomic_write_text"
+        ) as writer:
+            result = checks.apply_row("opencode-share-mode", self._ctx(), dry=False)
+        self.assertFalse(result["ok"])
+        self.assertIn("spliced JSONC failed self-validation", result["reason"])
+        writer.assert_not_called()
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+
+    def test_apply_codex_history_persistence_three_upsert_cases(self):
+        path = os.path.join(self.codex, "config.toml")
+        _write(path, _CODEX_TOML)
+        result = checks.apply_row("codex-history-persistence", self._ctx(), dry=False)
+        self.assertTrue(result["ok"])
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        parsed = tomllib.loads(text)
+        self.assertEqual(parsed["history"]["persistence"], "none")
+        self.assertEqual(parsed["history"]["max_bytes"], 1048576)
+        self.assertEqual(parsed["sandbox_mode"], "workspace-write")
+        self.assertTrue(parsed["features"]["hooks"])
+
+        no_key = 'sandbox_mode = "workspace-write"\n\n[history]\nmax_bytes = 10\n'
+        _write(path, no_key)
+        result = checks.apply_row("codex-history-persistence", self._ctx(), dry=False)
+        self.assertTrue(result["ok"])
+        with open(path, encoding="utf-8") as handle:
+            parsed = tomllib.loads(handle.read())
+        self.assertEqual(parsed["history"]["persistence"], "none")
+        self.assertEqual(parsed["history"]["max_bytes"], 10)
+
+        absent = 'sandbox_mode = "workspace-write"\n'
+        _write(path, absent)
+        result = checks.apply_row("codex-history-persistence", self._ctx(), dry=False)
+        self.assertTrue(result["ok"])
+        with open(path, encoding="utf-8") as handle:
+            parsed = tomllib.loads(handle.read())
+        self.assertEqual(parsed["history"]["persistence"], "none")
+        self.assertEqual(parsed["sandbox_mode"], "workspace-write")
+
+    def test_apply_row_dry_true_writes_nothing(self):
+        claude = os.path.join(self.claude, "settings.json")
+        _write(claude, json.dumps({"cleanupPeriodDays": 5}))
+        with open(claude, "rb") as handle:
+            before = handle.read()
+        result = checks.apply_row("claude-retention", self._ctx(), dry=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["after"], 3650)
+        with open(claude, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+
+        openc = os.path.join(self.opencode, "opencode.jsonc")
+        _write(openc, _OPENCODE_JSONC_WITH_SHARE)
+        with open(openc, "rb") as handle:
+            before = handle.read()
+        result = checks.apply_row("opencode-share-mode", self._ctx(), dry=True)
+        self.assertTrue(result["ok"])
+        with open(openc, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+
+        codex = os.path.join(self.codex, "config.toml")
+        _write(codex, _CODEX_TOML)
+        with open(codex, "rb") as handle:
+            before = handle.read()
+        result = checks.apply_row("codex-history-persistence", self._ctx(), dry=True)
+        self.assertTrue(result["ok"])
+        with open(codex, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+
+        _write(claude, json.dumps({"sandbox": {"enabled": False}}))
+        with open(claude, "rb") as handle:
+            before = handle.read()
+        result = checks.apply_row("claude-sandbox-enabled", self._ctx(), dry=True)
+        self.assertTrue(result["ok"])
+        with open(claude, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+
+    def test_apply_row_not_eligible_performs_no_write(self):
+        path = os.path.join(self.opencode, "opencode.jsonc")
+        _write(path, _OPENCODE_JSONC_WITH_SHARE)
+        with open(path, "rb") as handle:
+            before = handle.read()
+        result = checks.apply_row("opencode-retention", self._ctx(), dry=False)
+        self.assertEqual(result, {"ok": False, "reason": "not apply-eligible"})
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+        missing = checks.apply_row("no-such-row", self._ctx(), dry=False)
+        self.assertEqual(missing, {"ok": False, "reason": "not apply-eligible"})
+
+    def test_cmd_config_doctor_injects_apply_closure(self):
+        with open(os.path.join(_TOOLS_DIR, "setup.py"), encoding="utf-8") as handle:
+            text = handle.read()
+        start = text.find("def cmd_config_doctor")
+        self.assertGreater(start, 0)
+        nxt = text.find("\ndef ", start + 1)
+        body = text[start:nxt]
+        self.assertIn("apply_row", body)
+        self.assertIn("ReadContext(data=None, env=env, runner=None)", body)
+        self.assertNotIn("apply=None", body)
+        self.assertIn("TOCTOU", body)
+
+
+_BULK_APPLY_NAME = re.compile(
+    r"\b(?:apply_all|bulk_apply|apply_every_row|apply_rows|apply_selected|"
+    r"apply_each|apply_many|apply_every)\b",
+    re.IGNORECASE,
+)
+_BULK_APPLY_DEF = re.compile(
+    r"^\s*(?:async\s+)?def\s+(\w*(?:apply\w*(?:all|bulk|many|every|rows|"
+    r"selected|each)|(?:all|bulk|many|every|rows|selected|each)\w*apply)\w*)"
+    r"\s*\(",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+class TestNoBulkApply(unittest.TestCase):
+    """Naming-convention TRIPWIRE, not an exhaustive structural proof.
+
+    A helper named ``_do_it`` that happens to loop over multiple rows
+    internally would not be caught by any name pattern. The PRIMARY
+    guarantee is architectural: ``apply_row``'s own signature takes exactly
+    one ``row_id``, and every call site (the confirm modal's
+    ``ctx.apply(row_id, dry=False)``) passes exactly one. This test
+    cross-checks that guarantee at the naming level; it does not replace it.
+    """
+
+    _SCAN_FILES = (
+        "tools/config_doctor_checks.py",
+        "tools/config_doctor_appliers.py",
+        "tools/config_doctor_app.py",
+    )
+
+    def test_no_bulk_apply_function_names(self):
+        hits = []
+        for rel in self._SCAN_FILES:
+            path = os.path.join(_REPO, rel)
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read()
+            for match in _BULK_APPLY_DEF.finditer(text):
+                hits.append(f"{rel}:{match.group(1)}")
+            for match in _BULK_APPLY_NAME.finditer(text):
+                hits.append(f"{rel}:{match.group(0)}")
+        self.assertEqual(hits, [])
+
+    def test_no_bulk_apply_binding_action_names(self):
+        app = load_app()
+        bindings = getattr(app.ConfigDoctorApp, "BINDINGS", [])
+        hits = []
+        for binding in bindings:
+            action = binding[1] if isinstance(binding, (tuple, list)) else str(binding)
+            if _BULK_APPLY_NAME.search(str(action)) or _BULK_APPLY_DEF.search(
+                f"def {action}("
+            ):
+                hits.append(str(action))
+        self.assertEqual(hits, [])
+
+
+def load_app():
+    """Load config_doctor_app.py. Requires textual (run under uv)."""
+    try:
+        import textual  # noqa: F401
+    except ImportError:
+        raise unittest.SkipTest("textual not installed (run under uv)") from None
+    if _TOOLS_DIR not in sys.path:
+        sys.path.insert(0, _TOOLS_DIR)
+    path = os.path.join(_TOOLS_DIR, "config_doctor_app.py")
+    spec = importlib.util.spec_from_file_location("config_doctor_app", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["config_doctor_app"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+try:
+    import textual  # noqa: F401
+
+    _HAVE_TEXTUAL = True
+except ImportError:
+    _HAVE_TEXTUAL = False
+
+
+@unittest.skipUnless(_HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestConfirmApplyScreen(unittest.IsolatedAsyncioTestCase):
+    def _row(self, **overrides):
+        row = {
+            "id": "claude-retention",
+            "check": "Local transcript retention (cleanupPeriodDays)",
+            "current_display": "5",
+            "apply_target": 3650,
+            "apply_eligible": True,
+            "security_relevant": False,
+            "why": "why",
+            "source": "src",
+            "recommended_display": "3650",
+        }
+        row.update(overrides)
+        return row
+
+    def _catalog(self, *rows):
+        return {"sections": [{"runtime": "claude", "rows": list(rows)}]}
+
+    async def test_cancel_calls_apply_zero_times(self):
+        app_mod = load_app()
+        calls = []
+
+        def apply(row_id, dry):
+            calls.append((row_id, dry))
+            return {"ok": True, "after": 3650, "current_display": "3650"}
+
+        row = self._row()
+        ctx = app_mod.ConfigDoctorContext(catalog=self._catalog(row), apply=apply)
+        app = app_mod.ConfigDoctorApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.press("a")
+            screen = app.screen
+            self.assertIsInstance(screen, app_mod.ConfirmApplyScreen)
+            body = str(screen.query_one("#confirm-body").content)
+            self.assertIn("5", body)
+            self.assertIn("3650", body)
+            await pilot.press("escape")
+        self.assertEqual(calls, [])
+
+    async def test_confirm_calls_apply_once_and_refreshes_display(self):
+        app_mod = load_app()
+        calls = []
+
+        def apply(row_id, dry):
+            calls.append((row_id, dry))
+            if dry:
+                return {"ok": True, "after": 3650, "current_display": "3650"}
+            return {"ok": True, "after": 3650, "current_display": "3650"}
+
+        row = self._row()
+        ctx = app_mod.ConfigDoctorContext(catalog=self._catalog(row), apply=apply)
+        app = app_mod.ConfigDoctorApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.press("a")
+            self.assertIsInstance(app.screen, app_mod.ConfirmApplyScreen)
+            await pilot.press("y")
+            table = app.query_one("#catalog-table")
+            cell = table.get_cell(row["id"], table.ordered_columns[2].key)
+            self.assertEqual(str(cell), "3650")
+        self.assertEqual(calls, [("claude-retention", False)])
+
+    async def test_refused_apply_surfaces_reason_and_leaves_cell(self):
+        app_mod = load_app()
+        calls = []
+
+        def apply(row_id, dry):
+            calls.append((row_id, dry))
+            return {"ok": False, "reason": "refused: cleanupPeriodDays 0 is never writable"}
+
+        row = self._row(current_display="5")
+        ctx = app_mod.ConfigDoctorContext(catalog=self._catalog(row), apply=apply)
+        app = app_mod.ConfigDoctorApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.press("a")
+            await pilot.press("y")
+            self.assertIsInstance(app.screen, app_mod.ConfirmApplyScreen)
+            body = str(app.screen.query_one("#confirm-body").content)
+            self.assertIn("never writable", body)
+            table = app.query_one("#catalog-table")
+            cell = table.get_cell(row["id"], table.ordered_columns[2].key)
+            self.assertEqual(str(cell), "5")
+            await pilot.press("escape")
+        self.assertEqual(calls, [("claude-retention", False)])
+
+    async def test_security_relevant_preview_shows_literal_config(self):
+        app_mod = load_app()
+
+        def apply(row_id, dry):
+            if dry:
+                return {
+                    "ok": True,
+                    "literal_resulting_config": {"sandbox": {"enabled": True}},
+                    "after": True,
+                }
+            return {"ok": True, "after": True, "current_display": "True"}
+
+        row = self._row(
+            id="claude-sandbox-enabled",
+            check="Sandboxed Bash tool (sandbox.enabled)",
+            current_display="False",
+            apply_target=True,
+            security_relevant=True,
+        )
+        ctx = app_mod.ConfigDoctorContext(catalog=self._catalog(row), apply=apply)
+        app = app_mod.ConfigDoctorApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.press("a")
+            body = str(app.screen.query_one("#confirm-body").content)
+            self.assertIn("sandbox", body)
+            self.assertIn("enabled", body)
+
+    async def test_ineligible_row_a_key_is_silent_noop(self):
+        app_mod = load_app()
+        calls = []
+
+        def apply(row_id, dry):
+            calls.append((row_id, dry))
+            return {"ok": True}
+
+        row = self._row(
+            id="opencode-retention",
+            check="Session retention",
+            apply_eligible=False,
+            apply_target=None,
+        )
+        ctx = app_mod.ConfigDoctorContext(catalog=self._catalog(row), apply=apply)
+        app = app_mod.ConfigDoctorApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.press("a")
+            self.assertNotIsInstance(app.screen, app_mod.ConfirmApplyScreen)
+        self.assertEqual(calls, [])
 

@@ -7,11 +7,15 @@ skills/* package. This is the core engine Wave 2 (more rows) and Wave 3
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import subprocess
-from typing import NamedTuple
+from collections.abc import Callable
+from typing import NamedTuple, cast
 
+import config_doctor_appliers
 import config_doctor_readers
 
 UNKNOWN = config_doctor_readers.UNKNOWN
@@ -40,6 +44,8 @@ class CheckRow(NamedTuple):
     source: str
     apply: object = None
     reads_section_file: bool = True
+    apply_target: object = None
+    security_relevant: bool = False
 
 
 class ReadContext(NamedTuple):
@@ -105,6 +111,216 @@ def evaluate_row(row, ctx):
         "apply_eligible": row.apply is not None,
         "why": row.why,
         "source": row.source,
+        "apply_target": row.apply_target,
+        "security_relevant": row.security_relevant,
+    }
+
+
+def _row_by_id(row_id):
+    for row in CONFIG_DOCTOR_ROWS:
+        if row.id == row_id:
+            return row
+    return None
+
+
+def apply_row(row_id, ctx, dry):
+    """Dispatch one apply by row identity. Never raises.
+
+    Looks up ``row_id`` in CONFIG_DOCTOR_ROWS and invokes that row's own
+    ``apply(ctx, row.apply_target, dry)``. Dispatches by row identity via
+    ``row.apply``, never by inspecting ``row.runtime``. An unknown id or a
+    row with ``apply is None`` returns ``{"ok": False, "reason": "not
+    apply-eligible"}`` — never a silent no-op write. Any exception an
+    applier raises is converted to ``{"ok": False, "reason": "applier
+    error: ..."}`` so an unhandled exception cannot reach ConfigDoctorApp's
+    event loop (Textual 8.x swallows those into a graceful shutdown;
+    tools/wizard_app.py:129-137).
+    """
+    row = _row_by_id(row_id)
+    if row is None or row.apply is None:
+        return {"ok": False, "reason": "not apply-eligible"}
+    try:
+        apply_fn = cast(Callable[[object, object, bool], dict], row.apply)
+        result = apply_fn(ctx, row.apply_target, dry)
+    except Exception as exc:
+        return {"ok": False, "reason": f"applier error: {exc}"}
+    if not isinstance(result, dict):
+        return {"ok": False, "reason": f"applier error: non-dict result {result!r}"}
+    return result
+
+
+def _claude_settings_path(ctx):
+    return resolve_runtime_config_paths(ctx.env)["claude"]
+
+
+def _opencode_config_path(ctx):
+    return resolve_runtime_config_paths(ctx.env)["opencode"]
+
+
+def _codex_config_path(ctx):
+    return resolve_runtime_config_paths(ctx.env)["codex"]
+
+
+def _apply_claude_retention(ctx, target, dry):
+    """Write cleanupPeriodDays. Categorically refuses target 0.
+
+    The 0-guard is unconditional and independent of apply_target's declared
+    value (04-RESEARCH.md Common Pitfall 2). RETURNS a refusal dict, never
+    raises — an exception reaching ConfirmApplyScreen's confirm handler is
+    a Textual 8.x crash-to-graceful-shutdown path, not a caught refusal
+    (tools/wizard_app.py:129-137).
+    """
+    if target == 0:
+        return {
+            "ok": False,
+            "reason": "refused: cleanupPeriodDays 0 is never writable",
+        }
+    path = _claude_settings_path(ctx)
+    state, parsed = config_doctor_readers.read_json_checked(path)
+    data = dict(parsed) if state == CONFIG_STATE_OK and isinstance(parsed, dict) else {}
+    before = data.get("cleanupPeriodDays")
+    data["cleanupPeriodDays"] = target
+    if not dry:
+        config_doctor_appliers.atomic_write_json(path, data)
+    return {"ok": True, "before": before, "after": target, "current_display": str(target)}
+
+
+def _apply_claude_sandbox_enabled(ctx, target, dry):
+    path = _claude_settings_path(ctx)
+    state, parsed = config_doctor_readers.read_json_checked(path)
+    data = dict(parsed) if state == CONFIG_STATE_OK and isinstance(parsed, dict) else {}
+    if isinstance(data.get("sandbox"), dict):
+        data["sandbox"] = dict(data["sandbox"])
+    sandbox = data.setdefault("sandbox", {})
+    before = sandbox.get("enabled")
+    sandbox["enabled"] = target
+    if not dry:
+        config_doctor_appliers.atomic_write_json(path, data)
+    return {
+        "ok": True,
+        "before": before,
+        "after": target,
+        "current_display": str(target),
+        "literal_resulting_config": data,
+    }
+
+
+def _parse_jsonc_text(text):
+    stripped = config_doctor_readers.strip_trailing_commas(
+        config_doctor_readers.strip_jsonc_comments(text)
+    )
+    return json.loads(stripped)
+
+
+def _apply_opencode_share_mode(ctx, target, dry):
+    path = _opencode_config_path(ctx)
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    else:
+        text = "{\n}\n"
+    before = None
+    try:
+        parsed = _parse_jsonc_text(text)
+        if isinstance(parsed, dict):
+            before = parsed.get("share")
+    except (ValueError, TypeError):
+        before = None
+    spliced = config_doctor_appliers.set_jsonc_value(text, ("share",), target)
+    try:
+        _parse_jsonc_text(spliced)
+    except (ValueError, TypeError):
+        return {
+            "ok": False,
+            "reason": (
+                "refused: spliced JSONC failed self-validation, no write performed"
+            ),
+        }
+    if not dry:
+        config_doctor_appliers._atomic_write_text(path, spliced)
+    return {
+        "ok": True,
+        "before": before,
+        "after": target,
+        "current_display": str(target),
+    }
+
+
+def _toml_table_span(text, table_name):
+    header = f"[{table_name}]"
+    start = text.find(header)
+    if start < 0:
+        return None
+    body_start = start + len(header)
+    nxt = text.find("\n[", body_start)
+    end = len(text) if nxt < 0 else nxt
+    return start, body_start, end
+
+
+def _upsert_toml_table_key(text, table_name, key, value):
+    """String-level table/key upsert; no stdlib TOML writer exists.
+
+    04-RESEARCH.md Standard Stack: Python has no stdlib TOML writer, so
+    Codex config.toml is mutated by splicing the [history] table region
+    rather than a parse-mutate-dump round trip that would rewrite every
+    other byte.
+    """
+    dumped = _toml_dump_value(value)
+    span = _toml_table_span(text, table_name)
+    if span is None:
+        suffix = "" if text.endswith("\n") or not text else "\n"
+        return f"{text}{suffix}\n[{table_name}]\n{key} = {dumped}\n"
+    _start, body_start, end = span
+    body = text[body_start:end]
+    replaced, count = re.subn(
+        rf"(?m)^(\s*{re.escape(key)}\s*=\s*).*$",
+        rf"\1{dumped}",
+        body,
+        count=1,
+    )
+    if count:
+        return text[:body_start] + replaced + text[end:]
+    insert = f"\n{key} = {dumped}"
+    if body.endswith("\n"):
+        insert = f"{key} = {dumped}\n"
+        return text[:end] + insert + text[end:]
+    return text[:end] + insert + text[end:]
+
+
+def _toml_dump_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return json.dumps(value)
+
+
+def _apply_codex_history_persistence(ctx, target, dry):
+    path = _codex_config_path(ctx)
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    else:
+        text = ""
+    state, data = config_doctor_readers.read_toml_checked(path)
+    before = None
+    if state == CONFIG_STATE_OK and isinstance(data, dict):
+        history = data.get("history")
+        if isinstance(history, dict):
+            before = history.get("persistence")
+    new_text = _upsert_toml_table_key(text, "history", "persistence", target)
+    if not dry:
+        ok = config_doctor_appliers.write_toml_region_replace(path, new_text)
+        if not ok:
+            return {
+                "ok": False,
+                "reason": "refused: TOML write failed self-validation, no write committed",
+            }
+    return {
+        "ok": True,
+        "before": before,
+        "after": target,
+        "current_display": str(target),
     }
 
 
@@ -350,6 +566,8 @@ CONFIG_DOCTOR_ROWS = [
             "disabling persistence (the prior behavior GitHub #23710 described)."
         ),
         source="https://code.claude.com/docs/en/data-usage",
+        apply=_apply_claude_retention,
+        apply_target=3650,
     ),
     CheckRow(
         id="claude-prompt-cache-ttl",
@@ -399,6 +617,9 @@ CONFIG_DOCTOR_ROWS = [
             "Apply: yes, security-relevant."
         ),
         source="https://code.claude.com/docs/en/sandboxing",
+        apply=_apply_claude_sandbox_enabled,
+        apply_target=True,
+        security_relevant=True,
     ),
     CheckRow(
         id="claude-sandbox-fail-if-unavailable",
@@ -495,6 +716,8 @@ CONFIG_DOCTOR_ROWS = [
             "source PRD, not re-fetched this research session. Apply: yes."
         ),
         source="https://opencode.ai/docs/share/",
+        apply=_apply_opencode_share_mode,
+        apply_target="disabled",
     ),
     CheckRow(
         id="opencode-model-options",
@@ -631,6 +854,8 @@ CONFIG_DOCTOR_ROWS = [
             '"recommended: apply". Apply: yes, opt-in only.'
         ),
         source=_CODEX_SOURCE,
+        apply=_apply_codex_history_persistence,
+        apply_target="none",
     ),
     CheckRow(
         id="cursor-permissions",

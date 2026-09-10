@@ -2615,10 +2615,11 @@ def cmd_check(env):
 
 
 def cmd_config_doctor(env, tty, dry):
-    """Launch the Config Doctor TUI (read-only in this phase).
+    """Launch the Config Doctor TUI.
 
-    ``dry`` is accepted now so Wave 3's apply flow can read it from this same
-    call site without a signature change. Nothing in this wave writes.
+    ``dry`` is accepted at this call site for symmetry with other cmd_*
+    entry points; apply itself is driven per-row through the injected
+    ``apply`` closure (``apply_row(..., dry=...)``), never by this flag.
     """
     isatty_fn = getattr(tty, "isatty", None)
     if tty is None or not callable(isatty_fn) or not isatty_fn():
@@ -2637,7 +2638,19 @@ def cmd_config_doctor(env, tty, dry):
     import config_doctor_checks  # pylint: disable=import-outside-toplevel
 
     catalog = config_doctor_checks.build_catalog(env)
-    ctx = config_doctor_app.ConfigDoctorContext(catalog=catalog, apply=None)
+    apply_ctx = config_doctor_checks.ReadContext(data=None, env=env, runner=None)
+
+    def apply(row_id, dry):
+        # TOCTOU: this closure does NOT re-read-and-re-diff the target file
+        # immediately before writing. A window exists between build_catalog's
+        # read and this write if the user hand-edits the file in another
+        # terminal mid-session. Accepted, documented limitation for this
+        # wave (04-RESEARCH.md Common Threat Patterns; 04-03-PLAN.md Task 2
+        # <reversibility>) — not an oversight. Atomicity is with respect to
+        # the value this closure itself computed.
+        return config_doctor_checks.apply_row(row_id, apply_ctx, dry)
+
+    ctx = config_doctor_app.ConfigDoctorContext(catalog=catalog, apply=apply)
     with stdin_on_tty():
         config_doctor_app.run_config_doctor(ctx)
     return 0

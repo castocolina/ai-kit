@@ -6,10 +6,13 @@ config_doctor_checks.py — driven entirely through ConfigDoctorContext.
 
 from __future__ import annotations
 
+import json
 from typing import ClassVar, NamedTuple
 
 from rich.markup import escape
 from textual.app import App, ComposeResult
+from textual.containers import VerticalScroll
+from textual.screen import ModalScreen
 from textual.widgets import DataTable, Static
 
 # Palette lifted verbatim from tools/wizard_app.py:27-36
@@ -25,7 +28,7 @@ KEYCAP = "#21262d"
 
 
 class ConfigDoctorContext(NamedTuple):
-    """Injected by setup.py. apply stays None until Wave 3.
+    """Injected by setup.py. apply is a (row_id, dry) -> result closure.
 
     catalog/apply are typed ``object`` so this module stays free of any import
     from config_doctor_checks.py (mirrors WizardContext.commit: object = None).
@@ -35,9 +38,103 @@ class ConfigDoctorContext(NamedTuple):
     apply: object = None
 
 
+class ConfirmApplyScreen(ModalScreen):
+    """Per-item confirm: names the exact current -> target change.
+
+    Preview of the write is fetched exclusively through ``ctx.apply(row_id,
+    dry=True)`` — this module never imports config_doctor_checks. Confirm
+    calls ``ctx.apply(row_id, dry=False)`` exactly once. A refused result
+    stays on this screen until acknowledged; cancel never calls apply.
+    """
+
+    BINDINGS: ClassVar[list] = [
+        ("y", "confirm", "Confirm"),
+        ("enter", "confirm", "Confirm"),
+        ("n", "cancel", "Cancel"),
+        ("escape", "cancel", "Cancel"),
+    ]
+    CSS = f"""
+    ConfirmApplyScreen {{
+        align: center middle;
+    }}
+    #confirm-box {{
+        width: 80;
+        max-height: 80%;
+        background: #161b22;
+        border: solid {ACCENT};
+        padding: 1 2;
+    }}
+    #confirm-title {{ color: {ACCENT}; text-style: bold; }}
+    #confirm-body {{ color: {FG}; height: auto; }}
+    #confirm-hint {{ color: {DIM}; }}
+    """
+
+    def __init__(self, row, ctx) -> None:
+        super().__init__()
+        self.row = row
+        self.ctx = ctx
+        self._awaiting_ack = False
+
+    def compose(self) -> ComposeResult:
+        check = escape(str(self.row.get("check", "")))
+        current = escape(str(self.row.get("current_display", "")))
+        target = escape(str(self.row.get("apply_target", "")))
+        body = f"{check}\n  {current} -> {target}"
+        if self.row.get("security_relevant") and callable(self.ctx.apply):
+            preview = self.ctx.apply(self.row["id"], True)
+            if isinstance(preview, dict):
+                literal = preview.get("literal_resulting_config")
+                if literal is not None:
+                    if not isinstance(literal, str):
+                        literal = json.dumps(literal, indent=2)
+                    body = f"{body}\n\n{escape(str(literal))}"
+        with VerticalScroll(id="confirm-box"):
+            yield Static("Confirm apply", id="confirm-title")
+            yield Static(body, id="confirm-body")
+            yield Static(
+                f"[{KEYCAP}] y / Enter [/] confirm   "
+                f"[{KEYCAP}] n / Esc [/] cancel",
+                id="confirm-hint",
+            )
+
+    def action_confirm(self) -> None:
+        if self._awaiting_ack:
+            self.dismiss({"ok": False})
+            return
+        if not callable(self.ctx.apply):
+            self.dismiss({"ok": False, "reason": "apply not wired"})
+            return
+        result = self.ctx.apply(self.row["id"], False)
+        if not isinstance(result, dict):
+            result = {"ok": False, "reason": "apply returned a non-dict result"}
+        if result.get("ok"):
+            self.dismiss(result)
+            return
+        reason = escape(str(result.get("reason", "apply refused")))
+        self._awaiting_ack = True
+        self.query_one("#confirm-body", Static).update(reason)
+        self.query_one("#confirm-hint", Static).update(
+            f"[{WARN}]refused[/]  [{KEYCAP}] any key / Esc [/] acknowledge"
+        )
+
+    def action_cancel(self) -> None:
+        if self._awaiting_ack:
+            self.dismiss({"ok": False})
+            return
+        self.dismiss(None)
+
+    def on_key(self, event) -> None:
+        if self._awaiting_ack:
+            event.stop()
+            self.dismiss({"ok": False})
+
+
 class ConfigDoctorApp(App):
     ENABLE_COMMAND_PALETTE = False
-    BINDINGS: ClassVar[list] = [("q", "quit", "Quit")]
+    BINDINGS: ClassVar[list] = [
+        ("q", "quit", "Quit"),
+        ("a", "apply_row", "Apply"),
+    ]
     CSS = f"""
     Screen {{ background: #0d1117; }}
     #header {{ height: 1; color: {ACCENT}; text-style: bold; padding: 0 1; }}
@@ -100,11 +197,57 @@ class ConfigDoctorApp(App):
         if row_id:
             self._show_detail(row_id)
 
+    def _highlighted_row(self):
+        table = self.query_one("#catalog-table", DataTable)
+        if not table.row_count:
+            return None
+        cell_key = table.coordinate_to_cell_key(table.cursor_coordinate)
+        row_id = getattr(cell_key.row_key, "value", cell_key.row_key)
+        return self._rows_by_id.get(row_id)
+
+    def action_apply_row(self) -> None:
+        # Silent no-op on a non-apply-eligible row is the CORRECT behavior
+        # (there is nothing to apply), unlike every other "no-op on invalid
+        # input" case this project treats as a bug elsewhere.
+        row = self._highlighted_row()
+        if row is None:
+            return
+        if self.ctx.apply is None or not row.get("apply_eligible"):
+            return
+        self.push_screen(
+            ConfirmApplyScreen(row=row, ctx=self.ctx),
+            self._on_apply_dismissed,
+        )
+
+    def _on_apply_dismissed(self, result) -> None:
+        if not isinstance(result, dict) or not result.get("ok"):
+            return
+        row_id = None
+        row = None
+        highlighted = self._highlighted_row()
+        if highlighted is not None:
+            row_id = highlighted.get("id")
+            row = highlighted
+        if row_id is None:
+            return
+        display = result.get("current_display")
+        if display is None:
+            display = result.get("after")
+        if display is None:
+            return
+        display_s = escape(str(display))
+        table = self.query_one("#catalog-table", DataTable)
+        current_col = table.ordered_columns[2].key
+        table.update_cell(row_id, current_col, display_s)
+        if row is not None:
+            row["current_display"] = str(display)
+            self._show_detail(row_id)
+
 
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 def run_config_doctor(ctx: ConfigDoctorContext) -> None:
-    """Run the Config Doctor TUI (read-only in this phase)."""
+    """Run the Config Doctor TUI."""
     ConfigDoctorApp(ctx).run()

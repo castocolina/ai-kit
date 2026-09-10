@@ -200,3 +200,65 @@ class TestConfigDoctorPty(unittest.TestCase):
         self.assertIn("approvalMode", decoded)
         self.assertIn("registered", decoded)
         self.assertEqual(exit_code, 0)
+
+    def test_apply_confirm_flow_writes_the_target_value(self):
+        uv = _uv_cmd()
+        claude = self._mk_dir()
+        settings = os.path.join(claude, "settings.json")
+        with open(settings, "w", encoding="utf-8") as handle:
+            json.dump({"cleanupPeriodDays": 5}, handle)
+        env = dict(
+            os.environ,
+            HOME=self._mk_dir(),
+            CLAUDE_CONFIG_DIR=claude,
+            OPENCODE_CONFIG_DIR=self._mk_dir(),
+            XDG_CONFIG_HOME=self._mk_dir(),
+            CODEX_HOME=self._mk_dir(),
+            CURSOR_CONFIG_DIR=self._mk_dir(),
+            AI_KIT_DIR=_REPO_ROOT,
+            AI_KIT_UV_REEXEC="1",
+        )
+        pid, master_fd = spawn_pty(
+            [uv, "run", "--script", SETUP, "--config-doctor"],
+            env,
+        )
+        boot_deadline = time.time() + 30.0
+        all_captured: list[bytes] = []
+        with contextlib.suppress(AssertionError):
+            drive_until(master_fd, b"3650", boot_deadline, captured=all_captured)
+        with contextlib.suppress(OSError):
+            os.write(master_fd, b"a")
+        confirm_deadline = time.time() + 10.0
+        try:
+            confirm_output = drive_until(
+                master_fd, b"Confirm apply", confirm_deadline, captured=all_captured
+            )
+        except AssertionError:
+            confirm_output = b"".join(all_captured)
+        decoded_confirm = confirm_output.decode("utf-8", errors="replace")
+        self.assertIn("Confirm apply", decoded_confirm)
+        self.assertIn("3650", decoded_confirm)
+        with contextlib.suppress(OSError):
+            os.write(master_fd, b"y")
+        applied_deadline = time.time() + 10.0
+        with contextlib.suppress(AssertionError):
+            drive_until(master_fd, b"3650", applied_deadline, captured=all_captured)
+        with contextlib.suppress(OSError):
+            os.write(master_fd, b"q")
+        tail_output = _drain(master_fd, time.time() + 10)
+        with contextlib.suppress(OSError):
+            os.close(master_fd)
+        exit_code = None
+        with contextlib.suppress(ChildProcessError):
+            _, status = os.waitpid(pid, 0)
+            exit_code = os.WEXITSTATUS(status)
+        decoded = (b"".join(all_captured) + tail_output).decode(
+            "utf-8", errors="replace"
+        )
+        self.assertIn("3650", decoded)
+        self.assertEqual(exit_code, 0)
+        with open(settings, encoding="utf-8") as handle:
+            on_disk = json.load(handle)
+        self.assertEqual(on_disk["cleanupPeriodDays"], 3650)
+        self.assertEqual(list(on_disk.keys()), ["cleanupPeriodDays"])
+
