@@ -411,6 +411,11 @@ git clone https://github.com/castocolina/ai-kit ~/.gemini/skills/ai-kit     # Ge
 Agent-Skills-conformant tool its orchestrator logic in
 `skills/ai-kit-spec-review/SKILL.md` is discovered and can be followed directly.
 
+Session-start hooks in [`tools/hooks/`](tools/hooks/README.md) inject a live
+briefing of which curated `rtk` substitutions are actually on PATH. Claude Code
+and Cursor are wired; opencode has no documented injection point and that gap
+is accepted.
+
 ## Layout
 
 ```
@@ -421,7 +426,8 @@ ai-kit/
 ├── commands/                    # one Markdown file per slash command
 ├── tools/
 │   ├── install.sh               # the installer above
-│   └── status-line.py           # responsive Claude Code status line
+│   ├── status-line.py           # responsive Claude Code status line
+│   └── hooks/                   # session-start substitution briefing
 └── tests/                       # test_install.sh, test_status_line.py
 ```
 

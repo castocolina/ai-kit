@@ -15,6 +15,7 @@ Flags: --dry-run.
 Env overrides (mirrors install.sh):
   AI_KIT_DIR        install location (default: ${XDG_DATA_HOME:-~/.local/share}/ai-kit)
   CLAUDE_CONFIG_DIR Claude config dir (default: ~/.claude)
+  CURSOR_CONFIG_DIR Cursor config dir (default: ~/.cursor)
   XDG_CONFIG_HOME   config base       (default: ~/.config)
 """
 
@@ -41,19 +42,20 @@ CATEGORIES = ("agents", "commands", "skills")
 Paths = namedtuple(
     "Paths",
     "install_dir claude_dir settings config_dir config_toml sample status_line "
-    "statusline_doctor segments_dir claude_hook",
+    "statusline_doctor segments_dir claude_hook cursor_dir cursor_hooks cursor_hook",
 )
 
 
 def resolve_paths(env):
     """Resolve every path the installer touches, mirroring install.sh's env
     precedence: AI_KIT_DIR > XDG_DATA_HOME/ai-kit; CLAUDE_CONFIG_DIR > ~/.claude;
-    XDG_CONFIG_HOME/ai-kit > ~/.config/ai-kit."""
+    CURSOR_CONFIG_DIR > ~/.cursor; XDG_CONFIG_HOME/ai-kit > ~/.config/ai-kit."""
     home = env.get("HOME", "")
     install_dir = env.get("AI_KIT_DIR") or os.path.join(
         env.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"), "ai-kit"
     )
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    cursor_dir = env.get("CURSOR_CONFIG_DIR") or os.path.join(home, ".cursor")
     config_base = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
     config_dir = os.path.join(config_base, "ai-kit")
     return Paths(
@@ -68,6 +70,10 @@ def resolve_paths(env):
         segments_dir=os.path.join(config_dir, "segments"),
         claude_hook=os.path.join(
             install_dir, "tools", "hooks", "claude_session_start.py"),
+        cursor_dir=cursor_dir,
+        cursor_hooks=os.path.join(cursor_dir, "hooks.json"),
+        cursor_hook=os.path.join(
+            install_dir, "tools", "hooks", "cursor_session_start.py"),
     )
 
 
@@ -1347,6 +1353,11 @@ JSON_STATE_UNREADABLE = "unreadable"
 CLAUDE_HOOK_EVENT = "SessionStart"
 CLAUDE_HOOK_MATCHER = "startup|compact"
 CLAUDE_HOOK_MARKER = os.path.join("tools", "hooks", "claude_session_start.py")
+# Cursor's event key differs from Claude Code's only in casing. Sharing one
+# string would silently create a dead, never-fired key on one of the two
+# hosts (RESEARCH Pitfall 2).
+CURSOR_HOOK_EVENT = "sessionStart"
+CURSOR_HOOK_MARKER = os.path.join("tools", "hooks", "cursor_session_start.py")
 
 
 def _read_json_checked(path):
@@ -1496,6 +1507,7 @@ def wire_hook_claude(settings, hook_script, dry):
         settings, CLAUDE_HOOK_EVENT, nested=True)
     if not ok:
         return False
+    assert data is not None  # ok True <=> data is a dict, see _load_hook_config
     hooks = data.setdefault("hooks", {})
     entries = hooks.setdefault(CLAUDE_HOOK_EVENT, [])
     command = "python3 -S " + hook_script
@@ -1509,6 +1521,52 @@ def wire_hook_claude(settings, hook_script, dry):
         print(f"warn: failed to write {settings}: {exc}", file=sys.stderr)
         return False
     print(f"wired SessionStart hook -> {command}")
+    return True
+
+
+def _refresh_or_append_cursor_hook(entries, command):
+    """Replace an existing ai-kit sessionStart entry in place, or append one."""
+    new_entry = {"type": "command", "command": command}
+    for index, entry in enumerate(entries):
+        if CURSOR_HOOK_MARKER in entry.get("command", ""):
+            entries[index] = new_entry
+            return True
+    entries.append(new_entry)
+    return False
+
+
+def wire_hook_cursor(cursor_hooks, hook_script, dry):
+    """Append-if-absent Cursor sessionStart entry for the briefing wrapper.
+
+    Never materializes ~/.cursor/hooks.json when the parent directory does
+    not exist. Never overwrites a config it cannot fully interpret. Writes
+    through `_atomic_write_json`; an OSError leaves the target byte-identical
+    and returns False rather than aborting a wizard commit. Top-level
+    `version` is set to 1 only when `_load_hook_config` reported created.
+    """
+    if not os.path.isdir(os.path.dirname(cursor_hooks) or "."):
+        print("skipped Cursor sessionStart hook — no cursor dir")
+        return False
+    ok, data, created = _load_hook_config(cursor_hooks, CURSOR_HOOK_EVENT)
+    if not ok:
+        return False
+    assert data is not None  # ok True <=> data is a dict, see _load_hook_config
+    hooks = data.setdefault("hooks", {})
+    entries = hooks.setdefault(CURSOR_HOOK_EVENT, [])
+    command = "python3 -S " + hook_script
+    refreshed = _refresh_or_append_cursor_hook(entries, command)
+    if created:
+        data["version"] = 1
+    if dry:
+        print(f"would wire sessionStart hook -> {command}")
+        return True
+    try:
+        _atomic_write_json(cursor_hooks, data)
+    except OSError as exc:
+        print(f"warn: failed to write {cursor_hooks}: {exc}", file=sys.stderr)
+        return False
+    action = "refreshed" if refreshed else "wired"
+    print(f"{action} sessionStart hook -> {command}")
     return True
 
 
@@ -1600,6 +1658,63 @@ def unwire_statusline(settings, install_dir, dry):
         return
     data.pop("statusLine", None)
     _write_json(settings, data)
+
+
+def _entry_is_ours_nested(entry, marker):
+    """True when any nested command string contains `marker`."""
+    return any(marker in hook.get("command", "") for hook in entry.get("hooks") or [])
+
+
+def _commit_unwire(path, data, dry, would_msg):
+    """Honour dry, then atomically rewrite `path`. Never raises."""
+    if dry:
+        print(would_msg)
+        return
+    try:
+        _atomic_write_json(path, data)
+    except OSError as exc:
+        print(f"warn: failed to write {path}: {exc}", file=sys.stderr)
+
+
+def unwire_hook_claude(settings, dry):
+    """Remove ai-kit's own SessionStart entry; leave every foreign entry."""
+    ok, data, _ = _load_hook_config(settings, CLAUDE_HOOK_EVENT, nested=True)
+    if not ok:
+        return
+    assert data is not None  # ok True <=> data is a dict, see _load_hook_config
+    hooks = data.get("hooks") or {}
+    if CLAUDE_HOOK_EVENT not in hooks:
+        return
+    entries = hooks[CLAUDE_HOOK_EVENT]
+    kept = [e for e in entries if not _entry_is_ours_nested(e, CLAUDE_HOOK_MARKER)]
+    if kept == entries:
+        return
+    hooks[CLAUDE_HOOK_EVENT] = kept
+    _commit_unwire(settings, data, dry, "would remove ai-kit SessionStart hook")
+
+
+def unwire_hook_cursor(cursor_hooks, dry):
+    """Remove ai-kit's own sessionStart entry; leave every foreign entry."""
+    parent = os.path.dirname(cursor_hooks) or "."
+    if not os.path.isdir(parent) or not os.path.isfile(cursor_hooks):
+        return
+    ok, data, _ = _load_hook_config(cursor_hooks, CURSOR_HOOK_EVENT)
+    if not ok:
+        return
+    assert data is not None  # ok True <=> data is a dict, see _load_hook_config
+    hooks = data.get("hooks") or {}
+    if CURSOR_HOOK_EVENT not in hooks:
+        return
+    entries = hooks[CURSOR_HOOK_EVENT]
+    kept = [
+        e for e in entries
+        if CURSOR_HOOK_MARKER not in e.get("command", "")
+    ]
+    if kept == entries:
+        return
+    hooks[CURSOR_HOOK_EVENT] = kept
+    _commit_unwire(
+        cursor_hooks, data, dry, "would remove ai-kit sessionStart hook")
 
 
 def _is_inside_str(install_dir, command):
@@ -2201,6 +2316,7 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
             apply_selection(sel.category_sets(CATEGORIES), entries,
                             paths.claude_dir, dry, counts)
             wire_hook_claude(paths.settings, paths.claude_hook, dry)
+            wire_hook_cursor(paths.cursor_hooks, paths.cursor_hook, dry)
             if adopt:
                 # A discovered bundled example segment (e.g. system_memory) must
                 # actually exist under paths.segments_dir before persist_statusline's
@@ -2452,9 +2568,10 @@ def cmd_install(env, tty, dry, examples_flag=None):
 
 
 def cmd_uninstall(env, dry):
-    """Remove every ai-kit symlink under ~/.claude and the ai-kit statusLine (only
-    if it points into install_dir). Leaves install_dir, foreign links, and the
-    config TOML in place."""
+    """Remove every ai-kit symlink under ~/.claude, the ai-kit statusLine (only
+    if it points into install_dir), and ai-kit's own session-start hook entries
+    from both Claude Code and Cursor. Foreign hook entries are never touched.
+    Leaves install_dir, foreign links, and the config TOML in place."""
     paths = resolve_paths(env)
     counts = new_counts()
     installed = installed_links(paths.claude_dir, paths.install_dir)
@@ -2462,6 +2579,8 @@ def cmd_uninstall(env, dry):
         for name in sorted(installed[cat]):
             unlink_one(os.path.join(paths.claude_dir, cat, name), dry, counts)
     unwire_statusline(paths.settings, paths.install_dir, dry)
+    unwire_hook_claude(paths.settings, dry)
+    unwire_hook_cursor(paths.cursor_hooks, dry)
     print(f"removed {counts['unlinked']} ai-kit symlink(s). "
           f"install dir left in place: {paths.install_dir}")
     return 0

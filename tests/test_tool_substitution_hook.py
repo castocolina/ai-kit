@@ -13,12 +13,12 @@ import time
 import unittest
 from unittest import mock
 
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
 _SETUP_PATH = os.path.join(_REPO, "tools", "setup.py")
 _DETECT_PATH = os.path.join(_REPO, "tools", "hooks", "detect.py")
 _WRAPPER_PATH = os.path.join(_REPO, "tools", "hooks", "claude_session_start.py")
+_CURSOR_WRAPPER_PATH = os.path.join(_REPO, "tools", "hooks", "cursor_session_start.py")
 _PRECOMMIT_PATH = os.path.join(_REPO, ".pre-commit-config.yaml")
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
 _PYPROJECT_PATH = os.path.join(_REPO, "pyproject.toml")
@@ -286,16 +286,14 @@ class TestWiring(unittest.TestCase):
         def _boom(*_args, **_kwargs):
             raise OSError("injected replace failure")
 
-        with mock.patch.object(os, "replace", side_effect=_boom):
-            with self.assertRaises(OSError):
-                setup._atomic_write_json(self.settings, {"theme": "other"})
+        with mock.patch.object(os, "replace", side_effect=_boom), self.assertRaises(OSError):
+            setup._atomic_write_json(self.settings, {"theme": "other"})
         self.assertEqual(_read_bytes(self.settings), before)
         self.assertEqual(sorted(os.listdir(self.claude)), listing)
 
         buf = io.StringIO()
-        with mock.patch.object(os, "replace", side_effect=_boom):
-            with contextlib.redirect_stderr(buf):
-                result = setup.wire_hook_claude(self.settings, self.hook, dry=False)
+        with mock.patch.object(os, "replace", side_effect=_boom), contextlib.redirect_stderr(buf):
+            result = setup.wire_hook_claude(self.settings, self.hook, dry=False)
         self.assertFalse(result)
         self.assertTrue(buf.getvalue())
         self.assertEqual(_read_bytes(self.settings), before)
@@ -385,18 +383,600 @@ class TestWiring(unittest.TestCase):
         self.assertEqual(_read_bytes(paths.settings), before)
 
 
+_GSD_CURSOR_ENTRY = {
+    "type": "command",
+    "command": (
+        '"$(for n in ...node resolution...)" '
+        '"/home/bazzite/.cursor/hooks/gsd-cursor-session-start.js"'
+    ),
+    "gsd-managed": True,
+}
+
+
+def _cursor_hooks_doc(entries=None, version=1, extra=None):
+    data = {
+        "version": version,
+        "hooks": {
+            "sessionStart": list(entries if entries is not None else [_GSD_CURSOR_ENTRY]),
+        },
+    }
+    if extra:
+        data.update(extra)
+    return data
+
+
+class TestCursorWiring(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.cursor = os.path.join(self.tmp, ".cursor")
+        os.makedirs(self.cursor)
+        self.hooks_json = os.path.join(self.cursor, "hooks.json")
+        self.hook = os.path.join(
+            self.tmp, "ai-kit", "tools", "hooks", "cursor_session_start.py")
+
+    def _write_hooks(self, data):
+        with open(self.hooks_json, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+            handle.write("\n")
+
+    def _capture_wire(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(buf):
+            result = setup.wire_hook_cursor(self.hooks_json, self.hook, dry=False)
+        return result, buf.getvalue()
+
+    def _ours(self, data):
+        return [
+            entry for entry in data["hooks"]["sessionStart"]
+            if setup.CURSOR_HOOK_MARKER in entry.get("command", "")
+        ]
+
+    def test_gsd_entry_survives_value_identical(self):
+        original = _GSD_CURSOR_ENTRY.copy()
+        self._write_hooks(_cursor_hooks_doc())
+        result, _ = self._capture_wire()
+        self.assertTrue(result)
+        with open(self.hooks_json, encoding="utf-8") as handle:
+            stored = json.load(handle)
+        self.assertEqual(len(stored["hooks"]["sessionStart"]), 2)
+        self.assertEqual(stored["hooks"]["sessionStart"][0], original)
+
+    def test_appended_entry_is_flat_no_matcher(self):
+        self._write_hooks(_cursor_hooks_doc())
+        self.assertTrue(setup.wire_hook_cursor(self.hooks_json, self.hook, dry=False))
+        with open(self.hooks_json, encoding="utf-8") as handle:
+            stored = json.load(handle)
+        ours = self._ours(stored)
+        self.assertEqual(len(ours), 1)
+        entry = ours[0]
+        self.assertEqual(entry["type"], "command")
+        self.assertTrue(entry["command"].startswith("python3 -S "))
+        self.assertNotIn("matcher", entry)
+        self.assertNotIn("hooks", entry)
+
+    def test_wiring_twice_does_not_duplicate(self):
+        self._write_hooks(_cursor_hooks_doc())
+        self.assertTrue(setup.wire_hook_cursor(self.hooks_json, self.hook, dry=False))
+        self.assertTrue(setup.wire_hook_cursor(self.hooks_json, self.hook, dry=False))
+        with open(self.hooks_json, encoding="utf-8") as handle:
+            stored = json.load(handle)
+        self.assertEqual(len(stored["hooks"]["sessionStart"]), 2)
+        self.assertEqual(len(self._ours(stored)), 1)
+
+    def test_existing_version_1_is_preserved(self):
+        self._write_hooks(_cursor_hooks_doc(version=1))
+        self.assertTrue(setup.wire_hook_cursor(self.hooks_json, self.hook, dry=False))
+        with open(self.hooks_json, encoding="utf-8") as handle:
+            stored = json.load(handle)
+        self.assertEqual(stored["version"], 1)
+
+    def test_existing_non_default_version_is_preserved(self):
+        self._write_hooks(_cursor_hooks_doc(version=2))
+        self.assertTrue(setup.wire_hook_cursor(self.hooks_json, self.hook, dry=False))
+        with open(self.hooks_json, encoding="utf-8") as handle:
+            stored = json.load(handle)
+        self.assertEqual(stored["version"], 2)
+
+    def test_created_hooks_json_gets_version_1(self):
+        self.assertFalse(os.path.isfile(self.hooks_json))
+        self.assertTrue(setup.wire_hook_cursor(self.hooks_json, self.hook, dry=False))
+        with open(self.hooks_json, encoding="utf-8") as handle:
+            stored = json.load(handle)
+        self.assertEqual(stored["version"], 1)
+        self.assertEqual(len(self._ours(stored)), 1)
+
+    def test_absent_cursor_dir_creates_nothing(self):
+        missing_dir = os.path.join(self.tmp, "no-such-cursor")
+        hooks_json = os.path.join(missing_dir, "hooks.json")
+        before = sorted(os.listdir(self.tmp))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            result = setup.wire_hook_cursor(hooks_json, self.hook, dry=False)
+        self.assertFalse(result)
+        self.assertFalse(os.path.exists(missing_dir))
+        self.assertEqual(sorted(os.listdir(self.tmp)), before)
+        self.assertIn("no cursor dir", buf.getvalue().lower())
+
+    def test_hooks_not_object_is_refused(self):
+        self._write_hooks({"version": 1, "hooks": "not-an-object"})
+        before = _read_bytes(self.hooks_json)
+        result, err = self._capture_wire()
+        self.assertFalse(result)
+        self.assertIn(self.hooks_json, err)
+        self.assertEqual(_read_bytes(self.hooks_json), before)
+
+    def test_session_start_not_array_is_refused(self):
+        self._write_hooks({"version": 1, "hooks": {"sessionStart": {"type": "command"}}})
+        before = _read_bytes(self.hooks_json)
+        result, err = self._capture_wire()
+        self.assertFalse(result)
+        self.assertIn(self.hooks_json, err)
+        self.assertEqual(_read_bytes(self.hooks_json), before)
+
+    def test_unparseable_hooks_json_is_refused_not_clobbered(self):
+        payload = b"{ this is not json KEEP-ME-CURSOR-12345\n"
+        _write_bytes(self.hooks_json, payload)
+        before = _read_bytes(self.hooks_json)
+        result, err = self._capture_wire()
+        self.assertFalse(result)
+        self.assertIn(self.hooks_json, err)
+        self.assertEqual(_read_bytes(self.hooks_json), before)
+
+    def test_non_dict_hooks_json_is_refused_not_clobbered(self):
+        payload = b'[{"hooks": "nope"}]\n'
+        _write_bytes(self.hooks_json, payload)
+        before = _read_bytes(self.hooks_json)
+        result, err = self._capture_wire()
+        self.assertFalse(result)
+        self.assertIn(self.hooks_json, err)
+        self.assertEqual(_read_bytes(self.hooks_json), before)
+
+    def test_non_dict_array_element_is_refused_not_clobbered(self):
+        data = _cursor_hooks_doc(entries=[_GSD_CURSOR_ENTRY, "bare-string-element"])
+        self._write_hooks(data)
+        before = _read_bytes(self.hooks_json)
+        result, err = self._capture_wire()
+        self.assertFalse(result)
+        self.assertIn(self.hooks_json, err)
+        self.assertEqual(_read_bytes(self.hooks_json), before)
+
+    def test_atomic_write_failure_leaves_hooks_json_byte_identical(self):
+        self._write_hooks(_cursor_hooks_doc())
+        before = _read_bytes(self.hooks_json)
+        listing = sorted(os.listdir(self.cursor))
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("injected replace failure")
+
+        buf = io.StringIO()
+        with mock.patch.object(os, "replace", side_effect=_boom), contextlib.redirect_stderr(buf):
+            result = setup.wire_hook_cursor(self.hooks_json, self.hook, dry=False)
+        self.assertFalse(result)
+        self.assertTrue(buf.getvalue())
+        self.assertEqual(_read_bytes(self.hooks_json), before)
+        self.assertEqual(sorted(os.listdir(self.cursor)), listing)
+
+    def test_resolve_paths_honours_cursor_config_dir(self):
+        paths = setup.resolve_paths({
+            "HOME": "/home/u",
+            "AI_KIT_DIR": "/opt/kit",
+            "CURSOR_CONFIG_DIR": "/cfg/cursor",
+        })
+        self.assertEqual(paths.cursor_dir, "/cfg/cursor")
+        self.assertEqual(paths.cursor_hooks, "/cfg/cursor/hooks.json")
+        self.assertEqual(
+            paths.cursor_hook,
+            "/opt/kit/tools/hooks/cursor_session_start.py",
+        )
+        defaulted = setup.resolve_paths({"HOME": "/home/u", "AI_KIT_DIR": "/opt/kit"})
+        self.assertEqual(defaulted.cursor_dir, "/home/u/.cursor")
+        self.assertEqual(defaulted.cursor_hooks, "/home/u/.cursor/hooks.json")
+
+    def test_wizard_commit_wires_cursor_hook(self):
+        home = tempfile.mkdtemp()
+        install = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, install, ignore_errors=True)
+        paths = setup.resolve_paths({"HOME": home, "AI_KIT_DIR": install})
+        os.makedirs(paths.claude_dir, exist_ok=True)
+        os.makedirs(paths.cursor_dir, exist_ok=True)
+        with open(paths.cursor_hooks, "w", encoding="utf-8") as handle:
+            json.dump(_cursor_hooks_doc(), handle)
+            handle.write("\n")
+        original = _GSD_CURSOR_ENTRY.copy()
+        entries = {cat: [] for cat in setup.CATEGORIES}
+        commit = setup._make_wizard_commit(
+            paths, entries, dry=False, counts=setup.new_counts())
+        result = commit(setup.Selection([]), {"adopt": False})
+        self.assertEqual(set(result), {"ok", "adopt", "log"})
+        with open(paths.cursor_hooks, encoding="utf-8") as handle:
+            stored = json.load(handle)
+        self.assertEqual(stored["hooks"]["sessionStart"][0], original)
+        ours = [
+            entry for entry in stored["hooks"]["sessionStart"]
+            if setup.CURSOR_HOOK_MARKER in entry.get("command", "")
+        ]
+        self.assertEqual(len(ours), 1)
+        self.assertNotIn("matcher", ours[0])
+        self.assertIn("sessionStart", result["log"])
+
+
+class TestCursorWrapper(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install = os.path.join(self.tmp, "ai-kit")
+        self.hooks_dir = os.path.join(self.install, "tools", "hooks")
+        os.makedirs(self.hooks_dir)
+        shutil.copy(_DETECT_PATH, os.path.join(self.hooks_dir, "detect.py"))
+        shutil.copy(_WRAPPER_PATH, os.path.join(self.hooks_dir, "claude_session_start.py"))
+        shutil.copy(
+            _CURSOR_WRAPPER_PATH, os.path.join(self.hooks_dir, "cursor_session_start.py"))
+        self.claude_wrapper = os.path.join(self.hooks_dir, "claude_session_start.py")
+        self.cursor_wrapper = os.path.join(self.hooks_dir, "cursor_session_start.py")
+        os.chmod(self.claude_wrapper, 0o755)
+        os.chmod(self.cursor_wrapper, 0o755)
+        self.cursor = os.path.join(self.tmp, ".cursor")
+        os.makedirs(self.cursor)
+        self.hooks_json = os.path.join(self.cursor, "hooks.json")
+        self.bin_dir = os.path.join(self.tmp, "bin")
+        self.home = os.path.join(self.tmp, "home")
+        os.makedirs(self.home)
+
+    def _run(self, script, env):
+        return subprocess.run(
+            [sys.executable, "-S", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            stdin=subprocess.DEVNULL,
+        )
+
+    def test_wired_command_emits_additional_context(self):
+        with open(self.hooks_json, "w", encoding="utf-8") as handle:
+            json.dump(_cursor_hooks_doc(), handle)
+        self.assertTrue(
+            setup.wire_hook_cursor(self.hooks_json, self.cursor_wrapper, dry=False))
+        with open(self.hooks_json, encoding="utf-8") as handle:
+            stored = json.load(handle)
+        ours = [
+            entry["command"] for entry in stored["hooks"]["sessionStart"]
+            if setup.CURSOR_HOOK_MARKER in entry.get("command", "")
+        ]
+        self.assertEqual(len(ours), 1)
+        self.assertTrue(ours[0].startswith("python3 -S "))
+        script = ours[0][len("python3 -S "):]
+        fake_bin(self.bin_dir, ["rtk"], _rtk_stub_body(_VERIFIED_RTK_SHOW))
+        fake_bin(self.bin_dir, ["rg"], "#!/bin/sh\nexit 0\n")
+        env = scoped_env(self.bin_dir, self.home)
+        proc = self._run(script, env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(set(payload), {"additional_context"})
+        self.assertIn("rg", payload["additional_context"])
+
+    def test_empty_path_emits_empty_object(self):
+        fake_bin(self.bin_dir, [], "#!/bin/sh\nexit 0\n")
+        env = scoped_env(self.bin_dir, self.home)
+        proc = self._run(self.cursor_wrapper, env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "{}")
+
+    def test_both_hosts_carry_the_same_message(self):
+        fake_bin(self.bin_dir, ["rtk"], _rtk_stub_body(_VERIFIED_RTK_SHOW))
+        fake_bin(self.bin_dir, ["rg"], "#!/bin/sh\nexit 0\n")
+        env = scoped_env(self.bin_dir, self.home)
+        claude = self._run(self.claude_wrapper, env)
+        cursor = self._run(self.cursor_wrapper, env)
+        self.assertEqual(claude.returncode, 0, claude.stderr)
+        self.assertEqual(cursor.returncode, 0, cursor.stderr)
+        claude_msg = json.loads(claude.stdout)["hookSpecificOutput"]["additionalContext"]
+        cursor_msg = json.loads(cursor.stdout)["additional_context"]
+        self.assertEqual(claude_msg, cursor_msg)
+
+
+_FOREIGN_CLAUDE_A = {
+    "hooks": [{"type": "command", "command": "echo foreign-a"}],
+}
+_FOREIGN_CLAUDE_B = {
+    "matcher": "startup",
+    "hooks": [{"type": "command", "command": "echo foreign-b"}],
+}
+
+
+def _claude_ours(command):
+    return {
+        "matcher": setup.CLAUDE_HOOK_MATCHER,
+        "hooks": [{"type": "command", "command": command}],
+    }
+
+
+class TestUnwire(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install = os.path.join(self.tmp, "ai-kit")
+        self.claude = os.path.join(self.tmp, ".claude")
+        self.cursor = os.path.join(self.tmp, ".cursor")
+        os.makedirs(self.claude)
+        os.makedirs(self.cursor)
+        os.makedirs(os.path.join(self.install, "tools", "hooks"), exist_ok=True)
+        self.settings = os.path.join(self.claude, "settings.json")
+        self.hooks_json = os.path.join(self.cursor, "hooks.json")
+        self.claude_hook = os.path.join(
+            self.install, "tools", "hooks", "claude_session_start.py")
+        self.cursor_hook = os.path.join(
+            self.install, "tools", "hooks", "cursor_session_start.py")
+        self.env = {
+            "HOME": self.tmp,
+            "AI_KIT_DIR": self.install,
+            "CLAUDE_CONFIG_DIR": self.claude,
+            "CURSOR_CONFIG_DIR": self.cursor,
+        }
+
+    def _write_json(self, path, data):
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+            handle.write("\n")
+
+    def _claude_cmd(self):
+        return "python3 -S " + self.claude_hook
+
+    def _cursor_cmd(self):
+        return "python3 -S " + self.cursor_hook
+
+    def _seed_both_wired(self):
+        self._write_json(self.settings, {
+            "theme": "dark",
+            "hooks": {
+                "SessionStart": [
+                    _FOREIGN_CLAUDE_A,
+                    _FOREIGN_CLAUDE_B,
+                    _claude_ours(self._claude_cmd()),
+                ],
+            },
+        })
+        self._write_json(self.hooks_json, _cursor_hooks_doc(
+            entries=[
+                _GSD_CURSOR_ENTRY,
+                {"type": "command", "command": self._cursor_cmd()},
+            ],
+            extra={"theme": "dark"},
+        ))
+
+    def _capture(self, fn):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            result = fn()
+        return result, buf.getvalue()
+
+    def test_foreign_entries_survive_value_identical(self):
+        self._seed_both_wired()
+        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self._capture(lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
+        with open(self.settings, encoding="utf-8") as handle:
+            claude = json.load(handle)
+        with open(self.hooks_json, encoding="utf-8") as handle:
+            cursor = json.load(handle)
+        self.assertEqual(
+            claude["hooks"]["SessionStart"],
+            [_FOREIGN_CLAUDE_A, _FOREIGN_CLAUDE_B],
+        )
+        self.assertEqual(cursor["hooks"]["sessionStart"], [_GSD_CURSOR_ENTRY])
+        self.assertTrue(cursor["hooks"]["sessionStart"][0]["gsd-managed"])
+
+    def test_removing_only_entry_leaves_empty_array(self):
+        self._write_json(self.settings, {
+            "hooks": {"SessionStart": [_claude_ours(self._claude_cmd())]},
+        })
+        self._write_json(self.hooks_json, _cursor_hooks_doc(
+            entries=[{"type": "command", "command": self._cursor_cmd()}],
+        ))
+        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self._capture(lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
+        with open(self.settings, encoding="utf-8") as handle:
+            claude = json.load(handle)
+        with open(self.hooks_json, encoding="utf-8") as handle:
+            cursor = json.load(handle)
+        self.assertEqual(claude["hooks"]["SessionStart"], [])
+        self.assertIn("hooks", claude)
+        self.assertEqual(cursor["hooks"]["sessionStart"], [])
+        self.assertIn("hooks", cursor)
+        self.assertEqual(cursor["version"], 1)
+
+    def test_no_ai_kit_entry_leaves_files_byte_identical(self):
+        self._write_json(self.settings, {
+            "theme": "dark",
+            "hooks": {"SessionStart": [_FOREIGN_CLAUDE_A, _FOREIGN_CLAUDE_B]},
+        })
+        self._write_json(self.hooks_json, _cursor_hooks_doc())
+        claude_before = _read_bytes(self.settings)
+        cursor_before = _read_bytes(self.hooks_json)
+        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self._capture(lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
+        self.assertEqual(_read_bytes(self.settings), claude_before)
+        self.assertEqual(_read_bytes(self.hooks_json), cursor_before)
+
+    def test_unparseable_configs_are_refused_not_clobbered(self):
+        _write_bytes(self.settings, b"{ this is not json KEEP-CLAUDE\n")
+        _write_bytes(self.hooks_json, b"{ this is not json KEEP-CURSOR\n")
+        claude_before = _read_bytes(self.settings)
+        cursor_before = _read_bytes(self.hooks_json)
+        _, claude_err = self._capture(
+            lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        _, cursor_err = self._capture(
+            lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
+        self.assertIn(self.settings, claude_err)
+        self.assertIn(self.hooks_json, cursor_err)
+        self.assertEqual(_read_bytes(self.settings), claude_before)
+        self.assertEqual(_read_bytes(self.hooks_json), cursor_before)
+
+    def test_atomic_write_failure_leaves_target_byte_identical_on_unwire(self):
+        self._seed_both_wired()
+        claude_before = _read_bytes(self.settings)
+        cursor_before = _read_bytes(self.hooks_json)
+        claude_listing = sorted(os.listdir(self.claude))
+        cursor_listing = sorted(os.listdir(self.cursor))
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("injected replace failure")
+
+        buf = io.StringIO()
+        with (
+            mock.patch.object(os, "replace", side_effect=_boom),
+            contextlib.redirect_stdout(buf),
+            contextlib.redirect_stderr(buf),
+        ):
+            setup.unwire_hook_claude(self.settings, dry=False)
+            setup.unwire_hook_cursor(self.hooks_json, dry=False)
+        self.assertTrue(buf.getvalue())
+        self.assertEqual(_read_bytes(self.settings), claude_before)
+        self.assertEqual(_read_bytes(self.hooks_json), cursor_before)
+        self.assertEqual(sorted(os.listdir(self.claude)), claude_listing)
+        self.assertEqual(sorted(os.listdir(self.cursor)), cursor_listing)
+
+    def test_non_dict_array_element_is_refused_on_unwire(self):
+        self._write_json(self.settings, {
+            "hooks": {
+                "SessionStart": [
+                    "bare-string-element",
+                    _FOREIGN_CLAUDE_A,
+                ],
+            },
+        })
+        self._write_json(self.hooks_json, _cursor_hooks_doc(
+            entries=[_GSD_CURSOR_ENTRY, "bare-string-element"],
+        ))
+        claude_before = _read_bytes(self.settings)
+        cursor_before = _read_bytes(self.hooks_json)
+        _, claude_err = self._capture(
+            lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        _, cursor_err = self._capture(
+            lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
+        self.assertIn(self.settings, claude_err)
+        self.assertIn(self.hooks_json, cursor_err)
+        self.assertEqual(_read_bytes(self.settings), claude_before)
+        self.assertEqual(_read_bytes(self.hooks_json), cursor_before)
+        _, cmd_err = self._capture(
+            lambda: setup.cmd_uninstall(self.env, dry=False))
+        self.assertIn(self.settings, cmd_err)
+        self.assertIn(self.hooks_json, cmd_err)
+        self.assertEqual(_read_bytes(self.settings), claude_before)
+        self.assertEqual(_read_bytes(self.hooks_json), cursor_before)
+
+    def test_non_dict_nested_hook_member_is_refused_on_unwire(self):
+        self._write_json(self.settings, {
+            "hooks": {
+                "SessionStart": [
+                    {"matcher": "startup", "hooks": "not-a-list"},
+                ],
+            },
+        })
+        before = _read_bytes(self.settings)
+        _, err = self._capture(
+            lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self.assertIn(self.settings, err)
+        self.assertEqual(_read_bytes(self.settings), before)
+        _, cmd_err = self._capture(
+            lambda: setup.cmd_uninstall(self.env, dry=False))
+        self.assertIn(self.settings, cmd_err)
+        self.assertEqual(_read_bytes(self.settings), before)
+
+    def test_missing_configs_create_nothing(self):
+        shutil.rmtree(self.claude)
+        shutil.rmtree(self.cursor)
+        before = sorted(os.listdir(self.tmp))
+        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self._capture(lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
+        self._capture(lambda: setup.cmd_uninstall(self.env, dry=False))
+        self.assertFalse(os.path.exists(self.claude))
+        self.assertFalse(os.path.exists(self.cursor))
+        self.assertEqual(sorted(os.listdir(self.tmp)), before)
+
+    def test_uninstall_twice_is_a_no_op(self):
+        self._seed_both_wired()
+        rc1, _ = self._capture(lambda: setup.cmd_uninstall(self.env, dry=False))
+        self.assertEqual(rc1, 0)
+        rc2, err2 = self._capture(lambda: setup.cmd_uninstall(self.env, dry=False))
+        self.assertEqual(rc2, 0)
+        self.assertNotIn("warn:", err2)
+        self.assertNotIn("Traceback", err2)
+
+    def test_other_top_level_keys_survive(self):
+        self._seed_both_wired()
+        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self._capture(lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
+        with open(self.settings, encoding="utf-8") as handle:
+            claude = json.load(handle)
+        with open(self.hooks_json, encoding="utf-8") as handle:
+            cursor = json.load(handle)
+        self.assertEqual(claude["theme"], "dark")
+        self.assertEqual(cursor["theme"], "dark")
+        self.assertEqual(cursor["version"], 1)
+
+    def test_dry_writes_nothing(self):
+        self._seed_both_wired()
+        claude_before = _read_bytes(self.settings)
+        cursor_before = _read_bytes(self.hooks_json)
+        _, claude_out = self._capture(
+            lambda: setup.unwire_hook_claude(self.settings, dry=True))
+        _, cursor_out = self._capture(
+            lambda: setup.unwire_hook_cursor(self.hooks_json, dry=True))
+        self.assertTrue(claude_out)
+        self.assertTrue(cursor_out)
+        self.assertEqual(_read_bytes(self.settings), claude_before)
+        self.assertEqual(_read_bytes(self.hooks_json), cursor_before)
+
+    def test_entry_with_no_hooks_key_is_kept(self):
+        no_hooks = {"matcher": "startup"}
+        self._write_json(self.settings, {
+            "hooks": {
+                "SessionStart": [
+                    no_hooks,
+                    _claude_ours(self._claude_cmd()),
+                ],
+            },
+        })
+        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        with open(self.settings, encoding="utf-8") as handle:
+            claude = json.load(handle)
+        self.assertEqual(claude["hooks"]["SessionStart"], [no_hooks])
+
+    def test_cmd_uninstall_removes_ours_keeps_foreign_returns_0(self):
+        self._seed_both_wired()
+        rc, _ = self._capture(lambda: setup.cmd_uninstall(self.env, dry=False))
+        self.assertEqual(rc, 0)
+        with open(self.settings, encoding="utf-8") as handle:
+            claude = json.load(handle)
+        with open(self.hooks_json, encoding="utf-8") as handle:
+            cursor = json.load(handle)
+        self.assertEqual(
+            claude["hooks"]["SessionStart"],
+            [_FOREIGN_CLAUDE_A, _FOREIGN_CLAUDE_B],
+        )
+        self.assertEqual(cursor["hooks"]["sessionStart"], [_GSD_CURSOR_ENTRY])
+        self.assertEqual(claude["theme"], "dark")
+        self.assertEqual(cursor["version"], 1)
+
+
 class TestGateRegistration(unittest.TestCase):
     def test_py_compile_regex_matches_hook_scripts(self):
         regex = precommit_hook_files_regex("py-compile")
         self.assertIsNotNone(re.search(regex, "tools/hooks/detect.py"))
         self.assertIsNotNone(
             re.search(regex, "tools/hooks/claude_session_start.py"))
+        self.assertIsNotNone(
+            re.search(regex, "tools/hooks/cursor_session_start.py"))
 
     def test_ruff_regex_matches_hook_scripts(self):
         regex = precommit_hook_files_regex("ruff")
         self.assertIsNotNone(re.search(regex, "tools/hooks/detect.py"))
         self.assertIsNotNone(
             re.search(regex, "tools/hooks/claude_session_start.py"))
+        self.assertIsNotNone(
+            re.search(regex, "tools/hooks/cursor_session_start.py"))
 
     def test_makefile_lint_compiles_hook_scripts(self):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
@@ -686,3 +1266,30 @@ class TestCompose(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout, "{}")
+
+
+class TestHostCoverageDocs(unittest.TestCase):
+    def test_hooks_readme_exists(self):
+        path = os.path.join(_REPO, "tools", "hooks", "README.md")
+        self.assertTrue(os.path.isfile(path), path)
+
+    def test_hooks_readme_has_required_headings(self):
+        path = os.path.join(_REPO, "tools", "hooks", "README.md")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("## What these hooks do", text)
+        self.assertIn("## Host coverage", text)
+        self.assertIn("## Non-goals", text)
+
+    def test_hooks_readme_names_opencode(self):
+        path = os.path.join(_REPO, "tools", "hooks", "README.md")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("opencode", text.lower())
+
+    def test_detect_docstring_names_opencode(self):
+        with open(_DETECT_PATH, encoding="utf-8") as handle:
+            text = handle.read()
+        module_doc = text.split('"""', 2)[1]
+        self.assertIn("opencode", module_doc.lower())
+
