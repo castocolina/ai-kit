@@ -8,6 +8,8 @@ import sys
 
 from ai_kit_usage_metrics import (
     capture_claude,
+    capture_opencode,
+    capture_rtk,
     dashboard,
     paths,
     raw_store,
@@ -15,7 +17,11 @@ from ai_kit_usage_metrics import (
     refiner,
 )
 
-CAPTURE_SOURCES = {"claude": capture_claude.capture}
+CAPTURE_SOURCES = {
+    "claude": capture_claude.capture,
+    "opencode": capture_opencode.capture,
+    "rtk": capture_rtk.capture,
+}
 
 
 def _read_raw_jsonl(path: str) -> list[dict]:

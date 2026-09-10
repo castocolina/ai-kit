@@ -9,13 +9,23 @@ import tempfile
 import tomllib
 import unittest
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 sys.path.insert(
     0,
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-usage-metrics"),
 )
 
-from ai_kit_usage_metrics import capture_claude, family, paths, pricing, raw_store, refined_store
+from ai_kit_usage_metrics import (
+    capture_claude,
+    capture_opencode,
+    capture_rtk,
+    family,
+    paths,
+    pricing,
+    raw_store,
+    refined_store,
+)
 from ai_kit_usage_metrics.cli import main
 from ai_kit_usage_metrics.dashboard import generate
 from ai_kit_usage_metrics.raw_store import CaptureResult
@@ -160,6 +170,46 @@ class TestPaths(unittest.TestCase):
             os.path.join(base, "raw", "claude.jsonl"),
         )
 
+    def test_opencode_source_paths(self):
+        env = {"XDG_DATA_HOME": "/scratch/xdg-data", "HOME": "/scratch/home"}
+        self.assertEqual(
+            paths.opencode_db_path(env),
+            os.path.join("/scratch/xdg-data", "opencode", "opencode.db"),
+        )
+        self.assertEqual(
+            paths.opencode_storage_dir(env),
+            os.path.join("/scratch/xdg-data", "opencode", "storage"),
+        )
+        env = {"HOME": "/scratch/home"}
+        self.assertEqual(
+            paths.opencode_db_path(env),
+            os.path.join("/scratch/home", ".local", "share", "opencode", "opencode.db"),
+        )
+        self.assertEqual(
+            paths.opencode_storage_dir(env),
+            os.path.join("/scratch/home", ".local", "share", "opencode", "storage"),
+        )
+
+    def test_rtk_source_paths(self):
+        env = {"XDG_DATA_HOME": "/scratch/xdg-data", "HOME": "/scratch/home"}
+        self.assertEqual(
+            paths.rtk_history_db_path(env),
+            os.path.join("/scratch/xdg-data", "rtk", "history.db"),
+        )
+        self.assertEqual(
+            paths.rtk_tee_dir(env),
+            os.path.join("/scratch/xdg-data", "rtk", "tee"),
+        )
+        env = {"HOME": "/scratch/home"}
+        self.assertEqual(
+            paths.rtk_history_db_path(env),
+            os.path.join("/scratch/home", ".local", "share", "rtk", "history.db"),
+        )
+        self.assertEqual(
+            paths.rtk_tee_dir(env),
+            os.path.join("/scratch/home", ".local", "share", "rtk", "tee"),
+        )
+
 
 class TestFamily(unittest.TestCase):
     def test_rg_and_grep_share_grep_family(self):
@@ -255,6 +305,486 @@ class TestCapture(unittest.TestCase):
         self.assertIn(bad_path, result.stats["unreadable_files"])
         self.assertTrue(any(rec["source_file"] == simple_path for rec in result.records))
         self.assertFalse(any(rec["source_file"] == bad_path for rec in result.records))
+
+
+_OPENCODE_SESSION_ID = "ses_fixture_1"
+_OPENCODE_MESSAGE_ID = "msg_fixture_1"
+_OPENCODE_PART_BASH_ID = "prt_bash_1"
+_OPENCODE_PART_TEXT_ID = "prt_text_1"
+_OPENCODE_PART_BAD_ID = "prt_bad_1"
+_OPENCODE_TIME = 1789000000000
+_OPENCODE_BASH_DATA = (
+    '{"type":"tool","tool":"bash","callID":"call_1",'
+    '"state":{"status":"completed","input":{"command":"ls -la","workdir":"/tmp"},'
+    '"output":"ok","metadata":{"exit":0,"truncated":false},'
+    '"time":{"start":1789000000000,"end":1789000000500}}}'
+)
+_OPENCODE_TEXT_DATA = '{"type":"text","text":"hello"}'
+_OPENCODE_MALFORMED_DATA = "this is not json{{{"
+_OPENCODE_MESSAGE_DATA = (
+    '{"role":"assistant","cost":0,'
+    '"tokens":{"total":10,"input":5,"output":5,"reasoning":0,'
+    '"cache":{"write":0,"read":0}},'
+    '"modelID":"claude-opus-4-7","providerID":"anthropic",'
+    '"path":{"cwd":"/tmp","root":"/tmp"},'
+    '"time":{"created":1789000000000,"completed":1789000000500},'
+    '"finish":"stop"}'
+)
+
+
+def _opencode_schema_sql():
+    return """
+    CREATE TABLE session (
+        id TEXT PRIMARY KEY,
+        project_id TEXT,
+        workspace_id TEXT,
+        directory TEXT,
+        title TEXT,
+        cost REAL,
+        tokens_input INTEGER,
+        tokens_output INTEGER,
+        tokens_reasoning INTEGER,
+        tokens_cache_read INTEGER,
+        tokens_cache_write INTEGER,
+        model TEXT,
+        time_created INTEGER,
+        time_updated INTEGER
+    );
+    CREATE TABLE message (
+        id TEXT PRIMARY KEY,
+        session_id TEXT,
+        time_created INTEGER,
+        time_updated INTEGER,
+        data TEXT
+    );
+    CREATE TABLE part (
+        id TEXT PRIMARY KEY,
+        message_id TEXT,
+        session_id TEXT,
+        time_created INTEGER,
+        time_updated INTEGER,
+        data TEXT
+    );
+    """
+
+
+def _write_opencode_db(env, seed_fn):
+    db_path = paths.opencode_db_path(env)
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(_opencode_schema_sql())
+        seed_fn(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+def _seed_standard_opencode(conn):
+    conn.execute(
+        "INSERT INTO session (id, project_id, directory, title, model, "
+        "time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            _OPENCODE_SESSION_ID,
+            "prj_1",
+            "/tmp",
+            "fixture",
+            "claude-opus-4-7",
+            _OPENCODE_TIME,
+            _OPENCODE_TIME,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO message (id, session_id, time_created, time_updated, data) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (
+            _OPENCODE_MESSAGE_ID,
+            _OPENCODE_SESSION_ID,
+            _OPENCODE_TIME,
+            _OPENCODE_TIME,
+            _OPENCODE_MESSAGE_DATA,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            _OPENCODE_PART_BASH_ID,
+            _OPENCODE_MESSAGE_ID,
+            _OPENCODE_SESSION_ID,
+            _OPENCODE_TIME,
+            _OPENCODE_TIME,
+            _OPENCODE_BASH_DATA,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            _OPENCODE_PART_TEXT_ID,
+            _OPENCODE_MESSAGE_ID,
+            _OPENCODE_SESSION_ID,
+            _OPENCODE_TIME + 1,
+            _OPENCODE_TIME + 1,
+            _OPENCODE_TEXT_DATA,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            _OPENCODE_PART_BAD_ID,
+            _OPENCODE_MESSAGE_ID,
+            _OPENCODE_SESSION_ID,
+            _OPENCODE_TIME + 2,
+            _OPENCODE_TIME + 2,
+            _OPENCODE_MALFORMED_DATA,
+        ),
+    )
+
+
+class TestCaptureOpencode(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="ai-kit-um-opencode-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.env = _scratch_env(self.root)
+
+    def test_absent_db_returns_zero_without_connecting(self):
+        with patch("sqlite3.connect", side_effect=AssertionError("must not connect")):
+            result = capture_opencode.capture(self.env, {})
+        self.assertIsInstance(result, CaptureResult)
+        self.assertEqual(result.records, [])
+        self.assertEqual(result.stats["captured"], 0)
+        self.assertEqual(result.stats["malformed"], 0)
+
+    def test_session_message_part_lossless_and_verbatim(self):
+        db_path = _write_opencode_db(self.env, _seed_standard_opencode)
+        result = capture_opencode.capture(self.env, {})
+        self.assertIsInstance(result, CaptureResult)
+        self.assertEqual(len(result.records), 5)
+        self.assertEqual(result.stats["captured"], 5)
+        self.assertEqual(result.stats["malformed"], 1)
+
+        by_kind = {}
+        by_status = {}
+        for rec in result.records:
+            for key in (
+                "raw_ref",
+                "captured_at",
+                "runtime",
+                "source_file",
+                "source_line",
+                "parse_status",
+                "raw_text",
+                "payload",
+                "source_kind",
+                "record_id",
+                "session_id",
+                "message_id",
+                "time_created",
+            ):
+                self.assertIn(key, rec)
+            self.assertEqual(rec["runtime"], "opencode")
+            by_kind.setdefault(rec["source_kind"], []).append(rec)
+            by_status.setdefault(rec["parse_status"], []).append(rec)
+
+        self.assertEqual(len(by_kind["session"]), 1)
+        self.assertEqual(len(by_kind["message"]), 1)
+        self.assertEqual(len(by_kind["part"]), 3)
+        self.assertEqual(len(by_status["ok"]), 4)
+        self.assertEqual(len(by_status["malformed"]), 1)
+
+        session = by_kind["session"][0]
+        self.assertEqual(session["record_id"], _OPENCODE_SESSION_ID)
+        self.assertEqual(session["session_id"], _OPENCODE_SESSION_ID)
+        self.assertIsNone(session["message_id"])
+        self.assertEqual(session["time_created"], _OPENCODE_TIME)
+        self.assertEqual(
+            session["raw_ref"],
+            f"opencode:{db_path}:session:{_OPENCODE_SESSION_ID}",
+        )
+        self.assertEqual(session["parse_status"], "ok")
+
+        message = by_kind["message"][0]
+        self.assertEqual(message["record_id"], _OPENCODE_MESSAGE_ID)
+        self.assertEqual(message["session_id"], _OPENCODE_SESSION_ID)
+        self.assertIsNone(message["message_id"])
+        self.assertEqual(message["raw_text"], _OPENCODE_MESSAGE_DATA)
+        self.assertEqual(message["parse_status"], "ok")
+        self.assertEqual(
+            message["raw_ref"],
+            f"opencode:{db_path}:message:{_OPENCODE_MESSAGE_ID}",
+        )
+
+        parts = {rec["record_id"]: rec for rec in by_kind["part"]}
+        bash = parts[_OPENCODE_PART_BASH_ID]
+        self.assertEqual(bash["session_id"], _OPENCODE_SESSION_ID)
+        self.assertEqual(bash["message_id"], _OPENCODE_MESSAGE_ID)
+        self.assertEqual(bash["raw_text"], _OPENCODE_BASH_DATA)
+        self.assertEqual(bash["parse_status"], "ok")
+        self.assertEqual(bash["payload"]["tool"], "bash")
+
+        text = parts[_OPENCODE_PART_TEXT_ID]
+        self.assertEqual(text["session_id"], _OPENCODE_SESSION_ID)
+        self.assertEqual(text["message_id"], _OPENCODE_MESSAGE_ID)
+        self.assertEqual(text["raw_text"], _OPENCODE_TEXT_DATA)
+        self.assertEqual(text["parse_status"], "ok")
+
+        bad = parts[_OPENCODE_PART_BAD_ID]
+        self.assertEqual(bad["raw_text"], _OPENCODE_MALFORMED_DATA)
+        self.assertEqual(bad["parse_status"], "malformed")
+        self.assertIsNone(bad["payload"])
+
+        ok_parts_and_message = [
+            rec
+            for rec in result.records
+            if rec["source_kind"] in ("part", "message") and rec["parse_status"] == "ok"
+        ]
+        expected_data = {
+            ("message", _OPENCODE_MESSAGE_ID): _OPENCODE_MESSAGE_DATA,
+            ("part", _OPENCODE_PART_BASH_ID): _OPENCODE_BASH_DATA,
+            ("part", _OPENCODE_PART_TEXT_ID): _OPENCODE_TEXT_DATA,
+        }
+        for rec in ok_parts_and_message:
+            self.assertEqual(
+                rec["raw_text"],
+                expected_data[(rec["source_kind"], rec["record_id"])],
+            )
+
+    def test_tuple_cursor_does_not_reyield_same_timestamp_rows(self):
+        def seed(conn):
+            conn.execute(
+                "INSERT INTO session (id, time_created, time_updated) VALUES (?, ?, ?)",
+                ("ses_a", _OPENCODE_TIME, _OPENCODE_TIME),
+            )
+            conn.execute(
+                "INSERT INTO session (id, time_created, time_updated) VALUES (?, ?, ?)",
+                ("ses_b", _OPENCODE_TIME, _OPENCODE_TIME),
+            )
+            conn.execute(
+                "INSERT INTO message (id, session_id, time_created, time_updated, data) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("msg_a", "ses_a", _OPENCODE_TIME, _OPENCODE_TIME, "{}"),
+            )
+            conn.execute(
+                "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("prt_a", "msg_a", "ses_a", _OPENCODE_TIME, _OPENCODE_TIME, "{}"),
+            )
+            conn.execute(
+                "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("prt_b", "msg_a", "ses_a", _OPENCODE_TIME, _OPENCODE_TIME, "{}"),
+            )
+
+        _write_opencode_db(self.env, seed)
+        first = capture_opencode.capture(self.env, {})
+        part_ids = sorted(
+            rec["record_id"] for rec in first.records if rec["source_kind"] == "part"
+        )
+        self.assertEqual(part_ids, ["prt_a", "prt_b"])
+        session_ids = sorted(
+            rec["record_id"] for rec in first.records if rec["source_kind"] == "session"
+        )
+        self.assertEqual(session_ids, ["ses_a", "ses_b"])
+        second = capture_opencode.capture(self.env, first.cursor)
+        self.assertEqual(second.records, [])
+        self.assertEqual(second.stats["captured"], 0)
+
+    def test_nested_storage_json_captured_losslessly(self):
+        storage = paths.opencode_storage_dir(self.env)
+        nested = os.path.join(storage, "session_diff")
+        os.makedirs(nested, exist_ok=True)
+        good_rel = os.path.join("session_diff", "x.json")
+        bad_rel = os.path.join("session_diff", "bad.json")
+        good_path = os.path.join(storage, good_rel)
+        bad_path = os.path.join(storage, bad_rel)
+        with open(good_path, "w", encoding="utf-8") as handle:
+            handle.write("[]")
+        malformed_text = "not-json{{{"
+        with open(bad_path, "w", encoding="utf-8") as handle:
+            handle.write(malformed_text)
+
+        result = capture_opencode.capture(self.env, {})
+        legacy = [rec for rec in result.records if rec["source_kind"] == "legacy_storage_file"]
+        self.assertEqual(len(legacy), 2)
+        by_id = {rec["record_id"]: rec for rec in legacy}
+
+        good = by_id[good_rel]
+        self.assertEqual(good["raw_text"], "[]")
+        self.assertEqual(good["parse_status"], "ok")
+        self.assertEqual(good["payload"], [])
+        self.assertEqual(
+            good["raw_ref"],
+            f"opencode:{storage}:legacy_storage_file:{good_rel}",
+        )
+
+        bad = by_id[bad_rel]
+        self.assertEqual(bad["raw_text"], malformed_text)
+        self.assertEqual(bad["parse_status"], "malformed")
+        self.assertIsNone(bad["payload"])
+
+        second = capture_opencode.capture(self.env, result.cursor)
+        self.assertEqual(
+            [rec for rec in second.records if rec["source_kind"] == "legacy_storage_file"],
+            [],
+        )
+
+
+_RTK_HISTORY_SCHEMA = """
+CREATE TABLE commands (
+    id INTEGER PRIMARY KEY,
+    timestamp TEXT,
+    original_cmd TEXT,
+    rtk_cmd TEXT,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    saved_tokens INTEGER,
+    savings_pct REAL,
+    exec_time_ms INTEGER,
+    project_path TEXT
+);
+CREATE TABLE parse_failures (
+    id INTEGER PRIMARY KEY,
+    timestamp TEXT,
+    raw_command TEXT,
+    error_message TEXT,
+    fallback_succeeded INTEGER
+);
+"""
+
+
+def _write_rtk_history_db(env, seed_fn):
+    db_path = paths.rtk_history_db_path(env)
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(_RTK_HISTORY_SCHEMA)
+        seed_fn(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+def _seed_rtk_history(conn):
+    conn.execute(
+        "INSERT INTO commands (id, timestamp, original_cmd, rtk_cmd, input_tokens, "
+        "output_tokens, saved_tokens, savings_pct, exec_time_ms, project_path) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            1,
+            "2026-09-10T12:00:00Z",
+            "ls -la",
+            "ls -la",
+            10,
+            5,
+            2,
+            20.0,
+            15,
+            "/tmp/proj",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO parse_failures (id, timestamp, raw_command, error_message, "
+        "fallback_succeeded) VALUES (?, ?, ?, ?, ?)",
+        (1, "2026-09-10T12:01:00Z", "weird {{{", "parse error", 0),
+    )
+
+
+class TestCaptureRtk(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="ai-kit-um-rtk-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.env = _scratch_env(self.root)
+
+    def test_neither_source_present_yields_zero(self):
+        result = capture_rtk.capture(self.env, {})
+        self.assertIsInstance(result, CaptureResult)
+        self.assertEqual(result.records, [])
+        self.assertEqual(result.stats["captured"], 0)
+
+    def test_history_and_parse_failures_tagged(self):
+        db_path = _write_rtk_history_db(self.env, _seed_rtk_history)
+        result = capture_rtk.capture(self.env, {})
+        self.assertEqual(len(result.records), 2)
+        by_type = {rec["payload"]["source_type"]: rec for rec in result.records}
+        self.assertEqual(set(by_type), {"history", "parse_failure"})
+
+        history = by_type["history"]
+        self.assertEqual(history["runtime"], "rtk")
+        self.assertEqual(history["payload"]["original_cmd"], "ls -la")
+        self.assertEqual(history["payload"]["id"], 1)
+        self.assertTrue(history["raw_ref"].startswith(f"rtk:{db_path}:history:"))
+
+        failure = by_type["parse_failure"]
+        self.assertEqual(failure["payload"]["raw_command"], "weird {{{")
+        self.assertEqual(failure["payload"]["id"], 1)
+        self.assertEqual(failure["parse_status"], "ok")
+
+        second = capture_rtk.capture(self.env, result.cursor)
+        self.assertEqual(second.records, [])
+
+    def test_tee_logs_matching_and_nonmatching_filenames(self):
+        tee_dir = paths.rtk_tee_dir(self.env)
+        os.makedirs(tee_dir, exist_ok=True)
+        matching = "1788953554_brew_install_--help.log"
+        nonmatching = "odd-name.log"
+        with open(os.path.join(tee_dir, matching), "w", encoding="utf-8") as handle:
+            handle.write("matching tee content\n")
+        with open(os.path.join(tee_dir, nonmatching), "w", encoding="utf-8") as handle:
+            handle.write("nonmatching tee content\n")
+
+        result = capture_rtk.capture(self.env, {})
+        tee_recs = [
+            rec for rec in result.records if rec["payload"]["source_type"] == "tee"
+        ]
+        self.assertEqual(len(tee_recs), 2)
+        by_name = {rec["payload"]["filename"]: rec for rec in tee_recs}
+
+        match = by_name[matching]
+        self.assertEqual(match["payload"]["captured_epoch"], 1788953554)
+        self.assertEqual(match["payload"]["filename_hint"], "brew_install_--help")
+        self.assertEqual(match["payload"]["content"], "matching tee content\n")
+        self.assertIn("sha256", match["payload"])
+        self.assertEqual(len(match["payload"]["sha256"]), 64)
+
+        odd = by_name[nonmatching]
+        self.assertIsNone(odd["payload"]["captured_epoch"])
+        self.assertEqual(odd["payload"]["filename_hint"], nonmatching)
+        self.assertEqual(odd["payload"]["content"], "nonmatching tee content\n")
+
+        second = capture_rtk.capture(self.env, result.cursor)
+        self.assertEqual(
+            [rec for rec in second.records if rec["payload"]["source_type"] == "tee"],
+            [],
+        )
+
+    def test_tee_rewritten_same_filename_different_hash_recaptured(self):
+        tee_dir = paths.rtk_tee_dir(self.env)
+        os.makedirs(tee_dir, exist_ok=True)
+        name = "1789000000_cmd.log"
+        path = os.path.join(tee_dir, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("first content\n")
+        first = capture_rtk.capture(self.env, {})
+        first_tee = [
+            rec for rec in first.records if rec["payload"]["source_type"] == "tee"
+        ]
+        self.assertEqual(len(first_tee), 1)
+        first_hash = first_tee[0]["payload"]["sha256"]
+
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("second content different\n")
+        second = capture_rtk.capture(self.env, first.cursor)
+        second_tee = [
+            rec for rec in second.records if rec["payload"]["source_type"] == "tee"
+        ]
+        self.assertEqual(len(second_tee), 1)
+        self.assertEqual(second_tee[0]["payload"]["filename"], name)
+        self.assertNotEqual(second_tee[0]["payload"]["sha256"], first_hash)
+        self.assertEqual(second_tee[0]["payload"]["content"], "second content different\n")
 
 
 class TestRawStore(unittest.TestCase):

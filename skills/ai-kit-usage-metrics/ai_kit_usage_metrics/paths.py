@@ -53,6 +53,32 @@ def claude_projects_dir(env: dict) -> str:
     )
 
 
+def _xdg_data_home(env: dict) -> str:
+    return env.get("XDG_DATA_HOME") or os.path.join(
+        env.get("HOME", ""), ".local", "share"
+    )
+
+
+def opencode_db_path(env: dict) -> str:
+    """`${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db`."""
+    return os.path.join(_xdg_data_home(env), "opencode", "opencode.db")
+
+
+def opencode_storage_dir(env: dict) -> str:
+    """`${XDG_DATA_HOME:-$HOME/.local/share}/opencode/storage`."""
+    return os.path.join(_xdg_data_home(env), "opencode", "storage")
+
+
+def rtk_history_db_path(env: dict) -> str:
+    """`${XDG_DATA_HOME:-$HOME/.local/share}/rtk/history.db`."""
+    return os.path.join(_xdg_data_home(env), "rtk", "history.db")
+
+
+def rtk_tee_dir(env: dict) -> str:
+    """`${XDG_DATA_HOME:-$HOME/.local/share}/rtk/tee`."""
+    return os.path.join(_xdg_data_home(env), "rtk", "tee")
+
+
 def catalog_path(env: dict) -> str:
     """`${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/spec/model-catalog.json`.
 

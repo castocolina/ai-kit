@@ -33,7 +33,11 @@ import unittest
 
 # A roomy PTY window so the full Arrange board (3 lane panels + focused-chip +
 # OFF tray + live preview) renders without being clipped off a short screen.
-_PTY_ROWS = 50
+# Also needs to fit the whole Choose-screen skills picksbox (grows by ~2-3
+# rows per installed skill, plus the "N of M components selected" footer
+# below it) — 50 stopped being enough once the usage-metrics skill (05-01)
+# brought the installed-skill count to 13.
+_PTY_ROWS = 80
 _PTY_COLS = 120
 
 # Absolute path to the wizard so the tests work from any cwd.
