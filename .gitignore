@@ -7,3 +7,5 @@ __pycache__
 .atl/
 .claude/
 .codegraph/
+.aikit/
+.planning/phases/*/.review-diagnostics/

@@ -1406,15 +1406,22 @@ def _atomic_write_json(path, data):
             os.fsync(handle.fileno())
         os.chmod(tmp, mode)
         os.replace(tmp, target)
+    except OSError:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    # Best-effort directory fsync: the rename above already succeeded, so a
+    # failure here (seen on some network filesystems) must never be reported
+    # to the caller as a write failure — the correctness-relevant guarantee
+    # (the new content is durably in place under `target`) already holds.
+    try:
         dir_fd = os.open(dirname, os.O_RDONLY)
         try:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
     except OSError:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+        pass
 
 
 def _hook_entries_shape_ok(entries, nested):
@@ -1502,6 +1509,7 @@ def wire_hook_claude(settings, hook_script, dry):
     and returns False rather than aborting a wizard commit.
     """
     if not os.path.isdir(os.path.dirname(settings) or "."):
+        print("skipped Claude Code SessionStart hook — no claude dir")
         return False
     ok, data, _ = _load_hook_config(
         settings, CLAUDE_HOOK_EVENT, nested=True)
@@ -2606,6 +2614,35 @@ def cmd_check(env):
     return subprocess.call([sys.executable, "-S", paths.statusline_doctor, "--check"])
 
 
+def cmd_config_doctor(env, tty, dry):
+    """Launch the Config Doctor TUI (read-only in this phase).
+
+    ``dry`` is accepted now so Wave 3's apply flow can read it from this same
+    call site without a signature change. Nothing in this wave writes.
+    """
+    isatty_fn = getattr(tty, "isatty", None)
+    if tty is None or not callable(isatty_fn) or not isatty_fn():
+        print(
+            "error: cmd_config_doctor reached without a real terminal — this is a bug. "
+            "require_tty() should have exited before this point.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    _tools_dir = os.path.dirname(os.path.abspath(__file__))
+    if _tools_dir not in sys.path:
+        sys.path.insert(0, _tools_dir)
+
+    import config_doctor_app  # pylint: disable=import-outside-toplevel
+    import config_doctor_checks  # pylint: disable=import-outside-toplevel
+
+    catalog = config_doctor_checks.build_catalog(env)
+    ctx = config_doctor_app.ConfigDoctorContext(catalog=catalog, apply=None)
+    with stdin_on_tty():
+        config_doctor_app.run_config_doctor(ctx)
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # uv bootstrap — ensure textual (and the whole rich runtime) is available
 # before any wizard UI code runs.  The status-line RENDER path must never
@@ -2721,9 +2758,21 @@ def main(argv=None):
         "--examples", default=None, metavar="all|none|<ids>",
         help="example external segments to install (non-interactive); "
              "comma/space-separated ids, or all/none. Default: offer pre-checked.")
+    parser.add_argument(
+        "--config-doctor",
+        action="store_true",
+        help="launch the config diagnostics TUI (read-only in this phase)",
+    )
     args = parser.parse_args(argv)
     env = os.environ
     dry = args.dry_run
+    if args.config_doctor:
+        ensure_rich_runtime(env)
+        tty = cast("_StdTty", require_tty(open_tty()))
+        try:
+            return cmd_config_doctor(env, tty, dry)
+        finally:
+            tty.close()
     if args.subcommand in ("install", "reconfigure"):
         ensure_rich_runtime(env)              # may re-exec; must be BEFORE open_tty
         tty = cast("_StdTty", require_tty(open_tty()))  # fail-closed (FR-W.1/B)

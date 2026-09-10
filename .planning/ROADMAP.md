@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1.1: Autonomous-Run Infrastructure (INSERTED)** - Wire mandatory cross-AI plan-review convergence and cross-AI execution delegation, and build the clean-room Docker/Podman E2E harness, so Phases 1.2-5 can run under `/gsd-autonomous` per `.planning/ONESHOT-RULES.md` (completed 2026-09-09)
 - [x] **Phase 1.2: Multi-CLI Runtime Foundation** - Harden the installer's git fetch, add runtime self-detection, and research opencode's sidebar/status-bar viability (completed 2026-09-09)
 - [x] **Phase 2: Opencode Provider Management** - List and safely remove custom opencode providers via atomic, surgical JSONC edits (completed 2026-09-09)
-- [ ] **Phase 3: Tool-Substitution Awareness Hook** - Inject a live-verified rtk tool-substitution briefing into Claude Code session starts
+- [x] **Phase 3: Tool-Substitution Awareness Hook** - Inject a live-verified rtk tool-substitution briefing into Claude Code session starts (completed 2026-09-09)
 - [ ] **Phase 4: Config Doctor** - One-screen, confidence-labeled config diagnostics across Claude Code/opencode/Codex with confirmed per-item apply
 - [ ] **Phase 5: Usage Metrics Dashboard** - Capture, refine, and locally visualize how uz actually uses AI CLIs
 
@@ -117,8 +117,8 @@ Plans:
 
 Plans:
 
-- [ ] 03-01-PLAN.md — Tracer-first slice from a live PATH probe to a wired Claude Code `SessionStart` entry, the four-state `rtk init --show` detection contract over the curated 5-pair list, the two-part host-agnostic message composition, and the atomic append-if-absent `settings.json` wiring (REQ-tool-substitution-detection-composition, REQ-tool-substitution-hook-wiring)
-- [ ] 03-02-PLAN.md — Cursor `sessionStart` wiring against its lowercase-keyed flat array, D-10's symmetric `unwire_hook_*` in `cmd_uninstall`, and the host-coverage doc recording opencode as the one accepted gap; closes behind `make test`/`lint`/`validate`/`e2e-docker` (REQ-tool-substitution-hook-wiring)
+- [x] 03-01-PLAN.md — Tracer-first slice from a live PATH probe to a wired Claude Code `SessionStart` entry, the four-state `rtk init --show` detection contract over the curated 5-pair list, the two-part host-agnostic message composition, and the atomic append-if-absent `settings.json` wiring (REQ-tool-substitution-detection-composition, REQ-tool-substitution-hook-wiring)
+- [x] 03-02-PLAN.md — Cursor `sessionStart` wiring against its lowercase-keyed flat array, D-10's symmetric `unwire_hook_*` in `cmd_uninstall`, and the host-coverage doc recording opencode as the one accepted gap; closes behind `make test`/`lint`/`validate`/`e2e-docker` (REQ-tool-substitution-hook-wiring)
 
 ### Phase 4: Config Doctor
 
@@ -133,7 +133,14 @@ Plans:
   4. Choosing to apply a change requires an explicit, per-item confirmation naming the exact change about to be made — there is no bulk "apply all," and security-relevant applies show the literal resulting config before writing.
   5. Applying a JSONC change to opencode preserves every other byte of the file, using the same tested surgical-edit approach as Phase 2's provider-management skill.
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+
+- [ ] 04-01-PLAN.md — Tracer: one Claude Code retention row read-only end-to-end through `--config-doctor`'s review screen (REQ-config-doctor-diagnostic-checks, REQ-config-doctor-review-screen)
+- [ ] 04-02-PLAN.md — Full Checks Catalog across all four runtimes plus the cross-runtime rtk-Cursor-integration row, read-only (REQ-config-doctor-diagnostic-checks, REQ-config-doctor-review-screen)
+- [ ] 04-03-PLAN.md — Apply flow: atomic/surgical writers, per-item confirm with literal-resulting-config for security-relevant rows, no bulk apply-all (REQ-config-doctor-apply-flow)
+
 **UI hint**: yes
 
 ### Phase 5: Usage Metrics Dashboard
@@ -161,7 +168,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5
 | 1.1. Autonomous-Run Infrastructure (INSERTED) | 1/1 | Complete    | 2026-09-09 |
 | 1.2. Multi-CLI Runtime Foundation | 4/4 | Complete    | 2026-09-09 |
 | 2. Opencode Provider Management | 2/2 | Complete    | 2026-09-09 |
-| 3. Tool-Substitution Awareness Hook | 0/2 | Planned | - |
+| 3. Tool-Substitution Awareness Hook | 2/2 | Complete    | 2026-09-09 |
 | 4. Config Doctor | 0/TBD | Not started | - |
 | 5. Usage Metrics Dashboard | 0/TBD | Not started | - |
 

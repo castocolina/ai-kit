@@ -68,14 +68,17 @@ def emit(message):
 def main():
     """Detect, compose, emit. Never raise, never exit non-zero."""
     sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-    import detect
-
     try:
+        import detect
         _drain_stdin()
         detection = detect.detect_substitutions()
         message = detect.compose_message(detection)
         emit(message)
     except Exception:
+        # Covers a missing/corrupted sibling `detect.py` (partial install,
+        # interrupted copy, disk error) as well as any detect/compose
+        # failure — the import must degrade the same way every other
+        # failure path does, never raise past this function.
         sys.stdout.write("{}")
         sys.stdout.flush()
     return 0

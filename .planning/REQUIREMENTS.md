@@ -27,8 +27,8 @@ Decisions.
 
 ### Tool-Substitution Awareness Hook
 
-- [ ] **REQ-tool-substitution-detection-composition**: Pure, independently-tested live-detection + message-composition functions report which curated `rtk` substitutions (`cat`↔`bat`, `grep`↔`rg`, `find`↔`fd`, `sed`↔`sd`, `ls`↔`eza`) are genuinely active on this machine (binary presence + `registry.toml` `audience` + `rtk init --show`), never reciting catalog intent as verified; this curated set is the single source of truth mirrored by the usage-metrics command-family axis.
-- [ ] **REQ-tool-substitution-hook-wiring**: A new Claude Code `SessionStart` hook fires on `"startup"` and `"compact"`, injects the composed message via `hookSpecificOutput.additionalContext`, degrades gracefully (no error, no perceptible delay) when `rtk`/`tools-installer` is absent, and documents opencode's lack of an equivalent hook as an accepted gap. (Amended 2026-09-08: Cursor is NOT an accepted gap — live-verified during Phase 4 discussion that Cursor supports a `sessionStart` hook type, currently active on this machine at `~/.cursor/hooks.json`. The equivalent briefing must also be wired for Cursor's `sessionStart` hook; only opencode remains a genuine, documented gap.)
+- [x] **REQ-tool-substitution-detection-composition**: Pure, independently-tested live-detection + message-composition functions report which curated `rtk` substitutions (`cat`↔`bat`, `grep`↔`rg`, `find`↔`fd`, `sed`↔`sd`, `ls`↔`eza`) are genuinely active on this machine (binary presence + `registry.toml` `audience` + `rtk init --show`), never reciting catalog intent as verified; this curated set is the single source of truth mirrored by the usage-metrics command-family axis. (Complete 2026-09-09 — see `03-01-PLAN.md`/`03-01-SUMMARY.md`.)
+- [x] **REQ-tool-substitution-hook-wiring**: A new Claude Code `SessionStart` hook fires on `"startup"` and `"compact"`, injects the composed message via `hookSpecificOutput.additionalContext`, degrades gracefully (no error, no perceptible delay) when `rtk`/`tools-installer` is absent, and documents opencode's lack of an equivalent hook as an accepted gap. (Amended 2026-09-08: Cursor is NOT an accepted gap — live-verified during Phase 4 discussion that Cursor supports a `sessionStart` hook type, currently active on this machine at `~/.cursor/hooks.json`. The equivalent briefing must also be wired for Cursor's `sessionStart` hook; only opencode remains a genuine, documented gap. Complete 2026-09-09 — see `03-01-PLAN.md`/`03-01-SUMMARY.md`, `03-02-PLAN.md`/`03-02-SUMMARY.md`.)
 
 ### Config Doctor
 
@@ -71,8 +71,8 @@ milestone — see that requirement's acceptance criteria.)
 | REQ-multi-cli-opencode-ui-research | Phase 1.2 | Complete |
 | REQ-opencode-provider-list-remove | Phase 2 | Complete |
 | REQ-opencode-provider-cross-reference-check | Phase 2 | Complete |
-| REQ-tool-substitution-detection-composition | Phase 3 | Pending |
-| REQ-tool-substitution-hook-wiring | Phase 3 | Pending |
+| REQ-tool-substitution-detection-composition | Phase 3 | Complete |
+| REQ-tool-substitution-hook-wiring | Phase 3 | Complete |
 | REQ-config-doctor-diagnostic-checks | Phase 4 | Pending |
 | REQ-config-doctor-review-screen | Phase 4 | Pending |
 | REQ-config-doctor-apply-flow | Phase 4 | Pending |
