@@ -16,7 +16,7 @@ Decisions.
 
 ### Multi-CLI Runtime Support
 
-- [ ] **REQ-multi-cli-install-single-branch**: `tools/install.sh`'s primary git clone adds `--single-branch` (alongside existing `--branch`/`--depth 1`), leaving the tarball-fallback and `git pull --ff-only` paths unchanged, pinned by a new `tests/test_install.sh` case.
+- [x] **REQ-multi-cli-install-single-branch**: `tools/install.sh`'s primary git clone adds `--single-branch` (alongside existing `--branch`/`--depth 1`), leaving the tarball-fallback and `git pull --ff-only` paths unchanged, pinned by a new `tests/test_install.sh` case.
 - [ ] **REQ-multi-cli-runtime-detection**: A `detect_current_runtime()` function identifies `claude`/`opencode`/`codex`/`cursor`/`unknown`, surfaced as an optional `native_runtime` field on model-catalog entries with `cli: None`; `ai-kit-spec-config/SKILL.md` documents the labeling and passes `skill-judge` review. (Amended 2026-09-08: `cursor` added as a valid value — Phase 1.2's own CONTEXT.md D-02 already scopes `cursor-agent` into the empirical detection research; the original wording omitting it from the valid-value set was an oversight, caught during Phase 4 discussion. Phase renumbered from 1 to 1.2 on 2026-09-08 — see `.planning/ROADMAP.md`'s Phase Numbering note.)
 - [ ] **REQ-multi-cli-opencode-ui-research**: A committed markdown research report enumerates opencode's documented plugin hooks, assesses sidebar/status-bar viability, cross-references `anomalyco/opencode#5971`, and gives an explicit recommendation — no code changes.
 
@@ -66,7 +66,7 @@ milestone — see that requirement's acceptance criteria.)
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REQ-multi-cli-install-single-branch | Phase 1.2 | Pending |
+| REQ-multi-cli-install-single-branch | Phase 1.2 | Complete |
 | REQ-multi-cli-runtime-detection | Phase 1.2 | Pending |
 | REQ-multi-cli-opencode-ui-research | Phase 1.2 | Pending |
 | REQ-opencode-provider-list-remove | Phase 2 | Pending |
@@ -82,6 +82,7 @@ milestone — see that requirement's acceptance criteria.)
 | REQ-usage-metrics-classification-refinement-loop | Phase 5 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 14 total
 - Mapped to phases: 14
 - Unmapped: 0 ✓

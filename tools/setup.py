@@ -1745,13 +1745,25 @@ def _persist_layout(paths, state, dry, known_ext_ids=None):
     revert (FR-W.5).  Returns True on success (including no-op and dry-run).
 
     ``known_ext_ids``, when given, is the set of external segment ids to treat
-    as "already installed" for the boolean-toggle special-case below — it lets
-    a caller that pre-installs a bundled example ONLY to satisfy the doctor's
-    structural validation (see ``_make_wizard_commit`` in this module) still
-    have that example treated as "not yet installed" here, preserving the
-    original "no explicit boolean write → renderer shows it by default" outcome
-    for a first-time install. ``None`` (the default, used by every other
-    caller) falls back to a live disk scan exactly as before."""
+    as "already installed" for the boolean-toggle special-case below. An id
+    EXCLUDED from ``known_ext_ids`` skips the explicit-boolean-write branch
+    entirely — it is treated as "not yet installed", so no `<id> = bool` line
+    is written and the renderer's own present-on-disk default (ON) applies.
+    An id INCLUDED in ``known_ext_ids`` is eligible for an explicit write
+    whenever ``state["segments"][id]`` differs from that default.
+
+    This lets a caller that pre-installs a bundled example ONLY to satisfy the
+    doctor's structural validation (see ``_make_wizard_commit`` in this
+    module) still get correct behavior for BOTH desired states of a
+    newly-installed example: exclude its id to preserve the original "not yet
+    installed -> no explicit boolean, renderer shows it by default" outcome
+    when the desired state IS on/default; include its id (the caller must do
+    this explicitly — exclusion is not safe for every case) when the desired
+    state is off, so an explicit `<id> = false` gets written instead of
+    silently rendering on. The caller is responsible for deciding, per id,
+    which of the two applies — this function only honors whatever set it is
+    given. ``None`` (the default, used by every other caller) falls back to a
+    live disk scan exactly as before."""
     if dry:
         print("[dry-run] would write status-line config — no changes made",
               file=sys.stderr)
@@ -1983,13 +1995,21 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
     )
 
 
-def _make_wizard_commit(paths, entries, dry, counts):
+def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
     """Build the ``commit`` callable the wizard runs IN-UI on Review-confirm.
 
     It performs the real install — component symlinks, then (if the user adopted
     the status line at the gate) the doctor-validated config write + settings.json
     wiring — honoring the adopt decision already made in the UI (``assume_overwrite``
     so a foreign command isn't re-prompted on the terminal).
+
+    ``examples_flag`` is the CLI ``--examples`` value (``None``/``"all"``/``"none"``/
+    an id list), forwarded from ``cmd_install``. It is the AUTHORITATIVE desired
+    state for every discovered bundled example when given (mirrors
+    ``resolve_example_selection``'s own "flag wins" semantics), overriding the
+    wizard's own toggle. ``None`` (no flag on the command line) falls back to the
+    wizard's own ``state["segments"]`` toggle — see the in-body comment below for
+    why this distinction is load-bearing.
 
     The callable is invoked from a Textual worker thread, so it must NOT print to
     stdout/stderr (that would corrupt the alternate screen). All diagnostics the
@@ -2034,15 +2054,60 @@ def _make_wizard_commit(paths, entries, dry, counts):
                 # install_example_segments is idempotent (skips unchanged
                 # content) and does not itself enable a segment, so installing
                 # every discovered example unconditionally here, and again,
-                # redundantly, from cmd_install after the wizard returns, is safe.
+                # redundantly, from cmd_install after the wizard returns, is
+                # safe for the ON case — but the OFF case needs one more step:
+                # a newly-installed example whose desired state is OFF must NOT
+                # be left out of known_ext_ids, or _persist_layout's
+                # boolean-toggle loop below can never see it and an explicit
+                # `false` never gets written, so it renders ON by the same
+                # present-on-disk default (tools/status-line.py:
+                # seg_defaults.setdefault(id, True)) — silently overriding a
+                # user who declined it in the Arrange board, or a fresh
+                # `--examples=none` install. So: fold back in any
+                # newly-installed id whose desired state is explicitly OFF,
+                # forcing an explicit `false` write for it, while every
+                # ON/untouched id keeps the original "not yet installed" -
+                # renderer-default treatment.
+                #
+                # "Desired state" itself has two different sources depending
+                # on how this install was driven, and getting this wrong
+                # reintroduces the same bug from the other direction:
+                #   - an explicit `--examples` flag on the command line
+                #     (examples_flag is not None) is AUTHORITATIVE — it wins
+                #     over the wizard's own toggles (cmd_install's post-wizard
+                #     step already documents this "flag wins" contract), so
+                #     `--examples=all` must render every discovered example
+                #     ON even though the wizard's own default toggle for an
+                #     un-installed bundled example starts OFF; `--examples=
+                #     none`/an explicit id list must be honored exactly.
+                #   - no flag ⇒ fall back to the wizard's own toggle
+                #     (state["segments"]), so a user who never touches the
+                #     Arrange board's example toggle (it defaults OFF for a
+                #     not-yet-installed bundled example — see
+                #     _build_wizard_context) gets the OFF outcome CR-01
+                #     describes, and a user who explicitly turns it on gets ON.
                 known_ext_ids = {e["id"] for e in _discover_user_segments(paths.segments_dir)}
                 examples_dir = os.path.join(paths.install_dir, "examples", "segments")
                 examples = discover_example_segments(examples_dir)
                 if examples and not dry:
                     install_example_segments(examples, paths.config_dir)
-                ok = persist_statusline(paths, state, adopt, dry, tty=None,
-                                        assume_overwrite=True,
-                                        known_ext_ids=known_ext_ids)
+                if examples_flag is not None:
+                    desired_ids = {
+                        e["id"] for e in resolve_example_selection(examples_flag, examples)
+                    }
+                else:
+                    desired_ids = {
+                        e["id"] for e in examples if state["segments"].get(e["id"], False)
+                    }
+                newly_installed_desired_off = {
+                    e["id"] for e in examples
+                    if e["id"] not in known_ext_ids and e["id"] not in desired_ids
+                }
+                ok = persist_statusline(
+                    paths, state, adopt, dry, tty=None,
+                    assume_overwrite=True,
+                    known_ext_ids=known_ext_ids | newly_installed_desired_off,
+                )
         return {"ok": ok, "adopt": adopt, "log": buf.getvalue()}
     return commit
 
@@ -2080,10 +2145,16 @@ def _make_apply_housekeeping(  # pylint: disable=too-many-arguments,too-many-pos
 
 
 def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    paths, entries, installed, tty, dry, counts,
+    paths, entries, installed, tty, dry, counts, examples_flag=None,
 ):
     """Build the engine context and run the Textual wizard.  Applies the chosen
     selection on confirm; a None result (abort) leaves everything as-is.
+
+    ``examples_flag`` is forwarded unchanged to ``_make_wizard_commit`` — see
+    its docstring for why an explicit CLI ``--examples`` value must override
+    the wizard's own segment toggles for the in-UI commit, not just the
+    (now largely redundant, see IN-01) post-wizard install step in
+    ``cmd_install``.
 
     Fail-closed / single-path: this function is only reached after
     ``require_tty(open_tty())`` in ``main()`` has guaranteed a real,
@@ -2122,7 +2193,7 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
     # Done screen reflects the actual result. Inject the commit + housekeeping
     # callables here, where paths/entries/dry/counts are in scope.
     ctx = ctx._replace(
-        commit=_make_wizard_commit(paths, entries, dry, counts),
+        commit=_make_wizard_commit(paths, entries, dry, counts, examples_flag=examples_flag),
         apply_housekeeping=_make_apply_housekeeping(
             paths, entries, stale, predecessor_cands, dry, counts),
     )
@@ -2168,7 +2239,8 @@ def cmd_install(env, tty, dry, examples_flag=None):
     # Stale-link pruning and predecessor-link repointing (previously raw
     # pre-UI terminal prompts here) now happen INSIDE the wizard's housekeeping
     # gate — see launch_wizard / _build_wizard_context / _make_apply_housekeeping.
-    result = launch_wizard(paths, entries, installed, tty, dry, counts)
+    result = launch_wizard(paths, entries, installed, tty, dry, counts,
+                           examples_flag=examples_flag)
 
     # Example external segments (system_memory, …). Aborting the wizard
     # (result is None) is a full no-op — nothing further is installed. On a

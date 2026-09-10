@@ -1,19 +1,19 @@
 ---
 gsd_state_version: "1.0"
 milestone: v1.0
-current_phase: 1.2
+current_phase: "1.2"
 current_phase_name: Multi-CLI Runtime Foundation
-status: planning
-stopped_at: Phase 1.1 (Autonomous-Run Infrastructure) closed — 01.1-01-PLAN.md executed, all 3 tasks complete, make e2e-docker green; ready to plan Phase 1.2
-last_updated: "2026-09-09T16:14:00.000Z"
+status: executing
+stopped_at: Completed 01.2-01-PLAN.md
+last_updated: "2026-09-09T17:58:08.245Z"
 last_activity: 2026-09-09
-last_activity_desc: Executed 01.1-01-PLAN.md (Phase 1.1 Autonomous-Run Infrastructure) — fixed Dockerfile make gap, hardened .dockerignore/run.sh, discovered and fixed a real wizard example-segment install-ordering bug in tools/setup.py, verified make e2e-docker green with real evidence, amended ROADMAP.md Success Criteria 1 and 4, fixed stale ONESHOT wording/DRAFT banners, documented the D-09 fixture convention.
-state_head: 945d3db
+last_activity_desc: Completed 01.2-01-PLAN.md (installer --single-branch clone)
+state_head: 4aca0c719742fd18b4e4e07341c3ff34b40c8e52
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  total_plans: 5
+  completed_plans: 2
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-09-07)
 
 ## Current Position
 
-Phase: 1.2 of 6 (Multi-CLI Runtime Foundation) — Phase 1.1 (Autonomous-Run Infrastructure) complete
-Plan: TBD (not yet planned)
-Status: Ready to plan
-Last activity: 2026-09-09 — Executed 01.1-01-PLAN.md (Phase 1.1 Autonomous-Run Infrastructure): fixed Dockerfile make gap, hardened .dockerignore/run.sh, discovered and fixed a real wizard example-segment install-ordering bug in tools/setup.py, verified make e2e-docker green with real evidence, amended ROADMAP.md Success Criteria 1 and 4, fixed stale ONESHOT wording/DRAFT banners, documented the D-09 fixture convention.
+Phase: 1.2 (Multi-CLI Runtime Foundation) — IN PROGRESS
+Plan: 01 complete; next is 01.2-02
+Status: Executing
+Last activity: 2026-09-09 — Completed 01.2-01-PLAN.md
 
 Progress: [█░░░░░░░░░] 1/6 phases (17%)
 
@@ -38,22 +38,28 @@ Progress: [█░░░░░░░░░] 1/6 phases (17%)
 
 **Velocity:**
 
-- Total plans completed: 1
-- Average duration: ~50 min
-- Total execution time: ~1 hour
+- Total plans completed: 3
+- Average duration: ~36 min
+- Total execution time: ~1h 9min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1.1 Autonomous-Run Infrastructure | 1 | ~50min | ~50min |
+| 1.2 Multi-CLI Runtime Foundation | 1/4 | 9 min | 9 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 01.1-01 (~50 min)
+- Last 5 plans: 01.1-01 (~50 min), 01.2-01 (9 min)
 - Trend: -
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 1.2 P01 | 9 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -77,6 +83,7 @@ acceptance step for this milestone's scope.
   from unconditional "live-verified" to "correctly-configured... plus a
   documented, exercised Rule 2 fallback" — route reachability is inherently
   transient (evidenced by 01.1-REVIEWS.md's two review cycles).
+- [Phase 1.2]: The --single-branch token is explicitness/defensiveness, not a fetch-behavior bugfix: --depth 1 already implies --single-branch per git-scm.com/docs/git-clone unless --no-single-branch is given. — 01.2-RESEARCH.md critical finding; never claim this fixes a bug that did not exist.
 
 ### Pending Todos
 
@@ -100,6 +107,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-09T16:14:00.000Z
-Stopped at: Completed 01.1-01-PLAN.md (Phase 1.1 Autonomous-Run Infrastructure closed)
+Last session: 2026-09-09T17:58:08.232Z
+Stopped at: Completed 01.2-01-PLAN.md
 Resume file: None

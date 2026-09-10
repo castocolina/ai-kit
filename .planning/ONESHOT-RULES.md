@@ -31,20 +31,22 @@ any ran just because the previous one did:
    one from prior sessions (`has_context: true`) — do not re-run discuss-phase and do not
    second-guess their locked decisions. Phase 1.1 is infrastructure-only and may skip a
    full discuss-phase cycle per its own `ROADMAP.md` entry, but still needs a plan.
-2. **Plan** — `PLAN.md` file(s) exist for every wave, and carry `cross_ai: true` in
-   frontmatter when cross-AI execution delegation is intended for that plan (Rule 2).
-   Every plan, regardless of `cross_ai`, goes through plan-review convergence (Rule 2) —
-   `workflow.plan_review_convergence: true` is unconditional in this project's
-   `.planning/config.json`, not opt-in per plan.
-3. **Plan-review convergence** — run planning through `--converge` with
+2. **Plan** — `PLAN.md` file(s) exist for every wave, and always carry `cross_ai: true`
+   in frontmatter (Rule 2). This is what makes `execute-phase.md` delegate execution to
+   `workflow.cross_ai_command` instead of a local `gsd-executor` — every plan is planned
+   as a cross-AI-execution candidate, not opt-in per plan.
+3. **Plan-review convergence** — always run planning through `--converge` with
    `review.default_reviewers`/`review.models` (`.planning/config.json`). 0 unresolved
-   HIGH concerns before execution. This is mandatory for every plan in this milestone —
-   unlike GSD's own default (opt-in via config), this project's `config.json` has
-   `plan_review_convergence: true` set unconditionally (Phase 1.1's own success
-   criterion #1) — never skip it because a plan "looks simple."
+   HIGH concerns before execution. This runs for every plan regardless of its `cross_ai`
+   value — `workflow.plan_review_convergence: true` is unconditional in this project's
+   `.planning/config.json`, triggered by invoking planning through `--converge` /
+   `/gsd-plan-review-convergence`, not by the plan's own frontmatter. Never skip it
+   because a plan "looks simple."
 4. **Execute** — every wave's `SUMMARY.md` exists, tree is clean, `make test` green.
-   Record whether cross-AI execution fired (`workflow.cross_ai_execution`) or fell back
-   to a local `gsd-executor` — either is acceptable, but note which happened and why.
+   With `cross_ai: true` set (item 2), execution must actually attempt delegation —
+   record which route ran: primary `router-env/my-coding`, fallback `xai/grok-4.6`, or
+   last-resort local `gsd-executor` under a documented Rule 7 circuit-breaker (both
+   routes tried and failed). Never skip straight to local without trying both.
 5. **Code review** — `REVIEW.md` shows clean or all findings fixed.
 6. **Clean-room E2E gate** — for any plan touching `tools/*.py`, `tools/install.sh`,
    or a `skills/*/SKILL.md` that reads/writes a runtime config file, `make e2e-docker`
@@ -82,10 +84,17 @@ Grep/Read loop, per `AGENTS.md`'s Code Exploration section, throughout this run.
    - **Execution delegation** — PRIMARY: opencode `router-env/my-coding`
      (`workflow.cross_ai_command`). FALLBACK: `opencode run --model xai/grok-4.6`.
      Record which path actually ran.
-   - Every generated `PLAN.md` whose execution should delegate to cross-AI must carry
-     `cross_ai: true` in its frontmatter — that field is what makes `execute-phase.md`
-     delegate to `workflow.cross_ai_command` instead of a local `gsd-executor`. Add it if
-     a planner omits it when cross-AI execution is intended for that plan.
+   - **Every generated `PLAN.md` always carries `cross_ai: true` in its frontmatter.**
+     `execute-phase.md` reads that field to delegate execution to
+     `workflow.cross_ai_command` instead of a local `gsd-executor`. Planners set this on
+     every plan they write — never leave it unset.
+   - **`cross_ai: true` only controls execution delegation. Plan-review convergence is a
+     separate, always-on mechanism** (Per-Phase Checklist item 3): it is triggered by
+     `workflow.plan_review_convergence: true` plus invoking planning through
+     `--converge` / `/gsd-plan-review-convergence`, and runs for every plan regardless
+     of that plan's own `cross_ai` value. Do not conflate the two — a plan can converge
+     through review with `cross_ai: false` (and vice versa); they are independent gates
+     this project happens to require together.
    - Never substitute one role's model for the other's — plan-review and execution are
      different jobs; a fallback for one is not a fallback for the other.
    - Do not assume a configured route is reachable just because it's present in
@@ -93,6 +102,11 @@ Grep/Read loop, per `AGENTS.md`'s Code Exploration section, throughout this run.
      connection. This run's FIRST cross-AI call for a given role is that role's actual
      confirmation; apply that role's fallback before treating a failure as Rule 7's
      circuit breaker, and do not invent a third model on the fly.
+   - **Local `gsd-executor` is a last resort, not a peer option.** It is reachable only
+     after BOTH the execution primary (`router-env/my-coding`) AND its Rule 2 fallback
+     (`xai/grok-4.6`) have been tried and failed for the current plan — that is Rule 7's
+     circuit-breaker condition, and reaching it must be recorded as `human_verification`
+     with which two routes failed and how, not silently absorbed as "ran locally."
 
 3. **Config-safety is absolute, not phase-scoped.** Mirrors `AGENTS.md`'s own
    Non-Negotiable Rules — every write this run makes to any runtime config file (real or

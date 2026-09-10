@@ -32,7 +32,7 @@ proposals; no separate ADR exists for them (see PROJECT.md Key Decisions).
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1.1: Autonomous-Run Infrastructure (INSERTED)** - Wire mandatory cross-AI plan-review convergence and cross-AI execution delegation, and build the clean-room Docker/Podman E2E harness, so Phases 1.2-5 can run under `/gsd-autonomous` per `.planning/ONESHOT-RULES.md`
+- [x] **Phase 1.1: Autonomous-Run Infrastructure (INSERTED)** - Wire mandatory cross-AI plan-review convergence and cross-AI execution delegation, and build the clean-room Docker/Podman E2E harness, so Phases 1.2-5 can run under `/gsd-autonomous` per `.planning/ONESHOT-RULES.md` (completed 2026-09-09)
 - [ ] **Phase 1.2: Multi-CLI Runtime Foundation** - Harden the installer's git fetch, add runtime self-detection, and research opencode's sidebar/status-bar viability
 - [ ] **Phase 2: Opencode Provider Management** - List and safely remove custom opencode providers via atomic, surgical JSONC edits
 - [ ] **Phase 3: Tool-Substitution Awareness Hook** - Inject a live-verified rtk tool-substitution briefing into Claude Code session starts
@@ -71,7 +71,15 @@ Plans:
   3. `ai-kit-spec-config`'s wizard visibly labels `native_runtime` in its ranked candidate output, and the change passes `skill-judge` review.
   4. A committed markdown research report exists enumerating opencode's documented plugin hooks, assessing each for sidebar/status-bar viability, cross-referencing `anomalyco/opencode#5971`, and giving an explicit recommendation.
 
-**Plans**: TBD
+**Plans**: 1/4 plans executed
+
+Plans:
+
+- [x] 01.2-01-PLAN.md — Harden tools/install.sh's primary git clone with `--single-branch` (REQ-multi-cli-install-single-branch)
+- [ ] 01.2-02-PLAN.md — Implement detect_current_runtime() + native_runtime schema validation in model_catalog.py/config_io.py, resolving RESEARCH.md's Open Question 1 (REQ-multi-cli-runtime-detection)
+- [ ] 01.2-03-PLAN.md — Write the opencode sidebar/status-bar plugin viability research report (REQ-multi-cli-opencode-ui-research)
+- [ ] 01.2-04-PLAN.md — Wire native_runtime into ai-kit-spec-config's wizard (Step 2.7/Step 3) and pass skill-judge review (REQ-multi-cli-runtime-detection)
+
 **UI hint**: yes
 
 ### Phase 2: Opencode Provider Management
@@ -140,8 +148,8 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1.1. Autonomous-Run Infrastructure (INSERTED) | 1/1 | In Progress|  |
-| 1.2. Multi-CLI Runtime Foundation | 0/TBD | Not started | - |
+| 1.1. Autonomous-Run Infrastructure (INSERTED) | 1/1 | Complete    | 2026-09-09 |
+| 1.2. Multi-CLI Runtime Foundation | 1/4 | In Progress|  |
 | 2. Opencode Provider Management | 0/TBD | Not started | - |
 | 3. Tool-Substitution Awareness Hook | 0/TBD | Not started | - |
 | 4. Config Doctor | 0/TBD | Not started | - |
