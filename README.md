@@ -79,9 +79,12 @@ into an ephemeral environment.
 **Fail-closed / interactive-only.** The wizard requires a real terminal. If
 there is no usable TTY, or `uv`/`textual` cannot be obtained, or the terminal
 is too small to render the TUI, it prints a clear reason and exits non-zero.
-There is no plain-menu fallback and no headless-defaults mode — this is
-deliberate. A clean `Ctrl-C`, `q`, or `esc` abort leaves the original config
-intact.
+There is no plain-menu fallback, and the wizard itself never falls back to
+headless defaults — this is deliberate. A separate, explicit
+`setup.py install --headless` exists for CI and containers (see [Headless
+install](#headless-install-ci--containers--no-tty) below); it is opt-in per
+piece and defaults to doing nothing, so it is not a "headless defaults" mode.
+A clean `Ctrl-C`, `q`, or `esc` abort leaves the original config intact.
 
 #### Install-picks screen keybindings
 
@@ -334,9 +337,14 @@ A cross-platform Python reference (system available memory) ships at
 the wizard discovers every provider under the repo's `examples/segments/`,
 presents them **pre-checked** (default-ON), and copies the ones you keep into
 your config segments dir (executable, atomic, idempotent — re-running never
-duplicates). Headless / scripted runs are governed entirely by a flag and never
-prompt: `--examples=all|none|<ids>` (default `all`; `<ids>` is a comma/space list
-of segment ids). Disable an installed provider later like any segment:
+duplicates). Scripted runs are governed entirely by a flag and never prompt:
+`--examples=all|none|<ids>` (`<ids>` is a comma/space list of segment ids). The
+default differs by entry point: `install.sh` / `make install` default to `all`,
+while `python3 tools/setup.py install --headless` installs **no** example
+segments unless you pass `--examples` explicitly — nothing is wired or copied
+headlessly unless asked. See "Headless install (CI / containers / no TTY)" below
+for the full non-interactive flag set (`--skills`, `--with-statusline`,
+`--with-hooks`). Disable an installed provider later like any segment:
 `[segments] system_memory = false`.
 
 **Disable** a provider explicitly: `[segments] aws-session = false` (or
@@ -384,12 +392,56 @@ fetch and uses the checked-out files directly):
 git clone -b feat/x https://github.com/castocolina/ai-kit && cd ai-kit && make install
 ```
 
+### Headless install (CI / containers / no TTY)
+
+`python3 tools/setup.py install --headless` skips the interactive wizard
+entirely — no TTY, no Textual. Bare `--headless` links and wires nothing (a
+pure no-op). Combine with the flags below to opt into specific pieces —
+nothing is touched unless explicitly requested:
+
+- `--skills all` — link every skill (or `--skills name1,name2` for a subset).
+  Additive only: never unlinks a skill already present from a prior run.
+- `--with-statusline` — wire the ai-kit status line into `settings.json`. If the
+  Claude Code config dir does not exist, this is skipped with a message and
+  nothing is created — ai-kit never conjures a `~/.claude/` on a machine that
+  has no Claude Code.
+- `--with-hooks` — wire the SessionStart hook for Claude Code and Cursor. Same
+  rule: a host that isn't installed here is skipped, not an error.
+- `--examples=all|none|<ids>` — the same pre-existing flag `install.sh` and
+  the interactive wizard use for bundled example segments; it works
+  identically here, with or without `--headless`.
+
+Example: `python3 tools/setup.py install --headless --skills all --with-statusline --with-hooks --examples all`
+
+Exit codes: `0` success (including "nothing requested" and "that host isn't
+installed here"), `1` something you asked for did not happen — a config file
+ai-kit refuses to overwrite because it cannot parse it, a foreign `statusLine`
+it will not replace without a human saying yes, a skill whose link path is
+occupied by a real file or a non-ai-kit symlink, or a failed example-segment
+copy. `2` is a usage error (bad flag combination, or the interactive path
+finding no TTY). A `1` leaves every other requested step still attempted.
+
+**This does not fetch or update the repo.** `--headless` is a flag to
+`tools/setup.py`, which never syncs anything itself — syncing is
+`tools/install.sh`'s job, and only in piped/bootstrap mode (`curl ... | bash`).
+Running `install.sh` (or `make install`) from an existing local clone, or
+invoking `tools/setup.py` directly as above, explicitly skips the fetch. For
+a CI/container job that needs the latest kit, fetch or `git pull` the repo
+yourself first, then run `tools/setup.py install --headless ...` against it —
+or pipe the bootstrapper fresh each time if you want the fetch included:
+`curl -fsSL .../install.sh | bash -s -- install --headless --skills all`.
+
 **Wizard modes.** The interactive wizard requires a real terminal and a
 sufficiently large window (see [The install wizard](#the-install-wizard) above).
-If either is missing it exits non-zero with a clear message — there is no
-plain-menu fallback. For non-interactive installs, pass `--examples=all|none|<ids>`
-to control which example segments are copied; the rest of the link/prune/statusline
-steps are always non-interactive.
+If either is missing, `install.sh`/`make install` exits non-zero with a clear
+message — there is no plain-menu fallback inside the wizard itself. For a
+fully non-interactive run instead, use `python3 tools/setup.py install
+--headless` (see "Headless install (CI / containers / no TTY)" above) — its
+flags are the one non-interactive contract: `--examples=all|none|<ids>`
+controls which example segments are copied (identically whether or not
+`--headless` is also passed — it is a pre-existing top-level flag), and
+`--skills`/`--with-statusline`/`--with-hooks` (headless-only) control
+everything else the wizard would otherwise ask about interactively.
 
 Environment overrides: `AI_KIT_DIR`, `AI_KIT_REPO`, `AI_KIT_BRANCH`, `CLAUDE_CONFIG_DIR`.
 

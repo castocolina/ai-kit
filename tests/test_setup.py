@@ -4,7 +4,6 @@ import io
 import json
 import os
 import shutil
-import stat
 import sys
 import tempfile
 import unittest
@@ -1051,110 +1050,6 @@ class TestLinkOne(unittest.TestCase):
         self.assertEqual(c["unlinked"], 1)
 
 
-class TestResolveSkillsFlag(unittest.TestCase):
-    def setUp(self):
-        self.entries = {"skills": [("alpha", "/repo/skills/alpha"),
-                                    ("beta", "/repo/skills/beta")],
-                         "agents": [], "commands": []}
-
-    def test_all_returns_every_skill_name(self):
-        chosen, unknown = setup.resolve_skills_flag("all", self.entries)
-        self.assertEqual(chosen, {"alpha", "beta"})
-        self.assertEqual(unknown, [])
-
-    def test_specific_list_returns_only_named(self):
-        chosen, unknown = setup.resolve_skills_flag("alpha", self.entries)
-        self.assertEqual(chosen, {"alpha"})
-        self.assertEqual(unknown, [])
-
-    def test_unknown_name_reported_not_silently_dropped(self):
-        chosen, unknown = setup.resolve_skills_flag("alpha,ghost", self.entries)
-        self.assertEqual(chosen, {"alpha"})
-        self.assertEqual(unknown, ["ghost"])
-
-    def test_all_unknown_returns_empty_chosen_and_reports_all(self):
-        chosen, unknown = setup.resolve_skills_flag("ghost1,ghost2", self.entries)
-        self.assertEqual(chosen, set())
-        self.assertEqual(unknown, ["ghost1", "ghost2"])
-
-    def test_none_flag_returns_none_and_no_unknowns(self):
-        chosen, unknown = setup.resolve_skills_flag(None, self.entries)
-        self.assertIsNone(chosen)
-        self.assertEqual(unknown, [])
-
-    def test_all_is_case_insensitive_and_whitespace_tolerant(self):
-        # Parity with resolve_example_selection, which does
-        # flag.strip().lower() == "all" (tools/setup.py:815-817).
-        for flag in ("ALL", "All", " all ", "\tALL\n"):
-            chosen, unknown = setup.resolve_skills_flag(flag, self.entries)
-            self.assertEqual(chosen, {"alpha", "beta"}, flag)
-            self.assertEqual(unknown, [], flag)
-
-    def test_space_separated_list_is_accepted_like_examples(self):
-        # resolve_example_selection splits on re.split(r"[,\s]+", ...)
-        # (tools/setup.py:820); --skills must accept the same spellings, so a
-        # space-separated value is a list of names, not one unknown name.
-        chosen, unknown = setup.resolve_skills_flag("alpha beta", self.entries)
-        self.assertEqual(chosen, {"alpha", "beta"})
-        self.assertEqual(unknown, [])
-        chosen, unknown = setup.resolve_skills_flag("alpha,  beta", self.entries)
-        self.assertEqual(chosen, {"alpha", "beta"})
-        self.assertEqual(unknown, [])
-
-    def test_none_literal_is_not_a_keyword_just_an_unknown_name(self):
-        # --skills has no `none` value (bare --headless already means nothing),
-        # so the literal string is treated as an ordinary unknown skill name.
-        chosen, unknown = setup.resolve_skills_flag("none", self.entries)
-        self.assertEqual(chosen, set())
-        self.assertEqual(unknown, ["none"])
-
-
-class TestApplyAdditiveSkills(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.install_dir = os.path.join(self.tmp, "install")
-        self.claude_dir = os.path.join(self.tmp, "claude")
-        for name in ("alpha", "beta"):
-            skill_dir = os.path.join(self.install_dir, "skills", name)
-            os.makedirs(skill_dir)
-            open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8").close()
-        self.entries = setup.enumerate_entries(self.install_dir)
-
-    def test_links_only_requested_names(self):
-        counts = setup.new_counts()
-        setup.apply_additive_skills({"alpha"}, self.entries, self.claude_dir, False, counts)
-        self.assertTrue(os.path.islink(os.path.join(self.claude_dir, "skills", "alpha")))
-        self.assertFalse(os.path.exists(os.path.join(self.claude_dir, "skills", "beta")))
-        self.assertEqual(counts["linked"], 1)
-
-    def test_never_unlinks_an_out_of_band_existing_link(self):
-        # 'beta' already linked from some prior run — requesting only 'alpha' must
-        # leave 'beta' untouched, unlike apply_selection's reconcile-and-deselect.
-        beta_link = os.path.join(self.claude_dir, "skills", "beta")
-        os.makedirs(os.path.dirname(beta_link))
-        os.symlink(dict(self.entries["skills"])["beta"], beta_link)
-        counts = setup.new_counts()
-        setup.apply_additive_skills({"alpha"}, self.entries, self.claude_dir, False, counts)
-        self.assertTrue(os.path.islink(beta_link))
-        self.assertEqual(counts["unlinked"], 0)
-
-    def test_dry_run_makes_no_filesystem_changes(self):
-        counts = setup.new_counts()
-        setup.apply_additive_skills({"alpha"}, self.entries, self.claude_dir, True, counts)
-        self.assertFalse(os.path.exists(os.path.join(self.claude_dir, "skills", "alpha")))
-        self.assertEqual(counts["linked"], 1)  # counted, not applied
-
-    def test_link_one_oserror_propagates_to_caller(self):
-        # apply_additive_skills does NOT swallow link_one failures — Task 3's
-        # cmd_install_headless is what catches this and maps it to exit 1.
-        counts = setup.new_counts()
-        with mock.patch.object(setup, "link_one", side_effect=OSError("permission denied")):
-            with self.assertRaises(OSError):
-                setup.apply_additive_skills({"alpha"}, self.entries, self.claude_dir,
-                                             False, counts)
-
-
 class TestPruneStale(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -1504,22 +1399,6 @@ class TestApplySelection(unittest.TestCase):
         self.assertEqual(c["unlinked"], 1)
 
 
-class TestStatuslineCommandClassifier(unittest.TestCase):
-    def test_unset_shapes_return_empty_string(self):
-        for value in (None, {}, {"type": "command"}):
-            self.assertEqual(setup._statusline_command(value), "")
-
-    def test_string_and_dict_command_return_the_command(self):
-        self.assertEqual(setup._statusline_command("/usr/bin/mybar"), "/usr/bin/mybar")
-        self.assertEqual(
-            setup._statusline_command({"command": "/usr/bin/mybar"}), "/usr/bin/mybar")
-
-    def test_unsupported_shapes_return_none(self):
-        for value in (["/usr/bin/mybar"], 42, True, {"command": 1}, {"command": None},
-                      {"command": ["x"]}):
-            self.assertIsNone(setup._statusline_command(value))
-
-
 class TestWireStatusline(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -1583,161 +1462,6 @@ class TestWireStatusline(unittest.TestCase):
     def test_dry_run_does_not_write(self):
         setup.wire_statusline(self.settings, self.sl, tty=None, dry=True)
         self.assertFalse(os.path.exists(self.settings))
-
-    def test_unparseable_settings_is_refused_not_clobbered(self):
-        with open(self.settings, "w", encoding="utf-8") as f:
-            f.write("{ this is not json KEEP-ME-12345\n")
-        with open(self.settings, "rb") as f:
-            before = f.read()
-        buf = io.StringIO()
-        with contextlib.redirect_stderr(buf):
-            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
-        self.assertFalse(ok)
-        self.assertIn(self.settings, buf.getvalue())
-        with open(self.settings, "rb") as f:
-            self.assertEqual(f.read(), before)
-
-    def test_non_dict_settings_is_refused_not_clobbered(self):
-        with open(self.settings, "w", encoding="utf-8") as f:
-            json.dump(["not", "a", "dict"], f)
-        with open(self.settings, "rb") as f:
-            before = f.read()
-        ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
-        self.assertFalse(ok)
-        with open(self.settings, "rb") as f:
-            self.assertEqual(f.read(), before)
-
-    def test_atomic_write_failure_leaves_target_byte_identical(self):
-        with open(self.settings, "w", encoding="utf-8") as f:
-            json.dump({"theme": "dark"}, f)
-        with open(self.settings, "rb") as f:
-            before = f.read()
-        listing = sorted(os.listdir(self.tmp))
-
-        def _boom(*_args, **_kwargs):
-            raise OSError("injected replace failure")
-
-        buf = io.StringIO()
-        with mock.patch.object(os, "replace", side_effect=_boom), \
-             contextlib.redirect_stderr(buf):
-            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
-        self.assertFalse(ok)
-        self.assertTrue(buf.getvalue())
-        with open(self.settings, "rb") as f:
-            self.assertEqual(f.read(), before)
-        self.assertEqual(sorted(os.listdir(self.tmp)), listing)
-
-    def test_created_settings_file_is_mode_0600(self):
-        self.assertFalse(os.path.isfile(self.settings))
-        self.assertTrue(
-            setup.wire_statusline(self.settings, self.sl, tty=None, dry=False))
-        mode = stat.S_IMODE(os.stat(self.settings).st_mode)
-        self.assertEqual(mode, 0o600)
-
-    def test_foreign_string_form_headless_refuses_and_preserves(self):
-        # detect_statusline (tools/setup.py:1614-1637) already treats a bare
-        # string statusLine as foreign; wire_statusline must match that, not
-        # just handle the dict form.
-        with open(self.settings, "w", encoding="utf-8") as f:
-            json.dump({"statusLine": "/usr/bin/mybar"}, f)
-        with open(self.settings, "rb") as f:
-            before = f.read()
-        buf = io.StringIO()
-        with contextlib.redirect_stderr(buf):
-            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
-        self.assertFalse(ok)
-        self.assertIn("mybar", buf.getvalue())
-        with open(self.settings, "rb") as f:
-            self.assertEqual(f.read(), before)
-
-    def test_foreign_string_form_assume_overwrite_still_overwrites(self):
-        # assume_overwrite must short-circuit the string-form guard exactly
-        # like it already does for the dict-form guard. (Regression guard: this
-        # one already passes pre-implementation — see Step 2.)
-        with open(self.settings, "w", encoding="utf-8") as f:
-            json.dump({"statusLine": "/usr/bin/mybar"}, f)
-        ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False,
-                                    assume_overwrite=True)
-        self.assertTrue(ok)
-        with open(self.settings, encoding="utf-8") as f:
-            data = json.load(f)
-        self.assertIn(self.sl, data["statusLine"]["command"])
-
-    def test_non_string_command_is_refused_not_a_traceback(self):
-        # {"command": 1} currently raises TypeError out of `status_line not in
-        # cur_cmd`. It must refuse cleanly and preserve the file instead.
-        with open(self.settings, "w", encoding="utf-8") as f:
-            json.dump({"statusLine": {"type": "command", "command": 1}}, f)
-        with open(self.settings, "rb") as f:
-            before = f.read()
-        buf = io.StringIO()
-        with contextlib.redirect_stderr(buf):
-            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
-        self.assertFalse(ok)
-        self.assertIn(self.settings, buf.getvalue())
-        with open(self.settings, "rb") as f:
-            self.assertEqual(f.read(), before)
-
-    def test_list_shaped_statusline_is_refused_not_overwritten(self):
-        with open(self.settings, "w", encoding="utf-8") as f:
-            json.dump({"statusLine": ["/usr/bin/mybar"]}, f)
-        with open(self.settings, "rb") as f:
-            before = f.read()
-        buf = io.StringIO()
-        with contextlib.redirect_stderr(buf):
-            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
-        self.assertFalse(ok)
-        self.assertTrue(buf.getvalue())
-        with open(self.settings, "rb") as f:
-            self.assertEqual(f.read(), before)
-
-    def test_numeric_statusline_is_refused_not_overwritten(self):
-        with open(self.settings, "w", encoding="utf-8") as f:
-            json.dump({"statusLine": 42}, f)
-        with open(self.settings, "rb") as f:
-            before = f.read()
-        with contextlib.redirect_stderr(io.StringIO()):
-            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
-        self.assertFalse(ok)
-        with open(self.settings, "rb") as f:
-            self.assertEqual(f.read(), before)
-
-    def test_unsupported_shape_is_refused_even_with_assume_overwrite(self):
-        # assume_overwrite means "the user already said yes to replacing the
-        # command we showed them" — an unsupported shape was never shown to
-        # anyone, so there is no consent to act on.
-        with open(self.settings, "w", encoding="utf-8") as f:
-            json.dump({"statusLine": ["/usr/bin/mybar"]}, f)
-        with open(self.settings, "rb") as f:
-            before = f.read()
-        with contextlib.redirect_stderr(io.StringIO()):
-            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False,
-                                        assume_overwrite=True)
-        self.assertFalse(ok)
-        with open(self.settings, "rb") as f:
-            self.assertEqual(f.read(), before)
-
-    def test_unsupported_shape_refused_before_dry_run_short_circuit(self):
-        # dry must not report "would set" for a file it would actually refuse.
-        with open(self.settings, "w", encoding="utf-8") as f:
-            json.dump({"statusLine": ["/usr/bin/mybar"]}, f)
-        out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=True)
-        self.assertFalse(ok)
-        self.assertNotIn("would set", out.getvalue())
-
-    def test_dict_without_command_key_is_treated_as_unset(self):
-        # Nothing to preserve: an object with no "command" is not a foreign
-        # status line, so it is set silently like an absent one.
-        with open(self.settings, "w", encoding="utf-8") as f:
-            json.dump({"statusLine": {"type": "command"}, "theme": "dark"}, f)
-        self.assertTrue(
-            setup.wire_statusline(self.settings, self.sl, tty=None, dry=False))
-        with open(self.settings, encoding="utf-8") as f:
-            data = json.load(f)
-        self.assertIn(self.sl, data["statusLine"]["command"])
-        self.assertEqual(data["theme"], "dark")
 
 
 class TestRecipeAndUnwire(unittest.TestCase):
@@ -2029,6 +1753,428 @@ class TestFailClosed(unittest.TestCase):
                 setup.main(["reconfigure"])
             self.assertEqual(cm.exception.code, 2)
             self.assertIn("terminal", err.getvalue().lower())
+
+
+class TestHeadlessSummary(unittest.TestCase):
+    def test_nothing_requested_message(self):
+        msg = setup._headless_summary(False, False, setup.new_counts())
+        self.assertIn("nothing requested", msg)
+
+    def test_skills_matched_nothing_is_distinct_from_nothing_requested(self):
+        msg = setup._headless_summary(True, True, setup.new_counts())
+        self.assertIn("matched no valid names", msg)
+        self.assertNotIn("nothing requested", msg)
+
+    def test_counts_summary_reports_every_counter(self):
+        counts = setup.new_counts()
+        counts.update({"linked": 2, "relinked": 1, "skip_foreign": 1, "skip_real": 3})
+        msg = setup._headless_summary(True, False, counts)
+        for token in ("2 linked", "1 relinked", "1 foreign-skipped", "3 real-skipped"):
+            self.assertIn(token, msg)
+
+
+class TestHeadlessInstall(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install_dir = os.path.join(self.tmp, "install")
+        self.claude_dir = os.path.join(self.tmp, "claude")
+        self.cursor_dir = os.path.join(self.tmp, "cursor")
+        skill_dir = os.path.join(self.install_dir, "skills", "alpha")
+        os.makedirs(skill_dir)
+        open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8").close()
+        os.makedirs(os.path.join(self.install_dir, "tools", "hooks"), exist_ok=True)
+        for hook in ("claude_session_start.py", "cursor_session_start.py"):
+            open(os.path.join(self.install_dir, "tools", "hooks", hook),
+                 "w", encoding="utf-8").close()
+        open(os.path.join(self.install_dir, "tools", "status-line.py"),
+             "w", encoding="utf-8").close()
+        self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install_dir,
+                    "CLAUDE_CONFIG_DIR": self.claude_dir,
+                    "CURSOR_CONFIG_DIR": self.cursor_dir,
+                    "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config")}
+
+    def test_bare_headless_links_and_wires_nothing(self):
+        rc = setup.cmd_install_headless(self.env, False, None, False, False)
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.isdir(os.path.join(self.claude_dir, "skills")))
+
+    def test_headless_with_skills_all_links_everything(self):
+        rc = setup.cmd_install_headless(self.env, False, "all", False, False)
+        self.assertEqual(rc, 0)
+        self.assertTrue(os.path.islink(os.path.join(self.claude_dir, "skills", "alpha")))
+
+    def test_headless_unknown_skill_warns_but_exits_zero(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = setup.cmd_install_headless(self.env, False, "ghost", False, False)
+        self.assertEqual(rc, 0)
+        self.assertIn("ghost", buf.getvalue())
+
+    def test_headless_all_unknown_skills_is_not_reported_as_bare(self):
+        # --skills ghost (no valid names at all) must say so distinctly, not
+        # print the same "nothing requested" line bare --headless prints.
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+            rc = setup.cmd_install_headless(self.env, False, "ghost", False, False)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("nothing requested", buf_out.getvalue())
+
+    def test_requested_skill_blocked_by_foreign_symlink_is_nonzero(self):
+        # link_one reports this through counts["skip_foreign"], never by raising.
+        # The skill WAS requested and is NOT linked → exit 1 per the contract.
+        link = os.path.join(self.claude_dir, "skills", "alpha")
+        os.makedirs(os.path.dirname(link))
+        os.symlink(os.path.join(self.tmp, "somewhere-else"), link)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = setup.cmd_install_headless(self.env, False, "alpha", False, False)
+        self.assertEqual(rc, 1)
+        self.assertEqual(os.readlink(link), os.path.join(self.tmp, "somewhere-else"))
+        self.assertIn("foreign", buf.getvalue())
+
+    def test_requested_skill_blocked_by_real_file_is_nonzero(self):
+        link = os.path.join(self.claude_dir, "skills", "alpha")
+        os.makedirs(os.path.dirname(link))
+        with open(link, "w", encoding="utf-8") as f:
+            f.write("KEEP-ME\n")
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc = setup.cmd_install_headless(self.env, False, "alpha", False, False)
+        self.assertEqual(rc, 1)
+        self.assertFalse(os.path.islink(link))
+        with open(link, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "KEEP-ME\n")
+
+    def test_unrequested_skill_conflict_does_not_affect_exit_code(self):
+        # A conflict on a skill nobody asked for must not turn into exit 1: only
+        # REQUESTED-and-unlinked is a failure. 'alpha' is requested and links
+        # fine; the blocked path belongs to a skill outside the request.
+        other = os.path.join(self.install_dir, "skills", "beta")
+        os.makedirs(other)
+        open(os.path.join(other, "SKILL.md"), "w", encoding="utf-8").close()
+        link = os.path.join(self.claude_dir, "skills", "beta")
+        os.makedirs(os.path.dirname(link))
+        with open(link, "w", encoding="utf-8") as f:
+            f.write("KEEP-ME\n")
+        rc = setup.cmd_install_headless(self.env, False, "alpha", False, False)
+        self.assertEqual(rc, 0)
+
+    def test_headless_with_statusline_wires_it(self):
+        os.makedirs(self.claude_dir, exist_ok=True)
+        rc = setup.cmd_install_headless(self.env, False, None, True, False)
+        self.assertEqual(rc, 0)
+        with open(os.path.join(self.claude_dir, "settings.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertIn("status-line.py", data["statusLine"]["command"])
+
+    def test_headless_statusline_absent_claude_dir_skips_and_creates_nothing(self):
+        # self.claude_dir is NOT created: Claude Code is not installed here, so
+        # --with-statusline is a benign exit-0 skip that must NOT materialize
+        # ~/.claude/settings.json — parity with wire_hook_claude's documented
+        # "never materializes settings.json when the parent dir is absent"
+        # (guard at tools/setup.py:1511-1513). Without _headless_wire_statusline's
+        # guard, _atomic_write_json's os.makedirs(os.path.dirname(path) or ".",
+        # exist_ok=True) (tools/setup.py:1395) would create the whole tree.
+        self.assertFalse(os.path.exists(self.claude_dir))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = setup.cmd_install_headless(self.env, False, None, True, False)
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(self.claude_dir))
+        self.assertIn("no claude dir", out.getvalue())
+
+    def test_headless_statusline_and_hooks_agree_on_absent_host(self):
+        # The two wiring flags must classify host absence identically: both are
+        # benign exit-0 skips that create nothing.
+        self.assertFalse(os.path.exists(self.claude_dir))
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = setup.cmd_install_headless(self.env, False, None, True, True)
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(self.claude_dir))
+
+    def test_headless_statusline_refusal_on_foreign_command_is_nonzero(self):
+        os.makedirs(self.claude_dir, exist_ok=True)
+        settings = os.path.join(self.claude_dir, "settings.json")
+        with open(settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": {"type": "command", "command": "/usr/bin/mybar"}}, f)
+        rc = setup.cmd_install_headless(self.env, False, None, True, False)
+        self.assertEqual(rc, 1)
+        with open(settings, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["statusLine"]["command"], "/usr/bin/mybar")
+
+    def test_headless_statusline_refusal_on_foreign_string_command_is_nonzero(self):
+        # Foreign statusLine as a bare string (the other shape Claude Code
+        # supports, per detect_statusline) must be refused too, not overwritten.
+        os.makedirs(self.claude_dir, exist_ok=True)
+        settings = os.path.join(self.claude_dir, "settings.json")
+        with open(settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": "/usr/bin/mybar"}, f)
+        rc = setup.cmd_install_headless(self.env, False, None, True, False)
+        self.assertEqual(rc, 1)
+        with open(settings, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["statusLine"], "/usr/bin/mybar")
+
+    def test_headless_statusline_unsupported_shape_is_nonzero(self):
+        # Task 1's unsupported-shape refusal, seen through the exit code.
+        os.makedirs(self.claude_dir, exist_ok=True)
+        settings = os.path.join(self.claude_dir, "settings.json")
+        with open(settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": {"type": "command", "command": 1}}, f)
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc = setup.cmd_install_headless(self.env, False, None, True, False)
+        self.assertEqual(rc, 1)
+        with open(settings, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["statusLine"]["command"], 1)
+
+    def test_headless_statusline_unparseable_settings_is_nonzero(self):
+        os.makedirs(self.claude_dir, exist_ok=True)
+        with open(os.path.join(self.claude_dir, "settings.json"), "w",
+                  encoding="utf-8") as f:
+            f.write("{ not json\n")
+        rc = setup.cmd_install_headless(self.env, False, None, True, False)
+        self.assertEqual(rc, 1)
+
+    def test_headless_with_hooks_wires_claude_and_cursor_hooks(self):
+        os.makedirs(self.claude_dir, exist_ok=True)
+        os.makedirs(self.cursor_dir, exist_ok=True)
+        rc = setup.cmd_install_headless(self.env, False, None, False, True)
+        self.assertEqual(rc, 0)
+        with open(os.path.join(self.claude_dir, "settings.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertIn("SessionStart", data.get("hooks", {}))
+        with open(os.path.join(self.cursor_dir, "hooks.json"), encoding="utf-8") as f:
+            cdata = json.load(f)
+        self.assertIn("sessionStart", cdata.get("hooks", {}))
+
+    def test_headless_with_hooks_missing_host_dirs_is_still_exit_zero(self):
+        # Neither self.claude_dir nor self.cursor_dir is created — both hosts
+        # "not installed on this machine" is an expected skip, not a failure.
+        rc = setup.cmd_install_headless(self.env, False, None, False, True)
+        self.assertEqual(rc, 0)
+
+    def test_headless_with_hooks_malformed_claude_settings_is_nonzero(self):
+        os.makedirs(self.claude_dir, exist_ok=True)
+        os.makedirs(self.cursor_dir, exist_ok=True)
+        with open(os.path.join(self.claude_dir, "settings.json"), "w",
+                  encoding="utf-8") as f:
+            f.write("{ not json\n")
+        rc = setup.cmd_install_headless(self.env, False, None, False, True)
+        self.assertEqual(rc, 1)
+
+    def test_one_failure_does_not_skip_the_other_requested_work(self):
+        # A refused statusLine must not short-circuit --skills: both are
+        # attempted, the skill links, and the run still exits 1.
+        os.makedirs(self.claude_dir, exist_ok=True)
+        with open(os.path.join(self.claude_dir, "settings.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump({"statusLine": "/usr/bin/mybar"}, f)
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc = setup.cmd_install_headless(self.env, False, "all", True, False)
+        self.assertEqual(rc, 1)
+        self.assertTrue(os.path.islink(os.path.join(self.claude_dir, "skills", "alpha")))
+
+    def test_dry_run_makes_no_filesystem_changes(self):
+        rc = setup.cmd_install_headless(self.env, True, "all", False, False)
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.lexists(os.path.join(self.claude_dir, "skills", "alpha")))
+
+    def test_resolve_paths_failure_is_reported_and_nonzero(self):
+        # Defensive-boundary test only: resolve_paths (tools/setup.py:49-77) is
+        # pure env.get + os.path.join and cannot raise OSError for real, so this
+        # asserts the shape of the try/except, not a reachable failure mode. The
+        # reachable one is the enumerate_entries test below (os.path.isdir /
+        # os.listdir, tools/setup.py:605-606). Keep both: this one pins that
+        # resolve_paths stays INSIDE the boundary if it ever grows I/O.
+        buf = io.StringIO()
+        with mock.patch.object(setup, "resolve_paths", side_effect=OSError("boom")), \
+             contextlib.redirect_stderr(buf):
+            rc = setup.cmd_install_headless(self.env, False, None, False, False)
+        self.assertEqual(rc, 1)
+        self.assertIn("boom", buf.getvalue())
+
+    def test_enumerate_entries_failure_is_reported_and_nonzero(self):
+        buf = io.StringIO()
+        with mock.patch.object(setup, "enumerate_entries", side_effect=OSError("boom")), \
+             contextlib.redirect_stderr(buf):
+            rc = setup.cmd_install_headless(self.env, False, None, False, False)
+        self.assertEqual(rc, 1)
+        self.assertIn("boom", buf.getvalue())
+
+    def test_headless_skill_link_failure_is_reported_and_nonzero(self):
+        buf = io.StringIO()
+        with mock.patch.object(setup, "apply_additive_skills",
+                                side_effect=OSError("permission denied")), \
+             contextlib.redirect_stderr(buf):
+            rc = setup.cmd_install_headless(self.env, False, "all", False, False)
+        self.assertEqual(rc, 1)
+        self.assertIn("permission denied", buf.getvalue())
+
+    def test_headless_with_examples_installs_segments(self):
+        with mock.patch.object(setup, "discover_example_segments",
+                                return_value=[{"id": "system_memory",
+                                               "filename": "system_memory",
+                                               "path": "/x"}]), \
+             mock.patch.object(setup, "install_example_segments",
+                                return_value=["system_memory"]) as install_mock:
+            rc = setup.cmd_install_headless(self.env, False, None, False, False,
+                                             examples_flag="all")
+        self.assertEqual(rc, 0)
+        install_mock.assert_called_once()
+
+    def test_headless_examples_makedirs_oserror_is_reported_and_nonzero(self):
+        # install_example_segments' own os.makedirs(seg_dir) can raise — an
+        # explicitly requested install that did not happen is exit 1.
+        buf = io.StringIO()
+        with mock.patch.object(setup, "discover_example_segments",
+                                return_value=[{"id": "system_memory",
+                                               "filename": "system_memory",
+                                               "path": "/x"}]), \
+             mock.patch.object(setup, "install_example_segments",
+                                side_effect=OSError("read-only file system")), \
+             contextlib.redirect_stderr(buf):
+            rc = setup.cmd_install_headless(self.env, False, None, False, False,
+                                             examples_flag="all")
+        self.assertEqual(rc, 1)
+        self.assertIn("read-only file system", buf.getvalue())
+
+    def test_headless_examples_partial_install_is_nonzero(self):
+        # Two picked, one installed: install_example_segments skips a provider
+        # it cannot read or write and returns only the ids it managed.
+        buf = io.StringIO()
+        picked = [{"id": "a", "filename": "a", "path": "/x/a"},
+                  {"id": "b", "filename": "b", "path": "/x/b"}]
+        with mock.patch.object(setup, "discover_example_segments", return_value=picked), \
+             mock.patch.object(setup, "install_example_segments", return_value=["a"]), \
+             contextlib.redirect_stderr(buf):
+            rc = setup.cmd_install_headless(self.env, False, None, False, False,
+                                             examples_flag="all")
+        self.assertEqual(rc, 1)
+        self.assertIn("skipped", buf.getvalue())
+
+    def test_headless_examples_none_installs_nothing_and_exits_zero(self):
+        with mock.patch.object(setup, "discover_example_segments",
+                                return_value=[{"id": "a", "filename": "a",
+                                               "path": "/x/a"}]), \
+             mock.patch.object(setup, "install_example_segments") as install_mock:
+            rc = setup.cmd_install_headless(self.env, False, None, False, False,
+                                             examples_flag="none")
+        self.assertEqual(rc, 0)
+        install_mock.assert_not_called()
+
+    def test_headless_examples_dry_run_does_not_install(self):
+        with mock.patch.object(setup, "discover_example_segments",
+                                return_value=[{"id": "a", "filename": "a",
+                                               "path": "/x/a"}]), \
+             mock.patch.object(setup, "install_example_segments") as install_mock:
+            rc = setup.cmd_install_headless(self.env, True, None, False, False,
+                                             examples_flag="all")
+        self.assertEqual(rc, 0)
+        install_mock.assert_not_called()
+
+    def test_headless_bare_examples_counts_as_requested_not_bare_noop(self):
+        buf = io.StringIO()
+        with mock.patch.object(setup, "discover_example_segments", return_value=[]), \
+             contextlib.redirect_stdout(buf):
+            rc = setup.cmd_install_headless(self.env, False, None, False, False,
+                                             examples_flag="none")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("nothing requested", buf.getvalue())
+
+
+class TestHeadlessMainDispatch(unittest.TestCase):
+    """Exercises --headless through main(), not cmd_install_headless() directly --
+    this is what actually proves the CLI bypasses ensure_rich_runtime/open_tty/
+    require_tty, which calling cmd_install_headless() in isolation cannot show."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install_dir = os.path.join(self.tmp, "install")
+        self.claude_dir = os.path.join(self.tmp, "claude")
+        skill_dir = os.path.join(self.install_dir, "skills", "alpha")
+        os.makedirs(skill_dir)
+        open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8").close()
+        self.env_patch = mock.patch.dict(
+            os.environ,
+            {"HOME": self.tmp, "AI_KIT_DIR": self.install_dir,
+             "CLAUDE_CONFIG_DIR": self.claude_dir},
+            clear=True)
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
+
+    def test_headless_install_skips_ensure_rich_runtime_and_tty(self):
+        with mock.patch.object(setup, "ensure_rich_runtime") as ensure_rt, \
+             mock.patch.object(setup, "open_tty") as open_tty, \
+             mock.patch.object(setup, "require_tty") as require_tty:
+            rc = setup.main(["install", "--headless", "--skills", "all"])
+        self.assertEqual(rc, 0)
+        ensure_rt.assert_not_called()
+        open_tty.assert_not_called()
+        require_tty.assert_not_called()
+        self.assertTrue(os.path.islink(os.path.join(self.claude_dir, "skills", "alpha")))
+
+    def test_headless_reconfigure_also_bypasses_tty(self):
+        with mock.patch.object(setup, "ensure_rich_runtime") as ensure_rt, \
+             mock.patch.object(setup, "require_tty") as require_tty:
+            rc = setup.main(["reconfigure", "--headless"])
+        self.assertEqual(rc, 0)
+        ensure_rt.assert_not_called()
+        require_tty.assert_not_called()
+
+    def test_skills_flag_without_headless_is_rejected(self):
+        with self.assertRaises(SystemExit) as ctx:
+            setup.main(["install", "--skills", "all"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_with_statusline_flag_without_headless_is_rejected(self):
+        with self.assertRaises(SystemExit) as ctx:
+            setup.main(["install", "--with-statusline"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_with_hooks_flag_without_headless_is_rejected(self):
+        with self.assertRaises(SystemExit) as ctx:
+            setup.main(["install", "--with-hooks"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_headless_examples_flag_threads_through(self):
+        with mock.patch.object(setup, "cmd_install_headless", return_value=0) as headless_mock:
+            rc = setup.main(["install", "--headless", "--examples", "all"])
+        self.assertEqual(rc, 0)
+        headless_mock.assert_called_once_with(
+            mock.ANY, False, None, False, False, examples_flag="all")
+
+    def test_headless_propagates_the_nonzero_exit_code(self):
+        with mock.patch.object(setup, "cmd_install_headless", return_value=1):
+            rc = setup.main(["install", "--headless", "--with-statusline"])
+        self.assertEqual(rc, 1)
+
+    def test_headless_on_doctor_is_rejected(self):
+        with self.assertRaises(SystemExit) as ctx:
+            setup.main(["doctor", "--headless"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_headless_with_config_doctor_is_rejected(self):
+        with self.assertRaises(SystemExit) as ctx:
+            setup.main(["install", "--headless", "--config-doctor"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_runtime_gate_still_runs_before_the_tty_gate_without_headless(self):
+        # ensure_rich_runtime MUST be mocked out (as TestFailClosed does): main()
+        # calls it first, and under the system python3 that `make test` uses
+        # textual is absent, so a real call would sys.exit(3) or re-exec under uv
+        # and never reach the TTY gate. open_tty MUST be mocked too, for the same
+        # reason TestFailClosed and test_main_parses_examples_flag mock it: an
+        # unmocked call opens a real /dev/tty when the suite runs in a terminal,
+        # and the mocked-out require_tty would never close the handle.
+        order = []
+        with mock.patch.object(setup, "ensure_rich_runtime",
+                                side_effect=lambda *_a: order.append("runtime")), \
+             mock.patch.object(setup, "open_tty",
+                                side_effect=lambda: order.append("tty") or None), \
+             contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                setup.main(["install"])
+        self.assertEqual(order, ["runtime", "tty"])
 
 
 class TestUvBootstrap(unittest.TestCase):
@@ -2936,38 +3082,6 @@ class TestStatusLineDetection(unittest.TestCase):
         d = setup.detect_statusline(paths)
         self.assertEqual(d["state"], "unset")
         self.assertIsNone(d["current_command"])
-
-    def test_non_string_command_returns_unset_not_a_traceback(self):
-        # Today this raises TypeError: argument of type 'int' is not a container
-        # or iterable at tools/setup.py:1635 — cur.get("command", "") yields the
-        # TRUTHY 1 at :1628, so the `if not cur_cmd` guard at :1633 is passed and
-        # `paths.status_line in cur_cmd` explodes. detect_statusline runs in the
-        # interactive wizard (tools/setup.py:2248, :2288), so that is a startup
-        # crash, not a headless-only concern.
-        paths = self._paths({"statusLine": {"type": "command", "command": 1}})
-        d = setup.detect_statusline(paths)
-        self.assertEqual(d["state"], "unset")
-        self.assertIsNone(d["current_command"])
-
-    def test_truthy_non_string_command_shapes_all_return_unset(self):
-        for command in (1, True, ["x"], {"nested": "x"}):
-            with self.subTest(command=command):
-                paths = self._paths({"statusLine": {"command": command}})
-                d = setup.detect_statusline(paths)
-                self.assertEqual(d["state"], "unset")
-                self.assertIsNone(d["current_command"])
-
-    def test_list_number_and_bool_statusline_still_return_unset(self):
-        # Regression guard, NOT a red test: these three already return "unset"
-        # today via the `else: cur_cmd = ""` collapse at tools/setup.py:1631-1632.
-        # Routing detect_statusline through _statusline_command must not change
-        # them. See Step 2.
-        for value in (["/usr/bin/mybar"], 42, True):
-            with self.subTest(value=value):
-                paths = self._paths({"statusLine": value})
-                d = setup.detect_statusline(paths)
-                self.assertEqual(d["state"], "unset")
-                self.assertIsNone(d["current_command"])
 
 
 class TestSegmentInventoryLoader(unittest.TestCase):

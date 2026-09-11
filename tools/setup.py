@@ -10,7 +10,9 @@
 
 Invoked by tools/install.sh after it has guaranteed the repo and python3 are on
 disk. Subcommands: install (default), reconfigure, uninstall, doctor, check.
-Flags: --dry-run.
+Flags: --dry-run, --examples=all|none|<ids>, --config-doctor, and the headless
+set --headless / --skills=all|name1,name2 / --with-statusline / --with-hooks
+(the last three require --headless).
 
 Env overrides (mirrors install.sh):
   AI_KIT_DIR        install location (default: ${XDG_DATA_HOME:-~/.local/share}/ai-kit)
@@ -2693,6 +2695,221 @@ def cmd_install(env, tty, dry, examples_flag=None):
     return 0
 
 
+def _headless_paths_and_entries(env):
+    """resolve_paths + enumerate_entries behind ONE error boundary. Returns
+    (paths, entries), or (None, None) after printing one warning — the
+    exit-code-1 path the headless contract requires instead of a traceback.
+
+    enumerate_entries is the call that can actually raise: it does os.path.isdir
+    + os.listdir on install_dir (tools/setup.py:605-606), e.g. an AI_KIT_DIR that
+    exists but is not readable. resolve_paths (tools/setup.py:49-77) is pure
+    env.get + os.path.join with no filesystem access and cannot raise OSError; it
+    is inside this try only so the boundary still holds if it ever grows I/O."""
+    try:
+        paths = resolve_paths(env)
+        return paths, enumerate_entries(paths.install_dir)
+    except OSError as exc:
+        print(f"warn: headless setup could not resolve install paths/entries: {exc}",
+              file=sys.stderr)
+        return None, None
+
+
+def _headless_link_skills(skills_flag, entries, claude_dir, dry, counts):
+    """Resolve --skills and link the result additively. Returns (ok, chosen).
+
+    `chosen` is resolve_skills_flag's value -- None when --skills was not passed
+    at all, an empty set when it named only unknown skills -- so the caller can
+    tell those two apart in the summary line.
+
+    `ok` is False only when a skill that EXISTS in the repo was requested and is
+    NOT linked afterwards. Two shapes of that: link_one raising OSError (a real
+    filesystem error), or link_one recording a conflict in counts -- it bumps
+    skip_foreign (the link path is a symlink pointing outside ai-kit) or
+    skip_real (the link path is a real file/dir) and returns normally, so the
+    only way to see it is to compare the counters around the call. An unknown
+    NAME keeps ok True: nothing was asked of the filesystem.
+
+    Budget: 5 args + 5 locals = 10 of 15; 5 branches of 12; 4 returns of 6."""
+    chosen, unknown = resolve_skills_flag(skills_flag, entries)
+    for name in unknown:
+        print(f"warn: --skills named unknown skill {name!r} — skipping", file=sys.stderr)
+    if not chosen:
+        return True, chosen
+    blocked_before = counts["skip_foreign"] + counts["skip_real"]
+    try:
+        apply_additive_skills(chosen, entries, claude_dir, dry, counts)
+    except OSError as exc:
+        print(f"warn: failed to link one or more requested skills: {exc}",
+              file=sys.stderr)
+        return False, chosen
+    if counts["skip_foreign"] + counts["skip_real"] > blocked_before:
+        print("warn: one or more requested skills were left alone (a foreign "
+              "symlink or a real file occupies the link path) — see the warnings "
+              "above", file=sys.stderr)
+        return False, chosen
+    return True, chosen
+
+
+def _headless_wire_statusline(paths, dry):
+    """Wire the ai-kit status line, but only if the Claude Code config dir is
+    actually there. wire_statusline has no host-presence guard of its own and
+    _atomic_write_json would os.makedirs the parent, so calling it blind would
+    CREATE ~/.claude/settings.json on a machine with no Claude Code installed.
+    wire_hook_claude already refuses to do that ('Never materializes
+    ~/.claude/settings.json when the parent directory does not exist' --
+    docstring at tools/setup.py:1506-1507, guard + skip + `return False` at
+    tools/setup.py:1511-1513); this gives --with-statusline the same guarantee
+    without touching wire_statusline's interactive contract.
+
+    An absent host dir is a benign skip -> True (exit 0), exactly like the hook
+    wirers' 'no claude dir' case. Budget: 2 args + 0 locals = 2 of 15;
+    2 branches of 12; 2 returns of 6."""
+    if not os.path.isdir(paths.claude_dir):
+        print("skipped ai-kit status line — no claude dir")
+        return True
+    return wire_statusline(paths.settings, paths.status_line, None, dry,
+                           assume_overwrite=False)
+
+
+def _headless_wire_hooks(paths, dry):
+    """Wire the SessionStart hook for both hosts. Both wirers already no-op
+    cleanly when their config dir is absent, so neither call is gated -- the
+    isdir() checks only CLASSIFY the outcome: a host that isn't installed on
+    this machine is an expected skip (True), a host that is installed and still
+    failed is a real failure (False)."""
+    claude_present = os.path.isdir(paths.claude_dir)
+    cursor_present = os.path.isdir(paths.cursor_dir)
+    claude_ok = wire_hook_claude(paths.settings, paths.claude_hook, dry)
+    cursor_ok = wire_hook_cursor(paths.cursor_hooks, paths.cursor_hook, dry)
+    return not ((claude_present and not claude_ok)
+                or (cursor_present and not cursor_ok))
+
+
+def _headless_install_examples(paths, examples_flag, dry):
+    """Install the example segments --examples selects, reusing the same
+    primitives cmd_install uses (select_examples never touches tty on the
+    flag-given branch, so None is a safe tty here).
+
+    Returns False when an explicitly requested install did not happen:
+    install_example_segments raising OSError (its own os.makedirs of the
+    segments dir, on an unwritable/blocked config dir), or returning FEWER ids
+    than were picked -- its documented per-provider skip (unreadable source, bad
+    destination), already warned about on stderr by install_example_segments
+    itself, summarized once more here so the exit code has a stated reason.
+    An empty selection (--examples=none, or nothing discovered) is True:
+    nothing was asked of the filesystem.
+
+    Budget: 3 args + 4 locals (examples, picked, ids, exc) = 7 of 15;
+    4 branches of 12; 5 returns of 6."""
+    examples = discover_example_segments(
+        os.path.join(paths.install_dir, "examples", "segments"))
+    picked = select_examples(examples, examples_flag, None) if examples else []
+    if not picked:
+        return True
+    if dry:
+        print(f"would install {len(picked)} external segment(s): "
+              f"{', '.join(e['id'] for e in picked)}")
+        return True
+    try:
+        ids = install_example_segments(picked, paths.config_dir)
+    except OSError as exc:
+        print(f"warn: examples: could not install into {paths.config_dir}: {exc}",
+              file=sys.stderr)
+        return False
+    print(f"examples: installed {len(ids)} external segment(s): {', '.join(ids)}")
+    if len(ids) < len(picked):
+        print(f"warn: examples: {len(picked) - len(ids)} requested segment(s) were "
+              "skipped (see the warnings above)", file=sys.stderr)
+        return False
+    return True
+
+
+def _headless_summary(requested, skills_matched_nothing, counts):
+    """The single stdout summary line for a headless run. Pure -- no I/O -- so
+    the three cases are unit-testable without a temp dir. `requested` is False
+    only for bare --headless; `skills_matched_nothing` distinguishes
+    `--skills ghost` (asked for something, nothing valid matched) from it."""
+    if not requested:
+        return ("headless: nothing requested — pass --skills/--with-statusline/"
+                "--with-hooks/--examples to link or wire something")
+    if skills_matched_nothing:
+        return ("headless: --skills matched no valid names — nothing linked "
+                "(see warnings above)")
+    return (f"headless summary: {counts['linked']} linked, "
+            f"{counts['relinked']} relinked, {counts['skip_foreign']} foreign-skipped, "
+            f"{counts['skip_real']} real-skipped")
+
+
+def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        env, dry, skills_flag, with_statusline, with_hooks, examples_flag=None):
+    """The --headless counterpart to cmd_install: no Textual, no tty, no
+    require_tty gate. Bare (all flags falsy) is a pure no-op -- 'nothing
+    touched unless asked' (and nothing fetched -- see the plan's sync note;
+    this function never syncs the repo, headless or not). --skills links
+    additively (apply_additive_skills, never unlinks). --with-statusline/
+    --with-hooks independently opt into wiring those, reusing the existing
+    tty-safe primitives (wire_statusline is now itself headless-safe -- see
+    Task 1 -- and wire_hook_claude/wire_hook_cursor already were); both wiring
+    flags treat an absent host config dir as a benign skip and create nothing
+    (_headless_wire_statusline supplies that guard for the status line).
+    --examples
+    composes unchanged with the existing discover_example_segments/
+    select_examples/install_example_segments primitives cmd_install already
+    uses for its own --examples override.
+
+    Exit code: 0 for success, the bare no-op, an unrecognized --skills NAME, or
+    a host whose config dir doesn't exist (expected skip, not a failure). 1 when
+    anything explicitly requested did not happen: a malformed/unreadable config
+    file, an unsupported statusLine shape, a foreign statusLine headless mode
+    cannot confirm, a write failure, a requested skill blocked by a foreign
+    symlink or a real file, an OSError linking a requested skill, a failed or
+    partial --examples install, or enumerate_entries raising OSError while
+    resolving the checkout (the first statement below, before anything else
+    runs; resolve_paths shares that boundary defensively but does no I/O).
+    Every requested category is attempted even after an earlier one fails --
+    a refused statusLine must not silently skip --with-hooks -- and the
+    non-zero exit is reported once, at the end.
+
+    Six arguments, one over pylint's max-args/max-positional-arguments: the
+    localized disable above matches this file's existing practice for CLI-shaped
+    entry points (render_preview, prune_stale, persist_statusline,
+    launch_wizard). Body budget: 6 args + 7 locals (paths, entries, counts, ok,
+    chosen, requested, only_invalid_skills) = 13 of 15 max-locals;
+    6 branches of 12; 3 returns of 6."""
+    paths, entries = _headless_paths_and_entries(env)
+    if paths is None:
+        return 1
+
+    # --- deliberate omission: no prune_stale/predecessor_candidates call here.
+    # See the plan's "Out of scope" section -- their behavior contradicts
+    # "nothing touched unless asked." A future --prune-stale flag plugs in here.
+
+    counts = new_counts()
+    ok, chosen = _headless_link_skills(skills_flag, entries, paths.claude_dir,
+                                       dry, counts)
+    if with_statusline and not _headless_wire_statusline(paths, dry):
+        ok = False
+    if with_hooks and not _headless_wire_hooks(paths, dry):
+        ok = False
+    if examples_flag is not None and not _headless_install_examples(
+            paths, examples_flag, dry):
+        ok = False
+
+    requested = (skills_flag is not None or with_statusline or with_hooks
+                 or examples_flag is not None)
+    only_invalid_skills = (skills_flag is not None and not chosen
+                           and not with_statusline and not with_hooks
+                           and examples_flag is None)
+    print(_headless_summary(requested, only_invalid_skills, counts))
+    if dry:
+        print("(dry-run — no changes were made)")
+    if not ok:
+        print("headless: one or more requested operations could not complete "
+              "(see warnings above) — exiting non-zero", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_uninstall(env, dry):
     """Remove every ai-kit symlink under ~/.claude, the ai-kit statusLine (only
     if it points into install_dir), and ai-kit's own session-start hook entries
@@ -2874,7 +3091,7 @@ def ensure_rich_runtime(env):
     _reexec_under_uv(uv_path)               # normally never returns
 
 
-def main(argv=None):
+def main(argv=None):  # pylint: disable=too-many-return-statements
     """Parse the subcommand and dispatch. Default subcommand is install."""
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(prog="setup.py", add_help=True)
@@ -2894,7 +3111,27 @@ def main(argv=None):
         action="store_true",
         help="launch the config diagnostics TUI (per-item apply, explicit confirm)",
     )
+    parser.add_argument("--headless", action="store_true",
+                         help="non-interactive install/reconfigure: no wizard, "
+                              "no tty required. Bare form links/wires nothing; "
+                              "combine with --skills/--with-statusline/--with-hooks/"
+                              "--examples.")
+    parser.add_argument("--skills", default=None, metavar="all|name1,name2",
+                         help="(--headless only) skills to link additively — "
+                              "never unlinks anything not named.")
+    parser.add_argument("--with-statusline", action="store_true",
+                         help="(--headless only) wire the ai-kit status line.")
+    parser.add_argument("--with-hooks", action="store_true",
+                         help="(--headless only) wire SessionStart hooks "
+                              "(Claude Code + Cursor).")
     args = parser.parse_args(argv)
+    if (args.skills is not None or args.with_statusline or args.with_hooks) \
+            and not args.headless:
+        parser.error("--skills/--with-statusline/--with-hooks require --headless")
+    if args.headless and args.subcommand not in ("install", "reconfigure"):
+        parser.error("--headless is only valid with the install/reconfigure subcommands")
+    if args.headless and args.config_doctor:
+        parser.error("--headless and --config-doctor cannot be combined")
     env = os.environ
     dry = args.dry_run
     if args.config_doctor:
@@ -2905,6 +3142,10 @@ def main(argv=None):
         finally:
             tty.close()
     if args.subcommand in ("install", "reconfigure"):
+        if args.headless:
+            return cmd_install_headless(
+                env, dry, args.skills, args.with_statusline, args.with_hooks,
+                examples_flag=args.examples)
         ensure_rich_runtime(env)              # may re-exec; must be BEFORE open_tty
         tty = cast("_StdTty", require_tty(open_tty()))  # fail-closed (FR-W.1/B)
         try:
