@@ -187,7 +187,7 @@ def cache_update(stack: str, json_path: str, cache_root: str | None = None) -> i
 def main(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(
-            "usage: ai-kit-agents-md-checker.py check|remediate [repo_root] "
+            "usage: ai-kit-agents-md-rules-checker.py check|remediate [repo_root] "
             "| cache-update <stack> <json_path> [--cache-root <path>]"
         )
         return 0

@@ -36,6 +36,7 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-spec-execute`](skills/ai-kit-spec-execute/SKILL.md) | skill | Router: detects which framework (GSD, superpowers, …) generated a plan/phase, then delegates execution to that framework's `ai-kit-spec-execute-*` adapter. |
 | [`ai-kit-spec-execute-gsd`](skills/ai-kit-spec-execute-gsd/SKILL.md) | skill | Resolves the best available model/CLI for a GSD phase, prepares GSD's own `.planning/config.json` (native `runtime`/`model_profile_overrides`, or `workflow.cross_ai_command`), then hands off to GSD's own `/gsd-execute-phase` skill — never subprocess-dispatches GSD itself. |
 | [`ai-kit-opencode-providers`](skills/ai-kit-opencode-providers/SKILL.md) | skill | List and remove config-based custom opencode providers from `opencode.jsonc` without hand-editing JSONC or touching `auth.json`. |
+| [`ai-kit-agents-md-rules-checker`](skills/ai-kit-agents-md-rules-checker/SKILL.md) | skill | Checks an AGENTS.md/CLAUDE.md file and its Makefile/`.pre-commit-config.yaml` target shape against ai-kit's own 17-rule house ruleset, then wraps `/agent-md-refactor` to remediate gaps. |
 
 ## How the installer works
 

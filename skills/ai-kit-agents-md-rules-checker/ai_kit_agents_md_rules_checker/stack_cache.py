@@ -53,7 +53,7 @@ _STACK_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 
 def _default_cache_root() -> str:
     xdg_cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-    return os.path.join(xdg_cache, "ai-kit", "agents-md-checker", "stack-refs")
+    return os.path.join(xdg_cache, "ai-kit", "agents-md-rules-checker", "stack-refs")
 
 
 CACHE_ROOT = _default_cache_root()
