@@ -16,9 +16,10 @@ affects: [gsd-config-skill-consumers, repo-wide-lint-gate, ai-kit-spec-execute-g
 
 # Actuals (#2632)
 actuals:
-  tokens: 6391
+  tokens: 9374
   tasks: 2
-  commits: 2
+  commits: 4
+plan_head_before: 89f47f839ccf216eddabbc7ec71e253717707a27
 
 # Tech tracking
 tech-stack:
@@ -101,7 +102,7 @@ status: complete
 - **Started:** 2026-09-11 (session start)
 - **Completed:** 2026-09-11
 - **Tasks:** 2/2
-- **Files modified:** 18 (mostly zero-diff `git mv` renames; net `+179/-7` over the realized diff, excluding `.planning/`)
+- **Files modified:** 18 (git mv renames plus content edits; net `+225/-36` over the realized diff, excluding `.planning/`)
 
 ## Accomplishments
 - Authored `skills/ai-kit-gsd-curated-config/SKILL.md` (171 lines) documenting the real, verified 11-subcommand CLI surface built across Plans 01-03, reviewed against `/superpowers:writing-skills` conventions, and driven through a `/skill-judge` loop to convergence: first pass 97/120 (0 Critical, 0 Important, 3 suggested improvements), final pass 105/120 after addressing all three — clears this phase's established zero-Critical/Important gate with margin.
@@ -115,8 +116,9 @@ Each task was committed atomically:
 
 1. **Task 1: Scaffold SKILL.md and run the skill-judge quality gate** - `1697087` (docs)
 2. **Task 2: naming-analyzer rename, first-time 4-gate registration, README row, close Phase 7** - `6f3afa7` (feat)
+3. **Task 2 fix-up: complete rename content edits missed from 6f3afa7's staging** - `2c16b26` (fix)
 
-**Plan metadata:** pending (this docs commit)
+**Plan metadata:** `7cdb23c` (docs: complete plan)
 
 ## Files Created/Modified
 - `skills/ai-kit-gsd-curated-config/SKILL.md` - the skill's primary deliverable: frontmatter, Scope, entrypoint-resolution bash block, 6-step curated-flow narrative, 11-row subcommand reference table, NEVER list (D-10/D-05 citations), Common Mistakes table, Reporting rule
@@ -170,10 +172,18 @@ Each task was committed atomically:
 - **Verification:** `uv run pyright` (full project) -> `0 errors, 0 warnings, 0 informations`
 - **Committed in:** `6f3afa7` (Task 2 commit)
 
+**5. [Rule 1 - Bug] Task 2's commit `6f3afa7` staged the `git mv` renames but not the internal reference edits**
+- **Found during:** Post-execution self-check, verifying `git status --short` against a plain working tree (discovered after the original commit had already been made and the SUMMARY/final-commit steps were underway)
+- **Issue:** `git diff HEAD` showed the committed `6f3afa7` tree still contained old-name (`ai-kit-gsd-config`) content inside `SKILL.md`, `cli.py` (import prefix, ~15 error-message strings, `argparse(prog=...)`), the entrypoint script's import line, `cross_ai_build.py`/`preference_match.py`'s `# pyright: ignore` suppressions, and the test module's `sys.path`/import/fixture-path literals — the path renames (`git mv`) were captured, but the content edits made to those same files afterward were never staged before the commit.
+- **Fix:** Staged and committed the outstanding working-tree diff as a new commit (never amended `6f3afa7`, per policy).
+- **Files modified:** skills/ai-kit-gsd-curated-config/SKILL.md, ai-kit-gsd-curated-config.py, ai_kit_gsd_curated_config/cli.py, cross_ai_build.py, preference_match.py, tests/test_ai_kit_gsd_curated_config.py
+- **Verification:** `git status --short` clean (except unrelated `.planning/state.json`); repo-wide leftover-old-name grep returns zero matches; `make test` (1682 tests, OK), `make lint` (exit 0), scoped `ruff`/`pyright` clean, `make e2e-docker` PASS — all re-run after the fix commit
+- **Committed in:** `2c16b26`
+
 ---
 
-**Total deviations:** 4 auto-fixed (1 blocking/environment, 1 self-caught bug fix, 2 blocking/lint). All necessary for correctness or accuracy. No scope creep — the two pre-existing, unrelated `make validate` lint failures were explicitly left unfixed (see Deferred Issues below) rather than opportunistically cleaned up.
-**Impact on plan:** None of these changed the plan's scope or deliverables; all were required to complete the plan's own tasks correctly.
+**Total deviations:** 5 auto-fixed (1 blocking/environment, 1 self-caught bug fix, 2 blocking/lint, 1 self-caught incomplete-staging bug). All necessary for correctness or accuracy. No scope creep — the two pre-existing, unrelated `make validate` lint failures were explicitly left unfixed (see Deferred Issues below) rather than opportunistically cleaned up.
+**Impact on plan:** None of these changed the plan's scope or deliverables; all were required to complete the plan's own tasks correctly. Deviation 5 is a self-correction of the executor's own earlier commit-staging mistake, caught before the plan was declared complete — full re-verification (test/lint/validate/e2e-docker) confirms no regression.
 
 ## Deferred Issues
 
@@ -202,11 +212,15 @@ All claimed files verified present on disk:
 - FOUND: .planning/phases/07-curated-gsd-config-skill/deferred-items.md
 - FOUND: Makefile, .pre-commit-config.yaml, pyproject.toml, README.md
 
-Both claimed commits verified present in history:
+All claimed commits verified present in history:
 - FOUND: `1697087` docs(07-04): scaffold ai-kit-gsd-config SKILL.md, skill-judge loop cleared (97->105/120)
 - FOUND: `6f3afa7` feat(07-04): naming-analyzer rename to ai-kit-gsd-curated-config, first-time registration in all 4 gates, README row, close Phase 7
+- FOUND: `2c16b26` fix(07-04): complete rename content edits missed from 6f3afa7 staging
+- FOUND: `7cdb23c` docs(07-04): complete curated GSD config skill close-out plan
 
 README.md's new Contents row confirmed present at line 40.
+
+Working tree confirmed clean of leftover old-name references and consistent with committed history (`git status --short` shows only an unrelated, auto-generated `.planning/state.json` change). Full re-verification after the staging fix: `make test` (1682 tests, OK), `make lint` (exit 0), `make e2e-docker` (PASS), scoped `ruff check skills/ai-kit-gsd-curated-config/` and full-project `uv run pyright` both clean.
 
 ---
 *Phase: 07-curated-gsd-config-skill*
