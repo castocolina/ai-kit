@@ -1,8 +1,10 @@
+import contextlib
 import importlib.util
 import io
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import unittest
@@ -1398,6 +1400,22 @@ class TestApplySelection(unittest.TestCase):
         self.assertEqual(c["unlinked"], 1)
 
 
+class TestStatuslineCommandClassifier(unittest.TestCase):
+    def test_unset_shapes_return_empty_string(self):
+        for value in (None, {}, {"type": "command"}):
+            self.assertEqual(setup._statusline_command(value), "")
+
+    def test_string_and_dict_command_return_the_command(self):
+        self.assertEqual(setup._statusline_command("/usr/bin/mybar"), "/usr/bin/mybar")
+        self.assertEqual(
+            setup._statusline_command({"command": "/usr/bin/mybar"}), "/usr/bin/mybar")
+
+    def test_unsupported_shapes_return_none(self):
+        for value in (["/usr/bin/mybar"], 42, True, {"command": 1}, {"command": None},
+                      {"command": ["x"]}):
+            self.assertIsNone(setup._statusline_command(value))
+
+
 class TestWireStatusline(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -1461,6 +1479,161 @@ class TestWireStatusline(unittest.TestCase):
     def test_dry_run_does_not_write(self):
         setup.wire_statusline(self.settings, self.sl, tty=None, dry=True)
         self.assertFalse(os.path.exists(self.settings))
+
+    def test_unparseable_settings_is_refused_not_clobbered(self):
+        with open(self.settings, "w", encoding="utf-8") as f:
+            f.write("{ this is not json KEEP-ME-12345\n")
+        with open(self.settings, "rb") as f:
+            before = f.read()
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
+        self.assertFalse(ok)
+        self.assertIn(self.settings, buf.getvalue())
+        with open(self.settings, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_non_dict_settings_is_refused_not_clobbered(self):
+        with open(self.settings, "w", encoding="utf-8") as f:
+            json.dump(["not", "a", "dict"], f)
+        with open(self.settings, "rb") as f:
+            before = f.read()
+        ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
+        self.assertFalse(ok)
+        with open(self.settings, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_atomic_write_failure_leaves_target_byte_identical(self):
+        with open(self.settings, "w", encoding="utf-8") as f:
+            json.dump({"theme": "dark"}, f)
+        with open(self.settings, "rb") as f:
+            before = f.read()
+        listing = sorted(os.listdir(self.tmp))
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("injected replace failure")
+
+        buf = io.StringIO()
+        with mock.patch.object(os, "replace", side_effect=_boom), \
+             contextlib.redirect_stderr(buf):
+            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
+        self.assertFalse(ok)
+        self.assertTrue(buf.getvalue())
+        with open(self.settings, "rb") as f:
+            self.assertEqual(f.read(), before)
+        self.assertEqual(sorted(os.listdir(self.tmp)), listing)
+
+    def test_created_settings_file_is_mode_0600(self):
+        self.assertFalse(os.path.isfile(self.settings))
+        self.assertTrue(
+            setup.wire_statusline(self.settings, self.sl, tty=None, dry=False))
+        mode = stat.S_IMODE(os.stat(self.settings).st_mode)
+        self.assertEqual(mode, 0o600)
+
+    def test_foreign_string_form_headless_refuses_and_preserves(self):
+        # detect_statusline (tools/setup.py:1614-1637) already treats a bare
+        # string statusLine as foreign; wire_statusline must match that, not
+        # just handle the dict form.
+        with open(self.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": "/usr/bin/mybar"}, f)
+        with open(self.settings, "rb") as f:
+            before = f.read()
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
+        self.assertFalse(ok)
+        self.assertIn("mybar", buf.getvalue())
+        with open(self.settings, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_foreign_string_form_assume_overwrite_still_overwrites(self):
+        # assume_overwrite must short-circuit the string-form guard exactly
+        # like it already does for the dict-form guard. (Regression guard: this
+        # one already passes pre-implementation — see Step 2.)
+        with open(self.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": "/usr/bin/mybar"}, f)
+        ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False,
+                                    assume_overwrite=True)
+        self.assertTrue(ok)
+        with open(self.settings, encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertIn(self.sl, data["statusLine"]["command"])
+
+    def test_non_string_command_is_refused_not_a_traceback(self):
+        # {"command": 1} currently raises TypeError out of `status_line not in
+        # cur_cmd`. It must refuse cleanly and preserve the file instead.
+        with open(self.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": {"type": "command", "command": 1}}, f)
+        with open(self.settings, "rb") as f:
+            before = f.read()
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
+        self.assertFalse(ok)
+        self.assertIn(self.settings, buf.getvalue())
+        with open(self.settings, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_list_shaped_statusline_is_refused_not_overwritten(self):
+        with open(self.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": ["/usr/bin/mybar"]}, f)
+        with open(self.settings, "rb") as f:
+            before = f.read()
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
+        self.assertFalse(ok)
+        self.assertTrue(buf.getvalue())
+        with open(self.settings, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_numeric_statusline_is_refused_not_overwritten(self):
+        with open(self.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": 42}, f)
+        with open(self.settings, "rb") as f:
+            before = f.read()
+        with contextlib.redirect_stderr(io.StringIO()):
+            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
+        self.assertFalse(ok)
+        with open(self.settings, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_unsupported_shape_is_refused_even_with_assume_overwrite(self):
+        # assume_overwrite means "the user already said yes to replacing the
+        # command we showed them" — an unsupported shape was never shown to
+        # anyone, so there is no consent to act on.
+        with open(self.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": ["/usr/bin/mybar"]}, f)
+        with open(self.settings, "rb") as f:
+            before = f.read()
+        with contextlib.redirect_stderr(io.StringIO()):
+            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False,
+                                        assume_overwrite=True)
+        self.assertFalse(ok)
+        with open(self.settings, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_unsupported_shape_refused_before_dry_run_short_circuit(self):
+        # dry must not report "would set" for a file it would actually refuse.
+        with open(self.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": ["/usr/bin/mybar"]}, f)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=True)
+        self.assertFalse(ok)
+        self.assertNotIn("would set", out.getvalue())
+
+    def test_dict_without_command_key_is_treated_as_unset(self):
+        # Nothing to preserve: an object with no "command" is not a foreign
+        # status line, so it is set silently like an absent one.
+        with open(self.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": {"type": "command"}, "theme": "dark"}, f)
+        self.assertTrue(
+            setup.wire_statusline(self.settings, self.sl, tty=None, dry=False))
+        with open(self.settings, encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertIn(self.sl, data["statusLine"]["command"])
+        self.assertEqual(data["theme"], "dark")
 
 
 class TestRecipeAndUnwire(unittest.TestCase):
@@ -2659,6 +2832,38 @@ class TestStatusLineDetection(unittest.TestCase):
         d = setup.detect_statusline(paths)
         self.assertEqual(d["state"], "unset")
         self.assertIsNone(d["current_command"])
+
+    def test_non_string_command_returns_unset_not_a_traceback(self):
+        # Today this raises TypeError: argument of type 'int' is not a container
+        # or iterable at tools/setup.py:1635 — cur.get("command", "") yields the
+        # TRUTHY 1 at :1628, so the `if not cur_cmd` guard at :1633 is passed and
+        # `paths.status_line in cur_cmd` explodes. detect_statusline runs in the
+        # interactive wizard (tools/setup.py:2248, :2288), so that is a startup
+        # crash, not a headless-only concern.
+        paths = self._paths({"statusLine": {"type": "command", "command": 1}})
+        d = setup.detect_statusline(paths)
+        self.assertEqual(d["state"], "unset")
+        self.assertIsNone(d["current_command"])
+
+    def test_truthy_non_string_command_shapes_all_return_unset(self):
+        for command in (1, True, ["x"], {"nested": "x"}):
+            with self.subTest(command=command):
+                paths = self._paths({"statusLine": {"command": command}})
+                d = setup.detect_statusline(paths)
+                self.assertEqual(d["state"], "unset")
+                self.assertIsNone(d["current_command"])
+
+    def test_list_number_and_bool_statusline_still_return_unset(self):
+        # Regression guard, NOT a red test: these three already return "unset"
+        # today via the `else: cur_cmd = ""` collapse at tools/setup.py:1631-1632.
+        # Routing detect_statusline through _statusline_command must not change
+        # them. See Step 2.
+        for value in (["/usr/bin/mybar"], 42, True):
+            with self.subTest(value=value):
+                paths = self._paths({"statusLine": value})
+                d = setup.detect_statusline(paths)
+                self.assertEqual(d["state"], "unset")
+                self.assertIsNone(d["current_command"])
 
 
 class TestSegmentInventoryLoader(unittest.TestCase):

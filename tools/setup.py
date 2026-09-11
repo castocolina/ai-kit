@@ -1578,6 +1578,50 @@ def wire_hook_cursor(cursor_hooks, hook_script, dry):
     return True
 
 
+def _statusline_command(value):
+    """Classify a settings.json `statusLine` value into its command string.
+
+    Two shapes are supported (same as detect_statusline, tools/setup.py:1614):
+    a bare string, or an object with a string "command". Returns:
+      ""    → nothing configured (absent/None, or an object with no "command")
+      str   → the configured command
+      None  → an UNSUPPORTED shape (list/number/bool, or a "command" that is
+              not a string). The caller must refuse and write nothing: we
+              cannot describe what we would be destroying, so we don't.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        if "command" not in value:
+            return ""
+        cmd = value["command"]
+        return cmd if isinstance(cmd, str) else None
+    return None
+
+
+def _statusline_state(settings):
+    """Read settings.json for wire_statusline: returns (data, cur_cmd), or
+    (None, None) after printing one warning when the file exists but is not a
+    JSON object, or when its statusLine has an unsupported shape. Split out of
+    wire_statusline so that function stays at 6 returns (pylint max-returns)."""
+    state, data = _read_json_checked(settings)
+    if state == JSON_STATE_UNREADABLE:
+        print(f"warn: {settings}: cannot parse as a JSON object — ai-kit will not "
+              "overwrite a config file it cannot parse", file=sys.stderr)
+        return None, None
+    if state == JSON_STATE_ABSENT:
+        data = {}
+    cur_cmd = _statusline_command(data.get("statusLine"))
+    if cur_cmd is None:
+        print(f"warn: {settings}: statusLine must be a string or an object with "
+              "a string 'command' — ai-kit will not overwrite a statusLine it "
+              "cannot read", file=sys.stderr)
+        return None, None
+    return data, cur_cmd
+
+
 def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
     """Point settings.json's statusLine.command at the bundled status-line.py
     (with `python3 -S`), preserving all other keys. FR-5.5 double-confirm:
@@ -1587,14 +1631,36 @@ def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
     ``assume_overwrite`` short-circuits the foreign-command guard: the caller
     (the in-UI adoption gate) already asked the user "replace it with ai-kit?"
     and got a yes, so re-prompting on the terminal would be a redundant second
-    question. Returns True when statusLine now points at ai-kit, False when
-    left untouched."""
+    question.
+
+    Reads via `_read_json_checked` (absent/ok/unreadable) and writes via
+    `_atomic_write_json` — the same malformed-aware, atomic primitives
+    `wire_hook_claude`/`wire_hook_cursor` already use. A settings.json that
+    exists but cannot be parsed as a JSON object is refused outright (never
+    silently treated as "empty, safe to overwrite"), and a write failure
+    leaves the file byte-identical rather than raising past the caller.
+
+    statusLine may be a bare string or an object with a string "command" (both
+    shapes are supported by Claude Code; detect_statusline classifies them
+    through the same _statusline_command helper) — a foreign STRING command is
+    guarded exactly like a foreign dict command, not silently treated as
+    unset. Any OTHER shape (list/number/bool, or a non-string "command") is
+    refused outright via _statusline_command — which is where this function and
+    detect_statusline part ways: the reader reports such a shape as "unset",
+    this writer refuses to touch it. The refusal happens BEFORE the assume_overwrite
+    short-circuit and before the dry-run branch: assume_overwrite means a
+    human already approved replacing a command we showed them, and we cannot
+    show them a shape we don't understand.
+
+    Returns True when statusLine now points at ai-kit, False when left
+    untouched (foreign command declined/refused headless, unsupported
+    statusLine shape, unreadable settings.json, or a write failure)."""
     desired = "python3 -S " + status_line
-    data = _read_json(settings)
-    cur = data.get("statusLine")
-    cur_cmd = cur.get("command", "") if isinstance(cur, dict) else ""
+    data, cur_cmd = _statusline_state(settings)
+    if data is None:
+        return False
     if cur_cmd and status_line not in cur_cmd and not assume_overwrite:
-        # a foreign status line — guard it
+        # a foreign status line (dict or bare-string form) — guard it
         if not is_interactive(tty):
             print(f"warn: settings.json has a foreign statusLine ({cur_cmd}) — not wiring "
                   "the ai-kit status line (headless)", file=sys.stderr)
@@ -1607,7 +1673,11 @@ def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
         print(f"would set statusLine -> {desired}")
         return True
     data["statusLine"] = {"type": "command", "command": desired}
-    _write_json(settings, data)
+    try:
+        _atomic_write_json(settings, data)
+    except OSError as exc:
+        print(f"warn: failed to write {settings}: {exc}", file=sys.stderr)
+        return False
     return True
 
 
@@ -1618,18 +1688,22 @@ def detect_statusline(paths):
       - "ours"    iff the command invokes the resolved paths.status_line
                   (XDG-aware substring match — NOT a hard-coded string).
       - "foreign" iff a statusLine is configured but does not reference our script.
-      - "unset"   iff absent, empty, or file is missing/malformed.
+      - "unset"   iff absent, empty, file is missing/malformed, or the statusLine
+                  holds an UNSUPPORTED shape (a list/number/bool, or an object
+                  whose "command" is not a string). The unsupported case used to
+                  raise TypeError out of the `in` test below for a truthy
+                  non-container "command" (e.g. {"command": 1}) — an uncaught
+                  crash, since the wizard calls this during context population.
+                  Classification is shared with wire_statusline via
+                  _statusline_command; the two differ only in what they DO about
+                  it (this reports "unset", the writer refuses to overwrite).
 
-    statusLine may be a bare string or an object with a "command" key (both
+    statusLine may be a bare string or an object with a string "command" (both
     shapes are supported by Claude Code).  Writes nothing."""
     data = _read_json(paths.settings)
-    cur = data.get("statusLine")
-    if isinstance(cur, dict):
-        cur_cmd = cur.get("command", "")
-    elif isinstance(cur, str):
-        cur_cmd = cur
-    else:
-        cur_cmd = ""
+    # _statusline_command returns "" for unset and None for an unsupported
+    # shape; both are falsy, so both fall through to "unset" below.
+    cur_cmd = _statusline_command(data.get("statusLine"))
     if not cur_cmd:
         return {"state": "unset", "current_command": None}
     if paths.status_line in cur_cmd:
