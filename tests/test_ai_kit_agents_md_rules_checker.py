@@ -257,6 +257,27 @@ class TestStackCacheStates(unittest.TestCase):
                 "stale",
             )
 
+    def test_corrupted_cache_file_never_crashes(self):
+        # Regression: read_stack_cache used to let json.JSONDecodeError
+        # propagate uncaught, crashing every future check/remediate call
+        # for that stack (06-REVIEW.md Critical #1).
+        with tempfile.TemporaryDirectory() as cache_root:
+            path = stack_cache.cache_path("python", cache_root=cache_root)
+            _write(path, "{not valid json")
+            self.assertEqual(
+                stack_cache.read_stack_cache("python", cache_root=cache_root),
+                {"state": "absent", "data": None},
+            )
+
+    def test_non_object_cache_payload_never_crashes(self):
+        with tempfile.TemporaryDirectory() as cache_root:
+            path = stack_cache.cache_path("python", cache_root=cache_root)
+            _write(path, "[1, 2, 3]")
+            self.assertEqual(
+                stack_cache.read_stack_cache("python", cache_root=cache_root),
+                {"state": "absent", "data": None},
+            )
+
 
 class TestCachePathValidation(unittest.TestCase):
     def test_valid_identifiers_succeed(self):
@@ -540,6 +561,29 @@ class TestWiredCheckWordBoundary(unittest.TestCase):
             findings = makefile_checker.check_makefile_shape(repo)
             issues = {f.get("issue") for f in findings if f.get("present") is True}
             self.assertNotIn("chain_incomplete", issues)
+
+    def test_hyphenated_name_never_matches_inside_a_longer_hyphenated_token(self):
+        # Regression: `\btest-unit\b` alone treats the boundary between
+        # "unit" and a following "-integration..." (or a preceding
+        # "integration-") as already satisfied, since "-" is a non-word
+        # character -- reopening the substring false-positive class this
+        # word-boundary check exists to close, just for hyphenated names
+        # instead of single-word ones (06-REVIEW.md Critical #2).
+        self.assertFalse(
+            makefile_checker._recipe_mentions_target(
+                "\t$(MAKE) test-unit-integration-suite\n", "test-unit"
+            )
+        )
+        self.assertFalse(
+            makefile_checker._recipe_mentions_target(
+                "\t$(MAKE) integration-test-unit\n", "test-unit"
+            )
+        )
+        self.assertTrue(
+            makefile_checker._recipe_mentions_target(
+                "\t$(MAKE) test-unit\n", "test-unit"
+            )
+        )
 
 
 class TestNoCrashAndNoStack(unittest.TestCase):

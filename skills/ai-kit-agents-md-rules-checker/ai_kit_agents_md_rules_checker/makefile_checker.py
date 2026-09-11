@@ -152,14 +152,21 @@ def parse_precommit_hooks(path: str) -> dict[str, str | None]:
 
 
 def _recipe_mentions_target(recipe_text: str, name: str) -> bool:
-    """Word-boundary-aware check: never a raw substring match.
+    """Token-boundary-aware check: never a raw substring match.
 
-    `name="lint"` does not match a recipe invoking `"pylint"`, but
-    `name="test-unit"` matches the literal token `"test-unit"` (the
-    internal hyphen is not a boundary point; `\\b` is only evaluated at the
-    two ends of `name`).
+    `name="lint"` does not match a recipe invoking `"pylint"`. `name=
+    "test-unit"` matches the standalone token `"test-unit"` but NOT inside
+    a longer hyphenated token on EITHER side, e.g. neither
+    `"test-unit-integration-suite"` nor `"integration-test-unit"` --
+    `\\b` alone is insufficient here because `-` is a non-word character,
+    so a plain `\\btest-unit\\b` would treat the boundary between `"unit"`
+    and a following `"-integration..."` (or between a preceding
+    `"integration-"` and `"test"`) as already satisfied. Requires the
+    character immediately before AND after the match (if any) to NOT be
+    `-`/`_`/alnum, i.e. a true token boundary on both ends.
     """
-    return re.search(rf"\b{re.escape(name)}\b", recipe_text) is not None
+    pattern = rf"(?<![-\w]){re.escape(name)}(?![-\w])"
+    return re.search(pattern, recipe_text) is not None
 
 
 def _resolve_across_stacks(name, detected_stacks, get_tooling):

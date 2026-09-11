@@ -83,8 +83,17 @@ def read_stack_cache(stack: str, cache_root: str | None = None) -> dict:
     path = cache_path(stack, cache_root)
     if not os.path.isfile(path):
         return {"state": "absent", "data": None}
-    with open(path, encoding="utf-8") as handle:
-        payload = json.load(handle)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        # A corrupted/unreadable cache file is indistinguishable from no
+        # cache at all -- never crash the caller over it (same "never
+        # trust a stale entry, never crash" contract as the rest of this
+        # module's staleness handling).
+        return {"state": "absent", "data": None}
+    if not isinstance(payload, dict):
+        return {"state": "absent", "data": None}
     cached_at = payload.get("cached_at")
     data = payload.get("tooling")
     try:
