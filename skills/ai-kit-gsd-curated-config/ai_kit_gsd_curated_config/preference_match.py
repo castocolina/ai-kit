@@ -10,7 +10,9 @@ Deliberate, scoped exception to "this skill stays self-contained" (D-02): import
 detection/ranking classes wholesale. `ai_kit_spec`'s own skill directory is resolved via
 `model_detect.resolve_ai_kit_spec_path`'s sibling-dir logic and added to `sys.path` before the
 import, since this skill has no declared dependency contract on `ai_kit_spec` being importable
-otherwise.
+otherwise. The import is wrapped in `try/except ImportError` with a local fallback that
+reimplements the same delimiter-bounded match: since `ai_kit_spec` is not a declared dependency,
+its absence must degrade this module's regex helper, never crash the whole CLI at import time.
 """
 import os
 import re
@@ -25,7 +27,15 @@ if _ai_kit_spec_shim is not None:
     if _ai_kit_spec_skill_dir not in sys.path:
         sys.path.insert(0, _ai_kit_spec_skill_dir)
 
-from ai_kit_spec.model_heuristics import _hint_matches  # noqa: E402 # pyright: ignore
+try:
+    from ai_kit_spec.model_heuristics import _hint_matches  # pyright: ignore
+except ImportError:
+    # `ai_kit_spec` is a best-effort sibling, never a hard dependency (module docstring above):
+    # if its skill directory can't be resolved, or the sibling install is missing/broken, this
+    # skill must keep working rather than take the whole CLI down at import time. Fallback
+    # reimplements the exact delimiter-bounded substring match `_hint_matches` documents.
+    def _hint_matches(hint: str, lowered: str) -> bool:
+        return re.search(rf"\b{re.escape(hint)}\b", lowered) is not None
 
 # Fixed runtime search order for BOTH ladders (07-CONTEXT.md's Specifics section states this
 # order for plan-review explicitly and gives no contrary order for execution, so this module

@@ -178,6 +178,11 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
     degraded_reason = None
     if not args.cli:
         degraded_reason = "no_candidate"
+    elif not args.model:
+        # Without --model, build_execution_command would still succeed and interpolate the
+        # literal string "None" into the rendered command (str.format has no None guard) --
+        # a fabricated, broken command reported as success. Fail closed instead (D-05).
+        degraded_reason = "no_model"
     else:
         command = cross_ai_build.build_execution_command(args.cli, args.model, args.project_dir)
         if command is None:

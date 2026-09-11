@@ -1,4 +1,5 @@
 import contextlib
+import importlib
 import io
 import json
 import os
@@ -551,6 +552,40 @@ class TestResolveAiKitSpecPath(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestAiKitSpecImportGracefulDegradation(unittest.TestCase):
+    """CRITICAL #1 regression (Phase 7 code review): `preference_match.py` and
+    `cross_ai_build.py` import from the sibling `ai_kit_spec` skill at module scope.
+    `ai_kit_spec` is a best-effort dependency, not a declared one (both modules' own
+    docstrings) -- if it can't be located/imported, these modules must degrade, never raise
+    at import time and take the whole CLI down with them (cli.py imports both unconditionally)."""
+
+    def _reimport_with_ai_kit_spec_blocked(self, module_name):
+        real_import = __import__
+
+        def _blocking_import(name, *args, **kwargs):
+            if name == "ai_kit_spec" or name.startswith("ai_kit_spec."):
+                raise ModuleNotFoundError(f"No module named {name!r}")
+            return real_import(name, *args, **kwargs)
+
+        for mod in ("ai_kit_gsd_curated_config." + module_name, "ai_kit_spec"):
+            sys.modules.pop(mod, None)
+        with unittest.mock.patch("builtins.__import__", side_effect=_blocking_import):
+            module = importlib.import_module("ai_kit_gsd_curated_config." + module_name)
+        self.addCleanup(sys.modules.pop, "ai_kit_gsd_curated_config." + module_name, None)
+        return module
+
+    def test_preference_match_imports_without_crashing_and_hint_match_still_works(self):
+        reimported = self._reimport_with_ai_kit_spec_blocked("preference_match")
+        self.assertTrue(reimported._hint_matches("coding", "some-coding-model"))
+        self.assertFalse(reimported._hint_matches("coding", "some-encoding-model"))
+
+    def test_cross_ai_build_imports_without_crashing_and_degrades_to_none(self):
+        reimported = self._reimport_with_ai_kit_spec_blocked("cross_ai_build")
+        self.assertIsNone(reimported.build_execute_command)
+        result = reimported.build_execution_command("opencode", "some-model", "/fake/project")
+        self.assertIsNone(result)
+
+
 class TestBuildCandidatePool(unittest.TestCase):
     def test_opencode_only(self):
         snapshot = {
@@ -796,6 +831,25 @@ class TestApplyExecutionCli(unittest.TestCase):
         self.assertTrue(summary["cross_ai_execution_written"])
         self.assertFalse(summary["cross_ai_command_written"])
         self.assertEqual(summary["degraded_reason"], "no_candidate")
+
+    def test_cli_without_model_degrades_never_writes_literal_none(self):
+        run = make_fake_run([(0, "ok", "")])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exit_code = cli.main(
+                ["apply-execution", "--project-dir", "/fake/project", "--cli", "opencode"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 0)
+        written_keys = [call[3] for call in run.calls if "config-set" in call]
+        self.assertEqual(written_keys, ["workflow.cross_ai_execution"])
+        summary = json.loads(buf.getvalue())
+        self.assertTrue(summary["cross_ai_execution_written"])
+        self.assertFalse(summary["cross_ai_command_written"])
+        self.assertEqual(summary["degraded_reason"], "no_model")
+        self.assertNotIn("None", buf.getvalue())
 
 
 class TestApplyReviewCli(unittest.TestCase):
