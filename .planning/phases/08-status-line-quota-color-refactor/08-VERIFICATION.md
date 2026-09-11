@@ -13,7 +13,7 @@ covered_files:
   - ".planning/phases/08-status-line-quota-color-refactor/08-REVIEWS.md"
   - "tests/test_status_line.py"
   - "tools/status-line.py"
-covered_digest: "v1:sha256:d2bf49aef9b791263013fbaae920db6f3e3f1d97ebf0ab170235a1021a29a351"
+covered_digest: "v1:sha256:5ec1c927fd70fb2be720472a98e908d151b353a62a887e3d93be13413c7b248f"
 behavior_unverified: 0
 overrides_applied: 0
 behavior_unverified_items: []
@@ -124,6 +124,16 @@ No gaps. All 5 ROADMAP Phase 8 success criteria are observably true in `tools/st
 The single design-level concern carried over from the prior verification pass (D-03's real-world reachability, code review WR-01) has been resolved without any code change: the orchestrator's independent reproduction and the resulting dated clarifying note in `08-CONTEXT.md` (amended 2026-09-11) are confirmed, by this pass's own direct re-reproduction of the same three-input probe, to accurately describe the implementation's actual behavior. The implementation was never a defect relative to D-03/D-04's literal wording; the original human_needed escalation was about whether CONTEXT.md's prose (ahead of this amendment) promised more than the code delivered, and CONTEXT.md's text has now been corrected to match the code exactly. No ROADMAP success criterion required the exact-tie path to be reachable from a real `time.time()` call, so this also never blocked any SC1-SC5 truth.
 
 Remaining: a non-blocking ROADMAP.md bookkeeping sync (milestone checklist + Progress table) is still outstanding and is flagged above for the downstream ship/verify-work workflow to close, consistent with how the prior verification pass already treated this category of gap.
+
+### Digest Refresh Note (2026-09-11)
+
+`covered_digest` recomputed: `.planning/ROADMAP.md`/`.planning/REQUIREMENTS.md` (both
+in this digest's covered set) were updated by Phase 7's close-out (`gsd-tools phase
+complete 7`, commit `9e53636`) and the requirements-sync flagged as the outstanding
+non-blocking item above -- exactly the sync this report already called for, now
+applied. Confirmed via \`git log -- tools/status-line.py tests/test_status_line.py\`
+that neither source file has a commit after this verification's original pass; the
+digest change is bookkeeping-only. Verdict (`passed`) stands unmodified.
 
 ---
 

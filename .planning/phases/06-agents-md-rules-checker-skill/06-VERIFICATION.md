@@ -30,7 +30,7 @@ covered_files:
   - "skills/ai-kit-agents-md-rules-checker/ai_kit_agents_md_rules_checker/stack_detect.py"
   - "skills/ai-kit-agents-md-rules-checker/ai_kit_agents_md_rules_checker/tool_presence.py"
   - "tests/test_ai_kit_agents_md_rules_checker.py"
-covered_digest: "v1:sha256:d838ded58aa19eb23a5ebe383c6ef227a84ccfeef31483e4cbfb3ec8cd2fa230"
+covered_digest: "v1:sha256:8f8e609840b0f4f93a499a53ffc4adcafbf325f0b0ec323e997f0548304100e1"
 behavior_unverified: 0
 overrides_applied: 0
 re_verification:
@@ -152,6 +152,17 @@ None. The prior human-verification item (end-to-end SKILL.md wrap invocation) wa
 ### Gaps Summary
 
 The single gap from the prior verification pass — a new `pyright` regression in `stack_cache.py:100` introduced by the CR-01 fix commit (`2359e43`) — is closed by commit `6271a5d`. Verified directly: `pyright` reports 0 errors on the isolated file and `Passed` inside the full `make validate` run; the full 62-test package suite and the full 1595-test workspace suite both pass with no changes required; the CR-01/CR-02 regression tests specifically remain green; and the fix preserves identical runtime behavior for every `cached_at` input shape (confirmed by code inspection of the guard placement, not just test-passing). `make validate`'s only remaining failures are `ruff`/`pylint` findings in files with zero Phase 6 commits touching them — three of which are documented in `deferred-items.md`, plus one (`tests/test_ai_kit_spec.py`) confirmed pre-existing and unrelated but not yet added to that document (flagged as an advisory, not a blocker). Phase 6's goal is fully achieved: all 4 ROADMAP success criteria hold, both code-review Criticals are genuinely fixed and regression-tested, and the phase's own quality-gate contract (`make validate` introduces no new Phase-6-attributable failures) now holds as well.
+
+### Digest Refresh Note (2026-09-11)
+
+`covered_digest` recomputed after Phase 7's close-out (commit `6f3afa7`) edited the
+shared registration files this phase's digest also covers (`Makefile`,
+`.pre-commit-config.yaml`, `pyproject.toml`, `README.md`) to add its own
+`ai-kit-gsd-curated-config` entries — a legitimate, expected staleness trigger
+(shared file, unrelated addition), not a Phase 6 regression. Confirmed Phase 6's
+own registration rows in all four files are unchanged and still present
+(`grep` for `ai-kit-agents-md-rules-checker`/`ai_kit_agents_md_rules_checker` in
+each). No Phase 6 source file changed; verdict (`passed`) stands unmodified.
 
 ---
 
