@@ -37,17 +37,52 @@ named via `/naming-analyzer`.
   detection/ranking logic. — **Reversibility:** costly — this is a real dependency on
   another skill's internals; swapping it out later means re-plumbing the whole
   model-selection step.
-- **D-03:** Concrete model/effort mapping locked for config.json, independent of
-  whether the target project has ai-kit's own `ONESHOT-RULES.md` Rule-7
-  circuit-breaker (that mechanism is ai-kit-specific infrastructure, not assumed
-  to exist elsewhere):
-  - `model_overrides.gsd-executor: "haiku"` — universal default. Whenever local
-    `gsd-executor` ends up running at all (cross-ai unset, unreachable, or
-    failed, for any reason), it must use the cheapest tier, never sonnet/opus.
-  - `model_overrides.gsd-code-reviewer: "opus"` — code review is `standard` tier
-    under `balanced` (→ sonnet by default); needs an explicit override to get Opus.
-  - `gsd-planner` needs no override — already `heavy` tier → Opus + `xhigh` effort
-    by the built-in tier ladder under `balanced`.
+- **D-03 (revised — supersedes the original draft of this decision):** The
+  curated question for the base tier strategy is ONE question: which
+  `model_profile` (`quality` / `balanced` / `budget` / `adaptive`)? Whatever is
+  chosen becomes the baseline for every agent not explicitly overridden below.
+  Regardless of which base profile is chosen:
+  - **Critical-agent overrides are derived from GSD's own data, never guessed.**
+    The skill reads the installed gsd-core's own exported `AGENT_DEFAULT_TIERS`
+    map (`bin/lib/model-catalog.cjs`, re-exported via `model-profiles.cjs`) —
+    every agent GSD itself classifies as `heavy` tier (verified live on this
+    machine: `gsd-planner`, `gsd-roadmapper`, `gsd-debugger`,
+    `gsd-assumptions-analyzer`, `gsd-debug-session-manager`, `gsd-eval-planner`,
+    `gsd-framework-selector`, `gsd-security-auditor`, `gsd-user-profiler`) gets
+    `model_overrides.<agent>: "opus"` + `effort.agent_overrides.<agent>: "high"`.
+    This is GSD's own "deep reasoning, already maxed" signal, not a
+    phase-type-bucket guess — confirmed by directly querying the installed
+    `model-catalog.cjs`, which also showed `gsd-verifier`/`gsd-code-reviewer`
+    are `standard` tier and most other `verification`-phase agents
+    (`gsd-plan-checker`, `gsd-integration-checker`, `gsd-nyquist-auditor`,
+    `gsd-ui-checker`, `gsd-ui-auditor`, `gsd-doc-verifier`) are `light` —
+    genuinely mechanical, and must NOT be swept into the opus+high treatment
+    just because they share a phase-type with something heavy.
+  - **User's explicit top-up, named individually, not inferred:**
+    `model_overrides.gsd-code-reviewer: "opus"` +
+    `effort.agent_overrides.gsd-code-reviewer: "high"` — `standard` tier by
+    GSD's own classification, elevated because the user named it specifically.
+  - **Research/execution floor:** `models.research: "haiku"` and
+    `models.execution: "haiku"` as a phase-type-level floor for agents not
+    already covered above. GSD's own resolution precedence
+    (`model_overrides` > `dynamic_routing` > `models[phase_type]` >
+    `model_profile`) means the 3 heavy-tier agents that are ALSO tagged
+    execution/research by `AGENT_TO_PHASE_TYPE` (`gsd-debugger`,
+    `gsd-debug-session-manager` → execution; `gsd-user-profiler` → research)
+    still resolve to opus — the heavy-tier override wins automatically, no
+    manual conflict resolution needed.
+  - **Everything else** (light/standard tier, not named above) follows the
+    base `model_profile` with no override and default effort — left
+    genuinely cheap, per the user's explicit correction against an earlier,
+    wrong phase-type-sweep draft of this decision.
+  - `model_overrides.gsd-executor: "haiku"` is a separate, UNCONDITIONAL floor,
+    independent of whether the target project has ai-kit's own
+    `ONESHOT-RULES.md` Rule-7 circuit-breaker (ai-kit-specific infrastructure,
+    not assumed to exist elsewhere) — whenever local `gsd-executor` ends up
+    running at all, it must use the cheapest tier, never sonnet/opus. (Already
+    implied by the research/execution floor above; called out separately
+    since it's the one override that must hold even without this phase's
+    critical-agent logic at all.)
   - `review.effort.opencode: "high"` for plan-review-convergence — note this may be
     a no-op confirmation since `high` is every reviewer lane's declared default
     already.
@@ -58,6 +93,20 @@ named via `/naming-analyzer`.
   - `workflow.plan_review_convergence: true`, reviewer selection for PLAN REVIEW
     prefers patterns: contains "plan-review", gpt-sol, glm-5.2/5.3 (more
     expensive), opus as last resort; preferred runtimes opencode and cursor.
+  - **Live-verification mechanism (not a hardcoded snapshot):** the skill
+    derives tier/phase-type classification from the INSTALLED gsd-core's own
+    exported `AGENT_DEFAULT_TIERS`/`AGENT_TO_PHASE_TYPE` at run time, and uses
+    the public `resolve-execution <agent>` CLI query to confirm/display what
+    currently resolves for any given agent. The specific agent names listed
+    above are this session's verified snapshot (installed gsd-core v1.13.0,
+    2026-09-10) for documentation purposes only — the skill's actual logic
+    must re-derive this from the live install, never ship the snapshot as a
+    baked-in list. If a future gsd-core version lacks these exports, the skill
+    degrades to just the base-profile question — no fabricated tier guess.
+    — **Reversibility:** costly — this depends on `model-catalog.cjs`'s
+    current export surface; if a future gsd-core version renames or removes
+    `AGENT_DEFAULT_TIERS`/`AGENT_TO_PHASE_TYPE`, the skill's critical-agent
+    logic needs rework, not just a config value change.
 - **D-04:** `workflow.cross_ai_command` is a literal command string — for
   opencode/cursor EXECUTION delegation, the skill builds that string with an
   explicit `--model`/effort flag baked in from the matched candidate. Plan-review
@@ -135,12 +184,30 @@ named via `/naming-analyzer`.
 - `~/.claude/gsd-core/bin/lib/config-schema.cjs` — composes capability-contributed
   schema overlays (e.g. `ui_phase`, `intel`, `graphify.*` are capability-provided, not
   in the frozen base manifest — confirmed by grepping the manifest directly)
-- open-gsd `docs/CONFIGURATION.md` (fetched from `github.com/open-gsd/gsd-core` `next`
-  branch, 2026-09-10) — sections consulted: Model Profiles / Per-Agent Overrides /
-  Per-Phase-Type Models / Dynamic Routing / Effort Control (lines ~1529-2016),
-  Reviewer lane effort/defaults/instances (lines ~302-490). Re-verify if stale per
-  rule 14 — this is `next`-branch documentation, already confirmed schema-compatible
-  with the installed v1.13.0 manifest, but re-check if the installed version bumps.
+- `~/.claude/gsd-core/bin/lib/model-catalog.cjs` (re-exported by `model-profiles.cjs`) —
+  exports `AGENT_DEFAULT_TIERS` (heavy/standard/light per agent) and
+  `AGENT_TO_PHASE_TYPE` (planning/research/execution/verification/discuss per
+  agent); the live, offline, always-in-sync source D-03's critical-agent logic
+  requires at runtime, queried directly during this discussion via
+  `node -e "require('.../model-catalog.cjs')"` — confirmed working and returning
+  the 33-agent table for this installed version
+- `resolve-execution <agent-type> [--effort <level>] [--fast-mode <bool>]` —
+  public `gsd-tools` CLI query returning an agent's fully-resolved
+  model/effort/fast_mode under the current config; the drift-check/confirmation
+  companion to the two exports above
+- open-gsd `docs/CONFIGURATION.md` and `docs/how-to/configure-model-profiles.md`
+  (fetched from `github.com/open-gsd/gsd-core` `next` branch, 2026-09-10) —
+  sections consulted: Model Profiles / Per-Agent Overrides / Per-Phase-Type
+  Models / Dynamic Routing / Effort Control (CONFIGURATION.md lines ~1529-2016),
+  Reviewer lane effort/defaults/instances (lines ~302-490); the how-to guide's
+  profile table (quality/balanced/budget/adaptive/inherit × planner/executor/
+  researchers/verifier). Re-verify if stale per rule 14 — this is `next`-branch
+  documentation, already confirmed schema-compatible with the installed
+  v1.13.0 manifest, but re-check if the installed version bumps.
+- `docs/AGENTS.md` (same `next` branch) — full per-agent role-card reference;
+  consulted for agent categories/roster, but the actual criticality
+  classification used in D-03 comes from `AGENT_DEFAULT_TIERS`
+  (machine-readable), not from this prose doc.
 
 ### Reused detection/selection pipeline
 - `skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py`, `model_ranker.py`,

@@ -56,3 +56,47 @@ Options presented:
 ## Deferred Ideas
 
 None — discussion stayed within Phase 7 scope.
+
+---
+
+## Amendment (same day, follow-up session): critical-agent model/effort mapping
+
+User returned to revise the model/effort part of the Write mechanism decision (D-03),
+prompted by two reference docs: `docs/how-to/configure-model-profiles.md` and
+`docs/AGENTS.md` (both `github.com/open-gsd/gsd-core`, `next` branch).
+
+**Round 1 — initial ask:** use `model_profile: "budget"` but put critical agents on
+opus+high via `model_overrides`/`effort`.
+
+**Round 2 — my first proposal (rejected):** map "planner + reviewer agents" onto the
+whole `verification` phase-type group (8 agents) plus planning. User pushed back:
+some of those agents are "merely mechanical" (their words) and sweeping a whole
+phase-type bucket onto opus+high was wrong — asked for each agent to be reviewed
+individually against real data, not assumption, and for the skill to be able to
+detect/discover the right classification from GSD's own components locally
+(or live research) rather than anything hardcoded that could silently go stale.
+
+**Verification performed:** queried the installed gsd-core's `model-catalog.cjs`
+directly (`node -e "require(...)"`) for `AGENT_DEFAULT_TIERS` and
+`AGENT_TO_PHASE_TYPE` — confirmed `gsd-verifier`/`gsd-code-reviewer` are `standard`
+tier (not heavy) and most other verification-phase agents
+(`gsd-plan-checker`/`gsd-integration-checker`/`gsd-nyquist-auditor`/
+`gsd-ui-checker`/`gsd-ui-auditor`/`gsd-doc-verifier`) are `light` — validating the
+user's pushback with real data.
+
+**Round 3 — revised proposal (accepted):** one curated question (model_profile);
+GSD's own `heavy`-tier agents automatically get opus+high (derived live, not
+guessed); user's named top-up (`gsd-code-reviewer`) gets the same treatment
+explicitly; research/execution phase-types floor to haiku, with GSD's own
+override-precedence rules resolving the 3 agents that are both heavy-tier and
+execution/research-tagged in favor of heavy (opus wins); everything else
+(light/standard, unnamed) follows the base profile with no override. The skill's
+actual logic must re-derive this from the live `model-catalog.cjs` exports at
+run time, never ship a hardcoded snapshot.
+
+**User's final answer:** "Matches" (accepted as described).
+
+Superseded text in 07-CONTEXT.md's D-03: the original draft that said "gsd-planner
+needs no override — already heavy tier" (still true, but now subsumed by the
+general heavy-tier rule) and the code-reviewer-only override (now explicitly framed
+as a named top-up on top of, not instead of, the heavy-tier rule).
