@@ -9,7 +9,7 @@
 A color-only refactor of `tools/status-line.py`'s rate-limit bucket rendering:
 the displayed `used_percentage` and `resets_at`-derived reset suffix stay
 byte-identical; only which ramp color (`theme.ramps["rate"]`) gets picked
-changes, driven by a burn-rate signal (usage vs. elapsed-fraction-of-window)
+changes, driven by a burn-rate signal (usage vs. remaining-fraction-of-window)
 instead of raw usage percentage alone. No hardcoded window/time constants —
 every timing input comes from the Claude-provided rate-limit context
 (`resets_at`, and the bucket key name itself) on each render.
