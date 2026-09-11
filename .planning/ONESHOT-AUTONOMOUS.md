@@ -1,10 +1,15 @@
-# ai-kit Phases 1.1-5 — Claude Code Autonomous Run Driver
+# ai-kit Phases 1.1-8 — Claude Code Autonomous Run Driver
 
-**Phase 1.1 has exercised this playbook's Rule 2 (plan-review convergence) and Rule 6 (clean-room E2E gate) for real while closing itself — see `01.1-REVIEWS.md` and this phase's own `make e2e-docker` run. Phases 1.2 through 5 have not yet run under this playbook; treat those sections as reviewed-but-unexercised until each phase actually closes.** Copy-paste driver for a single autonomous run
-covering Phase 1.1 (Autonomous-Run Infrastructure) through Phase 5 (Usage Metrics
-Dashboard). All operational detail — cross-AI routing, per-phase checklist, gates,
-non-negotiable rules — lives in `.planning/ONESHOT-RULES.md`; this file only starts
-the run and points there.
+**Phases 1.1 through 5 (v1.0) are complete and evidenced — Phase 1.1 exercised this
+playbook's Rule 2 (plan-review convergence) and Rule 6 (clean-room E2E gate) for real
+while closing itself (`01.1-REVIEWS.md`, that phase's own `make e2e-docker` run), and
+Phases 1.2-5 closed under the same playbook afterward.** Copy-paste driver for a single
+autonomous run covering Phase 1.1 (Autonomous-Run Infrastructure) through Phase 8
+(Status-line Quota Color Refactor, v1.1's last phase). **Phases 6-8 (v1.1) have not yet
+run under this playbook and, unlike 1.1-5, are mutually independent — any order between
+them is fine; they depend on nothing from each other or from v1.0.** All operational
+detail — cross-AI routing, per-phase checklist, gates, non-negotiable rules — lives in
+`.planning/ONESHOT-RULES.md`; this file only starts the run and points there.
 
 ## How To Run
 
@@ -25,22 +30,25 @@ Paste the block below as the first message, then leave it running.
 
 ▼▼▼ COPY FROM HERE ▼▼▼
 
-/gsd-autonomous --to 5 --converge --opencode
+/gsd-autonomous --to 8 --converge --opencode
 
-You are the Claude Code orchestrator for this ai-kit v1.0 milestone: Phase 1.1
-(Autonomous-Run Infrastructure) through Phase 5 (Usage Metrics Dashboard). Phase 1.1
-itself wires the cross-AI plan-review convergence and cross-AI execution routes this
-run depends on — do not skip it, and do not plan Phase 1.2 until Phase 1.1's success
-criteria are all evidenced.
+You are the Claude Code orchestrator for this ai-kit repository, running v1.1
+milestone Phases 6 (AGENTS.md Rules Checker Skill), 7 (Curated GSD Config Skill), and
+8 (Status-line Quota Color Refactor) to completion. v1.0 (Phase 1.1 through Phase 5) is
+already complete — the cross-AI plan-review convergence and cross-AI execution routes
+Phase 1.1 wired are already in place in `.planning/config.json`; do not re-wire or
+re-verify that infrastructure, just use it. Phases 6, 7, and 8 are mutually
+independent — run them in any order, including in parallel dispatch if your runtime
+supports it; none of the three depends on another.
 
-Only implement through Phase 5.
+Only implement Phases 6 through 8.
 
 Read `.planning/ONESHOT-RULES.md` in full now, and again at the start of every turn,
 along with `.planning/STATE.md`, `.planning/ROADMAP.md`, and `.planning/REQUIREMENTS.md`.
 Follow `.planning/ONESHOT-RULES.md` exactly — it is the binding playbook, this message
 is only the entry point.
 
-Objective: run Phase 1.1 through Phase 5 to completion, unattended, stopping only for
+Objective: run Phases 6 through 8 to completion, unattended, stopping only for
 a real destructive anomaly, an unrecoverable tool/authentication failure, or a circuit
 breaker (`.planning/ONESHOT-RULES.md` Non-Negotiable Rule 7). Never trust a subagent's
 or delegate's self-reported "passed" — independently re-run the real verification
@@ -53,7 +61,7 @@ single highest-risk surface in this repo; every verification run uses a scratch
 never the real machine's real config (Rule 5). Defer everything a human needs to see
 to the end-of-phase UAT report (`workflow.human_verify_mode: "end-of-phase"`) and this
 run's final report — uz reviews once, after waking up, not mid-run. Do not ask uz to
-send a continuation command at any point between here and Phase 5's close.
+send a continuation command at any point between here and Phase 8's close.
 
 Treat verification as an autonomous convergence loop: any failing test, review
 finding, divergent behavior, incomplete evidence, or gap report must be planned,
