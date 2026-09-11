@@ -623,6 +623,60 @@ class TestCooperativeBuilders(unittest.TestCase):
         out = strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
         self.assertIn("7d: 50%", out)
 
+    def test_h_rate_limit_colors_by_urgency_less_time_remaining_is_more_urgent(self):
+        # Pins ROADMAP SC1's direction now that the formula conflict is
+        # resolved (see 08-01-PLAN.md's "## Formula Direction -- Resolved"
+        # and 08-REVIEWS.md's resolved REVISION_CONFLICT entry): identical
+        # used_percentage, less time remaining must render strictly more
+        # urgently than more time remaining, never less. Two SEPARATE calls
+        # -- both fixtures use the SAME "five_hour" key, so a shared dict
+        # would silently collide, leaving only one entry.
+        with mock.patch.object(sl.time, "time", return_value=NOW):
+            rl_4h = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600 * 4}}
+            out_4h = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_4h), 200, THEME)
+            self.assertIn(THEME.c("YELLOW"), out_4h)
+            self.assertNotIn(THEME.c("RED+bold"), out_4h)
+
+            rl_1h = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600}}
+            out_1h = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_1h), 200, THEME)
+            self.assertIn(THEME.c("RED+bold"), out_1h)
+
+    def test_h_rate_limit_display_unchanged_by_color_refactor(self):
+        # ROADMAP SC2: displayed percentage/reset-suffix text stays
+        # byte-identical -- only which ramp color is picked changes. Full
+        # assertEqual against the complete stripped string, not assertIn.
+        with mock.patch.object(sl.time, "time", return_value=NOW):
+            rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600}}
+            out = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
+            self.assertEqual(
+                out,
+                f"⚡️ 5h: 42% (↺ {sl.datetime.fromtimestamp(NOW + 3600).strftime('%H:%M')})",
+            )
+
+    def test_rate_limit_past_reset_color_matches_raw_pct(self):
+        # D-04: a stale resets_at (already in the past) clamps
+        # remaining_fraction to 1.0, reducing to today's raw-percentage
+        # color -- zero regression on the existing past-reset fixtures.
+        # Compared against sl.util_rate_color(50, THEME) directly -- NOT
+        # THEME.c(sl.util_pick_color(...)): util_pick_color already returns
+        # a resolved ANSI escape, and wrapping it in THEME.c() a second time
+        # would re-parse it as a color NAME and return "" (08-REVIEWS.md
+        # cycle 3 HIGH, fixed 2026-09-11).
+        with mock.patch.object(sl.time, "time", return_value=NOW):
+            rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW - 1}}
+            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
+            self.assertIn(sl.util_rate_color(50, THEME), out)
+
+    def test_h_rate_limit_clock_skew_falls_back_to_raw_pct(self):
+        # remaining_fraction = 6h/5h = 1.2 > 1.0 (resets_at implies MORE time
+        # remaining than the five_hour key's own parsed window allows --
+        # clock skew or a window/key mismatch) -- falls back to raw-pct
+        # color, NOT the D-03 INF/max-red clamp.
+        with mock.patch.object(sl.time, "time", return_value=NOW):
+            rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600 * 6}}
+            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
+            self.assertIn(sl.util_rate_color(50, THEME), out)
+
     def test_weekly_drops_before_hourly_under_column_pressure(self):
         # No resets_at, so each segment's terse form is its only form: "5h: 42%"
         # / "7d: 13%" (7 chars of content) plus util_icon's "⚡️ "
