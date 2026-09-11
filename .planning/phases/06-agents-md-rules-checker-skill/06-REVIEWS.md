@@ -2,7 +2,7 @@
 phase: 6
 reviewers: [opencode]
 reviewed_at: 2026-09-11T01:26:04Z
-cycles: 3
+cycles: 4
 plans_reviewed: [06-01-PLAN.md, 06-02-PLAN.md, 06-03-PLAN.md]
 models:
   opencode: "xai/grok-4.6 (reasoning=high)"
@@ -27,6 +27,13 @@ cycle_3:
   lane_notes:
     - "First invocation attempt dispatched per-plan subagents via the ai-kit-spec-review-checklist + dispatching-parallel-agents skills; the 06-03 subagent failed on an 'external_directory' permission denial (/var/home/bazzite/.config/opencode/gsd-core/workflows/*, auto-rejecting), and the run ended with only a 3-line narrative status, not a structured review. Re-invoked with an explicit no-subagent instruction in the prompt; the second invocation completed a full structured per-plan review, reading all three plan files, REQUIREMENTS.md, ROADMAP.md, the source todo, Makefile, .pre-commit-config.yaml, and the installed agent-md-refactor/skill-judge/naming-analyzer SKILL.md files directly, with file:line citations throughout."
     - "One cited finding (06-03's rename/leftover scan matching untracked *.md files) cites this review run's own scratch prompt file (.tmp-gsd-review/prompt.md) as the triggering example; the underlying defect (the scan pattern is not restricted to tracked/renamed surfaces) is real and repo-general, not an artifact specific to that scratch file."
+cycle_4:
+  reviewed_at: 2026-09-11T03:49:00Z
+  reviewers: [opencode]
+  models:
+    opencode: "openai/gpt-5.6-sol (reasoning=high)"
+  model_sources:
+    opencode: "ladder-fallback: rung 1 (opencode-local-plan, router-env/my-plan-review) resolved to an unavailable backing model (claude/claude-opus-5) and errored immediately; rung 2 (opencode-sol, openai/gpt-5.6-sol) was invoked directly per .aikit/review-spec.toml's documented ladder and succeeded on the first attempt with a full structured review, reading all three plan files, REQUIREMENTS.md, and ROADMAP.md directly with file:line citations throughout."
 ---
 
 # Cross-AI Plan Review — Phase 6
@@ -443,3 +450,55 @@ Two actionable non-HIGH concerns are not yet incorporated or explicitly deferred
 ## Convergence Status (after Cycle 3)
 
 Cycle 2's 9 findings are 7/9 RESOLVED and 1/9 PARTIALLY RESOLVED (that same finding, the Makefile-completeness claim, is also re-raised in Cycle 3 as a distinct HIGH about chaining/lightest-first ordering). Cycle 3 finds 12 distinct HIGH-severity concerns remaining across the three plans — seven in 06-01 (CLAUDE.md-only support, linked-file blind spot, missing-config crash behavior, chaining/ordering, empty-stack vacuous success, per-tool modern-CLI coverage, unsatisfiable research categories; the linked-file blind spot is shared with 06-02 and counted once), two more in 06-02 (cache-update path traversal, contradictory blocked-research semantics), and three in 06-03 (incomplete pre-rename re-verification, no-rename-branch/leftover-grep incompatibility, non-worktree-safe rename scan) — plus 2 actionable MEDIUM concerns (cache provenance, final-name normalization) not yet incorporated or deferred. This phase has not converged. Another planning pass addressing Cycle 3's findings, followed by cycle 4 review, is needed before execution.
+
+## Cycle 4
+
+**Scope note:** Rung 1 (`opencode-local-plan`, `router-env/my-plan-review`) errored immediately on an unavailable backing model (`claude/claude-opus-5`), as in cycles 2-3. Rung 2 (`opencode-sol`, `openai/gpt-5.6-sol`) was invoked directly and succeeded on the first attempt — no subagent-dispatch retry was needed this cycle. The reviewer read `06-01/02/03-PLAN.md`, `06-CONTEXT.md`, `REQUIREMENTS.md`, and `ROADMAP.md` directly and verified each Cycle 3 finding against the current (post-fix, commits `72323d6`/`bfe43c7`/`0b4e69b`) file content, with file:line citations throughout.
+
+### OpenCode Review (cycle 4, openai/gpt-5.6-sol)
+
+#### Cycle 3 Disposition Table
+
+| # | Cycle 3 finding | Verdict | Evidence |
+|---|---|---|---|
+| 1 | CLI can't check a CLAUDE.md-only repo | **RESOLVED** | CLI falls back from `AGENTS.md` to `CLAUDE.md`, with dedicated coverage (`06-01-PLAN.md:840-870,908-914`). |
+| 2 | Checker can't see rules moved into linked/progressive-disclosure files | **RESOLVED** | Classification includes one-hop, same-repo Markdown links matching the refactor skill's structure (`06-01-PLAN.md:840-870,915-922`). |
+| 3 | No non-crashing behavior for missing Makefile/pre-commit config | **RESOLVED** | Missing files return empty parser results and maximal target findings rather than crashing (`06-01-PLAN.md:317-327,395-407,922-927`). |
+| 4 | Prerequisite chaining ignored, lightest-first omitted, REQ still claimed complete | **PARTIALLY RESOLVED** | Prerequisite chaining now supported, but lightest-first ordering remains unverified despite being mandatory, while the plan still claims ROADMAP SC-1 satisfied (`06-01-PLAN.md:504-535,1026-1054`; `REQUIREMENTS.md:56`). |
+| 5 | Multi-stack resolver vacuous "fresh coverage" with zero detected stacks | **RESOLVED** | Zero detected stacks now explicitly produce `needs_research: True`, with regression coverage (`06-01-PLAN.md:363-376,934-939`). |
+| 6 | Modern-CLI rule collapses per-tool presence into one boolean | **RESOLVED** | R06 now records per-tool presence and requires separate signals for every installed modern CLI tool (`06-01-PLAN.md:759-780,805-826`). |
+| 7 | Two research categories with empty keyword sets, perpetual false positives | **PARTIALLY RESOLVED** | The implementation section removes both empty-keyword categories, but a must-have elsewhere still says `RESEARCH_CATEGORIES` contains them — an internal contradiction (`06-01-PLAN.md:41,46,251-276`). |
+| 8 | `cache-update` path-traversal via unvalidated `stack` argument | **RESOLVED** | Stack identifiers validated before path construction; CLI catches `ValueError` without writing (`06-01-PLAN.md:289-302`; `06-02-PLAN.md:210-223`). |
+| 9 | Blocked-research lifecycle contradictory invocation semantics | **PARTIALLY RESOLVED** | Same-or-later-invocation research is now allowed, but inline research after Steps A-C can repeat Steps A-C and invoke `agent-md-refactor` twice, violating the exactly-once contract (`06-02-PLAN.md:321-326,387-400`). |
+| 10 | Pre-rename re-verification omits arch-test + two portability assertions | **RESOLVED** | All five prerequisite verification commands wired, including the arch-test and both portability assertions (`06-03-PLAN.md:162-192,212-254`). |
+| 11 | No-rename branch incompatible with unconditional leftover-grep | **RESOLVED** | No-rename branch now exits successfully before the leftover grep runs (`06-03-PLAN.md:399-408,453-455`). |
+| 12 | Leftover scan not restricted to tracked/renamed surfaces | **RESOLVED** | Leftover scan now uses `git grep` over tracked files only, excluding `.planning` artifacts (`06-03-PLAN.md:387-397,453-455`). |
+| a | Cached research has no mandatory provenance contract (MEDIUM) | **PARTIALLY RESOLVED** | Provenance is required, but validation accepts any string containing `"(source:"`, including an empty/malformed citation (`06-02-PLAN.md:197-207,247-260`). |
+| b | Final-name normalization handles prefixes but not the complete identifier (MEDIUM) | **RESOLVED** | Normalization now lowercases and replaces underscores/repeated hyphens across the complete identifier, not only its prefix (`06-03-PLAN.md:331-358`). |
+
+#### New Findings (introduced by or surviving the Cycle 3 revision)
+
+- **HIGH** — A valid prerequisite alias such as `test: test-unit` is falsely reported as `not_aliased` because alias detection checks only recipe substrings or identical recipes; prerequisite aliasing must itself be recognized and tested (`06-01-PLAN.md:536-546`).
+- **HIGH** — The pre-commit/pre-push split check passes when any hook has a push stage, without establishing that slow hooks were actually moved there, while the requested research can't be consumed through `ALL_TOOLING_KEYS` (`06-01-PLAN.md:483-496`; `06-02-PLAN.md:410-435`).
+- **HIGH** — Pre-commit hook-id parsing only matches literal `- id: <name>` lines, silently omitting valid quoted YAML ids from the mandatory 1:1 target audit (`06-01-PLAN.md:350-361`).
+- **HIGH** — Validate-chain recipe matching uses raw substrings, so a target named `lint` can appear wired merely because the recipe contains `pylint` — matching must be token/command-aware (`06-01-PLAN.md:512-526`).
+- **HIGH** — The rename verifier treats ANY surviving provisional directory as an intentional no-rename outcome, so a skipped/incomplete rename can bypass the leftover audit entirely; it must compare against the analyzer's recorded final name, not just directory existence (`06-03-PLAN.md:399-408,453-455`).
+- **MEDIUM** — Complete-name normalization neither rejects nor normalizes unsupported characters, empty suffixes, or leading/trailing hyphens before constructing the final skill/package identifiers (`06-03-PLAN.md:331-358`).
+- **MEDIUM** — Linked-file containment lacks a symlink-safe realpath contract, allowing a lexically in-repository link to resolve outside the repository (`06-01-PLAN.md:854-860,994-1007`).
+- **MEDIUM** — Negating `git grep`'s exit status conflates "no matches" (exit 1) with a real grep error (exit >1) into the same success path; these must be distinguished (`06-03-PLAN.md:453-455`).
+
+##### Status: Issues Found — fix and re-invoke
+
+### Cycle 4 Consensus Summary
+
+Only one reviewer ran this cycle (OpenCode, fallback model `openai/gpt-5.6-sol`, reasoning=high — rung 1 errored on an unavailable backing model before running, as in cycles 2-3). No cross-reviewer agreement/divergence to synthesize; all findings are single-source but source-grounded with file:line citations, and the reviewer verified every Cycle 3 finding against the current post-fix file content rather than trusting commit messages.
+
+Of Cycle 3's 12 HIGH findings, 8 are confirmed RESOLVED and 4 are PARTIALLY RESOLVED (lightest-first ordering still unverified despite the claim of completeness; an internal contradiction left the removed research categories still named in a must-have; the exactly-once `agent-md-refactor` invocation contract can still be violated by repeated inline research; cache provenance validation accepts empty/malformed citations). Of the 2 Cycle 3 MEDIUM findings, 1 is RESOLVED and 1 is PARTIALLY RESOLVED (provenance format is checked but not content).
+
+The revision also surfaced 5 NEW HIGH findings (prerequisite-alias false negative, pre-commit/pre-push split research not consumable, quoted-YAML hook-id parsing gap, substring-only validate-chain matching, rename verifier trusting directory existence over the analyzer's recorded name) plus 3 NEW MEDIUM findings (identifier normalization gaps, non-symlink-safe link containment, `git grep` exit-status conflation).
+
+CYCLE_SUMMARY: current_high=8 current_actionable=4
+
+## Convergence Status (after Cycle 4)
+
+This phase has NOT converged after 4 cycles. The pattern across cycles 2→3→4 is a near-constant HIGH count (9→12→8, counting partial-resolutions as still-open) rather than a shrinking one — each round of fixes resolves most prior findings but surfaces a comparable number of new ones in the same checker-logic area (Makefile/prerequisite parsing, rename/leftover verification, cache provenance). This suggests the remaining defects are concentrated in a few genuinely hard sub-problems (Make recipe/prerequisite semantics, git-tracked-file leftover scanning, exactly-once research invocation) rather than superficial oversights, and another full replan-and-review cycle is likely to follow the same pattern without a more targeted fix strategy for those specific sub-problems.
