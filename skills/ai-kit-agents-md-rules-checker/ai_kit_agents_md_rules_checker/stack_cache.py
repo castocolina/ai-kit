@@ -96,9 +96,11 @@ def read_stack_cache(stack: str, cache_root: str | None = None) -> dict:
         return {"state": "absent", "data": None}
     cached_at = payload.get("cached_at")
     data = payload.get("tooling")
+    if not isinstance(cached_at, str):
+        return {"state": "stale", "data": data}
     try:
         cached_dt = datetime.fromisoformat(cached_at)
-    except (TypeError, ValueError):
+    except ValueError:
         return {"state": "stale", "data": data}
     if cached_dt.tzinfo is None:
         cached_dt = cached_dt.replace(tzinfo=UTC)
