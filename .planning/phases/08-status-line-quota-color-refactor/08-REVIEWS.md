@@ -13,7 +13,7 @@ model_sources:
 
 ## Plan-Revision Conflicts
 
-- [ ] REVISION_CONFLICT formula_direction/08-01 -- required_property: identical used_percentage with less time remaining renders a more urgent color than more time remaining, per ROADMAP SC1 | conflicts with: ROADMAP SC4's worked example plus CONTEXT.md D-01's locked burn-rate formula pct divided by elapsed_fraction, which is provably monotonically decreasing in elapsed_fraction for any fixed pct, the opposite direction | alternatives: keep the burn-rate formula and amend SC1's wording to a pace framing, or switch to pct divided by remaining fraction and rewrite SC4's worked example plus D-01; no single monotonic formula satisfies both as currently worded
+- [x] REVISION_CONFLICT formula_direction/08-01 -- required_property: identical used_percentage with less time remaining renders a more urgent color than more time remaining, per ROADMAP SC1 | conflicts with: ROADMAP SC4's worked example plus CONTEXT.md D-01's locked burn-rate formula pct divided by elapsed_fraction, which is provably monotonically decreasing in elapsed_fraction for any fixed pct, the opposite direction | alternatives: keep the burn-rate formula and amend SC1's wording to a pace framing, or switch to pct divided by remaining fraction and rewrite SC4's worked example plus D-01; no single monotonic formula satisfies both as currently worded | resolved: switched to pct divided by remaining_fraction (1 - elapsed_fraction); SC1 is the authoritative, directly-testable "what must be TRUE" statement and is kept as-is; ROADMAP SC4's worked example and CONTEXT.md D-01/D-03/D-04 amended 2026-09-11 to match (see ROADMAP.md and 08-CONTEXT.md amendment notes)
 
 ## OpenCode Review
 

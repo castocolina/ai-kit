@@ -20,14 +20,33 @@ every timing input comes from the Claude-provided rate-limit context
 ## Implementation Decisions
 
 ### Burn-rate formula
-- **D-01:** The color is picked by feeding a ratio — `used_percentage /
-  (elapsed_fraction * 100)` — into the EXISTING `theme.ramps["rate"]` thresholds
-  (50/80/inf) unchanged. This reproduces the roadmap's own worked example by
-  construction: 50% used at hour 1-of-5 (elapsed=20%) → ratio 250 → red; 30%
-  used at hour 4-of-5 (elapsed=80%) → ratio 37.5 → green/blue per the ramp. No
-  new ramp is designed or tuned. — **Reversibility:** reversible — swapping the
-  formula later only changes what value feeds the same existing
-  `util_pick_color` call; the ramp and its thresholds are untouched either way.
+- **D-01 (amended 2026-09-11 — supersedes the original draft of this decision):**
+  The color is picked by feeding a ratio — `used_percentage / remaining_fraction`,
+  where `remaining_fraction = 1 - elapsed_fraction` — into the EXISTING
+  `theme.ramps["rate"]` thresholds (50/80/inf) unchanged. No new ramp is
+  designed or tuned. — **Reversibility:** reversible — swapping the formula
+  later only changes what value feeds the same existing `util_pick_color`
+  call; the ramp and its thresholds are untouched either way.
+
+  **Why this supersedes the original `pct / elapsed_fraction` draft:** that
+  formula was chosen to reproduce ROADMAP.md SC4's original worked example
+  (50% used at hour 1-of-5 → red; 30% used at hour 4-of-5 → green/blue) — but
+  that example compares two DIFFERENT usage percentages at two different
+  points in time (a burn-*pace* framing), which is mathematically
+  incompatible with SC1's actual requirement: for the SAME `used_percentage`,
+  less time remaining must render MORE urgently, never less. `pct /
+  elapsed_fraction` is provably monotonically decreasing in `elapsed_fraction`
+  for fixed `pct` — exactly backwards from SC1. Live-verified during Phase 8's
+  plan-review convergence cycle 1 (opencode reviewer): identical 50% usage,
+  4h-remaining-of-5h (elapsed=0.2) → old formula gives ratio 250 → RED, while
+  1h-remaining (elapsed=0.8) → ratio 62.5 → YELLOW — less time left rendering
+  LESS urgently. `pct / remaining_fraction` fixes the direction: for fixed
+  `pct`, the ratio strictly increases as `remaining_fraction` shrinks (less
+  time left), satisfying SC1 by construction. ROADMAP.md SC4's worked example
+  text is corrected to match (see ROADMAP.md's own 2026-09-11 amendment note)
+  rather than kept as the (now known-inconsistent) standard to design around.
+  See `08-REVIEWS.md`'s resolved `## Plan-Revision Conflicts` entry for the
+  full arithmetic proof.
 - **D-02:** `elapsed_fraction` is derived per-render from two inputs, both
   already available without any hardcoded window-length constant:
   - `resets_at` (provided per bucket, as today)
@@ -45,16 +64,31 @@ every timing input comes from the Claude-provided rate-limit context
     needed).
 
 ### Edge cases
-- **D-03:** When `elapsed_fraction` is 0 (render happens at/near the exact
-  window start), any nonzero usage is treated as maximally urgent — the ratio
-  clamps straight to the ramp's top band rather than computing a literal
-  division-by-zero or an arbitrarily huge number.
-- **D-04:** When `resets_at` is already in the past (the existing
+- **D-03 (amended 2026-09-11 — the risky edge moved when D-01's formula flipped):**
+  With `ratio = pct / remaining_fraction`, the division-by-zero risk is no
+  longer at `elapsed_fraction == 0` (that case is now perfectly safe:
+  `remaining_fraction == 1`, so `ratio == pct` — no clamp needed at all,
+  reducing cleanly to raw-percentage behavior at window start). The risky edge
+  is now `remaining_fraction == 0` (i.e. `elapsed_fraction == 1` — the render
+  happens at/after the window's nominal reset moment while `resets_at` still
+  reads as "now or later," a narrow timing-race case distinct from D-04's
+  "resets_at already in the past" case below). Treat this as maximally urgent
+  — clamp straight to the ramp's top band — which is the semantically correct
+  call: you are at the literal edge of the window with no time left to pace
+  against.
+- **D-04 (amended 2026-09-11 — clamp direction flipped to match D-01):** When
+  `resets_at` is already in the past (the existing
   `test_h/w_rate_limit_shows_bucket_even_with_past_reset` cases deliberately
-  still show a stale bucket), `elapsed_fraction` clamps to `1.0`. This is the
-  "we don't have a reliable read on the current window, don't invent urgency"
-  fallback, and it exactly reduces to today's raw-percentage behavior for this
-  already-tested case — zero regression risk there.
+  still show a stale bucket), this is the "we don't have a reliable read on
+  the current window, don't invent urgency" fallback — under the corrected
+  D-01 formula this means clamping `remaining_fraction` to `1.0` (NOT `0.0`,
+  which would wrongly trigger D-03's max-urgency clamp for stale data). This
+  reduces to `ratio == pct` — today's raw-percentage behavior — for this
+  already-tested case, preserving the original zero-regression intent. (The
+  original pre-amendment text clamped `elapsed_fraction` to `1.0` for this
+  same case, which was correct under the old formula; the corrected
+  formulation is `remaining_fraction = 1.0`, the equivalent safe value under
+  the new one.)
 
 ### Where the logic lives
 - **D-05:** `util_rate_color(pct, theme)` stays exactly as it is today — a pure
