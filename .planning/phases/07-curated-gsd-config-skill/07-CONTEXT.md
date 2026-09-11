@@ -190,7 +190,11 @@ named via `/naming-analyzer`.
   agent); the live, offline, always-in-sync source D-03's critical-agent logic
   requires at runtime, queried directly during this discussion via
   `node -e "require('.../model-catalog.cjs')"` — confirmed working and returning
-  the 33-agent table for this installed version
+  the 35-agent table for this installed version (corrected 2026-09-11 —
+  this was a stale count from an earlier gsd-core version; harmless since
+  the code re-derives the count live and never hardcodes it, but
+  07-01-PLAN.md line 300's "35 agents" was already correct, `07-REVIEWS.md`
+  Cycle 2 self-verification review)
 - `resolve-execution <agent-type> [--effort <level>] [--fast-mode <bool>]` —
   public `gsd-tools` CLI query returning an agent's fully-resolved
   model/effort/fast_mode under the current config; the drift-check/confirmation
