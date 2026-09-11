@@ -53,9 +53,9 @@ phase.
 ### AGENTS.md Rules Checker Skill
 
 - [ ] **REQ-agtmd-wrapper**: A new skill wraps `/agent-md-refactor` and can be invoked to check an existing AGENTS.md/CLAUDE.md-style file against a house ruleset, not just perform a plain progressive-disclosure refactor.
-- [ ] **REQ-agtmd-makefile-rules**: The skill flags a missing/incomplete Makefile target structure — `setup-env`, one target per pre-commit hook (1:1 with `.pre-commit-config.yaml`), a `validate` target chaining all hook targets lightest-first, `test`/`test-unit` alias, `test-integration`, `e2e-test`, `arch-test` — with per-language tool conventions (e.g. gofmt/black/prettier for formatting).
-- [ ] **REQ-agtmd-workflow-rules**: The skill flags absence of: English-only communication, per-plan commit compaction, cross-AI plan-review + cross-AI cheap-model execution (both path-agnostic), rtk/modern-CLI(`rg`/`bat`/`sd`/`fd`/`eza`)/CodeGraph/graphify tool-awareness, no-absolute-paths, no-excuse-deflection on failing tests/bugs, stale-knowledge verification for gray-area topics, theory→hypothesis→spike methodology, no-orphaned-processes, `./tmp/` ephemeral-file convention, README/nested-docs currency, no-uncommitted-files-at-plan-close, and concise (non-narrative) documentation — the full rule set accumulated in the source todo.
-- [ ] **REQ-agtmd-skill-pipeline**: The skill is scaffolded via `/superpowers:writing-skills`, reviewed via `/skill-judge` (no remaining Critical/Important finding), and named via `/naming-analyzer`.
+- [x] **REQ-agtmd-makefile-rules**: The skill flags a missing/incomplete Makefile target structure — `setup-env`, one target per pre-commit hook (1:1 with `.pre-commit-config.yaml`), a `validate` target chaining all hook targets lightest-first, `test`/`test-unit` alias, `test-integration`, `e2e-test`, `arch-test` — with per-language tool conventions (e.g. gofmt/black/prettier for formatting).
+- [x] **REQ-agtmd-workflow-rules**: The skill flags absence of: English-only communication, per-plan commit compaction, cross-AI plan-review + cross-AI cheap-model execution (both path-agnostic), rtk/modern-CLI(`rg`/`bat`/`sd`/`fd`/`eza`)/CodeGraph/graphify tool-awareness, no-absolute-paths, no-excuse-deflection on failing tests/bugs, stale-knowledge verification for gray-area topics, theory→hypothesis→spike methodology, no-orphaned-processes, `./tmp/` ephemeral-file convention, README/nested-docs currency, no-uncommitted-files-at-plan-close, and concise (non-narrative) documentation — the full rule set accumulated in the source todo.
+- [ ] **REQ-agtmd-skill-pipeline**: The skill is scaffolded via `/superpowers:writing-skills`, reviewed via `/skill-judge` (no remaining Critical/Important finding), and named via `/naming-analyzer`. (Plan 01 completed the scaffold step only; `/skill-judge` review and `/naming-analyzer` rename are Plan 03's job.)
 
 ### Curated GSD Config Skill
 
@@ -109,9 +109,9 @@ pending-todo backlog rather than from further PRD ingest.
 | REQ-usage-metrics-dashboard-ui | Phase 5 | Done |
 | REQ-usage-metrics-classification-refinement-loop | Phase 5 | Done |
 | REQ-agtmd-wrapper | Phase 6 | Pending |
-| REQ-agtmd-makefile-rules | Phase 6 | Pending |
-| REQ-agtmd-workflow-rules | Phase 6 | Pending |
-| REQ-agtmd-skill-pipeline | Phase 6 | Pending |
+| REQ-agtmd-makefile-rules | Phase 6 | Complete |
+| REQ-agtmd-workflow-rules | Phase 6 | Complete |
+| REQ-agtmd-skill-pipeline | Phase 6 | Partial (scaffold done; skill-judge/naming-analyzer in Plan 03) |
 | REQ-cfg-curated-questions | Phase 7 | Pending |
 | REQ-cfg-writes-config | Phase 7 | Pending |
 | REQ-cfg-schema-validate | Phase 7 | Pending |
