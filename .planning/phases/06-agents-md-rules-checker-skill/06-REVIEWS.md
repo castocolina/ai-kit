@@ -2,7 +2,7 @@
 phase: 6
 reviewers: [opencode]
 reviewed_at: 2026-09-11T01:26:04Z
-cycles: 2
+cycles: 3
 plans_reviewed: [06-01-PLAN.md, 06-02-PLAN.md, 06-03-PLAN.md]
 models:
   opencode: "xai/grok-4.6 (reasoning=high)"
@@ -17,6 +17,16 @@ cycle_2:
     opencode: "ladder-fallback: review.models.opencode pins xai/grok-4.6, which returned HTTP 403 personal-team-blocked:spending-limit (out of xAI credits) on invocation; .aikit/review-spec.toml's documented reviewer ladder (opencode-local-plan > opencode-sol > opencode-grok > codex-sol > native-opus) was applied manually and opencode-sol (openai/gpt-5.6-sol) succeeded with a full source-grounded review"
   lane_notes:
     - "opencode run emitted repeated 'permission requested: external_directory ... auto-rejecting' for /home/bazzite/.claude/*, /home/bazzite/.agents/*, /home/bazzite/.config/opencode/* during this cycle's run. Spot-checked citations into those paths (e.g. agent-md-refactor/SKILL.md, skill-judge/SKILL.md, naming-analyzer/SKILL.md) against the real files on disk and they are accurate, so the denials did not appear to block the grounding that mattered for this review."
+cycle_3:
+  reviewed_at: 2026-09-11T03:14:54Z
+  reviewers: [opencode]
+  models:
+    opencode: "openai/gpt-5.6-sol (reasoning=high)"
+  model_sources:
+    opencode: "ladder-fallback: rung 1 (opencode-local-plan, router-env/my-plan-review) resolved to an unavailable backing model (claude/claude-opus-5) and errored immediately; rung 2 (opencode-sol, openai/gpt-5.6-sol) was invoked directly per .aikit/review-spec.toml's documented ladder and succeeded. xai/grok-4.6 (rung 3) was not attempted since rung 2 succeeded."
+  lane_notes:
+    - "First invocation attempt dispatched per-plan subagents via the ai-kit-spec-review-checklist + dispatching-parallel-agents skills; the 06-03 subagent failed on an 'external_directory' permission denial (/var/home/bazzite/.config/opencode/gsd-core/workflows/*, auto-rejecting), and the run ended with only a 3-line narrative status, not a structured review. Re-invoked with an explicit no-subagent instruction in the prompt; the second invocation completed a full structured per-plan review, reading all three plan files, REQUIREMENTS.md, ROADMAP.md, the source todo, Makefile, .pre-commit-config.yaml, and the installed agent-md-refactor/skill-judge/naming-analyzer SKILL.md files directly, with file:line citations throughout."
+    - "One cited finding (06-03's rename/leftover scan matching untracked *.md files) cites this review run's own scratch prompt file (.tmp-gsd-review/prompt.md) as the triggering example; the underlying defect (the scan pattern is not restricted to tracked/renamed surfaces) is real and repo-general, not an artifact specific to that scratch file."
 ---
 
 # Cross-AI Plan Review — Phase 6
@@ -296,3 +306,140 @@ REQUIREMENTS.md/ROADMAP.md wording — "REQ-agtmd-makefile-rules... a target per
 ## Convergence Status (after Cycle 2)
 
 Cycle 1's 7 HIGH-or-above concerns are resolved as literal assertions (per the ledgers, confirmed by Cycle 2's review). However, Cycle 2 finds the underlying cross-plan contract (Plan 01 finding schema ↔ Plan 02 remediation consumer) is still broken — in a new way (field-shape mismatch rather than key-spelling mismatch) — plus a fresh batch of HIGH-severity gaps in Makefile/workflow-rule completeness, cache freshness, multi-stack handling, host-portability, and the 06-03 rename/gate logic. None of these Cycle 2 findings appear in any plan's Review Dispositions Ledger yet (the ledgers only cover Cycle 1). This phase has not converged — another planning pass addressing Cycle 2's findings, followed by cycle 3 review, is needed before execution.
+
+## Cycle 3
+
+**Scope note:** `review.models.opencode` is pinned to `router-env/my-plan-review` (rung 1 of `.aikit/review-spec.toml`'s ladder), which resolved to a backing model (`claude/claude-opus-5`) reported as unavailable and errored immediately without running. Per the documented ladder (`opencode-local-plan` → `opencode-sol` → `opencode-grok` → `codex-sol` → `native-opus`), rung 2 (`opencode-sol`, `openai/gpt-5.6-sol`) was invoked directly and succeeded with a full source-grounded review. The first `opencode-sol` invocation attempted to dispatch per-plan subagents (via the `ai-kit-spec-review-checklist` + `dispatching-parallel-agents` skills); the 06-03 subagent failed on an external_directory permission denial and the run ended with only a 3-line narrative, not a structured review. A second invocation with an explicit no-subagent-dispatch instruction completed the full structured review below, reading all three plan files and cited repo files directly.
+
+### OpenCode Review (cycle 3, openai/gpt-5.6-sol)
+
+Using `ai-kit-spec-review-checklist` to verify the current GSD plans against Cycle 2 findings and identify revision-introduced concerns, auditing directly with no subagent dispatch. The Cycle 2 fixes materially repair the cache and finding-schema contracts, but the close-out plan still has executable verification gaps despite its revised prose.
+
+#### 06-01
+
+##### Summary
+The revision resolves the Cycle 2 cache, multi-stack, finding-schema, fixture, and workflow-rule defects. However, the plan still does not fully implement the declared AGENTS.md/CLAUDE.md and Makefile requirements.
+
+##### Strengths
+- Stale entries are gated on both freshness and key presence in `_resolve_across_stacks()`, with a dedicated stale-cache test. Evidence: `06-01-PLAN.md:315-335,506-520`.
+- Multi-stack resolution now requires fresh coverage for every detected stack and reports the uncovered stacks deterministically. Evidence: `06-01-PLAN.md:327-335,511-520`.
+- Every Makefile finding now carries `criticality` and `summary`, matching the fields consumed by Plan 02. Evidence: `06-01-PLAN.md:424-430`.
+- Non-inline pre-commit hooks remain visible through a `pre-commit run <id>` fallback. Evidence: `06-01-PLAN.md:302-313,341-348,491-499`.
+- R04 now requires independent review, execution, and path-agnostic signal groups; R02 is included based on its non-empty signals. Evidence: `06-01-PLAN.md:210-215,630-659,681-689`.
+- The tracer now creates a Python marker before exercising the Python cache. Evidence: `06-01-PLAN.md:478-505`.
+
+##### Concerns
+- **HIGH — The public CLI cannot check a CLAUDE.md-only repository.** `06-01-PLAN.md:432-449,665-673`; `.planning/REQUIREMENTS.md:55`. `main()` passes only `repo_root`, while `check()` defaults exclusively to `<repo>/AGENTS.md`; a repository containing only `CLAUDE.md` is treated as having an empty instruction file.
+- **HIGH — The checker cannot see rules placed into linked files by the skill it wraps.** `06-01-PLAN.md:665-673`; `06-02-PLAN.md:317-347`; `agent-md-refactor/SKILL.md:76-82,110-145`. The wrapped skill deliberately moves testing, documentation, and git rules out of the root file, but the checker reads only the root AGENTS.md — a later run can falsely report those rules missing and reinsert duplicates. (Same root cause recurs in 06-02 as the wrapper inheriting this blind spot.)
+- **HIGH — A missing Makefile or pre-commit config has no defined non-crashing behavior.** `06-01-PLAN.md:289-307,337-340`; `.planning/REQUIREMENTS.md:56`. The specified parsers directly read both paths with no absent-file handling, even though a missing Makefile is the strongest form of the gap the skill is supposed to report.
+- **HIGH — Valid Make prerequisite chaining is ignored, and lightest-first ordering is explicitly omitted.** `06-01-PLAN.md:297-301,393-422,567-585,759-776`; `.planning/REQUIREMENTS.md:56`; `.planning/ROADMAP.md:191-196`. The plan examines recipes only and expressly declares cost ordering unimplemented while still claiming the requirement complete.
+- **HIGH — No detected stack produces vacuous "fresh coverage."** `06-01-PLAN.md:315-356`. `missing` is empty, so `_resolve_across_stacks()` returns `("", False, [])`; the missing target then gets an empty recommendation and `needs_research: false`.
+- **HIGH — The modern-CLI rule cannot enforce awareness of each installed tool.** `06-01-PLAN.md:216-219,617-628,630-663`; `.planning/REQUIREMENTS.md:57`. Presence is collapsed to one boolean and R06's signals mention only `rg`/`ripgrep`/generic "modern cli"; guidance can pass while omitting `bat`, `sd`, `fd`, and `eza`.
+- **HIGH — Two newly added research categories can never be classified as covered.** `06-01-PLAN.md:360-385`. `validate-order` and `precommit-vs-prepush-split` keyword tuples are deliberately empty and empty categories are "NEVER skipped," so even a fully compliant repository receives perpetual findings.
+
+##### Suggestions
+- Add fixtures for a CLAUDE.md-only repo, linked progressive-disclosure files, no Makefile, no pre-commit file, prerequisite-based chaining, and no detected stack.
+- Model modern CLI presence per executable rather than as one aggregate condition.
+- Keep the documented heuristic limitations, but do not claim `REQ-agtmd-makefile-rules` complete while mandatory ordering remains unimplemented.
+
+##### Risk Assessment
+**HIGH.** Core Cycle 2 defects are repaired, but common repositories can still crash, be falsely classified, or fail supported-file requirements.
+
+#### 06-02
+
+##### Summary
+The remediation contract now handles workflow and Makefile findings separately and consistently. The cache schema and host-portability changes are substantially improved, but the write boundary and blocked-research flow remain unsafe or ambiguous.
+
+##### Strengths
+- `build_remediation()` no longer reads workflow-only `status` fields from Makefile findings. Evidence: `06-02-PLAN.md:140-182`.
+- Near-miss evidence is preserved through `matched_signals`. Evidence: `06-02-PLAN.md:153-162,215-223`.
+- Cache JSON is validated for root type, allowed keys, and non-empty string values before writing. Evidence: `06-02-PLAN.md:189-205,224-233`.
+- The generated skill is required to use host-neutral resolution, conditional examples, and a direct-in-context fallback rather than requiring Claude-specific dispatch. Evidence: `06-02-PLAN.md:260-265,329-360`.
+- The combined cache schema now includes all requested target and research-category keys. Evidence: `06-02-PLAN.md:367-386`.
+
+##### Concerns
+- **HIGH — `cache-update` permits path traversal through the stack argument.** `06-01-PLAN.md:270-281`; `06-02-PLAN.md:184-205`. `cache_path()` joins `f"{stack}.json"` under the cache root, while the new CLI validates only the JSON payload. A path-like stack can escape the cache directory and atomically overwrite an unrelated JSON file.
+- **HIGH — The blocked-research lifecycle has contradictory invocation semantics.** `06-02-PLAN.md:348-386`. The action says blocked work is deferred to a "LATER, separate invocation," then says remediation may be rerun in the "same or a later invocation."
+- **MEDIUM — Cached research has no mandatory provenance contract.** `06-02-PLAN.md:361-386,461-475`; `.planning/PROJECT.md:23-29`. Freshness is timestamped, but a non-empty freeform string can still be unsourced or hallucinated.
+
+##### Suggestions
+- Validate the stack identifier before resolving any cache path.
+- Make blocked research an explicit state machine with one tested continuation rule.
+- Require citations or provenance within the cache value schema.
+
+##### Risk Assessment
+**HIGH.** The consumer-side Cycle 2 schema failure is fixed, but the newly exposed cache writer can escape its intended directory.
+
+#### 06-03
+
+##### Summary
+The skill-judge gate is now aligned with the installed skill's actual report format, and the rename action has explicit changed/unchanged branches. The runnable verification does not fully implement those branches or the claimed re-verification coverage.
+
+##### Strengths
+- The plan accurately grounds `skill-judge` against its real `## Critical Issues` report section and no longer permits score-only passage. Evidence: `06-03-PLAN.md:135-155,180-195`; `skill-judge/SKILL.md:544-582`.
+- Actual invocation of both `skill-judge` and `naming-analyzer` is mandatory, with a stop-on-unavailable policy. Evidence: `06-03-PLAN.md:128-133,256-263`.
+- Rename actions are now conditionally described, and package prefixing avoids the specific double-prefix defect. Evidence: `06-03-PLAN.md:308-360`.
+- Post-rename execution and distinctness checks dynamically discover the final skill path. Evidence: `06-03-PLAN.md:401-431`.
+
+##### Concerns
+- **HIGH — The claimed full pre-rename re-verification is still incomplete.** `06-03-PLAN.md:161-178,198-232`; `06-01-PLAN.md:558-565,695-710`; `06-02-PLAN.md:407-428`. Task 1 omits Plan 01's `arch-test` live assertion, and its copied Plan 02 SKILL.md assertion omits the host-neutral and portable-fallback assertions at `06-02-PLAN.md:419-420`.
+- **HIGH — The no-rename branch remains incompatible with the runnable leftover check.** `06-03-PLAN.md:321-360,405-407`. The shell command is unconditional and returns failure when the provisional name correctly remains in live files; prose in `<fails_when>` cannot change the command's exit status.
+- **HIGH — The expanded leftover scan is not worktree-safe.** `06-03-PLAN.md:348-353,405-407`. The revised `*.md` scan is not restricted to tracked/renamed surfaces, so it can fail on unrelated untracked markdown the plan must preserve (it also cannot detect stale filenames or the provisional cache namespace).
+- **MEDIUM — Final-name normalization handles prefixes but not the complete identifier.** `06-03-PLAN.md:308-319`; `skill-judge/SKILL.md:220-223`. An analyzer result such as `agents_md_rules_checker` produces a frontmatter name containing underscores, which violates the installed skill-judge name rules.
+
+##### Suggestions
+- Copy the upstream verification commands byte-for-byte instead of maintaining reduced approximations.
+- Use a branch-aware rename audit over tracked files.
+- Normalize and validate the final identifier before any `git mv`.
+
+##### Risk Assessment
+**HIGH.** The prose design is improved, but the executable close-out can still fail in both rename branches and does not prove all upstream contracts.
+
+#### Cycle 2 Disposition Table
+
+| # | Cycle 2 finding | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Makefile findings lacked the fields assumed by `build_remediation()` | **RESOLVED** | `06-01-PLAN.md:424-430` gives every Makefile finding `criticality` and `summary`; `06-02-PLAN.md:153-182` branches by finding kind. |
+| 2 | Stale cache entries were trusted as recommendations | **RESOLVED** | `06-01-PLAN.md:315-335` requires `needs_research is False`; `:506-510` adds the stale-cache regression test. |
+| 3 | Multi-stack detection collapsed to the first usable stack | **RESOLVED** | `06-01-PLAN.md:327-335,511-520` requires fresh coverage for every detected stack. |
+| 4 | Non-inline hooks were invisible; R04 could pass without all clauses; R02 was excluded | **RESOLVED** | Non-inline fallback: `06-01-PLAN.md:302-313,341-348`; grouped R04: `:210-215,643-656`; R02 inclusion: `:213,633-659`. |
+| 5 | The seeded Python-cache tracer had no Python stack marker | **RESOLVED** | `06-01-PLAN.md:478-505` writes `requirements.txt` before cache lookup. |
+| 6 | Generated SKILL.md hardcoded Claude-only dispatch and path assumptions | **RESOLVED** | `06-02-PLAN.md:260-265,329-360` makes Claude dispatch an example only and defines a portable fallback. |
+| 7 | Cache schema could not represent formatter/security/dead-code categories | **RESOLVED** | `06-01-PLAN.md:244-265,360-385` adds `RESEARCH_CATEGORIES`/`ALL_TOOLING_KEYS`; `06-02-PLAN.md:367-386` uses the combined schema. |
+| 8 | The unchanged-name branch was impossible, and full pre-rename verification was not runnable | **PARTIALLY RESOLVED** | Action prose is conditional at `06-03-PLAN.md:321-360`, but the automated grep remains unconditional at `:405-407`; the Plan 01 arch-target check and two Plan 02 portability assertions remain omitted. |
+| 9 | Skill-judge's score threshold was weaker than the phase criterion and "Important" was unmapped | **RESOLVED** | `06-03-PLAN.md:135-155,180-195` requires an empty `## Critical Issues` section. |
+
+#### Cross-Document Consistency
+- Plan 01 claims `REQ-agtmd-makefile-rules` complete while explicitly excluding lightest-first ordering, contradicting `.planning/REQUIREMENTS.md:56` and `.planning/ROADMAP.md:193`.
+- Plans 01-02 describe support for AGENTS.md/CLAUDE.md-style files, but the only runnable CLI path defaults to AGENTS.md.
+- Plan 03 claims every upstream verification is rerun, but its runnable commands are a reduced subset.
+- The wrapper's root-only checker conflicts with `agent-md-refactor`'s documented linked-file output model.
+
+##### Status: Issues Found — fix and re-invoke
+
+---
+
+### Cycle 3 Consensus Summary
+
+Only one reviewer ran this cycle (OpenCode, fallback model `openai/gpt-5.6-sol`, reasoning=high — rung 1 of the ladder, `opencode-local-plan`, errored on an unavailable backing model before running). No cross-reviewer agreement/divergence to synthesize; all findings are single-source but source-grounded with `file:line` citations.
+
+Of Cycle 2's 9 findings, 7 are confirmed RESOLVED and 1 (the 06-03 rename/verification finding) is PARTIALLY RESOLVED — the conditional rename prose was added but the automated leftover-grep and pre-rename re-verification steps remain unconditional/incomplete. The revisions also introduced or left in place 12 distinct HIGH-severity concerns across the three plans:
+
+- HIGH: 06-01's public CLI cannot check a CLAUDE.md-only repository (defaults exclusively to `AGENTS.md`).
+- HIGH: the checker (06-01) and its wrapper (06-02) cannot see rules `agent-md-refactor` moves into linked/progressive-disclosure files — a later run can falsely report those rules missing and reinsert duplicates.
+- HIGH: 06-01 has no defined non-crashing behavior when the Makefile or pre-commit config is missing.
+- HIGH: 06-01 ignores Make prerequisite chaining and explicitly omits lightest-first ordering while still claiming `REQ-agtmd-makefile-rules` complete.
+- HIGH: 06-01's multi-stack resolver produces vacuous "fresh coverage" when no stack is detected at all.
+- HIGH: 06-01's modern-CLI rule collapses per-tool presence (`rg`/`bat`/`sd`/`fd`/`eza`) into one boolean, so guidance can pass while omitting four installed tools.
+- HIGH: 06-01 adds two new research categories (`validate-order`, `precommit-vs-prepush-split`) with empty keyword sets, so they can never be classified as covered — perpetual false positives.
+- HIGH: 06-02's `cache-update` CLI permits path traversal through an unvalidated `stack` argument, allowing an atomic overwrite of an arbitrary JSON file under the cache root.
+- HIGH: 06-02's blocked-research lifecycle gives contradictory invocation semantics (deferred to a "later, separate invocation" vs. "same or later invocation").
+- HIGH: 06-03's claimed full pre-rename re-verification omits Plan 01's `arch-test` live assertion and two Plan 02 SKILL.md portability assertions.
+- HIGH: 06-03's no-rename branch is still incompatible with its own unconditional leftover-grep, which fails even when the provisional name correctly remains.
+- HIGH: 06-03's expanded leftover/rename scan is not restricted to tracked or renamed surfaces, so it can fail on unrelated untracked markdown.
+
+Two actionable non-HIGH concerns are not yet incorporated or explicitly deferred: 06-02's cached research has no mandatory provenance/citation contract (MEDIUM), and 06-03's final-name normalization does not cover the complete identifier, so an analyzer result with underscores can violate skill-judge's own naming rules (MEDIUM).
+
+## Convergence Status (after Cycle 3)
+
+Cycle 2's 9 findings are 7/9 RESOLVED and 1/9 PARTIALLY RESOLVED (that same finding, the Makefile-completeness claim, is also re-raised in Cycle 3 as a distinct HIGH about chaining/lightest-first ordering). Cycle 3 finds 12 distinct HIGH-severity concerns remaining across the three plans — seven in 06-01 (CLAUDE.md-only support, linked-file blind spot, missing-config crash behavior, chaining/ordering, empty-stack vacuous success, per-tool modern-CLI coverage, unsatisfiable research categories; the linked-file blind spot is shared with 06-02 and counted once), two more in 06-02 (cache-update path traversal, contradictory blocked-research semantics), and three in 06-03 (incomplete pre-rename re-verification, no-rename-branch/leftover-grep incompatibility, non-worktree-safe rename scan) — plus 2 actionable MEDIUM concerns (cache provenance, final-name normalization) not yet incorporated or deferred. This phase has not converged. Another planning pass addressing Cycle 3's findings, followed by cycle 4 review, is needed before execution.
