@@ -1470,6 +1470,45 @@ def util_parse_threshold(key: str | int | float) -> float:
     return int(s)   # ValueError on garbage
 
 
+_UNIT_SECONDS = {
+    "hour": 3600, "hours": 3600, "day": 86400, "days": 86400,
+    "week": 604800, "weeks": 604800, "month": 2_592_000, "months": 2_592_000,
+}
+
+
+def util_rate_window_seconds(key: str) -> int | None:
+    """five_hour -> 5*3600, seven_day -> 7*86400. None when either the
+    number word or the unit word is unrecognized -- mirrors
+    fmt_rate_key_label's own "unknown words pass through" leniency rather
+    than raising."""
+    num, _, unit = key.partition("_")
+    n = _NUM_WORDS.get(num)
+    secs = _UNIT_SECONDS.get(unit)
+    if n is None or secs is None:
+        return None
+    return n * secs
+
+
+def util_rate_burn_ratio(pct: float, key: str, reset: int | None, now: float) -> float:
+    """Burn-rate ratio feeding the unchanged util_rate_color/theme.ramps["rate"]
+    ramp: used_percentage relative to how much of the bucket's window remains,
+    rather than raw usage alone (D-01). Falls back to `pct` unchanged (D-04)
+    when the window can't be reliably derived (unparseable key, missing
+    reset, a stale resets_at already in the past, or a resets_at implying
+    more time remaining than the key's parsed window allows -- clock skew or
+    a window/key mismatch). Clamps to the ramp's top band at the window's
+    literal reset instant (D-03)."""
+    window_seconds = util_rate_window_seconds(key)
+    if window_seconds is None or reset is None:
+        return pct
+    remaining_fraction = (reset - now) / window_seconds
+    if remaining_fraction < 0.0 or remaining_fraction > 1.0:
+        remaining_fraction = 1.0
+    if abs(remaining_fraction) < 1e-9:
+        return INF if pct > 0 else 0.0
+    return pct / remaining_fraction
+
+
 def util_rate_color(pct: float, theme: "Theme") -> str:
     """Pick the rate-limit ramp color for a usage percentage."""
     return util_pick_color(float(pct), theme.ramps["rate"])
@@ -1624,10 +1663,13 @@ def util_rate_group_str(
     when no matching bucket reports a percentage."""
     suffix_fn = util_hour_reset_suffix if hourly else util_week_reset_suffix
     parts: list[str] = []
+    now = time.time()
     # Visibility never depends on comparing resets_at against the clock: a bucket
     # is shown whenever it reports a percentage, regardless of whether its reset
     # is in the past or future, so a wrong system clock or timezone change can
-    # never hide a bucket.
+    # never hide a bucket. Color, however, now does depend on the clock: the
+    # burn-rate ratio below weighs used_percentage against how much of the
+    # bucket's window remains (via `now` and each bucket's resets_at).
     for key in sorted(rate_limits):
         if _rate_bucket_hourly(key) != hourly:
             continue
@@ -1638,7 +1680,8 @@ def util_rate_group_str(
         pct = float(pct_raw)
         reset_raw: Any = info.get("resets_at")
         reset: int | None = int(reset_raw) if reset_raw is not None else None
-        color = util_rate_color(pct, theme)
+        ratio = util_rate_burn_ratio(pct, key, reset, now)
+        color = util_rate_color(ratio, theme)
         suffix = suffix_fn(reset) if show_reset else ""
         parts.append(f"{fmt_rate_key_label(key)}: {color}{round(pct)}%{RESET}{suffix}")
     return util_icon("⚡", " | ".join(parts)) if parts else None

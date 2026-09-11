@@ -176,6 +176,86 @@ class TestPickColor(unittest.TestCase):
         self.assertEqual(sl.util_pick_color(200 * ms, theme.ramps["slowest"]), theme.c("WHITE"))
 
 
+class TestRateBurnRatio(unittest.TestCase):
+    """Pure-function tests for util_rate_window_seconds / util_rate_burn_ratio
+    (the burn-rate ratio feeding the unchanged util_rate_color/theme.ramps
+    ["rate"] ramp -- see 08-01-PLAN.md's "## Formula Direction -- Resolved").
+    `now` is passed directly as NOW; no time mocking needed for pure-function
+    calls (that comes in TestCooperativeBuilders' render-level tests)."""
+
+    def test_window_seconds_parses_known_keys(self):
+        self.assertEqual(sl.util_rate_window_seconds("five_hour"), 5 * 3600)
+        self.assertEqual(sl.util_rate_window_seconds("seven_day"), 7 * 86400)
+
+    def test_window_seconds_none_when_both_words_unknown(self):
+        self.assertIsNone(sl.util_rate_window_seconds("nonsense_unit"))
+
+    def test_window_seconds_none_when_only_number_word_unknown(self):
+        # "hour" IS a valid _UNIT_SECONDS key; "eleven" is NOT in _NUM_WORDS --
+        # isolates a ONE-SIDED lookup failure.
+        self.assertIsNone(sl.util_rate_window_seconds("eleven_hour"))
+
+    def test_window_seconds_none_when_only_unit_word_unknown(self):
+        # Mirror case: "five" IS a valid _NUM_WORDS key; "fortnight" is NOT in
+        # _UNIT_SECONDS.
+        self.assertIsNone(sl.util_rate_window_seconds("five_fortnight"))
+
+    def test_burn_ratio_one_hour_remaining_of_five_hour_window(self):
+        # Corrected SC4 worked example: remaining_fraction = 3600/18000 = 0.2,
+        # ratio = 50/0.2 = 250 -- top (RED+bold) band.
+        ratio = sl.util_rate_burn_ratio(50, "five_hour", NOW + 3600, NOW)
+        self.assertEqual(ratio, 250.0)
+        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("RED+bold"))
+
+    def test_burn_ratio_four_hours_remaining_same_pct_less_urgent(self):
+        # SAME 50% usage as above, but 4h remaining (remaining_fraction=0.8):
+        # ratio = 50/0.8 = 62.5 -- middle (YELLOW) band. SC1 direction check:
+        # identical pct, less time remaining must render strictly more
+        # urgently than this case, never less.
+        ratio = sl.util_rate_burn_ratio(50, "five_hour", NOW + 3600 * 4, NOW)
+        self.assertEqual(ratio, 62.5)
+        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("YELLOW"))
+
+    def test_burn_ratio_lower_pct_four_hours_remaining_is_green(self):
+        ratio = sl.util_rate_burn_ratio(30, "five_hour", NOW + 3600 * 4, NOW)
+        self.assertEqual(ratio, 37.5)
+        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("GREEN"))
+
+    def test_burn_ratio_at_exact_window_reset_clamps_to_max_urgency(self):
+        # D-03: remaining_fraction == 0 (reset == now exactly) -- a nonzero
+        # pct clamps to INF, landing in the ramp's top band even at 1% usage.
+        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", NOW, NOW), sl.INF)
+        self.assertEqual(sl.util_rate_burn_ratio(1, "five_hour", NOW, NOW), sl.INF)
+        # pct == 0 returns 0.0 -- no division attempted either way.
+        self.assertEqual(sl.util_rate_burn_ratio(0, "five_hour", NOW, NOW), 0.0)
+
+    def test_burn_ratio_at_window_start_reduces_to_raw_pct_unclamped(self):
+        # remaining_fraction == 1.0 (reset = now + window_seconds exactly --
+        # elapsed_fraction == 0): pct / 1.0 == pct, unclamped. This edge is
+        # safe under the corrected formula (contrast the superseded
+        # pct/elapsed_fraction formula, where this was the div-by-zero risk).
+        ratio = sl.util_rate_burn_ratio(50, "five_hour", NOW + 5 * 3600, NOW)
+        self.assertEqual(ratio, 50.0)
+
+    def test_burn_ratio_past_reset_falls_back_to_raw_pct(self):
+        # D-04: resets_at already in the past (remaining_fraction < 0.0) --
+        # "no reliable read on the current window, don't invent urgency."
+        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", NOW - 1, NOW), 50.0)
+
+    def test_burn_ratio_missing_reset_falls_back_to_raw_pct(self):
+        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", None, NOW), 50.0)
+
+    def test_burn_ratio_remaining_fraction_over_one_falls_back_to_raw_pct(self):
+        # resets_at implies MORE time remaining than the key's parsed
+        # window_seconds allows (clock skew / window-key mismatch) --
+        # remaining_fraction = 6h/5h = 1.2 > 1.0. Falls back to pct
+        # unchanged, distinct from the D-03 max-urgency clamp.
+        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", NOW + 3600 * 6, NOW), 50.0)
+
+    def test_burn_ratio_unknown_key_falls_back_to_raw_pct(self):
+        self.assertEqual(sl.util_rate_burn_ratio(50, "nonsense_unit", NOW + 3600, NOW), 50.0)
+
+
 class TestFormatters(unittest.TestCase):
     def test_fmt_number(self):
         self.assertEqual(sl.fmt_number(1234567), "1,234,567")
