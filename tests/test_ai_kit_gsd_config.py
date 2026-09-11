@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -5,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(
     0,
@@ -14,6 +17,7 @@ sys.path.insert(
 from ai_kit_gsd_config import (
     cli,
     critical_agents,
+    cross_ai_build,
     gsd_catalog,
     gsd_write,
     model_detect,
@@ -693,6 +697,181 @@ class TestBestReviewCandidate(unittest.TestCase):
         self.assertEqual(
             preference_match.best_review_candidate({}), ("claude", "opus", "native-last-resort")
         )
+
+
+class TestBuildExecutionCommand(unittest.TestCase):
+    def test_fake_builder_fills_model_placeholder(self):
+        def fake_execute_command_fn(cli_name, **params):
+            return "opencode run -m {model} --dir " + params["target_dir"] + " --auto"
+
+        result = cross_ai_build.build_execution_command(
+            "opencode",
+            "router-env/my-coding",
+            "/fake/project",
+            execute_command_fn=fake_execute_command_fn,
+        )
+        self.assertNotIn("{model}", result)
+        self.assertIn("router-env/my-coding", result)
+
+    def test_unknown_cli_returns_none_never_raises(self):
+        def fake_execute_command_fn(cli_name, **params):
+            raise ValueError(f"no builder for {cli_name}")
+
+        result = cross_ai_build.build_execution_command(
+            "unknown-cli",
+            "some-model",
+            "/fake/project",
+            execute_command_fn=fake_execute_command_fn,
+        )
+        self.assertIsNone(result)
+
+
+class TestCliToReviewerSlug(unittest.TestCase):
+    def test_cursor_agent_maps_to_cursor_not_itself(self):
+        self.assertEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["cursor-agent"], "cursor")
+        self.assertNotEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["cursor-agent"], "cursor-agent")
+
+    def test_opencode_and_claude_map_to_themselves(self):
+        self.assertEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["opencode"], "opencode")
+        self.assertEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["claude"], "claude")
+
+
+class TestApplyExecutionCli(unittest.TestCase):
+    def setUp(self):
+        self.fake_install_root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.fake_install_root, ignore_errors=True)
+        _make_fake_install(self.fake_install_root)
+        self.env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
+
+    def test_real_candidate_writes_both_keys(self):
+        run = make_fake_run([(0, "ok", ""), (0, "ok", "")])
+        buf = io.StringIO()
+        with (
+            unittest.mock.patch.object(
+                cross_ai_build,
+                "build_execution_command",
+                return_value="opencode run -m router-env/my-coding --dir /fake/project --auto",
+            ),
+            contextlib.redirect_stdout(buf),
+        ):
+            exit_code = cli.main(
+                [
+                    "apply-execution",
+                    "--project-dir",
+                    "/fake/project",
+                    "--cli",
+                    "opencode",
+                    "--model",
+                    "router-env/my-coding",
+                ],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 0)
+        written_keys = [call[3] for call in run.calls if "config-set" in call]
+        self.assertEqual(written_keys, ["workflow.cross_ai_execution", "workflow.cross_ai_command"])
+        summary = json.loads(buf.getvalue())
+        self.assertTrue(summary["cross_ai_execution_written"])
+        self.assertTrue(summary["cross_ai_command_written"])
+        self.assertIsNone(summary["degraded_reason"])
+
+    def test_no_candidate_writes_only_execution_flag(self):
+        run = make_fake_run([(0, "ok", "")])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exit_code = cli.main(
+                ["apply-execution", "--project-dir", "/fake/project"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 0)
+        written_keys = [call[3] for call in run.calls if "config-set" in call]
+        self.assertEqual(written_keys, ["workflow.cross_ai_execution"])
+        summary = json.loads(buf.getvalue())
+        self.assertTrue(summary["cross_ai_execution_written"])
+        self.assertFalse(summary["cross_ai_command_written"])
+        self.assertEqual(summary["degraded_reason"], "no_candidate")
+
+
+class TestApplyReviewCli(unittest.TestCase):
+    def setUp(self):
+        self.fake_install_root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.fake_install_root, ignore_errors=True)
+        _make_fake_install(self.fake_install_root)
+        self.env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
+
+    def _run_apply_review(self, config_get_stdout, config_get_returncode=0):
+        results = [
+            (0, "ok", ""),  # workflow.plan_review_convergence
+            (0, "ok", ""),  # review.effort.opencode
+            (config_get_returncode, config_get_stdout, ""),  # config-get review.default_reviewers
+            (0, "ok", ""),  # review.default_reviewers write
+            (0, "ok", ""),  # review.models.<slug> write
+        ]
+        run = make_fake_run(results)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exit_code = cli.main(
+                [
+                    "apply-review",
+                    "--project-dir",
+                    "/fake/project",
+                    "--cli",
+                    "opencode",
+                    "--model",
+                    "router-env/my-plan-review",
+                ],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        return exit_code, run, json.loads(buf.getvalue())
+
+    def test_existing_list_with_different_slug_merges_both(self):
+        exit_code, run, summary = self._run_apply_review(json.dumps(["claude"]))
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(summary["default_reviewers"], ["claude", "opencode"])
+        review_writes = [
+            call for call in run.calls
+            if "config-set" in call and call[3] == "review.default_reviewers"
+        ]
+        self.assertEqual(len(review_writes), 1)
+        self.assertEqual(json.loads(review_writes[0][4]), ["claude", "opencode"])
+
+    def test_absent_key_writes_fresh_one_element_list(self):
+        exit_code, _run, summary = self._run_apply_review("", config_get_returncode=1)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(summary["default_reviewers"], ["opencode"])
+
+    def test_already_contains_resolved_slug_dedupes(self):
+        """07-REVIEWS.md Cycle 2 MEDIUM: the realistic fresh-project -> apply-review path, where
+        a global ~/.gsd/defaults.json has already pre-seeded review.default_reviewers with the
+        same slug this run resolves to -- the dedupe must leave the list unchanged, and
+        review.models.<slug>/review.effort.opencode must still be written/confirmed with THIS
+        run's resolved values, never silently skipped because the slug was already present."""
+        exit_code, run, summary = self._run_apply_review(json.dumps(["opencode"]))
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(summary["default_reviewers"], ["opencode"])
+        review_writes = [
+            call for call in run.calls
+            if "config-set" in call and call[3] == "review.default_reviewers"
+        ]
+        self.assertEqual(json.loads(review_writes[0][4]), ["opencode"])
+        model_writes = [
+            call for call in run.calls
+            if "config-set" in call and call[3] == "review.models.opencode"
+        ]
+        self.assertEqual(len(model_writes), 1)
+        self.assertEqual(model_writes[0][4], "router-env/my-plan-review")
+        effort_writes = [
+            call for call in run.calls
+            if "config-set" in call and call[3] == "review.effort.opencode"
+        ]
+        self.assertEqual(len(effort_writes), 1)
+        self.assertTrue(summary["review_effort_opencode_written"])
+        self.assertTrue(summary["plan_review_convergence_written"])
 
 
 if __name__ == "__main__":

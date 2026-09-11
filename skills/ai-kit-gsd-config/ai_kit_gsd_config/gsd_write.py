@@ -11,6 +11,7 @@ conventions, a genuinely different use case. This skill's writes are durable, us
 config keys that must pass GSD's real schema validation, so they are written exclusively
 through gsd-tools' own CLI, never through a hand-rolled read/write of the file.
 """
+import json
 import subprocess
 
 
@@ -62,3 +63,33 @@ def config_set(node_bin, gsd_tools_path, target_dir, key, value, run_fn=subproce
     if result.returncode == 0:
         return True, result.stdout.strip()
     return False, result.stderr.strip()
+
+
+def config_get(node_bin, gsd_tools_path, project_dir, key_path, run_fn=subprocess.run):
+    """Runs `config-get <key_path> --project-dir <project_dir>` and returns the JSON-decoded
+    current value at `key_path` (e.g. `["opencode"]`), or `None` when the key is absent/unset or
+    the subprocess otherwise fails. gsd-tools' own `config-get` reports a clean "not set" result
+    distinctly from an unrelated error, but this function treats both identically as `None`,
+    since the only use of this result is deciding whether to append into an existing list --
+    appending into an absent list degrades safely to a fresh one-element list either way.
+
+    Deliberately omits `--raw` (a documented deviation -- see 07-02-SUMMARY.md): confirmed live
+    against the installed gsd-tools.cjs that `config-get --raw` on an array value serializes via
+    JS's own `String(array)`, which comma-joins elements into a BARE string (`"opencode,cursor"`,
+    no brackets) -- not valid JSON, and indistinguishable from a genuine single-element string
+    value. Plain (non-raw) mode always emits real `JSON.stringify`d output
+    (`["opencode","cursor"]` / `"adaptive"`), which `json.loads` here decodes correctly for both
+    list and scalar keys -- the only way to actually satisfy this function's own "JSON-decoded
+    current value" contract for a list-typed key like `review.default_reviewers`."""
+    result = run_fn(
+        [node_bin, gsd_tools_path, "config-get", key_path, "--project-dir", project_dir],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None

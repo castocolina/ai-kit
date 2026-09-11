@@ -8,7 +8,14 @@ import shutil
 import subprocess
 import sys
 
-from . import critical_agents, gsd_catalog, gsd_write, model_detect, preference_match
+from . import (
+    critical_agents,
+    cross_ai_build,
+    gsd_catalog,
+    gsd_write,
+    model_detect,
+    preference_match,
+)
 
 VALID_MODEL_PROFILES = ("quality", "balanced", "budget", "adaptive")
 
@@ -149,6 +156,103 @@ def _cmd_detect_review_candidate(args, which_fn, run_fn, env_fn):
     return 0
 
 
+def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
+    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+
+    ok, output = gsd_write.config_set(
+        node_bin, gsd_tools_path, args.project_dir, "workflow.cross_ai_execution", True, run_fn
+    )
+    if not ok:
+        print(f"ai-kit-gsd-config: failed to write workflow.cross_ai_execution: {output}",
+              file=sys.stderr)
+        return 1
+
+    cross_ai_command_written = False
+    degraded_reason = None
+    if not args.cli:
+        degraded_reason = "no_candidate"
+    else:
+        command = cross_ai_build.build_execution_command(args.cli, args.model, args.project_dir)
+        if command is None:
+            degraded_reason = "no_builder"
+        else:
+            ok, output = gsd_write.config_set(
+                node_bin, gsd_tools_path, args.project_dir, "workflow.cross_ai_command",
+                command, run_fn
+            )
+            if not ok:
+                print(f"ai-kit-gsd-config: failed to write workflow.cross_ai_command: {output}",
+                      file=sys.stderr)
+                return 1
+            cross_ai_command_written = True
+
+    print(json.dumps({
+        "cross_ai_execution_written": True,
+        "cross_ai_command_written": cross_ai_command_written,
+        "degraded_reason": degraded_reason,
+    }))
+    return 0
+
+
+def _cmd_apply_review(args, which_fn, run_fn, env_fn):
+    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+
+    ok, output = gsd_write.config_set(
+        node_bin, gsd_tools_path, args.project_dir, "workflow.plan_review_convergence",
+        True, run_fn
+    )
+    if not ok:
+        print(f"ai-kit-gsd-config: failed to write workflow.plan_review_convergence: {output}",
+              file=sys.stderr)
+        return 1
+
+    ok, output = gsd_write.config_set(
+        node_bin, gsd_tools_path, args.project_dir, "review.effort.opencode", "high", run_fn
+    )
+    if not ok:
+        print(f"ai-kit-gsd-config: failed to write review.effort.opencode: {output}",
+              file=sys.stderr)
+        return 1
+
+    slug = cross_ai_build.CLI_TO_REVIEWER_SLUG[args.cli]
+    existing = gsd_write.config_get(
+        node_bin, gsd_tools_path, args.project_dir, "review.default_reviewers", run_fn
+    )
+    reviewers = list(existing) if existing else []
+    if slug not in reviewers:
+        reviewers.append(slug)
+
+    ok, output = gsd_write.config_set(
+        node_bin, gsd_tools_path, args.project_dir, "review.default_reviewers",
+        json.dumps(reviewers), run_fn
+    )
+    if not ok:
+        print(f"ai-kit-gsd-config: failed to write review.default_reviewers: {output}",
+              file=sys.stderr)
+        return 1
+
+    ok, output = gsd_write.config_set(
+        node_bin, gsd_tools_path, args.project_dir, f"review.models.{slug}", args.model, run_fn
+    )
+    if not ok:
+        print(f"ai-kit-gsd-config: failed to write review.models.{slug}: {output}",
+              file=sys.stderr)
+        return 1
+
+    print(json.dumps({
+        "plan_review_convergence_written": True,
+        "default_reviewers": reviewers,
+        "review_effort_opencode_written": True,
+    }))
+    return 0
+
+
 def main(
     argv: list,
     which_fn=shutil.which,
@@ -171,6 +275,16 @@ def main(
     sub.add_parser("detect-execution-candidate")
     sub.add_parser("detect-review-candidate")
 
+    p_apply_execution = sub.add_parser("apply-execution")
+    p_apply_execution.add_argument("--project-dir", required=True)
+    p_apply_execution.add_argument("--cli", default=None)
+    p_apply_execution.add_argument("--model", default=None)
+
+    p_apply_review = sub.add_parser("apply-review")
+    p_apply_review.add_argument("--project-dir", required=True)
+    p_apply_review.add_argument("--cli", required=True)
+    p_apply_review.add_argument("--model", required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "ensure-project":
@@ -183,6 +297,10 @@ def main(
         return _cmd_detect_execution_candidate(args, which_fn, run_fn, env_fn)
     if args.command == "detect-review-candidate":
         return _cmd_detect_review_candidate(args, which_fn, run_fn, env_fn)
+    if args.command == "apply-execution":
+        return _cmd_apply_execution(args, which_fn, run_fn, env_fn)
+    if args.command == "apply-review":
+        return _cmd_apply_review(args, which_fn, run_fn, env_fn)
 
     parser.error(f"unknown command: {args.command}")
     return 2
