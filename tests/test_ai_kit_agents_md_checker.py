@@ -17,6 +17,7 @@ sys.path.insert(
 from ai_kit_agents_md_checker import (
     cli,
     makefile_checker,
+    remediation,
     rule_checker,
     rules,
     stack_cache,
@@ -844,6 +845,245 @@ class TestCliCheck(unittest.TestCase):
             result = cli.check(repo)
             ids = [f["id"] for f in result["workflow"]]
             self.assertIn("R03", ids)
+
+
+class TestRemediation(unittest.TestCase):
+    def test_missing_and_near_miss_auto_apply(self):
+        report = {
+            "workflow": [
+                {
+                    "id": "R01",
+                    "status": "missing",
+                    "criticality": 1,
+                    "summary": "R01 summary",
+                    "matched_signals": [],
+                },
+                {
+                    "id": "R17",
+                    "status": "near_miss",
+                    "criticality": 3,
+                    "summary": "R17 summary",
+                    "matched_signals": ["concise"],
+                },
+            ],
+            "makefile": [],
+        }
+        result = remediation.build_remediation(report)
+        self.assertIsInstance(result, dict)
+        ids = [entry["id"] for entry in result["remediate"]]
+        self.assertEqual(ids, ["R01", "R17"])
+        by_id = {entry["id"]: entry for entry in result["remediate"]}
+        self.assertIs(by_id["R01"]["auto_apply"], True)
+        self.assertIs(by_id["R17"]["auto_apply"], False)
+        self.assertEqual(result["blocked"], [])
+
+    def test_combined_cross_kind_criticality_ordering(self):
+        report = {
+            "workflow": [
+                {
+                    "id": "R09",
+                    "status": "missing",
+                    "criticality": 2,
+                    "summary": "workflow high",
+                    "matched_signals": [],
+                },
+            ],
+            "makefile": [
+                {
+                    "target": "setup-env",
+                    "present": False,
+                    "criticality": 1,
+                    "summary": "makefile critical",
+                    "recommendation": "uv venv",
+                    "needs_research": False,
+                },
+            ],
+        }
+        result = remediation.build_remediation(report)
+        ids_in_order = [entry["id"] for entry in result["remediate"]]
+        self.assertEqual(ids_in_order, ["setup-env", "R09"])
+
+    def test_matched_signals_carried_forward(self):
+        report = {
+            "workflow": [
+                {
+                    "id": "R17",
+                    "status": "near_miss",
+                    "criticality": 3,
+                    "summary": "R17 summary",
+                    "matched_signals": ["concise", "narrative"],
+                },
+            ],
+            "makefile": [],
+        }
+        result = remediation.build_remediation(report)
+        self.assertEqual(
+            result["remediate"][0]["matched_signals"], ["concise", "narrative"]
+        )
+
+    def test_present_but_recommended_structural_finding_in_remediate(self):
+        report = {
+            "workflow": [],
+            "makefile": [
+                {
+                    "target": "validate",
+                    "present": True,
+                    "issue": "chain_incomplete",
+                    "recommendation": "restructure validate to invoke vulture",
+                    "needs_research": False,
+                    "criticality": 1,
+                    "summary": "restructure validate to invoke vulture",
+                },
+            ],
+        }
+        result = remediation.build_remediation(report)
+        self.assertEqual(len(result["remediate"]), 1)
+        self.assertEqual(result["remediate"][0]["id"], "validate")
+        self.assertTrue(result["remediate"][0]["auto_apply"])
+        self.assertEqual(result["blocked"], [])
+
+    def test_blocked_preserves_stacks(self):
+        report = {
+            "workflow": [],
+            "makefile": [
+                {
+                    "category": "formatter",
+                    "recommendation": None,
+                    "needs_research": True,
+                    "stacks": ["go", "python"],
+                    "criticality": 1,
+                    "summary": "Tooling category 'formatter' needs research",
+                },
+            ],
+        }
+        result = remediation.build_remediation(report)
+        self.assertEqual(result["remediate"], [])
+        self.assertEqual(len(result["blocked"]), 1)
+        self.assertEqual(result["blocked"][0]["id"], "formatter")
+        self.assertEqual(result["blocked"][0]["stacks"], ["go", "python"])
+
+    def test_returns_dict_never_bare_list(self):
+        result = remediation.build_remediation({"workflow": [], "makefile": []})
+        self.assertIsInstance(result, dict)
+        self.assertEqual(set(result.keys()), {"remediate", "blocked"})
+
+
+class TestCacheUpdateCLI(unittest.TestCase):
+    def test_cache_update_round_trips_through_get_stack_tooling(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            cache_root = os.path.join(scratch, "_cache")
+            json_path = os.path.join(scratch, "tooling.json")
+            payload = {
+                "setup-env": (
+                    "uv venv && uv sync (source: https://docs.astral.sh/uv/)"
+                ),
+                "formatter": (
+                    "ruff format (source: https://docs.astral.sh/ruff/formatter/)"
+                ),
+            }
+            _write(json_path, json.dumps(payload))
+            rc = cli.main(
+                ["cache-update", "python", json_path, "--cache-root", cache_root]
+            )
+            self.assertEqual(rc, 0)
+            tooling, needs_research = stack_cache.get_stack_tooling(
+                "python", cache_root=cache_root
+            )
+            self.assertFalse(needs_research)
+            self.assertIn("setup-env", tooling)
+            self.assertIn("formatter", tooling)
+
+
+class TestCacheUpdateValidation(unittest.TestCase):
+    def _run(self, scratch, stack, payload_text):
+        cache_root = os.path.join(scratch, "_cache")
+        json_path = os.path.join(scratch, "tooling.json")
+        _write(json_path, payload_text)
+        rc = cli.main(["cache-update", stack, json_path, "--cache-root", cache_root])
+        return rc, cache_root
+
+    def test_json_array_instead_of_object(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            rc, cache_root = self._run(
+                scratch, "python", json.dumps(["not", "an", "object"])
+            )
+            self.assertEqual(rc, 1)
+            self.assertFalse(
+                os.path.isfile(stack_cache.cache_path("python", cache_root=cache_root))
+            )
+
+    def test_unknown_key(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            payload = {"not-a-real-key": "something (source: https://example.com)"}
+            rc, cache_root = self._run(scratch, "python", json.dumps(payload))
+            self.assertEqual(rc, 1)
+            self.assertFalse(
+                os.path.isfile(stack_cache.cache_path("python", cache_root=cache_root))
+            )
+
+    def test_non_string_value(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            payload = {"setup-env": 123}
+            rc, cache_root = self._run(scratch, "python", json.dumps(payload))
+            self.assertEqual(rc, 1)
+            self.assertFalse(
+                os.path.isfile(stack_cache.cache_path("python", cache_root=cache_root))
+            )
+
+    def test_value_missing_source_substring_entirely(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            payload = {"setup-env": "uv venv && uv sync"}
+            rc, cache_root = self._run(scratch, "python", json.dumps(payload))
+            self.assertEqual(rc, 1)
+            self.assertFalse(
+                os.path.isfile(stack_cache.cache_path("python", cache_root=cache_root))
+            )
+
+    def test_value_empty_citation(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            payload = {"setup-env": "uv venv (source:)"}
+            rc, cache_root = self._run(scratch, "python", json.dumps(payload))
+            self.assertEqual(rc, 1)
+            self.assertFalse(
+                os.path.isfile(stack_cache.cache_path("python", cache_root=cache_root))
+            )
+
+    def test_value_whitespace_only_citation(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            payload = {"setup-env": "uv venv (source: )"}
+            rc, cache_root = self._run(scratch, "python", json.dumps(payload))
+            self.assertEqual(rc, 1)
+            self.assertFalse(
+                os.path.isfile(stack_cache.cache_path("python", cache_root=cache_root))
+            )
+
+    def test_path_traversal_stack_rejected(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            payload = {"setup-env": "uv venv (source: https://example.com)"}
+            json_path = os.path.join(scratch, "tooling.json")
+            _write(json_path, json.dumps(payload))
+            cache_root = os.path.join(scratch, "_cache")
+
+            def _snapshot():
+                found = set()
+                for root, _dirs, files in os.walk(scratch):
+                    for name in files:
+                        found.add(os.path.relpath(os.path.join(root, name), scratch))
+                return found
+
+            before = _snapshot()
+            rc = cli.main(
+                [
+                    "cache-update",
+                    "../../etc/passwd",
+                    json_path,
+                    "--cache-root",
+                    cache_root,
+                ]
+            )
+            self.assertEqual(rc, 1)
+            self.assertFalse(os.path.isdir(cache_root))
+            self.assertEqual(before, _snapshot())
 
 
 class TestGateRegistration(unittest.TestCase):
