@@ -178,11 +178,15 @@ every timing input comes from the Claude-provided rate-limit context
 <specifics>
 ## Specific Ideas
 
-- The roadmap's own worked example (50%+ usage in hour 1-of-5 reads red; 30%
-  usage at hour 4-of-5 of the same window can read green/blue) is reproduced
-  exactly by the ratio formula against the UNCHANGED existing ramp thresholds
-  — confirmed arithmetically during this discussion (50/20=250 > 80 → red;
-  30/80=37.5 < 50 → green), not just assumed.
+- (Superseded 2026-09-11 — see D-01's amendment note for the full history.)
+  The roadmap's worked example is now: identical 50% usage with 4h remaining
+  in a 5h window reads YELLOW (`50/0.8=62.5`), while the SAME 50% usage with
+  only 1h remaining reads RED+bold (`50/0.2=250`) — against the UNCHANGED
+  existing ramp thresholds, using `ratio = pct / remaining_fraction`. This
+  satisfies ROADMAP SC1's same-usage, less-time-left-is-more-urgent invariant
+  by construction; the original pre-amendment example here used two different
+  usage percentages at two different times (a burn-pace framing) and was
+  mathematically incompatible with SC1.
 
 </specifics>
 
