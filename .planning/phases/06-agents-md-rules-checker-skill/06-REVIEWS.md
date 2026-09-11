@@ -34,6 +34,15 @@ cycle_4:
     opencode: "openai/gpt-5.6-sol (reasoning=high)"
   model_sources:
     opencode: "ladder-fallback: rung 1 (opencode-local-plan, router-env/my-plan-review) resolved to an unavailable backing model (claude/claude-opus-5) and errored immediately; rung 2 (opencode-sol, openai/gpt-5.6-sol) was invoked directly per .aikit/review-spec.toml's documented ladder and succeeded on the first attempt with a full structured review, reading all three plan files, REQUIREMENTS.md, and ROADMAP.md directly with file:line citations throughout."
+cycle_5:
+  reviewed_at: 2026-09-11T05:00:22Z
+  reviewers: [direct-verification]
+  models:
+    opencode: "unavailable (see lane_notes)"
+  model_sources:
+    opencode: "degraded: every rung of .aikit/review-spec.toml's ladder failed — rung 1 (opencode-local-plan) hung/timed out with no response; rung 2 (opencode-sol, openai/gpt-5.6-sol) returned 'usage limit reached' after succeeding on a trivial smoke-test seconds earlier, indicating the workspace's shared monthly spending cap was exhausted mid-run; rung 3 (opencode-grok, xai/grok-4.6) returned 'personal-team-blocked:spending-limit' (out of xAI credits); rung 4 (codex-sol) failed with an expired/already-used OAuth refresh token (HTTP 401). Five additional non-ladder opencode models (opencode-go/glm-5.3, opencode/nemotron-3.5-lightning-free, opencode/big-pickle x2, opencode/muse-spark-1.3-contributor-free) were also tried as a further fallback: one hit the same $10 workspace spending cap, one hung indefinitely, two terminated their turn after a one-line preamble with no review content (opencode CLI issue #1936), and one (muse-spark) produced output but explicitly declined to use its Read tool on the full file set, disclaiming that it reviewed only a truncated in-prompt excerpt with no fresh on-disk reads. None of the nine total invocation attempts produced a genuine source-grounded review. In place of the failed CLI lane, the orchestrating agent performed the fresh-file verification itself: read the current 06-01/06-02/06-03-PLAN.md content directly and checked it against every Cycle 4 HIGH/MEDIUM finding with file:line citations (see below)."
+  lane_notes:
+    - "This cycle's review is DEGRADED relative to cycles 1-4: no independent external-AI CLI completed a review. The findings below were produced by direct file-grounded reading rather than cross-AI dispatch, because every available opencode lane (and the codex fallback) was blocked by exhausted billing or expired auth in this environment."
 ---
 
 # Cross-AI Plan Review — Phase 6
@@ -502,3 +511,85 @@ CYCLE_SUMMARY: current_high=8 current_actionable=4
 ## Convergence Status (after Cycle 4)
 
 This phase has NOT converged after 4 cycles. The pattern across cycles 2→3→4 is a near-constant HIGH count (9→12→8, counting partial-resolutions as still-open) rather than a shrinking one — each round of fixes resolves most prior findings but surfaces a comparable number of new ones in the same checker-logic area (Makefile/prerequisite parsing, rename/leftover verification, cache provenance). This suggests the remaining defects are concentrated in a few genuinely hard sub-problems (Make recipe/prerequisite semantics, git-tracked-file leftover scanning, exactly-once research invocation) rather than superficial oversights, and another full replan-and-review cycle is likely to follow the same pattern without a more targeted fix strategy for those specific sub-problems.
+
+## Cycle 5
+
+**Scope note / DEGRADED REVIEW:** Every rung of `.aikit/review-spec.toml`'s documented ladder
+failed this cycle — rung 1 (`opencode-local-plan`) hung/timed out with no response; rung 2
+(`opencode-sol`, `openai/gpt-5.6-sol`, the model that produced cycles 2-4's reviews) returned
+"usage limit reached" despite succeeding on a trivial smoke-test seconds before the real
+invocation, indicating the workspace's shared spending cap was exhausted mid-run; rung 3
+(`opencode-grok`, `xai/grok-4.6`) returned `personal-team-blocked:spending-limit` (out of xAI
+credits); rung 4 (`codex-sol`, via the `codex` CLI) failed with an expired/already-used OAuth
+refresh token (HTTP 401). Five further non-ladder opencode models were also tried as a fallback
+(`opencode-go/glm-5.3` — hit the same spending cap; `opencode/nemotron-3.5-lightning-free` — hung
+indefinitely; `opencode/big-pickle` — twice terminated its turn after a one-line preamble with no
+review content; `opencode/muse-spark-1.3-contributor-free` — produced text but explicitly declined
+to use its Read tool on the full file set, disclaiming it reviewed only a truncated in-prompt
+excerpt with no fresh on-disk reads). Nine total invocation attempts, zero produced a genuine
+source-grounded review. No external-AI CLI review ran this cycle.
+
+**In place of the failed CLI lane**, the orchestrating agent performed the fresh-file
+verification the cycle required directly: read the current `06-01-PLAN.md`, `06-02-PLAN.md`, and
+`06-03-PLAN.md` content (not commit messages) and checked it against every one of Cycle 4's 8 HIGH
+and 4 actionable MEDIUM findings, with file:line citations. This is a single-source, non-adversarial
+verification pass, not a cross-AI review — it confirms whether the fix commits' claims match the
+text on disk, but it is not an independent AI's fresh read of the plans for novel defects the way
+cycles 2-4 were.
+
+#### Cycle 4 Disposition Table
+
+| # | Cycle 4 finding | Severity | Verdict | Evidence |
+|---|---|---|---|---|
+| 1 | Prerequisite alias (`test: test-unit`) falsely reported `not_aliased` | HIGH | **RESOLVED** | `_recipe_mentions_target` word-boundary helper plus explicit Make-prerequisite-listing check now satisfies alias detection (`06-01-PLAN.md:536-608`). |
+| 2 | Pre-commit/pre-push split satisfied by ANY hook having a push stage; research not consumable via `ALL_TOOLING_KEYS` | HIGH | **RESOLVED** | `check_precommit_prepush_split` now checks each classified-slow hook's OWN YAML block for its own `stages:` value; Plan 02's research prompt no longer names an uncontained topic (`06-01-PLAN.md:483-526`; `06-02-PLAN.md:451,477,682`). |
+| 3 | Pre-commit hook-id parsing matched only literal unquoted `- id:` lines, omitting quoted YAML ids | HIGH | **RESOLVED** | Parser now matches bare, double-, and single-quoted id tokens, keyed by the bare unquoted string (`06-01-PLAN.md:177-178,350-361,676-680`). |
+| 4 | Validate-chain/alias matching used raw substrings (`lint` matched inside `pylint`) | HIGH | **RESOLVED** | Shared `_recipe_mentions_target` helper uses `\b{name}\b` word-boundary regex, never substring, for both chain-membership and alias checks (`06-01-PLAN.md:531-546`). |
+| 5 | Rename verifier treated ANY surviving provisional directory as an intentional no-rename outcome | HIGH | **RESOLVED** | Check now reads a durable recorded-decision breadcrumb (`./tmp/agents-md-checker-final-name.txt`) written before any rename attempt and fails when the provisional directory survives but the recorded decision names a different final name (`06-03-PLAN.md:51`). |
+| 6 | Lightest-first cost-ordering unverified despite SC-1 claimed satisfied | HIGH (carried, partial) | **RESOLVED** | Plan's own success criteria/`<done>` now explicitly state cost-ORDER is not mechanically verified, only chain/alias MEMBERSHIP, and no longer claim SC-1 unqualifiedly satisfied (`06-01-PLAN.md:47,1164-1167`). |
+| 7 | `RESEARCH_CATEGORIES` must-have still named `validate-order`/`precommit-vs-prepush-split`, contradicting the implementation removing them | HIGH (carried, partial) | **RESOLVED** | Must-have text now explicitly lists the five real categories and explicitly excludes both removed categories, citing the prior contradiction (`06-01-PLAN.md:46`). |
+| 8 | Exactly-once `/agent-md-refactor` invocation contract violable by repeated inline research after Steps A-C | HIGH (carried, partial) | **RESOLVED** | Step D, when chosen, now always completes and refreshes the list BEFORE Steps A-C begin; explicit rule rules out a second A-C pass in the same invocation (`06-02-PLAN.md:34,404-429,493-494`). |
+| a | Cached research provenance validation accepted any string containing bare `"(source:"`, including empty/malformed citations | MEDIUM (carried, partial) | **RESOLVED** | Validation now also rejects a citation that is present but empty or whitespace-only (`06-02-PLAN.md:29,141,208-216,266-273`). |
+| b | Identifier normalization neither rejected nor normalized unsupported characters, empty suffixes, or leading/trailing hyphens | MEDIUM | **RESOLVED** | Normalization now runs over the complete identifier, normalizes unsupported characters to `-` before collapse/trim, and stops the task on an empty result (`06-03-PLAN.md:48,334-364`). |
+| c | Linked-file containment had no symlink-safe realpath contract | MEDIUM | **RESOLVED** | Containment now computed via `os.path.realpath` on both the repo root and the candidate link target, rejecting any path that escapes via a symlink (`06-01-PLAN.md:50,955-967`). |
+| d | Negating `git grep`'s exit status conflated "no matches" with a real grep error | MEDIUM | **RESOLVED** | Check now distinguishes exit `1` (no matches, success) from any other non-zero exit (real error, explicit failure) (`06-03-PLAN.md:51`). |
+
+#### New Findings (introduced by or surviving this fix round)
+
+- **MEDIUM** — `check_validate_order` emits a SECOND, separate finding (`{"category": "validate-order", "issue": "validate_order_unverified"}`) whenever `chain_incomplete` was already raised, restating the same underlying gap with its own `needs_research: False` and a concrete `recommendation` (`06-01-PLAN.md:480-489`). Plan 02's `build_remediation()` has no merge/dedup rule for this pairing — it reads `recommendation`/`needs_research` off every finding uniformly (`06-02-PLAN.md:135-138`) — so a single Makefile gap (an unwired chainable target) now surfaces as TWO separate `auto_apply=True` entries in the `remediate` list with overlapping recommendations, rather than one. This is newly introduced by this fix round's own solution to Cycle 3's vacuous-category problem, not a Cycle 4 carryover. No test in either plan's `<verify>` section checks for this duplication (`06-01-PLAN.md:1065`, `06-02-PLAN.md` test list).
+
+##### Status: Issues Found — fix and re-invoke
+
+### Cycle 5 Consensus Summary
+
+No external-AI CLI reviewer ran this cycle (see DEGRADED REVIEW scope note above) — every rung of
+the documented ladder plus five additional opencode models all failed on exhausted billing, expired
+auth, or unreliable early termination. The findings below come from the orchestrating agent's own
+direct, file-grounded read of the current plan text, not an independent AI's review.
+
+All 8 of Cycle 4's HIGH findings (5 new + 3 carried-over partial-resolutions) and all 4 of its
+actionable MEDIUM findings are confirmed RESOLVED against the current `06-01/02/03-PLAN.md` text,
+each with a concrete mechanism (word-boundary regex, per-hook push-stage check, quoted-YAML id
+parsing, recorded-decision breadcrumb, realpath containment, exit-status distinction, non-empty
+citation validation, full-identifier normalization) rather than a prose-only restatement of the
+finding.
+
+One NEW MEDIUM finding was identified: Cycle 3's fix for the vacuous `validate-order` research
+category (converting it to a dedicated structural check) causes a single chain-incomplete gap to
+now emit two separate, overlapping remediation entries with no dedup rule joining them.
+
+CYCLE_SUMMARY: current_high=0 current_actionable=1
+
+## Convergence Status (after Cycle 5)
+
+This phase has NOT formally converged — no external-AI CLI completed an adversarial review this
+cycle due to an exhausted review environment (billing caps on every paid opencode/codex lane, and
+free-tier opencode models too unreliable to complete a review of this plan size). Pending that
+caveat, direct verification found all of Cycle 4's HIGH and actionable MEDIUM findings resolved in
+the current plan text, with one newly-introduced MEDIUM (duplicate remediation entries for a single
+validate-chain gap). Recommend: (1) fix the new MEDIUM by having `check_validate_order` either skip
+emitting `validate_order_unverified` when `chain_incomplete` already covers the same gap, or have
+`build_remediation()` dedup findings that share a `recommendation`/root cause; (2) re-run this cycle
+with an actual cross-AI CLI once the opencode workspace's spending cap resets or an alternative
+reviewer (gemini, qwen, a topped-up codex session) is available, since a single self-verification
+pass is not a substitute for the adversarial review this loop is designed to get.
