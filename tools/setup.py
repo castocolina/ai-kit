@@ -1298,6 +1298,50 @@ def select_skills(entries, installed, tty):
     return _default_selection(entries, installed)
 
 
+def resolve_skills_flag(flag, entries):
+    """Parse --skills' value against the live skills entries. Returns
+    (chosen: set[str] | None, unknown: list[str]). `flag is None` means the
+    flag was not passed at all -- (None, []), the caller's signal to skip
+    skill linking entirely (bare --headless). 'all' (case-insensitive, like
+    resolve_example_selection's, tools/setup.py:812) means every valid skill
+    name. Otherwise the value is tokenized exactly as --examples' id list is --
+    re.split(r"[,\\s]+", ...), so 'alpha,beta' and 'alpha beta' both work
+    (tools/setup.py:820) -- and intersected against valid names; any name not
+    present is returned in `unknown` for the caller to warn about (never
+    silently dropped, never a hard failure) -- this includes the case where
+    EVERY requested name is unknown, which returns an empty `chosen` set
+    alongside a non-empty `unknown` list (the caller must not mistake this for
+    "nothing requested").
+
+    Unlike --examples there is NO 'none' value: bare --headless already means
+    "link nothing", so the literal 'none' is just an ordinary unknown name."""
+    if flag is None:
+        return None, []
+    valid = {name for name, _ in entries.get("skills", [])}
+    if flag.strip().lower() == "all":
+        return set(valid), []
+    requested = {t for t in re.split(r"[,\s]+", flag.strip()) if t}
+    chosen = requested & valid
+    unknown = sorted(requested - valid)
+    return chosen, unknown
+
+
+def apply_additive_skills(names, entries, claude_dir, dry, counts):
+    """Link every name in `names` (skills category only) via link_one -- NEVER
+    unlinks anything. Unlike apply_selection, there is no deselect branch: an
+    existing ai-kit link for a skill NOT in `names` is left exactly as it is.
+    This is the headless-path primitive -- 'nothing touched unless asked.'
+    Any OSError link_one raises (e.g. a permission failure) propagates to the
+    caller uncaught -- cmd_install_headless is responsible for catching it
+    and mapping it to the documented exit-code-1 failure case."""
+    by_name = dict(entries.get("skills", []))
+    for name in sorted(names):
+        target = by_name.get(name)
+        if target is None:
+            continue
+        link_one(os.path.join(claude_dir, "skills", name), target, dry, counts)
+
+
 def apply_selection(selection, entries, claude_dir, dry, counts):
     """Reconcile to the chosen set: link every selected entry (A∩B keep / A−B
     new-selected), unlink any currently-linked ai-kit entry that is NOT selected.

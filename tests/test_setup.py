@@ -1051,6 +1051,110 @@ class TestLinkOne(unittest.TestCase):
         self.assertEqual(c["unlinked"], 1)
 
 
+class TestResolveSkillsFlag(unittest.TestCase):
+    def setUp(self):
+        self.entries = {"skills": [("alpha", "/repo/skills/alpha"),
+                                    ("beta", "/repo/skills/beta")],
+                         "agents": [], "commands": []}
+
+    def test_all_returns_every_skill_name(self):
+        chosen, unknown = setup.resolve_skills_flag("all", self.entries)
+        self.assertEqual(chosen, {"alpha", "beta"})
+        self.assertEqual(unknown, [])
+
+    def test_specific_list_returns_only_named(self):
+        chosen, unknown = setup.resolve_skills_flag("alpha", self.entries)
+        self.assertEqual(chosen, {"alpha"})
+        self.assertEqual(unknown, [])
+
+    def test_unknown_name_reported_not_silently_dropped(self):
+        chosen, unknown = setup.resolve_skills_flag("alpha,ghost", self.entries)
+        self.assertEqual(chosen, {"alpha"})
+        self.assertEqual(unknown, ["ghost"])
+
+    def test_all_unknown_returns_empty_chosen_and_reports_all(self):
+        chosen, unknown = setup.resolve_skills_flag("ghost1,ghost2", self.entries)
+        self.assertEqual(chosen, set())
+        self.assertEqual(unknown, ["ghost1", "ghost2"])
+
+    def test_none_flag_returns_none_and_no_unknowns(self):
+        chosen, unknown = setup.resolve_skills_flag(None, self.entries)
+        self.assertIsNone(chosen)
+        self.assertEqual(unknown, [])
+
+    def test_all_is_case_insensitive_and_whitespace_tolerant(self):
+        # Parity with resolve_example_selection, which does
+        # flag.strip().lower() == "all" (tools/setup.py:815-817).
+        for flag in ("ALL", "All", " all ", "\tALL\n"):
+            chosen, unknown = setup.resolve_skills_flag(flag, self.entries)
+            self.assertEqual(chosen, {"alpha", "beta"}, flag)
+            self.assertEqual(unknown, [], flag)
+
+    def test_space_separated_list_is_accepted_like_examples(self):
+        # resolve_example_selection splits on re.split(r"[,\s]+", ...)
+        # (tools/setup.py:820); --skills must accept the same spellings, so a
+        # space-separated value is a list of names, not one unknown name.
+        chosen, unknown = setup.resolve_skills_flag("alpha beta", self.entries)
+        self.assertEqual(chosen, {"alpha", "beta"})
+        self.assertEqual(unknown, [])
+        chosen, unknown = setup.resolve_skills_flag("alpha,  beta", self.entries)
+        self.assertEqual(chosen, {"alpha", "beta"})
+        self.assertEqual(unknown, [])
+
+    def test_none_literal_is_not_a_keyword_just_an_unknown_name(self):
+        # --skills has no `none` value (bare --headless already means nothing),
+        # so the literal string is treated as an ordinary unknown skill name.
+        chosen, unknown = setup.resolve_skills_flag("none", self.entries)
+        self.assertEqual(chosen, set())
+        self.assertEqual(unknown, ["none"])
+
+
+class TestApplyAdditiveSkills(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install_dir = os.path.join(self.tmp, "install")
+        self.claude_dir = os.path.join(self.tmp, "claude")
+        for name in ("alpha", "beta"):
+            skill_dir = os.path.join(self.install_dir, "skills", name)
+            os.makedirs(skill_dir)
+            open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8").close()
+        self.entries = setup.enumerate_entries(self.install_dir)
+
+    def test_links_only_requested_names(self):
+        counts = setup.new_counts()
+        setup.apply_additive_skills({"alpha"}, self.entries, self.claude_dir, False, counts)
+        self.assertTrue(os.path.islink(os.path.join(self.claude_dir, "skills", "alpha")))
+        self.assertFalse(os.path.exists(os.path.join(self.claude_dir, "skills", "beta")))
+        self.assertEqual(counts["linked"], 1)
+
+    def test_never_unlinks_an_out_of_band_existing_link(self):
+        # 'beta' already linked from some prior run — requesting only 'alpha' must
+        # leave 'beta' untouched, unlike apply_selection's reconcile-and-deselect.
+        beta_link = os.path.join(self.claude_dir, "skills", "beta")
+        os.makedirs(os.path.dirname(beta_link))
+        os.symlink(dict(self.entries["skills"])["beta"], beta_link)
+        counts = setup.new_counts()
+        setup.apply_additive_skills({"alpha"}, self.entries, self.claude_dir, False, counts)
+        self.assertTrue(os.path.islink(beta_link))
+        self.assertEqual(counts["unlinked"], 0)
+
+    def test_dry_run_makes_no_filesystem_changes(self):
+        counts = setup.new_counts()
+        setup.apply_additive_skills({"alpha"}, self.entries, self.claude_dir, True, counts)
+        self.assertFalse(os.path.exists(os.path.join(self.claude_dir, "skills", "alpha")))
+        self.assertEqual(counts["linked"], 1)  # counted, not applied
+
+    def test_link_one_oserror_propagates_to_caller(self):
+        # apply_additive_skills does NOT swallow link_one failures — Task 3's
+        # cmd_install_headless is what catches this and maps it to exit 1.
+        counts = setup.new_counts()
+        with mock.patch.object(setup, "link_one", side_effect=OSError("permission denied")):
+            with self.assertRaises(OSError):
+                setup.apply_additive_skills({"alpha"}, self.entries, self.claude_dir,
+                                             False, counts)
+
+
 class TestPruneStale(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
