@@ -11,7 +11,14 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-gsd-config"),
 )
 
-from ai_kit_gsd_config import cli, critical_agents, gsd_catalog, gsd_write
+from ai_kit_gsd_config import (
+    cli,
+    critical_agents,
+    gsd_catalog,
+    gsd_write,
+    model_detect,
+    preference_match,
+)
 
 
 def make_fake_run(results):
@@ -482,6 +489,210 @@ class TestApplyCriticalAgentsCli(unittest.TestCase):
         self.assertFalse(summary["heavy_sweep_applied"])
         self.assertEqual(summary["unconditional_written"], 5)
         self.assertEqual(summary["degraded_reason"], "live_query_failed")
+
+
+class TestResolveAiKitSpecPath(unittest.TestCase):
+    """model_detect.resolve_ai_kit_spec_path -- mirrors ai-kit-spec-execute-gsd/SKILL.md's own
+    Step 0 multi-candidate resolution pattern for the SAME sibling skill."""
+
+    def test_plugin_root_candidate_wins_when_present(self):
+        def isdir_fn(path):
+            return path == os.path.join("/plugin/root", "skills", "ai-kit-spec-review")
+
+        result = model_detect.resolve_ai_kit_spec_path(
+            os.path.join("/somewhere", "skills", "ai-kit-gsd-config"),
+            env={"CLAUDE_PLUGIN_ROOT": "/plugin/root", "HOME": "/home/nope"},
+            isdir_fn=isdir_fn,
+        )
+        self.assertEqual(
+            result, os.path.join("/plugin/root", "skills", "ai-kit-spec-review", "ai-kit-spec.py")
+        )
+
+    def test_home_claude_skills_candidate_when_no_plugin_root(self):
+        def isdir_fn(path):
+            return path == os.path.join("/home/user", ".claude", "skills", "ai-kit-spec-review")
+
+        result = model_detect.resolve_ai_kit_spec_path(
+            os.path.join("/somewhere", "skills", "ai-kit-gsd-config"),
+            env={"HOME": "/home/user"},
+            isdir_fn=isdir_fn,
+        )
+        self.assertEqual(
+            result,
+            os.path.join("/home/user", ".claude", "skills", "ai-kit-spec-review", "ai-kit-spec.py"),
+        )
+
+    def test_sibling_of_this_skill_fallback(self):
+        def isdir_fn(path):
+            return path == os.path.join("/somewhere", "skills", "ai-kit-spec-review")
+
+        result = model_detect.resolve_ai_kit_spec_path(
+            os.path.join("/somewhere", "skills", "ai-kit-gsd-config"),
+            env={"HOME": "/nonexistent"},
+            isdir_fn=isdir_fn,
+        )
+        self.assertEqual(
+            result, os.path.join("/somewhere", "skills", "ai-kit-spec-review", "ai-kit-spec.py")
+        )
+
+    def test_none_when_nothing_found(self):
+        result = model_detect.resolve_ai_kit_spec_path(
+            os.path.join("/somewhere", "skills", "ai-kit-gsd-config"),
+            env={"HOME": "/nonexistent"},
+            isdir_fn=lambda path: False,
+        )
+        self.assertIsNone(result)
+
+
+class TestBuildCandidatePool(unittest.TestCase):
+    def test_opencode_only(self):
+        snapshot = {
+            "clis": {
+                "opencode": {"installed": True, "models": ["a", "b"]},
+                "cursor-agent": {"installed": False},
+                "claude": {"installed": True},
+            }
+        }
+        self.assertEqual(model_detect.build_candidate_pool(snapshot), {"opencode": ["a", "b"]})
+
+    def test_cursor_only(self):
+        snapshot = {
+            "clis": {
+                "opencode": {"installed": False},
+                "cursor-agent": {"installed": True, "models": ["x"]},
+            }
+        }
+        self.assertEqual(model_detect.build_candidate_pool(snapshot), {"cursor-agent": ["x"]})
+
+    def test_neither_installed(self):
+        snapshot = {
+            "clis": {
+                "opencode": {"installed": False},
+                "cursor-agent": {"installed": False},
+            }
+        }
+        self.assertEqual(model_detect.build_candidate_pool(snapshot), {})
+
+    def test_installed_but_models_absent_cli_omitted(self):
+        snapshot = {"clis": {"claude": {"installed": True, "path": "/usr/bin/claude"}}}
+        self.assertEqual(model_detect.build_candidate_pool(snapshot), {})
+
+    def test_none_snapshot_returns_empty_pool(self):
+        self.assertEqual(model_detect.build_candidate_pool(None), {})
+
+
+class TestVersionAtLeast(unittest.TestCase):
+    def test_composer_below_threshold_fails(self):
+        self.assertFalse(preference_match._version_at_least("composer-2.4", "composer", "2.5"))
+
+    def test_composer_equal_and_above_pass(self):
+        self.assertTrue(preference_match._version_at_least("composer-2.5", "composer", "2.5"))
+        self.assertTrue(preference_match._version_at_least("composer-2.6", "composer", "2.5"))
+
+    def test_composer_patch_version_passes(self):
+        self.assertTrue(preference_match._version_at_least("composer-2.5.1", "composer", "2.5"))
+
+    def test_grok_below_threshold_fails(self):
+        self.assertFalse(preference_match._version_at_least("grok-4.5", "grok", "4.6"))
+
+    def test_no_trailing_version_segment_returns_false_never_raises(self):
+        self.assertFalse(preference_match._version_at_least("composer", "composer", "2.5"))
+
+
+class TestBestExecutionCandidate(unittest.TestCase):
+    def test_coding_or_executor_rule(self):
+        pool = {"opencode": ["router-env/my-coding"]}
+        self.assertEqual(
+            preference_match.best_execution_candidate(pool),
+            ("opencode", "router-env/my-coding", "coding-or-executor"),
+        )
+
+    def test_composer_rule(self):
+        pool = {"opencode": ["composer-2.5"]}
+        self.assertEqual(
+            preference_match.best_execution_candidate(pool),
+            ("opencode", "composer-2.5", "composer>=2.5"),
+        )
+
+    def test_grok_rule(self):
+        pool = {"opencode": ["grok-4.6"]}
+        self.assertEqual(
+            preference_match.best_execution_candidate(pool), ("opencode", "grok-4.6", "grok>=4.6")
+        )
+
+    def test_deepseek_flash_rule(self):
+        pool = {"opencode": ["deepseek-flash"]}
+        self.assertEqual(
+            preference_match.best_execution_candidate(pool),
+            ("opencode", "deepseek-flash", "deepseek-flash"),
+        )
+
+    def test_luna_rule(self):
+        pool = {"opencode": ["luna"]}
+        self.assertEqual(
+            preference_match.best_execution_candidate(pool), ("opencode", "luna", "luna")
+        )
+
+    def test_priority_order_earlier_rule_wins_even_when_listed_later(self):
+        # "luna" (a later rule) sits ahead of "router-env/my-coding" (an earlier rule) in the
+        # opencode list -- the earlier rule (coding-or-executor) must still win.
+        pool = {"opencode": ["luna", "router-env/my-coding"]}
+        self.assertEqual(
+            preference_match.best_execution_candidate(pool),
+            ("opencode", "router-env/my-coding", "coding-or-executor"),
+        )
+
+    def test_cursor_agent_only_fallback_when_opencode_has_no_match(self):
+        pool = {"opencode": ["unrelated-model"], "cursor-agent": ["router-env/my-executor"]}
+        self.assertEqual(
+            preference_match.best_execution_candidate(pool),
+            ("cursor-agent", "router-env/my-executor", "coding-or-executor"),
+        )
+
+    def test_no_match_returns_none(self):
+        pool = {"opencode": ["unrelated-model"], "cursor-agent": ["also-unrelated"]}
+        self.assertIsNone(preference_match.best_execution_candidate(pool))
+
+
+class TestBestReviewCandidate(unittest.TestCase):
+    def test_plan_review_rule(self):
+        pool = {"opencode": ["router-env/my-plan-review"]}
+        self.assertEqual(
+            preference_match.best_review_candidate(pool),
+            ("opencode", "router-env/my-plan-review", "plan-review"),
+        )
+
+    def test_gpt_sol_rule(self):
+        pool = {"opencode": ["gpt-5.6-sol"]}
+        self.assertEqual(
+            preference_match.best_review_candidate(pool), ("opencode", "gpt-5.6-sol", "gpt-sol")
+        )
+
+    def test_glm_rule(self):
+        pool = {"opencode": ["glm-5.2"]}
+        self.assertEqual(
+            preference_match.best_review_candidate(pool),
+            ("opencode", "glm-5.2", "glm-5.2-or-5.3"),
+        )
+
+    def test_priority_order_earlier_rule_wins(self):
+        pool = {"opencode": ["glm-5.2", "router-env/my-plan-review"]}
+        self.assertEqual(
+            preference_match.best_review_candidate(pool),
+            ("opencode", "router-env/my-plan-review", "plan-review"),
+        )
+
+    def test_cursor_agent_only_fallback(self):
+        pool = {"opencode": ["unrelated"], "cursor-agent": ["router-env/my-plan-review"]}
+        self.assertEqual(
+            preference_match.best_review_candidate(pool),
+            ("cursor-agent", "router-env/my-plan-review", "plan-review"),
+        )
+
+    def test_empty_pool_returns_native_last_resort(self):
+        self.assertEqual(
+            preference_match.best_review_candidate({}), ("claude", "opus", "native-last-resort")
+        )
 
 
 if __name__ == "__main__":

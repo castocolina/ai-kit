@@ -8,9 +8,14 @@ import shutil
 import subprocess
 import sys
 
-from . import critical_agents, gsd_catalog, gsd_write
+from . import critical_agents, gsd_catalog, gsd_write, model_detect, preference_match
 
 VALID_MODEL_PROFILES = ("quality", "balanced", "budget", "adaptive")
+
+# This skill's own directory (skills/ai-kit-gsd-config), used by model_detect.
+# resolve_ai_kit_spec_path's sibling-of-this-skill fallback candidate. cli.py lives one level
+# below the skill root (ai_kit_gsd_config/cli.py), so dirname is applied twice.
+_THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _resolve_node_and_gsd_tools(which_fn, env_fn):
@@ -112,6 +117,38 @@ def _cmd_apply_critical_agents(args, which_fn, run_fn, env_fn):
     return 0
 
 
+def _detect_candidate_pool(run_fn, env_fn):
+    """Shared by both detect-*-candidate subcommands: resolves ai_kit_spec's shim, runs
+    detect-runtimes (or degrades to an empty snapshot when the shim can't be found), and
+    returns the built candidate pool. Never raises -- a missing sibling skill or a failed
+    detection subprocess both degrade to an empty pool, which each matcher already handles
+    (best_execution_candidate returns None, best_review_candidate returns the native
+    last-resort)."""
+    ai_kit_spec_path = model_detect.resolve_ai_kit_spec_path(_THIS_SKILL_DIR, env_fn())
+    snapshot = None
+    if ai_kit_spec_path is not None:
+        snapshot = model_detect.detect_runtimes_snapshot(sys.executable, ai_kit_spec_path, run_fn)
+    return model_detect.build_candidate_pool(snapshot)
+
+
+def _cmd_detect_execution_candidate(args, which_fn, run_fn, env_fn):
+    pool = _detect_candidate_pool(run_fn, env_fn)
+    result = preference_match.best_execution_candidate(pool)
+    if result is None:
+        print(json.dumps({"cli": None, "model": None, "rule": None}))
+        return 0
+    cli_name, model, rule = result
+    print(json.dumps({"cli": cli_name, "model": model, "rule": rule}))
+    return 0
+
+
+def _cmd_detect_review_candidate(args, which_fn, run_fn, env_fn):
+    pool = _detect_candidate_pool(run_fn, env_fn)
+    cli_name, model, rule = preference_match.best_review_candidate(pool)
+    print(json.dumps({"cli": cli_name, "model": model, "rule": rule}))
+    return 0
+
+
 def main(
     argv: list,
     which_fn=shutil.which,
@@ -131,6 +168,9 @@ def main(
     p_critical = sub.add_parser("apply-critical-agents")
     p_critical.add_argument("--project-dir", required=True)
 
+    sub.add_parser("detect-execution-candidate")
+    sub.add_parser("detect-review-candidate")
+
     args = parser.parse_args(argv)
 
     if args.command == "ensure-project":
@@ -139,6 +179,10 @@ def main(
         return _cmd_apply_profile(args, which_fn, run_fn, env_fn)
     if args.command == "apply-critical-agents":
         return _cmd_apply_critical_agents(args, which_fn, run_fn, env_fn)
+    if args.command == "detect-execution-candidate":
+        return _cmd_detect_execution_candidate(args, which_fn, run_fn, env_fn)
+    if args.command == "detect-review-candidate":
+        return _cmd_detect_review_candidate(args, which_fn, run_fn, env_fn)
 
     parser.error(f"unknown command: {args.command}")
     return 2
