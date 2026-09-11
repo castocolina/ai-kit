@@ -1657,7 +1657,7 @@ def _statusline_state(settings):
         print(f"warn: {settings}: cannot parse as a JSON object — ai-kit will not "
               "overwrite a config file it cannot parse", file=sys.stderr)
         return None, None
-    if state == JSON_STATE_ABSENT:
+    if state == JSON_STATE_ABSENT or not isinstance(data, dict):
         data = {}
     cur_cmd = _statusline_command(data.get("statusLine"))
     if cur_cmd is None:

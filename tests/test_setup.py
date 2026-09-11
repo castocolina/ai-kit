@@ -1149,10 +1149,10 @@ class TestApplyAdditiveSkills(unittest.TestCase):
         # apply_additive_skills does NOT swallow link_one failures — Task 3's
         # cmd_install_headless is what catches this and maps it to exit 1.
         counts = setup.new_counts()
-        with mock.patch.object(setup, "link_one", side_effect=OSError("permission denied")):
-            with self.assertRaises(OSError):
-                setup.apply_additive_skills({"alpha"}, self.entries, self.claude_dir,
-                                             False, counts)
+        with mock.patch.object(setup, "link_one", side_effect=OSError("permission denied")), \
+             self.assertRaises(OSError):
+            setup.apply_additive_skills({"alpha"}, self.entries, self.claude_dir,
+                                         False, counts)
 
 
 class TestPruneStale(unittest.TestCase):
@@ -2447,9 +2447,9 @@ class TestHeadlessMainDispatch(unittest.TestCase):
                                 side_effect=lambda *_a: order.append("runtime")), \
              mock.patch.object(setup, "open_tty",
                                 side_effect=lambda: order.append("tty") or None), \
-             contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                setup.main(["install"])
+             contextlib.redirect_stderr(io.StringIO()), \
+             self.assertRaises(SystemExit):
+            setup.main(["install"])
         self.assertEqual(order, ["runtime", "tty"])
 
 
