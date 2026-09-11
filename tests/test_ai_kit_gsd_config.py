@@ -24,6 +24,7 @@ from ai_kit_gsd_config import (
     gsd_write,
     model_detect,
     preference_match,
+    workflow_defaults,
 )
 
 
@@ -959,6 +960,191 @@ class TestDetectFrontendPresent(unittest.TestCase):
     def test_default_isfile_fn_on_nonexistent_directory_returns_false(self):
         self.assertFalse(frontend_detect.detect_frontend_present("/nonexistent-dir-xyz"))
 
+
+class TestWorkflowDefaults(unittest.TestCase):
+    def test_bundle_has_exactly_27_keys(self):
+        self.assertEqual(len(workflow_defaults.WORKFLOW_DEFAULTS), 27)
+
+    def test_no_excluded_keys_present(self):
+        overlap = workflow_defaults.EXCLUDED_KEYS & set(workflow_defaults.WORKFLOW_DEFAULTS)
+        self.assertEqual(overlap, set())
+
+
+class TestApplyWorkflowDefaultsCli(unittest.TestCase):
+    def setUp(self):
+        self.fake_install_root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.fake_install_root, ignore_errors=True)
+        _make_fake_install(self.fake_install_root)
+        self.env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
+
+    def test_writes_all_bundle_keys_plus_ui_phase_and_ui_review_independently(self):
+        bundle_size = len(workflow_defaults.WORKFLOW_DEFAULTS)
+        run = make_fake_run([(0, "ok", "")] * (bundle_size + 2))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exit_code = cli.main(
+                [
+                    "apply-workflow-defaults",
+                    "--project-dir",
+                    "/fake/project",
+                    "--ui-phase",
+                    "true",
+                    "--ui-review",
+                    "false",
+                ],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 0)
+
+        set_calls = [call for call in run.calls if "config-set" in call]
+        written_keys = {call[3] for call in set_calls}
+        for key in workflow_defaults.WORKFLOW_DEFAULTS:
+            self.assertIn(f"workflow.{key}", written_keys)
+        self.assertIn("workflow.ui_phase", written_keys)
+        self.assertIn("workflow.ui_review", written_keys)
+
+        ui_phase_call = next(c for c in set_calls if c[3] == "workflow.ui_phase")
+        ui_review_call = next(c for c in set_calls if c[3] == "workflow.ui_review")
+        self.assertEqual(ui_phase_call[4], "true")
+        self.assertEqual(ui_review_call[4], "false")
+
+        summary = json.loads(buf.getvalue())
+        self.assertEqual(summary["bundle_written"], bundle_size)
+        self.assertTrue(summary["ui_phase"])
+        self.assertFalse(summary["ui_review"])
+
+
+class TestApplyClaudeMdPathCli(unittest.TestCase):
+    def setUp(self):
+        self.fake_install_root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.fake_install_root, ignore_errors=True)
+        _make_fake_install(self.fake_install_root)
+        self.env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
+
+    def test_real_path_writes_key(self):
+        run = make_fake_run([(0, "ok", "")])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exit_code = cli.main(
+                [
+                    "apply-claude-md-path",
+                    "--project-dir",
+                    "/fake/project",
+                    "--path",
+                    "./AGENTS.md",
+                ],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(run.calls), 1)
+        self.assertEqual(run.calls[0][3], "claude_md_path")
+        self.assertEqual(run.calls[0][4], "./AGENTS.md")
+        summary = json.loads(buf.getvalue())
+        self.assertTrue(summary["applied"])
+
+    def test_empty_path_issues_zero_config_set_calls(self):
+        run = make_fake_run([])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exit_code = cli.main(
+                ["apply-claude-md-path", "--project-dir", "/fake/project", "--path", ""],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(run.calls, [])
+        summary = json.loads(buf.getvalue())
+        self.assertFalse(summary["applied"])
+
+
+class TestMergeModeEndToEnd(unittest.TestCase):
+    """D-09 (07-CONTEXT.md): proves merge mode's two contracts end-to-end against a REAL
+    installed gsd-core -- (1) a brand-new project correctly falls through Plan 01's
+    `ensure-project` before this plan's own subcommands apply the curated bundle, and (2) an
+    EXISTING `.planning/config.json` fixture with unrelated pre-existing keys is left
+    byte-identical on those keys after the run. Skips itself when no gsd-core is installed on
+    the machine running the suite, same pattern as `TestRealIntegration` above -- both halves
+    require the REAL `config-set`/`config-new-project` subcommands actually mutating a file on
+    disk, not a faked subprocess."""
+
+    _REAL_GSD_TOOLS = gsd_catalog.resolve_gsd_tools_path(dict(os.environ))
+
+    def setUp(self):
+        self._scratch_dirs = []
+        self.addCleanup(self._cleanup_scratch_dirs)
+
+    def _cleanup_scratch_dirs(self):
+        for d in self._scratch_dirs:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def _mkscratch(self):
+        d = tempfile.mkdtemp()
+        self._scratch_dirs.append(d)
+        return d
+
+    @unittest.skipUnless(
+        _REAL_GSD_TOOLS is not None, "no installed gsd-core found on this machine"
+    )
+    def test_merge_mode_end_to_end(self):
+        # (1) Fresh project, no .planning/ at all -- must fall through ensure-project first.
+        fresh = self._mkscratch()
+        exit_ensure = cli.main(["ensure-project", "--project-dir", fresh])
+        self.assertEqual(exit_ensure, 0)
+        exit_bundle = cli.main(
+            [
+                "apply-workflow-defaults",
+                "--project-dir",
+                fresh,
+                "--ui-phase",
+                "false",
+                "--ui-review",
+                "false",
+            ]
+        )
+        self.assertEqual(exit_bundle, 0)
+        fresh_config_path = os.path.join(fresh, ".planning", "config.json")
+        with open(fresh_config_path, encoding="utf-8") as f:
+            fresh_config = json.load(f)
+        fresh_workflow = fresh_config.get("workflow", {})
+        for key, expected_value in workflow_defaults.WORKFLOW_DEFAULTS.items():
+            self.assertEqual(fresh_workflow.get(key), expected_value, key)
+
+        # (2) Existing config with unrelated keys, hand-written (never via gsd-tools) -- must
+        # be left byte-identical on those keys after apply-workflow-defaults runs.
+        existing = self._mkscratch()
+        planning_dir = os.path.join(existing, ".planning")
+        os.makedirs(planning_dir, exist_ok=True)
+        fixture = {
+            "some_other_key": "untouched",
+            "workflow": {"some_other_workflow_key": "keep-me"},
+        }
+        existing_config_path = os.path.join(planning_dir, "config.json")
+        with open(existing_config_path, "w", encoding="utf-8") as f:
+            json.dump(fixture, f)
+
+        exit_bundle_existing = cli.main(
+            [
+                "apply-workflow-defaults",
+                "--project-dir",
+                existing,
+                "--ui-phase",
+                "false",
+                "--ui-review",
+                "false",
+            ]
+        )
+        self.assertEqual(exit_bundle_existing, 0)
+        with open(existing_config_path, encoding="utf-8") as f:
+            after_config = json.load(f)
+        self.assertEqual(after_config.get("some_other_key"), "untouched")
+        self.assertEqual(
+            after_config.get("workflow", {}).get("some_other_workflow_key"), "keep-me"
+        )
 
 
 if __name__ == "__main__":

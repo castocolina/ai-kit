@@ -9,12 +9,15 @@ import subprocess
 import sys
 
 from . import (
+    claude_md_detect,
     critical_agents,
     cross_ai_build,
+    frontend_detect,
     gsd_catalog,
     gsd_write,
     model_detect,
     preference_match,
+    workflow_defaults,
 )
 
 VALID_MODEL_PROFILES = ("quality", "balanced", "budget", "adaptive")
@@ -253,6 +256,93 @@ def _cmd_apply_review(args, which_fn, run_fn, env_fn):
     return 0
 
 
+def _cmd_detect_claude_md_path(args, which_fn, run_fn, env_fn):
+    path = claude_md_detect.detect_claude_md_path(args.project_dir)
+    print(json.dumps({"path": path}))
+    return 0
+
+
+def _cmd_detect_frontend(args, which_fn, run_fn, env_fn):
+    frontend_present = frontend_detect.detect_frontend_present(args.project_dir)
+    print(json.dumps({"frontend_present": frontend_present}))
+    return 0
+
+
+def _cmd_apply_claude_md_path(args, which_fn, run_fn, env_fn):
+    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+
+    if not args.path:
+        print(json.dumps({"applied": False, "key": "claude_md_path", "reason": "empty_path"}))
+        return 0
+
+    ok, output = gsd_write.config_set(
+        node_bin, gsd_tools_path, args.project_dir, "claude_md_path", args.path, run_fn
+    )
+    if not ok:
+        print(f"ai-kit-gsd-config: failed to write claude_md_path: {output}", file=sys.stderr)
+        return 1
+    print(json.dumps({"applied": True, "key": "claude_md_path", "value": args.path}))
+    return 0
+
+
+def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
+    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+
+    bundle_written = 0
+    for key, value in workflow_defaults.WORKFLOW_DEFAULTS.items():
+        # gsd-tools' own config-set recognizes the literal string "null" as its
+        # unset/clear sentinel (config.cjs) -- gsd_write._coerce_value has no special case
+        # for Python None (it falls through to `str(None)` == "None", a bare string gsd-tools
+        # would persist verbatim rather than clearing the key). Two WORKFLOW_DEFAULTS entries
+        # (code_review_command, plan_bounce_script) are None, so this substitution happens
+        # here, scoped to this plan's own cli.py, rather than widening gsd_write.py's shared
+        # coercion helper (out of this plan's declared files_modified).
+        coerced_value = "null" if value is None else value
+        ok, output = gsd_write.config_set(
+            node_bin, gsd_tools_path, args.project_dir, f"workflow.{key}", coerced_value, run_fn
+        )
+        if not ok:
+            print(
+                f"ai-kit-gsd-config: failed to write workflow.{key}: {output}", file=sys.stderr
+            )
+            return 1
+        bundle_written += 1
+
+    ui_phase = args.ui_phase == "true"
+    ui_review = args.ui_review == "true"
+
+    ok, output = gsd_write.config_set(
+        node_bin, gsd_tools_path, args.project_dir, "workflow.ui_phase", ui_phase, run_fn
+    )
+    if not ok:
+        print(f"ai-kit-gsd-config: failed to write workflow.ui_phase: {output}", file=sys.stderr)
+        return 1
+
+    ok, output = gsd_write.config_set(
+        node_bin, gsd_tools_path, args.project_dir, "workflow.ui_review", ui_review, run_fn
+    )
+    if not ok:
+        print(f"ai-kit-gsd-config: failed to write workflow.ui_review: {output}", file=sys.stderr)
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "bundle_written": bundle_written,
+                "ui_phase": ui_phase,
+                "ui_review": ui_review,
+            }
+        )
+    )
+    return 0
+
+
 def main(
     argv: list,
     which_fn=shutil.which,
@@ -285,6 +375,25 @@ def main(
     p_apply_review.add_argument("--cli", required=True)
     p_apply_review.add_argument("--model", required=True)
 
+    p_detect_claude_md_path = sub.add_parser("detect-claude-md-path")
+    p_detect_claude_md_path.add_argument("--project-dir", required=True)
+
+    p_detect_frontend = sub.add_parser("detect-frontend")
+    p_detect_frontend.add_argument("--project-dir", required=True)
+
+    p_apply_claude_md_path = sub.add_parser("apply-claude-md-path")
+    p_apply_claude_md_path.add_argument("--project-dir", required=True)
+    p_apply_claude_md_path.add_argument("--path", required=True)
+
+    p_apply_workflow_defaults = sub.add_parser("apply-workflow-defaults")
+    p_apply_workflow_defaults.add_argument("--project-dir", required=True)
+    p_apply_workflow_defaults.add_argument(
+        "--ui-phase", required=True, choices=("true", "false")
+    )
+    p_apply_workflow_defaults.add_argument(
+        "--ui-review", required=True, choices=("true", "false")
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "ensure-project":
@@ -301,6 +410,14 @@ def main(
         return _cmd_apply_execution(args, which_fn, run_fn, env_fn)
     if args.command == "apply-review":
         return _cmd_apply_review(args, which_fn, run_fn, env_fn)
+    if args.command == "detect-claude-md-path":
+        return _cmd_detect_claude_md_path(args, which_fn, run_fn, env_fn)
+    if args.command == "detect-frontend":
+        return _cmd_detect_frontend(args, which_fn, run_fn, env_fn)
+    if args.command == "apply-claude-md-path":
+        return _cmd_apply_claude_md_path(args, which_fn, run_fn, env_fn)
+    if args.command == "apply-workflow-defaults":
+        return _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn)
 
     parser.error(f"unknown command: {args.command}")
     return 2
