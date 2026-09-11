@@ -15,9 +15,11 @@ sys.path.insert(
 )
 
 from ai_kit_gsd_config import (
+    claude_md_detect,
     cli,
     critical_agents,
     cross_ai_build,
+    frontend_detect,
     gsd_catalog,
     gsd_write,
     model_detect,
@@ -872,6 +874,91 @@ class TestApplyReviewCli(unittest.TestCase):
         self.assertEqual(len(effort_writes), 1)
         self.assertTrue(summary["review_effort_opencode_written"])
         self.assertTrue(summary["plan_review_convergence_written"])
+
+
+class TestDetectClaudeMdPath(unittest.TestCase):
+    def test_agents_md_only(self):
+        def isfile_fn(path):
+            return path == os.path.join("/proj", "AGENTS.md")
+
+        result = claude_md_detect.detect_claude_md_path("/proj", isfile_fn)
+        self.assertEqual(result, "./AGENTS.md")
+
+    def test_claude_local_md_wins_over_lower_priority_claude_md(self):
+        present = {
+            os.path.join("/proj", "CLAUDE.local.md"),
+            os.path.join("/proj", "CLAUDE.md"),
+        }
+
+        def isfile_fn(path):
+            return path in present
+
+        result = claude_md_detect.detect_claude_md_path("/proj", isfile_fn)
+        self.assertEqual(result, "./CLAUDE.local.md")
+
+    def test_none_when_all_absent(self):
+        result = claude_md_detect.detect_claude_md_path("/proj", lambda path: False)
+        self.assertIsNone(result)
+
+
+def _make_fake_reader(files):
+    """`files` maps a bare filename ("package.json"/"README.md") to its fixture text.
+    Returns `(isfile_fn, read_fn)` -- both operate purely on the trailing basename, so the
+    caller never needs to know `project_dir`'s exact join shape."""
+
+    def isfile_fn(path):
+        return os.path.basename(path) in files
+
+    def read_fn(path):
+        return files[os.path.basename(path)]
+
+    return isfile_fn, read_fn
+
+
+class TestDetectFrontendPresent(unittest.TestCase):
+    def test_package_json_with_react_dependency(self):
+        isfile_fn, read_fn = _make_fake_reader(
+            {"package.json": json.dumps({"dependencies": {"react": "^18.0.0"}})}
+        )
+        self.assertTrue(frontend_detect.detect_frontend_present("/proj", isfile_fn, read_fn))
+
+    def test_readme_mentions_next_js_case_insensitively(self):
+        isfile_fn, read_fn = _make_fake_reader(
+            {"README.md": "This project is built with Next.js and TypeScript."}
+        )
+        self.assertTrue(frontend_detect.detect_frontend_present("/proj", isfile_fn, read_fn))
+
+    def test_package_json_reactive_substring_does_not_false_positive(self):
+        isfile_fn, read_fn = _make_fake_reader(
+            {"package.json": json.dumps({"dependencies": {"my-reactive-thing": "1.0.0"}})}
+        )
+        self.assertFalse(frontend_detect.detect_frontend_present("/proj", isfile_fn, read_fn))
+
+    def test_malformed_package_json_with_clean_readme_still_matches(self):
+        isfile_fn, read_fn = _make_fake_reader(
+            {
+                "package.json": "{not valid json",
+                "README.md": "Built using React for the UI layer.",
+            }
+        )
+        self.assertTrue(frontend_detect.detect_frontend_present("/proj", isfile_fn, read_fn))
+
+    def test_neither_file_present_returns_false_no_exception(self):
+        isfile_fn, read_fn = _make_fake_reader({})
+        self.assertFalse(frontend_detect.detect_frontend_present("/proj", isfile_fn, read_fn))
+
+    def test_next_js_dot_is_literal_not_a_wildcard(self):
+        """07-REVIEWS.md Cycle 2 LOW: an unescaped literal `.` in "next.js" would act as a
+        regex wildcard, letting "nextzjs" false-positive. re.escape must be applied to every
+        hint, closing this for good."""
+        isfile_fn, read_fn = _make_fake_reader(
+            {"README.md": "A project called nextzjs, unrelated to any real framework."}
+        )
+        self.assertFalse(frontend_detect.detect_frontend_present("/proj", isfile_fn, read_fn))
+
+    def test_default_isfile_fn_on_nonexistent_directory_returns_false(self):
+        self.assertFalse(frontend_detect.detect_frontend_present("/nonexistent-dir-xyz"))
+
 
 
 if __name__ == "__main__":
