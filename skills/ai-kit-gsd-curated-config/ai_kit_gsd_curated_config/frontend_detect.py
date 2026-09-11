@@ -47,8 +47,12 @@ def _package_json_signals_frontend(project_dir, isfile_fn, read_fn):
     if not isinstance(manifest, dict):
         return False
     deps = {}
-    deps.update(manifest.get("dependencies") or {})
-    deps.update(manifest.get("devDependencies") or {})
+    deps_raw = manifest.get("dependencies")
+    if isinstance(deps_raw, dict):
+        deps.update(deps_raw)
+    dev_deps_raw = manifest.get("devDependencies")
+    if isinstance(dev_deps_raw, dict):
+        deps.update(dev_deps_raw)
     return any(hint in deps for hint in _PACKAGE_JSON_DEPENDENCY_HINTS)
 
 

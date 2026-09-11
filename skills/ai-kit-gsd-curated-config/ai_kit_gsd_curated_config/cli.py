@@ -235,11 +235,18 @@ def _cmd_apply_review(args, which_fn, run_fn, env_fn):
               file=sys.stderr)
         return 1
 
-    slug = cross_ai_build.CLI_TO_REVIEWER_SLUG[args.cli]
+    slug = cross_ai_build.CLI_TO_REVIEWER_SLUG.get(args.cli)
+    if slug is None:
+        print(
+            f"ai-kit-gsd-curated-config: unrecognized --cli {args.cli!r} "
+            f"(expected one of {sorted(cross_ai_build.CLI_TO_REVIEWER_SLUG)})",
+            file=sys.stderr,
+        )
+        return 2
     existing = gsd_write.config_get(
         node_bin, gsd_tools_path, args.project_dir, "review.default_reviewers", run_fn
     )
-    reviewers = list(existing) if existing else []
+    reviewers = list(existing) if isinstance(existing, list) else []
     if slug not in reviewers:
         reviewers.append(slug)
 

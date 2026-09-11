@@ -851,6 +851,32 @@ class TestApplyExecutionCli(unittest.TestCase):
         self.assertEqual(summary["degraded_reason"], "no_model")
         self.assertNotIn("None", buf.getvalue())
 
+    def test_unimplemented_builder_degrades_to_no_builder(self):
+        """Phase 7 code review WR-04: the no_builder degrade branch had zero test coverage."""
+        run = make_fake_run([(0, "ok", "")])
+        buf = io.StringIO()
+        with (
+            unittest.mock.patch.object(
+                cross_ai_build, "build_execution_command", return_value=None
+            ),
+            contextlib.redirect_stdout(buf),
+        ):
+            exit_code = cli.main(
+                [
+                    "apply-execution", "--project-dir", "/fake/project",
+                    "--cli", "opencode", "--model", "some-model",
+                ],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 0)
+        written_keys = [call[3] for call in run.calls if "config-set" in call]
+        self.assertEqual(written_keys, ["workflow.cross_ai_execution"])
+        summary = json.loads(buf.getvalue())
+        self.assertFalse(summary["cross_ai_command_written"])
+        self.assertEqual(summary["degraded_reason"], "no_builder")
+
 
 class TestApplyReviewCli(unittest.TestCase):
     def setUp(self):
@@ -930,6 +956,40 @@ class TestApplyReviewCli(unittest.TestCase):
         self.assertTrue(summary["review_effort_opencode_written"])
         self.assertTrue(summary["plan_review_convergence_written"])
 
+    def test_unrecognized_cli_exits_cleanly_never_a_raw_keyerror_traceback(self):
+        """Phase 7 code review WR-01: an unrecognized --cli must fail with a documented exit
+        code and a clean stderr message, not an unhandled KeyError."""
+        run = make_fake_run([(0, "ok", ""), (0, "ok", "")])
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+            exit_code = cli.main(
+                [
+                    "apply-review", "--project-dir", "/fake/project",
+                    "--cli", "not-a-real-cli", "--model", "some-model",
+                ],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 2)
+        self.assertIn("not-a-real-cli", buf_err.getvalue())
+        review_writes = [call for call in run.calls if "config-set" in call
+                          and call[3] == "review.default_reviewers"]
+        self.assertEqual(review_writes, [])
+
+    def test_malformed_existing_reviewers_string_never_exploded_into_chars(self):
+        """Phase 7 code review WR-03: a pre-existing review.default_reviewers value that
+        decodes to a bare string (malformed/legacy config) must reset to a fresh list, never
+        get exploded character-by-character via list("opencode")."""
+        exit_code, run, summary = self._run_apply_review(json.dumps("opencode"))
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(summary["default_reviewers"], ["opencode"])
+        review_writes = [
+            call for call in run.calls
+            if "config-set" in call and call[3] == "review.default_reviewers"
+        ]
+        self.assertEqual(json.loads(review_writes[0][4]), ["opencode"])
+
 
 class TestDetectClaudeMdPath(unittest.TestCase):
     def test_agents_md_only(self):
@@ -1000,6 +1060,15 @@ class TestDetectFrontendPresent(unittest.TestCase):
 
     def test_neither_file_present_returns_false_no_exception(self):
         isfile_fn, read_fn = _make_fake_reader({})
+        self.assertFalse(frontend_detect.detect_frontend_present("/proj", isfile_fn, read_fn))
+
+    def test_dependencies_as_a_list_never_raises_value_error(self):
+        """Phase 7 code review WR-02: a syntactically-valid package.json whose "dependencies"
+        is a list (not an object) must degrade to no-signal, never raise ValueError out of
+        dict.update()."""
+        isfile_fn, read_fn = _make_fake_reader(
+            {"package.json": json.dumps({"dependencies": ["react"]})}
+        )
         self.assertFalse(frontend_detect.detect_frontend_present("/proj", isfile_fn, read_fn))
 
     def test_next_js_dot_is_literal_not_a_wildcard(self):
