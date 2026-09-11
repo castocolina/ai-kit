@@ -195,13 +195,13 @@ Plans:
   3. Invoking the new skill is observably distinct from invoking plain `/agent-md-refactor` directly — it wraps that skill's refactor pass and adds the house-rule check on top, rather than duplicating or replacing it.
   4. The skill's SKILL.md is scaffolded via `/superpowers:writing-skills`, passes `/skill-judge` with no remaining Critical/Important finding, and carries the name chosen by `/naming-analyzer` — never assumed upfront.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans executed
 
 Plans:
 
 - [x] 06-01-PLAN.md — Scaffold + Makefile target-shape checker + stack-cache architecture (REQ-agtmd-makefile-rules, REQ-agtmd-workflow-rules, REQ-agtmd-skill-pipeline)
 - [x] 06-02-PLAN.md — Remediation payload + research-dispatch cache close-out + full SKILL.md wrap narrative (REQ-agtmd-wrapper, REQ-agtmd-makefile-rules)
-- [ ] 06-03-PLAN.md — skill-judge loop, naming-analyzer + rename, README row (REQ-agtmd-skill-pipeline, REQ-agtmd-wrapper)
+- [x] 06-03-PLAN.md — skill-judge loop, naming-analyzer + rename, README row (REQ-agtmd-skill-pipeline, REQ-agtmd-wrapper)
 
 ### Phase 7: Curated GSD Config Skill
 
@@ -256,7 +256,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Tool-Substitution Awareness Hook | 2/2 | Complete    | 2026-09-09 |
 | 4. Config Doctor | 3/3 | Complete    | 2026-09-10 |
 | 5. Usage Metrics Dashboard | 6/6 | Complete    | 2026-09-10 |
-| 6. AGENTS.md Rules Checker Skill | 1/3 | In Progress|  |
+| 6. AGENTS.md Rules Checker Skill | 3/3 | In Progress|  |
 | 7. Curated GSD Config Skill | 0/TBD | Not started | - |
 | 8. Status-line Quota Color Refactor | 1/1 | Complete    | 2026-09-10 |
 

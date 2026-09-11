@@ -4,17 +4,17 @@ milestone: v1.1
 current_phase: 6
 current_phase_name: AGENTS.md Rules Checker Skill
 current_plan: 3
-status: in_progress
-stopped_at: Completed 06-02-PLAN.md
-last_updated: "2026-09-11T05:49:15.000Z"
+status: verifying
+stopped_at: Completed 06-03-PLAN.md
+last_updated: "2026-09-11T06:09:10.308Z"
 last_activity: 2026-09-11
 last_activity_desc: Phase 6 Plan 02 complete (remediation payload builder, cache-update research-dispatch path, full SKILL.md)
-state_head: a6c63dd
+state_head: 9a4f1cdbfa695483b0f865b1fb798f5851eb6dc4
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 8
-  completed_plans: 3
+  completed_plans: 4
 milestone_name: Agent Workflow Hygiene & Tooling Polish
 ---
 
@@ -32,7 +32,7 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 Phase: 6 — AGENTS.md Rules Checker Skill
 Current Plan: 3
 Total Plans in Phase: 3
-Status: In Progress
+Status: Phase complete — ready for verification
 Last activity: 2026-09-11 — Phase 6 Plan 02 complete (remediation payload builder, cache-update research-dispatch path, full SKILL.md)
 
 ## Performance Metrics
@@ -70,6 +70,7 @@ Last activity: 2026-09-11 — Phase 6 Plan 02 complete (remediation payload buil
 |------|----------|-------|-------|
 | Phase 06 P01 | 45min | 2 tasks | 14 files |
 | Phase 06 P02 | 50min | 2 tasks | 4 files |
+| Phase 06 P03 | 13min | 2 tasks | 16 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
   git-scm.com/docs/git-clone unless --no-single-branch is given.
 - [Phase 6]: Phase 6 Plan 01: AGENTS.md checker scaffold + Makefile/workflow checkers implemented per the cross-AI-reviewed plan verbatim; both tasks committed as one cohesive commit (b99eee7) since they share cli.py and the single test file.
 - [Phase 6]: Phase 6 Plan 02: remediation payload builder, `cache-update` research-dispatch path, and the full `SKILL.md` implemented per the cross-AI-reviewed (5 rounds) plan verbatim; `stack_cache.py` needed no code edit (Plan 01 already shipped every primitive this plan's `cache-update` handler calls). Committed as two separate commits (`12373ca` feat, `a6c63dd` docs) since the two tasks touch almost entirely disjoint files. `make validate`'s overall gate is blocked by three pre-existing, out-of-Phase-6-scope lint issues (logged to `06-agents-md-rules-checker-skill/deferred-items.md`); `make test`/`make lint` and a scoped `ruff check` against this plan's own 4 files are both clean.
+- [Phase 6]: [Phase 6] Phase 6 Plan 03: /skill-judge cleared SKILL.md (104/120, zero Critical Issues) and /naming-analyzer renamed the skill from provisional ai-kit-agents-md-checker to final ai-kit-agents-md-rules-checker (missing 'rules' was a Too-Vague/Medium-priority naming gap, no tie-break needed); all 4 registration surfaces + README updated; Phase 6 complete.
 
 ### Pending Todos
 
@@ -184,7 +186,7 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-11T05:49:15.000Z
-Stopped at: Completed 06-02-PLAN.md
+Last session: 2026-09-11T06:09:10.288Z
+Stopped at: Completed 06-03-PLAN.md
 Resume file: None
 </content>
