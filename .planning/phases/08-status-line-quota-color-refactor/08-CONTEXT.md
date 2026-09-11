@@ -90,6 +90,26 @@ every timing input comes from the Claude-provided rate-limit context
   formulation is `remaining_fraction = 1.0`, the equivalent safe value under
   the new one.)
 
+  **Clarifying note (amended 2026-09-11, post-implementation code review +
+  independent verification):** D-03's "at/after the window's nominal reset
+  moment" clamp is reachable in practice ONLY at the exact floating-point tie
+  `remaining_fraction == 0.0` — the literal instant `now == resets_at` to
+  float precision, which exists purely to avoid a `ZeroDivisionError`
+  (`pct / 0.0` raises in Python). ANY `remaining_fraction` that is negative,
+  even by a sub-second epsilon (`resets_at` a fraction of a second in the
+  past, the overwhelmingly common real-world shape since `time.time()` has
+  sub-second precision and `resets_at` is integer-second), takes D-04's
+  "already in the past" fallback instead — by design, since D-04 itself says
+  "any amount past," not "meaningfully past." This was flagged as WARNING
+  WR-01 in `08-REVIEW.md` and independently reproduced during phase
+  verification; on inspection it is not a defect — the implementation
+  matches both decisions' literal wording, the exact-tie case D-03 describes
+  is just narrower in practice than the prose might suggest to a future
+  reader. No ROADMAP success criterion requires the exact-tie path be
+  reachable from a real `time.time()` call — SC1's own worked example
+  (`50/0.8=62.5` vs `50/0.2=250`) only exercises the ordinary non-edge
+  division, which is unaffected.
+
 ### Where the logic lives
 - **D-05:** `util_rate_color(pct, theme)` stays exactly as it is today — a pure
   pct→color picker, untouched, zero risk to its existing callers/tests. A new

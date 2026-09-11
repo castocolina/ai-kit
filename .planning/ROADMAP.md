@@ -52,7 +52,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Usage Metrics Dashboard** - Capture, refine, and locally visualize how uz actually uses AI CLIs (completed 2026-09-10)
 - [ ] **Phase 6: AGENTS.md Rules Checker Skill** - Wrap `/agent-md-refactor` with a house-ruleset checker for Makefile target shape and the accumulated workflow rules
 - [ ] **Phase 7: Curated GSD Config Skill** - Small curated question set that writes and schema-validates `.planning/config.json`, replacing `gsd-settings`/`gsd-config`'s full interrogation
-- [ ] **Phase 8: Status-line Quota Color Refactor** - Rate-limit bucket coloring becomes relative to time-left-in-window, not raw usage percentage
+- [x] **Phase 8: Status-line Quota Color Refactor** - Rate-limit bucket coloring becomes relative to time-left-in-window, not raw usage percentage (completed 2026-09-10)
 
 ## Phase Details
 
@@ -237,11 +237,11 @@ Plans:
   4. The color computation is derived from a formula comparing `used_percentage` against remaining-fraction-of-window (a burn-rate signal): `ratio = used_percentage / remaining_fraction`, where `remaining_fraction = 1 - elapsed_fraction`, fed into the unchanged `theme.ramps["rate"]` thresholds (`[(50,"GREEN"),(80,"YELLOW"),("inf","RED+bold")]`). Worked example, verified directly against that ramp: identical 50% usage with 4h remaining in a 5h window gives `50 / 0.8 = 62.5` → YELLOW; the same 50% usage with only 1h remaining gives `50 / 0.2 = 250` → RED+bold — strictly more urgent, never less, satisfying SC1. (RED+bold is the ramp's final band; "more urgent than RED+bold" is not a representable state, so no worked example may claim one.) Confirmed by a throwaway spike script before the formula is locked in, per the project's theory-to-hypothesis-to-spike convention. (Amended 2026-09-11, corrected again same day after cycle-2 review: the original worked example used two DIFFERENT usage percentages at two different points in time — a burn-PACE framing mathematically incompatible with SC1's same-usage invariant; `pct/elapsed_fraction` satisfied that example but was monotonically backwards relative to SC1. The first correction attempt switched the formula to `pct/remaining_fraction` but kept an arithmetically-impossible worked example ("1h remaining reads even more urgent than red" — RED+bold has no more-urgent band above it); this text now states the real, directly-computed ramp outputs. See `08-REVIEWS.md` cycle 1 and cycle 2, `08-CONTEXT.md`'s D-01–D-04, and `REQUIREMENTS.md`'s matching correction to `REQ-stln-time-relative-color`.)
   5. `tests/test_status_line.py`'s existing ramp test pattern (`test_render_time_colors_by_slo_sla_ramp`) is extended with new cases covering the time-relative formula, including a case asserting the displayed percentage/reset-suffix text is unchanged, and the full suite passes.
 
-**Plans**: 1 plan
+**Plans**: 1/1 plans executed
 
 Plans:
 
-- [ ] 08-01-PLAN.md — Burn-rate ratio helpers (`util_rate_window_seconds` + `util_rate_burn_ratio`) wired into `util_rate_group_str`'s rate-limit ramp call site, plus ramp-boundary test coverage extending the existing pattern (REQ-stln-time-relative-color, REQ-stln-ramp-tests)
+- [x] 08-01-PLAN.md — Burn-rate ratio helpers (`util_rate_window_seconds` + `util_rate_burn_ratio`) wired into `util_rate_group_str`'s rate-limit ramp call site, plus ramp-boundary test coverage extending the existing pattern (REQ-stln-time-relative-color, REQ-stln-ramp-tests)
 
 ## Progress
 
@@ -258,7 +258,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 5. Usage Metrics Dashboard | 6/6 | Complete    | 2026-09-10 |
 | 6. AGENTS.md Rules Checker Skill | 0/3 | Not started | - |
 | 7. Curated GSD Config Skill | 0/TBD | Not started | - |
-| 8. Status-line Quota Color Refactor | 0/1 | Not started | - |
+| 8. Status-line Quota Color Refactor | 1/1 | Complete    | 2026-09-10 |
 
 ## Backlog
 
@@ -324,4 +324,5 @@ single-file, single-convention check. Raised while drafting this project's
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
 </content>
