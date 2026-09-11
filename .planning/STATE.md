@@ -119,6 +119,21 @@ permission block, or (b) accept a different reviewer lane for this phase, or
 Phase 7 specifically. Resume with `/gsd-plan-review-convergence 7 --opencode`
 once a decision is made, or `/gsd-execute-phase 7` to proceed without it.
 
+**Phase 8 execution — Rule 7 circuit breaker, fell back to local gsd-executor (2026-09-11).**
+`workflow.cross_ai_execution` delegation for plan 08-01 was attempted against BOTH documented
+routes and both failed: primary `opencode run --model router-env/my-coding` exited 1 with
+"Service temporarily unavailable: all targets were skipped by pre-dispatch filters" (empty
+output, no SUMMARY produced); Rule 2 fallback `opencode run --model xai/grok-4.6` failed with
+a provider-side billing block (`personal-team-blocked:spending-limit`), confirmed by a direct
+probe immediately before falling back further. Both routes tried and failed per Rule 2's
+explicit text — this is Rule 7's circuit-breaker condition for the execution role specifically
+(distinct from Phase 7's plan-review-role circuit breaker above). Per Rule 2's "Local
+gsd-executor is a last resort... reaching it must be recorded as human_verification with which
+two routes failed and how, not silently absorbed as 'ran locally,'" Phase 8's plan 08-01 was
+executed via local `gsd-executor` instead. This is a recorded deviation from the intended
+cross-AI execution path, not a silent fallback — uz may want to restore provider credits/router
+health before future phases' cross-AI execution.
+
 Phases 6-8 are mutually independent and independent of the completed v1.0
 phases — any order is fine. Phases 6 and 7 both end with the same
 skill-authoring pipeline (`/superpowers:writing-skills` → `/skill-judge` →
