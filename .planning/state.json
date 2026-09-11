@@ -41,7 +41,7 @@
     {
       "number": "7",
       "name": "Curated GSD Config Skill",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "8",
@@ -51,8 +51,8 @@
   ],
   "next": {
     "command": "/gsd:progress --next",
-    "label": "Advance to the next step (verify)",
-    "reason": "Phase 07 of 9 · ready to verify"
+    "label": "Advance to the next step (plan phase 08)",
+    "reason": "Phase 08 of 9 — needs a plan"
   },
-  "updated_at": "2026-09-11T08:09:48.824Z"
+  "updated_at": "2026-09-11T08:38:06.155Z"
 }
