@@ -32,12 +32,27 @@
       "number": "5",
       "name": "Usage Metrics Dashboard",
       "status": "complete"
+    },
+    {
+      "number": "6",
+      "name": "AGENTS.md Rules Checker Skill",
+      "status": "pending"
+    },
+    {
+      "number": "7",
+      "name": "Curated GSD Config Skill",
+      "status": "pending"
+    },
+    {
+      "number": "8",
+      "name": "Status-line Quota Color Refactor",
+      "status": "pending"
     }
   ],
   "next": {
-    "command": "/gsd:discuss-phase",
-    "label": "Discuss the first phase",
-    "reason": "Project initialized — plan your first phase"
+    "command": "/gsd:progress --next",
+    "label": "Advance to the next step (plan phase 8)",
+    "reason": "Phase 8 of 9 — needs a plan"
   },
-  "updated_at": "2026-09-10T21:59:34.758Z"
+  "updated_at": "2026-09-11T02:34:13.871Z"
 }
