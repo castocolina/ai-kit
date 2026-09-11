@@ -1,13 +1,13 @@
 ---
-name: ai-kit-gsd-config
+name: ai-kit-gsd-curated-config
 description: Curated, one-question GSD config setup for a target project's `.planning/config.json` — asks only `model_profile` (quality/balanced/budget/adaptive), then writes preference-driven defaults through gsd-tools' own schema-validated `config-set`/`config-new-project`: critical-agent opus/high overrides derived live from the installed gsd-core's own `AGENT_DEFAULT_TIERS` (never a hardcoded agent list), cross-AI execution/plan-review CLI+model selection from live-detected opencode/cursor-agent candidates, `claude_md_path`/frontend-based `ui_phase`/`ui_review` detection, and a fixed workflow-flag bundle. Use when a project needs GSD configured fast without the full `gsd-settings`/`gsd-config` interrogation (power-user knobs, API keys/integrations) — this is a faster alternative entry point, not a replacement or wrapper for either.
 ---
 
-# ai-kit-gsd-config
+# ai-kit-gsd-curated-config
 
 ## Scope
 
-This skill wraps the already-built `ai-kit-gsd-config.py` CLI. It writes
+This skill wraps the already-built `ai-kit-gsd-curated-config.py` CLI. It writes
 `.planning/config.json` for a target GSD project through ONE curated question
 (`model_profile`) plus a fixed set of preference-driven defaults this
 project's own maintainer already locked in (07-CONTEXT.md D-01 through D-10):
@@ -24,12 +24,12 @@ Resolve once per invocation, in one Bash call, and record the printed path
 as a literal absolute path:
 
 ```bash
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-gsd-config}" \
-         "$HOME/.claude/skills/ai-kit-gsd-config" \
-         "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-gsd-config" \
-         "$HOME/.agents/skills/ai-kit-gsd-config" \
+for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-gsd-curated-config}" \
+         "$HOME/.claude/skills/ai-kit-gsd-curated-config" \
+         "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-gsd-curated-config" \
+         "$HOME/.agents/skills/ai-kit-gsd-curated-config" \
          "$(dirname "<absolute path to THIS SKILL.md>")"; do
-  [ -f "$d/ai-kit-gsd-config.py" ] && { printf '%s\n' "$d/ai-kit-gsd-config.py"; break; }
+  [ -f "$d/ai-kit-gsd-curated-config.py" ] && { printf '%s\n' "$d/ai-kit-gsd-curated-config.py"; break; }
 done
 ```
 
@@ -81,7 +81,7 @@ apply without first showing the detected candidate.
    prints the best opencode/cursor-agent match against the execution
    preference ladder (`coding`/`executor` name match, then
    composer>=2.5, grok>=4.6, deepseek-flash, luna — see
-   `ai_kit_gsd_config/preference_match.py` for the exact rule order). Show
+   `ai_kit_gsd_curated_config/preference_match.py` for the exact rule order). Show
    the detected `{cli, model, rule}` to the user, then `apply-execution
    --cli <cli> --model <model>` (omit both flags when nothing matched —
    `workflow.cross_ai_execution` still gets written `true`, just with no
@@ -103,7 +103,7 @@ apply without first showing the detected candidate.
    BOTH flags — this same call also writes the fixed 27-key
    `workflow.*` defaults bundle (research/plan_check/verifier/nyquist_validation/
    code_review/security_enforcement and 21 more; see
-   `ai_kit_gsd_config/workflow_defaults.py` for the literal list).
+   `ai_kit_gsd_curated_config/workflow_defaults.py` for the literal list).
 
 ## Subcommand reference
 
@@ -135,7 +135,7 @@ installed where this skill can find it, not a bug in this skill.
   instead of them, never routed through them and never routing to them.
 - **Never hand-write `.planning/config.json`.** Every write in this skill's
   own CLI goes through `gsd-tools config-set`/`config-new-project`
-  (`ai_kit_gsd_config/gsd_write.py` is the only module in the package
+  (`ai_kit_gsd_curated_config/gsd_write.py` is the only module in the package
   permitted to shell out for a write) — this is what keeps every key this
   skill touches schema-validated the same way `gsd-settings` output is,
   never a parallel, unvalidated write path.

@@ -22,7 +22,7 @@ if _ai_kit_spec_shim is not None:
     if _ai_kit_spec_skill_dir not in sys.path:
         sys.path.insert(0, _ai_kit_spec_skill_dir)
 
-from ai_kit_spec.commands import build_execute_command  # noqa: E402
+from ai_kit_spec.commands import build_execute_command  # noqa: E402 # pyright: ignore
 
 # The only three CLI names this plan's two ladders can ever resolve to. Looking up any other
 # key raises KeyError -- never silently substitutes the raw CLI name as a fallback slug, which

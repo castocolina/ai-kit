@@ -1,4 +1,4 @@
-"""CLI entrypoint for ai-kit-gsd-config. Dependency-injected `main()` (which_fn/run_fn/
+"""CLI entrypoint for ai-kit-gsd-curated-config. Dependency-injected `main()` (which_fn/run_fn/
 env_fn), mirroring the same convention `skills/ai-kit-spec-review/ai_kit_spec/cli.py` uses,
 so every subcommand is testable without a real subprocess or real filesystem state."""
 import argparse
@@ -22,9 +22,9 @@ from . import (
 
 VALID_MODEL_PROFILES = ("quality", "balanced", "budget", "adaptive")
 
-# This skill's own directory (skills/ai-kit-gsd-config), used by model_detect.
+# This skill's own directory (skills/ai-kit-gsd-curated-config), used by model_detect.
 # resolve_ai_kit_spec_path's sibling-of-this-skill fallback candidate. cli.py lives one level
-# below the skill root (ai_kit_gsd_config/cli.py), so dirname is applied twice.
+# below the skill root (ai_kit_gsd_curated_config/cli.py), so dirname is applied twice.
 _THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -34,13 +34,13 @@ def _resolve_node_and_gsd_tools(which_fn, env_fn):
     lets a `None` path reach `subprocess.run` as a positional argument."""
     node_bin = gsd_catalog.resolve_node_binary(which_fn)
     if node_bin is None:
-        return None, None, "ai-kit-gsd-config: could not resolve 'node' on PATH"
+        return None, None, "ai-kit-gsd-curated-config: could not resolve 'node' on PATH"
     gsd_tools_path = gsd_catalog.resolve_gsd_tools_path(env_fn())
     if gsd_tools_path is None:
         return (
             None,
             None,
-            "ai-kit-gsd-config: could not locate an installed gsd-core's gsd-tools.cjs",
+            "ai-kit-gsd-curated-config: could not locate an installed gsd-core's gsd-tools.cjs",
         )
     return node_bin, gsd_tools_path, None
 
@@ -81,7 +81,7 @@ def _cmd_apply_critical_agents(args, which_fn, run_fn, env_fn):
         )
         if not ok:
             print(
-                f"ai-kit-gsd-config: failed to write unconditional key '{key}': {output}",
+                f"ai-kit-gsd-curated-config: failed to write unconditional key '{key}': {output}",
                 file=sys.stderr,
             )
             return 1
@@ -109,7 +109,8 @@ def _cmd_apply_critical_agents(args, which_fn, run_fn, env_fn):
                     heavy_agents_written += 1
                 else:
                     print(
-                        f"ai-kit-gsd-config: failed to write heavy-sweep key '{key}': {output}",
+                        f"ai-kit-gsd-curated-config: failed to write heavy-sweep key "
+                        f"'{key}': {output}",
                         file=sys.stderr,
                     )
             heavy_sweep_applied = True
@@ -169,7 +170,7 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
         node_bin, gsd_tools_path, args.project_dir, "workflow.cross_ai_execution", True, run_fn
     )
     if not ok:
-        print(f"ai-kit-gsd-config: failed to write workflow.cross_ai_execution: {output}",
+        print(f"ai-kit-gsd-curated-config: failed to write workflow.cross_ai_execution: {output}",
               file=sys.stderr)
         return 1
 
@@ -187,8 +188,11 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
                 command, run_fn
             )
             if not ok:
-                print(f"ai-kit-gsd-config: failed to write workflow.cross_ai_command: {output}",
-                      file=sys.stderr)
+                print(
+                    f"ai-kit-gsd-curated-config: failed to write "
+                    f"workflow.cross_ai_command: {output}",
+                    file=sys.stderr,
+                )
                 return 1
             cross_ai_command_written = True
 
@@ -211,15 +215,18 @@ def _cmd_apply_review(args, which_fn, run_fn, env_fn):
         True, run_fn
     )
     if not ok:
-        print(f"ai-kit-gsd-config: failed to write workflow.plan_review_convergence: {output}",
-              file=sys.stderr)
+        print(
+            f"ai-kit-gsd-curated-config: failed to write "
+            f"workflow.plan_review_convergence: {output}",
+            file=sys.stderr,
+        )
         return 1
 
     ok, output = gsd_write.config_set(
         node_bin, gsd_tools_path, args.project_dir, "review.effort.opencode", "high", run_fn
     )
     if not ok:
-        print(f"ai-kit-gsd-config: failed to write review.effort.opencode: {output}",
+        print(f"ai-kit-gsd-curated-config: failed to write review.effort.opencode: {output}",
               file=sys.stderr)
         return 1
 
@@ -236,7 +243,7 @@ def _cmd_apply_review(args, which_fn, run_fn, env_fn):
         json.dumps(reviewers), run_fn
     )
     if not ok:
-        print(f"ai-kit-gsd-config: failed to write review.default_reviewers: {output}",
+        print(f"ai-kit-gsd-curated-config: failed to write review.default_reviewers: {output}",
               file=sys.stderr)
         return 1
 
@@ -244,7 +251,7 @@ def _cmd_apply_review(args, which_fn, run_fn, env_fn):
         node_bin, gsd_tools_path, args.project_dir, f"review.models.{slug}", args.model, run_fn
     )
     if not ok:
-        print(f"ai-kit-gsd-config: failed to write review.models.{slug}: {output}",
+        print(f"ai-kit-gsd-curated-config: failed to write review.models.{slug}: {output}",
               file=sys.stderr)
         return 1
 
@@ -282,7 +289,10 @@ def _cmd_apply_claude_md_path(args, which_fn, run_fn, env_fn):
         node_bin, gsd_tools_path, args.project_dir, "claude_md_path", args.path, run_fn
     )
     if not ok:
-        print(f"ai-kit-gsd-config: failed to write claude_md_path: {output}", file=sys.stderr)
+        print(
+            f"ai-kit-gsd-curated-config: failed to write claude_md_path: {output}",
+            file=sys.stderr,
+        )
         return 1
     print(json.dumps({"applied": True, "key": "claude_md_path", "value": args.path}))
     return 0
@@ -309,7 +319,8 @@ def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
         )
         if not ok:
             print(
-                f"ai-kit-gsd-config: failed to write workflow.{key}: {output}", file=sys.stderr
+                f"ai-kit-gsd-curated-config: failed to write workflow.{key}: {output}",
+                file=sys.stderr,
             )
             return 1
         bundle_written += 1
@@ -321,14 +332,20 @@ def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
         node_bin, gsd_tools_path, args.project_dir, "workflow.ui_phase", ui_phase, run_fn
     )
     if not ok:
-        print(f"ai-kit-gsd-config: failed to write workflow.ui_phase: {output}", file=sys.stderr)
+        print(
+            f"ai-kit-gsd-curated-config: failed to write workflow.ui_phase: {output}",
+            file=sys.stderr,
+        )
         return 1
 
     ok, output = gsd_write.config_set(
         node_bin, gsd_tools_path, args.project_dir, "workflow.ui_review", ui_review, run_fn
     )
     if not ok:
-        print(f"ai-kit-gsd-config: failed to write workflow.ui_review: {output}", file=sys.stderr)
+        print(
+            f"ai-kit-gsd-curated-config: failed to write workflow.ui_review: {output}",
+            file=sys.stderr,
+        )
         return 1
 
     print(
@@ -349,7 +366,7 @@ def main(
     run_fn=subprocess.run,
     env_fn=lambda: dict(os.environ),
 ) -> int:
-    parser = argparse.ArgumentParser(prog="ai-kit-gsd-config")
+    parser = argparse.ArgumentParser(prog="ai-kit-gsd-curated-config")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_ensure = sub.add_parser("ensure-project")

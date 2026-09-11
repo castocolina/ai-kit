@@ -25,7 +25,7 @@ if _ai_kit_spec_shim is not None:
     if _ai_kit_spec_skill_dir not in sys.path:
         sys.path.insert(0, _ai_kit_spec_skill_dir)
 
-from ai_kit_spec.model_heuristics import _hint_matches  # noqa: E402
+from ai_kit_spec.model_heuristics import _hint_matches  # noqa: E402 # pyright: ignore
 
 # Fixed runtime search order for BOTH ladders (07-CONTEXT.md's Specifics section states this
 # order for plan-review explicitly and gives no contrary order for execution, so this module

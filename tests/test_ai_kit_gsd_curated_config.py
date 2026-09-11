@@ -11,10 +11,10 @@ import unittest.mock
 
 sys.path.insert(
     0,
-    os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-gsd-config"),
+    os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-gsd-curated-config"),
 )
 
-from ai_kit_gsd_config import (
+from ai_kit_gsd_curated_config import (
     claude_md_detect,
     cli,
     critical_agents,
@@ -507,7 +507,7 @@ class TestResolveAiKitSpecPath(unittest.TestCase):
             return path == os.path.join("/plugin/root", "skills", "ai-kit-spec-review")
 
         result = model_detect.resolve_ai_kit_spec_path(
-            os.path.join("/somewhere", "skills", "ai-kit-gsd-config"),
+            os.path.join("/somewhere", "skills", "ai-kit-gsd-curated-config"),
             env={"CLAUDE_PLUGIN_ROOT": "/plugin/root", "HOME": "/home/nope"},
             isdir_fn=isdir_fn,
         )
@@ -520,7 +520,7 @@ class TestResolveAiKitSpecPath(unittest.TestCase):
             return path == os.path.join("/home/user", ".claude", "skills", "ai-kit-spec-review")
 
         result = model_detect.resolve_ai_kit_spec_path(
-            os.path.join("/somewhere", "skills", "ai-kit-gsd-config"),
+            os.path.join("/somewhere", "skills", "ai-kit-gsd-curated-config"),
             env={"HOME": "/home/user"},
             isdir_fn=isdir_fn,
         )
@@ -534,7 +534,7 @@ class TestResolveAiKitSpecPath(unittest.TestCase):
             return path == os.path.join("/somewhere", "skills", "ai-kit-spec-review")
 
         result = model_detect.resolve_ai_kit_spec_path(
-            os.path.join("/somewhere", "skills", "ai-kit-gsd-config"),
+            os.path.join("/somewhere", "skills", "ai-kit-gsd-curated-config"),
             env={"HOME": "/nonexistent"},
             isdir_fn=isdir_fn,
         )
@@ -544,7 +544,7 @@ class TestResolveAiKitSpecPath(unittest.TestCase):
 
     def test_none_when_nothing_found(self):
         result = model_detect.resolve_ai_kit_spec_path(
-            os.path.join("/somewhere", "skills", "ai-kit-gsd-config"),
+            os.path.join("/somewhere", "skills", "ai-kit-gsd-curated-config"),
             env={"HOME": "/nonexistent"},
             isdir_fn=lambda path: False,
         )
