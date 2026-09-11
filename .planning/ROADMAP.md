@@ -232,11 +232,11 @@ Plans:
   4. The color computation is derived from a formula comparing `used_percentage` against elapsed-fraction-of-window (a burn-rate signal) — e.g. 50%+ used early in a 5h window reads red, but 30% used at hour 4-of-5 of the same window can read green/blue for the same ramp — confirmed by a throwaway spike script before the formula is locked in, per the project's theory-to-hypothesis-to-spike convention.
   5. `tests/test_status_line.py`'s existing ramp test pattern (`test_render_time_colors_by_slo_sla_ramp`) is extended with new cases covering the time-relative formula, including a case asserting the displayed percentage/reset-suffix text is unchanged, and the full suite passes.
 
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
 
-- [ ] TBD (defined at `/gsd-plan-phase 8`)
+- [ ] 08-01-PLAN.md — Burn-rate ratio helpers (`util_rate_window_seconds` + `util_rate_burn_ratio`) wired into `util_rate_group_str`'s rate-limit ramp call site, plus ramp-boundary test coverage extending the existing pattern (REQ-stln-time-relative-color, REQ-stln-ramp-tests)
 
 ## Progress
 
@@ -253,7 +253,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 5. Usage Metrics Dashboard | 6/6 | Complete    | 2026-09-10 |
 | 6. AGENTS.md Rules Checker Skill | 0/TBD | Not started | - |
 | 7. Curated GSD Config Skill | 0/TBD | Not started | - |
-| 8. Status-line Quota Color Refactor | 0/TBD | Not started | - |
+| 8. Status-line Quota Color Refactor | 0/1 | Not started | - |
 
 ## Backlog
 
