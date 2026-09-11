@@ -3,9 +3,6 @@ name: ai-kit-agents-md-checker
 description: Use when an AGENTS.md or CLAUDE.md-style agent-instruction file needs checking against ai-kit's own 17-rule house ruleset, when a repo's Makefile/`.pre-commit-config.yaml` target shape (setup-env, per-hook targets, validate chaining, test pyramid) needs auditing for gaps, or when asked "is my AGENTS.md missing any workflow rules" / "does my Makefile have the right targets". Wraps `/agent-md-refactor` with a house-rule check it has no awareness of on its own.
 ---
 
-<!-- Directory/package name "ai-kit-agents-md-checker" is PROVISIONAL pending
-     /naming-analyzer (Phase 6 Plan 03). Do not assume this is the final name. -->
-
 # ai-kit-agents-md-checker
 
 ## Scope
