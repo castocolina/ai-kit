@@ -59,9 +59,9 @@ phase.
 
 ### Curated GSD Config Skill
 
-- [ ] **REQ-cfg-curated-questions**: A new skill asks a small, curated question set — not the full `gsd-config`/`gsd-settings` interrogation — and applies the user's preset preferences (high effort for analysis tasks, Haiku for execution, cross-AI execution enabled, convergence of plan checks enabled) by default.
-- [ ] **REQ-cfg-writes-config**: The skill generates `.planning/config.json` in the same shape `gsd-settings`/`gsd-config` produce today.
-- [ ] **REQ-cfg-schema-validate**: The skill validates the generated config against the open-GSD config JSON schema when one exists.
+- [x] **REQ-cfg-curated-questions**: A new skill asks a small, curated question set — not the full `gsd-config`/`gsd-settings` interrogation — and applies the user's preset preferences (high effort for analysis tasks, Haiku for execution, cross-AI execution enabled, convergence of plan checks enabled) by default.
+- [x] **REQ-cfg-writes-config**: The skill generates `.planning/config.json` in the same shape `gsd-settings`/`gsd-config` produce today.
+- [x] **REQ-cfg-schema-validate**: The skill validates the generated config against the open-GSD config JSON schema when one exists.
 - [ ] **REQ-cfg-skill-pipeline**: The skill is scaffolded via `/superpowers:writing-skills`, reviewed via `/skill-judge`, and named via `/naming-analyzer`.
 
 ### Status-line Quota Color Refactor
@@ -112,9 +112,9 @@ pending-todo backlog rather than from further PRD ingest.
 | REQ-agtmd-makefile-rules | Phase 6 | Complete |
 | REQ-agtmd-workflow-rules | Phase 6 | Complete |
 | REQ-agtmd-skill-pipeline | Phase 6 | Complete |
-| REQ-cfg-curated-questions | Phase 7 | Pending |
-| REQ-cfg-writes-config | Phase 7 | Pending |
-| REQ-cfg-schema-validate | Phase 7 | Pending |
+| REQ-cfg-curated-questions | Phase 7 | Complete |
+| REQ-cfg-writes-config | Phase 7 | Complete |
+| REQ-cfg-schema-validate | Phase 7 | Complete |
 | REQ-cfg-skill-pipeline | Phase 7 | Pending |
 | REQ-stln-time-relative-color | Phase 8 | Complete |
 | REQ-stln-ramp-tests | Phase 8 | Complete |
