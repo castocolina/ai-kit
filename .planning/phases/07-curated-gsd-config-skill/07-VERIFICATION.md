@@ -5,18 +5,23 @@ verifier: independent goal-backward verification (fresh review, not the original
 status: passed
 score: 6/6 review findings (CR-01, CR-02, WR-01, WR-02, WR-03, WR-04) fixed and re-verified; all subcommands exercised live and match locked decisions
 covered_files:
-  - ".planning/phases/07-curated-gsd-config-skill/07-CONTEXT.md"
   - ".planning/phases/07-curated-gsd-config-skill/07-01-PLAN.md"
+  - ".planning/phases/07-curated-gsd-config-skill/07-01-SUMMARY.md"
   - ".planning/phases/07-curated-gsd-config-skill/07-02-PLAN.md"
+  - ".planning/phases/07-curated-gsd-config-skill/07-02-SUMMARY.md"
   - ".planning/phases/07-curated-gsd-config-skill/07-03-PLAN.md"
+  - ".planning/phases/07-curated-gsd-config-skill/07-03-SUMMARY.md"
   - ".planning/phases/07-curated-gsd-config-skill/07-04-PLAN.md"
+  - ".planning/phases/07-curated-gsd-config-skill/07-04-SUMMARY.md"
+  - ".planning/phases/07-curated-gsd-config-skill/07-CONTEXT.md"
   - ".planning/phases/07-curated-gsd-config-skill/07-REVIEW.md"
   - ".planning/phases/07-curated-gsd-config-skill/07-REVIEWS.md"
   - "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cli.py"
-  - "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/preference_match.py"
   - "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_build.py"
   - "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/frontend_detect.py"
+  - "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/preference_match.py"
   - "tests/test_ai_kit_gsd_curated_config.py"
+covered_digest: "v1:sha256:f4262858424aa449fbec13ef2b6902f4ae01da7509c3e38c643d00cd12cbe69f"
 test_results:
   unittest_module: "94 tests, OK"
   make_test: pass
