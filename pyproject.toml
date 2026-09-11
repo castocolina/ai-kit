@@ -84,12 +84,12 @@ disable = [
 # ─────────────────────────── vulture ───────────────────────────
 [tool.vulture]
 min_confidence = 80
-paths = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-agents-md-rules-checker"]
+paths = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-agents-md-rules-checker", "skills/ai-kit-gsd-curated-config"]
 # signal-handler / context-manager params required by their signature
 ignore_names = ["signum", "frame", "offset", "whence"]
 
 # ─────────────────────────── pyright ───────────────────────────
 [tool.pyright]
-include = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "tools/hooks", "tools/config_doctor_checks.py", "tools/config_doctor_readers.py", "tools/config_doctor_app.py", "tools/config_doctor_appliers.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-agents-md-rules-checker"]
+include = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "tools/hooks", "tools/config_doctor_checks.py", "tools/config_doctor_readers.py", "tools/config_doctor_app.py", "tools/config_doctor_appliers.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-agents-md-rules-checker", "skills/ai-kit-gsd-curated-config"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"

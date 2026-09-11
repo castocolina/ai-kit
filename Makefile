@@ -31,12 +31,12 @@ check:
 	bash $(INSTALL_SH) --check
 
 test:
-	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_system_memory_e2e tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_config_doctor tests.test_config_doctor_pty tests.test_ai_kit_usage_metrics tests.test_ai_kit_agents_md_rules_checker
+	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty tests.test_system_memory_e2e tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_config_doctor tests.test_config_doctor_pty tests.test_ai_kit_usage_metrics tests.test_ai_kit_agents_md_rules_checker tests.test_ai_kit_gsd_curated_config
 	bash tests/test_install.sh
 
 lint:
 	shellcheck $(INSTALL_SH) tests/test_install.sh
-	python3 -m py_compile $(SETUP_PY) tools/status-line.py tools/statusline-doctor.py tools/hooks/*.py tools/config_doctor_*.py skills/ai-kit-usage-metrics/ai-kit-usage-metrics.py skills/ai-kit-usage-metrics/ai_kit_usage_metrics/*.py skills/ai-kit-agents-md-rules-checker/ai-kit-agents-md-rules-checker.py skills/ai-kit-agents-md-rules-checker/ai_kit_agents_md_rules_checker/*.py
+	python3 -m py_compile $(SETUP_PY) tools/status-line.py tools/statusline-doctor.py tools/hooks/*.py tools/config_doctor_*.py skills/ai-kit-usage-metrics/ai-kit-usage-metrics.py skills/ai-kit-usage-metrics/ai_kit_usage_metrics/*.py skills/ai-kit-agents-md-rules-checker/ai-kit-agents-md-rules-checker.py skills/ai-kit-agents-md-rules-checker/ai_kit_agents_md_rules_checker/*.py skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/*.py
 
 # Quality gate. Runs the SAME pre-commit hooks that gate commits, across all
 # files — so `make validate` and the commit hook can never drift. `uv run`
