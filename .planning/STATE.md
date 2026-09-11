@@ -3,18 +3,18 @@ gsd_state_version: "1.0"
 milestone: v1.1
 current_phase: 6
 current_phase_name: AGENTS.md Rules Checker Skill
-current_plan: 2
+current_plan: 3
 status: in_progress
-stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-09-11T05:30:33.549Z"
+stopped_at: Completed 06-02-PLAN.md
+last_updated: "2026-09-11T05:49:15.000Z"
 last_activity: 2026-09-11
-last_activity_desc: Phase 6 Plan 01 complete (AGENTS.md checker scaffold + Makefile/workflow checkers)
-state_head: b99eee7e25a65cbe3aab054a3ee1c50c02cd7fa9
+last_activity_desc: Phase 6 Plan 02 complete (remediation payload builder, cache-update research-dispatch path, full SKILL.md)
+state_head: a6c63dd
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 8
-  completed_plans: 2
+  completed_plans: 3
 milestone_name: Agent Workflow Hygiene & Tooling Polish
 ---
 
@@ -30,18 +30,18 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 ## Current Position
 
 Phase: 6 — AGENTS.md Rules Checker Skill
-Current Plan: 2
+Current Plan: 3
 Total Plans in Phase: 3
 Status: In Progress
-Last activity: 2026-09-11 — Phase 6 Plan 01 complete (AGENTS.md checker scaffold + Makefile/workflow checkers)
+Last activity: 2026-09-11 — Phase 6 Plan 02 complete (remediation payload builder, cache-update research-dispatch path, full SKILL.md)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 19
+- Total plans completed: 20
 - Average duration: ~36 min
-- Total execution time: ~1h 9min
+- Total execution time: ~1h 59min
 
 **By Phase:**
 
@@ -69,6 +69,7 @@ Last activity: 2026-09-11 — Phase 6 Plan 01 complete (AGENTS.md checker scaffo
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 06 P01 | 45min | 2 tasks | 14 files |
+| Phase 06 P02 | 50min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
   a fetch-behavior bugfix: --depth 1 already implies --single-branch per
   git-scm.com/docs/git-clone unless --no-single-branch is given.
 - [Phase 6]: Phase 6 Plan 01: AGENTS.md checker scaffold + Makefile/workflow checkers implemented per the cross-AI-reviewed plan verbatim; both tasks committed as one cohesive commit (b99eee7) since they share cli.py and the single test file.
+- [Phase 6]: Phase 6 Plan 02: remediation payload builder, `cache-update` research-dispatch path, and the full `SKILL.md` implemented per the cross-AI-reviewed (5 rounds) plan verbatim; `stack_cache.py` needed no code edit (Plan 01 already shipped every primitive this plan's `cache-update` handler calls). Committed as two separate commits (`12373ca` feat, `a6c63dd` docs) since the two tasks touch almost entirely disjoint files. `make validate`'s overall gate is blocked by three pre-existing, out-of-Phase-6-scope lint issues (logged to `06-agents-md-rules-checker-skill/deferred-items.md`); `make test`/`make lint` and a scoped `ruff check` against this plan's own 4 files are both clean.
 
 ### Pending Todos
 
@@ -182,7 +184,7 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-11T05:30:33.528Z
-Stopped at: Completed 06-01-PLAN.md
+Last session: 2026-09-11T05:49:15.000Z
+Stopped at: Completed 06-02-PLAN.md
 Resume file: None
 </content>

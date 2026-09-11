@@ -195,12 +195,12 @@ Plans:
   3. Invoking the new skill is observably distinct from invoking plain `/agent-md-refactor` directly — it wraps that skill's refactor pass and adds the house-rule check on top, rather than duplicating or replacing it.
   4. The skill's SKILL.md is scaffolded via `/superpowers:writing-skills`, passes `/skill-judge` with no remaining Critical/Important finding, and carries the name chosen by `/naming-analyzer` — never assumed upfront.
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 Plans:
 
 - [x] 06-01-PLAN.md — Scaffold + Makefile target-shape checker + stack-cache architecture (REQ-agtmd-makefile-rules, REQ-agtmd-workflow-rules, REQ-agtmd-skill-pipeline)
-- [ ] 06-02-PLAN.md — Remediation payload + research-dispatch cache close-out + full SKILL.md wrap narrative (REQ-agtmd-wrapper, REQ-agtmd-makefile-rules)
+- [x] 06-02-PLAN.md — Remediation payload + research-dispatch cache close-out + full SKILL.md wrap narrative (REQ-agtmd-wrapper, REQ-agtmd-makefile-rules)
 - [ ] 06-03-PLAN.md — skill-judge loop, naming-analyzer + rename, README row (REQ-agtmd-skill-pipeline, REQ-agtmd-wrapper)
 
 ### Phase 7: Curated GSD Config Skill
