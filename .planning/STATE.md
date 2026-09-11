@@ -3,18 +3,18 @@ gsd_state_version: "1.0"
 milestone: v1.1
 current_phase: 07
 current_phase_name: Curated GSD Config Skill
-current_plan: 2
+current_plan: 3
 status: executing
-stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-09-11T07:06:35.011Z"
+stopped_at: Completed 07-02-PLAN.md
+last_updated: "2026-09-11T07:27:19.924Z"
 last_activity: 2026-09-11
 last_activity_desc: Phase 6 complete, transitioned to Phase 07
-state_head: fa87089ddb77e19fda949b718b1f3b9240d8b1bf
+state_head: 5c8952b2a4897fad6d94a4d691c8f82dc52ce376
 progress:
   total_phases: 9
-  completed_phases: 1
+  completed_phases: 0
   total_plans: 8
-  completed_plans: 5
+  completed_plans: 6
 milestone_name: Agent Workflow Hygiene & Tooling Polish
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 ## Current Position
 
 Phase: 07 — Curated GSD Config Skill
-Current Plan: 2
+Current Plan: 3
 Total Plans in Phase: 4
 Status: Ready to execute
 Last activity: 2026-09-11 — Phase 6 complete, transitioned to Phase 07
@@ -73,6 +73,7 @@ Last activity: 2026-09-11 — Phase 6 complete, transitioned to Phase 07
 | Phase 06 P02 | 50min | 2 tasks | 4 files |
 | Phase 06 P03 | 13min | 2 tasks | 16 files |
 | Phase 07 P01 | 55min | 2 tasks | 7 files |
+| Phase 07-curated-gsd-config-skill P02 | 45min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -96,6 +97,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 6]: Phase 6 Plan 02: remediation payload builder, `cache-update` research-dispatch path, and the full `SKILL.md` implemented per the cross-AI-reviewed (5 rounds) plan verbatim; `stack_cache.py` needed no code edit (Plan 01 already shipped every primitive this plan's `cache-update` handler calls). Committed as two separate commits (`12373ca` feat, `a6c63dd` docs) since the two tasks touch almost entirely disjoint files. `make validate`'s overall gate is blocked by three pre-existing, out-of-Phase-6-scope lint issues (logged to `06-agents-md-rules-checker-skill/deferred-items.md`); `make test`/`make lint` and a scoped `ruff check` against this plan's own 4 files are both clean.
 - [Phase 6]: [Phase 6] Phase 6 Plan 03: /skill-judge cleared SKILL.md (104/120, zero Critical Issues) and /naming-analyzer renamed the skill from provisional ai-kit-agents-md-checker to final ai-kit-agents-md-rules-checker (missing 'rules' was a Too-Vague/Medium-priority naming gap, no tie-break needed); all 4 registration surfaces + README updated; Phase 6 complete.
 - [Phase 07]: [Phase 7]: Phase 7 Plan 01: tracer + critical-agent overrides implemented per the self-verification-reviewed plan verbatim (cross-AI review lane was structurally blocked for this phase, see STATE.md Blockers). Corrected the plan's stated test-import pattern to match this repo's actual sibling convention (sys.path.insert + direct import, not spec_from_file_location/load_cli()). Both tasks committed atomically (194c192, fa87089).
+- [Phase 07]: gsd_write.config_get omits --raw (plain mode JSON-decodes correctly for both list and scalar keys; --raw comma-joins arrays into invalid JSON)
 
 ### Pending Todos
 
@@ -189,7 +191,7 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-11T07:06:34.987Z
-Stopped at: Completed 07-01-PLAN.md
+Last session: 2026-09-11T07:27:19.900Z
+Stopped at: Completed 07-02-PLAN.md
 Resume file: None
 </content>

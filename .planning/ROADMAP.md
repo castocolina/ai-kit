@@ -220,7 +220,7 @@ Plans:
 Plans:
 
 - [x] 07-01-PLAN.md — Tracer (`ensure-project`/`apply-profile`) + live-derived critical-agent model/effort overrides (D-01, D-03)
-- [ ] 07-02-PLAN.md — Model/CLI detection + preference-pattern matching; cross-AI execution command + structured plan-review keys (D-02, D-04, D-05)
+- [x] 07-02-PLAN.md — Model/CLI detection + preference-pattern matching; cross-AI execution command + structured plan-review keys (D-02, D-04, D-05)
 - [ ] 07-03-PLAN.md — `claude_md_path`/frontend detection, D-07 workflow-flag defaults bundle, merge-mode end-to-end integration test (D-06, D-07, D-08, D-09)
 - [ ] 07-04-PLAN.md — SKILL.md scaffold + skill-judge loop, naming-analyzer + rename, full gate registration, README row (SC4, D-10)
 
