@@ -6,8 +6,10 @@ every GSD agent already performs (per-host env var with a `$HOME`-relative defau
 a fixed order) -- never narrow this to `~/.claude` alone; several hosts (Cursor, Codex,
 OpenCode, Kilo, etc.) install gsd-core under their own config directory instead.
 """
+import json
 import os
 import shutil
+import subprocess
 
 # (env_var_name, default_path_relative_to_home) pairs, in the exact canonical order every GSD
 # planner/orchestrator agent already resolves gsd-tools.cjs through.
@@ -78,3 +80,52 @@ def resolve_node_binary(which_fn=shutil.which):
     """Every `node -e` call in this skill resolves `node` through this one function so a
     test can inject a fake resolver."""
     return which_fn("node")
+
+
+# A single-line Node expression that requires `process.argv[1]` (the model-catalog.cjs path,
+# passed as a real argv element -- never string-interpolated into the script body, avoiding
+# any quoting hazard from a path containing a space or quote character) and writes
+# `JSON.stringify({tiers: ..., phaseTypes: ...})` to stdout. If `require()` throws (a future
+# gsd-core version without these exports), the script instead writes the literal string
+# `null` to stdout and exits 0 -- this makes "exports missing" and "require failed" both
+# collapse to the SAME detectable signal (`stdout == "null"`) rather than needing the caller
+# to parse a Node stack trace.
+_AGENT_CATALOG_QUERY_SCRIPT = (
+    "try { const m = require(process.argv[1]); "
+    "process.stdout.write(JSON.stringify({tiers: m.AGENT_DEFAULT_TIERS, "
+    "phaseTypes: m.AGENT_TO_PHASE_TYPE})); } "
+    "catch (e) { process.stdout.write('null'); }"
+)
+
+
+def query_agent_catalog(node_bin, model_catalog_path, run_fn=subprocess.run):
+    """Returns the parsed `{"tiers": {...}, "phaseTypes": {...}}` dict on a clean `node -e`
+    run (exit 0, valid JSON, both keys present and non-empty dicts); returns `None` on ANY
+    of: non-zero exit, timeout, unparseable stdout, a parsed result missing either key, or
+    either key not being a non-empty dict. Never returns a partial/malformed result for the
+    caller to guess about."""
+    try:
+        result = run_fn(
+            [node_bin, "-e", _AGENT_CATALOG_QUERY_SCRIPT, model_catalog_path],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        parsed = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    tiers = parsed.get("tiers")
+    phase_types = parsed.get("phaseTypes")
+    if not isinstance(tiers, dict) or not tiers:
+        return None
+    if not isinstance(phase_types, dict) or not phase_types:
+        return None
+    return {"tiers": tiers, "phaseTypes": phase_types}

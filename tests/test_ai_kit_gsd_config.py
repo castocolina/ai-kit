@@ -11,7 +11,7 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-gsd-config"),
 )
 
-from ai_kit_gsd_config import cli, gsd_catalog, gsd_write
+from ai_kit_gsd_config import cli, critical_agents, gsd_catalog, gsd_write
 
 
 def make_fake_run(results):
@@ -236,6 +236,45 @@ class TestGsdCatalogResolution(unittest.TestCase):
         self.assertIsNone(gsd_catalog.resolve_node_binary(lambda name: None))
 
 
+FAKE_CATALOG_PATH = "/fake/model-catalog.cjs"
+
+
+class TestQueryAgentCatalog(unittest.TestCase):
+    def test_non_zero_exit_returns_none(self):
+        run = fake_run(1, stdout="", stderr="boom")
+        self.assertIsNone(gsd_catalog.query_agent_catalog(FAKE_NODE_BIN, FAKE_CATALOG_PATH, run))
+
+    def test_stdout_null_returns_none(self):
+        run = fake_run(0, stdout="null")
+        self.assertIsNone(gsd_catalog.query_agent_catalog(FAKE_NODE_BIN, FAKE_CATALOG_PATH, run))
+
+    def test_missing_key_returns_none(self):
+        run = fake_run(0, stdout=json.dumps({"tiers": {"a": "heavy"}}))
+        self.assertIsNone(gsd_catalog.query_agent_catalog(FAKE_NODE_BIN, FAKE_CATALOG_PATH, run))
+
+    def test_malformed_json_returns_none(self):
+        run = fake_run(0, stdout="{not json")
+        self.assertIsNone(gsd_catalog.query_agent_catalog(FAKE_NODE_BIN, FAKE_CATALOG_PATH, run))
+
+    def test_empty_dict_values_return_none(self):
+        run = fake_run(0, stdout=json.dumps({"tiers": {}, "phaseTypes": {}}))
+        self.assertIsNone(gsd_catalog.query_agent_catalog(FAKE_NODE_BIN, FAKE_CATALOG_PATH, run))
+
+    def test_well_formed_payload_round_trips_unchanged(self):
+        payload = {"tiers": {"a": "heavy"}, "phaseTypes": {"a": "execution"}}
+        run = fake_run(0, stdout=json.dumps(payload))
+        result = gsd_catalog.query_agent_catalog(FAKE_NODE_BIN, FAKE_CATALOG_PATH, run)
+        self.assertEqual(result, payload)
+
+    def test_timeout_returns_none(self):
+        def timeout_run(argv, **_kwargs):
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=10)
+
+        self.assertIsNone(
+            gsd_catalog.query_agent_catalog(FAKE_NODE_BIN, FAKE_CATALOG_PATH, timeout_run)
+        )
+
+
 class TestGsdWrite(unittest.TestCase):
     def test_ensure_config_exists_true_on_exit_zero(self):
         run = fake_run(0)
@@ -279,6 +318,170 @@ class TestGsdWrite(unittest.TestCase):
         )
         self.assertIn("false", run_false.calls[0])
         self.assertNotIn("False", run_false.calls[0])
+
+
+class TestComputeOverrides(unittest.TestCase):
+    def test_none_returns_only_unconditional_pairs(self):
+        result = critical_agents.compute_overrides(None)
+        self.assertEqual(len(result), 5)
+        self.assertEqual(result["model_overrides.gsd-code-reviewer"], "opus")
+        self.assertEqual(result["effort.agent_overrides.gsd-code-reviewer"], "high")
+        self.assertEqual(result["model_overrides.gsd-executor"], "haiku")
+        self.assertEqual(result["models.research"], "haiku")
+        self.assertEqual(result["models.execution"], "haiku")
+
+    def test_empty_dict_same_as_none(self):
+        self.assertEqual(
+            critical_agents.compute_overrides({}), critical_agents.compute_overrides(None)
+        )
+
+    def test_heavy_agent_gets_opus_high(self):
+        tiers = {
+            "fake-heavy-agent": "heavy",
+            "fake-standard-agent": "standard",
+            "gsd-code-reviewer": "standard",
+            "gsd-executor": "standard",
+        }
+        result = critical_agents.compute_overrides(tiers)
+        self.assertEqual(result["model_overrides.fake-heavy-agent"], "opus")
+        self.assertEqual(result["effort.agent_overrides.fake-heavy-agent"], "high")
+
+    def test_standard_and_light_agents_write_nothing(self):
+        tiers = {"fake-standard-agent": "standard", "fake-light-agent": "light"}
+        result = critical_agents.compute_overrides(tiers)
+        self.assertNotIn("model_overrides.fake-standard-agent", result)
+        self.assertNotIn("model_overrides.fake-light-agent", result)
+        self.assertNotIn("effort.agent_overrides.fake-standard-agent", result)
+        self.assertNotIn("effort.agent_overrides.fake-light-agent", result)
+
+    def test_unconditional_pairs_always_present_alongside_sweep(self):
+        tiers = {"fake-heavy-agent": "heavy"}
+        result = critical_agents.compute_overrides(tiers)
+        self.assertEqual(result["model_overrides.gsd-executor"], "haiku")
+        self.assertEqual(result["models.research"], "haiku")
+        self.assertEqual(result["models.execution"], "haiku")
+
+    def test_executor_tier_drift_never_gets_a_conflicting_effort_override(self):
+        """07-REVIEWS.md Cycle 2 self-verification finding: a future gsd-core reclassifying
+        gsd-executor as "heavy" must never add effort.agent_overrides.gsd-executor, which
+        would contradict the unconditional haiku floor for that agent."""
+        tiers = {"gsd-executor": "heavy"}
+        result = critical_agents.compute_overrides(tiers)
+        self.assertEqual(result["model_overrides.gsd-executor"], "haiku")
+        self.assertNotIn("effort.agent_overrides.gsd-executor", result)
+
+    def test_code_reviewer_reclassified_heavy_is_harmless_overlap(self):
+        tiers = {"gsd-code-reviewer": "heavy"}
+        result = critical_agents.compute_overrides(tiers)
+        self.assertEqual(result["model_overrides.gsd-code-reviewer"], "opus")
+        self.assertEqual(result["effort.agent_overrides.gsd-code-reviewer"], "high")
+
+
+class TestApplyCriticalAgentsCli(unittest.TestCase):
+    def setUp(self):
+        self.fake_install_root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.fake_install_root, ignore_errors=True)
+
+    def test_heavy_sweep_succeeds_and_writes_unconditional_plus_heavy_keys(self):
+        _make_fake_install(self.fake_install_root, include_model_catalog=True)
+        env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
+
+        query_payload_json = json.dumps(
+            {
+                "tiers": {"fake-heavy-agent": "heavy", "fake-standard-agent": "standard"},
+                "phaseTypes": {"fake-heavy-agent": "planning", "fake-standard-agent": "execution"},
+            }
+        )
+        # 5 unconditional config-set calls, then the node -e query call, then 2 sweep
+        # config-set calls for the one synthetic heavy agent's two keys.
+        results = [(0, "ok", "")] * 5 + [(0, query_payload_json, "")] + [(0, "ok", "")] * 2
+        run = make_fake_run(results)
+
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exit_code = cli.main(
+                ["apply-critical-agents", "--project-dir", "/fake/project"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=env_fn,
+            )
+        self.assertEqual(exit_code, 0)
+
+        written_keys = {call[3] for call in run.calls if "config-set" in call}
+        for key in critical_agents.compute_overrides(None):
+            self.assertIn(key, written_keys)
+        self.assertIn("model_overrides.fake-heavy-agent", written_keys)
+        self.assertIn("effort.agent_overrides.fake-heavy-agent", written_keys)
+        self.assertNotIn("model_overrides.fake-standard-agent", written_keys)
+
+        summary = json.loads(buf.getvalue())
+        self.assertTrue(summary["heavy_sweep_applied"])
+        self.assertEqual(summary["unconditional_written"], 5)
+        self.assertEqual(summary["heavy_agents_written"], 2)
+        self.assertIsNone(summary["degraded_reason"])
+
+    def test_model_catalog_not_found_degrades_but_still_writes_unconditional_keys(self):
+        _make_fake_install(self.fake_install_root, include_model_catalog=False)
+        env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
+
+        run = make_fake_run([(0, "ok", "")] * 5)
+
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exit_code = cli.main(
+                ["apply-critical-agents", "--project-dir", "/fake/project"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=env_fn,
+            )
+        self.assertEqual(exit_code, 0)
+
+        written_keys = {call[3] for call in run.calls if "config-set" in call}
+        for key in critical_agents.compute_overrides(None):
+            self.assertIn(key, written_keys)
+
+        summary = json.loads(buf.getvalue())
+        self.assertFalse(summary["heavy_sweep_applied"])
+        self.assertEqual(summary["unconditional_written"], 5)
+        self.assertEqual(summary["heavy_agents_written"], 0)
+        self.assertEqual(summary["degraded_reason"], "model_catalog_not_found")
+
+    def test_live_query_failed_degrades_but_still_writes_unconditional_keys(self):
+        _make_fake_install(self.fake_install_root, include_model_catalog=True)
+        env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
+
+        # 5 unconditional config-set calls succeed, then the node -e query call fails
+        # (non-zero exit) -- the dynamic sweep must degrade, not crash or under-write.
+        results = [(0, "ok", "")] * 5 + [(1, "", "node: boom")]
+        run = make_fake_run(results)
+
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exit_code = cli.main(
+                ["apply-critical-agents", "--project-dir", "/fake/project"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=env_fn,
+            )
+        self.assertEqual(exit_code, 0)
+
+        written_keys = {call[3] for call in run.calls if "config-set" in call}
+        for key in critical_agents.compute_overrides(None):
+            self.assertIn(key, written_keys)
+
+        summary = json.loads(buf.getvalue())
+        self.assertFalse(summary["heavy_sweep_applied"])
+        self.assertEqual(summary["unconditional_written"], 5)
+        self.assertEqual(summary["degraded_reason"], "live_query_failed")
 
 
 if __name__ == "__main__":
