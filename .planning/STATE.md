@@ -92,11 +92,37 @@ phase completes.
 
 ### Blockers/Concerns
 
-None currently blocking. Note for planners: Phases 6-8 are mutually
-independent and independent of the completed v1.0 phases — any order is
-fine. Phases 6 and 7 both end with the same skill-authoring pipeline
-(`/superpowers:writing-skills` → `/skill-judge` → `/naming-analyzer`);
-consider whether to plan/execute them together or sequentially.
+**Phase 7 plan-review convergence — reviewer lane structurally blocked, not converged (2026-09-11).**
+`/gsd-review --phase 7 --opencode` returned a numerically "clean" CYCLE_SUMMARY
+(0 HIGH / 0 actionable) on cycle 1, but `07-REVIEWS.md`'s own coverage block
+shows `plan_coverage.opencode.missing: [07-01, 07-02, 07-03, 07-04]` — all 4
+plans. Root cause: opencode's sandbox denied `external_directory` access to
+`~/.claude/gsd-core/*` (where this Claude-Code-runtime install of gsd-core
+lives) on two identical dispatch attempts; the reviewer's own
+`[reviewed-without-source-citations]` marker confirms it reviewed nothing.
+This is a genuine tooling gap, not a clean pass — Phase 7's plans
+(07-CONTEXT.md D-03) require reading `model-catalog.cjs` under
+`~/.claude/gsd-core/bin/lib/` as ground truth, and opencode's real
+`~/.config/opencode/opencode.jsonc` only allowlists
+`external_directory: {"~/.config/opencode/gsd-core/*": "allow"}` — the
+opencode-runtime install path, not the claude-runtime one this project
+actually uses. Per ONESHOT-RULES.md Rule 1, this is NOT accepted as
+convergence; `gsd_run state planned-phase` was deliberately NOT called for
+Phase 7. Per Rule 5, the orchestrator did not edit the user's real
+`~/.config/opencode/opencode.jsonc` to add the missing allowlist entry, since
+that is real AI-CLI configuration outside this run's authorized scope. Phase
+7 is parked at "reviewed, unconverged" pending a human decision: (a) add
+`"~/.claude/gsd-core/*": "allow"` to that file's `external_directory`
+permission block, or (b) accept a different reviewer lane for this phase, or
+(c) accept proceeding to execution without a grounded cross-AI review for
+Phase 7 specifically. Resume with `/gsd-plan-review-convergence 7 --opencode`
+once a decision is made, or `/gsd-execute-phase 7` to proceed without it.
+
+Phases 6-8 are mutually independent and independent of the completed v1.0
+phases — any order is fine. Phases 6 and 7 both end with the same
+skill-authoring pipeline (`/superpowers:writing-skills` → `/skill-judge` →
+`/naming-analyzer`); consider whether to plan/execute them together or
+sequentially.
 
 ## Deferred Items
 
