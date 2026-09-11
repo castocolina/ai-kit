@@ -50,7 +50,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Tool-Substitution Awareness Hook** - Inject a live-verified rtk tool-substitution briefing into Claude Code session starts (completed 2026-09-09)
 - [x] **Phase 4: Config Doctor** - One-screen, confidence-labeled config diagnostics across Claude Code/opencode/Codex with confirmed per-item apply (completed 2026-09-10)
 - [x] **Phase 5: Usage Metrics Dashboard** - Capture, refine, and locally visualize how uz actually uses AI CLIs (completed 2026-09-10)
-- [ ] **Phase 6: AGENTS.md Rules Checker Skill** - Wrap `/agent-md-refactor` with a house-ruleset checker for Makefile target shape and the accumulated workflow rules
+- [x] **Phase 6: AGENTS.md Rules Checker Skill** - Wrap `/agent-md-refactor` with a house-ruleset checker for Makefile target shape and the accumulated workflow rules (completed 2026-09-11)
 - [ ] **Phase 7: Curated GSD Config Skill** - Small curated question set that writes and schema-validates `.planning/config.json`, replacing `gsd-settings`/`gsd-config`'s full interrogation
 - [x] **Phase 8: Status-line Quota Color Refactor** - Rate-limit bucket coloring becomes relative to time-left-in-window, not raw usage percentage (completed 2026-09-10)
 
@@ -256,7 +256,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Tool-Substitution Awareness Hook | 2/2 | Complete    | 2026-09-09 |
 | 4. Config Doctor | 3/3 | Complete    | 2026-09-10 |
 | 5. Usage Metrics Dashboard | 6/6 | Complete    | 2026-09-10 |
-| 6. AGENTS.md Rules Checker Skill | 3/3 | In Progress|  |
+| 6. AGENTS.md Rules Checker Skill | 3/3 | Complete    | 2026-09-11 |
 | 7. Curated GSD Config Skill | 0/TBD | Not started | - |
 | 8. Status-line Quota Color Refactor | 1/1 | Complete    | 2026-09-10 |
 
