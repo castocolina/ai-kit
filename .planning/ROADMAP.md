@@ -215,14 +215,14 @@ Plans:
   3. When an open-GSD config JSON schema is present on the system, the generated config validates against it; when no schema is present, generation still succeeds without a hard failure.
   4. The skill's SKILL.md is scaffolded via `/superpowers:writing-skills`, reviewed via `/skill-judge` (no remaining Critical/Important finding), and carries the name chosen by `/naming-analyzer`.
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans executed
 
 Plans:
 
 - [x] 07-01-PLAN.md — Tracer (`ensure-project`/`apply-profile`) + live-derived critical-agent model/effort overrides (D-01, D-03)
 - [x] 07-02-PLAN.md — Model/CLI detection + preference-pattern matching; cross-AI execution command + structured plan-review keys (D-02, D-04, D-05)
 - [x] 07-03-PLAN.md — `claude_md_path`/frontend detection, D-07 workflow-flag defaults bundle, merge-mode end-to-end integration test (D-06, D-07, D-08, D-09)
-- [ ] 07-04-PLAN.md — SKILL.md scaffold + skill-judge loop, naming-analyzer + rename, full gate registration, README row (SC4, D-10)
+- [x] 07-04-PLAN.md — SKILL.md scaffold + skill-judge loop, naming-analyzer + rename, full gate registration, README row (SC4, D-10)
 
 ### Phase 8: Status-line Quota Color Refactor
 
@@ -257,7 +257,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Config Doctor | 3/3 | Complete    | 2026-09-10 |
 | 5. Usage Metrics Dashboard | 6/6 | Complete    | 2026-09-10 |
 | 6. AGENTS.md Rules Checker Skill | 3/3 | Complete    | 2026-09-11 |
-| 7. Curated GSD Config Skill | 3/4 | In Progress|  |
+| 7. Curated GSD Config Skill | 4/4 | In Progress|  |
 | 8. Status-line Quota Color Refactor | 1/1 | Complete    | 2026-09-10 |
 
 ## Backlog
