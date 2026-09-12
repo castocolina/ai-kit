@@ -128,5 +128,31 @@ class TestCheckRulesIncludePresent(unittest.TestCase):
         self.assertIn("X01", ids)
 
 
+import tempfile
+
+from ai_kit_rules_common.tool_presence import MODERN_CLI_TOOLS, check_tool_presence
+
+
+class TestToolPresence(unittest.TestCase):
+    def test_empty_path_and_repo_all_false(self):
+        with tempfile.TemporaryDirectory() as repo:
+            result = check_tool_presence(search_path="", repo_root=repo)
+        self.assertFalse(result["rtk"])
+        self.assertFalse(result["modern-cli"])
+        self.assertFalse(result["codegraph"])
+        self.assertFalse(result["graphify"])
+        self.assertFalse(result["gsd"])
+        for tool in MODERN_CLI_TOOLS:
+            self.assertFalse(result[f"modern-cli:{tool}"])
+
+    def test_codegraph_and_gsd_dirs_detected(self):
+        with tempfile.TemporaryDirectory() as repo:
+            os.makedirs(os.path.join(repo, ".codegraph"))
+            os.makedirs(os.path.join(repo, ".planning"))
+            result = check_tool_presence(search_path="", repo_root=repo)
+        self.assertTrue(result["codegraph"])
+        self.assertTrue(result["gsd"])
+
+
 if __name__ == "__main__":
     unittest.main()
