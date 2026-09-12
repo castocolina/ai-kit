@@ -22,6 +22,7 @@ dev = [
     "vulture~=2.14",
     "pre-commit~=4.4",
     "textual>=8.0,<9.0",
+    "bandit>=1.9.4",
 ]
 
 # ─────────────────────────── ruff ───────────────────────────
@@ -84,12 +85,13 @@ disable = [
 # ─────────────────────────── vulture ───────────────────────────
 [tool.vulture]
 min_confidence = 80
-paths = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-agents-md-rules-checker", "skills/ai-kit-gsd-curated-config"]
+paths = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-agents-md-rules-checker", "skills/ai-kit-gsd-curated-config", "skills/_shared"]
 # signal-handler / context-manager params required by their signature
 ignore_names = ["signum", "frame", "offset", "whence"]
 
 # ─────────────────────────── pyright ───────────────────────────
 [tool.pyright]
-include = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "tools/hooks", "tools/config_doctor_checks.py", "tools/config_doctor_readers.py", "tools/config_doctor_app.py", "tools/config_doctor_appliers.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-agents-md-rules-checker", "skills/ai-kit-gsd-curated-config"]
+include = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "tools/hooks", "tools/config_doctor_checks.py", "tools/config_doctor_readers.py", "tools/config_doctor_app.py", "tools/config_doctor_appliers.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-agents-md-rules-checker", "skills/ai-kit-gsd-curated-config", "skills/_shared"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
+extraPaths = ["skills/_shared"]

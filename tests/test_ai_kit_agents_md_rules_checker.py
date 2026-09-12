@@ -1136,6 +1136,8 @@ class TestGateRegistration(unittest.TestCase):
             text = handle.read()
         self.assertIn("tests.test_ai_kit_agents_md_rules_checker", text)
         self.assertIn("skills/ai-kit-agents-md-rules-checker/", text)
+        self.assertIn("tests.test_ai_kit_rules_common", text)
+        self.assertIn("skills/_shared/ai_kit_rules_common/", text)
 
     def test_precommit_ruff_and_py_compile_match_package_path(self):
         for hook_id in ("ruff", "py-compile"):
@@ -1144,22 +1146,29 @@ class TestGateRegistration(unittest.TestCase):
                 re.match(regex, _CLI_PY_CANDIDATE),
                 f"{_CLI_PY_CANDIDATE} did not match {hook_id} files: {regex}",
             )
+            self.assertIsNotNone(
+                re.match(regex, "skills/_shared/ai_kit_rules_common/classification.py"),
+                f"shared package did not match {hook_id} files: {regex}",
+            )
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
         self.assertIn("tests.test_ai_kit_agents_md_rules_checker", match.group(1))
+        self.assertIn("tests.test_ai_kit_rules_common", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
         self.assertIn("skills/ai-kit-agents-md-rules-checker", include)
+        self.assertIn("skills/_shared", include)
 
     def test_vulture_paths_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
         self.assertIn("skills/ai-kit-agents-md-rules-checker", paths)
+        self.assertIn("skills/_shared", paths)
 
 
 if __name__ == "__main__":
