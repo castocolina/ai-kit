@@ -214,6 +214,66 @@ class TestStackCache(unittest.TestCase):
             self.assertEqual(tooling, {"setup-env": "uv sync"})
             self.assertFalse(needs_research)
 
+    def test_corrupted_json_is_absent(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            cache_root = os.path.join(scratch, "_cache")
+            path = cache_path("python", cache_root=cache_root)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("{not valid json")
+            self.assertEqual(
+                read_stack_cache("python", cache_root=cache_root),
+                {"state": "absent", "data": None},
+            )
+
+    def test_non_dict_payload_is_absent(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            cache_root = os.path.join(scratch, "_cache")
+            path = cache_path("python", cache_root=cache_root)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump([1, 2, 3], handle)
+            self.assertEqual(
+                read_stack_cache("python", cache_root=cache_root),
+                {"state": "absent", "data": None},
+            )
+
+    def test_missing_or_malformed_cached_at_is_stale(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            cache_root = os.path.join(scratch, "_cache")
+            path = cache_path("python", cache_root=cache_root)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tooling = {"setup-env": "uv sync"}
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"tooling": tooling}, handle)
+            missing = read_stack_cache("python", cache_root=cache_root)
+            self.assertEqual(missing["state"], "stale")
+            self.assertEqual(missing["data"], tooling)
+
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"cached_at": "not-a-datetime", "tooling": tooling}, handle)
+            malformed = read_stack_cache("python", cache_root=cache_root)
+            self.assertEqual(malformed["state"], "stale")
+            self.assertEqual(malformed["data"], tooling)
+
+    def test_naive_cached_at_normalized_to_utc_and_stale(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            cache_root = os.path.join(scratch, "_cache")
+            path = cache_path("python", cache_root=cache_root)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            naive_old = (
+                datetime.now(UTC) - timedelta(days=STALE_AFTER_DAYS + 1)
+            ).replace(tzinfo=None)
+            cached_at = naive_old.isoformat()
+            self.assertNotIn("+", cached_at)
+            self.assertFalse(cached_at.endswith("Z"))
+            tooling = {"setup-env": "uv sync"}
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"cached_at": cached_at, "tooling": tooling}, handle)
+            result = read_stack_cache("python", cache_root=cache_root)
+            self.assertEqual(result["state"], "stale")
+            self.assertEqual(result["data"], tooling)
+
 
 from ai_kit_rules_common.remediation import build_remediation
 

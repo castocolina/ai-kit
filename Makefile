@@ -105,12 +105,14 @@ format:
 
 # Security scanner: ruff's S rule-set only ports a subset of Bandit's AST
 # checks (astral-sh/ruff#20129), so this stays a dedicated pass.
+# Informational/non-gating — not wired into validate; currently reports pre-existing findings unrelated to this plan.
 security-scanner:
-	uv run bandit -r tools skills -x tests
+	uv run bandit -r tools skills
 
 # Re-enables pylint's duplicate-code/R0801 check (globally disabled in
 # pyproject.toml for cross-occurrence false positives on idiomatic blocks)
 # as a narrowly-scoped, separate, non-gating invocation.
+# Informational/non-gating — not wired into validate; currently reports pre-existing findings unrelated to this plan.
 duplicate-code:
 	uv run pylint --disable=all --enable=duplicate-code tools skills
 

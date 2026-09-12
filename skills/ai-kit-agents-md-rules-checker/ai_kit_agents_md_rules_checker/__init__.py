@@ -23,4 +23,4 @@ if not os.path.isdir(os.path.join(_SHARED_DIR, "ai_kit_rules_common")):
     )
 
 if _SHARED_DIR not in sys.path:
-    sys.path.insert(0, _SHARED_DIR)
+    sys.path.append(_SHARED_DIR)

@@ -1170,6 +1170,39 @@ class TestGateRegistration(unittest.TestCase):
         self.assertIn("skills/ai-kit-agents-md-rules-checker", paths)
         self.assertIn("skills/_shared", paths)
 
+    def test_validate_covers_every_precommit_hook(self):
+        with open(_PRECOMMIT_PATH, encoding="utf-8") as handle:
+            precommit = handle.read()
+        hook_ids = []
+        for match in re.finditer(r"^\s*-\s*id:\s*(.+?)\s*$", precommit, re.MULTILINE):
+            value = match.group(1).strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            hook_ids.append(value)
+        self.assertTrue(hook_ids, "no - id: entries parsed from .pre-commit-config.yaml")
+
+        with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
+            makefile = handle.read()
+        match = re.search(r"^validate:\s*(.*)$", makefile, re.MULTILINE)
+        self.assertIsNotNone(match, "no validate: target in Makefile")
+        prerequisites = match.group(1).split()
+        makefile_targets = set(
+            re.findall(r"^(?!\.)([A-Za-z0-9_.-]+)\s*:(?!=)", makefile, re.MULTILINE)
+        )
+
+        covered = [hook_id for hook_id in hook_ids if hook_id in makefile_targets]
+        self.assertTrue(
+            covered,
+            "no pre-commit hook id has a same-named Makefile target",
+        )
+        for hook_id in covered:
+            self.assertIn(
+                hook_id,
+                prerequisites,
+                f"hook {hook_id!r} has a same-named Makefile target "
+                f"but is missing from validate: prerequisites {prerequisites}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

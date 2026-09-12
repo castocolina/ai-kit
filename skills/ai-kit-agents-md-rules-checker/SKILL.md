@@ -25,6 +25,8 @@ done
 
 If no candidate exists, stop and report that the skill is not installed. The fifth candidate covers a from-checkout invocation — substitute the directory actually containing this `SKILL.md`.
 
+Only the `$HOME/.claude/skills/...` symlink install (`tools/setup.py`) and a direct git checkout can actually import this skill: those layouts keep `skills/_shared/` beside the skill package. The other three candidates (`$CLAUDE_PLUGIN_ROOT`, opencode's skills dir, `~/.agents/skills`) raise `ImportError` at import time by design — they are copy-installs that do not carry `skills/_shared/`. A successful path lookup is not proof the import will succeed; prefer the symlink or a checkout.
+
 ## Run the check
 
 ```bash
