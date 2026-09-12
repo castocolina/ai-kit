@@ -215,5 +215,52 @@ class TestStackCache(unittest.TestCase):
             self.assertFalse(needs_research)
 
 
+from ai_kit_rules_common.remediation import build_remediation
+
+
+class TestRemediation(unittest.TestCase):
+    def test_missing_and_near_miss_auto_apply(self):
+        report = {
+            "workflow": [
+                {"id": "X01", "status": "missing", "criticality": 1, "summary": "s1"},
+                {"id": "X02", "status": "near_miss", "criticality": 2, "summary": "s2"},
+                {"id": "X03", "status": "present", "criticality": 3, "summary": "s3"},
+            ]
+        }
+        result = build_remediation(report)
+        ids = {e["id"]: e["auto_apply"] for e in result["remediate"]}
+        self.assertEqual(ids, {"X01": True, "X02": False})
+        self.assertEqual(result["blocked"], [])
+
+    def test_returns_dict_never_bare_list(self):
+        result = build_remediation({"workflow": []})
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result, {"remediate": [], "blocked": []})
+
+    def test_unknown_kind_keys_ignored_safely(self):
+        # A report carrying a kind key this module doesn't branch on (e.g.
+        # a future precommit-checker's findings, see this task's Interfaces
+        # "Known scope limit" note) must not crash build_remediation -- the
+        # unknown kind's findings are silently dropped, not validated
+        # against a fixed kind list, and findings under known kinds are
+        # still processed normally alongside it.
+        result = build_remediation(
+            {
+                "workflow": [
+                    {
+                        "id": "X01",
+                        "status": "missing",
+                        "criticality": 1,
+                        "summary": "s1",
+                    }
+                ],
+                "precommit": [{"id": "Y01", "status": "missing", "criticality": 1}],
+            }
+        )
+        self.assertEqual(len(result["remediate"]), 1)
+        self.assertEqual(result["remediate"][0]["id"], "X01")
+        self.assertEqual(result["blocked"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
