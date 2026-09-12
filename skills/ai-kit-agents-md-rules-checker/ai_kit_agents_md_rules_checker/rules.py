@@ -16,7 +16,7 @@ text (D-01) -- never a verbatim block-quote.
 
 from __future__ import annotations
 
-CONDITION_ALWAYS = "always"
+from ai_kit_rules_common.classification import CONDITION_ALWAYS
 
 
 def condition_tool_presence(name: str) -> str:

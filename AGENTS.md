@@ -120,15 +120,20 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 ## Testing
 
-- `make test` — `python3 -m unittest tests.test_setup tests.test_status_line
-  tests.test_external_segments tests.test_statusline_doctor tests.test_arch
-  tests.test_markdown_to_pdf tests.test_worktree_e2e tests.test_wizard_pty
-  tests.test_system_memory_e2e tests.test_ai_kit_spec
-  tests.test_ai_kit_spec_gsd`, then `bash tests/test_install.sh`. Run this
-  before considering work done — the Python suite alone doesn't cover
-  installer behavior (fetch, symlink, wiring).
+- `make test` is the aggregate over four pyramid tiers, never a duplicated
+  unittest list: `test-unit` (in-process stdlib modules, plus
+  `tests.test_framework_profiles` under `uv`), `test-integration` (Textual
+  app / PTY-driven subprocesses), `e2e-test` (real git worktrees,
+  PTY-spawned wizard/setup, and `bash tests/test_install.sh`), and
+  `arch-test` (AST architecture-fitness via `tests/test_arch.py`). Run
+  `make test` before considering work done — the Python suite alone
+  doesn't cover installer behavior (fetch, symlink, wiring).
 - `make lint` — shellcheck + `py_compile`. `make validate` — the same
-  pre-commit hooks that gate commits, run across all files.
+  pre-commit hooks that gate commits, run across all files via the
+  per-hook single-tool targets (`ruff`, `pylint`, `pyright`, `vulture`,
+  `shellcheck`, `py-compile`, `unittest`, `unittest-wizard`).
+  `security-scanner` and `duplicate-code` are informational-only Makefile
+  targets, not wired into `validate`.
 - `tests/*` gets a lighter ruff bar than runtime code (idiomatic test
   patterns are fine there even where they'd fail elsewhere).
 - `tests/test_arch.py` is a structural-fitness test (parses source with
@@ -213,8 +218,12 @@ unavailable or insufficient.
 
 ## Commands
 
-- `make dev` — provision the uv-managed dev/lint env + pre-commit hooks
-- `make test` — full unittest suite + `tests/test_install.sh`
+- `make setup-env` — provision the uv-managed dev/lint venv only (no hook install)
+- `make dev` — `setup-env` plus install the pre-commit hooks
+- `make test` — aggregate of `test-unit`, `test-integration`, `e2e-test`, `arch-test`
+- `make test-unit` / `test-integration` / `e2e-test` / `arch-test` — individual pyramid tiers
 - `make lint` — shellcheck + `py_compile`
-- `make validate` — the same pre-commit hooks that gate commits, all files
+- `make validate` — the same pre-commit hooks that gate commits, all files (via per-hook targets)
+- `make format` — `ruff format .` (dev-only, mutates files, not wired into validate)
+- `make security-scanner` / `make duplicate-code` — informational/non-gating checks, not wired into `validate`
 - `make doctor` / `make check` — installer diagnostics

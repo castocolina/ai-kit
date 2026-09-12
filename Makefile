@@ -43,7 +43,7 @@ check:
 # Runs under bare system python3 (stdlib-only, matching the runtime) except
 # test_framework_profiles, which needs PyYAML (uv's venv, not the system python3).
 test-unit:
-	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_markdown_to_pdf tests.test_mermaid_style tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_superpowers tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_ai_kit_usage_metrics tests.test_ai_kit_agents_md_rules_checker tests.test_ai_kit_gsd_curated_config
+	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_markdown_to_pdf tests.test_mermaid_style tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_superpowers tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_ai_kit_usage_metrics tests.test_ai_kit_agents_md_rules_checker tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_rules_common
 	uv run python3 -m unittest tests.test_framework_profiles
 
 # Multiple real components wired together (Textual app, PTY-driven subprocess)
@@ -67,7 +67,7 @@ test: test-unit test-integration e2e-test arch-test
 
 lint:
 	shellcheck $(INSTALL_SH) tests/test_install.sh
-	python3 -m py_compile $(SETUP_PY) tools/status-line.py tools/statusline-doctor.py tools/hooks/*.py tools/config_doctor_*.py skills/ai-kit-usage-metrics/ai-kit-usage-metrics.py skills/ai-kit-usage-metrics/ai_kit_usage_metrics/*.py skills/ai-kit-agents-md-rules-checker/ai-kit-agents-md-rules-checker.py skills/ai-kit-agents-md-rules-checker/ai_kit_agents_md_rules_checker/*.py skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/*.py
+	python3 -m py_compile $(SETUP_PY) tools/status-line.py tools/statusline-doctor.py tools/hooks/*.py tools/config_doctor_*.py skills/ai-kit-usage-metrics/ai-kit-usage-metrics.py skills/ai-kit-usage-metrics/ai_kit_usage_metrics/*.py skills/ai-kit-agents-md-rules-checker/ai-kit-agents-md-rules-checker.py skills/ai-kit-agents-md-rules-checker/ai_kit_agents_md_rules_checker/*.py skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/*.py skills/_shared/ai_kit_rules_common/*.py
 
 # Single-tool targets — each a thin delegate to its .pre-commit-config.yaml
 # hook (never a duplicated file-scope regex) so a dev can run one check alone.
@@ -105,12 +105,14 @@ format:
 
 # Security scanner: ruff's S rule-set only ports a subset of Bandit's AST
 # checks (astral-sh/ruff#20129), so this stays a dedicated pass.
+# Informational/non-gating — not wired into validate; currently reports pre-existing findings unrelated to this plan.
 security-scanner:
-	uv run bandit -r tools skills -x tests
+	uv run bandit -r tools skills
 
 # Re-enables pylint's duplicate-code/R0801 check (globally disabled in
 # pyproject.toml for cross-occurrence false positives on idiomatic blocks)
 # as a narrowly-scoped, separate, non-gating invocation.
+# Informational/non-gating — not wired into validate; currently reports pre-existing findings unrelated to this plan.
 duplicate-code:
 	uv run pylint --disable=all --enable=duplicate-code tools skills
 

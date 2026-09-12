@@ -1136,6 +1136,8 @@ class TestGateRegistration(unittest.TestCase):
             text = handle.read()
         self.assertIn("tests.test_ai_kit_agents_md_rules_checker", text)
         self.assertIn("skills/ai-kit-agents-md-rules-checker/", text)
+        self.assertIn("tests.test_ai_kit_rules_common", text)
+        self.assertIn("skills/_shared/ai_kit_rules_common/", text)
 
     def test_precommit_ruff_and_py_compile_match_package_path(self):
         for hook_id in ("ruff", "py-compile"):
@@ -1144,22 +1146,62 @@ class TestGateRegistration(unittest.TestCase):
                 re.match(regex, _CLI_PY_CANDIDATE),
                 f"{_CLI_PY_CANDIDATE} did not match {hook_id} files: {regex}",
             )
+            self.assertIsNotNone(
+                re.match(regex, "skills/_shared/ai_kit_rules_common/classification.py"),
+                f"shared package did not match {hook_id} files: {regex}",
+            )
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
         self.assertIn("tests.test_ai_kit_agents_md_rules_checker", match.group(1))
+        self.assertIn("tests.test_ai_kit_rules_common", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
         self.assertIn("skills/ai-kit-agents-md-rules-checker", include)
+        self.assertIn("skills/_shared", include)
 
     def test_vulture_paths_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
         self.assertIn("skills/ai-kit-agents-md-rules-checker", paths)
+        self.assertIn("skills/_shared", paths)
+
+    def test_validate_covers_every_precommit_hook(self):
+        with open(_PRECOMMIT_PATH, encoding="utf-8") as handle:
+            precommit = handle.read()
+        hook_ids = []
+        for match in re.finditer(r"^\s*-\s*id:\s*(.+?)\s*$", precommit, re.MULTILINE):
+            value = match.group(1).strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            hook_ids.append(value)
+        self.assertTrue(hook_ids, "no - id: entries parsed from .pre-commit-config.yaml")
+
+        with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
+            makefile = handle.read()
+        match = re.search(r"^validate:\s*(.*)$", makefile, re.MULTILINE)
+        self.assertIsNotNone(match, "no validate: target in Makefile")
+        prerequisites = match.group(1).split()
+        makefile_targets = set(
+            re.findall(r"^(?!\.)([A-Za-z0-9_.-]+)\s*:(?!=)", makefile, re.MULTILINE)
+        )
+
+        covered = [hook_id for hook_id in hook_ids if hook_id in makefile_targets]
+        self.assertTrue(
+            covered,
+            "no pre-commit hook id has a same-named Makefile target",
+        )
+        for hook_id in covered:
+            self.assertIn(
+                hook_id,
+                prerequisites,
+                f"hook {hook_id!r} has a same-named Makefile target "
+                f"but is missing from validate: prerequisites {prerequisites}",
+            )
 
 
 if __name__ == "__main__":

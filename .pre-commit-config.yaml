@@ -18,7 +18,7 @@ repos:
         # Scoped to the refactor's modules + tests, plus review-spec.py.
         # The rest of skills/ joins the gate later (the "enforce more
         # after the refactor" expansion).
-        files: ^((tools|tests)/.*|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-agents-md-rules-checker/.*|skills/ai-kit-gsd-curated-config/.*)\.py$
+        files: ^((tools|tests)/.*|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-agents-md-rules-checker/.*|skills/ai-kit-gsd-curated-config/.*|skills/_shared/.*)\.py$
         require_serial: true
       - id: pylint
         name: pylint
@@ -47,12 +47,12 @@ repos:
         name: py-compile
         entry: python3 -m py_compile
         language: system
-        files: ^(tools/(status-line|statusline-doctor|setup)|tools/hooks/[a-z_]+|tools/config_doctor_[a-z_]+|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-agents-md-rules-checker/.*|skills/ai-kit-gsd-curated-config/.*)\.py$
+        files: ^(tools/(status-line|statusline-doctor|setup)|tools/hooks/[a-z_]+|tools/config_doctor_[a-z_]+|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-agents-md-rules-checker/.*|skills/ai-kit-gsd-curated-config/.*|skills/_shared/.*)\.py$
       # Tests run on the user's real runtime (system python3, stdlib-only), matching
       # how the status line actually runs. Minimal core set for now; expands post-refactor.
       - id: unittest
         name: unittest (core)
-        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_config_doctor tests.test_config_doctor_pty tests.test_ai_kit_usage_metrics tests.test_ai_kit_agents_md_rules_checker tests.test_ai_kit_gsd_curated_config
+        entry: python3 -m unittest tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_config_doctor tests.test_config_doctor_pty tests.test_ai_kit_usage_metrics tests.test_ai_kit_agents_md_rules_checker tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_rules_common
         language: system
         pass_filenames: false
         always_run: true
