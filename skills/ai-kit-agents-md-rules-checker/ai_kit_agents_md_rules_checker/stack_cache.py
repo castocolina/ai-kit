@@ -1,22 +1,20 @@
-"""Per-stack tooling-recommendation cache with a staleness check (D-04).
+"""This skill's Makefile-tooling schema, bound to the shared generic cache
+engine in `ai_kit_rules_common.stack_cache` under this skill's own cache
+namespace (`agents-md-rules-checker`).
 
-Tooling recommendations for a detected stack are never invented from
-training data. This module only reads/writes a local, staleness-gated cache
-of per-stack tool-name strings; the research pass that FILLS a cold/stale
-entry is Plan 02's job. `REQUIRED_STATIC_TARGETS` and `RESEARCH_CATEGORIES`
-together are the single canonical schema for every key a `tooling` dict may
-legitimately carry -- defined here once, imported (never redefined) by
-`makefile_checker.py`.
+NOTE: `REQUIRED_STATIC_TARGETS`/`RESEARCH_CATEGORIES`/`ALL_TOOLING_KEYS`
+below are Makefile-tooling-specific, not generic -- they stay HERE (not in
+the shared package) because `makefile_checker.py` still lives in this
+skill. A follow-up plan relocates both this schema and `makefile_checker.py`
+together into a dedicated `ai-kit-makefile-rules-checker` skill; this
+module's job until then is unchanged from before this refactor.
 """
 
 from __future__ import annotations
 
-import contextlib
-import json
-import os
-import re
-import tempfile
-from datetime import UTC, datetime, timedelta
+from ai_kit_rules_common import stack_cache as _shared
+
+STALE_AFTER_DAYS = _shared.STALE_AFTER_DAYS
 
 REQUIRED_STATIC_TARGETS = (
     "setup-env",
@@ -28,11 +26,11 @@ REQUIRED_STATIC_TARGETS = (
     "arch-test",
 )
 
-# Tool-category recommendations the D-04 research prompt (Plan 02) asks for
-# that do NOT map 1:1 to one of the 7 static target names above.
-# `validate-order` and `precommit-vs-prepush-split` are deliberately NOT
-# members: both are process/structural facts readable directly from the
-# target repo's own files (see makefile_checker.check_validate_order and
+# Tool-category recommendations the research prompt asks for that do NOT
+# map 1:1 to one of the 7 static target names above. `validate-order` and
+# `precommit-vs-prepush-split` are deliberately NOT members: both are
+# process/structural facts readable directly from the target repo's own
+# files (see makefile_checker.check_validate_order and
 # check_precommit_prepush_split), not a tool pick that benefits from
 # research -- a category with no research-fillable content would be a
 # perpetual, unsatisfiable false positive.
@@ -46,105 +44,36 @@ RESEARCH_CATEGORIES = (
 
 ALL_TOOLING_KEYS = REQUIRED_STATIC_TARGETS + RESEARCH_CATEGORIES
 
-STALE_AFTER_DAYS = 30
-
-_STACK_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
-
-
-def _default_cache_root() -> str:
-    xdg_cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-    return os.path.join(xdg_cache, "ai-kit", "agents-md-rules-checker", "stack-refs")
-
-
-CACHE_ROOT = _default_cache_root()
+_NAMESPACE = "agents-md-rules-checker"
+CACHE_ROOT = _shared.default_cache_root(_NAMESPACE)
 
 
 def cache_path(stack: str, cache_root: str | None = None) -> str:
-    """Return the cache file path for `stack`, after validating its shape.
-
-    `stack` must be a bare `[a-z0-9][a-z0-9_-]{0,63}` identifier -- no `/`,
-    no `.`, no leading `-`/`_`. Raises `ValueError` BEFORE ever joining the
-    value into a filesystem path, so a path-traversal-shaped `stack`
-    argument can never resolve to a location outside `cache_root`.
-    """
-    if not isinstance(stack, str) or _STACK_ID_RE.fullmatch(stack) is None:
-        raise ValueError(f"invalid stack identifier: {stack!r}")
-    root = cache_root or CACHE_ROOT
-    return os.path.join(root, f"{stack}.json")
+    return _shared.cache_path(stack, cache_root or CACHE_ROOT)
 
 
 def read_stack_cache(stack: str, cache_root: str | None = None) -> dict:
-    """Return `{"state": "absent"|"stale"|"fresh", "data": dict|None}`.
-
-    `data` is populated whenever the file parses, regardless of staleness --
-    a stale cache is still returned so a caller CAN fall back to it, but
-    must see the `state` flag.
-    """
-    path = cache_path(stack, cache_root)
-    if not os.path.isfile(path):
-        return {"state": "absent", "data": None}
-    try:
-        with open(path, encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        # A corrupted/unreadable cache file is indistinguishable from no
-        # cache at all -- never crash the caller over it (same "never
-        # trust a stale entry, never crash" contract as the rest of this
-        # module's staleness handling).
-        return {"state": "absent", "data": None}
-    if not isinstance(payload, dict):
-        return {"state": "absent", "data": None}
-    cached_at = payload.get("cached_at")
-    data = payload.get("tooling")
-    if not isinstance(cached_at, str):
-        return {"state": "stale", "data": data}
-    try:
-        cached_dt = datetime.fromisoformat(cached_at)
-    except ValueError:
-        return {"state": "stale", "data": data}
-    if cached_dt.tzinfo is None:
-        cached_dt = cached_dt.replace(tzinfo=UTC)
-    age = datetime.now(UTC) - cached_dt
-    state = "stale" if age > timedelta(days=STALE_AFTER_DAYS) else "fresh"
-    return {"state": state, "data": data}
+    return _shared.read_stack_cache(stack, cache_root or CACHE_ROOT)
 
 
 def write_stack_cache(stack: str, data: dict, cache_root: str | None = None) -> None:
-    """Atomically write `{"cached_at": <iso now>, "stack": stack, "tooling": data}`.
-
-    Uses `tempfile.mkstemp` + `os.replace` in the cache dir, the same atomic
-    shape `tools/setup.py`'s `_atomic_write_json` already established
-    (adapted locally, not imported -- no `tools/`<->`skills/` cross-import).
-    """
-    path = cache_path(stack, cache_root)
-    dirname = os.path.dirname(path)
-    os.makedirs(dirname, exist_ok=True)
-    payload = {
-        "cached_at": datetime.now(UTC).isoformat(),
-        "stack": stack,
-        "tooling": data,
-    }
-    fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
-    except OSError:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    _shared.write_stack_cache(stack, data, cache_root or CACHE_ROOT)
 
 
 def get_stack_tooling(
     stack: str, cache_root: str | None = None
 ) -> tuple[dict | None, bool]:
-    """Return `(tooling_or_None, needs_research)`.
+    return _shared.get_stack_tooling(stack, cache_root or CACHE_ROOT)
 
-    `needs_research` is `True` for both `"absent"` and `"stale"` states.
-    """
-    result = read_stack_cache(stack, cache_root)
-    needs_research = result["state"] in ("absent", "stale")
-    return result["data"], needs_research
+
+__all__ = [
+    "ALL_TOOLING_KEYS",
+    "CACHE_ROOT",
+    "REQUIRED_STATIC_TARGETS",
+    "RESEARCH_CATEGORIES",
+    "STALE_AFTER_DAYS",
+    "cache_path",
+    "get_stack_tooling",
+    "read_stack_cache",
+    "write_stack_cache",
+]
