@@ -154,5 +154,66 @@ class TestToolPresence(unittest.TestCase):
         self.assertTrue(result["gsd"])
 
 
+import json
+from datetime import UTC, datetime, timedelta
+
+from ai_kit_rules_common.stack_cache import (
+    STALE_AFTER_DAYS,
+    cache_path,
+    default_cache_root,
+    get_stack_tooling,
+    read_stack_cache,
+    write_stack_cache,
+)
+
+
+class TestStackCache(unittest.TestCase):
+    def test_default_cache_root_includes_namespace(self):
+        root = default_cache_root("demo-skill")
+        self.assertIn("demo-skill", root)
+        self.assertTrue(root.endswith(os.path.join("demo-skill", "stack-refs")))
+
+    def test_absent_fresh_stale(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            cache_root = os.path.join(scratch, "_cache")
+            self.assertEqual(
+                read_stack_cache("python", cache_root=cache_root)["state"], "absent"
+            )
+
+            write_stack_cache(
+                "python", {"setup-env": "uv sync"}, cache_root=cache_root
+            )
+            self.assertEqual(
+                read_stack_cache("python", cache_root=cache_root)["state"], "fresh"
+            )
+
+            path = cache_path("python", cache_root=cache_root)
+            with open(path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+            stale_dt = datetime.now(UTC) - timedelta(days=STALE_AFTER_DAYS + 1)
+            payload["cached_at"] = stale_dt.isoformat()
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+            self.assertEqual(
+                read_stack_cache("python", cache_root=cache_root)["state"], "stale"
+            )
+
+    def test_invalid_stack_identifier_raises(self):
+        with self.assertRaises(ValueError):
+            cache_path("../escape", cache_root="/tmp/whatever")
+
+    def test_get_stack_tooling_needs_research_when_absent_or_stale(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            cache_root = os.path.join(scratch, "_cache")
+            tooling, needs_research = get_stack_tooling("python", cache_root=cache_root)
+            self.assertIsNone(tooling)
+            self.assertTrue(needs_research)
+
+            write_stack_cache("python", {"setup-env": "uv sync"}, cache_root=cache_root)
+            tooling, needs_research = get_stack_tooling("python", cache_root=cache_root)
+            self.assertEqual(tooling, {"setup-env": "uv sync"})
+            self.assertFalse(needs_research)
+
+
 if __name__ == "__main__":
     unittest.main()
