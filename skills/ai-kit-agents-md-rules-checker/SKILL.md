@@ -92,6 +92,57 @@ python3 "$ENTRYPOINT" cache-update <stack> <path-to-that-file>
 
 `cache-update` validates the JSON against `ALL_TOOLING_KEYS` membership, non-empty-string-ness, and the `(source: ...)` provenance requirement before writing — rejecting anything else with a one-line error and writing nothing. It also accepts a `--cache-root <path>` flag, but that flag is TEST-ONLY (documented in `cli.py`'s own docstring) and is never used by this skill's research-dispatch step.
 
+## Anti-patterns (NEVER)
+
+- **NEVER treat a paraphrase as sufficient.** `rule_checker.py` classifies by
+  literal lowercase substring matching against each rule's `signals` tuple —
+  it does **not** do semantic matching. Writing AGENTS.md content that is
+  semantically equivalent to a rule but uses different wording will still
+  report `missing`/`near_miss`. When inserting a rule's content, the exact
+  signal phrase (or enough of its synonyms to clear the ≥50%-of-signals
+  threshold) must appear verbatim, lowercased, somewhere in the prose —
+  phrase it naturally, but never assume "captures the meaning" is enough.
+  (Discovered by diagnosing 9 false-"missing" findings after a refactor pass
+  that deliberately avoided verbatim phrasing.)
+- **NEVER route near-miss confirmation through `/agent-md-refactor`'s own
+  Phase 1** ("Find Contradictions") — that phase is for conflicts already in
+  the file, not for confirming whether to insert a missing house rule. Step
+  A of this skill owns that confirmation itself.
+- **NEVER invoke `/agent-md-refactor` more than once per wrapping run.** It
+  is a whole-file refactor pass with no per-rule insertion mode; a second
+  pass risks pruning the first pass's insert.
+- **NEVER hardcode a `~/.claude/...` path** when resolving this skill's own
+  entrypoint or `agent-md-refactor`'s — always walk the host-neutral
+  candidate list (Claude Code plugin root, `$HOME/.claude`, opencode XDG
+  path, `~/.agents`, from-checkout sibling).
+- **NEVER accept a bare tool-name guess with no `(source: ...)`** in a Step D
+  research finding — `cache-update` rejects it, and an unsourced
+  recommendation is exactly the kind of claim Required Start #3 forbids.
+- **NEVER assume `rules.py`'s `category` field drives what gets checked
+  here.** `check_workflow_rules` filters by non-empty `signals`, not by
+  `category == "workflow"`. R02 is labeled `category: "makefile"` but its
+  AGENTS.md-prose clause is still checked by this skill because its signals
+  are non-empty — only R02's Makefile-*shape* half lives in
+  `makefile_checker.py`, read structurally from the real Makefile, never
+  from AGENTS.md prose. Don't "fix" a rule's category thinking it changes
+  routing; it doesn't.
+
+## Deciding Step D's option 1 vs 2
+
+Step D names two options but doesn't tell you which to pick — that choice
+depends on context, not on a fixed rule:
+
+- **Pick option 1 (research now)** when the `blocked` list names few distinct
+  stacks (1-2) and the user is already mid-flow on this repo — the research
+  cost is small and deferring it just means paying it next invocation anyway.
+- **Pick option 2 (defer)** when `blocked` spans many stacks, the user
+  explicitly wants a fast pass focused on what's already resolvable, or this
+  invocation is itself time-boxed (e.g. part of a larger orchestrated run that
+  budgets one skill call per target).
+- When genuinely unsure, ask the user which they'd prefer rather than
+  guessing — the cost of researching the wrong priority first is a wasted
+  sub-task dispatch.
+
 ## Reporting rule (D-05)
 
 Findings and remediation results are reported INLINE in the conversation only. This skill never writes a persisted report file into the target repo — git is already the history of AGENTS.md edits, and a separate "why this file was edited" report is exactly the kind of file the user does not want.

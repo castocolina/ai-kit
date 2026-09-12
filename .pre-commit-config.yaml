@@ -7,7 +7,7 @@
 # Enforcement is intentionally LENIENT during the render refactor (relaxed pylint
 # design thresholds in pyproject.toml; a minimal test set below). After Phase 2 the
 # thresholds tighten (Task 2.6) and the test hook expands to the full suite.
-default_install_hook_types: [pre-commit]
+default_install_hook_types: [pre-commit, pre-push]
 repos:
   - repo: local
     hooks:
@@ -31,11 +31,13 @@ repos:
         entry: uv run pyright
         language: system
         pass_filenames: false
+        stages: [pre-push]
       - id: vulture
         name: vulture
         entry: uv run vulture
         language: system
         pass_filenames: false
+        stages: [pre-push]
       - id: shellcheck
         name: shellcheck
         entry: shellcheck
@@ -54,6 +56,7 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+        stages: [pre-push]
       # Textual + PTY suites require uv (textual is not installed in the system python3).
       # Runs after the core suite so errors are easy to attribute.
       - id: unittest-wizard
@@ -62,3 +65,4 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+        stages: [pre-push]
