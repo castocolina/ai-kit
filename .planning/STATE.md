@@ -3,10 +3,10 @@ gsd_state_version: "1.0"
 milestone: v1.2
 milestone_name: ai-kit Rules Skill Family
 status: planning
-last_updated: "2026-09-13T21:42:12.314Z"
+last_updated: "2026-09-13T22:15:00.000Z"
 last_activity: 2026-09-13
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-10)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 6 - AGENTS.md Rules Checker Skill (v1.1 ROADMAP.md created; Phases 6-8 ready to plan, mutually independent)
+**Current focus:** Phase 9 - AGENTS.md Checker Prune (v1.2 ROADMAP.md created; Phases 9-15 ready to plan, in strict dependency order starting with Phase 9)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 9 - AGENTS.md Checker Prune (ai-kit-project-rules-agents) — not started
 Plan: —
-Status: Defining requirements
-Last activity: 2026-09-13 — Milestone v1.2 started
+Status: Roadmap created, ready to plan Phase 9
+Last activity: 2026-09-13 — Milestone v1.2 ROADMAP.md created (Phases 9-15, REQUIREMENTS.md traceability updated)
 
 ## Performance Metrics
 
@@ -53,11 +53,18 @@ Last activity: 2026-09-13 — Milestone v1.2 started
 | 8 | 1 | - | - |
 | 6 | 3 | - | - |
 | 7 | 4 | - | - |
+| 9 AGENTS.md Checker Prune | 0 | - | - |
+| 10 Makefile Rules Checker | 0 | - | - |
+| 11 Pre-commit Rules Checker | 0 | - | - |
+| 12 Architecture Rules Checker | 0 | - | - |
+| 13 Docker Rules Checker | 0 | - | - |
+| 14 CI/CD Rules Checker | 0 | - | - |
+| 15 Rules Orchestrator | 0 | - | - |
 
 **Recent Trend:**
 
 - Last 5 plans: 05-06, 05-05, 05-04, 05-03, 05-02 (v1.0 close-out)
-- Trend: v1.0 complete; v1.1 not yet planned
+- Trend: v1.0/v1.1 complete; v1.2 roadmap created, no plans executed yet
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**
@@ -98,6 +105,26 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 07]: 07-03: gsd_write.config_set None-value coercion fixed locally in cli.py's apply-workflow-defaults (substitutes literal 'null' string) rather than widening the shared _coerce_value helper outside this plan's declared files_modified.
 - [Phase 07]: Renamed ai-kit-gsd-config to ai-kit-gsd-curated-config per naming-analyzer (disambiguates from sibling gsd-config skill's different scope)
 - [Phase 07]: Deferred pre-existing make validate lint failures in tools/status-line.py and tools/wizard_app.py (Phase 8-owned, out of Phase 07 scope) to deferred-items.md
+- v1.2: Phase numbering continues from v1.1's last phase (Phase 9 starts
+  right after Phase 8), per ROADMAP.md's Phase Numbering convention
+  (2026-09-13).
+- v1.2: Phases 9-15 map 1:1 to this milestone's 7 requirements (one new or
+  modified skill each) and form a strict dependency chain — agents-prune ->
+  makefile -> precommit -> arch -> docker -> cicd -> all — unlike v1.1's
+  mutually-independent Phases 6-8. Each domain checker builds on the
+  shared-package conventions and dropped-logic ownership the prior phase
+  established, and the orchestrator (Phase 15) needs all 5 domain checkers
+  plus the Phase 9-pruned agents checker to exist before it can aggregate
+  them.
+- v1.2: Phase 12 (`ai-kit-project-rules-arch`) promotes and resolves
+  ROADMAP.md's backlog entry "Phase 999.3: Architecture-layer test suite
+  (BACKLOG)" at this milestone's scoped-down, form/convention-only ambition
+  (arch-test Makefile target existence/chaining/AST-only verification) — NOT
+  the backlog note's full dependency-direction/layering-boundary enforcement
+  ambition, which stays an explicitly-flagged known gap per the design spec.
+  The backlog stub itself is left unchanged in ROADMAP.md (a dated note was
+  appended after it pointing to Phase 12); this is its resolution, not a
+  duplicate.
 
 ### Pending Todos
 
@@ -107,7 +134,9 @@ None outstanding. The 3 pending todos that seeded v1.1
 `.planning/todos/pending/2026-09-10-refactor-status-line-quota-percentage-and-colors-to-be-relat.md`)
 have been promoted into ROADMAP.md Phases 6, 7, and 8 respectively; their
 files are left in place under `todos/pending/` for reference until each
-phase completes.
+phase completes. v1.2's scope came from
+`docs/superpowers/specs/2026-09-12-ai-kit-rules-skill-family-design.md`
+directly, not from a pending todo.
 
 ### Blockers/Concerns
 
@@ -181,6 +210,19 @@ skill-authoring pipeline (`/superpowers:writing-skills` → `/skill-judge` →
 `/naming-analyzer`); consider whether to plan/execute them together or
 sequentially.
 
+**v1.2 (Phases 9-15) — strict dependency chain, unlike v1.1 (2026-09-13).**
+Unlike v1.0's and v1.1's phases (which were either chained through concrete
+reused artifacts or fully independent), Phases 9-15 must be planned and
+executed in strict numeric order: Phase 10 cannot safely claim the Makefile
+logic Phase 9 drops until Phase 9 has actually landed (otherwise neither
+skill owns those checks, or both do); Phases 11-14 each build on the prior
+phase's shared-package/skill-authoring conventions; Phase 15 (the
+orchestrator) needs all 5 domain checkers plus the pruned agents checker to
+exist before it has anything to aggregate. Do not parallelize these phases
+even though `.planning/config.json` has `parallelization: true` — that
+setting applies to independent plans within a phase, not to this milestone's
+cross-phase ordering constraint.
+
 ## Deferred Items
 
 Items acknowledged and deferred at milestone close, most recent first:
@@ -191,7 +233,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-11T08:10:02.128Z
-Stopped at: Phase 8 complete — all phases complete
+Last session: 2026-09-13T22:15:00.000Z
+Stopped at: v1.2 ROADMAP.md created (Phases 9-15) and REQUIREMENTS.md traceability updated — awaiting roadmap approval, then ready to plan Phase 9
 Resume file: None
-</content>

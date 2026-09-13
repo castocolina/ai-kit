@@ -24,6 +24,27 @@ skill-authoring pipeline (`/superpowers:writing-skills` → `/skill-judge` →
 All three are independent of each other and of the completed v1.0 phases
 above — see PROJECT.md's "Current Milestone" section for the v1.1 goal.
 
+**v1.2 addendum (ai-kit Rules Skill Family):** Phases 9-15 below complete the
+rules-checker skill family designed in
+`docs/superpowers/specs/2026-09-12-ai-kit-rules-skill-family-design.md`. The
+prior, already-merged `ai-kit-rules-shared-package` plan extracted
+domain-agnostic infrastructure into `skills/_shared/ai_kit_rules_common/`;
+this milestone finishes pruning the AGENTS.md checker down to
+AGENTS.md-prose scope, then builds five new single-domain checkers
+(Makefile, pre-commit, architecture-test-shape, Docker Compose, CI/CD) plus
+an orchestrator that aggregates all six. Sequencing matters here, unlike
+v1.1's mutually-independent phases: the AGENTS.md prune must land before the
+Makefile checker can safely claim the dropped logic, each subsequent domain
+checker builds on the shared-package and skill-authoring conventions the
+prior one established, and the orchestrator needs all 5 domain checkers (plus
+the pruned agents checker) to exist before it can aggregate them — so Phases
+9-15 run strictly in order (9 → 10 → 11 → 12 → 13 → 14 → 15), not in
+parallel. Phase 12 (the architecture checker) also promotes and resolves the
+Backlog's "Phase 999.3: Architecture-layer test suite" entry at this
+milestone's scoped-down, form/convention-only ambition — see that phase's own
+goal for the resolution note. See PROJECT.md's "Current Milestone" section
+for the full v1.2 goal.
+
 ## Phases
 
 **Phase Numbering:**
@@ -41,6 +62,12 @@ above — see PROJECT.md's "Current Milestone" section for the v1.1 goal.
 - **Note (2026-09-10):** Phase numbering continues across milestone boundaries —
   v1.1 starts at Phase 6, immediately after v1.0's last phase (Phase 5). Phase
   numbers are never reset at a new milestone.
+- **Note (2026-09-13):** Phase numbering continues the same way across the
+  v1.1 → v1.2 boundary — v1.2 starts at Phase 9, immediately after v1.1's
+  last phase (Phase 8). Unlike v1.1's mutually-independent Phases 6-8,
+  Phases 9-15 form a strict dependency chain (9 → 10 → 11 → 12 → 13 → 14 →
+  15) per REQUIREMENTS.md's v1.2 section — each phase must complete before
+  the next is planned.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
@@ -53,6 +80,13 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 6: AGENTS.md Rules Checker Skill** - Wrap `/agent-md-refactor` with a house-ruleset checker for Makefile target shape and the accumulated workflow rules (completed 2026-09-11)
 - [x] **Phase 7: Curated GSD Config Skill** - Small curated question set that writes and schema-validates `.planning/config.json`, replacing `gsd-settings`/`gsd-config`'s full interrogation (completed 2026-09-11)
 - [x] **Phase 8: Status-line Quota Color Refactor** - Rate-limit bucket coloring becomes relative to time-left-in-window, not raw usage percentage (completed 2026-09-10)
+- [ ] **Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)** - Prune the renamed AGENTS.md/CLAUDE.md checker to AGENTS.md-prose scope only, dropping all Makefile-specific logic
+- [ ] **Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)** - New skill inherits the dropped Makefile logic plus `validate-<category>` parity, help/fail reachability, recipe-length cap, docker build-before-up, shellcheck threshold, and an advisory ordering heuristic
+- [ ] **Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)** - New skill checks Makefile↔pre-commit parity and applies the 6-category tooling taxonomy plus ruff/golangci-lint-specific checks
+- [ ] **Phase 12: Architecture Rules Checker (ai-kit-project-rules-arch)** - New skill verifies `arch-test` Makefile target shape/chaining/AST-only-ness; promotes and resolves backlog Phase 999.3 at form/convention-only scope
+- [ ] **Phase 13: Docker Rules Checker (ai-kit-project-rules-docker)** - New skill checks the docker-compose target family, healthcheck conventions, `depends_on` discipline, hot-reload convention, and runbook presence
+- [ ] **Phase 14: CI/CD Rules Checker (ai-kit-project-rules-cicd)** - New skill checks that CI config reuses Makefile/pre-commit/package.json/Gradle commands instead of duplicating tool invocations inline
+- [ ] **Phase 15: Rules Orchestrator (ai-kit-project-rules-all)** - New orchestrator skill runs all 6 checkers' `check`/`remediate` and aggregates one criticality-ordered report
 
 ## Phase Details
 
@@ -243,10 +277,114 @@ Plans:
 
 - [x] 08-01-PLAN.md — Burn-rate ratio helpers (`util_rate_window_seconds` + `util_rate_burn_ratio`) wired into `util_rate_group_str`'s rate-limit ramp call site, plus ramp-boundary test coverage extending the existing pattern (REQ-stln-time-relative-color, REQ-stln-ramp-tests)
 
+### Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)
+
+**Goal**: The AGENTS.md/CLAUDE.md checker — renamed from `ai-kit-agents-md-rules-checker` to `ai-kit-project-rules-agents` — is pruned to AGENTS.md-prose scope only, so the Makefile-specific logic it currently carries can be cleanly re-homed in Phase 10 without two skills claiming the same checks.
+**Depends on**: Nothing new (first phase of this milestone; builds on the already-merged `ai-kit-rules-shared-package` plan's `skills/_shared/ai_kit_rules_common/` extraction). Must complete before Phase 10 is planned, so the dropped Makefile logic has exactly one owner at every point in time.
+**Requirements**: REQ-rules-agents-prune
+**Success Criteria** (what must be TRUE):
+
+  1. The skill directory is renamed to `ai-kit-project-rules-agents`, and its `check` command returns only `{"workflow": [...]}` (no `"makefile"` key) when run against any target repo.
+  2. `makefile_checker.py`, the Makefile-specific `stack_cache.py`/`stack_detect.py`, and the `cache-path`/`cache-update` subcommands are removed from the skill's source tree; the skill retains `rules.py` (all 17 rules) and `rule_checker.py`, now importing the shared `ai_kit_rules_common` classification engine rather than a local copy.
+  3. `SKILL.md`'s scope line and examples drop all Makefile/`.pre-commit-config.yaml` language, while the existing `/agent-md-refactor` hand-off for AGENTS.md content is unchanged.
+  4. The renamed/updated test suite (`tests/test_ai_kit_agents_md_rules_checker.py` or its renamed equivalent) passes with no test exercising the removed Makefile-checking code paths, and `make test` is green.
+  5. `/skill-judge` review of the pruned `SKILL.md` shows no remaining Critical/Important finding (or a score ≥ 96/120) with no regression against the pre-prune baseline (98/120).
+
+**Plans**: TBD
+
+### Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)
+
+**Goal**: A new skill `ai-kit-project-rules-makefile` owns every Makefile-specific check dropped by Phase 9's prune, plus the new parity/reachability/recipe-length/ordering checks the design spec adds on top.
+**Depends on**: Phase 9 (must land first so this skill can safely claim the dropped `makefile_checker.py` logic without leaving a capability gap where neither skill checks it)
+**Requirements**: REQ-rules-makefile
+**Success Criteria** (what must be TRUE):
+
+  1. Running the new skill's `check` against a target repo's Makefile reproduces every check the old Makefile-checker performed (`REQUIRED_STATIC_TARGETS` shape, `validate`'s chain-incomplete check, the `test`/`test-unit` pairing check) with the same finding shape as before the Phase 9 prune.
+  2. For each tooling category with a concrete target present, the skill requires a matching `validate-<short-name>` alias (e.g. `validate-security`, `validate-duplicate`, `validate-dead`) and flags `validate` when it does not chain all of them — proven by a fixture Makefile with e.g. a `security-scanner` target present but no `validate-security` target.
+  3. A fixture Makefile with no `help`-reachable target (no `.DEFAULT_GOAL := help` and no catch-all `%:` rule) is flagged; a fixture with one of those mechanisms present is not.
+  4. A fixture Makefile recipe body longer than 3 lines (excluding the help/fail-printing target itself) is flagged as a finding recommending extraction to a `.sh` script; a paired fixture with a 3-line-or-shorter recipe triggers no finding.
+  5. A `docker-up`-shaped target without a `docker-build`-shaped Make prerequisite is flagged; once a fixture repo has ≥5 bash scripts and no `shellcheck` target wired into `.pre-commit-config.yaml`, that absence is flagged; and an advisory (non-blocking) reordering suggestion fires when a fixture's `validate` prerequisite list declares a slow tool before a fast one.
+
+**Plans**: TBD
+
+### Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)
+
+**Goal**: A new skill `ai-kit-project-rules-precommit` verifies Makefile↔pre-commit parity and applies the 6-category cross-language tooling taxonomy to flag configuration anti-patterns.
+**Depends on**: Phase 10 (sequenced per this milestone's dependency order; the parity check needs the Makefile-target-parsing conventions `ai-kit-project-rules-makefile` established, and this skill follows the same shared-package/skill-authoring pattern the prior phase set)
+**Requirements**: REQ-rules-precommit
+**Success Criteria** (what must be TRUE):
+
+  1. A fixture repo with a pre-commit hook id that has no matching single-tool Makefile target is flagged; a fixture with a Makefile target that has no matching hook id is also flagged — the parity check runs both directions, not just one.
+  2. Detected tooling from a fixture `.pre-commit-config.yaml` (e.g. ruff, mypy, bandit, eslint) is classified into exactly one of the 6 taxonomy categories (Formatting/Type-checking/Linting/Security/Duplicate-code/Dead-code), matching the baseline stack tables with no tool left unclassified.
+  3. A fixture with ruff `select = ["ALL"]` (or an equivalent "enable-everything" config for another ecosystem) is flagged; a paired fixture with a curated `extend-select` is not.
+  4. A fixture repo with zero Duplicate-code-category tooling is flagged for that category; a fixture with zero Dead-code-category tooling is flagged for that category; a fixture with both categories present triggers neither finding.
+  5. Ruff-specific checks each prove discrimination with a paired fixture (`ANN`/`TC`-only "type safety" claims flagged; `preview = true` without a pinned CI ruff version flagged; a child config silently discarding a parent's `lint.ignore` flagged), and the golangci-lint-specific check flags standalone `staticcheck` run alongside golangci-lint with staticcheck already enabled.
+
+**Plans**: TBD
+
+### Phase 12: Architecture Rules Checker (ai-kit-project-rules-arch)
+
+**Goal**: A new skill `ai-kit-project-rules-arch` verifies a repo has an `arch-test`-shaped Makefile target, chained into `test`, and (where discoverable) AST-only — carrying baseline per-stack canonical-tool knowledge without attempting real dependency-direction/layering-boundary enforcement. This phase **promotes and resolves** the Backlog's "Phase 999.3: Architecture-layer test suite" entry at exactly this milestone's scoped-down, form/convention-only ambition; that backlog note's fuller dependency-direction/layering-boundary ambition remains an explicitly-flagged known gap, not built here, per the design spec's own scope note. The backlog stub itself is left unchanged in ROADMAP.md — this phase is its resolution, not a second, separate item.
+**Depends on**: Phase 11 (sequenced per this milestone's dependency order; shares the shared-package conventions and skill-authoring pattern the prior domain checkers established)
+**Requirements**: REQ-rules-arch
+**Success Criteria** (what must be TRUE):
+
+  1. Running the skill against ai-kit's own repo — which already has `arch-test` chained into `test` in its Makefile, backed by `tests/test_arch.py` — produces no finding for target existence or chaining.
+  2. A fixture repo with no `arch-test`-shaped target is flagged; a fixture repo where `test` does not list `arch-test` as a prerequisite is flagged as a distinct finding from target-existence.
+  3. Where the backing test file is discoverable, the skill verifies it is AST-only — proven by a paired fixture: a check file that only parses source via `ast` (or equivalent) passes, a check file that `importlib.import_module`s its target is flagged.
+  4. The skill's remediation output names the canonical tool per stack (Python: import-linter, Node/TS: dependency-cruiser, Java: ArchUnit) and explicitly states the Rust/Go known gap rather than asserting a false canonical tool for those languages.
+  5. This phase's own PLAN/SUMMARY artifacts record the backlog-resolution note described in this phase's Goal above, so the resolution is traceable from the backlog entry to this phase without editing the backlog stub itself.
+
+**Plans**: TBD
+
+### Phase 13: Docker Rules Checker (ai-kit-project-rules-docker)
+
+**Goal**: A new skill `ai-kit-project-rules-docker` checks docker-compose/Makefile conventions for local-dev Docker workflows: the target family, healthcheck conventions, `depends_on` discipline, the hot-reload convention, and runbook presence.
+**Depends on**: Phase 12 (sequenced per this milestone's dependency order; reuses the shared package and skill-authoring conventions)
+**Requirements**: REQ-rules-docker
+**Success Criteria** (what must be TRUE):
+
+  1. A fixture Makefile missing one or more of the target family (`docker-up`, `docker-health`, `docker-stop`, `docker-clean`, `docker-prune`, `docker-events-up`, `docker-events-monitor`, `docker-events-test`) is flagged by name for each missing target; a fixture with the full family present is not.
+  2. A fixture `docker-compose.yml` service with a healthcheck `timeout`/`start_period`/`interval` exceeding 2s/10s/5s respectively is flagged; a paired fixture within all three bounds is not.
+  3. A `depends_on` entry using bare ordering (no `condition: service_healthy`) is flagged; a paired entry using `condition: service_healthy` is not.
+  4. A local-dev service definition using the production image/entrypoint baked at build time (no bind-mount plus dev command override) is flagged as missing the hot-reload convention; a paired fixture using the bind-mount convention is not.
+  5. The absence of `docker/local/README.md` is flagged as a missing runbook requirement; its presence is not.
+
+**Plans**: TBD
+
+### Phase 14: CI/CD Rules Checker (ai-kit-project-rules-cicd)
+
+**Goal**: A new skill `ai-kit-project-rules-cicd` checks that CI config reuses existing Makefile/pre-commit/`package.json`/Gradle commands rather than duplicating tool invocations inline in CI YAML.
+**Depends on**: Phase 13 (sequenced per this milestone's dependency order; reuses the shared package and skill-authoring conventions)
+**Requirements**: REQ-rules-cicd
+**Success Criteria** (what must be TRUE):
+
+  1. A fixture CI workflow (`.github/workflows/*.yml` or `.gitlab-ci.yml`) that runs a tool directly (e.g. `ruff check .`) when an equivalent single-tool Makefile target (e.g. `make ruff`) already exists is flagged, naming both the duplicated invocation and the target it should call instead.
+  2. A fixture CI workflow that calls `make <target>`/`npm run <script>`/the equivalent Gradle task for every tool it needs — with no direct tool invocation duplicating an existing command — produces no finding.
+  3. The check recognizes reuse sources across all four command surfaces named in the requirement (Makefile targets, pre-commit hooks, `package.json` scripts, Gradle tasks), each covered by at least one paired (triggering / non-triggering) fixture.
+  4. The skill reuses the shared `ai_kit_rules_common` classification/cache package rather than re-implementing its own parsing primitives, and its own test module imports from `skills/_shared/` the same way the other domain checkers do.
+
+**Plans**: TBD
+
+### Phase 15: Rules Orchestrator (ai-kit-project-rules-all)
+
+**Goal**: A new orchestrator skill `ai-kit-project-rules-all` runs all 6 checkers' `check`/`remediate` against one target repo and aggregates their findings into one criticality-ordered report, preserving the existing `/agent-md-refactor` hand-off for AGENTS.md-domain findings only.
+**Depends on**: Phase 14 (needs all 5 new domain checkers — makefile, precommit, arch, docker, cicd — plus the Phase 9-pruned agents checker — to exist before it can invoke and aggregate them)
+**Requirements**: REQ-rules-all
+**Success Criteria** (what must be TRUE):
+
+  1. Running the orchestrator against a target repo invokes all 6 checkers' `check` (agents, makefile, precommit, arch, docker, cicd), and the aggregated report contains findings from every domain that has any, with none silently dropped.
+  2. The aggregated report is ordered by criticality across domains (not grouped flatly in invocation order), using the same criticality vocabulary each individual checker's own `remediate` output already uses.
+  3. For AGENTS.md-domain findings specifically, the orchestrator still surfaces the `/agent-md-refactor` hand-off; for every other domain's findings, the report is inline and report-only, with no auto-apply — consistent with the family-wide detect-and-report-only scope boundary.
+  4. An integration-style test stubs all 6 checkers' `check` output and asserts the aggregation/ordering logic, without needing every individual checker's full logic re-exercised inside that test.
+  5. Cross-skill merging of findings across domains exists only inside this orchestrator — no individual checker's own `remediation.py` usage is changed to perform cross-domain merging, per the "Cross-skill remediation merging ownership" protocol in `.planning/intel/constraints.md`.
+
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7 → 8 (Phases 6, 7, and 8 are mutually independent — v1.1 scope, order among them is a scheduling choice, not a dependency)
+Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 (Phases 6, 7, and 8 are mutually independent — v1.1 scope, order among them is a scheduling choice, not a dependency. Phases 9-15 are v1.2 scope and form a strict dependency chain — each must complete before the next is planned, per REQUIREMENTS.md's v1.2 section and this roadmap's v1.2 addendum above.)
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -259,6 +397,13 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 6. AGENTS.md Rules Checker Skill | 3/3 | Complete    | 2026-09-11 |
 | 7. Curated GSD Config Skill | 4/4 | Complete    | 2026-09-11 |
 | 8. Status-line Quota Color Refactor | 1/1 | Complete    | 2026-09-10 |
+| 9. AGENTS.md Checker Prune | 0/TBD | Not started | - |
+| 10. Makefile Rules Checker | 0/TBD | Not started | - |
+| 11. Pre-commit Rules Checker | 0/TBD | Not started | - |
+| 12. Architecture Rules Checker | 0/TBD | Not started | - |
+| 13. Docker Rules Checker | 0/TBD | Not started | - |
+| 14. CI/CD Rules Checker | 0/TBD | Not started | - |
+| 15. Rules Orchestrator | 0/TBD | Not started | - |
 
 ## Backlog
 
@@ -325,4 +470,10 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
-</content>
+**Note (2026-09-13):** Promoted and resolved at a scoped-down,
+form/convention-only ambition by v1.2's Phase 12 (`ai-kit-project-rules-arch`
+— see `REQ-rules-arch`). Phase 12 verifies `arch-test` Makefile target
+existence/chaining/AST-only-ness; the fuller dependency-direction/layering-
+boundary enforcement ambition described above remains an explicitly-flagged
+known gap, not built by Phase 12. This stub is left as-is for history; it is
+not duplicated as a second active roadmap item.

@@ -27,7 +27,7 @@ Decisions.
 
 ### Tool-Substitution Awareness Hook
 
-- [x] **REQ-tool-substitution-detection-composition**: Pure, independently-tested live-detection + message-composition functions report which curated `rtk` substitutions (`cat`↔`bat`, `grep`↔`rg`, `find`↔`fd`, `sed`↔`sd`, `ls`↔`eza`) are genuinely active on this machine (binary presence + `registry.toml` `audience` + `rtk init --show`), never reciting catalog intent as verified; this curated set is the single source of truth mirrored by the usage-metrics command-family axis. (Complete 2026-09-09 — see `03-01-PLAN.md`/`03-01-SUMMARY.md`.)
+- [x] **REQ-tool-substitution-detection-composition**: Pure, independently-tested live-detection + message-composition functions report which curated `rtk` substitutions (`cat`↔`bat`, `grep`↔`rg`, `find`↔`fd`, `sed`↔`sd`, `ls`↔`eza`) are genuinely active on this machine (binary presence + `registry.toml` `audience` + `rtk init --show`), never reciting catalog intent as verified. This curated set is the single source of truth mirrored by the usage-metrics command-family axis. (Complete 2026-09-09 — see `03-01-PLAN.md`/`03-01-SUMMARY.md`.)
 - [x] **REQ-tool-substitution-hook-wiring**: A new Claude Code `SessionStart` hook fires on `"startup"` and `"compact"`, injects the composed message via `hookSpecificOutput.additionalContext`, degrades gracefully (no error, no perceptible delay) when `rtk`/`tools-installer` is absent, and documents opencode's lack of an equivalent hook as an accepted gap. (Amended 2026-09-08: Cursor is NOT an accepted gap — live-verified during Phase 4 discussion that Cursor supports a `sessionStart` hook type, currently active on this machine at `~/.cursor/hooks.json`. The equivalent briefing must also be wired for Cursor's `sessionStart` hook; only opencode remains a genuine, documented gap. Complete 2026-09-09 — see `03-01-PLAN.md`/`03-01-SUMMARY.md`, `03-02-PLAN.md`/`03-02-SUMMARY.md`.)
 
 ### Config Doctor
@@ -88,7 +88,10 @@ this milestone. (Codex/Cursor coverage inside `REQ-usage-metrics-raw-capture`
 is sequenced as later plans within its own phase, not deferred to a future
 milestone — see that requirement's acceptance criteria.) v1.1's 10
 requirements (see above) are this milestone's own scope, sourced from the
-pending-todo backlog rather than from further PRD ingest.
+pending-todo backlog rather than from further PRD ingest. v1.2's 7
+requirements (see above) are this milestone's own scope, sourced from
+`docs/superpowers/specs/2026-09-12-ai-kit-rules-skill-family-design.md`
+rather than from further PRD ingest.
 
 ## Out of Scope
 
@@ -101,6 +104,7 @@ pending-todo backlog rather than from further PRD ingest.
 | Hosted-database capability behind the usage-metrics dashboard | Session data must never leave the local machine; privacy-rejected alternative. |
 | An export/import step for the usage-metrics dashboard | The dashboard is a locally-regenerated static HTML page with direct filesystem access, not a browser-sandboxed Artifact — no export step is needed (amended 2026-09-08, see `05-CONTEXT.md` D-08). |
 | A local HTTP server serving the refined store live (this phase) | Static HTML regenerated with embedded data is simpler to start with; a live server remains a future evolution only if data volume ever requires it (see `05-CONTEXT.md` D-09). |
+| Real dependency-direction/layering-boundary enforcement in `ai-kit-project-rules-arch` | Scoped down deliberately for v1.2 to form/convention-only checks (target existence, chaining, AST-only-ness); no equally canonical architecture-fitness tool surfaced for Rust or Go in research, so asserting enforcement now would outrun what's actually verifiable — explicitly flagged as a known gap rather than silently dropped (see the design spec's "Open gap" section). |
 
 ## Traceability
 
@@ -130,14 +134,21 @@ pending-todo backlog rather than from further PRD ingest.
 | REQ-cfg-skill-pipeline | Phase 7 | Complete |
 | REQ-stln-time-relative-color | Phase 8 | Complete |
 | REQ-stln-ramp-tests | Phase 8 | Complete |
+| REQ-rules-agents-prune | Phase 9 | Pending |
+| REQ-rules-makefile | Phase 10 | Pending |
+| REQ-rules-precommit | Phase 11 | Pending |
+| REQ-rules-arch | Phase 12 | Pending |
+| REQ-rules-docker | Phase 13 | Pending |
+| REQ-rules-cicd | Phase 14 | Pending |
+| REQ-rules-all | Phase 15 | Pending |
 
 **Coverage:**
 
 - v1 requirements: 14 total, mapped: 14, unmapped: 0 ✓
 - v1.1 requirements: 10 total, mapped: 10, unmapped: 0 ✓
-- Combined: 24 total, mapped: 24, unmapped: 0 ✓
+- v1.2 requirements: 7 total, mapped: 7, unmapped: 0 ✓
+- Combined: 31 total, mapped: 31, unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-09-07*
-*Last updated: 2026-09-10 — added v1.1 Traceability rows (REQ-agtmd-*, REQ-cfg-*, REQ-stln-* -> Phases 6-8, Status: Pending) and updated Coverage; v1.0 rows/content unchanged.*
-</content>
+*Last updated: 2026-09-13 — added v1.2 Traceability rows (REQ-rules-* -> Phases 9-15, Status: Pending), the v1.2 Out of Scope row for arch-enforcement, and updated Coverage; v1/v1.1 rows/content unchanged.*
