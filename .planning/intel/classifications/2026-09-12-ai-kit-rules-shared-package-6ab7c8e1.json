@@ -1,0 +1,28 @@
+{
+  "source_path": "/var/home/bazzite/git/personal/ai-kit/docs/superpowers/plans/2026-09-12-ai-kit-rules-shared-package.md",
+  "type": "DOC",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "ai-kit Rules Shared Package Implementation Plan",
+  "summary": "Task-driven implementation plan for extracting domain-agnostic rule-classification, tool-presence detection, caching, and remediation infrastructure into a reusable shared package.",
+  "scope": [
+    "rules-checker skill family",
+    "Python 3.12 stdlib package",
+    "test-driven development",
+    "ai-kit-agents-md-rules-checker migration",
+    "shared infrastructure extraction",
+    "rule classification engine",
+    "tool-presence detection",
+    "stack-tooling cache",
+    "remediation ordering"
+  ],
+  "cross_refs": [
+    "docs/superpowers/specs/2026-09-12-ai-kit-rules-skill-family-design.md",
+    "skills/_shared/ai_kit_rules_common/",
+    "skills/ai-kit-agents-md-rules-checker/",
+    "tests/test_ai_kit_rules_common.py"
+  ],
+  "locked": false,
+  "precedence": 1,
+  "notes": "Task-driven implementation guide with 5 major tasks, each containing step-by-step instructions with failing tests, implementation, and verification. Manifest declares as DOC with precedence 1."
+}

@@ -4,24 +4,28 @@ All 5 classified PRDs are represented below (`ai-kit-config-doctor`,
 `ai-kit-multi-cli-runtime-support`, `ai-kit-opencode-provider-management`,
 `ai-kit-tool-substitution-awareness-hook`, `ai-kit-usage-metrics-dashboard`).
 
-(Note: this is a second re-run. The originally-reported 3-node cycle
-(config-doctor → tool-substitution-awareness-hook → usage-metrics-dashboard
-→ config-doctor) was broken in the prior run by removing
-usage-metrics-dashboard's back-reference to config-doctor. A residual
-2-node cycle then remained between tool-substitution-awareness-hook and
-usage-metrics-dashboard. The user has since edited
-`docs/prds/ai-kit-usage-metrics-dashboard-v1.0-prd.md` to also remove both
-of its back-references to `ai-kit-tool-substitution-awareness-hook` (the
-rtk-mechanism NOT-IN note and the command-family-mirroring note), replacing
-them with generic "a separate, unnamed tool-substitution effort" phrasing
-that no longer names the sibling PRD. Cycle detection was re-run fresh
-against the current source files — not cached classification state — and
-found no cycles: the cross-reference graph is now a DAG (`config-doctor` and
-`tool-substitution-awareness-hook`/`opencode-provider-management` point
-forward toward `multi-cli-runtime-support` and `usage-metrics-dashboard`,
-both of which are sinks with no outgoing named PRD references). All 5 PRDs
-are synthesized below. See `.planning/INGEST-CONFLICTS.md` for the full
-cycle-detection trail.)
+**Re-ingest note:** this is a repeat ingest of the same 5 PRD source files
+already synthesized in a prior run. All 14 requirements below already exist
+in `.planning/REQUIREMENTS.md` and map to roadmap Phases 1.2/2/3/4/5, all
+marked Complete/Done. This run re-extracted from the current PRD source
+files fresh (not from the amended `REQUIREMENTS.md` text) per the extraction
+discipline: mark absent/as-written rather than inferring later amendments
+into the source-level intel. Two of the 14 entries below were found to
+diverge from `.planning/REQUIREMENTS.md`'s current (post-implementation,
+amended) text for the same requirement scope — see `REQ-multi-cli-runtime-
+detection` and `REQ-usage-metrics-dashboard-ui` below, and the WARNINGS
+section of `../INGEST-CONFLICTS.md` for the full comparison. Since the
+underlying work already shipped, these are flagged for reconciliation
+awareness, not as blocking the roadmap.
+
+Cycle-detection note: the per-doc classification JSON's cached `cross_refs`
+field for `ai-kit-usage-metrics-dashboard-v1.0-prd.md` lists back-references
+to `ai-kit-config-doctor` and `ai-kit-tool-substitution-awareness-hook` that
+no longer exist in the current file content (the user removed them in a
+prior ingest round — see `.planning/PROJECT.md`'s Context section). Cycle
+detection for this run was re-verified directly against the current source
+file text, not the cached `cross_refs` field, and found no cycle — see the
+INFO entry in `../INGEST-CONFLICTS.md`. All 5 PRDs are synthesized below.
 
 ---
 
@@ -74,6 +78,7 @@ cycle-detection trail.)
   - When detection is inconclusive, the entry gets `native_runtime: "unknown"` and `execute_dispatch.py`'s existing `cli is None` in-process execution path is empirically confirmed unchanged (no new behavior gated on this value).
   - `ai-kit-spec-config/SKILL.md` is updated to document `native_runtime` labeling in the wizard's ranked candidate output, and passes a `skill-judge` review loop (no remaining Critical/Important finding, or score ≥ 96/120, no regression vs. pre-change baseline) before the task is marked complete.
 - scope: runtime detection, model catalog, native_runtime field, execute_dispatch.py
+- ⚠ **competing variant vs. existing `.planning/REQUIREMENTS.md`**: source PRD's valid-value set for `native_runtime` is exactly `{"claude", "opencode", "codex", "unknown"}` (no `cursor`). The already-shipped, amended `REQUIREMENTS.md` entry for this same requirement adds `"cursor"` as a 5th valid value (Amended 2026-09-08/09, discovered during Phase 4 discussion). See WARNINGS in `../INGEST-CONFLICTS.md`.
 
 ## REQ-multi-cli-opencode-ui-research
 - source: docs/prds/ai-kit-multi-cli-runtime-support-v1.0-prd.md
@@ -114,7 +119,7 @@ cycle-detection trail.)
 
 ## REQ-tool-substitution-hook-wiring
 - source: docs/prds/ai-kit-tool-substitution-awareness-hook-v1.0-prd.md
-- description: A new Claude-Code-side `SessionStart` hook that wires the live-detection + message-composition logic into a real, registered hook firing on both `"startup"` and `"compact"` trigger sources, injecting the composed explanation via `hookSpecificOutput.additionalContext` — with opencode's lack of an equivalent injection explicitly documented as an accepted current-generation gap rather than silently absent.
+- description: A new Claude-Code-side `SessionStart` hook that wires the live-detection + message-composition logic into a real, registered hook firing on both `"startup"` and `"compact"` trigger sources, injecting the composed explanation via `hookSpecificOutput.additionalContext` — with opencode's lack of an equivalent injection explicitly documented as an accepted current-generation gap rather than silently absent. (PRD's Non-Goals scope only "Cursor's rtk installation," i.e. whether the `rtk` binary itself is installed on Cursor, as out of scope — it does not explicitly scope Cursor hook-wiring itself in or out.)
 - acceptance:
   - The `SessionStart` hook fires on both `"startup"` and `"compact"` trigger sources and injects the composed explanation via `hookSpecificOutput.additionalContext`.
   - The hook runs fast enough to not perceptibly delay session start or post-compaction resume (no network calls, no slow subprocess spawns beyond simple existence checks).
@@ -148,14 +153,14 @@ cycle-detection trail.)
 
 ## REQ-usage-metrics-dashboard-ui
 - source: docs/prds/ai-kit-usage-metrics-dashboard-v1.0-prd.md
-- description: A locally-generated, filterable/sortable static HTML dashboard, regenerated by the pipeline script with the refined store's data embedded directly (no export/import step, no browser-sandboxed Artifact mechanism), answers session-grouped queries across the 5 MVP axes directly from refined data with no live re-parse, and never has a hosted-database capability pointed at session content. (Amended 2026-09-08, live-verified during Phase 5 discussion — see `05-CONTEXT.md` D-08/D-09/D-10.)
+- description: A locally-rendered interactive dashboard Artifact (HTML) that reads a local export from the refined store and answers session-grouped queries across the 5 MVP axes (date, model, commands/family, tokens, price); the dashboard Artifact itself never has a hosted-database capability pointed at session content — storing refined data inside the Artifact's own hosted-data mechanism was explicitly considered and rejected in favor of the Artifact being a visualization shell that loads a local export in whatever file format the dashboard will read.
 - acceptance:
-  - The dashboard never has a hosted-database capability pointed at session content — confirmed by an AST-based import scan of the generator (zero network-capable modules).
+  - The dashboard Artifact never has a hosted-database capability pointed at session content — confirmed by inspecting its published capability declaration.
   - The dashboard answers a filtered query like "how many grep-family invocations happened this month, grouped by unique session" directly from already-refined local data, no live re-parsing needed per query.
-  - The dashboard is a pipeline-regenerated static HTML file with refined data embedded directly (no export/import step, no browser-sandboxed Artifact mechanism), opened via `file://`.
   - The refined schema's exact field list and the `contains_control_flow` limitation are documented wherever this pipeline's `SKILL.md` (or equivalent) lives.
   - If this work is wrapped in a `SKILL.md` (likely, for the capture/refine pipeline's invocation), it passes the `skill-judge` review loop before being marked complete.
-- scope: pipeline-regenerated static HTML, no export/import step, privacy, MVP axes filtering/sorting
+- scope: dashboard Artifact, local export/import, privacy, MVP axes filtering/sorting
+- ⚠ **competing variant vs. existing `.planning/REQUIREMENTS.md`**: source PRD's design is an **Artifact** (browser-sandboxed visualization shell loading a local export — an explicit export/import step). The already-shipped, amended `REQUIREMENTS.md` entry for this same requirement describes the opposite architecture: "a locally-generated, filterable/sortable static HTML dashboard... no export/import step, no browser-sandboxed Artifact mechanism" (Amended 2026-09-08, see `05-CONTEXT.md` D-08/D-09/D-10 — also listed in `REQUIREMENTS.md`'s Out of Scope table: "An export/import step... no browser-sandboxed Artifact"). This is a full architecture reversal, not a minor wording diff. See WARNINGS in `../INGEST-CONFLICTS.md`.
 
 ## REQ-usage-metrics-classification-refinement-loop
 - source: docs/prds/ai-kit-usage-metrics-dashboard-v1.0-prd.md

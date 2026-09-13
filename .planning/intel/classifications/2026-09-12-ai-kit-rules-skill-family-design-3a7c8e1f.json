@@ -1,0 +1,39 @@
+{
+  "source_path": "/var/home/bazzite/git/personal/ai-kit/docs/superpowers/specs/2026-09-12-ai-kit-rules-skill-family-design.md",
+  "type": "SPEC",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "ai-kit Rules Skill Family — Design",
+  "summary": "Describes design of ai-kit Rules Skill Family: domain-specific checker skills for auditing projects, organized as independent modules with shared infrastructure.",
+  "scope": [
+    "ai-kit Rules Skill Family",
+    "Makefile",
+    "pre-commit hooks",
+    "Docker Compose",
+    "CI/CD",
+    "Python",
+    "TypeScript/Node",
+    "Java",
+    "Rust",
+    "Go",
+    "code quality",
+    "linting",
+    "type-checking",
+    "security scanning",
+    "tooling taxonomy",
+    "architecture fitness"
+  ],
+  "cross_refs": [
+    "SKILL.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".github/workflows/*.yml",
+    ".gitlab-ci.yml",
+    ".pre-commit-config.yaml",
+    "tests/test_ai_kit_agents_md_rules_checker.py",
+    "tests/test_arch.py"
+  ],
+  "locked": false,
+  "precedence": 0,
+  "notes": ""
+}

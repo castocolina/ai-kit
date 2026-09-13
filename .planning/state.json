@@ -1,7 +1,7 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v1.1",
+  "milestone": "v1.2",
   "phases": [
     {
       "number": "1.1",
@@ -50,9 +50,9 @@
     }
   ],
   "next": {
-    "command": "/gsd:new-milestone",
-    "label": "Start a new milestone",
-    "reason": "All phases complete — start a new milestone"
+    "command": "/gsd:discuss-phase",
+    "label": "Discuss the first phase",
+    "reason": "Project initialized — plan your first phase"
   },
-  "updated_at": "2026-09-11T09:05:27.739Z"
+  "updated_at": "2026-09-13T21:42:12.316Z"
 }
