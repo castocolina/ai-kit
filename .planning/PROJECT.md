@@ -11,14 +11,18 @@ some skills" toward genuine multi-CLI support — runtime detection, opencode
 provider management, and cross-runtime config diagnostics are all in active
 proposal.
 
-## Current Milestone: v1.1 Agent Workflow Hygiene & Tooling Polish
+## Current Milestone: v1.2 ai-kit Rules Skill Family
 
-**Goal:** Ship two new agent-facing skills (an AGENTS.md rules checker, and a curated GSD config skill) plus a status-line coloring fix, closing out the current backlog.
+**Goal:** Complete the rules-checker skill family designed in `docs/superpowers/specs/2026-09-12-ai-kit-rules-skill-family-design.md` — finish pruning the AGENTS.md checker and build the 5 remaining domain checkers plus an orchestrator, all sharing `skills/_shared/ai_kit_rules_common/` (extracted in the prior, already-merged `ai-kit-rules-shared-package` plan).
 
 **Target features:**
-- AGENTS.md rules checker skill — wraps `/agent-md-refactor`; enforces the accumulated house rules (language discipline, Makefile/pre-commit parity, commit compaction, cross-AI review+execution, rtk/modern-CLI/CodeGraph/graphify tool-awareness, path portability, no-excuse-deflection, stale-knowledge verification, theory→hypothesis→spike, clean working tree at plan close, concise documentation)
-- Curated GSD config skill — small preference-driven question set that writes and schema-validates `.planning/config.json`, replacing `gsd-settings`/`gsd-config`'s full interrogation
-- Status-line quota-color refactor — rate-limit bucket coloring becomes relative to time-left-in-window, not raw usage percentage
+- `ai-kit-project-rules-agents` (renamed from `ai-kit-agents-md-rules-checker`) pruned to AGENTS.md-prose scope only
+- `ai-kit-project-rules-makefile` — inherits the dropped Makefile-specific logic, plus `validate-<category>` parity, help/fail reachability, recipe-length cap, docker build-before-up, shellcheck threshold, advisory ordering heuristic
+- `ai-kit-project-rules-precommit` — Makefile↔pre-commit parity, 6-category tooling taxonomy, enable-everything/duplicate-code/dead-code absence checks, ruff/golangci-lint-specific checks
+- `ai-kit-project-rules-arch` — `arch-test` target existence/AST-only verification, per-stack canonical-tool baseline knowledge; resolves backlog Phase 999.3 at this milestone's scoped-down, form/convention-only ambition
+- `ai-kit-project-rules-docker` — docker-compose target family, healthcheck conventions, `depends_on` discipline, local-dev hot-reload convention, runbook requirement
+- `ai-kit-project-rules-cicd` — CI reuses Makefile/pre-commit/package.json/Gradle commands instead of duplicating tool invocations inline
+- `ai-kit-project-rules-all` (orchestrator) — runs all 6 checkers, aggregates one report, keeps the `/agent-md-refactor` hand-off for AGENTS.md-domain findings only
 
 ## Core Value
 

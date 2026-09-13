@@ -1,20 +1,16 @@
 ---
 gsd_state_version: "1.0"
-milestone: v1.1
-current_phase: 8
-current_plan: Not started
-status: completed
-stopped_at: Phase 8 complete — all phases complete
-last_updated: "2026-09-11T09:05:27.730Z"
-last_activity: 2026-09-11
-last_activity_desc: Phase 8 complete
-state_head: e32306e418e39f6ef646783d39e43fe6e9102c02
+milestone: v1.2
+milestone_name: ai-kit Rules Skill Family
+status: planning
+last_updated: "2026-09-13T21:42:12.314Z"
+last_activity: 2026-09-13
 progress:
-  total_phases: 9
-  completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
-milestone_name: Agent Workflow Hygiene & Tooling Polish
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -28,11 +24,10 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 
 ## Current Position
 
-Phase: 8
-Current Plan: Not started
-Total Plans in Phase: 4
-Status: All phases complete
-Last activity: 2026-09-11 — Phase 8 complete
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-09-13 — Milestone v1.2 started
 
 ## Performance Metrics
 
