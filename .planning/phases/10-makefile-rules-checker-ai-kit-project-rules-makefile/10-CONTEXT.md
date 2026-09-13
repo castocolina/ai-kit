@@ -62,6 +62,23 @@ THIS discussion (2026-09-13) still shows the pre-Phase-9 state
   — **Reversibility:** reversible — `detect_stacks` has no external
   callers outside this skill family yet, so moving it again later costs
   nothing beyond an import-path edit.
+- **D-05 (retrofit, added during Phase 14's discussion, 2026-09-13):**
+  `parse_makefile_targets`, `parse_makefile_recipe`, and
+  `parse_makefile_prerequisites` ALSO move to
+  `skills/_shared/ai_kit_rules_common/` as part of this phase's own work,
+  for the same reason as D-01/D-02. Discovered while discussing Phase 14
+  (`ai-kit-project-rules-cicd`): that skill needs to parse Makefile targets
+  to know what `make <target>` commands already exist (to flag CI steps
+  duplicating them), and Phase 11's parity check independently needs the
+  same parsing to match Makefile targets against pre-commit hook ids —
+  this is now a 3-skill convergence (10, 11, 14), not just the 2-skill
+  case D-01/D-02 already covered. Leaving these functions Phase-10-local
+  would force Phase 11 and Phase 14 into the same forbidden-cross-skill-
+  import-or-reimplement dilemma D-01/D-02 already exist to prevent, and
+  directly conflicts with Phase 14's own Success Criterion 4 ("reuses the
+  shared classification/cache package rather than re-implementing its own
+  parsing primitives").
+  — **Reversibility:** costly — same reasoning as D-01.
 
 ### Inherited scope (from the design spec, locked — not re-discussed)
 - **D-03:** Every check named in the design spec's `ai-kit-project-rules-

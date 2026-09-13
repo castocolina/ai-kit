@@ -68,6 +68,16 @@ still shows the pre-Phase-9 state.
   shared catalog structure where the two overlap, e.g. the baseline-
   stacks-by-language table feeding both the pairs-table lookups and the
   Makefile checker's tooling recommendations).
+- **D-05 (retrofit, added during Phase 14's discussion, 2026-09-13):**
+  This phase's bidirectional parity check needs `parse_makefile_targets`
+  (to enumerate Makefile targets for matching against pre-commit hook
+  ids) — this was already implicit in the parity check's own description
+  but not explicitly named as a shared-import dependency until Phase 14's
+  discussion surfaced the same need a third time. Per Phase 10 CONTEXT's
+  own D-05 retrofit, `parse_makefile_targets`/`parse_makefile_recipe`/
+  `parse_makefile_prerequisites` now move to `skills/_shared/
+  ai_kit_rules_common/` as part of Phase 10's own work; Phase 11 imports
+  them from there, same as D-01's precommit-parsing helpers.
 
 ### Unknown tool-pair default policy (inherited from PROJECT.md Core Value — not re-discussed)
 - **D-04:** A tool pair covering the same category that is NOT in the
