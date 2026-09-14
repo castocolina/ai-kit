@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import os
 
-from ai_kit_rules_common.criticality import CRITICALITY_CRITICAL
+from ai_kit_rules_common.criticality import CRITICALITY_CRITICAL, CRITICALITY_HIGH
 from ai_kit_rules_common.makefile_parse import (
     parse_makefile_prerequisites,
     parse_makefile_recipe,
@@ -45,6 +45,25 @@ CATEGORY_KEYWORDS = {
     "code-smell-detector": ("lint", "pylint", "golangci", "eslint"),
     "duplicate-code-detector": ("dup", "duplicate", "jscpd"),
     "dead-code-detector": ("dead", "vulture", "unused", "deadcode"),
+}
+
+# validate-<category> alias family (ROADMAP Phase 10 Success Criterion 2).
+# Three names are pinned literally by the roadmap and are not the
+# executor's to rename: security, duplicate and dead map to
+# `validate-security`, `validate-duplicate` and `validate-dead`. The
+# remaining two (formatter, code-smell-detector) are this plan's own
+# choice, following the same short-name convention the pinned three
+# follow (the category's own primary recognizable keyword, spelled out in
+# full rather than abbreviated): `validate-format` and `validate-lint`.
+# Stated once here, in code -- Phase 11 and Phase 15 inherit these two
+# names rather than re-deriving them (see SUMMARY for the recorded
+# decision).
+CATEGORY_ALIAS_MAP = {
+    "formatter": "validate-format",
+    "security-scanner": "validate-security",
+    "code-smell-detector": "validate-lint",
+    "duplicate-code-detector": "validate-duplicate",
+    "dead-code-detector": "validate-dead",
 }
 
 
@@ -67,6 +86,23 @@ def _resolve_across_stacks(name, detected_stacks, get_tooling):
         return None, True, missing
     combined = "; ".join(f"{s}: {covering[s]}" for s in sorted(covering))
     return combined, False, []
+
+
+def _alias_required_targets(category: str, present_targets: set[str]) -> list[str]:
+    """Return the sorted present target names that make `category`'s
+    `validate-<...>` alias required.
+
+    A target whose lowercased name begins with `validate` never counts --
+    otherwise `validate-security` would make itself required, and
+    `validate` would trigger every category.
+    """
+    keywords = CATEGORY_KEYWORDS[category]
+    return sorted(
+        name
+        for name in present_targets
+        if not name.lower().startswith("validate")
+        and any(kw in name.lower() for kw in keywords)
+    )
 
 
 def check_validate_order(repo_root: str, chain_incomplete_found: bool) -> None:
@@ -238,6 +274,75 @@ def check_makefile_shape(repo_root: str, get_tooling=None) -> list[dict]:
                     "recommendation": recommendation,
                     "needs_research": False,
                     "criticality": CRITICALITY_CRITICAL,
+                    "summary": recommendation,
+                }
+            )
+
+    # validate-<category> alias family (ROADMAP Phase 10 SC2). Placed after
+    # the inherited chain block above so both see the same parsed target
+    # set (`present_targets`).
+    required_aliases: list[tuple[str, str, list[str]]] = []
+    for category in RESEARCH_CATEGORIES:
+        triggering = _alias_required_targets(category, present_targets)
+        if not triggering:
+            continue  # this category requires no alias
+        required_aliases.append((category, CATEGORY_ALIAS_MAP[category], triggering))
+
+    for category, alias, triggering in required_aliases:
+        if alias in present_targets:
+            continue
+        recommendation = (
+            f"add Makefile target '{alias}' and chain it into `validate` "
+            f"(required by the {category} category's concrete target(s): "
+            + ", ".join(triggering)
+            + ")"
+        )
+        findings.append(
+            {
+                "target": alias,
+                "present": False,
+                "issue": "alias_missing",
+                "alias_category": category,
+                "triggering_targets": triggering,
+                "recommendation": recommendation,
+                "needs_research": False,
+                "criticality": CRITICALITY_HIGH,
+                "summary": recommendation,
+            }
+        )
+
+    if "validate" in present_targets and required_aliases:
+        validate_recipe = parse_makefile_recipe(makefile_path, "validate")
+        validate_prereqs = parse_makefile_prerequisites(makefile_path, "validate")
+
+        def _alias_wired(alias_name):
+            return (
+                recipe_mentions_target(validate_recipe, alias_name)
+                or alias_name in validate_prereqs
+            )
+
+        unchained_aliases = sorted(
+            {
+                alias
+                for _category, alias, _triggering in required_aliases
+                if alias in present_targets and not _alias_wired(alias)
+            }
+        )
+        if unchained_aliases:
+            recommendation = (
+                "chain the following alias target(s) into `validate` (via "
+                "its recipe or as a Make prerequisite): "
+                + ", ".join(unchained_aliases)
+            )
+            findings.append(
+                {
+                    "target": "validate",
+                    "present": True,
+                    "issue": "alias_chain_incomplete",
+                    "missing_alias_members": unchained_aliases,
+                    "recommendation": recommendation,
+                    "needs_research": False,
+                    "criticality": CRITICALITY_HIGH,
                     "summary": recommendation,
                 }
             )

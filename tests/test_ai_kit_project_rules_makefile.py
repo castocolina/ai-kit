@@ -376,6 +376,146 @@ class TestValidateChainAndAlias(unittest.TestCase):
             self.assertNotIn("not_aliased", issues)
 
 
+class TestValidateAliasFamily(unittest.TestCase):
+    # ROADMAP Phase 10 Success Criterion 2: for every tooling category with a
+    # concrete Makefile target present, the checker requires the matching
+    # `validate-<short-name>` alias target, and separately flags `validate`
+    # when an alias that DOES exist is not chained into it.
+
+    def test_no_concrete_target_requires_no_alias(self):
+        # Negative fixture: a category with no concrete target present
+        # requires nothing, even though every alias is absent.
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "validate:\n\techo v\n")
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("alias_missing", issues)
+            self.assertNotIn("alias_chain_incomplete", issues)
+
+    def test_alias_missing_when_concrete_target_present(self):
+        # Triggering fixture: a security-category concrete target with no
+        # `validate-security` target -> one finding naming the category and
+        # the concrete target(s) that made it required.
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "validate:\n\techo v\n\nsecurity-scan:\n\techo s\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            missing = [f for f in findings if f.get("issue") == "alias_missing"]
+            self.assertEqual(len(missing), 1)
+            finding = missing[0]
+            self.assertEqual(finding["target"], "validate-security")
+            self.assertFalse(finding["present"])
+            self.assertEqual(finding["alias_category"], "security-scanner")
+            self.assertIn("security-scan", finding["triggering_targets"])
+            self.assertFalse(finding["needs_research"])
+            self.assertIsNotNone(finding["recommendation"])
+            self.assertIsNotNone(finding["summary"])
+            self.assertIsNotNone(finding["criticality"])
+
+    def test_alias_present_but_unchained_flags_validate(self):
+        # Triggering fixture: `validate-security` present but `validate`
+        # neither lists it as a prerequisite nor references it in its
+        # recipe -> one finding against `validate` naming it among the
+        # alias members it fails to chain.
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "validate:\n\techo v\n\nsecurity-scan:\n\techo s\n\n"
+                "validate-security:\n\techo vs\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            agg = [f for f in findings if f.get("issue") == "alias_chain_incomplete"]
+            self.assertEqual(len(agg), 1)
+            finding = agg[0]
+            self.assertEqual(finding["target"], "validate")
+            self.assertTrue(finding["present"])
+            self.assertIn("validate-security", finding["missing_alias_members"])
+            self.assertFalse(finding["needs_research"])
+            self.assertIsNotNone(finding["recommendation"])
+            # The alias-missing finding must NOT also fire for the same gap.
+            self.assertNotIn(
+                "alias_missing", {f.get("issue") for f in findings}
+            )
+
+    def test_fully_satisfied_produces_no_finding(self):
+        # Negative fixture: concrete target, alias, AND the alias chained
+        # into `validate` -> no finding from this check at all.
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "validate: validate-security\n\techo v\n\nsecurity-scan:\n\techo s\n\n"
+                "validate-security:\n\techo vs\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("alias_missing", issues)
+            self.assertNotIn("alias_chain_incomplete", issues)
+
+    def test_validate_prefixed_target_never_counts_as_concrete_trigger(self):
+        # A target whose name begins with `validate` never counts as the
+        # concrete target that triggers a category's requirement --
+        # otherwise `validate-security` would make itself required, and
+        # `validate` would trigger every category.
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "validate:\n\techo v\n\nvalidate-security:\n\techo vs\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("alias_missing", issues)
+            self.assertNotIn("alias_chain_incomplete", issues)
+
+    def test_validate_absent_flags_missing_alias_but_not_chain(self):
+        # `validate` absent entirely -> no alias-chain finding (the
+        # inherited static-target check already reports the bigger gap);
+        # the per-category missing-alias findings still apply.
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "security-scan:\n\techo s\n")
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertIn("alias_missing", issues)
+            self.assertNotIn("alias_chain_incomplete", issues)
+
+    def test_aggregate_and_inherited_chain_incomplete_coexist_with_distinct_issues(
+        self,
+    ):
+        # Two different gaps about `validate` -- the inherited
+        # `chain_incomplete` (a hook-derived member not chained) and this
+        # check's `alias_chain_incomplete` (an existing alias not chained)
+        # -- can legitimately co-occur, distinguishable by `issue`.
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "validate:\n\techo v\n\nruff:\n\techo r\n\n"
+                "security-scan:\n\techo s\n\nvalidate-security:\n\techo vs\n",
+            )
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"), _MAKEFILE_RUFF_HOOK_TEXT
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            validate_findings = [f for f in findings if f.get("target") == "validate"]
+            self.assertEqual(len(validate_findings), 2)
+            issues = {f["issue"] for f in validate_findings}
+            self.assertEqual(issues, {"chain_incomplete", "alias_chain_incomplete"})
+
+    def test_alias_map_pinned_roadmap_names(self):
+        # ROADMAP SC2 pins these three names literally; not the executor's
+        # to rename.
+        self.assertEqual(
+            makefile_checker.CATEGORY_ALIAS_MAP["security-scanner"], "validate-security"
+        )
+        self.assertEqual(
+            makefile_checker.CATEGORY_ALIAS_MAP["duplicate-code-detector"],
+            "validate-duplicate",
+        )
+        self.assertEqual(
+            makefile_checker.CATEGORY_ALIAS_MAP["dead-code-detector"], "validate-dead"
+        )
+
+
 class TestWiringViaPrerequisites(unittest.TestCase):
     def test_validate_chain_via_prerequisites(self):
         with tempfile.TemporaryDirectory() as repo:
