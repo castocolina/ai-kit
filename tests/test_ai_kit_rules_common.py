@@ -686,5 +686,199 @@ class TestCriticalityDriftGuard(unittest.TestCase):
         )
 
 
+# Appended by Phase 11 plan 01: the generalized remediation's `precommit`
+# kind, the generic cache-payload validator, the taxonomy vocabulary, and
+# the provenance-citation drift guard between the shared generic validator
+# and ai-kit-project-rules-makefile's own tooling_payload.py validator.
+
+
+class TestRemediationPrecommitKind(unittest.TestCase):
+    """Additive coverage for `STRUCTURAL_KINDS` growing to include
+    `"precommit"` (Phase 11 plan 01). Every case here must leave
+    `TestRemediation`'s existing makefile-only assertions untouched."""
+
+    def test_backcompat_report_carrying_only_sibling_kind_is_byte_identical(self):
+        report = {
+            "makefile": [
+                {
+                    "target": "x",
+                    "criticality": 3,
+                    "summary": "s",
+                    "recommendation": "r",
+                    "issue": "i",
+                },
+            ],
+        }
+        result = build_remediation(report)
+        self.assertEqual(
+            result["remediate"],
+            [
+                {
+                    "kind": "makefile",
+                    "id": "x",
+                    "criticality": 3,
+                    "summary": "s",
+                    "issue": "i",
+                    "auto_apply": True,
+                }
+            ],
+        )
+        self.assertEqual(result["blocked"], [])
+
+    def test_cross_kind_ordering_discriminates_from_insertion_order(self):
+        # Insertion order is makefile-then-precommit; criticality order is
+        # the OPPOSITE (precommit=1 before makefile=3) -- the two disagree
+        # on purpose, so a per-kind (rather than one merged, sorted) list
+        # implementation would fail this the same way it would fail
+        # `test_combined_cross_kind_criticality_ordering` above.
+        report = {
+            "makefile": [
+                {"target": "m", "criticality": 3, "summary": "s", "recommendation": "r"}
+            ],
+            "precommit": [
+                {"category": "p", "criticality": 1, "summary": "s", "recommendation": "r"}
+            ],
+        }
+        result = build_remediation(report)
+        self.assertEqual([e["kind"] for e in result["remediate"]], ["precommit", "makefile"])
+
+    def test_precommit_kind_advisory_disables_auto_apply(self):
+        report = {
+            "precommit": [
+                {
+                    "category": "precommit-parity",
+                    "criticality": 2,
+                    "summary": "s",
+                    "recommendation": "r",
+                    "advisory": True,
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(len(result["remediate"]), 1)
+        self.assertFalse(result["remediate"][0]["auto_apply"])
+        self.assertEqual(result["remediate"][0]["kind"], "precommit")
+
+    def test_precommit_kind_needs_research_goes_to_blocked(self):
+        report = {
+            "precommit": [
+                {
+                    "category": "precommit-parity",
+                    "criticality": 2,
+                    "summary": "s",
+                    "recommendation": None,
+                    "needs_research": True,
+                    "stacks": ["python"],
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(result["remediate"], [])
+        self.assertEqual(len(result["blocked"]), 1)
+        self.assertEqual(result["blocked"][0]["kind"], "precommit")
+        self.assertEqual(result["blocked"][0]["stacks"], ["python"])
+
+
+from ai_kit_rules_common import stack_cache as _shared_stack_cache
+from ai_kit_rules_common.stack_cache import validate_stack_payload
+
+
+class TestValidateStackPayloadGeneric(unittest.TestCase):
+    def test_valid_payload_for_arbitrary_key_set(self):
+        self.assertIsNone(
+            validate_stack_payload({"alpha": "tool (source: https://x)"}, ("alpha", "beta"))
+        )
+
+    def test_rejects_unknown_key(self):
+        self.assertIsNotNone(
+            validate_stack_payload({"gamma": "tool (source: https://x)"}, ("alpha", "beta"))
+        )
+
+    def test_rejects_non_string_or_empty_value(self):
+        self.assertIsNotNone(validate_stack_payload({"alpha": 123}, ("alpha",)))
+        self.assertIsNotNone(validate_stack_payload({"alpha": ""}, ("alpha",)))
+
+    def test_rejects_absent_citation(self):
+        self.assertIsNotNone(
+            validate_stack_payload({"alpha": "tool, no citation here"}, ("alpha",))
+        )
+
+    def test_rejects_empty_or_whitespace_only_citation(self):
+        self.assertIsNotNone(validate_stack_payload({"alpha": "tool (source:)"}, ("alpha",)))
+        self.assertIsNotNone(validate_stack_payload({"alpha": "tool (source: )"}, ("alpha",)))
+
+    def test_rejects_non_dict_payload(self):
+        self.assertIsNotNone(validate_stack_payload(["not", "a", "dict"], ("alpha",)))
+
+
+from ai_kit_rules_common.tool_catalog import TAXONOMY_CATEGORIES
+
+
+class TestTaxonomyVocabulary(unittest.TestCase):
+    def test_exactly_six_names_in_pinned_order(self):
+        self.assertEqual(
+            list(TAXONOMY_CATEGORIES),
+            [
+                "formatting",
+                "type-checking",
+                "linting",
+                "security",
+                "duplicate-code",
+                "dead-code",
+            ],
+        )
+
+    def test_no_duplicates(self):
+        self.assertEqual(len(TAXONOMY_CATEGORIES), len(set(TAXONOMY_CATEGORIES)))
+
+
+_MAKEFILE_SKILL_TOOLING_PAYLOAD_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "skills",
+    "ai-kit-project-rules-makefile",
+    "ai_kit_project_rules_makefile",
+    "tooling_payload.py",
+)
+
+
+class TestProvenanceCitationRegexDriftGuard(unittest.TestCase):
+    """Pins `ai_kit_rules_common.stack_cache`'s generic validator's citation
+    regex against `ai-kit-project-rules-makefile`'s own `tooling_payload.py`
+    literal (a file read via `ast`, never a runtime import of another
+    skill's package). Two skills disagreeing about what counts as a cited
+    recommendation means one of them admits an uncited tool name into a
+    cache it later reports as researched fact."""
+
+    def test_shared_citation_regex_matches_sibling_skill_literal(self):
+        with open(_MAKEFILE_SKILL_TOOLING_PAYLOAD_PATH, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read())
+        literal = None
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Name) or target.id != "_SOURCE_CITATION_RE":
+                continue
+            if isinstance(node.value, ast.Call) and node.value.args:
+                arg = node.value.args[0]
+                if isinstance(arg, ast.Constant):
+                    literal = arg.value
+        self.assertIsNotNone(
+            literal,
+            f"no _SOURCE_CITATION_RE string literal found in "
+            f"{_MAKEFILE_SKILL_TOOLING_PAYLOAD_PATH}",
+        )
+        self.assertEqual(
+            literal,
+            _shared_stack_cache._SOURCE_CITATION_RE.pattern,
+            "ai_kit_rules_common.stack_cache's citation regex drifted from "
+            "ai-kit-project-rules-makefile's tooling_payload.py literal -- "
+            "two skills disagreeing about what counts as a cited "
+            "recommendation means one of them admits an uncited tool name "
+            "into a cache it later reports as researched fact.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
