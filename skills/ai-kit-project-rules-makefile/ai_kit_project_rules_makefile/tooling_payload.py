@@ -2,11 +2,11 @@
 per `.planning/phases/09-agents-md-checker-prune-ai-kit-project-rules-agents/
 09-CONTEXT.md` D-04.
 
-This module is deliberately UNWIRED: this skill has no `SKILL.md`, no
-package `__init__.py`, and no `cli.py` yet -- Phase 10 creates those and
-imports from here. A directory under `skills/` with no `SKILL.md` is
-invisible to the installer (its skill-entry validator requires that file),
-so this creates no half-installed skill.
+Wired by Phase 10: this skill's `stack_cache.py` imports `ALL_TOOLING_KEYS`/
+`REQUIRED_STATIC_TARGETS`/`RESEARCH_CATEGORIES` from here (the single
+definition site for the tooling key schema -- see `stack_cache.py`'s own
+docstring and threat row T-10-02), and this skill's `cli.py` calls
+`validate_tooling_payload` directly from its `cache-update` subcommand.
 
 Pre-move test coverage for this validator (payload shape, unknown-key
 rejection, missing/empty `(source: ...)` citation rejection) is recoverable
