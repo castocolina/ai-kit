@@ -309,7 +309,12 @@ Plans:
   4. The renamed/updated test suite (`tests/test_ai_kit_agents_md_rules_checker.py` or its renamed equivalent) passes with no test exercising the removed Makefile-checking code paths, and `make test` is green.
   5. `/skill-judge` review of the pruned `SKILL.md` shows no remaining Critical/Important finding (or a score ≥ 96/120) with no regression against the pre-prune baseline (98/120).
 
-**Plans**: TBD
+**Plans**: 0/2 plans executed
+
+Plans:
+
+- [ ] 09-01-PLAN.md — Rename the skill/package/entrypoint/test file to `ai-kit-project-rules-agents` and repoint every live reference (D-01/D-02) with stale-bytecode cleanup (D-03), then prune `makefile_checker.py`/`stack_detect.py`/the Makefile-tooling `stack_cache.py`/the `cache-path`+`cache-update` subcommands so `check` returns `{"workflow": [...]}` only, relocating the tooling-payload validator into `ai-kit-project-rules-makefile`'s tree (D-04) and re-homing the shared remediation coverage into `tests/test_ai_kit_rules_common.py` (REQ-rules-agents-prune)
+- [ ] 09-02-PLAN.md — Prune `SKILL.md` and the README registration row to AGENTS.md-prose scope while keeping the `/agent-md-refactor` Steps A/B/C hand-off intact, run `/skill-judge` against a freshly measured pre-prune baseline with committed evidence, and formally correct Success Criterion 5's cited baseline figure (REQ-rules-agents-prune)
 
 ### Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)
 
