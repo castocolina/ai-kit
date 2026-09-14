@@ -19,7 +19,10 @@ from __future__ import annotations
 # never sets the `target` identifier key its findings would otherwise be
 # tempted to carry, so its `id` always derives from `category`; later phases
 # append their own kind to this tuple rather than forking a second loop.
-STRUCTURAL_KINDS = ("makefile", "precommit", "arch")
+# `ai-kit-project-rules-docker`'s (Phase 13) sets `target` on its
+# target-family findings only, exactly like the makefile skill's meaning
+# of that key, and never on its runbook finding.
+STRUCTURAL_KINDS = ("makefile", "precommit", "arch", "docker")
 
 
 def build_remediation(report: dict) -> dict:
