@@ -115,9 +115,10 @@ def repo_uses_docker(repo_root: str, makefile_path: str) -> bool:
     except OSError:
         root_entries = []
     for entry in root_entries:
-        if entry == "Dockerfile" or entry.startswith("Dockerfile."):
-            if os.path.isfile(os.path.join(repo_root, entry)):
-                return True
+        if (entry == "Dockerfile" or entry.startswith("Dockerfile.")) and os.path.isfile(
+            os.path.join(repo_root, entry)
+        ):
+            return True
 
     if os.path.isdir(os.path.join(repo_root, "docker")):
         return True
