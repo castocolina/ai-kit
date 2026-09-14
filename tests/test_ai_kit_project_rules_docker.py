@@ -1038,5 +1038,428 @@ class TestDependsOnSequenceReaderForms(unittest.TestCase):
         self.assertEqual(compose_parse.block_sequence(block, "volumes"), [])
 
 
+# --------------------------------------------------------------------------- #
+# Plan 13-02, Task 3 -- fills out the suite for both checks and the
+# parser, proves both checks non-vacuous (mutations applied, observed
+# failing, and reverted -- see the plan's SUMMARY for the recorded
+# results), and adds multi-file / same-named-service coverage.
+# --------------------------------------------------------------------------- #
+
+
+class TestParserStructuralEdges(unittest.TestCase):
+    """Top-level `version:`, a top-level `volumes:` mapping, blank
+    lines, comments at several indents, a `---` separator, trailing
+    whitespace, and a file with no `services:` key at all -- none of
+    which may become a service or end a block early."""
+
+    def test_top_level_version_key_is_not_a_service(self):
+        text = "version: '3.8'\nservices:\n  api:\n    image: a\n"
+        svc = dict(compose_parse.iter_services(text))
+        self.assertNotIn("version", svc)
+        self.assertEqual(sorted(svc), ["api"])
+
+    def test_top_level_volumes_mapping_is_not_a_service(self):
+        text = "services:\n  api:\n    image: a\nvolumes:\n  data:\n"
+        svc = dict(compose_parse.iter_services(text))
+        self.assertNotIn("volumes", svc)
+        self.assertNotIn("data", svc)
+
+    def test_document_separator_is_skipped_as_noise(self):
+        text = "---\nservices:\n  api:\n    image: a\n"
+        svc = dict(compose_parse.iter_services(text))
+        self.assertEqual(sorted(svc), ["api"])
+
+    def test_comment_lines_at_several_indents_do_not_end_a_block(self):
+        text = (
+            "services:\n"
+            "  # top comment\n"
+            "  api:\n"
+            "    # nested comment\n"
+            "    image: a\n"
+            "    healthcheck:\n"
+            "      # deeper comment\n"
+            "      interval: 9s\n"
+        )
+        svc = dict(compose_parse.iter_services(text))
+        self.assertEqual(sorted(svc), ["api"])
+        healthcheck_block = compose_parse.block_subblock(svc["api"], "healthcheck")
+        self.assertEqual(compose_parse.block_scalar(healthcheck_block, "interval"), "9s")
+
+    def test_blank_lines_do_not_end_a_block(self):
+        text = "services:\n\n  api:\n\n    image: a\n\n"
+        svc = dict(compose_parse.iter_services(text))
+        self.assertEqual(compose_parse.block_scalar(svc["api"], "image"), "a")
+
+    def test_trailing_whitespace_on_lines_does_not_break_parsing(self):
+        text = "services:  \n  api:  \n    image: a  \n"
+        svc = dict(compose_parse.iter_services(text))
+        self.assertEqual(compose_parse.block_scalar(svc["api"], "image"), "a")
+
+    def test_no_services_key_yields_no_services(self):
+        text = "version: '3'\nvolumes:\n  data:\n"
+        svc = dict(compose_parse.iter_services(text))
+        self.assertEqual(svc, {})
+
+
+class TestParserNestingThreeServicesMiddleOnly(unittest.TestCase):
+    """Three services where only the MIDDLE one declares a nested
+    healthcheck block -- catches both an over-greedy and an
+    under-greedy block boundary at once."""
+
+    def test_only_middle_service_has_a_healthcheck_block(self):
+        text = (
+            "services:\n"
+            "  first:\n    image: a\n"
+            "  middle:\n    image: b\n    healthcheck:\n      interval: 9s\n"
+            "  last:\n    image: c\n"
+        )
+        svc = dict(compose_parse.iter_services(text))
+        self.assertEqual(sorted(svc), ["first", "last", "middle"])
+        self.assertIsNone(compose_parse.block_subblock(svc["first"], "healthcheck"))
+        self.assertIsNone(compose_parse.block_subblock(svc["last"], "healthcheck"))
+        middle_hc = compose_parse.block_subblock(svc["middle"], "healthcheck")
+        self.assertEqual(compose_parse.block_scalar(middle_hc, "interval"), "9s")
+        self.assertEqual(compose_parse.block_scalar(svc["last"], "image"), "c")
+
+
+class TestBlockAccessorsPairedCoverage(unittest.TestCase):
+    """Each accessor's own paired coverage: a present key and an absent
+    one, quoted and bare scalars, and a mapping whose keys come back in
+    file order."""
+
+    def test_block_scalar_present_and_absent_key(self):
+        block = "image: a\n"
+        self.assertEqual(compose_parse.block_scalar(block, "image"), "a")
+        self.assertIsNone(compose_parse.block_scalar(block, "missing"))
+
+    def test_block_scalar_quoted_and_bare_forms(self):
+        block = "a: 'quoted'\nb: bare\n"
+        self.assertEqual(compose_parse.block_scalar(block, "a"), "quoted")
+        self.assertEqual(compose_parse.block_scalar(block, "b"), "bare")
+
+    def test_block_subblock_present_and_absent_key(self):
+        block = "healthcheck:\n  interval: 9s\n"
+        self.assertIsNotNone(compose_parse.block_subblock(block, "healthcheck"))
+        self.assertIsNone(compose_parse.block_subblock(block, "missing"))
+
+    def test_block_mapping_keys_returned_in_file_order(self):
+        block = (
+            "depends_on:\n"
+            "  zeta:\n    condition: service_healthy\n"
+            "  alpha:\n    condition: service_healthy\n"
+        )
+        self.assertEqual(
+            compose_parse.block_mapping_keys(block, "depends_on"), ["zeta", "alpha"]
+        )
+
+
+class TestBlockSequenceScalarItemContract(unittest.TestCase):
+    """D-D7: `block_sequence` returns SCALAR items only. A long-form
+    volume entry (`- type: bind` / `source:` / `target:`) arrives as
+    the single fragment of its own `- ` line, with its continuation
+    lines DROPPED -- never merged, never returned as items of their
+    own. Plan 13-03's volume classifier is required to treat that
+    fragment as UNREADABLE rather than as an absent bind mount; this
+    method pins the observed contract that requirement rests on."""
+
+    def test_sequence_of_mappings_entry_yields_one_fragment_and_drops_continuations(self):
+        block = "volumes:\n  - type: bind\n    source: ./src\n    target: /app/src\n"
+        items = compose_parse.block_sequence(block, "volumes")
+        self.assertEqual(items, ["type: bind"])
+
+
+class TestParserDegradationFull(unittest.TestCase):
+    """Empty, whitespace-only, truncated `services:`, binary noise, a
+    tab-indented file, and a directory in place of a compose file all
+    degrade to a list and never raise."""
+
+    def test_whitespace_only_compose_file_yields_nothing(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), "   \n\t\n  \n")
+            self.assertEqual(_depends_on_findings(repo), [])
+            self.assertEqual(
+                [f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"],
+                [],
+            )
+
+    def test_tab_indented_file_does_not_raise(self):
+        """D-D7 states tab handling as a mis-attribution LIMIT, not a
+        guarantee -- assert only that nothing raises, never that a
+        tab-indented file parses correctly or produces a specific
+        service/finding set (cycle-1 review finding 11). If the
+        implementation happens to parse it correctly, that is luck, not
+        contract."""
+        text = "services:\n\tapi:\n\t\timage: a\n"
+        try:
+            services = list(compose_parse.iter_services(text))
+        except Exception as exc:  # the assertion IS does-not-raise; catch broadly on purpose
+            self.fail(f"iter_services raised on tab-indented input: {exc!r}")
+        self.assertIsInstance(services, list)
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), text)
+            findings = _findings(repo)
+            self.assertIsInstance(findings, list)
+
+    def test_directory_in_place_of_compose_file_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            os.makedirs(os.path.join(repo, "docker-compose.yml"), exist_ok=True)
+            findings = _findings(repo)
+            self.assertIsInstance(findings, list)
+            self.assertEqual(
+                [f for f in findings if f["category"] == "docker-healthcheck-bounds"], []
+            )
+
+    def test_read_compose_text_on_a_directory_returns_empty_string(self):
+        with tempfile.TemporaryDirectory() as repo:
+            dir_path = os.path.join(repo, "adir")
+            os.makedirs(dir_path, exist_ok=True)
+            self.assertEqual(compose_parse.read_compose_text(dir_path), "")
+
+
+class TestFlowMappingStatedLimitPairedFamily(unittest.TestCase):
+    """D-D7's flow-mapping limit, both bodies (`healthcheck: {...}`,
+    `depends_on: {...}`), each paired with the containment case that
+    proves this is a stated gap and not a parser bug: a SECOND service
+    immediately below, written in block form with a real violation,
+    must still be flagged with its own name. Plus the accessor-level
+    `None`/`[]` contract."""
+
+    def test_depends_on_flow_mapping_body_unread_and_does_not_raise(self):
+        compose = (
+            "services:\n"
+            "  flowy:\n    image: c\n    depends_on: {db: {condition: service_healthy}}\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            self.assertEqual(_depends_on_findings(repo), [])
+
+    def test_depends_on_flow_mapping_does_not_swallow_the_next_service(self):
+        compose = (
+            "services:\n"
+            "  flowy:\n    image: c\n    depends_on: {db: {condition: service_healthy}}\n"
+            "  after:\n    image: d\n    depends_on:\n      - db\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = _depends_on_findings(repo)
+            self.assertTrue(all(f["service"] == "after" for f in findings))
+            self.assertGreaterEqual(len(findings), 1)
+
+    def test_block_subblock_returns_none_for_flow_mapping_healthcheck_key(self):
+        block = "healthcheck: {interval: 30s}\n"
+        self.assertIsNone(compose_parse.block_subblock(block, "healthcheck"))
+
+    def test_block_mapping_keys_returns_empty_for_flow_mapping_depends_on_key(self):
+        block = "depends_on: {db: {condition: service_healthy}}\n"
+        self.assertEqual(compose_parse.block_mapping_keys(block, "depends_on"), [])
+
+
+class TestHealthcheckBoundsPerKeyPaired(unittest.TestCase):
+    """Driven from `healthcheck._BOUNDS` itself so the test cannot fall
+    out of step with the table: for EACH bound key, one service just
+    over its bound and one exactly at it."""
+
+    def test_each_bound_key_over_and_at_boundary(self):
+        defaults = {"interval": "5s", "timeout": "2s", "start_period": "10s"}
+        for key, bound in healthcheck._BOUNDS:
+            with self.subTest(key=key):
+                over = dict(defaults)
+                over[key] = f"{bound + 1}s"
+                at = dict(defaults)
+                at[key] = f"{bound}s"
+
+                compose_over = (
+                    "services:\n  svc:\n    image: demo\n" + _healthcheck_block(**over)
+                )
+                with tempfile.TemporaryDirectory() as repo:
+                    _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+                    _write(os.path.join(repo, "docker-compose.yml"), compose_over)
+                    findings = [
+                        f
+                        for f in _findings(repo)
+                        if f["category"] == "docker-healthcheck-bounds"
+                    ]
+                    self.assertEqual([f["key"] for f in findings], [key])
+
+                compose_at = (
+                    "services:\n  svc:\n    image: demo\n" + _healthcheck_block(**at)
+                )
+                with tempfile.TemporaryDirectory() as repo:
+                    _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+                    _write(os.path.join(repo, "docker-compose.yml"), compose_at)
+                    findings = [
+                        f
+                        for f in _findings(repo)
+                        if f["category"] == "docker-healthcheck-bounds"
+                    ]
+                    self.assertEqual(findings, [])
+
+
+class TestHealthcheckDeclaredValuesOnlyScopeRegression(unittest.TestCase):
+    """D-D9's declared-values-only prohibition is a deliberate scope
+    limit -- Compose's own 30s `interval` default exceeds the 5s bound,
+    so tightening this check to flag ABSENT keys is a reportable
+    proposal, not an executor's fix. Each case here must continue to
+    produce nothing; a later 'improvement' failing one of these is the
+    correct signal to report rather than to proceed."""
+
+    def test_only_test_key_declared_yields_nothing(self):
+        compose = (
+            "services:\n  svc:\n    image: demo\n    healthcheck:\n      test: [CMD, true]\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            self.assertEqual(
+                [f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"],
+                [],
+            )
+
+    def test_only_timeout_declared_yields_nothing(self):
+        compose = (
+            "services:\n  svc:\n    image: demo\n"
+            "    healthcheck:\n      test: [CMD, true]\n      timeout: 1s\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            self.assertEqual(
+                [f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"],
+                [],
+            )
+
+    def test_disable_true_yields_nothing_even_with_out_of_bounds_values(self):
+        compose = (
+            "services:\n  svc:\n    image: demo\n"
+            "    healthcheck:\n      disable: true\n      interval: 999s\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            self.assertEqual(
+                [f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"],
+                [],
+            )
+
+    def test_no_healthcheck_block_at_all_yields_nothing(self):
+        compose = "services:\n  svc:\n    image: demo\n"
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            self.assertEqual(
+                [f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"],
+                [],
+            )
+
+
+class TestHealthcheckUnreadableReasonField(unittest.TestCase):
+    """The unreadable-value advisory, paired with a readable one, plus
+    an assertion that its `reason` field distinguishes the case."""
+
+    def test_unreadable_value_finding_carries_reason_readable_pair_does_not_fire(self):
+        readable = "services:\n  svc:\n    image: demo\n" + _healthcheck_block(timeout="2s")
+        unreadable = (
+            "services:\n  svc:\n    image: demo\n" + _healthcheck_block(timeout="banana")
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), readable)
+            self.assertEqual(
+                [f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"],
+                [],
+            )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), unreadable)
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["issue"], "docker_healthcheck_unreadable")
+            self.assertIn("reason", findings[0])
+            self.assertEqual(findings[0]["reason"], "unreadable_duration")
+
+
+class TestMultiComposeFileCoverage(unittest.TestCase):
+    """A repo with BOTH `docker-compose.yml` and
+    `docker-compose.override.yml` where each declares a differently-
+    named offending service produces findings for both, each naming
+    its own file. A one-file implementation passes every other test in
+    this plan."""
+
+    def test_base_and_override_files_both_contribute_findings(self):
+        base = "services:\n  svc_a:\n    image: a\n" + _healthcheck_block(interval="30s")
+        override = "services:\n  svc_b:\n    image: b\n" + _healthcheck_block(interval="30s")
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), base)
+            _write(os.path.join(repo, "docker-compose.override.yml"), override)
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(sorted(f["service"] for f in findings), ["svc_a", "svc_b"])
+            by_service = {f["service"]: f["compose_file"] for f in findings}
+            self.assertEqual(by_service["svc_a"], "docker-compose.yml")
+            self.assertEqual(by_service["svc_b"], "docker-compose.override.yml")
+
+    def test_same_named_service_in_two_files_both_findings_differ_by_file(self):
+        text_a = "services:\n  svc:\n    image: a\n" + _healthcheck_block(interval="30s")
+        text_b = "services:\n  svc:\n    image: b\n" + _healthcheck_block(timeout="30s")
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), text_a)
+            _write(os.path.join(repo, "docker-compose.override.yml"), text_b)
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(len(findings), 2)
+            compose_files = sorted(f["compose_file"] for f in findings)
+            self.assertEqual(
+                compose_files, ["docker-compose.override.yml", "docker-compose.yml"]
+            )
+
+
+class TestDependsOnMultiFileCoverage(unittest.TestCase):
+    def test_depends_on_findings_from_two_files_each_name_their_own_file(self):
+        text_a = "services:\n  svc:\n    image: a\n    depends_on:\n      - db\n"
+        text_b = "services:\n  svc:\n    image: b\n    depends_on:\n      - cache\n"
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), text_a)
+            _write(os.path.join(repo, "docker-compose.override.yml"), text_b)
+            findings = _depends_on_findings(repo)
+            self.assertEqual(len(findings), 2)
+            compose_files = sorted(f["compose_file"] for f in findings)
+            self.assertEqual(
+                compose_files, ["docker-compose.override.yml", "docker-compose.yml"]
+            )
+
+
+class TestDependsOnConditionAccessorContract(unittest.TestCase):
+    """Per-dependency condition reading composes `block_subblock` TWICE
+    -- once for `depends_on:` itself, once for the dependency name --
+    exactly as `depends_on.py` does."""
+
+    def test_condition_scalar_reads_through_nested_subblock_calls(self):
+        service_block = "image: a\ndepends_on:\n  db:\n    condition: service_healthy\n"
+        depends_on_block = compose_parse.block_subblock(service_block, "depends_on")
+        entry_block = compose_parse.block_subblock(depends_on_block, "db")
+        self.assertEqual(
+            compose_parse.block_scalar(entry_block, "condition"), "service_healthy"
+        )
+
+    def test_absent_condition_key_yields_empty_subblock_and_none_scalar(self):
+        service_block = "image: a\ndepends_on:\n  db:\n"
+        depends_on_block = compose_parse.block_subblock(service_block, "depends_on")
+        entry_block = compose_parse.block_subblock(depends_on_block, "db")
+        self.assertEqual(entry_block, "")
+        self.assertIsNone(compose_parse.block_scalar(entry_block, "condition"))
+
+
 if __name__ == "__main__":
     unittest.main()

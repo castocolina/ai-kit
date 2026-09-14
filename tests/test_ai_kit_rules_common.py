@@ -1555,5 +1555,92 @@ class TestMakefileCategoryAliasDriftGuard(unittest.TestCase):
             _tc.MAKEFILE_CATEGORY_ALIAS["formatting"] = original
 
 
+from ai_kit_rules_common import yaml_text
+from ai_kit_rules_common.precommit_parse import _strip_yaml_quotes as _precommit_strip_yaml_quotes
+
+
+class TestYamlTextStripQuotes(unittest.TestCase):
+    """D-D8's `strip_yaml_quotes` -- the exact rule
+    `precommit_parse._strip_yaml_quotes` already implements."""
+
+    def test_bare_value_unchanged(self):
+        self.assertEqual(yaml_text.strip_yaml_quotes("bare"), "bare")
+
+    def test_single_quoted_value_stripped(self):
+        self.assertEqual(yaml_text.strip_yaml_quotes("'quoted'"), "quoted")
+
+    def test_double_quoted_value_stripped(self):
+        self.assertEqual(yaml_text.strip_yaml_quotes('"quoted"'), "quoted")
+
+    def test_mismatched_quotes_unchanged(self):
+        self.assertEqual(yaml_text.strip_yaml_quotes("'mismatched\""), "'mismatched\"")
+
+    def test_one_character_value_unchanged(self):
+        self.assertEqual(yaml_text.strip_yaml_quotes("'"), "'")
+
+    def test_empty_value_unchanged(self):
+        self.assertEqual(yaml_text.strip_yaml_quotes(""), "")
+
+
+class TestYamlTextIndentAndStructural(unittest.TestCase):
+    """D-D8's `line_indent`/`is_structural_line` -- a raw whitespace-
+    character count, never a tab-to-column conversion, and blank/
+    comment classification at both indent 0 and depth."""
+
+    def test_zero_indent(self):
+        self.assertEqual(yaml_text.line_indent("services:"), 0)
+
+    def test_nested_indent(self):
+        self.assertEqual(yaml_text.line_indent("    image: a"), 4)
+
+    def test_tab_led_line_counts_the_tab_as_one_character(self):
+        self.assertEqual(yaml_text.line_indent("\timage: a"), 1)
+
+    def test_blank_line_is_not_structural(self):
+        self.assertFalse(yaml_text.is_structural_line("   "))
+
+    def test_comment_at_indent_zero_is_not_structural(self):
+        self.assertFalse(yaml_text.is_structural_line("# comment"))
+
+    def test_comment_at_depth_is_not_structural(self):
+        self.assertFalse(yaml_text.is_structural_line("    # nested comment"))
+
+    def test_real_content_is_structural(self):
+        self.assertTrue(yaml_text.is_structural_line("  image: a"))
+
+
+class TestYamlTextQuoteStripDriftGuard(unittest.TestCase):
+    """`yaml_text.strip_yaml_quotes` and `precommit_parse.
+    _strip_yaml_quotes` implement the SAME rule by deliberate choice --
+    Phase 11 closed `precommit_parse.py`, so it is not repointed at the
+    new shared module here; `criticality.py`'s docstring already
+    records this exact arrangement for `rules.py`. This guard, over a
+    branch-covering input set, is what keeps the two implementations
+    from silently disagreeing."""
+
+    _INPUTS = (
+        "bare",
+        "'single'",
+        '"double"',
+        "'mismatched\"",
+        "\"mismatched'",
+        "'",
+        '"',
+        "",
+        "a",
+        "''",
+        '""',
+        "'unterminated",
+    )
+
+    def test_both_implementations_agree_on_every_input(self):
+        for value in self._INPUTS:
+            with self.subTest(value=value):
+                self.assertEqual(
+                    yaml_text.strip_yaml_quotes(value),
+                    _precommit_strip_yaml_quotes(value),
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
