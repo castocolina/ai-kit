@@ -111,4 +111,37 @@ git diff --quiet ec55c016ab277c10fef7ed0893670a10a9db32b6 -- skills/ai-kit-proje
 
 ## Naming-analyzer verdict
 
-(Recorded by Task 3 of this plan, in the section below, once run.)
+NAMING_VERDICT: confirmed -- "ai-kit-project-rules-makefile" is kept as-is, no rename applied.
+
+`/naming-analyzer` was run against the skill directory name `ai-kit-project-rules-makefile`, as
+the project's established skill-authoring pipeline step (scaffold, then judge, then name). The
+analysis, applying the skill's own decision framework (vagueness, misleading-name, abbreviation,
+convention, and length checks) to a package/directory name rather than a variable:
+
+- **Not vague**: "makefile" precisely names the audited artifact -- no generic placeholder
+  (`data`, `stuff`, `checker2`) anywhere in the name.
+- **Not misleading**: the name promises a Makefile-domain checker and the skill does exactly
+  that (target shape, alias chain, recipe length, Docker build-before-up, shellcheck threshold)
+  and nothing else -- it does not audit AGENTS.md prose, pre-commit parity, or CI config, which
+  live in sibling skills.
+- **Not mis-abbreviated**: "makefile" is spelled out in full, matching the sibling `agents`
+  segment's own full-word convention (neither uses an abbreviation like `mk` or `agt`).
+- **Family-convention match**: exact match to the `ai-kit-project-rules-<domain>` pattern all
+  five sibling checkers and the orchestrator (`ai-kit-project-rules-all`) already use --
+  consistency across a family carries more value here than a marginally shorter alternative
+  would.
+- **Length**: 30 characters, comfortably under the 64-character frontmatter `name:` limit
+  `skill-judge`'s own D4 dimension checks, and in the same range as the sibling
+  `ai-kit-project-rules-agents` (26 characters).
+
+**Alternative considered and rejected during this analysis**: `ai-kit-project-rules-make`
+(dropping the trailing `file`) is three characters shorter but more ambiguous -- "make" could
+be read as covering the `make` command's execution semantics generally, not specifically the
+`Makefile` artifact's target shape, which is this skill's actual and sole scope. "makefile" is
+the more precise noun for what is being audited, so the shorter alternative is not proposed.
+
+Per this task's instruction, the name is NOT this task's to change even where the verdict is
+"confirmed": `ai-kit-project-rules-makefile` is a user-decided, milestone-wide scheme that
+ROADMAP Phases 10-15 and Phase 15's own Success Criterion 1 name literally. Since the verdict is
+a confirmation rather than a proposed alternative, there is no five-phase blast radius to name
+here -- the confirmation simply closes this pipeline step with no open question for the user.
