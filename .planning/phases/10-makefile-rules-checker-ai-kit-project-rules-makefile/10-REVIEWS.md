@@ -1,7 +1,7 @@
 ---
 phase: 10
 reviewers: [opencode]
-reviewed_at: 2026-09-14T04:54:59Z
+reviewed_at: 2026-09-14T05:24:51Z
 plans_reviewed: [10-01-PLAN.md, 10-02-PLAN.md, 10-03-PLAN.md]
 models:
   opencode: "xai/grok-4.6 (reasoning=high)"
@@ -19,41 +19,40 @@ _None recorded._
 
 ## OpenCode Review
 
-I'll verify each plan against the live repo rather than the plan text, starting with the recovery commit, shared package, and Phase 9 prune state.
-Phase 9 landed: `makefile_checker.py` is gone and `tooling_payload.py` sits unwired. Next I’ll check the recovery commit, sibling CLI, and the claims the plans treat as load-bearing.
-Recovery commit and prune both resolve. Next I’ll inspect the recovered checker, test roster, gate surfaces, and a few claims that look load-bearing.
+I'll verify each plan against the live repo and the prior review, then write a section per plan id.
+The shared modules and payload validator are in place; next I’ll check Phase 9’s prune, the recovery commit, and the sibling skill’s real wiring.
+Phase 9 is landed and the recovery commit exists. I’ll read the recovered checker, sibling wiring, and prior review next.
+Prior HIGH items look addressed in the plans; I’ll now check remaining source claims and hunt for new gaps.
+Checking one more load-bearing fixture interaction and the recovered `stack_cache` vs the schema-single-source rule.
 ## 10-01
 
 ### Summary
 
-A re-home, not a rewrite: recover `makefile_checker.py` / `stack_detect.py` / skill-local `stack_cache.py` and the 15 deleted test classes from `9d672b9`, split parsers into `skills/_shared/ai_kit_rules_common/`, and stand up a `check`/`remediate`/`cache-update` skill that owns the `"makefile"` key Phase 9 dropped. The recovery commit, prune parent, unwired `tooling_payload.py`, and sibling import/CLI patterns all match the tree. The one ownership trap the plan names is real: recovered `check_makefile_shape` still appends `check_precommit_prepush_split`. Dropping that caller while still moving the function is the right Phase 11 boundary.
+A re-home, not a rewrite: recover `makefile_checker.py` / `stack_detect.py` / the skill-local cache binding and the 15 deleted test classes from `9d672b9`, split parsers into `skills/_shared/ai_kit_rules_common/`, and stand up a `check`/`remediate`/`cache-update` skill that owns the `"makefile"` key Phase 9 dropped. The recovery commit, prune parent, unwired `tooling_payload.py`, and sibling import/CLI patterns all match the tree. Round 1’s Task 2 stub-test contradiction is resolved in this revision (splitter → shared suite, ordering stub → skill suite, 10-02 rewrites that half in place).
 
 ### Strengths
 
-- Precondition is live-checkable. `makefile_checker.py` is absent from the agents package; `tooling_payload.py` exists and still says it is UNWIRED (`tooling_payload.py:5-9`); `9d672b9` and prune `e56316e` both resolve. Re-deriving the checker from the spec would reopen the gap Phase 9 just created.
-- Recovery paths are post-rename, as claimed. `git show 9d672b9:.../makefile_checker.py` is the 418-line file whose last act is `split_finding = check_precommit_prepush_split(...)` then `findings.append`. ROADMAP SC1 lists three inherited checks; the design spec assigns the fourth to the pre-commit skill (`docs/superpowers/specs/2026-09-12-ai-kit-rules-skill-family-design.md:125-127`). `NO-PRECOMMIT-STAGE-FINDING-OK` uses a slow hook with no `stages:` — the exact input the moved splitter fires on (`SLOW_HOOK_KEYWORDS` includes `"unittest"`).
-- Shared-package split matches D-01/D-02/D-05 and the import convention. Sibling `__init__.py:6-26` is the realpath → skills root → named `ImportError` → `sys.path.append` pattern. `build_remediation` already reads `report.get("makefile", [])` (`remediation.py:52-74`). `cache_path` raises on `../escape` before join (`stack_cache.py:24-46`); recovered `cache_update` already catches that `ValueError`.
-- Finding shape the tracer asks for is what the recovered checker actually emits: missing static targets with `present is False`, `target: "test-unit-alias"` for the pairing check, and one finding per `RESEARCH_CATEGORIES` entry (`tooling_payload.py:43-49`). The tracer fixture’s `ruff` hook/target does not match any `CATEGORY_KEYWORDS` substring, so all five category findings fire.
-- Test roster is exact. Recovered `tests/test_ai_kit_project_rules_agents.py` has 20 classes; Phase 9’s SUMMARY deleted 15; the 15 names in Task 2 match. `TestWiredCheckWordBoundary` really does split: two methods go through `check_makefile_shape` (chain membership), one calls `makefile_checker._recipe_mentions_target` (the helper to promote). `TestStackCache` in `tests/test_ai_kit_rules_common.py:170-276` already covers the generic engine, so the “keep binding, drop engine” instruction is load-bearing.
-- `CRITICALITY_*` literals in `rules.py:26-28` are 1/2/3. Drift guard via `ast` (not a runtime import of the sibling package) matches `.planning/intel/constraints.md`. `min_confidence = 80` in `pyproject.toml:87` really will not flag an unused shared function (vulture reports those at 60).
-- Installer boundary is real: `tools/setup.py:586` requires `SKILL.md`. Gate surfaces match the cited lines (`Makefile:46,70`, `.pre-commit-config.yaml:21,50,55`, `pyproject.toml:88,94`). T-10-01 through T-10-05 map to those mechanisms.
+- Precondition is live-checkable. `makefile_checker.py` is absent from the agents package; `tooling_payload.py` exists and still says it is UNWIRED (`tooling_payload.py:5-9`); `9d672b9` and prune `e56316e` both resolve.
+- Recovery paths are post-rename. Recovered `check_makefile_shape` still ends by appending `check_precommit_prepush_split`. ROADMAP SC1 lists three inherited checks; the design spec assigns the fourth to the pre-commit skill (`docs/superpowers/specs/2026-09-12-ai-kit-rules-skill-family-design.md:125-127`). `NO-PRECOMMIT-STAGE-FINDING-OK` uses a slow hook with no `stages:` — `SLOW_HOOK_KEYWORDS` includes `"unittest"`.
+- Shared-package split matches D-01/D-02/D-05. Sibling `__init__.py:6-26` is realpath → skills root → named `ImportError` → `sys.path.append`. `build_remediation` already reads `report.get("makefile", [])` (`remediation.py:52-74`). `cache_path` raises on `../escape` before join (`stack_cache.py:35-46`); recovered `cache_update` already catches that `ValueError`.
+- Tracer fixture matches recovered emission: missing statics with `present is False`, `target: "test-unit-alias"` for the pairing check, five `RESEARCH_CATEGORIES` findings (`tooling_payload.py:43-49`). The fixture’s `ruff` hook/target matches no `CATEGORY_KEYWORDS` substring.
+- Test roster is exact. Recovered suite has 20 classes; these 15 are the Makefile-domain set. `TestWiredCheckWordBoundary` really splits: two methods go through `check_makefile_shape`, one calls `_recipe_mentions_target`. `TestStackCache` in `tests/test_ai_kit_rules_common.py:170-276` already covers the generic engine.
+- `CRITICALITY_*` in `rules.py:26-28` are 1/2/3. `min_confidence = 80` (`pyproject.toml:87`) will not flag an unused shared function. Installer requires `SKILL.md` (`tools/setup.py:586`). Gate surfaces match (`Makefile:46,70`, `.pre-commit-config.yaml:21,50,55`, `pyproject.toml:88,94`).
 
 ### Concerns
 
-- **MEDIUM** — Task 2(a) and 2(b) contradict on the ordering-stub half of `TestValidateOrderAndPrecommitPrepushSplit`. (a) says leave it out of this commit (10-02 will replace the stub). (b) says port `test_check_validate_order_never_adds_a_finding` into the skill suite. Follow (b): the recovered method asserts `check_validate_order(...) is None` for both `True`/`False`, which is the post-Task-1 behavior. 10-02 then rewrites those tests.
-- **LOW** — The Task 1 tracer never fires `chain_incomplete`. The fixture lists `ruff` as a `validate` prerequisite, and recovered wiring treats a Make prerequisite as chained. Coverage depends on re-homed `TestValidateChainAndAlias` / `TestWiringViaPrerequisites` / `TestWiredCheckWordBoundary`. If Task 2 is deferred or split, SC1’s second inherited check has no end-to-end proof.
-- **LOW** — Must-haves say a `sys.path` **insert**; sibling `__init__.py:25-26` **appends**. Copy the sibling. Insert vs append only matters if something else already put a different `ai_kit_rules_common` on `sys.path`.
-- **LOW** — “Sibling class’s five checks, retargeted” lists Makefile / ruff+py-compile / unittest / pyright / vulture. The sibling’s fifth method is `test_validate_covers_every_precommit_hook` (`tests/test_ai_kit_project_rules_agents.py:394-425`), a this-repo hook-parity check that is Phase 11’s job. Do not copy that method.
+- **MEDIUM** — Recovered skill-local `stack_cache.py` is **not** a verbatim copy target. At `9d672b9` it already wraps the shared engine **and** still declares `REQUIRED_STATIC_TARGETS` / `RESEARCH_CATEGORIES` / `ALL_TOOLING_KEYS` as tuple literals (recovered `stack_cache.py:19-45`). Task 1(a) says copy recovered sources verbatim; Task 1(b) and `SCHEMA-SINGLE-SOURCE-OK` forbid those literals. An executor who `git show`s that blob into the new tree fails the schema criterion. The recovered file is a wrapper to imitate (namespace `project-rules-makefile`, re-export from `tooling_payload.py`), not a blob to paste.
+- **LOW** — Task 1 tracer still never fires `chain_incomplete` (fixture lists `ruff` as a `validate` prerequisite; recovered `_wired` treats a Make prerequisite as chained). Coverage depends on re-homed `TestValidateChainAndAlias` / `TestWiringViaPrerequisites`. Unresolved from round 1 (`L44@2cb6b3a`); structurally OK because Task 2 is not optional.
+- **LOW** — Must-haves still say a `sys.path` **insert**; sibling `__init__.py:25-26` **appends**. Task 1(b) already says copy the sibling. Unresolved from round 1 (`L45@2cb6b3a`).
 
 ### Suggestions
 
-- In the SUMMARY, resolve the stub-test contradiction explicitly: skill suite in 10-01, rewritten in 10-02.
+- In the SUMMARY, state explicitly that recovered `stack_cache.py` was **adapted** (schema stripped, namespace renamed), not copied. Record `project-rules-makefile` as the namespace string.
 - For the three cache classes, keep only namespace/wrapper/stale-through-checker cases. `TestCachePathValidation.test_invalid_identifiers_raise` is already `TestStackCache.test_invalid_stack_identifier_raises`.
-- Namespace `project-rules-makefile` is a new choice. Recovered binding used `agents-md-rules-checker`; `default_cache_root`’s docstring still examples `"makefile-rules-checker"`. Record the string so Phase 11 does not invent a third.
 
 ### Risk Assessment
 
-**LOW.** Costly extraction, but the recovery blob, split lines, and “home but no caller” rule are grounded in source. Main execution risk is the Task 2 stub-test contradiction, not the production split.
+**LOW.** Costly extraction, but the recovery blob, split lines, and “home but no caller” rule are grounded. Round 1’s stub-test contradiction is gone. Main remaining execution trap is pasting the recovered cache-binding file verbatim.
 
 ---
 
@@ -61,37 +60,32 @@ A re-home, not a rewrite: recover `makefile_checker.py` / `stack_detect.py` / sk
 
 ### Summary
 
-Adds the six new checks as paired-fixture TDD on the checker 10-01 re-homed, plus one additive `auto_apply` change in shared `build_remediation`. SC2–SC5, the `category`-vs-identifier trap, alias/chain double-report rule, ordered-prereq reader, and “do not silence this repo’s Makefile” note are all right. The Task 3 CLI criterion `ADVISORY-NONBLOCKING-OK` will fail as written: its fixture produces no non-advisory makefile finding with a `recommendation`, so `any(auto_apply is True)` is false.
+Adds the six new checks as paired-fixture TDD on the checker 10-01 re-homes, plus two additive edits to shared `build_remediation` (advisory → `auto_apply` off; carry `issue` forward). Round 1’s HIGH (`ADVISORY-NONBLOCKING-OK` unsatisfiable) and the docker/catch-all/walk-pruning MEDIUMs are addressed in this revision with pinned regexes and a third hook id. Two new matching gaps remain: the advisory proving fixture depends on classifying `unittest` as slower than `ruff`, which the spec’s concrete name list does not include; and a token-boundary `build` check will miss `docker compose up --build`.
 
 ### Strengths
 
-- Annotation-key note is exact. `build_remediation` does `identifier = finding.get("target", finding.get("category"))` (`remediation.py:53`). A new finding that stuffed the tooling category into `category` while also setting `target` would still identify as the target, but a category-only finding would steal the identifier. Inherited tooling findings are the ones keyed by `category` (`remediation.py:20-21`, `test_blocked_preserves_stacks` at `tests/test_ai_kit_rules_common.py:376-393`).
-- Alias family reuses `CATEGORY_KEYWORDS` and the recovered `_wired` rule (recipe token-boundary **or** Make prerequisite). Excluding names that start with `validate` is required: otherwise `validate-security` contains `"security"` and requires itself. Roadmap-pinned names `validate-security` / `validate-duplicate` / `validate-dead` match the design spec (`...design.md:91-96`).
-- Help/fail cannot be detected from `parse_makefile_targets`. `_TARGET_HEADER_RE` is `^(?!\.)([A-Za-z0-9_.-]+)\s*:(?!=)` — `.DEFAULT_GOAL` is dropped by `(?!\.)`, `%:` is not in the character class. Own patterns against raw text are mandatory.
-- Recipe-cap quadratic warning is real: recovered `parse_makefile_recipe` re-reads the file per target. Not changing that shared signature is the right Phase 11/14 constraint.
-- Advisory path is the only place a suggestion must survive `remediate`. Today the makefile branch hard-codes `"auto_apply": True` (`remediation.py:55-63` and the docstring at 22-24). `test_present_but_recommended_structural_finding_in_remediate` (`tests/test_ai_kit_rules_common.py:356-374`) pins that. Deriving `auto_apply` from absence of an advisory flag is the minimum additive change. Slowest-tier-first matching matches the spec’s substring hazard (`ruff` vs slower names that contain fast tokens).
-- Shellcheck CI half stated as unconfirmed matches PROJECT.md’s certainty rule and the spec (`...design.md:109-113`). Not stubbing a pass is correct.
-- This repo’s Makefile has neither `.DEFAULT_GOAL` nor `%:` (`Makefile:45-70` is a normal `test-unit` recipe). Treating findings against it as true positives, and not editing it, prevents the checker from being tested against a silenced subject.
+- Round 1 HIGH is actually fixed. `remediation.py:52-64` routes a makefile finding to `remediate` only when `recommendation is not None`. Recovered checker sets that only for a missing target whose name is also a hook id. The revised fixture’s `extra` hook with no `extra:` target is that shape; `[e['id'] for e in auto] == ['extra']` names it. `.DEFAULT_GOAL := help` keeps Task 2’s reachability check silent; both chainable members are wired so the inherited chain check does not suppress the advisory.
+- Annotation-key note is exact. `build_remediation` does `finding.get("target", finding.get("category"))` (`remediation.py:53`). Excluding names that start with `validate` is required: otherwise `validate-security` contains `"security"` and requires itself. Pinned aliases `validate-security` / `validate-duplicate` / `validate-dead` match the spec (`...design.md:91-96`).
+- Help/fail cannot be detected from `parse_makefile_targets`. `_TARGET_HEADER_RE` is `^(?!\.)([A-Za-z0-9_.-]+)\s*:(?!=)` — `.DEFAULT_GOAL` is dropped by `(?!\.)`, `%:` is not in the character class. Stemless catch-all `^%[ \t]*:(?!=)` is the right narrowing: a suffix rule is not a help path.
+- Docker pair is now pinned and matches the Phase 13 roster: every spec name carries the `docker-` prefix (`...design.md:106-108`). `docker-events-up` matches; prefix-less `events-up` does not.
+- `WALK-PRUNES-DOTDIRS-OK` is the negative fixture `WALK-BOUNDED-OK` could not be. Advisory `auto_apply` derived in the shared builder, not only in the checker (`remediation.py:62` is unconditionally `True` today). `id` kept as `validate` with `issue` as discriminator is the additive option that does not break `test_present_but_recommended_structural_finding_in_remediate` (`tests/test_ai_kit_rules_common.py:356-374`).
+- This repo’s Makefile has neither `.DEFAULT_GOAL` nor `%:`, and it defines `format` / `security-scanner` / `duplicate-code` (`Makefile:103,109,116`) with no `validate-*` aliases. Treating findings against it as true positives is correct.
 
 ### Concerns
 
-- **HIGH** — `ADVISORY-NONBLOCKING-OK` is unsatisfiable on its own fixture. The Makefile defines `help`/`unittest`/`ruff`/`validate: unittest ruff`, with matching hook ids. Recovered checker then: missing static targets have no stack markers → `needs_research True`, `recommendation None` → **blocked**; both hook ids exist as targets → no hook-gap recommendation; categories likewise blocked; help/recipe/docker/shellcheck silent; advisory is the only `remediate` entry, with `auto_apply False`. `assert any(e['auto_apply'] is True for e in r['remediate'])` fails. Fix: add one finding that still auto-applies, e.g. a hook id with no Makefile target (`id: extra` and no `extra:` target), or a 4-line non-help recipe.
-- **MEDIUM** — Docker shape rule disagrees with itself. Action: “start with the docker prefix and end with the respective verb” (covers `docker-up`, not `events-up`). Same paragraph: Phase 13’s family includes `events-up`. Spec says `docker-up`-shaped / `docker-build`-shaped (`...design.md:106-108`). Pick one pattern and write it in the SUMMARY; Phase 13 will copy it.
-- **MEDIUM** — Catch-all detection that is only “`%` at start of line” treats `%.o: %.c` as a help path. SC3 wants a catch-all `%:` so unknown targets print something. A suffix rule is not that. Require `%:` with no stem (optional empty prereqs), not any `%` pattern rule.
-- **MEDIUM** — `WALK-BOUNDED-OK` only bounds runtime. The fixture has 60 visible `dN/s.sh` files (already ≥5) plus `ignored.sh` under `.hidden`. Pruning the dot-dir cannot change the finding. Add a 4-visible-scripts + scripts-only-under `.git`/`node_modules` fixture that must **not** flag.
-- **LOW** — Alias-unchained and inherited `chain_incomplete` can both key `target: "validate"`. `build_remediation` then emits two `remediate` rows with `id: "validate"`. Distinct `issue` values keep `check` honest; `remediate` consumers that key on `id` will collide. Either qualify the remediate id (`validate:alias_unchained`) or document the collision.
-- **LOW** — Exempting “the target named by `.DEFAULT_GOAL`” from the recipe cap is broader than the spec’s “help/fail-printing target”. A repo with `.DEFAULT_GOAL := test` and a 6-line `test` recipe would be exempt. Prefer literal `help` + catch-all body; treat DEFAULT_GOAL as exempt only when it names `help`.
+- **MEDIUM** — `ADVISORY-NONBLOCKING-OK` still depends on a classification the plan does not pin. The fixture inverts `validate: unittest ruff`. Spec concrete names (`...design.md:308-311`) list `ruff` in the fast-linter tier and never mention `unittest`. Action text says “test suites last” but does not name `unittest`/`pytest` as keywords. A name matching nothing is skipped and cannot form an inversion — so a spec-literal table leaves `unittest` untiered, emits no advisory, and the criterion fails the same way round 1’s fixture did. Pin `unittest`/`pytest`/`test` in the slowest tier and `ruff` in the fast-linter tier in the plan (and SUMMARY).
+- **MEDIUM** — Inline-build satisfaction via a token-boundary `build` miss the common Compose flag. Recovered `_recipe_mentions_target` requires the character before the match to be neither `-` nor `_` nor alnum. In `docker compose up --build`, the character before `build` is `-`, so the lookbehind fails. Spec wording is “or an inline `build` invocation” (`...design.md:107`). A `docker-up` recipe that only has `--build` and no `docker-build` prerequisite will be flagged. Treat `--build` as a standalone build token, or document that only a Make prerequisite / `$(MAKE) docker-build` counts.
+- **LOW** — Catch-all recipe-cap exemption is vacuously true under the planned loop. `parse_makefile_targets` never returns `%:`, so “for each present target” never sees the catch-all body. A 6-line `%:` fixture produces no finding whether or not the exempt set includes it. Literal `help` and the DEFAULT_GOAL-named target are the only testable exemptions. Unresolved DEFAULT_GOAL breadth (`L83@2cb6b3a`) still stands.
 
 ### Suggestions
 
-- Repair `ADVISORY-NONBLOCKING-OK` before execution; it is the SC5 non-blocking proof.
-- Pin the two unpinned aliases in code and SUMMARY (`formatter` → `validate-format`, `code-smell-detector` → `validate-lint` is the short-name convention the pinned three already use).
-- For docker, record the regex itself in the SUMMARY (e.g. `(?i)^docker(-[a-z0-9]+)*-up$` / `-build$`) so Phase 13 does not guess.
-- Keep `check_validate_order`’s `chain_incomplete_found` argument load-bearing, as written; otherwise inverted-and-incomplete `validate` lists get noisy advisories.
+- Write the speed-tier table in the plan with the proving fixture’s names in it (`unittest` last, `ruff` second), not only the spec’s rust/go/python examples.
+- For docker inline-build, accept `--build` as a token, or drop “standalone build token” and require a build-shaped Make prerequisite only (which is what ROADMAP SC5 actually states).
+- 10-01’s `test_check_validate_order_never_adds_a_finding` calls `check_validate_order("ignored", False)` and will still pass after the stub is replaced (no Makefile → empty prereqs → no inversion). Rewrite it against a real inverted fixture so it does not go vacuous.
 
 ### Risk Assessment
 
-**MEDIUM.** Checks and paired-fixture discipline are sound; the shared `auto_apply` change is correctly additive. The Task 3 CLI assertion will fail without a fixture fix, and the docker/catch-all matching rules are under-specified for later phases.
+**MEDIUM.** Paired-fixture discipline and the shared-builder edits are sound; round 1’s blocking fixture bug is gone. Residual execution risk is the advisory criterion silently failing if `unittest` is not a slow-tier keyword, and a `--build` false positive Phase 13 will inherit.
 
 ---
 
@@ -99,86 +93,105 @@ Adds the six new checks as paired-fixture TDD on the checker 10-01 re-homed, plu
 
 ### Summary
 
-Docs-only close-out: write `SKILL.md`, one README row, `/skill-judge` as the code-review gate with committed evidence, `/naming-analyzer` as confirmation (no rename), and append-only corrections to ROADMAP SC1 and `REQ-rules-makefile`. The over-broad inheritance claim is a live fact: recovered `check_makefile_shape` emitted a fourth finding via `check_precommit_prepush_split`. Routing, report-only boundary, and “fix the document to match the code, never the reverse” are the right controls now that 10-01/10-02 will have made the skill real but uninstallable.
+Docs-only close-out: write `SKILL.md`, one README row, `/skill-judge` as the code-review gate with committed evidence, `/naming-analyzer` as confirmation (no rename), and append-only corrections to ROADMAP SC1 and `REQ-rules-makefile`. The over-broad inheritance claim is a live fact: recovered `check_makefile_shape` emitted a fourth finding via `check_precommit_prepush_split`. Routing, report-only boundary, and “fix the document to match the code, never the reverse” are the right controls.
 
 ### Strengths
 
-- `cc922e4:skills/ai-kit-agents-md-rules-checker/SKILL.md` resolves and actually contains `cache-update`, `(source:`, “research now”, “defer”, and Step D — plus `agent-md-refactor`, which this plan correctly forbids in the new document. Re-home, do not invent.
-- Description-vs-body split matches how hosts route. Sibling `SKILL.md:2-3` is the AGENTS.md/CLAUDE.md surface; putting those tokens in this skill’s `description` would reopen the two-owner bug Phase 9 closed. Verify scopes the negative assertion to frontmatter and still lets the body name the neighbor.
-- Output-shape check is against a live `check` invocation, not the plan’s prose. `auto_apply` off for advisory is the one fact a reader could otherwise get dangerously wrong (`remediation.py:55-63` today; 10-02 changes it).
-- Judge gate is absolute (new skill, no baseline), evidence names `JUDGED_COMMIT`, and every judge fix must still pass Task 1’s verify chain. That blocks rubric-driven description broadening (T-10-12) and shape simplification (T-10-15).
+- `cc922e4:skills/ai-kit-agents-md-rules-checker/SKILL.md` resolves and contains `cache-update`, `(source:`, “research now”, “defer”, and Step D — plus `agent-md-refactor`, which this plan correctly forbids in the new document. Decision-criteria sentences already exist there (research now when few stacks; defer when many; the third is the “ask rather than guess” instruction 10-03 must keep).
+- Description-vs-body split matches host routing. Sibling `SKILL.md` description is the AGENTS.md/CLAUDE.md surface; `SKILL-SHAPE-OK` scopes the negative assertion to frontmatter so the body can still name the neighbor.
+- Output-shape check is against a live `check` invocation. `auto_apply` off for advisory is the one fact a reader could otherwise get dangerously wrong (`remediation.py:62` today; 10-02 changes it).
+- Judge gate is absolute (new skill, no baseline). Every judge fix must still pass Task 1’s verify chain — that blocks rubric-driven description broadening (T-10-12) and shape simplification (T-10-15).
 - Naming: `ai-kit-project-rules-makefile` is locked by ROADMAP Phases 10–15. Recording a proposal without applying it is the only safe pipeline step.
-- Amendment target is real. ROADMAP Phase 10 SC1 (`ROADMAP.md:326`) says “reproduces every check the old Makefile-checker performed” then lists three. `REQUIREMENTS.md:77` says “inherits the Makefile-specific logic dropped by REQ-rules-agents-prune”. Recovered checker’s last statements append the pre-push finding. Append-only, same wording, cite `9d672b9`, leave the traceability row alone (`REQUIREMENTS.md:138`) — matches the Phase 9 house style and AGENTS.md’s both-files rule.
-- `cross_ai: false` is justified: `/skill-judge` and `/naming-analyzer` are host skills, not mechanical edits.
+- Amendment target is real. ROADMAP Phase 10 SC1 (`ROADMAP.md:326`) says “reproduces every check the old Makefile-checker performed” then lists three. `REQUIREMENTS.md:77` says “inherits the Makefile-specific logic dropped by REQ-rules-agents-prune”. `AMENDMENT-OK` requiring `9d672b9` on the same REQ bullet matches Phase 9’s house style (`REQUIREMENTS.md:76` already appends on one line). Traceability row left alone (`REQUIREMENTS.md` REQ-rules-makefile row).
+- `cross_ai: false` is justified: `/skill-judge` and `/naming-analyzer` are host skills.
 
 ### Concerns
 
-- **LOW** — Task 1 must copy alias map, docker shape, speed tiers, and the shellcheck CI-limit sentence from `10-02-SUMMARY.md`. If 10-02’s SUMMARY is thin, `SKILL.md` will freeze a guess. Make that SUMMARY a hard precondition, not just a read_first bullet.
-- **LOW** — Recovered research-dispatch still talks about lettered steps and the refactor hand-off. Stripping those while keeping decision criteria is easy to get directionally right and still fail `agent-md-refactor not in t.lower()`. Re-run that assertion after the first draft, not only at the end.
-- **LOW** — Judge fix-loop cap of 3 with escalate-rather-than-lower-the-bar is correct, but this plan cannot run the judge itself in a cross-AI setting (`cross_ai: false`). An executor without `skill-judge` installed must HALT as written; do not substitute a self-score.
+- **LOW** — Task 1 must copy alias map, docker shape, speed tiers, and the shellcheck CI-limit sentence from `10-02-SUMMARY.md`. If 10-02’s SUMMARY is thin — especially if the two unpinned aliases or the `unittest`/`ruff` tier keywords are missing — `SKILL.md` freezes a guess. Make that SUMMARY a hard precondition, not just a `read_first` bullet. Unresolved from round 1 (`L116@2cb6b3a`).
+- **LOW** — Recovered research-dispatch still talks about lettered steps and `/agent-md-refactor`. `SKILL-SHAPE-OK` fails if that literal appears anywhere in the new document, including an anti-pattern that names it in order to forbid it. Strip the mechanism name entirely; name the sibling skill in the body if a boundary must be stated.
+- **LOW** — Judge fix-loop cap of 3 with escalate-rather-than-lower-the-bar is correct. An executor without `skill-judge` installed must HALT; do not substitute a self-score.
 
 ### Suggestions
 
-- Quote the three decision-criteria sentences in `10-03-SUMMARY.md` as the plan already requires; that is what later phases will copy.
-- Restate the 180-vs-30 cache staleness discrepancy (`constraints.md:48` and design spec line 253 vs `stack_cache.py:22`) as an open question for Phase 11, so phase close does not drop it.
-- Sibling structure is the right scaffold (`## Scope`, entrypoint candidate list, `## Run the check`, anti-patterns). Do not pull in Wrap mechanism / Steps A–C (`SKILL.md:51-63`).
+- Quote the three decision-criteria sentences in `10-03-SUMMARY.md` as the plan already requires.
+- Restate the 180-vs-30 cache staleness discrepancy (`constraints.md:48` and design spec line 253 vs `stack_cache.py:22`) as an open question for Phase 11. If the re-homed research step mentions a day count, make it 30 (the live engine), not 180 — 10-03’s own rule is document follows code.
+- Sibling structure is the right scaffold. Do not pull in Wrap mechanism / Steps A–C.
 
 ### Risk Assessment
 
-**LOW.** No Python, no gates, no installer write until the user re-runs setup. Residual risk is documentation drift from 10-02’s recorded decisions, and the judge loop optimizing the rubric at the expense of routing/output-shape constraints — both already mitigated in the verify chain.
+**LOW.** No Python, no gates, no installer write until the user re-runs setup. Residual risk is documentation drift from 10-02’s recorded decisions, already mitigated in the verify chain.
 
 ---
 
 ## Cross-plan
 
-Wave order is right: shared extraction (costly) → new checks + additive `auto_apply` (costly for the shared builder) → installable docs. 10-01’s “home but no caller” for `check_precommit_prepush_split` and 10-03’s SC1 amendment are the same fact, stated twice on purpose. Highest execution defect is 10-02’s `ADVISORY-NONBLOCKING-OK` fixture, not architecture. Phase 10 as a whole can meet REQ-rules-makefile if that criterion is fixed and the docker/catch-all matchers are written down rather than left to taste.
+Wave order is right: shared extraction (costly) → new checks + additive `build_remediation` (costly for the shared builder) → installable docs. 10-01’s “home but no caller” for `check_precommit_prepush_split` and 10-03’s SC1 amendment are the same fact, stated twice on purpose.
+
+**Prior HIGH (`L78@2cb6b3a`) is resolved.** Independent re-check: `remediation.py:55-64` still auto-applies any makefile finding with a non-`None` `recommendation`; recovered `check_makefile_shape` still sets that only when the missing target is also a pre-commit hook id; the revised fixture’s `extra` hook is that finding. No other round-1 HIGH remains.
+
+Highest remaining execution defect is 10-02’s advisory proving fixture depending on unpinned `unittest` speed-tier membership, plus `--build` vs token-boundary. Phase 10 can meet REQ-rules-makefile if those two matching rules are written down rather than left to taste.
+
+**Overall phase risk: MEDIUM** (down from round 1 only because the blocking fixture bug is gone; not LOW while SC5’s non-blocking proof can still miss).
 
 ---
 
 ## Consensus Summary
 
-Only one reviewer lane ran this cycle (OpenCode / `xai/grok-4.6`, reasoning=high), so there is
-no cross-reviewer consensus to synthesize. The review is source-grounded: it carries no
-`[reviewed-without-repo-access]` or `[reviewed-without-source-citations]` marker and cites
-concrete `path:line` evidence throughout (`remediation.py:52-74`, `stack_cache.py:24-46`,
-`rules.py:26-28`, `tools/setup.py:586`, `ROADMAP.md:326`, `REQUIREMENTS.md:77`, the `9d672b9`
-recovery blob). Plan coverage is complete — all three plan ids (10-01, 10-02, 10-03) received
-their own section.
+One prompt-fed, source-grounded reviewer ran this cycle (OpenCode / `xai/grok-4.6`, reasoning=high).
+Its findings carry `file:line` evidence throughout — recovered blobs at `9d672b9`, the live
+`skills/_shared/ai_kit_rules_common/remediation.py`, `stack_cache.py`, `tooling_payload.py`, the
+design spec, `ROADMAP.md` and `REQUIREMENTS.md` — so no evidence-quality discount applies. With a
+single reviewer there is no cross-reviewer corroboration to report; the sections below record its
+verdict rather than agreement between independent reviewers.
 
-An independent source-grounding pass confirmed the single HIGH finding against real project
-source: `skills/_shared/ai_kit_rules_common/remediation.py:52-74` routes a makefile finding to
-`remediate` **only** when `recommendation is not None`, otherwise to `blocked`. The recovered
-checker (`git show 9d672b9:skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/makefile_checker.py:275-303`)
-sets `recommendation` for a missing static target only when that target's name is also a
-pre-commit hook id; the `ADVISORY-NONBLOCKING-OK` fixture in `10-02-PLAN.md:429` gives both of
-its hook ids (`unittest`, `ruff`) a matching Makefile target, so neither produces a finding at
-all, and every remaining missing-target/category finding resolves through the stack path with
-`recommendation = None`. The advisory is therefore the only `remediate` entry and carries
-`auto_apply is False`, so the criterion's final assertion
-`any(e['auto_apply'] is True for e in r['remediate'])` cannot pass on that fixture. The finding
-is real and not an artifact of reading plan text alone.
+**Round 1's HIGH is resolved.** `L78@2cb6b3a` (`ADVISORY-NONBLOCKING-OK` unsatisfiable on its own
+fixture) was independently re-checked against `remediation.py:52-64` and the recovered
+`check_makefile_shape`: the revised fixture's `extra` pre-commit hook with no matching Makefile
+target is the one finding shape that carries a non-`None` `recommendation`, so the auto-apply
+contrast the criterion asserts is now real. No HIGH concern was raised this cycle and no prior HIGH
+remains open.
 
 ### Agreed Strengths
 
-Single reviewer — no 2+ reviewer agreement available. Strengths it recorded, in priority order:
-
-- The re-home-not-rewrite strategy is live-checkable: the `9d672b9` recovery blob, the
-  `e56316e` prune parent, and the UNWIRED `tooling_payload.py` all resolve as the plans claim.
-- The shared-package split (D-01/D-02/D-05) matches the sibling's existing import convention
-  (`__init__.py:6-26`) and `build_remediation` already reads `report.get("makefile", [])`.
-- The `auto_apply` change in `build_remediation` is correctly scoped as strictly additive, with
-  `ADDITIVE-REMEDIATION-OK` and the sibling's full suite as the guards.
-- 10-03's ROADMAP SC1 / `REQ-rules-makefile` amendment is factually warranted: the recovered
-  `check_makefile_shape` really did emit a fourth finding via `check_precommit_prepush_split`,
-  so "reproduces every check" overstates the three-check inheritance.
-- Wave ordering (shared extraction → new checks → installable docs) is sound.
+- The re-home is grounded in a real recovery point: `9d672b9` and prune parent `e56316e` both
+  resolve, `makefile_checker.py` is genuinely absent from the agents package, and
+  `tooling_payload.py` still carries its UNWIRED marker — every precondition is live-checkable.
+- The shared-package split matches the constraints: the sibling `__init__.py` realpath →
+  skills-root → named `ImportError` pattern, `build_remediation` already reading
+  `report.get("makefile", [])`, and `cache_path` rejecting `../` escape before join.
+- Round 1's MEDIUMs landed with pinned artifacts rather than prose: the two Docker shape regexes,
+  the stemless `^%[ \t]*:(?!=)` catch-all narrowing, the `WALK-PRUNES-DOTDIRS-OK` negative fixture,
+  and the additive `issue` carry-forward that disambiguates two `validate`-keyed remediate rows.
+- 10-03's "document follows code, never the reverse" posture and the absolute `/skill-judge` gate
+  (no baseline to regress against, every judge fix re-running Task 1's verify chain) are the right
+  controls for a docs-only close-out.
 
 ### Agreed Concerns
 
-Single reviewer — no 2+ reviewer agreement available. See "Current HIGH Concerns" and the
-per-plan Concerns sections above; the one blocking item is 10-02's `ADVISORY-NONBLOCKING-OK`
-fixture.
+Highest-priority items this cycle, in the reviewer's own severity order:
+
+- **MEDIUM (10-01)** — recovered `stack_cache.py` is not a verbatim copy target. At `9d672b9` it
+  already wraps the shared engine *and* still declares `REQUIRED_STATIC_TARGETS` /
+  `RESEARCH_CATEGORIES` / `ALL_TOOLING_KEYS` as tuple literals. Task 1(a)'s "copy verbatim" and
+  Task 1(b) + `SCHEMA-SINGLE-SOURCE-OK` (and threat row T-10-02, which forbids a second literal
+  schema copy) contradict each other for this one file.
+- **MEDIUM (10-02)** — `ADVISORY-NONBLOCKING-OK` depends on `unittest` being classified slower than
+  `ruff`, but the plan sources its tier table from the design spec's concrete name list, which
+  names `ruff` and never mentions `unittest`. An untiered name is skipped by design, so a
+  spec-literal table emits no advisory and the criterion fails.
+- **MEDIUM (10-02)** — the inline-build escape hatch misses `docker compose up --build`: the
+  recovered `_recipe_mentions_target` boundary rejects a preceding `-`, so a `docker-up` recipe
+  whose only build is `--build` is flagged.
+- **LOW (10-02)** — the catch-all exemption from the 3-line recipe cap is vacuous: `parse_makefile_targets`
+  never returns `%:`, so the planned per-present-target loop never sees a catch-all body.
+- **LOW (10-03)** — Task 1 must copy the alias map, Docker shape, speed tiers and shellcheck CI
+  sentence out of `10-02-SUMMARY.md`, but that file is only a `read_first` bullet, not a
+  precondition; a thin SUMMARY freezes a guess into `SKILL.md`.
 
 ### Divergent Views
 
-None — only one reviewer lane ran.
+None — a single reviewer ran this cycle. Two round-1 LOWs the reviewer re-flagged as "unresolved"
+(the Task 1 tracer never firing `chain_incomplete`; must-haves saying `sys.path` *insert* where the
+sibling *appends*) are in fact explicitly addressed and deferred in 10-01's own Round-1 conflict
+table with stated rationale, so they are recorded here as a reviewer/plan disagreement about
+whether a documented deferral counts as resolution, not as open work.
