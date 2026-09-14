@@ -83,7 +83,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 8.1: Status-line Rate-Burn Pace Fix (INSERTED)** - Reverses Phase 8's burn-rate formula direction to `pct / elapsed_fraction` (pace), fixing a live regression where low usage well into a rate-limit window rendered as an urgency color (completed 2026-09-13)
 - [x] **Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)** - Prune the renamed AGENTS.md/CLAUDE.md checker to AGENTS.md-prose scope only, dropping all Makefile-specific logic (completed 2026-09-14)
 - [x] **Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)** - New skill inherits the dropped Makefile logic plus `validate-<category>` parity, help/fail reachability, recipe-length cap, docker build-before-up, shellcheck threshold, and an advisory ordering heuristic (completed 2026-09-14)
-- [ ] **Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)** - New skill checks Makefile↔pre-commit parity and applies the 6-category tooling taxonomy plus ruff/golangci-lint-specific checks
+- [x] **Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)** - New skill checks Makefile↔pre-commit parity and applies the 6-category tooling taxonomy plus ruff/golangci-lint-specific checks (completed 2026-09-14)
 - [ ] **Phase 12: Architecture Rules Checker (ai-kit-project-rules-arch)** - New skill verifies `arch-test` Makefile target shape/chaining/AST-only-ness; promotes and resolves backlog Phase 999.3 at form/convention-only scope
 - [ ] **Phase 13: Docker Rules Checker (ai-kit-project-rules-docker)** - New skill checks the docker-compose target family, healthcheck conventions, `depends_on` discipline, hot-reload convention, and runbook presence
 - [ ] **Phase 14: CI/CD Rules Checker (ai-kit-project-rules-cicd)** - New skill checks that CI config reuses Makefile/pre-commit/package.json/Gradle commands instead of duplicating tool invocations inline
@@ -372,7 +372,13 @@ Plans:
   4. The skill's remediation output names the canonical tool per stack (Python: import-linter, Node/TS: dependency-cruiser, Java: ArchUnit) and explicitly states the Rust/Go known gap rather than asserting a false canonical tool for those languages.
   5. This phase's own PLAN/SUMMARY artifacts record the backlog-resolution note described in this phase's Goal above, so the resolution is traceable from the backlog entry to this phase without editing the backlog stub itself.
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+
+- [ ] 12-01-PLAN.md — Wire `ai-kit-project-rules-arch` end-to-end: arch-test-shaped target existence and `test`-chaining as two distinct findings, the shared structural-kind tuple grown by one name, and the skill registered in every quality gate (SC1, SC2)
+- [ ] 12-02-PLAN.md — Target-aware AST-only correlation for the backing test file (12-CONTEXT D-01/D-02) plus the hardcoded per-stack canonical-tool baseline with the Rust/Go known gap (SC3, SC4)
+- [ ] 12-03-PLAN.md — SKILL.md, README row, `/skill-judge` code-review gate with committed evidence, `/naming-analyzer` confirmation, mechanical SC5 backlog-resolution traceability, and the dated correction to 12-CONTEXT.md's D-01 scouting claim (SC5)
 
 ### Phase 13: Docker Rules Checker (ai-kit-project-rules-docker)
 
@@ -436,7 +442,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 8. Status-line Quota Color Refactor | 1/1 | Complete    | 2026-09-10 |
 | 9. AGENTS.md Checker Prune | 2/2 | Complete    | 2026-09-14 |
 | 10. Makefile Rules Checker | 3/3 | Complete    | 2026-09-14 |
-| 11. Pre-commit Rules Checker | 4/4 | In Progress|  |
+| 11. Pre-commit Rules Checker | 4/4 | Complete    | 2026-09-14 |
 | 12. Architecture Rules Checker | 0/TBD | Not started | - |
 | 13. Docker Rules Checker | 0/TBD | Not started | - |
 | 14. CI/CD Rules Checker | 0/TBD | Not started | - |
