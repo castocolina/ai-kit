@@ -1,7 +1,8 @@
 ---
 phase: 11
 reviewers: [opencode]
-reviewed_at: 2026-09-14T07:58:36Z
+reviewed_at: 2026-09-14T08:30:00Z
+cycle_2_reviewed_at: 2026-09-14T08:30:00Z
 plans_reviewed: [11-01-PLAN.md, 11-02-PLAN.md, 11-03-PLAN.md, 11-04-PLAN.md]
 models:
   opencode: "xai/grok-4.6 (reasoning=high)"
@@ -173,3 +174,85 @@ Not applicable — single-reviewer cycle.
 - **11-03 — YAML subset cannot read the golangci `disable:` block-sequence fixture.** `config_read.py` is specified to read only scalar/inline-list values; `PAIR-CHECKS-OK`'s non-trigger fixture uses a block sequence (`linters: \n  disable: \n    - staticcheck`), which the reader as specified cannot see, so the assertion that the finding does NOT fire would fail.
 - **11-03 — pair evaluation depends on 11-02 classifying `staticcheck`.** Same root cause as the 11-02 HIGH above; restated because it independently breaks 11-03's own verify command regardless of which plan's task list "owns" the fix.
 - **11-04 — `AMENDMENT-OK` verify requires the literal word "amend" in both files, but Phase 10's own precedent ("Inherited-check scope corrected by Phase 10") never used that word.** A faithful copy of the established house style fails the probe as specified.
+
+---
+
+## Cycle 2 — OpenCode Review (`xai/grok-4.6`, reasoning=high)
+
+Reviewed against commit `a97d2f2` (cycle-1 replan) and the live tree. Verifies whether cycle 1's 4 HIGH fixes actually landed, and surfaces anything newly wrong.
+
+### 11-01
+
+**Summary:** The wiring plan still matches the tree: shared parsers exist, the stage-splitter has no production caller, gate line numbers are unchanged, and the cycle-1 tool-shape holes are closed in the tracer. Residual risk is small.
+
+**Strengths:** Preconditions hold (`precommit_parse.py`/`makefile_parse.py` exist; `check_precommit_prepush_split` has no production caller). Gate surfaces match cited lines. Tracer now uses `uv run pre-commit run` on every delegate and requires `len(b)==2` including `shellcheck` (`11-01-PLAN.md:399`) — a first-token matcher fails that probe, closing cycle 1's D-P2 clause (i) gap. D-P2b is a named decision addressing the `format` target. `STALE_AFTER_DAYS` still 30 — the 180-vs-30 discrepancy correctly left open.
+
+**Concerns (LOW):** "Seven" prefixed delegates is wrong — `Makefile` has eight `uv run pre-commit run` recipes (`py-compile` through `unittest-wizard`, `:74-98`); the plan's count and line range include `format`, which is not a delegate. The matcher itself does not depend on the count.
+
+**Risk:** LOW. Cycle-1 MEDIUMs on clause (i), D-P2b, and the Task-1 shared-suite gap are fully addressed.
+
+**Cycle-1 HIGHs:** none applicable to 11-01.
+
+### 11-02
+
+**Summary:** D-T7 closes the cycle-1 catalog hole for `staticcheck`/`ts-prune`/`cargo-audit`. The new `PAIRS-REACHABLE-OK` probe then overreaches: it demands every pairs tool-token live in the derived index, including bare `ruff`, which D-T3 forbids. That probe cannot pass without breaking inferred confidence.
+
+**Strengths:** D-T1 (derive index, raise on collision) still matches the spec table. D-T7 + `CATALOG-OK` (`11-02-PLAN.md:425`) pin the three cycle-1 tools and require each to share its partner's category — refusing partner-derivation is correct (indexing `ruff` from the vulture row would mark every bare ruff hook as dead-code). `+` split is now its own transcription rule. Stale cache is `confidence: "cache"` plus `stale: true`.
+
+**Concerns:**
+- **HIGH — `PAIRS-REACHABLE-OK` vs D-T3 bare `ruff` (NEW, unsatisfiable as written).** The probe (`11-02-PLAN.md:433`) asserts every pairs-row tool-token resolves in the derived index. The "ruff vs vulture" spec row (`design.md:293`) is a bare tool token; baseline cells are `ruff format`/`ruff check`, not bare `ruff`. D-T3 keeps bare `ruff` OUT of the index (so a hook with no entry is `inferred` linting, not `baseline`) — putting it in breaks the inferred-confidence fixture; leaving it out breaks this new probe. Deriving a first-token `ruff` from both cells collides formatting vs linting and trips the import guard. Genuinely unsatisfiable as specified.
+- **MEDIUM — D-T7 names three supplements; the guard requires every pairs tool-token.** Node security is `eslint-plugin-security` (+`semgrep` in CI) — `semgrep` is a pairs tool-token not covered by D-T7's three cited entries; the import guard raises until a fourth entry exists.
+- **MEDIUM — clause (iii) "single recipe tool token" repeats the runner-prefix hole clause (i) already fixed.** `security-scanner` is `uv run bandit -r tools skills` — a first-token matcher yields `uv`, not in the catalog. Cycle 1's clause (i) fix (skip the runner prefix) was not carried to clause (iii).
+- **MEDIUM — `duplicate-code` will not become tool-shaped via `pylint`.** Recipe is `uv run pylint --enable=duplicate-code`; catalog duplicate-code is `jscpd`/pylint `R0801`. Indexing bare `pylint` as duplicate-code would misclassify this repo's actual pylint lint hook.
+- **LOW — `key_links` still says pairs-only names are "indexed into the category its partner resolves to."** D-T7 forbids that rule; the `key_links` prose was not updated to match action (b2).
+
+**Suggestions:** Change `PAIRS-REACHABLE-OK` to resolve through the index OR the D-T3 defaults map, and/or only require index membership for redundancy/supersession rows (the rows 11-03 actually flags) — never put bare `ruff` in the index. Add `semgrep` as a fourth cited D-T7 entry. Pin clause (iii) the same way as clause (i): skip the runner prefix, then token-bound match against the index; do not expect `duplicate-code` to match via `pylint`.
+
+**Risk:** MEDIUM. SC2/SC4 probes sound; cycle-1 Go-pair hole closed; Task 1 can still fail on the new `PAIRS-REACHABLE-OK` probe.
+
+**Cycle-1 HIGH (staticcheck/ts-prune/cargo-audit unclassified): FULLY RESOLVED** for those three tools.
+
+### 11-03
+
+**Summary:** The anti-pattern plan now makes the golangci `disable:` block sequence a reader contract with a positive probe, and refuses to start Task 3 unless `classify` puts both Go tools in the same category. Both cycle-1 HIGHs closed. Remaining risk is 11-02's new catalog self-trap leaking in through the precondition.
+
+**Strengths:** YAML contract is scalar + inline list + block sequence with indentation-based termination; `YAML-BLOCK-SEQ-OK` (`:301`) proves the reader against `linters.disable` as a positive assertion (the cycle-1 failure mode). Task 3 precondition (`:415`) runs live `classify` on both Go tools and HALTs against 11-02 rather than adding a private map. PMD discovery is now a named candidate list. Rule-family row is skipped by reading the mark, not a failed name match — nine-of-ten is the honest claim.
+
+**Concerns (MEDIUM):** Task 3's `PAIR-PRECONDITION-OK` inherits 11-02's catalog — if 11-02 lands `staticcheck` correctly the Go fixture is fine; if the executor weakens D-T7 to force `PAIRS-REACHABLE-OK` to pass, this precondition is the backstop and must be kept as-is (no workaround should be added here).
+
+**Risk:** LOW given 11-02's D-T7 actually landing; MEDIUM if 11-02 Task 1 is forced to compromise the index to satisfy `PAIRS-REACHABLE-OK`.
+
+**Cycle-1 HIGH (YAML disable: block sequence): FULLY RESOLVED.**
+**Cycle-1 HIGH (pair eval needs classified staticcheck): FULLY RESOLVED** — Task 3 precondition, halt-and-report, no private tool map.
+
+### 11-04
+
+**Summary:** The close-out plan now matches this repo's append-only correction style. The "amend" self-trap is gone. `STATE.md` already says 4 plans.
+
+**Strengths:** `AMENDMENT-OK` (`11-04-PLAN.md:401`) now pins the opening phrase to the live Phase 9/10 house-style form ("...corrected by Phase 11:") rather than requiring the literal word "amend." REQ correction is on the same bullet line. No-baseline history search, judge-as-code-review, naming-confirmation-only, and "fix the document to match the code" all remain correct.
+
+**Concerns (LOW):** `SUMMARY-INPUTS-PRESENT-OK` is still only a token floor — the halt-on-empty-section rule is written, but not new; still the real enforcement gate per the plan text.
+
+**Risk:** LOW.
+
+**Cycle-1 HIGH (AMENDMENT-OK required "amend"): FULLY RESOLVED** — opening phrase pinned to the Phase 9/10 form, confirmed against `ROADMAP.md:326`.
+
+### Cross-plan (Cycle 2)
+
+Wave order 11-01 → 11-02 → 11-03 → 11-04 still matches the tree. All 4 cycle-1 HIGHs are closed in the plan text with live probes (`CATALOG-OK`/D-T7 for `staticcheck`; `YAML-BLOCK-SEQ-OK` + Task 3 `PAIR-PRECONDITION-OK`). One NEW HIGH surfaced inside 11-02's own fix: `PAIRS-REACHABLE-OK` (`11-02-PLAN.md:433`) is unsatisfiable against D-T3's bare-`ruff` defaults map — must be fixed before execution, without indexing `ruff`. Clause (iii) still needs the same runner-prefix pin clause (i) already received.
+
+**Overall: MEDIUM** — down from cycle 1's 4 HIGHs to 1 new HIGH, all 5 non-HIGH findings actionable and narrowly scoped.
+
+### Cycle 2 HIGH/Actionable Ledger
+
+| ID | Severity | Finding | Status |
+|----|----------|---------|--------|
+| 11-02 | HIGH (new) | `PAIRS-REACHABLE-OK` unsatisfiable against D-T3 bare-`ruff` defaults | UNRESOLVED |
+| 11-02 | MEDIUM | D-T7 names 3 supplements, guard requires `semgrep` as 4th | UNRESOLVED |
+| 11-02 | MEDIUM | clause (iii) needs the same runner-prefix pin as clause (i) | UNRESOLVED |
+| 11-02 | MEDIUM | `duplicate-code` will not become tool-shaped via bare `pylint` | UNRESOLVED |
+| 11-02 | LOW | `key_links` prose contradicts D-T7's no-partner-derivation rule | UNRESOLVED |
+| 11-01 | LOW | "seven" delegates should be "eight" | UNRESOLVED |
+| 11-02/11-03/11-04 | — | all 4 cycle-1 HIGHs | FULLY RESOLVED |
+
+CYCLE_SUMMARY: current_high=1 current_actionable=5
