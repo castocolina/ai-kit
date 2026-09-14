@@ -66,7 +66,7 @@ phase.
 
 ### Status-line Quota Color Refactor
 
-- [x] **REQ-stln-time-relative-color**: Rate-limit bucket coloring in `tools/status-line.py` (`util_rate_group_str` / `theme.ramps["rate"]`) is computed relative to time-remaining-in-window (using each bucket's `resets_at`), not raw `used_percentage` alone. Color-only change: the displayed `used_percentage` value and `resets_at`-derived reset-time suffix are unchanged — only which ramp color is picked shifts. All window/reset timing values are read from the Claude-provided rate-limit context (`resets_at` etc.) on every render; nothing about window length or elapsed time is hardcoded. Formula: `ratio = used_percentage / remaining_fraction` (`remaining_fraction = 1 - elapsed_fraction`), fed into the unchanged ramp. Example, verified against the real ramp: identical 50% usage reads YELLOW with 4h remaining in a 5h window, but the SAME 50% usage reads RED+bold with only 1h remaining — less time left is strictly more urgent for the same usage, never less. (Corrected 2026-09-11: the original example here compared different usage percentages at different times, a burn-pace framing mathematically incompatible with this requirement's own same-usage invariant — see `08-CONTEXT.md` D-01 and `ROADMAP.md`'s Phase 8 Success Criterion 4 for the full correction history.)
+- [x] **REQ-stln-time-relative-color**: Rate-limit bucket coloring in `tools/status-line.py` (`util_rate_group_str` / `theme.ramps["rate"]`) is computed relative to time-remaining-in-window (using each bucket's `resets_at`), not raw `used_percentage` alone. Color-only change: the displayed `used_percentage` value and `resets_at`-derived reset-time suffix are unchanged — only which ramp color is picked shifts. All window/reset timing values are read from the Claude-provided rate-limit context (`resets_at` etc.) on every render; nothing about window length or elapsed time is hardcoded. Formula: `ratio = used_percentage / remaining_fraction` (`remaining_fraction = 1 - elapsed_fraction`), fed into the unchanged ramp. Example, verified against the real ramp: identical 50% usage reads YELLOW with 4h remaining in a 5h window, but the SAME 50% usage reads RED+bold with only 1h remaining — less time left is strictly more urgent for the same usage, never less. (Corrected 2026-09-11: the original example here compared different usage percentages at different times, a burn-pace framing mathematically incompatible with this requirement's own same-usage invariant — see `08-CONTEXT.md` D-01 and `ROADMAP.md`'s Phase 8 Success Criterion 4 for the full correction history.) (Amended 2026-09-13: Phase 8.1 reverses the formula direction — the ratio is now `used_percentage / elapsed_fraction` (`elapsed_fraction = 1 - remaining_fraction`), superseding the `used_percentage / remaining_fraction` wording above; the worked example now reads GREEN (`25 / 0.8 = 31.25`) at 25% used with 4h of a 5h window elapsed, where the superseded formula read RED+bold (`25 / 0.2 = 125`); everything else about the requirement (color-only change, nothing hardcoded, values read from the Claude-provided rate-limit context) is unchanged. See ROADMAP Phase 8.1 SC1 and Phase 8.1 D-01.)
 - [x] **REQ-stln-ramp-tests**: The existing SLO/SLA ramp test pattern in `tests/test_status_line.py` is extended to cover the new time-relative coloring formula.
 
 ## v1.2 Requirements
@@ -132,7 +132,7 @@ rather than from further PRD ingest.
 | REQ-cfg-writes-config | Phase 7 | Complete |
 | REQ-cfg-schema-validate | Phase 7 | Complete |
 | REQ-cfg-skill-pipeline | Phase 7 | Complete |
-| REQ-stln-time-relative-color | Phase 8 | Complete |
+| REQ-stln-time-relative-color | Phase 8, 8.1 | Complete |
 | REQ-stln-ramp-tests | Phase 8 | Complete |
 | REQ-rules-agents-prune | Phase 9 | Pending |
 | REQ-rules-makefile | Phase 10 | Pending |
@@ -151,4 +151,4 @@ rather than from further PRD ingest.
 
 ---
 *Requirements defined: 2026-09-07*
-*Last updated: 2026-09-13 — added v1.2 Traceability rows (REQ-rules-* -> Phases 9-15, Status: Pending), the v1.2 Out of Scope row for arch-enforcement, and updated Coverage; v1/v1.1 rows/content unchanged.*
+*Last updated: 2026-09-13 — amended REQ-stln-time-relative-color for Phase 8.1's pace-direction reversal (`used_percentage / elapsed_fraction`); earlier the same day, added v1.2 Traceability rows (REQ-rules-* -> Phases 9-15, Status: Pending), the v1.2 Out of Scope row for arch-enforcement, and updated Coverage.*
