@@ -380,6 +380,6 @@ __all__ = [
     "compute_command_key",
     "is_tool_shaped_identity",
     "keys_match",
-    "precommit_hook_identity",
     "makefile_target_identity",
+    "precommit_hook_identity",
 ]
