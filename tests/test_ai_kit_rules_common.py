@@ -393,5 +393,228 @@ class TestRemediation(unittest.TestCase):
         self.assertEqual(result["blocked"][0]["stacks"], ["go", "python"])
 
 
+# The classes below are re-homed here from
+# tests/test_ai_kit_project_rules_agents.py by Phase 10 plan 01 (recovered
+# verbatim from commit 9d672b9, Phase 9's rename commit) -- they exercise
+# the Makefile-parsing and pre-commit-hook-parsing primitives D-01/D-05
+# moved into ai_kit_rules_common.makefile_parse / .precommit_parse.
+
+
+def _write(path, content):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+
+from ai_kit_rules_common.makefile_parse import parse_makefile_targets, recipe_mentions_target
+
+
+class TestParseMakefileTargets(unittest.TestCase):
+    def test_ignores_phony_and_recipe_lines(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                ".PHONY: test\ntest:\n\techo hi\n",
+            )
+            targets = parse_makefile_targets(os.path.join(repo, "Makefile"))
+            self.assertEqual(targets, {"test"})
+
+    def test_missing_file_returns_empty_set(self):
+        self.assertEqual(parse_makefile_targets("/nonexistent/Makefile"), set())
+
+
+class TestRecipeMentionsTargetWordBoundary(unittest.TestCase):
+    # Re-homed from TestWiredCheckWordBoundary (9d672b9) -- ONLY the case
+    # that exercises the recipe-reference helper's token semantics
+    # directly. The two cases that assert through check_makefile_shape
+    # stay TestWiredCheckWordBoundary in
+    # tests/test_ai_kit_project_rules_makefile.py (this is that class's
+    # two-way split).
+    def test_hyphenated_name_never_matches_inside_a_longer_hyphenated_token(self):
+        # Regression: `\btest-unit\b` alone treats the boundary between
+        # "unit" and a following "-integration..." (or a preceding
+        # "integration-") as already satisfied, since "-" is a non-word
+        # character -- reopening the substring false-positive class this
+        # word-boundary check exists to close, just for hyphenated names
+        # instead of single-word ones (06-REVIEW.md Critical #2).
+        self.assertFalse(
+            recipe_mentions_target(
+                "\t$(MAKE) test-unit-integration-suite\n", "test-unit"
+            )
+        )
+        self.assertFalse(
+            recipe_mentions_target(
+                "\t$(MAKE) integration-test-unit\n", "test-unit"
+            )
+        )
+        self.assertTrue(
+            recipe_mentions_target("\t$(MAKE) test-unit\n", "test-unit")
+        )
+
+
+from ai_kit_rules_common.precommit_parse import (
+    check_precommit_prepush_split,
+    parse_precommit_hooks,
+)
+
+
+class TestParsePrecommitHooks(unittest.TestCase):
+    def test_parse_precommit_hooks_handles_quoted_ids(self):
+        with tempfile.TemporaryDirectory() as repo:
+            path = os.path.join(repo, ".pre-commit-config.yaml")
+            _write(
+                path,
+                "repos:\n"
+                "  - repo: local\n"
+                "    hooks:\n"
+                "      - id: ruff\n"
+                "        entry: uv run ruff check\n"
+                '      - id: "vulture"\n'
+                "        entry: uv run vulture\n"
+                "      - id: 'pylint'\n"
+                "        entry: uv run pylint\n",
+            )
+            hooks = parse_precommit_hooks(path)
+            self.assertEqual(
+                hooks,
+                {
+                    "ruff": "uv run ruff check",
+                    "vulture": "uv run vulture",
+                    "pylint": "uv run pylint",
+                },
+            )
+
+    def test_missing_file_returns_empty_dict(self):
+        self.assertEqual(
+            parse_precommit_hooks("/nonexistent/.pre-commit-config.yaml"), {}
+        )
+
+
+class TestPrecommitPrepushSplit(unittest.TestCase):
+    # Re-homed from TestValidateOrderAndPrecommitPrepushSplit (9d672b9) --
+    # ONLY the pre-commit-stage-splitter half. The splitter moved to
+    # skills/_shared/ai_kit_rules_common/precommit_parse.py (D-01) and has
+    # no caller in this phase (Phase 11 owns the check). The class's other
+    # two slices -- the ordering-stub half and the
+    # test_categories_never_contain_removed_entries schema-shape case --
+    # stay under the class's original name,
+    # TestValidateOrderAndPrecommitPrepushSplit, in
+    # tests/test_ai_kit_project_rules_makefile.py (this is that class's
+    # three-way split).
+    def test_slow_hook_missing_own_push_stage_is_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                "repos:\n"
+                "  - repo: local\n"
+                "    hooks:\n"
+                "      - id: unittest\n"
+                "        entry: python3 -m unittest tests.test_x\n"
+                "        language: system\n"
+                "      - id: ruff\n"
+                "        entry: uv run ruff check\n"
+                "        language: system\n"
+                "        stages: [push]\n",
+            )
+            finding = check_precommit_prepush_split(repo)
+            self.assertIsNotNone(finding)
+            self.assertIn("unittest", finding["slow_hooks_missing_push_stage"])
+
+    def test_slow_hook_with_own_push_stage_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                "repos:\n"
+                "  - repo: local\n"
+                "    hooks:\n"
+                "      - id: unittest\n"
+                "        entry: python3 -m unittest tests.test_x\n"
+                "        language: system\n"
+                "        stages: [pre-push]\n",
+            )
+            finding = check_precommit_prepush_split(repo)
+            self.assertIsNone(finding)
+
+    def test_no_slow_hook_nothing_to_verify(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                "repos:\n"
+                "  - repo: local\n"
+                "    hooks:\n"
+                "      - id: ruff\n"
+                "        entry: uv run ruff check\n"
+                "        language: system\n",
+            )
+            finding = check_precommit_prepush_split(repo)
+            self.assertIsNone(finding)
+
+
+import ast
+
+from ai_kit_rules_common import criticality as _shared_criticality
+
+_AGENTS_RULES_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "skills",
+    "ai-kit-project-rules-agents",
+    "ai_kit_project_rules_agents",
+    "rules.py",
+)
+
+
+class TestCriticalityDriftGuard(unittest.TestCase):
+    """Pins the shared criticality bands against
+    ai-kit-project-rules-agents's rules.py literals (a file read via `ast`,
+    never a runtime import of another skill's package). Phase 15 orders
+    findings across six domains by this number, so two domains silently
+    disagreeing about what "critical" means would mis-sort the aggregated
+    report -- this is the guard that makes
+    ai_kit_rules_common.criticality's docstring claim checkable."""
+
+    def test_shared_bands_match_agents_skill_literals(self):
+        with open(_AGENTS_RULES_PATH, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read())
+        literals = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id not in (
+                "CRITICALITY_CRITICAL",
+                "CRITICALITY_HIGH",
+                "CRITICALITY_MEDIUM",
+            ):
+                continue
+            if isinstance(node.value, ast.Constant):
+                literals[target.id] = node.value.value
+        self.assertEqual(
+            len(literals),
+            3,
+            f"expected exactly 3 criticality literals in {_AGENTS_RULES_PATH}, "
+            f"found {literals}",
+        )
+        self.assertEqual(
+            (
+                literals["CRITICALITY_CRITICAL"],
+                literals["CRITICALITY_HIGH"],
+                literals["CRITICALITY_MEDIUM"],
+            ),
+            (
+                _shared_criticality.CRITICALITY_CRITICAL,
+                _shared_criticality.CRITICALITY_HIGH,
+                _shared_criticality.CRITICALITY_MEDIUM,
+            ),
+            "ai_kit_rules_common.criticality's bands drifted from "
+            "ai-kit-project-rules-agents's rules.py literals -- Phase 15 "
+            "orders findings across six domains by this number, so two "
+            "domains silently disagreeing about what 'critical' means "
+            "mis-sorts the aggregated report.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
