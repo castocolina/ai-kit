@@ -16,18 +16,49 @@ import re
 _TARGET_HEADER_RE = re.compile(r"^(?!\.)([A-Za-z0-9_.-]+)\s*:(?!=)(.*)$", re.MULTILINE)
 
 
+def parse_makefile_targets_ordered(path: str) -> list[str]:
+    """Return real target names defined in `path`, in Makefile declaration
+    order.
+
+    This is the single source of truth for target tokenization: `finditer`s
+    the same module-private header regex `parse_makefile_targets` (the
+    set-returning reader) is defined in terms of, so the two can never
+    disagree about what counts as a target. `.PHONY:`/other special targets
+    and recipe lines are never mistaken for targets; a `VAR := value` /
+    `VAR ?= value` assignment is excluded via the `(?!=)` guard on the
+    colon. A target declared twice de-duplicates to its FIRST occurrence,
+    since "first in declaration order" must stay meaningful even though a
+    Makefile may legally redeclare a target. Empty list if `path` does not
+    exist.
+    """
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for m in _TARGET_HEADER_RE.finditer(text):
+        name = m.group(1)
+        if name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+    return ordered
+
+
 def parse_makefile_targets(path: str) -> set[str]:
     """Return the set of real target names defined in `path`.
 
-    `.PHONY:`/other special targets and recipe lines are never mistaken for
-    targets; a `VAR := value` / `VAR ?= value` assignment is excluded via
-    the `(?!=)` guard on the colon. Empty set if `path` does not exist.
+    Defined in terms of `parse_makefile_targets_ordered` (the single source
+    of truth for target tokenization -- destroys declaration order, which
+    D-A1's arch-test-shaped-target tie-break needs the ordered reader for
+    instead) so the two readers can never disagree about what counts as a
+    target. `.PHONY:`/other special targets and recipe lines are never
+    mistaken for targets; a `VAR := value` / `VAR ?= value` assignment is
+    excluded via the `(?!=)` guard on the colon. Empty set if `path` does
+    not exist.
     """
-    if not os.path.isfile(path):
-        return set()
-    with open(path, encoding="utf-8") as handle:
-        text = handle.read()
-    return {m.group(1) for m in _TARGET_HEADER_RE.finditer(text)}
+    return set(parse_makefile_targets_ordered(path))
 
 
 def parse_makefile_prerequisites_ordered(path: str, target: str) -> list[str]:
@@ -117,5 +148,6 @@ __all__ = [
     "parse_makefile_prerequisites_ordered",
     "parse_makefile_recipe",
     "parse_makefile_targets",
+    "parse_makefile_targets_ordered",
     "recipe_mentions_target",
 ]

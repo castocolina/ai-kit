@@ -14,10 +14,12 @@ from __future__ import annotations
 # criticality-ordered `remediate` list together -- Phase 15's cross-domain
 # orchestrator reads that single list, so a per-kind list would make
 # ordering across domains impossible. Currently the sibling
-# `ai-kit-project-rules-makefile` skill's kind plus
-# `ai-kit-project-rules-precommit`'s (Phase 11); later phases append their
-# own kind to this tuple rather than forking a second loop.
-STRUCTURAL_KINDS = ("makefile", "precommit")
+# `ai-kit-project-rules-makefile` skill's kind, `ai-kit-project-rules-precommit`'s
+# (Phase 11), and `ai-kit-project-rules-arch`'s (Phase 12) -- the arch skill
+# never sets the `target` identifier key its findings would otherwise be
+# tempted to carry, so its `id` always derives from `category`; later phases
+# append their own kind to this tuple rather than forking a second loop.
+STRUCTURAL_KINDS = ("makefile", "precommit", "arch")
 
 
 def build_remediation(report: dict) -> dict:
