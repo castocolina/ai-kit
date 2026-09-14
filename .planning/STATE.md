@@ -3,17 +3,18 @@ gsd_state_version: "1.0"
 milestone: v1.2
 current_phase: 09
 current_phase_name: AGENTS.md Checker Prune (ai-kit-project-rules-agents)
+current_plan: 2
 status: planning
-stopped_at: Phase 8.1 complete, ready to plan Phase 09
-last_updated: "2026-09-14T01:50:04.090Z"
-last_activity: 2026-09-13
+stopped_at: Completed 09-01-PLAN.md
+last_updated: "2026-09-14T03:41:26.871Z"
+last_activity: 2026-09-14
 last_activity_desc: Phase 8.1 complete, transitioned to Phase 09
-state_head: 059d473838eccb7d92e7117ad9cc65d6f0a06cd1
+state_head: e56316ec7b1b0e8a76df3660476faaae5f4d3a4a
 progress:
   total_phases: 17
-  completed_phases: 2
-  total_plans: 9
-  completed_plans: 9
+  completed_phases: 1
+  total_plans: 11
+  completed_plans: 10
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -29,9 +30,10 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 ## Current Position
 
 Phase: 09 — AGENTS.md Checker Prune (ai-kit-project-rules-agents)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-09-13 — Phase 8.1 complete, transitioned to Phase 09
+Current Plan: 2
+Total Plans in Phase: 2
+Status: In progress
+Last activity: 2026-09-14 — Plan 09-01 (rename + prune ai-kit-project-rules-agents) complete
 
 ## Performance Metrics
 
@@ -83,6 +85,7 @@ Last activity: 2026-09-13 — Phase 8.1 complete, transitioned to Phase 09
 | Phase 07-curated-gsd-config-skill P02 | 45min | 2 tasks | 6 files |
 | Phase 07 P03 | 45min | 2 tasks | 5 files |
 | Phase 07 P04 | 2h40m | 2 tasks | 18 files |
+| Phase 09 P01 | 13min | 2 tasks | 21 files |
 
 ## Accumulated Context
 
@@ -140,6 +143,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
   The backlog stub itself is left unchanged in ROADMAP.md (a dated note was
   appended after it pointing to Phase 12); this is its resolution, not a
   duplicate.
+- [Phase 09]: [Phase 9]: Plan 09-01: renamed ai-kit-agents-md-rules-checker to ai-kit-project-rules-agents (git mv carried gitignored __pycache__ along with tracked files in this environment, so D-03's stale-bytecode guards correctly found both old paths already absent), then pruned makefile_checker.py/stack_cache.py/stack_detect.py/cache-update out of it so check() returns {"workflow": [...]} only; relocated the ALL_TOOLING_KEYS payload validator unwired into skills/ai-kit-project-rules-makefile/ for Phase 10; re-homed build_remediation's 3 second-kind-branch tests into tests/test_ai_kit_rules_common.py. make validate fails only on pre-existing out-of-scope findings in tools/status-line.py, tools/wizard_app.py, tests/test_ai_kit_spec.py, tests/test_ai_kit_spec_superpowers.py -- none touched by this plan.
 
 ### Pending Todos
 
@@ -248,6 +252,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-13T23:57:38.104Z
-Stopped at: Phase 8.1 complete, ready to plan Phase 09
-Resume file: .planning/phases/09-agents-md-checker-prune-ai-kit-project-rules-agents/09-CONTEXT.md
+Last session: 2026-09-14T03:41:26.841Z
+Stopped at: Completed 09-01-PLAN.md
+Resume file: 09-02-PLAN.md

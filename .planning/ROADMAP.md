@@ -309,11 +309,11 @@ Plans:
   4. The renamed/updated test suite (`tests/test_ai_kit_agents_md_rules_checker.py` or its renamed equivalent) passes with no test exercising the removed Makefile-checking code paths, and `make test` is green.
   5. `/skill-judge` review of the pruned `SKILL.md` shows no remaining Critical/Important finding (or a score ≥ 96/120) with no regression against the pre-prune baseline (98/120).
 
-**Plans**: 0/2 plans executed
+**Plans**: 1/2 plans executed
 
 Plans:
 
-- [ ] 09-01-PLAN.md — Rename the skill/package/entrypoint/test file to `ai-kit-project-rules-agents` and repoint every live reference (D-01/D-02) with stale-bytecode cleanup (D-03), then prune `makefile_checker.py`/`stack_detect.py`/the Makefile-tooling `stack_cache.py`/the `cache-path`+`cache-update` subcommands so `check` returns `{"workflow": [...]}` only, relocating the tooling-payload validator into `ai-kit-project-rules-makefile`'s tree (D-04) and re-homing the shared remediation coverage into `tests/test_ai_kit_rules_common.py` (REQ-rules-agents-prune)
+- [x] 09-01-PLAN.md — Rename the skill/package/entrypoint/test file to `ai-kit-project-rules-agents` and repoint every live reference (D-01/D-02) with stale-bytecode cleanup (D-03), then prune `makefile_checker.py`/`stack_detect.py`/the Makefile-tooling `stack_cache.py`/the `cache-path`+`cache-update` subcommands so `check` returns `{"workflow": [...]}` only, relocating the tooling-payload validator into `ai-kit-project-rules-makefile`'s tree (D-04) and re-homing the shared remediation coverage into `tests/test_ai_kit_rules_common.py` (REQ-rules-agents-prune)
 - [ ] 09-02-PLAN.md — Prune `SKILL.md` and the README registration row to AGENTS.md-prose scope while keeping the `/agent-md-refactor` Steps A/B/C hand-off intact, run `/skill-judge` as this phase's review gate against a freshly measured pre-prune baseline with committed evidence, and formally correct Success Criterion 5's cited baseline figure and Success Criterion 2's subcommand wording (REQ-rules-agents-prune)
 
 ### Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)
@@ -421,7 +421,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 6. AGENTS.md Rules Checker Skill | 3/3 | Complete    | 2026-09-11 |
 | 7. Curated GSD Config Skill | 4/4 | Complete    | 2026-09-11 |
 | 8. Status-line Quota Color Refactor | 1/1 | Complete    | 2026-09-10 |
-| 9. AGENTS.md Checker Prune | 0/TBD | Not started | - |
+| 9. AGENTS.md Checker Prune | 1/2 | In Progress|  |
 | 10. Makefile Rules Checker | 0/TBD | Not started | - |
 | 11. Pre-commit Rules Checker | 0/TBD | Not started | - |
 | 12. Architecture Rules Checker | 0/TBD | Not started | - |
