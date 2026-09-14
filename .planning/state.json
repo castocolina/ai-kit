@@ -47,12 +47,47 @@
       "number": "8",
       "name": "Status-line Quota Color Refactor",
       "status": "complete"
+    },
+    {
+      "number": "9",
+      "name": "AGENTS.md Checker Prune",
+      "status": "pending"
+    },
+    {
+      "number": "10",
+      "name": "Makefile Rules Checker",
+      "status": "pending"
+    },
+    {
+      "number": "11",
+      "name": "Pre-commit Rules Checker",
+      "status": "pending"
+    },
+    {
+      "number": "12",
+      "name": "Architecture Rules Checker",
+      "status": "pending"
+    },
+    {
+      "number": "13",
+      "name": "Docker Rules Checker",
+      "status": "pending"
+    },
+    {
+      "number": "14",
+      "name": "CI/CD Rules Checker",
+      "status": "pending"
+    },
+    {
+      "number": "15",
+      "name": "Rules Orchestrator",
+      "status": "pending"
     }
   ],
   "next": {
-    "command": "/gsd:discuss-phase",
-    "label": "Discuss the first phase",
-    "reason": "Project initialized — plan your first phase"
+    "command": "/gsd:progress --next",
+    "label": "Advance to the next step (plan phase 09)",
+    "reason": "Phase 09 of 17 — needs a plan"
   },
-  "updated_at": "2026-09-13T21:42:12.316Z"
+  "updated_at": "2026-09-14T01:50:04.099Z"
 }

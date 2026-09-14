@@ -1,19 +1,19 @@
 ---
 gsd_state_version: "1.0"
 milestone: v1.2
-current_phase: 8.1
-current_phase_name: status-line-rate-burn-pace-fix
+current_phase: 09
+current_phase_name: AGENTS.md Checker Prune (ai-kit-project-rules-agents)
 status: planning
-stopped_at: Phase 8.1 (INSERTED) created from a live user-reported regression; Phase 15 context gathered -- full v1.2 family (Phases 9-15) now has CONTEXT.md; none of Phase 8.1 or 9-15 planned/executed yet
-last_updated: "2026-09-13T23:57:38.131Z"
+stopped_at: Phase 8.1 complete, ready to plan Phase 09
+last_updated: "2026-09-14T01:50:04.090Z"
 last_activity: 2026-09-13
-last_activity_desc: Phase 8.1 (INSERTED) added -- rate-burn formula pace-direction fix, starting diff on branch fix/8.1-status-line-rate-burn-pace; ONESHOT-ENTRY-PROMPT.md updated to run it first
-state_head: 8c4a2bd77173b15edc4bd720430c0e517c0bf617
+last_activity_desc: Phase 8.1 complete, transitioned to Phase 09
+state_head: 059d473838eccb7d92e7117ad9cc65d6f0a06cd1
 progress:
   total_phases: 17
-  completed_phases: 1
-  total_plans: 8
-  completed_plans: 8
+  completed_phases: 2
+  total_plans: 9
+  completed_plans: 9
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -28,16 +28,16 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 
 ## Current Position
 
-Phase: 8.1 - Status-line Rate-Burn Pace Fix (INSERTED) — not started (starting diff exists on branch `fix/8.1-status-line-rate-burn-pace`)
-Plan: —
-Status: Context written, ready to plan Phase 8.1; Phase 9 ready to plan after
-Last activity: 2026-09-13 — Phase 8.1 (INSERTED) added from a live user-reported status-line regression
+Phase: 09 — AGENTS.md Checker Prune (ai-kit-project-rules-agents)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-09-13 — Phase 8.1 complete, transitioned to Phase 09
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 26
+- Total plans completed: 27
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -64,6 +64,7 @@ Last activity: 2026-09-13 — Phase 8.1 (INSERTED) added from a live user-report
 | 13 Docker Rules Checker | 0 | - | - |
 | 14 CI/CD Rules Checker | 0 | - | - |
 | 15 Rules Orchestrator | 0 | - | - |
+| 8.1 | 1 | - | - |
 
 **Recent Trend:**
 
@@ -248,5 +249,5 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-09-13T23:57:38.104Z
-Stopped at: Phase 15 context gathered -- full v1.2 family (Phases 9-15) now has CONTEXT.md; none planned/executed yet
+Stopped at: Phase 8.1 complete, ready to plan Phase 09
 Resume file: .planning/phases/09-agents-md-checker-prune-ai-kit-project-rules-agents/09-CONTEXT.md

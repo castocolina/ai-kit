@@ -80,7 +80,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 6: AGENTS.md Rules Checker Skill** - Wrap `/agent-md-refactor` with a house-ruleset checker for Makefile target shape and the accumulated workflow rules (completed 2026-09-11)
 - [x] **Phase 7: Curated GSD Config Skill** - Small curated question set that writes and schema-validates `.planning/config.json`, replacing `gsd-settings`/`gsd-config`'s full interrogation (completed 2026-09-11)
 - [x] **Phase 8: Status-line Quota Color Refactor** - Rate-limit bucket coloring becomes relative to time-left-in-window, not raw usage percentage (completed 2026-09-10)
-- [ ] **Phase 8.1: Status-line Rate-Burn Pace Fix (INSERTED)** - Reverses Phase 8's burn-rate formula direction to `pct / elapsed_fraction` (pace), fixing a live regression where low usage well into a rate-limit window rendered as an urgency color
+- [x] **Phase 8.1: Status-line Rate-Burn Pace Fix (INSERTED)** - Reverses Phase 8's burn-rate formula direction to `pct / elapsed_fraction` (pace), fixing a live regression where low usage well into a rate-limit window rendered as an urgency color (completed 2026-09-13)
 - [ ] **Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)** - Prune the renamed AGENTS.md/CLAUDE.md checker to AGENTS.md-prose scope only, dropping all Makefile-specific logic
 - [ ] **Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)** - New skill inherits the dropped Makefile logic plus `validate-<category>` parity, help/fail reachability, recipe-length cap, docker build-before-up, shellcheck threshold, and an advisory ordering heuristic
 - [ ] **Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)** - New skill checks Makefile↔pre-commit parity and applies the 6-category tooling taxonomy plus ruff/golangci-lint-specific checks
@@ -282,7 +282,7 @@ Plans:
 
 **Goal**: The rate-limit burn-rate formula reflects real urgency as a PACE signal (usage relative to time already elapsed), not as "less time remaining is always more urgent" — fixing a live regression where low usage well into a window rendered as a warning color.
 **Depends on**: Nothing (independent of Phase 8 and of Phases 9-15; a direct reversal of one formula inside Phase 8's own deliverable)
-**Requirements**: REQ-stln-time-relative-color (amended — see `08.1-CONTEXT.md` D-01)
+**Requirements**: REQ-stln-time-relative-color
 **Success Criteria** (what must be TRUE):
 
   1. The ratio fed into the unchanged `theme.ramps["rate"]` thresholds is `used_percentage / elapsed_fraction` (`elapsed_fraction = 1 - remaining_fraction`), not `used_percentage / remaining_fraction`. Worked example matching the live-reported regression: 25% used with 4h already elapsed of a 5h window (`elapsed_fraction = 0.8`, `remaining_fraction = 0.2`) — the superseded Phase 8 formula gives `25 / 0.2 = 125` → RED+bold (the bug: low usage well into the window read as urgent); this formula gives `25 / 0.8 = 31.25` → GREEN. See `08.1-CONTEXT.md` D-01/D-02 and `tests/test_status_line.py`'s `TestRateBurnRatio` for the full set of pinned boundary cases.
@@ -294,7 +294,7 @@ Plans:
 
 Plans:
 
-- [ ] 08.1-01-PLAN.md — Land the `fix/8.1-status-line-rate-burn-pace` branch's diff verbatim (cherry-pick `fc2d8bb`), close the two gaps the re-review found (stale call-site/render-test commentary, the unpinned SC1 25%-worked-example case), and formally amend REQUIREMENTS.md's REQ-stln-time-relative-color (REQ-stln-time-relative-color)
+- [x] 08.1-01-PLAN.md — Land the `fix/8.1-status-line-rate-burn-pace` branch's diff verbatim (cherry-pick `fc2d8bb`), close the two gaps the re-review found (stale call-site/render-test commentary, the unpinned SC1 25%-worked-example case), and formally amend REQUIREMENTS.md's REQ-stln-time-relative-color (REQ-stln-time-relative-color)
 
 ### Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)
 
