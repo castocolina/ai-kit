@@ -1803,5 +1803,467 @@ class TestHotReloadPerStackMarkerPairs(unittest.TestCase):
                 self.assertIsNone(_tc.resolve_hot_reload("run-the-production-build", {stack}))
 
 
+# --------------------------------------------------------------------------- #
+# Phase 14 plan 01: `STRUCTURAL_KINDS` grows to five kinds ("cicd"), the six
+# new `yaml_text` primitives (D-C8), the new `command_text` module (D-C9),
+# and both drift guards (D-C8's against `compose_parse.py`'s private
+# counterparts, D-C9's against `parity_checker._RUNNER_PREFIX_RE`).
+# --------------------------------------------------------------------------- #
+
+
+class TestRemediationCicdKind(unittest.TestCase):
+    """Additive coverage for `STRUCTURAL_KINDS` growing to include
+    `"cicd"` (Phase 14 plan 01). Every case here must leave
+    `TestRemediation`'s, `TestRemediationPrecommitKind`'s,
+    `TestRemediationArchKind`'s, and `TestRemediationDockerKind`'s
+    existing assertions untouched."""
+
+    def test_structural_kinds_has_five_kinds_original_four_unchanged(self):
+        self.assertEqual(STRUCTURAL_KINDS[:4], ("makefile", "precommit", "arch", "docker"))
+        self.assertIn("cicd", STRUCTURAL_KINDS)
+        self.assertEqual(len(STRUCTURAL_KINDS), len(set(STRUCTURAL_KINDS)))
+
+    def test_backcompat_report_carrying_only_four_pre_existing_kinds_is_unchanged(self):
+        report = {
+            "makefile": [
+                {
+                    "target": "x",
+                    "criticality": 3,
+                    "summary": "s",
+                    "recommendation": "r",
+                    "issue": "i",
+                },
+            ],
+            "precommit": [
+                {"category": "p", "criticality": 1, "summary": "s2", "recommendation": "r2"},
+            ],
+            "arch": [
+                {"category": "a", "criticality": 2, "summary": "s3", "recommendation": "r3"},
+            ],
+            "docker": [
+                {
+                    "target": "docker-up",
+                    "category": "docker-target-family",
+                    "criticality": 4,
+                    "summary": "s4",
+                    "recommendation": "r4",
+                },
+            ],
+        }
+        result = build_remediation(report)
+        self.assertEqual(
+            [e["kind"] for e in result["remediate"]],
+            ["precommit", "arch", "makefile", "docker"],
+        )
+        self.assertEqual(result["blocked"], [])
+
+    def test_all_five_kinds_order_as_one_list_disagreeing_with_insertion_order(self):
+        # Insertion order is makefile-then-precommit-then-arch-then-docker-
+        # then-cicd; criticality order disagrees on purpose (docker=1,
+        # arch=2, cicd=2, makefile=3, precommit=4).
+        report = {
+            "makefile": [
+                {"target": "m", "criticality": 3, "summary": "s", "recommendation": "r"}
+            ],
+            "precommit": [
+                {"category": "p", "criticality": 4, "summary": "s", "recommendation": "r"}
+            ],
+            "arch": [{"category": "a", "criticality": 2, "summary": "s", "recommendation": "r"}],
+            "docker": [
+                {
+                    "target": "docker-up",
+                    "category": "docker-target-family",
+                    "criticality": 1,
+                    "summary": "s",
+                    "recommendation": "r",
+                }
+            ],
+            "cicd": [
+                {
+                    "category": "cicd-command-reuse",
+                    "criticality": 2,
+                    "summary": "s",
+                    "recommendation": "r",
+                }
+            ],
+        }
+        result = build_remediation(report)
+        ks = [e["kind"] for e in result["remediate"]]
+        self.assertEqual(ks[0], "docker")
+        self.assertEqual(set(ks[1:3]), {"arch", "cicd"})
+        self.assertEqual(ks[3], "makefile")
+        self.assertEqual(ks[4], "precommit")
+
+    def test_cicd_kind_identifies_by_category_never_target(self):
+        # D-C7: no cicd finding carries `target`, so `id` always derives
+        # from `category`, unlike the docker skill's target-family kind.
+        report = {
+            "cicd": [
+                {
+                    "category": "cicd-command-reuse",
+                    "criticality": 3,
+                    "summary": "s",
+                    "recommendation": "r",
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(result["remediate"][0]["id"], "cicd-command-reuse")
+        self.assertEqual(result["remediate"][0]["kind"], "cicd")
+
+    def test_cicd_kind_needs_research_goes_to_blocked(self):
+        report = {
+            "cicd": [
+                {
+                    "category": "cicd-command-reuse",
+                    "criticality": 3,
+                    "summary": "s",
+                    "recommendation": None,
+                    "needs_research": True,
+                    "stacks": ["python"],
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(result["remediate"], [])
+        self.assertEqual(len(result["blocked"]), 1)
+        self.assertEqual(result["blocked"][0]["kind"], "cicd")
+        self.assertEqual(result["blocked"][0]["stacks"], ["python"])
+
+
+class TestYamlTextDocumentSeparator(unittest.TestCase):
+    def test_bare_separator_is_true(self):
+        self.assertTrue(yaml_text.is_document_separator("---"))
+        self.assertTrue(yaml_text.is_document_separator("  ---  "))
+
+    def test_scalar_containing_dashes_is_false(self):
+        self.assertFalse(yaml_text.is_document_separator("key: ---value"))
+        self.assertFalse(yaml_text.is_document_separator("----"))
+
+
+class TestYamlTextEffectiveStructural(unittest.TestCase):
+    def test_blank_line_is_false(self):
+        self.assertFalse(yaml_text.is_effective_structural("   "))
+
+    def test_comment_line_is_false(self):
+        self.assertFalse(yaml_text.is_effective_structural("  # comment"))
+
+    def test_document_separator_is_false(self):
+        self.assertFalse(yaml_text.is_effective_structural("---"))
+
+    def test_real_content_line_is_true(self):
+        self.assertTrue(yaml_text.is_effective_structural("key: value"))
+
+
+class TestYamlTextStripInlineComment(unittest.TestCase):
+    def test_unquoted_hash_truncates(self):
+        self.assertEqual(yaml_text.strip_inline_comment("value # comment"), "value ")
+
+    def test_hash_inside_single_quotes_is_preserved(self):
+        self.assertEqual(yaml_text.strip_inline_comment("'a#b' # c"), "'a#b' ")
+
+    def test_hash_inside_double_quotes_is_preserved(self):
+        self.assertEqual(yaml_text.strip_inline_comment('"a#b" # c'), '"a#b" ')
+
+    def test_no_hash_returns_unchanged(self):
+        self.assertEqual(yaml_text.strip_inline_comment("value"), "value")
+
+
+class TestYamlTextMatchKeyHeader(unittest.TestCase):
+    def test_real_header_matches(self):
+        self.assertEqual(yaml_text.match_key_header("key: value"), ("key", " value"))
+
+    def test_sequence_item_does_not_match(self):
+        self.assertIsNone(yaml_text.match_key_header("- item"))
+
+    def test_comment_does_not_match(self):
+        self.assertIsNone(yaml_text.match_key_header("# comment"))
+
+    def test_no_colon_does_not_match(self):
+        self.assertIsNone(yaml_text.match_key_header("bareword"))
+
+
+class TestYamlTextFindBlockEnd(unittest.TestCase):
+    def test_stops_at_first_line_at_or_below_ref_indent(self):
+        lines = ["job:", "  a: 1", "  b: 2", "next:"]
+        self.assertEqual(yaml_text.find_block_end(lines, 1, 0), 3)
+
+    def test_blank_line_inside_block_does_not_end_it(self):
+        lines = ["job:", "  a: 1", "", "  b: 2", "next:"]
+        self.assertEqual(yaml_text.find_block_end(lines, 1, 0), 4)
+
+    def test_end_of_input_returns_len(self):
+        lines = ["job:", "  a: 1", "  b: 2"]
+        self.assertEqual(yaml_text.find_block_end(lines, 1, 0), 3)
+
+
+class TestYamlTextOwnLevelLines(unittest.TestCase):
+    def test_skips_deeper_lines_and_yields_own_level(self):
+        lines = ["job:", "  a: 1", "    nested: 2", "  b: 3"]
+        result = list(yaml_text.own_level_lines(lines, 1, 4))
+        self.assertEqual([content for _, content in result], ["a: 1", "b: 3"])
+
+    def test_stops_at_shallower_line(self):
+        lines = ["job:", "  a: 1", "sibling:"]
+        result = list(yaml_text.own_level_lines(lines, 1, 3))
+        self.assertEqual([content for _, content in result], ["a: 1"])
+
+
+import importlib.util
+import re
+
+from ai_kit_rules_common import command_text as _cmdtext
+
+_COMPOSE_PARSE_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "skills",
+    "ai-kit-project-rules-docker",
+    "ai_kit_project_rules_docker",
+    "compose_parse.py",
+)
+
+_PARITY_CHECKER_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "skills",
+    "ai-kit-project-rules-precommit",
+    "ai_kit_project_rules_precommit",
+    "parity_checker.py",
+)
+
+
+class TestCommandTextSplitTopLevelSegments(unittest.TestCase):
+    def test_splits_on_and_and_semicolon_and_or(self):
+        self.assertEqual(
+            _cmdtext.split_top_level_segments("a && b; c || d"),
+            ["a", "b", "c", "d"],
+        )
+
+    def test_single_quoted_operators_are_not_split(self):
+        self.assertEqual(_cmdtext.split_top_level_segments("echo 'a && b'"), ["echo 'a && b'"])
+
+    def test_double_quoted_operators_are_not_split(self):
+        self.assertEqual(_cmdtext.split_top_level_segments('echo "a; b"'), ['echo "a; b"'])
+
+    def test_no_operator_returns_one_segment(self):
+        self.assertEqual(_cmdtext.split_top_level_segments("ruff check ."), ["ruff check ."])
+
+
+class TestCommandTextTruncateAtUnquotedPipe(unittest.TestCase):
+    def test_truncates_at_first_unquoted_pipe(self):
+        self.assertEqual(_cmdtext.truncate_at_unquoted_pipe("cat x | grep y"), "cat x ")
+
+    def test_quoted_pipe_is_preserved(self):
+        self.assertEqual(_cmdtext.truncate_at_unquoted_pipe("echo 'a | b'"), "echo 'a | b'")
+
+    def test_no_pipe_returns_unchanged(self):
+        self.assertEqual(_cmdtext.truncate_at_unquoted_pipe("ruff check ."), "ruff check .")
+
+
+class TestCommandTextHasHeredoc(unittest.TestCase):
+    def test_unquoted_heredoc_marker_detected(self):
+        self.assertTrue(_cmdtext.has_heredoc("python3 - <<EOF"))
+
+    def test_quoted_heredoc_like_text_not_detected(self):
+        self.assertFalse(_cmdtext.has_heredoc("echo '<<not a heredoc>>'"))
+
+    def test_no_heredoc_returns_false(self):
+        self.assertFalse(_cmdtext.has_heredoc("ruff check ."))
+
+
+class TestCommandTextStripLeadingNoise(unittest.TestCase):
+    def test_strips_var_assignment(self):
+        self.assertEqual(_cmdtext.strip_leading_noise("VAR=1 ruff check ."), "ruff check .")
+
+    def test_strips_env_and_its_assignments(self):
+        self.assertEqual(
+            _cmdtext.strip_leading_noise("env VAR=1 VAR2=2 ruff check ."), "ruff check ."
+        )
+
+    def test_strips_two_token_runner_prefix(self):
+        self.assertEqual(_cmdtext.strip_leading_noise("uv run ruff check ."), "ruff check .")
+
+    def test_strips_pnpm_exec(self):
+        self.assertEqual(_cmdtext.strip_leading_noise("pnpm exec eslint ."), "eslint .")
+
+    def test_strips_pnpm_dlx(self):
+        self.assertEqual(_cmdtext.strip_leading_noise("pnpm dlx eslint ."), "eslint .")
+
+    def test_strips_yarn_dlx(self):
+        self.assertEqual(_cmdtext.strip_leading_noise("yarn dlx eslint ."), "eslint .")
+
+    def test_strips_bun_x(self):
+        self.assertEqual(_cmdtext.strip_leading_noise("bun x eslint ."), "eslint .")
+
+    def test_strips_one_token_npx(self):
+        self.assertEqual(_cmdtext.strip_leading_noise("npx eslint ."), "eslint .")
+
+    def test_strips_one_token_bunx(self):
+        self.assertEqual(_cmdtext.strip_leading_noise("bunx eslint ."), "eslint .")
+
+    def test_no_noise_returns_unchanged(self):
+        self.assertEqual(_cmdtext.strip_leading_noise("ruff check ."), "ruff check .")
+
+    def test_bounded_recursion_cap_stops_after_three_rounds(self):
+        # Four stacked "<runner> run" prefixes; only 3 are stripped.
+        line = "uv run poetry run pdm run hatch run ruff check ."
+        self.assertEqual(_cmdtext.strip_leading_noise(line), "hatch run ruff check .")
+
+
+class TestCommandTextNormalizeToken(unittest.TestCase):
+    def test_basename_strips_path(self):
+        self.assertEqual(_cmdtext.normalize_token("./bin/ruff"), "ruff")
+        self.assertEqual(_cmdtext.normalize_token(".venv/bin/ruff"), "ruff")
+
+    def test_casefold_and_underscore_fold(self):
+        self.assertEqual(_cmdtext.normalize_token("Py_Compile"), "py-compile")
+
+    def test_casefold_only_input_unchanged_shape(self):
+        self.assertEqual(_cmdtext.normalize_token("RUFF"), "ruff")
+
+
+def _load_compose_parse_module():
+    spec = importlib.util.spec_from_file_location(
+        "_compose_parse_for_yaml_text_drift_guard", _COMPOSE_PARSE_PATH
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestYamlTextComposeParseDriftGuard(unittest.TestCase):
+    """D-C8: pins each new shared `yaml_text` primitive against
+    `compose_parse.py`'s private counterpart of the same shape, over a
+    shared input table. `compose_parse.py` is loaded BY FILE PATH
+    (`importlib.util.spec_from_file_location`), never by importing the
+    docker skill's package, and this class skips with a stated reason if
+    that file is absent."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not os.path.isfile(_COMPOSE_PARSE_PATH):
+            raise unittest.SkipTest(
+                f"compose_parse.py not found at {_COMPOSE_PARSE_PATH!r} -- "
+                "the docker skill this drift guard pins against is absent."
+            )
+        cls._compose = _load_compose_parse_module()
+
+    _LINE_INPUTS = ("---", "  ---  ", "----", "key: value", "  # comment", "", "   ", "- item")
+
+    def test_document_separator_agrees(self):
+        for line in self._LINE_INPUTS:
+            with self.subTest(line=line):
+                self.assertEqual(
+                    yaml_text.is_document_separator(line),
+                    self._compose._is_document_separator(line),
+                )
+
+    def test_effective_structural_agrees(self):
+        for line in self._LINE_INPUTS:
+            with self.subTest(line=line):
+                self.assertEqual(
+                    yaml_text.is_effective_structural(line),
+                    self._compose._effective_structural(line),
+                )
+
+    _TEXT_INPUTS = ("value # comment", "'a#b' # c", '"a#b" # c', "value", "#leading")
+
+    def test_strip_inline_comment_agrees(self):
+        for text in self._TEXT_INPUTS:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    yaml_text.strip_inline_comment(text),
+                    self._compose._strip_inline_comment(text),
+                )
+
+    _HEADER_INPUTS = ("key: value", "- item", "# comment", "bareword", "key:")
+
+    def test_match_key_header_agrees(self):
+        for content in self._HEADER_INPUTS:
+            with self.subTest(content=content):
+                self.assertEqual(
+                    yaml_text.match_key_header(content),
+                    self._compose._match_key_header(content),
+                )
+
+    def test_find_block_end_agrees(self):
+        lines = ["job:", "  a: 1", "  b: 2", "next:"]
+        self.assertEqual(
+            yaml_text.find_block_end(lines, 1, 0),
+            self._compose._find_block_end(lines, 1, 0),
+        )
+
+    def test_own_level_lines_agrees(self):
+        lines = ["job:", "  a: 1", "    nested: 2", "  b: 3"]
+        self.assertEqual(
+            list(yaml_text.own_level_lines(lines, 1, 4)),
+            list(self._compose._own_level_lines(lines, 1, 4)),
+        )
+
+    def test_drift_guard_is_non_vacuous(self):
+        """Mutate `is_document_separator`'s answer, confirm this class's
+        own comparison catches the divergence, then revert."""
+        original = yaml_text.is_document_separator
+        yaml_text.is_document_separator = lambda line: False
+        try:
+            self.assertNotEqual(
+                yaml_text.is_document_separator("---"),
+                self._compose._is_document_separator("---"),
+            )
+        finally:
+            yaml_text.is_document_separator = original
+
+
+def _read_runner_prefix_re_literal():
+    with open(_PARITY_CHECKER_PATH, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read())
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name) or target.id != "_RUNNER_PREFIX_RE":
+            continue
+        if isinstance(node.value, ast.Call) and node.value.args:
+            arg = node.value.args[0]
+            if isinstance(arg, ast.Constant):
+                return arg.value
+    raise AssertionError("_RUNNER_PREFIX_RE literal not found")
+
+
+class TestCommandTextRunnerPrefixDriftGuard(unittest.TestCase):
+    """D-C9: pins `command_text.RUNNER_PREFIX_RE`'s pattern literal
+    against `ai_kit_project_rules_precommit.parity_checker.
+    _RUNNER_PREFIX_RE`'s (read via `ast`, never imported) -- and ONLY
+    that one constant. `command_text`'s other prefix-stripping constants
+    (`npx`/`bunx`/`pnpm exec`/`pnpm dlx`/`yarn dlx`/`bun x`, and the
+    `VAR=value` handling) are deliberately outside this guard's subject:
+    `parity_checker` has no counterpart for any of them."""
+
+    def test_pinned_constant_matches_sibling_literal(self):
+        literal = _read_runner_prefix_re_literal()
+        self.assertEqual(literal, _cmdtext.RUNNER_PREFIX_RE.pattern)
+
+    def test_drift_guard_is_non_vacuous_on_the_pinned_constant(self):
+        original = _cmdtext.RUNNER_PREFIX_RE
+        _cmdtext.RUNNER_PREFIX_RE = re.compile(r"not-the-same-pattern")
+        try:
+            literal = _read_runner_prefix_re_literal()
+            self.assertNotEqual(literal, _cmdtext.RUNNER_PREFIX_RE.pattern)
+        finally:
+            _cmdtext.RUNNER_PREFIX_RE = original
+
+    def test_mutating_an_unpinned_constant_does_not_fail_the_guard(self):
+        """Proves the guard is scoped to `RUNNER_PREFIX_RE` alone, not a
+        whole-module equivalence check against `parity_checker`."""
+        literal = _read_runner_prefix_re_literal()
+        original = _cmdtext._ONE_TOKEN_RUNNER_RE
+        _cmdtext._ONE_TOKEN_RUNNER_RE = re.compile(r"totally-different")
+        try:
+            self.assertEqual(literal, _cmdtext.RUNNER_PREFIX_RE.pattern)
+        finally:
+            _cmdtext._ONE_TOKEN_RUNNER_RE = original
+
+
 if __name__ == "__main__":
     unittest.main()
