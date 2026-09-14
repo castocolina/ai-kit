@@ -3,18 +3,18 @@ gsd_state_version: "1.0"
 milestone: v1.2
 current_phase: 13
 current_phase_name: docker-rules-checker-ai-kit-project-rules-docker
-current_plan: Not started
+current_plan: 2
 status: executing
-stopped_at: Phase 12 complete, ready to plan Phase 13
-last_updated: "2026-09-14T17:19:30.841Z"
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-09-14T17:37:20.442Z"
 last_activity: 2026-09-14
 last_activity_desc: Phase 12 complete, transitioned to Phase 13
-state_head: b6d617b739359a6c4477004327656a4aa107136e
+state_head: 86991b9f81ad427b30c047e57963fa01431609f3
 progress:
   total_phases: 17
-  completed_phases: 2
+  completed_phases: 1
   total_plans: 25
-  completed_plans: 21
+  completed_plans: 22
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 
 ## Current Position
 
-Phase: 13 (docker-rules-checker-ai-kit-project-rules-docker) — READY TO EXECUTE
-Current Plan: Not started
+Phase: 13 (docker-rules-checker-ai-kit-project-rules-docker) — EXECUTING
+Current Plan: 2
 Total Plans in Phase: 4
 Status: Ready to execute
 Last activity: 2026-09-14 — Phase 12 complete, transitioned to Phase 13
@@ -99,6 +99,7 @@ Last activity: 2026-09-14 — Phase 12 complete, transitioned to Phase 13
 | Phase 11 P03 | single session | 3 tasks | 6 files |
 | Phase 11 P04 | single session | 3 tasks | 5 files |
 | Phase 12-architecture-rules-checker-ai-kit-project-rules-arch P03 | ~2h | 3 tasks | 4 files |
+| Phase 13-docker-rules-checker-ai-kit-project-rules-docker P01 | 45min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -173,6 +174,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 11]: pair_checks.py iterates the shared pairs table directly (row-by-row) rather than enumerating detected-tool combinations, so the rule-family row's skip is a real mark-driven branch
 - [Phase 11]: Phase 11 complete: ai-kit-project-rules-precommit SKILL.md written, skill-judge-gated at 103/120 (0 Critical/Important), naming-analyzer confirmed the name, ROADMAP SC1 + REQUIREMENTS REQ-rules-precommit corrected (append-only) to name which half of the parity condition the Phase 10 Makefile sibling already detected
 - [Phase 12]: [Phase 12] Plan 03: skill-judge scored 100/120 (0 Critical/Important, no fix loop); naming-analyzer confirmed ai-kit-project-rules-arch as-is; D-01's scouting claim corrected append-only citing tests/test_arch.py:374 and :605-611 as live evidence, the target-aware DECISION itself unchanged.
+- [Phase 13]: [Phase 13] Plan 13-01: wired ai-kit-project-rules-docker end-to-end (SC1/SC5) -- D-D4 root-scoped applicability gate (stat-based, non-recursive), D-D1 exact-equality family match, D-D3 identifier discipline both directions, D-D23 unreadable-Makefile wrap in the consuming skill. STRUCTURAL_KINDS grown to 4 kinds additively. Both non-vacuity mutations (D-D1 equality->prefix, gate root-only->recursive-walk) applied and observed failing before revert.
 
 ### Pending Todos
 
@@ -281,6 +283,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-14T14:43:02.359Z
-Stopped at: Phase 12 complete, ready to plan Phase 13
+Last session: 2026-09-14T17:37:20.408Z
+Stopped at: Completed 13-01-PLAN.md
 Resume file: None
