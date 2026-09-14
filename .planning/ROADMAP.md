@@ -294,7 +294,7 @@ Plans:
 
 Plans:
 
-- [ ] 08.1-01-PLAN.md — Land the `fix/8.1-status-line-rate-burn-pace` branch's diff (review, confirm test coverage, merge/cherry-pick onto the phase's execution branch, commit, close)
+- [ ] 08.1-01-PLAN.md — Land the `fix/8.1-status-line-rate-burn-pace` branch's diff verbatim (cherry-pick `fc2d8bb`), close the two gaps the re-review found (stale call-site/render-test commentary, the unpinned SC1 25%-worked-example case), and formally amend REQUIREMENTS.md's REQ-stln-time-relative-color (REQ-stln-time-relative-color)
 
 ### Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)
 
