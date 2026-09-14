@@ -16,6 +16,13 @@ field set, in D-C13's order.
 Structured so plans 14-02 and 14-03 extend this by APPENDING a CI-file
 source and a reuse-source surface inside the applicable branch, never by
 adding a check ahead of the gate.
+
+Plan 14-02 appends the GitHub Actions workflow files `ci_parse.
+discover_ci_files` now yields (D-C29): the CI-file loop below is still
+the ONLY loop over the ONLY list that function returns, and dispatches
+to `ci_parse.iter_command_sites` (GitLab) or `ci_parse.
+iter_workflow_command_sites` (GitHub Actions) per file by name. No
+second way to reach a workflow file is added anywhere in this module.
 """
 
 from __future__ import annotations
@@ -86,7 +93,15 @@ def check_cicd_rules(repo_root: str) -> list[dict]:
     for ci_file in ci_parse.discover_ci_files(repo_root):
         abs_path = os.path.join(repo_root, ci_file)
         text = ci_parse.read_ci_text(abs_path)
-        for site_name, command_lines in ci_parse.iter_command_sites(text):
+        # D-C29: `discover_ci_files` is the SINGLE source of this list
+        # (GitLab files then workflow files, deduplicated); this is the
+        # ONE loop over it, dispatching to the right reader per file by
+        # name. No second way to reach a workflow file is ever added.
+        if ci_file in ci_parse.GITLAB_CI_FILENAMES:
+            command_sites = ci_parse.iter_command_sites(text)
+        else:
+            command_sites = ci_parse.iter_workflow_command_sites(text)
+        for site_name, command_lines in command_sites:
             for command_line in command_lines:
                 if has_heredoc(command_line):
                     continue

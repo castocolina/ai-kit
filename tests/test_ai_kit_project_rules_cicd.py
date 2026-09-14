@@ -919,5 +919,238 @@ class TestGateRegistration(unittest.TestCase):
         self.assertIn("skills/ai-kit-project-rules-cicd", paths)
 
 
+_MK_RUFF_MYPY_TASK1 = (
+    "ruff:\n\tuv run ruff check .\n\n"
+    "mypy:\n\tuv run mypy .\n"
+)
+
+_WF_LINT_AND_TYPES = (
+    "name: ci\n"
+    "on:\n"
+    "  push:\n"
+    "jobs:\n"
+    "  lint:\n"
+    "    runs-on: ubuntu-latest\n"
+    "    steps:\n"
+    "    - uses: actions/checkout@v4\n"
+    "      with:\n"
+    "        path: ruff check .\n"
+    "    - name: Lint\n"
+    "      run: ruff check .\n"
+    "    - name: Types\n"
+    "      run: |\n"
+    "        mypy .\n"
+    "        make mypy\n"
+)
+
+
+class TestGitHubReaderShapes(unittest.TestCase):
+    """Plan 14-02 Task 1's <behavior> cases: the GitHub Actions
+    sequence-of-mappings reader, its `run:` scalar/block-scalar forms, and
+    the `uses:` exclusion (D-C14, D-C17, T-14-13, T-14-14, T-14-16, T-14-17)."""
+
+    def test_run_scalar_step_is_flagged_against_a_matching_makefile_target(self):
+        repo = _fixture(
+            {
+                "Makefile": _MK_RUFF_MYPY_TASK1,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  lint:\n    steps:\n    - run: ruff check .\n"
+                ),
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        finding = findings[0]
+        self.assertEqual(finding["ci_file"], ".github/workflows/ci.yml")
+        self.assertEqual(finding["job"], "lint")
+        self.assertEqual(finding["reuse_command"], "make ruff")
+        self.assertNotIn("target", finding)
+
+    def test_run_step_calling_make_target_yields_no_findings(self):
+        repo = _fixture(
+            {
+                "Makefile": _MK_RUFF_MYPY_TASK1,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  lint:\n    steps:\n    - run: make ruff\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_block_scalar_run_two_direct_one_reuse_yields_two_findings_in_line_order(
+        self,
+    ):
+        wf = (
+            "jobs:\n"
+            "  j:\n"
+            "    steps:\n"
+            "    - run: |\n"
+            "        ruff check .\n"
+            "        make ruff\n"
+            "        mypy .\n"
+        )
+        repo = _fixture({"Makefile": _MK_RUFF_MYPY_TASK1, ".github/workflows/ci.yml": wf})
+        findings = _findings(repo)
+        self.assertEqual([f["command"] for f in findings], ["ruff check .", "mypy ."])
+
+    def test_uses_step_with_and_without_with_block_contributes_no_commands(self):
+        repo = _fixture(
+            {
+                "Makefile": _MK_RUFF_MYPY_TASK1,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n"
+                    "  j:\n"
+                    "    steps:\n"
+                    "    - uses: actions/checkout@v4\n"
+                    "    - uses: actions/setup-python@v5\n"
+                    "      with:\n"
+                    "        path: ruff check .\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_two_jobs_yield_findings_in_job_then_step_order(self):
+        wf = (
+            "jobs:\n"
+            "  b-job:\n"
+            "    steps:\n"
+            "    - run: ruff check .\n"
+            "  a-job:\n"
+            "    steps:\n"
+            "    - run: mypy .\n"
+        )
+        repo = _fixture({"Makefile": _MK_RUFF_MYPY_TASK1, ".github/workflows/ci.yml": wf})
+        findings = _findings(repo)
+        self.assertEqual([f["job"] for f in findings], ["b-job", "a-job"])
+
+    def test_job_and_step_name_produce_the_d_c17_job_field(self):
+        repo = _fixture(
+            {"Makefile": _MK_RUFF_MYPY_TASK1, ".github/workflows/ci.yml": _WF_LINT_AND_TYPES}
+        )
+        findings = _findings(repo)
+        self.assertEqual([f["job"] for f in findings], ["lint / Lint", "lint / Types"])
+
+    def test_step_with_no_name_key_uses_bare_job_key(self):
+        repo = _fixture(
+            {
+                "Makefile": _MK_RUFF_MYPY_TASK1,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: ruff check .\n"
+                ),
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(findings[0]["job"], "j")
+
+
+class TestGitHubDiscoveryAndGate(unittest.TestCase):
+    """Discovery agrees with D-C1's already-shipped gate on every extension
+    and depth (D-C1's key-links entry)."""
+
+    def test_yml_extension_is_discovered(self):
+        repo = _fixture(
+            {".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: a\n"}
+        )
+        self.assertEqual(ci_parse.discover_ci_files(repo), [".github/workflows/ci.yml"])
+
+    def test_yaml_extension_is_discovered(self):
+        repo = _fixture(
+            {".github/workflows/ci.yaml": "jobs:\n  j:\n    steps:\n    - run: a\n"}
+        )
+        self.assertEqual(ci_parse.discover_ci_files(repo), [".github/workflows/ci.yaml"])
+
+    def test_non_yaml_workflow_entry_is_not_discovered(self):
+        repo = _fixture({".github/workflows/README.md": "# not yaml\n"})
+        self.assertEqual(ci_parse.discover_ci_files(repo), [])
+
+    def test_nested_workflow_file_is_not_discovered(self):
+        repo = _fixture(
+            {".github/workflows/sub/deep.yml": "jobs:\n  j:\n    steps:\n    - run: a\n"}
+        )
+        self.assertEqual(ci_parse.discover_ci_files(repo), [])
+        self.assertFalse(ci_parse.repo_has_ci_config(repo))
+
+    def test_gitlab_files_precede_workflow_files_sorted_by_name(self):
+        repo = _fixture(
+            {
+                ".gitlab-ci.yml": "j:\n  script:\n  - x\n",
+                ".github/workflows/b.yml": "jobs:\n  j:\n    steps:\n    - run: a\n",
+                ".github/workflows/a.yml": "jobs:\n  j:\n    steps:\n    - run: a\n",
+            }
+        )
+        self.assertEqual(
+            ci_parse.discover_ci_files(repo),
+            [".gitlab-ci.yml", ".github/workflows/a.yml", ".github/workflows/b.yml"],
+        )
+
+
+class TestCrossPlatformDeterminism(unittest.TestCase):
+    """D-C13's ordering and determinism, now across both platforms."""
+
+    def test_gitlab_then_workflow_files_and_two_runs_agree(self):
+        repo = _fixture(
+            {
+                "Makefile": _MK_RUFF_MYPY_TASK1,
+                ".gitlab-ci.yml": "gl-job:\n  script:\n  - ruff check .\n",
+                ".github/workflows/b.yml": "jobs:\n  j:\n    steps:\n    - run: mypy .\n",
+                ".github/workflows/a.yml": "jobs:\n  j:\n    steps:\n    - run: mypy .\n",
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(
+            [f["ci_file"] for f in findings],
+            [".gitlab-ci.yml", ".github/workflows/a.yml", ".github/workflows/b.yml"],
+        )
+        first = json.dumps(cli.check(repo), sort_keys=False)
+        second = json.dumps(cli.check(repo), sort_keys=False)
+        self.assertEqual(first, second)
+
+    def test_no_workflow_file_is_scanned_twice(self):
+        repo = _fixture(
+            {
+                "Makefile": _MK_RUFF_MYPY_TASK1,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: ruff check .\n"
+                ),
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+
+
+class TestGitHubDegradation(unittest.TestCase):
+    """Every malformed workflow shape yields a list and never raises."""
+
+    def test_empty_workflow_does_not_raise(self):
+        result = list(ci_parse.iter_workflow_command_sites(""))
+        self.assertEqual(result, [])
+
+    def test_no_jobs_key_does_not_raise(self):
+        result = list(ci_parse.iter_workflow_command_sites("name: ci\non:\n  push:\n"))
+        self.assertEqual(result, [])
+
+    def test_jobs_with_no_steps_does_not_raise(self):
+        result = list(
+            ci_parse.iter_workflow_command_sites("jobs:\n  j:\n    runs-on: ubuntu-latest\n")
+        )
+        self.assertEqual(result, [])
+
+    def test_tab_indented_workflow_does_not_raise(self):
+        text = "jobs:\n\tj:\n\t\tsteps:\n\t\t- run: ruff check .\n"
+        result = list(ci_parse.iter_workflow_command_sites(text))
+        self.assertIsInstance(result, list)
+
+    def test_unreadable_binary_workflow_yields_no_findings(self):
+        repo = tempfile.mkdtemp()
+        _write(os.path.join(repo, "Makefile"), _MK_RUFF_MYPY_TASK1)
+        os.makedirs(os.path.join(repo, ".github", "workflows"))
+        with open(
+            os.path.join(repo, ".github", "workflows", "ci.yml"), "wb"
+        ) as handle:
+            handle.write(b"\xff\xfe\x00 binary, not utf-8\n")
+        self.assertEqual(_findings(repo), [])
+
+
 if __name__ == "__main__":
     unittest.main()
