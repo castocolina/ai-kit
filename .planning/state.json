@@ -51,7 +51,7 @@
     {
       "number": "9",
       "name": "AGENTS.md Checker Prune",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "10",
@@ -86,8 +86,8 @@
   ],
   "next": {
     "command": "/gsd:progress --next",
-    "label": "Advance to the next step (verify)",
-    "reason": "Phase 09 of 17 · ready to verify"
+    "label": "Advance to the next step (plan phase 10)",
+    "reason": "Phase 10 of 17 — needs a plan"
   },
-  "updated_at": "2026-09-14T04:07:23.992Z"
+  "updated_at": "2026-09-14T04:12:07.917Z"
 }

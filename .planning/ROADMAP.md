@@ -81,7 +81,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 7: Curated GSD Config Skill** - Small curated question set that writes and schema-validates `.planning/config.json`, replacing `gsd-settings`/`gsd-config`'s full interrogation (completed 2026-09-11)
 - [x] **Phase 8: Status-line Quota Color Refactor** - Rate-limit bucket coloring becomes relative to time-left-in-window, not raw usage percentage (completed 2026-09-10)
 - [x] **Phase 8.1: Status-line Rate-Burn Pace Fix (INSERTED)** - Reverses Phase 8's burn-rate formula direction to `pct / elapsed_fraction` (pace), fixing a live regression where low usage well into a rate-limit window rendered as an urgency color (completed 2026-09-13)
-- [ ] **Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)** - Prune the renamed AGENTS.md/CLAUDE.md checker to AGENTS.md-prose scope only, dropping all Makefile-specific logic
+- [x] **Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)** - Prune the renamed AGENTS.md/CLAUDE.md checker to AGENTS.md-prose scope only, dropping all Makefile-specific logic (completed 2026-09-14)
 - [ ] **Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)** - New skill inherits the dropped Makefile logic plus `validate-<category>` parity, help/fail reachability, recipe-length cap, docker build-before-up, shellcheck threshold, and an advisory ordering heuristic
 - [ ] **Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)** - New skill checks Makefile↔pre-commit parity and applies the 6-category tooling taxonomy plus ruff/golangci-lint-specific checks
 - [ ] **Phase 12: Architecture Rules Checker (ai-kit-project-rules-arch)** - New skill verifies `arch-test` Makefile target shape/chaining/AST-only-ness; promotes and resolves backlog Phase 999.3 at form/convention-only scope
@@ -421,7 +421,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 6. AGENTS.md Rules Checker Skill | 3/3 | Complete    | 2026-09-11 |
 | 7. Curated GSD Config Skill | 4/4 | Complete    | 2026-09-11 |
 | 8. Status-line Quota Color Refactor | 1/1 | Complete    | 2026-09-10 |
-| 9. AGENTS.md Checker Prune | 1/2 | In Progress|  |
+| 9. AGENTS.md Checker Prune | 2/2 | Complete    | 2026-09-14 |
 | 10. Makefile Rules Checker | 0/TBD | Not started | - |
 | 11. Pre-commit Rules Checker | 0/TBD | Not started | - |
 | 12. Architecture Rules Checker | 0/TBD | Not started | - |
