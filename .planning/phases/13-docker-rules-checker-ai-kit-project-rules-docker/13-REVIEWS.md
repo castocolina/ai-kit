@@ -1,7 +1,7 @@
 ---
 phase: 13
 reviewers: [opencode]
-reviewed_at: 2026-09-14T12:26:00Z
+reviewed_at: 2026-09-14T13:12:00Z
 plans_reviewed: [13-01-PLAN.md, 13-02-PLAN.md, 13-03-PLAN.md, 13-04-PLAN.md]
 models:
   opencode: "xai/grok-4.6 (reasoning=high)"
@@ -9,7 +9,7 @@ model_sources:
   opencode: "pinned"
 ---
 
-# Cross-AI Plan Review — Phase 13 (Cycle 2)
+# Cross-AI Plan Review — Phase 13 (Cycle 3, final)
 
 <!-- gsd:plan-revision-conflicts:begin -->
 ## Plan-Revision Conflicts
@@ -18,78 +18,56 @@ model_sources:
 
 ## OpenCode Review
 
-Cycle 1's 16 findings are in the plan bodies, not just the ledgers, grounded against live source (HEAD `7beed6b`). New seam found: 13-03's long-form volume requirement vs 13-02's scalar-only sequence reader.
+Cycle 2's four findings are in the plan bodies and match live source. One leftover prose count remains in 13-04.
 
 ## 13-01
 
-**Summary.** Tracer still stands up the skill on SC1/SC5 plus the root-scoped gate. Live interfaces match. Cycle 1's unreadable-wrap overclaim is closed in the plan body as D-D23.
+**Summary.** Tracer still stands up the skill on SC1/SC5 plus the root-scoped gate. Live interfaces match. Cycle 1's D-D23 wrap and identifier-anchor rewrite remain correct. No new issue.
 
-**Strengths**
-- Gate edges are this repo's own (`tests/e2e/docker/Dockerfile`, `e2e-docker`). Clause (iv) prefix-after-normalization is the right rule.
-- Identifier anchors are now the real ones (missing-target loop + build-wiring finding); the coincidental line-463 citation is correctly named as such.
-- Registration surfaces match; the package glob is why 13-02/13-03 need no gate-file edits.
+**Strengths.** Gate edges, identifier anchors, registration surfaces, and the copyable `__init__.py` pattern all still check out against live line numbers.
 
-**Concerns.** None new at MEDIUM+. Residual executor risk is forgetting the wrap on every shared-parser call — D-D23 already states this.
+**Concerns.** None new.
 
 **Risk Assessment.** **LOW.**
 
-**Ledger Verification** — Findings 1, 9, 10 all **RESOLVED**, verified against live line numbers.
-
 ## 13-02
 
-**Summary.** Hard plan: indentation-aware stdlib compose parser + SC2/SC3. Cycle 1 flow-mapping and declared-values-only gaps are now pinned as limits with containment fixtures.
+**Summary.** Cycle 2's scalar-item contract is now explicit in the plan body: `block_sequence` returns only `- ` line text, and a `- type: bind` / `source:` / `target:` entry arrives as the fragment `type: bind` — exactly what 13-03 D-D17 rule 2 consumes. Cycle 1's flow-mapping and declared-values-only limits remain pinned. No new issue.
 
-**Strengths**
-- D-D7's block-end rule is the defect D-01 exists to prevent, tested with two differently-nested services.
-- Bounds exclusive, numbers match ROADMAP SC2. Unreadable duration -> advisory, not silence.
-- `depends_on` three bare forms, per-entry not whole-block.
-- The filename-literal-ban check was actually rebuilt (interpolated from live tuples), not just patched.
+**Strengths.** Block-end rule, exclusive bounds with a load-bearing fractional discriminator (`5.001s`, `docker_healthcheck_out_of_bounds`), per-entry `depends_on` evaluation, one-list filename interpolation.
 
-**Concerns**
-- **LOW — the exclusive-bounds check does not pin a fractional-second discriminator.** The stated 5.001s example is not what the verify assertion actually checks; an integer-only parser could still pass. Pin the discriminator to include a fractional part and assert the specific out-of-bounds issue code.
+**Concerns.** None new. Cycle-2 finding 1 (scalar-item vs long-form volumes) is **RESOLVED** by stating the contract rather than growing a mappings reader.
 
-**Suggestions.** Consider adding a `block_sequence`-of-mappings reader to D-D7 now, since 13-03 Task 3 needs long-form volume entries and cannot touch `compose_parse.py` itself (see 13-03 below).
-
-**Risk Assessment.** **MEDIUM.** New residual is the volumes-sequence-of-mappings hole 13-03 walks into.
-
-**Ledger Verification** — Findings 2, 3, 11, 12 all **RESOLVED**, verified against live line numbers.
+**Risk Assessment.** **MEDIUM** for execution (hand-written parser on untrusted text), **LOW** for plan-internal consistency. The volumes-parser seam that made cycle 2 MEDIUM is closed.
 
 ## 13-03
 
-**Summary.** D-04 expansion with a third advisory outcome, correctly isolated from the taxonomy/classifier. Cycle 1 tiebreak / source-literal / mixed-volume findings are in the body. New seam: long-form volumes vs 13-02's scalar sequence reader.
+**Summary.** Cycle 2's long-form descope and anonymous-volume rule landed as an ordered five-rule grammar, verified correct by walking short-form binds and bare-path anonymous volumes through it — neither is pushed onto `volumes_unreadable`. The stackless `HOT-RELOAD-OK` fixture now matches D-D15's reason order. No new issue.
 
-**Strengths**
-- Three outcomes, five named reasons, fixed evaluation order.
-- `HOT_RELOAD_TOOLS` correctly kept beside, not inside, the taxonomy/baseline-stacks tables.
-- Token-boundary matching with a total-order tiebreak, cross-process hash-seed determinism probe.
-- Mixed unreadable-volume state is now an explicit precedence rule, not a leftover bullet.
+**Strengths.** `HOT_RELOAD_TOOLS` correctly isolated from the taxonomy, token-boundary matching, key-set-derived stack test, mixed-unreadable-volume precedence rule.
 
-**Concerns**
-- **MEDIUM — long-form `type: bind` volumes are required by this plan but unparseable by 13-02's own scalar-only sequence reader, and this plan's `files_modified` explicitly excludes `compose_parse.py`.** A long-form volume entry is a sequence of mappings, not scalars — 13-02's `block_sequence` reader as specified cannot produce it, and this plan forbids a private re-scan. The executor cannot satisfy this plan's Task 3 pairing without violating one of the two plans' own stated boundaries. Short-form bind mounts (`./src:/app`) already discharge ROADMAP SC4 on their own — this is an internal inconsistency between plans, not a missing capability.
-- **LOW — anonymous volumes (a bare path with no colon) are not a bind mount** and must be explicitly excluded from the bind-mount grammar, not treated as conforming because they start with `/` or `.`.
+**Cycle-3 target 1 — D-D17 five-rule grammar.** **Correct.** Rule 1 (no colon -> anonymous, readable) fires before rule 2's absolute-path test, so `- /app/data` is never misrouted to the unreadable bucket; short-form `./src:/app` never reaches rule 2 either. Rule ordering is deliberate and verified against three concrete entries.
 
-**Suggestions.** Either extend 13-02's D-D7 with a sequence-of-mappings reader and add `compose_parse.py` to this plan's `files_modified`, or descope long-form volume detection from this plan's Task 3 entirely and state short-form-only as a SKILL.md limit. Do not leave both requirements standing as currently written.
+**Cycle-3 target 4 — reason-precedence vs stackless fixture.** **Consistent.** D-D15's stated order (`volumes_unreadable` -> `script_indirection` -> `no_stack_detected` -> `stack_without_baseline` -> `command_not_matched`) is what the corrected stackless fixture now encodes: `scripted` keeps `script_indirection` because that reason is evaluated first, while `okvite`/`prodcmd` correctly move to `no_stack_detected`.
 
-**Risk Assessment.** **MEDIUM.** The long-form-volumes seam is the one new executor trap that will fail a required test or force a second, unauthorized parser.
+**Concerns.** None new.
 
-**Ledger Verification** — Findings 4, 5, 6, 13, 14 all **RESOLVED**, verified against live line numbers.
+**Risk Assessment.** **MEDIUM** for execution (hardcoded marker baseline going stale — the reason outcome 3 exists at all), **LOW** for plan-internal consistency. Cycle 2's long-form seam is closed.
 
 ## 13-04
 
-**Summary.** Correct last plan: installability only here. Cycle 1's incomplete CONTEXT sweep and missing seventh limit are now a five-floor sweep and a SUMMARY-reconciled conditional.
+**Summary.** Cycle 2's eighth limit and the two hyphenated-token fixes are in the body and in the mechanical checks. One leftover "six required" count in the judge-loop prose was not updated when limit 8 landed.
 
-**Strengths**
-- Six required limits plus a seventh conditional on what 13-02's own SUMMARY actually records — reads the SUMMARY rather than assuming.
-- No Python edits in this plan. README: one added line, zero removed.
-- No-baseline bar with a recorded history search; name freeze is confirm-only.
+**Strengths.** No Python edits in this plan. README addition is minimal and correctly placed. Limits 1-6 and 8 required, limit 7 conditional on 13-02's own SUMMARY — `SKILL-SHAPE-OK` and `LIMITS-RECONCILED-OK` both correctly grep the tightened tokens (`per-service`, `mapping-style`, `flow-mapping` not bare `flow`).
+
+**Cycle-3 target 3 — eighth limit and the two LOW precision fixes.** **Present and correct.** Limit 8 states the long-form-volumes descope with the `mapping-style` token; both cycle-2 precision fixes (hyphenated `per-service`, `flow-mapping` substring) are in place and the two halves (13-02's SUMMARY requirement, 13-04's reconciliation check) match by construction.
 
 **Concerns**
-- **LOW — the "per-service" shape-check token requires the literal hyphenated form.** A limit sentence phrased without the hyphen (e.g. "not per service") would fail the mechanical check even though it says the same thing — write the limit with the hyphenated token verbatim.
-- **LOW — the seventh-limit reconciliation check is a loose substring match on the word "flow".** Any 13-02 SUMMARY mentioning flow *sequences* (which are in-scope, not a limit) would force an unnecessary seventh limit. Tighten the match to the specific "flow-mapping" phrase.
+- **LOW — judge-loop limit-count leftovers still say "six required."** Three prose sentences (Task 2 step 4, the verbatim-quote backstop note, Task 1's `read_first`) were not updated to reflect that limit 8 is now required, even though `SKILL-SHAPE-OK`'s mechanical check already requires all seven/eight tokens correctly and is re-run after every judge iteration. Not a silent-deletion hole — the mechanical gate already enforces the real requirement — but an executor reading only the prose could treat limit 8 as optional.
 
-**Risk Assessment.** **LOW** for code (owns none). **MEDIUM** for shipped claims. Cycle 1's two MEDIUMs are addressed in the body.
+**Suggestions.** Update the three leftover sentences to say "seven required (1-6 and 8) plus the conditional seventh."
 
-**Ledger Verification** — Findings 7, 8, 15, 16 all **RESOLVED**, verified against live line numbers.
+**Risk Assessment.** **LOW** for code (owns none). **MEDIUM** for shipped claims. Cycle 2's two LOWs are addressed in the mechanical checks; the leftover count is the only new actionable item, and it does not weaken any gate.
 
 ---
 
@@ -97,9 +75,9 @@ Cycle 1's 16 findings are in the plan bodies, not just the ledgers, grounded aga
 
 Wave order still matches the dependency graph. Shared-package edits stay additive.
 
-**New cross-plan defect:** 13-03's long-form volume requirement vs 13-02's scalar-only `block_sequence` reader, with `compose_parse.py` locked out of 13-03's own `files_modified`. Must be closed — either extend 13-02's parser and file list, or descope long-form from 13-03 — before execution.
+**Cycle-2 seam (13-03 long-form volumes vs 13-02 scalar-only reader): CLOSED.** Option (b) chosen and verified: 13-02 states the scalar-item contract; 13-03 routes the `type: bind` fragment to the advisory `volumes_unreadable` path; 13-04 carries it as required limit 8. 13-03's `files_modified` still excludes `compose_parse.py`, which is now correct rather than contradictory.
 
-**Overall risk: MEDIUM.** Cycle 1's 16 findings are genuinely in the plan bodies and match the live tree. Remaining risk is the volumes-parser seam plus three trivial verify-check precision gaps — not missing success criteria.
+**Overall risk: LOW.** Cycle 2's four findings are in the plan bodies and match live source. The volumes-parser MEDIUM is gone. The only remaining actionable item is one LOW leftover prose count in 13-04 that does not weaken any mechanical gate.
 
 ## Current HIGH Concerns
 
@@ -107,14 +85,20 @@ Wave order still matches the dependency graph. Shared-package edits stay additiv
 
 ## Current Actionable Non-HIGH Concerns
 
-1. **MEDIUM (13-02/13-03 cross-plan)** — 13-03's Task 3 requires detecting long-form `type: bind` volume mappings, but 13-02's `block_sequence` compose-sequence reader only handles scalar sequence items, and 13-03's `files_modified` explicitly excludes `compose_parse.py`. Resolve by either (a) extending 13-02's D-D7 with a sequence-of-mappings reader and adding `compose_parse.py` to 13-03's `files_modified`, or (b) descoping long-form volume detection from 13-03 and stating short-form-only as a SKILL.md limit. Pick one; do not leave both requirements standing.
-2. **LOW (13-02)** — The healthcheck-bounds exclusivity verify check does not actually pin a fractional-second discriminator (the plan's own stated `5.001s` example is not what the assertion checks); an integer-only duration parser could still pass. Tighten the assertion to require a fractional-second value and the specific out-of-bounds issue code.
-3. **LOW (13-03)** — Anonymous volumes (a bare path with no colon, e.g. `- /app/data`) must be explicitly excluded from the bind-mount grammar, not treated as conforming just because they start with `/` or `.`.
-4. **LOW (13-04)** — Two verify-check precision gaps: (a) the "per-service" shape-check token requires the literal hyphenated form — write the limit sentence with that exact token; (b) the seventh-limit reconciliation check is a loose substring match on "flow" that would misfire on an in-scope mention of flow *sequences* — tighten it to match "flow-mapping" specifically.
+1. **LOW (13-04)** — Three leftover "six required limits" prose sentences were not updated when required limit 8 (`mapping-style`) landed. The mechanical `SKILL-SHAPE-OK` check already requires the correct token set and is re-run after every judge iteration, so this is prose drift, not a gate weakness. Update the sentences to "seven required (1-6 and 8) plus the conditional seventh."
+
+## Cycle-3 verification targets
+
+| # | Target | Verdict |
+|---|---|---|
+| 1 | D-D17 does not misclassify anonymous volumes or short-form binds as `volumes_unreadable` | **Pass** |
+| 2 | D-D7 `block_sequence` is scalar-items-only, consistent with 13-03 after the descope | **Pass** |
+| 3 | Eighth SKILL.md limit + hyphenated `per-service` + `flow-mapping` match | **Pass** |
+| 4 | Stackless `HOT-RELOAD-OK` matches D-D15 reason order | **Pass** |
 
 ## Consensus Summary
 
-Single-reviewer cycle (opencode only) — no cross-reviewer consensus to synthesize. All findings above are from the single opencode (xai/grok-4.6, reasoning=high) pass, which re-verified all 16 cycle-1 dispositions against live source before surfacing new issues.
+Single-reviewer cycle (opencode only) — no cross-reviewer consensus to synthesize. All findings above are from the single opencode (xai/grok-4.6, reasoning=high) pass, which re-verified all 4 cycle-2 dispositions plus the 4 explicitly-requested cycle-3 targets against live source.
 
 ### Agreed Strengths
 N/A — single reviewer.
@@ -125,4 +109,8 @@ N/A — single reviewer.
 ### Divergent Views
 N/A — single reviewer.
 
-CYCLE_SUMMARY: current_high=0 current_actionable=4
+## Orchestrator disposition (cycle 3, MAX_CYCLES reached)
+
+At `cycle == MAX_CYCLES (3)` with `OPEN_CONFLICTS == 0`, the sole remaining finding is a LOW, purely-prose leftover that does not weaken any mechanical acceptance gate (the gate already requires the correct, updated token set). Per this run's established precedent (Phases 10-12), ruled to fix this directly as the orchestrator rather than spend a 4th planner/review cycle. Fixed in commit immediately following this one. Declaring convergence.
+
+CYCLE_SUMMARY: current_high=0 current_actionable=1
