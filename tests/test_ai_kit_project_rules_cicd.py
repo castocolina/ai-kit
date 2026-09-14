@@ -1190,7 +1190,10 @@ class TestPrecommitReuseSurface(unittest.TestCase):
         self.assertEqual(_findings(repo), [])
 
     def test_entry_less_upstream_ruff_hook_covers_ci_ruff_check(self):
-        pc = "repos:\n- repo: https://github.com/astral-sh/ruff-pre-commit\n  hooks:\n  - id: ruff\n"
+        pc = (
+            "repos:\n- repo: https://github.com/astral-sh/ruff-pre-commit\n"
+            "  hooks:\n  - id: ruff\n"
+        )
         repo = _fixture({".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": _CI_RUFF_STEP})
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
@@ -1208,7 +1211,9 @@ class TestPrecommitReuseSurface(unittest.TestCase):
         )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]["reuse_command"], "pre-commit run trailing-whitespace --all-files")
+        self.assertEqual(
+            findings[0]["reuse_command"], "pre-commit run trailing-whitespace --all-files"
+        )
 
     def test_entry_less_unknown_hook_id_admits_nothing(self):
         pc = "repos:\n- repo: local\n  hooks:\n  - id: my-house-style\n"
@@ -1330,7 +1335,11 @@ class TestPrecommitReuseSurface(unittest.TestCase):
             "    entry: ruff check\n    language: system\n"
         )
         repo = _fixture(
-            {"Makefile": mk, ".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": _CI_RUFF_STEP}
+            {
+                "Makefile": mk,
+                ".pre-commit-config.yaml": pc,
+                ".github/workflows/ci.yml": _CI_RUFF_STEP,
+            }
         )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
@@ -1345,14 +1354,21 @@ class TestPrecommitReuseSurface(unittest.TestCase):
             "    entry: ruff check\n    language: system\n"
         )
         wf = "jobs:\n  j:\n    steps:\n    - run: ruff check .\n    - run: mypy .\n"
-        repo = _fixture({"Makefile": mk, ".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": wf})
+        repo = _fixture(
+            {"Makefile": mk, ".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": wf}
+        )
         findings = _findings(repo)
         self.assertEqual(len(findings), 2)
         self.assertEqual(findings[0]["reuse_surface"], "precommit")
         self.assertEqual(findings[1]["reuse_surface"], "makefile")
 
     def test_absent_precommit_config_leaves_makefile_surface_usable(self):
-        repo = _fixture({"Makefile": "ruff:\n\tuv run ruff check .\n", ".github/workflows/ci.yml": _CI_RUFF_STEP})
+        repo = _fixture(
+            {
+                "Makefile": "ruff:\n\tuv run ruff check .\n",
+                ".github/workflows/ci.yml": _CI_RUFF_STEP,
+            }
+        )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["reuse_surface"], "makefile")
@@ -1369,6 +1385,236 @@ class TestPrecommitReuseSurface(unittest.TestCase):
         with open(os.path.join(repo, ".pre-commit-config.yaml"), "wb") as handle:
             handle.write(b"\xff\xfe\x00 binary, not utf-8\n")
         self.assertEqual(_findings(repo), [])
+
+
+_INTEGRATION_MK = "ruff:\n\tuv run ruff check .\n\nmypy:\n\tuv run mypy .\n"
+_INTEGRATION_PC = (
+    "repos:\n- repo: local\n  hooks:\n  - id: black\n"
+    "    entry: black .\n    language: system\n"
+)
+_INTEGRATION_GL = "gl-job:\n  script:\n  - ruff check .\n  - black .\n"
+_INTEGRATION_WF_A = "jobs:\n  j:\n    steps:\n    - run: mypy .\n"
+_INTEGRATION_WF_B = "jobs:\n  j:\n    steps:\n    - run: black .\n"
+
+_INTEGRATION_EXPECTED = [
+    {
+        "ci_file": ".gitlab-ci.yml",
+        "job": "gl-job",
+        "command": "ruff check .",
+        "tool": "ruff check",
+        "reuse_surface": "makefile",
+        "reuse_command": "make ruff",
+    },
+    {
+        "ci_file": ".gitlab-ci.yml",
+        "job": "gl-job",
+        "command": "black .",
+        "tool": "black",
+        "reuse_surface": "precommit",
+        "reuse_command": "pre-commit run black --all-files",
+    },
+    {
+        "ci_file": ".github/workflows/a.yml",
+        "job": "j",
+        "command": "mypy .",
+        "tool": "mypy",
+        "reuse_surface": "makefile",
+        "reuse_command": "make mypy",
+    },
+    {
+        "ci_file": ".github/workflows/b.yml",
+        "job": "j",
+        "command": "black .",
+        "tool": "black",
+        "reuse_surface": "precommit",
+        "reuse_command": "pre-commit run black --all-files",
+    },
+]
+
+
+def _integration_fixture(reverse_workflow_creation=False):
+    repo = tempfile.mkdtemp()
+    _write(os.path.join(repo, "Makefile"), _INTEGRATION_MK)
+    _write(os.path.join(repo, ".pre-commit-config.yaml"), _INTEGRATION_PC)
+    _write(os.path.join(repo, ".gitlab-ci.yml"), _INTEGRATION_GL)
+    if reverse_workflow_creation:
+        _write(os.path.join(repo, ".github/workflows/b.yml"), _INTEGRATION_WF_B)
+        _write(os.path.join(repo, ".github/workflows/a.yml"), _INTEGRATION_WF_A)
+    else:
+        _write(os.path.join(repo, ".github/workflows/a.yml"), _INTEGRATION_WF_A)
+        _write(os.path.join(repo, ".github/workflows/b.yml"), _INTEGRATION_WF_B)
+    return repo
+
+
+class TestIntegrationBothPlatformsBothSurfaces(unittest.TestCase):
+    """Task 3(c): the phase's first integration fixture -- every
+    combination of platform (GitLab, GitHub Actions) and surface
+    (makefile, precommit) fires at least once, asserted field by field in
+    D-C13's order. Plan 14-03 extends this fixture with its own two
+    surfaces."""
+
+    def test_complete_finding_list_in_declaration_order(self):
+        repo = _integration_fixture()
+        findings = _findings(repo)
+        self.assertEqual(len(findings), len(_INTEGRATION_EXPECTED))
+        for finding, expected in zip(findings, _INTEGRATION_EXPECTED, strict=True):
+            for key, value in expected.items():
+                self.assertEqual(finding[key], value, (key, finding))
+            self.assertNotIn("target", finding)
+
+    def test_two_runs_are_byte_identical(self):
+        repo = _integration_fixture()
+        first = json.dumps(cli.check(repo), sort_keys=False)
+        second = json.dumps(cli.check(repo), sort_keys=False)
+        self.assertEqual(first, second)
+
+    def test_reverse_filesystem_creation_order_does_not_change_output(self):
+        forward = _findings(_integration_fixture(reverse_workflow_creation=False))
+        reversed_ = _findings(_integration_fixture(reverse_workflow_creation=True))
+        self.assertEqual(forward, reversed_)
+
+    def test_remediate_over_the_integration_fixture(self):
+        repo = _integration_fixture()
+        payload = cli.remediate(repo)
+        self.assertEqual(len(payload["remediate"]), len(_INTEGRATION_EXPECTED))
+        for entry in payload["remediate"]:
+            self.assertEqual(entry["kind"], "cicd")
+            self.assertEqual(entry["id"], "cicd-command-reuse")
+            self.assertTrue(entry["auto_apply"])
+        self.assertEqual(payload["blocked"], [])
+
+
+class TestStatedLimitsGitHub(unittest.TestCase):
+    """Task 3(c): one method per limit this plan's GitHub Actions reader
+    states in its module docstring -- each pins CURRENT behavior with the
+    limit named as scope, so plan 14-04's `SKILL.md` can quote a claim
+    that is still true."""
+
+    _MK = "ruff:\n\tuv run ruff check .\n"
+
+    def test_uses_step_action_is_never_fetched_or_analyzed(self):
+        # Limit: "a `uses:` step's action is never fetched, downloaded,
+        # read or analyzed."
+        repo = _fixture(
+            {
+                "Makefile": self._MK,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - uses: some-org/some-action@v1\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_reusable_workflow_reference_is_never_followed(self):
+        # Limit: "a `jobs.<id>.uses` reusable workflow reference is
+        # likewise never followed."
+        repo = _fixture(
+            {
+                "Makefile": self._MK,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    uses: org/repo/.github/workflows/reusable.yml@main\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_if_condition_is_not_evaluated_command_still_read(self):
+        # Limit: "`if:` conditions ... are not evaluated, so a command
+        # that would never actually run on this platform is still read."
+        repo = _fixture(
+            {
+                "Makefile": self._MK,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - if: false\n      run: ruff check .\n"
+                ),
+            }
+        )
+        self.assertEqual(len(_findings(repo)), 1)
+
+    def test_matrix_strategy_is_not_expanded(self):
+        # Limit: "matrix expansion ... [is] not evaluated" -- a matrixed
+        # job's step is read exactly ONCE, never multiplied per matrix
+        # cell.
+        repo = _fixture(
+            {
+                "Makefile": self._MK,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    strategy:\n      matrix:\n        py: [1, 2, 3]\n"
+                    "    steps:\n    - run: ruff check .\n"
+                ),
+            }
+        )
+        self.assertEqual(len(_findings(repo)), 1)
+
+    def test_defaults_run_at_workflow_and_job_level_contributes_nothing(self):
+        # Limit: "`defaults.run` is not evaluated either, at workflow OR
+        # job level" -- the finding's command is the literal `run:` text,
+        # with no working-directory/shell prefix contribution.
+        repo = _fixture(
+            {
+                "Makefile": self._MK,
+                ".github/workflows/ci.yml": (
+                    "defaults:\n  run:\n    working-directory: sub\n    shell: bash\n"
+                    "jobs:\n  j:\n    defaults:\n      run:\n"
+                    "        working-directory: sub2\n        shell: bash\n"
+                    "    steps:\n    - run: ruff check .\n"
+                ),
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["command"], "ruff check .")
+
+    def test_expression_only_run_has_no_classifiable_tool_token(self):
+        # Limit: "`${{ }}` expressions are never resolved, so a step
+        # whose command is entirely an expression has no classifiable
+        # tool token."
+        repo = _fixture(
+            {
+                "Makefile": self._MK,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: ${{ steps.x.outputs.cmd }}\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_sequence_of_mappings_reader_stays_skill_local(self):
+        # D-C14: the mapping-item reader has exactly one consumer and is
+        # not IMPORTED from -- or delegated to -- the sibling docker
+        # skill's compose_parse.py. (`compose_parse` appears only in
+        # prose, naming the capability boundary this reader crosses.)
+        import ast
+
+        with open(
+            os.path.join(
+                _REPO,
+                "skills",
+                "ai-kit-project-rules-cicd",
+                "ai_kit_project_rules_cicd",
+                "ci_parse.py",
+            ),
+            encoding="utf-8",
+        ) as handle:
+            src = handle.read()
+        tree = ast.parse(src)
+        imported_modules = {
+            n.module or ""
+            for n in ast.walk(tree)
+            if isinstance(n, ast.ImportFrom)
+        } | {
+            alias.name
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Import)
+            for alias in n.names
+        }
+        self.assertTrue(
+            all(
+                "compose_parse" not in m and "ai_kit_project_rules_docker" not in m
+                for m in imported_modules
+            ),
+            imported_modules,
+        )
 
 
 if __name__ == "__main__":
