@@ -14,6 +14,7 @@ sys.path.insert(
 from ai_kit_project_rules_precommit import (
     cli,
     config_read,
+    pair_checks,
     parity_checker,
     precommit_checker,
     ruff_checks,
@@ -1298,6 +1299,222 @@ class TestRuffChecksModuleDirectly(unittest.TestCase):
                 ruff_checks.check_ruff_child_config_discards_parent_ignore(repo), []
             )
             self.assertEqual(ruff_checks.build_ruff_findings(repo), [])
+
+
+def _pair_findings(repo_root):
+    return [
+        x
+        for x in precommit_checker.check_precommit_rules(repo_root)
+        if x.get("category") == "tool-pair"
+    ]
+
+
+_GO_PAIR_HOOKS = (
+    "repos:\n"
+    "  - repo: local\n"
+    "    hooks:\n"
+    "      - id: golangci-lint\n"
+    "        entry: golangci-lint run\n"
+    "      - id: staticcheck\n"
+    "        entry: staticcheck ./...\n"
+)
+
+
+class TestPairChecksGoGolangciPrecondition(unittest.TestCase):
+    """ROADMAP SC5's final clause: the ONE confirmed fully-redundant Go
+    pairing, gated on golangci-lint really having staticcheck enabled."""
+
+    def test_both_present_with_staticcheck_enabled_is_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "go.mod"), "module x\n")
+            _write(os.path.join(repo, ".pre-commit-config.yaml"), _GO_PAIR_HOOKS)
+            findings = _pair_findings(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["issue"], "confirmed_redundant_pair")
+            self.assertTrue(findings[0]["advisory"])
+
+    def test_staticcheck_explicitly_disabled_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "go.mod"), "module x\n")
+            _write(os.path.join(repo, ".pre-commit-config.yaml"), _GO_PAIR_HOOKS)
+            _write(
+                os.path.join(repo, ".golangci.yml"),
+                "linters:\n  disable:\n    - staticcheck\n",
+            )
+            self.assertEqual(_pair_findings(repo), [])
+
+    def test_bare_enable_list_without_disable_all_still_flags(self):
+        """`enable:` alone is ADDITIVE in golangci-lint -- it does NOT
+        replace the default set (cross-AI review cycle 3 precision fix).
+        A bare enable list naming other linters, with no `disable-all`/
+        `default: none`, never removes staticcheck from the bundle."""
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "go.mod"), "module x\n")
+            _write(os.path.join(repo, ".pre-commit-config.yaml"), _GO_PAIR_HOOKS)
+            _write(
+                os.path.join(repo, ".golangci.yml"),
+                "linters:\n  enable:\n    - errcheck\n    - govet\n",
+            )
+            findings = _pair_findings(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["issue"], "confirmed_redundant_pair")
+
+    def test_disable_all_with_enable_list_omitting_staticcheck_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "go.mod"), "module x\n")
+            _write(os.path.join(repo, ".pre-commit-config.yaml"), _GO_PAIR_HOOKS)
+            _write(
+                os.path.join(repo, ".golangci.yml"),
+                "linters:\n  disable-all: true\n  enable:\n    - errcheck\n",
+            )
+            self.assertEqual(_pair_findings(repo), [])
+
+
+class TestPairChecksSupersession(unittest.TestCase):
+    def test_knip_and_ts_prune_both_present_is_supersession_not_redundant(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                (
+                    "repos:\n  - repo: local\n    hooks:\n"
+                    "      - id: knip\n        entry: knip\n"
+                    "      - id: ts-prune\n        entry: ts-prune\n"
+                ),
+            )
+            findings = _pair_findings(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["issue"], "superseded_tool")
+            self.assertNotEqual(findings[0]["issue"], "confirmed_redundant_pair")
+
+
+class TestPairChecksComplementaryNotFlagged(unittest.TestCase):
+    def test_cargo_machete_and_cargo_udeps_complementary_pair_produces_nothing(self):
+        """The spec explicitly calls cargo-machete/cargo-udeps
+        complementary (fast/narrow vs slow/wide, different sweep
+        cadence) -- the case a naive same-category rule gets wrong."""
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                (
+                    "repos:\n  - repo: local\n    hooks:\n"
+                    "      - id: cargo-machete\n        entry: cargo machete\n"
+                    "      - id: cargo-udeps\n        entry: cargo udeps\n"
+                ),
+            )
+            self.assertEqual(_pair_findings(repo), [])
+
+
+class TestPairChecksD04PresumedComplementaryDefault(unittest.TestCase):
+    def test_two_catalog_known_tools_sharing_a_category_with_no_table_row_produce_nothing(self):
+        """mypy and pyright both resolve to Python's type-checking
+        category and are both real catalog entries, but no pairs-table
+        row names them -- D-04's presumed-complementary default."""
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                (
+                    "repos:\n  - repo: local\n    hooks:\n"
+                    "      - id: mypy\n        entry: mypy .\n"
+                    "      - id: pyright\n        entry: pyright\n"
+                ),
+            )
+            classification = taxonomy_checker.classify_precommit_tools(repo)
+            self.assertTrue(classification["taxonomy"]["type-checking"])
+            self.assertEqual(_pair_findings(repo), [])
+
+
+class TestPairChecksRuleFamilyRowSkippedByMark(unittest.TestCase):
+    def test_the_ruff_s_rules_bandit_row_carries_the_mark(self):
+        from ai_kit_rules_common.tool_catalog import REDUNDANT_VS_COMPLEMENTARY_PAIRS
+
+        row = next(
+            r for r in REDUNDANT_VS_COMPLEMENTARY_PAIRS if r["tools"] == ("ruff S rules", "bandit")
+        )
+        self.assertEqual(row["rule_family_members"], ("ruff S rules",))
+
+    def test_bandit_and_a_real_ruff_hook_together_produce_no_tool_pair_finding(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                (
+                    "repos:\n  - repo: local\n    hooks:\n"
+                    "      - id: bandit\n        entry: bandit -r .\n"
+                    "      - id: ruff\n        entry: ruff check .\n"
+                ),
+            )
+            self.assertEqual(_pair_findings(repo), [])
+
+    def test_skip_is_mark_driven_not_a_name_matching_accident(self):
+        """White-box proof: even when BOTH members of a fabricated
+        rule-family row are forced to appear 'present' (which the real
+        rule-family member 'ruff S rules' never could, since no hook can
+        be named that and still classify as such), the mark alone
+        suppresses the row -- proving the skip reads `rule_family_members`
+        rather than depending on a name never matching by chance."""
+        fake_row = {
+            "ecosystem": "Test",
+            "tools": ("fake-family", "bandit"),
+            "rule_family_members": ("fake-family",),
+            "relationship": "redundant",
+            "reason": "test-only fixture row",
+        }
+        original_table = pair_checks.REDUNDANT_VS_COMPLEMENTARY_PAIRS
+        original_detect = pair_checks._detected_tool_names
+        try:
+            pair_checks.REDUNDANT_VS_COMPLEMENTARY_PAIRS = (fake_row,)
+            pair_checks._detected_tool_names = lambda repo_root: {"fake-family", "bandit"}
+            self.assertEqual(pair_checks.build_pair_findings("/nonexistent"), [])
+        finally:
+            pair_checks.REDUNDANT_VS_COMPLEMENTARY_PAIRS = original_table
+            pair_checks._detected_tool_names = original_detect
+
+
+class TestPairChecksNoDuplicatePerUnorderedPair(unittest.TestCase):
+    def test_three_tools_sharing_security_category_produce_exactly_one_finding(self):
+        """cargo-audit, cargo-deny, and gosec all resolve to the security
+        category (three unordered pairs total), but only the
+        cargo-audit/cargo-deny row exists in the pairs table -- exactly
+        one finding, proving no double-count from visiting the table by
+        row rather than by tool-combination."""
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                (
+                    "repos:\n  - repo: local\n    hooks:\n"
+                    "      - id: cargo-audit\n        entry: cargo audit\n"
+                    "      - id: cargo-deny\n        entry: cargo deny check\n"
+                    "      - id: gosec\n        entry: gosec ./...\n"
+                ),
+            )
+            classification = taxonomy_checker.classify_precommit_tools(repo)
+            self.assertTrue(len(classification["taxonomy"]["security"]) >= 3)
+            findings = _pair_findings(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["issue"], "confirmed_redundant_pair")
+            self.assertEqual(set(findings[0]["tools"]), {"cargo-audit", "cargo-deny"})
+
+
+class TestPairChecksAutoApplyOffInRemediate(unittest.TestCase):
+    def test_pair_finding_reaches_remediate_with_auto_apply_false(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "go.mod"), "module x\n")
+            _write(os.path.join(repo, ".pre-commit-config.yaml"), _GO_PAIR_HOOKS)
+            result = cli.remediate(repo)
+            entries = [
+                e for e in result["remediate"] if e.get("issue") == "confirmed_redundant_pair"
+            ]
+            self.assertEqual(len(entries), 1)
+            self.assertFalse(entries[0]["auto_apply"])
+
+
+class TestPairChecksSelfClean(unittest.TestCase):
+    def test_this_repository_produces_no_tool_pair_finding(self):
+        """This repo's own pre-commit config carries ruff/pyright/vulture
+        but no bandit hook (only a dev dependency), so no pairs-table
+        member-pair is simultaneously present -- confirmed a true clean
+        result via the real classifier, not suppressed."""
+        findings = _pair_findings(_REPO)
+        self.assertEqual(findings, [])
 
 
 if __name__ == "__main__":
