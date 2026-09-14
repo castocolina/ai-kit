@@ -8,6 +8,11 @@ Domain-agnostic: every function takes `cache_root` explicitly. There is no
 module-global default here, since this module is shared across skills with
 different cache namespaces -- call `default_cache_root(namespace)` once per
 skill and thread the result through.
+
+`validate_stack_payload` is likewise parameterized by the caller's own
+allowed-key collection, precisely because each consuming skill's tooling
+schema differs -- this is what the design spec means by "keyed generically
+instead of hardcoded".
 """
 
 from __future__ import annotations
@@ -22,6 +27,16 @@ from datetime import UTC, datetime, timedelta
 STALE_AFTER_DAYS = 30
 
 _STACK_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+
+# At least one character that is neither whitespace nor a closing paren must
+# immediately follow "(source:" (and any whitespace after it) -- rejects a
+# bare substring match against "(source:)" or "(source: )", not merely an
+# absent citation. Copied verbatim from
+# `ai-kit-project-rules-makefile`'s `tooling_payload._SOURCE_CITATION_RE`
+# (read via `ast`, never imported) so the two cannot silently define "a
+# cited recommendation" differently -- a non-vacuous drift guard in
+# `tests/test_ai_kit_rules_common.py` pins the two against each other.
+_SOURCE_CITATION_RE = re.compile(r"\(source:\s*[^\s)]")
 
 
 def default_cache_root(namespace: str) -> str:
@@ -113,11 +128,39 @@ def get_stack_tooling(stack: str, cache_root: str) -> tuple[dict | None, bool]:
     return result["data"], needs_research
 
 
+def validate_stack_payload(data, allowed_keys) -> str | None:
+    """Return a one-line error string, or `None` if `data` is valid.
+
+    Generic, keyed by the caller's own `allowed_keys` collection -- each
+    consuming skill's tooling schema differs, so this module hardcodes
+    none of them. `data` must be a JSON object; every key must be a member
+    of `allowed_keys`; every value must be a non-empty `str` carrying a
+    non-empty `(source: ...)` citation. Never merely checking for the bare
+    substring `"(source:"` -- `"...(source:)"` and `"...(source: )"` are
+    both rejected too, matching `ai-kit-project-rules-makefile`'s own
+    validator's stricter rule.
+    """
+    if not isinstance(data, dict):
+        return "tooling JSON must be an object, not a list/scalar"
+    for key, value in data.items():
+        if key not in allowed_keys:
+            return f"unknown tooling key: {key!r}"
+        if not isinstance(value, str) or not value:
+            return f"value for {key!r} must be a non-empty string"
+        if _SOURCE_CITATION_RE.search(value) is None:
+            return (
+                f"value for {key!r} is missing a non-empty (source: ...) "
+                "citation"
+            )
+    return None
+
+
 __all__ = [
     "STALE_AFTER_DAYS",
     "cache_path",
     "default_cache_root",
     "get_stack_tooling",
     "read_stack_cache",
+    "validate_stack_payload",
     "write_stack_cache",
 ]
