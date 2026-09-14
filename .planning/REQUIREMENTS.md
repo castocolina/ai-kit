@@ -74,7 +74,7 @@ phase.
 ### ai-kit Rules Skill Family
 
 - [x] **REQ-rules-agents-prune**: `ai-kit-project-rules-agents` (the renamed AGENTS.md/CLAUDE.md checker) is pruned to AGENTS.md-prose scope only — `makefile_checker.py`, `stack_detect.py`, the Makefile-specific `stack_cache.py`, and the `cache-path`/`cache-update` subcommands are removed; `check` returns only `{"workflow": [...]}`. Subcommand wording corrected by Phase 9: `cache-update` was the only removed CLI subcommand (`main` dispatched exactly `check`, `remediate`, and `cache-update`); `cache_path` is a plain module-level function in `stack_cache.py` that leaves as a side effect of that module's deletion, never a removed subcommand -- see 09-01-PLAN.md's objective for the same correction recorded on the code side.
-- [ ] **REQ-rules-makefile**: A new skill `ai-kit-project-rules-makefile` inherits the Makefile-specific logic dropped by REQ-rules-agents-prune, plus: a `validate-<category>` parity family, help/fail reachability, a 3-line recipe-length cap, docker build-before-up ordering, a shellcheck-target threshold (≥5 bash scripts), and an advisory fast-vs-slow ordering heuristic.
+- [x] **REQ-rules-makefile**: A new skill `ai-kit-project-rules-makefile` inherits the Makefile-specific logic dropped by REQ-rules-agents-prune, plus: a `validate-<category>` parity family, help/fail reachability, a 3-line recipe-length cap, docker build-before-up ordering, a shellcheck-target threshold (≥5 bash scripts), and an advisory fast-vs-slow ordering heuristic.
 - [ ] **REQ-rules-precommit**: A new skill `ai-kit-project-rules-precommit` checks Makefile↔pre-commit parity (every hook id ↔ a matching single-tool target, both directions), classifies detected tooling into the spec's 6-category taxonomy, flags "enable-everything" configs and complete absence of Duplicate-code/Dead-code tooling, and applies ruff/golangci-lint-specific checks.
 - [ ] **REQ-rules-arch**: A new skill `ai-kit-project-rules-arch` verifies an `arch-test`-shaped Makefile target exists, is chained into `test`, and (where discoverable) is AST-only; carries baseline per-stack canonical-tool knowledge (import-linter/dependency-cruiser/ArchUnit). Promotes and resolves the backlog's Phase 999.3 ("Architecture-layer test suite") — that note's dependency-direction/layering-boundary ambition is explicitly out of this skill's scoped-down, form/convention-only scope (see the spec's own scope note), so Phase 999.3 is resolved as "addressed at the scope this milestone settled on," not fully built.
 - [ ] **REQ-rules-docker**: A new skill `ai-kit-project-rules-docker` checks the docker-up/health/stop/clean/prune/events-* target family, healthcheck conventions (timeout ≤2s, start_period ≤10s, interval ≤5s), `depends_on` discipline (`condition: service_healthy`), the local-dev bind-mount/hot-reload convention, and the `docker/local/README.md` runbook requirement.
@@ -135,7 +135,7 @@ rather than from further PRD ingest.
 | REQ-stln-time-relative-color | Phase 8, 8.1 | Complete |
 | REQ-stln-ramp-tests | Phase 8 | Complete |
 | REQ-rules-agents-prune | Phase 9 | Complete |
-| REQ-rules-makefile | Phase 10 | Pending |
+| REQ-rules-makefile | Phase 10 | Complete |
 | REQ-rules-precommit | Phase 11 | Pending |
 | REQ-rules-arch | Phase 12 | Pending |
 | REQ-rules-docker | Phase 13 | Pending |
