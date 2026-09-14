@@ -1490,23 +1490,29 @@ def util_rate_window_seconds(key: str) -> int | None:
 
 
 def util_rate_burn_ratio(pct: float, key: str, reset: int | None, now: float) -> float:
-    """Burn-rate ratio feeding the unchanged util_rate_color/theme.ramps["rate"]
-    ramp: used_percentage relative to how much of the bucket's window remains,
-    rather than raw usage alone (D-01). Falls back to `pct` unchanged (D-04)
-    when the window can't be reliably derived (unparseable key, missing
-    reset, a stale resets_at already in the past, or a resets_at implying
-    more time remaining than the key's parsed window allows -- clock skew or
-    a window/key mismatch). Clamps to the ramp's top band at the window's
-    literal reset instant (D-03)."""
+    """Pace-based burn-rate ratio feeding the unchanged util_rate_color/
+    theme.ramps["rate"] ramp: used_percentage relative to how much of the
+    bucket's window has ALREADY ELAPSED, not how much remains -- i.e. "at
+    this rate, where would usage land by window end." 2026-09-13 reversal of
+    08-01-PLAN.md's "Formula Direction -- Resolved" (pct / remaining_fraction):
+    that formula made the ratio spike near a window's end even at low usage
+    (e.g. 25% used with most of the window already elapsed still read
+    orange/YELLOW), which is backwards -- low usage well into the window is
+    good pacing, not urgency. Falls back to `pct` unchanged when the window
+    can't be reliably derived (unparseable key, missing reset, a stale
+    resets_at already in the past, a resets_at implying more time remaining
+    than the key's parsed window allows -- clock skew or a window/key
+    mismatch), or when elapsed_fraction is ~0 -- too early in the window to
+    extrapolate a pace from a single low-elapsed-time data point, which
+    would otherwise spike the ratio toward INF on essentially no signal."""
     window_seconds = util_rate_window_seconds(key)
     if window_seconds is None or reset is None:
         return pct
     remaining_fraction = (reset - now) / window_seconds
-    if remaining_fraction < 0.0 or remaining_fraction > 1.0:
-        remaining_fraction = 1.0
-    if abs(remaining_fraction) < 1e-9:
-        return INF if pct > 0 else 0.0
-    return pct / remaining_fraction
+    elapsed_fraction = 1.0 - remaining_fraction
+    if elapsed_fraction < 0.0 or elapsed_fraction > 1.0 or elapsed_fraction < 1e-9:
+        return pct
+    return pct / elapsed_fraction
 
 
 def util_rate_color(pct: float, theme: "Theme") -> str:
