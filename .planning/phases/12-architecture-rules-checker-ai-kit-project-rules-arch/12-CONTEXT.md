@@ -60,6 +60,30 @@ actually merged before grounding any plan against "what currently exists."
   — **Reversibility:** costly — a blanket implementation shipped first
   would need a retrofit once the false-positive against ai-kit's own repo
   surfaces, not a config tweak.
+
+  Scouting claim corrected by Phase 12: D-01's DECISION (target-aware
+  correlation, not a blanket scan) stands and was implemented faithfully
+  -- confirmed by plan 12-02's live re-verification. Live evidence: the
+  file's architecture-fitness check calls `_parse("status-line.py")` at
+  `tests/test_arch.py:374` (a parser-helper function reaching
+  `ast.parse`), correctly parsing `tools/status-line.py` -- the real
+  checked target -- exactly as this decision describes, and the unrelated
+  `tools/setup.py` load this decision also names is correctly NOT
+  flagged. But the SAME FILE additionally contains
+  `TestSegmentInventory._sl` at `tests/test_arch.py:605-611`, which
+  separately loads that SAME module (`tools/status-line.py`) via
+  `importlib.util.spec_from_file_location` + `exec_module`, for unrelated
+  segment-inventory test helpers. This decision's supporting claim that
+  the file "never import[s]" its checked target is therefore not accurate
+  against the live tree: the file's architecture-fitness METHODS are
+  AST-only, but the FILE as a whole is not. Consequence, per plan 12-02's
+  recorded re-verification: running the finished checker against this
+  repository DOES produce one `arch-test-ast-only` finding
+  (`backing_file_executes_checked_target`) -- a true, correctly-
+  implemented result of the target-aware design this decision specified,
+  not a checker defect. ROADMAP Success Criterion 1 is unaffected -- it
+  is scoped to target-existence and chaining findings only, neither of
+  which fires here.
 - **D-02:** Identifying "the specific module being architecturally
   checked" (D-01's target) is resolved by name/path correlation — e.g. the
   module path(s) passed to `ast.parse`/the file(s) the backing test's own

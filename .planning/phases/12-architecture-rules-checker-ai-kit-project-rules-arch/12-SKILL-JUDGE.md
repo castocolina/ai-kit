@@ -147,3 +147,88 @@ with the file this task scored via:
 - `JUDGED_PATH`: `skills/ai-kit-project-rules-arch/SKILL.md`
 - `JUDGED_COMMIT`: `405c50258cff848b6f835492dc7a88504fa82602`
 - Score: 100/120, 0 Critical, 0 Important, 0/3 fix iterations used.
+
+## Naming-analyzer verdict
+
+NAMING_VERDICT: confirmed -- "ai-kit-project-rules-arch" is kept as-is, no rename applied.
+
+`/naming-analyzer` was run against the skill directory name `ai-kit-project-rules-arch`, as the
+project's established skill-authoring pipeline step (scaffold, then judge, then name). The
+analysis, applying the skill's own decision framework (vagueness, misleading-name, abbreviation,
+convention, and length checks) to a package/directory name rather than a variable:
+
+- **Not vague**: "arch" is a widely-understood, standard abbreviation for "architecture" in
+  software terminology (comparable to "config", "auth", "repo" -- not a generic placeholder like
+  "data" or "stuff"), and the family's fixed `ai-kit-project-rules-<domain>` convention
+  disambiguates it further: in this position, next to `agents`/`makefile`/`precommit`, "arch" can
+  only mean the architecture-fitness domain, not an unrelated sense of the word (a doorway shape,
+  a CPU architecture family name, the Arch Linux distribution).
+- **Misleading-name tension noted, but not severe enough to warrant a rename**: the skill's own
+  scope is narrower than "arch" alone might suggest -- it checks architecture-fitness WIRING
+  (target existence, chaining, AST-only-ness) and explicitly does NOT enforce dependency direction
+  or layering boundaries (Limits #3 in the finished `SKILL.md`). A reader who sees only the
+  four-character segment "arch" and never reads the description or the Limits section could
+  over-infer full architecture enforcement. This is the same shape of naming tension a
+  `checker`/`linter`/`validator` suffix at ANY granularity carries (a "linter" doesn't promise it
+  catches every bug either), and the family's own convention names skills by DOMAIN, not by SCOPE
+  DEPTH within that domain -- `ai-kit-project-rules-makefile` doesn't hedge into
+  `ai-kit-project-rules-makefile-target-shape-only` either, even though its own scope is similarly
+  bounded (target shape, not Makefile semantics). The `description` frontmatter field and the
+  `SKILL.md` body's own Limits section are where scope-depth is correctly communicated, not the
+  directory name -- consistent with skill-judge's own D4 guidance that the description, not the
+  name, carries the WHAT/WHEN/KEYWORDS routing burden.
+- **Not mis-abbreviated**: "arch" for "architecture" is a well-known abbreviation with no
+  ambiguity once paired with a family-position that already establishes the domain-word
+  convention (matching how "precommit" in the sibling skill drops the internal hyphen from
+  "pre-commit" without losing meaning). No name-mangled or non-obvious contraction is present.
+- **Family-convention match**: exact match to the `ai-kit-project-rules-<domain>` pattern all
+  three sibling checkers and the eventual orchestrator (`ai-kit-project-rules-all`) already use --
+  a single-word domain segment, same as `agents`/`makefile`/`precommit`, none of which qualify
+  their own scope depth in the name either.
+- **Length**: 25 characters (`ai-kit-project-rules-arch`), the SHORTEST of the four sibling names
+  (`ai-kit-project-rules-agents` at 27, `-makefile` at 29, `-precommit` at 30), comfortably under
+  the 64-character frontmatter `name:` limit `skill-judge`'s own D4 dimension checks.
+
+**Alternative considered and rejected during this analysis**: `ai-kit-project-rules-architecture`
+(the unabbreviated form) was considered and rejected -- it is 33 characters, longer than every
+sibling, and abbreviating a well-understood term for a shorter, equally clear name is exactly what
+this project's own established convention already does elsewhere in the family (`precommit`
+dropping the internal hyphen; `agents` standing in for "agent-instruction-file"). A
+scope-qualified form (e.g. `ai-kit-project-rules-arch-wiring`) was also considered and rejected --
+none of the three existing siblings qualify their own scope depth in the name, and doing so here
+alone would break the family's own established naming symmetry for a distinction the description
+and Limits section already carry. Neither alternative is proposed.
+
+Per this task's instruction, the name is NOT this task's to change even where the verdict is
+"confirmed": `ai-kit-project-rules-arch` is a user-decided, milestone-wide scheme that ROADMAP
+Phases 13-15 and Phase 15's own Success Criterion 1 name literally. Since the verdict is a
+confirmation rather than a proposed alternative, there is no four-phase blast radius to name here
+-- the confirmation simply closes this pipeline step with no open question for the user.
+
+## ROADMAP Success Criterion 5 -- mechanical discharge
+
+SC5_TRACEABILITY: note found in 12-01-PLAN.md, 12-02-PLAN.md, 12-03-PLAN.md, 12-01-SUMMARY.md, 12-02-SUMMARY.md; Phase 999.3 stub byte-identical to base commit 42c8f8e
+
+SC5 asks that this phase's own PLAN/SUMMARY artifacts record the backlog-resolution note so the
+resolution is traceable from the backlog entry to this phase WITHOUT editing the backlog stub
+itself. Both halves checked mechanically:
+
+**Half 1 -- the note is present in at least one PLAN and one SUMMARY.** Searched every
+`12-*-PLAN.md` and `12-*-SUMMARY.md` in this phase's directory for the literal string `Backlog
+resolution (ROADMAP Phase 12 Success Criterion 5):`. Found in all three PLANs
+(`12-01-PLAN.md`, `12-02-PLAN.md`, `12-03-PLAN.md`) and in both SUMMARYs written so far
+(`12-01-SUMMARY.md`, `12-02-SUMMARY.md`; this plan's own `12-03-SUMMARY.md` carries it too, quoted
+first per this plan's `<output>` instruction). Both halves of "at least one PLAN and at least one
+SUMMARY" are satisfied with margin.
+
+**Half 2 -- the Phase 999.3 backlog stub is byte-unchanged.** Extracted the
+`### Phase 999.3: Architecture-layer test suite (BACKLOG)` section (up to the next `### ` heading
+or end-of-file) from the live `.planning/ROADMAP.md` and from `.planning/ROADMAP.md` as it stood at
+base commit `42c8f8e` (`docs(11): independent verification report for Pre-commit Rules Checker
+phase` -- this phase's own base, the last commit before Phase 12's plan was created). The two
+extracted sections are byte-identical (1571 bytes each, `==` in Python). The stub was not touched
+by this phase, and the dated resolution note lives on Phase 12's own Goal paragraph
+(`.planning/ROADMAP.md:364`) instead, per this phase's own framing.
+
+`ROADMAP.md` and `REQUIREMENTS.md` are otherwise untouched by this plan -- see `NO-ROADMAP-EDIT-OK`
+below.
