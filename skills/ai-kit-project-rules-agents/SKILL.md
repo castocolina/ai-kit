@@ -1,9 +1,9 @@
 ---
-name: ai-kit-agents-md-rules-checker
+name: ai-kit-project-rules-agents
 description: Use when an AGENTS.md or CLAUDE.md-style agent-instruction file needs checking against ai-kit's own 17-rule house ruleset, when a repo's Makefile/`.pre-commit-config.yaml` target shape (setup-env, per-hook targets, validate chaining, test pyramid) needs auditing for gaps, or when asked "is my AGENTS.md missing any workflow rules" / "does my Makefile have the right targets". Wraps `/agent-md-refactor` with a house-rule check it has no awareness of on its own.
 ---
 
-# ai-kit-agents-md-rules-checker
+# ai-kit-project-rules-agents
 
 ## Scope
 
@@ -14,12 +14,12 @@ This skill checks a target repo's AGENTS.md/CLAUDE.md-style instruction file and
 Resolve once per invocation, in one Bash call, and record the printed path as a literal absolute path:
 
 ```bash
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-agents-md-rules-checker}" \
-         "$HOME/.claude/skills/ai-kit-agents-md-rules-checker" \
-         "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-agents-md-rules-checker" \
-         "$HOME/.agents/skills/ai-kit-agents-md-rules-checker" \
+for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-project-rules-agents}" \
+         "$HOME/.claude/skills/ai-kit-project-rules-agents" \
+         "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-project-rules-agents" \
+         "$HOME/.agents/skills/ai-kit-project-rules-agents" \
          "$(dirname "<absolute path to THIS SKILL.md>")"; do
-  [ -f "$d/ai-kit-agents-md-rules-checker.py" ] && { printf '%s\n' "$d/ai-kit-agents-md-rules-checker.py"; break; }
+  [ -f "$d/ai-kit-project-rules-agents.py" ] && { printf '%s\n' "$d/ai-kit-project-rules-agents.py"; break; }
 done
 ```
 

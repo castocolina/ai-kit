@@ -1,5 +1,5 @@
 """Generic rule-classification engine (moved from
-`ai-kit-agents-md-rules-checker/ai_kit_agents_md_rules_checker/
+`ai-kit-project-rules-agents/ai_kit_project_rules_agents/
 rule_checker.py`, generalized to take a `rules` tuple as a parameter
 instead of importing one fixed module's `RULES`).
 

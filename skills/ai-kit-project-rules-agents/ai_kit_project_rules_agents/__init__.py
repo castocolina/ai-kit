@@ -1,4 +1,4 @@
-"""AGENTS.md/CLAUDE.md house-rule checker (provisional package name)."""
+"""AGENTS.md/CLAUDE.md house-rule checker."""
 
 import os
 import sys
@@ -10,7 +10,7 @@ _SHARED_DIR = os.path.join(_SKILLS_ROOT, "_shared")
 
 if not os.path.isdir(os.path.join(_SHARED_DIR, "ai_kit_rules_common")):
     raise ImportError(
-        f"ai-kit-agents-md-rules-checker requires skills/_shared/"
+        f"ai-kit-project-rules-agents requires skills/_shared/"
         f"ai_kit_rules_common to exist beside this skill; looked for it at "
         f"{_SHARED_DIR!r} (resolved from this installed copy's own real "
         f"path) and found nothing there. This directory is only present "

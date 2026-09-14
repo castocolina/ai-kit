@@ -1,7 +1,7 @@
 """Live tool-presence detection -- delegates to the shared
 `ai_kit_rules_common.tool_presence` module (identical logic, shared across
 the rules-checker skill family). Re-exported here under this skill's own
-package namespace so existing imports (`from ai_kit_agents_md_rules_checker
+package namespace so existing imports (`from ai_kit_project_rules_agents
 import tool_presence`) keep working unchanged.
 """
 

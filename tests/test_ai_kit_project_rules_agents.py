@@ -11,10 +11,10 @@ from unittest import mock
 
 sys.path.insert(
     0,
-    os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-agents-md-rules-checker"),
+    os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-project-rules-agents"),
 )
 
-from ai_kit_agents_md_rules_checker import (
+from ai_kit_project_rules_agents import (
     cli,
     makefile_checker,
     remediation,
@@ -28,7 +28,7 @@ _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
 _PRECOMMIT_PATH = os.path.join(_REPO, ".pre-commit-config.yaml")
 _PYPROJECT_PATH = os.path.join(_REPO, "pyproject.toml")
-_CLI_PY_CANDIDATE = "skills/ai-kit-agents-md-rules-checker/ai_kit_agents_md_rules_checker/cli.py"
+_CLI_PY_CANDIDATE = "skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/cli.py"
 
 
 def _write(path, content):
@@ -1134,8 +1134,8 @@ class TestGateRegistration(unittest.TestCase):
     def test_makefile_registers_module_and_package(self):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             text = handle.read()
-        self.assertIn("tests.test_ai_kit_agents_md_rules_checker", text)
-        self.assertIn("skills/ai-kit-agents-md-rules-checker/", text)
+        self.assertIn("tests.test_ai_kit_project_rules_agents", text)
+        self.assertIn("skills/ai-kit-project-rules-agents/", text)
         self.assertIn("tests.test_ai_kit_rules_common", text)
         self.assertIn("skills/_shared/ai_kit_rules_common/", text)
 
@@ -1153,21 +1153,21 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
-        self.assertIn("tests.test_ai_kit_agents_md_rules_checker", match.group(1))
+        self.assertIn("tests.test_ai_kit_project_rules_agents", match.group(1))
         self.assertIn("tests.test_ai_kit_rules_common", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
-        self.assertIn("skills/ai-kit-agents-md-rules-checker", include)
+        self.assertIn("skills/ai-kit-project-rules-agents", include)
         self.assertIn("skills/_shared", include)
 
     def test_vulture_paths_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
-        self.assertIn("skills/ai-kit-agents-md-rules-checker", paths)
+        self.assertIn("skills/ai-kit-project-rules-agents", paths)
         self.assertIn("skills/_shared", paths)
 
     def test_validate_covers_every_precommit_hook(self):
