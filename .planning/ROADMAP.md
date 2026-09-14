@@ -329,13 +329,13 @@ Plans:
   4. A fixture Makefile recipe body longer than 3 lines (excluding the help/fail-printing target itself) is flagged as a finding recommending extraction to a `.sh` script; a paired fixture with a 3-line-or-shorter recipe triggers no finding.
   5. A `docker-up`-shaped target without a `docker-build`-shaped Make prerequisite is flagged; once a fixture repo has ≥5 bash scripts and no `shellcheck` target wired into `.pre-commit-config.yaml`, that absence is flagged; and an advisory (non-blocking) reordering suggestion fires when a fixture's `validate` prerequisite list declares a slow tool before a fast one.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans executed
 
 Plans:
 
 - [x] 10-01-PLAN.md — Extract the shared Makefile/pre-commit parsing primitives, stack detection and criticality vocabulary into `skills/_shared/ai_kit_rules_common/` (D-01/D-02/D-05), then wire the new skill end-to-end so a real invocation reproduces the three inherited checks, and re-home the 15 Makefile-domain test classes recovered from Phase 9's rename commit (REQ-rules-makefile)
 - [x] 10-02-PLAN.md — The six new checks with paired triggering/non-triggering fixtures: the `validate-<category>` alias family, help/fail reachability, the 3-line recipe cap, Docker build-before-up, the shellcheck threshold, and the advisory ordering heuristic made genuinely non-blocking through `remediate` (REQ-rules-makefile)
-- [ ] 10-03-PLAN.md — Write `SKILL.md` and the README row, run `/skill-judge` as the phase's code-review gate with committed evidence and `/naming-analyzer` as the pipeline's confirmation step, and formally amend ROADMAP SC1 + REQUIREMENTS' REQ-rules-makefile where the live pre-prune source contradicts their wording (REQ-rules-makefile)
+- [x] 10-03-PLAN.md — Write `SKILL.md` and the README row, run `/skill-judge` as the phase's code-review gate with committed evidence and `/naming-analyzer` as the pipeline's confirmation step, and formally amend ROADMAP SC1 + REQUIREMENTS' REQ-rules-makefile where the live pre-prune source contradicts their wording (REQ-rules-makefile)
 
 ### Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)
 
@@ -428,7 +428,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 7. Curated GSD Config Skill | 4/4 | Complete    | 2026-09-11 |
 | 8. Status-line Quota Color Refactor | 1/1 | Complete    | 2026-09-10 |
 | 9. AGENTS.md Checker Prune | 2/2 | Complete    | 2026-09-14 |
-| 10. Makefile Rules Checker | 2/3 | In Progress|  |
+| 10. Makefile Rules Checker | 3/3 | In Progress|  |
 | 11. Pre-commit Rules Checker | 0/TBD | Not started | - |
 | 12. Architecture Rules Checker | 0/TBD | Not started | - |
 | 13. Docker Rules Checker | 0/TBD | Not started | - |
