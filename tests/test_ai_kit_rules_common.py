@@ -1782,5 +1782,26 @@ class TestHotReloadCatalogAdditive(unittest.TestCase):
         self.assertTrue(_tc.SCRIPT_INDIRECTION_PREFIXES)
 
 
+class TestHotReloadPerStackMarkerPairs(unittest.TestCase):
+    """Plan 13-03 Task 3(b): the marker-LEVEL pairs that belong at the
+    shared catalog layer -- for each stack, one command that resolves and
+    one production-shaped command that does not -- complementing
+    `TestResolveHotReloadStackScoping`'s node/python-only cases with every
+    stack in the mapping, driven from `HOT_RELOAD_TOOLS`'s own keys rather
+    than hand-listed."""
+
+    def test_first_baseline_marker_resolves_for_its_own_stack(self):
+        for stack, markers in _tc.HOT_RELOAD_TOOLS.items():
+            if not markers:
+                continue
+            with self.subTest(stack=stack):
+                self.assertEqual(_tc.resolve_hot_reload(markers[0], {stack}), markers[0])
+
+    def test_production_shaped_command_does_not_resolve_for_any_stack(self):
+        for stack in _tc.HOT_RELOAD_TOOLS:
+            with self.subTest(stack=stack):
+                self.assertIsNone(_tc.resolve_hot_reload("run-the-production-build", {stack}))
+
+
 if __name__ == "__main__":
     unittest.main()

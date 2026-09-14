@@ -32,7 +32,8 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-project-rules-docker"),
 )
 
-from ai_kit_project_rules_docker import cli, compose_parse, docker_checker, healthcheck
+from ai_kit_project_rules_docker import cli, compose_parse, docker_checker, healthcheck, hot_reload
+from ai_kit_rules_common.tool_catalog import HOT_RELOAD_BASELINE_GAPS, HOT_RELOAD_TOOLS
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
@@ -1751,6 +1752,361 @@ class TestHotReloadStacklessRepoReasonPrecedence(unittest.TestCase):
         findings = _hot_reload_findings(repo)
         reasons = sorted(f.get("reason") for f in findings)
         self.assertEqual(reasons, ["no_stack_detected", "no_stack_detected", "script_indirection"])
+
+
+# ---------------------------------------------------------------------------
+# Plan 13-03 Task 3: fill out coverage for every outcome and every advisory
+# reason with paired fixtures, driven from the shared mapping rather than
+# hand-listed where possible.
+# ---------------------------------------------------------------------------
+
+_STACK_MARKER_FILES = {
+    "python": "pyproject.toml",
+    "node": "package.json",
+    "java": "pom.xml",
+    "rust": "Cargo.toml",
+    "go": "go.mod",
+}
+
+
+class TestHotReloadOutcomeOneEveryStackWithBaseline(unittest.TestCase):
+    """Outcome 1 (conforming), one subtest per stack carrying a baseline --
+    driven from `HOT_RELOAD_TOOLS`'s own keys rather than hand-listed, so a
+    stack added later is covered automatically."""
+
+    def test_bind_mount_and_first_baseline_marker_conforms_per_stack(self):
+        for stack, markers in HOT_RELOAD_TOOLS.items():
+            if not markers:
+                continue
+            with self.subTest(stack=stack):
+                command = markers[0]
+                override = (
+                    "services:\n"
+                    "  svc:\n"
+                    "    image: demo\n"
+                    "    volumes:\n"
+                    "      - ./src:/app/src\n"
+                    f"    command: '{command}'\n"
+                )
+                repo = _hot_reload_repo(override, stack_markers=(_STACK_MARKER_FILES[stack],))
+                self.assertEqual(_hot_reload_findings(repo), [], (stack, command))
+
+
+class TestHotReloadMissingBindHalfOnly(unittest.TestCase):
+    def test_no_volumes_key_but_override_present_names_bind_half_only(self):
+        override = "services:\n  nobind:\n    image: demo\n    command: node dist/server.js\n"
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f["issue"], "docker_hot_reload_convention_missing")
+        text = f["summary"].lower()
+        self.assertIn("no bind mount", text)
+        self.assertNotIn("no command or entrypoint override", text)
+
+    def test_adding_bind_mount_and_recognized_marker_makes_it_conform(self):
+        override = (
+            "services:\n"
+            "  nobind:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - ./src:/app/src\n"
+            "    command: node dist/server.js --watch\n"
+        )
+        repo = _hot_reload_repo(override)
+        self.assertEqual(_hot_reload_findings(repo), [])
+
+
+class TestHotReloadOutcomeThreeReasonsPaired(unittest.TestCase):
+    """Outcome 3 (not confirmable), one method per reason with its own
+    conforming counterpart in the SAME method -- proving each reason's
+    fixture discriminates rather than always firing."""
+
+    def test_command_not_matched_reason_paired_with_conforming_counterpart(self):
+        missing = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    command: node dist/server.js\n"
+        )
+        conforming = missing.replace("node dist/server.js", "vite --host 0.0.0.0")
+        bad = _hot_reload_findings(_hot_reload_repo(missing))
+        good = _hot_reload_findings(_hot_reload_repo(conforming))
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(bad[0].get("reason"), "command_not_matched")
+        self.assertEqual(good, [])
+
+    def test_script_indirection_reason_paired_with_conforming_counterpart(self):
+        scripted = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    command: npm run dev\n"
+        )
+        conforming = scripted.replace("npm run dev", "vite --host 0.0.0.0")
+        bad = _hot_reload_findings(_hot_reload_repo(scripted))
+        good = _hot_reload_findings(_hot_reload_repo(conforming))
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(bad[0].get("reason"), "script_indirection")
+        self.assertEqual(good, [])
+
+    def test_interpolated_volume_reason_paired_with_readable_counterpart(self):
+        var = chr(36) + "{SRC_DIR}"
+        unreadable = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n"
+            f"      - {var}:/app/src\n    command: vite --host 0.0.0.0\n"
+        )
+        readable = unreadable.replace(f"{var}:/app/src", "./src:/app/src")
+        bad = _hot_reload_findings(_hot_reload_repo(unreadable))
+        good = _hot_reload_findings(_hot_reload_repo(readable))
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(bad[0].get("reason"), "volumes_unreadable")
+        self.assertEqual(good, [])
+
+    def test_stackless_reason_paired_with_stack_detected_counterpart(self):
+        override = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    command: vite --host 0.0.0.0\n"
+        )
+        stackless = _hot_reload_findings(_hot_reload_repo(override, stack_markers=()))
+        stacked = _hot_reload_findings(_hot_reload_repo(override))
+        self.assertEqual(len(stackless), 1)
+        self.assertEqual(stackless[0].get("reason"), "no_stack_detected")
+        self.assertEqual(stacked, [])
+
+    def test_stack_without_baseline_reason_skipped_when_gaps_tuple_empty(self):
+        """`HOT_RELOAD_BASELINE_GAPS` is empty today (D-D16), so no
+        detectable stack carries an empty marker tuple and this reason is
+        unreachable via a real fixture. A skipped, EXPLAINED method is
+        honest; silently passing on an empty tuple would be a check that
+        does not exist. Kept so a future non-empty gaps tuple gets
+        immediate paired coverage rather than a silent blank."""
+        if not HOT_RELOAD_BASELINE_GAPS:
+            self.skipTest(
+                "HOT_RELOAD_BASELINE_GAPS is empty -- no stack has a "
+                "deliberately-empty marker tuple today, so "
+                "'stack_without_baseline' cannot be reached via a real "
+                "detected stack yet."
+            )
+        gap_stack = HOT_RELOAD_BASELINE_GAPS[0]
+        marker_file = _STACK_MARKER_FILES[gap_stack]
+        override = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    command: anything\n"
+        )
+        repo = _hot_reload_repo(override, stack_markers=(marker_file,))
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].get("reason"), "stack_without_baseline")
+
+
+class TestHotReloadUnreadableVolumePrecedenceFiveCombos(unittest.TestCase):
+    """D-D17's mixed-state precedence, all four combinations plus the
+    long-form's own mixed-state landing -- a rule about PRECEDENCE, which
+    no single method can show."""
+
+    def test_interpolated_source_no_override_is_mixed_state_advisory(self):
+        var = chr(36) + "{SRC_DIR}"
+        override = f"services:\n  svc:\n    image: demo\n    volumes:\n      - {var}:/app/src\n"
+        findings = _hot_reload_findings(_hot_reload_repo(override))
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["issue"], "docker_hot_reload_tool_unrecognized")
+        self.assertEqual(findings[0].get("reason"), "volumes_unreadable")
+
+    def test_interpolated_source_with_override_is_the_same_reason(self):
+        var = chr(36) + "{SRC_DIR}"
+        override = (
+            f"services:\n  svc:\n    image: demo\n    volumes:\n      - {var}:/app/src\n"
+            "    command: vite --host 0.0.0.0\n"
+        )
+        findings = _hot_reload_findings(_hot_reload_repo(override))
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].get("reason"), "volumes_unreadable")
+
+    def test_long_form_entry_no_override_lands_on_same_mixed_state_result(self):
+        override = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n"
+            "      - type: bind\n        source: ./src\n        target: /app/src\n"
+        )
+        findings = _hot_reload_findings(_hot_reload_repo(override))
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["issue"], "docker_hot_reload_tool_unrecognized")
+        self.assertEqual(findings[0].get("reason"), "volumes_unreadable")
+
+    def test_readable_bind_beside_interpolated_with_recognized_command_conforms(self):
+        var = chr(36) + "{SRC_DIR}"
+        override = (
+            f"services:\n  svc:\n    image: demo\n    volumes:\n      - {var}:/cache\n"
+            "      - ./src:/app/src\n    command: vite --host 0.0.0.0\n"
+        )
+        self.assertEqual(_hot_reload_findings(_hot_reload_repo(override)), [])
+
+    def test_readable_bind_beside_interpolated_with_production_command_is_command_not_matched(self):
+        var = chr(36) + "{SRC_DIR}"
+        override = (
+            f"services:\n  svc:\n    image: demo\n    volumes:\n      - {var}:/cache\n"
+            "      - ./src:/app/src\n    command: node dist/server.js\n"
+        )
+        findings = _hot_reload_findings(_hot_reload_repo(override))
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["issue"], "docker_hot_reload_tool_unrecognized")
+        self.assertEqual(findings[0].get("reason"), "command_not_matched")
+
+
+class TestHotReloadReasonDeterminism(unittest.TestCase):
+    def test_mixed_state_reason_is_stable_across_runs(self):
+        var = chr(36) + "{SRC_DIR}"
+        override = f"services:\n  svc:\n    image: demo\n    volumes:\n      - {var}:/app/src\n"
+        repo = _hot_reload_repo(override)
+        first = _hot_reload_findings(repo)[0].get("reason")
+        second = _hot_reload_findings(repo)[0].get("reason")
+        self.assertEqual(first, "volumes_unreadable")
+        self.assertEqual(first, second)
+
+    def test_script_indirection_in_stackless_repo_is_stable_and_not_no_stack_detected(self):
+        override = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    command: npm run dev\n"
+        )
+        repo = _hot_reload_repo(override, stack_markers=())
+        first = _hot_reload_findings(repo)[0].get("reason")
+        second = _hot_reload_findings(repo)[0].get("reason")
+        self.assertEqual(first, "script_indirection")
+        self.assertEqual(first, second)
+
+
+class TestHotReloadRecommendationMarkerBuiltAtRuntime(unittest.TestCase):
+    """D-D16's fourth prohibition: a recommendation naming markers must
+    JOIN them at runtime from the shared catalog, not from a hand-typed
+    example -- so the expected marker is read FROM the live tuple here,
+    never typed into the test."""
+
+    def test_command_not_matched_recommendation_names_a_marker_from_the_live_tuple(self):
+        override = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    command: node dist/server.js\n"
+        )
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        text = findings[0]["recommendation"]
+        node_markers = HOT_RELOAD_TOOLS["node"]
+        self.assertTrue(any(marker in text for marker in node_markers), text)
+
+
+class TestHotReloadVolumeEntryGrammarFullFamily(unittest.TestCase):
+    """D-D17's five ordered rules, each against the private classifier
+    directly so every rule has its own neighbor-distinguishing fixture."""
+
+    def test_named_volume_is_readable_non_bind(self):
+        self.assertEqual(hot_reload._classify_volume_entry("appdata:/app/data"), "named")
+
+    def test_short_form_with_ro_option_is_bind(self):
+        self.assertEqual(hot_reload._classify_volume_entry("./src:/app/src:ro"), "bind")
+
+    def test_interpolated_source_is_unreadable(self):
+        var = chr(36) + "{SRC_DIR}"
+        self.assertEqual(hot_reload._classify_volume_entry(f"{var}:/app/src"), "interpolated")
+
+    def test_anonymous_no_colon_is_readable_non_bind(self):
+        self.assertEqual(hot_reload._classify_volume_entry("/app/data"), "anonymous")
+
+    def test_anonymous_with_relative_dot_path_is_also_readable_non_bind(self):
+        self.assertEqual(hot_reload._classify_volume_entry("./cache"), "anonymous")
+
+    def test_long_form_fragment_is_unreadable(self):
+        self.assertEqual(hot_reload._classify_volume_entry("type: bind"), "not_short_form")
+
+
+class TestHotReloadEntrypointCountsAsOverride(unittest.TestCase):
+    """`entrypoint:` counts as an override exactly as `command:` does, in
+    both scalar and sequence form."""
+
+    def test_entrypoint_scalar_counts_as_override(self):
+        override = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    entrypoint: vite --host 0.0.0.0\n"
+        )
+        self.assertEqual(_hot_reload_findings(_hot_reload_repo(override)), [])
+
+    def test_entrypoint_sequence_form_counts_as_override(self):
+        override = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    entrypoint:\n      - vite\n      - --host\n      - 0.0.0.0\n"
+        )
+        self.assertEqual(_hot_reload_findings(_hot_reload_repo(override)), [])
+
+    def test_command_sequence_form_counts_as_override(self):
+        override = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    command:\n      - vite\n      - --host\n      - 0.0.0.0\n"
+        )
+        self.assertEqual(_hot_reload_findings(_hot_reload_repo(override)), [])
+
+
+class TestHotReloadScopeDefinedInBothFilesEvaluatedOnceFromLocalDev(unittest.TestCase):
+    def test_service_in_both_base_and_override_is_evaluated_once_from_local_dev(self):
+        base = "services:\n  svc:\n    image: demo\n"
+        override = (
+            "services:\n  svc:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    command: vite --host 0.0.0.0\n"
+        )
+        repo = _hot_reload_repo(override, base_text=base)
+        self.assertEqual(_hot_reload_findings(repo), [])
+
+    def test_service_in_both_files_missing_convention_produces_exactly_one_finding(self):
+        base = "services:\n  svc:\n    image: demo\n"
+        override = "services:\n  svc:\n    image: demo\n"
+        repo = _hot_reload_repo(override, base_text=base)
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+
+
+class TestHotReloadDegradation(unittest.TestCase):
+    def test_empty_local_dev_compose_file_yields_nothing_and_does_not_raise(self):
+        repo = tempfile.mkdtemp()
+        _write(os.path.join(repo, "docker-compose.yml"), "services:\n  prod:\n    image: demo\n")
+        _write(os.path.join(repo, "docker-compose.override.yml"), "")
+        self.assertEqual(_hot_reload_findings(repo), [])
+
+    def test_truncated_local_dev_compose_file_yields_nothing_and_does_not_raise(self):
+        """Truncated mid the `services:` key header itself -- never
+        reaching a real `name:` header -- yields no services at all
+        (never a partial one), so no hot-reload finding either."""
+        repo = tempfile.mkdtemp()
+        _write(os.path.join(repo, "docker-compose.yml"), "services:\n  prod:\n    image: demo\n")
+        _write(os.path.join(repo, "docker-compose.override.yml"), "serv")
+        self.assertEqual(_hot_reload_findings(repo), [])
+
+    def test_binary_local_dev_compose_file_yields_nothing_and_does_not_raise(self):
+        repo = tempfile.mkdtemp()
+        _write(os.path.join(repo, "docker-compose.yml"), "services:\n  prod:\n    image: demo\n")
+        with open(os.path.join(repo, "docker-compose.override.yml"), "wb") as handle:
+            handle.write(b"\x00\x01 not yaml \xff\n")
+        self.assertEqual(_hot_reload_findings(repo), [])
+
+
+class TestHotReloadMutualExclusivityAcrossEveryCase(unittest.TestCase):
+    def test_no_service_ever_produces_two_hot_reload_findings(self):
+        var = chr(36) + "{SRC_DIR}"
+        override = (
+            "services:\n"
+            "  okvite:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    command: vite --host 0.0.0.0\n"
+            "  prodcmd:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    command: node dist/server.js\n"
+            "  scripted:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "    command: npm run dev\n"
+            "  baked:\n    image: demo\n"
+            "  mounted:\n    image: demo\n    volumes:\n      - ./src:/app/src\n"
+            "  namedonly:\n    image: demo\n    volumes:\n      - appdata:/app/data\n"
+            "    command: node dist/server.js\n"
+            "  anonvol:\n    image: demo\n    volumes:\n      - /app/data\n"
+            "    command: node dist/server.js\n"
+            f"  murky:\n    image: demo\n    volumes:\n      - {var}:/app/src\n"
+            "  longform:\n    image: demo\n    volumes:\n      - type: bind\n"
+            "        source: ./src\n        target: /app/src\n"
+            "    command: vite --host 0.0.0.0\n"
+        )
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        service_names = {f["service"] for f in findings}
+        self.assertEqual(len(findings), len(service_names))
 
 
 if __name__ == "__main__":
