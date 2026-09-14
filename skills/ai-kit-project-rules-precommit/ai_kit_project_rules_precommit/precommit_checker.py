@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from ai_kit_rules_common.precommit_parse import check_precommit_prepush_split
 
+from .enable_everything import build_check_limitation_findings, build_enable_everything_findings
 from .parity_checker import check_parity
 from .taxonomy_checker import (
     build_category_absence_findings,
@@ -46,6 +47,8 @@ def check_precommit_rules(repo_root: str) -> list[dict]:
     classification = classify_precommit_tools(repo_root)
     findings.extend(build_unclassified_findings(classification))
     findings.extend(build_category_absence_findings(classification, repo_root))
+    findings.extend(build_enable_everything_findings(repo_root))
+    findings.extend(build_check_limitation_findings(repo_root))
     return findings
 
 

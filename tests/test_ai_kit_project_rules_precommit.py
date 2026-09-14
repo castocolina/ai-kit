@@ -13,6 +13,7 @@ sys.path.insert(
 
 from ai_kit_project_rules_precommit import (
     cli,
+    config_read,
     parity_checker,
     precommit_checker,
     stack_cache,
@@ -891,6 +892,238 @@ class TestGateRegistration(unittest.TestCase):
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
         self.assertIn("skills/ai-kit-project-rules-precommit", paths)
+
+
+def _enable_everything(repo_root):
+    return [
+        x
+        for x in precommit_checker.check_precommit_rules(repo_root)
+        if x.get("category") == "enable-everything"
+    ]
+
+
+def _check_limitations(repo_root):
+    return [
+        x
+        for x in precommit_checker.check_precommit_rules(repo_root)
+        if x.get("category") == "check-limitation"
+    ]
+
+
+class TestEnableEverythingRuff(unittest.TestCase):
+    def test_select_all_is_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "pyproject.toml"),
+                '[tool.ruff.lint]\nselect = ["ALL"]\n',
+            )
+            findings = _enable_everything(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["config_path"], "pyproject.toml")
+            self.assertEqual(findings[0]["issue"], "uncurated_ruleset")
+
+    def test_curated_extend_select_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "pyproject.toml"),
+                '[tool.ruff.lint]\nextend-select = ["E", "F", "I"]\n',
+            )
+            self.assertEqual(_enable_everything(repo), [])
+
+
+class TestEnableEverythingGo(unittest.TestCase):
+    def test_enable_all_true_is_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".golangci.yml"),
+                "linters:\n  enable-all: true\n",
+            )
+            findings = _enable_everything(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["config_path"], ".golangci.yml")
+
+    def test_explicit_curated_enable_list_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".golangci.yml"),
+                "linters:\n  enable:\n    - errcheck\n    - govet\n",
+            )
+            self.assertEqual(_enable_everything(repo), [])
+
+
+class TestEnableEverythingNode(unittest.TestCase):
+    def test_extends_everything_preset_is_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".eslintrc.json"),
+                json.dumps({"extends": "eslint:all"}),
+            )
+            findings = _enable_everything(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["config_path"], ".eslintrc.json")
+
+    def test_extends_named_preset_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".eslintrc.json"),
+                json.dumps({"extends": ["eslint:recommended"]}),
+            )
+            self.assertEqual(_enable_everything(repo), [])
+
+
+class TestEnableEverythingJava(unittest.TestCase):
+    def test_whole_category_ref_is_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "pmd.xml"),
+                '<ruleset><rule ref="category/java/bestpractices.xml"/></ruleset>\n',
+            )
+            findings = _enable_everything(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["config_path"], "pmd.xml")
+
+    def test_named_rules_ref_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "pmd.xml"),
+                (
+                    '<ruleset><rule ref='
+                    '"category/java/bestpractices.xml/UnusedLocalVariable"/>'
+                    "</ruleset>\n"
+                ),
+            )
+            self.assertEqual(_enable_everything(repo), [])
+
+    def test_rulesets_dir_one_level_deep_is_discovered(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "rulesets", "team.xml"),
+                '<ruleset><rule ref="category/java/security.xml"/></ruleset>\n',
+            )
+            findings = _enable_everything(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["config_path"], os.path.join("rulesets", "team.xml"))
+
+
+class TestEnableEverythingLimitation(unittest.TestCase):
+    def test_js_module_only_produces_limitation_not_enable_everything(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "eslint.config.js"), "export default [];\n")
+            self.assertEqual(_enable_everything(repo), [])
+            limitations = _check_limitations(repo)
+            self.assertEqual(len(limitations), 1)
+            self.assertEqual(limitations[0]["config_path"], "eslint.config.js")
+            self.assertIn("statically", limitations[0]["summary"])
+
+    def test_json_form_alongside_js_module_suppresses_limitation(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "eslint.config.js"), "export default [];\n")
+            _write(
+                os.path.join(repo, ".eslintrc.json"),
+                json.dumps({"extends": ["eslint:recommended"]}),
+            )
+            self.assertEqual(_check_limitations(repo), [])
+            # The normal check result still applies to the JSON form.
+            self.assertEqual(_enable_everything(repo), [])
+
+    def test_limitation_finding_reaches_remediate_with_auto_apply_off(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "eslint.config.js"), "export default [];\n")
+            result = cli.remediate(repo)
+            entries = [
+                e for e in result["remediate"] if e.get("issue") == "config_not_statically_readable"
+            ]
+            self.assertEqual(len(entries), 1)
+            self.assertFalse(entries[0]["auto_apply"])
+
+
+class TestConfigReadDegradation(unittest.TestCase):
+    """Every reader in config_read.py degrades to no-finding on malformed,
+    wrong-typed, absent, and empty input, proven through the real
+    entrypoint per the plan's instruction to assert absence of an
+    exception explicitly rather than catching one in the test."""
+
+    def test_truncated_toml_produces_no_finding_and_no_exception(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), '[tool.ruff.lint]\nselect = ["E"\n')
+            findings = precommit_checker.check_precommit_rules(repo)
+            self.assertIsInstance(findings, list)
+            self.assertEqual(_enable_everything(repo), [])
+
+    def test_json_top_level_list_produces_no_finding_and_no_exception(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, ".eslintrc.json"), json.dumps(["not", "a", "mapping"]))
+            findings = precommit_checker.check_precommit_rules(repo)
+            self.assertIsInstance(findings, list)
+            self.assertEqual(_enable_everything(repo), [])
+
+    def test_directory_instead_of_file_produces_no_finding_and_no_exception(self):
+        with tempfile.TemporaryDirectory() as repo:
+            os.makedirs(os.path.join(repo, ".golangci.yml"))
+            findings = precommit_checker.check_precommit_rules(repo)
+            self.assertIsInstance(findings, list)
+            self.assertEqual(_enable_everything(repo), [])
+
+    def test_empty_file_produces_no_finding_and_no_exception(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pmd.xml"), "")
+            findings = precommit_checker.check_precommit_rules(repo)
+            self.assertIsInstance(findings, list)
+            self.assertEqual(_enable_everything(repo), [])
+
+    def test_read_yaml_value_never_raises_on_malformed_input(self):
+        with tempfile.TemporaryDirectory() as repo:
+            path = os.path.join(repo, ".golangci.yml")
+            _write(path, "linters: [this, is, not, a, mapping\n")
+            value = config_read.read_yaml_value(path, ("linters", "enable-all"))
+            self.assertIs(value, config_read.NOT_READABLE)
+
+    def test_read_toml_never_raises_on_absent_file(self):
+        with tempfile.TemporaryDirectory() as repo:
+            path = os.path.join(repo, "does-not-exist.toml")
+            self.assertIs(config_read.read_toml(path), config_read.NOT_READABLE)
+
+
+class TestEnableEverythingPathsAreRepoRelative(unittest.TestCase):
+    def test_ruff_and_go_finding_paths_never_start_with_a_separator(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "pyproject.toml"),
+                '[tool.ruff.lint]\nselect = ["ALL"]\n',
+            )
+            _write(os.path.join(repo, ".golangci.yml"), "linters:\n  enable-all: true\n")
+            findings = _enable_everything(repo)
+            self.assertEqual(len(findings), 2)
+            for finding in findings:
+                self.assertFalse(finding["config_path"].startswith(os.sep))
+
+
+class TestReadYamlValueBlockSequenceContract(unittest.TestCase):
+    """Direct, positive proof (not a non-triggering assertion) that the
+    YAML subset reader reads all three required value shapes at a known
+    key path -- see this plan's YAML-BLOCK-SEQ-OK acceptance criterion."""
+
+    def test_scalar_inline_list_and_block_sequence_all_read(self):
+        with tempfile.TemporaryDirectory() as repo:
+            path = os.path.join(repo, ".golangci.yml")
+            _write(
+                path,
+                (
+                    "run:\n  timeout: 5m\n"
+                    "linters:\n"
+                    "  enable-all: false\n"
+                    "  disable:\n"
+                    "    - staticcheck\n"
+                    "    - errcheck\n"
+                    "  enable: [govet, ineffassign]\n"
+                ),
+            )
+            disable = config_read.read_yaml_value(path, ("linters", "disable"))
+            enable = config_read.read_yaml_value(path, ("linters", "enable"))
+            enable_all = config_read.read_yaml_value(path, ("linters", "enable-all"))
+            self.assertEqual(list(disable), ["staticcheck", "errcheck"])
+            self.assertEqual(list(enable), ["govet", "ineffassign"])
+            self.assertEqual(str(enable_all).lower(), "false")
 
 
 if __name__ == "__main__":
