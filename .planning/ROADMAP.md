@@ -82,7 +82,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 8: Status-line Quota Color Refactor** - Rate-limit bucket coloring becomes relative to time-left-in-window, not raw usage percentage (completed 2026-09-10)
 - [x] **Phase 8.1: Status-line Rate-Burn Pace Fix (INSERTED)** - Reverses Phase 8's burn-rate formula direction to `pct / elapsed_fraction` (pace), fixing a live regression where low usage well into a rate-limit window rendered as an urgency color (completed 2026-09-13)
 - [x] **Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)** - Prune the renamed AGENTS.md/CLAUDE.md checker to AGENTS.md-prose scope only, dropping all Makefile-specific logic (completed 2026-09-14)
-- [ ] **Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)** - New skill inherits the dropped Makefile logic plus `validate-<category>` parity, help/fail reachability, recipe-length cap, docker build-before-up, shellcheck threshold, and an advisory ordering heuristic
+- [x] **Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)** - New skill inherits the dropped Makefile logic plus `validate-<category>` parity, help/fail reachability, recipe-length cap, docker build-before-up, shellcheck threshold, and an advisory ordering heuristic (completed 2026-09-14)
 - [ ] **Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)** - New skill checks Makefile↔pre-commit parity and applies the 6-category tooling taxonomy plus ruff/golangci-lint-specific checks
 - [ ] **Phase 12: Architecture Rules Checker (ai-kit-project-rules-arch)** - New skill verifies `arch-test` Makefile target shape/chaining/AST-only-ness; promotes and resolves backlog Phase 999.3 at form/convention-only scope
 - [ ] **Phase 13: Docker Rules Checker (ai-kit-project-rules-docker)** - New skill checks the docker-compose target family, healthcheck conventions, `depends_on` discipline, hot-reload convention, and runbook presence
@@ -350,7 +350,14 @@ Plans:
   4. A fixture repo with zero Duplicate-code-category tooling is flagged for that category; a fixture with zero Dead-code-category tooling is flagged for that category; a fixture with both categories present triggers neither finding.
   5. Ruff-specific checks each prove discrimination with a paired fixture (`ANN`/`TC`-only "type safety" claims flagged; `preview = true` without a pinned CI ruff version flagged; a child config silently discarding a parent's `lint.ignore` flagged), and the golangci-lint-specific check flags standalone `staticcheck` run alongside golangci-lint with staticcheck already enabled.
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+
+- [ ] 11-01-PLAN.md — Wire the new `ai-kit-project-rules-precommit` skill end-to-end: the bidirectional Makefile↔pre-commit parity check, the inherited pre-commit-vs-pre-push stage splitter given the caller Phase 10 withheld from it, the shared taxonomy vocabulary, `precommit` as a structural kind in the shared remediation ordering, the cache namespace and `cache-update` research step, and registration in every quality gate (REQ-rules-precommit)
+- [ ] 11-02-PLAN.md — Converge the family's per-language tool knowledge into `skills/_shared/ai_kit_rules_common/tool_catalog.py` (baseline stacks, derived tool index, 6-to-5 category alias table with its drift guard, the locked pairs table), classify every detected tool into exactly one of the 6 taxonomy categories with its confidence reported, and flag complete absence of Duplicate-code or Dead-code tooling (REQ-rules-precommit)
+- [ ] 11-03-PLAN.md — The configuration anti-patterns with paired fixtures: one degrade-not-crash reader layer for untrusted target-repo configs, the cross-ecosystem enable-everything heuristic plus its explicit unreadable-config limitation, the three ruff-specific checks, and pairs-table evaluation with the presumed-complementary default including the golangci-lint standalone-staticcheck redundancy (REQ-rules-precommit)
+- [ ] 11-04-PLAN.md — Write `SKILL.md` and the README row, run `/skill-judge` as the phase's code-review gate with committed evidence and `/naming-analyzer` as the pipeline's confirmation step, and formally amend ROADMAP SC1 + REQUIREMENTS' REQ-rules-precommit where the live tree contradicts their wording (REQ-rules-precommit)
 
 ### Phase 12: Architecture Rules Checker (ai-kit-project-rules-arch)
 
@@ -428,8 +435,8 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 7. Curated GSD Config Skill | 4/4 | Complete    | 2026-09-11 |
 | 8. Status-line Quota Color Refactor | 1/1 | Complete    | 2026-09-10 |
 | 9. AGENTS.md Checker Prune | 2/2 | Complete    | 2026-09-14 |
-| 10. Makefile Rules Checker | 3/3 | In Progress|  |
-| 11. Pre-commit Rules Checker | 0/TBD | Not started | - |
+| 10. Makefile Rules Checker | 3/3 | Complete    | 2026-09-14 |
+| 11. Pre-commit Rules Checker | 0/4 | Not started | - |
 | 12. Architecture Rules Checker | 0/TBD | Not started | - |
 | 13. Docker Rules Checker | 0/TBD | Not started | - |
 | 14. CI/CD Rules Checker | 0/TBD | Not started | - |
