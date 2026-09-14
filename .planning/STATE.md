@@ -4,17 +4,17 @@ milestone: v1.2
 current_phase: 09
 current_phase_name: AGENTS.md Checker Prune (ai-kit-project-rules-agents)
 current_plan: 2
-status: planning
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-09-14T03:41:26.871Z"
+status: verifying
+stopped_at: Completed 09-02-PLAN.md
+last_updated: "2026-09-14T04:07:42.514Z"
 last_activity: 2026-09-14
 last_activity_desc: Phase 8.1 complete, transitioned to Phase 09
-state_head: e56316ec7b1b0e8a76df3660476faaae5f4d3a4a
+state_head: 4bb65a659f265ff0707259da9f3d0524ccb3ded6
 progress:
   total_phases: 17
   completed_phases: 1
   total_plans: 11
-  completed_plans: 10
+  completed_plans: 11
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -32,7 +32,7 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 Phase: 09 — AGENTS.md Checker Prune (ai-kit-project-rules-agents)
 Current Plan: 2
 Total Plans in Phase: 2
-Status: In progress
+Status: Phase complete — ready for verification
 Last activity: 2026-09-14 — Plan 09-01 (rename + prune ai-kit-project-rules-agents) complete
 
 ## Performance Metrics
@@ -86,6 +86,7 @@ Last activity: 2026-09-14 — Plan 09-01 (rename + prune ai-kit-project-rules-ag
 | Phase 07 P03 | 45min | 2 tasks | 5 files |
 | Phase 07 P04 | 2h40m | 2 tasks | 18 files |
 | Phase 09 P01 | 13min | 2 tasks | 21 files |
+| Phase 09-agents-md-checker-prune-ai-kit-project-rules-agents P02 | 25min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -144,6 +145,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
   appended after it pointing to Phase 12); this is its resolution, not a
   duplicate.
 - [Phase 09]: [Phase 9]: Plan 09-01: renamed ai-kit-agents-md-rules-checker to ai-kit-project-rules-agents (git mv carried gitignored __pycache__ along with tracked files in this environment, so D-03's stale-bytecode guards correctly found both old paths already absent), then pruned makefile_checker.py/stack_cache.py/stack_detect.py/cache-update out of it so check() returns {"workflow": [...]} only; relocated the ALL_TOOLING_KEYS payload validator unwired into skills/ai-kit-project-rules-makefile/ for Phase 10; re-homed build_remediation's 3 second-kind-branch tests into tests/test_ai_kit_rules_common.py. make validate fails only on pre-existing out-of-scope findings in tools/status-line.py, tools/wizard_app.py, tests/test_ai_kit_spec.py, tests/test_ai_kit_spec_superpowers.py -- none touched by this plan.
+- [Phase 09]: Scored /skill-judge myself (it is a loaded Skill, not a scripted program); found no packaging/naming-consistency dimension in its installed rubric and documented that instead of fabricating a score.
+- [Phase 09]: Substituted the freshly measured skill-judge baseline (100/120) into the ROADMAP amendment rather than either previously cited figure (98/120 or 104/120).
 
 ### Pending Todos
 
@@ -252,6 +255,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-14T03:41:26.841Z
-Stopped at: Completed 09-01-PLAN.md
-Resume file: 09-02-PLAN.md
+Last session: 2026-09-14T04:07:42.480Z
+Stopped at: Completed 09-02-PLAN.md
+Resume file: None
