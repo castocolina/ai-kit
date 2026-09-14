@@ -6,7 +6,7 @@ playbook's structure, not its content — ai-kit's highest-risk surface is real 
 config corruption, not GUI/input-injection, so the rules below are grounded in this
 project's own `AGENTS.md` and `.planning/PROJECT.md` constraints, not copied wholesale).
 Phase-specific scope (which phases, which decisions are locked) lives in each phase's
-own `{N}-CONTEXT.md` and in `.planning/ONESHOT-AUTONOMOUS.md`'s entry-prompt — this file
+own `{N}-CONTEXT.md` and in `.planning/ONESHOT-ENTRY-PROMPT.md` — this file
 states the rules that apply regardless of which phase is currently running. Do not treat
 any specific number, path, or finding below as final until reviewed. Read this in full
 at the start of the run and again at the start of every turn.
@@ -184,7 +184,7 @@ Grep/Read loop, per `AGENTS.md`'s Code Exploration section, throughout this run.
 11. **This run is an explicit, scoped exception to any "wait for an explicit go-ahead
     before committing" default.** uz's request for an autonomous run is the explicit
     authorization for unattended commit, for the exact scope named in
-    `.planning/ONESHOT-AUTONOMOUS.md`'s entry prompt — `commit_docs: true` already governs
+    `.planning/ONESHOT-ENTRY-PROMPT.md` — `commit_docs: true` already governs
     GSD's own per-step commits. This exception does not carry forward to any work outside
     that named scope, and never authorizes a force-push or a destructive git operation
     (`git reset --hard`, `git clean -f`, force-push) without a separate, explicit
