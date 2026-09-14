@@ -32,7 +32,7 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-project-rules-docker"),
 )
 
-from ai_kit_project_rules_docker import cli, docker_checker
+from ai_kit_project_rules_docker import cli, compose_parse, docker_checker, healthcheck
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
@@ -559,6 +559,325 @@ class TestGateRegistration(unittest.TestCase):
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
         self.assertIn("skills/ai-kit-project-rules-docker", paths)
+
+
+# --------------------------------------------------------------------------- #
+# Plan 13-02, Task 1 -- the shared YAML-text primitives (D-D8), the
+# indentation-aware compose parser (D-D7), and the healthcheck bounds
+# check (SC2, D-D9), written before either module existed and confirmed
+# to fail for the right reason (ImportError) before being implemented
+# against.
+# --------------------------------------------------------------------------- #
+
+
+def _healthcheck_block(interval="5s", timeout="2s", start_period="10s"):
+    return (
+        "    healthcheck:\n"
+        "      test: [CMD, true]\n"
+        f"      interval: {interval}\n"
+        f"      timeout: {timeout}\n"
+        f"      start_period: {start_period}\n"
+    )
+
+
+class TestHealthcheckBoundsNestingAttribution(unittest.TestCase):
+    """Two services with DIFFERENT healthcheck values in the same file --
+    the fixture shape that catches a parser attributing a nested block
+    to the wrong owner. A single-service fixture would pass for that
+    bug."""
+
+    def _fixture(self, second_healthcheck):
+        return (
+            "services:\n"
+            "  first:\n"
+            "    image: demo\n" + _healthcheck_block() + "  second:\n"
+            "    image: demo\n" + second_healthcheck
+        )
+
+    def test_second_services_bad_values_produce_three_findings_naming_only_it(self):
+        compose = self._fixture(_healthcheck_block("30s", "10s", "40s"))
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = _findings(repo)
+            hc_findings = [f for f in findings if f["category"] == "docker-healthcheck-bounds"]
+            self.assertEqual(len(hc_findings), 3)
+            self.assertTrue(all(f["service"] == "second" for f in hc_findings))
+            self.assertEqual(
+                sorted(f["key"] for f in hc_findings), ["interval", "start_period", "timeout"]
+            )
+
+    def test_second_service_at_exact_boundary_produces_no_finding(self):
+        compose = self._fixture(_healthcheck_block("5s", "2s", "10s"))
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = _findings(repo)
+            hc_findings = [f for f in findings if f["category"] == "docker-healthcheck-bounds"]
+            self.assertEqual(hc_findings, [])
+
+
+class TestHealthcheckDurationReading(unittest.TestCase):
+    """Compound and sub-second duration forms, read against the real
+    checker rather than `parse_duration` alone."""
+
+    def test_1m30s_flagged_against_interval_bound(self):
+        compose = (
+            "services:\n  svc:\n    image: demo\n" + _healthcheck_block(interval="1m30s")
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual([f["key"] for f in findings], ["interval"])
+
+    def test_1500ms_not_flagged_against_timeout_bound(self):
+        compose = (
+            "services:\n  svc:\n    image: demo\n" + _healthcheck_block(timeout="1500ms")
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(findings, [])
+
+
+class TestHealthcheckFractionalExclusiveBound(unittest.TestCase):
+    """The exclusive bound proven on a FRACTIONAL discriminator: an
+    integer-only duration reader fails this method by producing the
+    right key with the WRONG issue (unreadable, not out-of-bounds)."""
+
+    def test_interval_5_001s_is_out_of_bounds_not_unreadable(self):
+        compose = "services:\n  svc:\n    image: demo\n" + _healthcheck_block(
+            interval="5.001s"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["issue"], "docker_healthcheck_out_of_bounds")
+            self.assertEqual(findings[0]["key"], "interval")
+            self.assertEqual(findings[0]["declared"], "5.001s")
+
+
+class TestHealthcheckUnreadableValue(unittest.TestCase):
+    def test_timeout_forever_yields_one_advisory_not_out_of_bounds(self):
+        compose = (
+            "services:\n  svc:\n    image: demo\n"
+            "    healthcheck:\n"
+            "      test: [CMD, true]\n"
+            "      timeout: forever\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["issue"], "docker_healthcheck_unreadable")
+            self.assertTrue(findings[0]["advisory"])
+            self.assertEqual(findings[0]["declared"], "forever")
+
+
+class TestHealthcheckAbsenceScope(unittest.TestCase):
+    """A service with no `healthcheck:` block, and one declaring only
+    `test:`, each yield no healthcheck finding."""
+
+    def test_no_healthcheck_block_yields_nothing(self):
+        compose = "services:\n  svc:\n    image: demo\n"
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(findings, [])
+
+    def test_healthcheck_with_only_test_key_yields_nothing(self):
+        compose = (
+            "services:\n  svc:\n    image: demo\n"
+            "    healthcheck:\n      test: [CMD, true]\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(findings, [])
+
+    def test_only_timeout_declared_yields_nothing_declared_values_only(self):
+        """D-D9's declared-values-only prohibition, written as a
+        regression test: Compose's implicit 30s `interval` exceeds the
+        5s bound, so a later 'fix' to flag absent keys makes this fail
+        -- the signal to report rather than to proceed."""
+        compose = (
+            "services:\n  svc:\n    image: demo\n"
+            "    healthcheck:\n      test: [CMD, true]\n      timeout: 1s\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(findings, [])
+
+
+class TestHealthcheckFlowMappingStatedLimit(unittest.TestCase):
+    """D-D7's flow-mapping limit: a same-line `healthcheck: {...}` body
+    yields no finding, does not raise, and -- the half that matters --
+    does NOT disturb the NEXT service, which must still be flagged by
+    its own name."""
+
+    def test_flow_mapping_healthcheck_unread_and_does_not_swallow_next_service(self):
+        compose = (
+            "services:\n"
+            "  flowy:\n"
+            "    image: demo\n"
+            "    healthcheck: {interval: 30s, timeout: 10s}\n"
+            "  after:\n"
+            "    image: demo\n"
+            + _healthcheck_block(interval="30s", timeout="10s", start_period="10s")
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertTrue(all(f["service"] == "after" for f in findings))
+            self.assertGreaterEqual(len(findings), 1)
+
+
+class TestHealthcheckParserDegradation(unittest.TestCase):
+    """A truncated compose file, an empty file, and a file of binary
+    noise each yield zero services and no finding, and none raises."""
+
+    def test_truncated_services_key_yields_nothing(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), "services:\n")
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(findings, [])
+
+    def test_empty_compose_file_yields_nothing(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), "")
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(findings, [])
+
+    def test_binary_noise_compose_file_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            compose_path = os.path.join(repo, "docker-compose.yml")
+            with open(compose_path, "wb") as handle:
+                handle.write(b"\xff\xfe\x00 not yaml \xff\n")
+            findings = _findings(repo)
+            self.assertIsInstance(findings, list)
+            hc_findings = [f for f in findings if f["category"] == "docker-healthcheck-bounds"]
+            self.assertEqual(hc_findings, [])
+
+
+class TestComposeParserNestingFixture(unittest.TestCase):
+    """`PARSER-NESTING-OK`'s fixture: a top-level `version:`, a top-level
+    `volumes:` mapping, an interior comment, and an interior blank line,
+    none of which may end a block or become mistaken for a service."""
+
+    _FIXTURE = (
+        "version: '3'\n\n"
+        "services:\n\n"
+        "  # a comment that must not end a block\n"
+        "  alpha:\n"
+        "    image: a\n"
+        "    healthcheck:\n"
+        "      interval: 9s\n\n"
+        "  beta:\n"
+        "    image: b\n"
+        "    depends_on:\n"
+        "      - alpha\n\n"
+        "volumes:\n"
+        "  data:\n"
+    )
+
+    def test_only_alpha_and_beta_are_services(self):
+        svc = dict(compose_parse.iter_services(self._FIXTURE))
+        self.assertEqual(sorted(svc), ["alpha", "beta"])
+
+    def test_alpha_healthcheck_interval_read_correctly(self):
+        svc = dict(compose_parse.iter_services(self._FIXTURE))
+        healthcheck = compose_parse.block_subblock(svc["alpha"], "healthcheck")
+        self.assertEqual(compose_parse.block_scalar(healthcheck, "interval"), "9s")
+
+    def test_beta_does_not_inherit_alpha_healthcheck(self):
+        svc = dict(compose_parse.iter_services(self._FIXTURE))
+        self.assertIsNone(compose_parse.block_subblock(svc["beta"], "healthcheck"))
+
+    def test_beta_depends_on_reads_as_bare_sequence(self):
+        svc = dict(compose_parse.iter_services(self._FIXTURE))
+        self.assertEqual(compose_parse.block_sequence(svc["beta"], "depends_on"), ["alpha"])
+
+
+class TestParseDurationExactness(unittest.TestCase):
+    def test_readable_forms(self):
+        cases = {
+            "2s": 2.0,
+            "1m30s": 90.0,
+            "1500ms": 1.5,
+            "1h": 3600.0,
+            "0": 0.0,
+            "30": 30.0,
+            "5.001s": 5.001,
+            "0.5": 0.5,
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(healthcheck.parse_duration(raw), expected)
+
+    def test_unreadable_forms_return_none(self):
+        for raw in ("", "forever", "2 s", "abc", "5y", None, "10sx"):
+            with self.subTest(raw=raw):
+                self.assertIsNone(healthcheck.parse_duration(raw))
+
+
+class TestComposeFilenameListRepointed(unittest.TestCase):
+    """D-D6: the applicability gate and discovery read ONE list."""
+
+    def test_gate_and_discovery_share_the_same_tuples(self):
+        pool = set(compose_parse.BASE_COMPOSE_FILENAMES) | set(
+            compose_parse.LOCAL_DEV_COMPOSE_FILENAMES
+        )
+        self.assertEqual(len(pool), 8)
+
+    def test_local_dev_only_repo_is_gated_in_and_parsed(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                _makefile_with_targets(docker_checker.DOCKER_TARGET_FAMILY),
+            )
+            _write(
+                os.path.join(repo, "docker-compose.local.yml"),
+                "services:\n  api:\n    image: demo\n" + _healthcheck_block(interval="60s"),
+            )
+            _write(os.path.join(repo, "docker", "local", "README.md"), "# runbook\n")
+            findings = [
+                f for f in _findings(repo) if f["category"] == "docker-healthcheck-bounds"
+            ]
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["service"], "api")
 
 
 if __name__ == "__main__":

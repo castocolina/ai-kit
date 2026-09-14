@@ -8,7 +8,12 @@ evaluates root-level assets only.
 13-03 extend by appending calls inside the APPLICABLE branch below (never
 by adding a check ahead of the gate): the applicability gate (D-D4) is
 evaluated FIRST and short-circuits with an empty list when it does not
-hold; the two checks this plan owns then extend the findings list.
+hold; the checks this plan and plan 13-02 own then extend the findings
+list. Plan 13-02 REPOINTED clause (i) at `compose_parse`'s
+`BASE_COMPOSE_FILENAMES`/`LOCAL_DEV_COMPOSE_FILENAMES` tuples (D-D6) --
+the gate and compose-file discovery read ONE list now, never two --
+and this module discovers the repo's compose files ONCE, passing that
+same list down to every check plan 13-02/13-03 append.
 
 Every finding this module returns carries EXACTLY D-D5's field set:
 `category`, `issue`, `criticality`, `summary`, `recommendation`,
@@ -21,7 +26,11 @@ target). `remediation.py`'s `build_remediation` reads
 `finding.get("target", finding.get("category"))`, so dropping `target`
 from the family findings collapses N missing targets onto one remediate
 id, and adding it to the runbook finding points that id at an unrelated
-Makefile target name.
+Makefile target name. Plan 13-02's compose-derived findings (healthcheck
+bounds, `depends_on` discipline) sit on the PROHIBITED side of D-D3:
+none of them carries `target` either -- they are about a compose service
+and key/dependency, not a Makefile target, and carry `service`/
+`compose_file`/non-identifying data fields instead.
 """
 
 from __future__ import annotations
@@ -30,6 +39,8 @@ import os
 
 from ai_kit_rules_common.criticality import CRITICALITY_MEDIUM
 from ai_kit_rules_common.makefile_parse import parse_makefile_targets_ordered
+
+from . import compose_parse, healthcheck
 
 # D-D1 -- the eight-target family is a FIXED NAME LIST, matched exactly
 # after normalization -- never a shape rule, never the Makefile sibling's
@@ -45,18 +56,6 @@ DOCKER_TARGET_FAMILY = (
     "docker-events-up",
     "docker-events-monitor",
     "docker-events-test",
-)
-
-# D-D4 clause (i) -- root-level compose file evidence.
-_COMPOSE_FILE_NAMES = (
-    "docker-compose.yml",
-    "docker-compose.yaml",
-    "compose.yml",
-    "compose.yaml",
-    "docker-compose.override.yml",
-    "docker-compose.override.yaml",
-    "docker-compose.local.yml",
-    "docker-compose.local.yaml",
 )
 
 # D-06 / design spec: the runbook's required path, relative to repo_root.
@@ -106,7 +105,7 @@ def repo_uses_docker(repo_root: str, makefile_path: str) -> bool:
     it, every non-Docker repo -- including this one -- would be handed
     nine findings on its first run.
     """
-    for name in _COMPOSE_FILE_NAMES:
+    for name in compose_parse.BASE_COMPOSE_FILENAMES + compose_parse.LOCAL_DEV_COMPOSE_FILENAMES:
         if os.path.isfile(os.path.join(repo_root, name)):
             return True
 
@@ -192,6 +191,12 @@ def check_docker_rules(repo_root: str) -> list[dict]:
     findings because the shared parsers already return an empty result
     for an absent file; an unreadable one yields the same answer via the
     D-D23 wrap above.
+
+    Discovers this repo's compose files ONCE via `compose_parse.
+    discover_compose_files` (D-D6's one filename list) and passes that
+    same list down to every compose-derived check plan 13-02 appends --
+    plan 13-03 appends a third consumer of that same list rather than
+    re-discovering it.
     """
     makefile_path = os.path.join(repo_root, "Makefile")
     if not repo_uses_docker(repo_root, makefile_path):
@@ -202,6 +207,9 @@ def check_docker_rules(repo_root: str) -> list[dict]:
     runbook = _runbook_finding(repo_root)
     if runbook is not None:
         findings.append(runbook)
+
+    compose_files = compose_parse.discover_compose_files(repo_root)
+    findings.extend(healthcheck.check_healthcheck_bounds(repo_root, compose_files))
     return findings
 
 
