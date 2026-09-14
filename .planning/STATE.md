@@ -1,16 +1,16 @@
 ---
 gsd_state_version: "1.0"
 milestone: v1.2
-current_phase: 9
-current_phase_name: ai-kit-project-rules-agents
+current_phase: 8.1
+current_phase_name: status-line-rate-burn-pace-fix
 status: planning
-stopped_at: Phase 15 context gathered -- full v1.2 family (Phases 9-15) now has CONTEXT.md; none planned/executed yet
+stopped_at: Phase 8.1 (INSERTED) created from a live user-reported regression; Phase 15 context gathered -- full v1.2 family (Phases 9-15) now has CONTEXT.md; none of Phase 8.1 or 9-15 planned/executed yet
 last_updated: "2026-09-13T23:57:38.131Z"
 last_activity: 2026-09-13
-last_activity_desc: Milestone v1.2 ROADMAP.md created (Phases 9-15, REQUIREMENTS.md traceability updated)
+last_activity_desc: Phase 8.1 (INSERTED) added -- rate-burn formula pace-direction fix, starting diff on branch fix/8.1-status-line-rate-burn-pace; ONESHOT-ENTRY-PROMPT.md updated to run it first
 state_head: 8c4a2bd77173b15edc4bd720430c0e517c0bf617
 progress:
-  total_phases: 16
+  total_phases: 17
   completed_phases: 1
   total_plans: 8
   completed_plans: 8
@@ -24,14 +24,14 @@ milestone_name: ai-kit Rules Skill Family
 See: .planning/PROJECT.md (updated 2026-09-10)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 9 - AGENTS.md Checker Prune (v1.2 ROADMAP.md created; Phases 9-15 ready to plan, in strict dependency order starting with Phase 9)
+**Current focus:** Phase 8.1 (INSERTED) - Status-line Rate-Burn Pace Fix, then Phase 9 - AGENTS.md Checker Prune (v1.2 ROADMAP.md created; Phases 9-15 ready to plan, in strict dependency order starting with Phase 9)
 
 ## Current Position
 
-Phase: 9 - AGENTS.md Checker Prune (ai-kit-project-rules-agents) — not started
+Phase: 8.1 - Status-line Rate-Burn Pace Fix (INSERTED) — not started (starting diff exists on branch `fix/8.1-status-line-rate-burn-pace`)
 Plan: —
-Status: Roadmap created, ready to plan Phase 9
-Last activity: 2026-09-13 — Milestone v1.2 ROADMAP.md created (Phases 9-15, REQUIREMENTS.md traceability updated)
+Status: Context written, ready to plan Phase 8.1; Phase 9 ready to plan after
+Last activity: 2026-09-13 — Phase 8.1 (INSERTED) added from a live user-reported status-line regression
 
 ## Performance Metrics
 
@@ -109,6 +109,16 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 07]: 07-03: gsd_write.config_set None-value coercion fixed locally in cli.py's apply-workflow-defaults (substitutes literal 'null' string) rather than widening the shared _coerce_value helper outside this plan's declared files_modified.
 - [Phase 07]: Renamed ai-kit-gsd-config to ai-kit-gsd-curated-config per naming-analyzer (disambiguates from sibling gsd-config skill's different scope)
 - [Phase 07]: Deferred pre-existing make validate lint failures in tools/status-line.py and tools/wizard_app.py (Phase 8-owned, out of Phase 07 scope) to deferred-items.md
+- [Phase 8.1]: INSERTED decimal amendment to Phase 8, created 2026-09-13
+  after a live user report that Phase 8's `util_rate_burn_ratio` formula
+  (`pct / remaining_fraction`) rendered low usage well into a rate-limit
+  window as an urgency color (25% used, half the window elapsed, read
+  YELLOW/orange). Reverses the formula to `pct / elapsed_fraction` (a pace
+  signal) per the user's explicit, live-confirmed direction choice — see
+  `08.1-CONTEXT.md` for the full decision and why it reopens Phase 8's own
+  "Formula Direction — Resolved" call. Independent of the v1.2 chain; a
+  starting diff already exists on branch `fix/8.1-status-line-rate-burn-pace`
+  (commit `fc2d8bb`), 302/302 tests passing, not yet merged to main.
 - v1.2: Phase numbering continues from v1.1's last phase (Phase 9 starts
   right after Phase 8), per ROADMAP.md's Phase Numbering convention
   (2026-09-13).

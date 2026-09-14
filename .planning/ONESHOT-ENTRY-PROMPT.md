@@ -1,19 +1,29 @@
-# ai-kit Phases 9-15 — Claude Code Autonomous Run Driver
+# ai-kit Phases 8.1, 9-15 — Claude Code Autonomous Run Driver
 
 **v1.0 (Phase 1.1 through Phase 5) and v1.1 (Phases 6-8) are complete and evidenced.**
 Phase 1.1 exercised this playbook's Rule 2 (plan-review convergence) and Rule 6
 (clean-room E2E gate) for real while closing itself (`01.1-REVIEWS.md`, that phase's
 own `make e2e-docker` run); Phases 1.2-8 closed under the same playbook afterward.
-Copy-paste driver for a single autonomous run covering Phase 9 (AGENTS.md Checker
+Copy-paste driver for a single autonomous run covering Phase 8.1 (an INSERTED bug-fix
+amendment to Phase 8, independent of everything else), then Phase 9 (AGENTS.md Checker
 Prune) through Phase 15 (Rules Orchestrator, v1.2's last phase). **Unlike v1.1's
 Phases 6-8 (mutually independent, any order fine), v1.2's Phases 9-15 form a strict
 dependency chain — 9 → 10 → 11 → 12 → 13 → 14 → 15, each must actually land before the
 next is planned** (`.planning/STATE.md`'s Accumulated Context, "v1.2 — strict
-dependency chain, unlike v1.1"). Do not parallelize these phases even though
-`.planning/config.json` has `parallelization: true` — that setting governs independent
-plans within one phase, not this milestone's cross-phase ordering. All operational
-detail — cross-AI routing, per-phase checklist, gates, non-negotiable rules — lives in
-`.planning/ONESHOT-RULES.md`; this file only starts the run and points there.
+dependency chain, unlike v1.1"). Phase 8.1 has no dependency relationship with 9-15 at
+all — run it first (it's small) or anywhere convenient, it never blocks or is blocked
+by the chain. Do not parallelize Phases 9-15 even though `.planning/config.json` has
+`parallelization: true` — that setting governs independent plans within one phase, not
+this milestone's cross-phase ordering. All operational detail — cross-AI routing,
+per-phase checklist, gates, non-negotiable rules — lives in `.planning/ONESHOT-RULES.md`;
+this file only starts the run and points there.
+
+**Phase 8.1 already has a starting diff** on branch `fix/8.1-status-line-rate-burn-pace`
+(commit `fc2d8bb`) — a live user-reported regression fix to
+`tools/status-line.py`'s rate-limit burn-rate formula, tests already passing
+(302/302). `/gsd-plan-phase 8.1` should produce a plan that lands that branch's
+diff (review it against `08.1-CONTEXT.md`'s decisions, merge/cherry-pick, commit,
+close) rather than re-deriving the fix from scratch.
 
 **Known risk — opencode provider-credit exhaustion recurred twice during v1.1.**
 `.planning/STATE.md`'s Blockers/Concerns section records a billing-driven Rule 7
@@ -24,8 +34,8 @@ and fallback models) before starting this run — the "Cross-AI Execution — Co
 Reachability" section of `.planning/ONESHOT-RULES.md` governs what to do if a route is
 still unreachable.
 
-Every Phase 9-15 `{N}-CONTEXT.md` already exists (gathered 2026-09-13; none of the 7
-phases has a plan or execution yet) — this run's first step per phase is
+Every Phase 8.1 and 9-15 `{N}-CONTEXT.md` already exists (gathered 2026-09-13; none of
+the 8 phases has a plan or execution yet) — this run's first step per phase is
 `/gsd-plan-phase {N}`, not `/gsd-discuss-phase`; do not re-discuss a phase whose
 `{N}-CONTEXT.md` already reflects it.
 
@@ -50,27 +60,31 @@ Paste the block below as the first message, then leave it running.
 
 /gsd-autonomous --to 15 --converge --opencode
 
-You are the Claude Code orchestrator for this ai-kit repository, running v1.2
+You are the Claude Code orchestrator for this ai-kit repository, running Phase 8.1
+(an INSERTED bug-fix amendment to Phase 8's rate-limit burn-rate formula) and v1.2
 milestone Phases 9 (AGENTS.md Checker Prune), 10 (Makefile Rules Checker), 11
 (Pre-commit Rules Checker), 12 (Architecture Rules Checker), 13 (Docker Rules
 Checker), 14 (CI/CD Rules Checker), and 15 (Rules Orchestrator) to completion. v1.0
 and v1.1 (Phase 1.1 through Phase 8) are already complete — the cross-AI
 plan-review convergence and cross-AI execution routes Phase 1.1 wired are already in
 place in `.planning/config.json`; do not re-wire or re-verify that infrastructure,
-just use it (after confirming reachability per the Known-risk note above). Phases 9
-through 15 form a strict dependency chain — run them in numeric order only, never in
-parallel, and never start planning Phase N+1 until Phase N's `VERIFICATION.md` shows
-`passed`. Every phase's `{N}-CONTEXT.md` already exists; start each phase at
-`/gsd-plan-phase {N}`, not discuss-phase.
+just use it (after confirming reachability per the Known-risk note above). Run Phase
+8.1 first (it is small, independent of everything, and already has a starting diff
+on branch `fix/8.1-status-line-rate-burn-pace` commit `fc2d8bb` per its own
+`08.1-CONTEXT.md`) — it never blocks, and is never blocked by, the Phases 9-15 chain.
+Phases 9 through 15 form a strict dependency chain — run them in numeric order only,
+never in parallel, and never start planning Phase N+1 until Phase N's
+`VERIFICATION.md` shows `passed`. Every phase's `{N}-CONTEXT.md` already exists;
+start each phase at `/gsd-plan-phase {N}`, not discuss-phase.
 
-Only implement Phases 9 through 15.
+Implement Phase 8.1, then Phases 9 through 15. Nothing else.
 
 Read `.planning/ONESHOT-RULES.md` in full now, and again at the start of every turn,
 along with `.planning/STATE.md`, `.planning/ROADMAP.md`, and `.planning/REQUIREMENTS.md`.
 Follow `.planning/ONESHOT-RULES.md` exactly — it is the binding playbook, this message
 is only the entry point.
 
-Objective: run Phases 9 through 15 to completion, unattended, stopping only for
+Objective: run Phase 8.1, then Phases 9 through 15, to completion, unattended, stopping only for
 a real destructive anomaly, an unrecoverable tool/authentication failure, or a circuit
 breaker (`.planning/ONESHOT-RULES.md` Non-Negotiable Rule 7). Never trust a subagent's
 or delegate's self-reported "passed" — independently re-run the real verification

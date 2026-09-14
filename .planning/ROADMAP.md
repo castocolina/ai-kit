@@ -80,6 +80,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 6: AGENTS.md Rules Checker Skill** - Wrap `/agent-md-refactor` with a house-ruleset checker for Makefile target shape and the accumulated workflow rules (completed 2026-09-11)
 - [x] **Phase 7: Curated GSD Config Skill** - Small curated question set that writes and schema-validates `.planning/config.json`, replacing `gsd-settings`/`gsd-config`'s full interrogation (completed 2026-09-11)
 - [x] **Phase 8: Status-line Quota Color Refactor** - Rate-limit bucket coloring becomes relative to time-left-in-window, not raw usage percentage (completed 2026-09-10)
+- [ ] **Phase 8.1: Status-line Rate-Burn Pace Fix (INSERTED)** - Reverses Phase 8's burn-rate formula direction to `pct / elapsed_fraction` (pace), fixing a live regression where low usage well into a rate-limit window rendered as an urgency color
 - [ ] **Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)** - Prune the renamed AGENTS.md/CLAUDE.md checker to AGENTS.md-prose scope only, dropping all Makefile-specific logic
 - [ ] **Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)** - New skill inherits the dropped Makefile logic plus `validate-<category>` parity, help/fail reachability, recipe-length cap, docker build-before-up, shellcheck threshold, and an advisory ordering heuristic
 - [ ] **Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)** - New skill checks Makefile↔pre-commit parity and applies the 6-category tooling taxonomy plus ruff/golangci-lint-specific checks
@@ -277,6 +278,24 @@ Plans:
 
 - [x] 08-01-PLAN.md — Burn-rate ratio helpers (`util_rate_window_seconds` + `util_rate_burn_ratio`) wired into `util_rate_group_str`'s rate-limit ramp call site, plus ramp-boundary test coverage extending the existing pattern (REQ-stln-time-relative-color, REQ-stln-ramp-tests)
 
+### Phase 8.1: Status-line Rate-Burn Pace Fix (INSERTED)
+
+**Goal**: The rate-limit burn-rate formula reflects real urgency as a PACE signal (usage relative to time already elapsed), not as "less time remaining is always more urgent" — fixing a live regression where low usage well into a window rendered as a warning color.
+**Depends on**: Nothing (independent of Phase 8 and of Phases 9-15; a direct reversal of one formula inside Phase 8's own deliverable)
+**Requirements**: REQ-stln-time-relative-color (amended — see `08.1-CONTEXT.md` D-01)
+**Success Criteria** (what must be TRUE):
+
+  1. The ratio fed into the unchanged `theme.ramps["rate"]` thresholds is `used_percentage / elapsed_fraction` (`elapsed_fraction = 1 - remaining_fraction`), not `used_percentage / remaining_fraction`. Worked example matching the live-reported regression: 25% used with 4h already elapsed of a 5h window (`elapsed_fraction = 0.8`, `remaining_fraction = 0.2`) — the superseded Phase 8 formula gives `25 / 0.2 = 125` → RED+bold (the bug: low usage well into the window read as urgent); this formula gives `25 / 0.8 = 31.25` → GREEN. See `08.1-CONTEXT.md` D-01/D-02 and `tests/test_status_line.py`'s `TestRateBurnRatio` for the full set of pinned boundary cases.
+  2. **Color-only change, same as Phase 8's own SC2**: the displayed `used_percentage` number and `resets_at`-derived reset-time suffix stay byte-identical — only the ramp color selection changes.
+  3. `elapsed_fraction ~ 0` (too early in the window) falls back to raw `pct` rather than spiking toward the ramp's top band on no real signal — mirrors, at the opposite edge, Phase 8's own D-03/D-04 fallback behavior for stale/missing/out-of-range `resets_at`.
+  4. `tests/test_status_line.py`'s `TestRateBurnRatio` and the render-level `test_h_rate_limit_colors_by_pace_more_elapsed_time_is_less_urgent` pin the reversed direction, and the full suite (`make test-unit` / `python3 -m unittest tests.test_status_line`) passes.
+
+**Plans**: 0/1 plans executed (starting diff already exists on branch `fix/8.1-status-line-rate-burn-pace`, commit `fc2d8bb` — see `08.1-CONTEXT.md` D-04)
+
+Plans:
+
+- [ ] 08.1-01-PLAN.md — Land the `fix/8.1-status-line-rate-burn-pace` branch's diff (review, confirm test coverage, merge/cherry-pick onto the phase's execution branch, commit, close)
+
 ### Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)
 
 **Goal**: The AGENTS.md/CLAUDE.md checker — renamed from `ai-kit-agents-md-rules-checker` to `ai-kit-project-rules-agents` — is pruned to AGENTS.md-prose scope only, so the Makefile-specific logic it currently carries can be cleanly re-homed in Phase 10 without two skills claiming the same checks.
@@ -384,7 +403,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 (Phases 6, 7, and 8 are mutually independent — v1.1 scope, order among them is a scheduling choice, not a dependency. Phases 9-15 are v1.2 scope and form a strict dependency chain — each must complete before the next is planned, per REQUIREMENTS.md's v1.2 section and this roadmap's v1.2 addendum above.)
+Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 8.1 → 9 → 10 → 11 → 12 → 13 → 14 → 15 (Phases 6, 7, and 8 are mutually independent — v1.1 scope, order among them is a scheduling choice, not a dependency. Phase 8.1 is an INSERTED decimal amendment to Phase 8 — same "mutually independent" status, and independent of the v1.2 chain too; it can run at any point relative to Phases 9-15. Phases 9-15 are v1.2 scope and form a strict dependency chain — each must complete before the next is planned, per REQUIREMENTS.md's v1.2 section and this roadmap's v1.2 addendum above.)
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
