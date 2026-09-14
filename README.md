@@ -38,6 +38,7 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-opencode-providers`](skills/ai-kit-opencode-providers/SKILL.md) | skill | List and remove config-based custom opencode providers from `opencode.jsonc` without hand-editing JSONC or touching `auth.json`. |
 | [`ai-kit-project-rules-agents`](skills/ai-kit-project-rules-agents/SKILL.md) | skill | Checks an AGENTS.md/CLAUDE.md file against ai-kit's own 17-rule house ruleset, then wraps `/agent-md-refactor` to remediate gaps. |
 | [`ai-kit-project-rules-makefile`](skills/ai-kit-project-rules-makefile/SKILL.md) | skill | Checks a target repo's Makefile target shape — validate-<category> alias chain, recipe length, Docker build-before-up, shellcheck threshold. Detects and reports only. |
+| [`ai-kit-project-rules-precommit`](skills/ai-kit-project-rules-precommit/SKILL.md) | skill | Checks Makefile↔pre-commit parity (both directions), classifies pre-commit tooling into the 6-category taxonomy, and flags enable-everything configs, missing Duplicate-code/Dead-code tooling, and ruff/golangci-lint anti-patterns. Detects and reports only. |
 | [`ai-kit-gsd-curated-config`](skills/ai-kit-gsd-curated-config/SKILL.md) | skill | Curated, one-question (`model_profile`) GSD `.planning/config.json` setup — writes live-derived critical-agent overrides, detected cross-AI execution/review candidates, and preset workflow defaults through gsd-tools' own schema-validated CLI, coexisting with `gsd-settings`/`gsd-config` rather than replacing them. |
 
 ## How the installer works
