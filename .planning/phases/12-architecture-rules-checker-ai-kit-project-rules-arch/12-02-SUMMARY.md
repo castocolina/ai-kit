@@ -44,7 +44,7 @@ imports/executes its subject), plus a hardcoded per-stack canonical-tool
 recommendation with an explicit Rust/Go known-gap disclosure -- ROADMAP
 Phase 12 Success Criteria 3 and 4.
 
-## Backlog resolution (ROADMAP Phase 12 Success Criterion 5)
+## Backlog resolution (ROADMAP Phase 12 Success Criterion 5):
 
 > This phase promotes and resolves `.planning/ROADMAP.md`'s Backlog entry
 > "Phase 999.3: Architecture-layer test suite" at this milestone's
