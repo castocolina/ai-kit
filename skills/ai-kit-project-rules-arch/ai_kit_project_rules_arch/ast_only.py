@@ -170,25 +170,28 @@ def _detect_ast_aliases(tree: ast.Module) -> tuple[str | None, str | None]:
             for alias in node.names:
                 if alias.name == "ast":
                     ast_alias = alias.asname or "ast"
-        elif isinstance(node, ast.ImportFrom):
-            if node.module == "ast":
-                for alias in node.names:
-                    if alias.name == "parse":
-                        parse_alias = alias.asname or "parse"
+        elif isinstance(node, ast.ImportFrom) and node.module == "ast":
+            for alias in node.names:
+                if alias.name == "parse":
+                    parse_alias = alias.asname or "parse"
     return ast_alias, parse_alias
 
 
-def _is_direct_ast_parse_call(call: ast.Call, ast_alias: str | None, parse_alias: str | None) -> bool:
+def _is_direct_ast_parse_call(
+    call: ast.Call, ast_alias: str | None, parse_alias: str | None
+) -> bool:
     """A direct `ast.parse(...)` call (an `Attribute` `parse` on the
     module's own `ast` alias) or a direct bare `parse(...)` call where
     `parse` was imported FROM `ast` specifically."""
     func = call.func
-    if ast_alias is not None and isinstance(func, ast.Attribute) and func.attr == "parse":
-        if _dotted_name(func.value) == ast_alias:
-            return True
-    if parse_alias is not None and isinstance(func, ast.Name) and func.id == parse_alias:
+    if (
+        ast_alias is not None
+        and isinstance(func, ast.Attribute)
+        and func.attr == "parse"
+        and _dotted_name(func.value) == ast_alias
+    ):
         return True
-    return False
+    return parse_alias is not None and isinstance(func, ast.Name) and func.id == parse_alias
 
 
 def _is_executed_call(call: ast.Call) -> bool:
@@ -308,7 +311,8 @@ def _build_parser_helpers(
     }
     calls_by_func: dict[str, list[ast.Call]] = {name: [] for name in function_names}
     for call, scope in collector.call_scope.items():
-        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and scope.name in calls_by_func:
+        is_function_scope = isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if is_function_scope and scope.name in calls_by_func:
             calls_by_func[scope.name].append(call)
 
     helpers: set[str] = set()
@@ -423,9 +427,8 @@ def _find_ast_only_finding(repo_root: str, makefile_path: str, target_name: str)
         if isinstance(node, ast.Import):
             for alias in node.names:
                 executed_subjects.add(_normalize_module_token(alias.name))
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                executed_subjects.add(_normalize_module_token(node.module))
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            executed_subjects.add(_normalize_module_token(node.module))
 
     intersection = parsed_subjects & executed_subjects
     if not intersection:

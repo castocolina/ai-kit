@@ -172,11 +172,18 @@ class TestTracerAstOnlyTargetAware(unittest.TestCase):
     confirmed to fail for the right reason -- `ImportError` -- then
     implemented against until they passed)."""
 
-    def test_clean_file_parsing_one_module_and_loading_unrelated_one_not_flagged(self):
-        # D-01's exact real shape: parses target_mod via a helper, and
-        # SEPARATELY loads an UNRELATED module (helper_mod) via the
-        # variable-then-pass shape, under an alias that is not the
-        # module's own name.
+    def test_ast_parse_clean_file_parsing_one_module_and_loading_unrelated_one_not_flagged(self):
+        """D-01's exact real shape, written the way the real file writes
+        it: parses `target_mod` via a helper, and SEPARATELY loads an
+        UNRELATED module (`helper_mod`) by assigning its path to a LOCAL
+        NAME and passing the NAME to `spec_from_file_location`, exactly as
+        `TestSegmentInventory._sl` does at `tests/test_arch.py:605-611`,
+        under an alias that is not the module's own name. This mirrors the
+        real `tests/test_arch.py` pattern 12-CONTEXT D-01 was written
+        about -- a later contributor "simplifying" this fixture into a
+        file that loads nothing would delete the only proof the check is
+        not a blanket scan (D-01's whole point: a file that parses X and
+        separately loads unrelated Y is clean)."""
         body = _AST_ONLY_HELPER_SOURCE + _ast_only_byname_load(
             "helper_mod.py", "helper_alias_zz"
         )
@@ -184,12 +191,24 @@ class TestTracerAstOnlyTargetAware(unittest.TestCase):
         self.assertNotIn("backing_file_executes_checked_target", _issues(repo))
 
     def test_named_variable_then_pass_load_of_the_parsed_module_is_flagged_by_name(self):
-        # The load-bearing pair's dirty half: same variable-then-pass shape
-        # as the clean fixture, but aimed at the module that IS parsed.
-        # Only a real one-level name-resolution implementation on the
-        # EXECUTE side catches this -- a string-in-call-only build passes
-        # every inline fixture and stays inert against the live
-        # tests/test_arch.py:605-611.
+        """The load-bearing pair's dirty half, and the one this suite must
+        not lose: the SAME variable-then-pass shape as the clean fixture
+        above, but aimed at the module that IS parsed. Both halves assign
+        the module path to a LOCAL NAME and pass the NAME to
+        `spec_from_file_location` under an alias that is not the module's
+        own name -- the shape of `TestSegmentInventory._sl` at
+        `tests/test_arch.py:605-611`. Only a real one-level
+        name-resolution implementation on the EXECUTE side catches this --
+        a string-in-call-only build (one that collects only literals
+        sitting inside the call) passes every inline-shaped fixture and
+        stays permanently inert against the live
+        `tests/test_arch.py:605-611`, which is what this plan's D-01
+        correction and Task 3's human check both rest on being a real,
+        observed fact rather than an unverified claim. A later contributor
+        who "simplifies" either half of this pair by moving the path
+        inline into the call deletes the only coverage that tells a
+        working correlation apart from one that is inert against every
+        real repository."""
         body = _AST_ONLY_HELPER_SOURCE + _ast_only_byname_load(
             "target_mod.py", "target_alias_zz"
         )
@@ -246,7 +265,7 @@ class TestTracerAstOnlyNotVerifiable(unittest.TestCase):
     """D-A9's four PINNED not-verifiable reasons -- the skill never stays
     silent about a limit it has."""
 
-    def test_not_discoverable_when_recipe_forms_a_candidate_that_does_not_resolve(self):
+    def test_ast_only_not_discoverable_when_recipe_forms_a_candidate_that_does_not_resolve(self):
         # "lint-imports --config importlinter.ini" -- a config-driven tool
         # recipe with no Python file argument.
         repo = _ast_only_repo_raw(
@@ -278,10 +297,37 @@ class TestTracerAstOnlyNotVerifiable(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["reason"], "no_parse_call")
 
+    def test_emitted_reason_is_always_a_member_of_the_pinned_four_value_set(self):
+        """A fifth value cannot be introduced later without failing this
+        method -- it is not enough that the four reasons differ from each
+        other (that is satisfiable by any four differing prose strings);
+        each emitted `reason` must be one of D-A9's CLOSED enum."""
+        pinned = {"not_discoverable", "not_python", "unparseable", "no_parse_call"}
+        repos = [
+            _ast_only_repo_raw("lint-imports --config importlinter.ini", dict(_AST_ONLY_SRC_FILES)),
+            _ast_only_repo_raw(
+                "node tests/arch.spec.ts",
+                dict(_AST_ONLY_SRC_FILES, **{"tests/arch.spec.ts": "export const x = 1;\n"}),
+            ),
+            _ast_only_repo("def broken(:\n"),
+            _ast_only_repo("import os\nX = os.sep\n"),
+        ]
+        for repo in repos:
+            for finding in _findings(repo):
+                if finding["issue"] == "ast_only_not_verifiable":
+                    self.assertIn(finding["reason"], pinned)
+
 
 class TestTracerAstOnlyGateAndContainment(unittest.TestCase):
     """D-A4's gate re-asserted after this plan's addition, and D-A7's
-    containment guard against both known escape shapes."""
+    containment guard against both known escape shapes: parent-traversal
+    (`../outside.py`), and the SIBLING-prefix case
+    (`test_sibling_prefix_escape_is_rejected_as_not_discoverable` below) --
+    the one a bare, unresolved `startswith(repo_root)` would ACCEPT (it
+    passes the parent-traversal case but not this one), because
+    `<tmp>/repo-evil` textually starts with `<tmp>/repo` without being
+    inside it. Both out-of-root files are shaped so that a containment
+    bypass would produce a REAL (wrong) finding rather than silence."""
 
     def test_gate_repo_with_no_arch_test_target_produces_exactly_one_finding(self):
         repo = tempfile.mkdtemp()
@@ -363,15 +409,15 @@ class TestTracerCanonicalToolBaseline(unittest.TestCase):
     """D-A10's per-stack canonical-tool baseline (ROADMAP Phase 12 SC4),
     Task 2's own `<behavior>` fixtures."""
 
-    def test_python_only_repo_names_import_linter(self):
+    def test_python_only_repo_names_import_linter_canonical_tool(self):
         text = _missing_target_recommendation(_stack_repo(["pyproject.toml"]))
         self.assertIn("import-linter", text.lower())
 
-    def test_node_only_repo_names_dependency_cruiser(self):
+    def test_node_only_repo_names_dependency_cruiser_canonical_tool(self):
         text = _missing_target_recommendation(_stack_repo(["package.json"]))
         self.assertIn("dependency-cruiser", text.lower())
 
-    def test_java_only_repo_names_archunit(self):
+    def test_java_only_repo_names_archunit_canonical_tool(self):
         text = _missing_target_recommendation(_stack_repo(["pom.xml"]))
         self.assertIn("archunit", text.lower())
 
@@ -393,12 +439,12 @@ class TestTracerCanonicalToolBaseline(unittest.TestCase):
         self.assertIn("known gap", first)
         self.assertEqual(first, second)
 
-    def test_no_stack_detected_repo_states_so_explicitly(self):
+    def test_no_stack_detected_repo_names_none_of_the_canonical_tools(self):
         text = _missing_target_recommendation(_stack_repo([]))
         self.assertFalse([t for t in _CANONICAL_TOOL_NAMES if t in text.lower()])
         self.assertGreater(len(text), 40)
 
-    def test_chained_repo_emits_no_canonical_tool_text_at_all(self):
+    def test_chained_repo_emits_none_of_the_canonical_tool_text(self):
         repo = _stack_repo(["Cargo.toml"], chained=True)
         findings = _findings(repo)
         self.assertFalse([f for f in findings if f["issue"] == "arch_test_target_missing"])
