@@ -372,13 +372,13 @@ Plans:
   4. The skill's remediation output names the canonical tool per stack (Python: import-linter, Node/TS: dependency-cruiser, Java: ArchUnit) and explicitly states the Rust/Go known gap rather than asserting a false canonical tool for those languages.
   5. This phase's own PLAN/SUMMARY artifacts record the backlog-resolution note described in this phase's Goal above, so the resolution is traceable from the backlog entry to this phase without editing the backlog stub itself.
 
-**Plans**: 3 plans
+**Plans**: 3/3 plans executed
 
 Plans:
 
-- [ ] 12-01-PLAN.md — Wire `ai-kit-project-rules-arch` end-to-end: arch-test-shaped target existence and `test`-chaining as two distinct findings, the shared structural-kind tuple grown by one name, and the skill registered in every quality gate (SC1, SC2)
-- [ ] 12-02-PLAN.md — Target-aware AST-only correlation for the backing test file (12-CONTEXT D-01/D-02) plus the hardcoded per-stack canonical-tool baseline with the Rust/Go known gap (SC3, SC4)
-- [ ] 12-03-PLAN.md — SKILL.md, README row, `/skill-judge` code-review gate with committed evidence, `/naming-analyzer` confirmation, mechanical SC5 backlog-resolution traceability, and the dated correction to 12-CONTEXT.md's D-01 scouting claim (SC5)
+- [x] 12-01-PLAN.md — Wire `ai-kit-project-rules-arch` end-to-end: arch-test-shaped target existence and `test`-chaining as two distinct findings, the shared structural-kind tuple grown by one name, and the skill registered in every quality gate (SC1, SC2)
+- [x] 12-02-PLAN.md — Target-aware AST-only correlation for the backing test file (12-CONTEXT D-01/D-02) plus the hardcoded per-stack canonical-tool baseline with the Rust/Go known gap (SC3, SC4)
+- [x] 12-03-PLAN.md — SKILL.md, README row, `/skill-judge` code-review gate with committed evidence, `/naming-analyzer` confirmation, mechanical SC5 backlog-resolution traceability, and the dated correction to 12-CONTEXT.md's D-01 scouting claim (SC5)
 
 ### Phase 13: Docker Rules Checker (ai-kit-project-rules-docker)
 
@@ -443,7 +443,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 9. AGENTS.md Checker Prune | 2/2 | Complete    | 2026-09-14 |
 | 10. Makefile Rules Checker | 3/3 | Complete    | 2026-09-14 |
 | 11. Pre-commit Rules Checker | 4/4 | Complete    | 2026-09-14 |
-| 12. Architecture Rules Checker | 0/TBD | Not started | - |
+| 12. Architecture Rules Checker | 3/3 | In Progress|  |
 | 13. Docker Rules Checker | 0/TBD | Not started | - |
 | 14. CI/CD Rules Checker | 0/TBD | Not started | - |
 | 15. Rules Orchestrator | 0/TBD | Not started | - |
