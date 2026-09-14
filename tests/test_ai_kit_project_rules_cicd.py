@@ -32,7 +32,7 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-project-rules-cicd"),
 )
 
-from ai_kit_project_rules_cicd import ci_parse, cicd_checker, cli, reuse_sources
+from ai_kit_project_rules_cicd import ci_parse, cicd_checker, cli, package_scripts, reuse_sources
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
@@ -1615,6 +1615,185 @@ class TestStatedLimitsGitHub(unittest.TestCase):
             ),
             imported_modules,
         )
+
+
+# --------------------------------------------------------------------------- #
+# Plan 14-03 Task 1: the package.json script reuse surface (D-C18, D-C18b).
+# --------------------------------------------------------------------------- #
+
+_PJ_LINT_ESLINT = json.dumps({"scripts": {"lint": "eslint ."}})
+_CI_ESLINT_STEP = "jobs:\n  j:\n    steps:\n    - run: eslint .\n"
+
+
+class TestPackageJsonReuseSurface(unittest.TestCase):
+    """D-C18: a root `package.json` script is a reuse source through the
+    same command-key machinery every other surface uses."""
+
+    def test_matching_script_is_flagged_with_npm_run_recommendation(self):
+        repo = _fixture({"package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        finding = findings[0]
+        self.assertEqual(finding["reuse_surface"], "package-json")
+        self.assertEqual(finding["reuse_command"], "npm run lint")
+        self.assertNotIn("target", finding)
+
+    def test_ci_calling_npm_run_lint_directly_yields_no_findings(self):
+        repo = _fixture(
+            {
+                "package.json": _PJ_LINT_ESLINT,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: npm run lint\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_two_token_typecheck_script_covers_tsc_no_emit_but_not_bare_tsc(self):
+        pj = json.dumps({"scripts": {"typecheck": "tsc --noEmit"}})
+        covered = _fixture(
+            {
+                "package.json": pj,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: tsc --noEmit\n"
+                ),
+            }
+        )
+        findings = _findings(covered)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "npm run typecheck")
+
+        not_covered = _fixture(
+            {
+                "package.json": pj,
+                ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: tsc\n",
+            }
+        )
+        self.assertEqual(_findings(not_covered), [])
+
+    def test_aggregate_script_covers_nothing(self):
+        pj = json.dumps({"scripts": {"validate": "eslint . && tsc --noEmit"}})
+        repo = _fixture({"package.json": pj, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        self.assertEqual(_findings(repo), [])
+
+    def test_npx_prefixed_script_resolves_to_the_same_identity_as_bare(self):
+        pj_npx = json.dumps({"scripts": {"lint": "npx eslint ."}})
+        repo_npx = _fixture({"package.json": pj_npx, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        repo_bare = _fixture(
+            {"package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP}
+        )
+        self.assertEqual(_findings(repo_npx), _findings(repo_bare))
+
+    def test_pnpm_lockfile_recommends_pnpm_runner(self):
+        repo = _fixture(
+            {
+                "package.json": _PJ_LINT_ESLINT,
+                "pnpm-lock.yaml": "lockfileVersion: 9\n",
+                ".github/workflows/ci.yml": _CI_ESLINT_STEP,
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "pnpm run lint")
+
+    def test_yarn_lockfile_recommends_yarn_runner(self):
+        repo = _fixture(
+            {
+                "package.json": _PJ_LINT_ESLINT,
+                "yarn.lock": "# yarn lockfile v1\n",
+                ".github/workflows/ci.yml": _CI_ESLINT_STEP,
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "yarn run lint")
+
+    def test_both_pnpm_and_yarn_lockfiles_recommends_pnpm_first(self):
+        repo = _fixture(
+            {
+                "package.json": _PJ_LINT_ESLINT,
+                "pnpm-lock.yaml": "lockfileVersion: 9\n",
+                "yarn.lock": "# yarn lockfile v1\n",
+                ".github/workflows/ci.yml": _CI_ESLINT_STEP,
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "pnpm run lint")
+
+    def test_no_lockfile_recommends_npm_runner(self):
+        repo = _fixture({"package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "npm run lint")
+
+    def test_makefile_and_script_collision_recommends_only_the_makefile_target(self):
+        mk = "lint:\n\teslint .\n"
+        repo = _fixture(
+            {"Makefile": mk, "package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP}
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_surface"], "makefile")
+        self.assertEqual(findings[0]["reuse_command"], "make lint")
+
+
+class TestPackageJsonDegradation(unittest.TestCase):
+    """D-C18: every malformed `package.json` shape yields no sources and
+    never raises."""
+
+    def test_absent_package_json_leaves_inventory_usable(self):
+        repo = _fixture({".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        self.assertEqual(_findings(repo), [])
+
+    def test_unreadable_binary_package_json_does_not_raise(self):
+        repo = tempfile.mkdtemp()
+        _write(os.path.join(repo, ".github/workflows/ci.yml"), _CI_ESLINT_STEP)
+        with open(os.path.join(repo, "package.json"), "wb") as handle:
+            handle.write(b"\xff\xfe\x00 binary, not utf-8\n")
+        self.assertEqual(_findings(repo), [])
+
+    def test_invalid_json_does_not_raise(self):
+        repo = _fixture({"package.json": "{not json", ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        self.assertEqual(_findings(repo), [])
+
+    def test_no_scripts_key_leaves_inventory_usable(self):
+        pj = json.dumps({"name": "demo"})
+        repo = _fixture({"package.json": pj, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        self.assertEqual(_findings(repo), [])
+
+    def test_non_object_scripts_value_does_not_raise(self):
+        pj = json.dumps({"scripts": ["lint"]})
+        repo = _fixture({"package.json": pj, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        self.assertEqual(_findings(repo), [])
+
+    def test_non_string_script_value_does_not_raise(self):
+        pj = json.dumps({"scripts": {"lint": 123}})
+        repo = _fixture({"package.json": pj, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        self.assertEqual(_findings(repo), [])
+
+
+class TestPackageScriptsModuleDirect(unittest.TestCase):
+    """Direct unit coverage of `package_scripts.py`'s two functions, ahead
+    of the aggregator-level assertions above."""
+
+    def test_read_package_scripts_returns_name_command_pairs(self):
+        repo = _fixture({"package.json": _PJ_LINT_ESLINT})
+        self.assertEqual(package_scripts.read_package_scripts(repo), [("lint", "eslint .")])
+
+    def test_resolve_package_manager_runner_precedence(self):
+        repo = _fixture({"pnpm-lock.yaml": "x\n", "yarn.lock": "x\n"})
+        self.assertEqual(package_scripts.resolve_package_manager_runner(repo), "pnpm")
+
+    def test_resolve_package_manager_runner_defaults_to_npm(self):
+        repo = tempfile.mkdtemp()
+        self.assertEqual(package_scripts.resolve_package_manager_runner(repo), "npm")
+
+    def test_bun_lock_variants_resolve_to_bun(self):
+        for filename in ("bun.lockb", "bun.lock"):
+            with self.subTest(filename=filename):
+                repo = _fixture({filename: "x\n"})
+                self.assertEqual(package_scripts.resolve_package_manager_runner(repo), "bun")
 
 
 if __name__ == "__main__":

@@ -37,6 +37,8 @@ from ai_kit_rules_common.precommit_parse import parse_precommit_hooks
 from ai_kit_rules_common.tool_catalog import OUT_OF_TAXONOMY_GROUPS, resolve_tool_category
 from ai_kit_rules_common.yaml_text import strip_yaml_quotes
 
+from . import package_scripts
+
 # D-C16: the four-surface precedence order, declared once here so plan
 # 14-03 APPENDS to a settled rule rather than inventing its own tie-break.
 # A plain (non-annotated) assignment: this exact literal tuple shape is
@@ -320,6 +322,43 @@ def build_precommit_reuse_records(repo_root: str) -> list[dict]:
     return records
 
 
+def build_package_json_reuse_records(repo_root: str) -> list[dict]:
+    """D-C18/D-C18b: the `package.json` script surface's `{"key",
+    "surface", "reuse_command"}` records. Each script's command is
+    checked for a top-level `&&`/`||`/`;` split FIRST (an aggregate has
+    NO identity, the same judgement D-C3's real-line cap and D-C15's
+    multi-segment check make); otherwise the identity is the SAME
+    `strip_leading_noise` + `compute_command_key` a CI line goes through.
+    D-C4's gate applies with `derived_from_command_body=True` -- a
+    script's identity always comes from its body -- which is what admits
+    a script literally named for its tool (`"eslint": "eslint ."`) even
+    when the catalog has never heard of it. The reuse invocation is
+    D-C18b's resolved runner plus `run <script-name>` -- the script's REAL
+    name, never its identity. `package_scripts.read_package_scripts`
+    already degrades every malformed shape to an empty list, so this
+    function never raises either."""
+    runner = package_scripts.resolve_package_manager_runner(repo_root)
+    records: list[dict] = []
+    for script_name, command in package_scripts.read_package_scripts(repo_root):
+        if len(split_top_level_segments(command)) > 1:
+            continue
+        stripped = strip_leading_noise(command)
+        identity, _known = compute_command_key(stripped)
+        if not identity:
+            continue
+        if not is_tool_shaped_identity(identity, script_name, True):
+            continue
+        key = normalize_token(identity)
+        records.append(
+            {
+                "key": key,
+                "surface": "package-json",
+                "reuse_command": f"{runner} run {script_name}",
+            }
+        )
+    return records
+
+
 def build_reuse_inventory(repo_root: str) -> list[dict]:
     """The repo's usable reuse sources as `{"key", "surface",
     "reuse_command"}` records, in `SURFACE_ORDER`'s fixed order (D-C16):
@@ -369,11 +408,19 @@ def build_reuse_inventory(repo_root: str) -> list[dict]:
         seen_keys.add(record["key"])
         records.append(record)
 
+    # SURFACE_ORDER position 3: package-json.
+    for record in build_package_json_reuse_records(repo_root):
+        if record["key"] in seen_keys:
+            continue
+        seen_keys.add(record["key"])
+        records.append(record)
+
     return records
 
 
 __all__ = [
     "SURFACE_ORDER",
+    "build_package_json_reuse_records",
     "build_precommit_reuse_records",
     "build_reuse_inventory",
     "classify_reuse_invocation",
