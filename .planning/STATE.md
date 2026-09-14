@@ -3,18 +3,18 @@ gsd_state_version: "1.0"
 milestone: v1.2
 current_phase: 13
 current_phase_name: docker-rules-checker-ai-kit-project-rules-docker
-current_plan: 3
+current_plan: 4
 status: executing
-stopped_at: Completed 13-02-PLAN.md
-last_updated: "2026-09-14T18:16:37.927Z"
+stopped_at: Completed 13-03-PLAN.md
+last_updated: "2026-09-14T18:43:23.819Z"
 last_activity: 2026-09-14
 last_activity_desc: Phase 12 complete, transitioned to Phase 13
-state_head: 5a16abd7478da5ddae4d4465491a2094ac758e5f
+state_head: 61bf1e4a725450d98601f9b322ba6c40387d2ba2
 progress:
   total_phases: 17
   completed_phases: 1
   total_plans: 25
-  completed_plans: 23
+  completed_plans: 24
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 ## Current Position
 
 Phase: 13 (docker-rules-checker-ai-kit-project-rules-docker) — READY TO EXECUTE
-Current Plan: 3
+Current Plan: 4
 Total Plans in Phase: 4
 Status: Ready to execute
 Last activity: 2026-09-14 — Phase 12 complete, transitioned to Phase 13
@@ -101,6 +101,7 @@ Last activity: 2026-09-14 — Phase 12 complete, transitioned to Phase 13
 | Phase 12-architecture-rules-checker-ai-kit-project-rules-arch P03 | ~2h | 3 tasks | 4 files |
 | Phase 13-docker-rules-checker-ai-kit-project-rules-docker P01 | 45min | 2 tasks | 11 files |
 | Phase 13 P02 | ~2h | 3 tasks | 7 files |
+| Phase 13 P03 | ~2h | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -178,6 +179,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 13]: [Phase 13] Plan 13-01: wired ai-kit-project-rules-docker end-to-end (SC1/SC5) -- D-D4 root-scoped applicability gate (stat-based, non-recursive), D-D1 exact-equality family match, D-D3 identifier discipline both directions, D-D23 unreadable-Makefile wrap in the consuming skill. STRUCTURAL_KINDS grown to 4 kinds additively. Both non-vacuity mutations (D-D1 equality->prefix, gate root-only->recursive-walk) applied and observed failing before revert.
 - [Phase 13]: D-D7 compose parser contract (iter_services/block_scalar/block_subblock/block_sequence/block_mapping_keys) built on one shared structural reader; block_sequence is scalar-items-only, dropping sequence-of-mapping continuation lines
 - [Phase 13]: flow-mapping healthcheck/depends_on bodies confirmed as a real, surviving parser limit -- plan 13-04's SKILL.md needs a seventh limit for it
+- [Phase 13]: Three-outcome advisory hot-reload check (D-D15): conforming/convention-missing/not-confirmable-with-one-of-5-reasons, so a hardcoded staleable marker baseline never becomes a confident false accusation.
+- [Phase 13]: D-D17's five-rule volume-entry grammar: an entry with no colon is an anonymous volume (readable, never a bind mount) evaluated BEFORE the leading-character test; an unreadable bind answer always outranks a missing override (mixed-state precedence).
+- [Phase 13]: Per-stack hot-reload marker knowledge lives in tool_catalog.py's HOT_RELOAD_TOOLS, deliberately excluded from the six-category taxonomy and TOOL_CATEGORY_INDEX so a dev server is never misclassified as a static analyzer.
 
 ### Pending Todos
 
@@ -286,6 +290,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-14T18:14:23.389Z
-Stopped at: Completed 13-02-PLAN.md
+Last session: 2026-09-14T18:43:23.774Z
+Stopped at: Completed 13-03-PLAN.md
 Resume file: None

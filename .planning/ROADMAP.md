@@ -393,13 +393,13 @@ Plans:
   4. A local-dev service definition using the production image/entrypoint baked at build time (no bind-mount plus dev command override) is flagged as missing the hot-reload convention; a paired fixture using the bind-mount convention is not.
   5. The absence of `docker/local/README.md` is flagged as a missing runbook requirement; its presence is not.
 
-**Plans**: 2/4 plans executed
+**Plans**: 3/4 plans executed
 
 Plans:
 
 - [x] 13-01-PLAN.md — Wire `ai-kit-project-rules-docker` end-to-end on the two non-compose criteria: the root-scoped Docker applicability gate, the eight-target family as one finding per missing name, the `docker/local/README.md` runbook check, the shared structural-kind tuple grown by one name, and the skill registered in every quality gate (SC1, SC5)
 - [x] 13-02-PLAN.md — The indentation-aware, stdlib-only compose parser (13-CONTEXT D-01/D-02) plus the shared YAML-text primitives, the healthcheck timing bounds, and `depends_on` discipline across all three bare-ordering forms (SC2, SC3)
-- [ ] 13-03-PLAN.md — Stack-aware hot-reload convention for local-dev services (13-CONTEXT D-03/D-04/D-05): per-stack hot-reload knowledge added to the shared tool catalog, and a three-outcome check that never asserts "no hot reload" from an unrecognized command (SC4)
+- [x] 13-03-PLAN.md — Stack-aware hot-reload convention for local-dev services (13-CONTEXT D-03/D-04/D-05): per-stack hot-reload knowledge added to the shared tool catalog, and a three-outcome check that never asserts "no hot reload" from an unrecognized command (SC4)
 - [ ] 13-04-PLAN.md — SKILL.md with its six honesty-about-limits statements, the README row, the `/skill-judge` code-review gate with committed evidence, `/naming-analyzer` confirmation, and two dated append-only corrections to 13-CONTEXT.md
 
 ### Phase 14: CI/CD Rules Checker (ai-kit-project-rules-cicd)
@@ -451,7 +451,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 10. Makefile Rules Checker | 3/3 | Complete    | 2026-09-14 |
 | 11. Pre-commit Rules Checker | 4/4 | Complete    | 2026-09-14 |
 | 12. Architecture Rules Checker | 3/3 | Complete    | 2026-09-14 |
-| 13. Docker Rules Checker | 2/4 | In Progress|  |
+| 13. Docker Rules Checker | 3/4 | In Progress|  |
 | 14. CI/CD Rules Checker | 0/TBD | Not started | - |
 | 15. Rules Orchestrator | 0/TBD | Not started | - |
 
