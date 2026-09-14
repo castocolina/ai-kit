@@ -321,6 +321,77 @@ class TestRemediation(unittest.TestCase):
         self.assertEqual(result["remediate"][0]["id"], "X01")
         self.assertEqual(result["blocked"], [])
 
+    # The next three cases were re-homed here from
+    # tests/test_ai_kit_project_rules_agents.py by Phase 9's prune commit
+    # (09-CONTEXT.md D-04 / ROADMAP Phase 9) -- they are the only coverage
+    # of build_remediation's second ("makefile"-kind) per-kind branch, which
+    # Phase 10 depends on. Their second-kind payloads are non-empty and ARE
+    # the branch under test; copied verbatim from the pre-prune suite.
+    def test_combined_cross_kind_criticality_ordering(self):
+        report = {
+            "workflow": [
+                {
+                    "id": "R09",
+                    "status": "missing",
+                    "criticality": 2,
+                    "summary": "workflow high",
+                    "matched_signals": [],
+                },
+            ],
+            "makefile": [
+                {
+                    "target": "setup-env",
+                    "present": False,
+                    "criticality": 1,
+                    "summary": "makefile critical",
+                    "recommendation": "uv venv",
+                    "needs_research": False,
+                },
+            ],
+        }
+        result = build_remediation(report)
+        ids_in_order = [entry["id"] for entry in result["remediate"]]
+        self.assertEqual(ids_in_order, ["setup-env", "R09"])
+
+    def test_present_but_recommended_structural_finding_in_remediate(self):
+        report = {
+            "makefile": [
+                {
+                    "target": "validate",
+                    "present": True,
+                    "issue": "chain_incomplete",
+                    "recommendation": "restructure validate to invoke vulture",
+                    "needs_research": False,
+                    "criticality": 1,
+                    "summary": "restructure validate to invoke vulture",
+                },
+            ],
+        }
+        result = build_remediation(report)
+        self.assertEqual(len(result["remediate"]), 1)
+        self.assertEqual(result["remediate"][0]["id"], "validate")
+        self.assertTrue(result["remediate"][0]["auto_apply"])
+        self.assertEqual(result["blocked"], [])
+
+    def test_blocked_preserves_stacks(self):
+        report = {
+            "makefile": [
+                {
+                    "category": "formatter",
+                    "recommendation": None,
+                    "needs_research": True,
+                    "stacks": ["go", "python"],
+                    "criticality": 1,
+                    "summary": "Tooling category 'formatter' needs research",
+                },
+            ],
+        }
+        result = build_remediation(report)
+        self.assertEqual(result["remediate"], [])
+        self.assertEqual(len(result["blocked"]), 1)
+        self.assertEqual(result["blocked"][0]["id"], "formatter")
+        self.assertEqual(result["blocked"][0]["stacks"], ["go", "python"])
+
 
 if __name__ == "__main__":
     unittest.main()
