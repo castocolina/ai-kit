@@ -265,6 +265,14 @@ class TestRateBurnRatio(unittest.TestCase):
     def test_burn_ratio_unknown_key_falls_back_to_raw_pct(self):
         self.assertEqual(sl.util_rate_burn_ratio(50, "nonsense_unit", NOW + 3600, NOW), 50.0)
 
+    def test_burn_ratio_live_regression_low_pct_late_in_window_is_green(self):
+        # Live-observed regression: 25% used with 4h of a 5h window elapsed
+        # (elapsed_fraction = 0.8). Landed ratio = 25 / 0.8 = 31.25 GREEN.
+        # Superseded formula: 25 / 0.2 = 125 -> RED+bold.
+        ratio = sl.util_rate_burn_ratio(25, "five_hour", NOW + 3600, NOW)
+        self.assertAlmostEqual(ratio, 31.25)
+        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("GREEN"))
+
 
 class TestFormatters(unittest.TestCase):
     def test_fmt_number(self):
@@ -664,9 +672,9 @@ class TestCooperativeBuilders(unittest.TestCase):
             )
 
     def test_rate_limit_past_reset_color_matches_raw_pct(self):
-        # D-04: a stale resets_at (already in the past) clamps
-        # remaining_fraction to 1.0, reducing to today's raw-percentage
-        # color -- zero regression on the existing past-reset fixtures.
+        # D-03: a stale resets_at (already in the past) yields
+        # elapsed_fraction > 1.0, so the ratio falls back to raw pct --
+        # zero regression on the existing past-reset fixtures.
         # Compared against sl.util_rate_color(50, THEME) directly -- NOT
         # THEME.c(sl.util_pick_color(...)): util_pick_color already returns
         # a resolved ANSI escape, and wrapping it in THEME.c() a second time
@@ -678,14 +686,24 @@ class TestCooperativeBuilders(unittest.TestCase):
             self.assertIn(sl.util_rate_color(50, THEME), out)
 
     def test_h_rate_limit_clock_skew_falls_back_to_raw_pct(self):
-        # remaining_fraction = 6h/5h = 1.2 > 1.0 (resets_at implies MORE time
-        # remaining than the five_hour key's own parsed window allows --
-        # clock skew or a window/key mismatch) -- falls back to raw-pct
-        # color, NOT the D-03 INF/max-red clamp.
+        # A resets_at further out than the key-parsed window (6h remaining of
+        # a 5h window) yields elapsed_fraction < 0.0; D-03 falls back to raw
+        # pct, not Phase 8's superseded D-03/D-04 clamp.
         with mock.patch.object(sl.time, "time", return_value=NOW):
             rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600 * 6}}
             out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
             self.assertIn(sl.util_rate_color(50, THEME), out)
+
+    def test_h_rate_limit_live_regression_low_pct_late_in_window_is_green(self):
+        # Live-observed regression: 25% used with 4h of a 5h window elapsed.
+        # Landed pace is GREEN (25 / 0.8 = 31.25); superseded formula was
+        # RED+bold (25 / 0.2 = 125).
+        with mock.patch.object(sl.time, "time", return_value=NOW):
+            rl = {"five_hour": {"used_percentage": 25, "resets_at": NOW + 3600}}
+            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
+            self.assertIn(THEME.c("GREEN"), out)
+            self.assertNotIn(THEME.c("YELLOW"), out)
+            self.assertNotIn(THEME.c("RED+bold"), out)
 
     def test_weekly_drops_before_hourly_under_column_pressure(self):
         # No resets_at, so each segment's terse form is its only form: "5h: 42%"

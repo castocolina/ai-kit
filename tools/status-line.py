@@ -1675,7 +1675,8 @@ def util_rate_group_str(
     # is in the past or future, so a wrong system clock or timezone change can
     # never hide a bucket. Color, however, now does depend on the clock: the
     # burn-rate ratio below weighs used_percentage against how much of the
-    # bucket's window remains (via `now` and each bucket's resets_at).
+    # bucket's window has already elapsed (elapsed_fraction, via `now` and each
+    # bucket's resets_at).
     for key in sorted(rate_limits):
         if _rate_bucket_hourly(key) != hourly:
             continue
