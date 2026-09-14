@@ -880,5 +880,163 @@ class TestComposeFilenameListRepointed(unittest.TestCase):
             self.assertEqual(findings[0]["service"], "api")
 
 
+# --------------------------------------------------------------------------- #
+# Plan 13-02, Task 2 -- `depends_on` discipline (SC3, D-D10): all three
+# bare-ordering forms, the conforming form, the advisory completion
+# condition, the unreadable-condition advisory, and per-entry evaluation.
+# --------------------------------------------------------------------------- #
+
+
+def _depends_on_findings(repo):
+    return [f for f in _findings(repo) if f["category"] == "docker-depends-on"]
+
+
+class TestDependsOnBareOrdering(unittest.TestCase):
+    def test_block_sequence_of_two_names_yields_two_bare_findings(self):
+        compose = (
+            "services:\n  api:\n    image: a\n    depends_on:\n      - db\n      - cache\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = _depends_on_findings(repo)
+            self.assertEqual(len(findings), 2)
+            self.assertTrue(all(f["issue"] == "docker_depends_on_bare" for f in findings))
+            self.assertEqual(sorted(f["depends_on"] for f in findings), ["cache", "db"])
+
+    def test_flow_sequence_yields_the_same_two_findings(self):
+        compose = "services:\n  api:\n    image: a\n    depends_on: [db, cache]\n"
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = _depends_on_findings(repo)
+            self.assertEqual(len(findings), 2)
+            self.assertTrue(all(f["issue"] == "docker_depends_on_bare" for f in findings))
+            self.assertEqual(sorted(f["depends_on"] for f in findings), ["cache", "db"])
+
+
+class TestDependsOnMappingForm(unittest.TestCase):
+    def test_service_healthy_on_every_entry_yields_no_finding(self):
+        compose = (
+            "services:\n  api:\n    image: a\n    depends_on:\n"
+            "      db:\n        condition: service_healthy\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            self.assertEqual(_depends_on_findings(repo), [])
+
+    def test_service_started_yields_one_weak_finding(self):
+        compose = (
+            "services:\n  api:\n    image: a\n    depends_on:\n"
+            "      db:\n        condition: service_started\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = _depends_on_findings(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["issue"], "docker_depends_on_weak_condition")
+
+    def test_no_condition_at_all_yields_the_same_weak_issue(self):
+        compose = "services:\n  api:\n    image: a\n    depends_on:\n      db:\n"
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = _depends_on_findings(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["issue"], "docker_depends_on_weak_condition")
+
+    def test_completed_successfully_yields_one_advisory_with_auto_apply_false(self):
+        compose = (
+            "services:\n  api:\n    image: a\n    depends_on:\n"
+            "      seed:\n        condition: service_completed_successfully\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = _depends_on_findings(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["issue"], "docker_depends_on_completion_condition")
+            self.assertTrue(findings[0]["advisory"])
+            rem = cli.remediate(repo)
+            entries = [
+                e
+                for e in rem["remediate"]
+                if e["issue"] == "docker_depends_on_completion_condition"
+            ]
+            self.assertEqual([e["auto_apply"] for e in entries], [False])
+
+    def test_unreadable_condition_token_yields_one_advisory_naming_it(self):
+        compose = (
+            "services:\n  api:\n    image: a\n    depends_on:\n"
+            "      db:\n        condition: ${SOME_CONDITION}\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = _depends_on_findings(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["issue"], "docker_depends_on_unreadable")
+            self.assertTrue(findings[0]["advisory"])
+            self.assertEqual(findings[0]["depends_on"], "db")
+
+    def test_no_depends_on_at_all_yields_nothing(self):
+        compose = "services:\n  api:\n    image: a\n"
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            self.assertEqual(_depends_on_findings(repo), [])
+
+    def test_mixed_conforming_and_bare_across_two_services_flags_only_the_bare_one(self):
+        compose = (
+            "services:\n"
+            "  api:\n    image: a\n    depends_on:\n"
+            "      db:\n        condition: service_healthy\n"
+            "  worker:\n    image: b\n    depends_on:\n      - db\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = _depends_on_findings(repo)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["service"], "worker")
+            self.assertEqual(findings[0]["depends_on"], "db")
+
+
+class TestDependsOnPerEntryEvaluation(unittest.TestCase):
+    """A whole-block search for the conforming condition would pass this
+    fixture at zero findings; per-entry evaluation must not."""
+
+    def test_one_correct_entry_does_not_clear_the_other_two(self):
+        compose = (
+            "services:\n  api:\n    image: a\n    depends_on:\n"
+            "      db:\n        condition: service_healthy\n"
+            "      cache:\n        condition: service_started\n"
+            "      queue:\n"
+        )
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\techo u\n")
+            _write(os.path.join(repo, "docker-compose.yml"), compose)
+            findings = _depends_on_findings(repo)
+            self.assertEqual(sorted(f["depends_on"] for f in findings), ["cache", "queue"])
+
+
+class TestDependsOnSequenceReaderForms(unittest.TestCase):
+    """`block_sequence` reads block, flow, and quoted-flow forms
+    identically, and does not fire on an absent key."""
+
+    def test_block_flow_and_quoted_flow_forms_read_identically(self):
+        block = "image: x\ndepends_on:\n  - db\n  - cache\n"
+        flow = "image: x\ndepends_on: [db, cache]\n"
+        quoted_flow = "image: x\ndepends_on: [\"db\", 'cache']\n"
+        self.assertEqual(compose_parse.block_sequence(block, "depends_on"), ["db", "cache"])
+        self.assertEqual(compose_parse.block_sequence(flow, "depends_on"), ["db", "cache"])
+        self.assertEqual(
+            compose_parse.block_sequence(quoted_flow, "depends_on"), ["db", "cache"]
+        )
+        self.assertEqual(compose_parse.block_sequence(block, "volumes"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

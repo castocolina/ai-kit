@@ -40,7 +40,7 @@ import os
 from ai_kit_rules_common.criticality import CRITICALITY_MEDIUM
 from ai_kit_rules_common.makefile_parse import parse_makefile_targets_ordered
 
-from . import compose_parse, healthcheck
+from . import compose_parse, depends_on, healthcheck
 
 # D-D1 -- the eight-target family is a FIXED NAME LIST, matched exactly
 # after normalization -- never a shape rule, never the Makefile sibling's
@@ -210,6 +210,7 @@ def check_docker_rules(repo_root: str) -> list[dict]:
 
     compose_files = compose_parse.discover_compose_files(repo_root)
     findings.extend(healthcheck.check_healthcheck_bounds(repo_root, compose_files))
+    findings.extend(depends_on.check_depends_on(repo_root, compose_files))
     return findings
 
 
