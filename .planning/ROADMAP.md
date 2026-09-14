@@ -84,7 +84,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 9: AGENTS.md Checker Prune (ai-kit-project-rules-agents)** - Prune the renamed AGENTS.md/CLAUDE.md checker to AGENTS.md-prose scope only, dropping all Makefile-specific logic (completed 2026-09-14)
 - [x] **Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)** - New skill inherits the dropped Makefile logic plus `validate-<category>` parity, help/fail reachability, recipe-length cap, docker build-before-up, shellcheck threshold, and an advisory ordering heuristic (completed 2026-09-14)
 - [x] **Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)** - New skill checks Makefile↔pre-commit parity and applies the 6-category tooling taxonomy plus ruff/golangci-lint-specific checks (completed 2026-09-14)
-- [ ] **Phase 12: Architecture Rules Checker (ai-kit-project-rules-arch)** - New skill verifies `arch-test` Makefile target shape/chaining/AST-only-ness; promotes and resolves backlog Phase 999.3 at form/convention-only scope
+- [x] **Phase 12: Architecture Rules Checker (ai-kit-project-rules-arch)** - New skill verifies `arch-test` Makefile target shape/chaining/AST-only-ness; promotes and resolves backlog Phase 999.3 at form/convention-only scope (completed 2026-09-14)
 - [ ] **Phase 13: Docker Rules Checker (ai-kit-project-rules-docker)** - New skill checks the docker-compose target family, healthcheck conventions, `depends_on` discipline, hot-reload convention, and runbook presence
 - [ ] **Phase 14: CI/CD Rules Checker (ai-kit-project-rules-cicd)** - New skill checks that CI config reuses Makefile/pre-commit/package.json/Gradle commands instead of duplicating tool invocations inline
 - [ ] **Phase 15: Rules Orchestrator (ai-kit-project-rules-all)** - New orchestrator skill runs all 6 checkers' `check`/`remediate` and aggregates one criticality-ordered report
@@ -393,7 +393,14 @@ Plans:
   4. A local-dev service definition using the production image/entrypoint baked at build time (no bind-mount plus dev command override) is flagged as missing the hot-reload convention; a paired fixture using the bind-mount convention is not.
   5. The absence of `docker/local/README.md` is flagged as a missing runbook requirement; its presence is not.
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+
+- [ ] 13-01-PLAN.md — Wire `ai-kit-project-rules-docker` end-to-end on the two non-compose criteria: the root-scoped Docker applicability gate, the eight-target family as one finding per missing name, the `docker/local/README.md` runbook check, the shared structural-kind tuple grown by one name, and the skill registered in every quality gate (SC1, SC5)
+- [ ] 13-02-PLAN.md — The indentation-aware, stdlib-only compose parser (13-CONTEXT D-01/D-02) plus the shared YAML-text primitives, the healthcheck timing bounds, and `depends_on` discipline across all three bare-ordering forms (SC2, SC3)
+- [ ] 13-03-PLAN.md — Stack-aware hot-reload convention for local-dev services (13-CONTEXT D-03/D-04/D-05): per-stack hot-reload knowledge added to the shared tool catalog, and a three-outcome check that never asserts "no hot reload" from an unrecognized command (SC4)
+- [ ] 13-04-PLAN.md — SKILL.md with its six honesty-about-limits statements, the README row, the `/skill-judge` code-review gate with committed evidence, `/naming-analyzer` confirmation, and two dated append-only corrections to 13-CONTEXT.md
 
 ### Phase 14: CI/CD Rules Checker (ai-kit-project-rules-cicd)
 
@@ -443,7 +450,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 9. AGENTS.md Checker Prune | 2/2 | Complete    | 2026-09-14 |
 | 10. Makefile Rules Checker | 3/3 | Complete    | 2026-09-14 |
 | 11. Pre-commit Rules Checker | 4/4 | Complete    | 2026-09-14 |
-| 12. Architecture Rules Checker | 3/3 | In Progress|  |
+| 12. Architecture Rules Checker | 3/3 | Complete    | 2026-09-14 |
 | 13. Docker Rules Checker | 0/TBD | Not started | - |
 | 14. CI/CD Rules Checker | 0/TBD | Not started | - |
 | 15. Rules Orchestrator | 0/TBD | Not started | - |

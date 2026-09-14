@@ -66,7 +66,7 @@
     {
       "number": "12",
       "name": "Architecture Rules Checker",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "13",
@@ -86,8 +86,8 @@
   ],
   "next": {
     "command": "/gsd:progress --next",
-    "label": "Advance to the next step (verify)",
-    "reason": "Phase 12 of 17 · ready to verify"
+    "label": "Advance to the next step (plan phase 13)",
+    "reason": "Phase 13 of 17 — needs a plan"
   },
-  "updated_at": "2026-09-14T14:42:42.397Z"
+  "updated_at": "2026-09-14T14:46:32.720Z"
 }
