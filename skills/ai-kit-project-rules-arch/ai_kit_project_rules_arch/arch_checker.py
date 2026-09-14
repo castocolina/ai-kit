@@ -38,6 +38,8 @@ from ai_kit_rules_common.makefile_parse import (
     recipe_mentions_target,
 )
 
+from .ast_only import build_ast_only_findings
+
 # D-A1 -- arch-test-SHAPED is a naming RULE, not a literal. Normalize a
 # target name by casefolding it and folding `_` to `-`, then fully match
 # EITHER pattern below with `re.fullmatch` (no trailing `$` in either
@@ -208,6 +210,7 @@ def check_arch_rules(repo_root: str) -> list[dict]:
     if not is_chained(makefile_path, target_name):
         test_target_exists = "test" in targets_ordered
         findings.append(_not_chained_finding(target_name, test_target_exists))
+    findings.extend(build_ast_only_findings(repo_root, makefile_path, target_name))
 
     return findings
 

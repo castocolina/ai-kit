@@ -1,15 +1,22 @@
-"""Tests for `ai-kit-project-rules-arch` (REQ-rules-arch, Phase 12 plan 01).
+"""Tests for `ai-kit-project-rules-arch` (REQ-rules-arch, Phase 12 plans
+01-02).
 
-Task 1's tracer contract: the six `<behavior>` cases in the `TestTracer*`
-classes below, written before the checker existed and confirmed to fail
-for the right reason (ImportError -- the package did not exist yet), then
-implemented against until they passed. Task 2 fills the suite out with
-paired triggering/non-triggering fixtures for every structural check, the
-D-A1 shape rule per-alternative, all three D-A2 chaining mechanisms with
-their token-boundary case, cycle/breadth safety, degradation, the CLI
-surface, and its own gate-registration class. The shared suite's grown
-`STRUCTURAL_KINDS` tuple and `parse_makefile_targets_ordered` coverage
-live in `tests/test_ai_kit_rules_common.py` instead (Task 2 (b)).
+Plan 12-01, Task 1's tracer contract: the six `<behavior>` cases in the
+`TestTracer*` classes below, written before the checker existed and
+confirmed to fail for the right reason (ImportError -- the package did not
+exist yet), then implemented against until they passed. Task 2 fills the
+suite out with paired triggering/non-triggering fixtures for every
+structural check, the D-A1 shape rule per-alternative, all three D-A2
+chaining mechanisms with their token-boundary case, cycle/breadth safety,
+degradation, the CLI surface, and its own gate-registration class. The
+shared suite's grown `STRUCTURAL_KINDS` tuple and
+`parse_makefile_targets_ordered` coverage live in
+`tests/test_ai_kit_rules_common.py` instead (Task 2 (b)).
+
+Plan 12-02, Task 1's tracer contract: the `TestTracerAstOnly*` classes
+below carry this plan's own `<behavior>` cases (D-A7/D-A8/D-A9), written
+before `ast_only.py` existed. Task 3 promotes them into the permanent,
+fully paired coverage classes.
 """
 
 import os
@@ -96,6 +103,234 @@ def _precommit_hook_files_regex(hook_id):
     if match is None:
         raise AssertionError(f"no files: value for hook {hook_id!r}")
     return match.group(1).strip().strip("'\"")
+
+
+# --------------------------------------------------------------------------- #
+# Plan 12-02, Task 1 fixture helpers.
+# --------------------------------------------------------------------------- #
+
+_AST_ONLY_SRC_FILES = {
+    "src/target_mod.py": "X = 1\n",
+    "src/helper_mod.py": "Y = 2\n",
+}
+
+# The parse side: a helper function one level below `ast.parse` (the exact
+# `_parse(name)` shape `tests/test_arch.py` itself uses at line 87), called
+# from a wrapping function with the literal inline -- parses `target_mod`.
+_AST_ONLY_HELPER_SOURCE = (
+    'import ast, os\n'
+    'SRC = os.path.join(os.path.dirname(__file__), "..", "src")\n'
+    "\n\n"
+    "def _p(n):\n"
+    "    return ast.parse(open(os.path.join(SRC, n)).read())\n"
+    "\n\n"
+    "def t():\n"
+    '    return _p("target_mod.py")\n'
+)
+
+
+def _ast_only_byname_load(mod_filename, alias):
+    """The `TestSegmentInventory._sl`-shaped load
+    (`tests/test_arch.py:605-611`): assign the module path to a LOCAL NAME
+    first, then pass the NAME to `spec_from_file_location`, under an alias
+    that is not the module's own name."""
+    return (
+        "import importlib.util\n"
+        "\n\n"
+        "def load():\n"
+        f'    q = os.path.join(SRC, "{mod_filename}")\n'
+        f'    s = importlib.util.spec_from_file_location("{alias}", q)\n'
+        "    m = importlib.util.module_from_spec(s)\n"
+        "    s.loader.exec_module(m)\n"
+        "    return m\n"
+    )
+
+
+def _direct_chain_makefile(recipe):
+    """A Makefile where `arch-test` is a DIRECT prerequisite of `test`, so
+    every fixture built from it is chained by construction -- isolating
+    these fixtures to only the AST-only check under test."""
+    return f"test: arch-test\n\narch-test:\n\t{recipe}\n"
+
+
+def _ast_only_repo_raw(recipe, files):
+    repo = tempfile.mkdtemp()
+    _write(os.path.join(repo, "Makefile"), _direct_chain_makefile(recipe))
+    for rel, body in files.items():
+        _write(os.path.join(repo, rel), body)
+    return repo
+
+
+def _ast_only_repo(backing_file_body, recipe="python3 -m unittest tests.test_arch"):
+    files = dict(_AST_ONLY_SRC_FILES, **{"tests/test_arch.py": backing_file_body})
+    return _ast_only_repo_raw(recipe, files)
+
+
+class TestTracerAstOnlyTargetAware(unittest.TestCase):
+    """D-A8's target-aware parse-vs-execute correlation (Task 1's own
+    `<behavior>` fixtures, written before `ast_only.py` existed and
+    confirmed to fail for the right reason -- `ImportError` -- then
+    implemented against until they passed)."""
+
+    def test_clean_file_parsing_one_module_and_loading_unrelated_one_not_flagged(self):
+        # D-01's exact real shape: parses target_mod via a helper, and
+        # SEPARATELY loads an UNRELATED module (helper_mod) via the
+        # variable-then-pass shape, under an alias that is not the
+        # module's own name.
+        body = _AST_ONLY_HELPER_SOURCE + _ast_only_byname_load(
+            "helper_mod.py", "helper_alias_zz"
+        )
+        repo = _ast_only_repo(body)
+        self.assertNotIn("backing_file_executes_checked_target", _issues(repo))
+
+    def test_named_variable_then_pass_load_of_the_parsed_module_is_flagged_by_name(self):
+        # The load-bearing pair's dirty half: same variable-then-pass shape
+        # as the clean fixture, but aimed at the module that IS parsed.
+        # Only a real one-level name-resolution implementation on the
+        # EXECUTE side catches this -- a string-in-call-only build passes
+        # every inline fixture and stays inert against the live
+        # tests/test_arch.py:605-611.
+        body = _AST_ONLY_HELPER_SOURCE + _ast_only_byname_load(
+            "target_mod.py", "target_alias_zz"
+        )
+        repo = _ast_only_repo(body)
+        findings = [
+            f for f in _findings(repo) if f["issue"] == "backing_file_executes_checked_target"
+        ]
+        self.assertEqual(len(findings), 1)
+        text = findings[0]["summary"].lower()
+        self.assertTrue("target_mod" in text or "target-mod" in text)
+        self.assertNotIn("target_alias_zz", text)
+        self.assertNotIn("target-alias-zz", text)
+
+    def test_inline_import_module_call_is_flagged(self):
+        body = _AST_ONLY_HELPER_SOURCE + (
+            "import importlib\n\n\ndef u():\n    return importlib.import_module(\"target_mod\")\n"
+        )
+        repo = _ast_only_repo(body)
+        self.assertIn("backing_file_executes_checked_target", _issues(repo))
+
+    def test_plain_import_statement_is_flagged(self):
+        body = _AST_ONLY_HELPER_SOURCE + "import target_mod\n"
+        repo = _ast_only_repo(body)
+        self.assertIn("backing_file_executes_checked_target", _issues(repo))
+
+    def test_dotted_execute_side_normalizes_against_path_form_parse_side(self):
+        body = _AST_ONLY_HELPER_SOURCE + (
+            "import importlib\n\n\ndef u():\n"
+            '    return importlib.import_module("src.target_mod")\n'
+        )
+        repo = _ast_only_repo(body)
+        self.assertIn("backing_file_executes_checked_target", _issues(repo))
+
+    def test_two_level_parser_helper_fixed_point_is_flagged(self):
+        body = (
+            "import ast, os\n"
+            "import target_mod\n"
+            'SRC = os.path.join(os.path.dirname(__file__), "..", "src")\n'
+            "\n\n"
+            "def _b(n):\n"
+            "    return ast.parse(open(os.path.join(SRC, n)).read())\n"
+            "\n\n"
+            "def _a(n):\n"
+            "    return _b(n)\n"
+            "\n\n"
+            "def t():\n"
+            '    return _a("target_mod.py")\n'
+        )
+        repo = _ast_only_repo(body)
+        self.assertIn("backing_file_executes_checked_target", _issues(repo))
+
+
+class TestTracerAstOnlyNotVerifiable(unittest.TestCase):
+    """D-A9's four PINNED not-verifiable reasons -- the skill never stays
+    silent about a limit it has."""
+
+    def test_not_discoverable_when_recipe_forms_a_candidate_that_does_not_resolve(self):
+        # "lint-imports --config importlinter.ini" -- a config-driven tool
+        # recipe with no Python file argument.
+        repo = _ast_only_repo_raw(
+            "lint-imports --config importlinter.ini", dict(_AST_ONLY_SRC_FILES)
+        )
+        findings = [f for f in _findings(repo) if f["issue"] == "ast_only_not_verifiable"]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reason"], "not_discoverable")
+        self.assertNotIn("backing_file_executes_checked_target", _issues(repo))
+
+    def test_not_python_backing_file(self):
+        repo = _ast_only_repo_raw(
+            "node tests/arch.spec.ts",
+            dict(_AST_ONLY_SRC_FILES, **{"tests/arch.spec.ts": "export const x = 1;\n"}),
+        )
+        findings = [f for f in _findings(repo) if f["issue"] == "ast_only_not_verifiable"]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reason"], "not_python")
+
+    def test_unparseable_backing_file(self):
+        repo = _ast_only_repo("def broken(:\n")
+        findings = [f for f in _findings(repo) if f["issue"] == "ast_only_not_verifiable"]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reason"], "unparseable")
+
+    def test_no_parse_call_backing_file(self):
+        repo = _ast_only_repo("import os\nX = os.sep\n")
+        findings = [f for f in _findings(repo) if f["issue"] == "ast_only_not_verifiable"]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reason"], "no_parse_call")
+
+
+class TestTracerAstOnlyGateAndContainment(unittest.TestCase):
+    """D-A4's gate re-asserted after this plan's addition, and D-A7's
+    containment guard against both known escape shapes."""
+
+    def test_gate_repo_with_no_arch_test_target_produces_exactly_one_finding(self):
+        repo = tempfile.mkdtemp()
+        _write(os.path.join(repo, "Makefile"), "test: unit\n\nunit:\n\techo u\n")
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("arch_test_target_missing", _issues(repo))
+
+    def test_parent_traversal_escape_is_rejected_as_not_discoverable(self):
+        outer = tempfile.mkdtemp()
+        repo = os.path.join(outer, "repo")
+        os.makedirs(repo)
+        leak = (
+            "import ast\nimport leaked_mod\n\n\ndef p():\n"
+            '    return ast.parse(open("leaked_mod.py").read())\n'
+        )
+        _write(os.path.join(outer, "outside.py"), leak)
+        _write(os.path.join(repo, "Makefile"), _direct_chain_makefile("python3 ../outside.py"))
+        for rel, body in _AST_ONLY_SRC_FILES.items():
+            _write(os.path.join(repo, rel), body)
+        findings = [f for f in _findings(repo) if f["issue"] == "ast_only_not_verifiable"]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reason"], "not_discoverable")
+        self.assertNotIn("backing_file_executes_checked_target", _issues(repo))
+
+    def test_sibling_prefix_escape_is_rejected_as_not_discoverable(self):
+        # `<tmp>/repo-evil` is a SIBLING of `<tmp>/repo` whose name merely
+        # extends the root's -- the case a bare unresolved `startswith`
+        # would accept.
+        outer = tempfile.mkdtemp()
+        repo = os.path.join(outer, "repo")
+        evil = os.path.join(outer, "repo-evil")
+        os.makedirs(repo)
+        os.makedirs(evil)
+        leak = (
+            "import ast\nimport leaked_mod\n\n\ndef p():\n"
+            '    return ast.parse(open("leaked_mod.py").read())\n'
+        )
+        _write(os.path.join(evil, "leak.py"), leak)
+        _write(
+            os.path.join(repo, "Makefile"),
+            _direct_chain_makefile(f"python3 {os.path.join(evil, 'leak.py')}"),
+        )
+        for rel, body in _AST_ONLY_SRC_FILES.items():
+            _write(os.path.join(repo, rel), body)
+        findings = [f for f in _findings(repo) if f["issue"] == "ast_only_not_verifiable"]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reason"], "not_discoverable")
+        self.assertNotIn("backing_file_executes_checked_target", _issues(repo))
 
 
 class TestTracerChainingWithoutExistence(unittest.TestCase):
