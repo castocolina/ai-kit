@@ -37,8 +37,10 @@ from ai_kit_rules_common.makefile_parse import (
     parse_makefile_targets_ordered,
     recipe_mentions_target,
 )
+from ai_kit_rules_common.stack_detect import detect_stacks
 
 from .ast_only import build_ast_only_findings
+from .canonical_tools import canonical_tool_advice
 
 # D-A1 -- arch-test-SHAPED is a naming RULE, not a literal. Normalize a
 # target name by casefolding it and folding `_` to `-`, then fully match
@@ -132,18 +134,22 @@ def is_chained(makefile_path: str, target_name: str) -> bool:
     return recipe_mentions_target(test_recipe, target_name)
 
 
-def _missing_target_finding() -> dict:
-    """D-A3's existence finding. States the STRUCTURAL fix only -- add an
-    arch-test-shaped target and chain it into `test` -- and names no tool
-    for any language; plan 12-02 owns the per-stack canonical-tool text and
-    ADDS it to this same finding rather than replacing a placeholder."""
-    recommendation = (
+def _missing_target_finding(repo_root: str) -> dict:
+    """D-A3's existence finding. 12-01's structural fix sentence FIRST,
+    then plan 12-02's per-stack canonical-tool text (D-A10, ROADMAP SC4)
+    appended -- `detect_stacks(repo_root)` is called ONCE here, not per
+    finding, since this is the only finding it is ever attached to (the
+    tool choice is already made once an arch-test target exists, so the
+    chaining and AST-only findings never carry this text)."""
+    structural = (
         "This repo has no arch-test-shaped Makefile target (a target named "
         "e.g. 'arch-test', 'arch', 'arch-check', or 'architecture-test'). "
         "Add one that runs this repo's architecture-fitness checks, and "
         "chain it into 'test' -- as a direct or transitive prerequisite, or "
         "by invoking it from 'test''s recipe -- so it actually runs."
     )
+    stacks = detect_stacks(repo_root)
+    recommendation = f"{structural} {canonical_tool_advice(stacks)}"
     return {
         "category": "arch-test-target",
         "issue": "arch_test_target_missing",
@@ -204,7 +210,7 @@ def check_arch_rules(repo_root: str) -> list[dict]:
     targets_ordered = parse_makefile_targets_ordered(makefile_path)
     target_name = find_arch_test_shaped_target(targets_ordered)
     if target_name is None:
-        return [_missing_target_finding()]
+        return [_missing_target_finding(repo_root)]
 
     findings: list[dict] = []
     if not is_chained(makefile_path, target_name):

@@ -333,6 +333,82 @@ class TestTracerAstOnlyGateAndContainment(unittest.TestCase):
         self.assertNotIn("backing_file_executes_checked_target", _issues(repo))
 
 
+def _stack_repo(markers, chained=False):
+    """A repo with `markers` (stack-detection marker files) present, and
+    either NO arch-test-shaped target at all, or one that IS chained
+    (`chained=True`) -- used to prove the canonical-tool text is emitted
+    ONLY on the missing-target finding."""
+    repo = tempfile.mkdtemp()
+    if chained:
+        makefile = "test: unit arch-test\n\nunit:\n\techo u\n\narch-test:\n\techo a\n"
+    else:
+        makefile = "test: unit\n\nunit:\n\techo u\n"
+    _write(os.path.join(repo, "Makefile"), makefile)
+    for marker in markers:
+        _write(os.path.join(repo, marker), "{}\n" if marker.endswith(".json") else "\n")
+    return repo
+
+
+def _missing_target_recommendation(repo):
+    findings = [f for f in _findings(repo) if f["issue"] == "arch_test_target_missing"]
+    assert len(findings) == 1
+    assert findings[0]["summary"] == findings[0]["recommendation"]
+    return findings[0]["recommendation"]
+
+
+_CANONICAL_TOOL_NAMES = ("import-linter", "dependency-cruiser", "archunit")
+
+
+class TestTracerCanonicalToolBaseline(unittest.TestCase):
+    """D-A10's per-stack canonical-tool baseline (ROADMAP Phase 12 SC4),
+    Task 2's own `<behavior>` fixtures."""
+
+    def test_python_only_repo_names_import_linter(self):
+        text = _missing_target_recommendation(_stack_repo(["pyproject.toml"]))
+        self.assertIn("import-linter", text.lower())
+
+    def test_node_only_repo_names_dependency_cruiser(self):
+        text = _missing_target_recommendation(_stack_repo(["package.json"]))
+        self.assertIn("dependency-cruiser", text.lower())
+
+    def test_java_only_repo_names_archunit(self):
+        text = _missing_target_recommendation(_stack_repo(["pom.xml"]))
+        self.assertIn("archunit", text.lower())
+
+    def test_rust_only_repo_states_known_gap_and_names_no_tool(self):
+        text = _missing_target_recommendation(_stack_repo(["Cargo.toml"])).lower()
+        self.assertIn("known gap", text)
+        self.assertFalse([t for t in _CANONICAL_TOOL_NAMES if t in text])
+
+    def test_go_only_repo_states_known_gap_and_names_no_tool(self):
+        text = _missing_target_recommendation(_stack_repo(["go.mod"])).lower()
+        self.assertIn("known gap", text)
+        self.assertFalse([t for t in _CANONICAL_TOOL_NAMES if t in text])
+
+    def test_multi_stack_repo_composes_deterministically(self):
+        repo = _stack_repo(["pyproject.toml", "Cargo.toml"])
+        first = _missing_target_recommendation(repo).lower()
+        second = _missing_target_recommendation(repo).lower()
+        self.assertIn("import-linter", first)
+        self.assertIn("known gap", first)
+        self.assertEqual(first, second)
+
+    def test_no_stack_detected_repo_states_so_explicitly(self):
+        text = _missing_target_recommendation(_stack_repo([]))
+        self.assertFalse([t for t in _CANONICAL_TOOL_NAMES if t in text.lower()])
+        self.assertGreater(len(text), 40)
+
+    def test_chained_repo_emits_no_canonical_tool_text_at_all(self):
+        repo = _stack_repo(["Cargo.toml"], chained=True)
+        findings = _findings(repo)
+        self.assertFalse([f for f in findings if f["issue"] == "arch_test_target_missing"])
+        for finding in findings:
+            blob = str(finding).lower()
+            self.assertNotIn("known gap", blob)
+            for tool in _CANONICAL_TOOL_NAMES:
+                self.assertNotIn(tool, blob)
+
+
 class TestTracerChainingWithoutExistence(unittest.TestCase):
     """A fixture repo whose Makefile declares `arch-test:` with a recipe and
     `test: test-unit` (no arch-test prerequisite, no recipe mention) yields
