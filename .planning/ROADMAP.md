@@ -350,12 +350,12 @@ Plans:
   4. A fixture repo with zero Duplicate-code-category tooling is flagged for that category; a fixture with zero Dead-code-category tooling is flagged for that category; a fixture with both categories present triggers neither finding.
   5. Ruff-specific checks each prove discrimination with a paired fixture (`ANN`/`TC`-only "type safety" claims flagged; `preview = true` without a pinned CI ruff version flagged; a child config silently discarding a parent's `lint.ignore` flagged), and the golangci-lint-specific check flags standalone `staticcheck` run alongside golangci-lint with staticcheck already enabled.
 
-**Plans**: 1/4 plans executed
+**Plans**: 2/4 plans executed
 
 Plans:
 
 - [x] 11-01-PLAN.md — Wire the new `ai-kit-project-rules-precommit` skill end-to-end: the bidirectional Makefile↔pre-commit parity check, the inherited pre-commit-vs-pre-push stage splitter given the caller Phase 10 withheld from it, the shared taxonomy vocabulary, `precommit` as a structural kind in the shared remediation ordering, the cache namespace and `cache-update` research step, and registration in every quality gate (REQ-rules-precommit)
-- [ ] 11-02-PLAN.md — Converge the family's per-language tool knowledge into `skills/_shared/ai_kit_rules_common/tool_catalog.py` (baseline stacks, derived tool index, 6-to-5 category alias table with its drift guard, the locked pairs table), classify every detected tool into exactly one of the 6 taxonomy categories with its confidence reported, and flag complete absence of Duplicate-code or Dead-code tooling (REQ-rules-precommit)
+- [x] 11-02-PLAN.md — Converge the family's per-language tool knowledge into `skills/_shared/ai_kit_rules_common/tool_catalog.py` (baseline stacks, derived tool index, 6-to-5 category alias table with its drift guard, the locked pairs table), classify every detected tool into exactly one of the 6 taxonomy categories with its confidence reported, and flag complete absence of Duplicate-code or Dead-code tooling (REQ-rules-precommit)
 - [ ] 11-03-PLAN.md — The configuration anti-patterns with paired fixtures: one degrade-not-crash reader layer for untrusted target-repo configs, the cross-ecosystem enable-everything heuristic plus its explicit unreadable-config limitation, the three ruff-specific checks, and pairs-table evaluation with the presumed-complementary default including the golangci-lint standalone-staticcheck redundancy (REQ-rules-precommit)
 - [ ] 11-04-PLAN.md — Write `SKILL.md` and the README row, run `/skill-judge` as the phase's code-review gate with committed evidence and `/naming-analyzer` as the pipeline's confirmation step, and formally amend ROADMAP SC1 + REQUIREMENTS' REQ-rules-precommit where the live tree contradicts their wording (REQ-rules-precommit)
 
@@ -436,7 +436,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 8. Status-line Quota Color Refactor | 1/1 | Complete    | 2026-09-10 |
 | 9. AGENTS.md Checker Prune | 2/2 | Complete    | 2026-09-14 |
 | 10. Makefile Rules Checker | 3/3 | Complete    | 2026-09-14 |
-| 11. Pre-commit Rules Checker | 1/4 | In Progress|  |
+| 11. Pre-commit Rules Checker | 2/4 | In Progress|  |
 | 12. Architecture Rules Checker | 0/TBD | Not started | - |
 | 13. Docker Rules Checker | 0/TBD | Not started | - |
 | 14. CI/CD Rules Checker | 0/TBD | Not started | - |
