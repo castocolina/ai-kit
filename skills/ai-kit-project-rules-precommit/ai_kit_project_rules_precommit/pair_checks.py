@@ -179,9 +179,9 @@ def build_pair_findings(repo_root: str) -> list[dict]:
         if tool_a not in detected or tool_b not in detected:
             continue
 
-        if row["ecosystem"] == "Go" and row["relationship"] == "redundant":
-            if not _golangci_bundles_staticcheck(repo_root):
-                continue
+        is_go_redundancy_row = row["ecosystem"] == "Go" and row["relationship"] == "redundant"
+        if is_go_redundancy_row and not _golangci_bundles_staticcheck(repo_root):
+            continue
 
         finding = _pair_finding(tool_a, tool_b, row)
         if finding is not None:
