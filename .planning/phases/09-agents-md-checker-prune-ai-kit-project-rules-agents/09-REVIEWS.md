@@ -1,7 +1,7 @@
 ---
 phase: 9
 reviewers: [opencode]
-reviewed_at: 2026-09-14T02:18:55Z
+reviewed_at: 2026-09-14T02:41:31Z
 plans_reviewed: [09-01-PLAN.md, 09-02-PLAN.md]
 models:
   opencode: "xai/grok-4.6 (reasoning=high)"
@@ -19,118 +19,121 @@ _None recorded._
 
 ## OpenCode Review
 
-I'll verify the plans against the live tree first, then write the structured review.
-Using writing-clearly-and-concisely for the review. Next I’ll check the plan’s counts and a few load-bearing claims against the live tree.
-Using writing-clearly-and-concisely for the review. Claims below are checked against the live tree, not the plan text.
+Using codegraph to verify plan claims against the live tree before writing the review.
+Need the remaining test classes, RULES shape, SKILL.md, and registration surfaces.
+Checking test-class inventory, SKILL.md, registration surfaces, and file counts against the plans.
+Cycle-1 dispositions checked against the live tree. Remaining notes are new.
 
 ## 09-01
 
 ### Summary
 
-The rename-then-prune split matches the tree: 11 tracked skill files, 12 live old-name hits outside `.planning`/`docs`/`tmp`, `check()` still returns both keys at `cli.py:90-96`, and `rule_checker.py:14` already imports the shared engine. Task 1’s registration rewrite plus `TestGateRegistration` is the right non-vacuity guard. Task 2’s class-deletion map matches the 20 test classes, the three second-kind `TestRemediation` cases are the only coverage of `build_remediation`’s makefile loop, and `ALL_TOOLING_KEYS` is 12. One acceptance command is wrong against the AST of `rules.py`, and the Phase 10 recovery recipe never names the post-rename paths.
+The rename-then-prune split matches the tree: `main` at `cli.py:187-214` dispatches only `check` / `remediate` / `cache-update`; `check` at `cli.py:90-96` still returns `{"makefile", "workflow"}`; `RULES` is `ast.AnnAssign` at `rules.py:30`; `rule_checker.py:14` already imports `ai_kit_rules_common.classification`. Cycle-1 R1–R5 are reflected in the gates and match the files. This plan will hit REQ-rules-agents-prune’s code half if executed as written.
 
 ### Strengths
 
-- D-01/D-02/D-03 are operational, not slogans. `git ls-files` is 11; live `git grep -l` of the old names (excluding `.planning`/`docs`/`tmp`) is 12. Bytecode is already on disk at `skills/ai-kit-agents-md-rules-checker/__pycache__/` and the inner package `__pycache__/`, so the D-03 halt-then-`rm -rf` is aimed at a real leftover this repo has hit before.
-- The Task 1 tracer is a real entrypoint invocation, not an import smoke test. `check_rules` at `classification.py:155-157` drops only `status == "present"`, so `not_applicable` rules (R04–R08 when tools are absent) still count; `len(ids)==17` holds on empty filler text. Existing `TestCliCheck.test_check_combines_and_orders_by_criticality` (`tests/test_ai_kit_agents_md_rules_checker.py:821-831`) already uses that same fixture shape.
-- `TestGateRegistration` (`:1133-1171`) pins Makefile / pre-commit / pyright / vulture literals in the same commit as the surface edits. That is the T-09-02 mitigation, and those four surfaces do currently name the old skill (`Makefile:46,70`, `.pre-commit-config.yaml:21,50,55`, `pyproject.toml:88,94`).
-- Task 2’s keep/delete split is complete against the 20 classes. The three cases to re-home — `test_combined_cross_kind_criticality_ordering` (`:924`), `test_present_but_recommended_structural_finding_in_remediate` (`:968`), `test_blocked_preserves_stacks` (`:989`) — are the only tests that enter `build_remediation`’s makefile loop (`remediation.py:52-68`). `test_ai_kit_rules_common.py` has 26 tests today; +3 = 29 is correct.
-- D-04 landing `validate_tooling_payload` unwired is right: `_validate_tooling_payload` at `cli.py:105-126` plus the schema at `stack_cache.py:19-45` are Makefile-cache-specific; `setup.py:586` ignores a `skills/` dir with no `SKILL.md`; keeping it off vulture/ruff paths avoids a dead-code fail on a public function nothing imports yet.
-- Removing `cache-update` (`cli.py:203-212`) really does drop this skill’s only write path and the only caller-supplied JSON ingest. The validator is preserved, not deleted.
+- Task 1 tracer is a real entrypoint run. `check_rules` at `classification.py:155-157` drops only `status == "present"`, so filler text still yields 17 ids (R04–R08 become `not_applicable`). Same shape as `TestCliCheck.test_check_combines_and_orders_by_criticality` (`tests/test_ai_kit_agents_md_rules_checker.py:821-831`).
+- D-03 is aimed at leftovers that exist now: `skills/ai-kit-agents-md-rules-checker/__pycache__/` and `ai_kit_agents_md_rules_checker/__pycache__/`. The tracked-file / `!!`-only guard before `rm -rf` matches AGENTS.md’s no-`git-clean` rule.
+- `TestGateRegistration` (`tests/test_ai_kit_agents_md_rules_checker.py:1133-1171`) pins Makefile:46/70, `.pre-commit-config.yaml:21,50,55`, `pyproject.toml:88,94` in the same commit as the path edits (T-09-02).
+- Keep/delete split matches all 20 classes. Symlink-escape / dangling-link stay in `TestCliCheck` (`:858-891`) and actually exercise `os.path.realpath` at `cli.py:71-79` (T-09-01).
+- D-04 copies `REQUIRED_STATIC_TARGETS` + `RESEARCH_CATEGORIES` (`stack_cache.py:19-45`, 7+5=12) with the process-category comment. `validate_entry` at `tools/setup.py:581-586` ignores a `skills/` dir with no `SKILL.md`.
+- Phase 10 recovery is forced onto post-rename paths. `CLI-SURFACE-OK` uses `hasattr` so leaving `cache_update` as a dead function still fails.
+- `functools` / `json` / `datetime` / `mock` are used only by classes Task 2 deletes (`:199`, `:222`, `:1019+`). The unused-import note is load-bearing for `make validate`.
 
 ### Concerns
 
-- **HIGH — `RULES-17-OK` acceptance command cannot pass against this file.** Task 2 runs:
-
-  `isinstance(n,ast.Assign) and getattr(n.targets[0],'id','')=='RULES'`
-
-  Live `rules.py:30` is `RULES: tuple[dict, ...] = (`, which is `ast.AnnAssign`, not `ast.Assign`. I reproduced the `IndexError`. The executor will treat a correct 17-rule file as a failed prune and either churn or strip the annotation.
-
-- **MEDIUM — Phase 10 recovery paths are unspecified.** Task 2’s parent is the *rename* commit, so the files live at `skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/makefile_checker.py` (and the same for `stack_cache.py` / `stack_detect.py`). CONTEXT and ROADMAP still show the pre-rename paths. A cheap executor will record `git show <sha>:skills/ai-kit-agents-md-rules-checker/...`, which does not exist on that parent.
-
-- **MEDIUM — D-03 does not cover the inner package rename.** After `git mv` of `ai_kit_agents_md_rules_checker` → `ai_kit_project_rules_agents`, ignored `__pycache__` can remain at `skills/ai-kit-project-rules-agents/ai_kit_agents_md_rules_checker/`. D-03 only `rm -rf`s the old *skill* directory. Same leftover class as D-03, one level down. Tests import the new name, so this is clutter/footgun, not a silent wrong-import of the renamed suite.
-
-- **LOW — `cache-path` is not a CLI subcommand.** ROADMAP SC2 and this plan treat `cache-path`/`cache-update` as subcommands. `main()` at `cli.py:187-214` dispatches `check`, `remediate`, and `cache-update` only. `cache_path` is a function on `stack_cache.py:51-52` and dies with that module. The work is correct; the wording is not.
-
-- **LOW — unused test fixtures are not on the prune list.** `_FIXTURE_MAKEFILE_BASIC` and `_FIXTURE_PRECOMMIT_BASIC` (`:82-130`) are only consumed by classes Task 2 deletes. Plan tells the executor to drop unused *imports* (needed: `functools`, `mock`, `json`, `datetime` — tests do not ignore F401). It does not mention these constants. They may not fail ruff (F841 is local), but they are dead Makefile-domain payload left in the pruned suite.
+- **LOW** — Surviving `TestRemediation` fixtures still carry `"makefile": []` (`:913`, `:961`, `:1010`). Harmless for `build_remediation` (`remediation.py:52` uses `.get`), but they are the only leftover Makefile-shaped payload in a suite whose point is that this skill no longer has that domain. Plan (d) drops the empty key only on the three *moved* cases.
+- **LOW** — Task 2(e)’s “remaining three remediation cases from (d)” is easy to misread. The keep set is `test_missing_and_near_miss_auto_apply`, `test_matched_signals_carried_forward`, `test_returns_dict_never_bare_list` (`:895-922`, `:950-966`, `:1009-1012`). The move set is the other three (`:924-948`, `:968-987`, `:989-1007`). No name collision with `tests/test_ai_kit_rules_common.py:281-322`.
 
 ### Suggestions
 
-- Change `RULES-17-OK` to accept `ast.AnnAssign` (`n.target.id`) or both node types. Do not “fix” `rules.py` by dropping the annotation.
-- In Task 2’s SUMMARY instructions, paste the three post-rename `git show` paths, not the pre-rename ones.
-- Extend D-03 (or add a one-liner after the inner `git mv`) to `rm -rf` a leftover `ai_kit_agents_md_rules_checker/` under the new skill dir, with the same tracked-file halt guard.
-- Name `cache-update` as the only removed subcommand; say `cache_path` leaves with `stack_cache.py`.
-- Delete the two `_FIXTURE_*` constants in the same commit as the class deletions.
+- In Task 2(e), name the three keep methods and strip `"makefile": []` from those fixtures the same way (d) does for the moved ones.
+- Record the 15 deleted class names in the SUMMARY template now so the executor cannot invent a shorter list.
 
 ### Risk Assessment
 
-**MEDIUM.** The mechanical rename/prune is well grounded and the tracers will catch a botched `check()` shape. The broken `RULES-17-OK` command can stall or mis-edit `rules.py`, and an unstated recovery path can make Phase 10 re-derive modules this phase meant to hand off.
+**LOW.** Cycle-1 holes (AnnAssign, inner `__pycache__`, post-rename `git show`, `cache-path` vs `cache-update`, dead fixtures) are gated against live source. Remaining nits are executor-clarity, not design.
 
 ## 09-02
 
 ### Summary
 
-This is the docs/gate half, and it is sequenced correctly: 09-01 already moved names, this plan drops scope language that would keep routing Makefile questions here. The banned-literal chain matches the live `SKILL.md` (Makefile/pre-commit in `description`/`## Scope`/`## Run the check`, Step D + `## Deciding` + `ALL_TOOLING_KEYS` + `cache-update` in the wrap). The skill-judge same-session measurement plus ROADMAP append-only amendment matches AGENTS.md and the 08.1 house style. Main residual risk is the wrap-section edit (must delete Step D refs without touching A/B/C substance) and a judge finding that can only be cleared by restoring banned words.
+Docs/gate plan is correctly sequenced after 09-01 and aimed at the real SKILL.md: description/scope still advertise Makefile auditing (`SKILL.md:3,10`), wrap intro still names Step D (`:58`), `check` is still documented as `{"makefile", "workflow"}` (`:37`), and `## Deciding Step D` (`:132`) plus the unsourced-research anti-pattern (`:120-122`) are the right deletions. The A/B/C hand-off (`:60-66`) and remaining anti-patterns (`:99-119`) have no Makefile/pre-commit literals, so the KEEP bar and the `SCOPE-PRUNE-OK` chain do not collide. Two gaps remain: REQUIREMENTS.md still has the same false `cache-path` claim Task 3 only fixes in ROADMAP, and the skill-judge baseline is scored from a `./tmp/` path that is not a skill directory.
 
 ### Strengths
 
-- Precondition is load-bearing: it checks `cache_update` is already gone from `cli` before rewriting docs. That blocks documenting a prune 09-01 did not land.
-- `DOC-MATCHES-CODE-OK` derives documented keys from a real `check()` run, not from reading the JSON example. After 09-01, `check()` returns only `workflow` (`cli.py:90-96` today returns both; prune removes `makefile`). The current example at `SKILL.md:37-51` still shows `"makefile"` kinds and a non-empty `blocked` list — exactly the lie T-09-04 names.
-- Hand-off preservation is concrete: `grep -c 'Step A|B|C'` and `agent-md-refactor >= 3`. Those strings exist today at `SKILL.md:58-66` and throughout the wrap. The KEEP list correctly leaves entrypoint resolution (`:12-28`), inline reporting (`:148-150`), and `rules.py` as source of truth (`:153-154`).
-- Banned literals are the right ones. Live counts in current `SKILL.md`: `makefile` (case-insensitive) appears in the description (`:3`), Scope (`:10`), the `check` contract (`:37`), wrap intro (`:58`), Step D (`:68-95`), the R02 anti-pattern (`:123-130`), and `## Deciding` (`:132`). `cache-update` / `Step D` / `ALL_TOOLING_KEYS` are confined to sections the plan deletes. Remaining anti-patterns (`:99-119`) do not contain those words, so “leave them as they are” will not fail the chain.
-- Honest `remediate` contract: `build_remediation` (`remediation.py:11-12`) still returns `{"remediate", "blocked"}`. After prune, `blocked` is always empty because the makefile loop sees no `"makefile"` key. Documenting that beats deleting the key and teaching a `KeyError`.
-- Task 2’s baseline is a git blob (`git show <sha>:<old-path>/SKILL.md`), scored in the same session as the pruned file, with `git cat-file -e` on the recorded spec. That is the only comparison 09-CONTEXT.md will accept. ROADMAP SC5 still cites `98/120` (`ROADMAP.md:310`); Phase 6 recorded `104/120`. Task 3’s append-only sentence, opening `Baseline corrected by Phase 9`, matches 08.1’s `Superseded by Phase 8.1` pattern (`08.1-01-PLAN.md:320-321`).
-- `cross_ai: false` is justified: `/skill-judge` is a host skill, not a scripted edit. Putting it on 09-01’s cheap-model wave would fail SC5.
+- Carve-out replacement `The hand-off is Steps A/B/C.` is the only wrap-section edit; `**Step A` / `**Step B` / `**Step C` (`SKILL.md:60,63,64`) still satisfy `grep -c 'Step A'` ≥ 1 (`Steps A/B/C` does *not* contain the substring `Step A`).
+- Prescribed R02 bullet names `check_workflow_rules`, `signals`, `category`, and R02 without `makefile`/`pre-commit`, matching `classification.py:105-109` and `rules.py:44-50`.
+- `DOC-MATCHES-CODE-OK` runs the pruned entrypoint; `FRONTMATTER-OK` requires `AGENTS.md` and `CLAUDE.md` in `description`. Together they close T-09-04’s routing lie if Task 1 is followed.
+- `validate_entry` (`tools/setup.py:581-586`) and `cross_ai: false` (skill-judge is host-local) are the right constraints.
+- Scratch deletion is `test ! -e ./tmp/09-skill-judge-baseline-SKILL.md`, not porcelain — `tmp/` is gitignored.
+- Task 3’s append-only SC5/SC2 edits match ROADMAP `:307` and `:310` as they actually read, and the verify command pins the measured `BASELINE_SCORE` into the SC5 sentence.
 
 ### Concerns
 
-- **MEDIUM — wrap KEEP vs Step D REMOVE is a narrow edit.** `SKILL.md:58` is “The hand-off is Steps A/B/C, plus an optional Step D…”. Task 1 says do not tidy A/B/C wording, and also says remove every Step D cross-reference from that paragraph. `grep -c 'Step D'` must become 0. A cheap editor will either leave `:58` (fail verify) or rewrite the whole wrap (fail the “unchanged in substance” bar / drop `agent-md-refactor` count).
-- **MEDIUM — skill-judge vs banned literals.** Task 2 forbids reintroducing Makefile/pre-commit/Step D language to win points, and caps the loop at three. That conflict path is written down, which is good. The R02 anti-pattern (`SKILL.md:123-130`) currently names `makefile_checker.py` and Makefile-shape; the rewrite must keep the `signals`/`category` lesson without those words. If the judge demands a named structural owner, “another skill’s concern” may score as vague.
-- **LOW — scratch-file acceptance is vacuous.** Step 1 writes the recovered `SKILL.md` under `./tmp/` (gitignored). “Gone from the working tree” is checked with `git status --porcelain`, which will not list it even if left behind. Harmless under project convention, not evidence of deletion.
-- **LOW — `description` is the only runtime change in this plan**, and no automated check talks to the host router. The human-check pair (“does my build configuration have the right targets” vs “is my AGENTS.md missing any workflow rules”) is the real SC3 test; it only runs end-of-phase.
+- **MEDIUM** — AGENTS.md’s Workflow rule requires amending REQUIREMENTS.md *and* ROADMAP when a live-verified fact contradicts them. `REQ-rules-agents-prune` still says the `cache-path`/`cache-update` subcommands are removed (`.planning/REQUIREMENTS.md` v1.2). `main` at `cli.py:194-212` never dispatched `cache-path`; `cache_path` is `stack_cache.py:51`. Task 3 (`files_modified`: only `.planning/ROADMAP.md`) leaves the same false claim in the file downstream planners treat as requirement source of truth. Cycle-1 R11 widened Task 3 to SC2 but stopped at ROADMAP.
+- **MEDIUM** — Baseline is `git show` into `./tmp/09-skill-judge-baseline-SKILL.md`. skill-judge scores packaging (frontmatter `name:` vs parent directory). The recovered blob’s `name: ai-kit-agents-md-rules-checker` (`SKILL.md:2`) sitting under `tmp/` can tank the baseline on location/name dimensions the pruned file (`skills/ai-kit-project-rules-agents/`) will win, making “no regression” easier to pass than a same-layout comparison. 09-CONTEXT.md asked for a controlled same-session comparison; path layout is an uncontrolled variable.
+- **LOW** — Must-have says document `remediate`’s second key as always-empty (`build_remediation` at `remediation.py:77` still returns `blocked`). No acceptance check requires `"blocked"` in SKILL.md. A cheap edit that deletes that key from the docs still passes `DOC-MATCHES-CODE-OK` (it only runs `check`) and `SCOPE-PRUNE-OK`.
 
 ### Suggestions
 
-- Give the wrap intro a one-line replacement: “The hand-off is Steps A/B/C.” Nothing else in `:54-67` needs to move.
-- For the R02 anti-pattern, prescribe the replacement sentence in the plan (name R02, `signals`, `category`, “structural half is another skill’s concern”) so the executor does not invent Makefile wording to stay precise.
-- Add `rm -f` of the `./tmp/` baseline copy as an explicit Step 5 line, not a porcelain check.
-- Keep the human-check. Do not try to automate host routing.
+- Add a second append-only sentence on `REQ-rules-agents-prune` in REQUIREMENTS.md, same house style as Task 3 (`Baseline corrected` / `Subcommand wording corrected`), or explicitly record in Task 3 why REQUIREMENTS.md is exempt.
+- Recover the baseline blob into a scratch *directory named* `ai-kit-agents-md-rules-checker/` (still under `./tmp/`), run skill-judge on that `SKILL.md`, then delete the whole scratch dir by name.
+- Add `grep -c '"blocked"'` (or equivalent) to Task 1’s chain so the always-empty second key cannot disappear from the docs.
 
 ### Risk Assessment
 
-**LOW.** Docs-only, well gated, and the dangerous mismatch (SKILL.md advertising `makefile` / `cache-update` after 09-01 removed them) is exactly what this wave closes. Residual risk is editorial: a wrap-section over-edit or a judge/scope stalemate, both of which the plan already tells the executor to stop and report rather than trade.
-
----
-
-**Cross-plan:** Execute 09-01 then 09-02 with no gap that ships the renamed skill’s `SKILL.md` still advertising Makefile checks. Fix the `RULES-17-OK` AST check and the Phase 10 `git show` paths before 09-01 runs; 09-02 can stay as written.
+**LOW.** Docs/gate work is well specified against the live SKILL.md; the two MEDIUM items are amendment completeness and measurement fairness, not a likely wrong prune. They should be folded before execution so Phase 10 and later skill-judge comparisons do not inherit a stale REQUIREMENTS line or a vacuous baseline.
 
 ---
 
 ## Consensus Summary
 
-Only one reviewer lane ran this cycle (`opencode`, `xai/grok-4.6` at high reasoning), so there is
-no cross-reviewer consensus to synthesize. The review is source-grounded — it cites `file:line`
+Cycle 2. Only one reviewer lane ran (`opencode`, `xai/grok-4.6` at high reasoning), so there is no
+cross-reviewer consensus to synthesize. The review is source-grounded — it cites `file:line`
 evidence throughout and carries neither the `[reviewed-without-repo-access]` nor the
-`[reviewed-without-source-citations]` marker — and its single HIGH was independently confirmed
-against the live tree during aggregation.
+`[reviewed-without-source-citations]` marker. Both plan ids in the coverage manifest received their
+own section.
+
+**Cycle-1 carry-over: resolved.** Cycle 1's single HIGH (`RULES-17-OK` filtering on `ast.Assign`
+against a `rules.py` `RULES` that is an `ast.AnnAssign`) is confirmed closed — this cycle's reviewer
+re-checked the live tree (`rules.py:30`) and reports the gate now matches, along with cycle-1's four
+MEDIUM/LOW items (post-rename Phase 10 `git show` paths, inner `__pycache__` in D-03,
+`cache-path` vs `cache-update` wording, dead `_FIXTURE_*` constants). No HIGH concerns were raised
+this cycle.
 
 ### Agreed Strengths
 
-_Single-reviewer cycle — no 2+ reviewer corroboration available._ The reviewer's grounded
-strengths: D-01/D-02/D-03 are verified against real counts (11 tracked files, 12 old-name hits);
-the Task 1 tracer is a real entrypoint invocation rather than an import smoke test;
-`TestGateRegistration` pins the four registration surfaces in the same commit that edits them;
-Task 2's keep/delete split is complete against all 20 test classes; D-04 landing the tooling
-validator unwired avoids a dead-code gate failure; 09-02's `DOC-MATCHES-CODE-OK` derives the
-documented keys from a real `check()` run rather than from the JSON example.
+_Single-reviewer cycle — no 2+ reviewer corroboration available._ The reviewer's grounded strengths:
+09-01's Task 1 tracer is a real entrypoint run whose 17-id expectation matches
+`classification.py:155-157`; D-03's `rm -rf` is guarded by a tracked-file / `!!`-only check per
+AGENTS.md's no-`git-clean` rule; `TestGateRegistration` pins all four registration surfaces in the
+same commit as the path edits; the keep/delete split covers all 20 test classes; the Phase 10
+recovery recipe is now forced onto post-rename paths and `CLI-SURFACE-OK` uses `hasattr` so a dead
+`cache_update` function still fails. For 09-02: the wrap carve-out replacement is verified not to
+break `grep -c 'Step A'`; `DOC-MATCHES-CODE-OK` derives documented keys from a real `check()` run;
+Task 3's append-only SC5/SC2 edits match ROADMAP `:307`/`:310` as they actually read.
 
 ### Agreed Concerns
 
-_Single-reviewer cycle._ The one HIGH — the `RULES-17-OK` acceptance command in 09-01 filtering on
-`ast.Assign` when `rules.py:29` is `RULES: tuple[dict, ...] = (` (an `ast.AnnAssign`) — was
-verified directly against the repo during this cycle and is confirmed: the list comprehension
-yields `[]` and the `[0]` subscript raises `IndexError`, so a correct 17-rule file reads as a
-failed prune.
+_Single-reviewer cycle._ Two MEDIUM items, both on 09-02 and both verified against live source:
+
+1. **REQUIREMENTS.md amendment is incomplete.** AGENTS.md's Workflow rule requires amending
+   REQUIREMENTS.md *and* ROADMAP.md when a live-verified fact contradicts them. `REQ-rules-agents-prune`
+   still asserts `cache-path`/`cache-update` were removed CLI subcommands; `main` at `cli.py:194-212`
+   never dispatched `cache-path` (`cache_path` is `stack_cache.py:51`). Task 3's `files_modified`
+   names only `.planning/ROADMAP.md`, leaving the false claim in the requirements source of truth.
+2. **skill-judge baseline layout is uncontrolled.** The baseline blob is recovered to
+   `./tmp/09-skill-judge-baseline-SKILL.md`; skill-judge scores packaging (frontmatter `name:` vs
+   parent directory), so a blob named `ai-kit-agents-md-rules-checker` sitting under `tmp/` can lose
+   location/name points the pruned file under `skills/ai-kit-project-rules-agents/` will win —
+   making "no regression" easier to pass than a same-layout comparison, contrary to 09-CONTEXT.md's
+   controlled-comparison requirement.
+
+Three LOW items: surviving `TestRemediation` fixtures still carry `"makefile": []`
+(`:913`, `:961`, `:1010`); Task 2(e)'s "remaining three remediation cases" is ambiguous and should
+name the three keep methods; and no acceptance check requires `"blocked"` to remain documented in
+SKILL.md, so a cheap edit deleting that key still passes `DOC-MATCHES-CODE-OK` and `SCOPE-PRUNE-OK`.
 
 ### Divergent Views
 
