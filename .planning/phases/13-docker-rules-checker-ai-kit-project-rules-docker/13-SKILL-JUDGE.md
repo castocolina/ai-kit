@@ -161,3 +161,78 @@ Otherwise, code review should confirm byte-identity with the file this task scor
 - `JUDGED_PATH`: `skills/ai-kit-project-rules-docker/SKILL.md`
 - `JUDGED_COMMIT`: `df6bbf0b3cb244fa969016ee81b386673f4b5cc5`
 - Score: 103/120, 0 Critical, 0 Important, 0/3 fix iterations used.
+
+## Naming-analyzer verdict
+
+Date: 2026-09-14
+
+NAMING_VERDICT: confirmed -- "ai-kit-project-rules-docker" is kept as-is, no rename applied.
+
+`/naming-analyzer` was run against the skill directory name `ai-kit-project-rules-docker`, as the
+project's established skill-authoring pipeline step (scaffold, then judge, then name -- the same
+order Phases 9-12 recorded). Prompt context given to the analyzer: the four sibling names already
+in the family (`ai-kit-project-rules-agents`, `-makefile`, `-precommit`, `-arch`), this skill's
+actual scope (local-dev Docker Compose conventions: the eight-target Makefile family, the
+runbook, healthcheck bounds, `depends_on` discipline, and the hot-reload convention -- never
+general Dockerfile linting, container security scanning, or running any container), and the fact
+that the `ai-kit-project-rules-<domain>` family scheme is user-decided rather than open for this
+task to redesign. Applying the analyzer's own decision framework (vagueness, misleading-name,
+abbreviation, convention, and length checks) to a package/directory name rather than a variable:
+
+- **Not vague**: "docker" is a precise, industry-standard term with no ambiguity in this
+  position -- next to `agents`/`makefile`/`precommit`/`arch`, "docker" can only mean the Docker
+  Compose local-dev-convention domain, not an unrelated sense of the word.
+- **Misleading-name tension noted, but not severe enough to warrant a rename**: the skill's own
+  scope is narrower than "docker" alone might suggest -- it checks LOCAL-DEV Compose conventions
+  only (Limits #1-8 in the finished `SKILL.md`) and explicitly does NOT run, build, or inspect a
+  container, does NOT invoke a `docker`/`docker compose` command, and does NOT perform general
+  Dockerfile linting or image-security scanning. A reader who sees only the word "docker" and
+  never reads the description or the Limits section could over-infer a broader Docker
+  best-practices or security tool. This is the same shape of naming tension the `arch` sibling's
+  own evidence file already recorded for "arch" (narrower than full architecture enforcement) and
+  the `makefile` sibling's for "makefile" (target shape only, not full Make semantics) -- the
+  family's own convention names skills by DOMAIN, not by SCOPE DEPTH within that domain, and the
+  `description` frontmatter field plus the `SKILL.md` body's own Limits section are where
+  scope-depth is correctly communicated, not the directory name.
+- **Not mis-abbreviated**: "docker" is the full, unabbreviated, correctly-spelled proper noun for
+  the technology this skill checks -- no contraction or mangled form is present to evaluate.
+- **Family-convention match**: exact match to the `ai-kit-project-rules-<domain>` pattern all
+  four sibling checkers already use -- a single-word domain segment, same as
+  `agents`/`makefile`/`precommit`/`arch`, none of which qualify their own scope depth in the name
+  either.
+- **Length**: 27 characters (`ai-kit-project-rules-docker`), tied with `-agents` (27) for
+  shortest-or-tied among the five family members, shorter than `-makefile` (29) and `-precommit`
+  (30), comfortably under the 64-character frontmatter `name:` limit `skill-judge`'s own D4
+  dimension checks.
+
+**Alternative considered and rejected during this analysis**: a scope-qualified form (e.g.
+`ai-kit-project-rules-docker-compose` or `ai-kit-project-rules-docker-local-dev`) was considered
+and rejected -- none of the four existing siblings qualify their own scope depth in the name
+(`arch` does not become `arch-wiring-only`; `makefile` does not become `makefile-target-shape`),
+and doing so here alone would break the family's own established naming symmetry for a
+distinction the description and Limits section already carry, while also lengthening the name
+well past every sibling for no routing benefit (a host routes on `description`, per D4/rubric
+guidance, not on name length). No alternative is proposed.
+
+Per this task's instruction, the name is NOT this task's to change even where the verdict is
+"confirmed": `ai-kit-project-rules-docker` is fixed by `REQUIREMENTS.md`'s `REQ-rules-docker`, by
+`.planning/ROADMAP.md` Phases 13, 14 and 15, and by Phase 15's own Success Criterion 1, which
+enumerates the six checkers this orchestrator must invoke by this exact family naming scheme.
+Since the verdict is a confirmation rather than a proposed alternative, there is no four-phase
+blast radius to name here beyond stating these downstream dependencies explicitly -- the
+confirmation simply closes this pipeline step with no open question for the user.
+
+## ROADMAP Phase 13 success criteria -- discharge pointers
+
+| SC | Description | Discharged by | Verify command |
+|----|---|---|---|
+| SC1 | Missing/present `docker-*` target family, flagged by name | 13-01-PLAN.md | `TestTargetFamilyDrivenFromTuple` (tests/test_ai_kit_project_rules_docker.py); tracer + `APPLICABILITY-EDGES-OK` |
+| SC2 | Healthcheck `timeout`/`start_period`/`interval` exceeding 2s/10s/5s flagged, at-bound not | 13-02-PLAN.md | `BOUNDS-EXCLUSIVE-OK`; `TestHealthcheckBoundsPerKeyPaired.test_each_bound_key_over_and_at_boundary` |
+| SC3 | Bare-ordering `depends_on` flagged, `condition: service_healthy` not, per-entry | 13-02-PLAN.md | `DEPENDS-ON-OK`, `PER-ENTRY-OK`, `SEQUENCE-FORMS-OK` |
+| SC4 | Missing hot-reload convention flagged, bind-mount-plus-override convention not | 13-03-PLAN.md | `HOT-RELOAD-OK`, `HOT-RELOAD-COVERAGE-OK`, `MARKER-SELECTION-OK` |
+| SC5 | Absent `docker/local/README.md` flagged, present not | 13-01-PLAN.md | `TestRunbookPaired.test_runbook_missing_produces_one_finding` / `test_runbook_present_produces_no_finding` |
+
+All five commands/test classes were re-confirmed passing during this plan's own precondition and
+verification runs (`python3 -m unittest tests.test_ai_kit_project_rules_docker`, full suite
+green, 536/536 combined with the shared suite). This phase's verification step can follow these
+pointers rather than re-deriving each criterion's proof from scratch.

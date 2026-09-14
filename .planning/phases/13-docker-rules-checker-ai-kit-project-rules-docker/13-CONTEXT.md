@@ -3,6 +3,15 @@
 **Gathered:** 2026-09-13
 **Status:** Ready for planning — BLOCKED on Phases 9-12 landing first (see Phase Boundary)
 
+> **Corrected 2026-09-14 (Phase 13 plan 04):** Phases 9-12 have since landed — each has a
+> committed `SKILL.md` (`skills/ai-kit-project-rules-agents/SKILL.md`,
+> `skills/ai-kit-project-rules-makefile/SKILL.md`,
+> `skills/ai-kit-project-rules-precommit/SKILL.md`,
+> `skills/ai-kit-project-rules-arch/SKILL.md`, all confirmed present live during this phase's own
+> Task 3 precondition). This phase's hard prerequisite REASONING is unchanged and was satisfied,
+> not waived — the dependency was real, it is simply now met. Phase 14 reads this file and would
+> otherwise read a satisfied prerequisite as an open blocker.
+
 <domain>
 ## Phase Boundary
 
@@ -18,11 +27,26 @@ Phase 12's `arch-test`, this skill has no real self-example in ai-kit;
 every behavior is proven by synthetic fixtures only (already the ROADMAP's
 own framing — all 5 success criteria are fixture-based).
 
+> **Corrected 2026-09-14 (Phase 13 plan 04):** True of the LOCAL-DEV workflow this skill checks
+> and true at the repository ROOT (re-confirmed live: no `docker-compose.yml`/`docker-compose.yaml`/
+> `compose.yml`/`compose.yaml`/`Dockerfile` at ai-kit's own repo root), but the repo does carry a
+> CI-only `tests/e2e/docker/Dockerfile` behind its `e2e-docker` Makefile target — exactly the pair
+> of edges 13-01's root-scoped applicability gate (D-D4) is shaped around. The distinction is not
+> pedantry: a later reader who takes the original wording literally would conclude the gate's
+> nested-evidence negative case was invented rather than drawn from this repository. The original
+> claim's CONCLUSION — that this phase has no real self-example and must be proven by synthetic
+> fixtures — is unchanged and correct.
+
 **Hard prerequisite — this phase cannot be planned or executed before
 Phases 9-12 actually land.** `.planning/ROADMAP.md`'s "Depends on" line
 for Phase 13 names Phase 12 directly; the full chain back to Phase 9 is
 unbroken. As of this discussion, NONE of Phases 9-12 have a plan or
 execution yet (each has only a CONTEXT.md).
+
+> **Corrected 2026-09-14 (Phase 13 plan 04):** Phases 9-12 have all since landed with committed
+> `SKILL.md` files (see the correction on the header `**Status:**` line above for the exact paths
+> confirmed live). The hard-prerequisite REASONING above is unchanged and was satisfied, not
+> waived — the dependency chain back to Phase 9 was real, it is simply now fully met.
 
 </domain>
 
@@ -45,6 +69,15 @@ execution yet (each has only a CONTEXT.md).
   — **Reversibility:** costly — switching to a real YAML library later
   means rewriting this skill's parsing layer, not a local tweak, and would
   be the first dependency-discipline exception in this skill family.
+
+  > **Corrected 2026-09-14 (Phase 13 plan 04):** This precedent citation is now stale in its
+  > exact names. The `.pre-commit-config.yaml` block-reading logic converged into
+  > `skills/_shared/ai_kit_rules_common/precommit_parse.py`, where the block iterator is now
+  > PUBLIC (`iter_precommit_hook_blocks`, no leading underscore) while `_ID_LINE_RE`,
+  > `_ENTRY_LINE_RE`, and `_strip_yaml_quotes` stayed private in that module. The `makefile_checker.py`
+  > that now exists (`skills/ai-kit-project-rules-makefile/ai_kit_project_rules_makefile/makefile_checker.py`)
+  > does NOT house this pre-commit-hook parsing logic. The PRECEDENT itself was real and was
+  > followed — see the correction on "Existing parsing precedent" below for the full path history.
 - **D-02:** No new dependency is added anywhere in this skill or
   `skills/_shared/` as a result of D-01.
 
@@ -134,6 +167,15 @@ execution yet (each has only a CONTEXT.md).
   parsing-without-a-library pattern D-01 follows, applied to a flatter
   structure; this phase's parser generalizes it to handle nesting
 
+  > **Corrected 2026-09-14 (Phase 13 plan 04):** That directory no longer exists (re-confirmed
+  > live: `skills/ai-kit-agents-md-rules-checker` is absent from this worktree). The helpers
+  > converged into `skills/_shared/ai_kit_rules_common/precommit_parse.py`, where the block reader
+  > is now PUBLIC (`iter_precommit_hook_blocks`, no leading underscore) while `_ID_LINE_RE`,
+  > `_ENTRY_LINE_RE`, and `_strip_yaml_quotes` stayed private. Cite the real module and the real
+  > names — a reader who follows the old citation finds nothing and may otherwise conclude D-01's
+  > rationale was invented; the precedent itself was real and was followed exactly as this section
+  > describes, only its filesystem location moved.
+
 </canonical_refs>
 
 <code_context>
@@ -143,8 +185,22 @@ execution yet (each has only a CONTEXT.md).
 - None directly — ai-kit's own repo has no Docker setup to exercise this
   skill against (confirmed via scouting: no `docker-compose*.yml` or
   `Dockerfile*` found, no `docker-*` Makefile targets)
+
+  > **Corrected 2026-09-14 (Phase 13 plan 04):** True at the repository ROOT and of the LOCAL-DEV
+  > workflow (re-confirmed live), but the repo does carry a CI-only `tests/e2e/docker/Dockerfile`
+  > behind its `e2e-docker` Makefile target. See the correction on the Phase Boundary paragraph
+  > above for the full reasoning; the conclusion here ("None directly" reusable for exercising
+  > THIS skill's local-dev checks) is unchanged and correct — the CI-only Dockerfile does not
+  > satisfy this skill's LOCAL-DEV runbook/healthcheck/`depends_on`/hot-reload checks either way.
 - `skills/_shared/ai_kit_rules_common/stack_cache.py`, once `detect_stacks`
   lands there per Phase 10's D-02 — this phase's D-05 consumes it directly
+
+  > **Corrected 2026-09-14 (Phase 13 plan 04):** `detect_stacks` landed in
+  > `skills/_shared/ai_kit_rules_common/stack_detect.py`, not `stack_cache.py`. `stack_cache.py`
+  > is the generic per-skill on-disk tooling-cache helper module (used by the Phase 10/11
+  > siblings' research-and-cache surface); this skill (D-D12) has no research step and no cache at
+  > all, so it does not use `stack_cache.py` either. Plan 13-03 (D-D16) consumed `detect_stacks`
+  > directly from the real path, `ai_kit_rules_common.stack_detect`.
 
 ### Established Patterns
 - Regex/text-based YAML parsing without a library (`makefile_checker.py`'s
@@ -152,11 +208,34 @@ execution yet (each has only a CONTEXT.md).
   this phase's nested structure needs indentation tracking the existing
   pattern doesn't currently need
 
+  > **Corrected 2026-09-14 (Phase 13 plan 04):** The `.pre-commit-config.yaml`-handling logic
+  > this bullet points at converged into `skills/_shared/ai_kit_rules_common/precommit_parse.py`
+  > (`iter_precommit_hook_blocks`, public). The `makefile_checker.py` that exists today
+  > (`skills/ai-kit-project-rules-makefile/ai_kit_project_rules_makefile/makefile_checker.py`)
+  > checks Makefile target SHAPE and does not handle `.pre-commit-config.yaml` at all — confirmed
+  > live (no `pre-commit`/`precommit` string match in that file's own `.pre-commit-config.yaml`-
+  > reading sense). The PATTERN this bullet names (regex/text-based YAML parsing without a
+  > library) is still the real precedent D-01 followed; only the module housing it moved.
+
 ### Integration Points
 - D-05 adds a new category to the shared per-language tool catalog Phase
   11's D-01 creates — this phase cannot be fully planned until that
   catalog's shape is known, reinforcing the Phase 9→10→11→12→13 dependency
   chain already in place for other reasons
+
+  > **Corrected 2026-09-14 (Phase 13 plan 04):** Plan 13-03 deliberately did NOT do this (D-D16):
+  > `HOT_RELOAD_TOOLS`/`HOT_RELOAD_BASELINE_GAPS`/`SCRIPT_INDIRECTION_PREFIXES` sit BESIDE the
+  > six-category taxonomy in `skills/_shared/ai_kit_rules_common/tool_catalog.py` and never reach
+  > `TOOL_CATEGORY_INDEX` or `resolve_tool_category` (re-confirmed live: `resolve_tool_category`
+  > still answers `None` for every hot-reload marker) — because a dev server is not a static
+  > analyzer, and feeding one into the shared classifier would misclassify a real hook in the
+  > `ai-kit-project-rules-precommit` sibling this phase never opens. This section's own "Claude's
+  > Discretion" bullet ("new top-level category vs. a dedicated dict keyed by stack") is what
+  > actually offered the choice — the dict was chosen, so this Integration Points line and that
+  > Decisions-section bullet were never in agreement. This is the most dangerous of this sweep's
+  > corrections: a later reader following the stale prose instead of the decision text could
+  > corrupt the pre-commit sibling's classifier. See `13-03-SUMMARY.md` and
+  > `skills/_shared/ai_kit_rules_common/tool_catalog.py` for the real shape.
 
 </code_context>
 
