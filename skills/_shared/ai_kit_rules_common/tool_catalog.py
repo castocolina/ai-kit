@@ -47,10 +47,25 @@ guidance" paragraph. It already ships as the sibling
 `speed_tier()`) -- duplicating it here would be the second half of D-03
 silently dropped rather than placed. Stated here so a reader can see the
 decision was made, not missed.
+
+Phase 13 (13-CONTEXT D-05) adds one more section below, kept deliberately
+SEPARATE from everything above: `HOT_RELOAD_TOOLS`, `HOT_RELOAD_BASELINE_
+GAPS`, `SCRIPT_INDIRECTION_PREFIXES` and `resolve_hot_reload` -- per-stack
+hot-reload dev-server knowledge for `ai-kit-project-rules-docker`'s
+local-dev hot-reload convention check. It is NOT part of the six-category
+taxonomy above and never reaches `TOOL_CATEGORY_INDEX`: a dev server is
+not a static analyzer, and feeding one into that derived index would
+either trip the collision guard or silently teach the pre-commit
+sibling's classifier that a dev server is a linter. It lives in this
+module rather than inside the docker skill because D-05's whole point is
+that per-stack tool knowledge converges to one home so a correction
+benefits every checker at once, exactly as the six-category taxonomy
+above already does.
 """
 
 from __future__ import annotations
 
+import re
 from typing import cast
 
 TAXONOMY_CATEGORIES = (
@@ -563,15 +578,167 @@ def find_pair_relationship(tool_a: str, tool_b: str) -> dict[str, object] | None
     return None
 
 
+# ---------------------------------------------------------------------------
+# Hot-reload knowledge (13-CONTEXT D-04/D-05, plan 13-03 D-D16). Deliberately
+# NOT part of the six-category taxonomy above and NEVER fed into
+# `_derive_tool_category_index`/`TOOL_CATEGORY_INDEX`, and `resolve_tool_
+# category` must keep answering `None` for every marker here. A dev server
+# is not a static analyzer; merging the two would either trip the collision
+# guard above (loud) or silently teach the pre-commit sibling's classifier
+# that a dev server is a linter (quiet, not fine). This section exists so
+# `ai-kit-project-rules-docker`'s hot-reload check can ask "does this
+# override command actually invoke a stack-appropriate reload tool" rather
+# than trusting a bind mount plus any override at all -- 13-CONTEXT D-04's
+# whole expansion.
+# ---------------------------------------------------------------------------
+
+# Keyed by exactly the stack names `stack_detect.detect_stacks` can return
+# (`python`, `node`, `java`, `rust`, `go`). Each value is a tuple of
+# lowercase command MARKERS, transcribed as baseline knowledge that is
+# expected to go stale -- see `HOT_RELOAD_BASELINE_GAPS` and D-D15's
+# advisory outcome for how staleness surfaces honestly instead of becoming
+# a confident false accusation.
+HOT_RELOAD_TOOLS: dict[str, tuple[str, ...]] = {
+    "python": (
+        "--reload",
+        "--reload-dir",
+        # Listed WITHOUT requiring a debug flag on the command line,
+        # deliberately: Flask's reloader is commonly enabled through
+        # `FLASK_DEBUG` in the environment rather than a CLI flag. The
+        # permissive direction here avoids a false "no hot reload" claim
+        # against a real Flask dev service -- the cost is only a missed
+        # advisory.
+        "flask run",
+        "runserver",
+        "watchmedo",
+        "watchfiles",
+        "hupper",
+        "adev runserver",
+    ),
+    "node": (
+        "vite",
+        "webpack-dev-server",
+        "webpack serve",
+        "nodemon",
+        "next dev",
+        "nuxt dev",
+        "ng serve",
+        "react-scripts start",
+        "tsx watch",
+        "ts-node-dev",
+        # A bare flag on purpose: `--watch` is the shared reload idiom
+        # across `uvicorn`, `gunicorn`, `node` and several others. Matching
+        # the flag rather than enumerating every server that accepts it is
+        # what keeps this table small enough to stay honest. Its position
+        # here (after `nodemon`, both seven characters) is load-bearing for
+        # `resolve_hot_reload`'s tie-break -- see its docstring.
+        "--watch",
+        "remix dev",
+        "astro dev",
+    ),
+    "go": (
+        "air",
+        "compiledaemon",
+        "realize",
+        "gow",
+        "reflex",
+        "fresh",
+    ),
+    "rust": (
+        "cargo watch",
+        "cargo-watch",
+        "bacon",
+        "dioxus serve",
+        "trunk serve",
+    ),
+    "java": (
+        "spring-boot:run",
+        "bootrun",
+        "quarkus:dev",
+        "quarkus dev",
+        "--continuous",
+    ),
+}
+
+# The stack names whose tuple is deliberately empty -- empty today, and a
+# named constant anyway so a future stack can be added as a STATED gap
+# rather than as a silent blank. `resolve_hot_reload`'s caller reads this
+# to distinguish D-D15's `stack_without_baseline` reason from
+# `command_not_matched`.
+HOT_RELOAD_BASELINE_GAPS: tuple[str, ...] = ()
+
+# NOT hot-reload markers -- these are the signal for D-D15's
+# `script_indirection` reason: the real command lives behind a script
+# runner this skill does not follow into `package.json` or a Makefile.
+SCRIPT_INDIRECTION_PREFIXES: tuple[str, ...] = (
+    "npm run",
+    "yarn",
+    "pnpm",
+    "bun run",
+    "make",
+)
+
+
+def resolve_hot_reload(command_text: str, stacks) -> str | None:
+    """Return the matched hot-reload marker for `command_text`, scoped to
+    `stacks`, or `None`.
+
+    Case-insensitive and whitespace-normalized. Matching is TOKEN-BOUNDARY-
+    AWARE on both ends in the spirit of `makefile_parse.
+    recipe_mentions_target` (`(?<![-\\w])...(?![-\\w])`): `vite` must not
+    match inside `invited`, and `air` must not match inside `airflow`.
+    Markers are scoped to the passed `stacks` -- a Node marker must NOT
+    match for a repo where only Python was detected, which is the entire
+    point of 13-CONTEXT D-04's "stack-appropriate" wording. An empty
+    `stacks` resolves to `None` rather than matching everything.
+
+    Selection among multiple matches is a TOTAL ORDER, not "prefer the
+    longest": (1) LONGEST marker text wins; (2) a tie on length ->
+    EARLIEST POSITION in its own stack's tuple wins; (3) still tied because
+    the two markers came from DIFFERENT stacks -> the stack whose name
+    sorts first (plain `sorted()` over the passed stack names) wins.
+    Clause (2) is not hypothetical: the seeded `node` tuple's `nodemon` and
+    `--watch` are both seven characters, so length alone does not decide
+    `nodemon --watch src`. Clause (3) exists because `stacks` arrives as a
+    SET whose iteration order is not guaranteed stable ACROSS processes, so
+    a rule stopping at clause (2) would be non-deterministic in precisely
+    the polyglot repos D-04 cares most about. Implemented as an explicit
+    sort key over `(-len(marker), stack_index, marker_index)` with
+    `stack_index` taken from `sorted(stacks)` -- never "whatever the first
+    loop finds".
+    """
+    if not command_text or not stacks:
+        return None
+    normalized = " ".join(command_text.split()).casefold()
+    if not normalized:
+        return None
+    sorted_stacks = sorted(stacks)
+    candidates: list[tuple[int, int, int, str]] = []
+    for stack_index, stack in enumerate(sorted_stacks):
+        markers = HOT_RELOAD_TOOLS.get(stack, ())
+        for marker_index, marker in enumerate(markers):
+            pattern = rf"(?<![-\w]){re.escape(marker)}(?![-\w])"
+            if re.search(pattern, normalized) is not None:
+                candidates.append((-len(marker), stack_index, marker_index, marker))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][3]
+
+
 __all__ = [
     "AMBIGUOUS_TOOL_DEFAULTS",
     "BASELINE_STACKS",
+    "HOT_RELOAD_BASELINE_GAPS",
+    "HOT_RELOAD_TOOLS",
     "MAKEFILE_CATEGORY_ALIAS",
     "OUT_OF_TAXONOMY_GROUPS",
     "REDUNDANT_VS_COMPLEMENTARY_PAIRS",
+    "SCRIPT_INDIRECTION_PREFIXES",
     "TAXONOMY_CATEGORIES",
     "TAXONOMY_DEFINITIONS",
     "TOOL_CATEGORY_INDEX",
     "find_pair_relationship",
+    "resolve_hot_reload",
     "resolve_tool_category",
 ]

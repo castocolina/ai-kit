@@ -1642,5 +1642,145 @@ class TestYamlTextQuoteStripDriftGuard(unittest.TestCase):
                 )
 
 
+import subprocess
+
+from ai_kit_rules_common.stack_detect import detect_stacks
+
+
+def _stack_marker_dir(*filenames):
+    """A fresh temp dir containing an empty file per name in `filenames` --
+    `detect_stacks` reads a marker's mere PRESENCE, never its contents."""
+    d = tempfile.mkdtemp()
+    for name in filenames:
+        with open(os.path.join(d, name), "w", encoding="utf-8") as handle:
+            handle.write("x")
+    return d
+
+
+class TestHotReloadCatalogKeySet(unittest.TestCase):
+    """13-CONTEXT D-05 / plan 13-03 D-D16: `HOT_RELOAD_TOOLS`'s keys must be
+    exactly the stack names `detect_stacks` can return -- DERIVED here by
+    running `detect_stacks` over temp dirs, never re-typed (T-13-18): a
+    hand-typed set would pass forever while the two modules drift, and the
+    symptom of that drift is silence, not an error."""
+
+    def test_key_set_matches_detect_stacks_derived_markers(self):
+        marker_files = ("go.mod", "pyproject.toml", "package.json", "pom.xml", "Cargo.toml")
+        found: set[str] = set()
+        for name in marker_files:
+            found |= detect_stacks(_stack_marker_dir(name))
+        self.assertEqual(set(_tc.HOT_RELOAD_TOOLS), found)
+
+    def test_all_marker_tuples_are_lowercase_nonempty_strings(self):
+        for stack, markers in _tc.HOT_RELOAD_TOOLS.items():
+            self.assertIsInstance(markers, tuple, stack)
+            for marker in markers:
+                self.assertEqual(marker, marker.lower().strip(), marker)
+                self.assertTrue(marker)
+
+
+class TestResolveHotReloadStackScoping(unittest.TestCase):
+    def test_recognized_command_resolves_for_its_own_stack_only(self):
+        self.assertTrue(_tc.resolve_hot_reload("vite --host 0.0.0.0", {"node"}))
+        self.assertIsNone(_tc.resolve_hot_reload("vite --host 0.0.0.0", {"python"}))
+        self.assertTrue(_tc.resolve_hot_reload("flask run --debug", {"python"}))
+        self.assertIsNone(_tc.resolve_hot_reload("flask run --debug", {"node"}))
+
+    def test_bare_reload_flag_resolves_for_python(self):
+        self.assertTrue(_tc.resolve_hot_reload("uvicorn app:app --reload", {"python"}))
+
+    def test_token_boundary_both_directions(self):
+        self.assertIsNone(_tc.resolve_hot_reload("serve invited users", {"node"}))
+        self.assertIsNone(_tc.resolve_hot_reload("airflow scheduler", {"go"}))
+        self.assertTrue(_tc.resolve_hot_reload("air -c .air.toml", {"go"}))
+
+    def test_production_shaped_command_resolves_to_nothing_for_every_stack(self):
+        for stack in _tc.HOT_RELOAD_TOOLS:
+            with self.subTest(stack=stack):
+                self.assertIsNone(_tc.resolve_hot_reload("gunicorn app:app", {stack}))
+
+    def test_empty_stack_set_resolves_to_nothing(self):
+        self.assertIsNone(_tc.resolve_hot_reload("vite", set()))
+
+
+class TestResolveHotReloadSelectionOrder(unittest.TestCase):
+    """D-D16's total order: (1) longest marker, (2) tie -> earliest position
+    in its own stack's tuple, (3) still tied across stacks -> alphabetically
+    first stack name."""
+
+    def test_clause_one_longest_marker_wins(self):
+        result = _tc.resolve_hot_reload("webpack-dev-server --watch src", {"node"})
+        self.assertEqual(result, "webpack-dev-server")
+
+    def test_clause_two_tie_on_length_earliest_position_wins(self):
+        node_tuple = _tc.HOT_RELOAD_TOOLS["node"]
+        self.assertIn("nodemon", node_tuple)
+        self.assertIn("--watch", node_tuple)
+        self.assertEqual(len("nodemon"), len("--watch"), "seeded tie assumption broke")
+        self.assertLess(node_tuple.index("nodemon"), node_tuple.index("--watch"))
+        result = _tc.resolve_hot_reload("nodemon --watch src index.js", {"node"})
+        self.assertEqual(result, "nodemon")
+
+    def test_clause_three_cross_process_determinism(self):
+        """`stacks` arrives as a SET whose iteration order varies BETWEEN
+        processes but not within one -- an in-process repeat cannot detect
+        this class of non-determinism, so this drives six real subprocesses
+        with differing `PYTHONHASHSEED` values."""
+        script = (
+            "import sys\n"
+            "sys.path.insert(0, 'skills/_shared')\n"
+            "from ai_kit_rules_common.tool_catalog import resolve_hot_reload as R\n"
+            "print(R('nodemon --watch src index.js', {'node', 'python'}))\n"
+        )
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "probe.py")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(script)
+        outputs = set()
+        for seed in range(6):
+            env = dict(os.environ, PYTHONHASHSEED=str(seed))
+            result = subprocess.run(
+                [sys.executable, path],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=os.getcwd(),
+                env=env,
+            )
+            outputs.add(result.stdout.strip())
+        self.assertEqual(outputs, {"nodemon"})
+
+
+class TestHotReloadNotInTaxonomy(unittest.TestCase):
+    """The taxonomy-corruption risk (T-13-17) stated as a test, not only as
+    a comment: no hot-reload marker may be answerable by `resolve_tool_
+    category`, and none may be a key of `TOOL_CATEGORY_INDEX`."""
+
+    def test_no_marker_in_index_or_resolvable_by_resolve_tool_category(self):
+        for markers in _tc.HOT_RELOAD_TOOLS.values():
+            for marker in markers:
+                with self.subTest(marker=marker):
+                    self.assertNotIn(marker, _tc.TOOL_CATEGORY_INDEX)
+                    self.assertIsNone(_tc.resolve_tool_category(marker))
+
+
+class TestHotReloadCatalogAdditive(unittest.TestCase):
+    """The shared catalog edit is additive (T-13-17): existing baseline
+    cells, the derived index, and both import-time guards behave exactly
+    as before -- proven here and by the precommit sibling's suite passing
+    unchanged."""
+
+    def test_pre_existing_catalog_facts_unchanged(self):
+        self.assertEqual(_tc.BASELINE_STACKS["python"]["linting"], ("ruff check",))
+        self.assertEqual(_tc.BASELINE_STACKS["node"]["duplicate-code"], ("jscpd",))
+        self.assertEqual(_tc.resolve_tool_category("ruff"), "linting")
+        self.assertEqual(_tc.resolve_tool_category("staticcheck"), "linting")
+
+    def test_hot_reload_gaps_and_prefixes_are_tuples(self):
+        self.assertIsInstance(_tc.HOT_RELOAD_BASELINE_GAPS, tuple)
+        self.assertIsInstance(_tc.SCRIPT_INDIRECTION_PREFIXES, tuple)
+        self.assertTrue(_tc.SCRIPT_INDIRECTION_PREFIXES)
+
+
 if __name__ == "__main__":
     unittest.main()
