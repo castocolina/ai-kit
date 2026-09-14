@@ -1152,5 +1152,224 @@ class TestGitHubDegradation(unittest.TestCase):
         self.assertEqual(_findings(repo), [])
 
 
+_CI_RUFF_STEP = "jobs:\n  j:\n    steps:\n    - run: ruff check .\n"
+
+
+class TestPrecommitReuseSurface(unittest.TestCase):
+    """Plan 14-02 Task 2's <behavior> cases: the pre-commit-hook reuse
+    surface (D-C15), its D-C4 gate reuse, and D-C16's precedence."""
+
+    def test_local_hook_with_entry_is_flagged_with_pre_commit_run_recommendation(self):
+        pc = (
+            "repos:\n- repo: local\n  hooks:\n  - id: ruff\n"
+            "    entry: ruff check\n    language: system\n"
+        )
+        repo = _fixture({".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": _CI_RUFF_STEP})
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        finding = findings[0]
+        self.assertEqual(finding["reuse_surface"], "precommit")
+        self.assertEqual(finding["reuse_command"], "pre-commit run ruff --all-files")
+        self.assertIn("ruff check .", finding["recommendation"])
+        self.assertIn("pre-commit run ruff", finding["recommendation"])
+        self.assertNotIn("target", finding)
+
+    def test_ci_calling_pre_commit_run_directly_yields_no_findings(self):
+        pc = (
+            "repos:\n- repo: local\n  hooks:\n  - id: ruff\n"
+            "    entry: ruff check\n    language: system\n"
+        )
+        repo = _fixture(
+            {
+                ".pre-commit-config.yaml": pc,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: pre-commit run ruff --all-files\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_entry_less_upstream_ruff_hook_covers_ci_ruff_check(self):
+        pc = "repos:\n- repo: https://github.com/astral-sh/ruff-pre-commit\n  hooks:\n  - id: ruff\n"
+        repo = _fixture({".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": _CI_RUFF_STEP})
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "pre-commit run ruff --all-files")
+
+    def test_entry_less_hygiene_hook_covers_its_own_direct_invocation(self):
+        pc = "repos:\n- repo: local\n  hooks:\n  - id: trailing-whitespace\n"
+        repo = _fixture(
+            {
+                ".pre-commit-config.yaml": pc,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: trailing-whitespace .\n"
+                ),
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "pre-commit run trailing-whitespace --all-files")
+
+    def test_entry_less_unknown_hook_id_admits_nothing(self):
+        pc = "repos:\n- repo: local\n  hooks:\n  - id: my-house-style\n"
+        repo = _fixture(
+            {
+                ".pre-commit-config.yaml": pc,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: my-house-style .\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_entry_carrying_unknown_tool_is_admitted_via_route_3(self):
+        pc = (
+            "repos:\n- repo: local\n  hooks:\n  - id: myformatter\n"
+            "    entry: myformatter --fix\n    language: system\n"
+        )
+        repo = _fixture(
+            {
+                ".pre-commit-config.yaml": pc,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: myformatter --fix now\n"
+                ),
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "pre-commit run myformatter --all-files")
+
+    def test_quoted_entry_matches_a_direct_ci_invocation_identically_to_bare(self):
+        pc_quoted = (
+            'repos:\n- repo: local\n  hooks:\n  - id: ruff\n'
+            '    entry: "ruff check"\n    language: system\n'
+        )
+        pc_bare = pc_quoted.replace('entry: "ruff check"', "entry: ruff check")
+        quoted = _fixture(
+            {".pre-commit-config.yaml": pc_quoted, ".github/workflows/ci.yml": _CI_RUFF_STEP}
+        )
+        bare = _fixture(
+            {".pre-commit-config.yaml": pc_bare, ".github/workflows/ci.yml": _CI_RUFF_STEP}
+        )
+        self.assertEqual(_findings(quoted), _findings(bare))
+        self.assertEqual(len(_findings(quoted)), 1)
+
+    def test_single_quoted_entry_resolves_to_the_same_identity_as_bare(self):
+        pc_single = (
+            "repos:\n- repo: local\n  hooks:\n  - id: black\n"
+            "    entry: 'black .'\n    language: system\n"
+        )
+        pc_bare = pc_single.replace("entry: 'black .'", "entry: black .")
+        repo_single = _fixture(
+            {
+                ".pre-commit-config.yaml": pc_single,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: black .\n"
+                ),
+            }
+        )
+        repo_bare = _fixture(
+            {
+                ".pre-commit-config.yaml": pc_bare,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: black .\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo_single), _findings(repo_bare))
+
+    def test_multi_segment_bare_entry_has_no_identity(self):
+        pc = (
+            "repos:\n- repo: local\n  hooks:\n  - id: fmt\n"
+            "    entry: black . && isort .\n    language: system\n"
+        )
+        repo = _fixture(
+            {
+                ".pre-commit-config.yaml": pc,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: black .\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_multi_segment_quoted_entry_has_no_identity(self):
+        pc = (
+            'repos:\n- repo: local\n  hooks:\n  - id: fmt\n'
+            '    entry: "black . && isort ."\n    language: system\n'
+        )
+        repo = _fixture(
+            {
+                ".pre-commit-config.yaml": pc,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: black .\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_shell_one_liner_over_non_tool_command_covers_nothing(self):
+        pc = (
+            "repos:\n- repo: local\n  hooks:\n  - id: shellish\n"
+            '    entry: bash -c "exit 0"\n    language: system\n'
+        )
+        repo = _fixture(
+            {
+                ".pre-commit-config.yaml": pc,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: bash -c \"exit 0\"\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_makefile_and_hook_collision_recommends_only_the_makefile_target(self):
+        mk = "ruff:\n\tuv run ruff check .\n"
+        pc = (
+            "repos:\n- repo: local\n  hooks:\n  - id: ruff\n"
+            "    entry: ruff check\n    language: system\n"
+        )
+        repo = _fixture(
+            {"Makefile": mk, ".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": _CI_RUFF_STEP}
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_surface"], "makefile")
+        self.assertEqual(findings[0]["reuse_command"], "make ruff")
+        self.assertNotIn("pre-commit", findings[0]["recommendation"])
+
+    def test_makefile_mypy_and_hook_ruff_each_produce_their_own_finding(self):
+        mk = "mypy:\n\tuv run mypy .\n"
+        pc = (
+            "repos:\n- repo: local\n  hooks:\n  - id: ruff\n"
+            "    entry: ruff check\n    language: system\n"
+        )
+        wf = "jobs:\n  j:\n    steps:\n    - run: ruff check .\n    - run: mypy .\n"
+        repo = _fixture({"Makefile": mk, ".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": wf})
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 2)
+        self.assertEqual(findings[0]["reuse_surface"], "precommit")
+        self.assertEqual(findings[1]["reuse_surface"], "makefile")
+
+    def test_absent_precommit_config_leaves_makefile_surface_usable(self):
+        repo = _fixture({"Makefile": "ruff:\n\tuv run ruff check .\n", ".github/workflows/ci.yml": _CI_RUFF_STEP})
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_surface"], "makefile")
+
+    def test_empty_precommit_config_yields_no_precommit_findings(self):
+        repo = _fixture(
+            {".pre-commit-config.yaml": "", ".github/workflows/ci.yml": _CI_RUFF_STEP}
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_unreadable_binary_precommit_config_does_not_raise(self):
+        repo = tempfile.mkdtemp()
+        _write(os.path.join(repo, ".github/workflows/ci.yml"), _CI_RUFF_STEP)
+        with open(os.path.join(repo, ".pre-commit-config.yaml"), "wb") as handle:
+            handle.write(b"\xff\xfe\x00 binary, not utf-8\n")
+        self.assertEqual(_findings(repo), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,14 +1,21 @@
 """The reuse-source inventory and the command-key machinery both sides of
 the CI-vs-repo match share (D-C3, D-C4, D-C5, D-C6).
 
-Only the Makefile surface is inventoried in this plan; plans 14-02 and
-14-03 EXTEND `build_reuse_inventory` by appending one more surface's
-records to the SAME list rather than adding a parallel structure. The
-reuse-invocation TABLE (D-C6) is complete here across all four surfaces
-(`make`, `pre-commit run`, `npm`/`pnpm`/`yarn` script forms,
-`gradle`/`./gradlew`) -- recognizing an invocation as reuse is a
-different direction from inventorying a reuse SOURCE, and only the
-second is staged across plans.
+The Makefile surface (plan 14-01) and the pre-commit-hook surface (plan
+14-02, D-C15) are inventoried here; plan 14-03 EXTENDS `build_reuse_
+inventory` by appending its own two surfaces' records to the SAME list
+rather than adding a parallel structure. The reuse-invocation TABLE
+(D-C6) is complete here across all four surfaces (`make`, `pre-commit
+run`, `npm`/`pnpm`/`yarn` script forms, `gradle`/`./gradlew`) --
+recognizing an invocation as reuse is a different direction from
+inventorying a reuse SOURCE, and only the second is staged across plans.
+
+D-C16: the inventory is built in the FIXED order `SURFACE_ORDER`
+(`makefile`, `precommit`, `package-json`, `gradle`) declared once for all
+four surfaces, and when two surfaces produce the same command key the
+FIRST one inventoried wins -- a property of insertion order plus a
+first-wins `seen_keys` set shared across every surface's loop, not a
+post-hoc sort or a per-surface priority number.
 """
 
 from __future__ import annotations
@@ -18,6 +25,7 @@ import re
 
 from ai_kit_rules_common.command_text import (
     normalize_token,
+    split_top_level_segments,
     strip_leading_noise,
 )
 from ai_kit_rules_common.makefile_parse import (
@@ -25,7 +33,16 @@ from ai_kit_rules_common.makefile_parse import (
     parse_makefile_recipe,
     parse_makefile_targets_ordered,
 )
+from ai_kit_rules_common.precommit_parse import parse_precommit_hooks
 from ai_kit_rules_common.tool_catalog import OUT_OF_TAXONOMY_GROUPS, resolve_tool_category
+from ai_kit_rules_common.yaml_text import strip_yaml_quotes
+
+# D-C16: the four-surface precedence order, declared once here so plan
+# 14-03 APPENDS to a settled rule rather than inventing its own tie-break.
+# A plain (non-annotated) assignment: this exact literal tuple shape is
+# what the SURFACE-ORDER-OK acceptance criterion asserts exists exactly
+# once.
+SURFACE_ORDER = ("makefile", "precommit", "package-json", "gradle")
 
 # D-T4's marker groups, flattened once and casefolded -- Route 2 of the
 # tool-shaped identity gate, and the KNOWN half of D-C5's key
@@ -147,10 +164,16 @@ def keys_match(key_a: str, key_b: str) -> bool:
 def is_tool_shaped_identity(
     identity: str, source_name: str, derived_from_command_body: bool
 ) -> bool:
-    """D-C4's tool-shaped identity gate. An identity makes its source
+    """D-C4's tool-shaped identity gate -- the ONE function BOTH the
+    Makefile surface and (plan 14-02) the pre-commit-hook surface call,
+    never a per-surface copy (T-14-18). An identity makes its source
     USABLE only when at least one route holds:
       Route 1: `resolve_tool_category(identity)` is not `None`.
-      Route 2: `identity` is an out-of-taxonomy marker (exact, casefolded).
+      Route 2: `identity` is an out-of-taxonomy marker (exact,
+        casefolded), read directly from `OUT_OF_TAXONOMY_GROUPS` --
+        the SAME groups `_OUT_OF_TAXONOMY_FLAT` is built from, checked
+        inline here so this ONE function is unambiguously identifiable
+        as D-C4's gate.
       Route 3: `normalize(identity) == normalize(source_name)` AND
         `derived_from_command_body` is `True` -- CLOSED to a name-only
         identity that was never derived from a real command body (a
@@ -160,8 +183,10 @@ def is_tool_shaped_identity(
     Never raises."""
     if resolve_tool_category(identity) is not None:
         return True
-    if identity.strip().casefold() in _OUT_OF_TAXONOMY_FLAT:
-        return True
+    folded = identity.strip().casefold()
+    for group in OUT_OF_TAXONOMY_GROUPS.values():
+        if folded in {marker.casefold() for marker in group["markers"]}:  # type: ignore[union-attr]
+            return True
     return derived_from_command_body and normalize_token(identity) == normalize_token(
         source_name
     )
@@ -222,17 +247,94 @@ def makefile_target_identity(
     return None, False  # clause (b2), different keys -> no identity
 
 
+def precommit_hook_identity(hook_id: str, entry: str | None) -> tuple[str | None, bool]:
+    """D-C15: `(identity, derived_from_command_body)` for a pre-commit
+    hook `hook_id` with entry `entry`, both read from the SHARED
+    `parse_precommit_hooks` -- never a second `.pre-commit-config.yaml`
+    parser inside this skill.
+
+    When `entry` is not `None`: the entry is quote-stripped FIRST via the
+    shared `yaml_text.strip_yaml_quotes` (the shared hook reader
+    normalizes the hook ID's quoting but NOT the entry's, verified live
+    2026-09-14 -- without this step a real `entry: "ruff check"` computes
+    the key `"ruff` and matches nothing). The multi-segment aggregate
+    test (a top-level `&&`, `||` or `;`, via the shared `command_text.
+    split_top_level_segments`) then runs on the UNQUOTED entry, so a
+    quoted aggregate is judged on its real content: more than one
+    top-level segment means the entry is an aggregate with NO identity,
+    the same judgement D-C3's real-line cap makes on the Makefile
+    surface. Otherwise the identity is the entry's command key, computed
+    by the SAME `strip_leading_noise` + `compute_command_key` a CI line
+    goes through, and `derived_from_command_body` is `True`.
+
+    When `entry` is `None` (a non-`local` `repo:` block, whose real
+    command lives in an external hook-repo manifest this skill does not
+    fetch): the identity is `hook_id` itself, `derived_from_command_body`
+    is `False` -- Route 3 of `is_tool_shaped_identity` is therefore
+    CLOSED to it, and only Route 1 (`AMBIGUOUS_TOOL_DEFAULTS`'s bare
+    `ruff`) or Route 2 (the hygiene group) can admit it. Never raises."""
+    if entry is not None:
+        unquoted = strip_yaml_quotes(entry)
+        if len(split_top_level_segments(unquoted)) > 1:
+            return None, False
+        stripped = strip_leading_noise(unquoted)
+        key, _known = compute_command_key(stripped)
+        return key, True
+    return hook_id, False
+
+
+def build_precommit_reuse_records(repo_root: str) -> list[dict]:
+    """The pre-commit surface's `{"key", "surface", "reuse_command"}`
+    records (D-C15), read ONLY through the shared `parse_precommit_
+    hooks` -- wrapped in `try/except (OSError, UnicodeDecodeError)`
+    (D-C10): that shared reader guards a MISSING file itself (returns
+    `{}`) but not a read failure on a PRESENT one (verified live
+    2026-09-14: it raises `UnicodeDecodeError` on binary content), so
+    this wrap is the one this task adds. The reuse invocation is
+    `pre-commit run <hook_id> --all-files` -- the hook's REAL id, never
+    its identity, and deliberately WITHOUT the Phase 11 sibling's `uv
+    run` prefix: that prefix is ai-kit's own local convention, while this
+    recommendation targets a CI file in an arbitrary repo whose runner
+    may not have `uv` at all. Never raises."""
+    path = os.path.join(repo_root, ".pre-commit-config.yaml")
+    try:
+        hooks = parse_precommit_hooks(path)
+    except (OSError, UnicodeDecodeError):
+        hooks = {}
+
+    records: list[dict] = []
+    for hook_id, entry in hooks.items():
+        identity, derived = precommit_hook_identity(hook_id, entry)
+        if identity is None:
+            continue
+        if not is_tool_shaped_identity(identity, hook_id, derived):
+            continue
+        key = normalize_token(identity)
+        records.append(
+            {
+                "key": key,
+                "surface": "precommit",
+                "reuse_command": f"pre-commit run {hook_id} --all-files",
+            }
+        )
+    return records
+
+
 def build_reuse_inventory(repo_root: str) -> list[dict]:
     """The repo's usable reuse sources as `{"key", "surface",
-    "reuse_command"}` records, Makefile surface only in this plan; plans
-    14-02/14-03 EXTEND this by appending more surfaces' records to the
-    SAME list.
+    "reuse_command"}` records, in `SURFACE_ORDER`'s fixed order (D-C16):
+    the Makefile surface (plan 14-01), then the pre-commit-hook surface
+    (plan 14-02); plan 14-03 EXTENDS this by appending its own two
+    surfaces' records to the SAME list, in the same ONE-list-built-once
+    shape.
 
-    Every shared-Makefile-parser call is wrapped in
-    `try/except (OSError, UnicodeDecodeError)` (D-C10): a failed read
-    means "no reuse sources", not an exception. When two reuse sources
-    produce the same key, the FIRST in discovery order is kept and the
-    collision is recorded nowhere else. Never raises."""
+    Every shared-parser call is wrapped in `try/except (OSError,
+    UnicodeDecodeError)` (D-C10): a failed read means "no reuse
+    sources", not an exception. When two reuse sources across ANY
+    surfaces produce the same key, the FIRST one inventoried wins -- a
+    SINGLE `seen_keys` set shared across every surface's loop, not a
+    per-surface set or a post-hoc sort -- and the losing source is
+    recorded nowhere else. Never raises."""
     makefile_path = os.path.join(repo_root, "Makefile")
     try:
         ordered_targets = parse_makefile_targets_ordered(makefile_path)
@@ -241,6 +343,8 @@ def build_reuse_inventory(repo_root: str) -> list[dict]:
 
     records: list[dict] = []
     seen_keys: set[str] = set()
+
+    # SURFACE_ORDER position 1: makefile.
     for name in ordered_targets:
         try:
             recipe_text = parse_makefile_recipe(makefile_path, name)
@@ -257,14 +361,25 @@ def build_reuse_inventory(repo_root: str) -> list[dict]:
             continue
         seen_keys.add(key)
         records.append({"key": key, "surface": "makefile", "reuse_command": f"make {name}"})
+
+    # SURFACE_ORDER position 2: precommit.
+    for record in build_precommit_reuse_records(repo_root):
+        if record["key"] in seen_keys:
+            continue
+        seen_keys.add(record["key"])
+        records.append(record)
+
     return records
 
 
 __all__ = [
+    "SURFACE_ORDER",
+    "build_precommit_reuse_records",
     "build_reuse_inventory",
     "classify_reuse_invocation",
     "compute_command_key",
     "is_tool_shaped_identity",
     "keys_match",
+    "precommit_hook_identity",
     "makefile_target_identity",
 ]
