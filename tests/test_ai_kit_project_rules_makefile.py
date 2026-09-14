@@ -516,6 +516,144 @@ class TestValidateAliasFamily(unittest.TestCase):
         )
 
 
+class TestHelpReachability(unittest.TestCase):
+    # ROADMAP Phase 10 Success Criterion 3.
+
+    def test_default_goal_naming_existing_target_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                ".DEFAULT_GOAL := build\n\nbuild:\n\techo b\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("no_reachable_help_path", issues)
+
+    def test_stemless_catchall_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"), "%:\n\techo unknown\n\nbuild:\n\techo b\n"
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("no_reachable_help_path", issues)
+
+    def test_stemmed_suffix_rule_is_not_a_catchall_and_is_flagged(self):
+        # Discriminating negative case: a suffix rule tells Make how to
+        # build one file class from another and does nothing for an
+        # unknown-target invocation.
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "%.o: %.c\n\techo compile\n\nbuild:\n\techo b\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            reach = [f for f in findings if f.get("issue") == "no_reachable_help_path"]
+            self.assertEqual(len(reach), 1)
+
+    def test_neither_mechanism_is_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "build:\n\techo b\n")
+            findings = makefile_checker.check_makefile_shape(repo)
+            reach = [f for f in findings if f.get("issue") == "no_reachable_help_path"]
+            self.assertEqual(len(reach), 1)
+            self.assertEqual(reach[0]["target"], "help")
+
+    def test_default_goal_naming_undefined_target_is_flagged_with_distinct_summary(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                ".DEFAULT_GOAL := nonexistent\n\nbuild:\n\techo b\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            reach = [f for f in findings if f.get("issue") == "no_reachable_help_path"]
+            self.assertEqual(len(reach), 1)
+            self.assertIn("nonexistent", reach[0]["summary"])
+
+            with tempfile.TemporaryDirectory() as repo2:
+                _write(os.path.join(repo2, "Makefile"), "build:\n\techo b\n")
+                findings2 = makefile_checker.check_makefile_shape(repo2)
+                reach2 = next(
+                    f for f in findings2 if f.get("issue") == "no_reachable_help_path"
+                )
+            # Same issue id, different summary sentence.
+            self.assertEqual(reach[0]["issue"], reach2["issue"])
+            self.assertNotEqual(reach[0]["summary"], reach2["summary"])
+
+
+class TestRecipeLengthCap(unittest.TestCase):
+    # ROADMAP Phase 10 Success Criterion 4.
+
+    def test_four_line_recipe_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "build:\n\techo 1\n\techo 2\n\techo 3\n\techo 4\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            over = [f for f in findings if f.get("issue") == "recipe_too_long"]
+            self.assertEqual(len(over), 1)
+            self.assertEqual(over[0]["target"], "build")
+            self.assertEqual(over[0]["line_count"], 4)
+            self.assertIsNotNone(over[0]["recommendation"])
+            self.assertIn("script", over[0]["recommendation"])
+
+    def test_exactly_three_lines_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"), "build:\n\techo 1\n\techo 2\n\techo 3\n"
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            over = [f for f in findings if f.get("issue") == "recipe_too_long"]
+            self.assertEqual(over, [])
+
+    def test_blank_and_comment_padded_three_commands_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "build:\n\techo 1\n\n\t# a comment\n\techo 2\n\n\t# another\n\techo 3\n\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            over = [f for f in findings if f.get("issue") == "recipe_too_long"]
+            self.assertEqual(over, [])
+
+    def test_help_target_exempt_from_cap(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "help:\n\techo 1\n\techo 2\n\techo 3\n\techo 4\n\techo 5\n\techo 6\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            over = [f for f in findings if f.get("issue") == "recipe_too_long"]
+            self.assertEqual(over, [])
+
+    def test_default_goal_named_target_exempt_from_cap(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                ".DEFAULT_GOAL := usage\n\n"
+                "usage:\n\techo 1\n\techo 2\n\techo 3\n\techo 4\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            over = [f for f in findings if f.get("issue") == "recipe_too_long"]
+            self.assertEqual(over, [])
+
+    def test_one_finding_per_over_long_target(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "build:\n\techo 1\n\techo 2\n\techo 3\n\techo 4\n\n"
+                "deploy:\n\techo 1\n\techo 2\n\techo 3\n\techo 4\n\techo 5\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            over = {f["target"]: f for f in findings if f.get("issue") == "recipe_too_long"}
+            self.assertEqual(set(over), {"build", "deploy"})
+            self.assertEqual(over["build"]["line_count"], 4)
+            self.assertEqual(over["deploy"]["line_count"], 5)
+
+
 class TestWiringViaPrerequisites(unittest.TestCase):
     def test_validate_chain_via_prerequisites(self):
         with tempfile.TemporaryDirectory() as repo:

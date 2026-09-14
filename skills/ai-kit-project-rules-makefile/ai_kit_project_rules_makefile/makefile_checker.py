@@ -25,8 +25,13 @@ is not one of them.
 from __future__ import annotations
 
 import os
+import re
 
-from ai_kit_rules_common.criticality import CRITICALITY_CRITICAL, CRITICALITY_HIGH
+from ai_kit_rules_common.criticality import (
+    CRITICALITY_CRITICAL,
+    CRITICALITY_HIGH,
+    CRITICALITY_MEDIUM,
+)
 from ai_kit_rules_common.makefile_parse import (
     parse_makefile_prerequisites,
     parse_makefile_recipe,
@@ -65,6 +70,91 @@ CATEGORY_ALIAS_MAP = {
     "duplicate-code-detector": "validate-duplicate",
     "dead-code-detector": "validate-dead",
 }
+
+
+# Help/fail reachability (ROADMAP Phase 10 SC3). Both read the raw Makefile
+# text directly -- neither form survives `parse_makefile_targets` (its
+# header pattern excludes lines starting with a dot, and its character
+# class contains no `%`), so neither mechanism can be detected by looking
+# in the parsed target set.
+_DEFAULT_GOAL_RE = re.compile(r"^\s*\.DEFAULT_GOAL\s*(?::=|=)\s*(\S+)", re.MULTILINE)
+
+# PINNED: a STEMLESS catch-all target only -- a line-leading `%` followed by
+# optional horizontal whitespace and then a `:` that is not the `:=` of an
+# assignment. A STEMMED pattern/suffix rule (`%.o: %.c`) must NOT satisfy
+# this: it tells Make how to build one file class from another and does
+# nothing for an unknown-target invocation.
+_CATCHALL_RE = re.compile(r"^%[ \t]*:(?!=)", re.MULTILINE)
+
+# Header-line pattern used ONLY to build the single-pass target->recipe
+# mapping below (`_build_recipe_map`), mirroring
+# `ai_kit_rules_common.makefile_parse`'s own private `_TARGET_HEADER_RE`
+# character-for-character (that pattern is module-private there, so it is
+# re-derived here rather than imported) -- so this module's own recipe-cap
+# scan can never disagree with the shared parser about what counts as a
+# target header.
+_HEADER_LINE_RE = re.compile(r"^(?!\.)([A-Za-z0-9_.-]+)\s*:(?!=)")
+
+
+def _default_goal_target(text: str) -> str | None:
+    match = _DEFAULT_GOAL_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _has_stemless_catchall(text: str) -> bool:
+    return _CATCHALL_RE.search(text) is not None
+
+
+def _build_recipe_map(text: str) -> dict[str, str]:
+    """Single pass over `text` building `target -> recipe text`.
+
+    Guards against the quadratic scan a naive per-target call to
+    `parse_makefile_recipe` would cause on a large Makefile (that reader
+    re-reads and re-scans the whole file per target): this walks the file
+    ONCE, mirroring `parse_makefile_recipe`'s own header/recipe boundary
+    rules (a blank or indented line continues the current recipe; the
+    first non-indented, non-blank line ends it) so results agree with the
+    shared reader. First occurrence wins for a duplicated target name,
+    matching `parse_makefile_recipe`'s own first-match behavior.
+    """
+    recipes: dict[str, str] = {}
+    current_target: str | None = None
+    current_lines: list[str] = []
+
+    def _flush():
+        nonlocal current_target, current_lines
+        if current_target is not None and current_target not in recipes:
+            recipes[current_target] = "".join(current_lines)
+        current_target = None
+        current_lines = []
+
+    for line in text.splitlines(keepends=True):
+        header_match = _HEADER_LINE_RE.match(line)
+        if header_match:
+            _flush()
+            current_target = header_match.group(1)
+            continue
+        if current_target is None:
+            continue
+        if line.strip() == "" or line[:1] in (" ", "\t"):
+            current_lines.append(line)
+        else:
+            _flush()
+    _flush()
+    return recipes
+
+
+def _real_recipe_line_count(recipe_text: str) -> int:
+    """Count `recipe_text`'s real lines: blank lines and comment-only
+    lines (first non-whitespace character starts a Make comment) are not
+    real lines."""
+    count = 0
+    for line in recipe_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        count += 1
+    return count
 
 
 def _resolve_across_stacks(name, detected_stacks, get_tooling):
@@ -138,6 +228,14 @@ def check_makefile_shape(repo_root: str, get_tooling=None) -> list[dict]:
     present_targets = parse_makefile_targets(makefile_path)
     hooks = parse_precommit_hooks(precommit_path)
     detected = detect_stacks(repo_root)
+
+    # Read once, shared by the reachability check and the recipe-cap
+    # check's single-pass recipe map (Task 2) -- avoids re-reading the
+    # file per check and per target.
+    makefile_text = ""
+    if os.path.isfile(makefile_path):
+        with open(makefile_path, encoding="utf-8") as handle:
+            makefile_text = handle.read()
 
     findings: list[dict] = []
 
@@ -344,6 +442,76 @@ def check_makefile_shape(repo_root: str, get_tooling=None) -> list[dict]:
                     "needs_research": False,
                     "criticality": CRITICALITY_HIGH,
                     "summary": recommendation,
+                }
+            )
+
+    # Help/fail reachability (ROADMAP Phase 10 SC3).
+    default_goal_name = _default_goal_target(makefile_text)
+    has_catchall = _has_stemless_catchall(makefile_text)
+    default_goal_satisfied = (
+        default_goal_name is not None and default_goal_name in present_targets
+    )
+    if not default_goal_satisfied and not has_catchall:
+        if default_goal_name is not None:
+            reach_summary = (
+                f"`.DEFAULT_GOAL` points at '{default_goal_name}', which is not a "
+                "defined target, so an unknown-target invocation has no reachable "
+                "help path"
+            )
+        else:
+            reach_summary = (
+                "no `.DEFAULT_GOAL` directive naming a real target and no "
+                "stemless catch-all `%:` rule, so an unknown-target invocation "
+                "has no reachable help path"
+            )
+        findings.append(
+            {
+                "target": "help",
+                "present": "help" in present_targets,
+                "issue": "no_reachable_help_path",
+                "recommendation": (
+                    "add a `.DEFAULT_GOAL := help`-style directive naming a real "
+                    "target, or a stemless catch-all rule (`%:`) that prints usage"
+                ),
+                "needs_research": False,
+                "criticality": CRITICALITY_MEDIUM,
+                "summary": reach_summary,
+            }
+        )
+
+    # 3-line recipe cap (ROADMAP Phase 10 SC4). The exempt set has exactly
+    # two members, both fixture-discriminable: the target named by the
+    # default-goal directive, and a target literally named `help`. The
+    # stemless catch-all is deliberately NOT a member --
+    # `parse_makefile_targets`'s header pattern contains no `%`, so a
+    # catch-all never enters `present_targets` and this loop never sees its
+    # body; an exemption for it would be unreachable by construction.
+    recipe_exempt_targets = set()
+    if default_goal_name is not None and default_goal_name in present_targets:
+        recipe_exempt_targets.add(default_goal_name)
+    if "help" in present_targets:
+        recipe_exempt_targets.add("help")
+
+    recipe_map = _build_recipe_map(makefile_text)
+    for target in sorted(present_targets):
+        if target in recipe_exempt_targets:
+            continue
+        line_count = _real_recipe_line_count(recipe_map.get(target, ""))
+        if line_count > 3:
+            cap_recommendation = (
+                f"extract `{target}`'s {line_count}-line recipe into a shell "
+                "script the target then calls"
+            )
+            findings.append(
+                {
+                    "target": target,
+                    "present": True,
+                    "issue": "recipe_too_long",
+                    "line_count": line_count,
+                    "recommendation": cap_recommendation,
+                    "needs_research": False,
+                    "criticality": CRITICALITY_MEDIUM,
+                    "summary": cap_recommendation,
                 }
             )
 
