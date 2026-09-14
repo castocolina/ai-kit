@@ -138,3 +138,51 @@ file this task scored via:
 - `JUDGED_PATH`: `skills/ai-kit-project-rules-precommit/SKILL.md`
 - `JUDGED_COMMIT`: `741fa1b565bc57598e7f759b0de0d97424084d02`
 - Score: 103/120, 0 Critical, 0 Important, 0/3 fix iterations used.
+
+## Naming-analyzer verdict
+
+NAMING_VERDICT: confirmed -- "ai-kit-project-rules-precommit" is kept as-is, no rename applied.
+
+`/naming-analyzer` was run against the skill directory name `ai-kit-project-rules-precommit`, as
+the project's established skill-authoring pipeline step (scaffold, then judge, then name). The
+analysis, applying the skill's own decision framework (vagueness, misleading-name, abbreviation,
+convention, and length checks) to a package/directory name rather than a variable:
+
+- **Not vague**: "precommit" precisely names the audited artifact (`.pre-commit-config.yaml` /
+  the `pre-commit` framework) -- no generic placeholder (`data`, `stuff`, `checker2`) anywhere in
+  the name.
+- **Not misleading**: the name promises a pre-commit-configuration-domain checker and the skill
+  does exactly that (Makefile<->pre-commit parity, 6-category taxonomy classification,
+  enable-everything detection, Duplicate-code/Dead-code absence, ruff/golangci-lint-specific
+  anti-patterns) and nothing else -- it does not audit AGENTS.md prose or Makefile target shape
+  itself (it only READS the Makefile to compare against pre-commit hooks), which live in sibling
+  skills.
+- **Not mis-abbreviated**: "precommit" is the compound-word form of "pre-commit" with the
+  internal hyphen dropped, matching the sibling segments' own bare-noun convention (`agents`,
+  `makefile` -- neither sibling segment carries an internal hyphen either). Keeping the internal
+  hyphen (`ai-kit-project-rules-pre-commit`) would risk the segment being misread as two
+  domain words ("pre" and "commit") rather than one, since hyphens are this family's own
+  segment separator -- dropping it is the correct call, not an information-losing abbreviation.
+- **Family-convention match**: exact match to the `ai-kit-project-rules-<domain>` pattern both
+  sibling checkers and the eventual orchestrator (`ai-kit-project-rules-all`) already use --
+  consistency across a family carries more value here than a marginally different alternative
+  would.
+- **Length**: 31 characters, comfortably under the 64-character frontmatter `name:` limit
+  `skill-judge`'s own D4 dimension checks, and in the same range as both siblings
+  (`ai-kit-project-rules-makefile` at 30, `ai-kit-project-rules-agents` at 28).
+
+**Alternative considered and rejected during this analysis**: `ai-kit-project-rules-parity`
+(naming only the parity check) is shorter but materially misleading -- this skill's scope is
+five distinct check families (parity, taxonomy, enable-everything, category-absence,
+ruff/golangci-lint-specific), and "parity" alone would promise a narrower skill than the one that
+actually exists, the same "name doesn't match behavior" failure mode the naming-analyzer's own
+Critical-severity category flags. `ai-kit-project-rules-pre-commit` (with the internal hyphen
+retained) was also considered and rejected for the segmentation-ambiguity reason above. Neither
+alternative is proposed.
+
+Per this task's instruction, the name is NOT this task's to change even where the verdict is
+"confirmed": `ai-kit-project-rules-precommit` is a user-decided, milestone-wide scheme that
+ROADMAP Phases 11-15 and Phase 15's own Success Criterion 1 name literally (`"invokes all 6
+checkers' check (agents, makefile, precommit, arch, docker, cicd)"`). Since the verdict is a
+confirmation rather than a proposed alternative, there is no four-phase blast radius to name here
+-- the confirmation simply closes this pipeline step with no open question for the user.
