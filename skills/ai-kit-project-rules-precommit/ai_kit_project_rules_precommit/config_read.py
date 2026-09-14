@@ -247,9 +247,48 @@ def first_existing_candidate(repo_root: str, candidates: tuple[str, ...], reader
     return None, NOT_READABLE
 
 
+# Plan 11-03 Task 2's child-config discovery helper (D-C6). `_PRUNED_DIR_NAMES`
+# is COPIED (never imported -- this skill does not import the sibling's
+# package, per the constraints.md shared-package import convention) from
+# `ai_kit_project_rules_makefile.makefile_checker._PRUNED_DIR_NAMES`
+# (`makefile_checker.py:92-94`), so this walk and the sibling's cannot
+# independently drift.
+_PRUNED_DIR_NAMES = frozenset(
+    {"node_modules", "vendor", "dist", "build", "target", "venv", "__pycache__"}
+)
+# Caps the walk so a pathological target-repo tree cannot hang a caller
+# (T-11-15): once this many directories have been visited, the walk stops
+# with whatever it has found so far.
+_MAX_WALK_DIRECTORIES = 5000
+
+
+def iter_non_root_files(repo_root: str, filenames: tuple[str, ...]):
+    """Bounded, pruned walk yielding repo-relative paths to every
+    non-root file under `repo_root` whose base name is in `filenames`.
+    Never descends into a dot-prefixed or pruned directory (the SAME
+    pruning set the sibling `ai-kit-project-rules-makefile` skill's own
+    walk uses), and stops once `_MAX_WALK_DIRECTORIES` directories have
+    been visited -- never a second walk with different limits."""
+    abs_repo_root = os.path.abspath(repo_root)
+    visited = 0
+    for dirpath, dirnames, files in os.walk(repo_root):
+        visited += 1
+        if visited > _MAX_WALK_DIRECTORIES:
+            break
+        dirnames[:] = [
+            d for d in dirnames if not d.startswith(".") and d not in _PRUNED_DIR_NAMES
+        ]
+        if os.path.abspath(dirpath) == abs_repo_root:
+            continue
+        for filename in files:
+            if filename in filenames:
+                yield os.path.relpath(os.path.join(dirpath, filename), repo_root)
+
+
 __all__ = [
     "NOT_READABLE",
     "first_existing_candidate",
+    "iter_non_root_files",
     "read_config_value",
     "read_json",
     "read_toml",

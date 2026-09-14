@@ -16,6 +16,7 @@ from ai_kit_project_rules_precommit import (
     config_read,
     parity_checker,
     precommit_checker,
+    ruff_checks,
     stack_cache,
     taxonomy_checker,
 )
@@ -1124,6 +1125,179 @@ class TestReadYamlValueBlockSequenceContract(unittest.TestCase):
             self.assertEqual(list(disable), ["staticcheck", "errcheck"])
             self.assertEqual(list(enable), ["govet", "ineffassign"])
             self.assertEqual(str(enable_all).lower(), "false")
+
+
+def _ruff_findings_by_issue(repo_root, issue):
+    return [
+        x
+        for x in precommit_checker.check_precommit_rules(repo_root)
+        if x.get("issue") == issue
+    ]
+
+
+class TestRuffTypeSafety(unittest.TestCase):
+    def test_annotation_family_no_type_checker_is_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "pyproject.toml"),
+                '[tool.ruff.lint]\nselect = ["ANN", "TC"]\n',
+            )
+            findings = _ruff_findings_by_issue(repo, "annotation_rules_are_not_type_checking")
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["config_path"], "pyproject.toml")
+
+    def test_annotation_family_with_type_checking_hook_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "pyproject.toml"),
+                '[tool.ruff.lint]\nselect = ["ANN", "TC"]\n',
+            )
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                "repos:\n  - repo: local\n    hooks:\n      - id: mypy\n        entry: mypy .\n",
+            )
+            self.assertEqual(
+                _ruff_findings_by_issue(repo, "annotation_rules_are_not_type_checking"), []
+            )
+
+    def test_annotation_family_with_type_checking_makefile_target_no_hook_not_flagged(self):
+        """The SECOND evidence source: a tool-shaped Makefile target
+        resolving into type-checking, with NO matching hook, must ALSO
+        suppress the finding -- the half a hooks-only implementation
+        gets wrong."""
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "pyproject.toml"),
+                '[tool.ruff.lint]\nselect = ["ANN", "TC"]\n',
+            )
+            _write(os.path.join(repo, "Makefile"), "mypy:\n\tmypy .\n")
+            self.assertEqual(
+                _ruff_findings_by_issue(repo, "annotation_rules_are_not_type_checking"), []
+            )
+
+    def test_unrelated_rule_containing_family_letters_is_not_flagged(self):
+        """Prefix, not substring: 'FANN001' contains 'ANN' but does not
+        START with it, and must not trigger the finding."""
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "pyproject.toml"),
+                '[tool.ruff.lint]\nselect = ["FANN001"]\n',
+            )
+            self.assertEqual(
+                _ruff_findings_by_issue(repo, "annotation_rules_are_not_type_checking"), []
+            )
+
+
+class TestRuffPreviewPin(unittest.TestCase):
+    _PREVIEW_PY = '[tool.ruff]\npreview = true\n[tool.ruff.lint]\nselect = ["E"]\n'
+
+    def test_preview_with_no_pin_is_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), self._PREVIEW_PY)
+            findings = _ruff_findings_by_issue(repo, "preview_without_pinned_version")
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["config_path"], "pyproject.toml")
+
+    def test_preview_with_exact_dependency_pin_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "pyproject.toml"),
+                self._PREVIEW_PY + '\n[project]\ndependencies = ["ruff==0.14.3"]\n',
+            )
+            self.assertEqual(_ruff_findings_by_issue(repo, "preview_without_pinned_version"), [])
+
+    def test_preview_with_hook_repo_revision_pin_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), self._PREVIEW_PY)
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                (
+                    "repos:\n"
+                    "  - repo: https://github.com/astral-sh/ruff-pre-commit\n"
+                    "    rev: v0.14.0\n"
+                    "    hooks:\n"
+                    "      - id: ruff\n"
+                ),
+            )
+            self.assertEqual(_ruff_findings_by_issue(repo, "preview_without_pinned_version"), [])
+
+    def test_preview_with_lockfile_pin_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), self._PREVIEW_PY)
+            _write(
+                os.path.join(repo, "uv.lock"),
+                '[[package]]\nname = "ruff"\nversion = "0.14.3"\n',
+            )
+            self.assertEqual(_ruff_findings_by_issue(repo, "preview_without_pinned_version"), [])
+
+
+def _child_ignore_findings(repo_root):
+    return _ruff_findings_by_issue(repo_root, "child_select_discards_parent_ignore")
+
+
+class TestRuffChildConfigInheritance(unittest.TestCase):
+    _PARENT_PY = '[tool.ruff.lint]\nselect = ["E"]\nignore = ["E501"]\n'
+
+    def test_child_discards_parent_ignore_is_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), self._PARENT_PY)
+            _write(
+                os.path.join(repo, "pkg", "ruff.toml"),
+                'extend = "../pyproject.toml"\n[lint]\nselect = ["F"]\n',
+            )
+            findings = _ruff_findings_by_issue(repo, "child_select_discards_parent_ignore")
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["config_path"], os.path.join("pkg", "ruff.toml"))
+
+    def test_child_with_own_ignore_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), self._PARENT_PY)
+            _write(
+                os.path.join(repo, "pkg", "ruff.toml"),
+                'extend = "../pyproject.toml"\n[lint]\nselect = ["F"]\nignore = ["E501"]\n',
+            )
+            self.assertEqual(_child_ignore_findings(repo), [])
+
+    def test_child_with_no_selection_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), self._PARENT_PY)
+            _write(os.path.join(repo, "pkg", "ruff.toml"), 'extend = "../pyproject.toml"\n')
+            self.assertEqual(_child_ignore_findings(repo), [])
+
+    def test_child_inside_pruned_directory_is_not_walked(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), self._PARENT_PY)
+            _write(
+                os.path.join(repo, "node_modules", "pkg", "ruff.toml"),
+                'extend = "../pyproject.toml"\n[lint]\nselect = ["F"]\n',
+            )
+            self.assertEqual(_child_ignore_findings(repo), [])
+
+
+class TestRuffChecksSelfClean(unittest.TestCase):
+    def test_this_repository_triggers_none_of_the_three_ruff_checks(self):
+        repo = _REPO
+        findings = [
+            x
+            for x in precommit_checker.check_precommit_rules(repo)
+            if x.get("category", "").startswith("ruff-")
+        ]
+        self.assertEqual(findings, [])
+
+
+class TestRuffChecksModuleDirectly(unittest.TestCase):
+    """Direct, non-CLI proof that each of the three functions exists at
+    the module level and returns the documented shape (single-finding
+    functions return None/dict, the child-config check returns a list)."""
+
+    def test_check_functions_return_documented_shapes(self):
+        with tempfile.TemporaryDirectory() as repo:
+            self.assertIsNone(ruff_checks.check_ruff_type_safety(repo))
+            self.assertIsNone(ruff_checks.check_ruff_preview_without_pin(repo))
+            self.assertEqual(
+                ruff_checks.check_ruff_child_config_discards_parent_ignore(repo), []
+            )
+            self.assertEqual(ruff_checks.build_ruff_findings(repo), [])
 
 
 if __name__ == "__main__":
