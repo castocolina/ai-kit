@@ -32,7 +32,14 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-project-rules-cicd"),
 )
 
-from ai_kit_project_rules_cicd import ci_parse, cicd_checker, cli, package_scripts, reuse_sources
+from ai_kit_project_rules_cicd import (
+    ci_parse,
+    cicd_checker,
+    cli,
+    gradle_tasks,
+    package_scripts,
+    reuse_sources,
+)
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
@@ -1794,6 +1801,346 @@ class TestPackageScriptsModuleDirect(unittest.TestCase):
             with self.subTest(filename=filename):
                 repo = _fixture({filename: "x\n"})
                 self.assertEqual(package_scripts.resolve_package_manager_runner(repo), "bun")
+
+
+# --------------------------------------------------------------------------- #
+# Plan 14-03 Task 2: the Gradle task reuse surface (D-C19, D-C19b, D-C20).
+# --------------------------------------------------------------------------- #
+
+_WF_SPOTLESS = "plugins {\n    id \"com.diffplug.spotless\" version \"6.25.0\"\n}\n"
+_BG_NO_SPOTLESS = "plugins {\n    id \"java\"\n}\n"
+_CI_SPOTLESS_STEP = "jobs:\n  j:\n    steps:\n    - run: spotless\n"
+_CI_JSCPD_STEP = "jobs:\n  j:\n    steps:\n    - run: jscpd .\n"
+
+
+class TestGradleDeclaredTaskExtraction(unittest.TestCase):
+    """D-C19 Route 1, extractor-level: each declaration form returns a
+    name the catalog cannot answer -- this tests the regexes alone."""
+
+    def test_bare_task_form(self):
+        self.assertIn("foo", gradle_tasks.extract_declared_task_names("task foo\n"))
+
+    def test_task_call_form(self):
+        self.assertIn("foo", gradle_tasks.extract_declared_task_names('task("foo")\n'))
+
+    def test_tasks_register_form(self):
+        self.assertIn(
+            "foo", gradle_tasks.extract_declared_task_names('tasks.register("foo")\n')
+        )
+
+    def test_tasks_register_typed_form(self):
+        self.assertIn(
+            "foo",
+            gradle_tasks.extract_declared_task_names('tasks.register<Copy>("foo")\n'),
+        )
+
+    def test_tasks_named_form(self):
+        self.assertIn("foo", gradle_tasks.extract_declared_task_names('tasks.named("foo")\n'))
+
+    def test_kotlin_by_tasks_registering_form(self):
+        self.assertIn(
+            "foo",
+            gradle_tasks.extract_declared_task_names("val foo by tasks.registering\n"),
+        )
+
+    def test_kotlin_by_tasks_creating_form(self):
+        self.assertIn(
+            "foo", gradle_tasks.extract_declared_task_names("val foo by tasks.creating\n")
+        )
+
+
+class TestGradleDeclaredTaskEndToEnd(unittest.TestCase):
+    """D-C19 Route 1, end-to-end: one method per declaration form using a
+    catalog-answerable task name, asserting a matching CI line is really
+    flagged (an extractor-only assertion passes even when the aggregator
+    never calls it)."""
+
+    def _assert_form_is_end_to_end_flagged(self, build_gradle_text):
+        repo = _fixture({"build.gradle": build_gradle_text, ".github/workflows/ci.yml": _CI_JSCPD_STEP})
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertEqual(findings[0]["reuse_surface"], "gradle")
+
+    def test_bare_task_end_to_end(self):
+        self._assert_form_is_end_to_end_flagged("task jscpd\n")
+
+    def test_task_call_end_to_end(self):
+        self._assert_form_is_end_to_end_flagged('task("jscpd")\n')
+
+    def test_tasks_register_end_to_end(self):
+        self._assert_form_is_end_to_end_flagged('tasks.register("jscpd")\n')
+
+    def test_tasks_register_typed_end_to_end(self):
+        self._assert_form_is_end_to_end_flagged('tasks.register<Copy>("jscpd")\n')
+
+    def test_tasks_named_end_to_end(self):
+        self._assert_form_is_end_to_end_flagged('tasks.named("jscpd")\n')
+
+    def test_kotlin_by_tasks_registering_end_to_end(self):
+        repo = _fixture(
+            {"build.gradle.kts": "val jscpd by tasks.registering\n", ".github/workflows/ci.yml": _CI_JSCPD_STEP}
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1, findings)
+
+
+class TestGradleRoute1NameIdentityLimit(unittest.TestCase):
+    """D-C19 Route 1's stated limit, pinned as behavior: a declared task's
+    identity is its NAME with no command body behind it, so D-C4's Route
+    3 is closed to it -- `jscpd` is admitted (name equals the tool name,
+    catalog-answerable), `jscpdReport` is not, and no finding anywhere
+    names that task. Written BEFORE the positive case, per this plan's
+    own instruction, so a later reader meets the limit first."""
+
+    def test_jscpd_report_negative_yields_zero_findings(self):
+        repo = _fixture(
+            {"build.gradle": 'tasks.register("jscpdReport")\n', ".github/workflows/ci.yml": _CI_JSCPD_STEP}
+        )
+        findings = _findings(repo)
+        self.assertEqual(findings, [])
+        # No finding anywhere names that task.
+        self.assertTrue(all("jscpdReport" not in json.dumps(f) for f in findings))
+
+    def test_jscpd_positive_covers_ci_jscpd_line(self):
+        repo = _fixture(
+            {"build.gradle": 'tasks.register("jscpd")\n', ".github/workflows/ci.yml": _CI_JSCPD_STEP}
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_surface"], "gradle")
+
+
+class TestGradlePluginTableEvidence(unittest.TestCase):
+    """D-C19 Route 2: a plugin-contributed task is a reuse source only
+    when the plugin id is actually present in the build script."""
+
+    def test_plugin_present_covers_ci_line_with_wrapper(self):
+        repo = _fixture(
+            {"build.gradle": _WF_SPOTLESS, "gradlew": "#!/bin/sh\n", ".github/workflows/ci.yml": _CI_SPOTLESS_STEP}
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "./gradlew spotlessCheck")
+
+    def test_plugin_present_without_wrapper_uses_bare_gradle(self):
+        repo = _fixture({"build.gradle": _WF_SPOTLESS, ".github/workflows/ci.yml": _CI_SPOTLESS_STEP})
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "gradle spotlessCheck")
+
+    def test_plugin_absent_yields_zero_findings_and_never_names_the_task(self):
+        repo = _fixture(
+            {"build.gradle": _BG_NO_SPOTLESS, "gradlew": "#!/bin/sh\n", ".github/workflows/ci.yml": _CI_SPOTLESS_STEP}
+        )
+        findings = _findings(repo)
+        self.assertEqual(findings, [])
+
+    def test_build_gradle_kts_only_is_read_identically(self):
+        repo = _fixture(
+            {"build.gradle.kts": _WF_SPOTLESS, "gradlew": "#!/bin/sh\n", ".github/workflows/ci.yml": _CI_SPOTLESS_STEP}
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "./gradlew spotlessCheck")
+
+    def test_both_dsl_files_contribute_the_union(self):
+        repo = _fixture(
+            {
+                "build.gradle": _WF_SPOTLESS,
+                "build.gradle.kts": 'tasks.register("jscpd")\n',
+                "gradlew": "#!/bin/sh\n",
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: spotless\n    - run: jscpd .\n"
+                ),
+            }
+        )
+        findings = _findings(repo)
+        surfaces = sorted(f["reuse_surface"] for f in findings)
+        self.assertEqual(surfaces, ["gradle", "gradle"])
+        self.assertEqual(len(findings), 2)
+
+
+class TestGradleLifecycleExclusion(unittest.TestCase):
+    """D-C19: generic lifecycle tasks are never reuse sources."""
+
+    def test_check_task_is_never_a_reuse_source(self):
+        repo = _fixture(
+            {
+                "build.gradle": 'tasks.register("check")\n',
+                "gradlew": "#!/bin/sh\n",
+                ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: check\n",
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_build_test_assemble_are_never_reuse_sources(self):
+        for name in ("build", "test", "assemble"):
+            with self.subTest(name=name):
+                repo = _fixture(
+                    {
+                        "build.gradle": f'tasks.register("{name}")\n',
+                        "gradlew": "#!/bin/sh\n",
+                        ".github/workflows/ci.yml": f"jobs:\n  j:\n    steps:\n    - run: {name}\n",
+                    }
+                )
+                self.assertEqual(_findings(repo), [])
+
+
+class TestGradleFourSurfacePrecedence(unittest.TestCase):
+    """D-C16 across all four surfaces: a repo where a Makefile target, a
+    hook, a script AND a task all cover one tool still produces exactly
+    one finding, recommending the Makefile target."""
+
+    def test_all_four_surfaces_collapse_to_one_makefile_finding(self):
+        mk = "lint:\n\teslint .\n"
+        pc = "repos:\n- repo: local\n  hooks:\n  - id: eslint\n    entry: eslint .\n    language: system\n"
+        pj = json.dumps({"scripts": {"lint": "eslint ."}})
+        bg = 'tasks.register("eslint")\n'
+        repo = _fixture(
+            {
+                "Makefile": mk,
+                ".pre-commit-config.yaml": pc,
+                "package.json": pj,
+                "build.gradle": bg,
+                "gradlew": "#!/bin/sh\n",
+                ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: eslint .\n",
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_surface"], "makefile")
+        self.assertEqual(findings[0]["reuse_command"], "make lint")
+
+
+class TestGradleDegradation(unittest.TestCase):
+    """D-C19: absent, empty, unreadable-binary and syntactically-broken
+    build scripts each leave the inventory usable and never raise."""
+
+    def test_absent_build_script_leaves_inventory_usable(self):
+        repo = _fixture({".github/workflows/ci.yml": _CI_JSCPD_STEP})
+        self.assertEqual(_findings(repo), [])
+
+    def test_empty_build_script_leaves_inventory_usable(self):
+        repo = _fixture({"build.gradle": "", ".github/workflows/ci.yml": _CI_JSCPD_STEP})
+        self.assertEqual(_findings(repo), [])
+
+    def test_unreadable_binary_build_script_does_not_raise(self):
+        repo = tempfile.mkdtemp()
+        _write(os.path.join(repo, ".github/workflows/ci.yml"), _CI_JSCPD_STEP)
+        with open(os.path.join(repo, "build.gradle"), "wb") as handle:
+            handle.write(b"\xff\xfe\x00 binary, not utf-8\n")
+        self.assertEqual(_findings(repo), [])
+
+    def test_syntactically_broken_build_script_does_not_raise(self):
+        repo = _fixture(
+            {"build.gradle": "{{{ not valid groovy at all ((( \n", ".github/workflows/ci.yml": _CI_JSCPD_STEP}
+        )
+        result = _findings(repo)
+        self.assertIsInstance(result, list)
+
+
+class TestGradleNoGateLeak(unittest.TestCase):
+    """D-C19b: the plugin table's fourth admission route must not leak
+    off the Gradle surface. Each of `ktlint`, `detekt` and
+    `dependency-check` is a plugin-table tool identity the shared catalog
+    cannot answer -- on the three OTHER surfaces every admission route
+    must refuse it. Fixtures are deliberately shaped so a leak is the
+    ONLY route that could admit them: `lint:` running `dependency-check`
+    (not a `dependency-check:` target), `{"lint": "detekt"}` (not
+    `{"detekt": "detekt"}`) -- the naive spellings would be admitted
+    legitimately through Route 3 and the criterion would pass for the
+    wrong reason."""
+
+    def test_entry_less_ktlint_hook_is_never_a_reuse_source(self):
+        pc = "repos:\n- repo: local\n  hooks:\n  - id: ktlint\n"
+        repo = _fixture(
+            {".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: ktlint\n"}
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_detekt_named_package_json_script_is_never_a_reuse_source(self):
+        pj = json.dumps({"scripts": {"lint": "detekt"}})
+        repo = _fixture(
+            {"package.json": pj, ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: detekt\n"}
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_dependency_check_named_makefile_target_is_never_a_reuse_source(self):
+        mk = "lint:\n\tdependency-check\n"
+        repo = _fixture(
+            {
+                "Makefile": mk,
+                ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: dependency-check\n",
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_ktlint_via_gradle_plugin_is_a_reuse_source(self):
+        bg = 'plugins {\n    id "org.jlleitschuh.gradle.ktlint"\n}\n'
+        repo = _fixture(
+            {"build.gradle": bg, "gradlew": "#!/bin/sh\n", ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: ktlint\n"}
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_surface"], "gradle")
+        self.assertEqual(findings[0]["reuse_command"], "./gradlew ktlintCheck")
+
+
+class TestGradlePriorSurfacesUnaffected(unittest.TestCase):
+    """The gate's new route must not change any prior surface's answer:
+    one previously-covered and one previously-uncovered identity per
+    surface still resolve the same way."""
+
+    def test_makefile_ruff_still_resolves(self):
+        repo = _fixture(
+            {"Makefile": _MK_RUFF_MYPY, ".gitlab-ci.yml": "j:\n  script:\n  - ruff check .\n"}
+        )
+        self.assertEqual(len(_findings(repo)), 1)
+
+    def test_makefile_unknown_still_does_not_resolve(self):
+        repo = _fixture(
+            {
+                "Makefile": "my-house-style:\n",
+                ".gitlab-ci.yml": "j:\n  script:\n  - my-house-style x\n",
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_precommit_ruff_still_resolves(self):
+        pc = (
+            "repos:\n- repo: local\n  hooks:\n  - id: ruff\n"
+            "    entry: ruff check\n    language: system\n"
+        )
+        repo = _fixture({".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": _CI_RUFF_STEP})
+        self.assertEqual(len(_findings(repo)), 1)
+
+    def test_precommit_unknown_still_does_not_resolve(self):
+        pc = "repos:\n- repo: local\n  hooks:\n  - id: my-house-style\n"
+        repo = _fixture(
+            {
+                ".pre-commit-config.yaml": pc,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: my-house-style .\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_package_json_lint_still_resolves(self):
+        repo = _fixture({"package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        self.assertEqual(len(_findings(repo)), 1)
+
+    def test_package_json_unknown_still_does_not_resolve(self):
+        pj = json.dumps({"scripts": {"lint": "some-mystery-tool x"}})
+        repo = _fixture(
+            {
+                "package.json": pj,
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: some-mystery-tool x\n"
+                ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
 
 
 if __name__ == "__main__":

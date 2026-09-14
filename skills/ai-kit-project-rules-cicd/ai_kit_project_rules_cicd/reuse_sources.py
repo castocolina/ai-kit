@@ -37,7 +37,7 @@ from ai_kit_rules_common.precommit_parse import parse_precommit_hooks
 from ai_kit_rules_common.tool_catalog import OUT_OF_TAXONOMY_GROUPS, resolve_tool_category
 from ai_kit_rules_common.yaml_text import strip_yaml_quotes
 
-from . import package_scripts
+from . import gradle_tasks, package_scripts
 
 # D-C16: the four-surface precedence order, declared once here so plan
 # 14-03 APPENDS to a settled rule rather than inventing its own tie-break.
@@ -164,12 +164,16 @@ def keys_match(key_a: str, key_b: str) -> bool:
 
 
 def is_tool_shaped_identity(
-    identity: str, source_name: str, derived_from_command_body: bool
+    identity: str,
+    source_name: str,
+    derived_from_command_body: bool,
+    from_plugin_table: bool = False,
 ) -> bool:
-    """D-C4's tool-shaped identity gate -- the ONE function BOTH the
-    Makefile surface and (plan 14-02) the pre-commit-hook surface call,
-    never a per-surface copy (T-14-18). An identity makes its source
-    USABLE only when at least one route holds:
+    """D-C4's tool-shaped identity gate -- the ONE function the Makefile
+    surface, the pre-commit-hook surface (plan 14-02), and the
+    package-json and Gradle surfaces (plan 14-03) ALL call, never a
+    per-surface copy (T-14-18). An identity makes its source USABLE only
+    when at least one route holds:
       Route 1: `resolve_tool_category(identity)` is not `None`.
       Route 2: `identity` is an out-of-taxonomy marker (exact,
         casefolded), read directly from `OUT_OF_TAXONOMY_GROUPS` --
@@ -182,7 +186,23 @@ def is_tool_shaped_identity(
         recipe line, a hook `entry:`, a script body), since D-C3 clause
         (c) and similar name-equals-own-name shapes elsewhere in this
         family would otherwise make Route 3 a tautology.
+      Route 4 (D-C19b, plan 14-03): `from_plugin_table` is `True`. This
+        is a PARAMETER the CALLER passes, DEFAULTING TO OFF, never a
+        membership test this function performs on `identity` itself --
+        only the Gradle surface ever passes it, and only after it has
+        already confirmed the pinned plugin table's plugin-id evidence
+        is present in the build script. Table membership is a property
+        of the STRING, not of where the string came from: `ktlint`,
+        `detekt` and `dependency-check` are ordinary names a repo can
+        give a pre-commit hook, a `package.json` script, or a Makefile
+        target, and a membership-test implementation would silently
+        admit all three there too. Passing the flag from the caller
+        keeps the route meaning "this identity came OUT OF the plugin
+        table", never "this identity happens to look like something in
+        the plugin table".
     Never raises."""
+    if from_plugin_table:
+        return True
     if resolve_tool_category(identity) is not None:
         return True
     folded = identity.strip().casefold()
@@ -359,6 +379,70 @@ def build_package_json_reuse_records(repo_root: str) -> list[dict]:
     return records
 
 
+def build_gradle_reuse_records(repo_root: str) -> list[dict]:
+    """D-C19/D-C19b/D-C20: the Gradle task surface's `{"key", "surface",
+    "reuse_command"}` records, both routes over the union of root
+    `build.gradle` and `build.gradle.kts` text.
+
+    Route 1 (declared tasks): the identity IS the task name --
+    `derived_from_command_body=False` is passed to the gate, since this
+    surface never sees a task's body, which is what keeps Route 3 closed
+    to a Route-1 identity (see `gradle_tasks`'s module docstring). A
+    lifecycle task name (`check`, `build`, `test`, `assemble`) is
+    excluded before the gate is ever consulted.
+
+    Route 2 (plugin-contributed tasks): `gradle_tasks.plugin_table_matches`
+    already required the plugin-id evidence; this function passes
+    `from_plugin_table=True` to the gate for exactly those rows -- D-C19b's
+    fourth route, scoped to this surface alone by the caller-passed flag,
+    never a membership test the gate performs.
+
+    The reuse invocation is D-C20's wrapper-aware form, naming the task's
+    REAL name. `gradle_tasks.read_gradle_build_scripts` already degrades
+    every malformed shape to empty text, so this function never raises
+    either."""
+    text = gradle_tasks.read_gradle_build_scripts(repo_root)
+    records: list[dict] = []
+
+    seen_declared: set[str] = set()
+    for task_name in gradle_tasks.extract_declared_task_names(text):
+        if task_name in gradle_tasks.LIFECYCLE_TASK_NAMES:
+            continue
+        if task_name in seen_declared:
+            continue
+        seen_declared.add(task_name)
+        if not is_tool_shaped_identity(task_name, task_name, False):
+            continue
+        key = normalize_token(task_name)
+        records.append(
+            {
+                "key": key,
+                "surface": "gradle",
+                "reuse_command": gradle_tasks.resolve_gradle_invocation(repo_root, task_name),
+            }
+        )
+
+    seen_plugin_route: set[str] = set()
+    for task_name, tool_identity in gradle_tasks.plugin_table_matches(text):
+        if task_name in gradle_tasks.LIFECYCLE_TASK_NAMES:
+            continue
+        if task_name in seen_plugin_route:
+            continue
+        seen_plugin_route.add(task_name)
+        if not is_tool_shaped_identity(tool_identity, task_name, False, from_plugin_table=True):
+            continue
+        key = normalize_token(tool_identity)
+        records.append(
+            {
+                "key": key,
+                "surface": "gradle",
+                "reuse_command": gradle_tasks.resolve_gradle_invocation(repo_root, task_name),
+            }
+        )
+
+    return records
+
+
 def build_reuse_inventory(repo_root: str) -> list[dict]:
     """The repo's usable reuse sources as `{"key", "surface",
     "reuse_command"}` records, in `SURFACE_ORDER`'s fixed order (D-C16):
@@ -415,11 +499,19 @@ def build_reuse_inventory(repo_root: str) -> list[dict]:
         seen_keys.add(record["key"])
         records.append(record)
 
+    # SURFACE_ORDER position 4: gradle.
+    for record in build_gradle_reuse_records(repo_root):
+        if record["key"] in seen_keys:
+            continue
+        seen_keys.add(record["key"])
+        records.append(record)
+
     return records
 
 
 __all__ = [
     "SURFACE_ORDER",
+    "build_gradle_reuse_records",
     "build_package_json_reuse_records",
     "build_precommit_reuse_records",
     "build_reuse_inventory",
