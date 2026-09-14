@@ -971,6 +971,177 @@ class TestRemediationArchKind(unittest.TestCase):
         self.assertEqual(result["remediate"][0]["id"], "some-makefile-target")
 
 
+class TestRemediationDockerKind(unittest.TestCase):
+    """Additive coverage for `STRUCTURAL_KINDS` growing to include
+    `"docker"` (Phase 13 plan 01). Every case here must leave
+    `TestRemediation`'s, `TestRemediationPrecommitKind`'s, and
+    `TestRemediationArchKind`'s existing assertions untouched."""
+
+    def test_structural_kinds_has_four_kinds_original_three_unchanged(self):
+        self.assertEqual(STRUCTURAL_KINDS[:3], ("makefile", "precommit", "arch"))
+        self.assertIn("docker", STRUCTURAL_KINDS)
+        self.assertEqual(len(STRUCTURAL_KINDS), len(set(STRUCTURAL_KINDS)))
+
+    def test_backcompat_report_carrying_only_three_pre_existing_kinds_is_byte_identical(self):
+        report = {
+            "makefile": [
+                {
+                    "target": "x",
+                    "criticality": 3,
+                    "summary": "s",
+                    "recommendation": "r",
+                    "issue": "i",
+                },
+            ],
+            "precommit": [
+                {
+                    "category": "p",
+                    "criticality": 1,
+                    "summary": "s2",
+                    "recommendation": "r2",
+                },
+            ],
+            "arch": [
+                {
+                    "category": "a",
+                    "criticality": 2,
+                    "summary": "s3",
+                    "recommendation": "r3",
+                },
+            ],
+        }
+        result = build_remediation(report)
+        self.assertEqual(
+            result["remediate"],
+            [
+                {
+                    "kind": "precommit",
+                    "id": "p",
+                    "criticality": 1,
+                    "summary": "s2",
+                    "issue": None,
+                    "auto_apply": True,
+                },
+                {
+                    "kind": "arch",
+                    "id": "a",
+                    "criticality": 2,
+                    "summary": "s3",
+                    "issue": None,
+                    "auto_apply": True,
+                },
+                {
+                    "kind": "makefile",
+                    "id": "x",
+                    "criticality": 3,
+                    "summary": "s",
+                    "issue": "i",
+                    "auto_apply": True,
+                },
+            ],
+        )
+        self.assertEqual(result["blocked"], [])
+
+    def test_all_four_kinds_order_as_one_list_disagreeing_with_insertion_order(self):
+        # Insertion order is makefile-then-precommit-then-arch-then-docker;
+        # criticality order disagrees on purpose (docker=1, arch=2,
+        # makefile=3, precommit=4) -- a per-kind implementation would
+        # print insertion order instead.
+        report = {
+            "makefile": [
+                {"target": "m", "criticality": 3, "summary": "s", "recommendation": "r"}
+            ],
+            "precommit": [
+                {"category": "p", "criticality": 4, "summary": "s", "recommendation": "r"}
+            ],
+            "arch": [{"category": "a", "criticality": 2, "summary": "s", "recommendation": "r"}],
+            "docker": [
+                {
+                    "category": "docker-target-family",
+                    "target": "docker-up",
+                    "criticality": 1,
+                    "summary": "s",
+                    "recommendation": "r",
+                }
+            ],
+        }
+        result = build_remediation(report)
+        self.assertEqual(
+            [e["kind"] for e in result["remediate"]],
+            ["docker", "arch", "makefile", "precommit"],
+        )
+
+    def test_docker_kind_advisory_disables_auto_apply(self):
+        report = {
+            "docker": [
+                {
+                    "category": "docker-local-runbook",
+                    "criticality": 3,
+                    "summary": "s",
+                    "recommendation": "r",
+                    "advisory": True,
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(len(result["remediate"]), 1)
+        self.assertFalse(result["remediate"][0]["auto_apply"])
+        self.assertEqual(result["remediate"][0]["kind"], "docker")
+
+    def test_docker_kind_needs_research_goes_to_blocked(self):
+        report = {
+            "docker": [
+                {
+                    "category": "docker-target-family",
+                    "criticality": 3,
+                    "summary": "s",
+                    "recommendation": None,
+                    "needs_research": True,
+                    "stacks": ["python"],
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(result["remediate"], [])
+        self.assertEqual(len(result["blocked"]), 1)
+        self.assertEqual(result["blocked"][0]["kind"], "docker")
+        self.assertEqual(result["blocked"][0]["stacks"], ["python"])
+
+    def test_identifier_precedence_target_key_wins_for_docker_target_findings(self):
+        # remediation.py:88's `finding.get("target", finding.get("category"))`
+        # pinned as a property, not left implicit -- this is the shared-module
+        # fact the docker skill's D-D3 `target`-key rule depends on for its
+        # target-family findings (the one place in that skill the key is
+        # correct).
+        report = {
+            "docker": [
+                {
+                    "target": "docker-up",
+                    "category": "docker-target-family",
+                    "criticality": 3,
+                    "summary": "s",
+                    "recommendation": "r",
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(result["remediate"][0]["id"], "docker-up")
+
+    def test_identifier_precedence_category_only_for_docker_runbook_finding(self):
+        report = {
+            "docker": [
+                {
+                    "category": "docker-local-runbook",
+                    "criticality": 3,
+                    "summary": "s",
+                    "recommendation": "r",
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(result["remediate"][0]["id"], "docker-local-runbook")
+
+
 from ai_kit_rules_common import stack_cache as _shared_stack_cache
 from ai_kit_rules_common.stack_cache import validate_stack_payload
 
