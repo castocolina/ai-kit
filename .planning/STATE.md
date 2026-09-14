@@ -3,18 +3,18 @@ gsd_state_version: "1.0"
 milestone: v1.2
 current_phase: 11
 current_phase_name: Pre-commit Rules Checker (ai-kit-project-rules-precommit)
-current_plan: 3
+current_plan: 4
 status: executing
-stopped_at: Completed 11-02-PLAN.md
-last_updated: "2026-09-14T10:02:10.303Z"
+stopped_at: Completed 11-03-PLAN.md
+last_updated: "2026-09-14T10:43:24.181Z"
 last_activity: 2026-09-14
 last_activity_desc: Phase 10 complete, transitioned to Phase 11
-state_head: 0e29d8598618c984cca2536bb6883632d8980381
+state_head: a01cac81d90bcdc89fbe5c6768056f85ab74de38
 progress:
   total_phases: 17
   completed_phases: 1
   total_plans: 18
-  completed_plans: 16
+  completed_plans: 17
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 ## Current Position
 
 Phase: 11 — Pre-commit Rules Checker (ai-kit-project-rules-precommit)
-Current Plan: 3
+Current Plan: 4
 Total Plans in Phase: 4
 Status: Ready to execute
 Last activity: 2026-09-14 — Plan 11-01 executed (ai-kit-project-rules-precommit wired end-to-end)
@@ -94,6 +94,7 @@ Last activity: 2026-09-14 — Plan 11-01 executed (ai-kit-project-rules-precommi
 | Phase 10 P03 | ~5min | 3 tasks | 5 files |
 | Phase 11-pre-commit-rules-checker-ai-kit-project-rules-precommit P01 | 50min | 3 tasks | 16 files |
 | Phase 11 P02 | n/a | 3 tasks | 7 files |
+| Phase 11 P03 | single session | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -164,6 +165,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 11]: [Phase 11 P01]: Discovered (not fixed) that ai-kit's own Makefile 'lint' target accidentally satisfies D-P2 clause (ii)'s bare short-name 'lint', producing an unplanned target_without_hook finding beyond the plan's anticipated format/security-scanner/duplicate-code set -- left for 11-02/11-04 to scope.
 - [Phase 11]: 11-02: alias-table variable renamed MAKEFILE_CATEGORY_ALIAS to avoid a dir()-order collision with TAXONOMY_DEFINITIONS in the CATALOG-OK probe
 - [Phase 11]: 11-02: clause (iii)'s runner-prefix-skip is its own single helper, not a literal reuse of clause (i)'s unanchored regex (which needs no such helper)
+- [Phase 11]: Task 2's ruff discovery helpers implemented locally in ruff_checks.py rather than reaching into enable_everything.py, to keep the per-task commit file scope exact
+- [Phase 11]: pair_checks.py iterates the shared pairs table directly (row-by-row) rather than enumerating detected-tool combinations, so the rule-family row's skip is a real mark-driven branch
 
 ### Pending Todos
 
@@ -272,6 +275,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-14T10:02:10.262Z
-Stopped at: Completed 11-02-PLAN.md
+Last session: 2026-09-14T10:43:24.145Z
+Stopped at: Completed 11-03-PLAN.md
 Resume file: None
