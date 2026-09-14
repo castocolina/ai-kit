@@ -85,9 +85,10 @@ def repo_has_ci_config(repo_root: str) -> bool:
         except OSError:
             entries = []
         for entry in entries:
-            if entry.endswith(".yml") or entry.endswith(".yaml"):
-                if os.path.isfile(os.path.join(workflows_dir, entry)):
-                    return True
+            if (entry.endswith(".yml") or entry.endswith(".yaml")) and os.path.isfile(
+                os.path.join(workflows_dir, entry)
+            ):
+                return True
 
     return False
 
@@ -137,11 +138,19 @@ def _sequence_command_lines(lines: list[str], start: int, end: int) -> list[str]
     """Command lines from a `- `-prefixed sequence. A block-scalar item
     (`- |`/`- >`, any chomping/indentation indicator) contributes each of
     its deeper-indented continuation lines as its own command line; an
-    ordinary item contributes exactly one, quotes stripped."""
+    ordinary item contributes exactly one, quotes stripped.
+
+    Stops at the first own-level line that is NOT `-`-prefixed, rather
+    than skipping over it: GitLab CI commonly indents a job's
+    `before_script`/`script`/`after_script` sibling keys at the SAME
+    level as their own list items (ai-kit's own `.gitlab-ci.yml` uses
+    this style for `stages:`), so a scan that merely skipped a
+    non-`-`-prefixed line would bleed across the sibling-key boundary and
+    absorb a LATER key's items as this sequence's own."""
     commands: list[str] = []
     for idx, content in own_level_lines(lines, start, end):
         if not content.startswith("-"):
-            continue
+            break
         item_text = content[1:].strip()
         if _BLOCK_SCALAR_RE.match(item_text):
             item_indent = line_indent(lines[idx])
@@ -187,6 +196,40 @@ def _extract_script_command_lines(block_lines: list[str]) -> list[str]:
     return commands
 
 
+def _top_level_block_end(lines: list[str], header_idx: int) -> int:
+    """The end index of a TOP-LEVEL key's value block (ref indent 0).
+
+    Handles GitLab's same-indent-as-key sequence style (`key:\n- item\n-
+    item\n`, the shape ai-kit's own `.gitlab-ci.yml` uses for `stages:`):
+    a `-`-prefixed line at indent 0 is a sequence ITEM of this key, never
+    the start of the next key, even though its indent equals the next
+    top-level key's indent too. Falls back to the ordinary
+    `find_block_end` boundary (the first line at indent <= 0) whenever
+    the immediate next structural line is NOT itself a `-`-prefixed
+    indent-0 line -- the common deeper-indented-children case."""
+    n = len(lines)
+    i = header_idx + 1
+    while i < n and not is_effective_structural(lines[i]):
+        i += 1
+    if i >= n:
+        return n
+    if line_indent(lines[i]) == 0 and lines[i].strip().startswith("-"):
+        j = i
+        while j < n:
+            line = lines[j]
+            if not is_effective_structural(line):
+                j += 1
+                continue
+            if line_indent(line) != 0:
+                j += 1
+                continue
+            if not line.strip().startswith("-"):
+                break
+            j += 1
+        return j
+    return find_block_end(lines, header_idx + 1, 0)
+
+
 def iter_command_sites(text: str):
     """Yield `(site_name, [command_line, ...])` for every top-level
     command site in one GitLab CI file's `text`, in file-declaration
@@ -222,7 +265,7 @@ def iter_command_sites(text: str):
             continue
         key, rest = parsed
         key = strip_yaml_quotes(key.strip())
-        block_end = find_block_end(lines, i + 1, 0)
+        block_end = _top_level_block_end(lines, i)
 
         if key in _RESERVED_TOP_LEVEL_KEYS:
             i = block_end

@@ -184,18 +184,32 @@ def _strip_one_round(line: str) -> str:
     return line
 
 
-def strip_leading_noise(line: str) -> str:
+def strip_leading_noise(line: str, stop_check=None) -> str:
     """Strip up to 3 ROUNDS of D-C6's leading noise, trying each rule (in
     `_strip_one_round`'s order) every round and applying the first match.
     A line with more than 3 stacked prefixes stops after the third round
-    rather than looping -- a stated bound, not a bug. Never raises for
-    any string input."""
+    rather than looping -- a stated bound, not a bug.
+
+    `stop_check`, if given, is an opaque predicate this module never
+    interprets: called with the current text BEFORE any stripping and
+    again after every round that changes it; the moment it returns
+    `True`, stripping stops and that text is returned as-is. This lets a
+    caller recognize a shape it cares about (a reuse-invocation prefix
+    like `pre-commit run <id>`, which the generic runner-prefix rule
+    below would otherwise consume as if it were a `<runner> run <rest>`
+    wrapper) without this module needing any policy knowledge of what
+    that shape means -- D-C9 keeps that knowledge in the caller. Never
+    raises for any string input."""
     result = line
+    if stop_check is not None and stop_check(result):
+        return result
     for _ in range(3):
         stripped = _strip_one_round(result)
         if stripped == result:
             break
         result = stripped
+        if stop_check is not None and stop_check(result):
+            break
     return result
 
 

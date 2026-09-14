@@ -92,7 +92,17 @@ def check_cicd_rules(repo_root: str) -> list[dict]:
                     continue
                 for raw_segment in split_top_level_segments(command_line):
                     segment = truncate_at_unquoted_pipe(raw_segment)
-                    stripped = strip_leading_noise(segment)
+                    # `stop_check` lets a reuse-invocation shape this
+                    # skill recognizes (e.g. `pre-commit run <id>`) halt
+                    # stripping the moment it appears -- otherwise the
+                    # generic `<runner> run <rest>` rule below would
+                    # consume "pre-commit run " as if it were a runner
+                    # wrapper before the table ever saw it intact.
+                    stripped = strip_leading_noise(
+                        segment,
+                        stop_check=lambda s: reuse_sources.classify_reuse_invocation(s)
+                        is not None,
+                    )
                     if not stripped.strip():
                         continue
                     if reuse_sources.classify_reuse_invocation(stripped) is not None:

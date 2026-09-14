@@ -50,6 +50,14 @@ _DELEGATE_RE = re.compile(
 # Order matters only where two rows could both match the same text (the
 # more specific row is listed first); every mapped surface is otherwise
 # independent.
+#
+# The bare `yarn <script>`/`pnpm <script>` rows exclude `dlx`/`exec` as
+# the immediate next token (a negative lookahead): those are D-C6's
+# two-token direct-runner forms (stripped as noise BEFORE this table is
+# ever checked), not package.json script names, and an unqualified
+# `\S+` here would read `pnpm exec eslint .` as if `exec` were a script
+# id -- the exact false-classification the ordering proof in this
+# skill's test suite pins against.
 _REUSE_TABLE: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^(?<![-\w])make(?![-\w])"), "makefile"),
     (
@@ -64,8 +72,14 @@ _REUSE_TABLE: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (re.compile(r"^(?<![-\w])pnpm(?![-\w])[ \t]+(?<![-\w])run(?![-\w])[ \t]+\S+"), "package-json"),
     (re.compile(r"^(?<![-\w])yarn(?![-\w])[ \t]+(?<![-\w])run(?![-\w])[ \t]+\S+"), "package-json"),
-    (re.compile(r"^(?<![-\w])yarn(?![-\w])[ \t]+\S+"), "package-json"),
-    (re.compile(r"^(?<![-\w])pnpm(?![-\w])[ \t]+\S+"), "package-json"),
+    (
+        re.compile(r"^(?<![-\w])yarn(?![-\w])[ \t]+(?!dlx(?![-\w]))\S+"),
+        "package-json",
+    ),
+    (
+        re.compile(r"^(?<![-\w])pnpm(?![-\w])[ \t]+(?!exec(?![-\w]))(?!dlx(?![-\w]))\S+"),
+        "package-json",
+    ),
     (re.compile(r"^\./gradlew(?![-\w])[ \t]+\S+"), "gradle"),
     (re.compile(r"^(?<![-\w])gradlew(?![-\w])[ \t]+\S+"), "gradle"),
     (re.compile(r"^(?<![-\w])gradle(?![-\w])[ \t]+\S+"), "gradle"),
@@ -148,9 +162,9 @@ def is_tool_shaped_identity(
         return True
     if identity.strip().casefold() in _OUT_OF_TAXONOMY_FLAT:
         return True
-    if derived_from_command_body and normalize_token(identity) == normalize_token(source_name):
-        return True
-    return False
+    return derived_from_command_body and normalize_token(identity) == normalize_token(
+        source_name
+    )
 
 
 def _real_recipe_lines(recipe_text: str) -> list[str]:
