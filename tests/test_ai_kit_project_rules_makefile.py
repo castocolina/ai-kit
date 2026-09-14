@@ -766,21 +766,298 @@ class TestNoCrashAndNoStack(unittest.TestCase):
                 self.assertIn("no stack", by_target[target]["summary"].lower())
 
 
+def _make_scripts(repo, count, subdir="scripts"):
+    for i in range(count):
+        _write(os.path.join(repo, subdir, f"s{i}.sh"), "#!/bin/sh\n")
+
+
+class TestDockerBuildBeforeUp(unittest.TestCase):
+    # ROADMAP Phase 10 Success Criterion 5 (first clause).
+
+    def test_no_build_wiring_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "docker-up:\n\tdocker compose up\n")
+            findings = makefile_checker.check_makefile_shape(repo)
+            flagged = [f for f in findings if f.get("issue") == "docker_build_not_wired"]
+            self.assertEqual(len(flagged), 1)
+            self.assertEqual(flagged[0]["target"], "docker-up")
+            self.assertEqual(flagged[0]["criticality"], 2)
+
+    def test_build_shaped_prerequisite_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "docker-build:\n\tdocker build .\n\n"
+                "docker-up: docker-build\n\tdocker compose up\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("docker_build_not_wired", issues)
+
+    def test_recipe_invocation_of_existing_build_target_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "docker-build:\n\tdocker build .\n\n"
+                "docker-up:\n\t$(MAKE) docker-build\n\tdocker compose up\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("docker_build_not_wired", issues)
+
+    def test_recipe_mentioning_undefined_build_target_is_not_satisfaction(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "docker-up:\n\t$(MAKE) docker-build\n\tdocker compose up\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            flagged = [f for f in findings if f.get("issue") == "docker_build_not_wired"]
+            self.assertEqual(len(flagged), 1)
+
+    def test_inline_compose_flag_only_is_flagged_pinned_behavior(self):
+        # This is the case the rule is written down to settle: NO
+        # "standalone build token" clause. The finding's summary must name
+        # what was checked, never claim the recipe performs no build.
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"), "docker-up:\n\tdocker compose up --build\n"
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            flagged = [f for f in findings if f.get("issue") == "docker_build_not_wired"]
+            self.assertEqual(len(flagged), 1)
+            summary = flagged[0]["summary"].lower()
+            self.assertIn("prerequisite", summary)
+            # Must name what was checked, never claim the recipe itself
+            # performs no build -- on this fixture that stronger claim
+            # would be false (it DOES build, via the inline --build flag).
+            self.assertNotIn("never build", summary)
+            self.assertNotIn("performs no build", summary)
+            self.assertNotIn("does not build", summary)
+
+    def test_no_up_shaped_target_no_finding(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "build:\n\techo b\n")
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("docker_build_not_wired", issues)
+
+    def test_multi_segment_up_shaped_satisfied_by_multi_segment_build_prereq(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "docker-events-build:\n\tdocker build .\n\n"
+                "docker-events-up: docker-events-build\n\tdocker compose up\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("docker_build_not_wired", issues)
+
+    def test_shape_membership_up_and_build(self):
+        up_re = makefile_checker._DOCKER_UP_SHAPE_RE
+        build_re = makefile_checker._DOCKER_BUILD_SHAPE_RE
+        for name in ("docker-up", "docker-events-up"):
+            self.assertIsNotNone(up_re.match(name), name)
+        for name in ("docker-build", "docker-events-build"):
+            self.assertIsNotNone(build_re.match(name), name)
+        for name in ("events-up", "up", "docker-up-legacy", "docker_up"):
+            self.assertIsNone(up_re.match(name), name)
+        for name in ("events-build", "build", "docker-build-legacy"):
+            self.assertIsNone(build_re.match(name), name)
+
+
+class TestShellcheckThreshold(unittest.TestCase):
+    # ROADMAP Phase 10 Success Criterion 5 (second clause).
+
+    def test_five_scripts_no_target_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _make_scripts(repo, 5)
+            _write(os.path.join(repo, "Makefile"), "build:\n\techo b\n")
+            findings = makefile_checker.check_makefile_shape(repo)
+            missing = [
+                f for f in findings if f.get("issue") == "shellcheck_target_missing"
+            ]
+            self.assertEqual(len(missing), 1)
+            self.assertFalse(missing[0]["present"])
+            self.assertIn("ai-kit-project-rules-cicd", missing[0]["summary"])
+
+    def test_four_scripts_no_finding(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _make_scripts(repo, 4)
+            _write(os.path.join(repo, "Makefile"), "build:\n\techo b\n")
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("shellcheck_target_missing", issues)
+            self.assertNotIn("shellcheck_target_not_wired", issues)
+
+    def test_five_scripts_target_present_but_not_wired_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _make_scripts(repo, 5)
+            _write(
+                os.path.join(repo, "Makefile"),
+                "shellcheck:\n\tshellcheck scripts/*.sh\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            not_wired = [
+                f for f in findings if f.get("issue") == "shellcheck_target_not_wired"
+            ]
+            self.assertEqual(len(not_wired), 1)
+            self.assertTrue(not_wired[0]["present"])
+            self.assertIn("ai-kit-project-rules-cicd", not_wired[0]["summary"])
+            missing = [
+                f for f in findings if f.get("issue") == "shellcheck_target_missing"
+            ]
+            self.assertEqual(missing, [])
+
+    def test_five_scripts_target_and_hook_present_no_finding(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _make_scripts(repo, 5)
+            _write(
+                os.path.join(repo, "Makefile"),
+                "shellcheck:\n\tshellcheck scripts/*.sh\n",
+            )
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                "repos:\n  - repo: local\n    hooks:\n"
+                "      - id: shellcheck\n        entry: shellcheck scripts/*.sh\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("shellcheck_target_missing", issues)
+            self.assertNotIn("shellcheck_target_not_wired", issues)
+
+    def test_pruned_directories_do_not_count_toward_threshold(self):
+        # Below-threshold pair proving pruning actually happens: 4 visible
+        # scripts plus 20 under pruned directories must stay silent, while
+        # the identical tree with 5 visible scripts fires.
+        with tempfile.TemporaryDirectory() as repo:
+            _make_scripts(repo, 4, subdir="scripts")
+            _make_scripts(repo, 10, subdir=".git")
+            _make_scripts(repo, 10, subdir="node_modules")
+            _write(os.path.join(repo, "Makefile"), "build:\n\techo b\n")
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("shellcheck_target_missing", issues)
+
+        with tempfile.TemporaryDirectory() as repo2:
+            _make_scripts(repo2, 5, subdir="scripts")
+            _make_scripts(repo2, 10, subdir=".git")
+            _make_scripts(repo2, 10, subdir="node_modules")
+            _write(os.path.join(repo2, "Makefile"), "build:\n\techo b\n")
+            findings2 = makefile_checker.check_makefile_shape(repo2)
+            issues2 = {f.get("issue") for f in findings2}
+            self.assertIn("shellcheck_target_missing", issues2)
+
+
+class TestAdvisoryOrdering(unittest.TestCase):
+    # ROADMAP Phase 10 Success Criterion 5 (third clause).
+
+    def _repo_with_validate(self, repo, prereqs):
+        target_blocks = "\n\n".join(f"{name}:\n\techo {name}\n" for name in prereqs)
+        _write(
+            os.path.join(repo, "Makefile"),
+            ".DEFAULT_GOAL := help\n\nhelp:\n\techo h\n\n"
+            + target_blocks
+            + f"\n\nvalidate: {' '.join(prereqs)}\n\techo v\n",
+        )
+        hook_lines = "".join(
+            f"      - id: {name}\n        entry: run {name}\n" for name in prereqs
+        )
+        _write(
+            os.path.join(repo, ".pre-commit-config.yaml"),
+            f"repos:\n  - repo: local\n    hooks:\n{hook_lines}",
+        )
+
+    def test_inverted_prereqs_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            self._repo_with_validate(repo, ["unittest", "ruff"])
+            findings = makefile_checker.check_makefile_shape(repo)
+            adv = [f for f in findings if f.get("issue") == "validate_order_advisory"]
+            self.assertEqual(len(adv), 1)
+            self.assertTrue(adv[0]["advisory"])
+            self.assertEqual(adv[0]["criticality"], 4)
+            self.assertIn(("unittest", "ruff"), adv[0]["inverted_pairs"])
+
+    def test_correct_order_not_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            self._repo_with_validate(repo, ["ruff", "unittest"])
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("validate_order_advisory", issues)
+
+    def test_unrecognized_name_skipped_never_forms_inversion(self):
+        with tempfile.TemporaryDirectory() as repo:
+            self._repo_with_validate(repo, ["zzz-unknown", "unittest"])
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertNotIn("validate_order_advisory", issues)
+
+    def test_one_finding_lists_all_inversions(self):
+        with tempfile.TemporaryDirectory() as repo:
+            self._repo_with_validate(repo, ["unittest", "mypy", "ruff"])
+            findings = makefile_checker.check_makefile_shape(repo)
+            adv = [f for f in findings if f.get("issue") == "validate_order_advisory"]
+            self.assertEqual(len(adv), 1)
+            self.assertGreaterEqual(len(adv[0]["inverted_pairs"]), 2)
+
+    def test_speed_tier_pinned(self):
+        self.assertIsNotNone(makefile_checker.speed_tier("unittest"))
+        self.assertIsNotNone(makefile_checker.speed_tier("ruff"))
+        self.assertGreater(
+            makefile_checker.speed_tier("unittest"), makefile_checker.speed_tier("ruff")
+        )
+        self.assertEqual(
+            makefile_checker.speed_tier("pytest"), makefile_checker.speed_tier("unittest")
+        )
+        self.assertEqual(
+            makefile_checker.speed_tier("test"), makefile_checker.speed_tier("unittest")
+        )
+        self.assertIsNone(makefile_checker.speed_tier("zzz-not-a-real-tool"))
+
+    def test_suppressed_when_chain_incomplete(self):
+        # `validate`'s prerequisites ARE inverted (unittest before ruff),
+        # but a third hook-derived member (`extra`) is not chained at all
+        # -- the actionable chain finding is the one to act on, so the
+        # advisory must stay silent.
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                ".DEFAULT_GOAL := help\n\nhelp:\n\techo h\n\n"
+                "unittest:\n\techo u\n\nruff:\n\techo r\n\nextra:\n\techo e\n\n"
+                "validate: unittest ruff\n\techo v\n",
+            )
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                "repos:\n  - repo: local\n    hooks:\n"
+                "      - id: unittest\n        entry: run unittest\n"
+                "      - id: ruff\n        entry: run ruff\n"
+                "      - id: extra\n        entry: run extra\n",
+            )
+            findings = makefile_checker.check_makefile_shape(repo)
+            issues = {f.get("issue") for f in findings}
+            self.assertIn("chain_incomplete", issues)
+            self.assertNotIn("validate_order_advisory", issues)
+
+
 class TestValidateOrderAndPrecommitPrepushSplit(unittest.TestCase):
     # THREE-WAY split of 9d672b9's TestValidateOrderAndPrecommitPrepushSplit:
     #   1. splitter cases -> tests/test_ai_kit_rules_common.py's
     #      TestPrecommitPrepushSplit (the splitter moved to
     #      skills/_shared/ai_kit_rules_common/precommit_parse.py)
-    #   2. the ordering-stub case below -> HERE. This is the checker's
-    #      actual post-Task-1 behavior (a permanent no-op); plan 10-02
-    #      rewrites this coverage in place once the stub becomes the
-    #      advisory heuristic.
+    #   2. the ordering-stub case below -> HERE, REWRITTEN IN PLACE by plan
+    #      10-02 Task 3 now that the stub is the real advisory heuristic.
+    #      Detailed coverage of the heuristic itself lives in
+    #      TestAdvisoryOrdering above; what's kept here is the narrow
+    #      contract this class originally asserted -- the
+    #      `chain_incomplete_found` flag stays load-bearing.
     #   3. the schema-shape case below -> HERE too (cycle-3 review finding:
     #      this method is neither a splitter case nor an ordering-stub
     #      case, it's an independent schema-shape assertion the original
     #      two-way split left unassigned).
-    def test_check_validate_order_never_adds_a_finding(self):
+    def test_check_validate_order_suppressed_by_chain_incomplete_flag(self):
         self.assertIsNone(makefile_checker.check_validate_order("ignored", True))
+
+    def test_check_validate_order_returns_none_for_a_repo_with_no_inversion(self):
         self.assertIsNone(makefile_checker.check_validate_order("ignored", False))
 
     def test_categories_never_contain_removed_entries(self):

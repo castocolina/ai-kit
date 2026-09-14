@@ -20,10 +20,27 @@ def build_remediation(report: dict) -> dict:
     `makefile`-kind findings (both `"target"`- and `"category"`-keyed,
     treated identically) branch ONLY on `recommendation`/`needs_research`,
     never on `present` or on which identifying key is set: any finding with
-    a non-`None` `recommendation` becomes a `remediate` entry with
-    `auto_apply=True`; any finding with `needs_research=True` and no
-    `recommendation` goes into `blocked`, carrying its `criticality`/
-    `summary`/identifier/`"stacks"` list forward verbatim.
+    a non-`None` `recommendation` becomes a `remediate` entry; any finding
+    with `needs_research=True` and no `recommendation` goes into `blocked`,
+    carrying its `criticality`/`summary`/identifier/`"stacks"` list forward
+    verbatim.
+
+    `auto_apply` is `True` UNLESS the finding carries `advisory: True`, in
+    which case it is `False` -- additive: a finding with no `advisory` key
+    behaves exactly as it always has (`auto_apply=True`). A finding that is
+    inherently a best-effort suggestion (e.g. the Makefile ordering
+    heuristic) must never be presented to a caller as safe to apply
+    automatically.
+
+    Every `makefile`-kind `remediate` entry also carries `issue`
+    (`finding.get("issue")`, `None` when the finding has none) forward
+    verbatim. `id` is a human-readable LABEL, not a unique key -- `remediate`
+    has always been one heterogeneous list in which a `workflow` entry and a
+    `makefile` entry can share an `id`, and two DIFFERENT makefile findings
+    (e.g. the inherited `chain_incomplete` and an alias-family
+    `alias_chain_incomplete` finding) can legitimately both identify as the
+    same target. `(kind, id, issue)` is what tells two entries apart, not
+    `id` alone.
 
     Both kinds' `remediate` entries are built into ONE list, then sorted by
     `criticality` ascending, spanning every kind present in `report`
@@ -59,7 +76,8 @@ def build_remediation(report: dict) -> dict:
                     "id": identifier,
                     "criticality": finding["criticality"],
                     "summary": finding["summary"],
-                    "auto_apply": True,
+                    "issue": finding.get("issue"),
+                    "auto_apply": not finding.get("advisory", False),
                 }
             )
         elif finding.get("needs_research"):

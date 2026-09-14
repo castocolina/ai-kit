@@ -392,6 +392,76 @@ class TestRemediation(unittest.TestCase):
         self.assertEqual(result["blocked"][0]["id"], "formatter")
         self.assertEqual(result["blocked"][0]["stacks"], ["go", "python"])
 
+    # Plan 10-02 Task 3: two additive edits to the makefile branch -- the
+    # advisory flag drives auto-apply, and `issue` is carried forward onto
+    # the remediate entry. Both are ADDITIVE: every case above (with no
+    # `advisory`/`issue` key) must keep producing exactly what it produces
+    # today.
+    def test_advisory_finding_disables_auto_apply(self):
+        report = {
+            "makefile": [
+                {
+                    "target": "validate",
+                    "present": True,
+                    "issue": "validate_order_advisory",
+                    "advisory": True,
+                    "recommendation": "reorder",
+                    "needs_research": False,
+                    "criticality": 4,
+                    "summary": "reorder",
+                },
+            ],
+        }
+        result = build_remediation(report)
+        self.assertEqual(len(result["remediate"]), 1)
+        self.assertFalse(result["remediate"][0]["auto_apply"])
+
+    def test_non_advisory_finding_still_auto_applies(self):
+        report = {
+            "makefile": [
+                {
+                    "target": "setup-env",
+                    "present": False,
+                    "criticality": 1,
+                    "summary": "add it",
+                    "recommendation": "uv venv",
+                    "needs_research": False,
+                },
+            ],
+        }
+        result = build_remediation(report)
+        self.assertEqual(len(result["remediate"]), 1)
+        self.assertTrue(result["remediate"][0]["auto_apply"])
+
+    def test_issue_carried_forward_and_none_when_absent(self):
+        with_issue = {
+            "makefile": [
+                {
+                    "target": "validate",
+                    "criticality": 1,
+                    "summary": "s",
+                    "recommendation": "r",
+                    "needs_research": False,
+                    "issue": "chain_incomplete",
+                },
+            ],
+        }
+        without_issue = {
+            "makefile": [
+                {
+                    "target": "setup-env",
+                    "criticality": 1,
+                    "summary": "s",
+                    "recommendation": "r",
+                    "needs_research": False,
+                },
+            ],
+        }
+        result_with = build_remediation(with_issue)
+        result_without = build_remediation(without_issue)
+        self.assertEqual(result_with["remediate"][0]["issue"], "chain_incomplete")
+        self.assertIsNone(result_without["remediate"][0]["issue"])
+
 
 # The classes below are re-homed here from
 # tests/test_ai_kit_project_rules_agents.py by Phase 10 plan 01 (recovered

@@ -28,12 +28,14 @@ import os
 import re
 
 from ai_kit_rules_common.criticality import (
+    CRITICALITY_ADVISORY,
     CRITICALITY_CRITICAL,
     CRITICALITY_HIGH,
     CRITICALITY_MEDIUM,
 )
 from ai_kit_rules_common.makefile_parse import (
     parse_makefile_prerequisites,
+    parse_makefile_prerequisites_ordered,
     parse_makefile_recipe,
     parse_makefile_targets,
     recipe_mentions_target,
@@ -70,6 +72,88 @@ CATEGORY_ALIAS_MAP = {
     "duplicate-code-detector": "validate-duplicate",
     "dead-code-detector": "validate-dead",
 }
+
+# Docker build-before-up (ROADMAP Phase 10 SC5, first clause). PINNED,
+# not left to taste -- Phase 13 copies this exact vocabulary rather than
+# inventing a second one. Shape-based (a target NAME pattern), not a
+# fixed name list, so the docker-prefixed target family Phase 13 will
+# later define is covered without this skill enumerating it. Compiled
+# once as `re.Pattern` objects at module scope.
+_DOCKER_UP_SHAPE_RE = re.compile(r"(?i)^docker(?:-[a-z0-9]+)*-up$")
+_DOCKER_BUILD_SHAPE_RE = re.compile(r"(?i)^docker(?:-[a-z0-9]+)*-build$")
+
+# Shellcheck threshold (ROADMAP Phase 10 SC5, second clause).
+SHELLCHECK_TARGET_NAME = "shellcheck"
+SHELLCHECK_KEYWORDS = ("shellcheck",)
+SHELLCHECK_SCRIPT_THRESHOLD = 5
+# Pruned during the bounded directory walk: every dot-directory (checked
+# separately via `name.startswith(".")`) plus this fixed set of
+# dependency/build directory names.
+_PRUNED_DIR_NAMES = frozenset(
+    {"node_modules", "vendor", "dist", "build", "target", "venv", "__pycache__"}
+)
+# Names the walk reports the CI half of this rule is confirmed by instead
+# -- stated rather than faked, because this skill standalone cannot
+# confirm a CI/CD pipeline actually runs shellcheck.
+_SHELLCHECK_CI_HALF_NOTE = (
+    " This skill standalone confirms only the Makefile target and "
+    "pre-commit-hook halves of this rule; the CI half is confirmed by the "
+    "`ai-kit-project-rules-cicd` skill (the CI/CD rules checker) and the "
+    "`ai-kit-project-rules-all` orchestrator."
+)
+
+# Advisory fast-vs-slow ordering heuristic (ROADMAP Phase 10 SC5, third
+# clause). Reused baseline knowledge from the design spec's own
+# fast-vs-slow ordering guidance, never mechanically verified cost order.
+SPEED_TIER_FORMATTER = 1
+SPEED_TIER_FAST_LINTER = 2
+SPEED_TIER_TYPE_ANALYSIS = 3
+SPEED_TIER_SLOWEST = 4
+
+# FOUR KEYWORDS ARE PINNED beyond the design spec's own concrete name
+# list: `test`/`unittest`/`pytest` in the slowest tier, `ruff` in the
+# fast-linter tier. The spec names `ruff` but no test runner at all, and
+# an untiered name is skipped by design -- without this pin the advisory
+# check would be silently inert. Matched SLOWEST-TIER-FIRST by
+# `speed_tier` below (see its own docstring for why the direction
+# matters).
+_SPEED_TIERS = (
+    (
+        SPEED_TIER_SLOWEST,
+        ("cargo-udeps", "govulncheck", "bandit", "semgrep", "test", "unittest", "pytest"),
+    ),
+    (
+        SPEED_TIER_TYPE_ANALYSIS,
+        ("clippy", "golangci-lint", "mypy", "tsc"),
+    ),
+    (
+        SPEED_TIER_FAST_LINTER,
+        ("cargo-machete", "gosec", "ruff"),
+    ),
+    (
+        SPEED_TIER_FORMATTER,
+        ("rustfmt", "gofmt", "prettier", "format", "fmt"),
+    ),
+)
+
+
+def speed_tier(name: str) -> int | None:
+    """Return `name`'s speed tier (1=fastest .. 4=slowest), or `None` for
+    an unrecognized name -- never guessed at, so it is excluded from
+    inversion detection entirely.
+
+    Matched SLOWEST-TIER-FIRST: several fast-tier keywords are substrings
+    of slow-tier tool names (the tier-2 keyword `lint` is a substring of
+    the tier-3 tool `golangci-lint`), so a fastest-first scan would
+    misclassify a slow tool as fast. Checking tier 4 first, then 3, then
+    2, then 1 resolves `golangci-lint` to tier 3 before tier 2's `lint`
+    keyword ever gets a chance to match it.
+    """
+    lowered = name.lower()
+    for tier, keywords in _SPEED_TIERS:
+        if any(keyword in lowered for keyword in keywords):
+            return tier
+    return None
 
 
 # Help/fail reachability (ROADMAP Phase 10 SC3). Both read the raw Makefile
@@ -195,21 +279,197 @@ def _alias_required_targets(category: str, present_targets: set[str]) -> list[st
     )
 
 
-def check_validate_order(repo_root: str, chain_incomplete_found: bool) -> None:
-    """Structural check for the removed `validate-order` research category.
+def _docker_build_before_up_findings(
+    makefile_path: str, present_targets: set[str]
+) -> list[dict]:
+    """Docker build-before-up (ROADMAP Phase 10 SC5, first clause).
 
-    Never appends its own finding in either branch. When chain membership
-    is incomplete, the existing `chain_incomplete` finding (from
-    `check_makefile_shape`) is the sole source of truth for that gap. When
-    chain membership is complete, mechanically verifying true cost ORDER
-    ("lightest/cheapest first") among the chained targets is still not
-    attempted -- a permanent, structural limitation of a regex-based
-    checker, documented here rather than re-asserted as a per-run finding
-    that would report the same non-actionable caveat on every single
-    invocation.
+    For each present up-shaped target, satisfied when EITHER one of its
+    Make prerequisites is build-shaped, OR its recipe token-boundary-
+    references a build-shaped target that is actually present -- the same
+    `prerequisite OR token-boundary recipe reference` wiring rule the
+    inherited `chain_incomplete` check already uses. There is deliberately
+    NO "standalone build token" clause: the token-boundary helper's
+    pattern (`(?<![-\\w])NAME(?![-\\w])`) cannot match a bare `build`
+    token inside `docker compose up --build` (the character immediately
+    before is `-`), so a `docker-up` whose only build is that inline flag
+    IS flagged, with a summary naming what was checked rather than
+    claiming the recipe performs no build.
     """
-    del repo_root, chain_incomplete_found  # intentionally unused; see docstring
-    return None
+    findings: list[dict] = []
+    up_targets = sorted(t for t in present_targets if _DOCKER_UP_SHAPE_RE.match(t))
+    build_targets = {t for t in present_targets if _DOCKER_BUILD_SHAPE_RE.match(t)}
+
+    for target in up_targets:
+        prereqs = parse_makefile_prerequisites(makefile_path, target)
+        recipe = parse_makefile_recipe(makefile_path, target)
+        satisfied = any(_DOCKER_BUILD_SHAPE_RE.match(p) for p in prereqs) or any(
+            recipe_mentions_target(recipe, build_target) for build_target in build_targets
+        )
+        if satisfied:
+            continue
+        recommendation = (
+            f"add a build-shaped Make prerequisite to `{target}` (e.g. "
+            f"`{target}: docker-build`), or invoke an existing build-shaped "
+            "target from its recipe (e.g. `$(MAKE) docker-build`)"
+        )
+        summary = (
+            f"`{target}` declares no build-shaped Make prerequisite and its "
+            "recipe does not invoke an existing build-shaped target"
+        )
+        findings.append(
+            {
+                "target": target,
+                "present": True,
+                "issue": "docker_build_not_wired",
+                "recommendation": recommendation,
+                "needs_research": False,
+                "criticality": CRITICALITY_HIGH,
+                "summary": summary,
+            }
+        )
+    return findings
+
+
+def _count_shell_scripts(
+    repo_root: str, threshold: int = SHELLCHECK_SCRIPT_THRESHOLD
+) -> tuple[int, bool]:
+    """Bounded walk of `repo_root`: prune every dot-directory and every
+    directory named in `_PRUNED_DIR_NAMES`, counting `.sh` files, and
+    STOP as soon as `threshold` is reached.
+
+    Returns `(count, is_floor)`. `is_floor` is `True` when the walk
+    stopped early -- `count` is then a FLOOR (`"at least this many"`),
+    never an exact total above threshold. Stopping early bounds the walk
+    on a pathological target repo: this check only ever needs to know "at
+    least `threshold`", never the exact number above it.
+    """
+    count = 0
+    for _root, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [
+            d for d in dirnames if not d.startswith(".") and d not in _PRUNED_DIR_NAMES
+        ]
+        for name in filenames:
+            if name.endswith(".sh"):
+                count += 1
+                if count >= threshold:
+                    return count, True
+    return count, False
+
+
+def _shellcheck_threshold_findings(
+    repo_root: str, present_targets: set[str], hooks: dict[str, str | None]
+) -> list[dict]:
+    """Shellcheck threshold (ROADMAP Phase 10 SC5, second clause)."""
+    count, is_floor = _count_shell_scripts(repo_root)
+    if count < SHELLCHECK_SCRIPT_THRESHOLD:
+        return []
+
+    count_field = "script_count_floor" if is_floor else "script_count"
+    count_prefix = "at least " if is_floor else ""
+    has_target = any(
+        any(kw in name.lower() for kw in SHELLCHECK_KEYWORDS) for name in present_targets
+    )
+    if not has_target:
+        recommendation = (
+            f"add a `{SHELLCHECK_TARGET_NAME}` Makefile target running "
+            "shellcheck over this repo's shell scripts"
+        )
+        summary = (
+            f"{count_prefix}{count} shell scripts were found and no present "
+            "Makefile target's name carries a shellcheck keyword."
+            + _SHELLCHECK_CI_HALF_NOTE
+        )
+        return [
+            {
+                "target": SHELLCHECK_TARGET_NAME,
+                "present": False,
+                "issue": "shellcheck_target_missing",
+                count_field: count,
+                "recommendation": recommendation,
+                "needs_research": False,
+                "criticality": CRITICALITY_HIGH,
+                "summary": summary,
+            }
+        ]
+
+    has_hook = any(
+        any(kw in hook_id.lower() for kw in SHELLCHECK_KEYWORDS) for hook_id in hooks
+    )
+    if has_hook:
+        return []
+
+    recommendation = (
+        f"wire the existing `{SHELLCHECK_TARGET_NAME}` Makefile target into "
+        "`.pre-commit-config.yaml` as a hook"
+    )
+    summary = (
+        f"{count_prefix}{count} shell scripts were found and a "
+        "shellcheck-shaped Makefile target exists but no pre-commit hook id "
+        "names it." + _SHELLCHECK_CI_HALF_NOTE
+    )
+    return [
+        {
+            "target": SHELLCHECK_TARGET_NAME,
+            "present": True,
+            "issue": "shellcheck_target_not_wired",
+            count_field: count,
+            "recommendation": recommendation,
+            "needs_research": False,
+            "criticality": CRITICALITY_HIGH,
+            "summary": summary,
+        }
+    ]
+
+
+def check_validate_order(repo_root: str, chain_incomplete_found: bool) -> dict | None:
+    """Advisory, non-blocking fast-vs-slow ordering suggestion for
+    `validate`'s prerequisite list (ROADMAP Phase 10 SC5, third clause).
+
+    When chain membership is incomplete, the existing `chain_incomplete`
+    finding (from `check_makefile_shape`) is the sole source of truth for
+    that gap -- ordering advice about a list that is missing members is
+    noise, so this returns `None`. Otherwise, mechanically verifying true
+    cost ORDER ("lightest/cheapest first") among the chained targets is
+    still not attempted for BLOCKING purposes -- a permanent, structural
+    limitation of a regex-based checker. What this now returns is a
+    best-effort suggestion built from hardcoded baseline knowledge
+    (`speed_tier`), never a blocking finding: the returned dict (when not
+    `None`) always carries `advisory: True` and `CRITICALITY_ADVISORY`.
+    """
+    if chain_incomplete_found:
+        return None
+
+    makefile_path = os.path.join(repo_root, "Makefile")
+    prereqs = parse_makefile_prerequisites_ordered(makefile_path, "validate")
+    tiered = [(name, speed_tier(name)) for name in prereqs]
+    tiered = [(name, tier) for name, tier in tiered if tier is not None]
+
+    inversions: list[tuple[str, str]] = []
+    for i, (earlier_name, earlier_tier) in enumerate(tiered):
+        for later_name, later_tier in tiered[i + 1 :]:
+            if earlier_tier > later_tier:
+                inversions.append((earlier_name, later_name))
+
+    if not inversions:
+        return None
+
+    pairs_text = "; ".join(f"'{a}' before '{b}'" for a, b in inversions)
+    recommendation = (
+        "reorder `validate`'s prerequisites so faster checks run first "
+        f"(currently inverted: {pairs_text})"
+    )
+    return {
+        "target": "validate",
+        "present": True,
+        "issue": "validate_order_advisory",
+        "inverted_pairs": inversions,
+        "advisory": True,
+        "recommendation": recommendation,
+        "needs_research": False,
+        "criticality": CRITICALITY_ADVISORY,
+        "summary": recommendation,
+    }
 
 
 def check_makefile_shape(repo_root: str, get_tooling=None) -> list[dict]:
@@ -515,6 +775,16 @@ def check_makefile_shape(repo_root: str, get_tooling=None) -> list[dict]:
                 }
             )
 
-    check_validate_order(repo_root, chain_incomplete_found)
+    # Docker build-before-up (ROADMAP Phase 10 SC5, first clause).
+    findings.extend(_docker_build_before_up_findings(makefile_path, present_targets))
+
+    # Shellcheck threshold (ROADMAP Phase 10 SC5, second clause).
+    findings.extend(_shellcheck_threshold_findings(repo_root, present_targets, hooks))
+
+    # Advisory fast-vs-slow ordering heuristic (ROADMAP Phase 10 SC5, third
+    # clause).
+    validate_order_finding = check_validate_order(repo_root, chain_incomplete_found)
+    if validate_order_finding is not None:
+        findings.append(validate_order_finding)
 
     return findings
