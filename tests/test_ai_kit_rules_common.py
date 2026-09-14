@@ -275,7 +275,7 @@ class TestStackCache(unittest.TestCase):
             self.assertEqual(result["data"], tooling)
 
 
-from ai_kit_rules_common.remediation import build_remediation
+from ai_kit_rules_common.remediation import STRUCTURAL_KINDS, build_remediation
 
 
 class TestRemediation(unittest.TestCase):
@@ -476,7 +476,11 @@ def _write(path, content):
         handle.write(content)
 
 
-from ai_kit_rules_common.makefile_parse import parse_makefile_targets, recipe_mentions_target
+from ai_kit_rules_common.makefile_parse import (
+    parse_makefile_targets,
+    parse_makefile_targets_ordered,
+    recipe_mentions_target,
+)
 
 
 class TestParseMakefileTargets(unittest.TestCase):
@@ -491,6 +495,51 @@ class TestParseMakefileTargets(unittest.TestCase):
 
     def test_missing_file_returns_empty_set(self):
         self.assertEqual(parse_makefile_targets("/nonexistent/Makefile"), set())
+
+
+class TestParseMakefileTargetsOrdered(unittest.TestCase):
+    """D-A1's declaration-order tie-break needs this reader (Phase 12 plan
+    01) -- coverage placed beside the existing `parse_makefile_targets`
+    coverage above, in this file's style. Every pre-existing
+    `makefile_parse` assertion above and below must keep passing
+    byte-for-byte; this class is purely additive."""
+
+    def test_declaration_order_is_preserved(self):
+        with tempfile.TemporaryDirectory() as repo:
+            path = os.path.join(repo, "Makefile")
+            _write(path, "zeta: alpha\n\techo z\n\nalpha:\n\techo a\n")
+            self.assertEqual(parse_makefile_targets_ordered(path), ["zeta", "alpha"])
+
+    def test_repeated_header_deduplicates_to_first_occurrence(self):
+        with tempfile.TemporaryDirectory() as repo:
+            path = os.path.join(repo, "Makefile")
+            _write(
+                path,
+                "zeta: alpha\n\techo z\n\nalpha:\n\techo a\n\nzeta:\n\techo dup\n",
+            )
+            self.assertEqual(parse_makefile_targets_ordered(path), ["zeta", "alpha"])
+
+    def test_var_assignment_and_phony_exclusions_still_apply(self):
+        with tempfile.TemporaryDirectory() as repo:
+            path = os.path.join(repo, "Makefile")
+            _write(
+                path,
+                "VAR := x\n\n.PHONY: zeta alpha\n\nzeta: alpha\n\techo z\n\nalpha:\n\techo a\n",
+            )
+            self.assertEqual(parse_makefile_targets_ordered(path), ["zeta", "alpha"])
+
+    def test_missing_file_returns_empty_list(self):
+        self.assertEqual(parse_makefile_targets_ordered("/nonexistent/Makefile"), [])
+
+    def test_set_reader_agrees_with_ordered_reader(self):
+        # The property that proves the two readers are one parse rather
+        # than two -- `parse_makefile_targets` is defined in terms of
+        # `parse_makefile_targets_ordered`, so they can never disagree.
+        with tempfile.TemporaryDirectory() as repo:
+            path = os.path.join(repo, "Makefile")
+            _write(path, "zeta: alpha\n\techo z\n\nalpha:\n\techo a\n\nbeta:\n\techo b\n")
+            ordered = parse_makefile_targets_ordered(path)
+            self.assertEqual(parse_makefile_targets(path), set(ordered))
 
 
 class TestRecipeMentionsTargetWordBoundary(unittest.TestCase):
@@ -777,6 +826,149 @@ class TestRemediationPrecommitKind(unittest.TestCase):
         self.assertEqual(len(result["blocked"]), 1)
         self.assertEqual(result["blocked"][0]["kind"], "precommit")
         self.assertEqual(result["blocked"][0]["stacks"], ["python"])
+
+
+class TestRemediationArchKind(unittest.TestCase):
+    """Additive coverage for `STRUCTURAL_KINDS` growing to include `"arch"`
+    (Phase 12 plan 01). Every case here must leave `TestRemediation`'s and
+    `TestRemediationPrecommitKind`'s existing assertions untouched."""
+
+    def test_structural_kinds_has_three_kinds_original_two_unchanged(self):
+        self.assertEqual(STRUCTURAL_KINDS[:2], ("makefile", "precommit"))
+        self.assertIn("arch", STRUCTURAL_KINDS)
+        self.assertEqual(len(STRUCTURAL_KINDS), len(set(STRUCTURAL_KINDS)))
+
+    def test_backcompat_report_carrying_only_two_pre_existing_kinds_is_byte_identical(self):
+        report = {
+            "makefile": [
+                {
+                    "target": "x",
+                    "criticality": 3,
+                    "summary": "s",
+                    "recommendation": "r",
+                    "issue": "i",
+                },
+            ],
+            "precommit": [
+                {
+                    "category": "p",
+                    "criticality": 1,
+                    "summary": "s2",
+                    "recommendation": "r2",
+                },
+            ],
+        }
+        result = build_remediation(report)
+        self.assertEqual(
+            result["remediate"],
+            [
+                {
+                    "kind": "precommit",
+                    "id": "p",
+                    "criticality": 1,
+                    "summary": "s2",
+                    "issue": None,
+                    "auto_apply": True,
+                },
+                {
+                    "kind": "makefile",
+                    "id": "x",
+                    "criticality": 3,
+                    "summary": "s",
+                    "issue": "i",
+                    "auto_apply": True,
+                },
+            ],
+        )
+        self.assertEqual(result["blocked"], [])
+
+    def test_all_three_kinds_order_as_one_list_disagreeing_with_insertion_order(self):
+        # Insertion order is makefile-then-precommit-then-arch; criticality
+        # order disagrees on purpose (arch=1, makefile=3, precommit=4) --
+        # a per-kind implementation would print insertion order instead.
+        report = {
+            "makefile": [
+                {"target": "m", "criticality": 3, "summary": "s", "recommendation": "r"}
+            ],
+            "precommit": [
+                {"category": "p", "criticality": 4, "summary": "s", "recommendation": "r"}
+            ],
+            "arch": [
+                {"category": "a", "criticality": 1, "summary": "s", "recommendation": "r"}
+            ],
+        }
+        result = build_remediation(report)
+        self.assertEqual(
+            [e["kind"] for e in result["remediate"]], ["arch", "makefile", "precommit"]
+        )
+
+    def test_arch_kind_advisory_disables_auto_apply(self):
+        report = {
+            "arch": [
+                {
+                    "category": "arch-test-chaining",
+                    "criticality": 2,
+                    "summary": "s",
+                    "recommendation": "r",
+                    "advisory": True,
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(len(result["remediate"]), 1)
+        self.assertFalse(result["remediate"][0]["auto_apply"])
+        self.assertEqual(result["remediate"][0]["kind"], "arch")
+
+    def test_arch_kind_needs_research_goes_to_blocked(self):
+        report = {
+            "arch": [
+                {
+                    "category": "arch-test-target",
+                    "criticality": 2,
+                    "summary": "s",
+                    "recommendation": None,
+                    "needs_research": True,
+                    "stacks": ["python"],
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(result["remediate"], [])
+        self.assertEqual(len(result["blocked"]), 1)
+        self.assertEqual(result["blocked"][0]["kind"], "arch")
+        self.assertEqual(result["blocked"][0]["stacks"], ["python"])
+
+    def test_identifier_precedence_category_only_yields_category_as_id(self):
+        # remediation.py:86's `finding.get("target", finding.get("category"))`
+        # pinned as a property, not left implicit -- this is the shared-module
+        # fact the arch skill's D-A3 `target`-key prohibition depends on.
+        report = {
+            "arch": [
+                {
+                    "category": "arch-test-target",
+                    "criticality": 2,
+                    "summary": "s",
+                    "recommendation": "r",
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(result["remediate"][0]["id"], "arch-test-target")
+
+    def test_identifier_precedence_target_key_wins_over_category(self):
+        report = {
+            "arch": [
+                {
+                    "target": "some-makefile-target",
+                    "category": "arch-test-target",
+                    "criticality": 2,
+                    "summary": "s",
+                    "recommendation": "r",
+                }
+            ]
+        }
+        result = build_remediation(report)
+        self.assertEqual(result["remediate"][0]["id"], "some-makefile-target")
 
 
 from ai_kit_rules_common import stack_cache as _shared_stack_cache

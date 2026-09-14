@@ -1,16 +1,22 @@
 """Tests for `ai-kit-project-rules-arch` (REQ-rules-arch, Phase 12 plan 01).
 
-Task 1's tracer contract: the six `<behavior>` cases below, written before
-the checker existed and confirmed to fail for the right reason (ImportError
--- the package did not exist yet), then implemented against until they
-passed. Task 2 fills the suite out with paired triggering/non-triggering
-fixtures for every structural check, the D-A1 shape rule per-alternative,
-gate registration, and the shared suite's grown `STRUCTURAL_KINDS` tuple.
+Task 1's tracer contract: the six `<behavior>` cases in the `TestTracer*`
+classes below, written before the checker existed and confirmed to fail
+for the right reason (ImportError -- the package did not exist yet), then
+implemented against until they passed. Task 2 fills the suite out with
+paired triggering/non-triggering fixtures for every structural check, the
+D-A1 shape rule per-alternative, all three D-A2 chaining mechanisms with
+their token-boundary case, cycle/breadth safety, degradation, the CLI
+surface, and its own gate-registration class. The shared suite's grown
+`STRUCTURAL_KINDS` tuple and `parse_makefile_targets_ordered` coverage
+live in `tests/test_ai_kit_rules_common.py` instead (Task 2 (b)).
 """
 
 import os
+import re
 import sys
 import tempfile
+import tomllib
 import unittest
 
 sys.path.insert(
@@ -18,9 +24,13 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-project-rules-arch"),
 )
 
-from ai_kit_project_rules_arch import arch_checker, cli  # noqa: E402
+from ai_kit_project_rules_arch import arch_checker, cli
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
+_PRECOMMIT_PATH = os.path.join(_REPO, ".pre-commit-config.yaml")
+_PYPROJECT_PATH = os.path.join(_REPO, "pyproject.toml")
+_CLI_PY_CANDIDATE = "skills/ai-kit-project-rules-arch/ai_kit_project_rules_arch/cli.py"
 
 
 def _write(path, content):
@@ -35,6 +45,57 @@ def _findings(repo_root):
 
 def _issues(repo_root):
     return [f["issue"] for f in _findings(repo_root)]
+
+
+def _linear_chain_makefile(hops, target_name="arch-test"):
+    """`test` reaching `target_name` through a linear chain exactly `hops`
+    edges long (`test: t1`, `t1: t2`, ..., `t{hops-1}: target_name`)."""
+    lines = []
+    prev = "test"
+    for i in range(1, hops):
+        nxt = f"t{i}"
+        lines.append(f"{prev}: {nxt}\n\n")
+        prev = nxt
+    lines.append(f"{prev}: {target_name}\n\n")
+    lines.append(f"{target_name}:\n\techo a\n")
+    return "".join(lines)
+
+
+def _wide_fanout_makefile(width=600, target_name="arch-test"):
+    """`test` with `width` distinct direct prerequisites (deliberately
+    over D-A2's 512-target breadth bound), none of which lead to
+    `target_name` -- `target_name` is declared separately and genuinely
+    unreachable, proving the walk terminates rather than hanging on a
+    bushy graph."""
+    prereqs = " ".join(f"w{i}" for i in range(width))
+    lines = [f"test: {prereqs}\n\n"]
+    for i in range(width):
+        lines.append(f"w{i}:\n\techo w{i}\n\n")
+    lines.append(f"{target_name}:\n\techo a\n")
+    return "".join(lines)
+
+
+# Copied (not imported) from tests/test_ai_kit_project_rules_precommit.py,
+# per Task 2's action: "Copy the sibling's pre-commit hook helpers rather
+# than importing them across test modules."
+def _precommit_hook_block(hook_id):
+    with open(_PRECOMMIT_PATH, encoding="utf-8") as handle:
+        text = handle.read()
+    needle = f"- id: {hook_id}"
+    start = text.find(needle)
+    if start < 0:
+        raise AssertionError(f"hook id {hook_id!r} not found")
+    rest = text[start:]
+    nxt = rest.find("\n      - id:", len(needle))
+    return rest if nxt < 0 else rest[:nxt]
+
+
+def _precommit_hook_files_regex(hook_id):
+    block = _precommit_hook_block(hook_id)
+    match = re.search(r"^\s*files:\s*(\S+)\s*$", block, re.MULTILINE)
+    if match is None:
+        raise AssertionError(f"no files: value for hook {hook_id!r}")
+    return match.group(1).strip().strip("'\"")
 
 
 class TestTracerChainingWithoutExistence(unittest.TestCase):
@@ -121,6 +182,320 @@ class TestTracerShapeAnchoring(unittest.TestCase):
             self.assertEqual(issues, ["arch_test_target_missing"])
 
 
+class TestTargetExistencePaired(unittest.TestCase):
+    """Target existence, paired (Task 2 (a))."""
+
+    def test_no_shaped_target_flags_existence_exactly_once(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test: test-unit\n\ntest-unit:\n\techo t\n",
+            )
+            self.assertEqual(_issues(repo), ["arch_test_target_missing"])
+
+    def test_present_and_chained_target_not_flagged_for_existence(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test: test-unit arch-test\n\ntest-unit:\n\techo t\n\n"
+                "arch-test:\n\techo a\n",
+            )
+            self.assertEqual(_findings(repo), [])
+
+
+class TestChainingPaired(unittest.TestCase):
+    """Chaining, paired (Task 2 (a))."""
+
+    def test_unreached_target_flags_chaining_exactly_once(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test: test-unit\n\ntest-unit:\n\techo t\n\narch-test:\n\techo a\n",
+            )
+            self.assertEqual(_issues(repo), ["arch_test_not_chained"])
+
+    def test_prerequisite_added_not_flagged_for_chaining(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test: test-unit arch-test\n\ntest-unit:\n\techo t\n\n"
+                "arch-test:\n\techo a\n",
+            )
+            self.assertNotIn("arch_test_not_chained", _issues(repo))
+
+
+class TestEvaluationGate(unittest.TestCase):
+    """D-A4's evaluation gate: the no-target repo produces EXACTLY ONE
+    finding. Assert the length, not just membership -- a cascade is the
+    failure this gate exists to prevent and a membership-only assertion
+    passes for the cascade too."""
+
+    def test_missing_target_repo_produces_exactly_one_finding(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test: test-unit\n\ntest-unit:\n\techo t\n",
+            )
+            self.assertEqual(len(_findings(repo)), 1)
+
+
+class TestShapeRulePositiveAlternatives(unittest.TestCase):
+    """D-A1's positive alternatives: each name below is arch-test-shaped,
+    so the existence finding must NOT fire (the shape rule is satisfied)."""
+
+    def _shaped_repo_findings(self, target_header):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                f"test: test-unit {target_header}\n\ntest-unit:\n\techo t\n\n"
+                f"{target_header}:\n\techo a\n",
+            )
+            return _findings(repo)
+
+    def test_arch_test_literal_shape_satisfied(self):
+        self.assertEqual(self._shaped_repo_findings("arch-test"), [])
+
+    def test_arch_test_underscore_shape_satisfied(self):
+        self.assertEqual(self._shaped_repo_findings("arch_test"), [])
+
+    def test_arch_bare_shape_satisfied(self):
+        self.assertEqual(self._shaped_repo_findings("arch"), [])
+
+    def test_arch_check_shape_satisfied(self):
+        self.assertEqual(self._shaped_repo_findings("arch-check"), [])
+
+    def test_architecture_test_shape_satisfied(self):
+        self.assertEqual(self._shaped_repo_findings("architecture-test"), [])
+
+    def test_test_arch_prefixed_shape_satisfied(self):
+        self.assertEqual(self._shaped_repo_findings("test-arch"), [])
+
+
+class TestShapeRuleNegativeAlternatives(unittest.TestCase):
+    """D-A1's negative half -- the one that matters: an unanchored pattern
+    passes every positive case and silently accepts `archive`, which is
+    the false-NEGATIVE direction that hides a real gap."""
+
+    def _unshaped_repo_issues(self, target_header):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                f"test: test-unit\n\ntest-unit:\n\techo t\n\n{target_header}:\n\techo z\n",
+            )
+            return _issues(repo)
+
+    def test_archive_target_missing_flagged(self):
+        self.assertEqual(self._unshaped_repo_issues("archive"), ["arch_test_target_missing"])
+
+    def test_arch_docs_target_missing_flagged(self):
+        self.assertEqual(self._unshaped_repo_issues("arch-docs"), ["arch_test_target_missing"])
+
+    def test_architecture_diagrams_target_missing_flagged(self):
+        self.assertEqual(
+            self._unshaped_repo_issues("architecture-diagrams"), ["arch_test_target_missing"]
+        )
+
+
+class TestShapeRuleDeterminism(unittest.TestCase):
+    """A repo declaring BOTH `arch` and `arch-test` names the same target
+    on repeated runs, AND names the one declared FIRST -- the mechanism is
+    the shared ordered reader `parse_makefile_targets_ordered`, never
+    lexicographic order and never set iteration (which has no order)."""
+
+    def test_arch_declared_first_is_chosen(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "arch:\n\techo a1\n\narch-test:\n\techo a2\n\ntest: arch\n",
+            )
+            from ai_kit_rules_common.makefile_parse import parse_makefile_targets_ordered
+
+            target = arch_checker.find_arch_test_shaped_target(
+                parse_makefile_targets_ordered(os.path.join(repo, "Makefile"))
+            )
+            self.assertEqual(target, "arch")
+
+    def test_arch_test_declared_first_is_chosen(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "arch-test:\n\techo a2\n\narch:\n\techo a1\n\ntest: arch-test\n",
+            )
+            from ai_kit_rules_common.makefile_parse import parse_makefile_targets_ordered
+
+            target = arch_checker.find_arch_test_shaped_target(
+                parse_makefile_targets_ordered(os.path.join(repo, "Makefile"))
+            )
+            self.assertEqual(target, "arch-test")
+
+
+class TestFindingSchema(unittest.TestCase):
+    """D-A3's finding schema: every finding this skill emits carries
+    exactly the six pinned fields and carries NO identifier key of the
+    Makefile sibling's kind (`remediation.py:86`'s precedence is why: a
+    `target` key would silently repoint the remediate `id`). Each
+    `remediate` entry's `id` equals its finding's `category`, and the
+    existence and chaining findings produce two DIFFERENT ids."""
+
+    _SCHEMA_FIELDS = {
+        "category",
+        "issue",
+        "criticality",
+        "summary",
+        "recommendation",
+        "needs_research",
+    }
+
+    def test_missing_target_finding_has_exact_schema_and_no_target_key(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test: test-unit\n\ntest-unit:\n\techo t\n",
+            )
+            finding = _findings(repo)[0]
+            self.assertEqual(set(finding), self._SCHEMA_FIELDS)
+            self.assertNotIn("target", finding)
+
+    def test_not_chained_finding_has_exact_schema_and_no_target_key(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test: test-unit\n\ntest-unit:\n\techo t\n\narch-test:\n\techo a\n",
+            )
+            finding = _findings(repo)[0]
+            self.assertEqual(set(finding), self._SCHEMA_FIELDS)
+            self.assertNotIn("target", finding)
+
+    def test_remediate_ids_equal_categories_and_are_distinct(self):
+        with (
+            tempfile.TemporaryDirectory() as repo_missing,
+            tempfile.TemporaryDirectory() as repo_unchained,
+        ):
+            _write(
+                os.path.join(repo_missing, "Makefile"),
+                "test: test-unit\n\ntest-unit:\n\techo t\n",
+            )
+            _write(
+                os.path.join(repo_unchained, "Makefile"),
+                "test: test-unit\n\ntest-unit:\n\techo t\n\narch-test:\n\techo a\n",
+            )
+            missing_result = cli.remediate(repo_missing)
+            unchained_result = cli.remediate(repo_unchained)
+            missing_check = cli.check(repo_missing)["arch"]
+            unchained_check = cli.check(repo_unchained)["arch"]
+            self.assertEqual(missing_result["remediate"][0]["id"], missing_check[0]["category"])
+            self.assertEqual(
+                unchained_result["remediate"][0]["id"], unchained_check[0]["category"]
+            )
+            ids = {missing_result["remediate"][0]["id"], unchained_result["remediate"][0]["id"]}
+            self.assertEqual(len(ids), 2)
+
+
+class TestChainingMechanisms(unittest.TestCase):
+    """D-A2's three mechanisms, each its own method plus a non-triggering
+    counterpart, plus the token-boundary boundary case."""
+
+    def test_direct_prerequisite_is_chained(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test: arch-test\n\narch-test:\n\techo a\n",
+            )
+            self.assertEqual(_findings(repo), [])
+
+    def test_no_direct_prerequisite_not_chained(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test: test-unit\n\ntest-unit:\n\techo t\n\narch-test:\n\techo a\n",
+            )
+            self.assertIn("arch_test_not_chained", _issues(repo))
+
+    def test_transitive_prerequisite_through_one_aggregate_is_chained(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test: test-all\n\ntest-all: unit arch-test\n\nunit:\n\techo u\n\n"
+                "arch-test:\n\techo a\n",
+            )
+            self.assertEqual(_findings(repo), [])
+
+    def test_recipe_invocation_by_name_is_chained(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test:\n\t$(MAKE) arch-test\n\narch-test:\n\techo a\n",
+            )
+            self.assertEqual(_findings(repo), [])
+
+    def test_recipe_mentioning_longer_hyphenated_token_not_chained(self):
+        # `arch-test-integration` must NOT satisfy `arch-test` -- the
+        # shared helper's both-ends token boundary is what buys this; a
+        # plain substring implementation would pass every other case here.
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test:\n\t$(MAKE) arch-test-integration\n\narch-test:\n\techo a\n\n"
+                "arch-test-integration:\n\techo ai\n",
+            )
+            self.assertIn("arch_test_not_chained", _issues(repo))
+
+
+class TestGraphSafety(unittest.TestCase):
+    """Cycle safety AND breadth safety: a Makefile whose prerequisite
+    graph contains a cycle returns a verdict and does not hang, and a
+    Makefile whose `test` has a fan-out larger than D-A2's 512-target
+    breadth bound also returns a verdict rather than walking forever.
+    Paired with the depth bound's honest degradation: a linear chain
+    longer than 8 hops is reported not-chained (deliberate degradation
+    for a graph the checker declined to finish reading, not a bug to tune
+    away), paired with the same chain one hop inside the bound, which
+    must come back chained."""
+
+    def test_cyclic_prerequisites_returns_verdict(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "test: a\n\na: b\n\nb: a\n\narch-test:\n\techo a\n",
+            )
+            issues = _issues(repo)
+            self.assertEqual(issues, ["arch_test_not_chained"])
+
+    def test_wide_fanout_returns_verdict(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), _wide_fanout_makefile())
+            issues = _issues(repo)
+            self.assertEqual(issues, ["arch_test_not_chained"])
+
+    def test_chain_within_depth_bound_is_chained(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), _linear_chain_makefile(8))
+            self.assertEqual(_findings(repo), [])
+
+    def test_chain_exceeding_depth_bound_not_chained(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), _linear_chain_makefile(9))
+            self.assertIn("arch_test_not_chained", _issues(repo))
+
+
+class TestDegradation(unittest.TestCase):
+    """A repo with no `Makefile` at all, and a repo with an empty
+    `Makefile`, each return a list and never raise."""
+
+    def test_no_makefile_returns_list_without_raising(self):
+        with tempfile.TemporaryDirectory() as repo:
+            result = _findings(repo)
+            self.assertIsInstance(result, list)
+            self.assertEqual([f["issue"] for f in result], ["arch_test_target_missing"])
+
+    def test_empty_makefile_returns_list_without_raising(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "Makefile"), "")
+            result = _findings(repo)
+            self.assertIsInstance(result, list)
+            self.assertEqual([f["issue"] for f in result], ["arch_test_target_missing"])
+
+
 class TestCliSurface(unittest.TestCase):
     def test_check_returns_single_key_payload(self):
         with tempfile.TemporaryDirectory() as repo:
@@ -136,6 +511,38 @@ class TestCliSurface(unittest.TestCase):
 
     def test_unknown_subcommand_returns_2(self):
         self.assertEqual(cli.main(["bogus"]), 2)
+
+
+class TestGateRegistration(unittest.TestCase):
+    def test_makefile_registers_module_and_package(self):
+        with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("tests.test_ai_kit_project_rules_arch", text)
+        self.assertIn("skills/ai-kit-project-rules-arch/", text)
+
+    def test_ruff_and_py_compile_match_package_path(self):
+        for hook_id in ("ruff", "py-compile"):
+            regex = _precommit_hook_files_regex(hook_id)
+            self.assertIsNotNone(
+                re.match(regex, _CLI_PY_CANDIDATE),
+                f"{_CLI_PY_CANDIDATE} did not match {hook_id} files: {regex}",
+            )
+        entry_block = _precommit_hook_block("unittest")
+        match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
+        self.assertIsNotNone(match, "no entry: value for hook unittest")
+        self.assertIn("tests.test_ai_kit_project_rules_arch", match.group(1))
+
+    def test_pyright_include_contains_package_directory(self):
+        with open(_PYPROJECT_PATH, "rb") as handle:
+            data = tomllib.load(handle)
+        include = data["tool"]["pyright"]["include"]
+        self.assertIn("skills/ai-kit-project-rules-arch", include)
+
+    def test_vulture_paths_contains_package_directory(self):
+        with open(_PYPROJECT_PATH, "rb") as handle:
+            data = tomllib.load(handle)
+        paths = data["tool"]["vulture"]["paths"]
+        self.assertIn("skills/ai-kit-project-rules-arch", paths)
 
 
 if __name__ == "__main__":
