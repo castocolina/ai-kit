@@ -1461,5 +1461,297 @@ class TestDependsOnConditionAccessorContract(unittest.TestCase):
         self.assertIsNone(compose_parse.block_scalar(entry_block, "condition"))
 
 
+# ---------------------------------------------------------------------------
+# Plan 13-03: hot-reload convention check (ROADMAP Phase 13 SC4, D-D13
+# through D-D18). Every fixture below carries a stack marker (`package.
+# json`/`pyproject.toml`) at repo root so `detect_stacks` finds `node`/
+# `python` and the seeded catalog's `vite`/`node ...` markers actually
+# resolve or fail to resolve as intended.
+# ---------------------------------------------------------------------------
+
+
+def _hot_reload_findings(repo_root):
+    return [f for f in _findings(repo_root) if f["category"] == "docker-hot-reload"]
+
+
+def _hot_reload_repo(
+    override_text,
+    *,
+    override_filename="docker-compose.override.yml",
+    base_text="services:\n  prod:\n    image: demo\n",
+    stack_markers=("package.json", "pyproject.toml"),
+):
+    repo = tempfile.mkdtemp()
+    _write(os.path.join(repo, "docker-compose.yml"), base_text)
+    _write(os.path.join(repo, override_filename), override_text)
+    for marker in stack_markers:
+        content = "{}\n" if marker.endswith(".json") else "[project]\nname = 'x'\n"
+        _write(os.path.join(repo, marker), content)
+    return repo
+
+
+class TestHotReloadConformingBindPlusRecognizedCommand(unittest.TestCase):
+    def test_bind_mount_and_recognized_command_yields_no_finding(self):
+        override = (
+            "services:\n"
+            "  okvite:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - ./src:/app/src\n"
+            "    command: vite --host 0.0.0.0\n"
+        )
+        repo = _hot_reload_repo(override)
+        self.assertEqual(_hot_reload_findings(repo), [])
+
+
+class TestHotReloadProductionEntrypointAdvisory(unittest.TestCase):
+    """The user's own reported case (13-CONTEXT D-04): a bind mount plus an
+    override that is just the production entrypoint, with no watch/reload
+    flag, must NOT be reported conforming."""
+
+    def test_bind_mount_plus_production_command_is_advisory_command_not_matched(self):
+        override = (
+            "services:\n"
+            "  prodcmd:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - ./src:/app/src\n"
+            "    command: node dist/server.js\n"
+        )
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f["issue"], "docker_hot_reload_tool_unrecognized")
+        self.assertEqual(f.get("reason"), "command_not_matched")
+        self.assertIs(f.get("advisory"), True)
+
+
+class TestHotReloadScriptIndirectionAdvisory(unittest.TestCase):
+    def test_script_runner_override_is_advisory_script_indirection(self):
+        override = (
+            "services:\n"
+            "  scripted:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - ./src:/app/src\n"
+            "    command: npm run dev\n"
+        )
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f.get("reason"), "script_indirection")
+        self.assertIs(f.get("advisory"), True)
+        text = f["recommendation"].lower()
+        self.assertTrue("package.json" in text or "makefile" in text, text)
+
+
+class TestHotReloadMissingBothHalves(unittest.TestCase):
+    def test_no_volumes_no_override_names_both_halves(self):
+        override = "services:\n  baked:\n    image: demo\n"
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f["issue"], "docker_hot_reload_convention_missing")
+        self.assertNotIn("advisory", f)
+        text = f["summary"].lower()
+        self.assertIn("no bind mount", text)
+        self.assertIn("no command or entrypoint override", text)
+
+
+class TestHotReloadMissingOverrideHalfOnly(unittest.TestCase):
+    def test_bind_mount_present_no_override_names_override_half_only(self):
+        override = (
+            "services:\n"
+            "  mounted:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - ./src:/app/src\n"
+        )
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f["issue"], "docker_hot_reload_convention_missing")
+        text = f["summary"].lower()
+        self.assertNotIn("no bind mount", text)
+        self.assertIn("no command or entrypoint override", text)
+
+
+class TestHotReloadNamedVolumeIsMissingNotUnreadable(unittest.TestCase):
+    def test_named_volume_only_is_convention_missing(self):
+        override = (
+            "services:\n"
+            "  namedonly:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - appdata:/app/data\n"
+            "    command: node dist/server.js\n"
+        )
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["issue"], "docker_hot_reload_convention_missing")
+
+
+class TestHotReloadInterpolatedVolumeIsAdvisory(unittest.TestCase):
+    def test_interpolated_volume_source_is_advisory_unreadable(self):
+        var = chr(36) + "{SRC_DIR}"
+        override = (
+            "services:\n"
+            "  murky:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            f"      - {var}:/app/src\n"
+        )
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f["issue"], "docker_hot_reload_tool_unrecognized")
+        self.assertEqual(f.get("reason"), "volumes_unreadable")
+        self.assertIs(f.get("advisory"), True)
+
+
+class TestHotReloadAnonymousVolumeIsMissingNotBind(unittest.TestCase):
+    """D-D17 rule 1: a bare path with NO colon is an anonymous volume --
+    READABLE, never a bind mount -- even though it begins with `/`."""
+
+    def test_bare_path_anonymous_volume_is_convention_missing(self):
+        override = (
+            "services:\n"
+            "  anonvol:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - /app/data\n"
+            "    command: node dist/server.js\n"
+        )
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["issue"], "docker_hot_reload_convention_missing")
+
+    def test_same_leading_characters_with_separator_is_a_bind_mount(self):
+        override = (
+            "services:\n"
+            "  realbind:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - /app/data:/app/data\n"
+            "    command: vite --host 0.0.0.0\n"
+        )
+        repo = _hot_reload_repo(override)
+        self.assertEqual(_hot_reload_findings(repo), [])
+
+
+class TestHotReloadLongFormVolumeIsAdvisory(unittest.TestCase):
+    """D-D17's descope (cycle-2 review finding 1): a long-form
+    (mapping-style) entry is UNREADABLE, never a confident finding in
+    either direction."""
+
+    def test_long_form_mapping_style_entry_is_advisory_not_missing_not_conforming(self):
+        override = (
+            "services:\n"
+            "  longform:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - type: bind\n"
+            "        source: ./src\n"
+            "        target: /app/src\n"
+            "    command: vite --host 0.0.0.0\n"
+        )
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f["issue"], "docker_hot_reload_tool_unrecognized")
+        self.assertEqual(f.get("reason"), "volumes_unreadable")
+
+
+class TestHotReloadMixedStateUnreadableAndMissingOverride(unittest.TestCase):
+    """D-D17's mixed-state precedence: `volumes_unreadable` outranks the
+    missing-override half even though both are true here."""
+
+    def test_interpolated_volume_and_no_override_is_one_advisory_never_missing(self):
+        var = chr(36) + "{SRC_DIR}"
+        override = (
+            "services:\n"
+            "  murky:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            f"      - {var}:/app/src\n"
+        )
+        repo = _hot_reload_repo(override)
+        findings = _hot_reload_findings(repo)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f["issue"], "docker_hot_reload_tool_unrecognized")
+        self.assertEqual(f.get("reason"), "volumes_unreadable")
+        self.assertIs(f.get("advisory"), True)
+        text = (f["summary"] + " " + f["recommendation"]).lower()
+        self.assertNotIn("no bind mount", text)
+        self.assertIn("no 'command:' or 'entrypoint:' override", text)
+
+
+class TestHotReloadReadableBindBesideUnreadableStaysConforming(unittest.TestCase):
+    """The mixed state's paired counterpart: one READABLE bind mount
+    settles the answer, so an unreadable neighbour must not drag a
+    genuinely conforming service into the advisory outcome."""
+
+    def test_one_readable_bind_mount_settles_answer_despite_interpolated_neighbor(self):
+        var = chr(36) + "{SRC_DIR}"
+        override = (
+            "services:\n"
+            "  mixed:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            f"      - {var}:/cache\n"
+            "      - ./src:/app/src\n"
+            "    command: vite --host 0.0.0.0\n"
+        )
+        repo = _hot_reload_repo(override)
+        self.assertEqual(_hot_reload_findings(repo), [])
+
+
+class TestHotReloadBaseFileOnlyServiceNeverEvaluated(unittest.TestCase):
+    def test_service_defined_only_in_base_compose_file_is_not_evaluated(self):
+        repo = tempfile.mkdtemp()
+        _write(os.path.join(repo, "docker-compose.yml"), "services:\n  prod:\n    image: demo\n")
+        self.assertEqual(_hot_reload_findings(repo), [])
+
+
+class TestHotReloadStacklessRepoReasonPrecedence(unittest.TestCase):
+    """D-D15's fixed reason order end-to-end: `script_indirection` is
+    evaluated BEFORE `no_stack_detected`, so a script-runner override in a
+    stackless repo keeps `script_indirection` rather than moving to
+    `no_stack_detected` -- only the two non-script services move."""
+
+    def test_no_detected_stack_moves_non_script_services_to_no_stack_detected(self):
+        override = (
+            "services:\n"
+            "  okvite:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - ./src:/app/src\n"
+            "    command: vite --host 0.0.0.0\n"
+            "  prodcmd:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - ./src:/app/src\n"
+            "    command: node dist/server.js\n"
+            "  scripted:\n"
+            "    image: demo\n"
+            "    volumes:\n"
+            "      - ./src:/app/src\n"
+            "    command: npm run dev\n"
+        )
+        repo = _hot_reload_repo(override, stack_markers=())
+        findings = _hot_reload_findings(repo)
+        reasons = sorted(f.get("reason") for f in findings)
+        self.assertEqual(reasons, ["no_stack_detected", "no_stack_detected", "script_indirection"])
+
+
 if __name__ == "__main__":
     unittest.main()
