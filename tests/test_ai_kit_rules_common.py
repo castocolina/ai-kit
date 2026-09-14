@@ -880,5 +880,317 @@ class TestProvenanceCitationRegexDriftGuard(unittest.TestCase):
         )
 
 
+# Appended by Phase 11 plan 02: the shared catalog's baseline stacks table,
+# derived tool-to-category index, D-T7 pairs reachability, ambiguous-tool
+# defaults, out-of-taxonomy markers, Makefile-category alias table (+ its
+# drift guard), and the redundant-vs-complementary pairs lookup.
+
+from ai_kit_rules_common import tool_catalog as _tc
+
+
+class TestBaselineStacksShape(unittest.TestCase):
+    def test_all_five_stacks_present_with_all_six_category_keys(self):
+        self.assertEqual(set(_tc.BASELINE_STACKS), {"python", "node", "java", "rust", "go"})
+        for stack, categories in _tc.BASELINE_STACKS.items():
+            self.assertEqual(
+                set(categories),
+                set(_tc.TAXONOMY_CATEGORIES),
+                f"{stack} does not carry all six category keys",
+            )
+
+    def test_empty_category_allowed_only_for_inherent_ones(self):
+        # type-checking is N/A (compiler-inherent) for java/rust/go; every
+        # entry STRING within a non-empty category is a non-empty string.
+        for stack, categories in _tc.BASELINE_STACKS.items():
+            for category, entries in categories.items():
+                for entry in entries:
+                    self.assertIsInstance(entry, str)
+                    self.assertTrue(entry, f"{stack}/{category} has an empty entry string")
+        for stack in ("java", "rust", "go"):
+            self.assertEqual(_tc.BASELINE_STACKS[stack]["type-checking"], ())
+
+
+class TestToolCategoryIndexDerivation(unittest.TestCase):
+    def test_every_baseline_entry_resolves_to_its_own_category(self):
+        for categories in _tc.BASELINE_STACKS.values():
+            for category, entries in categories.items():
+                for entry in entries:
+                    self.assertEqual(_tc.TOOL_CATEGORY_INDEX[entry], category)
+
+    def test_index_contains_no_key_absent_from_both_tables(self):
+        baseline_entries = {
+            entry
+            for categories in _tc.BASELINE_STACKS.values()
+            for entries in categories.values()
+            for entry in entries
+        }
+        allowed = baseline_entries | set(_tc._SUPPLEMENTARY_INDEX_ENTRIES)
+        self.assertEqual(set(_tc.TOOL_CATEGORY_INDEX), allowed)
+
+    def test_no_index_key_contains_a_plus_sign(self):
+        # The cheapest mechanical catch for a "+"-joined cell transcribed as
+        # one combined string instead of two entries.
+        self.assertFalse([k for k in _tc.TOOL_CATEGORY_INDEX if "+" in k])
+
+    def test_plus_and_slash_joined_cells_were_really_split(self):
+        # Node linting cell ("eslint"+"typescript-eslint") and Java
+        # formatting cell ("spotless"+"google-java-format") each resolve
+        # through the index on their own.
+        for entry, category in (
+            ("eslint", "linting"),
+            ("typescript-eslint", "linting"),
+            ("spotless", "formatting"),
+            ("google-java-format", "formatting"),
+        ):
+            self.assertEqual(_tc.TOOL_CATEGORY_INDEX[entry], category)
+
+    def test_collision_guard_is_non_vacuous(self):
+        """A constructed two-category collision must raise -- proven by a
+        fixture table the real table's own silence cannot substitute for."""
+        colliding = {
+            "alpha-stack": {
+                "formatting": ("shared-tool-name",),
+                "type-checking": (),
+                "linting": (),
+                "security": (),
+                "duplicate-code": (),
+                "dead-code": (),
+            },
+            "beta-stack": {
+                "formatting": (),
+                "type-checking": ("shared-tool-name",),
+                "linting": (),
+                "security": (),
+                "duplicate-code": (),
+                "dead-code": (),
+            },
+        }
+        with self.assertRaises(ImportError):
+            _derive_from(colliding)
+
+
+def _derive_from(baseline):
+    """Re-implements `_derive_tool_category_index`'s collision rule against
+    an arbitrary baseline mapping, so the guard is proven non-vacuous
+    without needing `tool_catalog` to expose a parameterized variant of its
+    own import-time-only function."""
+    index = {}
+    for categories in baseline.values():
+        for category, entries in categories.items():
+            for entry in entries:
+                existing = index.get(entry)
+                if existing is not None and existing != category:
+                    raise ImportError(
+                        f"collision: {entry!r} is both {existing!r} and {category!r}"
+                    )
+                index[entry] = category
+    return index
+
+
+class TestResolveToolCategory(unittest.TestCase):
+    def test_baseline_entries_resolve(self):
+        self.assertEqual(_tc.resolve_tool_category("ruff format"), "formatting")
+        self.assertEqual(_tc.resolve_tool_category("mypy"), "type-checking")
+
+    def test_case_folded(self):
+        self.assertEqual(_tc.resolve_tool_category("MYPY"), "type-checking")
+
+    def test_supplementary_entries_resolve(self):
+        for tool_name in ("staticcheck", "ts-prune", "cargo-audit", "semgrep"):
+            self.assertIsNotNone(_tc.resolve_tool_category(tool_name))
+
+    def test_ambiguous_default_resolves_without_being_an_index_key(self):
+        # The bare Python formatter/linter binary name resolves through the
+        # defaults map chain link, NOT through index membership: indexing it
+        # would collide its two suffixed entries or forge a `baseline`
+        # confidence D-T3 reserves for an inference. This is the guard shape
+        # the cross-AI review's cycle 2 HIGH ruled unsatisfiable if written
+        # as index-membership-only.
+        self.assertNotIn("ruff", _tc.TOOL_CATEGORY_INDEX)
+        self.assertEqual(_tc.resolve_tool_category("ruff"), "linting")
+
+    def test_rule_family_member_absent_from_index_and_resolves_to_none(self):
+        # "ruff S rules" is a rule selector, not an invocable tool -- it is
+        # not a member of the index, and resolve_tool_category must answer
+        # None for it (it is not a tool at all).
+        self.assertNotIn("ruff S rules", _tc.TOOL_CATEGORY_INDEX)
+        self.assertIsNone(_tc.resolve_tool_category("ruff S rules"))
+
+    def test_unknown_name_resolves_to_none(self):
+        self.assertIsNone(_tc.resolve_tool_category("definitely-not-a-real-tool"))
+        self.assertIsNone(_tc.resolve_tool_category(""))
+        self.assertIsNone(_tc.resolve_tool_category(None))
+
+
+class TestPairsReachability(unittest.TestCase):
+    """D-T7: every tool-token member of every pairs row resolves through
+    `resolve_tool_category` -- the index first, then the defaults map --
+    never through raw index membership, which is unsatisfiable against this
+    table (the bare `ruff` row's first member)."""
+
+    def test_every_tool_token_member_resolves(self):
+        for row in _tc.REDUNDANT_VS_COMPLEMENTARY_PAIRS:
+            rule_family = row.get("rule_family_members", ())
+            for member in row["tools"]:
+                if member in rule_family:
+                    continue
+                self.assertIsNotNone(
+                    _tc.resolve_tool_category(member),
+                    f"pairs row {row['tools']!r} member {member!r} does not "
+                    "resolve",
+                )
+
+    def test_redundancy_and_supersession_rows_share_one_category(self):
+        for row in _tc.REDUNDANT_VS_COMPLEMENTARY_PAIRS:
+            if row["relationship"] not in ("redundant", "supersession"):
+                continue
+            rule_family = row.get("rule_family_members", ())
+            tokens = [t for t in row["tools"] if t not in rule_family]
+            categories = {_tc.resolve_tool_category(t) for t in tokens}
+            self.assertEqual(
+                len(categories),
+                1,
+                f"{row['relationship']} row {row['tools']!r} spans categories "
+                f"{categories!r} -- a researched 'don't run both' can never fire",
+            )
+
+    def test_named_regression_tools_resolve_to_their_partners_category(self):
+        # The exact four tools the cross-AI review's cycle 1 HIGH named as
+        # reachable only through the pairs table or a cell's prose.
+        pairs = {
+            "staticcheck": "golangci-lint",
+            "ts-prune": "knip",
+            "cargo-audit": "cargo-deny",
+            "semgrep": "eslint-plugin-security",
+        }
+        for tool_name, partner in pairs.items():
+            self.assertEqual(
+                _tc.resolve_tool_category(tool_name),
+                _tc.resolve_tool_category(partner),
+            )
+
+    def test_cross_category_rows_are_expected_and_harmless(self):
+        """Exactly two of today's ten rows resolve cross-category, and both
+        are complementary -- the ruff/vulture row (bare `ruff`, deliberately
+        not an index key) and the Java PMD/SpotBugs row (source-analysis vs
+        bytecode-analysis, genuinely different categories). Pinned here so a
+        future transcription that makes a REDUNDANCY row cross-category
+        fails this instead of quietly producing advice that can never
+        fire."""
+        cross = []
+        for row in _tc.REDUNDANT_VS_COMPLEMENTARY_PAIRS:
+            rule_family = row.get("rule_family_members", ())
+            tokens = [t for t in row["tools"] if t not in rule_family]
+            if len(tokens) != 2:
+                continue
+            categories = {_tc.resolve_tool_category(t) for t in tokens}
+            if len(categories) > 1:
+                cross.append(row)
+        self.assertEqual(len(cross), 2, [r["tools"] for r in cross])
+        for row in cross:
+            self.assertIn(row["relationship"], ("complementary", "overlapping"))
+        self.assertIn(("ruff", "vulture"), [r["tools"] for r in cross])
+
+    def test_import_guard_raises_on_unresolvable_member(self):
+        row = {
+            "ecosystem": "fixture",
+            "tools": ("definitely-not-a-real-tool", "vulture"),
+            "rule_family_members": (),
+            "relationship": "complementary",
+            "reason": "fixture row for the non-vacuity guard",
+        }
+        with self.assertRaises(ImportError):
+            _tc._validate_pairs_reachability((row,))
+
+    def test_import_guard_raises_on_cross_category_redundancy(self):
+        row = {
+            "ecosystem": "fixture",
+            "tools": ("mypy", "vulture"),
+            "rule_family_members": (),
+            "relationship": "redundant",
+            "reason": "fixture row for the non-vacuity guard",
+        }
+        with self.assertRaises(ImportError):
+            _tc._validate_pairs_reachability((row,))
+
+
+class TestFindPairRelationship(unittest.TestCase):
+    def test_order_insensitive_both_directions(self):
+        forward = _tc.find_pair_relationship("knip", "ts-prune")
+        backward = _tc.find_pair_relationship("ts-prune", "knip")
+        self.assertIsNotNone(forward)
+        self.assertEqual(forward, backward)
+        self.assertEqual(forward["relationship"], "supersession")
+
+    def test_unresearched_pair_returns_none(self):
+        self.assertIsNone(_tc.find_pair_relationship("mypy", "jscpd"))
+
+
+class TestAmbiguousToolDefaults(unittest.TestCase):
+    def test_exactly_one_cited_entry(self):
+        self.assertEqual(_tc.AMBIGUOUS_TOOL_DEFAULTS, {"ruff": "linting"})
+
+
+class TestOutOfTaxonomyGroups(unittest.TestCase):
+    def test_each_group_carries_markers_and_a_reason(self):
+        for group_name, group in _tc.OUT_OF_TAXONOMY_GROUPS.items():
+            self.assertTrue(group["markers"], group_name)
+            self.assertTrue(group["reason"], group_name)
+
+
+class TestMakefileCategoryAliasDriftGuard(unittest.TestCase):
+    """Pins `MAKEFILE_CATEGORY_ALIAS`'s five mapped values against the
+    sibling `ai-kit-project-rules-makefile` skill's real `RESEARCH_
+    CATEGORIES` tuple, read via `ast` from `tooling_payload.py` (never
+    imported)."""
+
+    def _read_research_categories(self):
+        with open(
+            _MAKEFILE_SKILL_TOOLING_PAYLOAD_PATH, encoding="utf-8"
+        ) as handle:
+            tree = ast.parse(handle.read())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Name) or target.id != "RESEARCH_CATEGORIES":
+                continue
+            if isinstance(node.value, ast.Tuple):
+                return tuple(
+                    elt.value for elt in node.value.elts if isinstance(elt, ast.Constant)
+                )
+        raise AssertionError("RESEARCH_CATEGORIES literal not found")
+
+    def test_alias_table_has_six_keys_one_none_five_matching_sibling(self):
+        self.assertEqual(set(_tc.MAKEFILE_CATEGORY_ALIAS), set(_tc.TAXONOMY_CATEGORIES))
+        self.assertIsNone(_tc.MAKEFILE_CATEGORY_ALIAS["type-checking"])
+        none_count = sum(1 for v in _tc.MAKEFILE_CATEGORY_ALIAS.values() if v is None)
+        self.assertEqual(none_count, 1)
+
+    def test_mapped_values_match_sibling_research_categories(self):
+        research_categories = self._read_research_categories()
+        mapped = {v for v in _tc.MAKEFILE_CATEGORY_ALIAS.values() if v is not None}
+        self.assertEqual(
+            mapped,
+            set(research_categories),
+            "MAKEFILE_CATEGORY_ALIAS drifted from ai-kit-project-rules-"
+            "makefile's RESEARCH_CATEGORIES -- the two skills would stop "
+            "describing the same categories.",
+        )
+
+    def test_drift_guard_is_non_vacuous(self):
+        """Edit one mapped value, confirm exactly this class's second test
+        fails, then revert -- proving the guard actually compares rather
+        than trivially passing."""
+        original = _tc.MAKEFILE_CATEGORY_ALIAS["formatting"]
+        _tc.MAKEFILE_CATEGORY_ALIAS["formatting"] = "not-a-real-category"
+        try:
+            research_categories = self._read_research_categories()
+            mapped = {v for v in _tc.MAKEFILE_CATEGORY_ALIAS.values() if v is not None}
+            self.assertNotEqual(mapped, set(research_categories))
+        finally:
+            _tc.MAKEFILE_CATEGORY_ALIAS["formatting"] = original
+
+
 if __name__ == "__main__":
     unittest.main()
