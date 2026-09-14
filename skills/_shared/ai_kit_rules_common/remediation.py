@@ -22,7 +22,13 @@ from __future__ import annotations
 # `ai-kit-project-rules-docker`'s (Phase 13) sets `target` on its
 # target-family findings only, exactly like the makefile skill's meaning
 # of that key, and never on its runbook finding.
-STRUCTURAL_KINDS = ("makefile", "precommit", "arch", "docker")
+# `ai-kit-project-rules-cicd`'s (Phase 14) sets NO identifier key on any
+# finding at all -- three of its four reuse surfaces are not Makefile
+# targets, so a `target` key would mean a Makefile target name on some
+# findings and a hook id/npm script/Gradle task on others, the exact
+# per-surface meaning flip D-D3 exists to prevent. Its `id` always
+# derives from `category`.
+STRUCTURAL_KINDS = ("makefile", "precommit", "arch", "docker", "cicd")
 
 
 def build_remediation(report: dict) -> dict:
