@@ -11,7 +11,13 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-project-rules-precommit"),
 )
 
-from ai_kit_project_rules_precommit import cli, parity_checker, precommit_checker, stack_cache
+from ai_kit_project_rules_precommit import (
+    cli,
+    parity_checker,
+    precommit_checker,
+    stack_cache,
+    taxonomy_checker,
+)
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
@@ -330,6 +336,311 @@ class TestStageSplitWired(unittest.TestCase):
             findings = precommit_checker.check_precommit_rules(repo)
             hits = [f for f in findings if f.get("category") == "precommit-vs-prepush-split"]
             self.assertEqual(hits, [])
+
+
+class TestClassifyPrecommitTools(unittest.TestCase):
+    """Plan 11-02 Task 2: classification (ROADMAP SC2), each fixture its
+    own class per the plan's paired-fixture instruction."""
+
+    def test_sc2_fixture_four_tools_each_in_exactly_one_category(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), '[project]\nname="x"\n')
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(
+                    _hook("ruff", entry="ruff check ."),
+                    _hook("mypy", entry="mypy ."),
+                    _hook("bandit", entry="bandit -r ."),
+                    _hook("eslint", entry="eslint ."),
+                ),
+            )
+            result = taxonomy_checker.classify_precommit_tools(repo)
+            self.assertEqual(result["unclassified"], [])
+            placed = {}
+            for category, hooks in result["taxonomy"].items():
+                for hook in hooks:
+                    placed.setdefault(hook["hook_id"], []).append(category)
+            self.assertEqual(sorted(placed), ["bandit", "eslint", "mypy", "ruff"])
+            self.assertTrue(all(len(v) == 1 for v in placed.values()))
+            used_categories = {c for c, hs in result["taxonomy"].items() if hs}
+            self.assertEqual(used_categories, {"linting", "type-checking", "security"})
+
+
+class TestDisambiguationPair(unittest.TestCase):
+    def test_formatter_subcommand_classifies_formatting(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(_hook("fmt-or-lint", entry="ruff format .")),
+            )
+            result = taxonomy_checker.classify_precommit_tools(repo)
+            self.assertEqual(result["taxonomy"]["formatting"][0]["hook_id"], "fmt-or-lint")
+
+    def test_lint_subcommand_classifies_linting(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(_hook("fmt-or-lint", entry="ruff check .")),
+            )
+            result = taxonomy_checker.classify_precommit_tools(repo)
+            self.assertEqual(result["taxonomy"]["linting"][0]["hook_id"], "fmt-or-lint")
+
+
+class TestTokenBoundaryPair(unittest.TestCase):
+    def test_plugin_name_containing_shorter_tool_name_classifies_as_plugin(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(
+                    _hook("eslint-security", entry="eslint-plugin-security .")
+                ),
+            )
+            result = taxonomy_checker.classify_precommit_tools(repo)
+            self.assertEqual(len(result["taxonomy"]["security"]), 1)
+            self.assertEqual(result["taxonomy"]["linting"], [])
+            self.assertEqual(
+                result["taxonomy"]["security"][0]["matched"], "eslint-plugin-security"
+            )
+
+
+class TestInferredConfidencePair(unittest.TestCase):
+    def test_bare_ambiguous_hook_id_is_inferred(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(_hook("ruff")),
+            )
+            result = taxonomy_checker.classify_precommit_tools(repo)
+            hooks = result["taxonomy"]["linting"]
+            self.assertEqual(len(hooks), 1)
+            self.assertEqual(hooks[0]["confidence"], "inferred")
+
+    def test_disambiguated_entry_is_baseline(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(_hook("ruff", entry="ruff check .")),
+            )
+            result = taxonomy_checker.classify_precommit_tools(repo)
+            hooks = result["taxonomy"]["linting"]
+            self.assertEqual(len(hooks), 1)
+            self.assertEqual(hooks[0]["confidence"], "baseline")
+
+
+class TestCacheConfidencePath(unittest.TestCase):
+    # Invented, implausible name -- MUST be absent from the catalog index,
+    # asserted below, so this fixture cannot silently rot into vacuity when
+    # a later phase grows the catalog. Resolution order puts the index
+    # first, so a real/already-indexed tool name would classify at
+    # `baseline` before the cache is ever consulted.
+    _CACHE_ONLY_TOOL = "zzz-imaginary-deadcode-detector"
+
+    def test_invented_tool_name_is_absent_from_catalog_index(self):
+        from ai_kit_rules_common.tool_catalog import TOOL_CATEGORY_INDEX
+
+        self.assertNotIn(self._CACHE_ONLY_TOOL, TOOL_CATEGORY_INDEX)
+
+    def test_warm_cache_classifies_at_cache_confidence_naming_the_stack(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), '[project]\nname="x"\n')
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(
+                    _hook(self._CACHE_ONLY_TOOL, entry=f"{self._CACHE_ONLY_TOOL} .")
+                ),
+            )
+            cache_root = os.path.join(repo, "_cache")
+            stack_cache.write_stack_cache(
+                "python",
+                {
+                    "dead-code": (
+                        f"{self._CACHE_ONLY_TOOL} "
+                        "(source: https://example.com/imaginary-tool)"
+                    )
+                },
+                cache_root=cache_root,
+            )
+            result = taxonomy_checker.classify_precommit_tools(repo, cache_root=cache_root)
+            hooks = result["taxonomy"]["dead-code"]
+            self.assertEqual(len(hooks), 1)
+            self.assertEqual(hooks[0]["confidence"], "cache")
+            self.assertEqual(hooks[0]["stack"], "python")
+            self.assertFalse(hooks[0]["stale"])
+
+    def test_cold_cache_is_unclassified(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), '[project]\nname="x"\n')
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(
+                    _hook(self._CACHE_ONLY_TOOL, entry=f"{self._CACHE_ONLY_TOOL} .")
+                ),
+            )
+            cache_root = os.path.join(repo, "_cache")
+            result = taxonomy_checker.classify_precommit_tools(repo, cache_root=cache_root)
+            self.assertEqual(len(result["unclassified"]), 1)
+            self.assertEqual(result["unclassified"][0]["hook_id"], self._CACHE_ONLY_TOOL)
+
+
+class TestCacheStalenessFlag(unittest.TestCase):
+    _CACHE_ONLY_TOOL = "zzz-imaginary-deadcode-detector"
+
+    def test_stale_hit_is_still_cache_confidence_with_stale_flag_true(self):
+        import json as _json
+        from datetime import UTC, datetime, timedelta
+
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), '[project]\nname="x"\n')
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(
+                    _hook(self._CACHE_ONLY_TOOL, entry=f"{self._CACHE_ONLY_TOOL} .")
+                ),
+            )
+            cache_root = os.path.join(repo, "_cache")
+            stack_cache.write_stack_cache(
+                "python",
+                {
+                    "dead-code": (
+                        f"{self._CACHE_ONLY_TOOL} "
+                        "(source: https://example.com/imaginary-tool)"
+                    )
+                },
+                cache_root=cache_root,
+            )
+            path = stack_cache.cache_path("python", cache_root=cache_root)
+            with open(path, encoding="utf-8") as handle:
+                payload = _json.load(handle)
+            backdated = datetime.now(UTC) - timedelta(days=stack_cache.STALE_AFTER_DAYS + 1)
+            payload["cached_at"] = backdated.isoformat()
+            with open(path, "w", encoding="utf-8") as handle:
+                _json.dump(payload, handle)
+
+            result = taxonomy_checker.classify_precommit_tools(repo, cache_root=cache_root)
+            hooks = result["taxonomy"]["dead-code"]
+            self.assertEqual(len(hooks), 1)
+            self.assertEqual(hooks[0]["confidence"], "cache")
+            self.assertTrue(hooks[0]["stale"])
+
+
+class TestOutOfTaxonomy(unittest.TestCase):
+    def test_hygiene_and_test_runner_hooks_produce_no_finding(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(
+                    _hook("trailing-whitespace"),
+                    _hook("run-pytest", entry="pytest tests/"),
+                ),
+            )
+            result = taxonomy_checker.classify_precommit_tools(repo)
+            self.assertEqual(len(result["out_of_taxonomy"]), 2)
+            self.assertEqual(result["unclassified"], [])
+            findings = taxonomy_checker.build_unclassified_findings(result)
+            self.assertEqual(findings, [])
+
+    def test_genuinely_unknown_analysis_tool_is_unclassified_and_produces_a_finding(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(_hook("some-brand-new-analyzer")),
+            )
+            result = taxonomy_checker.classify_precommit_tools(repo)
+            self.assertEqual(len(result["unclassified"]), 1)
+            findings = taxonomy_checker.build_unclassified_findings(result)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["category"], "tool-taxonomy")
+            self.assertEqual(findings[0]["issue"], "unclassified_tool")
+            self.assertIsNone(findings[0]["recommendation"])
+            self.assertTrue(findings[0]["needs_research"])
+
+
+class TestOneOutcomeInvariant(unittest.TestCase):
+    def test_every_hook_id_appears_exactly_once_across_all_outcomes(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(
+                    _hook("ruff", entry="ruff check ."),
+                    _hook("trailing-whitespace"),
+                    _hook("some-brand-new-analyzer"),
+                    _hook("mypy", entry="mypy ."),
+                    _hook("run-pytest", entry="pytest tests/"),
+                ),
+            )
+            result = taxonomy_checker.classify_precommit_tools(repo)
+            seen = []
+            for hooks in result["taxonomy"].values():
+                seen.extend(h["hook_id"] for h in hooks)
+            seen.extend(h["hook_id"] for h in result["out_of_taxonomy"])
+            seen.extend(h["hook_id"] for h in result["unclassified"])
+            self.assertEqual(
+                sorted(seen),
+                sorted(
+                    [
+                        "mypy",
+                        "run-pytest",
+                        "ruff",
+                        "some-brand-new-analyzer",
+                        "trailing-whitespace",
+                    ]
+                ),
+            )
+            self.assertEqual(len(seen), len(set(seen)))
+
+
+class TestUnclassifiedReachesBlocked(unittest.TestCase):
+    def test_unclassified_tool_is_a_blocked_remediation_entry(self):
+        with tempfile.TemporaryDirectory() as repo:
+            # A matching Makefile target keeps the parity check (Direction
+            # A) silent, so this fixture isolates the taxonomy-unclassified
+            # path rather than also exercising precommit-parity.
+            _write(
+                os.path.join(repo, "Makefile"),
+                "some-brand-new-analyzer:\n\techo noop\n",
+            )
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(_hook("some-brand-new-analyzer")),
+            )
+            result = cli.remediate(repo)
+            self.assertEqual(result["remediate"], [])
+            self.assertEqual(len(result["blocked"]), 1)
+            self.assertEqual(result["blocked"][0]["kind"], "precommit")
+            self.assertIsNone(result["blocked"][0].get("recommendation"))
+
+
+class TestPredicateExtensionClauseIII(unittest.TestCase):
+    def test_makefile_target_named_after_catalog_tool_with_no_hook_is_flagged(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "security-scanner:\n\tuv run bandit -r tools skills\n",
+            )
+            _write(os.path.join(repo, ".pre-commit-config.yaml"), _precommit_yaml())
+            findings = parity_checker.check_parity(repo)
+            hits = [f for f in findings if f.get("issue") == "target_without_hook"]
+            self.assertEqual(len(hits), 1)
+            self.assertEqual(hits[0]["target"], "security-scanner")
+            self.assertEqual(hits[0]["clause"], "iii")
+
+    def test_bare_general_purpose_linter_name_does_not_become_tool_shaped(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "Makefile"),
+                "duplicate-code:\n"
+                "\tuv run pylint --disable=all --enable=duplicate-code tools skills\n",
+            )
+            _write(os.path.join(repo, ".pre-commit-config.yaml"), _precommit_yaml())
+            findings = parity_checker.check_parity(repo)
+            hits = [f for f in findings if f.get("issue") == "target_without_hook"]
+            self.assertEqual(hits, [])
+
+    def test_real_repo_security_scanner_newly_flagged_duplicate_code_not(self):
+        f = cli.check(".")["precommit"]
+        targets = {x["target"] for x in f if x.get("issue") == "target_without_hook"}
+        self.assertIn("security-scanner", targets)
+        self.assertNotIn("duplicate-code", targets)
 
 
 class TestDegradation(unittest.TestCase):

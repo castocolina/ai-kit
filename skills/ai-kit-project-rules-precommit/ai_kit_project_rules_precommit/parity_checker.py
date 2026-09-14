@@ -27,6 +27,7 @@ from ai_kit_rules_common.makefile_parse import (
     parse_makefile_targets,
 )
 from ai_kit_rules_common.precommit_parse import parse_precommit_hooks
+from ai_kit_rules_common.tool_catalog import resolve_tool_category
 
 # D-P2 clause (ii)'s pinned vocabulary: the sibling skill's `validate-<...>`
 # alias family (`CATEGORY_ALIAS_MAP` in
@@ -55,6 +56,30 @@ _CLAUSE_II_NAMES = frozenset(_CLAUSE_II_ALIASES) | frozenset(_CLAUSE_II_SHORT_NA
 _DELEGATE_RE = re.compile(
     r"(?<![-\w])pre-commit(?![-\w])[ \t]+(?<![-\w])run(?![-\w])[ \t]+(\S+)"
 )
+
+# Clause (iii)'s ONE runner-prefix recognizer (plan 11-02). Generic --
+# recognizes the SHAPE "<runner> run <rest>" (this repository's own
+# convention, `uv run <tool> <args>`, e.g. `Makefile:109-110`/`:116-117`),
+# never a specific runner name. Clause (i) needs no equivalent of its own:
+# its `_DELEGATE_RE` search is already prefix-agnostic because it searches
+# for the FIXED LITERAL `pre-commit run` anywhere on the line, so whatever
+# precedes it (`uv run`, `poetry run`, `env VAR=x`, or nothing) never has to
+# be identified. Clause (iii) has no fixed literal to anchor a search
+# around -- it must name the first real token itself -- which is why this
+# is the ONE prefix-recognition helper this predicate needs, at exactly one
+# call site.
+_RUNNER_PREFIX_RE = re.compile(
+    r"^(?<![-\w])[A-Za-z0-9_.-]+(?![-\w])[ \t]+(?<![-\w])run(?![-\w])[ \t]+"
+)
+
+
+def _first_token_after_runner_prefix(line: str) -> str | None:
+    """Strip a leading `<runner> run` prefix (if present) and return the
+    first remaining whitespace-delimited token, or `None` if nothing
+    remains."""
+    stripped = _RUNNER_PREFIX_RE.sub("", line, count=1)
+    tokens = stripped.split()
+    return tokens[0] if tokens else None
 
 
 def normalize_name(name: str) -> str:
@@ -93,9 +118,15 @@ def classify_target_shape(name: str, recipe_text: str, prerequisites: set[str]) 
     identity unambiguous); for a clause-(ii) short-name/alias match it is
     the target's own name, since there is no recipe to extract an id from.
 
-    THE ONE PREDICATE plan 11-02 extends with a clause (iii) over the
-    shared catalog's real tool names -- route every tool-shaped judgement
-    through this function so 11-02 has exactly one place to add it.
+    THE ONE PREDICATE plan 11-02 extends with clause (iii) over the shared
+    catalog's real tool names -- every tool-shaped judgement routes through
+    this function, which is why 11-02 has exactly one place to add it.
+    Clause (iii): a target whose OWN NAME resolves via the shared catalog's
+    `resolve_tool_category`, OR whose single recipe line's tool token
+    (after skipping a leading `<runner> run` prefix) resolves, is
+    tool-shaped -- `identity` is the target's own name either way (matching
+    clause (ii)'s convention: Direction B then asks "is there a hook of
+    that target's name").
 
     The ≤2-real-line cap is a GLOBAL AND over every clause, evaluated
     FIRST: a recipe exceeding it is never tool-shaped no matter what it is
@@ -119,6 +150,17 @@ def classify_target_shape(name: str, recipe_text: str, prerequisites: set[str]) 
 
     if normalize_name(name) in _CLAUSE_II_NAMES:
         return {"tool_shaped": True, "clause": "ii", "identity": name}
+
+    # Clause (iii), a THIRD OR, evaluated under the SAME cap as clauses (i)
+    # and (ii) (both early-return checks above already ran) -- never beside
+    # it, never bypassing it.
+    if resolve_tool_category(name) is not None:
+        return {"tool_shaped": True, "clause": "iii", "identity": name}
+
+    if len(real_lines) == 1:
+        candidate = _first_token_after_runner_prefix(real_lines[0])
+        if candidate is not None and resolve_tool_category(candidate) is not None:
+            return {"tool_shaped": True, "clause": "iii", "identity": name}
 
     return not_shaped
 

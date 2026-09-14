@@ -14,6 +14,7 @@ import sys
 from . import stack_cache
 from .precommit_checker import check_precommit_rules
 from .remediation import build_remediation
+from .taxonomy_checker import classify_precommit_tools
 from .tooling_payload import validate_tooling_payload
 
 
@@ -27,6 +28,13 @@ def remediate(repo_root: str) -> dict:
     """`check(...)` then `remediation.build_remediation(...)` -- no second
     lookup into the checker, no competing finding shape."""
     return build_remediation(check(repo_root))
+
+
+def classify(repo_root: str) -> dict:
+    """`classify_precommit_tools(...)`'s structured result, made directly
+    inspectable through the real entrypoint (ROADMAP SC2) rather than only
+    through a unit test."""
+    return classify_precommit_tools(repo_root)
 
 
 def _split_cache_root(args: list[str]) -> tuple[list[str], str | None]:
@@ -90,8 +98,9 @@ def cache_update(stack: str, json_path: str, cache_root: str | None = None) -> i
 def main(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(
-            "usage: ai-kit-project-rules-precommit.py check|remediate [repo_root] "
-            "| cache-update <stack> <json_path> [--cache-root <path>]"
+            "usage: ai-kit-project-rules-precommit.py check|remediate|classify "
+            "[repo_root] | cache-update <stack> <json_path> "
+            "[--cache-root <path>]"
         )
         return 0
     cmd = argv[0]
@@ -102,6 +111,10 @@ def main(argv: list[str]) -> int:
     if cmd == "remediate":
         repo_root = argv[1] if len(argv) > 1 else "."
         print(json.dumps(remediate(repo_root), indent=2))
+        return 0
+    if cmd == "classify":
+        repo_root = argv[1] if len(argv) > 1 else "."
+        print(json.dumps(classify(repo_root), indent=2))
         return 0
     if cmd == "cache-update":
         positional, cache_root = _split_cache_root(argv[1:])
