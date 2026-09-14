@@ -85,7 +85,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 10: Makefile Rules Checker (ai-kit-project-rules-makefile)** - New skill inherits the dropped Makefile logic plus `validate-<category>` parity, help/fail reachability, recipe-length cap, docker build-before-up, shellcheck threshold, and an advisory ordering heuristic (completed 2026-09-14)
 - [x] **Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)** - New skill checks Makefile↔pre-commit parity and applies the 6-category tooling taxonomy plus ruff/golangci-lint-specific checks (completed 2026-09-14)
 - [x] **Phase 12: Architecture Rules Checker (ai-kit-project-rules-arch)** - New skill verifies `arch-test` Makefile target shape/chaining/AST-only-ness; promotes and resolves backlog Phase 999.3 at form/convention-only scope (completed 2026-09-14)
-- [ ] **Phase 13: Docker Rules Checker (ai-kit-project-rules-docker)** - New skill checks the docker-compose target family, healthcheck conventions, `depends_on` discipline, hot-reload convention, and runbook presence
+- [x] **Phase 13: Docker Rules Checker (ai-kit-project-rules-docker)** - New skill checks the docker-compose target family, healthcheck conventions, `depends_on` discipline, hot-reload convention, and runbook presence (completed 2026-09-14)
 - [ ] **Phase 14: CI/CD Rules Checker (ai-kit-project-rules-cicd)** - New skill checks that CI config reuses Makefile/pre-commit/package.json/Gradle commands instead of duplicating tool invocations inline
 - [ ] **Phase 15: Rules Orchestrator (ai-kit-project-rules-all)** - New orchestrator skill runs all 6 checkers' `check`/`remediate` and aggregates one criticality-ordered report
 
@@ -414,7 +414,14 @@ Plans:
   3. The check recognizes reuse sources across all four command surfaces named in the requirement (Makefile targets, pre-commit hooks, `package.json` scripts, Gradle tasks), each covered by at least one paired (triggering / non-triggering) fixture.
   4. The skill reuses the shared `ai_kit_rules_common` classification/cache package rather than re-implementing its own parsing primitives, and its own test module imports from `skills/_shared/` the same way the other domain checkers do.
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+
+- [ ] 14-01-PLAN.md — Tracer: wire `ai-kit-project-rules-cicd` end-to-end on the `.gitlab-ci.yml` reader and the Makefile-target reuse surface — the root-scoped applicability gate, the command-key match rule with its one catalog-grounded widening, the tool-shaped identity gate, the complete reuse-invocation table, the shared `yaml_text` block primitives and new `command_text` grammar module, `cicd` appended to the shared structural-kind tuple, and the skill registered in every quality gate (SC1 GitLab half, SC2, SC3 Makefile pair, SC4)
+- [ ] 14-02-PLAN.md — The GitHub Actions reader (sequence-of-mapping steps, block-scalar `run:` bodies, the unfetched `uses:` step) and the pre-commit-hook reuse surface on the shared `precommit_parse` reader, with surface precedence settled for all four surfaces (SC1 GitHub half, SC3 pre-commit pair)
+- [ ] 14-03-PLAN.md — The `package.json`-script surface with lockfile-driven runner resolution and the Gradle-task surface with its pinned plugin table gated on real plugin evidence, completing SC3's four-surface paired-fixture requirement and SC2's remaining half
+- [ ] 14-04-PLAN.md — `SKILL.md` with its ten honesty-about-limits statements, the README row, the `/skill-judge` code-review gate with committed evidence at a named commit, `/naming-analyzer` confirmation, and dated append-only corrections to `14-CONTEXT.md`
 
 ### Phase 15: Rules Orchestrator (ai-kit-project-rules-all)
 
@@ -451,7 +458,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 10. Makefile Rules Checker | 3/3 | Complete    | 2026-09-14 |
 | 11. Pre-commit Rules Checker | 4/4 | Complete    | 2026-09-14 |
 | 12. Architecture Rules Checker | 3/3 | Complete    | 2026-09-14 |
-| 13. Docker Rules Checker | 4/4 | In Progress|  |
+| 13. Docker Rules Checker | 4/4 | Complete    | 2026-09-14 |
 | 14. CI/CD Rules Checker | 0/TBD | Not started | - |
 | 15. Rules Orchestrator | 0/TBD | Not started | - |
 
