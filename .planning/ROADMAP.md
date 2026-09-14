@@ -304,10 +304,10 @@ Plans:
 **Success Criteria** (what must be TRUE):
 
   1. The skill directory is renamed to `ai-kit-project-rules-agents`, and its `check` command returns only `{"workflow": [...]}` (no `"makefile"` key) when run against any target repo.
-  2. `makefile_checker.py`, the Makefile-specific `stack_cache.py`/`stack_detect.py`, and the `cache-path`/`cache-update` subcommands are removed from the skill's source tree; the skill retains `rules.py` (all 17 rules) and `rule_checker.py`, now importing the shared `ai_kit_rules_common` classification engine rather than a local copy.
+  2. `makefile_checker.py`, the Makefile-specific `stack_cache.py`/`stack_detect.py`, and the `cache-path`/`cache-update` subcommands are removed from the skill's source tree; the skill retains `rules.py` (all 17 rules) and `rule_checker.py`, now importing the shared `ai_kit_rules_common` classification engine rather than a local copy. Subcommand wording corrected by Phase 9: `cache-update` was the only removed CLI subcommand (`main` dispatched exactly `check`, `remediate`, and `cache-update`); `cache_path` is a plain module-level function in `stack_cache.py` that leaves as a side effect of that module's deletion, never a removed subcommand -- see 09-01-PLAN.md's objective for the same correction recorded on the code side.
   3. `SKILL.md`'s scope line and examples drop all Makefile/`.pre-commit-config.yaml` language, while the existing `/agent-md-refactor` hand-off for AGENTS.md content is unchanged.
   4. The renamed/updated test suite (`tests/test_ai_kit_agents_md_rules_checker.py` or its renamed equivalent) passes with no test exercising the removed Makefile-checking code paths, and `make test` is green.
-  5. `/skill-judge` review of the pruned `SKILL.md` shows no remaining Critical/Important finding (or a score ≥ 96/120) with no regression against the pre-prune baseline (98/120).
+  5. `/skill-judge` review of the pruned `SKILL.md` shows no remaining Critical/Important finding (or a score ≥ 96/120) with no regression against the pre-prune baseline (98/120). Baseline corrected by Phase 9: the 98/120 figure above is the design spec's own pre-fix number (per 09-CONTEXT.md's skill-judge regression-baseline note); the verified pre-prune baseline is 100/120, measured fresh in this phase against the recovered pre-phase `SKILL.md` blob rather than taken from any cited figure, and is recorded as evidence in this phase's `09-SKILL-JUDGE.md`.
 
 **Plans**: 1/2 plans executed
 
