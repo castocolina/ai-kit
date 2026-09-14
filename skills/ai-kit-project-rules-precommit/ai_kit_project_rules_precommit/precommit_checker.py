@@ -13,7 +13,11 @@ from __future__ import annotations
 from ai_kit_rules_common.precommit_parse import check_precommit_prepush_split
 
 from .parity_checker import check_parity
-from .taxonomy_checker import build_unclassified_findings, classify_precommit_tools
+from .taxonomy_checker import (
+    build_category_absence_findings,
+    build_unclassified_findings,
+    classify_precommit_tools,
+)
 
 
 def check_precommit_rules(repo_root: str) -> list[dict]:
@@ -29,12 +33,11 @@ def check_precommit_rules(repo_root: str) -> list[dict]:
     through -- so the pre-prune behavior is genuinely reproduced rather than
     approximated.
 
-    Classifies every declared tool exactly once (plan 11-02) and appends
-    its unclassified-tool findings. The classification is computed ONCE and
-    threaded through -- a future addition to this function (e.g. the
-    category-absence checks) must read the SAME `classification` value
-    rather than calling `classify_precommit_tools` a second time, so the
-    two computations can never diverge on a stale cache read.
+    Classifies every declared tool exactly once (plan 11-02 Task 2) and
+    appends its unclassified-tool findings, then feeds the SAME
+    `classification` value into the Duplicate-code/Dead-code absence checks
+    (plan 11-02 Task 3) -- computed once and threaded through, so the two
+    computations can never diverge on a stale cache read.
     """
     findings = list(check_parity(repo_root))
     stage_split_finding = check_precommit_prepush_split(repo_root)
@@ -42,6 +45,7 @@ def check_precommit_rules(repo_root: str) -> list[dict]:
         findings.append(stage_split_finding)
     classification = classify_precommit_tools(repo_root)
     findings.extend(build_unclassified_findings(classification))
+    findings.extend(build_category_absence_findings(classification, repo_root))
     return findings
 
 

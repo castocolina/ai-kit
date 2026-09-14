@@ -605,9 +605,13 @@ class TestUnclassifiedReachesBlocked(unittest.TestCase):
             )
             result = cli.remediate(repo)
             self.assertEqual(result["remediate"], [])
-            self.assertEqual(len(result["blocked"]), 1)
-            self.assertEqual(result["blocked"][0]["kind"], "precommit")
-            self.assertIsNone(result["blocked"][0].get("recommendation"))
+            # Task 3's category-absence findings also route to `blocked`
+            # for this no-stack-marker fixture -- filter to the
+            # taxonomy-specific entry this test is actually about.
+            hits = [b for b in result["blocked"] if b["id"] == "some-brand-new-analyzer"]
+            self.assertEqual(len(hits), 1)
+            self.assertEqual(hits[0]["kind"], "precommit")
+            self.assertIsNone(hits[0].get("recommendation"))
 
 
 class TestPredicateExtensionClauseIII(unittest.TestCase):
@@ -641,6 +645,138 @@ class TestPredicateExtensionClauseIII(unittest.TestCase):
         targets = {x["target"] for x in f if x.get("issue") == "target_without_hook"}
         self.assertIn("security-scanner", targets)
         self.assertNotIn("duplicate-code", targets)
+
+
+_PYTHON_EVERYTHING_HOOKS = (
+    _hook("ruff-fmt", entry="ruff format ."),
+    _hook("mypy", entry="mypy ."),
+    _hook("ruff", entry="ruff check ."),
+    _hook("bandit", entry="bandit -r ."),
+)
+
+
+class TestCategoryAbsenceThreeRealCases(unittest.TestCase):
+    """ROADMAP Phase 11 SC4: three real fixture repos, not two plus an
+    argument."""
+
+    def _repo_with(self, *extra_hooks):
+        repo = tempfile.mkdtemp()
+        _write(os.path.join(repo, "pyproject.toml"), '[project]\nname="x"\n')
+        _write(
+            os.path.join(repo, ".pre-commit-config.yaml"),
+            _precommit_yaml(*_PYTHON_EVERYTHING_HOOKS, *extra_hooks),
+        )
+        return repo
+
+    def test_zero_duplicate_code_tooling_flags_exactly_that_category(self):
+        repo = self._repo_with(_hook("vulture", entry="vulture ."))
+        findings = precommit_checker.check_precommit_rules(repo)
+        issues = {f.get("issue") for f in findings if f.get("category") == "category-absence"}
+        self.assertEqual(issues, {"duplicate_code_absent"})
+
+    def test_zero_dead_code_tooling_flags_exactly_that_category(self):
+        repo = self._repo_with(_hook("jscpd", entry="jscpd ."))
+        findings = precommit_checker.check_precommit_rules(repo)
+        issues = {f.get("issue") for f in findings if f.get("category") == "category-absence"}
+        self.assertEqual(issues, {"dead_code_absent"})
+
+    def test_both_categories_covered_triggers_neither_finding(self):
+        repo = self._repo_with(
+            _hook("jscpd", entry="jscpd ."), _hook("vulture", entry="vulture .")
+        )
+        findings = precommit_checker.check_precommit_rules(repo)
+        issues = {f.get("issue") for f in findings if f.get("category") == "category-absence"}
+        self.assertEqual(issues, set())
+
+
+class TestCategoryAbsenceRecommendation(unittest.TestCase):
+    def test_recommendation_names_concrete_tool_for_detected_stack(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), '[project]\nname="x"\n')
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(_hook("jscpd", entry="jscpd .")),
+            )
+            findings = precommit_checker.check_precommit_rules(repo)
+            hits = [f for f in findings if f.get("issue") == "dead_code_absent"]
+            self.assertEqual(len(hits), 1)
+            self.assertIn("vulture", hits[0]["recommendation"])
+
+    def test_unrecognized_stack_and_cold_cache_is_blocked_no_recommendation(self):
+        from ai_kit_project_rules_precommit.taxonomy_checker import (
+            build_category_absence_findings,
+            classify_precommit_tools,
+        )
+
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, ".pre-commit-config.yaml"), _precommit_yaml())
+            cache_root = os.path.join(repo, "_cache")
+            classification = classify_precommit_tools(
+                repo, cache_root=cache_root, detected_stacks={"zig"}
+            )
+            findings = build_category_absence_findings(
+                classification, repo, detected_stacks={"zig"}, cache_root=cache_root
+            )
+            self.assertEqual(len(findings), 2)
+            for finding in findings:
+                self.assertIsNone(finding["recommendation"])
+                self.assertTrue(finding["needs_research"])
+                self.assertEqual(finding["stacks"], ["zig"])
+
+    def test_no_stack_marker_at_all_produces_a_finding_that_says_so(self):
+        from ai_kit_project_rules_precommit.taxonomy_checker import (
+            build_category_absence_findings,
+            classify_precommit_tools,
+        )
+
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, ".pre-commit-config.yaml"), _precommit_yaml())
+            classification = classify_precommit_tools(repo, detected_stacks=set())
+            findings = build_category_absence_findings(
+                classification, repo, detected_stacks=set()
+            )
+            self.assertEqual(len(findings), 2)
+            for finding in findings:
+                self.assertIn("no detected language stack", finding["summary"])
+                self.assertEqual(finding["stacks"], [])
+                self.assertIsNone(finding["recommendation"])
+
+
+class TestCategoryAbsenceD_T5ConsistencyGuard(unittest.TestCase):
+    """A dead-code tool known ONLY through a cache entry still counts as
+    present -- the case a second keyword scan would get wrong while the
+    classification-driven check gets right."""
+
+    def test_cache_only_dead_code_tool_suppresses_the_absence_finding(self):
+        from ai_kit_project_rules_precommit.taxonomy_checker import (
+            build_category_absence_findings,
+            classify_precommit_tools,
+        )
+
+        cache_only_tool = "zzz-imaginary-deadcode-detector"
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "pyproject.toml"), '[project]\nname="x"\n')
+            _write(
+                os.path.join(repo, ".pre-commit-config.yaml"),
+                _precommit_yaml(_hook(cache_only_tool, entry=f"{cache_only_tool} .")),
+            )
+            cache_root = os.path.join(repo, "_cache")
+            stack_cache.write_stack_cache(
+                "python",
+                {
+                    "dead-code": (
+                        f"{cache_only_tool} (source: https://example.com/imaginary-tool)"
+                    )
+                },
+                cache_root=cache_root,
+            )
+            classification = classify_precommit_tools(repo, cache_root=cache_root)
+            self.assertEqual(len(classification["taxonomy"]["dead-code"]), 1)
+            findings = build_category_absence_findings(
+                classification, repo, cache_root=cache_root
+            )
+            issues = {f["issue"] for f in findings}
+            self.assertNotIn("dead_code_absent", issues)
 
 
 class TestDegradation(unittest.TestCase):

@@ -18,9 +18,11 @@ the outcomes below):
   5. Nothing matched: unclassified, carrying the detected stacks so a
      research pass knows what to research.
 
-Plan 11-02's Task 3 adds the Duplicate-code/Dead-code absence checks on top
-of `classify_precommit_tools`'s result, computed from the classification
-rather than a second keyword scan (D-T5) -- not yet present here.
+`build_category_absence_findings` flags complete absence of Duplicate-code
+or Dead-code category tooling (ROADMAP Phase 11 Success Criterion 4),
+computed FROM `classify_precommit_tools`'s result rather than a second
+keyword scan (D-T5) -- a repo can never be told it has no dead-code tooling
+by one part of the output while another part lists one.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from ai_kit_rules_common.precommit_parse import parse_precommit_hooks
 from ai_kit_rules_common.stack_detect import detect_stacks
 from ai_kit_rules_common.tool_catalog import (
     AMBIGUOUS_TOOL_DEFAULTS,
+    BASELINE_STACKS,
     OUT_OF_TAXONOMY_GROUPS,
     TAXONOMY_CATEGORIES,
     TOOL_CATEGORY_INDEX,
@@ -213,7 +216,113 @@ def build_unclassified_findings(classification: dict) -> list[dict]:
     return findings
 
 
+# D-T6: pinned vocabulary for the two absence findings.
+_ABSENCE_ISSUES = (
+    ("duplicate-code", "duplicate_code_absent"),
+    ("dead-code", "dead_code_absent"),
+)
+
+_ABSENCE_RATIONALE = (
+    "research confirms Duplicate-code and Dead-code are the two categories "
+    "most commonly skipped entirely across every ecosystem surveyed"
+)
+
+
+def _absence_finding(
+    category: str,
+    issue: str,
+    stacks: set[str],
+    cache_root: str | None,
+) -> dict:
+    base_summary = f"no {category} tooling detected -- {_ABSENCE_RATIONALE}"
+
+    if not stacks:
+        summary = (
+            f"{base_summary}; no detected language stack, so no concrete "
+            "tool can be recommended"
+        )
+        return {
+            "category": "category-absence",
+            "issue": issue,
+            "target": category,
+            "recommendation": None,
+            "needs_research": True,
+            "criticality": CRITICALITY_MEDIUM,
+            "summary": summary,
+            "stacks": [],
+        }
+
+    named: list[str] = []
+    unresolved: list[str] = []
+    for stack in sorted(stacks):
+        entries = BASELINE_STACKS.get(stack, {}).get(category)
+        if entries:
+            named.append(f"{stack}: {', '.join(entries)}")
+            continue
+        cache_result = stack_cache.read_stack_cache(stack, cache_root=cache_root)
+        data = cache_result["data"] or {}
+        cached_value = data.get(category)
+        if cached_value:
+            named.append(f"{stack}: {_extract_cached_tool_name(cached_value)}")
+        else:
+            unresolved.append(stack)
+
+    if unresolved:
+        summary = (
+            f"{base_summary}; stack(s) {', '.join(sorted(unresolved))} have "
+            "no baseline or cached recommendation for this category"
+        )
+        return {
+            "category": "category-absence",
+            "issue": issue,
+            "target": category,
+            "recommendation": None,
+            "needs_research": True,
+            "criticality": CRITICALITY_MEDIUM,
+            "summary": summary,
+            "stacks": sorted(stacks),
+        }
+
+    recommendation = f"add {category} tooling -- " + "; ".join(named)
+    return {
+        "category": "category-absence",
+        "issue": issue,
+        "target": category,
+        "recommendation": recommendation,
+        "needs_research": False,
+        "criticality": CRITICALITY_MEDIUM,
+        "summary": f"{base_summary} -- {recommendation}",
+        "stacks": sorted(stacks),
+    }
+
+
+def build_category_absence_findings(
+    classification: dict,
+    repo_root: str,
+    detected_stacks: set[str] | None = None,
+    cache_root: str | None = None,
+) -> list[dict]:
+    """D-T5: absence is computed from `classification`, never from a second
+    keyword scan -- a hook classified into a category at ANY confidence
+    (baseline, cache, or inferred) counts as present, so a repo can never be
+    told it has no dead-code tooling by one part of the output while
+    another part lists one.
+
+    `detected_stacks` is an injectable override, same as
+    `classify_precommit_tools`'s -- so a synthetic stack (e.g. one outside
+    the five researched baselines) can be tested without real marker files.
+    """
+    stacks = detect_stacks(repo_root) if detected_stacks is None else detected_stacks
+    findings = []
+    for category, issue in _ABSENCE_ISSUES:
+        if classification["taxonomy"].get(category):
+            continue
+        findings.append(_absence_finding(category, issue, stacks, cache_root))
+    return findings
+
+
 __all__ = [
+    "build_category_absence_findings",
     "build_unclassified_findings",
     "classify_precommit_tools",
 ]
