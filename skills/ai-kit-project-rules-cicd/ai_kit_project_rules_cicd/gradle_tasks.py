@@ -59,12 +59,11 @@ LIFECYCLE_TASK_NAMES: frozenset[str] = frozenset({"check", "build", "test", "ass
 # immediately following the `task`/`tasks` token).
 _TASK_BARE_RE = re.compile(r"(?<![-\w])task[ \t]+([A-Za-z_][A-Za-z0-9_]*)")
 _TASK_CALL_RE = re.compile(r"(?<![-\w])task\([ \t]*[\"']([^\"']+)[\"'][ \t]*\)")
-_TASKS_REGISTER_RE = re.compile(
-    r"(?<![-\w])tasks\.register(?:<[^>]*>)?\([ \t]*[\"']([^\"']+)[\"']"
-)
+_TASKS_REGISTER_RE = re.compile(r"(?<![-\w])tasks\.register(?:<[^>]*>)?\([ \t]*[\"']([^\"']+)[\"']")
 _TASKS_NAMED_RE = re.compile(r"(?<![-\w])tasks\.named\([ \t]*[\"']([^\"']+)[\"']")
 _KOTLIN_BY_TASKS_RE = re.compile(
-    r"(?<![-\w])val[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+by[ \t]+tasks\.(?:registering|creating)(?![-\w])"
+    r"(?<![-\w])val[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+by[ \t]+"
+    r"tasks\.(?:registering|creating)(?![-\w])"
 )
 
 _DECLARATION_PATTERNS: tuple[re.Pattern[str], ...] = (
