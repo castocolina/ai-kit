@@ -401,9 +401,10 @@ cicd) already uses:
   module list (same list as `Makefile:46`, duplicated per the file's own
   "Single source of truth" comment structure)
 - `pyproject.toml:88` and `:94` — append `"skills/ai-kit-project-rules-all"`
-  to both the `[tool.pyright]` `paths` list (line 88) and the
-  `[tool.vulture]` `paths`/`include` list (line 94)
-  `[VERIFIED: pyproject.toml:88,94, read this session — both lines list the same 9 skill paths verbatim, ending "...skills/ai-kit-project-rules-cicd", "skills/ai-kit-gsd-curated-config", "skills/_shared"]`
+  to both the `[tool.vulture]` `paths` list (line 88, under the
+  `[tool.vulture]` header at line 86) and the `[tool.pyright]` `include` list
+  (line 94, under the `[tool.pyright]` header at line 93)
+  `[VERIFIED: pyproject.toml:86-88,93-94, re-read live 2026-09-15 — line 86 is `[tool.vulture]`, line 88 is its `paths` list; line 93 is `[tool.pyright]`, line 94 is its `include` list; both lists list the same 9 skill paths verbatim, ending "...skills/ai-kit-project-rules-cicd", "skills/ai-kit-gsd-curated-config", "skills/_shared". Correction: an earlier pass of this document had the tool-to-line mapping swapped (claimed line 88 was `[tool.pyright]` and line 94 was `[tool.vulture]`) — cross-AI review (`15-REVIEWS.md` cycle 1, claude lane, concern L64) caught the swap; this line reflects the corrected, live-verified mapping. It did not propagate into a plan bug — `15-02-PLAN.md` Task 1's own `<action>` text already named the tools correctly and instructs re-reading live rather than trusting line numbers.]`
 - `README.md` — add a table row for `ai-kit-project-rules-all`, matching
   the exact style of the `ai-kit-project-rules-docker`/`cicd` rows
   (`README.md:43-44`, read this session)
