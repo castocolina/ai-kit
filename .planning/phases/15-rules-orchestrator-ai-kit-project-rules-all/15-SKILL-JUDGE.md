@@ -258,3 +258,90 @@ review should confirm byte-identity with the file this task scored via:
 - `JUDGED_COMMIT`: `8f231d0936d6a798d9f34475e60f8551cd9f3ac3`
 - Score: 97/120, 0 Critical, 0 Important (1 Important found and fixed in Iteration 1), 1/3 fix
   iterations used.
+
+## Naming-analyzer verdict
+
+Date: 2026-09-15
+
+NAMING_VERDICT: confirmed
+
+`ai-kit-project-rules-all` is kept as-is; no rename is applied.
+
+`/naming-analyzer` was run against the skill directory name `ai-kit-project-rules-all`, as the
+project's established skill-authoring pipeline step (scaffold, then judge, then name -- the same
+order Phases 9-14 recorded). Prompt context given to the analyzer: the six sibling names already in
+the family (`ai-kit-project-rules-agents`, `-makefile`, `-precommit`, `-arch`, `-docker`, `-cicd`),
+this skill's actual scope (subprocess fan-out across all 6 siblings, merged into one cross-domain,
+criticality-ordered report -- never a rules engine of its own, never a 7th finding category), and the
+fact that the `ai-kit-project-rules-<domain>` family scheme is user-decided rather than open for
+this task to redesign. Applying the analyzer's own decision framework (vagueness, misleading-name,
+abbreviation, convention, and length checks) to a package/directory name rather than a variable:
+
+- **Not vague**: "all" is a precise, unambiguous domain word in THIS position -- next to
+  `agents`/`makefile`/`precommit`/`arch`/`docker`/`cicd`, a reader who has seen even one sibling name
+  immediately reads "all" as "spans all of the above," not as a generic filler word the way `data`
+  or `info` would be flagged in the analyzer's own JavaScript examples.
+- **No misleading-name tension, unlike several siblings' own recorded findings**: `cicd`'s evidence
+  file recorded a real "narrower than the word suggests" tension (reuse-duplication checking only,
+  not general CI/CD quality); `docker`'s and `arch`'s evidence recorded the same shape of tension for
+  their own domain words. `all` has the OPPOSITE property here: it is the one name in the family that
+  is not narrower than it sounds. This skill genuinely does run all 6 siblings' `check`/`remediate`
+  and does aggregate every domain's findings, with none silently dropped (ROADMAP Success Criterion
+  1, re-verified live in this repo's real dogfooded run: 12 `remediate`, 3 `blocked`, 0 `failed`,
+  spanning every domain that had a finding that day). No scope-depth qualifier is being hidden behind
+  a broader-sounding word.
+- **Not mis-abbreviated**: "all" is a complete English word, not an abbreviation at all -- there is
+  no shorter or longer spelling to weigh against it.
+- **Family-convention match**: exact match to the `ai-kit-project-rules-<domain>` pattern all 6
+  sibling checkers already use -- a single-word domain segment, same as
+  `agents`/`makefile`/`precommit`/`arch`/`docker`/`cicd`, occupying the identical structural slot even
+  though this skill's own role (orchestrator, not a domain checker) differs from every sibling that
+  slot otherwise names.
+- **Length**: 24 characters (`ai-kit-project-rules-all`), the SHORTEST name in the family --
+  shorter than `-arch` (25, the previous shortest), `-agents` (27), `-docker` (27), `-makefile` (29),
+  `-precommit` (30), `-cicd` (25), comfortably under the 64-character frontmatter `name:` limit
+  `skill-judge`'s own D4 dimension checks.
+
+**Alternative considered and rejected during this analysis**: a role-qualified form (e.g.
+`ai-kit-project-rules-orchestrator` or `ai-kit-project-rules-aggregate`) was considered and
+rejected. `dispatch.py`'s own module docstring already uses the word "orchestrator" internally
+("Subprocess-fans-out to the 6 sibling `ai-kit-project-rules-*` checkers and merges their findings
+into one criticality-ordered report" -- `__init__.py:1-7`), so the ROLE is already documented in the
+code and in this `SKILL.md`'s own body; encoding it a second time into the directory name would
+break the family's own established single-word-domain-segment symmetry (no sibling encodes ITS OWN
+role -- "checker" -- into its name either) for a distinction the description and Scope section
+already carry, while also lengthening the name past `-precommit`, the family's current longest, for
+no routing benefit (a host routes on `description`, per D4/rubric guidance, not on name length or
+role-encoding). No alternative is proposed.
+
+**The 3 live name-dependency sites, re-verified live rather than assumed, during this
+incorporation:**
+
+1. `.planning/REQUIREMENTS.md` line 82 -- the `REQ-rules-all` bullet: "A new skill
+   `ai-kit-project-rules-all` (orchestrator) runs all 6 checkers' `check`/`remediate` against one
+   target repo and aggregates into one criticality-ordered report; keeps the existing
+   `/agent-md-refactor` hand-off for AGENTS.md-domain findings only." Re-read live; names the skill
+   by this exact string.
+2. `.planning/ROADMAP.md` line 428 -- Phase 15's Goal line: "A new orchestrator skill
+   `ai-kit-project-rules-all` runs all 6 checkers' `check`/`remediate` against one target repo and
+   aggregates their findings into one criticality-ordered report, preserving the existing
+   `/agent-md-refactor` hand-off for AGENTS.md-domain findings only." Re-read live; names the skill
+   by this exact string. (The Phase 15 section HEADING itself, line 426, also names it literally:
+   "### Phase 15: Rules Orchestrator (ai-kit-project-rules-all)".)
+3. `.planning/ROADMAP.md` line 433 -- Phase 15's Success Criterion 1: "Running the orchestrator
+   against a target repo invokes all 6 checkers' `check` (agents, makefile, precommit, arch, docker,
+   cicd), and the aggregated report contains findings from every domain that has any, with none
+   silently dropped." Re-read live; this line refers to "the orchestrator" rather than repeating the
+   literal string `ai-kit-project-rules-all` -- reported exactly as found, since the plan's own
+   instruction is to "name them in the record with what you actually found," not to assume the
+   literal string appears everywhere the plan cited. The reference is unambiguous in context: the
+   Goal line immediately above (line 428) is the only skill this section's "the orchestrator" can
+   mean, and the section heading (line 426) also names it literally.
+
+Per this task's instruction, the name is NOT this task's to change even where the verdict is
+"confirmed": `ai-kit-project-rules-all` is fixed by `REQUIREMENTS.md`'s `REQ-rules-all` bullet, by
+`.planning/ROADMAP.md` Phase 15's section heading and goal line, and by Phase 15's own Success
+Criterion 1's contextual reference. Since the verdict is a confirmation rather than a proposed
+alternative, there is no rename-propagation blast radius to name here beyond stating these 3
+dependencies explicitly -- the confirmation simply closes this pipeline step with no open question
+for the user.

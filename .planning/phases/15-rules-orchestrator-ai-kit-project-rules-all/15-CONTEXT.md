@@ -3,6 +3,12 @@
 **Gathered:** 2026-09-13
 **Status:** Ready for planning — BLOCKED on Phases 9-14 landing first (see Phase Boundary)
 
+> **Corrected 2026-09-15:** the above `**Status:**` line is stale. Phases 9-14 are all
+> `Complete` (`.planning/ROADMAP.md`'s Progress table, re-verified live during this correction:
+> every one of Phases 9-14 shows "Complete" with a 2026-09-14 completion date). Phase 15 itself
+> is now `In Progress` (`.planning/ROADMAP.md`'s Progress table), with plan 15-01 already
+> executed and merged, and this very correction being written as part of plan 15-02's Task 3.
+
 <domain>
 ## Phase Boundary
 
@@ -25,6 +31,16 @@ for Phase 15 names Phase 14 directly, with the explicit rationale that all
 6 checkers must exist first. As of this discussion, NONE of Phases 9-14
 have a plan or execution yet (each has only a CONTEXT.md) — this is the
 deepest context-ahead-of-execution gap in the family so far.
+
+> **Corrected 2026-09-15:** the "NONE of Phases 9-14 have a plan or execution yet" claim
+> above is stale. All 6 prerequisite phases have since executed and completed:
+> `.planning/phases/09-agents-md-checker-prune-ai-kit-project-rules-agents/` through
+> `.planning/phases/14-ci-cd-rules-checker-ai-kit-project-rules-cicd/` each now carry
+> multiple `-PLAN.md`/`-SUMMARY.md` pairs (re-verified live: `ls .planning/phases/`
+> during this correction shows all 6 directories present with completed plan/summary
+> pairs), and `.planning/ROADMAP.md`'s Progress table confirms all 6 as `Complete`
+> (2026-09-14). The hard prerequisite this note described is satisfied; this phase (15)
+> is now executing its own second plan (15-02) against all 6 real sibling checkers.
 
 </domain>
 
@@ -124,6 +140,16 @@ deepest context-ahead-of-execution gap in the family so far.
   for `check`) this phase's subprocess-dispatch logic targets; every other
   checker in the family (9-14) will expose the same shape by the time this
   phase is planned
+
+> **Corrected 2026-09-15:** the path `skills/ai-kit-agents-md-rules-checker/` above no
+> longer exists. Phase 9's prune renamed this skill to
+> `skills/ai-kit-project-rules-agents/` (re-verified live during this correction: `ls
+> skills/ai-kit-agents-md-rules-checker` fails with "No such file or directory"; `ls
+> skills/ai-kit-project-rules-agents` succeeds). The `check`/`remediate` CLI contract
+> this note describes is otherwise still accurate — confirmed live against
+> `skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/cli.py`, which plan
+> 15-01's `dispatch.py` subprocess-invokes by this new path, and plan 15-02's `SKILL.md`
+> documents by this new name throughout.
 
 ### Established Patterns
 - Standalone entry-script-per-skill pattern (`<skill-dir>/<skill-name>.py`
