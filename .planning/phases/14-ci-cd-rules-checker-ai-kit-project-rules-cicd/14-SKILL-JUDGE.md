@@ -3,7 +3,7 @@
 Date: 2026-09-14
 
 JUDGED_PATH: skills/ai-kit-project-rules-cicd/SKILL.md
-JUDGED_COMMIT: 033dcae7fa1332e7d6732738285a970eba15b9af
+JUDGED_COMMIT: 66ed063f270918a987bc644c5a6af066400696d8
 BASELINE: none (new skill, no prior SKILL.md -- verified by history search, see below)
 SCORE: 103/120
 CRITICAL: 0
@@ -78,13 +78,29 @@ because the installed skill does not produce one.
 
 ### Step 3 -- scored
 
-295 lines, no `references/` directory. Follows the "Tool" pattern (decision structure over the
+299 lines, no `references/` directory. Follows the "Tool" pattern (decision structure over the
 applicability gate and the four reuse surfaces, worked JSON code examples pulled from real runs,
 low freedom throughout), sized at the top of the family's own 150-300-line range and above the
 Phase 13 sibling's 251 lines -- proportionate to this being the densest skill in the family:
 eleven honesty-about-limits statements (three more than the Phase 13 sibling's eight), four
 pinned hyphenated tokens, two CI platforms, four reuse surfaces, and an eight-row pinned plugin
 table, against that sibling's five finding categories and one platform.
+
+**Second pass, after commit `033dcae` (295 lines).** While assembling this plan's SUMMARY, a real
+content gap was found and fixed (Rule 2, commit `66ed063`, 299 lines): the document showed only
+the flagging (SC1) case in its worked `check`/`remediate` examples, never the fully-compliant
+(SC2) case -- a reader had no worked confirmation that a CI job already calling the reuse command
+produces zero findings. One sentence was added, confirmed against a real run
+(`{"cicd": []}` for a `.gitlab-ci.yml` job running `make ruff` instead of `ruff check .`), and the
+document stayed inside the 150-300-line range. This is a purely additive, non-controversial
+change: it does not touch any Limits statement, any pinned token, the description, the Scope
+section, or any dimension's evidence citation below -- so the per-dimension scores and the 103/120
+total are RE-AFFIRMED rather than re-derived from scratch, and `JUDGED_COMMIT` is updated to
+`66ed063` per this evidence file's own code-review-pointer rule (any `SKILL.md` change requires
+re-running the gate and updating this file in step). D8's existing 1-point deduction (no worked
+JSON for the `SURFACE_ORDER` collision case) is UNCHANGED by this addition, since the new example
+demonstrates the zero-finding case, not the collision case -- a distinct gap, still open, not
+claimed as closed by this fix.
 
 ## Per-dimension scores
 
@@ -228,12 +244,12 @@ MUST be re-run against the changed file. Otherwise, code review should confirm b
 the file this task scored via:
 
 ```
-/usr/bin/git diff --quiet 033dcae7fa1332e7d6732738285a970eba15b9af -- skills/ai-kit-project-rules-cicd/SKILL.md
+/usr/bin/git diff --quiet 66ed063f270918a987bc644c5a6af066400696d8 -- skills/ai-kit-project-rules-cicd/SKILL.md
 ```
 
 - Evidence file: `.planning/phases/14-ci-cd-rules-checker-ai-kit-project-rules-cicd/14-SKILL-JUDGE.md`
 - `JUDGED_PATH`: `skills/ai-kit-project-rules-cicd/SKILL.md`
-- `JUDGED_COMMIT`: `033dcae7fa1332e7d6732738285a970eba15b9af`
+- `JUDGED_COMMIT`: `66ed063f270918a987bc644c5a6af066400696d8`
 - Score: 103/120, 0 Critical, 0 Important, 0/3 fix iterations used.
 
 ## Naming-analyzer verdict
