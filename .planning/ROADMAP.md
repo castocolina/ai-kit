@@ -86,7 +86,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 11: Pre-commit Rules Checker (ai-kit-project-rules-precommit)** - New skill checks Makefile↔pre-commit parity and applies the 6-category tooling taxonomy plus ruff/golangci-lint-specific checks (completed 2026-09-14)
 - [x] **Phase 12: Architecture Rules Checker (ai-kit-project-rules-arch)** - New skill verifies `arch-test` Makefile target shape/chaining/AST-only-ness; promotes and resolves backlog Phase 999.3 at form/convention-only scope (completed 2026-09-14)
 - [x] **Phase 13: Docker Rules Checker (ai-kit-project-rules-docker)** - New skill checks the docker-compose target family, healthcheck conventions, `depends_on` discipline, hot-reload convention, and runbook presence (completed 2026-09-14)
-- [ ] **Phase 14: CI/CD Rules Checker (ai-kit-project-rules-cicd)** - New skill checks that CI config reuses Makefile/pre-commit/package.json/Gradle commands instead of duplicating tool invocations inline
+- [x] **Phase 14: CI/CD Rules Checker (ai-kit-project-rules-cicd)** - New skill checks that CI config reuses Makefile/pre-commit/package.json/Gradle commands instead of duplicating tool invocations inline (completed 2026-09-14)
 - [ ] **Phase 15: Rules Orchestrator (ai-kit-project-rules-all)** - New orchestrator skill runs all 6 checkers' `check`/`remediate` and aggregates one criticality-ordered report
 
 ## Phase Details
@@ -459,7 +459,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 11. Pre-commit Rules Checker | 4/4 | Complete    | 2026-09-14 |
 | 12. Architecture Rules Checker | 3/3 | Complete    | 2026-09-14 |
 | 13. Docker Rules Checker | 4/4 | Complete    | 2026-09-14 |
-| 14. CI/CD Rules Checker | 4/4 | In Progress|  |
+| 14. CI/CD Rules Checker | 4/4 | Complete    | 2026-09-14 |
 | 15. Rules Orchestrator | 0/TBD | Not started | - |
 
 ## Backlog
