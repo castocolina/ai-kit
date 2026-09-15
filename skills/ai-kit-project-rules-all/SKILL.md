@@ -10,9 +10,11 @@ description: Use when a target repo needs a whole-repo "check everything"/"run a
 This skill DETECTS AND REPORTS across all 6 sibling domains at once. It never edits the target
 repo; never runs any sibling's checker logic itself (it subprocess-invokes each sibling's own real
 entry script); and never re-derives a classification a sibling's own `remediate` subcommand already
-made -- every `remediate`/`blocked` entry this skill's report carries is exactly what that sibling
-produced, unchanged. Per-domain rule logic belongs entirely to the six siblings, never to this
-skill:
+made -- every `remediate`/`blocked` entry this skill's report carries keeps every field value that
+sibling produced exactly as it produced it, with the ONE documented exception of the `hand_off` key
+aggregate() adds to `workflow`-kind entries (see Hand-off mechanism below); this skill never
+overwrites, reclassifies, or drops a field a sibling set. Per-domain rule logic belongs entirely to
+the six siblings, never to this skill:
 
 - `ai-kit-project-rules-agents` -- the AGENTS.md/CLAUDE.md house-ruleset checker (`workflow` kind).
 - `ai-kit-project-rules-makefile` -- Makefile target-shape checker (`makefile` kind).
@@ -184,9 +186,10 @@ force the count to exactly 8.
    "nothing to report" if it does not read the whole payload.** The three lists are mutually
    exclusive per domain, but nothing about the shape forces a caller to read all three.
 8. **Zero re-implementation of any sibling's own classification logic anywhere in this skill.**
-   Every `remediate`/`blocked` entry in the combined report is exactly what that sibling's own
-   `remediate` subcommand already produced -- criticality, `auto_apply`, and every other field
-   arrive unchanged from the sibling that emitted them.
+   Every field in a `remediate`/`blocked` entry -- `criticality`, `auto_apply`, `issue`, and every
+   other key -- arrives exactly as that sibling's own `remediate` subcommand already produced it;
+   the ONE addition this skill's own `aggregate()` ever makes is the `hand_off` key on `workflow`-kind
+   entries, documented in full above, never a change to a value a sibling already set.
 
 `SKILL-SHAPE-OK`-style keyword checks on this section are a DELETION DETECTOR and nothing more:
 they confirm a limit's keyword survived, not that the sentence still states something a reader
