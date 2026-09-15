@@ -1,6 +1,6 @@
 # 14-04 Task 2: `/skill-judge` evidence
 
-Date: 2026-09-15
+Date: 2026-09-14
 
 JUDGED_PATH: skills/ai-kit-project-rules-cicd/SKILL.md
 JUDGED_COMMIT: 033dcae7fa1332e7d6732738285a970eba15b9af
@@ -235,3 +235,93 @@ the file this task scored via:
 - `JUDGED_PATH`: `skills/ai-kit-project-rules-cicd/SKILL.md`
 - `JUDGED_COMMIT`: `033dcae7fa1332e7d6732738285a970eba15b9af`
 - Score: 103/120, 0 Critical, 0 Important, 0/3 fix iterations used.
+
+## Naming-analyzer verdict
+
+Date: 2026-09-14
+
+NAMING_VERDICT: confirmed
+
+`ai-kit-project-rules-cicd` is kept as-is; no rename is applied.
+
+`/naming-analyzer` was run against the skill directory name `ai-kit-project-rules-cicd`, as the
+project's established skill-authoring pipeline step (scaffold, then judge, then name -- the same
+order Phases 9-13 recorded). Prompt context given to the analyzer: the five sibling names already
+in the family (`ai-kit-project-rules-agents`, `-makefile`, `-precommit`, `-arch`, `-docker`), this
+skill's actual scope (CI-config reuse-duplication checking across GitLab CI and GitHub Actions,
+against four reuse surfaces -- Makefile targets, pre-commit hooks, `package.json` scripts, Gradle
+build tasks -- never general CI/CD pipeline security, deployment correctness, or build-tool
+enumeration), and the fact that the `ai-kit-project-rules-<domain>` family scheme is user-decided
+rather than open for this task to redesign. Applying the analyzer's own decision framework
+(vagueness, misleading-name, abbreviation, convention, and length checks) to a package/directory
+name rather than a variable:
+
+- **Not vague**: "cicd" is a precise, industry-standard abbreviation (Continuous
+  Integration/Continuous Delivery) with no ambiguity in this position -- next to
+  `agents`/`makefile`/`precommit`/`arch`/`docker`, "cicd" can only mean the CI/CD pipeline-config
+  domain, not an unrelated sense of the term.
+- **Misleading-name tension noted, but not severe enough to warrant a rename**: the skill's own
+  scope is narrower than "cicd" alone might suggest -- it checks REUSE DUPLICATION only (does a CI
+  step call a tool directly when an equivalent command already exists elsewhere in the repo) and
+  explicitly does NOT run a CI job, does NOT evaluate pipeline security, does NOT check deployment
+  correctness, and does NOT enumerate a build tool's own tasks. A reader who sees only the word
+  "cicd" and never reads the description or the Limits section could over-infer a broader
+  CI/CD-quality or pipeline-security tool. This is the same shape of naming tension the `docker`
+  sibling's own evidence file recorded for "docker" (local-dev Compose conventions only, not
+  general Docker security) and the `arch` sibling's for "arch" (form/convention only, not full
+  dependency-direction enforcement) -- the family's own convention names skills by DOMAIN, not by
+  SCOPE DEPTH within that domain, and the `description` frontmatter field plus the `SKILL.md`
+  body's own Scope/Limits sections are where scope-depth is correctly communicated, not the
+  directory name.
+- **Not mis-abbreviated**: "cicd" is the industry-standard abbreviation for the domain this skill
+  checks, in the same acceptable-abbreviation category `naming-analyzer`'s own guidance names for
+  `html`/`api`/`url` -- well-known enough that spelling it out
+  (`ai-kit-project-rules-continuous-integration-continuous-delivery`) would harm readability
+  rather than help it, and no sibling in this family spells out its own domain word further than
+  its common industry form either.
+- **Family-convention match**: exact match to the `ai-kit-project-rules-<domain>` pattern all
+  five sibling checkers already use -- a single-word (here, single-abbreviation) domain segment,
+  same as `agents`/`makefile`/`precommit`/`arch`/`docker`, none of which qualify their own scope
+  depth in the name either.
+- **Length**: 25 characters (`ai-kit-project-rules-cicd`), tied with `-arch` (25) for
+  shortest-or-tied among the six family members, shorter than every other sibling
+  (`-agents` 27, `-docker` 27, `-makefile` 29, `-precommit` 30), comfortably under the
+  64-character frontmatter `name:` limit `skill-judge`'s own D4 dimension checks.
+
+**Alternative considered and rejected during this analysis**: a scope-qualified form (e.g.
+`ai-kit-project-rules-cicd-reuse` or `ai-kit-project-rules-ci-command-reuse`) was considered and
+rejected -- none of the five existing siblings qualify their own scope depth in the name (`docker`
+does not become `docker-local-dev`; `arch` does not become `arch-form-only`), and doing so here
+alone would break the family's own established naming symmetry for a distinction the description
+and Limits section already carry, while also lengthening the name well past every sibling for no
+routing benefit (a host routes on `description`, per D4/rubric guidance, not on name length). No
+alternative is proposed.
+
+**The four live name-dependency sites, re-verified live rather than assumed, during this
+incorporation:**
+
+1. `.planning/REQUIREMENTS.md` line 81 -- the `REQ-rules-cicd` bullet: "A new skill
+   `ai-kit-project-rules-cicd` checks that CI config reuses existing
+   Makefile/pre-commit/package.json/Gradle commands rather than duplicating tool invocations
+   inline." Re-read live; names the skill by this exact string.
+2. `.planning/ROADMAP.md` line 407 -- Phase 14's Goal line: "A new skill
+   `ai-kit-project-rules-cicd` checks that CI config reuses existing
+   Makefile/pre-commit/`package.json`/Gradle commands rather than duplicating tool invocations
+   inline in CI YAML." Re-read live; names the skill by this exact string.
+3. `.planning/ROADMAP.md` line 429 -- Phase 15's "Depends on" note: "Phase 14 (needs all 5 new
+   domain checkers -- makefile, precommit, arch, docker, cicd -- plus the Phase 9-pruned agents
+   checker -- to exist before it can invoke and aggregate them)." Re-read live; names this skill's
+   domain word (`cicd`) in the enumerated list.
+4. `.planning/ROADMAP.md` line 433 -- Phase 15's Success Criterion 1: "Running the orchestrator
+   against a target repo invokes all 6 checkers' `check` (agents, makefile, precommit, arch,
+   docker, cicd), and the aggregated report contains findings from every domain that has any, with
+   none silently dropped." Re-read live; enumerates this skill's domain word by exact name.
+
+Per this task's instruction, the name is NOT this task's to change even where the verdict is
+"confirmed": `ai-kit-project-rules-cicd` is fixed by `REQUIREMENTS.md`'s `REQ-rules-cicd`, by
+`.planning/ROADMAP.md` Phase 14's goal line and Phase 15's dependency note, and by Phase 15's own
+Success Criterion 1, which enumerates the six checkers this orchestrator must invoke by this exact
+family naming scheme. Since the verdict is a confirmation rather than a proposed alternative,
+there is no rename-propagation blast radius to name here beyond stating these four downstream
+dependencies explicitly -- the confirmation simply closes this pipeline step with no open question
+for the user.

@@ -3,6 +3,16 @@
 **Gathered:** 2026-09-13
 **Status:** Ready for planning — BLOCKED on Phases 9-13 landing first (see Phase Boundary)
 
+> **Corrected 2026-09-14 (Phase 14 plan 04):** Phases 9-13 have since landed — each has a
+> committed `SKILL.md` (`skills/ai-kit-project-rules-agents/SKILL.md`,
+> `skills/ai-kit-project-rules-makefile/SKILL.md`,
+> `skills/ai-kit-project-rules-precommit/SKILL.md`,
+> `skills/ai-kit-project-rules-arch/SKILL.md`, `skills/ai-kit-project-rules-docker/SKILL.md`, all
+> confirmed present live during this plan's own drafting). This phase's hard prerequisite
+> REASONING below is unchanged and was satisfied, not waived — the dependency chain was real, it
+> is simply now fully met. Phase 15 reads this file and would otherwise read a satisfied
+> prerequisite as an open blocker.
+
 <domain>
 ## Phase Boundary
 
@@ -27,6 +37,13 @@ Phases 9-13 actually land.** `.planning/ROADMAP.md`'s "Depends on" line
 for Phase 14 names Phase 13 directly; the full chain back to Phase 9 is
 unbroken. As of this discussion, NONE of Phases 9-13 have a plan or
 execution yet (each has only a CONTEXT.md).
+
+> **Corrected 2026-09-14 (Phase 14 plan 04):** Phases 9-13 have all since landed with committed
+> `SKILL.md` files and executed plans (`.planning/ROADMAP.md`'s own per-phase "Plans" lines
+> re-read live: Phase 9 with both plans checked off, Phases 10-13 each showing N/N plans
+> executed) — see the correction on the header `**Status:**` line above for the exact `SKILL.md`
+> paths confirmed live. The hard-prerequisite REASONING above is unchanged and was satisfied, not
+> waived — the dependency chain back to Phase 9 was real, it is simply now fully met.
 
 </domain>
 
@@ -107,6 +124,18 @@ execution yet (each has only a CONTEXT.md).
 - `skills/ai-kit-agents-md-rules-checker/ai_kit_agents_md_rules_checker/
   makefile_checker.py` — `parse_makefile_targets`/`parse_makefile_recipe`/
   `parse_makefile_prerequisites`, the functions D-01 relocates
+
+  > **Corrected 2026-09-14 (Phase 14 plan 04):** This path no longer exists — Phase 9's rename
+  > (`ai-kit-agents-md-rules-checker` → `ai-kit-project-rules-agents`) and its prune of
+  > `makefile_checker.py` both landed before this phase started (re-confirmed live: `skills/
+  > ai-kit-agents-md-rules-checker/` is absent from the tree; `skills/ai-kit-project-rules-agents/`
+  > exists in its place and no longer carries a `makefile_checker.py`). D-01's retrofit completed
+  > as planned: `parse_makefile_targets`, `parse_makefile_recipe`, and
+  > `parse_makefile_prerequisites` (plus `parse_makefile_targets_ordered` and
+  > `parse_makefile_prerequisites_ordered`, added during that retrofit) now live in
+  > `skills/_shared/ai_kit_rules_common/makefile_parse.py` — re-confirmed live by reading that
+  > module's own `def`/`__all__` lines during this correction — and this phase's `reuse_sources.py`
+  > imports all three original functions from that shared module directly, never from the old path.
 - `.gitlab-ci.yml` (ai-kit's own, repo root) — scouted; confirmed to
   contain zero direct tool invocations (just an included security-scan
   template and an empty `test` stage), so it is not usable as either a
@@ -123,6 +152,17 @@ execution yet (each has only a CONTEXT.md).
 - `skills/_shared/ai_kit_rules_common/`, once D-01's Makefile-parsing
   primitives land there (as part of Phase 10's own retrofitted work) —
   this phase imports directly, never re-implements
+
+  > **Corrected 2026-09-14 (Phase 14 plan 04):** These primitives are ON DISK now, not a future
+  > landing — re-confirmed live by reading `skills/_shared/ai_kit_rules_common/makefile_parse.py`'s
+  > own `def`/`__all__` lines: `parse_makefile_targets_ordered`, `parse_makefile_targets`,
+  > `parse_makefile_prerequisites_ordered`, `parse_makefile_prerequisites`, `parse_makefile_recipe`,
+  > and `recipe_mentions_target` are all present and exported. This phase's own
+  > `reuse_sources.py` imports `parse_makefile_prerequisites`, `parse_makefile_recipe`, and
+  > `parse_makefile_targets_ordered` from exactly this module (re-confirmed live via its own
+  > `from ai_kit_rules_common.makefile_parse import (...)` statement) — the "imports directly,
+  > never re-implements" half of this claim held throughout plans 14-01 through 14-03, and is now
+  > a completed fact rather than a forward-looking plan.
 
 ### Established Patterns
 - Phase 13's D-01 (stdlib-only, indentation-aware regex/text YAML
