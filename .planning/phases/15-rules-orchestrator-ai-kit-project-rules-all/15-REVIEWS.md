@@ -200,3 +200,9 @@ N/A — single reviewer. Only unresolved item is:
 N/A — single reviewer.
 
 **Disposition:** All 6 Cycle 1 findings verified genuinely fixed against live source. 0 HIGH concerns remain. 1 new LOW concern surfaced (see above), not yet incorporated into PLAN.md.
+
+## Orchestrator Ruling (Cycle 2 close)
+
+0 HIGH findings and 1 trivial LOW finding remain, consistent with established precedent (Phases 10-14) of fixing a single-sentence, mechanical finding directly rather than spending a third review cycle. Applied directly: `15-01-PLAN.md` Task 1's `cli.py` action text now states `dispatch`/`aggregate` must be imported and called via qualified module-attribute access (`from . import dispatch, aggregate`), never imported by name — mirroring the existing `DOMAIN_TIMEOUT_SECONDS` module-level-name rule, guaranteeing Task 3's Test 5 monkeypatch of `dispatch.dispatch_all` is effective. Both plans re-validated clean (`verify.plan-structure`, `frontmatter.validate --schema plan`). Convergence declared.
+
+CYCLE_SUMMARY: current_high=0 current_actionable=0
