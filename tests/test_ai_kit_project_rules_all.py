@@ -19,7 +19,9 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(
     0,
@@ -33,6 +35,20 @@ _ENTRYPOINT = [
     sys.executable,
     os.path.join(_REPO, "skills", "ai-kit-project-rules-all", "ai-kit-project-rules-all.py"),
 ]
+
+
+def _write_fixture_script(content: str) -> str:
+    """A standalone `.py` file under a fresh temp dir, subprocess-invoked
+    by `run_domain` exactly like a real sibling entry script -- the
+    `resolve_entrypoint`/`SKILL_NAMES` machinery is left untouched; only
+    `dispatch.resolve_entrypoint`'s return value is monkeypatched to point
+    at this fixture, so `run_domain` still exercises the real subprocess
+    path (`subprocess.run` is never mocked)."""
+    tmpdir = tempfile.mkdtemp()
+    path = os.path.join(tmpdir, "fixture.py")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    return path
 
 
 class TestTracer(unittest.TestCase):
@@ -64,6 +80,65 @@ class TestTracer(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual(set(report.keys()), {"remediate", "blocked", "failed"})
+
+
+class TestFailureIsolation(unittest.TestCase):
+    """Task 2's `<behavior>` cases -- D-02/D-05's degradation paths, each
+    driven through the real subprocess path against a small fixture
+    script rather than a mocked `subprocess` call."""
+
+    def test_nonzero_exit_degrades_to_d05_shape(self):
+        fixture = _write_fixture_script("import sys\nsys.exit(1)\n")
+        with mock.patch.object(dispatch, "resolve_entrypoint", return_value=fixture):
+            result = dispatch.run_domain("cicd", ".")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["domain"], "cicd")
+        self.assertEqual(result["returncode"], 1)
+        self.assertTrue(result["error"])
+
+    def test_malformed_json_stdout_degrades_to_d05_shape(self):
+        fixture = _write_fixture_script("print('not json')\n")
+        with mock.patch.object(dispatch, "resolve_entrypoint", return_value=fixture):
+            result = dispatch.run_domain("cicd", ".")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["domain"], "cicd")
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("json", result["error"].lower())
+
+    def test_timeout_degrades_to_d05_shape(self):
+        fixture = _write_fixture_script("import time\ntime.sleep(5)\nprint('{}')\n")
+        with (
+            mock.patch.object(dispatch, "resolve_entrypoint", return_value=fixture),
+            mock.patch.object(dispatch, "DOMAIN_TIMEOUT_SECONDS", 1),
+        ):
+            result = dispatch.run_domain("cicd", ".")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["domain"], "cicd")
+        self.assertIsNone(result["returncode"])
+        self.assertIn("timed out", result["error"].lower())
+
+    def test_unresolvable_entrypoint_isolated_from_other_five_real_domains(self):
+        real_resolve = dispatch.resolve_entrypoint
+
+        def _break_cicd_only(skill_name):
+            if skill_name == dispatch.SKILL_NAMES["cicd"]:
+                return None
+            return real_resolve(skill_name)
+
+        with mock.patch.object(dispatch, "resolve_entrypoint", side_effect=_break_cicd_only):
+            results = dispatch.dispatch_all(repo_root=_REPO)
+
+        cicd_result = results["cicd"]
+        self.assertEqual(cicd_result["status"], "failed")
+        self.assertIsNone(cicd_result["returncode"])
+        self.assertIn("entrypoint not found", cicd_result["error"].lower())
+
+        other_domains = [d for d in dispatch.DOMAIN_ORDER if d != "cicd"]
+        for domain in other_domains:
+            self.assertIn("remediate", results[domain], msg=f"{domain}: {results[domain]}")
+            self.assertNotEqual(
+                results[domain].get("status"), "failed", msg=f"{domain}: {results[domain]}"
+            )
 
 
 if __name__ == "__main__":

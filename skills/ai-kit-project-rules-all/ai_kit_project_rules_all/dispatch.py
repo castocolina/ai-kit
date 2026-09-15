@@ -81,16 +81,59 @@ def resolve_entrypoint(skill_name: str) -> str | None:
 def run_domain(domain: str, repo_root: str) -> dict:
     """Resolve `domain`'s entrypoint and subprocess-invoke its `remediate`
     subcommand (D-04), returning its parsed JSON payload.
+
+    D-02: every failure mode -- an unresolvable entrypoint, a non-zero
+    exit, a timeout past `DOMAIN_TIMEOUT_SECONDS`, or stdout that is not
+    valid JSON -- degrades to D-05's failure-entry shape instead of
+    raising, so one sibling's crash never aborts `dispatch_all`'s run of
+    the other 5 domains.
     """
     skill_name = SKILL_NAMES[domain]
     entrypoint = resolve_entrypoint(skill_name)
-    result = subprocess.run(
-        [sys.executable, entrypoint, "remediate", repo_root],
-        capture_output=True,
-        text=True,
-        timeout=DOMAIN_TIMEOUT_SECONDS,
-    )
-    return json.loads(result.stdout)
+    if entrypoint is None:
+        return {
+            "domain": domain,
+            "status": "failed",
+            "error": f"entrypoint not found for {skill_name!r}",
+            "returncode": None,
+        }
+
+    try:
+        result = subprocess.run(
+            [sys.executable, entrypoint, "remediate", repo_root],
+            capture_output=True,
+            text=True,
+            timeout=DOMAIN_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "domain": domain,
+            "status": "failed",
+            "error": f"timed out after {DOMAIN_TIMEOUT_SECONDS}s",
+            "returncode": None,
+        }
+
+    if result.returncode != 0:
+        stderr_tail = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else ""
+        error = f"exited {result.returncode}"
+        if stderr_tail:
+            error += f": {stderr_tail}"
+        return {
+            "domain": domain,
+            "status": "failed",
+            "error": error,
+            "returncode": result.returncode,
+        }
+
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        return {
+            "domain": domain,
+            "status": "failed",
+            "error": f"invalid JSON on stdout: {exc}",
+            "returncode": result.returncode,
+        }
 
 
 def dispatch_all(repo_root: str) -> dict:
