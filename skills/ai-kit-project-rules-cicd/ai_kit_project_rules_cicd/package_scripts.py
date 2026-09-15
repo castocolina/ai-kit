@@ -3,8 +3,12 @@ package-manager runner resolution (D-C18b), plan 14-03's first addition.
 
 Two limits, stated here rather than discovered later:
   - ROOT file only. A workspace member's `package.json` is not read.
-  - `scripts` only. `bin`, `config` and lifecycle hooks such as `prepare`
-    are not treated as commands to reuse.
+  - `scripts` only. Any OTHER top-level `package.json` field -- `bin`,
+    `config`, and so on -- is never read as a command to reuse. A
+    `scripts` entry named for an npm lifecycle hook (e.g. `prepare`) is
+    read exactly like any other `scripts` entry -- through the SAME
+    aggregate check and command-key machinery, no special-casing by
+    name -- since it lives inside `scripts`, not outside it.
 
 `read_package_scripts` reads the root `package.json` with the stdlib
 `json` module and returns `(script_name, command)` pairs for every entry
