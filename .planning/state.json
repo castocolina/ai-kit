@@ -81,13 +81,13 @@
     {
       "number": "15",
       "name": "Rules Orchestrator",
-      "status": "pending"
+      "status": "in_progress"
     }
   ],
   "next": {
-    "command": "/gsd:progress --next",
-    "label": "Advance to the next step",
-    "reason": "Phase 15 of 17 · executing"
+    "command": "/gsd:verify-work",
+    "label": "Re-verify work",
+    "reason": "Recent verification failed — re-verify or debug"
   },
-  "updated_at": "2026-09-15T01:31:35.742Z"
+  "updated_at": "2026-09-15T02:02:20.607Z"
 }

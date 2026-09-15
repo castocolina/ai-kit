@@ -79,7 +79,7 @@ phase.
 - [x] **REQ-rules-arch**: A new skill `ai-kit-project-rules-arch` verifies an `arch-test`-shaped Makefile target exists, is chained into `test`, and (where discoverable) is AST-only; carries baseline per-stack canonical-tool knowledge (import-linter/dependency-cruiser/ArchUnit). Promotes and resolves the backlog's Phase 999.3 ("Architecture-layer test suite") — that note's dependency-direction/layering-boundary ambition is explicitly out of this skill's scoped-down, form/convention-only scope (see the spec's own scope note), so Phase 999.3 is resolved as "addressed at the scope this milestone settled on," not fully built.
 - [x] **REQ-rules-docker**: A new skill `ai-kit-project-rules-docker` checks the docker-up/health/stop/clean/prune/events-* target family, healthcheck conventions (timeout ≤2s, start_period ≤10s, interval ≤5s), `depends_on` discipline (`condition: service_healthy`), the local-dev bind-mount/hot-reload convention, and the `docker/local/README.md` runbook requirement.
 - [x] **REQ-rules-cicd**: A new skill `ai-kit-project-rules-cicd` checks that CI config reuses existing Makefile/pre-commit/package.json/Gradle commands rather than duplicating tool invocations inline.
-- [ ] **REQ-rules-all**: A new skill `ai-kit-project-rules-all` (orchestrator) runs all 6 checkers' `check`/`remediate` against one target repo and aggregates into one criticality-ordered report; keeps the existing `/agent-md-refactor` hand-off for AGENTS.md-domain findings only.
+- [x] **REQ-rules-all**: A new skill `ai-kit-project-rules-all` (orchestrator) runs all 6 checkers' `check`/`remediate` against one target repo and aggregates into one criticality-ordered report; keeps the existing `/agent-md-refactor` hand-off for AGENTS.md-domain findings only.
 
 ## v2 Requirements
 
@@ -140,7 +140,7 @@ rather than from further PRD ingest.
 | REQ-rules-arch | Phase 12 | Complete |
 | REQ-rules-docker | Phase 13 | Complete |
 | REQ-rules-cicd | Phase 14 | Complete |
-| REQ-rules-all | Phase 15 | Pending |
+| REQ-rules-all | Phase 15 | Complete |
 
 **Coverage:**
 

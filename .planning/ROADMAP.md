@@ -436,12 +436,12 @@ Plans:
   4. An integration-style test stubs all 6 checkers' `check` output and asserts the aggregation/ordering logic, without needing every individual checker's full logic re-exercised inside that test.
   5. Cross-skill merging of findings across domains exists only inside this orchestrator — no individual checker's own `remediation.py` usage is changed to perform cross-domain merging, per the "Cross-skill remediation merging ownership" protocol in `.planning/intel/constraints.md`.
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans executed
 
 Plans:
 
 - [x] 15-01-PLAN.md — Subprocess fan-out (D-01/D-02/D-04/D-05/D-06) and pure cross-domain criticality merge with AGENTS.md hand-off tagging, dogfooded against this repo's own 6 real sibling checkers (SC1, SC2, SC3's data half, SC4, SC5)
-- [ ] 15-02-PLAN.md — SKILL.md (Step A/B/C hand-off cross-reference, 8 honesty-about-limits statements), registration across README.md/.pre-commit-config.yaml/pyproject.toml, /skill-judge gate, and /naming-analyzer confirmation (SC3's documentation half)
+- [x] 15-02-PLAN.md — SKILL.md (Step A/B/C hand-off cross-reference, 8 honesty-about-limits statements), registration across README.md/.pre-commit-config.yaml/pyproject.toml, /skill-judge gate, and /naming-analyzer confirmation (SC3's documentation half)
 
 ## Progress
 
@@ -465,7 +465,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 | 12. Architecture Rules Checker | 3/3 | Complete    | 2026-09-14 |
 | 13. Docker Rules Checker | 4/4 | Complete    | 2026-09-14 |
 | 14. CI/CD Rules Checker | 4/4 | Complete    | 2026-09-14 |
-| 15. Rules Orchestrator | 1/2 | In Progress|  |
+| 15. Rules Orchestrator | 2/2 | In Progress|  |
 
 ## Backlog
 
