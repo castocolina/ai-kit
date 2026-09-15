@@ -43,7 +43,7 @@ check:
 # Runs under bare system python3 (stdlib-only, matching the runtime) except
 # test_framework_profiles, which needs PyYAML (uv's venv, not the system python3).
 test-unit:
-	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_markdown_to_pdf tests.test_mermaid_style tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_superpowers tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_ai_kit_usage_metrics tests.test_ai_kit_project_rules_agents tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_rules_common tests.test_ai_kit_project_rules_makefile tests.test_ai_kit_project_rules_precommit tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_cicd
+	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_markdown_to_pdf tests.test_mermaid_style tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_superpowers tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_ai_kit_usage_metrics tests.test_ai_kit_project_rules_agents tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_rules_common tests.test_ai_kit_project_rules_makefile tests.test_ai_kit_project_rules_precommit tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_cicd tests.test_ai_kit_project_rules_all
 	uv run python3 -m unittest tests.test_framework_profiles
 
 # Multiple real components wired together (Textual app, PTY-driven subprocess)
