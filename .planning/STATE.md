@@ -3,18 +3,18 @@ gsd_state_version: "1.0"
 milestone: v1.2
 current_phase: 14
 current_phase_name: CI/CD Rules Checker (ai-kit-project-rules-cicd)
-current_plan: 3
+current_plan: 4
 status: executing
-stopped_at: Completed 14-02-PLAN.md
-last_updated: "2026-09-14T23:44:17.021Z"
+stopped_at: Completed 14-03-PLAN.md
+last_updated: "2026-09-15T00:12:49.581Z"
 last_activity: 2026-09-14
 last_activity_desc: Phase 13 complete, transitioned to Phase 14
-state_head: 184cafda9e7c6e5c63ad35beb4ba2805de8fbc09
+state_head: cdb6d68e774aa8b598a325776223db7c5d360186
 progress:
   total_phases: 17
   completed_phases: 1
   total_plans: 29
-  completed_plans: 27
+  completed_plans: 28
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 ## Current Position
 
 Phase: 14 — CI/CD Rules Checker (ai-kit-project-rules-cicd)
-Current Plan: 3
+Current Plan: 4
 Total Plans in Phase: 4
 Status: Ready to execute
 Last activity: 2026-09-14 — Plan 14-01 (tracer) complete
@@ -106,6 +106,7 @@ Last activity: 2026-09-14 — Plan 14-01 (tracer) complete
 | Phase 13-docker-rules-checker-ai-kit-project-rules-docker P04 | ~1h 10min | 3 tasks | 4 files |
 | Phase 14 P01 | 105min | 2 tasks | 15 files |
 | Phase 14 P02 | 23min | 3 tasks | 4 files |
+| Phase 14-ci-cd-rules-checker-ai-kit-project-rules-cicd P03 | 95min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -190,6 +191,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 14]: [Phase 14] 14-01: D-C1 through D-C13 and D-C28 implemented exactly as the cross-AI-converged plan specified (GitLab CI applicability gate, catalog-grounded identity/match rules, complete reuse-invocation table, determinism, never-follow-include disclosure) — no deviation from the planner's locked decisions.
 - [Phase 14]: [Phase 14] 14-01: 3 Rule-1 auto-fixes landed in a separate commit before the test-only Task 2 commit — GitLab reader same-indent-as-key sequence handling, command_text.strip_leading_noise stop_check callback (pre-commit run vs generic runner-prefix collision), and pnpm/yarn bare-script table rows excluding exec/dlx.
 - [Phase 14]: D-C14/D-C15/D-C16/D-C17/D-C29 implemented as locked; is_tool_shaped_identity rewritten (behavior-unchanged) to satisfy ONE-GATE-OK's AST check
+- [Phase 14]: D-C18/D-C18b: package.json scripts as reuse sources with lockfile-driven runner resolution (pnpm > yarn > bun > npm)
+- [Phase 14]: D-C19/D-C19b/D-C20: Gradle task reuse surface via declared-task extraction plus a pinned plugin table gated on real plugin-id evidence, admitted through a caller-passed gate parameter (never a membership test)
 
 ### Pending Todos
 
@@ -298,6 +301,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-14T23:44:16.975Z
-Stopped at: Completed 14-02-PLAN.md
+Last session: 2026-09-15T00:12:49.533Z
+Stopped at: Completed 14-03-PLAN.md
 Resume file: None
