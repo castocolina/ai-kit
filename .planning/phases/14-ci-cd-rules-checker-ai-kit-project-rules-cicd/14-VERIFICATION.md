@@ -1,9 +1,17 @@
 ---
 phase: 14
-verified: 2026-09-15T00:45:00Z
+verified: 2026-09-15T00:48:00Z
 status: passed
 score: "All 4 success criteria independently re-verified against live source and live command output, not self-reported plan/test claims. 801 tests pass (1 pre-existing, unrelated skip), lint clean, CLI exercised directly against ai-kit's own repo root."
 covered_files:
+  - .planning/phases/14-ci-cd-rules-checker-ai-kit-project-rules-cicd/14-01-PLAN.md
+  - .planning/phases/14-ci-cd-rules-checker-ai-kit-project-rules-cicd/14-01-SUMMARY.md
+  - .planning/phases/14-ci-cd-rules-checker-ai-kit-project-rules-cicd/14-02-PLAN.md
+  - .planning/phases/14-ci-cd-rules-checker-ai-kit-project-rules-cicd/14-02-SUMMARY.md
+  - .planning/phases/14-ci-cd-rules-checker-ai-kit-project-rules-cicd/14-03-PLAN.md
+  - .planning/phases/14-ci-cd-rules-checker-ai-kit-project-rules-cicd/14-03-SUMMARY.md
+  - .planning/phases/14-ci-cd-rules-checker-ai-kit-project-rules-cicd/14-04-PLAN.md
+  - .planning/phases/14-ci-cd-rules-checker-ai-kit-project-rules-cicd/14-04-SUMMARY.md
   - skills/_shared/ai_kit_rules_common/command_text.py
   - skills/_shared/ai_kit_rules_common/yaml_text.py
   - skills/ai-kit-project-rules-cicd/SKILL.md
@@ -13,7 +21,7 @@ covered_files:
   - skills/ai-kit-project-rules-cicd/ai_kit_project_rules_cicd/package_scripts.py
   - skills/ai-kit-project-rules-cicd/ai_kit_project_rules_cicd/reuse_sources.py
   - tests/test_ai_kit_project_rules_cicd.py
-covered_digest: "v1:sha256:4504f3a5ff5d5433496f9d189805dc52e35eec526c31e1cf8c0a3680aeef2c16"
+covered_digest: "v1:sha256:0feb1a7bb7cb05f59c2c4673ceef35f95e5f0e9028e04c5728bf81fad422159d"
 behavior_unverified: 0
 overrides_applied: 0
 behavior_unverified_items: []
