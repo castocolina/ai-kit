@@ -119,6 +119,10 @@ same fixture:
 `python3 "$ENTRYPOINT" bogus <repo_root>` exits `2` and prints `unknown subcommand: bogus` --
 confirmed against a real run.
 
+A fixture whose CI already calls the reuse command directly (the same `.gitlab-ci.yml` job now
+running `make ruff` instead of `ruff check .`) produces `{"cicd": []}` -- confirmed against a
+real run.
+
 This skill has exactly two subcommands, `check` and `remediate` -- unlike the Phase 10
 (`ai-kit-project-rules-makefile`) and Phase 11 (`ai-kit-project-rules-precommit`) siblings, there
 is no third, research-triggering command behind either one. There is no research step and no
