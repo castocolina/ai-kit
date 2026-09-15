@@ -16,6 +16,7 @@ grown `STRUCTURAL_KINDS` tuple, the new `yaml_text` primitives,
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import json
@@ -88,9 +89,7 @@ class TestTracerDirectInvocationFlagged(unittest.TestCase):
         repo = _fixture(
             {
                 "Makefile": _MK_RUFF_MYPY,
-                ".gitlab-ci.yml": (
-                    "lint-job:\n  stage: test\n  script:\n  - ruff check .\n"
-                ),
+                ".gitlab-ci.yml": ("lint-job:\n  stage: test\n  script:\n  - ruff check .\n"),
             }
         )
         findings = _findings(repo)
@@ -128,9 +127,7 @@ class TestTracerMixedDirectAndReuse(unittest.TestCase):
         repo = _fixture(
             {
                 "Makefile": _MK_RUFF_MYPY,
-                ".gitlab-ci.yml": (
-                    "lint-job:\n  script:\n  - ruff check .\n  - make mypy\n"
-                ),
+                ".gitlab-ci.yml": ("lint-job:\n  script:\n  - ruff check .\n  - make mypy\n"),
             }
         )
         findings = _findings(repo)
@@ -170,9 +167,7 @@ class TestTracerIdentityGateShellNoise(unittest.TestCase):
         repo = _fixture(
             {
                 "Makefile": _MK_RUFF_MYPY,
-                ".gitlab-ci.yml": (
-                    "j:\n  script:\n  - rm -rf dist\n  - echo hello\n"
-                ),
+                ".gitlab-ci.yml": ("j:\n  script:\n  - rm -rf dist\n  - echo hello\n"),
             }
         )
         self.assertEqual(_findings(repo), [])
@@ -215,16 +210,12 @@ class TestTracerTwoLineTargetIdentity(unittest.TestCase):
 
     def test_different_key_two_line_target_has_no_identity(self):
         mk = "ruff:\n\truff check .\n\truff format .\n"
-        repo = _fixture(
-            {"Makefile": mk, ".gitlab-ci.yml": "j:\n  script:\n  - ruff check .\n"}
-        )
+        repo = _fixture({"Makefile": mk, ".gitlab-ci.yml": "j:\n  script:\n  - ruff check .\n"})
         self.assertEqual(_findings(repo), [])
 
     def test_same_key_two_line_target_covers_ci_line(self):
         mk = "ruff:\n\truff check .\n\truff check --fix .\n"
-        repo = _fixture(
-            {"Makefile": mk, ".gitlab-ci.yml": "j:\n  script:\n  - ruff check .\n"}
-        )
+        repo = _fixture({"Makefile": mk, ".gitlab-ci.yml": "j:\n  script:\n  - ruff check .\n"})
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["reuse_command"], "make ruff")
@@ -403,9 +394,7 @@ class TestReaderStatedLimits(unittest.TestCase):
         repo = _fixture(
             {
                 "Makefile": _MK_RUFF_MYPY,
-                ".gitlab-ci.yml": (
-                    "j:\n  script:\n  - python3 - <<EOF\n  - ruff check .\n"
-                ),
+                ".gitlab-ci.yml": ("j:\n  script:\n  - python3 - <<EOF\n  - ruff check .\n"),
             }
         )
         findings = _findings(repo)
@@ -487,9 +476,7 @@ class TestIdentityExtractionClauses(unittest.TestCase):
 
     def test_clause_c_non_catalog_bare_name_yields_no_findings(self):
         mk = "my-house-style:\n"
-        repo = _fixture(
-            {"Makefile": mk, ".gitlab-ci.yml": "j:\n  script:\n  - my-house-style x\n"}
-        )
+        repo = _fixture({"Makefile": mk, ".gitlab-ci.yml": "j:\n  script:\n  - my-house-style x\n"})
         self.assertEqual(_findings(repo), [])
 
     def test_three_real_line_target_is_capped_out_and_yields_no_findings(self):
@@ -511,9 +498,7 @@ class TestIdentityGateNegatives(unittest.TestCase):
 
     def _assert_shell_noise_target_is_never_a_reuse_source(self, target_name, command):
         mk = f"{target_name}:\n\t{command}\n"
-        repo = _fixture(
-            {"Makefile": mk, ".gitlab-ci.yml": f"j:\n  script:\n  - {command}\n"}
-        )
+        repo = _fixture({"Makefile": mk, ".gitlab-ci.yml": f"j:\n  script:\n  - {command}\n"})
         self.assertEqual(_findings(repo), [], f"{target_name} wrongly entered the inventory")
 
     def test_rm_target_is_never_a_reuse_source(self):
@@ -584,9 +569,7 @@ class TestMatchRuleRuffTriad(unittest.TestCase):
 
     def test_two_token_form_tsc_no_emit_matches(self):
         mk = "types:\n\tuv run tsc --noEmit\n"
-        repo = _fixture(
-            {"Makefile": mk, ".gitlab-ci.yml": "j:\n  script:\n  - tsc --noEmit\n"}
-        )
+        repo = _fixture({"Makefile": mk, ".gitlab-ci.yml": "j:\n  script:\n  - tsc --noEmit\n"})
         self.assertEqual(len(_findings(repo)), 1)
 
     def test_unknown_key_with_no_reuse_source_yields_no_findings(self):
@@ -664,9 +647,7 @@ class TestSegmentationAndReuseTable(unittest.TestCase):
 
     def test_npx_direct_invocation_is_flagged(self):
         mk = "lint:\n\tnpx eslint .\n"
-        repo = _fixture(
-            {"Makefile": mk, ".gitlab-ci.yml": "j:\n  script:\n  - npx eslint .\n"}
-        )
+        repo = _fixture({"Makefile": mk, ".gitlab-ci.yml": "j:\n  script:\n  - npx eslint .\n"})
         self.assertEqual(len(_findings(repo)), 1)
 
     def test_pnpm_exec_direct_invocation_is_flagged_not_reuse(self):
@@ -738,14 +719,8 @@ class TestDeterminism(unittest.TestCase):
     file-declaration order, then segments in line order. Order and
     alphabetical order DISAGREE on purpose."""
 
-    _MK = (
-        "zzz:\n\tuv run tsc --noEmit\n\n"
-        "aaa:\n\tuv run ruff check .\n"
-    )
-    _CI = (
-        "b-job:\n  script:\n  - tsc --noEmit\n"
-        "a-job:\n  script:\n  - ruff check .\n"
-    )
+    _MK = "zzz:\n\tuv run tsc --noEmit\n\naaa:\n\tuv run ruff check .\n"
+    _CI = "b-job:\n  script:\n  - tsc --noEmit\na-job:\n  script:\n  - ruff check .\n"
 
     def test_findings_follow_declaration_order_not_alphabetical(self):
         repo = _fixture({"Makefile": self._MK, ".gitlab-ci.yml": self._CI})
@@ -767,9 +742,7 @@ class TestDegradation(unittest.TestCase):
         self.assertEqual(_findings(repo), [])
 
     def test_empty_makefile_yields_no_findings(self):
-        repo = _fixture(
-            {"Makefile": "", ".gitlab-ci.yml": "j:\n  script:\n  - ruff check .\n"}
-        )
+        repo = _fixture({"Makefile": "", ".gitlab-ci.yml": "j:\n  script:\n  - ruff check .\n"})
         self.assertEqual(_findings(repo), [])
 
     def test_unreadable_binary_makefile_yields_no_findings(self):
@@ -864,9 +837,7 @@ class TestCliSurface(unittest.TestCase):
             os.chdir(cwd)
 
     def test_entrypoint_subprocess_unknown_subcommand_is_clean_exit_2(self):
-        result = subprocess.run(
-            [*_ENTRYPOINT, "bogus"], capture_output=True, text=True
-        )
+        result = subprocess.run([*_ENTRYPOINT, "bogus"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("Traceback", result.stderr)
 
@@ -926,10 +897,7 @@ class TestGateRegistration(unittest.TestCase):
         self.assertIn("skills/ai-kit-project-rules-cicd", paths)
 
 
-_MK_RUFF_MYPY_TASK1 = (
-    "ruff:\n\tuv run ruff check .\n\n"
-    "mypy:\n\tuv run mypy .\n"
-)
+_MK_RUFF_MYPY_TASK1 = "ruff:\n\tuv run ruff check .\n\nmypy:\n\tuv run mypy .\n"
 
 _WF_LINT_AND_TYPES = (
     "name: ci\n"
@@ -977,9 +945,7 @@ class TestGitHubReaderShapes(unittest.TestCase):
         repo = _fixture(
             {
                 "Makefile": _MK_RUFF_MYPY_TASK1,
-                ".github/workflows/ci.yml": (
-                    "jobs:\n  lint:\n    steps:\n    - run: make ruff\n"
-                ),
+                ".github/workflows/ci.yml": ("jobs:\n  lint:\n    steps:\n    - run: make ruff\n"),
             }
         )
         self.assertEqual(_findings(repo), [])
@@ -1042,9 +1008,7 @@ class TestGitHubReaderShapes(unittest.TestCase):
         repo = _fixture(
             {
                 "Makefile": _MK_RUFF_MYPY_TASK1,
-                ".github/workflows/ci.yml": (
-                    "jobs:\n  j:\n    steps:\n    - run: ruff check .\n"
-                ),
+                ".github/workflows/ci.yml": ("jobs:\n  j:\n    steps:\n    - run: ruff check .\n"),
             }
         )
         findings = _findings(repo)
@@ -1056,15 +1020,11 @@ class TestGitHubDiscoveryAndGate(unittest.TestCase):
     and depth (D-C1's key-links entry)."""
 
     def test_yml_extension_is_discovered(self):
-        repo = _fixture(
-            {".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: a\n"}
-        )
+        repo = _fixture({".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: a\n"})
         self.assertEqual(ci_parse.discover_ci_files(repo), [".github/workflows/ci.yml"])
 
     def test_yaml_extension_is_discovered(self):
-        repo = _fixture(
-            {".github/workflows/ci.yaml": "jobs:\n  j:\n    steps:\n    - run: a\n"}
-        )
+        repo = _fixture({".github/workflows/ci.yaml": "jobs:\n  j:\n    steps:\n    - run: a\n"})
         self.assertEqual(ci_parse.discover_ci_files(repo), [".github/workflows/ci.yaml"])
 
     def test_non_yaml_workflow_entry_is_not_discovered(self):
@@ -1117,9 +1077,7 @@ class TestCrossPlatformDeterminism(unittest.TestCase):
         repo = _fixture(
             {
                 "Makefile": _MK_RUFF_MYPY_TASK1,
-                ".github/workflows/ci.yml": (
-                    "jobs:\n  j:\n    steps:\n    - run: ruff check .\n"
-                ),
+                ".github/workflows/ci.yml": ("jobs:\n  j:\n    steps:\n    - run: ruff check .\n"),
             }
         )
         findings = _findings(repo)
@@ -1152,9 +1110,7 @@ class TestGitHubDegradation(unittest.TestCase):
         repo = tempfile.mkdtemp()
         _write(os.path.join(repo, "Makefile"), _MK_RUFF_MYPY_TASK1)
         os.makedirs(os.path.join(repo, ".github", "workflows"))
-        with open(
-            os.path.join(repo, ".github", "workflows", "ci.yml"), "wb"
-        ) as handle:
+        with open(os.path.join(repo, ".github", "workflows", "ci.yml"), "wb") as handle:
             handle.write(b"\xff\xfe\x00 binary, not utf-8\n")
         self.assertEqual(_findings(repo), [])
 
@@ -1198,8 +1154,7 @@ class TestPrecommitReuseSurface(unittest.TestCase):
 
     def test_entry_less_upstream_ruff_hook_covers_ci_ruff_check(self):
         pc = (
-            "repos:\n- repo: https://github.com/astral-sh/ruff-pre-commit\n"
-            "  hooks:\n  - id: ruff\n"
+            "repos:\n- repo: https://github.com/astral-sh/ruff-pre-commit\n  hooks:\n  - id: ruff\n"
         )
         repo = _fixture({".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": _CI_RUFF_STEP})
         findings = _findings(repo)
@@ -1253,7 +1208,7 @@ class TestPrecommitReuseSurface(unittest.TestCase):
 
     def test_quoted_entry_matches_a_direct_ci_invocation_identically_to_bare(self):
         pc_quoted = (
-            'repos:\n- repo: local\n  hooks:\n  - id: ruff\n'
+            "repos:\n- repo: local\n  hooks:\n  - id: ruff\n"
             '    entry: "ruff check"\n    language: system\n'
         )
         pc_bare = pc_quoted.replace('entry: "ruff check"', "entry: ruff check")
@@ -1275,17 +1230,13 @@ class TestPrecommitReuseSurface(unittest.TestCase):
         repo_single = _fixture(
             {
                 ".pre-commit-config.yaml": pc_single,
-                ".github/workflows/ci.yml": (
-                    "jobs:\n  j:\n    steps:\n    - run: black .\n"
-                ),
+                ".github/workflows/ci.yml": ("jobs:\n  j:\n    steps:\n    - run: black .\n"),
             }
         )
         repo_bare = _fixture(
             {
                 ".pre-commit-config.yaml": pc_bare,
-                ".github/workflows/ci.yml": (
-                    "jobs:\n  j:\n    steps:\n    - run: black .\n"
-                ),
+                ".github/workflows/ci.yml": ("jobs:\n  j:\n    steps:\n    - run: black .\n"),
             }
         )
         self.assertEqual(_findings(repo_single), _findings(repo_bare))
@@ -1298,24 +1249,20 @@ class TestPrecommitReuseSurface(unittest.TestCase):
         repo = _fixture(
             {
                 ".pre-commit-config.yaml": pc,
-                ".github/workflows/ci.yml": (
-                    "jobs:\n  j:\n    steps:\n    - run: black .\n"
-                ),
+                ".github/workflows/ci.yml": ("jobs:\n  j:\n    steps:\n    - run: black .\n"),
             }
         )
         self.assertEqual(_findings(repo), [])
 
     def test_multi_segment_quoted_entry_has_no_identity(self):
         pc = (
-            'repos:\n- repo: local\n  hooks:\n  - id: fmt\n'
+            "repos:\n- repo: local\n  hooks:\n  - id: fmt\n"
             '    entry: "black . && isort ."\n    language: system\n'
         )
         repo = _fixture(
             {
                 ".pre-commit-config.yaml": pc,
-                ".github/workflows/ci.yml": (
-                    "jobs:\n  j:\n    steps:\n    - run: black .\n"
-                ),
+                ".github/workflows/ci.yml": ("jobs:\n  j:\n    steps:\n    - run: black .\n"),
             }
         )
         self.assertEqual(_findings(repo), [])
@@ -1329,7 +1276,7 @@ class TestPrecommitReuseSurface(unittest.TestCase):
             {
                 ".pre-commit-config.yaml": pc,
                 ".github/workflows/ci.yml": (
-                    "jobs:\n  j:\n    steps:\n    - run: bash -c \"exit 0\"\n"
+                    'jobs:\n  j:\n    steps:\n    - run: bash -c "exit 0"\n'
                 ),
             }
         )
@@ -1381,9 +1328,7 @@ class TestPrecommitReuseSurface(unittest.TestCase):
         self.assertEqual(findings[0]["reuse_surface"], "makefile")
 
     def test_empty_precommit_config_yields_no_precommit_findings(self):
-        repo = _fixture(
-            {".pre-commit-config.yaml": "", ".github/workflows/ci.yml": _CI_RUFF_STEP}
-        )
+        repo = _fixture({".pre-commit-config.yaml": "", ".github/workflows/ci.yml": _CI_RUFF_STEP})
         self.assertEqual(_findings(repo), [])
 
     def test_unreadable_binary_precommit_config_does_not_raise(self):
@@ -1396,8 +1341,7 @@ class TestPrecommitReuseSurface(unittest.TestCase):
 
 _INTEGRATION_MK = "ruff:\n\tuv run ruff check .\n\nmypy:\n\tuv run mypy .\n"
 _INTEGRATION_PC = (
-    "repos:\n- repo: local\n  hooks:\n  - id: black\n"
-    "    entry: black .\n    language: system\n"
+    "repos:\n- repo: local\n  hooks:\n  - id: black\n    entry: black .\n    language: system\n"
 )
 _INTEGRATION_GL = "gl-job:\n  script:\n  - ruff check .\n  - black .\n"
 _INTEGRATION_WF_A = "jobs:\n  j:\n    steps:\n    - run: mypy .\n"
@@ -1591,8 +1535,6 @@ class TestStatedLimitsGitHub(unittest.TestCase):
         # not IMPORTED from -- or delegated to -- the sibling docker
         # skill's compose_parse.py. (`compose_parse` appears only in
         # prose, naming the capability boundary this reader crosses.)
-        import ast
-
         with open(
             os.path.join(
                 _REPO,
@@ -1606,15 +1548,8 @@ class TestStatedLimitsGitHub(unittest.TestCase):
             src = handle.read()
         tree = ast.parse(src)
         imported_modules = {
-            n.module or ""
-            for n in ast.walk(tree)
-            if isinstance(n, ast.ImportFrom)
-        } | {
-            alias.name
-            for n in ast.walk(tree)
-            if isinstance(n, ast.Import)
-            for alias in n.names
-        }
+            n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+        } | {alias.name for n in ast.walk(tree) if isinstance(n, ast.Import) for alias in n.names}
         self.assertTrue(
             all(
                 "compose_parse" not in m and "ai_kit_project_rules_docker" not in m
@@ -1637,7 +1572,9 @@ class TestPackageJsonReuseSurface(unittest.TestCase):
     same command-key machinery every other surface uses."""
 
     def test_matching_script_is_flagged_with_npm_run_recommendation(self):
-        repo = _fixture({"package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        repo = _fixture(
+            {"package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP}
+        )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
         finding = findings[0]
@@ -1649,9 +1586,7 @@ class TestPackageJsonReuseSurface(unittest.TestCase):
         repo = _fixture(
             {
                 "package.json": _PJ_LINT_ESLINT,
-                ".github/workflows/ci.yml": (
-                    "jobs:\n  j:\n    steps:\n    - run: npm run lint\n"
-                ),
+                ".github/workflows/ci.yml": ("jobs:\n  j:\n    steps:\n    - run: npm run lint\n"),
             }
         )
         self.assertEqual(_findings(repo), [])
@@ -1661,9 +1596,7 @@ class TestPackageJsonReuseSurface(unittest.TestCase):
         covered = _fixture(
             {
                 "package.json": pj,
-                ".github/workflows/ci.yml": (
-                    "jobs:\n  j:\n    steps:\n    - run: tsc --noEmit\n"
-                ),
+                ".github/workflows/ci.yml": ("jobs:\n  j:\n    steps:\n    - run: tsc --noEmit\n"),
             }
         )
         findings = _findings(covered)
@@ -1729,7 +1662,9 @@ class TestPackageJsonReuseSurface(unittest.TestCase):
         self.assertEqual(findings[0]["reuse_command"], "pnpm run lint")
 
     def test_no_lockfile_recommends_npm_runner(self):
-        repo = _fixture({"package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        repo = _fixture(
+            {"package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP}
+        )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["reuse_command"], "npm run lint")
@@ -1737,7 +1672,11 @@ class TestPackageJsonReuseSurface(unittest.TestCase):
     def test_makefile_and_script_collision_recommends_only_the_makefile_target(self):
         mk = "lint:\n\teslint .\n"
         repo = _fixture(
-            {"Makefile": mk, "package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP}
+            {
+                "Makefile": mk,
+                "package.json": _PJ_LINT_ESLINT,
+                ".github/workflows/ci.yml": _CI_ESLINT_STEP,
+            }
         )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
@@ -1807,8 +1746,8 @@ class TestPackageScriptsModuleDirect(unittest.TestCase):
 # Plan 14-03 Task 2: the Gradle task reuse surface (D-C19, D-C19b, D-C20).
 # --------------------------------------------------------------------------- #
 
-_WF_SPOTLESS = "plugins {\n    id \"com.diffplug.spotless\" version \"6.25.0\"\n}\n"
-_BG_NO_SPOTLESS = "plugins {\n    id \"java\"\n}\n"
+_WF_SPOTLESS = 'plugins {\n    id "com.diffplug.spotless" version "6.25.0"\n}\n'
+_BG_NO_SPOTLESS = 'plugins {\n    id "java"\n}\n'
 _CI_SPOTLESS_STEP = "jobs:\n  j:\n    steps:\n    - run: spotless\n"
 _CI_JSCPD_STEP = "jobs:\n  j:\n    steps:\n    - run: jscpd .\n"
 
@@ -1824,9 +1763,7 @@ class TestGradleDeclaredTaskExtraction(unittest.TestCase):
         self.assertIn("foo", gradle_tasks.extract_declared_task_names('task("foo")\n'))
 
     def test_tasks_register_form(self):
-        self.assertIn(
-            "foo", gradle_tasks.extract_declared_task_names('tasks.register("foo")\n')
-        )
+        self.assertIn("foo", gradle_tasks.extract_declared_task_names('tasks.register("foo")\n'))
 
     def test_tasks_register_typed_form(self):
         self.assertIn(
@@ -1856,7 +1793,9 @@ class TestGradleDeclaredTaskEndToEnd(unittest.TestCase):
     never calls it)."""
 
     def _assert_form_is_end_to_end_flagged(self, build_gradle_text):
-        repo = _fixture({"build.gradle": build_gradle_text, ".github/workflows/ci.yml": _CI_JSCPD_STEP})
+        repo = _fixture(
+            {"build.gradle": build_gradle_text, ".github/workflows/ci.yml": _CI_JSCPD_STEP}
+        )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1, findings)
         self.assertEqual(findings[0]["reuse_surface"], "gradle")
@@ -1878,7 +1817,10 @@ class TestGradleDeclaredTaskEndToEnd(unittest.TestCase):
 
     def test_kotlin_by_tasks_registering_end_to_end(self):
         repo = _fixture(
-            {"build.gradle.kts": "val jscpd by tasks.registering\n", ".github/workflows/ci.yml": _CI_JSCPD_STEP}
+            {
+                "build.gradle.kts": "val jscpd by tasks.registering\n",
+                ".github/workflows/ci.yml": _CI_JSCPD_STEP,
+            }
         )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1, findings)
@@ -1894,7 +1836,10 @@ class TestGradleRoute1NameIdentityLimit(unittest.TestCase):
 
     def test_jscpd_report_negative_yields_zero_findings(self):
         repo = _fixture(
-            {"build.gradle": 'tasks.register("jscpdReport")\n', ".github/workflows/ci.yml": _CI_JSCPD_STEP}
+            {
+                "build.gradle": 'tasks.register("jscpdReport")\n',
+                ".github/workflows/ci.yml": _CI_JSCPD_STEP,
+            }
         )
         findings = _findings(repo)
         self.assertEqual(findings, [])
@@ -1903,7 +1848,10 @@ class TestGradleRoute1NameIdentityLimit(unittest.TestCase):
 
     def test_jscpd_positive_covers_ci_jscpd_line(self):
         repo = _fixture(
-            {"build.gradle": 'tasks.register("jscpd")\n', ".github/workflows/ci.yml": _CI_JSCPD_STEP}
+            {
+                "build.gradle": 'tasks.register("jscpd")\n',
+                ".github/workflows/ci.yml": _CI_JSCPD_STEP,
+            }
         )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
@@ -1916,28 +1864,42 @@ class TestGradlePluginTableEvidence(unittest.TestCase):
 
     def test_plugin_present_covers_ci_line_with_wrapper(self):
         repo = _fixture(
-            {"build.gradle": _WF_SPOTLESS, "gradlew": "#!/bin/sh\n", ".github/workflows/ci.yml": _CI_SPOTLESS_STEP}
+            {
+                "build.gradle": _WF_SPOTLESS,
+                "gradlew": "#!/bin/sh\n",
+                ".github/workflows/ci.yml": _CI_SPOTLESS_STEP,
+            }
         )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["reuse_command"], "./gradlew spotlessCheck")
 
     def test_plugin_present_without_wrapper_uses_bare_gradle(self):
-        repo = _fixture({"build.gradle": _WF_SPOTLESS, ".github/workflows/ci.yml": _CI_SPOTLESS_STEP})
+        repo = _fixture(
+            {"build.gradle": _WF_SPOTLESS, ".github/workflows/ci.yml": _CI_SPOTLESS_STEP}
+        )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["reuse_command"], "gradle spotlessCheck")
 
     def test_plugin_absent_yields_zero_findings_and_never_names_the_task(self):
         repo = _fixture(
-            {"build.gradle": _BG_NO_SPOTLESS, "gradlew": "#!/bin/sh\n", ".github/workflows/ci.yml": _CI_SPOTLESS_STEP}
+            {
+                "build.gradle": _BG_NO_SPOTLESS,
+                "gradlew": "#!/bin/sh\n",
+                ".github/workflows/ci.yml": _CI_SPOTLESS_STEP,
+            }
         )
         findings = _findings(repo)
         self.assertEqual(findings, [])
 
     def test_build_gradle_kts_only_is_read_identically(self):
         repo = _fixture(
-            {"build.gradle.kts": _WF_SPOTLESS, "gradlew": "#!/bin/sh\n", ".github/workflows/ci.yml": _CI_SPOTLESS_STEP}
+            {
+                "build.gradle.kts": _WF_SPOTLESS,
+                "gradlew": "#!/bin/sh\n",
+                ".github/workflows/ci.yml": _CI_SPOTLESS_STEP,
+            }
         )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
@@ -1993,7 +1955,10 @@ class TestGradleFourSurfacePrecedence(unittest.TestCase):
 
     def test_all_four_surfaces_collapse_to_one_makefile_finding(self):
         mk = "lint:\n\teslint .\n"
-        pc = "repos:\n- repo: local\n  hooks:\n  - id: eslint\n    entry: eslint .\n    language: system\n"
+        pc = (
+            "repos:\n- repo: local\n  hooks:\n  - id: eslint\n"
+            "    entry: eslint .\n    language: system\n"
+        )
         pj = json.dumps({"scripts": {"lint": "eslint ."}})
         bg = 'tasks.register("eslint")\n'
         repo = _fixture(
@@ -2033,7 +1998,10 @@ class TestGradleDegradation(unittest.TestCase):
 
     def test_syntactically_broken_build_script_does_not_raise(self):
         repo = _fixture(
-            {"build.gradle": "{{{ not valid groovy at all ((( \n", ".github/workflows/ci.yml": _CI_JSCPD_STEP}
+            {
+                "build.gradle": "{{{ not valid groovy at all ((( \n",
+                ".github/workflows/ci.yml": _CI_JSCPD_STEP,
+            }
         )
         result = _findings(repo)
         self.assertIsInstance(result, list)
@@ -2054,14 +2022,20 @@ class TestGradleNoGateLeak(unittest.TestCase):
     def test_entry_less_ktlint_hook_is_never_a_reuse_source(self):
         pc = "repos:\n- repo: local\n  hooks:\n  - id: ktlint\n"
         repo = _fixture(
-            {".pre-commit-config.yaml": pc, ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: ktlint\n"}
+            {
+                ".pre-commit-config.yaml": pc,
+                ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: ktlint\n",
+            }
         )
         self.assertEqual(_findings(repo), [])
 
     def test_detekt_named_package_json_script_is_never_a_reuse_source(self):
         pj = json.dumps({"scripts": {"lint": "detekt"}})
         repo = _fixture(
-            {"package.json": pj, ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: detekt\n"}
+            {
+                "package.json": pj,
+                ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: detekt\n",
+            }
         )
         self.assertEqual(_findings(repo), [])
 
@@ -2070,7 +2044,9 @@ class TestGradleNoGateLeak(unittest.TestCase):
         repo = _fixture(
             {
                 "Makefile": mk,
-                ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: dependency-check\n",
+                ".github/workflows/ci.yml": (
+                    "jobs:\n  j:\n    steps:\n    - run: dependency-check\n"
+                ),
             }
         )
         self.assertEqual(_findings(repo), [])
@@ -2078,7 +2054,11 @@ class TestGradleNoGateLeak(unittest.TestCase):
     def test_ktlint_via_gradle_plugin_is_a_reuse_source(self):
         bg = 'plugins {\n    id "org.jlleitschuh.gradle.ktlint"\n}\n'
         repo = _fixture(
-            {"build.gradle": bg, "gradlew": "#!/bin/sh\n", ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: ktlint\n"}
+            {
+                "build.gradle": bg,
+                "gradlew": "#!/bin/sh\n",
+                ".github/workflows/ci.yml": "jobs:\n  j:\n    steps:\n    - run: ktlint\n",
+            }
         )
         findings = _findings(repo)
         self.assertEqual(len(findings), 1)
@@ -2127,7 +2107,9 @@ class TestGradlePriorSurfacesUnaffected(unittest.TestCase):
         self.assertEqual(_findings(repo), [])
 
     def test_package_json_lint_still_resolves(self):
-        repo = _fixture({"package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        repo = _fixture(
+            {"package.json": _PJ_LINT_ESLINT, ".github/workflows/ci.yml": _CI_ESLINT_STEP}
+        )
         self.assertEqual(len(_findings(repo)), 1)
 
     def test_package_json_unknown_still_does_not_resolve(self):
@@ -2138,6 +2120,317 @@ class TestGradlePriorSurfacesUnaffected(unittest.TestCase):
                 ".github/workflows/ci.yml": (
                     "jobs:\n  j:\n    steps:\n    - run: some-mystery-tool x\n"
                 ),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+
+# --------------------------------------------------------------------------- #
+# Plan 14-03 Task 3: SC3's paired-fixture audit, the four-surface
+# integration fixture, and the limits each new reader states.
+# --------------------------------------------------------------------------- #
+
+_SURFACE_FIXTURE_MARKERS: dict[str, tuple[str, ...]] = {
+    "makefile": ("Makefile",),
+    "precommit": (".pre-commit-config.yaml",),
+    "package-json": ("package.json",),
+    "gradle": ("build.gradle", "build.gradle.kts"),
+}
+
+
+def _this_test_module_ast():
+    with open(os.path.abspath(__file__), encoding="utf-8") as handle:
+        return ast.parse(handle.read())
+
+
+def _iter_test_methods(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
+            yield node
+
+
+def _body_string_constants(node):
+    return {
+        n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    }
+
+
+def _contains_empty_list_assertion(node):
+    """A call whose args include an empty-list literal `[]` -- the shape
+    every `assertEqual(_findings(repo), [])` / `assertEqual(result, [])`
+    method in this suite uses to assert "no findings"."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            for arg in n.args:
+                if isinstance(arg, ast.List) and not arg.elts:
+                    return True
+    return False
+
+
+def _contains_positive_length_assertion(node):
+    """A call whose args include a nonzero int literal -- the shape every
+    `assertEqual(len(findings), 1)` method in this suite uses to assert
+    "at least one finding"."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            for arg in n.args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, int) and arg.value >= 1:
+                    return True
+    return False
+
+
+class TestSC3PairedFixtureAudit(unittest.TestCase):
+    """ROADMAP Phase 14 SC3, quoted verbatim: 'The check recognizes reuse
+    sources across all four command surfaces named in the requirement
+    (Makefile targets, pre-commit hooks, `package.json` scripts, Gradle
+    tasks), each covered by at least one paired (triggering /
+    non-triggering) fixture.' This class is what makes that criterion
+    MEASURABLE rather than claimed: it discovers triggering and
+    non-triggering test methods from the suite's OWN AST, by each
+    surface's canonical config filename (a fact fixed by the surfaces
+    themselves, not a hand-maintained list of test names), so the audit
+    cannot fall out of step with the suite as tests are added, renamed,
+    or removed."""
+
+    def test_every_surface_has_a_triggering_and_a_non_triggering_fixture(self):
+        tree = _this_test_module_ast()
+        methods = list(_iter_test_methods(tree))
+        for surface, markers in _SURFACE_FIXTURE_MARKERS.items():
+            triggering = []
+            non_triggering = []
+            for method in methods:
+                constants = _body_string_constants(method)
+                if not any(marker in constants for marker in markers):
+                    continue
+                if _contains_empty_list_assertion(method):
+                    non_triggering.append(method.name)
+                if _contains_positive_length_assertion(method) or surface in constants:
+                    triggering.append(method.name)
+            with self.subTest(surface=surface):
+                self.assertTrue(
+                    triggering, f"no triggering fixture discovered for surface {surface!r}"
+                )
+                self.assertTrue(
+                    non_triggering,
+                    f"no non-triggering fixture discovered for surface {surface!r}",
+                )
+
+
+_INTEGRATION4_MK = "lint:\n\teslint .\n\nmypy:\n\tuv run mypy .\n"
+_INTEGRATION4_PC = (
+    "repos:\n- repo: local\n  hooks:\n  - id: eslint\n"
+    "    entry: eslint .\n    language: system\n"
+    "  - id: black\n    entry: black .\n    language: system\n"
+)
+_INTEGRATION4_PJ = json.dumps({"scripts": {"lint": "eslint .", "typecheck": "tsc --noEmit"}})
+_INTEGRATION4_BG = 'tasks.register("jscpd")\n'
+_INTEGRATION4_GL = "gl-job:\n  script:\n  - eslint .\n  - jscpd .\n"
+_INTEGRATION4_WF_A = "jobs:\n  j:\n    steps:\n    - run: mypy .\n"
+_INTEGRATION4_WF_B = "jobs:\n  j:\n    steps:\n    - run: black .\n    - run: tsc --noEmit\n"
+
+_INTEGRATION4_EXPECTED = [
+    {
+        "category": "cicd-command-reuse",
+        "issue": "ci_duplicates_existing_command",
+        "criticality": 3,
+        "needs_research": False,
+        "ci_file": ".gitlab-ci.yml",
+        "job": "gl-job",
+        "command": "eslint .",
+        "tool": "eslint",
+        "reuse_surface": "makefile",
+        "reuse_command": "make lint",
+    },
+    {
+        "category": "cicd-command-reuse",
+        "issue": "ci_duplicates_existing_command",
+        "criticality": 3,
+        "needs_research": False,
+        "ci_file": ".gitlab-ci.yml",
+        "job": "gl-job",
+        "command": "jscpd .",
+        "tool": "jscpd",
+        "reuse_surface": "gradle",
+        "reuse_command": "./gradlew jscpd",
+    },
+    {
+        "category": "cicd-command-reuse",
+        "issue": "ci_duplicates_existing_command",
+        "criticality": 3,
+        "needs_research": False,
+        "ci_file": ".github/workflows/a.yml",
+        "job": "j",
+        "command": "mypy .",
+        "tool": "mypy",
+        "reuse_surface": "makefile",
+        "reuse_command": "make mypy",
+    },
+    {
+        "category": "cicd-command-reuse",
+        "issue": "ci_duplicates_existing_command",
+        "criticality": 3,
+        "needs_research": False,
+        "ci_file": ".github/workflows/b.yml",
+        "job": "j",
+        "command": "black .",
+        "tool": "black",
+        "reuse_surface": "precommit",
+        "reuse_command": "pre-commit run black --all-files",
+    },
+    {
+        "category": "cicd-command-reuse",
+        "issue": "ci_duplicates_existing_command",
+        "criticality": 3,
+        "needs_research": False,
+        "ci_file": ".github/workflows/b.yml",
+        "job": "j",
+        "command": "tsc --noEmit",
+        "tool": "tsc --noemit",
+        "reuse_surface": "package-json",
+        "reuse_command": "pnpm run typecheck",
+    },
+]
+
+
+def _integration4_fixture():
+    repo = tempfile.mkdtemp()
+    _write(os.path.join(repo, "Makefile"), _INTEGRATION4_MK)
+    _write(os.path.join(repo, ".pre-commit-config.yaml"), _INTEGRATION4_PC)
+    _write(os.path.join(repo, "package.json"), _INTEGRATION4_PJ)
+    _write(os.path.join(repo, "pnpm-lock.yaml"), "lockfileVersion: 9\n")
+    _write(os.path.join(repo, "build.gradle"), _INTEGRATION4_BG)
+    _write(os.path.join(repo, "gradlew"), "#!/bin/sh\n")
+    _write(os.path.join(repo, ".gitlab-ci.yml"), _INTEGRATION4_GL)
+    _write(os.path.join(repo, ".github/workflows/a.yml"), _INTEGRATION4_WF_A)
+    _write(os.path.join(repo, ".github/workflows/b.yml"), _INTEGRATION4_WF_B)
+    return repo
+
+
+class TestIntegrationAllFourSurfaces(unittest.TestCase):
+    """Task 3(d): extends plan 14-02 Task 3's two-surface integration
+    fixture to all four. `eslint` is covered by THREE surfaces at once
+    (Makefile target, pre-commit hook, package.json script -- deliberately
+    NOT Gradle) and still produces exactly one finding, naming the
+    Makefile target (D-C16). `jscpd` (Gradle only), `mypy` (Makefile
+    only), `black` (pre-commit only) and `tsc --noEmit` (package-json
+    only, via a pnpm lockfile) each fire their own surface exactly once."""
+
+    def test_complete_finding_list_in_declaration_order(self):
+        repo = _integration4_fixture()
+        findings = _findings(repo)
+        self.assertEqual(len(findings), len(_INTEGRATION4_EXPECTED))
+        for finding, expected in zip(findings, _INTEGRATION4_EXPECTED, strict=True):
+            for key, value in expected.items():
+                self.assertEqual(finding[key], value, (key, finding))
+            self.assertNotIn("target", finding)
+
+    def test_three_surface_tool_produces_exactly_one_makefile_finding(self):
+        repo = _integration4_fixture()
+        findings = _findings(repo)
+        eslint_findings = [f for f in findings if f["command"] == "eslint ."]
+        self.assertEqual(len(eslint_findings), 1)
+        self.assertEqual(eslint_findings[0]["reuse_surface"], "makefile")
+        self.assertEqual(eslint_findings[0]["reuse_command"], "make lint")
+
+    def test_all_four_surfaces_fire_at_least_once(self):
+        repo = _integration4_fixture()
+        findings = _findings(repo)
+        self.assertEqual(
+            sorted({f["reuse_surface"] for f in findings}),
+            ["gradle", "makefile", "package-json", "precommit"],
+        )
+
+    def test_two_runs_are_byte_identical(self):
+        repo = _integration4_fixture()
+        first = json.dumps(cli.check(repo), sort_keys=False)
+        second = json.dumps(cli.check(repo), sort_keys=False)
+        self.assertEqual(first, second)
+
+    def test_remediate_over_the_integration_fixture(self):
+        repo = _integration4_fixture()
+        payload = cli.remediate(repo)
+        self.assertEqual(len(payload["remediate"]), len(_INTEGRATION4_EXPECTED))
+        for entry in payload["remediate"]:
+            self.assertEqual(entry["kind"], "cicd")
+            self.assertEqual(entry["id"], "cicd-command-reuse")
+            self.assertTrue(entry["auto_apply"])
+        self.assertEqual(payload["blocked"], [])
+
+
+class TestStatedLimitsPackageJsonAndGradle(unittest.TestCase):
+    """Task 3(e): one method per limit `package_scripts.py` and
+    `gradle_tasks.py` state in their own module docstrings -- each pins
+    CURRENT behavior with the limit named as scope."""
+
+    def test_package_json_workspace_member_is_not_read(self):
+        # Limit: "ROOT file only. A workspace member's package.json is
+        # not read."
+        pj = json.dumps({"scripts": {"lint": "eslint ."}})
+        repo = _fixture(
+            {
+                "packages/app/package.json": pj,
+                ".github/workflows/ci.yml": _CI_ESLINT_STEP,
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_package_json_bin_and_config_fields_are_never_read(self):
+        # Limit: "scripts only. Any OTHER top-level package.json field --
+        # bin, config, and so on -- is never read as a command to reuse."
+        pj = json.dumps({"bin": {"mytool": "eslint ."}, "config": {"lint": "eslint ."}})
+        repo = _fixture({"package.json": pj, ".github/workflows/ci.yml": _CI_ESLINT_STEP})
+        self.assertEqual(_findings(repo), [])
+
+    def test_gradle_subproject_build_script_is_not_read(self):
+        # Limit: "ROOT build scripts only. A subproject's build.gradle
+        # and settings.gradle's project list are not read."
+        repo = _fixture(
+            {
+                "sub/build.gradle": 'tasks.register("jscpd")\n',
+                ".github/workflows/ci.yml": _CI_JSCPD_STEP,
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_gradle_task_from_an_unpinned_plugin_is_invisible(self):
+        # Limit: "No Gradle execution of any kind. `gradle tasks` is
+        # never run, so a task contributed by a plugin outside the
+        # pinned PLUGIN_TASK_TABLE is invisible to this reader."
+        bg = 'plugins {\n    id "org.jetbrains.kotlin.jvm"\n}\n'
+        repo = _fixture(
+            {
+                "build.gradle": bg,
+                "gradlew": "#!/bin/sh\n",
+                ".github/workflows/ci.yml": ("jobs:\n  j:\n    steps:\n    - run: compileKotlin\n"),
+            }
+        )
+        self.assertEqual(_findings(repo), [])
+
+    def test_gradle_plugin_id_mentioned_only_in_a_comment_still_admits(self):
+        # Limit: "a plain containment test against the build-script TEXT
+        # ... a comment mentioning the plugin id counts too. This is an
+        # accepted over-admission."
+        bg = "// applies com.diffplug.spotless via a convention plugin\n"
+        repo = _fixture(
+            {
+                "build.gradle": bg,
+                "gradlew": "#!/bin/sh\n",
+                ".github/workflows/ci.yml": _CI_SPOTLESS_STEP,
+            }
+        )
+        findings = _findings(repo)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["reuse_command"], "./gradlew spotlessCheck")
+
+    def test_gradle_route1_name_identity_limit_cross_reference(self):
+        # Limit: "A declared task's identity is its NAME with no command
+        # body behind it ... tasks.register('jscpdReport') covers
+        # NOTHING." Fully exercised in TestGradleRoute1NameIdentityLimit;
+        # pinned here too so the limits enumeration is self-contained.
+        repo = _fixture(
+            {
+                "build.gradle": 'tasks.register("jscpdReport")\n',
+                ".github/workflows/ci.yml": _CI_JSCPD_STEP,
             }
         )
         self.assertEqual(_findings(repo), [])
