@@ -15,7 +15,14 @@ It returned `"detected": true` on exactly **one** signal:
 
 | Verb | Noun | Matched snippet |
 |---|---|---|
-| `(surface)` | `api` | "Both new aggregations live inside the pure-function marker block and touch no DOM API." |
+| `(surface)` | `api` | "`clearedCriteria` is inside the pure-function marker block and touches no DOM API." |
+
+Re-run after the Round-2 review revision (2026-09-16, REVIEWS.md `faf76ad`): still exactly
+one signal, still the same "DOM API" phrase — the matched sentence moved to a different
+plan because that revision edited plan text, but nothing about the integration picture
+changed. The Round-2 edits are a cwd-seeding fix, a CSS clamp re-scoping, dialog focus
+restoration, a docstring correction and a `pipefail` wrapper — no new dependency, no new
+origin, no data fetch. This declaration therefore stands unchanged.
 
 ## Why this is a false positive
 
