@@ -4,11 +4,11 @@ milestone: v1.2
 current_phase: 15
 current_plan: Not started
 status: completed
-stopped_at: Phase 15.1 context gathered
-last_updated: "2026-09-16T10:24:10.281Z"
+stopped_at: Phase 15.1 UI-SPEC approved
+last_updated: "2026-09-16T11:10:09.598Z"
 last_activity: 2026-09-15
 last_activity_desc: Phase 15 complete
-state_head: 4da0fb22100e3296189ed83cd92aaea7f5273379
+state_head: e5af8241ed2c5b9c430c4b1b325eabf2b567ce96
 progress:
   total_phases: 18
   completed_phases: 16
@@ -314,6 +314,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-16T10:24:10.236Z
-Stopped at: Phase 15.1 context gathered
-Resume file: .planning/phases/15.1-usage-metrics-dashboard-ux-perf-overhaul-dashboard-launch-de/15.1-CONTEXT.md
+Last session: 2026-09-16T11:10:09.556Z
+Stopped at: Phase 15.1 UI-SPEC approved
+Resume file: .planning/phases/15.1-usage-metrics-dashboard-ux-perf-overhaul-dashboard-launch-de/15.1-UI-SPEC.md
