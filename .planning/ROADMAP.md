@@ -486,11 +486,24 @@ by at least one plan.
 **Plans:** 5 plans
 
 Plans:
+**Wave 1**
 
 - [ ] 15.1-01-PLAN.md — Tracer: opencode date fix, Material/CDN/virtualized dashboard shell, runtime column, auto-open — wired end-to-end
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 15.1-02-PLAN.md — Remaining refiner fixes: command-shape family guard, cursor date, codex custom_tool_call branch, canonical `subfamily_of()`
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 15.1-03-PLAN.md — Filter bar and column redesign: runtime and subfamily axes, unified from/to date range, null-versus-zero rendering
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 15.1-04-PLAN.md — Full-command dialog with decomposer breakdown, turn-id-aware session dedup, empty/loading/error states
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 15.1-05-PLAN.md — Charts 1 and 2, SKILL.md realignment, phase-wide gates and real-store re-refine
 
 ### Phase 999.1: Shared core for Config Doctor's TUI and a future CLI variant (BACKLOG)
