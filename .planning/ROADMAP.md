@@ -483,12 +483,12 @@ never reaching the refiner at all.
 runs on `15.1-CONTEXT.md`'s decision IDs D-01 through D-19, every one of which is covered
 by at least one plan.
 **Depends on:** Phase 15
-**Plans:** 5 plans
+**Plans:** 1/5 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 15.1-01-PLAN.md — Tracer: opencode date fix, Material/CDN dashboard shell, ONE virtualized painter serving both flat and grouped modes, runtime column, auto-open — wired end-to-end
+- [x] 15.1-01-PLAN.md — Tracer: opencode date fix, Material/CDN dashboard shell, ONE virtualized painter serving both flat and grouped modes, runtime column, auto-open — wired end-to-end
 
 **Wave 2** *(blocked on Wave 1 completion)*
 

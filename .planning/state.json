@@ -85,9 +85,9 @@
     }
   ],
   "next": {
-    "command": "/gsd:verify-work",
-    "label": "Re-verify work",
-    "reason": "Recent verification failed — re-verify or debug"
+    "command": "/gsd:progress --next",
+    "label": "Advance to the next step",
+    "reason": "Phase 15.1 of 18 · executing"
   },
-  "updated_at": "2026-09-15T02:04:48.555Z"
+  "updated_at": "2026-09-16T23:56:18.616Z"
 }

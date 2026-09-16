@@ -3,18 +3,18 @@ gsd_state_version: "1.0"
 milestone: v1.2
 current_phase: "15.1"
 current_phase_name: usage-metrics-dashboard-ux-perf-overhaul-dashboard-launch-de
-current_plan: Not started
-status: completed
-stopped_at: Phase 15.1 UI-SPEC approved
-last_updated: "2026-09-16T13:35:04.111Z"
-last_activity: 2026-09-15
+current_plan: 2
+status: executing
+stopped_at: Completed 15.1-01-PLAN.md
+last_updated: "2026-09-16T23:56:27.247Z"
+last_activity: 2026-09-16
 last_activity_desc: Phase 15 complete
-state_head: 26baaa6a6a0bf8b390a0e4b1474cd22d9d2dab39
+state_head: 6b98c1d9e5a00f2dba3c0b40a58eac8cc4089828
 progress:
   total_phases: 18
   completed_phases: 16
   total_plans: 36
-  completed_plans: 31
+  completed_plans: 32
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 
 ## Current Position
 
-Phase: 15.1 (usage-metrics-dashboard-ux-perf-overhaul-dashboard-launch-de) — READY TO EXECUTE
-Current Plan: Not started
+Phase: 15.1 (usage-metrics-dashboard-ux-perf-overhaul-dashboard-launch-de) — IN PROGRESS
+Current Plan: 2
 Total Plans in Phase: 5
-Status: All phases complete
-Last activity: 2026-09-14 — Phase 15 complete
+Status: Ready to execute
+Last activity: 2026-09-16 — Phase 15.1 Plan 01 complete
 
 ## Performance Metrics
 
@@ -112,6 +112,7 @@ Last activity: 2026-09-14 — Phase 15 complete
 | Phase 14 P04 | 75min | 3 tasks | 4 files |
 | Phase 15 P01 | 10min | 3 tasks | 7 files |
 | Phase 15 P02 | ~30min | 3 tasks | 6 files |
+| Phase 15.1 P01 | ~35min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -203,6 +204,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 14]: /naming-analyzer confirmed ai-kit-project-rules-cicd -- no rename; four live name-dependency sites re-verified
 - [Phase 15]: [Phase 15]: Phase 15 Plan 01: rules-orchestrator functional core (dispatch/aggregate/cli) implemented per the converged, cross-AI-reviewed plan verbatim -- D-04/D-05/D-06 were plan-authored decisions, not deviations. Task 1 shipped run_domain() happy-path-only; Task 2 added D-02 isolation in a separate commit per the plan's explicit task split, confirmed correct by pyright (2 type errors after Task 1, 0 after Task 2). Worktree branch was 182 commits behind main (predating Phases 9-15); fast-forwarded cleanly before starting (zero unique commits lost).
 - [Phase 15]: Found and fixed one Important-severity self-contradiction in SKILL.md before formal skill-judge scoring: Scope/Limits both overstated entries as 'unchanged' but aggregate() adds a hand_off key to workflow-kind entries.
+- [Phase 15.1]: Phase 15.1 Plan 01: tracer slice (opencode date fix, Material/CDN-wired/virtualized dashboard shell) + gap-closure (D-22 checkbox visibility, D-23 grouped-mode header mismatch) implemented per the cross-AI-reviewed plan; @tanstack/virtual-core@3.17.11 worked directly against a real table/tbody under SD-2, no Clusterize.js fallback needed. Committed onto gsd/phase-15.1-usage-metrics-dashboard-ux-perf-overhaul-dashboard-launch-de (not main) due to the mandatory pre-commit protected-branch safety gate.
 
 ### Pending Todos
 
@@ -315,6 +317,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-16T11:10:09.556Z
-Stopped at: Phase 15.1 UI-SPEC approved
-Resume file: .planning/phases/15.1-usage-metrics-dashboard-ux-perf-overhaul-dashboard-launch-de/15.1-UI-SPEC.md
+Last session: 2026-09-16T23:56:27.205Z
+Stopped at: Completed 15.1-01-PLAN.md
+Resume file: None
