@@ -488,23 +488,23 @@ by at least one plan.
 Plans:
 **Wave 1**
 
-- [ ] 15.1-01-PLAN.md — Tracer: opencode date fix, Material/CDN/virtualized dashboard shell, runtime column, auto-open — wired end-to-end
+- [ ] 15.1-01-PLAN.md — Tracer: opencode date fix, Material/CDN dashboard shell, ONE virtualized painter serving both flat and grouped modes, runtime column, auto-open — wired end-to-end
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 15.1-02-PLAN.md — Remaining refiner fixes: command-shape family guard, cursor date, codex custom_tool_call branch, canonical `subfamily_of()`
+- [ ] 15.1-02-PLAN.md — Remaining refiner fixes: command-shape family guard, cursor timestamp recovery, codex custom_tool_call branch plus its workdir resolver, canonical `subfamily_of()` with option arity
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 15.1-03-PLAN.md — Filter bar and column redesign: runtime and subfamily axes, unified from/to date range, null-versus-zero rendering
+- [ ] 15.1-03-PLAN.md — Filter bar and column redesign: runtime and subfamily axes, unified from/to date range, wrapped two-line command cell, null-versus-zero rendering
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 15.1-04-PLAN.md — Full-command dialog with decomposer breakdown, turn-id-aware session dedup, empty/loading/error states
+- [ ] 15.1-04-PLAN.md — Full-command dialog with sibling-resolved decomposer breakdown, turn-identity session dedup, empty/loading/error states
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 15.1-05-PLAN.md — Charts 1 and 2, SKILL.md realignment, phase-wide gates and real-store re-refine
+- [ ] 15.1-05-PLAN.md — Dual-axis spend chart and capped distribution chart with dedup-before-sum, split filter/sort update path, SKILL.md realignment, phase-wide gates and real-store re-refine
 
 ### Phase 999.1: Shared core for Config Doctor's TUI and a future CLI variant (BACKLOG)
 
