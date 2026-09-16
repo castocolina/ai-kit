@@ -11,6 +11,7 @@ import tempfile
 import tomllib
 import unittest
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from unittest.mock import patch
 
 sys.path.insert(
@@ -2103,6 +2104,41 @@ class TestRefinerFull(unittest.TestCase):
         self.assertEqual(texts, ["ls -la", "pwd"])
         self.assertNotIn(None, texts)
 
+    def test_opencode_time_created_populates_date(self):
+        # D-16 / D-19 regression: an opencode raw envelope whose ONLY
+        # timestamp-shaped field is "time_created" (epoch-ms int, no
+        # "timestamp" key anywhere -- matching the real capture shape from
+        # capture_opencode.py's _base_envelope) must still produce a
+        # non-NULL date/timestamp on the refined row.
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = "ses_date_check"
+        message_id = "msg_date_check"
+        time_created = 1758000000000
+        rec = capture_opencode._base_envelope(
+            "/opencode.db",
+            "part",
+            "prt_date_check",
+            json.dumps(
+                {
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {"input": {"command": "echo hi"}},
+                }
+            ),
+            captured_at,
+            session_id,
+            message_id,
+            time_created,
+        )
+        self.assertNotIn("timestamp", rec)
+        self.assertIsNone(rec["payload"].get("timestamp"))
+        rows = refine_all([rec])
+        self.assertEqual(len(rows), 1)
+        expected_ts = datetime.fromtimestamp(time_created / 1000, tz=UTC).isoformat()
+        self.assertEqual(rows[0]["timestamp"], expected_ts)
+        self.assertEqual(rows[0]["date"], expected_ts[:10])
+        self.assertIsNotNone(rows[0]["date"])
+
 
 class TestPricing(unittest.TestCase):
     def test_catalog_absent_degrades_to_unknown(self):
@@ -2182,6 +2218,15 @@ _DASHBOARD_PY = os.path.join(
 # Markers wrapping the shipped pure JS functions so tests can extract them.
 _JS_PURE_START = "/* PURE_FUNCTIONS_START */"
 _JS_PURE_END = "/* PURE_FUNCTIONS_END */"
+
+# Void HTML elements: no closing tag, so a naive stack-based nesting walker
+# must not push them (there is no matching end tag to pop them back off).
+_VOID_ELEMENTS = frozenset(
+    {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
+)
 
 _FULL_SCHEMA_COLUMNS = (
     "id",
@@ -2495,6 +2540,141 @@ class TestDashboardFull(unittest.TestCase):
         self.assertEqual(session["tokens_output"], 100)
         self.assertEqual(session["price"], 0.05)
 
+    def test_slice_for_items_materializes_only_virtual_items_via_node(self):
+        # Dependency-free proof that materialization is bounded by the
+        # virtual window (20 items) rather than by the row count (84,082
+        # rows) -- the production path (sliceForItems) is exercised
+        # directly, not a parallel test-only implementation.
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        pure = _extract_pure_js(html)
+        wrapper = os.path.join(self.root, "slice_check.js")
+        row_count = 84082
+        item_count = 20
+        offset = 500
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconst rowCount = "
+                + str(row_count)
+                + ";\nconst rows = [];\n"
+                "for (let i = 0; i < rowCount; i++) { rows.push({index: i}); }\n"
+                "const offset = "
+                + str(offset)
+                + ";\nconst items = [];\n"
+                "for (let i = 0; i < "
+                + str(item_count)
+                + "; i++) { items.push({index: offset + i, start: i * 56}); }\n"
+                "const result = sliceForItems(rows, items);\n"
+                "console.log(JSON.stringify(result));\n"
+            )
+        proc = subprocess.run(
+            ["node", wrapper], capture_output=True, text=True, check=True
+        )
+        result = json.loads(proc.stdout)
+        self.assertEqual(len(result), item_count)
+        for i, entry in enumerate(result):
+            self.assertEqual(entry["index"], offset + i)
+            self.assertEqual(entry["start"], i * 56)
+            self.assertEqual(entry["row"]["index"], offset + i)
+
+    def test_single_tbody_paint_path_and_valid_table_nesting(self):
+        html, _out = self._seed_and_generate()
+        script_start = html.find("<script>\n")
+        self.assertNotEqual(script_start, -1)
+        script = html[script_start:]
+
+        append_sites = [m.start() for m in re.finditer(r"tbody\.appendChild\(", script)]
+        self.assertEqual(
+            len(append_sites),
+            1,
+            "expected exactly one call site appending rows to usage-tbody",
+        )
+
+        _named_function_re = re.compile(r"function\s+[A-Za-z_$][\w$]*\s*\([^)]*\)\s*\{")
+
+        def _function_body_containing(text, index):
+            # Climb to the nearest ENCLOSING NAMED function (skip anonymous
+            # callbacks like the forEach(function (entry) {...}) the append
+            # call itself sits inside) -- the named function is the one
+            # whose body is asserted to iterate sliceForItems.
+            matches = list(_named_function_re.finditer(text[:index]))
+            self.assertTrue(matches, "append site is not inside a named function")
+            func_start = matches[-1].start()
+            brace_open = matches[-1].end() - 1
+            depth = 0
+            i = brace_open
+            while i < len(text):
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return text[func_start : i + 1]
+                i += 1
+            raise AssertionError("unterminated function body")
+
+        func_body = _function_body_containing(script, append_sites[0])
+        self.assertIn("sliceForItems(", func_body)
+
+        # renderGrouped's append-every-row loop is deleted, not kept
+        # alongside -- both modes now route through the one painter above.
+        self.assertNotIn("function renderGrouped", script)
+        self.assertNotIn("function renderFlat", script)
+
+        class _TableNestingParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.stack = []
+                self.table_parent = None
+                self.table_children = []
+                self.has_thead = False
+                self.has_usage_tbody = False
+                self._table_depth = None
+
+            def handle_starttag(self, tag, attrs):
+                attr_dict = dict(attrs)
+                if tag == "table" and attr_dict.get("id") == "usage-table":
+                    if self.stack:
+                        parent_tag, parent_attrs = self.stack[-1]
+                        self.table_parent = (parent_tag, parent_attrs.get("id"))
+                    else:
+                        self.table_parent = (None, None)
+                    self._table_depth = len(self.stack)
+                elif (
+                    self._table_depth is not None
+                    and len(self.stack) == self._table_depth + 1
+                ):
+                    self.table_children.append(tag)
+                    if tag == "thead":
+                        self.has_thead = True
+                    if tag == "tbody" and attr_dict.get("id") == "usage-tbody":
+                        self.has_usage_tbody = True
+                if tag not in _VOID_ELEMENTS:
+                    self.stack.append((tag, attr_dict))
+
+            def handle_endtag(self, tag):
+                if self.stack and self.stack[-1][0] == tag:
+                    self.stack.pop()
+
+        parser = _TableNestingParser()
+        parser.feed(html)
+        # #table-scroll wraps the ENTIRE <table>; a wrapper is never placed
+        # between <table> and <tbody> (that would be invalid HTML, re-parented
+        # by the browser).
+        self.assertEqual(parser.table_parent, ("div", "table-scroll"))
+        legal_children = {"caption", "colgroup", "thead", "tbody", "tfoot", "tr"}
+        self.assertTrue(parser.table_children, "table had no direct element children")
+        for child in parser.table_children:
+            self.assertIn(child, legal_children)
+        # Deliberately NOT asserting tbody is the first child or that no tag
+        # intervenes between <table> and <tbody> -- SD-2's sticky <thead>
+        # legitimately precedes <tbody>. The property proven here is legal
+        # table ancestry, not source ordering.
+        self.assertTrue(parser.has_thead)
+        self.assertTrue(parser.has_usage_tbody)
+
     def test_no_data_driven_innerhtml_assignment(self):
         html, _out = self._seed_and_generate()
         script_start = html.find("<script>\n")
@@ -2594,7 +2774,8 @@ class TestPermissions(unittest.TestCase):
         )
         previous = os.umask(0o000)
         self.addCleanup(os.umask, previous)
-        rc = main(["run"], env=env)
+        with patch("ai_kit_usage_metrics.cli.webbrowser.open"):
+            rc = main(["run"], env=env)
         self.assertEqual(rc, 0)
         base = paths.usage_metrics_base(env)
         for directory in (
@@ -2634,7 +2815,8 @@ class TestEndToEnd(unittest.TestCase):
         )
 
     def test_run_end_to_end_produces_raw_refined_and_dashboard(self):
-        rc = main(["run"], env=self.env)
+        with patch("ai_kit_usage_metrics.cli.webbrowser.open"):
+            rc = main(["run"], env=self.env)
         self.assertEqual(rc, 0)
         raw_path = paths.raw_jsonl_path(self.env, "claude")
         db_path = paths.refined_db_path(self.env)
@@ -2684,10 +2866,56 @@ class TestEndToEnd(unittest.TestCase):
         self.assertIn("2026-09-10", html)
         self.assertIn('id="usage-metrics-data"', html)
 
-        rc2 = main(["run"], env=self.env)
+        with patch("ai_kit_usage_metrics.cli.webbrowser.open"):
+            rc2 = main(["run"], env=self.env)
         self.assertEqual(rc2, 0)
         self.assertEqual(_count_jsonl_lines(raw_path), raw_count)
         self.assertEqual(_refined_row_count(self.env), 1)
+
+
+class TestTracer151(unittest.TestCase):
+    """Phase 15.1 Plan 01 tracer: opencode date fix + Material/virtualized/
+    auto-opened dashboard, proven end-to-end through one real `run` path."""
+
+    def test_run_end_to_end_opencode_date_material_virtualized_autoopen(self):
+        root = tempfile.mkdtemp(prefix="ai-kit-um-tracer151-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        env = _scratch_env(root)
+        _write_opencode_db(env, _seed_standard_opencode)
+
+        with patch("ai_kit_usage_metrics.cli.webbrowser.open") as mock_open:
+            rc = main(["run"], env=env)
+        self.assertEqual(rc, 0)
+
+        mock_open.assert_called_once()
+        (opened_url,), _kwargs = mock_open.call_args
+        self.assertTrue(opened_url.startswith("file://"))
+        self.assertTrue(opened_url.endswith(paths.dashboard_html_path(env)))
+
+        conn = sqlite3.connect(paths.refined_db_path(env))
+        try:
+            row = conn.execute(
+                "SELECT date FROM refined_commands WHERE runtime = 'opencode'"
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertIsNotNone(row)
+        self.assertIsNotNone(row[0])
+
+        with open(paths.dashboard_html_path(env), encoding="utf-8") as handle:
+            html = handle.read()
+        self.assertIn("@material/web@2.5.0", html)
+        self.assertIn("@tanstack/virtual-core@3.17.11", html)
+        self.assertIn("chart.js@4.5.1", html)
+
+        thead_start = html.index("<thead>") + len("<thead>")
+        first_th_tag = re.search(r"<th[^>]*>", html[thead_start:])
+        self.assertIsNotNone(first_th_tag)
+        self.assertIn('data-sort-key="runtime"', first_th_tag.group(0))
+
+        self.assertIn("md-checkbox", html)
+        self.assertIn("prefers-color-scheme: dark", html)
+        self.assertIn('id="table-scroll"', html)
 
 
 PRD_LOOP_RG_PY = 'for f in *.py; do rg pattern "$f"; done'

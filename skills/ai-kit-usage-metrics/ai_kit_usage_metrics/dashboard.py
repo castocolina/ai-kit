@@ -46,15 +46,173 @@ _HTML_HEAD = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <title>ai-kit usage metrics</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined">
+<script type="importmap">
+{
+  "imports": {
+    "@material/web/": "https://esm.run/@material/web@2.5.0/"
+  }
+}
+</script>
+<script type="module">
+import "@material/web/checkbox/checkbox.js";
+</script>
+<script type="module">
+import { Virtualizer, observeElementRect, observeElementOffset, elementScroll } from "https://esm.run/@tanstack/virtual-core@3.17.11";
+window.__virtualCore = {
+  Virtualizer: Virtualizer,
+  observeElementRect: observeElementRect,
+  observeElementOffset: observeElementOffset,
+  elementScroll: elementScroll
+};
+window.dispatchEvent(new Event("virtual-core-ready"));
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
 <style>
-body { font-family: sans-serif; margin: 1.5rem; }
-#filters { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; margin-bottom: 1rem; }
-#filters label { display: flex; flex-direction: column; font-size: 0.85rem; }
-table { border-collapse: collapse; width: 100%; }
-th, td { border: 1px solid #ccc; padding: 0.4rem 0.6rem; text-align: left; }
-th { cursor: pointer; }
-input, select { padding: 0.3rem; }
-.badge { color: #555; font-size: 0.85rem; }
+:root {
+  --md-sys-color-surface: #FFFBFE;
+  --md-sys-color-surface-variant: #E7E0EC;
+  --md-sys-color-primary: #6750A4;
+  --md-sys-color-error: #B3261E;
+  --md-sys-color-on-surface: #1C1B1F;
+  --md-sys-color-outline: #79747E;
+  --md-sys-typescale-body-size: 16px;
+  --md-sys-typescale-body-weight: 400;
+  --md-sys-typescale-body-line-height: 24px;
+  --md-sys-typescale-label-size: 14px;
+  --md-sys-typescale-label-weight: 500;
+  --md-sys-typescale-label-line-height: 20px;
+  --md-sys-typescale-heading-size: 22px;
+  --md-sys-typescale-heading-weight: 400;
+  --md-sys-typescale-heading-line-height: 28px;
+  --md-sys-typescale-display-size: 24px;
+  --md-sys-typescale-display-weight: 400;
+  --md-sys-typescale-display-line-height: 32px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --md-sys-color-surface: #1C1B1F;
+    --md-sys-color-surface-variant: #49454F;
+    --md-sys-color-primary: #D0BCFF;
+    --md-sys-color-error: #F2B8B5;
+    --md-sys-color-on-surface: #E6E1E5;
+    --md-sys-color-outline: #938F99;
+  }
+}
+body {
+  font-family: "Roboto", sans-serif;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--md-sys-typescale-body-size);
+  font-weight: var(--md-sys-typescale-body-weight);
+  line-height: var(--md-sys-typescale-body-line-height);
+  margin: var(--space-2xl) var(--space-lg);
+}
+h1 {
+  font-size: var(--md-sys-typescale-display-size);
+  font-weight: var(--md-sys-typescale-display-weight);
+  line-height: var(--md-sys-typescale-display-line-height);
+}
+#filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-lg);
+  background: var(--md-sys-color-surface-variant);
+  padding: var(--space-md);
+  border-radius: 4px;
+}
+#filters label {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--md-sys-typescale-label-size);
+  font-weight: var(--md-sys-typescale-label-weight);
+  line-height: var(--md-sys-typescale-label-line-height);
+}
+input, select {
+  padding: var(--space-sm);
+}
+.badge {
+  color: var(--md-sys-color-error);
+  font-size: var(--md-sys-typescale-label-size);
+}
+#charts-row {
+  display: flex;
+  gap: var(--space-xl);
+  margin-bottom: var(--space-lg);
+}
+#chart-runtime-panel {
+  background: var(--md-sys-color-surface-variant);
+  padding: var(--space-md);
+  border-radius: 4px;
+}
+#runtime-chart-fallback {
+  color: var(--md-sys-color-error);
+  font-size: var(--md-sys-typescale-label-size);
+  display: none;
+}
+#table-scroll {
+  overflow-y: auto;
+  max-height: 480px;
+  position: relative;
+  border: 1px solid var(--md-sys-color-outline);
+}
+#usage-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+#usage-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--md-sys-color-surface-variant);
+}
+#usage-table thead tr, #usage-table tbody tr {
+  display: flex;
+  width: 100%;
+}
+#usage-table th, #usage-table td {
+  padding: var(--space-sm) var(--space-md);
+  text-align: left;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--md-sys-color-outline);
+  overflow: hidden;
+}
+#usage-table th {
+  cursor: pointer;
+  font-size: var(--md-sys-typescale-label-size);
+  font-weight: var(--md-sys-typescale-label-weight);
+  line-height: var(--md-sys-typescale-label-line-height);
+}
+#usage-tbody {
+  display: block;
+  position: relative;
+}
+#usage-tbody tr {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 56px;
+}
+#usage-table th:nth-child(1), #usage-table td:nth-child(1) { flex: 0 0 90px; }
+#usage-table th:nth-child(2), #usage-table td:nth-child(2) { flex: 0 0 100px; }
+#usage-table th:nth-child(3), #usage-table td:nth-child(3) { flex: 0 0 140px; }
+#usage-table th:nth-child(4), #usage-table td:nth-child(4) { flex: 0 0 90px; }
+#usage-table th:nth-child(5), #usage-table td:nth-child(5) { flex: 1 1 320px; min-width: 0; }
+#usage-table th:nth-child(6), #usage-table td:nth-child(6) { flex: 0 0 90px; }
+#usage-table th:nth-child(7), #usage-table td:nth-child(7) { flex: 0 0 90px; }
+#usage-table th:nth-child(8), #usage-table td:nth-child(8) { flex: 0 0 80px; }
+#usage-table th:nth-child(9), #usage-table td:nth-child(9) { flex: 0 0 130px; }
+#usage-table th:nth-child(10), #usage-table td:nth-child(10) { flex: 0 0 100px; }
+#usage-table th:nth-child(11), #usage-table td:nth-child(11) { flex: 0 0 140px; }
 </style>
 </head>
 <body>
@@ -99,11 +257,21 @@ input, select { padding: 0.3rem; }
 <label>price max
 <input id="filter-price-max" type="number">
 </label>
-<label><input id="group-by-session" type="checkbox"> group by session</label>
+<label>group by session
+<md-checkbox id="group-by-session"></md-checkbox>
+</label>
 </form>
+<div id="charts-row">
+<div id="chart-runtime-panel">
+<canvas id="runtime-chart" width="240" height="240"></canvas>
+<p id="runtime-chart-fallback"></p>
+</div>
+</div>
+<div id="table-scroll">
 <table id="usage-table">
 <thead>
 <tr>
+<th data-sort-key="runtime">runtime</th>
 <th data-sort-key="date">date</th>
 <th data-sort-key="model">model</th>
 <th data-sort-key="family">family</th>
@@ -114,11 +282,11 @@ input, select { padding: 0.3rem; }
 <th data-sort-key="source_confidence">source_confidence</th>
 <th data-sort-key="execution_certain">execution</th>
 <th data-sort-key="session_id">session</th>
-<th data-sort-key="runtime">runtime</th>
 </tr>
 </thead>
 <tbody id="usage-tbody"></tbody>
 </table>
+</div>
 <script type="application/json" id="usage-metrics-data">"""
 
 _HTML_MID = """</script>
@@ -285,14 +453,55 @@ function groupBySession(rows) {
     };
   });
 }
+
+function sliceForItems(rows, items) {
+  // Pure mapping from the virtualizer's virtual-item window to
+  // {index, start, row} triples. This IS the production materialization
+  // path -- the one painter below iterates this function's output and
+  // nothing else, so materialization is bounded by items.length (the
+  // virtual window), never by rows.length (the full dataset).
+  return items.map(function (item) {
+    return {index: item.index, start: item.start, row: rows[item.index]};
+  });
+}
+
+function runtimeCounts(rows) {
+  var counts = {};
+  var order = [];
+  rows.forEach(function (row) {
+    var rt = row.runtime;
+    if (rt == null || rt === "") return;
+    if (!Object.prototype.hasOwnProperty.call(counts, rt)) {
+      counts[rt] = 0;
+      order.push(rt);
+    }
+    counts[rt] += 1;
+  });
+  return {
+    labels: order,
+    counts: order.map(function (rt) { return counts[rt]; })
+  };
+}
 /* PURE_FUNCTIONS_END */
+
+var CHART_PALETTE_LIGHT = ["#6750A4", "#7D5260", "#625B71", "#79747E", "#1C1B1F"];
+var CHART_PALETTE_DARK = ["#D0BCFF", "#EFB8C8", "#CCC2DC", "#938F99", "#E6E1E5"];
+
+function chartJsAvailable() {
+  return typeof Chart !== "undefined";
+}
 
 (function () {
   var dataEl = document.getElementById("usage-metrics-data");
   var data = JSON.parse(dataEl.textContent);
   var tbody = document.getElementById("usage-tbody");
+  var scrollEl = document.getElementById("table-scroll");
   var sortKey = "date";
   var sortDir = "asc";
+  var virtualizer = null;
+  var currentRows = [];
+  var currentBuilder = flatRowBuilder;
+  var runtimeChart = null;
 
   function distinctValues(key) {
     var seen = {};
@@ -349,56 +558,131 @@ function groupBySession(rows) {
     return row.execution_certain === false || row.execution_certain === 0;
   }
 
-  function renderFlat(rows) {
+  function flatRowBuilder(row) {
+    var tr = document.createElement("tr");
+    tr.appendChild(td(row.runtime));
+    tr.appendChild(td(row.date));
+    tr.appendChild(td(row.model));
+    tr.appendChild(td(displayFamily(row)));
+    tr.appendChild(td(row.command_text));
+    tr.appendChild(td(row.tokens_input));
+    tr.appendChild(td(row.tokens_output));
+    tr.appendChild(td(row.price));
+    var conf = document.createElement("td");
+    if (row.source_confidence) {
+      conf.textContent = String(row.source_confidence);
+      conf.className = "badge";
+    }
+    tr.appendChild(conf);
+    var exec = document.createElement("td");
+    if (isConditional(row)) exec.textContent = "(conditional)";
+    tr.appendChild(exec);
+    tr.appendChild(td(row.session_id));
+    return tr;
+  }
+
+  function groupedRowBuilder(row) {
+    var tr = document.createElement("tr");
+    tr.appendChild(td(row.session_id));
+    tr.appendChild(td(row.count));
+    tr.appendChild(td(row.tokens_input));
+    tr.appendChild(td(row.tokens_output));
+    tr.appendChild(td(row.price));
+    return tr;
+  }
+
+  function virtualizerOptions(count) {
+    var vc = window.__virtualCore;
+    return {
+      count: count,
+      getScrollElement: function () { return scrollEl; },
+      estimateSize: function () { return 56; },
+      observeElementRect: vc.observeElementRect,
+      observeElementOffset: vc.observeElementOffset,
+      scrollToFn: vc.elementScroll,
+      overscan: 8,
+      onChange: paint
+    };
+  }
+
+  function paint() {
+    // The ONE function in this file that writes rows to <tbody>. Both flat
+    // and grouped modes route through it -- render() only ever changes which
+    // row array (currentRows) and which cell-builder (currentBuilder) it
+    // reads, never adds a second append loop.
+    if (!virtualizer) return;
+    tbody.style.height = virtualizer.getTotalSize() + "px";
     tbody.textContent = "";
-    rows.forEach(function (row) {
-      var tr = document.createElement("tr");
-      tr.appendChild(td(row.date));
-      tr.appendChild(td(row.model));
-      tr.appendChild(td(displayFamily(row)));
-      tr.appendChild(td(row.command_text));
-      tr.appendChild(td(row.tokens_input));
-      tr.appendChild(td(row.tokens_output));
-      tr.appendChild(td(row.price));
-      var conf = document.createElement("td");
-      if (row.source_confidence) {
-        conf.textContent = String(row.source_confidence);
-        conf.className = "badge";
-      }
-      tr.appendChild(conf);
-      var exec = document.createElement("td");
-      if (isConditional(row)) exec.textContent = "(conditional)";
-      tr.appendChild(exec);
-      tr.appendChild(td(row.session_id));
-      tr.appendChild(td(row.runtime));
+    var items = sliceForItems(currentRows, virtualizer.getVirtualItems());
+    items.forEach(function (entry) {
+      var tr = currentBuilder(entry.row);
+      tr.style.transform = "translateY(" + entry.start + "px)";
       tbody.appendChild(tr);
     });
   }
 
-  function renderGrouped(rows) {
-    tbody.textContent = "";
-    rows.forEach(function (row) {
-      var tr = document.createElement("tr");
-      tr.appendChild(td(row.session_id));
-      tr.appendChild(td(row.count));
-      tr.appendChild(td(row.tokens_input));
-      tr.appendChild(td(row.tokens_output));
-      tr.appendChild(td(row.price));
-      tbody.appendChild(tr);
+  function mountVirtualizer() {
+    var vc = window.__virtualCore;
+    if (!vc || virtualizer) return;
+    virtualizer = new vc.Virtualizer(virtualizerOptions(currentRows.length));
+    virtualizer._didMount();
+    virtualizer._willUpdate();
+    paint();
+  }
+
+  function buildRuntimeChart(rows) {
+    var canvas = document.getElementById("runtime-chart");
+    var fallback = document.getElementById("runtime-chart-fallback");
+    if (!chartJsAvailable()) {
+      if (canvas) canvas.style.display = "none";
+      if (fallback) {
+        fallback.textContent = "Chart unavailable \\u2014 chart.js failed to load";
+        fallback.style.display = "block";
+      }
+      return;
+    }
+    if (canvas) canvas.style.display = "";
+    if (fallback) fallback.style.display = "none";
+    var agg = runtimeCounts(rows);
+    var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var palette = dark ? CHART_PALETTE_DARK : CHART_PALETTE_LIGHT;
+    var colors = agg.labels.map(function (_, i) { return palette[i % 5]; });
+    if (runtimeChart) {
+      runtimeChart.data.labels = agg.labels;
+      runtimeChart.data.datasets[0].data = agg.counts;
+      runtimeChart.data.datasets[0].backgroundColor = colors;
+      runtimeChart.update();
+      return;
+    }
+    runtimeChart = new Chart(canvas, {
+      type: "doughnut",
+      data: {
+        labels: agg.labels,
+        datasets: [{data: agg.counts, backgroundColor: colors}]
+      }
     });
   }
 
   function render() {
     var grouped = document.getElementById("group-by-session").checked;
-    var rows = filterRows(data, readCriteria());
+    var filtered = filterRows(data, readCriteria());
     if (grouped) {
-      rows = groupBySession(rows);
-      rows = sortRows(rows, sortKey === "session_id" ? "session_id" : sortKey, sortDir);
-      renderGrouped(rows);
+      currentRows = sortRows(
+        groupBySession(filtered),
+        sortKey === "session_id" ? "session_id" : sortKey,
+        sortDir
+      );
+      currentBuilder = groupedRowBuilder;
     } else {
-      rows = sortRows(rows, sortKey, sortDir);
-      renderFlat(rows);
+      currentRows = sortRows(filtered, sortKey, sortDir);
+      currentBuilder = flatRowBuilder;
     }
+    if (virtualizer) {
+      virtualizer.setOptions(virtualizerOptions(currentRows.length));
+      virtualizer.measure();
+    }
+    paint();
+    buildRuntimeChart(filtered);
   }
 
   document.querySelectorAll("#usage-table th").forEach(function (th) {
@@ -416,7 +700,15 @@ function groupBySession(rows) {
 
   document.getElementById("filters").addEventListener("input", render);
   document.getElementById("filters").addEventListener("change", render);
+
   render();
+  if (window.__virtualCore) {
+    mountVirtualizer();
+  } else {
+    window.addEventListener("virtual-core-ready", function () {
+      mountVirtualizer();
+    }, {once: true});
+  }
 })();
 </script>
 </body>

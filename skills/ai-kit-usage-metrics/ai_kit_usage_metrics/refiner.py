@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 
 from ai_kit_usage_metrics.cwd_state import CwdState
 from ai_kit_usage_metrics.decomposer import decompose
@@ -376,13 +376,27 @@ def _cursor_attr() -> dict:
     }
 
 
+def _opencode_timestamp(rec: dict) -> str | None:
+    # Mirrors _parse_ts's guard style: opencode's raw envelope (capture_opencode.py's
+    # _base_envelope) never sets a "timestamp" key anywhere -- only "time_created", an
+    # epoch-millisecond int. Only reached from _row_timestamp after both existing
+    # lookups miss and runtime == "opencode" (D-16 / D-19).
+    time_created = rec.get("time_created")
+    if not isinstance(time_created, int):
+        return None
+    return datetime.fromtimestamp(time_created / 1000, tz=UTC).isoformat()
+
+
 def _row_timestamp(rec: dict):
     value = rec.get("timestamp")
     if value is not None:
         return value
     payload = rec.get("payload")
-    if isinstance(payload, dict):
-        return payload.get("timestamp")
+    payload_ts = payload.get("timestamp") if isinstance(payload, dict) else None
+    if payload_ts is not None:
+        return payload_ts
+    if rec.get("runtime") == "opencode":
+        return _opencode_timestamp(rec)
     return None
 
 

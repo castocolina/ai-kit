@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import webbrowser
 
 from ai_kit_usage_metrics import (
     capture_claude,
@@ -95,12 +96,16 @@ def cmd_dashboard(env: dict) -> None:
     output = paths.dashboard_html_path(env)
     if not os.path.isfile(db_path):
         dashboard.generate(None, output)
-        return
-    conn = refined_store.open_refined_db_readonly(env)
-    try:
-        dashboard.generate(conn, output)
-    finally:
-        conn.close()
+    else:
+        conn = refined_store.open_refined_db_readonly(env)
+        try:
+            dashboard.generate(conn, output)
+        finally:
+            conn.close()
+    # D-17: unconditional auto-open, no opt-out flag. Covers both the `run` and
+    # `dashboard` subcommands since both call cmd_dashboard as their single
+    # wiring point. Never pass row-derived or caller-supplied text here.
+    webbrowser.open("file://" + os.path.abspath(output))
 
 
 def main(argv, env=None) -> int:
