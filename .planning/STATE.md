@@ -4,14 +4,14 @@ milestone: v1.2
 current_phase: 15
 current_plan: Not started
 status: completed
-stopped_at: Phase 15 complete — all phases complete
-last_updated: "2026-09-15T02:04:48.546Z"
+stopped_at: Phase 15.1 context gathered
+last_updated: "2026-09-16T10:24:10.281Z"
 last_activity: 2026-09-15
 last_activity_desc: Phase 15 complete
-state_head: 6d2cb5bdfba8335f666eb88d465d4b02139876bf
+state_head: 4da0fb22100e3296189ed83cd92aaea7f5273379
 progress:
-  total_phases: 17
-  completed_phases: 3
+  total_phases: 18
+  completed_phases: 16
   total_plans: 31
   completed_plans: 31
 milestone_name: ai-kit Rules Skill Family
@@ -24,7 +24,7 @@ milestone_name: ai-kit Rules Skill Family
 See: .planning/PROJECT.md (updated 2026-09-10)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 8.1 (INSERTED) - Status-line Rate-Burn Pace Fix, then Phase 9 - AGENTS.md Checker Prune (v1.2 ROADMAP.md created; Phases 9-15 ready to plan, in strict dependency order starting with Phase 9)
+**Current focus:** Phase 15.1 (INSERTED) - Usage Metrics Dashboard UX/Perf Overhaul, urgent gap-closure for Phase 5 dashboard
 
 ## Current Position
 
@@ -300,6 +300,10 @@ even though `.planning/config.json` has `parallelization: true` — that
 setting applies to independent plans within a phase, not to this milestone's
 cross-phase ordering constraint.
 
+### Roadmap Evolution
+
+- Phase 15.1 inserted after Phase 15: Usage Metrics Dashboard UX/Perf Overhaul — 14 UX/perf/bug findings from live dashboard.html review (empty date col, family showing garbage tokens, session-group row dup, no pagination/virtualization causing browser freeze, filter bar unordered, missing runtime column, no launch detection, price always 0, no charts, no MUI styling) (URGENT)
+
 ## Deferred Items
 
 Items acknowledged and deferred at milestone close, most recent first:
@@ -310,6 +314,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-15T02:02:31.630Z
-Stopped at: Phase 15 complete — all phases complete
-Resume file: None
+Last session: 2026-09-16T10:24:10.236Z
+Stopped at: Phase 15.1 context gathered
+Resume file: .planning/phases/15.1-usage-metrics-dashboard-ux-perf-overhaul-dashboard-launch-de/15.1-CONTEXT.md
