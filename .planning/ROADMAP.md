@@ -469,6 +469,30 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 
 ## Backlog
 
+### Phase 15.1: Usage Metrics Dashboard UX/Perf Overhaul: dashboard launch detection, pagination/virtualization for large datasets, filter bar reordered runtime->model->family->subfamily->command, runtime column, MUI-based visual redesign, charts, empty date column bug, price always-zero investigation, family showing garbage tokens, session-group row duplication bug, default last-week prefilter, unified date-range picker (INSERTED)
+
+**Goal:** The usage-metrics dashboard renders the full refined dataset without freezing
+the browser, in a Material-designed light/dark UI with runtime and subfamily filters, one
+unified date range, a full-command detail dialog and three charts — and all five
+data-correctness bugs found live against the real 84,082-row refined store are fixed and
+independently verified: opencode's and cursor's 100%-NULL dates, `family` derived from
+opaque script blobs, an unknown price rendering as a blank cell rather than as unknown,
+session sums deduping on a turn id that may not exist, and codex's current tool-call shape
+never reaching the refiner at all.
+**Requirements**: none — inserted urgent-work phase with no formal REQ-IDs; traceability
+runs on `15.1-CONTEXT.md`'s decision IDs D-01 through D-19, every one of which is covered
+by at least one plan.
+**Depends on:** Phase 15
+**Plans:** 5 plans
+
+Plans:
+
+- [ ] 15.1-01-PLAN.md — Tracer: opencode date fix, Material/CDN/virtualized dashboard shell, runtime column, auto-open — wired end-to-end
+- [ ] 15.1-02-PLAN.md — Remaining refiner fixes: command-shape family guard, cursor date, codex custom_tool_call branch, canonical `subfamily_of()`
+- [ ] 15.1-03-PLAN.md — Filter bar and column redesign: runtime and subfamily axes, unified from/to date range, null-versus-zero rendering
+- [ ] 15.1-04-PLAN.md — Full-command dialog with decomposer breakdown, turn-id-aware session dedup, empty/loading/error states
+- [ ] 15.1-05-PLAN.md — Charts 1 and 2, SKILL.md realignment, phase-wide gates and real-store re-refine
+
 ### Phase 999.1: Shared core for Config Doctor's TUI and a future CLI variant (BACKLOG)
 
 **Goal:** [Captured for future planning] Phase 4 (Config Doctor) builds the
