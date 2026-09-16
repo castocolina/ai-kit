@@ -143,6 +143,15 @@ input, select {
   color: var(--md-sys-color-error);
   font-size: var(--md-sys-typescale-label-size);
 }
+/* D-22: the checkbox has no default (unfocused) visual weight from
+   @material/web alone -- give it visible border/fill contrast against the
+   filter bar's surface-variant background, independent of :focus/:hover. */
+#group-by-session {
+  display: inline-flex;
+  border: 1.5px solid var(--md-sys-color-outline);
+  border-radius: 4px;
+  background: var(--md-sys-color-surface);
+}
 #charts-row {
   display: flex;
   gap: var(--space-xl);
@@ -213,6 +222,20 @@ input, select {
 #usage-table th:nth-child(9), #usage-table td:nth-child(9) { flex: 0 0 130px; }
 #usage-table th:nth-child(10), #usage-table td:nth-child(10) { flex: 0 0 100px; }
 #usage-table th:nth-child(11), #usage-table td:nth-child(11) { flex: 0 0 140px; }
+/* D-23: grouped mode's own 5-column header/row set (session, count,
+   tokens_input, tokens_output, price) -- scoped to .row-grouped so it never
+   shares column meaning/widths with flat mode's 11-column nth-child rules
+   above. The extra class selector outranks the plain #usage-table rule. */
+#usage-table .row-grouped th:nth-child(1),
+#usage-table .row-grouped td:nth-child(1) { flex: 0 0 200px; }
+#usage-table .row-grouped th:nth-child(2),
+#usage-table .row-grouped td:nth-child(2) { flex: 0 0 100px; }
+#usage-table .row-grouped th:nth-child(3),
+#usage-table .row-grouped td:nth-child(3) { flex: 0 0 130px; }
+#usage-table .row-grouped th:nth-child(4),
+#usage-table .row-grouped td:nth-child(4) { flex: 0 0 130px; }
+#usage-table .row-grouped th:nth-child(5),
+#usage-table .row-grouped td:nth-child(5) { flex: 1 1 100px; min-width: 0; }
 </style>
 </head>
 <body>
@@ -270,7 +293,7 @@ input, select {
 <div id="table-scroll">
 <table id="usage-table">
 <thead>
-<tr>
+<tr id="thead-flat">
 <th data-sort-key="runtime">runtime</th>
 <th data-sort-key="date">date</th>
 <th data-sort-key="model">model</th>
@@ -282,6 +305,13 @@ input, select {
 <th data-sort-key="source_confidence">source_confidence</th>
 <th data-sort-key="execution_certain">execution</th>
 <th data-sort-key="session_id">session</th>
+</tr>
+<tr id="thead-grouped" class="row-grouped" style="display:none;">
+<th data-sort-key="session_id">session</th>
+<th data-sort-key="count">count</th>
+<th data-sort-key="tokens_input">tokens_input</th>
+<th data-sort-key="tokens_output">tokens_output</th>
+<th data-sort-key="price">price</th>
 </tr>
 </thead>
 <tbody id="usage-tbody"></tbody>
@@ -496,6 +526,8 @@ function chartJsAvailable() {
   var data = JSON.parse(dataEl.textContent);
   var tbody = document.getElementById("usage-tbody");
   var scrollEl = document.getElementById("table-scroll");
+  var theadFlat = document.getElementById("thead-flat");
+  var theadGrouped = document.getElementById("thead-grouped");
   var sortKey = "date";
   var sortDir = "asc";
   var virtualizer = null;
@@ -583,6 +615,9 @@ function chartJsAvailable() {
 
   function groupedRowBuilder(row) {
     var tr = document.createElement("tr");
+    // D-23: grouped mode's own class, matched by the .row-grouped CSS scope
+    // so these 5 cells never inherit flat mode's 11-column nth-child widths.
+    tr.className = "row-grouped";
     tr.appendChild(td(row.session_id));
     tr.appendChild(td(row.count));
     tr.appendChild(td(row.tokens_input));
@@ -677,6 +712,10 @@ function chartJsAvailable() {
       currentRows = sortRows(filtered, sortKey, sortDir);
       currentBuilder = flatRowBuilder;
     }
+    // D-23: swap the visible <thead> row alongside the render-mode toggle so
+    // headers always match the cell count/meaning currentBuilder emits.
+    if (theadFlat) theadFlat.style.display = grouped ? "none" : "flex";
+    if (theadGrouped) theadGrouped.style.display = grouped ? "flex" : "none";
     if (virtualizer) {
       virtualizer.setOptions(virtualizerOptions(currentRows.length));
       virtualizer.measure();

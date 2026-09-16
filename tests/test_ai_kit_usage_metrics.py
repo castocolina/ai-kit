@@ -2675,6 +2675,94 @@ class TestDashboardFull(unittest.TestCase):
         self.assertTrue(parser.has_thead)
         self.assertTrue(parser.has_usage_tbody)
 
+    def test_group_by_session_checkbox_has_visible_unfocused_styling(self):
+        # D-22 regression: the checkbox must have visible border/fill
+        # contrast in its DEFAULT (unfocused, unchecked) state -- a rule
+        # scoped only to :focus/:hover would still leave it invisible on
+        # first paint, which is exactly the bug this guards against.
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            source = handle.read()
+        style_start = source.index("<style>")
+        style_end = source.index("</style>")
+        style = source[style_start:style_end]
+        # Strip CSS comments first -- a descriptive comment mentioning
+        # ":focus"/":hover" in prose must not be mistaken for a pseudo-class
+        # qualifying the selector itself.
+        style = re.sub(r"/\*.*?\*/", "", style, flags=re.S)
+        rules = re.findall(r"([^{}]+)\{([^{}]*)\}", style)
+        unfocused_rules = [
+            (selector, body)
+            for selector, body in rules
+            if "#group-by-session" in selector
+            and ":focus" not in selector
+            and ":hover" not in selector
+        ]
+        self.assertTrue(
+            unfocused_rules,
+            "no unfocused #group-by-session CSS rule found — checkbox would "
+            "be invisible until it receives focus",
+        )
+        self.assertTrue(
+            any(
+                re.search(r"\bborder\b", body) or re.search(r"\bbackground\b", body)
+                for _selector, body in unfocused_rules
+            ),
+            "expected visible border/fill contrast in the unfocused rule body",
+        )
+
+    def test_grouped_mode_header_matches_grouped_cell_count(self):
+        # D-23 regression: <thead>'s visible header row must always match
+        # the cell count/meaning of whichever builder (flat vs grouped) is
+        # currently painting -- never flat's fixed 11-column header shown
+        # over grouped's 5-cell rows (or vice versa).
+        html, _out = self._seed_and_generate()
+        thead_start = html.index("<thead>")
+        thead_end = html.index("</thead>", thead_start)
+        thead = html[thead_start:thead_end]
+
+        flat_row_match = re.search(r'<tr id="thead-flat"[^>]*>(.*?)</tr>', thead, re.S)
+        grouped_row_match = re.search(
+            r'<tr id="thead-grouped"[^>]*>(.*?)</tr>', thead, re.S
+        )
+        self.assertIsNotNone(flat_row_match, "no #thead-flat header row found")
+        self.assertIsNotNone(grouped_row_match, "no #thead-grouped header row found")
+
+        flat_header_count = len(re.findall(r"<th\b", flat_row_match.group(1)))
+        grouped_header_count = len(re.findall(r"<th\b", grouped_row_match.group(1)))
+
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            source = handle.read()
+
+        def _extract_function_body(text, function_name):
+            marker = "function " + function_name + "("
+            start = text.index(marker)
+            brace_open = text.index("{", start)
+            depth = 0
+            i = brace_open
+            while i < len(text):
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return text[brace_open : i + 1]
+                i += 1
+            raise AssertionError("unterminated function body: " + function_name)
+
+        flat_body = _extract_function_body(source, "flatRowBuilder")
+        grouped_body = _extract_function_body(source, "groupedRowBuilder")
+        flat_cell_count = len(re.findall(r"tr\.appendChild\(", flat_body))
+        grouped_cell_count = len(re.findall(r"tr\.appendChild\(", grouped_body))
+
+        self.assertEqual(flat_header_count, flat_cell_count)
+        self.assertEqual(grouped_header_count, grouped_cell_count)
+        self.assertEqual(grouped_header_count, 5)
+        self.assertEqual(flat_header_count, 11)
+
+        # No padding/placeholder cell added solely to preserve flat mode's
+        # column count in grouped mode.
+        self.assertNotEqual(grouped_header_count, flat_header_count)
+
     def test_no_data_driven_innerhtml_assignment(self):
         html, _out = self._seed_and_generate()
         script_start = html.find("<script>\n")
