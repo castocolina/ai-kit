@@ -61,6 +61,11 @@ import "@material/web/select/outlined-select.js";
 import "@material/web/select/select-option.js";
 import "@material/web/textfield/outlined-text-field.js";
 import "@material/web/button/text-button.js";
+import "@material/web/button/filled-button.js";
+import "@material/web/iconbutton/icon-button.js";
+import "@material/web/icon/icon.js";
+import "@material/web/dialog/dialog.js";
+import "@material/web/progress/linear-progress.js";
 </script>
 <script type="module">
 import { Virtualizer, observeElementRect, observeElementOffset, elementScroll } from "https://esm.run/@tanstack/virtual-core@3.17.11";
@@ -312,6 +317,47 @@ h1 {
 #usage-table .row-grouped td:nth-child(4) { flex: 0 0 130px; }
 #usage-table .row-grouped th:nth-child(5),
 #usage-table .row-grouped td:nth-child(5) { flex: 1 1 100px; min-width: 0; }
+#usage-table td.command-cell {
+  cursor: pointer;
+}
+/* D-14: full-command detail dialog. Fixed max-height on the dialog surface
+   itself (both the host's own CSS box AND @material/web's own container
+   custom property, so the constraint holds regardless of which layer ends
+   up governing size) with the decomposer step list scrolling INTERNALLY --
+   RESEARCH.md live-verified a real 55-step compound command, so an
+   unbounded dialog is a real case, not a hypothetical. */
+#command-dialog {
+  --md-dialog-container-max-block-size: 70vh;
+  max-height: 70vh;
+}
+.dialog-command-text {
+  font-family: inherit;
+  font-size: var(--md-sys-typescale-body-size);
+  line-height: var(--md-sys-typescale-body-line-height);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0 0 var(--space-md) 0;
+}
+.dialog-copy-status {
+  min-height: var(--md-sys-typescale-label-line-height);
+  font-size: var(--md-sys-typescale-label-size);
+  color: var(--md-sys-color-primary);
+  margin: 0 0 var(--space-md) 0;
+}
+.dialog-copy-status--error {
+  color: var(--md-sys-color-error);
+}
+.dialog-steps {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.dialog-step {
+  font-size: var(--md-sys-typescale-body-size);
+  line-height: var(--md-sys-typescale-body-line-height);
+  padding: var(--space-xs) 0;
+  border-bottom: 1px solid var(--md-sys-color-surface-variant);
+  overflow-wrap: anywhere;
+}
 </style>
 </head>
 <body>
@@ -362,7 +408,7 @@ h1 {
 <p id="runtime-chart-fallback"></p>
 </div>
 </div>
-<div id="table-scroll">
+<div id="table-scroll" tabindex="-1">
 <table id="usage-table">
 <thead>
 <tr id="thead-flat">
@@ -391,6 +437,20 @@ h1 {
 <tbody id="usage-tbody"></tbody>
 </table>
 </div>
+<md-dialog id="command-dialog">
+<div slot="headline">Command</div>
+<div slot="content">
+<pre id="dialog-command-text" class="dialog-command-text"></pre>
+<p id="dialog-copy-status" class="dialog-copy-status" role="status"></p>
+<div id="dialog-steps" class="dialog-steps"></div>
+</div>
+<div slot="actions">
+<md-filled-button id="dialog-copy-button" aria-label="Copy command">Copy command</md-filled-button>
+<md-icon-button id="dialog-close-button" aria-label="Close dialog">
+<md-icon>close</md-icon>
+</md-icon-button>
+</div>
+</md-dialog>
 <script type="application/json" id="usage-metrics-data">"""
 
 _HTML_MID = """</script>
@@ -674,6 +734,50 @@ function clearedCriteria() {
     priceMax: ""
   };
 }
+// D-14 / SD-3: a single refined row does NOT carry the full decomposer
+// breakdown -- only its own step's fields. The sibling steps of one
+// decomposed command are separate rows sharing one raw_ref (refined_store.py's
+// UNIQUE(raw_ref, step_index) constraint guarantees the pair is unique per
+// row). indexByRawRef(rows) is the real lookup mechanism: built ONCE at load
+// over the FULL embedded payload (never the filtered set), it returns a Map
+// from raw_ref to that record's rows sorted ascending by step_index.
+function indexByRawRef(rows) {
+  var map = new Map();
+  rows.forEach(function (row) {
+    var key = row.raw_ref;
+    if (key == null) return;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(row);
+  });
+  map.forEach(function (bucket) {
+    bucket.sort(function (a, b) {
+      return Number(a.step_index) - Number(b.step_index);
+    });
+  });
+  return map;
+}
+
+// stepEntries: pure render-data helper for the detail dialog's decomposer
+// section. A row whose step_count is 1 (or absent) has no siblings to show,
+// so it returns an empty array and the dialog omits the entire step section
+// -- the dialog body directly above already shows that single command in
+// full, so a single-command empty state would only restate it (this is the
+// concrete choice UI-SPEC.md required the planner to record, not silently
+// default).
+function stepEntries(rowsByRawRef, row) {
+  var stepCount = row.step_count == null ? null : Number(row.step_count);
+  if (stepCount == null || stepCount <= 1) return [];
+  var bucket = rowsByRawRef.get(row.raw_ref);
+  if (!bucket) return [];
+  return bucket.map(function (sibling) {
+    return {
+      position: Number(sibling.step_index) + 1,
+      total: Number(sibling.step_count),
+      operator: sibling.operator == null ? "" : String(sibling.operator),
+      text: sibling.command_text == null ? "" : String(sibling.command_text)
+    };
+  });
+}
 /* PURE_FUNCTIONS_END */
 
 var CHART_PALETTE_LIGHT = ["#6750A4", "#7D5260", "#625B71", "#79747E", "#1C1B1F"];
@@ -687,6 +791,10 @@ function chartJsAvailable() {
   var dataEl = document.getElementById("usage-metrics-data");
   var data = JSON.parse(dataEl.textContent);
   decorateSubfamily(data);
+  // D-14 / SD-3: built ONCE at load, immediately after decorateSubfamily,
+  // over the full embedded payload -- this is what lets a sibling step
+  // excluded by the current filter still appear in the detail dialog.
+  var rowsByRawRef = indexByRawRef(data);
   var tbody = document.getElementById("usage-tbody");
   var scrollEl = document.getElementById("table-scroll");
   var theadFlat = document.getElementById("thead-flat");
@@ -697,6 +805,10 @@ function chartJsAvailable() {
   var currentRows = [];
   var currentBuilder = flatRowBuilder;
   var runtimeChart = null;
+  // D-14: the element that opened the dialog, restored on close (see the
+  // "closed"-event listener registered once at mount, below).
+  var dialogTrigger = null;
+  var dialogCommandText = "";
 
   function distinctValues(key) {
     var seen = {};
@@ -796,8 +908,12 @@ function chartJsAvailable() {
     // and an optional .step-marker (fixed, reserved space) -- never a clamp
     // on the <td> itself, so a long two-line command can never push the
     // compound-step marker out of view.
+    // D-14: focusable (tabindex 0) so the full-command dialog is reachable
+    // without a mouse -- activation is wired via the delegated tbody
+    // listeners below, not a per-cell listener here.
     var cell = document.createElement("td");
     cell.className = "command-cell";
+    cell.setAttribute("tabindex", "0");
     var text = document.createElement("span");
     text.className = "command-text";
     text.textContent = row.command_text == null ? "" : String(row.command_text);
@@ -867,6 +983,118 @@ function chartJsAvailable() {
     return tr;
   }
 
+  // D-14: full-command detail dialog. Wired once at mount (this whole
+  // block runs exactly once, since the enclosing IIFE runs exactly once per
+  // page load) -- never per dialog-open, which would accumulate listeners.
+  var CLIPBOARD_SUCCESS_MESSAGE = "Command copied to clipboard.";
+  var CLIPBOARD_FAILURE_MESSAGE =
+    "Couldn't copy the command \\u2014 clipboard access is unavailable.";
+  var dialogEl = document.getElementById("command-dialog");
+  var dialogCommandTextEl = document.getElementById("dialog-command-text");
+  var dialogCopyStatusEl = document.getElementById("dialog-copy-status");
+  var dialogStepsEl = document.getElementById("dialog-steps");
+  var dialogCopyButton = document.getElementById("dialog-copy-button");
+  var dialogCloseButton = document.getElementById("dialog-close-button");
+
+  function renderDialogSteps(row) {
+    dialogStepsEl.textContent = "";
+    var entries = stepEntries(rowsByRawRef, row);
+    entries.forEach(function (entry) {
+      var stepEl = document.createElement("div");
+      stepEl.className = "dialog-step";
+      var opSuffix = entry.operator ? " (" + entry.operator + ")" : "";
+      stepEl.textContent =
+        "Step " + entry.position + " of " + entry.total + opSuffix + ": " + entry.text;
+      dialogStepsEl.appendChild(stepEl);
+    });
+    // Zero-one-many (UI-SPEC.md): a single-step row shows no step section
+    // at all -- the dialog body above already shows that one command in
+    // full, so an empty-state restating it would add nothing.
+    dialogStepsEl.style.display = entries.length > 0 ? "" : "none";
+  }
+
+  function openDialogForRow(row, trigger) {
+    dialogCommandText = row.command_text == null ? "" : String(row.command_text);
+    dialogCommandTextEl.textContent = dialogCommandText;
+    dialogCopyStatusEl.textContent = "";
+    dialogCopyStatusEl.classList.remove("dialog-copy-status--error");
+    renderDialogSteps(row);
+    dialogTrigger = trigger;
+    dialogEl.show();
+  }
+
+  function resolveRowFromCell(cell) {
+    var tr = cell.closest("tr");
+    if (!tr) return null;
+    var idx = Number(tr.getAttribute("data-row-index"));
+    if (isNaN(idx)) return null;
+    return currentRows[idx];
+  }
+
+  function activateCommandCell(event) {
+    // Resolve the activated element as the closest [tabindex] ancestor so a
+    // pointer activation on the inner .command-text span still records the
+    // focusable command cell itself, not the span.
+    var cell = event.target.closest("[tabindex]");
+    if (!cell || !cell.classList.contains("command-cell")) return;
+    var row = resolveRowFromCell(cell);
+    if (!row) return;
+    openDialogForRow(row, cell);
+  }
+
+  tbody.addEventListener("click", activateCommandCell);
+  tbody.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    // preventDefault on the space case so the scrollport does not page down
+    // behind the now-open dialog.
+    if (event.key === " ") event.preventDefault();
+    activateCommandCell(event);
+  });
+
+  // "closed" (NOT "close") -- in the pinned @material/web@2.5.0 md-dialog,
+  // "close" is cancelable and fires BEFORE the close animation runs, so an
+  // element referenced inside a "close" handler can still be mid-transition.
+  // "closed" fires once the dialog has actually finished closing, which is
+  // the point at which restoring focus is safe.
+  dialogEl.addEventListener("closed", function () {
+    if (dialogTrigger && dialogTrigger.isConnected) {
+      dialogTrigger.focus();
+    } else {
+      // The virtualizer can have recycled the triggering row out of the DOM
+      // while the dialog was open -- fall back to the scroll container
+      // (tabindex="-1" so it can receive programmatic focus) rather than
+      // silently dropping keyboard focus onto <body>.
+      scrollEl.focus();
+    }
+    dialogTrigger = null;
+  });
+
+  dialogCloseButton.addEventListener("click", function () {
+    dialogEl.close();
+  });
+
+  dialogCopyButton.addEventListener("click", function () {
+    function showFailure() {
+      dialogCopyStatusEl.textContent = CLIPBOARD_FAILURE_MESSAGE;
+      dialogCopyStatusEl.classList.add("dialog-copy-status--error");
+    }
+    function showSuccess() {
+      dialogCopyStatusEl.textContent = CLIPBOARD_SUCCESS_MESSAGE;
+      dialogCopyStatusEl.classList.remove("dialog-copy-status--error");
+    }
+    // Both clipboard-refusal shapes route to the same visible message: an
+    // insecure context (e.g. a file:// page) may not expose
+    // navigator.clipboard at all -- reading .writeText off it would throw
+    // before any promise exists, so that shape is guarded explicitly here --
+    // and a secure-context browser may still reject the write, handled by
+    // the .catch below.
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+      showFailure();
+      return;
+    }
+    navigator.clipboard.writeText(dialogCommandText).then(showSuccess).catch(showFailure);
+  });
+
   function virtualizerOptions(count) {
     var vc = window.__virtualCore;
     return {
@@ -893,6 +1121,12 @@ function chartJsAvailable() {
     items.forEach(function (entry) {
       var tr = currentBuilder(entry.row);
       tr.style.transform = "translateY(" + entry.start + "px)";
+      // D-14: the painter is the ONLY place that knows a materialized <tr>'s
+      // position in currentRows -- the delegated dialog-activation listener
+      // below resolves the activated row through this attribute rather than
+      // binding a listener per rendered row (rows are recycled by the
+      // virtualizer as the user scrolls).
+      tr.setAttribute("data-row-index", String(entry.index));
       tbody.appendChild(tr);
     });
   }

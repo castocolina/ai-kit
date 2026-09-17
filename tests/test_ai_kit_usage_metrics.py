@@ -2655,6 +2655,26 @@ def _extract_pure_js(html):
     return html[start + len(_JS_PURE_START) : end]
 
 
+def _extract_block_after(text, marker):
+    # Same brace-depth slicer as _extract_js_function_body, but anchored on
+    # an arbitrary literal marker string rather than a "function <name>("
+    # prefix -- used for anonymous callbacks (event listeners) that have no
+    # function name of their own to search for.
+    start = text.index(marker)
+    brace_open = text.index("{", start)
+    depth = 0
+    i = brace_open
+    while i < len(text):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace_open : i + 1]
+        i += 1
+    raise AssertionError("unterminated block for marker: " + marker)
+
+
 def _extract_js_function_body(text, function_name):
     # Shared brace-depth slicer: locates `function <name>(` and returns the
     # exact source span from its opening `{` to the matching closing `}`.
@@ -3272,6 +3292,18 @@ class TestDashboardFull(unittest.TestCase):
             def handle_endtag(self, tag):
                 if self.stack and self.stack[-1][0] == tag:
                     self.stack.pop()
+                    # Stop tracking "direct children of the table" once the
+                    # table itself has closed -- otherwise a later sibling
+                    # at the same stack depth (e.g. the D-14 dialog markup
+                    # that now follows #table-scroll) would be misidentified
+                    # as a table child just because the depths happen to
+                    # coincide.
+                    if (
+                        tag == "table"
+                        and self._table_depth is not None
+                        and len(self.stack) == self._table_depth
+                    ):
+                        self._table_depth = None
 
         parser = _TableNestingParser()
         parser.feed(html)
@@ -3454,6 +3486,157 @@ class TestDashboardFull(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom) and node.module:
                 found.add(node.module.split(".", 1)[0])
         self.assertEqual(found & forbidden, set())
+
+    def test_command_dialog_markup_copy_and_step_section(self):
+        html, _out = self._seed_and_generate()
+        self.assertIn('<md-dialog id="command-dialog">', html)
+        self.assertIn(">Copy command<", html)
+        self.assertIn('aria-label="Close dialog"', html)
+        self.assertIn('aria-label="Copy command"', html)
+        self.assertIn('id="table-scroll" tabindex="-1"', html)
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            source = handle.read()
+        cell_body = _extract_js_function_body(source, "commandCell")
+        self.assertIn('setAttribute("tabindex", "0")', cell_body)
+        style_start = source.index("<style>")
+        style_end = source.index("</style>")
+        style = source[style_start:style_end]
+        style = re.sub(r"/\*.*?\*/", "", style, flags=re.S)
+        rules = re.findall(r"([^{}]+)\{([^{}]*)\}", style)
+        dialog_rules = [(sel.strip(), body) for sel, body in rules if "#command-dialog" in sel]
+        self.assertTrue(dialog_rules, "no #command-dialog CSS rule found")
+        self.assertTrue(
+            any("max-height" in body for _sel, body in dialog_rules),
+            "no max-height constraint on the dialog surface",
+        )
+        steps_rules = [(sel.strip(), body) for sel, body in rules if ".dialog-steps" in sel]
+        self.assertTrue(steps_rules, "no .dialog-steps CSS rule found")
+        self.assertTrue(
+            any("overflow-y" in body for _sel, body in steps_rules),
+            "step list does not scroll internally",
+        )
+
+    def test_dialog_restores_focus_and_handles_clipboard_refusal(self):
+        html, _out = self._seed_and_generate()
+        script_start = html.find("<script>\n")
+        self.assertNotEqual(script_start, -1)
+        script = html[script_start:]
+
+        self.assertIn("var dialogTrigger = null;", script)
+        self.assertIn("dialogTrigger = trigger;", script)
+
+        closed_body = _extract_block_after(
+            script, 'dialogEl.addEventListener("closed", function () {'
+        )
+        self.assertIn("dialogTrigger.isConnected", closed_body)
+        self.assertIn("dialogTrigger.focus()", closed_body)
+        self.assertIn("scrollEl.focus()", closed_body)
+        self.assertIn("dialogTrigger = null;", closed_body)
+
+        activate_body = _extract_js_function_body(script, "activateCommandCell")
+        self.assertIn('closest("[tabindex]")', activate_body)
+
+        keydown_body = _extract_block_after(
+            script, 'tbody.addEventListener("keydown", function (event) {'
+        )
+        self.assertIn('event.key !== "Enter" && event.key !== " "', keydown_body)
+        self.assertIn("event.preventDefault()", keydown_body)
+        self.assertIn("activateCommandCell(event)", keydown_body)
+
+        copy_body = _extract_block_after(
+            script, 'dialogCopyButton.addEventListener("click", function () {'
+        )
+        self.assertIn("navigator.clipboard", copy_body)
+        self.assertIn("typeof navigator.clipboard.writeText", copy_body)
+        self.assertIn(".catch(showFailure)", copy_body)
+        self.assertIn("showFailure", copy_body)
+        self.assertIn("showSuccess", copy_body)
+
+    def test_step_entries_resolve_siblings_via_node(self):
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        pure = _extract_pure_js(html)
+        rows = [
+            {
+                "raw_ref": "rr1",
+                "step_index": 0,
+                "step_count": 3,
+                "operator": None,
+                "command_text": "cd src",
+            },
+            {
+                "raw_ref": "rr1",
+                "step_index": 2,
+                "step_count": 3,
+                "operator": "||",
+                "command_text": "rg TODO",
+            },
+            {
+                "raw_ref": "rr1",
+                "step_index": 1,
+                "step_count": 3,
+                "operator": "&&",
+                "command_text": "ls -la",
+            },
+            {
+                "raw_ref": "rr2",
+                "step_index": 0,
+                "step_count": 1,
+                "operator": None,
+                "command_text": "echo hi",
+            },
+        ]
+        fixture = os.path.join(self.root, "step_entries_rows.json")
+        with open(fixture, "w", encoding="utf-8") as handle:
+            json.dump(rows, handle)
+        wrapper = os.path.join(self.root, "step_entries_check.js")
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconst rows = require("
+                + json.dumps(fixture)
+                + ");\n"
+                "const fullIdx = indexByRawRef(rows);\n"
+                "const bucketOrder = fullIdx.get('rr1').map(function (r) "
+                "{ return r.step_index; });\n"
+                "const forStep0 = stepEntries(fullIdx, rows[0]);\n"
+                "const forStep2Row = stepEntries(fullIdx, rows[1]);\n"
+                "const forSingle = stepEntries(fullIdx, rows[3]);\n"
+                "// Prove the index must be built over the FULL payload: an\n"
+                "// index built over a filtered subset that dropped 2 of the\n"
+                "// 3 rr1 siblings resolves an incomplete breakdown, while\n"
+                "// the full-payload index resolves all 3.\n"
+                "const filteredRows = [rows[0], rows[3]];\n"
+                "const filteredIdx = indexByRawRef(filteredRows);\n"
+                "const filteredEntries = stepEntries(filteredIdx, rows[0]);\n"
+                "console.log(JSON.stringify({\n"
+                "  bucketOrder: bucketOrder,\n"
+                "  forStep0: forStep0,\n"
+                "  forStep2Row: forStep2Row,\n"
+                "  forSingle: forSingle,\n"
+                "  filteredEntries: filteredEntries,\n"
+                "}));\n"
+            )
+        proc = subprocess.run(
+            ["node", wrapper], capture_output=True, text=True, check=True
+        )
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["bucketOrder"], [0, 1, 2])
+        self.assertEqual(len(result["forStep0"]), 3)
+        self.assertEqual(len(result["forStep2Row"]), 3)
+        self.assertEqual(result["forStep0"], result["forStep2Row"])
+        self.assertEqual(
+            [entry["position"] for entry in result["forStep0"]], [1, 2, 3]
+        )
+        self.assertEqual(
+            [entry["operator"] for entry in result["forStep0"]], ["", "&&", "||"]
+        )
+        self.assertEqual(result["forSingle"], [])
+        # The full-payload index resolves all 3 siblings even though this
+        # particular call activated the row via a filtered subset elsewhere.
+        self.assertEqual(len(result["filteredEntries"]), 1)
+        self.assertNotEqual(len(result["filteredEntries"]), len(result["forStep0"]))
 
 
 class TestPermissions(unittest.TestCase):
