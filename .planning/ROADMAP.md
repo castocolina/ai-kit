@@ -483,7 +483,7 @@ never reaching the refiner at all.
 runs on `15.1-CONTEXT.md`'s decision IDs D-01 through D-19, every one of which is covered
 by at least one plan.
 **Depends on:** Phase 15
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans:
 **Wave 1**
@@ -500,7 +500,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 15.1-04-PLAN.md — Full-command dialog with sibling-resolved decomposer breakdown, turn-identity session dedup, empty/loading/error states
+- [x] 15.1-04-PLAN.md — Full-command dialog with sibling-resolved decomposer breakdown, turn-identity session dedup, empty/loading/error states
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
