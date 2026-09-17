@@ -255,6 +255,31 @@ class TestPaths(unittest.TestCase):
         )
 
 
+# SD-1 spec table (15.1-02-PLAN.md shared_definitions) -- the oracle both the
+# Python subfamily_of() and Plan 03's JavaScript mirror are checked against.
+# Module-level (not inline in the test method) so Plan 03 can import this same
+# case list for its cross-language parity test.
+SUBFAMILY_SPEC_CASES = [
+    ("git commit -m msg", "commit"),
+    ("git -C /path commit", "commit"),
+    ("git -C mydir commit", "commit"),
+    ("git --git-dir=/x status", "status"),
+    ("sudo git -C /srv pull", "pull"),
+    ("FOO=bar git -c user.name=x log", "log"),
+    ("nice -n10 git push", "push"),
+    ("make -C build test", "test"),
+    ("rg -n pattern", "pattern"),
+    ("python3 -m unittest tests.x", "unittest"),
+    ("git -- status", "status"),
+    ("ls -la /tmp", ""),
+    ("python3 -c 'import os'", ""),
+    ("git", ""),
+    ("git --version", ""),
+    ("", ""),
+    ("   ", ""),
+]
+
+
 class TestFamily(unittest.TestCase):
     def test_rg_and_grep_share_grep_family(self):
         self.assertEqual(family.family_of("grep -r x"), "grep")
@@ -273,6 +298,11 @@ class TestFamily(unittest.TestCase):
         self.assertEqual(family.family_of("nice -n10 rg x"), "grep")
         self.assertEqual(family.family_of("env FOO=bar sudo grep x"), "grep")
         self.assertEqual(family.family_of(""), "")
+
+    def test_subfamily_of_matches_spec_table(self):
+        for command_text, expected in SUBFAMILY_SPEC_CASES:
+            with self.subTest(command_text=command_text):
+                self.assertEqual(family.subfamily_of(command_text), expected)
 
 
 class TestDecomposer(unittest.TestCase):
