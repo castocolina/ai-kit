@@ -23,3 +23,15 @@ executor's Scope Boundary rule.
   (`refiner.py`, `dashboard.py`, `cli.py`, `tests/test_ai_kit_usage_metrics.py`)
   are implicated — pyright type-checks the whole project, and this finding
   is entirely outside Plan 01's scope.
+
+## Plan 03
+
+- **`ruff check tests/test_ai_kit_usage_metrics.py`** reports one
+  pre-existing `E501` (line too long) at `tests/test_ai_kit_usage_metrics.py:1242`,
+  in `_codex_custom_tool_call_line`'s signature — introduced by Plan 02's
+  commit `5825442a` (2026-09-16), not touched by this plan. Confirmed via
+  `git blame`; none of Plan 03's own additions to this file are involved.
+- `tests.test_markdown_to_pdf.TestRenderRealMmdc.test_real_render_produces_image`
+  still fails on this machine for the same pre-existing `mmdc` reason logged
+  under Plan 01 above — reconfirmed via `make test-unit`, still the only
+  error in the full 2510-test run.

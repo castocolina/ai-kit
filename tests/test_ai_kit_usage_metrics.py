@@ -2961,8 +2961,9 @@ class TestDashboardFull(unittest.TestCase):
                 "\nconst rows = require("
                 + json.dumps(fixture)
                 + ");\n"
-                + "const first = decorateSubfamily(rows).map(function (r) { return r.subfamily; });\n"
-                + "const second = decorateSubfamily(rows).map(function (r) { return r.subfamily; });\n"
+                + "function subs(r) { return r.map(function (x) { return x.subfamily; }); }\n"
+                + "const first = subs(decorateSubfamily(rows));\n"
+                + "const second = subs(decorateSubfamily(rows));\n"
                 + "console.log(JSON.stringify({first: first, second: second}));\n"
             )
         proc = subprocess.run(
