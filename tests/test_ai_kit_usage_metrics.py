@@ -1208,6 +1208,56 @@ def _codex_function_call_line():
     )
 
 
+def _codex_custom_tool_call_line(
+    cmd, workdir=None, tool_name="exec_command", timestamp="2026-01-15T12:00:02Z", call_id="call_ctc_1"
+):
+    """Verbatim-shaped codex `custom_tool_call`/"exec" record (RESEARCH.md Pitfall 5).
+
+    `input` is a JavaScript source STRING (not a JSON document) that awaits a
+    `tools.<tool_name>({...})` call whose single argument is a JSON object literal.
+    """
+    args = {"cmd": cmd}
+    if workdir is not None:
+        args["workdir"] = workdir
+    js_body = f"const r = await tools.{tool_name}({json.dumps(args)}); text(r.output);"
+    return json.dumps(
+        {
+            "timestamp": timestamp,
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "id": "ctc_test",
+                "status": "completed",
+                "call_id": call_id,
+                "name": "exec",
+                "input": js_body,
+            },
+        }
+    )
+
+
+def _codex_custom_tool_call_web_run_line(timestamp="2026-01-15T12:00:02Z"):
+    """Real non-shell sample from the same wrapper shape (RESEARCH.md Pitfall 5)."""
+    js_body = (
+        'const r = await tools.web__run({"search_query":[{"q":"test"}],'
+        '"response_length":"long"}); text(r);'
+    )
+    return json.dumps(
+        {
+            "timestamp": timestamp,
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "id": "ctc_web_test",
+                "status": "completed",
+                "call_id": "call_web_1",
+                "name": "exec",
+                "input": js_body,
+            },
+        }
+    )
+
+
 def _write_codex_rollout(env, relative_dirs, filename, lines):
     directory = os.path.join(paths.codex_sessions_dir(env), *relative_dirs)
     os.makedirs(directory, exist_ok=True)
@@ -2215,6 +2265,136 @@ class TestRefinerFull(unittest.TestCase):
         texts = [row["command_text"] for row in rows]
         self.assertEqual(texts, ["ls -la", "pwd"])
         self.assertNotIn(None, texts)
+
+    def test_codex_legacy_function_call_still_refines(self):
+        # Confirms the pre-existing shape keeps priority and is unaffected by
+        # the new custom_tool_call dispatch branch (Task 2).
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = _CODEX_SESSION_UUID
+        path = f"/sessions/{_CODEX_ROLLOUT_NAME}"
+        meta = capture_codex._envelope(
+            path, 1, _codex_session_meta_line(), captured_at, session_id
+        )
+        legacy = capture_codex._envelope(
+            path, 2, _codex_function_call_line(), captured_at, session_id
+        )
+        rows = refine_all([meta, legacy])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["command_text"], "ls -la")
+        self.assertEqual(rows[0]["resolved_cwd"], "/tmp/proj")
+
+    def test_codex_custom_tool_call_exec_produces_command(self):
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = _CODEX_SESSION_UUID
+        path = f"/sessions/{_CODEX_ROLLOUT_NAME}"
+        meta = capture_codex._envelope(
+            path, 1, _codex_session_meta_line(), captured_at, session_id
+        )
+        ctc = capture_codex._envelope(
+            path,
+            2,
+            _codex_custom_tool_call_line("rg -n pattern file.py", workdir="/repo"),
+            captured_at,
+            session_id,
+        )
+        rows = refine_all([meta, ctc])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["command_text"], "rg -n pattern file.py")
+        self.assertEqual(rows[0]["resolved_cwd"], "/repo")
+
+    def test_codex_custom_tool_call_compound_command_cwd_follows_cd(self):
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = _CODEX_SESSION_UUID
+        path = f"/sessions/{_CODEX_ROLLOUT_NAME}"
+        meta = capture_codex._envelope(
+            path, 1, _codex_session_meta_line(), captured_at, session_id
+        )
+        ctc = capture_codex._envelope(
+            path,
+            2,
+            _codex_custom_tool_call_line("cd src && pwd", workdir="/repo"),
+            captured_at,
+            session_id,
+        )
+        rows = refine_all([meta, ctc])
+        self.assertEqual(len(rows), 2)
+        by_index = sorted(rows, key=lambda row: row["step_index"])
+        self.assertEqual(by_index[0]["command_text"], "cd src")
+        self.assertEqual(by_index[0]["resolved_cwd"], "/repo")
+        self.assertEqual(by_index[1]["command_text"], "pwd")
+        self.assertEqual(by_index[1]["resolved_cwd"], "/repo/src")
+
+    def test_codex_custom_tool_call_without_workdir_falls_back_to_cwd_state(self):
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = _CODEX_SESSION_UUID
+        path = f"/sessions/{_CODEX_ROLLOUT_NAME}"
+        meta = capture_codex._envelope(
+            path, 1, _codex_session_meta_line(), captured_at, session_id
+        )
+        ctc = capture_codex._envelope(
+            path,
+            2,
+            _codex_custom_tool_call_line("pwd"),
+            captured_at,
+            session_id,
+        )
+        rows = refine_all([meta, ctc])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["command_text"], "pwd")
+        # Falls back to the session-seeded CwdState directory (from
+        # session_meta's cwd), never an empty string.
+        self.assertEqual(rows[0]["resolved_cwd"], "/tmp/proj")
+
+    def test_codex_custom_tool_call_web_run_is_not_a_command(self):
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = _CODEX_SESSION_UUID
+        path = f"/sessions/{_CODEX_ROLLOUT_NAME}"
+        meta = capture_codex._envelope(
+            path, 1, _codex_session_meta_line(), captured_at, session_id
+        )
+        web_run = capture_codex._envelope(
+            path, 2, _codex_custom_tool_call_web_run_line(), captured_at, session_id
+        )
+        rows = refine_all([meta, web_run])
+        self.assertEqual(rows, [])
+
+    def test_codex_custom_tool_call_malformed_body_does_not_abort(self):
+        captured_at = datetime.now(UTC).isoformat()
+        session_id = _CODEX_SESSION_UUID
+        path = f"/sessions/{_CODEX_ROLLOUT_NAME}"
+        meta = capture_codex._envelope(
+            path, 1, _codex_session_meta_line(), captured_at, session_id
+        )
+        malformed = capture_codex._envelope(
+            path,
+            2,
+            json.dumps(
+                {
+                    "timestamp": "2026-01-15T12:00:02Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "id": "ctc_bad",
+                        "status": "completed",
+                        "call_id": "call_bad_ctc",
+                        "name": "exec",
+                        "input": "const r = await tools.exec_command({\"cmd\":); text(r.output);",
+                    },
+                }
+            ),
+            captured_at,
+            session_id,
+        )
+        good = capture_codex._envelope(
+            path,
+            3,
+            _codex_custom_tool_call_line("pwd", workdir="/repo"),
+            captured_at,
+            session_id,
+        )
+        rows = refine_all([meta, malformed, good])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["command_text"], "pwd")
 
     def test_opencode_time_created_populates_date(self):
         # D-16 / D-19 regression: an opencode raw envelope whose ONLY
