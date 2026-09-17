@@ -3401,6 +3401,50 @@ class TestDashboardFull(unittest.TestCase):
         )
         self.assertIn("debounce(applyFilters, 150)", source)
 
+    def test_charts_row_and_filters_are_layout_siblings(self):
+        # D-20: #filters and #charts-row are siblings inside one flex/grid
+        # parent (#dashboard-top), not two independently stacked full-width
+        # blocks -- a source-level structural check rather than a rendered
+        # layout measurement, since this suite has no browser harness.
+        html, _out = self._seed_and_generate()
+        wrap_start = html.index('id="dashboard-top"')
+        wrap_open = html.rindex("<div", 0, wrap_start)
+        charts_row_pos = html.index('id="charts-row"', wrap_open)
+        filters_pos = html.index('id="filters"', wrap_open)
+        wrap_close = html.index("</div>", filters_pos)
+        # Both live between the wrapper's opening tag and its first closing
+        # </div> that follows the filter bar -- i.e. inside the same parent.
+        self.assertTrue(wrap_open < charts_row_pos < wrap_close)
+        self.assertTrue(wrap_open < filters_pos < wrap_close)
+        # Charts row first per UI-SPEC.md's focal-point ordering -- D-20
+        # only moves filters from stacked-below to beside, not reorders.
+        self.assertLess(charts_row_pos, filters_pos)
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("#dashboard-top {", source)
+        self.assertIn("display: flex", _extract_block_after(source, "#dashboard-top {"))
+
+    def test_chart_canvases_have_no_fixed_pixel_dimensions(self):
+        html, _out = self._seed_and_generate()
+        for match in re.finditer(r"<canvas\b[^>]*>", html):
+            tag = match.group(0)
+            self.assertNotIn("width=", tag)
+            self.assertNotIn("height=", tag)
+            style_match = re.search(r'style="([^"]*)"', tag)
+            if style_match:
+                self.assertNotRegex(style_match.group(1), r"(width|height):\s*\d+px")
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            source = handle.read()
+        # The shared wrapper's height is clamp()-based, never a bare
+        # fixed-pixel value.
+        wrap_block = _extract_block_after(source, ".chart-canvas-wrap {")
+        self.assertNotRegex(wrap_block, r"height:\s*\d+px")
+        self.assertIn("clamp(", wrap_block)
+        # Every new Chart(...) options object opts into Chart.js's own
+        # responsive resize handling (>= one per chart; a comment may also
+        # mention the phrase, so this is a floor, not an exact count).
+        self.assertGreaterEqual(source.count("responsive: true"), 3)
+
     def test_column_order_matches_d12(self):
         html, _out = self._seed_and_generate()
         expected_order = [

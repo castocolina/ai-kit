@@ -129,14 +129,38 @@ h1 {
   font-weight: var(--md-sys-typescale-display-weight);
   line-height: var(--md-sys-typescale-display-line-height);
 }
+/* D-20: #dashboard-top lays the charts row and the filter bar out as flex
+   siblings (charts row first, per UI-SPEC.md's existing table/charts/
+   filters visual-focal-point ordering -- D-20 only moves filters from
+   stacked-below to beside, it does not reorder that priority), with the
+   table remaining full-width below both. flex-wrap is the graceful
+   narrow-viewport fallback; no breakpoint or mobile layout was required
+   (D-21). */
+#dashboard-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xl);
+  margin-bottom: var(--space-lg);
+  flex-wrap: wrap;
+  width: 100%;
+}
+#charts-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xl);
+  flex: 1 1 600px;
+  min-width: 0;
+}
 #filters {
   display: flex;
   flex-wrap: wrap;
+  align-content: flex-start;
   gap: var(--space-sm) var(--space-md);
-  margin-bottom: var(--space-lg);
   background: var(--md-sys-color-surface-variant);
   padding: var(--space-md);
   border-radius: 4px;
+  flex: 1 1 320px;
+  min-width: 280px;
 }
 #filters label {
   display: flex;
@@ -200,11 +224,6 @@ h1 {
   border-radius: 4px;
   background: var(--md-sys-color-surface);
 }
-#charts-row {
-  display: flex;
-  gap: var(--space-xl);
-  margin-bottom: var(--space-lg);
-}
 /* D-18: shared styling for all three chart panels (runtime doughnut,
    tokens/price-per-day, family/subfamily distribution) -- generalized from
    Plan 01's single #chart-runtime-panel rule so a new panel only needs the
@@ -213,7 +232,7 @@ h1 {
   background: var(--md-sys-color-surface-variant);
   padding: var(--space-md);
   border-radius: 4px;
-  flex: 1 1 0;
+  flex: 1 1 220px;
   min-width: 0;
 }
 .chart-panel-title {
@@ -227,9 +246,21 @@ h1 {
   font-size: var(--md-sys-typescale-label-size);
   display: none;
 }
+/* D-21: every chart canvas scales with its container's width instead of
+   rendering at a fixed pixel size -- the wrapper gets a clamp()-based
+   (never a bare fixed-pixel) height via CSS, width: 100%, and Chart.js's
+   own responsive: true + maintainAspectRatio: false (set on every chart's
+   options below) drives the canvas itself from that container. No new
+   resize-observer JS is needed beyond what responsive: true already does. */
+.chart-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: clamp(220px, 30vh, 320px);
+}
 #table-scroll {
   overflow-y: auto;
   max-height: 480px;
+  width: 100%;
   position: relative;
   border: 1px solid var(--md-sys-color-outline);
 }
@@ -403,6 +434,24 @@ h1 {
 <p class="state-body">Couldn't load usage data. Regenerate the dashboard with
 <code>ai-kit-usage-metrics dashboard</code>.</p>
 </div>
+<div id="dashboard-top">
+<div id="charts-row">
+<div id="chart-runtime-panel" class="chart-panel">
+<h2 class="chart-panel-title">Runtime distribution</h2>
+<div class="chart-canvas-wrap"><canvas id="runtime-chart"></canvas></div>
+<p id="runtime-chart-fallback" class="chart-fallback"></p>
+</div>
+<div id="chart-per-day-panel" class="chart-panel">
+<h2 class="chart-panel-title">Tokens &amp; price per day</h2>
+<div class="chart-canvas-wrap"><canvas id="per-day-chart"></canvas></div>
+<p id="per-day-chart-fallback" class="chart-fallback"></p>
+</div>
+<div id="chart-family-panel" class="chart-panel">
+<h2 class="chart-panel-title">Family / subfamily distribution</h2>
+<div class="chart-canvas-wrap"><canvas id="family-chart"></canvas></div>
+<p id="family-chart-fallback" class="chart-fallback"></p>
+</div>
+</div>
 <form id="filters">
 <label>runtime
 <md-outlined-select id="filter-runtime"></md-outlined-select>
@@ -443,22 +492,6 @@ h1 {
 </label>
 <md-text-button id="clear-filters" type="button">Clear filters</md-text-button>
 </form>
-<div id="charts-row">
-<div id="chart-runtime-panel" class="chart-panel">
-<h2 class="chart-panel-title">Runtime distribution</h2>
-<canvas id="runtime-chart" width="240" height="240"></canvas>
-<p id="runtime-chart-fallback" class="chart-fallback"></p>
-</div>
-<div id="chart-per-day-panel" class="chart-panel">
-<h2 class="chart-panel-title">Tokens &amp; price per day</h2>
-<canvas id="per-day-chart"></canvas>
-<p id="per-day-chart-fallback" class="chart-fallback"></p>
-</div>
-<div id="chart-family-panel" class="chart-panel">
-<h2 class="chart-panel-title">Family / subfamily distribution</h2>
-<canvas id="family-chart"></canvas>
-<p id="family-chart-fallback" class="chart-fallback"></p>
-</div>
 </div>
 <div id="table-scroll" tabindex="-1">
 <table id="usage-table">
@@ -1416,6 +1449,10 @@ function chartJsAvailable() {
       data: {
         labels: agg.labels,
         datasets: [{data: agg.counts, backgroundColor: colors}]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false
       }
     });
   }
