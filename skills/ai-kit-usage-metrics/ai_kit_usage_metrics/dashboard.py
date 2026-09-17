@@ -205,12 +205,24 @@ h1 {
   gap: var(--space-xl);
   margin-bottom: var(--space-lg);
 }
-#chart-runtime-panel {
+/* D-18: shared styling for all three chart panels (runtime doughnut,
+   tokens/price-per-day, family/subfamily distribution) -- generalized from
+   Plan 01's single #chart-runtime-panel rule so a new panel only needs the
+   .chart-panel/.chart-fallback classes, not a bespoke rule. */
+.chart-panel {
   background: var(--md-sys-color-surface-variant);
   padding: var(--space-md);
   border-radius: 4px;
+  flex: 1 1 0;
+  min-width: 0;
 }
-#runtime-chart-fallback {
+.chart-panel-title {
+  font-size: var(--md-sys-typescale-heading-size);
+  font-weight: var(--md-sys-typescale-heading-weight);
+  line-height: var(--md-sys-typescale-heading-line-height);
+  margin: 0 0 var(--space-sm) 0;
+}
+.chart-fallback {
   color: var(--md-sys-color-error);
   font-size: var(--md-sys-typescale-label-size);
   display: none;
@@ -432,9 +444,20 @@ h1 {
 <md-text-button id="clear-filters" type="button">Clear filters</md-text-button>
 </form>
 <div id="charts-row">
-<div id="chart-runtime-panel">
+<div id="chart-runtime-panel" class="chart-panel">
+<h2 class="chart-panel-title">Runtime distribution</h2>
 <canvas id="runtime-chart" width="240" height="240"></canvas>
-<p id="runtime-chart-fallback"></p>
+<p id="runtime-chart-fallback" class="chart-fallback"></p>
+</div>
+<div id="chart-per-day-panel" class="chart-panel">
+<h2 class="chart-panel-title">Tokens &amp; price per day</h2>
+<canvas id="per-day-chart"></canvas>
+<p id="per-day-chart-fallback" class="chart-fallback"></p>
+</div>
+<div id="chart-family-panel" class="chart-panel">
+<h2 class="chart-panel-title">Family / subfamily distribution</h2>
+<canvas id="family-chart"></canvas>
+<p id="family-chart-fallback" class="chart-fallback"></p>
 </div>
 </div>
 <div id="table-scroll" tabindex="-1">
@@ -840,6 +863,127 @@ function stepEntries(rowsByRawRef, row) {
     };
   });
 }
+
+// D-18 item 2 / SD-7: family/subfamily distribution bar cap -- a real
+// module-level constant (not a phrase) inside the marker block so the
+// node-executed test harness sees it too.
+var CHART_FAMILY_LIMIT = 15;
+
+// D-18 item 1 / SD-5: per-day token totals broken down by runtime, plus one
+// overall price total -- both deduplicated on the shared turnKey identity
+// BEFORE summing, per refined_store.py's module docstring. Summing first and
+// deduplicating afterwards is the exact regression this function exists to
+// prevent: it would inflate every date's totals by the step count of every
+// compound command sharing that date. A null tokens/price/date value is
+// skipped rather than coerced to zero; a genuine zero price is still summed.
+function aggregateTokensAndPriceByDay(rows) {
+  var dateOrder = [];
+  var seenKeysByDate = {};
+  var priceByDate = {};
+  var runtimeSeen = {};
+  var runtimeOrder = [];
+  var tokensByDateRuntime = {};
+  rows.forEach(function (row) {
+    var date = row.date;
+    if (date == null || date === "") return;
+    if (!Object.prototype.hasOwnProperty.call(tokensByDateRuntime, date)) {
+      tokensByDateRuntime[date] = {};
+      priceByDate[date] = null;
+      dateOrder.push(date);
+    }
+    var key = turnKey(row);
+    if (!seenKeysByDate[date]) seenKeysByDate[date] = {};
+    if (seenKeysByDate[date][key]) return;
+    seenKeysByDate[date][key] = true;
+    var runtime = row.runtime;
+    if (runtime != null && runtime !== "") {
+      if (!Object.prototype.hasOwnProperty.call(runtimeSeen, runtime)) {
+        runtimeSeen[runtime] = true;
+        runtimeOrder.push(runtime);
+      }
+      var tokens = null;
+      if (row.tokens_input != null) {
+        tokens = (tokens == null ? 0 : tokens) + Number(row.tokens_input);
+      }
+      if (row.tokens_output != null) {
+        tokens = (tokens == null ? 0 : tokens) + Number(row.tokens_output);
+      }
+      if (tokens != null) {
+        var byRuntime = tokensByDateRuntime[date];
+        byRuntime[runtime] = (byRuntime[runtime] == null ? 0 : byRuntime[runtime]) + tokens;
+      }
+    }
+    if (row.price != null) {
+      priceByDate[date] = (priceByDate[date] == null ? 0 : priceByDate[date]) + Number(row.price);
+    }
+  });
+  dateOrder.sort();
+  runtimeOrder.sort();
+  return {
+    dates: dateOrder,
+    runtimes: runtimeOrder,
+    tokensByRuntime: runtimeOrder.map(function (rt) {
+      return dateOrder.map(function (d) {
+        var v = tokensByDateRuntime[d][rt];
+        return v == null ? 0 : v;
+      });
+    }),
+    price: dateOrder.map(function (d) { return priceByDate[d]; })
+  };
+}
+
+// D-18 item 2 / SD-7: family/subfamily distribution, ranked by row count.
+// This chart counts ROWS, not tokens or price -- every decomposed step is a
+// genuinely separate command invocation -- so it deliberately does NOT
+// deduplicate on turnKey. Do not "fix" that in later.
+function aggregateFamilyDistribution(rows) {
+  var counts = {};
+  var order = [];
+  rows.forEach(function (row) {
+    if (row.family == null || row.family === "") return;
+    var label = row.subfamily ? row.family + " " + row.subfamily : row.family;
+    if (!Object.prototype.hasOwnProperty.call(counts, label)) {
+      counts[label] = 0;
+      order.push(label);
+    }
+    counts[label] += 1;
+  });
+  // Count descending; ties broken by the label string ascending using a
+  // plain "<" comparison (never localeCompare), so node and the browser
+  // agree on the same order.
+  order.sort(function (a, b) {
+    if (counts[a] !== counts[b]) return counts[b] - counts[a];
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  });
+  var top = order.slice(0, CHART_FAMILY_LIMIT);
+  var rest = order.slice(CHART_FAMILY_LIMIT);
+  var labels = top.slice();
+  var values = top.map(function (label) { return counts[label]; });
+  if (rest.length > 0) {
+    var remainderSum = rest.reduce(function (sum, label) { return sum + counts[label]; }, 0);
+    labels.push("other (" + rest.length + " more)");
+    values.push(remainderSum);
+  }
+  return {labels: labels, counts: values};
+}
+
+// SD-6: DOM-free debounce factory so the #filters `input` listener (text and
+// number fields) does not run a full-dataset filter+chart recompute on every
+// keystroke. `change` events (selects, date inputs, the checkbox) stay
+// immediate -- only `input` is debounced, at a fixed 150ms delay.
+function debounce(fn, delay) {
+  var timer = null;
+  return function () {
+    var args = arguments;
+    var context = this;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(function () {
+      fn.apply(context, args);
+    }, delay);
+  };
+}
 /* PURE_FUNCTIONS_END */
 
 var CHART_PALETTE_LIGHT = ["#6750A4", "#7D5260", "#625B71", "#79747E", "#1C1B1F"];
@@ -866,6 +1010,13 @@ function chartJsAvailable() {
   var currentRows = [];
   var currentBuilder = flatRowBuilder;
   var runtimeChart = null;
+  var perDayChart = null;
+  var familyChart = null;
+  // The filtered (but not yet sorted/grouped) row set from the most recent
+  // applyFilters() call -- applySort() re-sorts THIS set rather than
+  // re-running filterRows(), matching SD-6's "re-sorts the already-filtered
+  // row set" wording exactly.
+  var currentFiltered = [];
   // D-14: the element that opened the dialog, restored on close (see the
   // "closed"-event listener registered once at mount, below).
   var dialogTrigger = null;
@@ -965,9 +1116,9 @@ function chartJsAvailable() {
   }
 
   function clearFilters() {
-    // SD-9: reset every filter-* control, then render() exactly once at the
-    // end. The session-grouping checkbox is deliberately left alone -- it
-    // is a view mode, not a filter.
+    // SD-9: reset every filter-* control, then applyFilters() exactly once
+    // at the end. The session-grouping checkbox is deliberately left alone
+    // -- it is a view mode, not a filter.
     ["filter-runtime", "filter-model", "filter-family", "filter-subfamily"].forEach(
       function (id) {
         document.getElementById(id).value = "all";
@@ -985,7 +1136,7 @@ function chartJsAvailable() {
     ["filter-date-from", "filter-date-to"].forEach(function (id) {
       document.getElementById(id).value = "";
     });
-    render();
+    applyFilters();
   }
 
   function td(text) {
@@ -1206,9 +1357,10 @@ function chartJsAvailable() {
 
   function paint() {
     // The ONE function in this file that writes rows to <tbody>. Both flat
-    // and grouped modes route through it -- render() only ever changes which
-    // row array (currentRows) and which cell-builder (currentBuilder) it
-    // reads, never adds a second append loop.
+    // and grouped modes route through it -- buildCurrentRowsFromFiltered()
+    // only ever changes which row array (currentRows) and which
+    // cell-builder (currentBuilder) it reads, never adds a second append
+    // loop.
     if (!virtualizer) return;
     tbody.style.height = virtualizer.getTotalSize() + "px";
     tbody.textContent = "";
@@ -1268,20 +1420,145 @@ function chartJsAvailable() {
     });
   }
 
-  function render() {
+  // D-18 item 1 / SD-5: Chart.js mixed chart -- one stacked bar dataset per
+  // runtime on the left "y" axis (deduplicated token totals) plus one line
+  // dataset on the right "y1" axis (deduplicated daily price total, Accent
+  // colour). Both required measures are rendered, never one tooltip-only.
+  function buildPerDayChart(rows) {
+    var canvas = document.getElementById("per-day-chart");
+    var fallback = document.getElementById("per-day-chart-fallback");
+    if (!chartJsAvailable()) {
+      if (canvas) canvas.style.display = "none";
+      if (fallback) {
+        fallback.textContent = "Chart unavailable \\u2014 chart.js failed to load";
+        fallback.style.display = "block";
+      }
+      return;
+    }
+    var agg = aggregateTokensAndPriceByDay(rows);
+    var noData = agg.dates.length === 0;
+    if (canvas) canvas.style.display = noData ? "none" : "";
+    if (fallback) {
+      fallback.textContent = noData ? "No data for this range" : "";
+      fallback.style.display = noData ? "block" : "none";
+    }
+    if (noData) return;
+    var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var palette = dark ? CHART_PALETTE_DARK : CHART_PALETTE_LIGHT;
+    var barDatasets = agg.runtimes.map(function (rt, i) {
+      return {
+        type: "bar",
+        label: rt,
+        data: agg.tokensByRuntime[i],
+        backgroundColor: palette[i % 5],
+        stack: "tokens",
+        yAxisID: "y"
+      };
+    });
+    // Accent role (--md-sys-color-primary) reserved for exactly this line --
+    // palette[0] is that same colour in both light and dark modes.
+    var lineDataset = {
+      type: "line",
+      label: "price",
+      data: agg.price,
+      borderColor: palette[0],
+      yAxisID: "y1"
+    };
+    var datasets = barDatasets.concat([lineDataset]);
+    if (perDayChart) {
+      perDayChart.data.labels = agg.dates;
+      perDayChart.data.datasets = datasets;
+      perDayChart.update("none");
+      return;
+    }
+    perDayChart = new Chart(canvas, {
+      type: "bar",
+      data: {labels: agg.dates, datasets: datasets},
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {stacked: true},
+          y: {
+            type: "linear",
+            position: "left",
+            stacked: true,
+            title: {display: true, text: "tokens"}
+          },
+          y1: {
+            type: "linear",
+            position: "right",
+            grid: {drawOnChartArea: false},
+            title: {display: true, text: "price"}
+          }
+        }
+      }
+    });
+  }
+
+  // D-18 item 2 / SD-7: capped, deterministically-ordered horizontal bar
+  // chart over aggregateFamilyDistribution's row-count ranking.
+  function buildFamilyDistributionChart(rows) {
+    var canvas = document.getElementById("family-chart");
+    var fallback = document.getElementById("family-chart-fallback");
+    if (!chartJsAvailable()) {
+      if (canvas) canvas.style.display = "none";
+      if (fallback) {
+        fallback.textContent = "Chart unavailable \\u2014 chart.js failed to load";
+        fallback.style.display = "block";
+      }
+      return;
+    }
+    var agg = aggregateFamilyDistribution(rows);
+    var noData = agg.labels.length === 0;
+    if (canvas) canvas.style.display = noData ? "none" : "";
+    if (fallback) {
+      fallback.textContent = noData ? "No data for this range" : "";
+      fallback.style.display = noData ? "block" : "none";
+    }
+    if (noData) return;
+    var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var palette = dark ? CHART_PALETTE_DARK : CHART_PALETTE_LIGHT;
+    var colors = agg.labels.map(function (_, i) { return palette[i % 5]; });
+    if (familyChart) {
+      familyChart.data.labels = agg.labels;
+      familyChart.data.datasets[0].data = agg.counts;
+      familyChart.data.datasets[0].backgroundColor = colors;
+      familyChart.update("none");
+      return;
+    }
+    familyChart = new Chart(canvas, {
+      type: "bar",
+      data: {labels: agg.labels, datasets: [{data: agg.counts, backgroundColor: colors}]},
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false
+      }
+    });
+  }
+
+  // SD-6: the sole entry point that recomputes currentRows from the current
+  // filter criteria and the current sort/grouping -- shared by applyFilters
+  // (which recomputes currentFiltered too) and applySort (which re-sorts the
+  // ALREADY-filtered set without re-running filterRows).
+  function buildCurrentRowsFromFiltered() {
     var grouped = document.getElementById("group-by-session").checked;
-    var filtered = filterRows(data, readCriteria());
     if (grouped) {
       currentRows = sortRows(
-        groupBySession(filtered),
+        groupBySession(currentFiltered),
         sortKey === "session_id" ? "session_id" : sortKey,
         sortDir
       );
       currentBuilder = groupedRowBuilder;
     } else {
-      currentRows = sortRows(filtered, sortKey, sortDir);
+      currentRows = sortRows(currentFiltered, sortKey, sortDir);
       currentBuilder = flatRowBuilder;
     }
+  }
+
+  function repaintTable() {
+    var grouped = document.getElementById("group-by-session").checked;
     // D-23: swap the visible <thead> row alongside the render-mode toggle so
     // headers always match the cell count/meaning currentBuilder emits.
     if (theadFlat) theadFlat.style.display = grouped ? "none" : "flex";
@@ -1298,7 +1575,26 @@ function chartJsAvailable() {
       virtualizer.measure();
     }
     paint();
-    buildRuntimeChart(filtered);
+  }
+
+  // SD-6: applyFilters() recomputes the filtered row set, repaints the
+  // table, AND recomputes all three chart instances IN PLACE from that same
+  // filtered set. applySort() re-sorts the already-filtered row set and
+  // repaints the table ONLY -- sorting cannot change any chart's contents,
+  // so its body must never call a chart-update function. The <th> click
+  // listener below calls applySort(), never applyFilters().
+  function applyFilters() {
+    currentFiltered = filterRows(data, readCriteria());
+    buildCurrentRowsFromFiltered();
+    repaintTable();
+    buildRuntimeChart(currentFiltered);
+    buildPerDayChart(currentFiltered);
+    buildFamilyDistributionChart(currentFiltered);
+  }
+
+  function applySort() {
+    buildCurrentRowsFromFiltered();
+    repaintTable();
   }
 
   document.querySelectorAll("#usage-table th").forEach(function (th) {
@@ -1310,12 +1606,16 @@ function chartJsAvailable() {
         sortKey = key;
         sortDir = "asc";
       }
-      render();
+      applySort();
     });
   });
 
-  filtersForm.addEventListener("input", render);
-  filtersForm.addEventListener("change", render);
+  // SD-6: `change` (selects, date inputs, the group-by-session checkbox)
+  // stays immediate; `input` (text/number fields) is debounced at a fixed
+  // 150ms so a keystroke does not run three full-dataset aggregations.
+  var debouncedApplyFilters = debounce(applyFilters, 150);
+  filtersForm.addEventListener("input", debouncedApplyFilters);
+  filtersForm.addEventListener("change", applyFilters);
   document.getElementById("clear-filters").addEventListener("click", function (event) {
     event.preventDefault();
     clearFilters();
@@ -1335,7 +1635,7 @@ function chartJsAvailable() {
     fillSelect("filter-family", distinctValues("family"));
     fillSelect("filter-subfamily", distinctValues("subfamily"));
 
-    render();
+    applyFilters();
     if (window.__virtualCore) {
       mountVirtualizer();
     } else {

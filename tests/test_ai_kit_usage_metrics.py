@@ -3220,6 +3220,187 @@ class TestDashboardFull(unittest.TestCase):
         self.assertIn('slot = "headline"', body)
         self.assertNotIn('createElement("option")', body)
 
+    def test_three_chart_canvases_and_pinned_chartjs(self):
+        html, _out = self._seed_and_generate()
+        self.assertIn('id="runtime-chart"', html)
+        self.assertIn('id="per-day-chart"', html)
+        self.assertIn('id="family-chart"', html)
+        self.assertIn("chart.js@4.5.1", html)
+        self.assertEqual(len(re.findall(r"<canvas\b", html)), 3)
+
+    def test_per_day_aggregation_dedups_before_summing_via_node(self):
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        pure = _extract_pure_js(html)
+        rows = []
+        # Three sibling rows sharing raw_ref r1/turn_id t1 on one date -- must
+        # contribute their turn-level figures ONCE, not three times.
+        for step in range(3):
+            rows.append(
+                {
+                    "raw_ref": "r1",
+                    "session_id": "s1",
+                    "turn_id": "t1",
+                    "date": "2026-02-01",
+                    "runtime": "claude",
+                    "step_index": step,
+                    "tokens_input": 100,
+                    "tokens_output": 10,
+                    "price": 0.5,
+                }
+            )
+        # Two sibling rows sharing raw_ref r2, NULL turn_id -- dedup on
+        # (session_id, raw_ref) instead.
+        for step in range(2):
+            rows.append(
+                {
+                    "raw_ref": "r2",
+                    "session_id": "s1",
+                    "turn_id": None,
+                    "date": "2026-02-01",
+                    "runtime": "claude",
+                    "step_index": step,
+                    "tokens_input": 50,
+                    "tokens_output": 5,
+                    "price": 0.25,
+                }
+            )
+        # A single row, raw_ref r3, NULL turn_id -- its own distinct key.
+        rows.append(
+            {
+                "raw_ref": "r3",
+                "session_id": "s1",
+                "turn_id": None,
+                "date": "2026-02-01",
+                "runtime": "claude",
+                "step_index": 0,
+                "tokens_input": 7,
+                "tokens_output": 1,
+                "price": 0.1,
+            }
+        )
+        # A null-price row contributes nothing; a genuine zero-price row
+        # still contributes a zero -- these must be distinguishable.
+        rows.append(
+            {
+                "raw_ref": "r4",
+                "session_id": "s2",
+                "turn_id": "t4",
+                "date": "2026-02-02",
+                "runtime": "claude",
+                "step_index": 0,
+                "tokens_input": 10,
+                "tokens_output": 0,
+                "price": None,
+            }
+        )
+        rows.append(
+            {
+                "raw_ref": "r5",
+                "session_id": "s2",
+                "turn_id": "t5",
+                "date": "2026-02-03",
+                "runtime": "claude",
+                "step_index": 0,
+                "tokens_input": 10,
+                "tokens_output": 0,
+                "price": 0,
+            }
+        )
+        # A null-date row is omitted from the per-day chart entirely.
+        rows.append(
+            {
+                "raw_ref": "r6",
+                "session_id": "s3",
+                "turn_id": "t6",
+                "date": None,
+                "runtime": "claude",
+                "step_index": 0,
+                "tokens_input": 999,
+                "tokens_output": 999,
+                "price": 9,
+            }
+        )
+        fixture = os.path.join(self.root, "per_day_rows.json")
+        with open(fixture, "w", encoding="utf-8") as handle:
+            json.dump(rows, handle)
+        wrapper = os.path.join(self.root, "per_day_check.js")
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconst rows = require("
+                + json.dumps(fixture)
+                + ");\n"
+                + "console.log(JSON.stringify(aggregateTokensAndPriceByDay(rows)));\n"
+            )
+        proc = subprocess.run(["node", wrapper], capture_output=True, text=True, check=True)
+        agg = json.loads(proc.stdout)
+        self.assertEqual(agg["dates"], ["2026-02-01", "2026-02-02", "2026-02-03"])
+        idx1 = agg["dates"].index("2026-02-01")
+        total_tokens = sum(series[idx1] for series in agg["tokensByRuntime"])
+        self.assertEqual(total_tokens, 173)
+        self.assertAlmostEqual(agg["price"][idx1], 0.85)
+        # The no-dedup regression: naively summing all 6 raw rows directly.
+        self.assertNotEqual(total_tokens, 448)
+        idx2 = agg["dates"].index("2026-02-02")
+        self.assertIsNone(agg["price"][idx2])
+        idx3 = agg["dates"].index("2026-02-03")
+        self.assertEqual(agg["price"][idx3], 0)
+        # r6's null date never introduces a fourth date.
+        self.assertEqual(len(agg["dates"]), 3)
+
+    def test_family_distribution_cap_and_tie_order_via_node(self):
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        pure = _extract_pure_js(html)
+        labels_counts = [(f"fam{i:02d}", 20 - i) for i in range(14)]
+        # A deliberate count tie straddling the 15/16 cutoff: famTieA must
+        # win rank 15 (ascending label), famTieB falls into the remainder.
+        labels_counts += [("famTieA", 6), ("famTieB", 6), ("famRest", 5)]
+        rows = []
+        for label, count in labels_counts:
+            for _ in range(count):
+                rows.append({"family": label, "subfamily": ""})
+        fixture = os.path.join(self.root, "family_dist_rows.json")
+        with open(fixture, "w", encoding="utf-8") as handle:
+            json.dump(rows, handle)
+        wrapper = os.path.join(self.root, "family_dist_check.js")
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconst rows = require("
+                + json.dumps(fixture)
+                + ");\n"
+                + "console.log(JSON.stringify(aggregateFamilyDistribution(rows)));\n"
+            )
+        proc = subprocess.run(["node", wrapper], capture_output=True, text=True, check=True)
+        agg = json.loads(proc.stdout)
+        self.assertEqual(len(agg["labels"]), 16)
+        self.assertEqual(agg["labels"][14], "famTieA")
+        self.assertNotIn("famTieB", agg["labels"][:15])
+        self.assertEqual(agg["labels"][15], "other (2 more)")
+        self.assertEqual(agg["counts"][15], 11)
+
+    def test_sort_event_does_not_recompute_charts(self):
+        html, _out = self._seed_and_generate()
+        self.assertIn('id="per-day-chart"', html)
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            source = handle.read()
+        th_click_block = _extract_block_after(
+            source, 'th.addEventListener("click", function () {'
+        )
+        self.assertIn("applySort", th_click_block)
+        self.assertNotIn("applyFilters", th_click_block)
+        apply_sort_body = _extract_js_function_body(source, "applySort")
+        for forbidden in ("buildRuntimeChart", "buildPerDayChart", "buildFamilyDistributionChart"):
+            self.assertNotIn(forbidden, apply_sort_body)
+        self.assertIn(
+            'filtersForm.addEventListener("input", debouncedApplyFilters)', source
+        )
+        self.assertIn("debounce(applyFilters, 150)", source)
+
     def test_column_order_matches_d12(self):
         html, _out = self._seed_and_generate()
         expected_order = [
