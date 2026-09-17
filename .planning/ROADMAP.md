@@ -483,7 +483,7 @@ never reaching the refiner at all.
 runs on `15.1-CONTEXT.md`'s decision IDs D-01 through D-19, every one of which is covered
 by at least one plan.
 **Depends on:** Phase 15
-**Plans:** 2/5 plans executed
+**Plans:** 3/5 plans executed
 
 Plans:
 **Wave 1**
@@ -496,7 +496,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 15.1-03-PLAN.md — Filter bar and column redesign: runtime and subfamily axes, unified from/to date range, wrapped two-line command cell, null-versus-zero rendering
+- [x] 15.1-03-PLAN.md — Filter bar and column redesign: runtime and subfamily axes, unified from/to date range, wrapped two-line command cell, null-versus-zero rendering
 
 **Wave 4** *(blocked on Wave 3 completion)*
 

@@ -3,18 +3,18 @@ gsd_state_version: "1.0"
 milestone: v1.2
 current_phase: "15.1"
 current_phase_name: usage-metrics-dashboard-ux-perf-overhaul-dashboard-launch-de
-current_plan: 3
+current_plan: 4
 status: executing
-stopped_at: Completed 15.1-02-PLAN.md
-last_updated: "2026-09-17T00:10:54.444Z"
+stopped_at: Completed 15.1-03-PLAN.md
+last_updated: "2026-09-17T00:28:48.651Z"
 last_activity: 2026-09-16
 last_activity_desc: Phase 15 complete
-state_head: 1f0fa44ecc341edd01c15c4f5cbbbadff2d5bbae
+state_head: 83ce3b580318c76d625dc8491fba2ed5750ceb15
 progress:
   total_phases: 18
   completed_phases: 16
   total_plans: 36
-  completed_plans: 33
+  completed_plans: 34
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-10)
 ## Current Position
 
 Phase: 15.1 (usage-metrics-dashboard-ux-perf-overhaul-dashboard-launch-de) — IN PROGRESS
-Current Plan: 3
+Current Plan: 4
 Total Plans in Phase: 5
 Status: Ready to execute
 Last activity: 2026-09-16 — Phase 15.1 Plan 01 complete
@@ -114,6 +114,7 @@ Last activity: 2026-09-16 — Phase 15.1 Plan 01 complete
 | Phase 15 P02 | ~30min | 3 tasks | 6 files |
 | Phase 15.1 P01 | ~35min | 3 tasks | 5 files |
 | Phase 15.1 P02 | 55min | 3 tasks | 3 files |
+| Phase 15.1 P03 | 75min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -209,6 +210,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 15.1]: Codex workdir seeded once per record above the step loop into the shared CwdState (not a per-step resolver) so compound commands like 'cd src && pwd' see /repo then /repo/src correctly
 - [Phase 15.1]: Codex tools.* allow-list grounded by full real-store enumeration (3,952 custom_tool_call records): only exec_command is a shell-exec tool; no other observed name has a cmd-shaped argument
 - [Phase 15.1]: subfamily_of() deliberately not wired into _build_row and adds no refined_commands column -- subfamily is derived at dashboard render time to avoid a three-place schema-change hazard
+- [Phase 15.1]: Phase 15.1 Plan 03: D-12 filter bar/column rebuild with runtime+subfamily axes, unified date range, and D-16 null-vs-zero rendering implemented per the cross-AI-reviewed plan verbatim. — date column placement resolves a gap in D-12's own wording (planner decision, not a user decision); the date-range wrapper span was renamed off the filter-* id prefix to avoid false-matching the clear-filters coverage test.
 
 ### Pending Todos
 
@@ -321,6 +323,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-17T00:10:54.400Z
-Stopped at: Completed 15.1-02-PLAN.md
+Last session: 2026-09-17T00:28:48.609Z
+Stopped at: Completed 15.1-03-PLAN.md
 Resume file: None
