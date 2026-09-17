@@ -483,7 +483,7 @@ never reaching the refiner at all.
 runs on `15.1-CONTEXT.md`'s decision IDs D-01 through D-19, every one of which is covered
 by at least one plan.
 **Depends on:** Phase 15
-**Plans:** 1/5 plans executed
+**Plans:** 2/5 plans executed
 
 Plans:
 **Wave 1**
@@ -492,7 +492,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 15.1-02-PLAN.md — Remaining refiner fixes: command-shape family guard, cursor timestamp recovery, codex custom_tool_call branch plus its workdir resolver, canonical `subfamily_of()` with option arity
+- [x] 15.1-02-PLAN.md — Remaining refiner fixes: command-shape family guard, cursor timestamp recovery, codex custom_tool_call branch plus its workdir resolver, canonical `subfamily_of()` with option arity
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
