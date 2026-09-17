@@ -1,10 +1,30 @@
 """SQLite refined-commands store (full Wave-1 schema, UPSERT writes).
 
 Token/price figures on `refined_commands` are turn-level values duplicated
-onto every step-row sharing a `(session_id, turn_id)`. Consumers computing
-a session or date total MUST `SELECT DISTINCT session_id, turn_id,
-tokens_input, tokens_output, price` before summing — never a raw per-row
-`SUM`.
+onto every step-row of one decomposed command. Consumers computing a session
+or date total MUST deduplicate before summing, using this two-branch
+identity:
+
+- when `turn_id` is non-null: dedup on `(session_id, turn_id)`.
+- when `turn_id` is null (e.g. rtk, which has no turn concept at all — see
+  the 29,437 null-turn rtk rows this fallback exists for): dedup on
+  `(session_id, raw_ref)`, NOT `(session_id, raw_ref, step_index)`. Every
+  step of one decomposed command shares one `raw_ref` and the SAME
+  turn-level `tokens_input`/`tokens_output`/`price`, so keying on the step
+  as well would count each sibling's duplicated figures separately and
+  multiply the total by the step count.
+
+A plain `SELECT DISTINCT session_id, turn_id, tokens_input, tokens_output,
+price` is NOT sufficient on its own: SQLite's `DISTINCT` treats two NULL
+`turn_id` values as equal, so every null-turn row in a session collapses to
+one row and silently under-sums every other null-turn row's figures — the
+null-turn fallback above exists specifically to avoid that collapse.
+
+`turnKey()` in `dashboard.py`'s embedded JavaScript is the canonical
+implementation of this identity; `groupBySession()` there calls it rather
+than constructing its own key. Any other consumer of this schema (a new
+report, a chart aggregation) MUST reuse or replicate that same two-branch
+rule, never a bare per-row `SUM` or a single-branch `DISTINCT`.
 """
 
 from __future__ import annotations

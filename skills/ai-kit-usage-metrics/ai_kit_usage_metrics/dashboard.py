@@ -641,6 +641,27 @@ function sortRows(rows, key, direction) {
   });
 }
 
+// SD-4: the single shared turn-level dedup identity (Plan 05's per-day chart
+// aggregation reuses this function rather than defining a second one). Token
+// and price figures are turn-level values duplicated onto every step-row
+// sharing a (session_id, turn_id) -- when a turn id exists, that pair IS the
+// identity. codex/rtk rows with no turn concept at all fall back to
+// (session_id, raw_ref): every step of one decomposed command shares one
+// raw_ref, so the fallback collapses the siblings' duplicated figures to one
+// contribution WITHOUT collapsing two genuinely different null-turn commands
+// in the same session (their raw_ref differs). step_index is deliberately
+// NEVER part of either branch -- including it would treat each sibling step
+// as a unique turn and inflate the sum by the step count, the exact
+// over-count the Round-1 cross-AI review identified in the previous plan.
+// The "t:"/"r:" markers keep the two key namespaces from ever colliding.
+function turnKey(row) {
+  var sid = String(row.session_id);
+  if (row.turn_id != null) {
+    return sid + "\\0t:" + String(row.turn_id);
+  }
+  return sid + "\\0r:" + String(row.raw_ref);
+}
+
 function groupBySession(rows) {
   var counts = {};
   var order = [];
@@ -656,7 +677,7 @@ function groupBySession(rows) {
   var sums = {};
   rows.forEach(function (row) {
     var sid = row.session_id;
-    var key = String(sid) + "\\0" + String(row.turn_id);
+    var key = turnKey(row);
     if (seen[key]) return;
     seen[key] = true;
     if (!sums[sid]) {

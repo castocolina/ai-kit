@@ -1721,6 +1721,23 @@ class TestRefinedStore(unittest.TestCase):
         self.assertEqual(rows[0][0], "ls -la")
         self.assertEqual(rows[0][1], "files")
 
+    def test_refined_store_docstring_states_the_two_branch_dedup_rule(self):
+        # This is the gate that keeps refined_store.py's own canonical
+        # dedup-identity statement from drifting away from turnKey() again --
+        # the Round-2 cross-AI review finding that motivated this task.
+        doc = " ".join((refined_store.__doc__ or "").split())
+        self.assertIn("turn_id", doc)
+        self.assertIn("raw_ref", doc)
+        self.assertIn("turnKey", doc)
+        self.assertIn("step_index", doc)
+        self.assertTrue(
+            "SELECT DISTINCT session_id, turn_id, tokens_input" not in doc
+            or "NOT sufficient" in doc
+            or "not sufficient" in doc,
+            "the obsolete pair-only SELECT DISTINCT prescription is still "
+            "stated as the rule, unretracted",
+        )
+
 
 class TestRefinerFull(unittest.TestCase):
     def test_claude_cd_and_grep_two_steps_with_cwd(self):
@@ -2922,6 +2939,131 @@ class TestDashboardFull(unittest.TestCase):
         self.assertEqual(session["tokens_input"], 300)
         self.assertEqual(session["tokens_output"], 100)
         self.assertEqual(session["price"], 0.05)
+
+    def test_turn_key_and_group_by_session_null_turn_via_node(self):
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        pure = _extract_pure_js(html)
+        rows = [
+            # (a) three sibling null-turn rows sharing raw_ref r1 -- must
+            # contribute their shared figures exactly ONCE, not 3x.
+            {
+                "session_id": "sess-null-mix",
+                "turn_id": None,
+                "raw_ref": "r1",
+                "step_index": 0,
+                "tokens_input": 100,
+                "tokens_output": 20,
+                "price": 0.01,
+            },
+            {
+                "session_id": "sess-null-mix",
+                "turn_id": None,
+                "raw_ref": "r1",
+                "step_index": 1,
+                "tokens_input": 100,
+                "tokens_output": 20,
+                "price": 0.01,
+            },
+            {
+                "session_id": "sess-null-mix",
+                "turn_id": None,
+                "raw_ref": "r1",
+                "step_index": 2,
+                "tokens_input": 100,
+                "tokens_output": 20,
+                "price": 0.01,
+            },
+            # (b) two sibling null-turn rows sharing raw_ref r2 -- a DIFFERENT
+            # command, must contribute its own figures once, separately.
+            {
+                "session_id": "sess-null-mix",
+                "turn_id": None,
+                "raw_ref": "r2",
+                "step_index": 0,
+                "tokens_input": 50,
+                "tokens_output": 10,
+                "price": 0.005,
+            },
+            {
+                "session_id": "sess-null-mix",
+                "turn_id": None,
+                "raw_ref": "r2",
+                "step_index": 1,
+                "tokens_input": 50,
+                "tokens_output": 10,
+                "price": 0.005,
+            },
+            # (c) one null-turn row, its own raw_ref, own figures.
+            {
+                "session_id": "sess-null-mix",
+                "turn_id": None,
+                "raw_ref": "r3",
+                "step_index": 0,
+                "tokens_input": 7,
+                "tokens_output": 3,
+                "price": 0.002,
+            },
+            # A second, independent session covering the ALREADY-correct
+            # non-null-turn compound case -- proves this change did not
+            # regress it (test_group_by_session_dedups_turn_tokens above is
+            # left byte-for-byte unchanged as the primary regression guard).
+            {
+                "session_id": "sess-turn-ok",
+                "turn_id": "t1",
+                "raw_ref": "r4",
+                "step_index": 0,
+                "tokens_input": 40,
+                "tokens_output": 5,
+                "price": 0.002,
+            },
+            {
+                "session_id": "sess-turn-ok",
+                "turn_id": "t1",
+                "raw_ref": "r4",
+                "step_index": 1,
+                "tokens_input": 40,
+                "tokens_output": 5,
+                "price": 0.002,
+            },
+        ]
+        fixture = os.path.join(self.root, "turn_key_rows.json")
+        with open(fixture, "w", encoding="utf-8") as handle:
+            json.dump(rows, handle)
+        wrapper = os.path.join(self.root, "turn_key_check.js")
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconst rows = require("
+                + json.dumps(fixture)
+                + ");\n"
+                "const grouped = groupBySession(rows);\n"
+                "console.log(JSON.stringify(grouped));\n"
+            )
+        proc = subprocess.run(
+            ["node", wrapper], capture_output=True, text=True, check=True
+        )
+        grouped = {item["session_id"]: item for item in json.loads(proc.stdout)}
+
+        null_mix = grouped["sess-null-mix"]
+        self.assertEqual(null_mix["count"], 6)
+        self.assertEqual(null_mix["tokens_input"], 157)
+        self.assertEqual(null_mix["tokens_output"], 33)
+        self.assertAlmostEqual(null_mix["price"], 0.017)
+        # The no-dedup regression: summing all 6 raw rows instead of the 3
+        # distinct raw_refs.
+        self.assertNotEqual(null_mix["tokens_input"], 407)
+        # The old collapse-everything regression: keying only on session_id
+        # (or session_id + turn_id with turn_id always null) would have kept
+        # just the first row's figures.
+        self.assertNotEqual(null_mix["tokens_input"], 100)
+
+        turn_ok = grouped["sess-turn-ok"]
+        self.assertEqual(turn_ok["count"], 2)
+        self.assertEqual(turn_ok["tokens_input"], 40)
+        self.assertEqual(turn_ok["tokens_output"], 5)
+        self.assertAlmostEqual(turn_ok["price"], 0.002)
 
     def test_subfamily_js_matches_spec_table_and_python(self):
         # Round-1 review finding: a parity test that only proves the JS and
