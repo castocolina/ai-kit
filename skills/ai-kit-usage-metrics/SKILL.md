@@ -116,9 +116,20 @@ queries `refined.db` only.
 - `exec_duration_ms` — execution duration when the source reports one
 
 Token/price figures on a compound command are turn-level values duplicated
-onto every step sharing `(session_id, turn_id)`. Session totals must
-dedup on that pair before summing; invocation counts still count every
-matching row.
+onto every step-row of the decomposed command. Any consumer computing a
+session or date total (including the dashboard's grouped view and its
+per-day chart) MUST deduplicate first, using the same two-branch identity
+`refined_store.py`'s module docstring states: dedup on `(session_id,
+turn_id)` when `turn_id` is non-null; dedup on `(session_id, raw_ref)` —
+never `(session_id, raw_ref, step_index)` — when `turn_id` is null (rtk
+rows have no turn concept at all). A bare `SELECT DISTINCT session_id,
+turn_id, tokens_input, tokens_output, price` is NOT sufficient on its
+own: SQLite's `DISTINCT` treats two NULL `turn_id` values as equal, so
+every null-turn row in a session silently collapses to one row and
+under-sums every other null-turn row's figures — the null-turn fallback
+above exists specifically to avoid that collapse. Invocation counts still
+count every matching row (no dedup needed there — every decomposed step is
+a genuinely separate command invocation).
 
 ## `command_shape` limitation
 
@@ -141,9 +152,39 @@ community-reverse-engineered, not officially documented. The dashboard
 renders that value in its own column; do not present a Cursor row with
 the same certainty as a Claude Code or opencode row.
 
+A Cursor command record itself carries no timestamp. Its `date` is
+inherited from the most recent preceding timestamped user turn in the
+same session file — never from `captured_at` — so it is accurate to the
+day but not to the minute. A command with no preceding timestamped
+record in its session keeps a NULL `date` rather than borrowing capture
+time; this is honest, not a bug. Cursor rows keep `source_confidence =
+"low"` regardless of whether the inherited date resolved, since the
+inheritance mechanism itself does not raise the row's overall confidence.
+
 `store.db` is excluded: it holds opaque undocumented BLOB rows (`blobs`
 table, `meta` table empty). Support for it is additive future work if
 the format is ever documented.
+
+## Codex support
+
+Codex tool calls are refined from both its legacy `function_call` shape
+and its current `custom_tool_call` wrapper shape. Only `exec_command` is
+recognized as shell-executing inside a `custom_tool_call` — grounded by
+a full enumeration of the real captured store, the only observed
+`tools.*` name whose JSON argument carries a `cmd` key. Every other
+observed name sharing the same wrapper (`apply_patch`, `web__run`,
+`update_plan`, `write_stdin`, `mcp__codegraph__codegraph_explore`,
+`append`, `create_goal`, `update_goal`, `values`) is deliberately NOT
+treated as a command. The working directory is taken from the tool
+call's own `workdir` argument when present, seeded once per record
+before its steps are resolved.
+
+A codex `turn_id` is a token-count-interval proxy, not a true turn
+boundary — several genuinely distinct commands can share one interval,
+so a grouped session/date sum for codex rows is a conservative lower
+bound on the interval's real attribution, not an exact figure. This is a
+documented limitation, not something this pipeline attempts to split
+further (splitting would risk double-counting the interval's tokens).
 
 ## Classification refinement loop
 
@@ -185,16 +226,60 @@ unclassified rather than guessed.
 ## Dashboard
 
 `dashboard` embeds the refined rows as JSON in a static HTML file and
-opens with no server. Filters and sorts cover the 5 MVP axes (date,
-model, family + command-text substring, tokens, price) plus a group-by-
-session toggle. A row with empty `family` but set `inferred_family`
-renders as `{inferred_family} (inferred, {inferred_confidence})`. A row
-with `execution_certain=False` renders a `(conditional)` marker.
+opens with no server, styled with Material Web Components (`@material/web`,
+CDN-loaded) and row-virtualized (`@tanstack/virtual-core`) so the full
+~85k-row real dataset does not freeze the browser. Both the `run` and
+`dashboard` subcommands open the generated file in the default browser
+automatically when they finish — there is no opt-out flag.
 
-The "current month" date preset is computed in the browser from
-`new Date()` when the file is opened, so the same HTML answers that
-preset differently depending on when it is opened. Every other embedded
-value is fixed at generation time.
+The filter bar carries these axes, left to right, in the same order as
+the table's columns: runtime, model, family, subfamily, a command-text
+substring search, a single from/to date range, a token-count range, a
+price range, a group-by-session toggle, and a clear-filters action. A
+single day is expressed by setting both ends of the date range to the
+same date. Clicking clear-filters resets every filter control but
+deliberately does NOT change the group-by-session toggle — that toggle
+is a view mode, not a filter. The table itself is virtualized in both
+flat and grouped modes; only the rows near the viewport are ever
+materialized. A row with empty `family` but set `inferred_family`
+renders as `{inferred_family} (inferred, {inferred_confidence})`. A row
+with `execution_certain=False` renders a `conditional` badge. An unknown
+price or date renders as an em dash (`—`) rather than a blank cell or a
+bare `0` — a price cell also carries a tooltip explaining the model is
+not in the local pricing catalog.
+
+The `command_text` column wraps to a fixed two-line clamp rather than
+truncating to one line; the full untruncated text, a copy-to-clipboard
+button, and — for a step of a compound command — the decomposer's full
+step-by-step breakdown are all available through a detail dialog opened
+by clicking or keyboard-activating the command cell.
+
+Three charts sit above the table, all aggregating from the same embedded
+JSON payload the table itself reads — no second data source: (1) tokens
+and price per day, broken down by runtime, as a stacked bar (tokens, left
+axis) plus a line (price, right axis) so both measures are visible at
+once; (2) the family/subfamily distribution, capped at the 15
+highest-count labels plus one trailing "other (N more)" bar; (3) the
+runtime distribution as a doughnut. Every chart recomputes only when a
+filter changes (immediately for a select/date/checkbox, debounced 150ms
+for a text/number keystroke) — sorting the table never recomputes a
+chart. The two token/price-bearing charts deduplicate on the same
+turn-identity rule described above before summing; the family/subfamily
+distribution counts rows and deliberately does not deduplicate, since
+every decomposed step is a genuinely separate invocation.
+
+## Subfamily
+
+`subfamily` (e.g. `git commit` → family `git`, subfamily `commit`) is a
+display-and-filter axis derived at dashboard render time from
+`command_text`, using the same wrapper/assignment/leading-flag-skip
+rules as `family` plus a per-binary table of flags known to consume a
+value argument (so `git -C /path commit` still resolves to `commit`, not
+`-C`). It is NOT a `refined_commands` column — it does not appear in the
+schema list above and is not queryable from the database directly, only
+derivable from `command_text` the same way the dashboard derives it.
+Like `family`, it is empty for any row whose `command_shape` is not
+`simple`.
 
 ## NEVER
 
@@ -206,9 +291,14 @@ value is fixed at generation time.
   invocation — both are flagged inferences, not decomposer facts.
 - Never treat an `execution_certain=False` (`&&`-gated) step as a
   confirmed run — a preceding `&&` may have short-circuited it.
-- Never sum `tokens_input` / `tokens_output` / `price` per session
-  without deduping on `(session_id, turn_id)` first — those figures are
-  duplicated onto every step of a compound command.
+- Never sum `tokens_input` / `tokens_output` / `price` per session or
+  date without deduping first — `(session_id, turn_id)` when `turn_id`
+  is non-null, `(session_id, raw_ref)` when it is null — those figures
+  are duplicated onto every step of a compound command, and a bare
+  `SELECT DISTINCT` on a nullable `turn_id` silently collapses rows.
+- Never present a grouped/summed codex total with the same certainty as
+  claude/opencode/rtk — codex's `turn_id` is a token-count-interval
+  proxy, so the sum is a conservative lower bound, not an exact figure.
 - Never open Cursor `store.db` — it is opaque undocumented BLOBs, not a
   session log.
 - Never send session data off-machine or wire a hosted-database

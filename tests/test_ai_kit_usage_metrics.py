@@ -4589,6 +4589,33 @@ class TestSkillDocumentation(unittest.TestCase):
         self.assertIn("classify", text)
         self.assertIn("trigger", text)
 
+    def test_skill_md_documents_subfamily_autoopen_and_codex_limits(self):
+        with open(_SKILL_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        # Subfamily axis, and its explicit non-column status.
+        self.assertIn("subfamily", text)
+        self.assertIn("NOT a `refined_commands` column", text)
+        # Automatic browser open, both subcommands, no opt-out.
+        self.assertIn("automatically", text)
+        self.assertIn("no opt-out flag", text)
+        # Current codex custom_tool_call shape + its turn-id limitation.
+        self.assertIn("custom_tool_call", text)
+        self.assertIn("exec_command", text)
+        self.assertIn("token-count-interval proxy", text)
+        # Cursor inherited-timestamp statement.
+        self.assertIn("inherited from the most recent preceding", text)
+        # Turn-identity dedup invariant, including the null-turn fallback.
+        self.assertIn("(session_id, turn_id)", text)
+        self.assertIn("(session_id, raw_ref)", text)
+        # D-13: the removed date-preset paragraph is gone; the Dashboard
+        # section instead names the from/to range control.
+        dashboard_start = text.index("## Dashboard")
+        dashboard_end = text.index("## Subfamily")
+        dashboard_section = text[dashboard_start:dashboard_end]
+        self.assertIn("from/to date range", dashboard_section)
+        self.assertNotIn("current month", dashboard_section.lower())
+        self.assertNotIn("browser-clock", dashboard_section.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
