@@ -1742,7 +1742,119 @@ class TestRefinerFull(unittest.TestCase):
         self.assertEqual(rows[0]["command_text"], command)
         self.assertEqual(rows[0]["command_shape"], "control_flow_script")
         self.assertEqual(rows[0]["step_count"], 1)
-        self.assertEqual(rows[0]["family"], "for")
+        # D-16 family: a control_flow_script row's `family` is gated to empty
+        # rather than the mechanically-derived "for" keyword (Task 1, Defect A).
+        self.assertEqual(rows[0]["family"], "")
+
+    def test_family_empty_for_non_simple_command_shape(self):
+        control_flow_command = 'for f in *.py; do rg pattern "$f"; done'
+        control_flow_rec = capture_claude._envelope(
+            "/a.jsonl",
+            1,
+            _assistant_bash_line(control_flow_command, cwd="/repo"),
+            datetime.now(UTC).isoformat(),
+        )
+        unclassified_command = "echo $(git status)"
+        unclassified_rec = capture_claude._envelope(
+            "/a.jsonl",
+            2,
+            _assistant_bash_line(
+                unclassified_command,
+                cwd="/repo",
+                session_id="sess-unclassified",
+                uuid="turn-uuid-unclassified",
+                tool_id="toolu_unclassified",
+            ),
+            datetime.now(UTC).isoformat(),
+        )
+        simple_rec = capture_claude._envelope(
+            "/a.jsonl",
+            3,
+            _assistant_bash_line(
+                "grep -r TODO .",
+                cwd="/repo",
+                session_id="sess-simple-family",
+                uuid="turn-uuid-simple-family",
+                tool_id="toolu_simple_family",
+            ),
+            datetime.now(UTC).isoformat(),
+        )
+        rows = refine_all([control_flow_rec, unclassified_rec, simple_rec])
+        by_text = {row["command_text"]: row for row in rows}
+        self.assertEqual(by_text[control_flow_command]["command_shape"], "control_flow_script")
+        self.assertEqual(by_text[control_flow_command]["family"], "")
+        self.assertEqual(by_text[unclassified_command]["command_shape"], "unclassified")
+        self.assertEqual(by_text[unclassified_command]["family"], "")
+        self.assertEqual(by_text["grep -r TODO ."]["command_shape"], "simple")
+        self.assertEqual(by_text["grep -r TODO ."]["family"], "grep")
+
+    def test_cursor_timestamp_inherited_from_preceding_user_turn(self):
+        timestamp_line = json.dumps(
+            {
+                "role": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "<timestamp>Monday, Aug 31, 2026, 1:24 AM (UTC-4)</timestamp>",
+                        }
+                    ]
+                },
+            }
+        )
+        shell_line = _cursor_tool_use_line("Shell", {"command": "ls -la"})
+        ts_rec = capture_cursor._envelope(
+            "/transcript.jsonl", 1, timestamp_line, datetime.now(UTC).isoformat(),
+            _CURSOR_SESSION_UUID,
+        )
+        shell_rec = capture_cursor._envelope(
+            "/transcript.jsonl", 2, shell_line, datetime.now(UTC).isoformat(),
+            _CURSOR_SESSION_UUID,
+        )
+        rows = refine_all([ts_rec, shell_rec])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["timestamp"], "2026-08-31T01:24:00-04:00")
+        self.assertEqual(rows[0]["date"], "2026-08-31")
+        self.assertEqual(rows[0]["source_confidence"], "low")
+
+    def test_cursor_command_without_preceding_timestamp_keeps_null_date(self):
+        shell_line = _cursor_tool_use_line("Shell", {"command": "ls -la"})
+        shell_rec = capture_cursor._envelope(
+            "/transcript.jsonl", 1, shell_line, datetime.now(UTC).isoformat(),
+            _CURSOR_SESSION_UUID,
+        )
+        rows = refine_all([shell_rec])
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["timestamp"])
+        self.assertIsNone(rows[0]["date"])
+
+    def test_cursor_unparseable_timestamp_block_yields_null_date(self):
+        timestamp_line = json.dumps(
+            {
+                "role": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "<timestamp>not a real timestamp</timestamp>",
+                        }
+                    ]
+                },
+            }
+        )
+        shell_line = _cursor_tool_use_line("Shell", {"command": "ls -la"})
+        ts_rec = capture_cursor._envelope(
+            "/transcript.jsonl", 1, timestamp_line, datetime.now(UTC).isoformat(),
+            _CURSOR_SESSION_UUID,
+        )
+        shell_rec = capture_cursor._envelope(
+            "/transcript.jsonl", 2, shell_line, datetime.now(UTC).isoformat(),
+            _CURSOR_SESSION_UUID,
+        )
+        rows = refine_all([ts_rec, shell_rec])
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["timestamp"])
+        self.assertIsNone(rows[0]["date"])
 
     def test_opencode_workdir_rebase(self):
         captured_at = datetime.now(UTC).isoformat()

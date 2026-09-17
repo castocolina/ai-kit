@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+import re
+from datetime import UTC, datetime, timedelta, timezone
 
 from ai_kit_usage_metrics.cwd_state import CwdState
 from ai_kit_usage_metrics.decomposer import decompose
@@ -12,6 +13,31 @@ from ai_kit_usage_metrics.pricing import estimate_price
 
 _SENTINEL_MIN = ""
 _STATE_MACHINE_RUNTIMES = frozenset({"opencode", "codex", "cursor"})
+
+# D-19: Codex's post-2026-07-27 tool-call shape wraps a JS-source-string
+# body that awaits a `tools.*(...)` call. Only names whose JSON argument
+# object represents an actual shell invocation belong here -- grounded by
+# a real-store enumeration (see 15.1-02-SUMMARY.md), not guessed. A name
+# such as `web__run` or `apply_patch` is a real observed `tools.*` call in
+# the same wrapper shape that must NOT be treated as a command.
+_CODEX_EXEC_TOOL_NAMES = frozenset({"exec_command"})
+_CODEX_TOOL_CALL_RE = re.compile(
+    r"tools\.(?:" + "|".join(re.escape(name) for name in _CODEX_EXEC_TOOL_NAMES) + r")\("
+)
+# Memoizes _codex_custom_tool_args's one JSON decode per record so its two
+# independent consumers (_codex_custom_tool_cmd, _codex_custom_tool_workdir)
+# each stay a simple str | None call while paying the raw_decode cost once.
+# Cleared at the start of every refine_all() call -- id() can be recycled
+# across GC'd payload dicts within one process, so a memo that outlives its
+# batch could return another record's parsed args.
+_CODEX_CUSTOM_TOOL_ARGS_MEMO: dict[int, dict | None] = {}
+
+# Cursor's reverse-engineered transcript sometimes embeds a localised,
+# human-readable stamp inside a `<timestamp>...</timestamp>` block, e.g.
+# "Monday, Aug 31, 2026, 1:24 AM (UTC-4)" (D-16 date / D-19).
+_CURSOR_TIMESTAMP_BLOCK_RE = re.compile(r"<timestamp>(.*?)</timestamp>", re.S)
+_CURSOR_TIMESTAMP_HEAD_FORMAT = "%A, %b %d, %Y, %I:%M %p"
+_CURSOR_TIMESTAMP_OFFSET_MARKER = " (UTC"
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -142,6 +168,66 @@ def _codex_command(payload: object) -> str | None:
     return _codex_parsed_cmd(inner.get("arguments"))
 
 
+def _codex_custom_tool_args(payload: object) -> dict | None:
+    """Recognise and parse codex's post-2026-07-27 `custom_tool_call` shape.
+
+    `payload` is the raw record's top-level payload (mirroring `_codex_command`'s
+    convention). The inner `input` field is a JavaScript source string -- not a
+    JSON document -- that awaits an allow-listed `tools.*(...)` call whose single
+    argument is a JSON object literal. Locates the call site with a regex, then
+    hands the stdlib decoder the exact position right after the opening
+    parenthesis: `json.JSONDecoder().raw_decode` is "parse one JSON value
+    starting here, tell me where it ended" -- no hand-rolled brace counting, no
+    substring search for a `cmd` key (which would false-match `web__run`'s
+    `search_query` object). The single decode site is memoized per-payload so
+    both `_codex_custom_tool_cmd` and `_codex_custom_tool_workdir` can call this
+    without re-decoding the same body.
+    """
+    if not isinstance(payload, dict):
+        return None
+    memo_key = id(payload)
+    if memo_key in _CODEX_CUSTOM_TOOL_ARGS_MEMO:
+        return _CODEX_CUSTOM_TOOL_ARGS_MEMO[memo_key]
+    result = _parse_codex_custom_tool_args(payload)
+    _CODEX_CUSTOM_TOOL_ARGS_MEMO[memo_key] = result
+    return result
+
+
+def _parse_codex_custom_tool_args(payload: dict) -> dict | None:
+    inner = payload.get("payload")
+    if not isinstance(inner, dict):
+        return None
+    if inner.get("type") != "custom_tool_call" or inner.get("name") != "exec":
+        return None
+    body = inner.get("input")
+    if not isinstance(body, str):
+        return None
+    match = _CODEX_TOOL_CALL_RE.search(body)
+    if match is None:
+        return None
+    try:
+        parsed, _end = json.JSONDecoder().raw_decode(body, match.end())
+    except (ValueError, json.JSONDecodeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _codex_custom_tool_cmd(payload: object) -> str | None:
+    args = _codex_custom_tool_args(payload)
+    if args is None:
+        return None
+    cmd = args.get("cmd")
+    return cmd if isinstance(cmd, str) else None
+
+
+def _codex_custom_tool_workdir(payload: object) -> str | None:
+    args = _codex_custom_tool_args(payload)
+    if args is None:
+        return None
+    workdir = args.get("workdir")
+    return workdir or None
+
+
 def _cursor_command(payload: object) -> str | None:
     if not isinstance(payload, dict):
         return None
@@ -166,7 +252,10 @@ def _command_text(rec: dict) -> str | None:
     if runtime == "opencode":
         return _opencode_command(rec, payload)
     if runtime == "codex":
-        return _codex_command(payload)
+        command = _codex_command(payload)
+        if command is not None:
+            return command
+        return _codex_custom_tool_cmd(payload)
     if runtime == "cursor":
         return _cursor_command(payload)
     return None
@@ -207,6 +296,25 @@ RESOLVE_CWD = {
     "codex": _cwd_state_resolver,
     "cursor": _cwd_state_resolver,
 }
+
+
+def _codex_seed_cwd(rec: dict, cwd_state: CwdState) -> None:
+    """Seed the record's `custom_tool_call` workdir into `cwd_state`, once.
+
+    Called from `_rows_for_record` ABOVE the per-step loop -- never from
+    inside it. `RESOLVE_CWD["codex"]` intentionally stays `_cwd_state_resolver`:
+    with the record-level workdir already applied here, the generic
+    `resolve_for` -> `observe` sequence is correct for every step, including a
+    compound command like `cd src && pwd` under `workdir=/repo`, whose second
+    step must see `/repo/src` -- not get reset back to `/repo`. This function
+    only assigns `cwd_state.current`; it never calls `observe` or `resolve_for`,
+    and it leaves `cwd_state` untouched when no workdir is present (a legacy
+    `function_call` record, or a `custom_tool_call` with no `workdir` key), so
+    the session's accumulated directory carries forward.
+    """
+    workdir = _codex_custom_tool_workdir(rec.get("payload"))
+    if workdir:
+        cwd_state.current = workdir
 
 
 def _seed_opencode_cwd(recs: list[dict]) -> str:
@@ -400,6 +508,105 @@ def _row_timestamp(rec: dict):
     return None
 
 
+def _cursor_timestamp_text(payload: object) -> str | None:
+    """Return the inner text of the first `<timestamp>` block, or None.
+
+    Only the first `type == "text"` content block of
+    `payload["message"]["content"]` is inspected -- matching the shape observed
+    in the real captured store (D-16 date / D-19). Every drill-down is
+    `isinstance`-guarded, matching this module's other extractors.
+    """
+    if not isinstance(payload, dict):
+        return None
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        return None
+    content = message.get("content")
+    if not isinstance(content, list) or not content:
+        return None
+    block = content[0]
+    if not isinstance(block, dict) or block.get("type") != "text":
+        return None
+    text = block.get("text")
+    if not isinstance(text, str):
+        return None
+    match = _CURSOR_TIMESTAMP_BLOCK_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _parse_cursor_offset(offset_text: str) -> timezone | None:
+    if offset_text == "":
+        return UTC
+    sign = offset_text[0]
+    if sign not in "+-":
+        return None
+    body = offset_text[1:]
+    hour_text, _, minute_text = body.partition(":")
+    if not hour_text.isdigit() or (minute_text and not minute_text.isdigit()):
+        return None
+    hours = int(hour_text)
+    minutes = int(minute_text) if minute_text else 0
+    delta = timedelta(hours=hours, minutes=minutes)
+    if sign == "-":
+        delta = -delta
+    return timezone(delta)
+
+
+def _parse_cursor_timestamp(text: str) -> str | None:
+    """Parse cursor's localised stamp, e.g. `Monday, Aug 31, 2026, 1:24 AM (UTC-4)`.
+
+    Any parse failure returns None -- never substitute `captured_at`, which
+    would present a fabricated value at the same confidence as a real one.
+    """
+    if not isinstance(text, str):
+        return None
+    idx = text.find(_CURSOR_TIMESTAMP_OFFSET_MARKER)
+    if idx == -1:
+        return None
+    head = text[:idx]
+    tail = text[idx + len(_CURSOR_TIMESTAMP_OFFSET_MARKER) :]
+    if not tail.endswith(")"):
+        return None
+    offset_text = tail[:-1]
+    try:
+        naive = datetime.strptime(head, _CURSOR_TIMESTAMP_HEAD_FORMAT)
+    except ValueError:
+        return None
+    tzinfo = _parse_cursor_offset(offset_text)
+    if tzinfo is None:
+        return None
+    return naive.replace(tzinfo=tzinfo).isoformat()
+
+
+def _cursor_timestamps(recs: list[dict]) -> list[tuple]:
+    """Build `(source_line, iso)` pairs, ascending, for every parsable record.
+
+    Mirrors `_codex_intervals`'s per-group builder shape -- `_cursor_timestamp_for`
+    then picks the LAST entry at or before a given record, the same selection
+    idiom `_codex_attr` uses for token intervals.
+    """
+    entries: list[tuple] = []
+    for rec in recs:
+        text = _cursor_timestamp_text(rec.get("payload"))
+        if text is None:
+            continue
+        iso = _parse_cursor_timestamp(text)
+        if iso is None:
+            continue
+        entries.append((rec.get("source_line"), iso))
+    entries.sort(key=lambda pair: pair[0] if pair[0] is not None else -1)
+    return entries
+
+
+def _cursor_timestamp_for(rec: dict, entries: list[tuple]) -> str | None:
+    line = rec.get("source_line")
+    chosen = None
+    for source_line, iso in entries:
+        if line is not None and source_line is not None and source_line <= line:
+            chosen = iso
+    return chosen
+
+
 def _claude_duration(rec: dict, result_ts: dict[str, str]) -> int | None:
     payload = rec.get("payload")
     if not isinstance(payload, dict):
@@ -427,9 +634,18 @@ def _empty_rtk_fields() -> dict:
 
 def _build_row(rec: dict, step: dict, ctx: dict) -> dict:
     timestamp = _row_timestamp(rec)
+    if timestamp is None:
+        timestamp = ctx.get("timestamp_fallback")
     date = timestamp[:10] if isinstance(timestamp, str) and len(timestamp) >= 10 else None
     operator = step["operator"]
     attr = ctx["attr"]
+    # D-16 family: only a "simple" step is a real single command -- a
+    # control_flow_script/unclassified step is the ENTIRE opaque blob, and
+    # family_of() applied to that blob deterministically returns garbage
+    # (a bare control-flow keyword, an unterminated command-substitution
+    # token, a shell function-definition line). Gate on the shape rather
+    # than teaching family_of() to parse inside blobs it was never meant to.
+    family = family_of(step["text"]) if step["command_shape"] == "simple" else ""
     row = {
         "raw_ref": rec.get("raw_ref"),
         "runtime": ctx["runtime"],
@@ -439,7 +655,7 @@ def _build_row(rec: dict, step: dict, ctx: dict) -> dict:
         "timestamp": timestamp,
         "model": attr["model"],
         "command_text": step["text"],
-        "family": family_of(step["text"]),
+        "family": family,
         "command_shape": step["command_shape"],
         "step_index": step["step_index"],
         "step_count": ctx["step_count"],
@@ -472,6 +688,8 @@ def _rows_for_record(rec: dict, ctx: dict) -> list[dict]:
         payload = rec.get("payload")
         seed = payload.get("cwd") if isinstance(payload, dict) else None
         cwd_state = CwdState(seed or "unknown")
+    if runtime == "codex":
+        _codex_seed_cwd(rec, cwd_state)
     resolver = RESOLVE_CWD[runtime]
     built = []
     row_ctx = {
@@ -480,6 +698,7 @@ def _rows_for_record(rec: dict, ctx: dict) -> list[dict]:
         "attr": ctx["attr"],
         "duration": ctx["duration"],
         "step_count": len(steps),
+        "timestamp_fallback": ctx.get("timestamp_fallback"),
     }
     for step in steps:
         row_ctx["resolved_cwd"] = resolver(rec, step, cwd_state)
@@ -506,6 +725,8 @@ def _refine_runtime_group(runtime: str, session_id, recs: list[dict], env: dict)
         lookup["messages"] = _opencode_messages(recs)
     elif runtime == "codex":
         lookup["intervals"] = _codex_intervals(recs)
+    elif runtime == "cursor":
+        lookup["cursor_timestamps"] = _cursor_timestamps(recs)
     durations = _tool_result_timestamps(recs) if runtime == "claude" else {}
     rows: list[dict] = []
     for rec in recs:
@@ -515,6 +736,11 @@ def _refine_runtime_group(runtime: str, session_id, recs: list[dict], env: dict)
             "cwd_state": cwd_state,
             "attr": _attr_for(runtime, rec, lookup, env),
             "duration": _claude_duration(rec, durations) if runtime == "claude" else None,
+            "timestamp_fallback": (
+                _cursor_timestamp_for(rec, lookup.get("cursor_timestamps") or [])
+                if runtime == "cursor"
+                else None
+            ),
         }
         rows.extend(_rows_for_record(rec, ctx))
     return rows
@@ -565,6 +791,10 @@ def _refine_rtk_record(rec: dict) -> dict | None:
 def refine_all(raw_records: list[dict], env: dict | None = None) -> list[dict]:
     """Build `refined_commands` rows for shell commands across all 5 sources."""
     env = env or {}
+    # id() can be recycled across GC'd payload dicts within one process (tests
+    # call refine_all() many times), so a memo that outlives its own batch
+    # could return a stale/wrong-record's parsed custom_tool_call args.
+    _CODEX_CUSTOM_TOOL_ARGS_MEMO.clear()
     grouped: dict[tuple, list[dict]] = {}
     for rec in raw_records:
         grouped.setdefault(_group_key(rec), []).append(rec)
