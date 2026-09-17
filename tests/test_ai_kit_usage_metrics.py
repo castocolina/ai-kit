@@ -2862,7 +2862,14 @@ class TestDashboardFull(unittest.TestCase):
         self.assertIn("(inferred,", html)
         self.assertIn("LOW", html)
         self.assertIn("source_confidence", html)
-        self.assertIn("(conditional)", html)
+        # Copywriting Contract: the execution-uncertain marker is now an
+        # error-tinted "conditional" badge, not the old parenthesised text.
+        self.assertNotIn("(conditional)", html)
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            source = handle.read()
+        exec_body = _extract_js_function_body(source, "flatRowBuilder")
+        self.assertIn('"conditional"', exec_body)
+        self.assertIn('exec.className = "badge"', exec_body)
 
     def test_group_by_session_dedups_turn_tokens(self):
         html, _out = self._seed_and_generate()
@@ -3049,6 +3056,103 @@ class TestDashboardFull(unittest.TestCase):
         self.assertIn('createElement("md-select-option")', body)
         self.assertIn('slot = "headline"', body)
         self.assertNotIn('createElement("option")', body)
+
+    def test_column_order_matches_d12(self):
+        html, _out = self._seed_and_generate()
+        expected_order = [
+            "runtime",
+            "model",
+            "family",
+            "subfamily",
+            "command_text",
+            "exec_duration_ms",
+            "date",
+            "tokens_input",
+            "tokens_output",
+            "price",
+            "source_confidence",
+            "execution_certain",
+            "session_id",
+        ]
+        found = re.findall(r'data-sort-key="([a-z_]+)"', html)
+        # #thead-grouped repeats session_id/count/tokens_input/tokens_output/
+        # price after the flat #thead-flat row -- only the first 13 entries
+        # (the flat header) are checked against D-12's locked order.
+        self.assertEqual(found[:13], expected_order)
+
+    def test_null_and_zero_price_and_null_date_render_distinctly(self):
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        pure = _extract_pure_js(html)
+        wrapper = os.path.join(self.root, "null_zero_check.js")
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconst result = {\n"
+                "  nullPrice: priceCellText(null),\n"
+                "  zeroPrice: priceCellText(0),\n"
+                "  nullDate: dateCellText(null),\n"
+                "  realDate: dateCellText('2026-09-10'),\n"
+                "};\n"
+                "console.log(JSON.stringify(result));\n"
+            )
+        proc = subprocess.run(
+            ["node", wrapper], capture_output=True, text=True, check=True
+        )
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["nullPrice"], "—")
+        self.assertEqual(result["zeroPrice"], "0")
+        self.assertEqual(result["nullDate"], "—")
+        self.assertEqual(result["realDate"], "2026-09-10")
+        # RESEARCH.md: 16,366 rows have a genuine zero price alongside
+        # 37,231 rows with no price at all -- these must never collapse to
+        # the same rendered text.
+        self.assertNotEqual(result["nullPrice"], result["zeroPrice"])
+        self.assertNotEqual(result["nullDate"], result["realDate"])
+
+    def test_command_cell_wraps_to_two_lines(self):
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            source = handle.read()
+        style_start = source.index("<style>")
+        style_end = source.index("</style>")
+        style = source[style_start:style_end]
+        style = re.sub(r"/\*.*?\*/", "", style, flags=re.S)
+        rules = re.findall(r"([^{}]+)\{([^{}]*)\}", style)
+        clamp_rules = [(sel.strip(), body) for sel, body in rules if "line-clamp" in body]
+        self.assertTrue(clamp_rules, "no -webkit-line-clamp rule found")
+        for selector, body in clamp_rules:
+            self.assertIn(".command-text", selector)
+            self.assertNotIn("td", selector)
+            self.assertRegex(body, r"-webkit-line-clamp:\s*2\b")
+        command_text_rules = [
+            (sel.strip(), body) for sel, body in rules if ".command-text" in sel
+        ]
+        self.assertTrue(command_text_rules, "no .command-text rule found")
+        for _selector, body in command_text_rules:
+            # The Round-1 review's flagged contradiction with D-12 -- a
+            # single-line no-wrap command cell must never come back.
+            self.assertNotIn("white-space: nowrap", body)
+
+    def test_step_marker_is_outside_the_clamped_element(self):
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            source = handle.read()
+        body = _extract_js_function_body(source, "commandCell")
+        # The marker is appended to the cell itself -- a sibling of
+        # .command-text -- never inside .command-text, so a two-line clamp
+        # can never swallow it.
+        self.assertIn("cell.appendChild(marker)", body)
+        self.assertNotIn("text.appendChild(marker)", body)
+        style_start = source.index("<style>")
+        style_end = source.index("</style>")
+        style = source[style_start:style_end]
+        style = re.sub(r"/\*.*?\*/", "", style, flags=re.S)
+        rules = re.findall(r"([^{}]+)\{([^{}]*)\}", style)
+        marker_rules = [(sel.strip(), body) for sel, body in rules if ".step-marker" in sel]
+        self.assertTrue(marker_rules, "no .step-marker rule found")
+        _selector, marker_body = marker_rules[0]
+        self.assertRegex(marker_body, r"flex:\s*0\s+0\s+auto")
+        self.assertIn("min-width", marker_body)
 
     def test_slice_for_items_materializes_only_virtual_items_via_node(self):
         # Dependency-free proof that materialization is bounded by the
@@ -3243,31 +3347,17 @@ class TestDashboardFull(unittest.TestCase):
         with open(_DASHBOARD_PY, encoding="utf-8") as handle:
             source = handle.read()
 
-        def _extract_function_body(text, function_name):
-            marker = "function " + function_name + "("
-            start = text.index(marker)
-            brace_open = text.index("{", start)
-            depth = 0
-            i = brace_open
-            while i < len(text):
-                if text[i] == "{":
-                    depth += 1
-                elif text[i] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        return text[brace_open : i + 1]
-                i += 1
-            raise AssertionError("unterminated function body: " + function_name)
-
-        flat_body = _extract_function_body(source, "flatRowBuilder")
-        grouped_body = _extract_function_body(source, "groupedRowBuilder")
+        flat_body = _extract_js_function_body(source, "flatRowBuilder")
+        grouped_body = _extract_js_function_body(source, "groupedRowBuilder")
         flat_cell_count = len(re.findall(r"tr\.appendChild\(", flat_body))
         grouped_cell_count = len(re.findall(r"tr\.appendChild\(", grouped_body))
 
         self.assertEqual(flat_header_count, flat_cell_count)
         self.assertEqual(grouped_header_count, grouped_cell_count)
         self.assertEqual(grouped_header_count, 5)
-        self.assertEqual(flat_header_count, 11)
+        # D-10/D-12 (Plan 03 Task 3): flat mode grew from 11 to 13 columns
+        # (+subfamily, +exec time).
+        self.assertEqual(flat_header_count, 13)
 
         # No padding/placeholder cell added solely to preserve flat mode's
         # column count in grouped mode.

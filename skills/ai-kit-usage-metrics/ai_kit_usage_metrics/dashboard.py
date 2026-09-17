@@ -174,9 +174,17 @@ h1 {
 #clear-filters {
   align-self: flex-end;
 }
+/* Shared badge treatment (source_confidence AND the execution-uncertain
+   marker) -- error-tinted, per UI-SPEC's Destructive/warning role. */
 .badge {
+  display: inline-block;
+  padding: 2px var(--space-xs);
+  border: 1px solid var(--md-sys-color-error);
+  border-radius: 4px;
   color: var(--md-sys-color-error);
   font-size: var(--md-sys-typescale-label-size);
+  font-weight: var(--md-sys-typescale-label-weight);
+  line-height: var(--md-sys-typescale-label-line-height);
 }
 /* D-22: the checkbox has no default (unfocused) visual weight from
    @material/web alone -- give it visible border/fill contrast against the
@@ -246,17 +254,50 @@ h1 {
   width: 100%;
   height: 56px;
 }
+/* D-10/D-12 flat-mode column order: runtime, model, family, subfamily,
+   command, exec time, date, tokens_input, tokens_output, price,
+   source_confidence, execution, session -- 13 columns. */
 #usage-table th:nth-child(1), #usage-table td:nth-child(1) { flex: 0 0 90px; }
-#usage-table th:nth-child(2), #usage-table td:nth-child(2) { flex: 0 0 100px; }
-#usage-table th:nth-child(3), #usage-table td:nth-child(3) { flex: 0 0 140px; }
+#usage-table th:nth-child(2), #usage-table td:nth-child(2) { flex: 0 0 110px; }
+#usage-table th:nth-child(3), #usage-table td:nth-child(3) { flex: 0 0 90px; }
 #usage-table th:nth-child(4), #usage-table td:nth-child(4) { flex: 0 0 90px; }
 #usage-table th:nth-child(5), #usage-table td:nth-child(5) { flex: 1 1 320px; min-width: 0; }
 #usage-table th:nth-child(6), #usage-table td:nth-child(6) { flex: 0 0 90px; }
-#usage-table th:nth-child(7), #usage-table td:nth-child(7) { flex: 0 0 90px; }
-#usage-table th:nth-child(8), #usage-table td:nth-child(8) { flex: 0 0 80px; }
-#usage-table th:nth-child(9), #usage-table td:nth-child(9) { flex: 0 0 130px; }
-#usage-table th:nth-child(10), #usage-table td:nth-child(10) { flex: 0 0 100px; }
-#usage-table th:nth-child(11), #usage-table td:nth-child(11) { flex: 0 0 140px; }
+#usage-table th:nth-child(7), #usage-table td:nth-child(7) { flex: 0 0 100px; }
+#usage-table th:nth-child(8), #usage-table td:nth-child(8) { flex: 0 0 90px; }
+#usage-table th:nth-child(9), #usage-table td:nth-child(9) { flex: 0 0 90px; }
+#usage-table th:nth-child(10), #usage-table td:nth-child(10) { flex: 0 0 90px; }
+#usage-table th:nth-child(11), #usage-table td:nth-child(11) { flex: 0 0 130px; }
+#usage-table th:nth-child(12), #usage-table td:nth-child(12) { flex: 0 0 100px; }
+#usage-table th:nth-child(13), #usage-table td:nth-child(13) { flex: 0 0 140px; }
+/* D-12: the command cell is a flex row of two children -- .command-text
+   (clamped, grows) and an optional .step-marker (fixed, reserved space) --
+   never a clamp on the <td> itself, so the marker can never be swallowed by
+   the 2-line clamp. */
+#usage-table td.command-cell {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  overflow: hidden;
+}
+.command-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.step-marker {
+  flex: 0 0 auto;
+  min-width: var(--space-2xl);
+  font-size: var(--md-sys-typescale-label-size);
+  font-weight: var(--md-sys-typescale-label-weight);
+  line-height: var(--md-sys-typescale-label-line-height);
+  color: var(--md-sys-color-outline);
+}
 /* D-23: grouped mode's own 5-column header/row set (session, count,
    tokens_input, tokens_output, price) -- scoped to .row-grouped so it never
    shares column meaning/widths with flat mode's 11-column nth-child rules
@@ -326,10 +367,12 @@ h1 {
 <thead>
 <tr id="thead-flat">
 <th data-sort-key="runtime">runtime</th>
-<th data-sort-key="date">date</th>
 <th data-sort-key="model">model</th>
 <th data-sort-key="family">family</th>
+<th data-sort-key="subfamily">subfamily</th>
 <th data-sort-key="command_text">command</th>
+<th data-sort-key="exec_duration_ms">exec time</th>
+<th data-sort-key="date">date</th>
 <th data-sort-key="tokens_input">tokens_input</th>
 <th data-sort-key="tokens_output">tokens_output</th>
 <th data-sort-key="price">price</th>
@@ -382,6 +425,22 @@ function displayFamily(row) {
       String(row.inferred_confidence) + ")";
   }
   return "";
+}
+
+// D-16: a null value is NOT the same as a real zero/blank -- both display
+// helpers below return the em dash marker for null/missing and the real
+// value otherwise, so 37,231 rows with no computed price stop reading as
+// "price is always 0" and rows with a genuinely NULL date stop reading as
+// a blank cell with no visual marker.
+var EM_DASH = "\\u2014";
+var PRICE_UNKNOWN_TOOLTIP = "unknown \\u2014 model not in catalog";
+
+function priceCellText(price) {
+  return price == null ? EM_DASH : String(price);
+}
+
+function dateCellText(date) {
+  return date == null || date === "" ? EM_DASH : String(date);
 }
 
 // D-11 / SD-1: literal JavaScript port of family.py's subfamily_of() and its
@@ -732,16 +791,53 @@ function chartJsAvailable() {
     return row.execution_certain === false || row.execution_certain === 0;
   }
 
+  function commandCell(row) {
+    // D-12: a flex row of two children -- .command-text (clamped, grows)
+    // and an optional .step-marker (fixed, reserved space) -- never a clamp
+    // on the <td> itself, so a long two-line command can never push the
+    // compound-step marker out of view.
+    var cell = document.createElement("td");
+    cell.className = "command-cell";
+    var text = document.createElement("span");
+    text.className = "command-text";
+    text.textContent = row.command_text == null ? "" : String(row.command_text);
+    cell.appendChild(text);
+    var stepCount = row.step_count == null ? null : Number(row.step_count);
+    if (stepCount != null && stepCount > 1) {
+      var marker = document.createElement("span");
+      marker.className = "step-marker";
+      var stepPosition = row.step_index == null ? "" : String(Number(row.step_index) + 1);
+      marker.textContent = stepPosition + "/" + String(stepCount);
+      cell.appendChild(marker);
+    }
+    return cell;
+  }
+
+  function priceTd(row) {
+    var cell = document.createElement("td");
+    cell.textContent = priceCellText(row.price);
+    if (row.price == null) cell.title = PRICE_UNKNOWN_TOOLTIP;
+    return cell;
+  }
+
+  function dateTd(row) {
+    var cell = document.createElement("td");
+    cell.textContent = dateCellText(row.date);
+    return cell;
+  }
+
   function flatRowBuilder(row) {
     var tr = document.createElement("tr");
     tr.appendChild(td(row.runtime));
-    tr.appendChild(td(row.date));
     tr.appendChild(td(row.model));
     tr.appendChild(td(displayFamily(row)));
-    tr.appendChild(td(row.command_text));
+    tr.appendChild(td(row.subfamily));
+    tr.appendChild(commandCell(row));
+    tr.appendChild(td(row.exec_duration_ms));
+    tr.appendChild(dateTd(row));
     tr.appendChild(td(row.tokens_input));
     tr.appendChild(td(row.tokens_output));
-    tr.appendChild(td(row.price));
+    tr.appendChild(priceTd(row));
     var conf = document.createElement("td");
     if (row.source_confidence) {
       conf.textContent = String(row.source_confidence);
@@ -749,7 +845,10 @@ function chartJsAvailable() {
     }
     tr.appendChild(conf);
     var exec = document.createElement("td");
-    if (isConditional(row)) exec.textContent = "(conditional)";
+    if (isConditional(row)) {
+      exec.textContent = "conditional";
+      exec.className = "badge";
+    }
     tr.appendChild(exec);
     tr.appendChild(td(row.session_id));
     return tr;
