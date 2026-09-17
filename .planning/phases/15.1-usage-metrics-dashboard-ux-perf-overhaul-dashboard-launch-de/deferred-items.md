@@ -44,3 +44,17 @@ executor's Scope Boundary rule.
   error, 20 skipped — the identical single error). None of this plan's 3
   touched files (`dashboard.py`, `refined_store.py`,
   `tests/test_ai_kit_usage_metrics.py`) are implicated.
+
+## Plan 05
+
+- `tests.test_markdown_to_pdf.TestRenderRealMmdc.test_real_render_produces_image`
+  still fails on this machine for the same pre-existing `mmdc` reason logged
+  under Plan 01 above — reconfirmed via `make test-unit` (2525 tests, 1
+  error, 20 skipped — the identical single error, same `MODULE_NOT_FOUND`
+  at the same pnpm-global path). `git log -- tests/test_markdown_to_pdf.py
+  skills/markdown-to-pdf/scripts/render_mermaid.py` shows no commit from
+  this phase (15.1) touches either file — confirmed pre-existing and
+  outside this plan's scope, not fixed here.
+- `tests.test_ai_kit_usage_metrics.py:1242` `ruff` `E501` — same
+  pre-existing finding logged under Plan 03, still present, still
+  untouched by this plan's own additions to the file.
