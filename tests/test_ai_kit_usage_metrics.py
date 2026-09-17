@@ -3780,6 +3780,76 @@ class TestDashboardFull(unittest.TestCase):
         self.assertEqual(len(result["filteredEntries"]), 1)
         self.assertNotEqual(len(result["filteredEntries"]), len(result["forStep0"]))
 
+    def test_empty_error_and_loading_states_present(self):
+        html, _out = self._seed_and_generate()
+        self.assertIn("No commands match these filters", html)
+        self.assertIn("Widen the date range or clear a filter to see more.", html)
+        self.assertIn("Couldn't load usage data.", html)
+        self.assertIn("ai-kit-usage-metrics dashboard", html)
+        self.assertIn("md-linear-progress", html)
+        self.assertIn('id="loading-progress"', html)
+        self.assertIn('id="page-error-state"', html)
+        self.assertIn('id="table-empty-state"', html)
+        # Both states start hidden -- the loading bar is what's visible
+        # first, not the empty/error copy.
+        self.assertIn('id="page-error-state" class="state-panel state-panel--error" hidden', html)
+        self.assertIn('id="table-empty-state" class="state-panel" hidden', html)
+
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        pure = _extract_pure_js(html)
+        wrapper = os.path.join(self.root, "empty_state_check.js")
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconsole.log(JSON.stringify({\n"
+                "  empty: shouldShowEmptyState([]),\n"
+                "  nonEmpty: shouldShowEmptyState([{id: 1}]),\n"
+                "}));\n"
+            )
+        proc = subprocess.run(
+            ["node", wrapper], capture_output=True, text=True, check=True
+        )
+        result = json.loads(proc.stdout)
+        self.assertTrue(result["empty"])
+        self.assertFalse(result["nonEmpty"])
+
+    def test_bootstrap_defers_initialization_behind_two_frames(self):
+        html, _out = self._seed_and_generate()
+        script_start = html.find("<script>\n")
+        self.assertNotEqual(script_start, -1)
+        script = html[script_start:]
+        self.assertRegex(
+            script,
+            r"requestAnimationFrame\(function \(\) \{\s*requestAnimationFrame\(initialize\);",
+        )
+        self.assertIn("setTimeout(initialize, 0)", script)
+        init_body = _extract_js_function_body(script, "initialize")
+        self.assertIn("decorateSubfamily(data)", init_body)
+        self.assertIn("indexByRawRef(data)", init_body)
+        self.assertIn("loadingBar.remove()", init_body)
+        self.assertIn("setFilterControlsDisabled(false)", init_body)
+        # The removal/re-enable happens INSIDE the deferred callback, never
+        # at the top level of the inline script (which would defeat SD-10's
+        # paint guarantee — the whole point is that nothing heavy runs
+        # before the browser has painted the bar at least once).
+        top_level_after_init = script[script.index("function initialize()") :]
+        defer_call_index = top_level_after_init.index("setFilterControlsDisabled(true)")
+        self.assertLess(
+            top_level_after_init.index("function initialize()"), defer_call_index
+        )
+
+    def test_empty_state_predicate_hides_filter_events_from_top_level(self):
+        # Filter controls are disabled for the SAME duration the loading bar
+        # is present (UI-SPEC.md's explicit sub-decision) -- proven at the
+        # source level via the same setFilterControlsDisabled(true) call
+        # immediately preceding the deferred bootstrap.
+        html, _out = self._seed_and_generate()
+        script_start = html.find("<script>\n")
+        script = html[script_start:]
+        bootstrap_tail = script[script.index("setFilterControlsDisabled(true);") :]
+        self.assertIn("requestAnimationFrame", bootstrap_tail[:400])
+
 
 class TestPermissions(unittest.TestCase):
     def test_run_creates_private_dirs_and_files(self):

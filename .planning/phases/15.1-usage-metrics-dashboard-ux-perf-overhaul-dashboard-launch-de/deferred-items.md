@@ -35,3 +35,12 @@ executor's Scope Boundary rule.
   still fails on this machine for the same pre-existing `mmdc` reason logged
   under Plan 01 above — reconfirmed via `make test-unit`, still the only
   error in the full 2510-test run.
+
+## Plan 04
+
+- `tests.test_markdown_to_pdf.TestRenderRealMmdc.test_real_render_produces_image`
+  still fails on this machine for the same pre-existing `mmdc` reason logged
+  under Plan 01 above — reconfirmed via `make test-unit` (2518 tests, 1
+  error, 20 skipped — the identical single error). None of this plan's 3
+  touched files (`dashboard.py`, `refined_store.py`,
+  `tests/test_ai_kit_usage_metrics.py`) are implicated.

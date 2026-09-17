@@ -358,10 +358,39 @@ h1 {
   border-bottom: 1px solid var(--md-sys-color-surface-variant);
   overflow-wrap: anywhere;
 }
+/* Empty / loading / error page states -- today's dashboard leaves the table
+   silently blank in every one of these cases; this closes that gap. */
+#loading-progress {
+  margin-bottom: var(--space-md);
+  width: 100%;
+}
+.state-panel {
+  padding: var(--space-lg);
+}
+.state-heading {
+  font-size: var(--md-sys-typescale-heading-size);
+  font-weight: var(--md-sys-typescale-heading-weight);
+  line-height: var(--md-sys-typescale-heading-line-height);
+  margin: 0 0 var(--space-sm) 0;
+}
+.state-body {
+  font-size: var(--md-sys-typescale-body-size);
+  line-height: var(--md-sys-typescale-body-line-height);
+  margin: 0;
+}
+.state-panel--error .state-heading,
+.state-panel--error .state-body {
+  color: var(--md-sys-color-error);
+}
 </style>
 </head>
 <body>
 <h1>Usage metrics</h1>
+<md-linear-progress id="loading-progress" indeterminate></md-linear-progress>
+<div id="page-error-state" class="state-panel state-panel--error" hidden>
+<p class="state-body">Couldn't load usage data. Regenerate the dashboard with
+<code>ai-kit-usage-metrics dashboard</code>.</p>
+</div>
 <form id="filters">
 <label>runtime
 <md-outlined-select id="filter-runtime"></md-outlined-select>
@@ -436,6 +465,10 @@ h1 {
 </thead>
 <tbody id="usage-tbody"></tbody>
 </table>
+</div>
+<div id="table-empty-state" class="state-panel" hidden>
+<p class="state-heading">No commands match these filters</p>
+<p class="state-body">Widen the date range or clear a filter to see more.</p>
 </div>
 <md-dialog id="command-dialog">
 <div slot="headline">Command</div>
@@ -740,6 +773,14 @@ function runtimeCounts(rows) {
 // cleared filter bar produces. filterRows(rows, clearedCriteria()) returning
 // every row is the node-testable proof that "cleared" really means
 // unfiltered.
+// SD-10 / empty state: a pure, DOM-free predicate so the node harness can
+// drive it directly -- true for a zero-length filtered/grouped row set
+// (flat OR grouped mode; a grouped session count of zero reuses the same
+// empty state per UI-SPEC.md's zero-one-many resolution), false otherwise.
+function shouldShowEmptyState(rows) {
+  return !rows || rows.length === 0;
+}
+
 function clearedCriteria() {
   return {
     runtime: "all",
@@ -810,16 +851,15 @@ function chartJsAvailable() {
 
 (function () {
   var dataEl = document.getElementById("usage-metrics-data");
-  var data = JSON.parse(dataEl.textContent);
-  decorateSubfamily(data);
-  // D-14 / SD-3: built ONCE at load, immediately after decorateSubfamily,
-  // over the full embedded payload -- this is what lets a sibling step
-  // excluded by the current filter still appear in the detail dialog.
-  var rowsByRawRef = indexByRawRef(data);
   var tbody = document.getElementById("usage-tbody");
   var scrollEl = document.getElementById("table-scroll");
   var theadFlat = document.getElementById("thead-flat");
   var theadGrouped = document.getElementById("thead-grouped");
+  var filtersForm = document.getElementById("filters");
+  var chartsRow = document.getElementById("charts-row");
+  var loadingBar = document.getElementById("loading-progress");
+  var pageErrorState = document.getElementById("page-error-state");
+  var tableEmptyState = document.getElementById("table-empty-state");
   var sortKey = "date";
   var sortDir = "asc";
   var virtualizer = null;
@@ -830,6 +870,45 @@ function chartJsAvailable() {
   // "closed"-event listener registered once at mount, below).
   var dialogTrigger = null;
   var dialogCommandText = "";
+  // Populated by initialize() below, after a successful payload parse --
+  // NOT synchronously here, so a malformed payload never reaches
+  // decorateSubfamily/indexByRawRef with garbage.
+  var data = [];
+  var rowsByRawRef = new Map();
+
+  function setFilterControlsDisabled(disabled) {
+    // UI-SPEC.md's explicit loading sub-decision: filter controls stay
+    // disabled for exactly the interval the progress bar is shown, so a
+    // filter event can never fire against a virtualizer that has not
+    // mounted yet.
+    var controls = filtersForm.querySelectorAll(
+      "md-outlined-select, md-outlined-text-field, input, md-checkbox, md-text-button"
+    );
+    controls.forEach(function (el) {
+      el.disabled = disabled;
+    });
+  }
+
+  function showPageError() {
+    // UI-SPEC.md: ONE page-level error state, not three independent
+    // per-surface error UIs -- the filter bar and charts row are hidden
+    // behind the same state the table area shows.
+    if (pageErrorState) pageErrorState.hidden = false;
+    if (filtersForm) filtersForm.style.display = "none";
+    if (chartsRow) chartsRow.style.display = "none";
+    if (scrollEl) scrollEl.style.display = "none";
+    if (loadingBar) loadingBar.remove();
+  }
+
+  // The embedded-payload parse is wrapped: a malformed/truncated payload
+  // fails into the page-level error state instead of leaving the rest of
+  // this script to run against undefined data.
+  try {
+    data = JSON.parse(dataEl.textContent);
+  } catch (parseError) {
+    showPageError();
+    return;
+  }
 
   function distinctValues(key) {
     var seen = {};
@@ -868,11 +947,6 @@ function chartJsAvailable() {
     values.forEach(addOption);
     select.value = "all";
   }
-
-  fillSelect("filter-runtime", distinctValues("runtime"));
-  fillSelect("filter-model", distinctValues("model"));
-  fillSelect("filter-family", distinctValues("family"));
-  fillSelect("filter-subfamily", distinctValues("subfamily"));
 
   function readCriteria() {
     return {
@@ -1212,6 +1286,13 @@ function chartJsAvailable() {
     // headers always match the cell count/meaning currentBuilder emits.
     if (theadFlat) theadFlat.style.display = grouped ? "none" : "flex";
     if (theadGrouped) theadGrouped.style.display = grouped ? "flex" : "none";
+    // Empty state (UI-SPEC.md): a zero-length filtered/grouped row set
+    // replaces the table with the locked empty-state copy instead of an
+    // empty <tbody>. Relaxing the filter removes the state and resumes
+    // normal rendering.
+    var empty = shouldShowEmptyState(currentRows);
+    if (tableEmptyState) tableEmptyState.hidden = !empty;
+    if (scrollEl) scrollEl.style.display = empty ? "none" : "";
     if (virtualizer) {
       virtualizer.setOptions(virtualizerOptions(currentRows.length));
       virtualizer.measure();
@@ -1233,20 +1314,53 @@ function chartJsAvailable() {
     });
   });
 
-  document.getElementById("filters").addEventListener("input", render);
-  document.getElementById("filters").addEventListener("change", render);
+  filtersForm.addEventListener("input", render);
+  filtersForm.addEventListener("change", render);
   document.getElementById("clear-filters").addEventListener("click", function (event) {
     event.preventDefault();
     clearFilters();
   });
 
-  render();
-  if (window.__virtualCore) {
-    mountVirtualizer();
-  } else {
-    window.addEventListener("virtual-core-ready", function () {
+  function initialize() {
+    // SD-10 step 3: the blocking initialization, run only once the browser
+    // has had a chance to paint the progress bar shown synchronously below.
+    decorateSubfamily(data);
+    // D-14 / SD-3: built ONCE at load, immediately after decorateSubfamily,
+    // over the full embedded payload -- this is what lets a sibling step
+    // excluded by the current filter still appear in the detail dialog.
+    rowsByRawRef = indexByRawRef(data);
+
+    fillSelect("filter-runtime", distinctValues("runtime"));
+    fillSelect("filter-model", distinctValues("model"));
+    fillSelect("filter-family", distinctValues("family"));
+    fillSelect("filter-subfamily", distinctValues("subfamily"));
+
+    render();
+    if (window.__virtualCore) {
       mountVirtualizer();
-    }, {once: true});
+    } else {
+      window.addEventListener("virtual-core-ready", function () {
+        mountVirtualizer();
+      }, {once: true});
+    }
+
+    if (loadingBar) loadingBar.remove();
+    setFilterControlsDisabled(false);
+  }
+
+  // SD-10: show the bar and disable the controls SYNCHRONOUSLY (both true
+  // the instant this script runs), then defer the blocking work behind a
+  // DOUBLE requestAnimationFrame -- a single frame only schedules the
+  // callback, it does not guarantee the browser has actually painted the
+  // bar first. Falls back to setTimeout(fn, 0) when requestAnimationFrame
+  // is unavailable (the node-executed test harness, which has no browser).
+  setFilterControlsDisabled(true);
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(function () {
+      requestAnimationFrame(initialize);
+    });
+  } else {
+    setTimeout(initialize, 0);
   }
 })();
 </script>
