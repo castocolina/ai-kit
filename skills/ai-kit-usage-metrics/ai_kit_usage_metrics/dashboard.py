@@ -57,6 +57,10 @@ _HTML_HEAD = """<!DOCTYPE html>
 </script>
 <script type="module">
 import "@material/web/checkbox/checkbox.js";
+import "@material/web/select/outlined-select.js";
+import "@material/web/select/select-option.js";
+import "@material/web/textfield/outlined-text-field.js";
+import "@material/web/button/text-button.js";
 </script>
 <script type="module">
 import { Virtualizer, observeElementRect, observeElementOffset, elementScroll } from "https://esm.run/@tanstack/virtual-core@3.17.11";
@@ -132,12 +136,43 @@ h1 {
 #filters label {
   display: flex;
   flex-direction: column;
+  gap: var(--space-xs);
   font-size: var(--md-sys-typescale-label-size);
   font-weight: var(--md-sys-typescale-label-weight);
   line-height: var(--md-sys-typescale-label-line-height);
 }
-input, select {
-  padding: var(--space-sm);
+#filters md-outlined-select,
+#filters md-outlined-text-field {
+  min-width: 140px;
+}
+/* D-13: two native date inputs visually merged into one bordered,
+   flight-booking-style control with a single shared <label> above it --
+   no @material/web date-range component exists (UI-SPEC.md live-checked). */
+#date-range-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: 4px;
+  padding: 0 var(--space-sm);
+  background: var(--md-sys-color-surface);
+  height: 40px;
+  box-sizing: border-box;
+}
+#date-range-group input[type="date"] {
+  border: none;
+  background: transparent;
+  padding: var(--space-sm) 0;
+  font-family: inherit;
+  font-size: var(--md-sys-typescale-body-size);
+  color: var(--md-sys-color-on-surface);
+}
+#date-range-group .date-range-sep {
+  color: var(--md-sys-color-outline);
+  font-size: var(--md-sys-typescale-label-size);
+}
+#clear-filters {
+  align-self: flex-end;
 }
 .badge {
   color: var(--md-sys-color-error);
@@ -241,48 +276,44 @@ input, select {
 <body>
 <h1>Usage metrics</h1>
 <form id="filters">
-<label>family
-<select id="filter-family"><option value="all">all</option></select>
+<label>runtime
+<md-outlined-select id="filter-runtime"></md-outlined-select>
 </label>
 <label>model
-<select id="filter-model"><option value="all">all</option></select>
+<md-outlined-select id="filter-model"></md-outlined-select>
+</label>
+<label>family
+<md-outlined-select id="filter-family"></md-outlined-select>
+</label>
+<label>subfamily
+<md-outlined-select id="filter-subfamily"></md-outlined-select>
 </label>
 <label>command
-<input id="filter-command" type="text">
+<md-outlined-text-field id="filter-command" type="text"></md-outlined-text-field>
 </label>
-<label>date
-<select id="filter-date-preset">
-<option value="all">all</option>
-<option value="day">single day</option>
-<option value="week">current week</option>
-<option value="current_month">current month</option>
-<option value="custom">custom range</option>
-</select>
-</label>
-<label>day
-<input id="filter-date-day" type="date">
-</label>
-<label>start
-<input id="filter-date-start" type="date">
-</label>
-<label>end
-<input id="filter-date-end" type="date">
+<label>date range
+<span id="date-range-group">
+<input id="filter-date-from" type="date" aria-label="from date">
+<span class="date-range-sep">&ndash;</span>
+<input id="filter-date-to" type="date" aria-label="to date">
+</span>
 </label>
 <label>tokens min
-<input id="filter-tokens-min" type="number">
+<md-outlined-text-field id="filter-tokens-min" type="number"></md-outlined-text-field>
 </label>
 <label>tokens max
-<input id="filter-tokens-max" type="number">
+<md-outlined-text-field id="filter-tokens-max" type="number"></md-outlined-text-field>
 </label>
 <label>price min
-<input id="filter-price-min" type="number">
+<md-outlined-text-field id="filter-price-min" type="number"></md-outlined-text-field>
 </label>
 <label>price max
-<input id="filter-price-max" type="number">
+<md-outlined-text-field id="filter-price-max" type="number"></md-outlined-text-field>
 </label>
 <label>group by session
 <md-checkbox id="group-by-session"></md-checkbox>
 </label>
+<md-text-button id="clear-filters" type="button">Clear filters</md-text-button>
 </form>
 <div id="charts-row">
 <div id="chart-runtime-panel">
@@ -322,33 +353,6 @@ input, select {
 _HTML_MID = """</script>
 <script>
 /* PURE_FUNCTIONS_START */
-function pad2(n) {
-  return n < 10 ? "0" + n : String(n);
-}
-
-function ymd(d) {
-  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
-}
-
-function currentMonthPrefix() {
-  // "current month" is YYYY-MM prefix-matched against each row's date at
-  // render time using the browser's own new Date(). The SAME dashboard HTML
-  // file therefore answers "current month" differently depending on WHEN it
-  // is opened. That is intentional, and distinct from every OTHER piece of
-  // data in the file, which IS fixed at generation time.
-  var now = new Date();
-  return now.getFullYear() + "-" + pad2(now.getMonth() + 1);
-}
-
-function currentWeekRange() {
-  var now = new Date();
-  var day = now.getDay();
-  var offset = day === 0 ? -6 : 1 - day;
-  var monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
-  var sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
-  return [ymd(monday), ymd(sunday)];
-}
-
 function inDateRange(date, start, end) {
   if (!date) return false;
   var d = String(date);
@@ -461,33 +465,32 @@ function decorateSubfamily(rows) {
 
 function filterRows(rows, criteria) {
   criteria = criteria || {};
+  var runtime = criteria.runtime;
   var family = criteria.family;
   var model = criteria.model;
+  var subfamily = criteria.subfamily;
   var cmd = criteria.commandText ? String(criteria.commandText).toLowerCase() : "";
-  var preset = criteria.datePreset;
+  var dateFrom = criteria.dateFrom;
+  var dateTo = criteria.dateTo;
   var tmin = numOrNull(criteria.tokensMin);
   var tmax = numOrNull(criteria.tokensMax);
   var pmin = numOrNull(criteria.priceMin);
   var pmax = numOrNull(criteria.priceMax);
-  var week = preset === "week" ? currentWeekRange() : null;
-  var monthPrefix = preset === "current_month" ? currentMonthPrefix() : null;
   return rows.filter(function (row) {
+    if (runtime && runtime !== "all" && row.runtime !== runtime) return false;
     if (family && family !== "all" && row.family !== family) return false;
     if (model && model !== "all" && row.model !== model) return false;
+    if (subfamily && subfamily !== "all" && row.subfamily !== subfamily) return false;
     if (cmd) {
       var hay = row.command_text == null ? "" : String(row.command_text);
       if (hay.toLowerCase().indexOf(cmd) === -1) return false;
     }
-    if (preset === "day") {
-      if (String(row.date || "") !== String(criteria.dateDay || "")) return false;
-    } else if (preset === "week") {
-      if (!inDateRange(row.date, week[0], week[1])) return false;
-    } else if (preset === "current_month") {
-      if (String(row.date || "").indexOf(monthPrefix) !== 0) return false;
-    } else if (preset === "custom") {
-      if (!inDateRange(row.date, criteria.dateStart, criteria.dateEnd)) {
-        return false;
-      }
+    // D-13: a single from/to range replaces the 4 removed preset branches.
+    // An empty string on either end is an open bound (inDateRange's own
+    // falsy check); when BOTH ends are empty this block is skipped
+    // entirely, so a null-date row is only excluded once a bound is set.
+    if (dateFrom || dateTo) {
+      if (!inDateRange(row.date, dateFrom, dateTo)) return false;
     }
     if (tmin != null || tmax != null) {
       var tok = combinedTokens(row);
@@ -591,6 +594,27 @@ function runtimeCounts(rows) {
     counts: order.map(function (rt) { return counts[rt]; })
   };
 }
+
+// SD-9: the DOM-free companion to clearFilters() (defined outside the
+// marker block, since it touches document) -- the criteria object a fully
+// cleared filter bar produces. filterRows(rows, clearedCriteria()) returning
+// every row is the node-testable proof that "cleared" really means
+// unfiltered.
+function clearedCriteria() {
+  return {
+    runtime: "all",
+    model: "all",
+    family: "all",
+    subfamily: "all",
+    commandText: "",
+    dateFrom: "",
+    dateTo: "",
+    tokensMin: "",
+    tokensMax: "",
+    priceMin: "",
+    priceMax: ""
+  };
+}
 /* PURE_FUNCTIONS_END */
 
 var CHART_PALETTE_LIGHT = ["#6750A4", "#7D5260", "#625B71", "#79747E", "#1C1B1F"];
@@ -632,32 +656,70 @@ function chartJsAvailable() {
   }
 
   function fillSelect(id, values) {
+    // SD-8: md-outlined-select does not render bare <option> children --
+    // it needs md-select-option elements with a slotted headline div. Clear
+    // first so repeat calls stay idempotent; the all-value option is always
+    // created first, one option per distinct value follows, then the
+    // select's own value is set to "all".
     var select = document.getElementById(id);
-    values.forEach(function (v) {
-      var opt = document.createElement("option");
-      opt.value = v;
-      opt.textContent = v;
+    select.textContent = "";
+    function addOption(value) {
+      var opt = document.createElement("md-select-option");
+      opt.value = value;
+      var headline = document.createElement("div");
+      headline.slot = "headline";
+      headline.textContent = value;
+      opt.appendChild(headline);
       select.appendChild(opt);
-    });
+    }
+    addOption("all");
+    values.forEach(addOption);
+    select.value = "all";
   }
 
-  fillSelect("filter-family", distinctValues("family"));
+  fillSelect("filter-runtime", distinctValues("runtime"));
   fillSelect("filter-model", distinctValues("model"));
+  fillSelect("filter-family", distinctValues("family"));
+  fillSelect("filter-subfamily", distinctValues("subfamily"));
 
   function readCriteria() {
     return {
-      family: document.getElementById("filter-family").value,
+      runtime: document.getElementById("filter-runtime").value,
       model: document.getElementById("filter-model").value,
+      family: document.getElementById("filter-family").value,
+      subfamily: document.getElementById("filter-subfamily").value,
       commandText: document.getElementById("filter-command").value,
-      datePreset: document.getElementById("filter-date-preset").value,
-      dateDay: document.getElementById("filter-date-day").value,
-      dateStart: document.getElementById("filter-date-start").value,
-      dateEnd: document.getElementById("filter-date-end").value,
+      dateFrom: document.getElementById("filter-date-from").value,
+      dateTo: document.getElementById("filter-date-to").value,
       tokensMin: document.getElementById("filter-tokens-min").value,
       tokensMax: document.getElementById("filter-tokens-max").value,
       priceMin: document.getElementById("filter-price-min").value,
       priceMax: document.getElementById("filter-price-max").value
     };
+  }
+
+  function clearFilters() {
+    // SD-9: reset every filter-* control, then render() exactly once at the
+    // end. The session-grouping checkbox is deliberately left alone -- it
+    // is a view mode, not a filter.
+    ["filter-runtime", "filter-model", "filter-family", "filter-subfamily"].forEach(
+      function (id) {
+        document.getElementById(id).value = "all";
+      }
+    );
+    [
+      "filter-command",
+      "filter-tokens-min",
+      "filter-tokens-max",
+      "filter-price-min",
+      "filter-price-max"
+    ].forEach(function (id) {
+      document.getElementById(id).value = "";
+    });
+    ["filter-date-from", "filter-date-to"].forEach(function (id) {
+      document.getElementById(id).value = "";
+    });
+    render();
   }
 
   function td(text) {
@@ -819,6 +881,10 @@ function chartJsAvailable() {
 
   document.getElementById("filters").addEventListener("input", render);
   document.getElementById("filters").addEventListener("change", render);
+  document.getElementById("clear-filters").addEventListener("click", function (event) {
+    event.preventDefault();
+    clearFilters();
+  });
 
   render();
   if (window.__virtualCore) {

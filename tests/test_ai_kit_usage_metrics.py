@@ -2655,6 +2655,27 @@ def _extract_pure_js(html):
     return html[start + len(_JS_PURE_START) : end]
 
 
+def _extract_js_function_body(text, function_name):
+    # Shared brace-depth slicer: locates `function <name>(` and returns the
+    # exact source span from its opening `{` to the matching closing `}`.
+    # Used wherever a test needs to assert something about a single named
+    # function's body without executing it.
+    marker = "function " + function_name + "("
+    start = text.index(marker)
+    brace_open = text.index("{", start)
+    depth = 0
+    i = brace_open
+    while i < len(text):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace_open : i + 1]
+        i += 1
+    raise AssertionError("unterminated function body: " + function_name)
+
+
 class TestDashboardFull(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="ai-kit-um-dash-full-")
@@ -2798,8 +2819,12 @@ class TestDashboardFull(unittest.TestCase):
 
     def test_each_mvp_axis_has_filter_and_sortable_header(self):
         html, _out = self._seed_and_generate()
+        # D-10/D-11: runtime already carries a sortable header (Plan 01);
+        # subfamily's sortable header is added by Task 3's column reorder
+        # and is asserted there (test_column_order_matches_d12) rather than
+        # duplicated here -- Task 2 only owns the filter bar, not <thead>.
         axes = {
-            "date": ("filter-date-preset", "date"),
+            "runtime": ("filter-runtime", "runtime"),
             "model": ("filter-model", "model"),
             "family": ("filter-family", "family"),
             "tokens": ("filter-tokens-min", "tokens_input"),
@@ -2811,6 +2836,15 @@ class TestDashboardFull(unittest.TestCase):
         self.assertIn('id="filter-tokens-max"', html)
         self.assertIn('id="filter-price-max"', html)
         self.assertIn('id="group-by-session"', html)
+        self.assertIn('id="filter-subfamily"', html)
+        # D-13: the 4 separate date controls are replaced by a single
+        # from/to range -- no preset/day/start/end id survives.
+        self.assertIn('id="filter-date-from"', html)
+        self.assertIn('id="filter-date-to"', html)
+        self.assertNotIn('id="filter-date-preset"', html)
+        self.assertNotIn('id="filter-date-day"', html)
+        self.assertNotIn('id="filter-date-start"', html)
+        self.assertNotIn('id="filter-date-end"', html)
         for axis, (filter_id, sort_key) in axes.items():
             self.assertIn(
                 f'id="{filter_id}"',
@@ -2930,6 +2964,91 @@ class TestDashboardFull(unittest.TestCase):
         result = json.loads(proc.stdout)
         self.assertEqual(result["first"], ["commit", "", ""])
         self.assertEqual(result["second"], ["commit", "", ""])
+
+    def test_filter_rows_runtime_subfamily_and_date_range_via_node(self):
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        pure = _extract_pure_js(html)
+        rows = [
+            {"id": "r1", "runtime": "claude", "subfamily": "commit", "date": "2026-01-01"},
+            {"id": "r2", "runtime": "opencode", "subfamily": "commit", "date": "2026-01-05"},
+            {"id": "r3", "runtime": "claude", "subfamily": "status", "date": "2026-01-10"},
+            {"id": "r4", "runtime": "claude", "subfamily": "status", "date": None},
+            {"id": "r5", "runtime": "opencode", "subfamily": "pull", "date": "2026-01-03"},
+        ]
+        fixture = os.path.join(self.root, "filter_axes_rows.json")
+        with open(fixture, "w", encoding="utf-8") as handle:
+            json.dump(rows, handle)
+        wrapper = os.path.join(self.root, "filter_axes_check.js")
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconst rows = require("
+                + json.dumps(fixture)
+                + ");\n"
+                "function ids(r) { return r.map(function (x) { return x.id; }); }\n"
+                "const result = {\n"
+                "  runtimeClaude: ids(filterRows(rows, {runtime: 'claude'})),\n"
+                "  runtimeAll: ids(filterRows(rows, {runtime: 'all'})),\n"
+                "  subfamilyCommit: ids(filterRows(rows, {subfamily: 'commit'})),\n"
+                "  dateFromOnly: ids(filterRows(rows, {dateFrom: '2026-01-05'})),\n"
+                "  dateToOnly: ids(filterRows(rows, {dateTo: '2026-01-05'})),\n"
+                "  dateSingleDay: ids(filterRows(rows, "
+                "{dateFrom: '2026-01-05', dateTo: '2026-01-05'})),\n"
+                "  noDateConstraint: ids(filterRows(rows, {})),\n"
+                "  clearedReturnsAll: ids(filterRows(rows, clearedCriteria())),\n"
+                "};\n"
+                "console.log(JSON.stringify(result));\n"
+            )
+        proc = subprocess.run(
+            ["node", wrapper], capture_output=True, text=True, check=True
+        )
+        result = json.loads(proc.stdout)
+        self.assertEqual(set(result["runtimeClaude"]), {"r1", "r3", "r4"})
+        self.assertEqual(set(result["runtimeAll"]), {"r1", "r2", "r3", "r4", "r5"})
+        self.assertEqual(set(result["subfamilyCommit"]), {"r1", "r2"})
+        # from-only: keeps every row on or after that date; null date (r4)
+        # is excluded once a bound is set.
+        self.assertEqual(set(result["dateFromOnly"]), {"r2", "r3"})
+        # to-only: keeps every row on or before that date; null date
+        # excluded the same way.
+        self.assertEqual(set(result["dateToOnly"]), {"r1", "r2", "r5"})
+        # both ends set to the same value expresses a single day.
+        self.assertEqual(set(result["dateSingleDay"]), {"r2"})
+        # neither end set -> no date constraint at all; the null-date row
+        # is included.
+        self.assertEqual(
+            set(result["noDateConstraint"]), {"r1", "r2", "r3", "r4", "r5"}
+        )
+        self.assertEqual(
+            set(result["clearedReturnsAll"]), {"r1", "r2", "r3", "r4", "r5"}
+        )
+
+    def test_clear_filters_covers_every_filter_control(self):
+        html, _out = self._seed_and_generate()
+        filter_ids = sorted(set(re.findall(r'id="(filter-[a-z-]+)"', html)))
+        self.assertTrue(filter_ids, "no filter-* ids found in generated HTML")
+        body = _extract_js_function_body(html, "clearFilters")
+        for filter_id in filter_ids:
+            self.assertIn(
+                filter_id,
+                body,
+                f"clearFilters does not reset {filter_id!r}",
+            )
+        # SD-9: group-by-session is a view mode, not a filter -- clearFilters
+        # must never touch it.
+        self.assertNotIn("group-by-session", body)
+
+    def test_material_selects_are_populated_with_select_options(self):
+        html, _out = self._seed_and_generate()
+        self.assertIn('import "@material/web/select/select-option.js"', html)
+        with open(_DASHBOARD_PY, encoding="utf-8") as handle:
+            source = handle.read()
+        body = _extract_js_function_body(source, "fillSelect")
+        self.assertIn('createElement("md-select-option")', body)
+        self.assertIn('slot = "headline"', body)
+        self.assertNotIn('createElement("option")', body)
 
     def test_slice_for_items_materializes_only_virtual_items_via_node(self):
         # Dependency-free proof that materialization is bounded by the
@@ -3179,6 +3298,11 @@ class TestDashboardFull(unittest.TestCase):
         fixture = os.path.join(self.root, "rows.json")
         with open(fixture, "w", encoding="utf-8") as handle:
             json.dump(rows, handle)
+        # D-13: the removed 'current_month' preset is expressed as an
+        # explicit dateFrom/dateTo range covering this calendar month.
+        month_prefix = self.this_month[:7]
+        date_from = month_prefix + "-01"
+        date_to = month_prefix + "-31"
         with open(wrapper, "w", encoding="utf-8") as handle:
             handle.write(pure)
             handle.write(
@@ -3186,7 +3310,8 @@ class TestDashboardFull(unittest.TestCase):
                 + json.dumps(fixture)
                 + ");\n"
                 + "const filtered = filterRows(rows, "
-                "{family: 'grep', datePreset: 'current_month'});\n"
+                "{family: 'grep', dateFrom: " + json.dumps(date_from) + ", "
+                "dateTo: " + json.dumps(date_to) + "});\n"
                 + "const grouped = groupBySession(filtered);\n"
                 + "console.log(JSON.stringify({filtered: filtered.length, grouped: grouped}));\n"
             )
