@@ -2862,6 +2862,75 @@ class TestDashboardFull(unittest.TestCase):
         self.assertEqual(session["tokens_output"], 100)
         self.assertEqual(session["price"], 0.05)
 
+    def test_subfamily_js_matches_spec_table_and_python(self):
+        # Round-1 review finding: a parity test that only proves the JS and
+        # Python outputs agree can pass while BOTH violate the real spec
+        # table (e.g. both porting a wrong "skip flags, take next token"
+        # rule). Assertion (a) against the hardcoded expectations is what
+        # closes that gap.
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        pure = _extract_pure_js(html)
+        cases_fixture = os.path.join(self.root, "subfamily_cases.json")
+        with open(cases_fixture, "w", encoding="utf-8") as handle:
+            json.dump([cmd for cmd, _expected in SUBFAMILY_SPEC_CASES], handle)
+        wrapper = os.path.join(self.root, "subfamily_check.js")
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconst cases = require("
+                + json.dumps(cases_fixture)
+                + ");\n"
+                + "console.log(JSON.stringify(cases.map(subfamilyOf)));\n"
+            )
+        proc = subprocess.run(
+            ["node", wrapper], capture_output=True, text=True, check=True
+        )
+        js_results = json.loads(proc.stdout)
+        expected = [expected for _cmd, expected in SUBFAMILY_SPEC_CASES]
+        python_results = [family.subfamily_of(cmd) for cmd, _expected in SUBFAMILY_SPEC_CASES]
+        # (a) JavaScript vs the hardcoded spec-table expectations.
+        self.assertEqual(js_results, expected)
+        # (b) Python vs the same hardcoded spec-table expectations.
+        self.assertEqual(python_results, expected)
+        # (c) JavaScript vs Python, element-for-element.
+        self.assertEqual(js_results, python_results)
+
+    def test_decorate_subfamily_gates_on_command_shape_via_node(self):
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        pure = _extract_pure_js(html)
+        fixture = os.path.join(self.root, "decorate_rows.json")
+        rows = [
+            {"command_shape": "simple", "command_text": "git -C /path commit"},
+            {
+                "command_shape": "control_flow_script",
+                "command_text": "for f in *.py; do rg x; done",
+            },
+            {"command_shape": "unclassified", "command_text": "echo $( git status )"},
+        ]
+        with open(fixture, "w", encoding="utf-8") as handle:
+            json.dump(rows, handle)
+        wrapper = os.path.join(self.root, "decorate_check.js")
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(pure)
+            handle.write(
+                "\nconst rows = require("
+                + json.dumps(fixture)
+                + ");\n"
+                + "const first = decorateSubfamily(rows).map(function (r) { return r.subfamily; });\n"
+                + "const second = decorateSubfamily(rows).map(function (r) { return r.subfamily; });\n"
+                + "console.log(JSON.stringify({first: first, second: second}));\n"
+            )
+        proc = subprocess.run(
+            ["node", wrapper], capture_output=True, text=True, check=True
+        )
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["first"], ["commit", "", ""])
+        self.assertEqual(result["second"], ["commit", "", ""])
+
     def test_slice_for_items_materializes_only_virtual_items_via_node(self):
         # Dependency-free proof that materialization is bounded by the
         # virtual window (20 items) rather than by the row count (84,082

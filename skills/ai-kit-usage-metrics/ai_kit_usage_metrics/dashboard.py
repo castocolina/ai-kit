@@ -380,6 +380,85 @@ function displayFamily(row) {
   return "";
 }
 
+// D-11 / SD-1: literal JavaScript port of family.py's subfamily_of() and its
+// three supporting constants (_WRAPPERS, _ASSIGNMENT_RE, _VALUE_FLAGS) plus
+// the plausibility filter regex. Kept inside the pure-function marker block
+// so the suite's node-executed parity test (test_subfamily_js_matches_spec_table_and_python)
+// picks it up automatically. Any change here must be mirrored in family.py,
+// and vice versa -- SUBFAMILY_SPEC_CASES is the shared oracle for both.
+var SUBFAMILY_WRAPPERS = ["sudo", "env", "time", "nice", "ionice"];
+var SUBFAMILY_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=\\S*$/;
+var SUBFAMILY_CANDIDATE_RE = /^[A-Za-z][A-Za-z0-9_.:-]*$/;
+var SUBFAMILY_VALUE_FLAGS = {
+  "git": ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"],
+  "make": ["-C", "--directory", "-f", "--file", "-j", "--jobs", "-o", "-W"],
+  "docker": ["-H", "--host", "--context", "--config", "--log-level"],
+  "kubectl": ["-n", "--namespace", "--context", "--cluster", "--user", "--kubeconfig"],
+  "npm": ["--prefix", "-w", "--workspace", "--registry"],
+  "cargo": ["--manifest-path", "--config", "-Z"],
+  "go": ["-C"],
+  "pip": ["-r", "--requirement", "--index-url", "--extra-index-url", "-t", "--target"],
+  "pip3": ["-r", "--requirement", "--index-url", "--extra-index-url", "-t", "--target"],
+  "systemctl": ["-H", "--host", "-M", "--machine"],
+  "apt": ["-o", "-c", "-t"],
+  "apt-get": ["-o", "-c", "-t"],
+  "tar": ["-f", "--file", "-C", "--directory"],
+  "rsync": ["-e", "--exclude-from", "--files-from"]
+};
+
+function subfamilyOf(commandText) {
+  var tokens = (commandText || "").split(/\\s+/).filter(function (t) { return t.length > 0; });
+  var i = 0;
+  while (i < tokens.length) {
+    var tok = tokens[i];
+    if (SUBFAMILY_ASSIGNMENT_RE.test(tok)) {
+      i += 1;
+      continue;
+    }
+    if (SUBFAMILY_WRAPPERS.indexOf(tok) !== -1) {
+      i += 1;
+      while (i < tokens.length && tokens[i].indexOf("-") === 0) {
+        i += 1;
+      }
+      continue;
+    }
+    break;
+  }
+  if (i >= tokens.length) return "";
+  var familyTokenParts = tokens[i].split("/");
+  var familyToken = familyTokenParts[familyTokenParts.length - 1];
+  var valueFlags = SUBFAMILY_VALUE_FLAGS[familyToken] || [];
+  i += 1;
+  while (i < tokens.length && tokens[i].indexOf("-") === 0) {
+    if (tokens[i] === "--") {
+      i += 1;
+      break;
+    }
+    var flag = tokens[i];
+    i += 1;
+    if (flag.indexOf("=") === -1 && valueFlags.indexOf(flag) !== -1 && i < tokens.length) {
+      i += 1;
+    }
+  }
+  if (i >= tokens.length) return "";
+  var candidate = tokens[i];
+  if (!SUBFAMILY_CANDIDATE_RE.test(candidate)) return "";
+  return candidate;
+}
+
+function decorateSubfamily(rows) {
+  // Called exactly once, immediately after the embedded payload is parsed
+  // and before any filter/sort/render runs -- deriving subfamily per filter
+  // event across the full ~84k-row payload is precisely the per-event cost
+  // D-02 exists to remove. Gated on command_shape === "simple" (mirroring
+  // Plan 02's Python-side family gate) so opaque control_flow_script/
+  // unclassified blobs never populate the subfamily axis with garbage.
+  rows.forEach(function (row) {
+    row.subfamily = row.command_shape === "simple" ? subfamilyOf(row.command_text) : "";
+  });
+  return rows;
+}
+
 function filterRows(rows, criteria) {
   criteria = criteria || {};
   var family = criteria.family;
@@ -524,6 +603,7 @@ function chartJsAvailable() {
 (function () {
   var dataEl = document.getElementById("usage-metrics-data");
   var data = JSON.parse(dataEl.textContent);
+  decorateSubfamily(data);
   var tbody = document.getElementById("usage-tbody");
   var scrollEl = document.getElementById("table-scroll");
   var theadFlat = document.getElementById("thead-flat");
