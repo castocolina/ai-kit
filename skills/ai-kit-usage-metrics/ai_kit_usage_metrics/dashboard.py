@@ -433,6 +433,13 @@ h1 {
 .state-panel--error .state-body {
   color: var(--md-sys-color-error);
 }
+.result-count {
+  font-size: var(--md-sys-typescale-label-size);
+  font-weight: var(--md-sys-typescale-label-weight);
+  line-height: var(--md-sys-typescale-label-line-height);
+  color: var(--md-sys-color-outline);
+  margin: var(--space-sm) 0;
+}
 </style>
 </head>
 <body>
@@ -501,6 +508,7 @@ h1 {
 <md-text-button id="clear-filters" type="button">Clear filters</md-text-button>
 </form>
 </div>
+<p id="result-count" class="result-count" role="status"></p>
 <div id="table-scroll" tabindex="-1">
 <table id="usage-table">
 <thead>
@@ -1051,6 +1059,7 @@ function chartJsAvailable() {
   var loadingBar = document.getElementById("loading-progress");
   var pageErrorState = document.getElementById("page-error-state");
   var tableEmptyState = document.getElementById("table-empty-state");
+  var resultCount = document.getElementById("result-count");
   var sortKey = "date";
   var sortDir = "asc";
   var virtualizer = null;
@@ -1634,6 +1643,11 @@ function chartJsAvailable() {
     if (virtualizer) {
       virtualizer.setOptions(virtualizerOptions(currentRows.length));
       virtualizer.measure();
+    }
+    if (resultCount) {
+      resultCount.textContent = grouped
+        ? currentFiltered.length + " matching commands across " + currentRows.length + " sessions"
+        : currentRows.length + " matching commands";
     }
     paint();
   }

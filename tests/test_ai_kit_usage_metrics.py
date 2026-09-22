@@ -3737,6 +3737,19 @@ class TestDashboardFull(unittest.TestCase):
             "expected visible border/fill contrast in the unfocused rule body",
         )
 
+    def test_result_count_reflects_matching_rows(self):
+        html, _out = self._seed_and_generate()
+        self.assertIn('id="result-count"', html)
+        body = _extract_js_function_body(html, "repaintTable")
+        self.assertIn("resultCount", body)
+        self.assertIn("currentFiltered.length", body)
+        self.assertIn("currentRows.length", body)
+        # grouped and flat modes count different things (sessions vs raw
+        # matching commands) -- the text must distinguish them, not print
+        # the same phrase for both.
+        self.assertIn("matching commands", body)
+        self.assertIn("sessions", body)
+
     def test_grouped_mode_header_matches_grouped_cell_count(self):
         # D-23 regression: <thead>'s visible header row must always match
         # the cell count/meaning of whichever builder (flat vs grouped) is
