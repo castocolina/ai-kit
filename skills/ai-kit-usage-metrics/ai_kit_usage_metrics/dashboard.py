@@ -1740,7 +1740,7 @@ function chartJsAvailable() {
     if (grouped) {
       currentRows = sortRows(
         groupBySession(currentFiltered),
-        sortKey === "session_id" ? "session_id" : sortKey,
+        sortKey,
         sortDir
       );
       currentBuilder = groupedRowBuilder;
