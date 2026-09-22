@@ -267,6 +267,7 @@ SUBFAMILY_SPEC_CASES = [
     ("sudo git -C /srv pull", "pull"),
     ("FOO=bar git -c user.name=x log", "log"),
     ("nice -n10 git push", "push"),
+    ("export FOO=bar git commit -m msg", "commit"),
     ("make -C build test", "test"),
     ("rg -n pattern", "pattern"),
     ("python3 -m unittest tests.x", "unittest"),

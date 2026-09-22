@@ -677,7 +677,7 @@ function dateCellText(date) {
 // so the suite's node-executed parity test (test_subfamily_js_matches_spec_table_and_python)
 // picks it up automatically. Any change here must be mirrored in family.py,
 // and vice versa -- SUBFAMILY_SPEC_CASES is the shared oracle for both.
-var SUBFAMILY_WRAPPERS = ["sudo", "env", "time", "nice", "ionice"];
+var SUBFAMILY_WRAPPERS = ["sudo", "env", "time", "nice", "ionice", "export"];
 var SUBFAMILY_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=\\S*$/;
 var SUBFAMILY_CANDIDATE_RE = /^[A-Za-z][A-Za-z0-9_.:-]*$/;
 var SUBFAMILY_VALUE_FLAGS = {
