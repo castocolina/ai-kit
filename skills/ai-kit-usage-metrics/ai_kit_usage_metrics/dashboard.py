@@ -586,6 +586,12 @@ function displayFamily(row) {
 // a blank cell with no visual marker.
 var EM_DASH = "\\u2014";
 var PRICE_UNKNOWN_TOOLTIP = "unknown \\u2014 model not in catalog";
+/* rtk rows carry price_confidence "not_applicable" (refiner.py never
+   attempts a catalog lookup for them -- rtk is a shell-command wrapper
+   measuring token savings, not a model call). Showing the catalog-miss
+   tooltip on those rows falsely implies rtk should have a priceable
+   model, so it gets its own distinct message. */
+var PRICE_NOT_APPLICABLE_TOOLTIP = "not applicable \\u2014 rtk measures token savings, not model cost";
 
 function priceCellText(price) {
   return price == null ? EM_DASH : String(price);
@@ -1214,7 +1220,11 @@ function chartJsAvailable() {
   function priceTd(row) {
     var cell = document.createElement("td");
     cell.textContent = priceCellText(row.price);
-    if (row.price == null) cell.title = PRICE_UNKNOWN_TOOLTIP;
+    if (row.price == null) {
+      cell.title = row.price_confidence === "not_applicable"
+        ? PRICE_NOT_APPLICABLE_TOOLTIP
+        : PRICE_UNKNOWN_TOOLTIP;
+    }
     return cell;
   }
 
