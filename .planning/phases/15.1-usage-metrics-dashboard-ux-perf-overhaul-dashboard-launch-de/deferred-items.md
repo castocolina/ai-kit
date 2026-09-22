@@ -58,3 +58,30 @@ executor's Scope Boundary rule.
 - `tests.test_ai_kit_usage_metrics.py:1242` `ruff` `E501` — same
   pre-existing finding logged under Plan 03, still present, still
   untouched by this plan's own additions to the file.
+
+## Code review (--fix --auto, iteration 3/3 loop cap)
+
+Two minor warnings surfaced on the final (3rd, capped) re-review iteration
+and were not auto-fixed, since the `--auto` fix/re-review loop is capped at
+3 iterations to avoid unbounded churn:
+
+- **Flat-mode sort-key guard is asymmetric with the grouped-mode one just
+  fixed** (`dashboard.py`, `buildCurrentRowsFromFiltered()`): `b9d8a52`
+  added a `GROUPED_SORT_KEYS` fallback for the grouped branch only. A
+  grouped-only sort key (e.g. `count`) left active in `sortKey` when the
+  user unchecks "group by session" silently no-ops the flat-mode sort —
+  the mirror-image of the bug `b9d8a52` fixed. Low severity: requires the
+  specific sequence of sorting by a grouped-only column, then switching
+  back to flat mode, to notice; the column header UI does not expose
+  grouped-only keys while in flat mode already (only `data-sort-key`
+  attributes present in the flat `<thead>` are clickable), so this is
+  reachable only via the JS API directly or a very specific state
+  transition, not through normal header-click navigation.
+- **`b9d8a52` shipped without a dedicated regression test**, unlike its
+  sibling fix `310f020` which added
+  `test_virtualizer_fallback_timer_reversed_by_late_mount_via_node`.
+
+Follow-up: add a symmetric `FLAT_SORT_KEYS` guard (or a shared
+`resolveSortKey(mode, sortKey)` helper covering both directions) plus a
+node-executed regression test, in a future small fix or the next phase
+that touches this file.
