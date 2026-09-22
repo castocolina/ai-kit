@@ -80,7 +80,9 @@ window.__virtualCore = {
 };
 window.dispatchEvent(new Event("virtual-core-ready"));
 </script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+        integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
+        crossorigin="anonymous"></script>
 <style>
 :root {
   --md-sys-color-surface: #FFFBFE;
