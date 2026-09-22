@@ -4120,6 +4120,126 @@ class TestDashboardFull(unittest.TestCase):
         self.assertTrue(result["empty"])
         self.assertFalse(result["nonEmpty"])
 
+    def test_virtualizer_fallback_timer_reversed_by_late_mount_via_node(self):
+        # WR-02 (re-review): the 5s virtualizer-load fallback timer can fire
+        # BEFORE a merely-slow (not actually failed) "virtual-core-ready"
+        # event arrives -- showPageError() runs first, then mountVirtualizer()
+        # succeeds moments later. This test drives the REAL shipped
+        # showPageError/hidePageError/mountVirtualizer function bodies (and
+        # the real setTimeout-callback body) extracted verbatim from the
+        # generated HTML, against a minimal hand-built DOM/window stand-in
+        # for the handful of elements/globals those three closures touch
+        # (pageErrorState, filtersForm, chartsRow, scrollEl, loadingBar,
+        # window.__virtualCore, virtualizer, virtualizerFallbackTimer).
+        #
+        # Coverage: proves (a) the timer-fires-first branch still shows the
+        # page error exactly as before, (b) a late-but-successful
+        # mountVirtualizer() call reverses every one of showPageError()'s
+        # effects (pageErrorState re-hidden, filtersForm/chartsRow/scrollEl
+        # display restored) and neutralizes the stale timer handle, matching
+        # the exact race the WR-02 finding described.
+        #
+        # Explicit non-coverage (documented per REVIEW.md's fallback
+        # instruction, since this suite has no browser/jsdom harness -- see
+        # test_charts_row_and_filters_are_layout_siblings's comment):
+        # virtualizerOptions()/paint()/the real @tanstack Virtualizer class
+        # are stubbed no-ops here, so this test does NOT exercise actual
+        # table (re)painting or virtualization math (that is covered
+        # separately by test_slice_for_items_materializes_only_virtual_items_via_node).
+        # It also does not exercise real browser setTimeout/event-loop
+        # timing -- the timer callback and the "virtual-core-ready" mount are
+        # invoked directly, in the buggy order, rather than scheduled.
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        show_page_error_body = _extract_js_function_body(html, "showPageError")
+        hide_page_error_body = _extract_js_function_body(html, "hidePageError")
+        mount_virtualizer_body = _extract_js_function_body(html, "mountVirtualizer")
+        fallback_timer_callback = _extract_block_after(
+            html, "virtualizerFallbackTimer = setTimeout(function () {"
+        )
+        wrapper = os.path.join(self.root, "virtualizer_fallback_check.js")
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(
+                "var virtualizer = null;\n"
+                "var virtualizerFallbackTimer = null;\n"
+                "var currentRows = [];\n"
+                # Minimal DOM stand-ins for the exact properties
+                # showPageError/hidePageError/mountVirtualizer read or write.
+                "var pageErrorState = {hidden: true};\n"
+                "var filtersForm = {style: {display: \"\"}};\n"
+                "var chartsRow = {style: {display: \"\"}};\n"
+                "var scrollEl = {style: {display: \"\"}};\n"
+                "var loadingBarRemoveCalls = 0;\n"
+                "var loadingBar = {remove: function () { loadingBarRemoveCalls++; }};\n"
+                # Stubs for the two collaborators mountVirtualizer() calls
+                # that are out of scope for this test (see docstring above).
+                "function virtualizerOptions(count) { return {count: count}; }\n"
+                "var paintCalls = 0;\n"
+                "function paint() { paintCalls++; }\n"
+                "var window = {__virtualCore: null};\n"
+                "function FakeVirtualizer() {\n"
+                "  this._didMount = function () {};\n"
+                "  this._willUpdate = function () {};\n"
+                "}\n"
+                "\nfunction showPageError() " + show_page_error_body + "\n"
+                "\nfunction hidePageError() " + hide_page_error_body + "\n"
+                "\nfunction mountVirtualizer() " + mount_virtualizer_body + "\n"
+                "\nvar states = {};\n"
+                # Step 1: the 5s fallback timer fires while virtualizer is
+                # still null (the CDN script hasn't finished loading yet) --
+                # the REAL extracted setTimeout-callback body, invoked
+                # directly rather than scheduled.
+                "(function () " + fallback_timer_callback + ")();\n"
+                "states.afterTimeout = {\n"
+                "  pageErrorHidden: pageErrorState.hidden,\n"
+                "  filtersDisplay: filtersForm.style.display,\n"
+                "  chartsDisplay: chartsRow.style.display,\n"
+                "  scrollDisplay: scrollEl.style.display,\n"
+                "  loadingBarRemoveCalls: loadingBarRemoveCalls,\n"
+                "};\n"
+                # Step 2: the CDN script finishes loading shortly afterward
+                # and "virtual-core-ready" fires -- mountVirtualizer() runs
+                # against a now-stale (but not yet cleared) timer handle,
+                # exactly like initialize()'s addEventListener callback.
+                "window.__virtualCore = {Virtualizer: FakeVirtualizer};\n"
+                "virtualizerFallbackTimer = \"stale-timer-handle\";\n"
+                "mountVirtualizer();\n"
+                "states.afterLateMount = {\n"
+                "  virtualizerMounted: virtualizer !== null,\n"
+                "  fallbackTimerCleared: virtualizerFallbackTimer === null,\n"
+                "  pageErrorHidden: pageErrorState.hidden,\n"
+                "  filtersDisplay: filtersForm.style.display,\n"
+                "  chartsDisplay: chartsRow.style.display,\n"
+                "  scrollDisplay: scrollEl.style.display,\n"
+                "  paintCalls: paintCalls,\n"
+                "};\n"
+                "console.log(JSON.stringify(states));\n"
+            )
+        proc = subprocess.run(
+            ["node", wrapper], capture_output=True, text=True, check=True
+        )
+        states = json.loads(proc.stdout)
+        # After the timer fires with virtualizer still null: the page-error
+        # state is shown, exactly as the pre-WR-02-re-review behavior did.
+        after_timeout = states["afterTimeout"]
+        self.assertFalse(after_timeout["pageErrorHidden"])
+        self.assertEqual(after_timeout["filtersDisplay"], "none")
+        self.assertEqual(after_timeout["chartsDisplay"], "none")
+        self.assertEqual(after_timeout["scrollDisplay"], "none")
+        self.assertEqual(after_timeout["loadingBarRemoveCalls"], 1)
+        # After the late-but-successful mount: every one of showPageError()'s
+        # effects must be fully reversed, and the stale timer handle cleared
+        # -- this is the exact assertion the WR-02 finding was missing.
+        after_late_mount = states["afterLateMount"]
+        self.assertTrue(after_late_mount["virtualizerMounted"])
+        self.assertTrue(after_late_mount["fallbackTimerCleared"])
+        self.assertTrue(after_late_mount["pageErrorHidden"])
+        self.assertEqual(after_late_mount["filtersDisplay"], "")
+        self.assertEqual(after_late_mount["chartsDisplay"], "")
+        self.assertEqual(after_late_mount["scrollDisplay"], "")
+        self.assertEqual(after_late_mount["paintCalls"], 1)
+
     def test_bootstrap_defers_initialization_behind_two_frames(self):
         html, _out = self._seed_and_generate()
         script_start = html.find("<script>\n")

@@ -1122,6 +1122,10 @@ function chartJsAvailable() {
   var sortKey = "date";
   var sortDir = "asc";
   var virtualizer = null;
+  // WR-02 (re-review): tracks the 5s virtualizer-load fallback timer (see
+  // initialize() below) so a mount that succeeds -- whether before or after
+  // the timer fires -- can neutralize it / reverse its effects.
+  var virtualizerFallbackTimer = null;
   var currentRows = [];
   var currentBuilder = flatRowBuilder;
   var runtimeChart = null;
@@ -1164,6 +1168,22 @@ function chartJsAvailable() {
     if (chartsRow) chartsRow.style.display = "none";
     if (scrollEl) scrollEl.style.display = "none";
     if (loadingBar) loadingBar.remove();
+  }
+
+  // WR-02 (re-review): reverses showPageError()'s effects. The 5s virtualizer
+  // fallback timer (initialize(), below) can legitimately fire BEFORE a
+  // merely-slow (not actually failed) "virtual-core-ready" event arrives --
+  // clearing the timer alone only prevents a redundant future fire, it does
+  // not undo an error already shown. mountVirtualizer() calls this
+  // unconditionally on every successful mount so a late-but-successful mount
+  // is a true no-op when the timer never fired, and a full recovery
+  // (re-show filtersForm/chartsRow/scrollEl, hide pageErrorState) when it did.
+  function hidePageError() {
+    if (!pageErrorState || pageErrorState.hidden) return;
+    pageErrorState.hidden = true;
+    if (filtersForm) filtersForm.style.display = "";
+    if (chartsRow) chartsRow.style.display = "";
+    if (scrollEl) scrollEl.style.display = "";
   }
 
   // The embedded-payload parse is wrapped: a malformed/truncated payload
@@ -1564,9 +1584,17 @@ function chartJsAvailable() {
   function mountVirtualizer() {
     var vc = window.__virtualCore;
     if (!vc || virtualizer) return;
+    // WR-02: neutralize the fallback timer on every successful mount --
+    // whether it is still pending (clearing it prevents a redundant future
+    // fire) or has already fired (hidePageError() below reverses it).
+    if (virtualizerFallbackTimer) {
+      clearTimeout(virtualizerFallbackTimer);
+      virtualizerFallbackTimer = null;
+    }
     virtualizer = new vc.Virtualizer(virtualizerOptions(currentRows.length));
     virtualizer._didMount();
     virtualizer._willUpdate();
+    hidePageError();
     paint();
   }
 
@@ -1863,7 +1891,11 @@ function chartJsAvailable() {
       // Surface the same page-level error state the JSON-parse-failure path
       // uses if the virtualizer still hasn't mounted a few seconds later --
       // a no-op if it mounted in time (virtualizer is non-null by then).
-      setTimeout(function () {
+      // The timer id is stashed in virtualizerFallbackTimer so a mount that
+      // succeeds later -- via the listener above, even after this timer has
+      // already fired and shown the error -- can neutralize/reverse it
+      // (see mountVirtualizer()'s hidePageError() call).
+      virtualizerFallbackTimer = setTimeout(function () {
         if (!virtualizer) showPageError();
       }, 5000);
     }
