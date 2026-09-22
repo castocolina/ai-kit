@@ -353,8 +353,13 @@ h1 {
    tokens_input, tokens_output, price) -- scoped to .row-grouped so it never
    shares column meaning/widths with flat mode's 11-column nth-child rules
    above. The extra class selector outranks the plain #usage-table rule. */
+/* session_id is a 36-char UUID -- it is the column that needs the
+   flexible/growing width, not the trailing numeric columns (which are
+   always short and were previously given flex-grow, stretching an
+   empty price column while session_id wrapped in a cramped fixed
+   200px). */
 #usage-table .row-grouped th:nth-child(1),
-#usage-table .row-grouped td:nth-child(1) { flex: 0 0 200px; }
+#usage-table .row-grouped td:nth-child(1) { flex: 1 1 260px; min-width: 0; white-space: nowrap; }
 #usage-table .row-grouped th:nth-child(2),
 #usage-table .row-grouped td:nth-child(2) { flex: 0 0 100px; }
 #usage-table .row-grouped th:nth-child(3),
@@ -362,7 +367,7 @@ h1 {
 #usage-table .row-grouped th:nth-child(4),
 #usage-table .row-grouped td:nth-child(4) { flex: 0 0 130px; }
 #usage-table .row-grouped th:nth-child(5),
-#usage-table .row-grouped td:nth-child(5) { flex: 1 1 100px; min-width: 0; }
+#usage-table .row-grouped td:nth-child(5) { flex: 0 0 100px; }
 #usage-table td.command-cell {
   cursor: pointer;
 }
