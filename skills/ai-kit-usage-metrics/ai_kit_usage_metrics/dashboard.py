@@ -1731,6 +1731,14 @@ function chartJsAvailable() {
     });
   }
 
+  // WR-01 (re-review): groupBySession()'s output rows are {session_id,
+  // count, tokens_input, tokens_output, price} -- "date" (the default
+  // sortKey) is not one of them. Checking "group by session" as a user's
+  // very first action -- before ever clicking a column header -- must not
+  // silently degrade sortRows into a no-op (undefined == undefined for
+  // every row) with zero visual indication anything is unsorted.
+  var GROUPED_SORT_KEYS = ["session_id", "count", "tokens_input", "tokens_output", "price"];
+
   // SD-6: the sole entry point that recomputes currentRows from the current
   // filter criteria and the current sort/grouping -- shared by applyFilters
   // (which recomputes currentFiltered too) and applySort (which re-sorts the
@@ -1738,9 +1746,13 @@ function chartJsAvailable() {
   function buildCurrentRowsFromFiltered() {
     var grouped = document.getElementById("group-by-session").checked;
     if (grouped) {
+      // WR-01: fall back to a grouped-valid key when the active sortKey
+      // (e.g. the flat-mode default "date", or any other flat-only column)
+      // doesn't exist on a grouped row -- never silently no-op the sort.
+      var groupedKey = GROUPED_SORT_KEYS.indexOf(sortKey) === -1 ? "session_id" : sortKey;
       currentRows = sortRows(
         groupBySession(currentFiltered),
-        sortKey,
+        groupedKey,
         sortDir
       );
       currentBuilder = groupedRowBuilder;
