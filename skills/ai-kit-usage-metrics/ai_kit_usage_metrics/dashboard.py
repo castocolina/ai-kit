@@ -48,24 +48,27 @@ _HTML_HEAD = """<!DOCTYPE html>
 <title>ai-kit usage metrics</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined">
-<script type="importmap">
-{
-  "imports": {
-    "@material/web/": "https://esm.run/@material/web@2.5.0/"
-  }
-}
-</script>
 <script type="module">
-import "@material/web/checkbox/checkbox.js";
-import "@material/web/select/outlined-select.js";
-import "@material/web/select/select-option.js";
-import "@material/web/textfield/outlined-text-field.js";
-import "@material/web/button/text-button.js";
-import "@material/web/button/filled-button.js";
-import "@material/web/iconbutton/icon-button.js";
-import "@material/web/icon/icon.js";
-import "@material/web/dialog/dialog.js";
-import "@material/web/progress/linear-progress.js";
+/* unpkg's "?module" transform resolves every bare specifier (tslib, lit/*)
+   to a canonical per-version-range URL, so all nine submodules below share
+   ONE instance of shared internals like md-focus-ring instead of each
+   getting its own bundled copy -- esm.run/jsDelivr's "+esm" transform
+   bundles each deep submodule import independently and re-registers
+   shared custom elements, which throws
+   "the name 'md-focus-ring' has already been used with this registry"
+   (confirmed live and documented upstream:
+   https://github.com/jsdelivr/jsdelivr/issues/18473,
+   https://github.com/material-components/material-web/discussions/5587). */
+import "https://unpkg.com/@material/web@2.5.0/checkbox/checkbox.js?module";
+import "https://unpkg.com/@material/web@2.5.0/select/outlined-select.js?module";
+import "https://unpkg.com/@material/web@2.5.0/select/select-option.js?module";
+import "https://unpkg.com/@material/web@2.5.0/textfield/outlined-text-field.js?module";
+import "https://unpkg.com/@material/web@2.5.0/button/text-button.js?module";
+import "https://unpkg.com/@material/web@2.5.0/button/filled-button.js?module";
+import "https://unpkg.com/@material/web@2.5.0/iconbutton/icon-button.js?module";
+import "https://unpkg.com/@material/web@2.5.0/icon/icon.js?module";
+import "https://unpkg.com/@material/web@2.5.0/dialog/dialog.js?module";
+import "https://unpkg.com/@material/web@2.5.0/progress/linear-progress.js?module";
 </script>
 <script type="module">
 import { Virtualizer, observeElementRect, observeElementOffset, elementScroll } from "https://esm.run/@tanstack/virtual-core@3.17.11";
@@ -1570,7 +1573,13 @@ function chartJsAvailable() {
       options: {
         indexAxis: "y",
         responsive: true,
-        maintainAspectRatio: false
+        maintainAspectRatio: false,
+        /* Each bar is its own category colour, not a multi-series
+           breakdown -- a dataset-level legend entry has no dataset
+           `label` to show (hence the earlier "undefined" swatch) and
+           wouldn't represent the per-bar colouring anyway; the y-axis
+           category labels already identify each bar. */
+        plugins: {legend: {display: false}}
       }
     });
   }

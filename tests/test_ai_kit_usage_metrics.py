@@ -3212,7 +3212,7 @@ class TestDashboardFull(unittest.TestCase):
 
     def test_material_selects_are_populated_with_select_options(self):
         html, _out = self._seed_and_generate()
-        self.assertIn('import "@material/web/select/select-option.js"', html)
+        self.assertIn('@material/web@2.5.0/select/select-option.js?module', html)
         with open(_DASHBOARD_PY, encoding="utf-8") as handle:
             source = handle.read()
         body = _extract_js_function_body(source, "fillSelect")
