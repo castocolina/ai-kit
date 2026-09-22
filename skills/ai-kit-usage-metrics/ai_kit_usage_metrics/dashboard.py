@@ -203,6 +203,27 @@ h1 {
   color: var(--md-sys-color-outline);
   font-size: var(--md-sys-typescale-label-size);
 }
+/* Quick-select chips beside the flight-booking-style range control --
+   set the two date inputs programmatically rather than requiring the
+   user to type or pick each end of a range by hand for the common
+   cases (today / last week / last 30 days / calendar month / no
+   filter). "month" (last 30 days) is the default active preset on
+   initial page load. */
+#date-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs, 4px);
+  margin-top: var(--space-xs);
+}
+#date-presets md-text-button {
+  --md-text-button-label-text-size: var(--md-sys-typescale-label-size);
+  --md-text-button-container-height: 28px;
+}
+#date-presets md-text-button[data-active] {
+  --md-text-button-label-text-color: var(--md-sys-color-primary);
+  font-weight: var(--md-sys-typescale-label-weight);
+  text-decoration: underline;
+}
 #clear-filters {
   align-self: flex-end;
 }
@@ -488,6 +509,13 @@ h1 {
 <input id="filter-date-from" type="date" aria-label="from date">
 <span class="date-range-sep">&ndash;</span>
 <input id="filter-date-to" type="date" aria-label="to date">
+</span>
+<span id="date-presets" role="group" aria-label="date range presets">
+<md-text-button type="button" data-preset="today">Today</md-text-button>
+<md-text-button type="button" data-preset="week">Last 7 days</md-text-button>
+<md-text-button type="button" data-preset="month">Last 30 days</md-text-button>
+<md-text-button type="button" data-preset="current-month">This month</md-text-button>
+<md-text-button type="button" data-preset="all">All time</md-text-button>
 </span>
 </label>
 <label>tokens min
@@ -1192,8 +1220,70 @@ function chartJsAvailable() {
     ["filter-date-from", "filter-date-to"].forEach(function (id) {
       document.getElementById(id).value = "";
     });
+    markActiveDatePreset("all");
     applyFilters();
   }
+
+  function markActiveDatePreset(name) {
+    document.querySelectorAll("#date-presets md-text-button").forEach(function (btn) {
+      if (btn.getAttribute("data-preset") === name) btn.setAttribute("data-active", "");
+      else btn.removeAttribute("data-active");
+    });
+  }
+
+  function isoDate(dt) {
+    var mm = String(dt.getMonth() + 1);
+    if (mm.length < 2) mm = "0" + mm;
+    var dd = String(dt.getDate());
+    if (dd.length < 2) dd = "0" + dd;
+    return dt.getFullYear() + "-" + mm + "-" + dd;
+  }
+
+  // Quick-select date-range presets (airline/hotel-booking pattern: a
+  // single bordered from/to control per D-13, plus quick-select chips
+  // rather than requiring every range to be hand-picked). "today"/"week"
+  // (last 7 days)/"month" (last 30 days) are ROLLING windows anchored on
+  // the moment the page is opened -- the same "computed in the browser
+  // from new Date() when opened" pattern SKILL.md already documents for
+  // the current-month case, so the same generated HTML answers
+  // differently depending on when it is opened, by design. "current-month"
+  // is the CALENDAR month to date (1st of this month through today),
+  // distinct from the rolling 30-day "month" preset. "all" clears the
+  // range entirely.
+  function applyDatePreset(name) {
+    var today = new Date();
+    var from = "", to = "";
+    if (name === "today") {
+      from = isoDate(today);
+      to = from;
+    } else if (name === "week") {
+      from = isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6));
+      to = isoDate(today);
+    } else if (name === "month") {
+      from = isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29));
+      to = isoDate(today);
+    } else if (name === "current-month") {
+      from = isoDate(new Date(today.getFullYear(), today.getMonth(), 1));
+      to = isoDate(today);
+    }
+    document.getElementById("filter-date-from").value = from;
+    document.getElementById("filter-date-to").value = to;
+    markActiveDatePreset(name);
+    applyFilters();
+  }
+  document.querySelectorAll("#date-presets md-text-button").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      applyDatePreset(btn.getAttribute("data-preset"));
+    });
+  });
+  // A manual edit of either date input no longer matches any preset's
+  // computed range -- drop the active highlight rather than leave a
+  // preset looking selected when it no longer describes the filter.
+  ["filter-date-from", "filter-date-to"].forEach(function (id) {
+    document.getElementById(id).addEventListener("input", function () {
+      markActiveDatePreset(null);
+    });
+  });
 
   function td(text) {
     var cell = document.createElement("td");
@@ -1710,7 +1800,10 @@ function chartJsAvailable() {
     fillSelect("filter-family", distinctValues("family"));
     fillSelect("filter-subfamily", distinctValues("subfamily"));
 
-    applyFilters();
+    // Default to the last-30-days preset on initial load rather than an
+    // unfiltered view of the full embedded dataset -- applyDatePreset()
+    // sets the date inputs and calls applyFilters() itself.
+    applyDatePreset("month");
     if (window.__virtualCore) {
       mountVirtualizer();
     } else {

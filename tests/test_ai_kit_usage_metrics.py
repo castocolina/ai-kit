@@ -3786,6 +3786,24 @@ class TestDashboardFull(unittest.TestCase):
         self.assertIn("matching commands", body)
         self.assertIn("sessions", body)
 
+    def test_date_range_presets_exist_and_default_to_last_30_days(self):
+        # User-directed feature: airline/hotel-booking-style quick-select
+        # chips beside the from/to range control, with "last 30 days" (not
+        # an unfiltered view of the full embedded dataset) as the default
+        # active state on initial page load.
+        html, _out = self._seed_and_generate()
+        for preset in ("today", "week", "month", "current-month", "all"):
+            self.assertIn('data-preset="%s"' % preset, html)
+        body = _extract_js_function_body(html, "applyDatePreset")
+        self.assertIn('"filter-date-from"', body)
+        self.assertIn('"filter-date-to"', body)
+        self.assertIn("markActiveDatePreset", body)
+        self.assertIn("applyFilters", body)
+        # The bootstrap must call the "month" preset, not a bare
+        # applyFilters() over the unfiltered dataset, so the initial paint
+        # is already narrowed to the last 30 days.
+        self.assertIn('applyDatePreset("month");', html)
+
     def test_grouped_mode_header_matches_grouped_cell_count(self):
         # D-23 regression: <thead>'s visible header row must always match
         # the cell count/meaning of whichever builder (flat vs grouped) is
