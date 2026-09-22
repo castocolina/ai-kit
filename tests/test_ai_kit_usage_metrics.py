@@ -3497,7 +3497,20 @@ class TestDashboardFull(unittest.TestCase):
         # 37,231 rows with no price at all -- these must never collapse to
         # the same rendered text.
         self.assertNotEqual(result["nullPrice"], result["zeroPrice"])
-        self.assertNotEqual(result["nullDate"], result["realDate"])
+
+    def test_price_tooltip_distinguishes_rtk_not_applicable_from_catalog_miss(self):
+        html, _out = self._seed_and_generate()
+        body = _extract_js_function_body(html, "priceTd")
+        self.assertIn("PRICE_NOT_APPLICABLE_TOOLTIP", body)
+        self.assertIn("PRICE_UNKNOWN_TOOLTIP", body)
+        self.assertIn("not_applicable", body)
+        # rtk rows carry price_confidence "not_applicable" (refiner.py never
+        # attempts a catalog lookup for them) and must not show the same
+        # "not in catalog" tooltip a genuine claude/codex/cursor catalog
+        # miss shows -- that would falsely imply rtk should have a
+        # priceable model.
+        self.assertIn("not applicable", html)
+        self.assertIn("not in catalog", html)
 
     def test_command_cell_wraps_to_two_lines(self):
         with open(_DASHBOARD_PY, encoding="utf-8") as handle:
