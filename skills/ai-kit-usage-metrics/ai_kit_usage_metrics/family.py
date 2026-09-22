@@ -22,8 +22,35 @@ for _legacy, _modern in CURATED_SUBSTITUTIONS:
 # Common wrapper binaries and a leading env-var-assignment run that should be
 # skipped before taking the family-determining token, so `sudo grep x` and
 # `FOO=bar rg x` resolve to "grep" rather than "sudo"/"FOO=bar" (WR-04).
-_WRAPPERS = frozenset({"sudo", "env", "time", "nice", "ionice"})
+# `export` is a shell keyword wrapping an assignment the same way (`export
+# FOO=bar` / `export FOO=bar rg x`), not a real binary -- without it, a bare
+# `export FOO=bar` line has its OWN assignment token skipped but "export"
+# itself never gets a skip rule, so it wrongly becomes the family.
+_WRAPPERS = frozenset({"sudo", "env", "time", "nice", "ionice", "export"})
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*$")
+
+# A command substitution glued directly onto an assignment's value with no
+# separating space (`FOO="$(jq ...)"`, `FOO=$(jq ...)`) is naive-whitespace-
+# tokenized as ONE token together with the substituted command's own name
+# (e.g. `FOO="$(jq` from `FOO="$(jq -cSn ...)"`), so the plain assignment
+# skip above consumes it as a unit and the substituted command's own FLAG
+# (`-cSn`) becomes the next token and is wrongly read as the family. This
+# pattern recognizes that shape and captures the substitution's real command
+# name directly, ahead of the plain assignment check.
+_SUBST_ASSIGNMENT_RE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*=[\"']?\$\(([A-Za-z0-9_./-]+)"
+)
+
+# A family value that reaches this point without matching a curated pair is
+# shown as-is (D-16: "never a generic 'unclassified' string") -- but only
+# when it plausibly LOOKS like a command/binary name. The decomposer's
+# quote-aware scanner cannot always structurally close every shell
+# construct (documented `unclassified`/`control_flow_script` limitation in
+# SKILL.md); a mis-split fragment of one of those constructs -- a trailing
+# `sort)` from an unclosed `<(...)` process substitution, a bare `-cSn`
+# flag, a quoted string fragment -- is not a command name and must not
+# populate the family filter/chart as if it were one.
+_FAMILY_CANDIDATE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]*$")
 
 # D-11 / SD-1: option-arity table for subfamily_of()'s value-flag skip. A flag
 # belongs here when its following SEPARATE argument is a configuration value
@@ -83,6 +110,10 @@ def family_of(command_text: str) -> str:
     i = 0
     while i < len(tokens):
         tok = tokens[i]
+        subst = _SUBST_ASSIGNMENT_RE.match(tok)
+        if subst:
+            token = subst.group(1)
+            return _TOKEN_TO_FAMILY.get(token, token)
         if _ASSIGNMENT_RE.match(tok):
             i += 1
             continue
@@ -93,6 +124,8 @@ def family_of(command_text: str) -> str:
             continue
         break
     token = os.path.basename(tokens[i]) if i < len(tokens) else ""
+    if token and not _FAMILY_CANDIDATE_RE.match(token):
+        return ""
     return _TOKEN_TO_FAMILY.get(token, token)
 
 

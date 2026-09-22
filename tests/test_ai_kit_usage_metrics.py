@@ -304,6 +304,42 @@ class TestFamily(unittest.TestCase):
             with self.subTest(command_text=command_text):
                 self.assertEqual(family.subfamily_of(command_text), expected)
 
+    def test_command_substitution_glued_to_assignment_resolves_to_real_command(self):
+        # Live-found regression (2026-09-21): naive whitespace tokenizing
+        # glues a command substitution's command name onto the preceding
+        # assignment token when there is no space after "$(" ("FOO=\"$(jq"),
+        # so the substitution's own FLAG ("-cSn") was wrongly read as the
+        # family instead of "jq".
+        self.assertEqual(
+            family.family_of(
+                'intended_projection="$(jq -cSn --argjson t "$t" \'{}\')"'
+            ),
+            "jq",
+        )
+        self.assertEqual(family.family_of("x=$(rg -n foo bar)"), "grep")
+
+    def test_export_prefix_does_not_mask_family(self):
+        # "export FOO=bar" is a shell keyword wrapping an assignment the
+        # same way "sudo"/"env" wrap a command -- it must not itself become
+        # the reported family, and a bare export-only line (no command
+        # after the assignment) must degrade to "" rather than "export".
+        self.assertEqual(family.family_of("export FOO=bar grep x"), "grep")
+        self.assertEqual(family.family_of("export PNPM_HOME=/x/bin"), "")
+
+    def test_implausible_fragment_returns_empty_family(self):
+        # Live-found regression (2026-09-21): a decomposer fragment left
+        # over from a shell construct it could not structurally close (an
+        # unclosed process substitution, a bare flag, a quoted fragment)
+        # must not populate the family filter/chart as if it were a real
+        # command name -- SKILL.md already documents this as a known
+        # decomposer limitation, not something family_of() should present
+        # with the same confidence as a real command.
+        self.assertEqual(family.family_of("sort) <(git diff --name-only A..B"), "")
+        self.assertEqual(family.family_of("-cSn"), "")
+        self.assertEqual(family.family_of("Read()"), "")
+        self.assertEqual(family.family_of('"quoted fragment'), "")
+        self.assertEqual(family.family_of(">"), "")
+
 
 class TestDecomposer(unittest.TestCase):
     def test_scan_command_prd_compound_and(self):
