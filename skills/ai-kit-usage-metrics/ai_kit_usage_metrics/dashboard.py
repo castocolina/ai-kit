@@ -107,6 +107,12 @@ window.dispatchEvent(new Event("virtual-core-ready"));
   --space-lg: 24px;
   --space-xl: 32px;
   --space-2xl: 48px;
+  /* Subtle tonal row treatments for the table -- distinct from, and
+     lighter than, --md-sys-color-surface-variant (which the filter bar
+     and chart panels already use), so the table's own rhythm doesn't
+     compete with those surfaces for visual weight. */
+  --row-stripe: #F7F2FA;
+  --row-hover: #ECE6F0;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -116,6 +122,8 @@ window.dispatchEvent(new Event("virtual-core-ready"));
     --md-sys-color-error: #F2B8B5;
     --md-sys-color-on-surface: #E6E1E5;
     --md-sys-color-outline: #938F99;
+    --row-stripe: #242327;
+    --row-hover: #2D2C31;
   }
 }
 body {
@@ -147,11 +155,17 @@ h1 {
   flex-wrap: wrap;
   width: 100%;
 }
+/* The charts are the content a viewer came to read; the filter bar is a
+   control surface for narrowing it. Giving both equal flex weight was
+   why each chart panel got squeezed to ~1/4 of the row on a wide
+   viewport -- charts now claim roughly 2x the filter bar's share, and
+   the filter bar caps out rather than ballooning to fill leftover
+   width its form controls don't need. */
 #charts-row {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-xl);
-  flex: 1 1 600px;
+  flex: 2 1 720px;
   min-width: 0;
 }
 #filters {
@@ -160,9 +174,10 @@ h1 {
   align-content: flex-start;
   gap: var(--space-sm) var(--space-md);
   background: var(--md-sys-color-surface-variant);
-  padding: var(--space-md);
+  padding: var(--space-lg);
   border-radius: 4px;
   flex: 1 1 320px;
+  max-width: 420px;
   min-width: 280px;
 }
 #filters label {
@@ -254,16 +269,16 @@ h1 {
    .chart-panel/.chart-fallback classes, not a bespoke rule. */
 .chart-panel {
   background: var(--md-sys-color-surface-variant);
-  padding: var(--space-md);
+  padding: var(--space-lg);
   border-radius: 4px;
-  flex: 1 1 220px;
-  min-width: 0;
+  flex: 1 1 280px;
+  min-width: 260px;
 }
 .chart-panel-title {
   font-size: var(--md-sys-typescale-heading-size);
   font-weight: var(--md-sys-typescale-heading-weight);
   line-height: var(--md-sys-typescale-heading-line-height);
-  margin: 0 0 var(--space-sm) 0;
+  margin: 0 0 var(--space-md) 0;
 }
 .chart-fallback {
   color: var(--md-sys-color-error);
@@ -279,7 +294,7 @@ h1 {
 .chart-canvas-wrap {
   position: relative;
   width: 100%;
-  height: clamp(220px, 30vh, 320px);
+  height: clamp(260px, 36vh, 400px);
 }
 #table-scroll {
   overflow-y: auto;
@@ -297,6 +312,7 @@ h1 {
   top: 0;
   z-index: 1;
   background: var(--md-sys-color-surface-variant);
+  border-bottom: 2px solid var(--md-sys-color-outline);
 }
 #usage-table thead tr, #usage-table tbody tr {
   display: flex;
@@ -314,6 +330,8 @@ h1 {
   font-size: var(--md-sys-typescale-label-size);
   font-weight: var(--md-sys-typescale-label-weight);
   line-height: var(--md-sys-typescale-label-line-height);
+  padding-top: var(--space-md);
+  padding-bottom: var(--space-md);
 }
 #usage-tbody {
   display: block;
@@ -325,6 +343,17 @@ h1 {
   left: 0;
   width: 100%;
   height: 56px;
+}
+/* Alternating tonal rows and a hover highlight give a 13-column,
+   thousands-of-rows table a scannable rhythm without touching the
+   locked 56px row height (SD-2's virtualizer estimateSize constant).
+   nth-child parity tracks visual row position within the current
+   virtualized paint, which is what a reader's eye actually follows. */
+#usage-tbody tr:nth-child(even) {
+  background: var(--row-stripe);
+}
+#usage-tbody tr:hover {
+  background: var(--row-hover);
 }
 /* D-10/D-12 flat-mode column order: runtime, model, family, subfamily,
    command, exec time, date, tokens_input, tokens_output, price,
