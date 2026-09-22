@@ -3247,15 +3247,21 @@ class TestDashboardFull(unittest.TestCase):
         # must never touch it.
         self.assertNotIn("group-by-session", body)
 
-    def test_material_selects_are_populated_with_select_options(self):
+    def test_filter_selects_are_native_and_populated_with_options(self):
+        # md-outlined-select/md-select-option were dropped after live
+        # Playwright testing reproduced their menu closing itself on the
+        # opening click (worse in Firefox than Chromium) -- native <select>
+        # has no such popup logic to misfire.
         html, _out = self._seed_and_generate()
-        self.assertIn('@material/web@2.5.0/select/select-option.js?module', html)
+        self.assertNotIn('select/outlined-select.js?module', html)
+        self.assertNotIn('select/select-option.js?module', html)
+        for filter_id in ("filter-runtime", "filter-model", "filter-family", "filter-subfamily"):
+            self.assertIn(f'<select id="{filter_id}">', html)
         with open(_DASHBOARD_PY, encoding="utf-8") as handle:
             source = handle.read()
         body = _extract_js_function_body(source, "fillSelect")
-        self.assertIn('createElement("md-select-option")', body)
-        self.assertIn('slot = "headline"', body)
-        self.assertNotIn('createElement("option")', body)
+        self.assertIn('createElement("option")', body)
+        self.assertNotIn('createElement("md-select-option")', body)
 
     def test_three_chart_canvases_and_pinned_chartjs(self):
         html, _out = self._seed_and_generate()

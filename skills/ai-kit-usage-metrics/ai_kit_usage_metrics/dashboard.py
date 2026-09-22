@@ -58,10 +58,17 @@ _HTML_HEAD = """<!DOCTYPE html>
    "the name 'md-focus-ring' has already been used with this registry"
    (confirmed live and documented upstream:
    https://github.com/jsdelivr/jsdelivr/issues/18473,
-   https://github.com/material-components/material-web/discussions/5587). */
+   https://github.com/material-components/material-web/discussions/5587).
+
+   md-outlined-select/md-select-option are deliberately NOT imported: live
+   Playwright testing reproduced its md-menu popup closing itself on the
+   very click that opens it -- worse in Firefox than Chromium, consistent
+   with the browser-dependent light-dismiss/focus-retargeting bugs tracked
+   upstream against md-menu. The 4 filter dropdowns below use native
+   <select> instead (fillSelect() populates <option>, styled in CSS to
+   match the outlined-field look), which has none of that component's
+   focus-trap machinery to misfire. */
 import "https://unpkg.com/@material/web@2.5.0/checkbox/checkbox.js?module";
-import "https://unpkg.com/@material/web@2.5.0/select/outlined-select.js?module";
-import "https://unpkg.com/@material/web@2.5.0/select/select-option.js?module";
 import "https://unpkg.com/@material/web@2.5.0/textfield/outlined-text-field.js?module";
 import "https://unpkg.com/@material/web@2.5.0/button/text-button.js?module";
 import "https://unpkg.com/@material/web@2.5.0/button/filled-button.js?module";
@@ -115,6 +122,8 @@ window.dispatchEvent(new Event("virtual-core-ready"));
      compete with those surfaces for visual weight. */
   --row-stripe: #F7F2FA;
   --row-hover: #ECE6F0;
+  --date-input-color-scheme: light;
+  --date-icon-filter: none;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -126,6 +135,8 @@ window.dispatchEvent(new Event("virtual-core-ready"));
     --md-sys-color-outline: #938F99;
     --row-stripe: #242327;
     --row-hover: #2D2C31;
+    --date-input-color-scheme: dark;
+    --date-icon-filter: invert(1);
   }
 }
 body {
@@ -142,45 +153,37 @@ h1 {
   font-weight: var(--md-sys-typescale-display-weight);
   line-height: var(--md-sys-typescale-display-line-height);
 }
-/* D-20: #dashboard-top lays the charts row and the filter bar out as flex
-   siblings (charts row first, per UI-SPEC.md's existing table/charts/
-   filters visual-focal-point ordering -- D-20 only moves filters from
-   stacked-below to beside, it does not reorder that priority), with the
-   table remaining full-width below both. flex-wrap is the graceful
-   narrow-viewport fallback; no breakpoint or mobile layout was required
-   (D-21). */
+/* D-20 (revised): the filter bar controls what the charts show, so it
+   reads BEFORE them, as its own full-width row -- not squeezed into the
+   same row beside them. That side-by-side arrangement (D-20's original
+   form) is what the live UAT feedback specifically named ("graficos al
+   mismo nivel de los filtros") as still wrong: cramped charts, an
+   over-narrow filter column, and no natural reading order between
+   "narrow the data" and "see the result". Stacking top-to-bottom removes
+   all three at once. */
 #dashboard-top {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-xl);
+  flex-direction: column;
+  gap: var(--space-lg);
   margin-bottom: var(--space-lg);
-  flex-wrap: wrap;
   width: 100%;
 }
-/* The charts are the content a viewer came to read; the filter bar is a
-   control surface for narrowing it. Giving both equal flex weight was
-   why each chart panel got squeezed to ~1/4 of the row on a wide
-   viewport -- charts now claim roughly 2x the filter bar's share, and
-   the filter bar caps out rather than ballooning to fill leftover
-   width its form controls don't need. */
 #charts-row {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-xl);
-  flex: 2 1 720px;
-  min-width: 0;
+  width: 100%;
 }
 #filters {
   display: flex;
   flex-wrap: wrap;
-  align-content: flex-start;
-  gap: var(--space-sm) var(--space-md);
+  align-items: flex-end;
+  gap: var(--space-md) var(--space-lg);
   background: var(--md-sys-color-surface-variant);
   padding: var(--space-lg);
   border-radius: 4px;
-  flex: 1 1 320px;
-  max-width: 420px;
-  min-width: 280px;
+  width: 100%;
+  box-sizing: border-box;
 }
 #filters label {
   display: flex;
@@ -190,9 +193,38 @@ h1 {
   font-weight: var(--md-sys-typescale-label-weight);
   line-height: var(--md-sys-typescale-label-line-height);
 }
-#filters md-outlined-select,
 #filters md-outlined-text-field {
   min-width: 140px;
+}
+/* Native <select> in place of md-outlined-select (see the import-block
+   comment above for why) -- styled to read as the same outlined-field
+   family as md-outlined-text-field beside it: same height, corner
+   radius, and outline color, so swapping the implementation doesn't
+   read as a visual regression. */
+#filters select {
+  min-width: 140px;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: 4px;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  font-family: inherit;
+  font-size: var(--md-sys-typescale-body-size);
+  cursor: pointer;
+}
+#filters select:hover {
+  border-color: var(--md-sys-color-on-surface);
+}
+#filters select:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: -1px;
+  border-color: var(--md-sys-color-primary);
+}
+#filters select:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 /* D-13: two native date inputs visually merged into one bordered,
    flight-booking-style control with a single shared <label> above it --
@@ -215,6 +247,26 @@ h1 {
   font-family: inherit;
   font-size: var(--md-sys-typescale-body-size);
   color: var(--md-sys-color-on-surface);
+  color-scheme: var(--date-input-color-scheme, light);
+  cursor: pointer;
+}
+/* The browser's own calendar-icon glyph defaults to near-black -- on the
+   dark palette below it goes nearly invisible against the same dark
+   field background. Inverting it in that palette is the fix; there is
+   no cross-browser way to recolor the glyph directly. */
+#date-range-group input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: var(--date-icon-filter, none);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px;
+}
+#date-range-group input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  background: var(--md-sys-color-surface-variant);
+}
+#date-range-group:focus-within {
+  border-color: var(--md-sys-color-primary);
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: -1px;
 }
 #date-range-group .date-range-sep {
   color: var(--md-sys-color-outline);
@@ -521,16 +573,16 @@ h1 {
 </div>
 <form id="filters">
 <label>runtime
-<md-outlined-select id="filter-runtime"></md-outlined-select>
+<select id="filter-runtime"></select>
 </label>
 <label>model
-<md-outlined-select id="filter-model"></md-outlined-select>
+<select id="filter-model"></select>
 </label>
 <label>family
-<md-outlined-select id="filter-family"></md-outlined-select>
+<select id="filter-family"></select>
 </label>
 <label>subfamily
-<md-outlined-select id="filter-subfamily"></md-outlined-select>
+<select id="filter-subfamily"></select>
 </label>
 <label>command
 <md-outlined-text-field id="filter-command" type="text"></md-outlined-text-field>
@@ -1152,7 +1204,7 @@ function chartJsAvailable() {
     // filter event can never fire against a virtualizer that has not
     // mounted yet.
     var controls = filtersForm.querySelectorAll(
-      "md-outlined-select, md-outlined-text-field, input, md-checkbox, md-text-button"
+      "select, md-outlined-text-field, input, md-checkbox, md-text-button"
     );
     controls.forEach(function (el) {
       el.disabled = disabled;
@@ -1213,20 +1265,16 @@ function chartJsAvailable() {
   }
 
   function fillSelect(id, values) {
-    // SD-8: md-outlined-select does not render bare <option> children --
-    // it needs md-select-option elements with a slotted headline div. Clear
-    // first so repeat calls stay idempotent; the all-value option is always
-    // created first, one option per distinct value follows, then the
-    // select's own value is set to "all".
+    // A native <select> (see the import-block comment for why) -- clear
+    // first so repeat calls stay idempotent; the all-value option is
+    // always created first, one option per distinct value follows, then
+    // the select's own value is set to "all".
     var select = document.getElementById(id);
     select.textContent = "";
     function addOption(value) {
-      var opt = document.createElement("md-select-option");
+      var opt = document.createElement("option");
       opt.value = value;
-      var headline = document.createElement("div");
-      headline.slot = "headline";
-      headline.textContent = value;
-      opt.appendChild(headline);
+      opt.textContent = value;
       select.appendChild(opt);
     }
     addOption("all");
