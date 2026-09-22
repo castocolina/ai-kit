@@ -1841,6 +1841,17 @@ function chartJsAvailable() {
       window.addEventListener("virtual-core-ready", function () {
         mountVirtualizer();
       }, {once: true});
+      // WR-02: if the CDN-hosted @tanstack/virtual-core script never loads
+      // (network failure, ad-blocker, offline file:// open -- a real
+      // scenario for a local-first tool), "virtual-core-ready" never fires,
+      // virtualizer stays null forever, and paint() silently no-ops on
+      // every call while the loading bar has already been removed below.
+      // Surface the same page-level error state the JSON-parse-failure path
+      // uses if the virtualizer still hasn't mounted a few seconds later --
+      // a no-op if it mounted in time (virtualizer is non-null by then).
+      setTimeout(function () {
+        if (!virtualizer) showPageError();
+      }, 5000);
     }
 
     if (loadingBar) loadingBar.remove();
