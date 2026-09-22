@@ -1380,9 +1380,11 @@ function chartJsAvailable() {
     tr.appendChild(td(row.tokens_output));
     tr.appendChild(priceTd(row));
     var conf = document.createElement("td");
-    if (row.source_confidence) {
+    if (row.source_confidence === "low") {
       conf.textContent = String(row.source_confidence);
       conf.className = "badge";
+    } else if (row.source_confidence) {
+      conf.textContent = String(row.source_confidence);
     }
     tr.appendChild(conf);
     var exec = document.createElement("td");
