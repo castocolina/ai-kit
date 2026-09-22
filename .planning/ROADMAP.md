@@ -483,7 +483,7 @@ never reaching the refiner at all.
 runs on `15.1-CONTEXT.md`'s decision IDs D-01 through D-19, every one of which is covered
 by at least one plan.
 **Depends on:** Phase 15
-**Plans:** 4/5 plans executed
+**Plans:** 5/5 plans executed
 
 Plans:
 **Wave 1**
@@ -504,7 +504,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 15.1-05-PLAN.md — Dual-axis spend chart and capped distribution chart with dedup-before-sum, split filter/sort update path, SKILL.md realignment, phase-wide gates and real-store re-refine
+- [x] 15.1-05-PLAN.md — Dual-axis spend chart and capped distribution chart with dedup-before-sum, split filter/sort update path, SKILL.md realignment, phase-wide gates and real-store re-refine
 
 ### Phase 999.1: Shared core for Config Doctor's TUI and a future CLI variant (BACKLOG)
 
