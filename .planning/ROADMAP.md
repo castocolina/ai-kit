@@ -483,7 +483,7 @@ never reaching the refiner at all.
 runs on `15.1-CONTEXT.md`'s decision IDs D-01 through D-19, every one of which is covered
 by at least one plan.
 **Depends on:** Phase 15
-**Plans:** 5/5 plans executed
+**Plans:** 5/5 plans complete
 
 Plans:
 **Wave 1**
