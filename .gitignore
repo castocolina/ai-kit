@@ -10,3 +10,9 @@ __pycache__
 .aikit/
 .planning/phases/*/.review-diagnostics/
 .planning/phases/*/.execution-diagnostics/
+.planning/milestones/*/*/.review-diagnostics/
+.planning/milestones/*/*/.execution-diagnostics/
+.gsd/
+.playwright-mcp/
+tmp/
+/*.png
