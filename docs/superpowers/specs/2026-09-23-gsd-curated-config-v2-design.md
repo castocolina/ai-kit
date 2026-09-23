@@ -253,7 +253,24 @@ Execution (question: "delegate plan execution to another CLI?", recommended on C
 - Skill eval: `superpowers:writing-skills` RED/GREEN pressure scenarios (baseline subagent without
   the skill vs. with it) for: Cursor host MVP, Claude host Rigorous with cross-AI, pi host with a
   missing ponytail skill; then `/skill-judge` on SKILL.md (part of code review, per project rule).
-- Live smoke: `inventory` + `recommend` + `apply --dry-run` run from opencode, cursor-agent, pi,
-  codex and claude on a scratch project; record results in the phase summary.
+- Live smoke: `inventory` + `recommend` + `apply` (dry-run, then real on a scratch project) run
+  from inside the host session. Scope per host:
+  - **claude**: in this milestone (evaluation phase; current host).
+  - **codex**, **opencode**: in this milestone, final phase.
+  - **cursor**, **pi**: deferred to their own later phases/milestone. Their code paths ship in
+    this milestone covered only by fixture-based unit tests (real CLI output captured
+    2026-09-23); SKILL.md labels both hosts "not live-validated" until those phases pass.
 - `make validate` registration unchanged (tests module + py_compile globs already cover the
   package); README row updated.
+
+## 10. Delivery phases
+
+1. **ai_kit_spec extensions** (§3.1) — detection, enumeration parsers for all 5 hosts (fixtures),
+   `image_input`, role purposes.
+2. **curated-config rewrite** (§3–§8) — inventory, recommend, plan I/O, apply with backup/restore,
+   presets, cross-AI, skill affinity, SKILL.md.
+3. **Evaluation on claude** — writing-skills RED/GREEN scenarios, `/skill-judge` in code review,
+   real-gsd-tools integration (`resolve-model` for all 35 agents), live smoke from Claude Code.
+4. **Live validation on codex + opencode** — smoke from each host; fix what surfaces; resolve the
+   two open verifications (opencode lane from an opencode host, codex session env signal).
+5. *(later)* **cursor live validation**; 6. *(later)* **pi live validation**.
