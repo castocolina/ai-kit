@@ -55,7 +55,7 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 
 ### Evaluation and Live Validation
 
-- [ ] **EVAL-01**: SKILL.md rewritten for the four-question + review flow; passes writing-skills RED/GREEN pressure scenarios (Cursor MVP, Claude Rigorous with cross-AI, pi with ponytail missing)
+- [ ] **EVAL-01**: SKILL.md rewritten for the four-question + review flow; passes writing-skills RED/GREEN pressure scenarios B (Claude Rigorous with cross-AI), C (opencode host with routers, no catalog), D (existing v1-written config), E ("just apply it" pressure); RED baselines = no skill, plus v1 SKILL.md on B/D (Phase 19 D-01/D-02; cursor/pi scenarios moved to Phases 21/22)
 - [ ] **EVAL-02**: `/skill-judge` runs as part of code review; SKILL.md scores ≥96/120 with no Critical/Important findings
 - [ ] **EVAL-03**: Live smoke on the claude host — `inventory` + `recommend` + `apply` (dry-run, then real on a scratch project)
 - [ ] **EVAL-04**: Live smoke on the codex host, including confirmation of the codex session env signal

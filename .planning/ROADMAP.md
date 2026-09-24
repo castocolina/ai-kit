@@ -164,8 +164,8 @@ model exactly as planned.
 **Requirements**: EVAL-01, EVAL-02, EVAL-03, APP-05
 **Success Criteria** (what must be TRUE):
   1. SKILL.md (rewritten for the four-question + review flow) passes `writing-skills` RED/GREEN
-     pressure scenarios for Cursor MVP, Claude Rigorous with cross-AI, and pi with the ponytail
-     skill missing.
+     pressure scenarios B (Claude Rigorous + cross-AI), C (opencode + routers, no catalog),
+     D (existing v1 config) and E ("just apply it"), with no-skill and v1 baselines.
   2. `/skill-judge` runs as part of code review and SKILL.md scores ≥96/120 with no
      Critical/Important findings.
   3. A live smoke run from the claude host — `inventory` + `recommend` + `apply` (dry-run, then
