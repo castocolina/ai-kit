@@ -110,6 +110,18 @@ from ai_kit_spec.vendor import infer_vendor_from_model  # noqa: F401
 CODEX_FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures",
                                   "codex_debug_models.json")
 
+# Source: `opencode models --verbose`, opencode 1.18.32, 2026-09-24
+# Capture: 110 header+JSON blocks (8528 lines)
+# Kept verbatim: two real models (openai/gpt-5.6-sol, router-env/my-coding) with their
+#   id, providerID, name, family, status, limit, and capabilities fields
+# Trimmed: name, family, status, limit, and capabilities are kept as essential for this
+#   test (image_input verification); model_messages, instructions_template, and other
+#   verbose CLI metadata are omitted to keep the fixture small
+# Why the raw capture is not committed: it enumerates every provider configured on the
+#   maintainer's machine, including private router endpoints, so it is not public-shareable
+OPENCODE_VERBOSE_FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures",
+                                             "opencode_models_verbose.txt")
+
 
 # Back-compat shim so every existing `rs.<name>` call in this file keeps working verbatim --
 # avoids touching 146 existing test bodies for a pure module-boundary change. Explicit name

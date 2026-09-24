@@ -154,11 +154,13 @@ JSON
    `is_router`/`batch_mode`/`fallback_quota` for this same candidate, since it has no other way
    to know those three fields were already confirmed here.
 
-   When the `unmatched` entry carries `reasoning_modes` (the effort levels `detect-runtimes`
-   read from the CLI itself, e.g. `codex debug models`), copy that list verbatim into the
-   confirmation `entry` as `"reasoning_modes": [...]`. It is CLI-reported data, not a guess, so
-   it is not one of the fields the user is asked to confirm. Omit the key when the unmatched
-   entry has none.
+   When the `unmatched` entry carries `reasoning_modes` and/or `image_input` (data
+   `detect-runtimes` read from the CLI itself: effort levels from `codex debug models`,
+   image capability from `opencode models --verbose`), copy each one verbatim into the
+   confirmation `entry`, together with `image_input_source` whenever `image_input` is
+   copied. It is CLI-reported data, not a guess, so it is not one of the fields the user is
+   asked to confirm. Omit a key the unmatched entry does not carry — never write
+   `image_input: false` without a source.
 
    (When the user does NOT correct the provider — the common case — `$CONFIRMED_KEY` always
    equals `unmatched.key` exactly, since both are `canonical_key` applied to the same provider

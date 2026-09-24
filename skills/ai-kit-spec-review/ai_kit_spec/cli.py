@@ -255,38 +255,54 @@ def _runtime_meta_from_snapshot(runtimes: dict) -> dict:
     keyed by `(cli_name, model_id)` tuples. Today it carries each entry's
     `reasoning_modes` value (a dict mapping model id -> effort list, which
     `build_runtimes_snapshot` populates for codex when `codex debug models`
-    enumerates) into a flat `{"reasoning_modes": [...]}` record per model.
-    Anything malformed is skipped, never raised: a non-dict `clis` entry,
-    a non-dict `reasoning_modes`, a blank/`str`-keyed lookup, or an
-    effort list that is not a non-empty list made only of `str`."""
+    enumerates) and `image_input` (for opencode, from `opencode models
+    --verbose`) into a flat `{"reasoning_modes": [...], "image_input": bool}`
+    record per model. Anything malformed is skipped, never raised: a non-dict
+    `clis` entry, a non-dict `reasoning_modes` or `image_input`, a blank/
+    `str`-keyed lookup, an effort list that is not a non-empty list of
+    `str`, or an `image_input` value that is not a bool."""
     meta = {}
     for cli_name, cli_data in (runtimes or {}).get("clis", {}).items():
         if not isinstance(cli_data, dict):
             continue
         modes_map = cli_data.get("reasoning_modes")
-        if not isinstance(modes_map, dict):
-            continue
-        for model_id, modes in modes_map.items():
-            if not isinstance(model_id, str) or not model_id.strip():
-                continue
-            if (not isinstance(modes, list) or not modes
-                    or not all(isinstance(m, str) for m in modes)):
-                continue
-            meta[(cli_name, model_id)] = {"reasoning_modes": list(modes)}
+        if isinstance(modes_map, dict):
+            for model_id, modes in modes_map.items():
+                if not isinstance(model_id, str) or not model_id.strip():
+                    continue
+                if (not isinstance(modes, list) or not modes
+                        or not all(isinstance(m, str) for m in modes)):
+                    continue
+                meta.setdefault((cli_name, model_id), {})["reasoning_modes"] = list(modes)
+        image_map = cli_data.get("image_input")
+        if isinstance(image_map, dict):
+            for model_id, image in image_map.items():
+                if not isinstance(model_id, str) or not model_id.strip():
+                    continue
+                if not isinstance(image, bool):
+                    continue
+                meta.setdefault((cli_name, model_id), {})["image_input"] = image
     return meta
 
 
 def _apply_runtime_meta(entry: dict, runtime_meta: dict | None, cli_name: str,
-                        model_id: str) -> None:
+                        model_id: str, runtime_wins_image_input: bool = False) -> None:
     """Copies per-model runtime metadata (from `_runtime_meta_from_snapshot`)
     onto `entry` IN PLACE. Only a non-empty CLI-reported `reasoning_modes`
-    list is applied; when the (cli_name, model_id) lookup misses, `entry` is
-    left untouched — an absent key lets `merge_catalog_entry` preserve
-    whatever the cache already had."""
+    list is applied. For `image_input` (when `runtime_wins_image_input` is
+    True or when the entry's existing value is not a bool), both
+    `image_input` and `image_input_source` are set — the value from metadata
+    and "opencode" as the source. When the (cli_name, model_id) lookup
+    misses, `entry` is left untouched — an absent key lets `merge_catalog_entry`
+    preserve whatever the cache already had."""
     meta = (runtime_meta or {}).get((cli_name, model_id)) or {}
     modes = meta.get("reasoning_modes") or []
     if modes:
         entry["reasoning_modes"] = list(modes)
+    if "image_input" in meta and isinstance(meta["image_input"], bool):
+        if runtime_wins_image_input or not isinstance(entry.get("image_input"), bool):
+            entry["image_input"] = meta["image_input"]
+            entry["image_input_source"] = "opencode"
 
 
 # 16 D-04 (review cycle 2): claude only ever runs anthropic models, so its bare ids are
@@ -444,7 +460,8 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
             pricing = (existing_entry or {}).get("pricing")
             if pricing:
                 entry["pricing"] = pricing
-            _apply_runtime_meta(entry, runtime_meta, cli_name, model_id)
+            _apply_runtime_meta(entry, runtime_meta, cli_name, model_id,
+                                runtime_wins_image_input=True)
             catalog, reason = merge_catalog_entry(catalog, key, entry)
             if reason:
                 rejections.append(reason)

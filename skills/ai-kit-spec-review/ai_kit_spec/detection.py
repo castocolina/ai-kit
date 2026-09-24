@@ -222,6 +222,100 @@ def detect_codex_models(binary: str, run_fn=subprocess.run) -> list:
     return parse_codex_debug_models(getattr(result, "stdout", None))
 
 
+def parse_opencode_verbose_image_input(stdout) -> dict:
+    """Parses `opencode models --verbose` output into a dict mapping
+    header-line (provider/id format) to a bool (whether image is in the
+    input capabilities). The output format is a repeated pattern of:
+    header line (e.g., "openai/gpt-5.6-sol"), newline, 2-space-indented
+    JSON object, newline.
+
+    Records `result[header] = image` only when the decoded value has all of:
+    - providerID and id are both non-blank str
+    - f"{providerID}/{id}" == header (addresses review: mismatched header/
+      id pairs are skipped, so a shifted or swapped stream can never
+      attribute capability data to the wrong model)
+    - capabilities is a dict whose input is a dict whose image is a bool
+
+    Stops at the first undecodable JSON block; blocks that fail any check
+    are silently skipped and parsing continues. Never raises. Returns {} on
+    non-str input or if the first character is { (no header line)."""
+    if not isinstance(stdout, str):
+        return {}
+    result = {}
+    decoder = json.JSONDecoder()
+    index = 0
+    while index < len(stdout):
+        # Skip whitespace
+        while index < len(stdout) and stdout[index].isspace():
+            index += 1
+        if index >= len(stdout):
+            break
+        # Check for headerless JSON (format changed)
+        if stdout[index] == "{":
+            break
+        # Read header line
+        line_end = stdout.find("\n", index)
+        if line_end == -1:
+            break
+        header = stdout[index:line_end].strip()
+        if not header:
+            break
+        index = line_end + 1
+        # Skip whitespace after header
+        while index < len(stdout) and stdout[index].isspace():
+            index += 1
+        if index >= len(stdout):
+            break
+        # Decode JSON
+        try:
+            obj, end_index = decoder.raw_decode(stdout, index)
+            index = end_index
+        except ValueError:
+            # Malformed JSON; stop parsing
+            break
+        # Verify structure
+        if not isinstance(obj, dict):
+            continue
+        provider_id = obj.get("providerID")
+        model_id = obj.get("id")
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            continue
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        if f"{provider_id}/{model_id}" != header:
+            continue
+        capabilities = obj.get("capabilities")
+        if not isinstance(capabilities, dict):
+            continue
+        input_cap = capabilities.get("input")
+        if not isinstance(input_cap, dict):
+            continue
+        image = input_cap.get("image")
+        if not isinstance(image, bool):
+            continue
+        result[header] = image
+    return result
+
+
+def detect_opencode_image_input(binary: str, run_fn=subprocess.run) -> dict:
+    """Runs `<binary> models --verbose` and parses the output via
+    `parse_opencode_verbose_image_input`, returning a dict mapping model
+    id/header to a bool. A non-zero exit is a FAILURE, not a success with
+    stale/partial output: the result's `returncode` must be exactly 0; a
+    `run_fn` stub returning None or an object without a `returncode`
+    attribute yields {}. Like every parser, any failure (OSError,
+    subprocess.TimeoutExpired, invalid JSON, unexpected shape) degrades to
+    {} and never raises."""
+    try:
+        result = run_fn([binary, "models", "--verbose"], capture_output=True, text=True,
+                        check=False, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if getattr(result, "returncode", 1) != 0:
+        return {}
+    return parse_opencode_verbose_image_input(getattr(result, "stdout", None))
+
+
 def group_models_by_family(models: list) -> dict:
     """Collapses tier/effort/mode variants of the same base model into one
     group, e.g. ["claude-opus-5-high", "claude-opus-5-high-fast",
@@ -317,6 +411,9 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
         entry = {"installed": True, "path": binpath}
         if cli == "opencode":
             entry["models"] = detect_opencode_models(binpath, run_fn=run_fn)
+            image_input_map = detect_opencode_image_input(binpath, run_fn=run_fn)
+            if image_input_map:
+                entry["image_input"] = image_input_map
         elif cli == "cursor-agent":
             entry["models"] = detect_cursor_agent_models(binpath, run_fn=run_fn)
         elif cli == "codex":
