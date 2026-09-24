@@ -474,7 +474,7 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 **Goal:** Close the in-milestone tech debt found by `.planning/v1.2-MILESTONE-AUDIT.md` so v1.2 can close as a verified (not override) closeout.
 **Requirements**: none new (debt closure for REQ-rules-precommit / Phase 15.1)
 **Depends on:** Phase 15.1
-**Plans:** 0 plans
+**Plans:** 1 plan
 
 **Success Criteria** (what must be TRUE):
   1. `uv run pyright` reports 0 errors: `REDUNDANT_VS_COMPLEMENTARY_PAIRS` in `skills/_shared/ai_kit_rules_common/tool_catalog.py` is typed so `pair_checks.py:178`'s unpack type-checks, with no runtime behavior change (all rules-checker tests still pass).
@@ -485,8 +485,9 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
 Out of scope: pre-v1.2 lint in `tools/status-line.py`, `tools/wizard_app.py`, `tests/test_ai_kit_spec_superpowers.py`; the mmdc environment failure; Nyquist VALIDATION backfill.
 
 Plans:
+**Wave 1**
 
-- [ ] TBD (run /gsd-plan-phase 15.2 to break down)
+- [ ] 15.2-01-PLAN.md — Tracer: symmetric flat/grouped sort-key fallback + node regression tests both directions + test-file ruff fix (WR-01/WR-02, SC2/SC3); PairRow TypedDict for pyright 0 errors (SC1); move resolved todos to todos/done + full gate sweep (SC4)
 
 ### Phase 15.1: Usage Metrics Dashboard UX/Perf Overhaul: dashboard launch detection, pagination/virtualization for large datasets, filter bar reordered runtime->model->family->subfamily->command, runtime column, MUI-based visual redesign, charts, empty date column bug, price always-zero investigation, family showing garbage tokens, session-group row duplication bug, default last-week prefilter, unified date-range picker (INSERTED)
 
