@@ -50,6 +50,31 @@ Filled in by the planner per task. The requirement-level map (from 16-RESEARCH.m
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
+### Per-task map (planner, 2026-09-24)
+
+All plans are cross-AI executed (`cross_ai: true`) and sequential (waves 1-6), since every plan
+touches `tests/test_ai_kit_spec.py`. Each task commits once; the quick command runs after that
+commit, and the broad stdlib regression command runs at each plan's final task. Broad regression:
+`python3 -m unittest tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_superpowers tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_opencode_providers tests.test_ai_kit_usage_metrics`
+
+| Task | Wave | Req / Decisions (edges, prohibitions) | Type | Automated Command | Status |
+|------|------|-----------------|------|-------------------|--------|
+| 16-01-T1 | 1 | SPEC-02, SPEC-03 / D-05, D-07, D-08 | tracer | `python3 -m unittest tests.test_ai_kit_spec.TestCodexEnumerationEndToEnd tests.test_ai_kit_spec.TestBuildRuntimesSnapshot tests.test_ai_kit_spec.TestBuildModelCatalog tests.test_ai_kit_spec.TestFetchModelCatalogCli -v` | ⬜ pending |
+| 16-01-T2 | 1 | SPEC-02 / D-05, D-06, D-07 (E4, P2) | tdd | `python3 -m unittest tests.test_ai_kit_spec.TestParseCodexDebugModels tests.test_ai_kit_spec.TestDetectCodexModels tests.test_ai_kit_spec.TestBuildRuntimesSnapshot tests.test_ai_kit_spec.TestCodexEnumerationEndToEnd -v` + broad regression | ⬜ pending |
+| 16-02-T1 | 2 | SPEC-01 / D-01, D-02, D-03 | tracer | `python3 -m unittest tests.test_ai_kit_spec.TestPiHostEndToEnd tests.test_ai_kit_spec.TestDetectCurrentRuntime tests.test_ai_kit_spec.TestValidateCatalogEntry tests.test_ai_kit_spec.TestRenderAndWriteToml tests.test_ai_kit_spec.TestMainCli -v` | ⬜ pending |
+| 16-02-T2 | 2 | SPEC-01 / D-01, D-02, D-06 (E1, E2, E3, P1) | tdd | `python3 -m unittest tests.test_ai_kit_spec.TestRuntimePrecedenceMatrix tests.test_ai_kit_spec.TestPiHostEndToEnd tests.test_ai_kit_spec.TestDetectCurrentRuntime -v` + broad regression | ⬜ pending |
+| 16-03-T1 | 3 | SPEC-02 / D-12 (E5) | tracer | `python3 -m unittest tests.test_ai_kit_spec.TestRuntimesSchemaVersion tests.test_ai_kit_spec.TestMainCli tests.test_ai_kit_spec.TestBuildRuntimesSnapshot tests.test_ai_kit_spec.TestCacheStaleness -v` | ⬜ pending |
+| 16-03-T2 | 3 | SPEC-03 / D-12 (E5) | tdd | `python3 -m unittest tests.test_ai_kit_spec.TestCatalogSchemaVersion tests.test_ai_kit_spec.TestFetchModelCatalogCli tests.test_ai_kit_spec.TestMergeCatalogEntry tests.test_ai_kit_spec.TestCurrentCandidateKeys tests.test_ai_kit_spec.TestApplyHeuristicCorrections -v` + broad regression | ⬜ pending |
+| 16-04-T1 | 4 | SPEC-02 / D-04, D-05, D-07 | tracer | `python3 -m unittest tests.test_ai_kit_spec.TestClaudeEnumerationEndToEnd tests.test_ai_kit_spec.TestBuildRuntimesSnapshot tests.test_ai_kit_spec.TestCatalogSchemaVersion tests.test_ai_kit_spec.TestMainCli -v` | ⬜ pending |
+| 16-04-T2 | 4 | SPEC-02 / D-04, D-07 (E4, P2, P3) | tdd | `python3 -m unittest tests.test_ai_kit_spec.TestClaudeFallback tests.test_ai_kit_spec.TestClaudeEnumerationEndToEnd tests.test_ai_kit_spec.TestBuildRuntimesSnapshot -v` + broad regression | ⬜ pending |
+| 16-05-T1 | 5 | SPEC-03 / D-09 | tracer | `python3 -m unittest tests.test_ai_kit_spec.TestImageInputEndToEnd tests.test_ai_kit_spec.TestValidateCatalogEntry tests.test_ai_kit_spec.TestBuildModelCatalog tests.test_ai_kit_spec.TestFetchModelCatalogCli -v` | ⬜ pending |
+| 16-05-T2 | 5 | SPEC-03 / D-06, D-07, D-09 (E4, P4) | tdd | `python3 -m unittest tests.test_ai_kit_spec.TestOpencodeVerboseImageInput tests.test_ai_kit_spec.TestImageInputEndToEnd tests.test_ai_kit_spec.TestBuildRuntimesSnapshot tests.test_ai_kit_spec.TestDetectOpencodeModels tests.test_ai_kit_spec.TestCodexEnumerationEndToEnd -v` + broad regression | ⬜ pending |
+| 16-06-T1 | 6 | SPEC-04 / D-10 | tracer | `python3 -m unittest tests.test_ai_kit_spec.TestPurposeAliasesEndToEnd tests.test_ai_kit_spec.TestLoadRankingWeights tests.test_ai_kit_spec.TestScoreCandidates -v` | ⬜ pending |
+| 16-06-T2 | 6 | SPEC-04 / D-10, D-11 (E6, P5) | tdd | `python3 -m unittest tests.test_ai_kit_spec.TestRankerPurposeFloor tests.test_ai_kit_spec.TestPurposeAliasesEndToEnd tests.test_ai_kit_spec.TestLoadRankingWeights tests.test_ai_kit_spec.TestScoreCandidates -v` + broad regression | ⬜ pending |
+
+Orchestrator-only gates (use `uv run`, never run by the cross-AI executor): `make test-unit` after
+each wave, `make validate` before `/gsd-verify-work`.
+
 ---
 
 ## Wave 0 Requirements

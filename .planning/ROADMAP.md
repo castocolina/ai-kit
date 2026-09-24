@@ -93,7 +93,15 @@ rewrite depends on.
   4. The ranker accepts `planning`, `general`, `mechanical`, `execution`, `review` purposes via the
      ranking-weights file, and existing `review`/`execute` callers keep working unchanged as
      aliases.
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+- [ ] 16-01-PLAN.md — codex model enumeration (`codex debug models` fixture) end-to-end into runtimes.json and catalog `reasoning_modes`
+- [ ] 16-02-PLAN.md — pi/codex host detection with pi > opencode > cursor > codex > claude precedence; `pi` accepted as native_runtime
+- [ ] 16-03-PLAN.md — `schema_version` on runtimes.json and model-catalog.json (`_meta`); unversioned caches refresh under `--if-stale`
+- [ ] 16-04-PLAN.md — claude enumeration: aliases + catalog full ids + dated fallback, never executing claude
+- [ ] 16-05-PLAN.md — optional `image_input` from models.dev modalities and `opencode models --verbose`
+- [ ] 16-06-PLAN.md — ranker purposes planning/general/mechanical/execution/review, execute/review aliases, mechanical floor
 
 ### Phase 17: Curated-Config Inventory & Recommendation Engine
 **Goal**: The rewritten `ai-kit-gsd-curated-config` can inventory a target project/host and turn
