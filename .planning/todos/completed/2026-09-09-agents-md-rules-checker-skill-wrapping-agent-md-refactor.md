@@ -6,6 +6,8 @@ resolves_phase: 6
 severity: major
 files:
   - ../gitig/.pre-commit-config.yaml
+completed: 2026-09-23
+status: completed
 ---
 
 ## Problem

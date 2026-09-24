@@ -5,6 +5,8 @@ area: tooling
 resolves_phase: 7
 severity: minor
 files: []
+completed: 2026-09-23
+status: completed
 ---
 
 ## Problem

@@ -6,6 +6,8 @@ resolves_phase: 8
 severity: minor
 files:
   - tools/status-line.py
+completed: 2026-09-23
+status: completed
 ---
 
 ## Problem
