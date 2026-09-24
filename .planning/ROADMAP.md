@@ -95,7 +95,7 @@ rewrite depends on.
   4. The ranker accepts `planning`, `general`, `mechanical`, `execution`, `review` purposes via the
      ranking-weights file, and existing `review`/`execute` callers keep working unchanged as
      aliases.
-**Plans**: 1/6 plans executed
+**Plans**: 2/6 plans executed
 
 Plans:
 **Wave 1**
@@ -104,7 +104,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 16-02-PLAN.md — pi/codex host detection with pi > opencode > cursor > codex > claude precedence; `pi` accepted as native_runtime
+- [x] 16-02-PLAN.md — pi/codex host detection with pi > opencode > cursor > codex > claude precedence; `pi` accepted as native_runtime
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
