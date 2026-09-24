@@ -6071,10 +6071,10 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
             self.assertEqual(len(md_fetch_count), 1)
             entries, meta = model_catalog.split_catalog_meta(cache_read_json(catalog_path))
             self.assertEqual(meta["anthropic_model_ids"],
-                             sorted(list(detection.CLAUDE_FALLBACK_MODEL_IDS) + [new]))
+                             sorted([*detection.CLAUDE_FALLBACK_MODEL_IDS, new]))
             self.assertEqual(meta["anthropic_model_ids_as_of"], time.strftime("%Y-%m-%d"))
             self.assertEqual(meta["schema_version"], 2)
-            for mid in list(detection.CLAUDE_FALLBACK_MODEL_IDS) + [new]:
+            for mid in [*detection.CLAUDE_FALLBACK_MODEL_IDS, new]:
                 key = f"anthropic/{mid}"
                 self.assertIn(key, entries)
                 self.assertEqual(entries[key]["runtimes"]["claude"]["model_id"], mid)
@@ -6095,7 +6095,7 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
             self.assertEqual(second["clis"]["claude"], {
                 "installed": True, "path": "/fake/bin/claude",
                 "aliases": ["fable", "opus", "sonnet", "haiku"],
-                "models": sorted(list(detection.CLAUDE_FALLBACK_MODEL_IDS) + [new]),
+                "models": sorted([*detection.CLAUDE_FALLBACK_MODEL_IDS, new]),
                 "models_source": "catalog",
                 "models_as_of": time.strftime("%Y-%m-%d"),
             })
@@ -6122,6 +6122,442 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
 
             # 6. Claude was never executed (16 D-07) -- only claude is installed.
             self.assertEqual(recorded_runs, [])
+
+
+class TestClaudeFallback(unittest.TestCase):
+    """Unit + CLI pins for 16 D-04's claude hybrid sourcing: the dated in-code fallback and
+    its labeling, junk-tolerant id parsing, the never-execute rule, and the lazy catalog
+    read (only for an installed claude)."""
+
+    @staticmethod
+    def _claude_which(name):
+        return "/fake/bin/claude" if name == "claude" else None
+
+    def _snapshot(self, **overrides):
+        kwargs = {"which_fn": self._claude_which, "run_fn": lambda *a, **k: None}
+        kwargs.update(overrides)
+        return detection.build_runtimes_snapshot(**kwargs)
+
+    def _fallback_entry(self):
+        return {"installed": True, "path": "/fake/bin/claude",
+                "aliases": list(detection.CLAUDE_MODEL_ALIASES),
+                "models": list(detection.CLAUDE_FALLBACK_MODEL_IDS),
+                "models_source": "dated-fallback",
+                "models_as_of": detection.CLAUDE_FALLBACK_AS_OF}
+
+    def test_no_catalog_uses_dated_fallback(self):
+        claude = self._snapshot(catalog_fn=lambda: None)["clis"]["claude"]
+        self.assertEqual(claude, self._fallback_entry())
+
+    def test_missing_catalog_fn_uses_dated_fallback(self):
+        claude = self._snapshot()["clis"]["claude"]
+        self.assertEqual(claude, self._fallback_entry())
+
+    def test_catalog_without_usable_anthropic_ids_uses_fallback(self):
+        for raw in ({"_meta": {"schema_version": 2}},
+                    {"_meta": {"anthropic_model_ids": []}},
+                    {"_meta": "junk"},
+                    {"x/y": {}}):
+            with self.subTest(raw=raw):
+                claude = self._snapshot(catalog_fn=lambda raw=raw: raw)["clis"]["claude"]
+                self.assertEqual(claude, self._fallback_entry())
+
+    def test_junk_ids_are_filtered_and_labeled_catalog(self):
+        raw = {"_meta": {"anthropic_model_ids": ["claude-x", None, 3, "", "claude-x"]}}
+        claude = self._snapshot(catalog_fn=lambda: raw)["clis"]["claude"]
+        self.assertEqual(claude["models"], ["claude-x"])
+        self.assertEqual(claude["models_source"], "catalog")
+        self.assertNotIn("models_as_of", claude)
+
+    def test_claude_is_never_executed(self):
+        recorded = []
+
+        def recording_run_fn(argv, **kwargs):
+            recorded.append((argv, kwargs))
+            return unittest.mock.MagicMock(returncode=0, stdout="")
+
+        self._snapshot(run_fn=recording_run_fn)
+        self.assertEqual(recorded, [])  # 16 D-07: claude is never executed
+
+    def test_uninstalled_claude_never_reads_the_catalog(self):
+        reads = []
+
+        def recording_catalog_fn():
+            reads.append(1)
+            return None
+
+        snapshot = detection.build_runtimes_snapshot(
+            which_fn=lambda n: None, run_fn=lambda *a, **k: None,
+            catalog_fn=recording_catalog_fn)
+        self.assertEqual(snapshot["clis"]["claude"], {"installed": False})
+        self.assertEqual(reads, [])  # the catalog is only ever read for an installed claude
+
+    def test_garbage_default_catalog_falls_back_via_cli(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            env = {"HOME": d}
+            catalog_file = model_catalog.cache_catalog_path(env)
+            os.makedirs(os.path.dirname(catalog_file), exist_ok=True)
+            with open(catalog_file, "w", encoding="utf-8") as f:
+                f.write("not json")
+            r = os.path.join(d, "runtimes.json")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["detect-runtimes", "--if-stale", r],
+                               which_fn=self._claude_which, run_fn=lambda *a, **k: None,
+                               env_fn=lambda: env)
+            self.assertEqual(code, 0)
+            saved = cache_read_json(r)
+            self.assertEqual(saved["clis"]["claude"]["models_source"], "dated-fallback")
+
+    def test_models_dev_without_anthropic_preserves_recorded_ids(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            cache_write_json(catalog_path, {"_meta": {
+                "schema_version": 2, "anthropic_model_ids": ["claude-a"],
+                "anthropic_model_ids_as_of": "2026-09-01"}})
+            runtimes_path = os.path.join(d, "runtimes.json")
+            cache_write_json(runtimes_path, {"clis": {}})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path],
+                    which_fn=lambda name: None,
+                    fetch_models_dev_fn=lambda: ({"openai": {"models": {}}}, True),
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    load_secret_fn=lambda env_, key: None,
+                    env_fn=lambda: {"HOME": d})
+            self.assertEqual(code, 0)
+            _, meta = model_catalog.split_catalog_meta(cache_read_json(catalog_path))
+            self.assertEqual(meta["anthropic_model_ids"], ["claude-a"])
+            self.assertEqual(meta["anthropic_model_ids_as_of"], "2026-09-01")
+
+    def test_aliases_never_appear_in_models(self):
+        recorded_raw = {"_meta": {"anthropic_model_ids": ["claude-x"],
+                                  "anthropic_model_ids_as_of": "2026-09-01"}}
+        cases = [None, "no-catalog-fn", {"_meta": {"schema_version": 2}}, recorded_raw]
+        for raw in cases:
+            with self.subTest(raw=raw):
+                claude = self._snapshot(
+                    catalog_fn=None if raw == "no-catalog-fn" else lambda raw=raw: raw
+                )["clis"]["claude"]
+                for alias in detection.CLAUDE_MODEL_ALIASES:
+                    self.assertNotIn(alias, claude["models"])
+                self.assertEqual(claude["models_source"],
+                                 "catalog" if raw is recorded_raw else "dated-fallback")
+
+
+class TestClaudeRuntimeFreshness(unittest.TestCase):
+    """The catalog -> runtimes freshness edge (review cycle 1): runtimes.json's claude ids
+    are derived from model-catalog.json `_meta`, so a catalog change re-detects a fresh
+    snapshot -- and an unchanged catalog (including no recorded ids vs a stored dated
+    fallback) never loops."""
+
+    @staticmethod
+    def _claude_which(name):
+        return "/fake/bin/claude" if name == "claude" else None
+
+    def test_fallback_snapshot_without_catalog_ids_is_not_redetected(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            env = {"HOME": d}
+            r = os.path.join(d, "runtimes.json")
+            for seed in ("no-catalog-file", {"_meta": {"schema_version": 2}}):
+                with self.subTest(seed=seed):
+                    if os.path.exists(r):
+                        os.remove(r)
+                    if seed != "no-catalog-file":
+                        cache_write_json(model_catalog.cache_catalog_path(env), seed)
+                    buf = io.StringIO()
+                    with redirect_stdout(buf):
+                        code = rs.main(["detect-runtimes", "--if-stale", r],
+                                       which_fn=self._claude_which,
+                                       run_fn=lambda *a, **k: None,
+                                       env_fn=lambda: env)
+                    self.assertEqual(code, 0)
+                    self.assertNotEqual(json.loads(buf.getvalue()), {})  # first run detects
+                    buf = io.StringIO()
+                    with redirect_stdout(buf):
+                        code = rs.main(["detect-runtimes", "--if-stale", r],
+                                       which_fn=self._claude_which,
+                                       run_fn=lambda *a, **k: None,
+                                       env_fn=lambda: env)
+                    self.assertEqual(code, 0)
+                    # A stored dated fallback matches "no recorded ids" -- no re-detect loop.
+                    self.assertEqual(json.loads(buf.getvalue()), {})
+
+    def test_catalog_id_change_invalidates_a_fresh_snapshot(self):
+        import io
+        from contextlib import redirect_stdout
+        new = "claude-new-not-in-fallback"
+        with tempfile.TemporaryDirectory() as d:
+            env = {"HOME": d}
+            r = os.path.join(d, "runtimes.json")
+            catalog_path = model_catalog.cache_catalog_path(env)
+            md = json.loads(json.dumps(TestClaudeEnumerationEndToEnd.MD))
+
+            def detect():
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = rs.main(["detect-runtimes", "--if-stale", r],
+                                   which_fn=self._claude_which,
+                                   run_fn=lambda *a, **k: None,
+                                   env_fn=lambda: env)
+                return code, buf.getvalue()
+
+            def fetch(if_stale):
+                argv = ["fetch-model-catalog", "--runtimes-json", r,
+                        "--catalog-path", catalog_path]
+                if if_stale:
+                    argv.append("--if-stale")
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = rs.main(argv, which_fn=self._claude_which,
+                                   fetch_models_dev_fn=lambda: (md, True),
+                                   fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                                   load_secret_fn=lambda env_, key: None,
+                                   env_fn=lambda: env)
+                return code, buf.getvalue()
+
+            # Replay the tracer's convergence: fallback detect -> recording fetch -> detect.
+            self.assertEqual(detect()[0], 0)
+            code, out = fetch(if_stale=True)
+            self.assertEqual(code, 0)
+            self.assertFalse(json.loads(out)["fetch_skipped"])
+            code, out = detect()
+            self.assertNotEqual(json.loads(out), {})
+            new = "claude-new-not-in-fallback"
+            five = sorted([*detection.CLAUDE_FALLBACK_MODEL_IDS, new])
+            self.assertEqual(cache_read_json(r)["clis"]["claude"]["models"], five)
+
+            # A FORCED fetch whose models.dev payload gained `claude-extra-new` ...
+            md["anthropic"]["models"]["claude-extra-new"] = {
+                "id": "claude-extra-new", "tool_call": True,
+                "limit": {"context": 1000000, "output": 128000}}
+            code, _ = fetch(if_stale=False)
+            self.assertEqual(code, 0)
+            entries, meta = model_catalog.split_catalog_meta(cache_read_json(catalog_path))
+            six = sorted([*five, "claude-extra-new"])
+            self.assertEqual(meta["anthropic_model_ids"], six)
+            self.assertEqual(
+                entries["anthropic/claude-extra-new"]["runtimes"]["claude"]["model_id"],
+                "claude-extra-new")
+
+            # ... invalidates the still-fresh runtimes snapshot: claude re-detects.
+            code, out = detect()
+            self.assertEqual(code, 0)
+            self.assertNotEqual(json.loads(out), {})
+            self.assertEqual(cache_read_json(r)["clis"]["claude"]["models"], six)
+
+    def test_skip_check_never_reads_the_catalog_without_an_installed_claude(self):
+        reads = []
+
+        def recording_catalog_fn():
+            reads.append(1)
+            return None
+
+        for data in (None, [], {}, {"clis": []}, {"clis": {}},
+                     {"clis": {"claude": "x"}},
+                     {"clis": {"claude": {"installed": False}}}):
+            with self.subTest(data=data):
+                reads.clear()
+                self.assertTrue(detection.claude_runtime_is_current(
+                    data, catalog_fn=recording_catalog_fn))
+                self.assertEqual(reads, [])
+
+    def test_as_of_difference_is_stale_and_full_match_is_current(self):
+        catalog_raw = {"_meta": {"anthropic_model_ids": ["claude-x"],
+                                 "anthropic_model_ids_as_of": "2026-09-01"}}
+        base = {"installed": True, "path": "/fake/bin/claude",
+                "aliases": list(detection.CLAUDE_MODEL_ALIASES),
+                "models": ["claude-x"], "models_source": "catalog"}
+        stale = {**base, "models_as_of": "2026-09-02"}
+        self.assertFalse(detection.claude_runtime_is_current(
+            {"clis": {"claude": stale}}, catalog_fn=lambda: catalog_raw))
+        current = {**base, "models_as_of": "2026-09-01"}
+        self.assertTrue(detection.claude_runtime_is_current(
+            {"clis": {"claude": current}}, catalog_fn=lambda: catalog_raw))
+
+
+class TestClaudeCatalogMaterialization(unittest.TestCase):
+    """Same-fetch materialization (review cycle 2 HIGH): a fetch that records models.dev's
+    anthropic ids also builds an `anthropic/<id>` entry with a claude runtime for every one,
+    gated on claude being on PATH, lazy (no anthropic provider -> nothing), never widening
+    the printed `discovered`/`unmatched` scope, with the `anthropic` match hint claude-only
+    and malformed rows neither crashing the fetch nor getting recorded (review cycle 3)."""
+
+    def test_materialization_needs_claude_on_path(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            runtimes_path = os.path.join(d, "runtimes.json")
+            cache_write_json(runtimes_path, {"clis": {}})
+            which_calls = []
+
+            def recording_which(name):
+                which_calls.append(name)
+                return None
+
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path],
+                    which_fn=recording_which,
+                    fetch_models_dev_fn=lambda: (TestClaudeEnumerationEndToEnd.MD, True),
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    load_secret_fn=lambda env_, key: None,
+                    env_fn=lambda: {"HOME": d})
+            self.assertEqual(code, 0)
+            entries, meta = model_catalog.split_catalog_meta(cache_read_json(catalog_path))
+            self.assertEqual(meta["anthropic_model_ids"],
+                             sorted([*detection.CLAUDE_FALLBACK_MODEL_IDS,
+                                     "claude-new-not-in-fallback"]))
+            self.assertFalse([e for e in entries.values()
+                              if "claude" in e.get("runtimes", {})])
+            self.assertEqual(which_calls, ["claude"])
+
+    def test_materialization_is_lazy(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            runtimes_path = os.path.join(d, "runtimes.json")
+            cache_write_json(runtimes_path, {"clis": {}})
+            which_calls = []
+
+            def recording_which(name):
+                which_calls.append(name)
+                return "/fake/bin/claude" if name == "claude" else None
+
+            no_anthropic = {"openai": {"models": {
+                "gpt-5.6-sol": {"id": "gpt-5.6-sol", "tool_call": True,
+                                 "limit": {"context": 400000, "output": 128000}}}}}
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path],
+                    which_fn=recording_which,
+                    fetch_models_dev_fn=lambda: (no_anthropic, True),
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    load_secret_fn=lambda env_, key: None,
+                    env_fn=lambda: {"HOME": d})
+            self.assertEqual(code, 0)
+            self.assertEqual(which_calls, [])  # no anthropic ids -> claude is never probed
+            written = cache_read_json(catalog_path)
+            self.assertFalse([k for k in written if k.startswith("anthropic/")])
+
+    def test_narrowed_snapshot_scope_never_widens(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            runtimes_path = os.path.join(d, "runtimes.json")
+            cache_write_json(runtimes_path, {
+                "schema_version": 2,
+                "clis": {"opencode": {"installed": True,
+                                       "models": ["openai/gpt-5.6-sol"]}}})
+            md = json.loads(json.dumps(TestClaudeEnumerationEndToEnd.MD))
+            md["openai"] = {"models": {
+                "gpt-5.6-sol": {"id": "gpt-5.6-sol", "tool_call": True,
+                                 "limit": {"context": 400000, "output": 128000}}}}
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path],
+                    which_fn=lambda name: "/fake/bin/claude" if name == "claude" else None,
+                    fetch_models_dev_fn=lambda: (md, True),
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    load_secret_fn=lambda env_, key: None,
+                    env_fn=lambda: {"HOME": d})
+            self.assertEqual(code, 0)
+            result = json.loads(buf.getvalue())
+            entries, _ = model_catalog.split_catalog_meta(cache_read_json(catalog_path))
+            for mid in [*detection.CLAUDE_FALLBACK_MODEL_IDS,
+                        "claude-new-not-in-fallback"]:
+                self.assertEqual(entries[f"anthropic/{mid}"]["runtimes"]["claude"]
+                                 ["model_id"], mid)
+            self.assertEqual(result["discovered"],
+                             [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}])
+            self.assertFalse([u for u in result["unmatched"] if u.get("cli") == "claude"])
+            self.assertEqual(model_catalog.current_candidate_keys(entries,
+                                                                   result["discovered"]),
+                             {"openai/gpt-5.6-sol"})
+
+    def test_anthropic_hint_is_claude_only(self):
+        md = {"anthropic": {"models": {"claude-x": {"id": "claude-x"}}},
+              "reseller": {"models": {"claude-x": {"id": "claude-x"}}}}
+        catalog, _, unmatched = cli.build_model_catalog(
+            [{"cli": "claude", "model_id": "claude-x"}], md, True, [], False, {})
+        self.assertIn("anthropic/claude-x", catalog)
+        self.assertEqual(unmatched, [])
+        catalog, _, unmatched = cli.build_model_catalog(
+            [{"cli": "cursor-agent", "model_id": "claude-x"}], md, True, [], False, {})
+        self.assertNotIn("anthropic/claude-x", catalog)
+        self.assertEqual(len(unmatched), 1)  # every other CLI keeps the unhinted behavior
+
+    def test_anthropic_model_ids_keeps_only_well_formed_rows(self):
+        md = {"anthropic": {"models": {
+            "claude-b": {},
+            "claude-a": {"id": "claude-a", "limit": {"output": 1}, "cost": {"input": 1.0}},
+            "claude-null": None,
+            "claude-str": "junk",
+            "claude-list": [],
+            "": {},
+            "claude-bad-limit": {"limit": "junk"},
+            "claude-null-limit": {"limit": None},
+            "claude-bad-cost": {"cost": 3},
+        }}}
+        self.assertEqual(cli._anthropic_model_ids(md), ["claude-a", "claude-b"])
+        for bad in (None, "x", {}, {"anthropic": []}, {"anthropic": {"models": []}}):
+            self.assertEqual(cli._anthropic_model_ids(bad), [])
+
+    def test_malformed_anthropic_rows_never_crash_or_get_recorded(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            runtimes_path = os.path.join(d, "runtimes.json")
+            cache_write_json(runtimes_path, {"schema_version": 2, "clis": {}})
+            md = {"anthropic": {"models": {
+                "claude-ok": {"id": "claude-ok", "tool_call": True,
+                               "limit": {"context": 200000, "output": 64000}},
+                "claude-null": None,
+                "claude-str": "junk",
+                "claude-bad-limit": {"id": "claude-bad-limit", "limit": "junk"},
+                "claude-bad-tool": {"id": "claude-bad-tool", "tool_call": "yes"},
+            }}}
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path],
+                    which_fn=lambda name: "/fake/bin/claude" if name == "claude" else None,
+                    fetch_models_dev_fn=lambda: (md, True),
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    load_secret_fn=lambda env_, key: None,
+                    env_fn=lambda: {"HOME": d})
+            self.assertEqual(code, 0)
+            result = json.loads(buf.getvalue())
+            entries, meta = model_catalog.split_catalog_meta(cache_read_json(catalog_path))
+            self.assertEqual(meta["anthropic_model_ids"], ["claude-ok"])
+            ok = entries["anthropic/claude-ok"]
+            self.assertEqual(ok["runtimes"]["claude"]["model_id"], "claude-ok")
+            self.assertIsNone(model_catalog.validate_catalog_entry("anthropic/claude-ok", ok))
+            self.assertEqual([k for k in entries if k.startswith("anthropic/")],
+                             ["anthropic/claude-ok"])
+            self.assertFalse([u for u in result["unmatched"] if u.get("cli") == "claude"])
+            # A well-shaped row whose entry validation rejected ("tool_call": "yes") is
+            # reported, never recorded without an entry.
+            self.assertTrue(any("claude-bad-tool" in r for r in result["rejections"]))
 
 
 if __name__ == "__main__":

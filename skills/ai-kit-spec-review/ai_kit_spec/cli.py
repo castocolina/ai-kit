@@ -35,8 +35,8 @@ from ai_kit_spec.local_secrets import load_secret
 from ai_kit_spec.model_catalog import (
     CATALOG_SCHEMA_VERSION,
     cache_catalog_path,
-    catalog_schema_is_current,
     canonical_key,
+    catalog_schema_is_current,
     join_catalog_meta,
     merge_catalog_entry,
     split_catalog_meta,

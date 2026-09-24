@@ -291,6 +291,33 @@ The phase CONTEXT files are authoritative where they differ from the sections ab
 - Reasoning levels use the existing `reasoning_modes` field, not `reasoning_levels`
   (Phase 16 D-08).
 
+**Enumeration**
+- `runtimes.json` `clis.claude` carries `aliases` (`fable`, `opus`, `sonnet`, `haiku`, what
+  `claude --model` resolves), `models` (full ids), `models_source` and `models_as_of`. The
+  full ids come from `model-catalog.json` `_meta.anthropic_model_ids`, recorded by
+  `fetch-model-catalog` from models.dev's `anthropic` provider (`models_source: catalog`);
+  otherwise a dated in-code fallback is used (`models_source: dated-fallback`). Aliases stay
+  out of `models` so catalog discovery never matches a bare alias (Phase 16 D-04).
+- `detect-runtimes --if-stale` also treats the cached `clis.claude` entry as stale when its
+  `aliases`/`models`/`models_source`/`models_as_of` differ from what the current
+  `model-catalog.json` `_meta` yields, because those ids are derived from the catalog. A
+  `fetch-model-catalog` run where models.dev answered and `claude` is on PATH also builds an
+  `anthropic/<id>` catalog entry with a `claude` runtime for every recorded anthropic id in
+  that same fetch, including ids the runtimes snapshot does not list yet. Those extra entries
+  never appear in its printed `discovered` or `unmatched` lists. Bare claude ids are matched
+  with the `anthropic` provider hint, because every anthropic id also appears under many
+  reseller providers on models.dev. In the standard order (`detect-runtimes --if-stale`, then
+  `fetch-model-catalog --if-stale`), the next `detect-runtimes --if-stale` (a second call in
+  the same run, or the next run) lists the catalog ids, and each one already has a catalog
+  entry. A later network-skipping `fetch-model-catalog --if-stale` keeps those entries instead
+  of reporting them unmatched, so a consumer can score them without waiting for the 30-day
+  catalog TTL. If claude is installed only after the last real fetch, run
+  `fetch-model-catalog` once without `--if-stale` (Phase 16 D-04, D-12).
+- `clis.codex.models` lists the `codex debug models` slugs with `visibility: list`, and
+  `clis.codex.reasoning_modes` maps each slug to its effort levels. When codex enumeration
+  yields nothing, the `models` key is omitted and codex keeps the pre-Phase-16
+  single-provider path (Phase 16 D-05).
+
 **Skills (§7)**
 - Missing recommended skills are silently omitted, never offered or installed (Phase 18 D-03).
 - The cap per agent depends on rigor instead of a fixed 3 (Phase 18 D-04).
