@@ -95,7 +95,7 @@ rewrite depends on.
   4. The ranker accepts `planning`, `general`, `mechanical`, `execution`, `review` purposes via the
      ranking-weights file, and existing `review`/`execute` callers keep working unchanged as
      aliases.
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans executed
 
 Plans:
 **Wave 1**
@@ -120,7 +120,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 16-06-PLAN.md — ranker purposes planning/general/mechanical/execution/review, execute/review aliases, mechanical floor; phase gate (`make test` + `make validate`, causal triage against the pre-phase base)
+- [x] 16-06-PLAN.md — ranker purposes planning/general/mechanical/execution/review, execute/review aliases, mechanical floor; phase gate (`make test` + `make validate`, causal triage against the pre-phase base)
 
 ### Phase 17: Curated-Config Inventory & Recommendation Engine
 

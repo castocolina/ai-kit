@@ -269,3 +269,18 @@ None. Plan executed as specified. All Task 1-2 changes within PHASE_FILES pass t
 2. Run `/skill-judge` on skills/ai-kit-spec-config/SKILL.md (blocking).
 3. Re-run Phase 16 gate if needed once environment constraints are addressed.
 
+
+## Orchestrator gate re-run (2026-09-24)
+
+The executor's `GATE NOT PASSED` came from a single unresolved constituent: `test-integration` could not run under `UV_OFFLINE=1`. `textual` 8.2.7 is already installed in `.venv`, so the offline sync check was the blocker, not a missing package. The orchestrator re-ran every constituent individually with `UV_NO_SYNC=1` (no offline flag, nothing installed):
+
+- **Pass:** `test-integration` (131 tests), `e2e-test` (13), `arch-test` (22), `pyright`, `vulture`, `shellcheck`, `py-compile`, `unittest` and `unittest-wizard`, all exit 0.
+- **`test-unit` (exit 2):** the only error is `tests.test_markdown_to_pdf.TestRenderRealMmdc.test_real_render_produces_image`. It also fails at pre-phase base `333cf04` (reproduced in a detached temporary worktree, since removed). Pre-existing environment issue: pnpm-global `@mermaid-js/mermaid-cli` is missing.
+- **`pylint` (exit 2):** only `tools/status-line.py`, 6 findings, the same 6 at base `333cf04`. Pre-existing.
+- **`ruff` (exit 2), phase-caused and fixed:** Phase 16 had raised `tests/test_ai_kit_spec.py` from 13 to 47 violations. The fix is in `80bcac6` plus `b407f8f`, which restores an original test name. The file is now clean, and 594 tests still pass. The remaining ruff findings are in `tools/status-line.py`, `tools/wizard_app.py`, `tests/test_ai_kit_spec_superpowers.py` and `tests/test_ai_kit_usage_metrics.py`, all present at base and none a Phase 16 file.
+- **skill-judge:** 104/120 with no Critical or Important findings (`16-SKILL-JUDGE.md`, `82a0c62`).
+- **Environment finding:** `.git/hooks/pre-commit` points to a missing `.venv` path (`/home/user-zero/...`), so this phase's commits ran without hooks. That is why the ruff regression was not caught at commit time.
+
+### Gate status (orchestrator)
+
+`GATE PASSED` — every constituent ran. The one phase-caused failure (ruff) is fixed; every remaining failure also fails at pre-phase base `333cf04`.
