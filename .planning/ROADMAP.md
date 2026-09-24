@@ -95,7 +95,7 @@ rewrite depends on.
   4. The ranker accepts `planning`, `general`, `mechanical`, `execution`, `review` purposes via the
      ranking-weights file, and existing `review`/`execute` callers keep working unchanged as
      aliases.
-**Plans**: 4/6 plans executed
+**Plans**: 5/6 plans executed
 
 Plans:
 **Wave 1**
@@ -116,7 +116,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 16-05-PLAN.md — optional `image_input` (with `image_input_source` provenance) from models.dev modalities and `opencode models --verbose`
+- [x] 16-05-PLAN.md — optional `image_input` (with `image_input_source` provenance) from models.dev modalities and `opencode models --verbose`
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
