@@ -301,10 +301,10 @@ def _apply_runtime_meta(entry: dict, runtime_meta: dict | None, cli_name: str,
     modes = meta.get("reasoning_modes") or []
     if modes:
         entry["reasoning_modes"] = list(modes)
-    if "image_input" in meta and isinstance(meta["image_input"], bool):
-        if runtime_wins_image_input or not isinstance(entry.get("image_input"), bool):
-            entry["image_input"] = meta["image_input"]
-            entry["image_input_source"] = "opencode"
+    if isinstance(meta.get("image_input"), bool) and (
+            runtime_wins_image_input or not isinstance(entry.get("image_input"), bool)):
+        entry["image_input"] = meta["image_input"]
+        entry["image_input_source"] = "opencode"
 
 
 # 16 D-04 (review cycle 2): claude only ever runs anthropic models, so its bare ids are

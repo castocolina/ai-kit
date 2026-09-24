@@ -41,9 +41,9 @@ from ai_kit_usage_metrics.cli import CAPTURE_SOURCES, main
 from ai_kit_usage_metrics.cwd_state import CwdState
 from ai_kit_usage_metrics.dashboard import generate
 from ai_kit_usage_metrics.decomposer import classify_segment, decompose, scan_command
-from ai_kit_usage_metrics.raw_store import CaptureResult
 from ai_kit_usage_metrics.paths import catalog_path
 from ai_kit_usage_metrics.pricing import estimate_price
+from ai_kit_usage_metrics.raw_store import CaptureResult
 from ai_kit_usage_metrics.refiner import refine_all
 
 SIMPLE_COMMAND = "ls -la"
@@ -2544,8 +2544,7 @@ class TestPricing(unittest.TestCase):
                     "anthropic/claude-x": {
                         "pricing": {"input_per_1m": 3.0, "output_per_1m": 15.0}
                     },
-                }
-            ,
+                },
                 handle,
             )
         return path

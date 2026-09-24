@@ -27,8 +27,10 @@ _FIELD_TYPES = {
     "tokens_per_sec": (int, float), "max_output_tokens": int, "structured_output": bool,
     "tool_calling": bool, "native": bool, "reasoning_modes": list, "fast_mode": bool,
     "speed_tier": str, "name_declared_purpose": str, "native_runtime": str,
-    "image_input": bool,  # 16 D-09 — optional; absent means unknown; written only from a source statement
-    "image_input_source": str,  # 16 D-09 (review cycle 2 MEDIUM); field-level provenance of image_input
+    # 16 D-09 — optional; absent means unknown; written only from a source statement.
+    "image_input": bool,
+    # 16 D-09 (review cycle 2 MEDIUM) — field-level provenance of image_input.
+    "image_input_source": str,
     # HIGH finding: is_router/batch_mode/fallback_quota have no external source (spec §3) --
     # they are ALWAYS either a naming heuristic's guess or a user's explicit confirmation of
     # that guess, and a plain bool alone cannot tell those two provenances apart. This list

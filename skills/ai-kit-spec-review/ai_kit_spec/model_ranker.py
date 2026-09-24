@@ -138,9 +138,8 @@ def _is_valid_weights_structure(weights) -> bool:
         return False
     # Validate each purpose present in CANONICAL_PURPOSES
     for purpose in CANONICAL_PURPOSES:
-        if purpose in weights:
-            if not _is_valid_purpose_section(weights[purpose]):
-                return False
+        if purpose in weights and not _is_valid_purpose_section(weights[purpose]):
+            return False
     # Validate bonuses
     bonuses = weights.get("bonuses")
     if not isinstance(bonuses, dict) or _REQUIRED_BONUS_FIELDS - bonuses.keys():
@@ -216,10 +215,8 @@ def score_candidates(entries: list, purpose: str, weights: dict) -> list:
     own note on why that spec-named bonus is deliberately absent from this implementation."""
     # Resolve purpose alias (e.g., "execute" -> "execution")
     canonical = resolve_purpose(purpose)
-    if canonical in weights:
-        axis_weights = weights[canonical]
-    else:
-        axis_weights = weights[purpose]  # Hand-built legacy dict keyed "execute" keeps working
+    # A hand-built legacy dict keyed "execute" keeps working via the fallback.
+    axis_weights = weights[canonical] if canonical in weights else weights[purpose]
 
     # Apply floor filter BEFORE normalization so excluded candidates don't affect scoring
     floor = axis_weights.get(_FLOOR_KEY) or {}
