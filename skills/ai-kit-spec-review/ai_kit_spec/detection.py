@@ -23,13 +23,18 @@ def detect_installed_clis(which_fn=shutil.which) -> dict:
     return {cli: which_fn(cli) for cli in KNOWN_CLIS}
 
 
-# Fixed check order (D-02). Label "cursor" differs from KNOWN_CLIS's "cursor-agent"
-# binary-name entry on purpose (D-09) — this tuple never normalizes KNOWN_CLIS.
+# Fixed check order per 16 D-01, as amended by Phase 20 D-02 (replaces 01.2 D-02's claude-first
+# order). When CLIs nest, env vars accumulate and the innermost CLI must win, so claude --
+# usually the outer orchestrator -- is checked last. The label "cursor" still differs from
+# KNOWN_CLIS's "cursor-agent" binary-name entry on purpose (01.2 D-09); this tuple never
+# touches KNOWN_CLIS.
 _RUNTIME_ENV_SIGNALS = (
-    ("claude", "CLAUDECODE"),
+    ("pi", "PI_CODING_AGENT"),
     ("opencode", "OPENCODE"),
     ("cursor", "CURSOR_AGENT"),
+    ("codex", "CODEX_THREAD_ID"),
     ("codex", "CODEX_VERSION"),
+    ("claude", "CLAUDECODE"),
 )
 
 
@@ -50,20 +55,29 @@ def detect_current_runtime(env: dict | None = None) -> str:
     cross-process persistence. Nested-subprocess env vars accumulate, so
     two signals may both be set; the function never claims to resolve "true
     immediate parent" beyond what the fixed order establishes (D-02/D-03).
+    The fixed order is pi > opencode > cursor > codex > claude
+    (16 D-01, amended by Phase 20 D-02).
 
-    Signal verification is NOT uniform — never treat all four as equally
+    Signal verification is NOT uniform — never treat all six as equally
     confirmed (AGENTS.md certainty-labeling; 01.2-RESEARCH.md Common Pitfall 2):
 
-    - claude (`CLAUDECODE`): live-verified this session via this process's
-      own env dump.
-    - opencode (`OPENCODE`/`OPENCODE_PID`): live-verified this session via a
-      live spawned `opencode run` subprocess.
+    - pi (`PI_CODING_AGENT`): source-inspected-only — confirmed in the
+      installed `@earendil-works/pi-coding-agent` package's
+      `dist/config.js`, not live-verified from a real pi session (16 D-03;
+      live validation is Phase 22).
+    - opencode (`OPENCODE`): live-verified (01.2) via a live spawned
+      `opencode run` subprocess.
     - cursor (`CURSOR_AGENT`): source-inspected-only — confirmed via the
-      actually-installed cursor-agent bundle's own `index.js`, not a live
-      subprocess (blocked by exhausted quota this session).
+      installed cursor-agent bundle's own `index.js`, not a live subprocess.
+    - codex (`CODEX_THREAD_ID`): observed in real codex session shell
+      snapshots under `~/.codex/sessions` (the snapshot preamble exports
+      `CODEX_THREAD_ID` from `__CODEX_SNAPSHOT_OVERRIDE_1`; 20 occurrences,
+      16 D-02) — not yet live-verified from a codex host (Phase 20,
+      EVAL-04).
     - codex (`CODEX_VERSION`): source-inspected-only — confirmed via
-      openai/codex's open-source `exec_env.rs`, not a live subprocess
-      (blocked by expired auth this session).
+      openai/codex's open-source `exec_env.rs`, not a live subprocess.
+    - claude (`CLAUDECODE`): live-verified (01.2) via the process's own
+      env dump.
     """
     env = env if env is not None else os.environ
     for label, var in _RUNTIME_ENV_SIGNALS:

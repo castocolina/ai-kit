@@ -530,7 +530,7 @@ class TestValidateCatalogEntry(unittest.TestCase):
         self.assertIn("native_runtime", reason)
 
     def test_valid_native_runtime_values_are_accepted(self):
-        for value in ("claude", "opencode", "codex", "cursor", "unknown"):
+        for value in ("claude", "opencode", "codex", "cursor", "pi", "unknown"):
             reason = model_catalog.validate_catalog_entry(
                 "x", self._valid_entry(native_runtime=value))
             self.assertIsNone(reason, msg=value)
@@ -850,15 +850,69 @@ class TestDetectCurrentRuntime(unittest.TestCase):
         self.assertEqual(
             detection.detect_current_runtime(env={"CLAUDECODE": ""}), "unknown")
 
-    def test_nested_subprocess_fixed_order_winner_is_claude(self):
+    def test_nested_subprocess_fixed_order_winner_is_opencode(self):
         self.assertEqual(
             detection.detect_current_runtime(
                 env={"OPENCODE": "1", "CLAUDECODE": "1"}),
-            "claude")
+            "opencode")
 
     def test_env_none_reads_live_os_environ(self):
         with unittest.mock.patch.dict(os.environ, {"CLAUDECODE": "1"}, clear=True):
             self.assertEqual(detection.detect_current_runtime(env=None), "claude")
+
+
+class TestPiHostEndToEnd(unittest.TestCase):
+    def test_pi_signal_wins_over_outer_claude_and_prints_pi(self):
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = rs.main(
+                ["detect-current-runtime"],
+                env_fn=lambda: {"PI_CODING_AGENT": "1", "CLAUDECODE": "1"},
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(buf.getvalue()), {"native_runtime": "pi"})
+
+    def test_pi_native_runtime_survives_the_review_spec_render(self):
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rs.main(
+                ["detect-current-runtime"],
+                env_fn=lambda: {"PI_CODING_AGENT": "1", "CLAUDECODE": "1"},
+            )
+        value = json.loads(buf.getvalue())["native_runtime"]
+        config = {"policy": {}, "reviewers": [
+            {"key": "native-primary", "model": "m", "vendor": "v",
+             "native_runtime": value}]}
+        rendered = config_io.cfg_render_toml(config)
+        self.assertIn("[[reviewers]]", rendered)
+        self.assertIn('native_runtime = "pi"', rendered)
+
+    def test_pi_native_runtime_accepted_by_both_validators(self):
+        self.assertIsNone(
+            config_io.validate_reviewer_fields(
+                {"key": "a", "native_runtime": "pi"}))
+        entry = {"provider": "openai", "runtimes": {"opencode": {"model_id": "m"}},
+                 "source": {"models_dev": True}, "confidence": "high",
+                 "last_verified": "2026-09-02", "native_runtime": "pi"}
+        self.assertIsNone(model_catalog.validate_catalog_entry("x", entry))
+
+    def test_codex_launched_from_claude_reads_as_codex(self):
+        # Phase 20 D-02 rationale: claude is the usual outer orchestrator, so a codex
+        # launched from Claude must read as codex, not claude.
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = rs.main(
+                ["detect-current-runtime"],
+                env_fn=lambda: {"CODEX_THREAD_ID": "t-1", "CLAUDECODE": "1"},
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(buf.getvalue()), {"native_runtime": "codex"})
 
 
 class TestDetectOpencodeModels(unittest.TestCase):

@@ -94,7 +94,10 @@ def _toml_value(v) -> str:
 
 
 _VALID_PURPOSE = {"review", "execute", "both"}
-_VALID_NATIVE_RUNTIME = {"claude", "opencode", "codex", "cursor", "unknown"}
+# Deliberately duplicated with model_catalog._VALID_NATIVE_RUNTIME -- the two sets must change
+# together (AGENTS.md Architecture). "pi" is here because detect_current_runtime can return it
+# since Phase 16.
+_VALID_NATIVE_RUNTIME = {"claude", "opencode", "codex", "cursor", "pi", "unknown"}
 
 
 def validate_reviewer_fields(entry: dict) -> str | None:

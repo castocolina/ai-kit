@@ -36,7 +36,10 @@ _NUMERIC_SUBFIELD_TABLES = {
 }
 _RUNTIME_FIELD_TYPES = {"model_id": str, "ctx_window": (int, float)}
 _VALID_NAME_DECLARED_PURPOSE = {"review", "execute"}
-_VALID_NATIVE_RUNTIME = {"claude", "opencode", "codex", "cursor", "unknown"}
+# Deliberately duplicated with config_io._VALID_NATIVE_RUNTIME -- the two sets must change
+# together (AGENTS.md Architecture). "pi" is here because detect_current_runtime can return it
+# since Phase 16.
+_VALID_NATIVE_RUNTIME = {"claude", "opencode", "codex", "cursor", "pi", "unknown"}
 
 
 def cache_catalog_path(env: dict) -> str:
