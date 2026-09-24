@@ -1,8 +1,8 @@
 ---
 phase: 16
-cycle: 2
+cycle: 3
 reviewers: [opencode-plan-review, codex-sol-high]
-reviewed_at: 2026-09-24T10:53:45Z
+reviewed_at: 2026-09-24T11:45:39Z
 plans_reviewed: [16-01-PLAN.md, 16-02-PLAN.md, 16-03-PLAN.md, 16-04-PLAN.md, 16-05-PLAN.md, 16-06-PLAN.md]
 models:
   opencode-plan-review: "router-env/my-plan-review (reasoning=high)"
@@ -18,42 +18,253 @@ model_sources:
 ## Plan-Revision Conflicts
 <!-- gsd:plan-revision-conflicts:end -->
 
-> Cycle 2 of plan-review convergence. It reviews the plans as revised in `8834ead`. The cycle-1
-> review (6789a06) stays in git history. Each PLAN.md's "Review Dispositions Ledger" cites it by
-> line (`L<n>@6789a06`).
+> This is cycle 3 (the final cycle) of plan-review convergence. It reviews the plans as revised in
+> `9a0f0fc`. The cycle-1 review (`6789a06`) and the cycle-2 review (`92c2ef4`) are kept in git
+> history. Each PLAN.md's "Review Dispositions Ledger" cites them by line (`L<n>@<sha>`).
 >
-> Lane notes (environment findings, not plan findings). Reviewers came from
+> Lane notes (environment findings, not plan findings). Both reviewers came from
 > `review.default_reviewers`: `opencode-plan-review` (opencode, `router-env/my-plan-review`) and
 > `codex-sol-high` (codex, `gpt-5.6-sol`). No lane was substituted, and the xai/grok lane was not
 > used.
-> - **codex-sol-high:** produced a full review. It got the full inlined prompt (339 KB), covers all
->   six plan ids, and cites `file:line` evidence.
-> - **opencode-plan-review: FAILED (environment).** It got a compact 19.3 KB prompt that pointed
->   at the plans, RESEARCH.md and the cycle-1 REVIEWS.md on disk. The first dispatch exited 1
->   with no assistant text (stop reason `tool-calls`, 193 output tokens). A short foreground probe
->   ("Reply with exactly: PROBE-OK") showed the router backend refusing requests:
->   `Model opencode-zen/glm-5.2 is locked` (HTTP 503, `isRetryable: true`) and then
->   `All credentials for model glm-5.2 are cooling down` (`rate_limit_error` / `model_cooldown`).
->   All 19 probes between 07:05 and 07:50 (-03) failed the same way, so the CLI is working
->   but the backing model is quota-blocked. The single permitted lane retry (same compact prompt)
->   also exited 1 with no assistant text. Stubs and stderr are kept in `.review-diagnostics/`.
-> - **Effect on counting:** only ONE reviewer produced a review section this cycle, so the
->   consensus gate does not engage. Every codex HIGH counts on its own, as the contract requires.
->   The orchestrator independently confirmed both HIGH premises against source (see Verification
->   coverage).
+> - **codex-sol-high:** full review in about 8 minutes (08:18 to 08:26 -03). It got the full
+>   inlined prompt (336 KB: plans, CONTEXT.md, roadmap, requirements, with RESEARCH.md and the
+>   cycle-2 REVIEWS.md referenced on disk). It covers all six plan ids and cites `file:line`
+>   evidence.
+> - **opencode-plan-review:** full review in about 26 minutes (08:18 to 08:44 -03). It got a
+>   compact 11 KB prompt that pointed at the plans, RESEARCH.md, the cycle-2 REVIEWS.md and
+>   `git show 9a0f0fc` on disk. The router backend was reachable this cycle, unlike cycle 2. The
+>   opencode log showed steady tool-loop progress (steps 6 to 18 and later), so no probe or retry
+>   was needed. It covers all six plan ids and cites `file:line` evidence.
+> - The two lanes ran at the same time. They use different providers, so they share no rate
+>   limit.
+> - **Effect on counting:** two reviewers produced a review section, so the consensus gate
+>   engages. Neither section opens with a `[reviewed-without-source-citations]` or
+>   `[reviewed-without-repo-access]` marker, so both count at full weight.
 > - The working tree was unchanged after both read-only runs (`git status`: only the pre-existing
 >   `.planning/state.json` modification).
 
 ## OpenCode Review (opencode-plan-review)
 
-opencode review failed or returned empty output. stderr:
+## 16-01
 
-Raw response body:
-OpenCode review returned no assistant text (#1936: agent ended its turn with no final message).
-Diagnostic: stop reason=tool-calls, output tokens=193 (first dispatch); stop reason=?, output tokens=? (retry)
-Diagnosis: opencode ran at effort=high and exited with status 1. Root cause from the foreground
-probe: router-env backend `glm-5.2` locked / all credentials cooling down (transient quota state,
-not a broken CLI). Recorded as an environment finding; this lane contributes no findings this cycle.
+### Summary
+
+The Codex enumeration plan remains implementation-ready. It follows existing subprocess-injection patterns, preserves reasoning metadata through matched and unmatched paths, and explicitly rejects unsuccessful subprocess results.
+
+### Cycle-2 dispositions
+
+- **RESOLVED — provisional failure classification.** Failures outside this plan’s files are now marked provisional until 16-06 reproduces them at `PHASE_BASE` (`.planning/phases/16-ai-kit-spec-extensions/16-01-PLAN.md:112-122`, `:645-651`).
+- **RESOLVED — phase-wide artifact table.** It now includes the 16-04 materialization/provider-hint additions and 16-05 provenance field (`16-01-PLAN.md:547-562`, `:651`).
+- **EXPLICITLY REJECTED WITH VALID RATIONALE — raw fixture/hash workflow.** The plan records command, version, date, retained fields, substitutions, and omission rationale without committing the 259 KB vendor prompt payload (`16-01-PLAN.md:277-290`, `:653-656`).
+- **EXPLICITLY DEFERRED WITH VALID RATIONALE — stricter existing opencode/cursor return-code handling.** D-06 preserves those existing paths while the new Codex parser gets the stricter gate (`16-01-PLAN.md:217-240`, `:639-643`).
+
+### Strengths
+
+- The proposed Codex invocation uses an argv list, the PATH-resolved executable, a 15-second timeout, and no shell (`16-01-PLAN.md:208-221`). This matches the existing injected subprocess seams in `skills/ai-kit-spec-review/ai_kit_spec/detection.py:74-106`.
+- The plan reuses the existing `reasoning_modes` schema instead of introducing a competing field (`16-01-PLAN.md:248-275`; `skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py:18-23`).
+- Both current unmatched exits are explicitly targeted for metadata propagation (`16-01-PLAN.md:262-269`); those exits currently occur at `skills/ai-kit-spec-review/ai_kit_spec/cli.py:270-274` and `:409-413`.
+- The fixture/parser tests cover hidden models, duplicate slugs, malformed levels, nonzero exits, missing return codes, and instruction-payload leakage (`16-01-PLAN.md:305-322`, `:358-393`).
+
+### Concerns
+
+- **No new blocking concern found.**
+
+### Suggestions
+
+- Execute as written.
+- Preserve the explicit test that catalog files never contain `model_messages` or `instructions_template`; the external response is much larger and more sensitive than the data actually needed.
+
+### Risk Assessment
+
+**LOW.** The plan is narrow, hermetic, and well covered. Remaining fixture provenance limitations are explicitly accepted and do not affect runtime correctness.
+
+## 16-02
+
+### Summary
+
+This remains a strong table-driven host-detection plan. It changes the precedence tuple, closes both downstream `"pi"` validation gaps, and tests both individual signals and nested-session precedence.
+
+### Cycle-2 dispositions
+
+- **RESOLVED — provisional failure classification.** Per-plan failures are no longer finally labeled pre-existing; 16-06 owns causal classification (`.planning/phases/16-ai-kit-spec-extensions/16-02-PLAN.md:103-113`, `:414-419`).
+- **EXPLICITLY DEFERRED WITH VALID RATIONALE — duplicated `_VALID_NATIVE_RUNTIME` sets.** The definitions remain duplicated, but the plan permanently pins equality between them (`16-02-PLAN.md:195-200`, `:235-236`, `:421-424`). Current source confirms the two independent definitions at `skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py:39` and `skills/ai-kit-spec-review/ai_kit_spec/config_io.py:96-97`.
+
+### Strengths
+
+- The exact six-row tuple correctly represents Codex’s two independent signals and required precedence (`16-02-PLAN.md:156-166`).
+- It preserves the architectural distinction between current host detection and installed CLI detection; the plan explicitly leaves `KNOWN_CLIS` unchanged (`16-02-PLAN.md:165-166`, `:255-263`), matching `AGENTS.md:67-71`.
+- The tracer verifies the complete detection → validator → TOML-render path for `"pi"`, not just the pure detection return value (`16-02-PLAN.md:208-224`).
+- Confidence labels are tied to the actual tuple and checked for invented signal names such as `OPENCODE_PID` (`16-02-PLAN.md:262-283`).
+
+### Concerns
+
+- **No new blocking concern found.**
+
+### Suggestions
+
+- Keep the validator-set equality assertion as a permanent regression test.
+- Preserve the exact tuple assertion; it protects both adjacency and the two-row Codex representation.
+
+### Risk Assessment
+
+**LOW.** The behavior is data-driven, exhaustively pinned, and consistent with the current module boundaries.
+
+## 16-03
+
+### Summary
+
+The cache migration is carefully designed. It keeps TTL logic generic, introduces schema-aware refresh at the CLI boundary, isolates catalog metadata under `_meta`, and preserves backward compatibility for existing catalogs and sibling readers.
+
+### Cycle-2 dispositions
+
+- **RESOLVED in the operative plan — false “shared with quota.py” claim.** The current truth, objective, test description, and threat entry now identify the real consumers and correctly state that `quota.py` imports only `cache_base` (`.planning/phases/16-ai-kit-spec-extensions/16-03-PLAN.md:39`, `:101-108`, `:212-214`, `:438`, `:496-502`).
+- **RESOLVED — provisional failure classification.** Final classification is delegated to 16-06’s baseline reproduction (`16-03-PLAN.md:121-131`, `:502`).
+- **RESOLVED CROSS-PLAN — Claude cache convergence.** This plan creates the `cached_runtimes` and `_meta` seams; revised 16-04 now performs same-fetch entry materialization (`16-03-PLAN.md:80-83`, `:507`; `16-04-PLAN.md:299-320`).
+- **EXPLICITLY DEFERRED WITH VALID RATIONALE — concurrent cache writers.** The plan now claims only single-writer atomic replacement and accurately declares the fixed temporary path unsafe for concurrent writers (`16-03-PLAN.md:35`, `:87-91`, `:437-439`, `:491-494`). Current implementation uses one fixed `<path>.tmp` before `os.replace` (`skills/ai-kit-spec-review/ai_kit_spec/cache.py:21-29`).
+
+### Strengths
+
+- The proposed refresh condition correctly requires fresh TTL **and** current schema before skipping, so either stale condition forces refresh (`16-03-PLAN.md:172-183`). The current skip seam is exactly where expected at `skills/ai-kit-spec-review/ai_kit_spec/cli.py:716-725`.
+- `_meta` is split before model-entry iteration, which is necessary because current loops call entry methods directly (`skills/ai-kit-spec-review/ai_kit_spec/cli.py:79-82`; `skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py:162-172`).
+- The plan covers every catalog-writing command—fetch, confirmation, and heuristic correction—so `_meta` cannot disappear on a later write (`16-03-PLAN.md:275-289`).
+- Sibling-reader regression tests target the actual access patterns rather than merely asserting that `_meta` exists (`16-03-PLAN.md:345-363`).
+
+### Concerns
+
+- **LOW — the grounding research still contains the corrected false claim.** Executors are told to read `16-RESEARCH.md` (`16-03-PLAN.md:141-148`), but that document still says `cache_is_stale` is shared with `quota.py` at `.planning/phases/16-ai-kit-spec-extensions/16-RESEARCH.md:153` and `:496-502`. Current source contradicts it: the TTL checks are in `skills/ai-kit-spec-review/ai_kit_spec/cli.py:717` and `:782`, while `quota.py` imports only `cache_base`. The Round-2 ledger supersedes the plan wording, but not this upstream grounding text.
+
+### Suggestions
+
+- Correct `16-RESEARCH.md:153` and `:496-502` before execution so the executor does not receive contradictory authoritative context.
+- Optionally annotate the old Round-1 deferred wording at `16-03-PLAN.md:494` as superseded inline, rather than relying solely on the later ledger entry.
+
+### Risk Assessment
+
+**MEDIUM.** The implementation mechanism is sound, but this changes shared persistent formats and still carries one contradictory grounding claim.
+
+## 16-04
+
+### Summary
+
+The revision substantively resolves the cycle-2 bootstrap defect. The first successful models.dev fetch now records Anthropic IDs and materializes their catalog entries in the same transaction, including IDs absent from the dated fallback.
+
+### Cycle-2 dispositions
+
+- **RESOLVED — non-fallback Anthropic IDs lacked catalog entries.** Extra Claude candidates are passed into `build_model_catalog` during the recording fetch, while remaining outside caller-visible discovery scope (`.planning/phases/16-ai-kit-spec-extensions/16-04-PLAN.md:299-320`).
+- **RESOLVED — tracer masked the issue by using fallback IDs only.** The revised tracer includes `claude-new-not-in-fallback` and verifies entry creation, validation, runtime convergence, skipped refetch, and ranking visibility (`16-04-PLAN.md:322-380`).
+- **RESOLVED — reseller collision.** Claude candidates receive an Anthropic-only tie-breaking hint (`16-04-PLAN.md:288-297`). Current matching behavior otherwise returns `None` for ambiguous provider matches (`skills/ai-kit-spec-review/ai_kit_spec/model_matcher.py:96-142`).
+- **RESOLVED — false “one more detect completes convergence” statement.** Another detection is now sufficient because the prior fetch has already built every catalog entry; the erratum also documents the installed-after-fetch exception (`16-04-PLAN.md:471-485`, `:624-631`).
+- **RESOLVED — provisional failure classification.** Final pre-existing status belongs to 16-06 (`16-04-PLAN.md:178-188`, `:632`).
+
+### Strengths
+
+- The fix targets the actual current bottleneck: discovery currently comes only from runtime `models` arrays and only those candidates enter `build_model_catalog` (`skills/ai-kit-spec-review/ai_kit_spec/cli.py:740-745`, `:800-802`).
+- Scope isolation is explicit and tested: internal materialization candidates do not alter printed `discovered` or `unmatched` (`16-04-PLAN.md:303-316`, `:429-432`).
+- The provider hint is narrowly scoped to Claude; all other CLIs preserve collision-safe current behavior (`16-04-PLAN.md:293-297`, `:431-432`).
+- The real-order tracer covers detect → fetch → detect → skipped fetch → skipped detect and proves the new ID is scoreable through `current_candidate_keys` (`16-04-PLAN.md:345-380`).
+- Claude remains non-executable throughout enumeration (`16-04-PLAN.md:251-257`, `:379-380`).
+
+### Concerns
+
+- **MEDIUM — malformed Anthropic model rows can violate the “every recorded ID has an entry” invariant or crash the fetch.** `_anthropic_model_ids` accepts every nonblank key from an Anthropic `models` dictionary (`16-04-PLAN.md:285-287`), but current matching spreads each selected model value as a dictionary (`skills/ai-kit-spec-review/ai_kit_spec/model_matcher.py:121-134`). A `null`, list, string, or malformed `limit` value can therefore fail during matching/enrichment. `fetch_models_dev` validates JSON transport, not the response schema (`skills/ai-kit-spec-review/ai_kit_spec/model_sources.py:30-38`). The plan stamps all extracted IDs into `_meta` and filters their internal unmatched records without testing malformed per-model rows (`16-04-PLAN.md:307-320`).
+
+### Suggestions
+
+- Add a malformed-Anthropic-row test with one valid sibling and values such as `null`, a string, and an invalid `limit`.
+- Record an ID in `_meta.anthropic_model_ids` only if its row can be materialized into a validated Claude catalog entry, or fail the fetch without stamping the new ID set.
+- Assert after every successful materializing fetch that each recorded ID maps to a validated `anthropic/<id>` entry carrying a Claude runtime.
+
+### Risk Assessment
+
+**MEDIUM.** The cycle-2 HIGH is resolved on valid source data. Remaining risk is defensive schema handling for a third-party catalog response.
+
+## 16-05
+
+### Summary
+
+The provenance revision fixes the stale True→False capability transition identified in cycle 2. It distinguishes models.dev assertions from opencode runtime readings and preserves backward compatibility with source-less legacy values.
+
+### Cycle-2 dispositions
+
+- **RESOLVED — missing `image_input` provenance.** The plan adds optional `image_input_source`, preserves only models.dev-sourced values during source outages, and allows current runtime data to replace cached runtime-derived data (`.planning/phases/16-ai-kit-spec-extensions/16-05-PLAN.md:96-108`, `:188-220`, `:351-373`).
+- **RESOLVED — requested transition coverage.** Tests cover runtime True→False, models.dev precedence, runtime silence, source-less legacy entries, and opencode-only extraction (`16-05-PLAN.md:299-303`, `:393-403`).
+- **RESOLVED — provisional failure classification.** Per-plan failures remain provisional pending 16-06 (`16-05-PLAN.md:138-148`, `:550-557`).
+- **RESOLVED — post-16-04 hermeticity.** Every fetch test explicitly supplies `which_fn`, preventing real PATH-dependent Claude materialization (`16-05-PLAN.md:129-132`, `:398-403`, `:557`).
+- **EXPLICITLY REJECTED WITH VALID RATIONALE — raw verbose capture/hash workflow.** The raw output exposes private configured providers, while the committed fixture carries inline provenance (`16-05-PLAN.md:375-383`, `:559-562`).
+
+### Strengths
+
+- The plan uses the current merge distinction correctly: omitted keys preserve cached values, while incoming `None` clears stale values (`skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py:143-158`; `16-05-PLAN.md:203-220`).
+- Header-to-object identity validation prevents shifted verbose blocks from assigning one model’s capability to another (`16-05-PLAN.md:325-340`).
+- Nonzero/missing subprocess return codes degrade to no capability map (`16-05-PLAN.md:341-346`).
+- Runtime metadata is applied on both current unmatched paths, allowing later user confirmation without losing the CLI-reported capability (`16-05-PLAN.md:366-373`; current exits at `skills/ai-kit-spec-review/ai_kit_spec/cli.py:270-274` and `:409-413`).
+- The generated 110-block test directly covers the observed output scale and the index-based parsing strategy (`16-05-PLAN.md:290`, `:389-392`).
+
+### Concerns
+
+- **MEDIUM — schema validation does not enforce provenance/value co-presence.** The plan repeatedly requires `image_input` and `image_input_source` to be written, cleared, or omitted together (`16-05-PLAN.md:33-34`, `:203-220`), but its validator tests explicitly accept `"models_dev"` or `"opencode"` independently on an entry shape without requiring boolean `image_input` (`16-05-PLAN.md:246-251`). That permits meaningless orphan provenance through `confirm-catalog-entry`, which persists any entry accepted by `validate_catalog_entry` (`skills/ai-kit-spec-review/ai_kit_spec/cli.py:810-829`).
+
+### Suggestions
+
+- Reject non-null `image_input_source` unless `image_input` is a boolean.
+- Continue accepting legacy `image_input` without provenance so old caches remain compatible.
+- Add tests for orphan-source rejection, paired clear-on-`None`, and legacy value-without-source acceptance.
+
+### Risk Assessment
+
+**MEDIUM.** The cycle-2 stale-value defect is resolved, but the new field pair needs one schema-level consistency rule.
+
+## 16-06
+
+### Summary
+
+The ranker work is thorough, and the revised baseline comparison fixes the original false “pre-existing” classification problem. The final gate remains unsafe, however: aggregate Make targets may stop before all required tiers run, and the acceptance criteria allow unresolved failures while simultaneously saying the gate has not passed.
+
+### Cycle-2 dispositions
+
+- **RESOLVED — path-only pre-existing classification.** Every failure outside `PHASE_FILES` now requires reproduction at `PHASE_BASE`; passing or differing at baseline makes it phase-caused, while inability to reproduce is unresolved rather than pre-existing (`.planning/phases/16-ai-kit-spec-extensions/16-06-PLAN.md:416-466`, `:584-590`). Treating a failure that directly names a phase-modified file as phase-caused is conservative and does not recreate the original false-excusal defect.
+- **RESOLVED — `score_candidates` docstring.** The prescribed wording now matches current behavior: missing normalized axes use 49.0 and all axis weights remain in the divisor (`16-06-PLAN.md:204-213`, `:275`, `:590`; current implementation at `skills/ai-kit-spec-review/ai_kit_spec/model_ranker.py:109-148`).
+- **RESOLVED — per-plan provisional classifications.** 16-06 is now the sole authority for final baseline classification (`16-06-PLAN.md:105-122`).
+
+### Strengths
+
+- Alias normalization preserves loaded legacy `[execute]` sections and hand-built legacy dictionaries while making `execution` canonical (`16-06-PLAN.md:175-204`, `:241-260`).
+- One `_is_finite_number` rejects booleans and non-finite values across axes, bonuses, floors, and candidate scores (`16-06-PLAN.md:186-196`, `:310-327`).
+- Floors run before normalization, so excluded candidates cannot distort survivor scores (`16-06-PLAN.md:317-323`).
+- The baseline workflow records exact commands, result classifications, cleanup state, and justified out-of-phase fixes (`16-06-PLAN.md:421-481`).
+- The planned aggregate commands correspond to the repository’s intended gates: `make test` covers four tiers and `make validate` covers all hook targets (`Makefile:45-66`, `:74-122`; `AGENTS.md:121-136`).
+
+### Concerns
+
+- **HIGH — aggregate Make targets may stop before later required tiers or hooks run.** `test` and `validate` are prerequisite aggregates (`Makefile:66`, `:122`). Without keep-going behavior, an early failure can prevent later prerequisites from running. The plan permits a nonzero aggregate result after classifying its visible failures (`16-06-PLAN.md:408-418`, `:491-494`), so a proven pre-existing unit-test failure could leave integration, E2E, architecture, or later validation hooks completely unexecuted and conceal phase regressions.
+- **HIGH — unresolved gate failures are both blocking and accepted by completion criteria.** Step 4 correctly says an unreproducible failure is unresolved and “the gate is not passed while it stands” (`16-06-PLAN.md:448-451`). But the must-have, acceptance criteria, and `<done>` permit completion when failures are merely listed as unresolved (`16-06-PLAN.md:36`, `:491-499`). This internal contradiction can mark the phase done despite an explicitly unpassed repository gate, contrary to `AGENTS.md:60-63` and `:123-130`.
+- **MEDIUM — the temporary worktree path is hardcoded.** The plan embeds `/tmp/ai-kit-p16-base.*` in generated commands and acceptance checks (`16-06-PLAN.md:421-425`, `:488-495`), while project instructions require portable discovered or passed base paths (`AGENTS.md:57-59`).
+- **LOW — global `git worktree prune` is unnecessary.** After removing `$BASE_WT`, pruning may alter unrelated stale worktree metadata (`16-06-PLAN.md:452-456`). This is broader than the task needs and conflicts with preserving unrelated work (`AGENTS.md:54-56`).
+
+### Suggestions
+
+- Run each test tier and validation target independently, collecting all results even when an earlier target fails. At minimum: `test-unit`, `test-integration`, `e2e-test`, `arch-test`, and each validation hook target.
+- Require final `make test` and `make validate` success unless every nonzero item is proven pre-existing **and every constituent tier/hook actually ran**.
+- Make any unresolved gate failure block `<done>` and phase completion; reporting it is not equivalent to passing.
+- Use `${TMPDIR:-/tmp}` or Python’s `tempfile` rather than embedding `/tmp`.
+- Remove only the worktree created by the task; omit global `git worktree prune`.
+
+### Risk Assessment
+
+**HIGH.** The ranker changes themselves are well specified, and the cycle-2 causal-triage defect is resolved. The final phase gate can still omit required verification and accept an explicitly unresolved failure.
+
+## Cross-plan assessment
+
+The serial wave ordering remains appropriate because the plans intentionally build on shared `detection.py`, `cli.py`, catalog formats, and one central test module. Cycle-2’s primary implementation defects in 16-04, 16-05, and 16-06 are substantively addressed.
+
+Execution should still be blocked on the two 16-06 HIGH findings. Recommended pre-execution fixes:
+
+1. Ensure every test tier and validation hook runs even when an earlier one fails.
+2. Make unresolved gate failures block plan and phase completion.
+3. Add the 16-04 malformed-source-row test and 16-05 provenance/value consistency validation.
+4. Correct the stale `quota.py` consumer claims in `16-RESEARCH.md`.
+
+**Overall phase risk: HIGH until the 16-06 gate contract is corrected.** No files were modified during this review.
 
 ---
 
@@ -63,436 +274,449 @@ not a broken CLI). Recorded as an environment finding; this lane contributes no 
 
 ### Summary
 
-The Codex enumeration plan is implementation-ready and follows the repository’s existing injected-subprocess conventions. It now covers the complete `codex debug models` → runtimes snapshot → catalog path, preserves reasoning metadata on unmatched records, and rejects unsuccessful subprocess results.
+The codex enumeration plan is implementation-ready. It follows the repository’s existing injected-subprocess pattern, filters internal models, preserves reasoning metadata through both catalog and unmatched-candidate paths, and has strong malformed-output coverage.
 
-### Cycle-1 dispositions
+### Cycle-2 dispositions
 
-- **RESOLVED — blocking `skill-judge` gate.** The executor-visible objective now identifies it as an orchestrator-owned blocking gate with the exact pass threshold and pending-summary requirement (`16-01-PLAN.md:121-129`), matching `AGENTS.md:45-47`.
-- **RESOLVED — full repository verification scheduling.** This plan runs `make test-unit`, while 16-06 Task 3 schedules the actual `make test` and `make validate` gates (`16-01-PLAN.md:439-461`; `16-06-PLAN.md:385-420`).
-- **RESOLVED — unmatched `reasoning_modes`.** Both unmatched exits receive `_apply_runtime_meta` before append (`16-01-PLAN.md:246-269`). This targets the real current exits at `skills/ai-kit-spec-review/ai_kit_spec/cli.py:409-413`.
-- **RESOLVED — non-zero Codex exit.** The proposed `getattr(result, "returncode", 1) != 0` guard and degradation tests are explicit (`16-01-PLAN.md:206-219`, `:356-364`).
-- **PARTIALLY RESOLVED — fixture provenance.** The revision records command, version, date, retained fields, substitutions, and omission rationale (`16-01-PLAN.md:275-288`). The fixture remains manually transcribed rather than reproducibly sanitized from a preserved capture.
-- **NOT RESOLVED, accepted scope deferral — existing opencode/cursor return-code handling.** The current parsers still parse stdout without checking return status (`detection.py:74-106`); the plan deliberately limits stricter behavior to new parsers (`16-01-PLAN.md:637-638`).
+- **RESOLVED — provisional failure classification.** Per-plan failures are explicitly provisional until 16-06 reproduces them at the phase base, preventing path-only claims of pre-existence. [16-01-PLAN.md:112](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-01-PLAN.md:112)
+- **RESOLVED — phase artifact inventory.** The phase-wide table now includes the later Claude materialization and `image_input_source` artifacts. [16-01-PLAN.md:541](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-01-PLAN.md:541)
+- **EXPLICITLY REJECTED — raw fixture hash/redaction recipe.** The rationale is reasonable: the source capture contains a large vendor prompt that should not be committed, while the retained fields, command, version, date, and transformations are documented beside the fixture constant. [16-01-PLAN.md:645](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-01-PLAN.md:645)
 
 ### Strengths
 
-- Uses the existing argv-list, timeout, injected-`run_fn` pattern from `detection.py:74-106`.
-- Filters internal Codex entries and strips the large instruction payload before persistence.
-- Correctly reuses the existing validated `reasoning_modes` field (`model_catalog.py:22`, `:111-113`).
-- Tests malformed items, duplicate slugs, hidden entries, missing return codes, payload leakage, and unmatched metadata.
-- Preserves the pre-existing single-provider fallback by omitting `models` when enumeration fails.
+- The wrapper mirrors the existing safe argv-list pattern and adds the missing return-code gate. The current enumerators already use injected `run_fn`, `capture_output`, and a 15-second timeout. [detection.py:74](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/detection.py:74)
+- Reusing `reasoning_modes` is schema-compatible: it is already an optional field with list-of-strings validation. [model_catalog.py:18](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py:18) [model_catalog.py:111](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py:111)
+- The plan correctly updates both existing unmatched exits, which currently append records before either catalog merge path. [cli.py:270](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/cli.py:270) [cli.py:409](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/cli.py:409)
+- Failure behavior preserves the existing single-provider reconciliation path because no `models` key is emitted when enumeration fails. The current discovery logic distinguishes precisely on that key. [cli.py:740](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/cli.py:740)
 
 ### Concerns
 
-- **LOW — fixture reproducibility remains limited.** The detailed provenance makes the fixture auditable, but a future maintainer cannot regenerate it mechanically from the original capture.
+- None beyond the explicitly accepted fixture-reproducibility tradeoff.
 
 ### Suggestions
 
-- Record a hash of the original raw capture and a short deterministic redaction recipe without committing the vendor prompt text.
-- Otherwise execute as written after the cross-plan blockers under 16-04 and 16-06 are corrected.
+- Execute as written. Keep the fixture provenance comment adjacent to the path constant so it cannot drift away from the fixture.
 
 ### Risk Assessment
 
-**LOW.** The runtime and catalog paths are well bounded, degradation behavior is explicit, and the remaining issue is provenance quality rather than functional correctness.
+**LOW.** Parsing, invocation safety, partial degradation, hidden-model filtering, and end-to-end metadata propagation are all explicitly tested.
+
+---
 
 ## 16-02
 
 ### Summary
 
-This is a strong, narrow plan. It changes the precedence table rather than adding unnecessary control flow, closes the duplicated `pi` schema gap, and pins both individual signals and the complete nested-runtime matrix.
+The host-detection plan accurately implements the amended nesting order and closes the downstream validation gap for `native_runtime = "pi"`. Tests cover the exact tuple, individual signals, precedence removal sequence, empty values, and confidence wording.
 
-### Cycle-1 dispositions
+### Cycle-2 dispositions
 
-- **RESOLVED — blocking `skill-judge` gate.** The objective makes it explicit and orchestrator-owned (`16-02-PLAN.md:112-120`).
-- **RESOLVED — full verification scheduling.** `make test-unit` is executor-visible here, with the full repository gates in 16-06 (`16-02-PLAN.md:302-323`).
-- **RESOLVED — false `OPENCODE_PID` claim.** The prescribed docstring names only `OPENCODE`, and the tests assert that no undocumented signal appears (`16-02-PLAN.md:166-191`, `:253-280`).
+- **RESOLVED — provisional failure classification.** Failures outside plan files remain provisional until the causal phase gate. [16-02-PLAN.md:89](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-02-PLAN.md:89)
+- **EXPLICITLY DEFERRED — duplicated native-runtime allowlists.** The rationale is sound for this phase: both definitions are updated together and permanently equality-pinned, while consolidating modules would exceed SPEC-01’s scope. [16-02-PLAN.md:414](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-02-PLAN.md:414)
 
 ### Strengths
 
-- The six-row tuple exactly encodes the required precedence and correctly represents Codex’s two independent signals (`16-02-PLAN.md:155-164`).
-- It preserves the deliberate distinction between runtime identity and installed CLIs: current `KNOWN_CLIS` is separate at `detection.py:13`, while runtime signals are at `detection.py:25-32`.
-- It closes both currently duplicated validation gaps: `model_catalog.py:39,103-106` and `config_io.py:96-129`.
-- The end-to-end tracer verifies that `pi` survives detection, validation, and TOML rendering—not merely that the tuple returns a string.
-- Confidence labels are tested against the actual signal table.
+- The proposed six-row tuple fixes the stale current order and keeps the two codex signals separate, avoiding Python’s string-`or` pitfall. The current tuple still puts Claude first and only recognizes `CODEX_VERSION`. [detection.py:25](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/detection.py:25)
+- Updating both validators is necessary: they are genuinely duplicated in separate modules today. [model_catalog.py:39](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py:39) [config_io.py:97](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/config_io.py:97)
+- The documentation correction is source-grounded: the current docstring mentions `OPENCODE_PID`, although the detector never reads it. [detection.py:53](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/detection.py:53)
+- Keeping `pi` out of `KNOWN_CLIS` preserves the Phase 22 enumeration boundary. [detection.py:13](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/detection.py:13)
 
 ### Concerns
 
-- No new blocking concern found.
-- **LOW — duplicated runtime allow-lists remain a maintenance hazard.** The plan mitigates this with equality tests and comments, but the two source definitions still require coordinated updates.
+- None.
 
 ### Suggestions
 
-- Keep the equality assertion between both `_VALID_NATIVE_RUNTIME` sets as a permanent regression test.
-- Do not add `pi` to `KNOWN_CLIS` in this phase; the plan correctly preserves that Phase 22 boundary.
+- Retain the equality assertion for the two `_VALID_NATIVE_RUNTIME` sets even if they are consolidated in a future phase.
 
 ### Risk Assessment
 
-**LOW.** The change is table-driven, fully pinned by tests, and closes a real schema incompatibility discovered during research.
+**LOW.** The behavioral change is costly to reverse but is explicitly user-approved, narrowly implemented, and comprehensively pinned.
+
+---
 
 ## 16-03
 
 ### Summary
 
-The cache-version migration is well designed: it keeps generic TTL logic schema-agnostic, reserves `_meta` without exposing it as a model, preserves metadata through every writer, and honestly narrows atomicity claims to the behavior the current cache writer actually provides.
+The cache-schema migration plan is sound. It separates runtime and catalog schema placement correctly, preserves old cache entries, makes version staleness an additional CLI-level condition, and explicitly avoids overstating concurrent-writer safety.
 
-### Cycle-1 dispositions
+### Cycle-2 dispositions
 
-- **RESOLVED — false concurrent-writer claim.** The objective now says single-writer atomicity and explicitly declares concurrent writers unsupported (`16-03-PLAN.md:87-101`). That matches the fixed temporary name in `cache.py:21-29`.
-- **RESOLVED — “exactly one refresh” overstatement.** The plan now says one successful refresh and explicitly retries failures (`16-03-PLAN.md:71-76`).
-- **RESOLVED — sibling `_meta` reader coverage.** It adds regression tests for both catalog consumers (`16-03-PLAN.md:337-354`); their current mechanisms naturally ignore `_meta`.
-- **RESOLVED — full verification scheduling.** Unit verification occurs here and the aggregate gates are in 16-06.
-- **PARTIALLY RESOLVED — Claude catalog-to-runtime freshness.** This plan creates the `cached_runtimes` seam and the correct TTL-or-schema logic (`16-03-PLAN.md:165-174`), but the phase-wide convergence remains incomplete because of the 16-04 catalog-materialization issue below.
-- **NOT RESOLVED, accepted deferral — per-writer temporary files.** The code remains concurrency-unsafe by design (`16-03-PLAN.md:482-485`); that is acceptable only while the unsupported-concurrency contract remains true.
+- **RESOLVED — incorrect quota consumer claim.** The revised plan now correctly limits schema-aware stale checks to the two CLI commands rather than claiming quota shares these helpers. [16-03-PLAN.md:496](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-03-PLAN.md:496)
+- **RESOLVED — provisional failure classification.** Final classification is delegated to 16-06’s mandatory base reproduction. [16-03-PLAN.md:503](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-03-PLAN.md:503)
+- **RESOLVED CROSS-PLAN — Claude catalog/runtime convergence.** The remaining dependency is now handled by 16-04’s catalog-aware runtime freshness and same-fetch materialization rather than by this generic schema migration.
 
 ### Strengths
 
-- Correctly leaves shared `cache_is_stale` unchanged (`cache.py:32-36`).
-- Uses OR refresh semantics: stale TTL or old schema triggers refresh.
-- Separates catalog metadata before existing functions iterate model entries.
-- Protects `_meta` from accidental confirmation or correction writes.
-- Tests invalid JSON, non-object caches, old versions, newer compatible versions, and source-fetch failures.
-- Documents why the catalog version belongs under `_meta` rather than as an ordinary entry.
+- `_meta` is the correct catalog location because current catalog consumers treat every ordinary top-level key as a model identifier. [model_catalog.py:162](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py:162)
+- The planned split/join boundary prevents `_meta` from reaching `merge_catalog_entry`, which currently assumes a model entry and applies field-level merge semantics. [model_catalog.py:129](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py:129)
+- Tests for sibling readers are well targeted. The provider scanner already ignores records without provider/runtime data, while pricing directly retrieves the requested model key. [cross_reference.py:64](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-opencode-providers/ai_kit_opencode_providers/cross_reference.py:64) [pricing.py:16](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-usage-metrics/ai_kit_usage_metrics/pricing.py:16)
+- The concurrency statement is now honest: atomic replacement protects interrupted single-writer operations, but the fixed temporary name does not support competing writers.
 
 ### Concerns
 
-- No independent blocker inside this plan.
-- Its ultimate success depends on 16-04 correctly closing the catalog-to-runtime dependency, which the current revision only partially achieves.
+- None newly introduced.
 
 ### Suggestions
 
-- Keep 16-03 ordered before 16-04.
-- Do not mark D-12 fully verified until the revised 16-04 tracer includes a catalog ID not present in the dated fallback and proves it becomes a usable catalog entry.
+- Execute as written. Keep schema interpretation in the two CLI consumers rather than making the generic mtime helper format-aware.
 
 ### Risk Assessment
 
-**MEDIUM.** The migration itself is careful, but it changes a shared persistent format and participates in the unresolved Claude bootstrap path.
+**MEDIUM.** Persistent-format migrations have inherently broad compatibility impact, but the plan covers old caches, reserved-key isolation, sibling consumers, failed refreshes, and atomic replacement.
+
+---
 
 ## 16-04
 
 ### Summary
 
-The revision fixes the narrow stale-`runtimes.json` problem and significantly improves source labeling and hermeticity. However, it does not complete the actual catalog bootstrap needed for Phase 17 scoring. The tracer masks this because every models.dev ID in the test is already present in the dated fallback.
+The cycle-2 blocker is substantively fixed. Newly fetched Anthropic IDs are materialized into catalog entries during the same fetch, Claude matching gets a narrowly scoped first-party provider hint, and the real detect→fetch→detect convergence sequence is exercised.
 
-### Cycle-1 dispositions
+### Cycle-2 dispositions
 
-- **PARTIALLY RESOLVED — real-order Claude freshness handoff.** `claude_runtime_is_current` correctly invalidates a fresh runtime snapshot when catalog metadata changes (`16-04-PLAN.md:209-242`), and the tracer now uses detect → fetch → detect (`:244-276`).
-- **PARTIALLY RESOLVED — catalog and runtime cache dependency.** Runtime IDs converge, but catalog entries for newly learned non-fallback IDs do not.
-- **RESOLVED — executor-visible verification scheduling.** Unit gates are in this plan and full gates are scheduled in 16-06.
-- **NOT RESOLVED — same-run second detection/fetch convergence.** The plan explicitly defers this to Phase 17 (`16-04-PLAN.md:482-485`), but the source trace shows that another detect alone is insufficient.
+- **RESOLVED — non-fallback Anthropic IDs were not materialized.** The recording fetch now adds extra Claude candidates and builds entries for all newly recorded IDs. [16-04-PLAN.md:285](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-04-PLAN.md:285)
+- **RESOLVED — reseller collisions.** Claude alone receives the `anthropic` provider hint. This uses the matcher’s existing provider-specific disambiguation path. [model_matcher.py:123](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_matcher.py:123)
+- **RESOLVED — misleading convergence erratum.** The revised wording makes the second detection sufficient only because the preceding fetch already materialized every recorded ID.
+- **RESOLVED — provisional failure classification.** Final causality remains owned by 16-06. [16-04-PLAN.md:624](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-04-PLAN.md:624)
 
 ### Strengths
 
-- Aliases are kept separate from full IDs, preventing bogus `anthropic/opus` catalog matches (`16-04-PLAN.md:103-113`).
-- Claude is never executed; the catalog is read lazily only when Claude is installed.
-- Fallback provenance is explicit through `models_source` and `models_as_of`.
-- The freshness comparison includes aliases, IDs, source, and date, with no-loop tests.
-- It uses the standard catalog path through injected `env_fn`, avoiding real user caches.
+- The fix addresses the actual source gap: current fetch behavior only builds from snapshot candidates and then writes the result, so catalog-only IDs cannot presently become entries. [cli.py:740](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/cli.py:740) [cli.py:800](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/cli.py:800)
+- Materialization is gated by the real PATH-resolved Claude binary and remains outside reported discovery/unmatched scope, avoiding unexpected wizard prompts.
+- Tests include a non-fallback ID and a colliding reseller row, so they exercise both cycle-2 defects rather than only the dated fallback.
+- The catalog freshness dependency is lazy and no-loop: it is consulted only after TTL/schema eligibility and only for installed Claude.
 
 ### Concerns
 
-- **HIGH — new catalog IDs are learned but not materialized as scored catalog entries.** Current `fetch-model-catalog` builds `discovered` exclusively from the runtime snapshot’s `models` arrays (`cli.py:740-745`) and calls `build_model_catalog` only for those candidates (`cli.py:800-802`). On the first upgraded run, Claude contains only the four fallback IDs. The fetch records every Anthropic ID into `_meta`, but it builds entries only for fallback candidates. The second detect updates `runtimes.json` to the full ID list, yet the plan does not fetch again (`16-04-PLAN.md:268-274`). A subsequent `fetch-model-catalog --if-stale` skips models.dev because the fetch marker is fresh (`cli.py:781-785`), so non-fallback IDs become unmatched rather than enriched until the TTL expires.
-- The tracer cannot detect this because its only IDs—`claude-opus-5-5` and `claude-sonnet-5`—are already in `CLAUDE_FALLBACK_MODEL_IDS` (`16-04-PLAN.md:184-185`, `:251-267`).
-- This conflicts with the stated purpose that full IDs are needed “for scoring” (`16-04-PLAN.md:81-83`) and with Phase 17’s adapter, which is specified to run one detect plus one fetch (`docs/.../2026-09-23-gsd-curated-config-v2-design.md:97-99`).
+- **LOW — malformed Anthropic rows may now reach the matcher.** The proposed `_anthropic_model_ids` accepts every nonblank model-map key without requiring its value to be a dictionary. [16-04-PLAN.md:285](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-04-PLAN.md:285) Same-fetch materialization then feeds every such key to `match_models_dev`, whose successful path expands the matched value with `{**model, ...}` and therefore assumes a mapping. [model_matcher.py:123](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_matcher.py:123) A malformed upstream row could make `fetch-model-catalog` raise instead of degrading.
 
 ### Suggestions
 
-- Make the first successful models.dev fetch add the fetched Anthropic IDs to discovery when Claude is installed, so their entries are built during that same fetch; or introduce an explicit candidate-set freshness key that forces a second real fetch after runtime IDs change.
-- Extend the tracer with `claude-new-not-in-fallback` and assert all of the following:
-
-  - it appears in `_meta.anthropic_model_ids`;
-  - the subsequent runtime snapshot lists it;
-  - `anthropic/claude-new-not-in-fallback` exists as a validated catalog entry;
-  - Phase 17 can score it without waiting for the fetch TTL.
-
-- Update the erratum at `16-04-PLAN.md:354-360`; another detect alone does not currently complete catalog convergence.
+- Filter `_anthropic_model_ids` to entries whose key is a nonblank string **and whose value is a dict**, and add one malformed-row test.
 
 ### Risk Assessment
 
-**HIGH.** The plan meets the enumeration-labeling requirement but can leave most current Anthropic IDs unavailable for scoring for up to the catalog TTL.
+**LOW.** The former HIGH convergence defect is resolved. The remaining concern is defensive hardening against malformed third-party data.
+
+---
 
 ## 16-05
 
 ### Summary
 
-The source-order design is mostly sound and the revised verbose parser is substantially safer. Header-to-object validation, non-zero-exit rejection, partial parsing, and unmatched propagation are now covered. A remaining provenance ambiguity can preserve stale runtime capability values.
+The provenance revision correctly fixes the stale-capability problem. `image_input` and `image_input_source` travel together, models.dev statements retain priority, current opencode readings can replace older runtime-derived values during skipped fetches, and absence remains distinct from a sourced `false`.
 
-### Cycle-1 dispositions
+### Cycle-2 dispositions
 
-- **RESOLVED — unmatched `image_input`.** Runtime metadata is now applied to both unmatched paths and the wizard copies it into confirmed entries (`16-05-PLAN.md:298-311`, `:336-344`).
-- **RESOLVED — non-zero verbose exit.** The new parser wrapper rejects it (`16-05-PLAN.md:287-293`).
-- **RESOLVED — header/object attribution.** A block is accepted only when its header equals `providerID/id` (`16-05-PLAN.md:279-286`).
-- **RESOLVED — large-output expectation.** The parser walks by index and has a generated 110-block performance test (`16-05-PLAN.md:285-287`, `:322-330`).
-- **PARTIALLY RESOLVED — fixture provenance.** Command, version, date, retained fields, and privacy rationale are documented (`16-05-PLAN.md:313-321`), but regeneration remains manual.
-- **RESOLVED — repository gate scheduling.** Unit checks occur here; the full gate is in 16-06.
+- **RESOLVED — missing field-level provenance.** The schema, preservation rules, runtime application, and transition tests now distinguish `models_dev` from `opencode`. [16-05-PLAN.md:188](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-05-PLAN.md:188)
+- **RESOLVED — provisional failure classification.** Non-plan failures remain provisional until 16-06. [16-05-PLAN.md:550](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-05-PLAN.md:550)
+- **RESOLVED — post-16-04 test hermeticity.** Every relevant fetch test injects `which_fn=lambda name: None`, preventing the real host PATH from widening candidates. [16-05-PLAN.md:129](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-05-PLAN.md:129)
+- **EXPLICITLY REJECTED — raw fixture hash/redaction recipe.** The rejection is justified because the full capture exposes private provider/router configuration; detailed local provenance remains recorded beside the fixture path. [16-05-PLAN.md:558](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-05-PLAN.md:558)
 
 ### Strengths
 
-- Keeps `image_input` optional, so old catalog entries remain valid.
-- Correctly distinguishes unknown from a sourced `False`.
-- Uses models.dev first and runtime metadata only when models.dev made no statement.
-- The clear-on-`None` design aligns with current merge behavior at `model_catalog.py:145-158`.
-- The parser is linear, bounded by a subprocess timeout, and rejects mismatched headers.
-- The test matrix covers matched, unmatched, router, malformed, source outage, source precedence, and performance paths.
+- The proposed preservation semantics align with the existing merge contract: explicit `None` clears a field, while an omitted key preserves the cached value. [model_catalog.py:145](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_catalog.py:145)
+- Reading runtime image capability only from `clis.opencode` ensures that `image_input_source: opencode` is truthful.
+- Header equality with decoded `providerID/id` prevents a shifted block stream from attributing one model’s capability to another.
+- The parser uses `JSONDecoder.raw_decode` with an index, providing linear behavior for the observed multi-thousand-line output.
+- Tests cover both matched and unmatched paths, runtime True→False transitions, models.dev precedence, source silence, legacy sourceless entries, malformed blocks, and non-zero subprocess exits.
 
 ### Concerns
 
-- **MEDIUM — the cache does not remember which source supplied `image_input`.** Task 1 preserves cached `image_input` whenever models.dev is skipped or unavailable (`16-05-PLAN.md:167-176`). Task 2 then lets runtime metadata replace it only when the entry lacks a boolean, except on the router path (`16-05-PLAN.md:298-307`). Consider this sequence:
-
-  1. models.dev matches a non-router model but has no modalities;
-  2. opencode runtime metadata supplies `image_input: true`;
-  3. that value is cached;
-  4. a later runtime snapshot reports `false`, while models.dev fetch is skipped;
-  5. the cached `true` is copied as though models.dev owned it, and `_apply_runtime_meta` refuses to replace it.
-
-  The result is stale capability data in a field Phase 17 uses as an eligibility gate.
+- None newly introduced.
 
 ### Suggestions
 
-- Track field-level provenance, such as `image_input_source: models_dev|opencode`, or keep independently sourced values until precedence is resolved.
-- Add a transition test for a non-router, models.dev-matched-without-modalities candidate whose runtime value changes `True → False` during a fetch-skipped run.
-- Preserve cached models.dev assertions during outages, but allow a newly observed runtime value to replace a cached runtime-derived value.
+- Execute as written. Preserve the five provenance-transition tests as regression tests because they encode the most subtle cache behavior in this phase.
 
 ### Risk Assessment
 
-**MEDIUM.** Normal fresh-fetch behavior is strong, but stale capability data could lead Phase 17 to select or reject a vision agent incorrectly.
+**LOW.** The source ordering and unknown-versus-false semantics are explicit and extensively tested.
+
+---
 
 ## 16-06
 
 ### Summary
 
-The ranker work is thorough: aliases, backward-compatible partial files, bool-safe numeric validation, raw-score floors, purity, and invalid-UTF-8 fallback are all well planned. The final repository gate is now scheduled, but its failure-classification rule is unsafe and can mislabel phase-caused integration failures as pre-existing.
+The ranker work is well specified and the cycle-2 causal-triage defect is largely corrected. However, the revised cleanup proof contains a conditional false failure: it compares the complete worktree listing before and after a task that may create a fix commit.
 
-### Cycle-1 dispositions
+### Cycle-2 dispositions
 
-- **RESOLVED — missing full gates.** Task 3 now runs the actual aggregate `make test` and `make validate` (`16-06-PLAN.md:375-420`), matching `Makefile:42-66`, `:119-122` and `AGENTS.md:121-134`.
-- **RESOLVED — booleans accepted as numbers.** `_is_finite_number` is shared by axes, bonuses, floors, and candidate floor checks (`16-06-PLAN.md:179-189`, `:294-311`).
-- **RESOLVED — `review` self-alias ambiguity.** Only aliases whose canonical name differs are moved, with a dedicated test (`16-06-PLAN.md:168-178`, `:243-245`).
-- **RESOLVED — `skill-judge` ownership.** It remains a blocking orchestrator gate and is reported as pending, as explicitly permitted by the review instructions (`16-06-PLAN.md:501`).
+- **RESOLVED IN MECHANISM — path-based gate triage.** Every failure outside phase files must now be reproduced at `PHASE_BASE`; only an identical failure counts as pre-existing, while base-pass/HEAD-fail results are phase-caused. [16-06-PLAN.md:416](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-06-PLAN.md:416)
+- **RESOLVED — inaccurate `score_candidates` docstring.** The plan now documents the actual 49.0 substitution and full-weight divisor, matching the current implementation. [model_ranker.py:109](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_ranker.py:109) [model_ranker.py:144](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_ranker.py:144)
 
 ### Strengths
 
-- The plan directly fixes the current bool hole at `model_ranker.py:51-61`.
-- It preserves legacy hand-built `execute` dictionaries while canonicalizing loaded TOML.
-- Missing new purposes are filled from independent deep copies of defaults.
-- Floors are applied before normalization, preventing excluded candidates from shifting survivor scores.
-- Missing, boolean, nonnumeric, or unknown floor axes are rejected.
-- Invalid UTF-8 is added to the loader’s never-raise contract; current handling only catches `OSError` and TOML errors (`model_ranker.py:64-79`).
-- The floor and alias consequences are explicitly documented for Phase 17.
+- `_is_finite_number` directly closes the existing Python-bool hole: current validation accepts `True` because it uses `isinstance(value, (int, float))`. [model_ranker.py:42](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_ranker.py:42)
+- Catching `UnicodeDecodeError` makes the documented never-raise loader contract complete; the current exception list does not catch decoding failures. [model_ranker.py:64](/var/home/bazzite/git/personal/ai-kit/skills/ai-kit-spec-review/ai_kit_spec/model_ranker.py:64)
+- Floors are checked against raw scores before normalization, preventing excluded candidates from shifting survivor normalization.
+- The phase gate matches repository policy: `make test` aggregates all four tiers, and `make validate` runs the configured hook suite. [Makefile:42](/var/home/bazzite/git/personal/ai-kit/Makefile:42) [Makefile:66](/var/home/bazzite/git/personal/ai-kit/Makefile:66) [Makefile:122](/var/home/bazzite/git/personal/ai-kit/Makefile:122)
+- Detached base-worktree reproduction with the matching interpreter/tool is a materially stronger causal test than the earlier path heuristic.
 
 ### Concerns
 
-- **HIGH — Task 3’s path-based gate triage is not causal analysis.** The plan says a failure is phase-caused only when the test module, traceback, or hook mentions a `PHASE_FILES` path; every other failure is declared pre-existing (`16-06-PLAN.md:393-400`). A change to shared CLI output or cache shape can break an installer, PTY, or integration test whose failure mentions only its own test file. The acceptance criteria repeat the same unsafe inference (`16-06-PLAN.md:423-425`). This can produce a “completed” phase with a real regression, contrary to `AGENTS.md:60-63`.
-- **LOW — a stale ranker docstring is left behind.** Current `score_candidates` says absent axes are excluded and weights renormalized (`model_ranker.py:109-117`), but the code actually substitutes `_MISSING_AXIS_DEFAULT` for every missing axis (`model_ranker.py:144-148`). The plan updates the purpose line but does not correct this false behavior description.
+- **MEDIUM — the before/after worktree equality check fails after a legitimate fix commit.** Step 1 records the exact `git worktree list`, and cleanup later requires exact equality. [16-06-PLAN.md:400](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-06-PLAN.md:400) But the same task may fix and commit a phase-caused failure. [16-06-PLAN.md:457](/var/home/bazzite/git/personal/ai-kit/.planning/phases/16-ai-kit-spec-extensions/16-06-PLAN.md:457) The default worktree listing includes each worktree’s current HEAD SHA, so a new commit changes the main-worktree line even when the temporary worktree was removed perfectly. The final acceptance check can therefore report cleanup failure precisely when the causal-fix path worked.
 
 ### Suggestions
 
-- Treat every newly failing full-gate test as phase-caused unless it is reproduced at `PHASE_BASE`. Make the detached-worktree comparison mandatory for failures outside `PHASE_FILES`, not optional.
-- Allow causally required downstream test or documentation fixes to extend `PHASE_FILES` with an explicit justification; do not prohibit them solely because they were not predicted before running the gate.
-- Update the `score_candidates` docstring to describe the 49-point missing-axis default and clarify that floor validation occurs before that default is relevant.
+- Compare normalized worktree identity rather than complete output:
+  - compare only `worktree` paths and `branch` refs from `git worktree list --porcelain`;
+  - separately assert no path begins `/tmp/ai-kit-p16-base.`;
+  - retain the before/after `git branch --list` comparison to prove no branch was created.
+- Alternatively, explicitly permit the main worktree’s HEAD field to change when Task 3 creates a `fix(16-06):` commit.
 
 ### Risk Assessment
 
-**HIGH.** The ranker implementation plan is strong, but the final completion gate can incorrectly excuse real cross-component regressions.
+**MEDIUM.** Product behavior and causal failure classification are strong, but the cleanup acceptance logic can falsely fail execution when a legitimate gate fix is committed.
+
+---
 
 ## Cross-plan assessment
 
-The cycle-2 revision resolves most cycle-1 findings, especially subprocess exit handling, unmatched metadata propagation, confidence labeling, `_meta` reader coverage, numeric validation, `skill-judge` ownership, and actual full-gate scheduling.
+The serial dependency chain is coherent:
 
-Three changes are needed before execution:
+`codex metadata plumbing → host detection → cache schemas → Claude convergence → image capability → ranker and phase gate`
 
-1. **16-04 HIGH:** make newly learned non-fallback Claude IDs become enriched catalog entries, not merely runtime IDs.
-2. **16-06 HIGH:** replace path-based failure classification with mandatory baseline reproduction or equivalent causal evidence.
-3. **16-05 MEDIUM:** preserve field-level source provenance so runtime-derived `image_input` can change during a models.dev-skipped run.
+All cycle-2 HIGH product defects are addressed. No new HIGH concern was found. Before execution, I recommend two final edits:
 
-The serial six-wave ordering remains appropriate because the plans intentionally build on the same `detection.py`, `cli.py`, cache format, and central test module.
+1. Fix 16-06’s worktree comparison so a legitimate fix commit does not invalidate cleanup verification.
+2. Harden 16-04’s Anthropic ID extraction against non-dictionary model rows.
 
-**Overall phase risk: HIGH until 16-04 and 16-06 are revised.** No files were modified during this review.
+**Overall risk: MEDIUM**, driven by the 16-06 gate false-negative rather than by an unresolved Phase 16 feature defect. After that correction, the plan set is ready for execution.
 
 ---
 
 ## Consensus Summary
 
-Only one prompt-fed, source-grounded reviewer produced a review this cycle (codex-sol-high). The
-opencode-plan-review lane failed for environment reasons (see Lane notes). So there is no
-cross-reviewer consensus: "Agreed" below means the codex reviewer and the orchestrator's own
-source-grounding pass agree. The codex review has no `[reviewed-without-source-citations]` or
-`[reviewed-without-repo-access]` marker, so it counts at full weight. Codex rates the phase
-**HIGH risk until 16-04 and 16-06 are revised**. It also says the revision resolves most cycle-1
-findings.
+Two prompt-fed, source-grounded reviewers produced a review this cycle, and both count at full
+weight (no discount markers). They agree that `9a0f0fc` resolves every cycle-2 finding: the
+16-04 HIGH (non-fallback anthropic ids now get catalog entries in the same fetch), the 16-06 HIGH
+(triage now needs a mandatory PHASE_BASE reproduction), the 16-05 MEDIUM (`image_input_source`
+provenance), the 16-06 LOW (`score_candidates` docstring) and the 16-03 LOW (real
+`cache_write_json` / `cache_is_stale` consumers). Plans 16-01 and 16-02 are LOW risk and ready as
+written.
 
-### Cycle-1 finding status (codex dispositions, checked by the orchestrator)
+The reviewers differ on the overall verdict. Codex rates the phase **MEDIUM** and ready once two
+small edits land. Opencode rates it **HIGH** until the 16-06 gate contract is fixed. Every
+remaining item is in 16-06 Task 3's gate mechanics or is defensive hardening in 16-04 and 16-05.
+No Phase 16 feature defect remains.
 
-- Agreed Concern 1 (HIGH, Claude catalog→runtimes freshness edge): **PARTIALLY RESOLVED**.
-  `claude_runtime_is_current` plus the real-order tracer fix the stale-`runtimes.json` half. The
-  remainder is new HIGH 1 below, and it is not counted twice.
-- Agreed Concern 2 (HIGH, skill-judge gate): **RESOLVED**. The gate is an orchestrator-owned
-  blocking gate stated in each affected plan's `<objective>` (16-01:121-129, 16-02:112-120,
-  16-05:124-129, 16-06:118-123), and every SUMMARY lists it under `## Pending orchestrator gates`.
-- Agreed Concern 3 (HIGH, `make test` never executor-visible): **RESOLVED**. `make test-unit`
-  runs in every plan's final task. 16-06 Task 3 runs `make test` (all four tiers,
-  `Makefile:66`) and `make validate` (`Makefile:122`). Task 3's triage rule raises new HIGH 2.
-- Agreed Concern 4 (HIGH, false concurrent-writer claim): **RESOLVED**. The truth now reads
-  "single-writer atomic replace; concurrent writers unsupported", which matches `cache.py:26`.
-  The code change is deferred with rationale.
-- Agreed Concern 5 (MEDIUM, bool weights): **RESOLVED** (`_is_finite_number` for axes, bonuses
-  and floors).
-- Cycle-1 single-reviewer items: unmatched-branch metadata (16-01, 16-05), returncode (16-01,
-  16-05), `OPENCODE_PID` docstring, header/id check, "exactly one refresh" wording, sibling
-  `_meta` tests, `review` self-alias wording, and the verbose-parse size test are all **RESOLVED**.
-  Fixture provenance is **explicitly rejected with rationale** (vendor prompt text and private
-  router endpoints must not be committed; inline provenance recorded instead). Codex calls it
-  "partially resolved" and raises only a LOW, which the rejection covers.
+### Cycle-2 finding status (both reviewers, checked by the orchestrator)
 
-### Agreed Concerns (codex + orchestrator source verification)
+- Cycle-2 HIGH 1 (16-04, new anthropic ids learned but not materialized as catalog entries):
+  **RESOLVED** (both reviewers). The recording fetch passes `claude_candidates` to
+  `build_model_catalog`. They are gated on `which_fn("claude")` and kept out of the printed
+  `discovered` and `unmatched`. Claude candidates get the `anthropic` provider hint. The tracer
+  uses `claude-new-not-in-fallback` plus a colliding `reseller` row
+  (16-04-PLAN.md:285-320, :322-380). The orchestrator traced the fetch-skipped step 4 through
+  current source. With `md_match` and `aa_match` both None, `_find_existing_key_for_runtime`
+  (`cli.py:64`) finds the materialized `anthropic/<id>` entry by its claude runtime, so the id is
+  preserved, not reported unmatched. The hinted tie-break is real code
+  (`model_matcher.py:135-141`).
+- Cycle-2 HIGH 2 (16-06, path-based triage): **RESOLVED in mechanism** (both reviewers). The
+  PHASE_BASE reproduction is now mandatory for every failure outside PHASE_FILES
+  (16-06-PLAN.md:416-466). Opencode raises two new, separate HIGHs about the gate's execution
+  and completion semantics (below).
+- Cycle-2 MEDIUM (16-05, `image_input` provenance): **RESOLVED** (both reviewers).
+- Cycle-2 LOWs: the `score_candidates` docstring is **RESOLVED** (both reviewers). The 16-03
+  "shared with quota.py" wording is **RESOLVED in the plan** (both reviewers). Opencode notes the
+  same false claim is still in `16-RESEARCH.md` (see Other findings).
+- Accepted deferrals and rejections that both reviewers found sound: fixture hash and redaction
+  recipe (16-01, 16-05), duplicated `_VALID_NATIVE_RUNTIME` sets (16-02), per-writer cache temp
+  files (16-03), existing opencode/cursor return-code handling (16-01).
 
-1. **HIGH: newly learned anthropic ids never become catalog entries in the real refresh order
-   (16-04).** `fetch-model-catalog` builds `discovered` only from the runtimes snapshot's
-   `models` arrays (`cli.py:740-745`) and only builds entries for those (`cli.py:800-802`). On
-   the first upgraded run, `clis.claude.models` holds only the four fallback ids, so the fetch
-   records every anthropic id in `_meta` but builds entries only for the fallback four. The
-   next `detect-runtimes --if-stale` then lists every id. The next `fetch-model-catalog
-   --if-stale` skips models.dev because the sidecar `fetch-meta.json` is fresh (`cli.py:781-785`),
-   so `models_dev_ok` is False and any non-fallback id becomes `unmatched` until the catalog TTL
-   runs out. The 16-04 tracer cannot catch this: both of its models.dev ids (`claude-opus-5-5`,
-   `claude-sonnet-5`) are already in `CLAUDE_FALLBACK_MODEL_IDS`. The 16-04 erratum and ledger
-   ("a caller may call `detect-runtimes --if-stale` once more") therefore overstate convergence.
-   Fix options: (a) when claude is installed and models.dev succeeded, add the fetched anthropic
-   ids to `discovered` in the same fetch so their entries are built immediately; or (b) add a
-   candidate-set freshness key that forces a real fetch when the runtime candidate set changes.
-   Also extend the tracer with an id that is NOT in the fallback list, and assert that
-   `anthropic/<that id>` exists as a validated catalog entry after the standard sequence.
-2. **HIGH: 16-06 Task 3's failure triage is path-based, not causal.** A failure counts as
-   phase-caused only when its test module, traceback or hook finding names a `PHASE_FILES` path.
-   Everything else is declared pre-existing, and the `PHASE_BASE` worktree reproduction is only
-   optional ("When unsure, you may…"). A Phase 16 change to shared CLI output or cache shape can
-   break an integration, PTY or installer test whose traceback names only its own test file. The
-   acceptance criteria repeat the inference. Fix: make the `PHASE_BASE` reproduction MANDATORY
-   for every failure outside `PHASE_FILES` (pre-existing only if it also fails at `PHASE_BASE`).
-   Also allow a causally required fix outside `PHASE_FILES` when it is justified explicitly in
-   the SUMMARY.
+### Agreed Strengths
+
+- 16-01 and 16-02 are implementation-ready: argv-list subprocess seams, `reasoning_modes` reused,
+  both unmatched exits covered, and an exact precedence tuple.
+- 16-03 isolates `_meta` before model-entry iteration and makes schema staleness a CLI-level
+  condition.
+- 16-04's fix targets the real bottleneck (`cli.py:740-745`, `:800-802`). The materialization is
+  scope-isolated, and the provider hint applies only to claude.
+- 16-05's preserve/clear semantics match `merge_catalog_entry`'s omitted-key versus None contract
+  (`model_catalog.py:143-158`).
+- 16-06's `_is_finite_number` closes the bool hole, and floors are checked on raw values before
+  normalization.
+
+### Agreed Concerns
+
+1. **MEDIUM (codex LOW, opencode MEDIUM): 16-04 `_anthropic_model_ids` does not require each
+   model row to be a dict.** Materialization then sends every key to `match_models_dev`, which
+   spreads the matched row (`{**model, "provider": ...}`, `model_matcher.py:122`, `:134`, `:141`).
+   `fetch_models_dev` checks only the JSON transport, not the schema (`model_sources.py:30-38`).
+   So a malformed upstream anthropic row (null, string or list) raises a `TypeError` in
+   `fetch-model-catalog` instead of degrading. The id would also be stamped into
+   `_meta.anthropic_model_ids` with no entry behind it. Fix: in `_anthropic_model_ids`, keep only
+   keys whose value is a dict, and add one malformed-row test with a valid sibling.
 
 ### Divergent Views
 
-- Not applicable: only one reviewer produced a review this cycle.
+- **16-06 Task 3 gate.** Codex found only a MEDIUM there (the worktree-list equality check). Opencode
+  found two HIGHs, one MEDIUM and one LOW. The orchestrator checked opencode's two HIGH premises
+  against the Makefile and the plan text and confirmed both (see Current HIGH Concerns below).
+- **Overall risk.** Codex says MEDIUM, opencode says HIGH. The gap is entirely the 16-06 gate
+  items.
 
-### Other codex findings
+### Current HIGH Concerns (single-reviewer, judgment-class; they count under the consensus gate)
 
-- **MEDIUM (16-05): `image_input` has no field-level provenance, so a runtime-derived value can
-  go stale.** Take a non-router model that models.dev matches but that has no `modalities`, so
-  its `image_input` came from opencode runtime metadata. On a later fetch-skipped run,
-  `_preserved_or_fresh_md_fields` copies the cached value as if models.dev owned it (16-05 Task 1
-  Step 2). `_apply_runtime_meta` (default `runtime_wins_image_input=False`) then refuses to
-  replace it with a new runtime reading (16-05 Task 2 Step 3). A True→False change is lost, and
-  this field is a Phase 17 eligibility gate. Fix: record `image_input_source` (`models_dev` or
-  `opencode`), or let a runtime reading replace a cached runtime-derived value. Add a
-  fetch-skipped True→False transition test. The orchestrator confirmed the premise against the
-  plan text.
-- **LOW (16-06): the `score_candidates` docstring is already false and the plan leaves it
-  false.** The docstring says absent axes are "excluded from the weighted sum and the remaining
-  weights renormalize" (`model_ranker.py:110-112`). The code actually substitutes
-  `_MISSING_AXIS_DEFAULT` (49.0) for every missing axis (`model_ranker.py:144-145`). 16-06
-  changes the purpose line but not this sentence. Fix: rewrite it in 16-06 Task 1 to describe the
-  49.0 default and say that floors are checked on raw values before that default applies.
-- **LOW (16-01, 16-05): fixture reproducibility.** Codex suggests recording a hash of the raw
-  capture plus a redaction recipe. Not counted: the ledgers explicitly reject committing or
-  regenerating from the raw captures, with rationale.
-- **LOW (16-02): duplicated `_VALID_NATIVE_RUNTIME` allow-lists.** Not counted: the plan already
-  pins them with an equality test.
-- Explicit deferrals codex accepted: existing opencode/cursor returncode handling (16-01 ledger)
-  and a per-writer `mkstemp` cache writer (16-03 ledger).
+1. **HIGH (opencode; orchestrator-confirmed): an aggregate Make target stops at its first failing
+   prerequisite, so the later tiers and hooks never run.** `test: test-unit test-integration
+   e2e-test arch-test` (`Makefile:66`) and `validate: ruff pylint pyright vulture shellcheck
+   py-compile unittest unittest-wizard` (`Makefile:122`) are prerequisite lists. The Makefile has
+   no `-k`, `MAKEFLAGS` or `.IGNORE` (checked with grep). Task 3 Step 2 says `make test` "runs the
+   four tiers in order", and the acceptance criteria accept a non-zero exit once every visible
+   failure is triaged (16-06-PLAN.md:408-418, :491-494). So a failure proven pre-existing, or one
+   left unresolved, in an early tier hides every later tier. Example: e2e-test cannot get a
+   terminal in the executor session, so `arch-test` never runs. Every hook after a failing
+   `ruff` is skipped the same way. Fix: run each tier target (`test-unit`, `test-integration`,
+   `e2e-test`, `arch-test`) and each `validate` hook target on its own, or run `make -k test` /
+   `make -k validate`. Record every constituent's result. Require that every constituent actually
+   ran before a failure can be excused.
+2. **HIGH (opencode; orchestrator-confirmed as an internal contradiction): an unresolved gate
+   failure is called blocking but is still accepted by the completion criteria.** Step 4 says an
+   item that cannot be reproduced at PHASE_BASE is UNRESOLVED and that "the gate is not passed
+   while it stands" (16-06-PLAN.md:448-451). But the must_haves truth (:36), the acceptance
+   criteria (:492-493) and `<done>` (:499) all accept completion once it is "listed under
+   `## Unresolved gate failures`". Nothing tells the orchestrator or verifier that such a listing
+   blocks phase completion. AGENTS.md:60-63 requires saying so explicitly to uz. Fix: state in
+   the objective, the must_haves truth and `<done>` that any `## Unresolved gate failures` entry
+   means the Phase 16 gate has NOT passed. The plan then ends as "gate not passed, escalate to
+   uz", never as complete.
+
+### Other findings (single reviewer; the orchestrator checked each premise)
+
+- **MEDIUM (codex): the before/after `git worktree list` equality check fails after a
+  legitimate fix commit.** Step 1 records `git worktree list` exactly, and the acceptance
+  criteria require the final output to equal it (16-06-PLAN.md:405-406, :495). The default
+  output includes each worktree's HEAD SHA (checked: `/var/home/.../ai-kit 9a0f0fc
+  [gsd/v1.3-curated-config-v2]`). A `fix(16-06):` commit changes the main worktree's line even
+  when cleanup worked. Fix: compare only the `worktree` paths and `branch` refs from `--porcelain`,
+  assert that no `ai-kit-p16-base.` path remains, and keep the `git branch --list` equality check.
+- **MEDIUM (opencode): 16-05's validator does not require `image_input_source` to come with
+  `image_input`.** The planned test accepts `image_input_source` `"models_dev"`/`"opencode"` on
+  `_valid_entry` without a bool `image_input` (16-05-PLAN.md:246-251). `confirm-catalog-entry`
+  persists anything `validate_catalog_entry` accepts. The "written, cleared or omitted together"
+  rule (16-05-PLAN.md:203-220) is therefore enforced only by the writers, not by the schema. Fix:
+  reject a non-null `image_input_source` unless `image_input` is a bool, and keep accepting a
+  legacy `image_input` without a source.
+- **MEDIUM → orchestrator LOW (opencode): 16-06 hardcodes `/tmp` for the base worktree**
+  (`mktemp -d /tmp/ai-kit-p16-base.XXXXXX`, and the verify and acceptance greps,
+  16-06-PLAN.md:423-425, :488-495). AGENTS.md:57-59 bans absolute paths in source, tests and
+  project assets. This is a one-off executor shell command, so the rule applies only loosely.
+  The fix is trivial either way: `${TMPDIR:-/tmp}` in the command, and match on the
+  `ai-kit-p16-base.` basename in the checks.
+- **LOW (opencode): 16-06 runs a global `git worktree prune`.** `git worktree remove --force
+  "$BASE_WT"` already removes that worktree's admin entry. A global prune can also drop stale
+  metadata for unrelated worktrees, against AGENTS.md:54-56 (preserve unrelated work). The repo
+  has other worktrees under `.claude/worktrees/`. It also combines badly with the exact-equality
+  check above. Fix: drop the `git worktree prune` step.
+- **LOW (opencode): `16-RESEARCH.md` still says `cache_is_stale` / `cache_write_json` are
+  "shared with quota.py"** (`16-RESEARCH.md:153`, `:497-498`, confirmed). 16-03 now names the real
+  consumers, and 16-03's read_first sends the executor to RESEARCH.md, so the executor gets
+  contradictory context. Fix: correct those RESEARCH.md lines, or add an erratum pointer in
+  16-03's read_first. (16-03's Round-1 ledger text at :494 is already marked superseded by its
+  Round-2 row.)
 
 ## Verification coverage
 
-Source-grounding pass (`plan_review.source_grounding: true`; effective authority `grep` from
-`gsd-tools drift-guard authority`). The orchestrator ran it against the working tree at `8834ead`.
-Cycle 1's full symbol inventory (see 6789a06) still applies to the unchanged citations. This
-cycle re-verified every existing-code symbol that the `8834ead` revision added. New symbols in
-16-01's phase-wide "Artifacts this phase produces" table (for example `_apply_runtime_meta`,
-`claude_runtime_is_current`, `_is_finite_number`, `TestCodexEnumerationEndToEnd`) are excluded.
+Source-grounding pass (`plan_review.source_grounding: true`; the effective authority is `grep`,
+from `gsd-tools drift-guard authority`). The orchestrator ran it against the working tree at
+`9a0f0fc`. The symbol inventories from cycles 1 and 2 (`6789a06`, `92c2ef4`) still apply to the
+unchanged citations. This cycle re-verified every existing-code symbol that the `9a0f0fc`
+revision newly cites (taken from the backticked identifiers on added lines of
+`git show 9a0f0fc -- .planning/phases`). New symbols in the plans' "Artifacts this phase produces"
+tables are excluded, for example `_anthropic_model_ids`, `_FIRST_PARTY_PROVIDER_BY_CLI`,
+`claude_candidates`, `_VALID_IMAGE_INPUT_SOURCE`, `image_input_source`,
+`TestClaudeCatalogMaterialization` and the new test names.
 
 ### VERIFIED (existing symbols the revision cites)
 
-- `cache.py`: `cache_write_json` :21, fixed temp path `tmp = path + ".tmp"` :26 (the ledgers say
-  `:25`; that is off by one and not material), `os.replace` :29; `cache_is_stale` :32.
-- `cli.py`: both `unmatched.append` sites that 16-01 and 16-05 extend, :270 (router
-  vendor-unknown branch) and :410 (ordinary branch, the `cli.py:409` the plans cite);
-  `merge_catalog_entry` call sites :311 and :476; `fetch-model-catalog` discovery from runtimes
-  `models` :740-745; `fetch_meta_path` / `skip_fetch` :781-782; `build_model_catalog` call
-  :800-801; `detect-runtimes` early return :717.
-- `cross_reference.scan_catalog` (`ai_kit_opencode_providers/cross_reference.py:64`) and test
-  scaffolding `TestCrossReferenceCatalog` :895, `_XrefScratch` :852, `_write_file` :823
-  (`tests/test_ai_kit_opencode_providers.py`).
-- `pricing.estimate_price` (`ai_kit_usage_metrics/pricing.py:16`, `catalog.get(canonical_key(...))`
-  :34); `ai_kit_usage_metrics.paths.catalog_path` (`paths.py:106`); `TestPricing`
-  (`tests/test_ai_kit_usage_metrics.py:2523`).
-- `model_ranker.py`: `_REQUIRED_BONUS_FIELDS` :39, `_is_valid_weights_structure` :42 (bool hole
-  :55), `score_candidates` :109 (docstring :110-112 vs `_MISSING_AXIS_DEFAULT` use :144-145).
-- `TestBuildRuntimesSnapshot.test_lists_opencode_models_when_installed`
-  (`tests/test_ai_kit_spec.py:1118`).
-- Makefile targets that 16-06 Task 3 and the per-plan gates run: `test-unit` :45,
-  `test-integration` :51, `e2e-test`, `arch-test`, the aggregate `test` :66 (four tiers), `lint`
-  :68, and `validate` :122 (ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest,
-  unittest-wizard). This supports 16-06's claim that `make validate` subsumes `make lint`'s
-  shellcheck and py-compile checks.
-- `cli-model-selection.md` item 4, "Unmatched-candidate research and confirmation" (:104), which
-  16-01 Step 2 and 16-05 Step 5 extend.
-- The `PHASE_BASE` recipe `git log --grep='(16-01):'` matches no commit today (checked with raw
-  git output), so it will resolve to the first real `feat(16-01)` commit once execution starts.
+- `model_matcher.match_models_dev` :96 (signature `provider_hint=None, allow_fuzzy=True`). The
+  bare-id exact pool is at :123-126, a single match wins at :132-134, and the hint tie-break is at
+  :135-141, returning None when a collision stays ambiguous. This supports 16-04's claim that
+  "an unhinted multi-provider bare id returns no match".
+- `cli.py`: `_find_existing_key_for_runtime` :64; `_preserved_or_fresh_md_fields` :108;
+  `build_model_catalog` :208; the ordinary-path `md_match = match_models_dev(model_id,
+  models_dev_data) if models_dev_ok else None` line (inside `build_model_catalog`, :315);
+  `md_enrich_match` :330-345; `fetch-model-catalog` `discovered` built from runtimes :740-745;
+  `fetch_meta_path` / `skip_fetch` :781-782; `build_model_catalog` call :800-801; `main(argv,
+  which_fn=shutil.which, ...)` :482 (so `which_fn` is available to `fetch-model-catalog`).
+- `model_catalog.py`: `_MANDATORY_CATALOG_FIELDS` :12, `_FIELD_TYPES` :18,
+  `_VALID_NAME_DECLARED_PURPOSE` :38, `_VALID_NATIVE_RUNTIME` :39, `cache_catalog_path` :42,
+  `validate_catalog_entry` :53, `merge_catalog_entry` :129 (omitted key preserved, explicit None
+  cleared, :143-158), `current_candidate_keys` :162.
+- `model_ranker.py`: `_MISSING_AXIS_DEFAULT = 49.0` :35, `score_candidates` :109.
+- 16-03's corrected consumer list, checked by grep over `skills/`. `cache_is_stale` is called only
+  at `cli.py:717` and `:782`. `cache_write_json` is used at `cli.py:723`, `:798`, `:802`, `:828`,
+  `:850`, `:859`, `dispatch.py:201` (`write_resumable_state`), `ai_kit_spec_gsd/gsd_config.py`
+  (:66, :85, :116, :156, :177), `ai_kit_spec_gsd/cli.py:142` and
+  `ai_kit_spec_superpowers/cli.py:226`. All VERIFIED.
+- 16-06 Task 3's references: Makefile `test-unit` :45 (its second command is `uv run python3 -m
+  unittest tests.test_framework_profiles`, :47), `test-integration` :51, `e2e-test` :56,
+  `arch-test` :61 (bare `python3`), `test` :66, `validate` :122 plus the eight single-tool
+  targets it lists; `.pre-commit-config.yaml` hook ids ruff, pylint, pyright (with
+  `pass_filenames: false`), vulture, shellcheck, py-compile, unittest and unittest-wizard;
+  `pyproject.toml` `package = false` :13; `.venv/bin/python` and `.venv/bin/ruff` exist in the
+  main checkout.
 
 ### MISSING / AMBIGUOUS
 
-- **Inaccurate relational claim (LOW, needs acknowledgement), 16-03.** A must_haves truth
-  (16-03-PLAN.md:39), the objective (:101) and a Task 1 test description (:205) say
-  `cache_is_stale` is "shared with quota.py". `quota.py` imports only `cache_base` (`quota.py:6`).
-  `cache_is_stale`'s only callers are `cli.py:717` and `cli.py:782`. The 16-03 deferral ledger
-  also says `cache_write_json` is "shared with `quota.py`". In fact it is shared with the cli.py
-  quota write (:859), `dispatch.py:201` and the execute adapters (`ai_kit_spec_gsd`,
-  `ai_kit_spec_superpowers`). The design conclusion (keep both helpers generic; changing the
-  writer widens scope beyond D-12) still holds. Only the named consumer is wrong. Fix: name the
-  real consumers.
+- None found among the existing symbols the revision cites.
+- Stale grounding text (LOW, needs acknowledgement): `16-RESEARCH.md:153` and `:497-498` still
+  state the corrected-away "shared with quota.py" claim (see Other findings).
 
 ### UNCHECKABLE (INFO: the `grep` authority cannot assert these)
 
 - Signatures and keyword defaults of new or extended functions (`build_runtimes_snapshot(...,
-  catalog_fn=None)`, `_apply_runtime_meta(..., runtime_wins_image_input=False)`): the plans'
-  own verify commands cover them.
-- Whether `make test`'s `e2e-test` / `test-integration` tiers can run in the cross-AI executor's
-  session (PTY allocation, `uv` offline venv). 16-06 reports these as environment limitations
-  instead of working around them.
+  catalog_fn=None)`, `claude_runtime_is_current(runtimes_data, catalog_fn=None)`,
+  `_apply_runtime_meta(..., runtime_wins_image_input=False)`). The plans' own verify commands
+  cover them.
+- Live models.dev shape claims from the `9a0f0fc` revision ("on 2026-09-24 every anthropic id
+  also appears under 9-21 reseller providers"). They were not re-fetched this cycle. The
+  hint-based design is correct whether or not such collisions exist.
+- Whether `make test`'s `test-integration` / `e2e-test` tiers can get a terminal in the cross-AI
+  executor's session. This is the concrete trigger for Current HIGH 1.
 - External facts carried from cycle 1 (codex-cli 0.147.0 `debug models` shape, opencode 1.18.32
-  `--verbose` shape, models.dev anthropic ids, `PI_CODING_AGENT` / `CODEX_THREAD_ID`): verified
-  against real captures in cycle 1 and not re-captured this cycle.
+  `--verbose` shape, `PI_CODING_AGENT` / `CODEX_THREAD_ID`): verified against real captures in
+  cycle 1 and not re-captured.
 
 ### Cross-artifact fact-drift pass
 
 - Phase status (`gsd-tools drift-guard phase-status --phase 16`): **uncheckable**
   (`reason: phase_not_in_roadmap`; STATE.md says "Ready to execute"). The seam cannot parse
   ROADMAP.md's `- [ ] **Phase 16: ...**` entry. The axis was skipped, not found consistent.
-- ROADMAP Success Criteria ↔ `must_haves.truths`: no contradiction. The `8834ead` ROADMAP edits
-  (16-04 "catalog-aware `--if-stale`", 16-06 "phase gate") match the revised plans. SC2's
-  "claude (hardcoded aliases + catalog full ids + dated fallback)" matches 16-04's truths. (New
-  HIGH 1 is about whether catalog ids become scoreable entries. That is a correctness gap, not a
-  contradiction between artifacts.)
-- ROADMAP `**Requirements:**` (SPEC-01..04) ↔ plan requirement refs: consistent, unchanged from
+- ROADMAP Success Criteria ↔ `must_haves.truths`: no contradiction. The `9a0f0fc` ROADMAP plan-list
+  edits (16-04 "every recorded id materialized as an `anthropic/<id>` catalog entry in the same
+  fetch", 16-05 "`image_input_source` provenance", 16-06 "causal triage against the pre-phase
+  base") match the revised plans. SC2's "claude (hardcoded aliases + catalog full ids + dated
+  fallback)" matches 16-04's truths.
+- ROADMAP `**Requirements:**` (SPEC-01..04) ↔ plan requirement refs: consistent, unchanged since
   cycle 1.
-- CONTEXT.md Decisions ↔ plan usage: no contradiction. 16-04's catalog-aware skip adds to D-12
-  ("schema_version ... staleness") and does not contradict it. The cycle-1 D-09 advisory
-  (16-05 also fills a models.dev match that lacks `modalities`) still stands. New MEDIUM (16-05
-  provenance) is where that widening becomes a correctness issue.
+- CONTEXT.md Decisions ↔ plan usage: no contradiction. 16-04's same-fetch materialization and
+  claude-only `anthropic` hint add to D-04 (hybrid sourcing) and do not contradict it. 16-05's
+  `image_input_source` adds provenance under D-09's source order and does not contradict it.
+- RESEARCH.md ↔ 16-03 (not a judgment pair in the table; recorded for completeness): the
+  "shared with quota.py" claim contradicts 16-03's corrected truth. It is counted once, as the
+  opencode LOW above.
 - Advisory only: this pass contributes nothing to `current_high` / `current_actionable`.
 
 ## Cycle accounting (orchestrator)
 
-- Consensus gate: **not engaged**, because exactly one reviewer (codex-sol-high) produced a
-  review section; opencode-plan-review failed for environment reasons. The single reviewer's
-  HIGHs count as-is. Both HIGH premises were also confirmed against source by the orchestrator.
-- `current_high = 2`: (1) 16-04 newly learned anthropic ids are not materialized as catalog
-  entries in the real refresh order; this is the unresolved remainder of cycle-1 Agreed
-  Concern 1, counted once; (2) 16-06 Task 3's path-based, non-causal failure triage. Cycle-1
-  HIGHs 2-4 are fully resolved.
-- `current_actionable = 3`: (1) 16-05 `image_input` provenance / stale runtime value (MEDIUM);
-  (2) 16-06 `score_candidates` docstring still describes renormalization (LOW); (3) 16-03 "shared
-  with quota.py" relational inaccuracy in a truth, the objective and the ledger (LOW,
-  source-grounding). Not counted: the fixture-reproducibility LOW (covered by the explicit
-  ledger rejection), the duplicated allow-list LOW (already pinned by an equality test), the
-  accepted deferrals, and the advisory fact-drift items.
+- Consensus gate: **engaged**, because two reviewers (opencode-plan-review, codex-sol-high)
+  produced review sections and neither carries a discount marker. No HIGH was raised by both.
+  Opencode's two 16-06 HIGHs are **judgment-class** (gate execution and completion semantics),
+  so they count without corroboration. The orchestrator also confirmed both premises against
+  source and plan text. No existence-class HIGH was raised.
+- `current_high = 2`: (1) 16-06 aggregate `make test` / `make validate` stop at the first failing
+  prerequisite, so later tiers and hooks can go unrun while the visible failure is excused;
+  (2) 16-06 completion criteria accept `## Unresolved gate failures` although Step 4 says the
+  gate has not passed. All cycle-1 and cycle-2 HIGHs are fully resolved.
+- `current_actionable = 6`: (1) 16-04 non-dict anthropic rows (agreed, MEDIUM); (2) 16-06
+  worktree-list equality broken by a fix commit (MEDIUM); (3) 16-05 orphan `image_input_source`
+  accepted by the validator (MEDIUM); (4) 16-06 hardcoded `/tmp` (LOW); (5) 16-06 global
+  `git worktree prune` (LOW); (6) stale "shared with quota.py" claim in 16-RESEARCH.md read by
+  the 16-03 executor (LOW). Not counted: the accepted deferrals and rejections listed above, and
+  the advisory fact-drift items.
