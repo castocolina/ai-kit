@@ -92,7 +92,6 @@ from ai_kit_spec.review_reports import (  # noqa: F401
 )
 from ai_kit_spec.vendor import infer_vendor_from_model  # noqa: F401
 
-
 # Fixture provenance (JSON cannot hold comments, so the record lives here, next to the
 # constant the tests read the fixture through):
 # - Source command: `codex debug models` (CLI version codex-cli 0.147.0, the real binary
@@ -658,11 +657,17 @@ class TestMergeCatalogEntry(unittest.TestCase):
         self.assertNotIn("new", original)
 
     def test_runtimes_merge_across_two_cli_writes_for_the_same_key(self):
-        entry_a = {"provider": "openai", "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}},
-                   "source": {}, "confidence": "high", "last_verified": "2026-09-02"}
+        entry_a = {
+            "provider": "openai",
+            "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}},
+            "source": {}, "confidence": "high", "last_verified": "2026-09-02"
+        }
         catalog, _ = model_catalog.merge_catalog_entry({}, "openai/gpt-5.6-sol", entry_a)
-        entry_b = {"provider": "openai", "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
-                   "source": {}, "confidence": "high", "last_verified": "2026-09-02"}
+        entry_b = {
+            "provider": "openai",
+            "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
+            "source": {}, "confidence": "high", "last_verified": "2026-09-02"
+        }
         catalog, reason = model_catalog.merge_catalog_entry(catalog, "openai/gpt-5.6-sol", entry_b)
         self.assertIsNone(reason)
         self.assertIn("opencode", catalog["openai/gpt-5.6-sol"]["runtimes"])
@@ -672,11 +677,15 @@ class TestMergeCatalogEntry(unittest.TestCase):
         # CRITICAL finding: a source's provenance flipping to false must actually clear the
         # field it used to own, not leave it behind under plain dict-spread's "absent key
         # means preserve" semantics.
-        existing_entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
-                           "last_verified": "2026-09-02", "scores": {"intelligence_index": 91.0}}
+        existing_entry = {
+            "provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
+            "last_verified": "2026-09-02", "scores": {"intelligence_index": 91.0}
+        }
         catalog = {"k": existing_entry}
-        entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
-                  "last_verified": "2026-09-02", "scores": None}
+        entry = {
+            "provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
+            "last_verified": "2026-09-02", "scores": None
+        }
         catalog, reason = model_catalog.merge_catalog_entry(catalog, "k", entry)
         self.assertIsNone(reason)
         self.assertNotIn("scores", catalog["k"])
@@ -685,11 +694,15 @@ class TestMergeCatalogEntry(unittest.TestCase):
         # Contrast with the test above: OMITTING a key (a source that's simply down this run,
         # never claiming anything about the field) must still preserve the cached value --
         # only an explicit None is a clear signal.
-        existing_entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
-                           "last_verified": "2026-09-02", "scores": {"intelligence_index": 91.0}}
+        existing_entry = {
+            "provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
+            "last_verified": "2026-09-02", "scores": {"intelligence_index": 91.0}
+        }
         catalog = {"k": existing_entry}
-        entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
-                  "last_verified": "2026-09-02"}  # no "scores" key at all
+        entry = {
+            "provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
+            "last_verified": "2026-09-02"
+        }  # no "scores" key at all
         catalog, reason = model_catalog.merge_catalog_entry(catalog, "k", entry)
         self.assertIsNone(reason)
         self.assertEqual(catalog["k"]["scores"], {"intelligence_index": 91.0})
@@ -766,7 +779,8 @@ class TestApplyHeuristicCorrections(unittest.TestCase):
             catalog, "router-env/x", {"is_router": "not-a-bool"})
         self.assertIsNotNone(reason)
         self.assertIn("is_router", reason)
-        self.assertTrue(updated["router-env/x"]["is_router"])  # unchanged -- rejected correction never applied
+        # unchanged -- rejected correction never applied
+        self.assertTrue(updated["router-env/x"]["is_router"])
 
 
 class TestCachePaths(unittest.TestCase):
@@ -1721,21 +1735,20 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
 
     def test_unreadable_or_non_object_cache_redetects_without_raising(self):
         for seed_text in ("not json", "[1, 2]"):
-            with self.subTest(seed=seed_text):
-                with tempfile.TemporaryDirectory() as d:
-                    path = os.path.join(d, "runtimes.json")
-                    with open(path, "w", encoding="utf-8") as f:
-                        f.write(seed_text)
-                    import io
-                    from contextlib import redirect_stdout
-                    buf = io.StringIO()
-                    recorded = []
-                    with redirect_stdout(buf):
-                        code = rs.main(["detect-runtimes", "--if-stale", path],
-                                        which_fn=lambda n: recorded.append(n) or None,
-                                        run_fn=lambda *a, **k: None)
-                    self.assertEqual(code, 0)
-                    self.assertEqual(recorded, list(detection.KNOWN_CLIS))
+            import io
+            from contextlib import redirect_stdout
+            with self.subTest(seed=seed_text), tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "runtimes.json")
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(seed_text)
+                buf = io.StringIO()
+                recorded = []
+                with redirect_stdout(buf):
+                    code = rs.main(["detect-runtimes", "--if-stale", path],
+                                    which_fn=lambda n, _r=recorded: _r.append(n) or None,
+                                    run_fn=lambda *a, **k: None)
+                self.assertEqual(code, 0)
+                self.assertEqual(recorded, list(detection.KNOWN_CLIS))
 
     def test_version_predicate_rejects_non_int_values(self):
         f = detection.runtimes_schema_is_current
@@ -4488,9 +4501,6 @@ class TestRankerPurposeFloor(unittest.TestCase):
                     "[bonuses]\nbatch_mode = 8\nfallback_quota = 5\nbonus_cap = 15\n")
             path = f.name
         try:
-            # Manually write NaN to avoid TOML escaping issues; use a simple non-finite value
-            with open(path, "r") as f:
-                content = f.read()
             # Instead, write a floor with a string value that fails _is_finite_number
             with open(path, "w") as f:
                 f.write("[review]\nintelligence_index = 0.30\ncoding_index = 0.10\n"
@@ -4528,7 +4538,7 @@ class TestRankerPurposeFloor(unittest.TestCase):
         ]
         entries_copy = copy.deepcopy(entries)
         w = model_ranker.load_ranking_weights()
-        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        model_ranker.score_candidates(entries, "mechanical", w)
         # entries should not be mutated (same object structure, no added keys)
         self.assertEqual(entries, entries_copy)
 
@@ -4673,7 +4683,7 @@ class TestFetchArtificialAnalysis(unittest.TestCase):
             if "page=1" in url:
                 return {"data": [{"id": "1"}], "pagination": {"has_more": True}}
             raise urllib.error.URLError("dropped mid-pagination")
-        data, ok = model_sources.fetch_artificial_analysis("aa_test", fetch_fn=flaky_fetch)
+        _data, ok = model_sources.fetch_artificial_analysis("aa_test", fetch_fn=flaky_fetch)
         self.assertFalse(ok)  # partial data exists but is NOT trustworthy -- caller must not use it
 
 
@@ -4848,8 +4858,12 @@ class TestMatchModelsDev(unittest.TestCase):
         self.assertEqual(result["cost"]["input"], 3.5)
 
     def test_fuzzy_match_returns_none_when_no_candidate_is_close_enough(self):
-        fuzzy_data = {"openai": {"models": {"gpt-5.6-sol-2": {"id": "gpt-5.6-sol-2"}}}}
-        self.assertIsNone(model_matcher.match_models_dev("totally-different-vendor-model", fuzzy_data))
+        fuzzy_data = {
+            "openai": {"models": {"gpt-5.6-sol-2": {"id": "gpt-5.6-sol-2"}}}
+        }
+        self.assertIsNone(
+            model_matcher.match_models_dev("totally-different-vendor-model", fuzzy_data)
+        )
 
     def test_fuzzy_match_with_two_equally_close_candidates_returns_none_rather_than_guess(self):
         # Collision-safety extends to the fuzzy path too -- two near-ties (both an equally
@@ -5295,7 +5309,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                                                  "source": {"manual": True}, "confidence": "low",
                                                  "last_verified": "2026-08-01"}}
         discovered = [{"cli": "opencode", "model_id": "vendor/totally-unknown"}]
-        catalog, rejections, unmatched = cli.build_model_catalog(
+        catalog, _rejections, unmatched = cli.build_model_catalog(
             discovered, {}, True, [], True, existing)
         self.assertEqual(unmatched, [])
         self.assertIn("opencode", catalog["vendor/totally-unknown"]["runtimes"])
@@ -5303,14 +5317,19 @@ class TestBuildModelCatalog(unittest.TestCase):
 
     def test_router_batch_and_fallback_quota_heuristics_are_applied(self):
         # HIGH finding: a candidate that matches NEITHER external source is, by this function's
-        # own contract, never added to `catalog` -- it goes to `unmatched` instead (see the
-        # dedicated unmatched-candidate tests above). Asserting on catalog[key] for such a
-        # candidate is a KeyError by construction. Give this candidate a real models.dev match
-        # so it actually lands in `catalog`, exercising the heuristics on the MATCHED path
-        # (the unmatched path's own heuristic fields are already covered separately, above).
+        # own contract, never added to `catalog` -- it goes to `unmatched` instead (see
+        # the dedicated unmatched-candidate tests above). Asserting on catalog[key] for
+        # such a candidate is a KeyError by construction. Give this candidate a real
+        # models.dev match so it actually lands in `catalog`, exercising the heuristics
+        # on the MATCHED path (the unmatched path's own heuristic fields are already
+        # covered separately, above).
         discovered = [{"cli": "opencode", "model_id": "router-env/my-plan-review"}]
-        models_dev_data = {"router-env": {"models": {"my-plan-review": {"id": "my-plan-review"}}}}
-        catalog, _, unmatched = cli.build_model_catalog(discovered, models_dev_data, True, [], True, {})
+        models_dev_data = {
+            "router-env": {"models": {"my-plan-review": {"id": "my-plan-review"}}}
+        }
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, [], True, {}
+        )
         self.assertEqual(unmatched, [])
         entry = catalog["router-env/my-plan-review"]
         self.assertTrue(entry["is_router"])
@@ -5447,16 +5466,23 @@ class TestBuildModelCatalog(unittest.TestCase):
     def test_heuristic_correction_survives_a_later_catalog_rebuild(self):
         # HIGH finding: every refresh recomputed is_router/batch_mode/fallback_quota fresh
         # from the naming heuristic, silently overwriting a user's prior correction
-        # (apply_heuristic_corrections, Task 2) on the very next run.
-        existing = {"router-env/my-plan-review": {
-            "provider": "router-env", "runtimes": {"opencode": {"model_id": "router-env/my-plan-review"}},
-            "source": {}, "confidence": "low", "last_verified": "2026-08-01",
-            "is_router": False}}  # user corrected this away from the heuristic default (True)
+        # (apply_heuristic_corrections, Task 2) on the very next run
+        existing = {
+            "router-env/my-plan-review": {
+                "provider": "router-env",
+                "runtimes": {
+                    "opencode": {"model_id": "router-env/my-plan-review"}
+                },
+                "source": {}, "confidence": "low", "last_verified": "2026-08-01",
+                "is_router": False
+            }
+        }
+        # user corrected this away from the heuristic default (True)
         discovered = [{"cli": "opencode", "model_id": "router-env/my-plan-review"}]
         catalog, _, _ = cli.build_model_catalog(discovered, {}, True, [], True, existing)
         self.assertFalse(catalog["router-env/my-plan-review"]["is_router"])
 
-    def test_bare_model_matched_only_via_artificial_analysis_derives_vendor_from_model_creator(self):
+    def test_bare_model_via_aa_derives_vendor_from_creator(self):
         # HIGH finding: a bare model id (codex-style, no "<vendor>/" prefix) with NO
         # models.dev match must not become its own vendor ("gpt-5.6-sol/gpt-5.6-sol") just
         # because model_id.split("/", 1)[0] has nothing to split -- when Artificial Analysis
@@ -5480,7 +5506,7 @@ class TestBuildModelCatalog(unittest.TestCase):
         # or --extra-candidate -- there's no special-casing by origin inside this function.
         discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"},
                       {"cli": "codex", "model_id": "gpt-5.6-alt"}]  # e.g. from --extra-candidate
-        catalog, _, unmatched = cli.build_model_catalog(discovered, {}, True, [], True, {})
+        _catalog, _, unmatched = cli.build_model_catalog(discovered, {}, True, [], True, {})
         self.assertEqual({u["cli"] for u in unmatched}, {"opencode", "codex"})
 
     def test_bare_id_with_both_sources_unavailable_recovers_key_from_existing_catalog(self):
@@ -5922,8 +5948,11 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             local_cfg = os.path.join(d, ".aikit", "review-spec.toml")
             os.makedirs(os.path.dirname(local_cfg))
             with open(local_cfg, "w", encoding="utf-8") as f:
-                f.write('[[reviewers]]\nkey = "codex-primary"\nmodel = "vendor/already-registered"\n'
-                        'vendor = "vendor"\ncli = "codex"\n')
+                f.write(
+                    '[[reviewers]]\nkey = "codex-primary"\n'
+                    'model = "vendor/already-registered"\n'
+                    'vendor = "vendor"\ncli = "codex"\n'
+                )
             import io
             from contextlib import redirect_stdout
             buf = io.StringIO()
@@ -5946,7 +5975,11 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                 json.dump({}, f)
             entry_path = os.path.join(d, "entry.json")
             with open(entry_path, "w", encoding="utf-8") as f:
-                json.dump({"model_id": "vendor/x", "entry": {"provider": "vendor"}}, f)  # missing fields
+                # missing fields
+                json.dump(
+                    {"model_id": "vendor/x", "entry": {"provider": "vendor"}},
+                    f
+                )
             import io
             from contextlib import redirect_stdout
             buf = io.StringIO()
@@ -6637,7 +6670,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 )
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
-            entries, meta = model_catalog.split_catalog_meta(catalog)
+            entries, _meta = model_catalog.split_catalog_meta(catalog)
             # anthropic/claude-sonnet-5 modalities has image -> True
             self.assertIn("anthropic/claude-sonnet-5", entries)
             self.assertEqual(
@@ -6686,7 +6719,10 @@ class TestImageInputEndToEnd(unittest.TestCase):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = rs.main(
-                    ["fetch-model-catalog", "--if-stale", "--runtimes-json", r, "--catalog-path", c],
+                    [
+                        "fetch-model-catalog", "--if-stale",
+                        "--runtimes-json", r, "--catalog-path", c
+                    ],
                     fetch_artificial_analysis_fn=lambda api_key: ([], True),
                     fetch_models_dev_fn=never_fetch_models_dev,
                     load_secret_fn=lambda env, key: None,
@@ -6696,7 +6732,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(fetch_called, [])  # Should not have been called
             catalog = cache_read_json(c)
-            entries, meta = model_catalog.split_catalog_meta(catalog)
+            entries, _meta = model_catalog.split_catalog_meta(catalog)
             # Entry still has the cached image_input and source
             self.assertEqual(entries["vendor/text-only"]["image_input"], True)
             self.assertEqual(entries["vendor/text-only"]["image_input_source"], "models_dev")
@@ -6709,7 +6745,8 @@ class TestImageInputEndToEnd(unittest.TestCase):
             r = os.path.join(d, "runtimes.json")
             # Seed: same entry as above
             entry = {
-                "provider": "vendor", "runtimes": {"opencode": {"model_id": "vendor/no-modalities"}},
+                "provider": "vendor",
+                "runtimes": {"opencode": {"model_id": "vendor/no-modalities"}},
                 "source": {"models_dev": True}, "confidence": "high",
                 "last_verified": "2026-09-02",
                 "image_input": True, "image_input_source": "models_dev"
@@ -6737,7 +6774,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 )
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
-            entries, meta = model_catalog.split_catalog_meta(catalog)
+            entries, _meta = model_catalog.split_catalog_meta(catalog)
             # Fresh fetch found the model but with no modalities -> clears both keys
             self.assertNotIn("image_input", entries["vendor/no-modalities"])
             self.assertNotIn("image_input_source", entries["vendor/no-modalities"])
@@ -6753,11 +6790,16 @@ class TestImageInputEndToEnd(unittest.TestCase):
         for val in (True, False, None):
             with self.subTest(image_input=val):
                 self.assertIsNone(
-                    model_catalog.validate_catalog_entry(model_id, {**valid_entry, "image_input": val}))
+                    model_catalog.validate_catalog_entry(
+                        model_id, {**valid_entry, "image_input": val}
+                    )
+                )
         # Non-bool values are rejected
         for val in ("yes", 1):
             with self.subTest(image_input=val):
-                reason = model_catalog.validate_catalog_entry(model_id, {**valid_entry, "image_input": val})
+                reason = model_catalog.validate_catalog_entry(
+                    model_id, {**valid_entry, "image_input": val}
+                )
                 self.assertIsNotNone(reason)
                 self.assertIn("image_input", reason)
         # image_input_source with bool image_input is valid
@@ -6765,10 +6807,18 @@ class TestImageInputEndToEnd(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertIsNone(
                     model_catalog.validate_catalog_entry(
-                        model_id, {**valid_entry, "image_input": True, "image_input_source": source}))
+                        model_id,
+                        {**valid_entry, "image_input": True,
+                         "image_input_source": source}
+                    )
+                )
                 self.assertIsNone(
                     model_catalog.validate_catalog_entry(
-                        model_id, {**valid_entry, "image_input": False, "image_input_source": source}))
+                        model_id,
+                        {**valid_entry, "image_input": False,
+                         "image_input_source": source}
+                    )
+                )
         # image_input_source with None image_input alone is valid
         self.assertIsNone(
             model_catalog.validate_catalog_entry(
@@ -6865,19 +6915,29 @@ class TestOpencodeVerboseImageInput(unittest.TestCase):
 
     def test_parse_first_valid_then_garbage_keeps_first(self):
         """Valid block, then garbage, keeps the valid one."""
-        text = 'openai/gpt-5.6-sol\n{"providerID":"openai","id":"gpt-5.6-sol","capabilities":{"input":{"image":true}}}\ngarbage\n'
+        text = (
+            'openai/gpt-5.6-sol\n'
+            '{"providerID":"openai","id":"gpt-5.6-sol",'
+            '"capabilities":{"input":{"image":true}}}\n'
+            'garbage\n'
+        )
         result = detection.parse_opencode_verbose_image_input(text)
         self.assertEqual(result, {"openai/gpt-5.6-sol": True})
 
     def test_parse_mismatched_header_and_id_skips_block(self):
         """Header does not match providerID/id, block is skipped."""
-        text = 'openai/gpt-5.6-sol\n{"providerID":"openai","id":"different","capabilities":{"input":{"image":true}}}\n'
+        text = (
+            'openai/gpt-5.6-sol\n'
+            '{"providerID":"openai","id":"different",'
+            '"capabilities":{"input":{"image":true}}}\n'
+        )
         result = detection.parse_opencode_verbose_image_input(text)
         self.assertEqual(result, {})
 
     def test_parse_swapped_headers_result_is_empty(self):
         """Both blocks present but headers swapped — both skipped."""
-        fixture = open(OPENCODE_VERBOSE_FIXTURE_PATH, encoding="utf-8").read()
+        with open(OPENCODE_VERBOSE_FIXTURE_PATH, encoding="utf-8") as f:
+            fixture = f.read()
         # Find the two blocks and swap them
         blocks = fixture.split('\n\n')
         if len(blocks) >= 2:
@@ -6897,26 +6957,38 @@ openai/gpt-5.6-sol
 
     def test_parse_missing_capabilities_skips_block(self):
         """Block without capabilities key is skipped."""
-        text = 'openai/gpt-5.6-sol\n{"providerID":"openai","id":"gpt-5.6-sol"}\n'
+        text = (
+            'openai/gpt-5.6-sol\n'
+            '{"providerID":"openai","id":"gpt-5.6-sol"}\n'
+        )
         result = detection.parse_opencode_verbose_image_input(text)
         self.assertEqual(result, {})
 
     def test_parse_missing_image_key_skips_block(self):
         """Capabilities without image key is skipped."""
-        text = 'openai/gpt-5.6-sol\n{"providerID":"openai","id":"gpt-5.6-sol","capabilities":{"input":{"text":true}}}\n'
+        text = (
+            'openai/gpt-5.6-sol\n'
+            '{"providerID":"openai","id":"gpt-5.6-sol",'
+            '"capabilities":{"input":{"text":true}}}\n'
+        )
         result = detection.parse_opencode_verbose_image_input(text)
         self.assertEqual(result, {})
 
     def test_parse_non_bool_image_value_skips_block(self):
         """Image value that is not bool (e.g., "yes") is skipped."""
-        text = 'openai/gpt-5.6-sol\n{"providerID":"openai","id":"gpt-5.6-sol","capabilities":{"input":{"image":"yes"}}}\n'
+        text = (
+            'openai/gpt-5.6-sol\n'
+            '{"providerID":"openai","id":"gpt-5.6-sol",'
+            '"capabilities":{"input":{"image":"yes"}}}\n'
+        )
         result = detection.parse_opencode_verbose_image_input(text)
         self.assertEqual(result, {})
 
     def test_detect_nonzero_exit_with_valid_output_returns_empty(self):
         """Non-zero exit code returns {} even if stdout is valid JSON."""
         def fake_run(argv, **kwargs):
-            fixture = open(OPENCODE_VERBOSE_FIXTURE_PATH, encoding="utf-8").read()
+            with open(OPENCODE_VERBOSE_FIXTURE_PATH, encoding="utf-8") as f:
+                fixture = f.read()
             return unittest.mock.MagicMock(returncode=1, stdout=fixture)
         result = detection.detect_opencode_image_input("/fake/bin/opencode", run_fn=fake_run)
         self.assertEqual(result, {})
@@ -6947,7 +7019,10 @@ openai/gpt-5.6-sol
         blocks = []
         for i in range(110):
             header = f"vendor/m-{i}"
-            obj = {"id": f"m-{i}", "providerID": "vendor", "capabilities": {"input": {"image": True}}}
+            obj = {
+                "id": f"m-{i}", "providerID": "vendor",
+                "capabilities": {"input": {"image": True}}
+            }
             blocks.append(f"{header}\n{json.dumps(obj, indent=2)}")
         text = "\n".join(blocks)
         start = time.perf_counter()
@@ -6977,7 +7052,10 @@ openai/gpt-5.6-sol
                                which_fn=lambda name: None)
             self.assertEqual(code, 0)
             result = json.loads(buf.getvalue())
-            unmatched = [u for u in result.get("unmatched", []) if u["model_id"] == "router-env/custom"]
+            unmatched = [
+                u for u in result.get("unmatched", [])
+                if u["model_id"] == "router-env/custom"
+            ]
             self.assertEqual(len(unmatched), 1)
             self.assertEqual(unmatched[0]["cli"], "opencode")
             self.assertEqual(unmatched[0].get("image_input"), True)
@@ -6985,13 +7063,12 @@ openai/gpt-5.6-sol
 
     def test_vendor_unknown_router_candidate_carries_image_input(self):
         """Vendor-unknown router carries image_input from runtime metadata."""
-        result = {}
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory():
             result = cli.build_model_catalog(
                 [{"cli": "opencode", "model_id": "local-llm-coding"}],
                 {}, True, [], True, {},
                 runtime_meta={("opencode", "local-llm-coding"): {"image_input": False}})
-            catalog, rejections, unmatched = result
+            _, _, unmatched = result
             self.assertEqual(len(unmatched), 1)
             self.assertEqual(unmatched[0]["vendor_unknown"], True)
             self.assertEqual(unmatched[0].get("image_input"), False)
@@ -7020,7 +7097,7 @@ openai/gpt-5.6-sol
                                which_fn=lambda name: None)
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
-            entries, meta = model_catalog.split_catalog_meta(catalog)
+            entries, _meta = model_catalog.split_catalog_meta(catalog)
             self.assertEqual(entries["vendor/no-modalities"]["image_input"], True)
             self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "opencode")
             # Run 2: skip fetch, runtime changes to False
@@ -7040,7 +7117,7 @@ openai/gpt-5.6-sol
                                which_fn=lambda name: None)
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
-            entries, meta = model_catalog.split_catalog_meta(catalog)
+            entries, _meta = model_catalog.split_catalog_meta(catalog)
             self.assertEqual(entries["vendor/no-modalities"]["image_input"], False)
             self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "opencode")
 
@@ -7060,8 +7137,15 @@ openai/gpt-5.6-sol
             with redirect_stdout(buf):
                 code = rs.main(["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                                fetch_artificial_analysis_fn=lambda api_key: ([], True),
-                               fetch_models_dev_fn=lambda: ({"vendor": {"models": {
-                                   "no-modalities": {"id": "no-modalities", "modalities": {"input": ["text", "image"]}}}}}, True),
+                               fetch_models_dev_fn=lambda: (
+                                   {"vendor": {"models": {
+                                       "no-modalities": {
+                                           "id": "no-modalities",
+                                           "modalities": {"input": ["text", "image"]}
+                                       }
+                                   }}},
+                                   True
+                               ),
                                load_secret_fn=lambda env, key: None,
                                env_fn=lambda: {"HOME": d},
                                which_fn=lambda name: None)
@@ -7083,7 +7167,7 @@ openai/gpt-5.6-sol
                                which_fn=lambda name: None)
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
-            entries, meta = model_catalog.split_catalog_meta(catalog)
+            entries, _meta = model_catalog.split_catalog_meta(catalog)
             # models.dev value (True) stays, not overridden by runtime (False)
             self.assertEqual(entries["vendor/no-modalities"]["image_input"], True)
             self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "models_dev")
@@ -7125,24 +7209,27 @@ openai/gpt-5.6-sol
                                which_fn=lambda name: None)
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
-            entries, meta = model_catalog.split_catalog_meta(catalog)
+            entries, _meta = model_catalog.split_catalog_meta(catalog)
             # Cached value stays (source silence is not removal)
             self.assertEqual(entries["vendor/no-modalities"]["image_input"], True)
             self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "opencode")
 
     def test_sourceless_cached_value_is_treated_as_runtime_derived(self):
-        """Cached value without image_input_source (e.g., older wizard) is treated as runtime-derived."""
+        """Cached value without image_input_source is treated as runtime-derived."""
         import io
         from contextlib import redirect_stdout
         with tempfile.TemporaryDirectory() as d:
             c = os.path.join(d, "model-catalog.json")
             r = os.path.join(d, "runtimes.json")
             # Seed: entry without image_input_source
-            cache_write_json(c, {"_meta": {"schema_version": 2}, "vendor/no-modalities": {
-                "provider": "vendor", "runtimes": {"opencode": {"model_id": "vendor/no-modalities"}},
-                "source": {"models_dev": False}, "confidence": "low",
-                "last_verified": "2026-09-24",
-                "image_input": True
+            cache_write_json(c, {
+                "_meta": {"schema_version": 2},
+                "vendor/no-modalities": {
+                    "provider": "vendor",
+                    "runtimes": {"opencode": {"model_id": "vendor/no-modalities"}},
+                    "source": {"models_dev": False}, "confidence": "low",
+                    "last_verified": "2026-09-24",
+                    "image_input": True
             }})
             # Skip fetch, but runtime now says False
             cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
@@ -7161,7 +7248,7 @@ openai/gpt-5.6-sol
                                which_fn=lambda name: None)
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
-            entries, meta = model_catalog.split_catalog_meta(catalog)
+            entries, _meta = model_catalog.split_catalog_meta(catalog)
             # Sourceless value is treated as runtime-derived, replaced by new runtime reading
             self.assertEqual(entries["vendor/no-modalities"]["image_input"], False)
             self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "opencode")
@@ -7171,8 +7258,14 @@ openai/gpt-5.6-sol
         result = {}
         result = cli._runtime_meta_from_snapshot({
             "clis": {
-                "codex": {"installed": True, "models": ["gpt-x"], "image_input": {"gpt-x": True}},
-                "opencode": {"installed": True, "models": ["vendor/x"], "image_input": {"vendor/x": False}}
+                "codex": {
+                    "installed": True, "models": ["gpt-x"],
+                    "image_input": {"gpt-x": True}
+                },
+                "opencode": {
+                    "installed": True, "models": ["vendor/x"],
+                    "image_input": {"vendor/x": False}
+                }
             }
         })
         # opencode's image_input is extracted
