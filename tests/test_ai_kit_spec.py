@@ -5482,7 +5482,7 @@ class TestBuildModelCatalog(unittest.TestCase):
         catalog, _, _ = cli.build_model_catalog(discovered, {}, True, [], True, existing)
         self.assertFalse(catalog["router-env/my-plan-review"]["is_router"])
 
-    def test_bare_model_via_aa_derives_vendor_from_creator(self):
+    def test_bare_model_matched_only_via_artificial_analysis_derives_vendor_from_model_creator(self):  # noqa: E501
         # HIGH finding: a bare model id (codex-style, no "<vendor>/" prefix) with NO
         # models.dev match must not become its own vendor ("gpt-5.6-sol/gpt-5.6-sol") just
         # because model_id.split("/", 1)[0] has nothing to split -- when Artificial Analysis
