@@ -915,6 +915,103 @@ class TestPiHostEndToEnd(unittest.TestCase):
         self.assertEqual(json.loads(buf.getvalue()), {"native_runtime": "codex"})
 
 
+class TestRuntimePrecedenceMatrix(unittest.TestCase):
+    def test_signal_tuple_is_pinned(self):
+        self.assertEqual(detection._RUNTIME_ENV_SIGNALS, (
+            ("pi", "PI_CODING_AGENT"),
+            ("opencode", "OPENCODE"),
+            ("cursor", "CURSOR_AGENT"),
+            ("codex", "CODEX_THREAD_ID"),
+            ("codex", "CODEX_VERSION"),
+            ("claude", "CLAUDECODE"),
+        ))
+
+    def test_each_single_signal_maps_to_its_label(self):
+        for var, label in (("PI_CODING_AGENT", "pi"), ("OPENCODE", "opencode"),
+                           ("CURSOR_AGENT", "cursor"), ("CODEX_THREAD_ID", "codex"),
+                           ("CODEX_VERSION", "codex"), ("CLAUDECODE", "claude")):
+            self.assertEqual(detection.detect_current_runtime(env={var: "1"}), label, msg=var)
+
+    def test_all_signals_set_resolves_in_documented_order(self):
+        # E1: with every signal set, removing the winner step by step walks the documented
+        # precedence pi > opencode > cursor > codex > claude, then "unknown".
+        env = {"PI_CODING_AGENT": "1", "OPENCODE": "1", "CURSOR_AGENT": "1",
+               "CODEX_THREAD_ID": "1", "CODEX_VERSION": "1", "CLAUDECODE": "1"}
+        steps = (
+            ("PI_CODING_AGENT", "pi"),
+            ("OPENCODE", "opencode"),
+            ("CURSOR_AGENT", "cursor"),
+            ("CODEX_THREAD_ID", "codex"),
+            ("CODEX_VERSION", "codex"),
+            ("CLAUDECODE", "claude"),
+        )
+        for removed_var, expected in steps:
+            self.assertEqual(detection.detect_current_runtime(env=dict(env)), expected)
+            del env[removed_var]
+        self.assertEqual(detection.detect_current_runtime(env=dict(env)), "unknown")
+
+    def test_both_codex_signals_return_codex_alone_or_together(self):
+        # E3: the codex label owns TWO tuple rows (16 D-02) -- each alone, and both
+        # together, must read as codex.
+        self.assertEqual(
+            detection.detect_current_runtime(env={"CODEX_THREAD_ID": "t-1"}), "codex")
+        self.assertEqual(
+            detection.detect_current_runtime(env={"CODEX_VERSION": "0.153.4"}), "codex")
+        self.assertEqual(
+            detection.detect_current_runtime(
+                env={"CODEX_THREAD_ID": "t-1", "CODEX_VERSION": "0.153.4"}), "codex")
+
+    def test_empty_env_and_empty_string_signals_return_unknown(self):
+        # E2: absent OR present-but-empty everywhere resolves to the literal str "unknown",
+        # never None.
+        self.assertEqual(detection.detect_current_runtime(env={}), "unknown")
+        all_empty = {var: "" for _, var in detection._RUNTIME_ENV_SIGNALS}
+        result = detection.detect_current_runtime(env=all_empty)
+        self.assertEqual(result, "unknown")
+        self.assertIsInstance(result, str)
+
+    def test_empty_string_signal_falls_through_to_next(self):
+        self.assertEqual(
+            detection.detect_current_runtime(env={"PI_CODING_AGENT": "", "CLAUDECODE": "1"}),
+            "claude")
+
+    def test_env_none_reads_live_os_environ_for_pi(self):
+        with unittest.mock.patch.dict(os.environ, {"PI_CODING_AGENT": "1"}, clear=True):
+            self.assertEqual(detection.detect_current_runtime(env=None), "pi")
+
+    def test_known_clis_still_excludes_pi(self):
+        # 16 D-06: pi enumeration (and "pi" in KNOWN_CLIS) is Phase 22's concern.
+        self.assertEqual(detection.KNOWN_CLIS,
+                         ("claude", "codex", "opencode", "grok", "cursor-agent"))
+        self.assertNotIn("pi", detection.KNOWN_CLIS)
+
+    def test_docstring_confidence_labels_for_pi_and_codex_thread_id(self):
+        # P1: pi and codex stay visibly flagged as not (yet) live-verified -- they must never
+        # borrow the live-verified (01.2) label the opencode/claude bullets carry.
+        # inspect.cleandoc normalizes across interpreter eras: CPython 3.14+ dedents
+        # docstrings at compile time (_PyCompile_CleanDoc, "C implementation of
+        # inspect.cleandoc()"), while <= 3.13 keeps the source indentation, so the raw
+        # __doc__ bullet indentation is interpreter-dependent but its cleandoc form is not.
+        import inspect
+        doc = inspect.cleandoc(detection.detect_current_runtime.__doc__)
+        bullets = doc.split("\n- ")
+        pi_bullet = next(b for b in bullets if "PI_CODING_AGENT" in b)
+        thread_id_bullet = next(b for b in bullets if "CODEX_THREAD_ID" in b)
+        self.assertIn("source-inspected-only", pi_bullet)
+        self.assertIn("not live-verified", pi_bullet)
+        self.assertNotIn("live-verified (01.2)", pi_bullet)
+        self.assertIn("not yet live-verified", thread_id_bullet)
+        self.assertNotIn("live-verified (01.2)", thread_id_bullet)
+
+    def test_docstring_names_only_signals_the_tuple_reads(self):
+        # Review-cycle-1 honesty: every env var the tuple reads is documented, and the
+        # docstring names no env var the tuple does not read (notably opencode's PID var).
+        doc = detection.detect_current_runtime.__doc__
+        for _, var in detection._RUNTIME_ENV_SIGNALS:
+            self.assertIn(var, doc, msg=var)
+        self.assertNotIn("OPENCODE_PID", doc)
+
+
 class TestDetectOpencodeModels(unittest.TestCase):
     def test_parses_one_model_per_line(self):
         class FakeResult:
