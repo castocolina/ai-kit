@@ -41,7 +41,7 @@ from __future__ import annotations
 import os
 
 from ai_kit_rules_common.criticality import CRITICALITY_MEDIUM
-from ai_kit_rules_common.tool_catalog import REDUNDANT_VS_COMPLEMENTARY_PAIRS
+from ai_kit_rules_common.tool_catalog import REDUNDANT_VS_COMPLEMENTARY_PAIRS, PairRow
 
 from . import config_read
 from .taxonomy_checker import classify_precommit_tools
@@ -72,7 +72,7 @@ def _detected_tool_names(repo_root: str) -> set[str]:
     return names
 
 
-def _pair_finding(tool_a: str, tool_b: str, row: dict) -> dict | None:
+def _pair_finding(tool_a: str, tool_b: str, row: PairRow) -> dict | None:
     relationship = row["relationship"]
     issue = _FLAGGED_ISSUE_BY_RELATIONSHIP.get(relationship)
     if issue is None:

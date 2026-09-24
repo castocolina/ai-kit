@@ -66,7 +66,7 @@ above already does.
 from __future__ import annotations
 
 import re
-from typing import cast
+from typing import TypedDict
 
 TAXONOMY_CATEGORIES = (
     "formatting",
@@ -380,7 +380,18 @@ MAKEFILE_CATEGORY_ALIAS: dict[str, str | None] = {
 # "supersession" are what plan 11-03 flags and what the import-time guard
 # below holds to the same-category requirement; "complementary" and
 # "overlapping" emit nothing.
-REDUNDANT_VS_COMPLEMENTARY_PAIRS: tuple[dict[str, object], ...] = (
+class PairRow(TypedDict):
+    """Static shape of one REDUNDANT_VS_COMPLEMENTARY_PAIRS row (15.2, SC1).
+    Purely a typing construct -- rows remain plain dicts at runtime."""
+
+    ecosystem: str
+    tools: tuple[str, str]
+    rule_family_members: tuple[str, ...]
+    relationship: str
+    reason: str
+
+
+REDUNDANT_VS_COMPLEMENTARY_PAIRS: tuple[PairRow, ...] = (
     {
         "ecosystem": "Python",
         "tools": ("ruff S rules", "bandit"),
@@ -526,7 +537,7 @@ def resolve_tool_category(tool_name: str) -> str | None:
     return AMBIGUOUS_TOOL_DEFAULTS.get(key)
 
 
-def _validate_pairs_reachability(rows: tuple[dict[str, object], ...]) -> None:
+def _validate_pairs_reachability(rows: tuple[PairRow, ...]) -> None:
     """D-T7's import-time guard. Every tool-token member of every row must
     resolve THROUGH `resolve_tool_category` -- never by asking whether the
     name is an index key, which is the version of this check that cannot
@@ -537,8 +548,8 @@ def _validate_pairs_reachability(rows: tuple[dict[str, object], ...]) -> None:
     cross-category is fine and must not raise.
     """
     for row in rows:
-        tools = cast("tuple[str, ...]", row["tools"])
-        rule_family = cast("tuple[str, ...]", row.get("rule_family_members", ()))
+        tools = row["tools"]
+        rule_family = row.get("rule_family_members", ())
         token_members = [t for t in tools if t not in rule_family]
         resolved: dict[str, str] = {}
         for member in token_members:
@@ -567,13 +578,13 @@ def _validate_pairs_reachability(rows: tuple[dict[str, object], ...]) -> None:
 _validate_pairs_reachability(REDUNDANT_VS_COMPLEMENTARY_PAIRS)
 
 
-def find_pair_relationship(tool_a: str, tool_b: str) -> dict[str, object] | None:
+def find_pair_relationship(tool_a: str, tool_b: str) -> PairRow | None:
     """D-04's mechanism: return the pairs-table row naming both `tool_a` and
     `tool_b` (in EITHER order), or `None` for an unresearched pair. Plan
     11-03 treats `None` as presumed-complementary and never flags it."""
     wanted = {tool_a, tool_b}
     for row in REDUNDANT_VS_COMPLEMENTARY_PAIRS:
-        if set(cast("tuple[str, ...]", row["tools"])) == wanted:
+        if set(row["tools"]) == wanted:
             return row
     return None
 
@@ -738,6 +749,7 @@ __all__ = [
     "TAXONOMY_CATEGORIES",
     "TAXONOMY_DEFINITIONS",
     "TOOL_CATEGORY_INDEX",
+    "PairRow",
     "find_pair_relationship",
     "resolve_hot_reload",
     "resolve_tool_category",
