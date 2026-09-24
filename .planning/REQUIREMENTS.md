@@ -79,12 +79,45 @@ None deferred beyond v1.3 at definition time.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| SPEC-01 | Phase 16 | Pending |
+| SPEC-02 | Phase 16 | Pending |
+| SPEC-03 | Phase 16 | Pending |
+| SPEC-04 | Phase 16 | Pending |
+| INV-01 | Phase 17 | Pending |
+| INV-02 | Phase 17 | Pending |
+| INV-03 | Phase 17 | Pending |
+| REC-01 | Phase 17 | Pending |
+| REC-02 | Phase 17 | Pending |
+| REC-03 | Phase 17 | Pending |
+| REC-04 | Phase 17 | Pending |
+| REC-05 | Phase 17 | Pending |
+| REC-06 | Phase 17 | Pending |
+| XAI-01 | Phase 18 | Pending |
+| XAI-02 | Phase 18 | Pending |
+| SKL-01 | Phase 18 | Pending |
+| SKL-02 | Phase 18 | Pending |
+| SKL-03 | Phase 18 | Pending |
+| APP-01 | Phase 18 | Pending |
+| APP-02 | Phase 18 | Pending |
+| APP-03 | Phase 18 | Pending |
+| APP-04 | Phase 18 | Pending |
+| EVAL-06 | Phase 18 | Pending |
+| EVAL-01 | Phase 19 | Pending |
+| EVAL-02 | Phase 19 | Pending |
+| EVAL-03 | Phase 19 | Pending |
+| APP-05 | Phase 19 | Pending |
+| EVAL-04 | Phase 20 | Pending |
+| EVAL-05 | Phase 20 | Pending |
+| EVAL-07 | Phase 21 | Pending |
+| EVAL-08 | Phase 22 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 29 total
-- Mapped to phases: 0 (filled by roadmap)
-- Unmapped: 29
+- v1.3 requirements: 31 total (corrected during roadmap creation from this document's initial
+  "29 total" placeholder — an actual count of every `**PREFIX-NN**` requirement ID above yields
+  31: SPEC 4, INV 3, REC 6, XAI 2, SKL 3, APP 5, EVAL 8)
+- Mapped to phases: 31/31
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-09-23*
-*Last updated: 2026-09-23 after initial definition*
+*Last updated: 2026-09-23 after v1.3 roadmap creation (Phases 16–22, 100% coverage)*

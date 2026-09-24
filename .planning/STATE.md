@@ -3,10 +3,10 @@ gsd_state_version: "1.0"
 milestone: v1.3
 milestone_name: GSD Curated Config v2
 status: planning
-last_updated: "2026-09-24T01:23:09.512Z"
+last_updated: "2026-09-24T01:34:42.000Z"
 last_activity: 2026-09-23
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-23)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** v1.3 GSD Curated Config v2 — defining requirements
+**Current focus:** v1.3 GSD Curated Config v2 — Phase 16 (ai_kit_spec Extensions), ready to plan
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-09-23 — Milestone v1.3 started
+Phase: 16 of 22 (ai_kit_spec Extensions)
+Plan: TBD (roadmap only; no plans created yet)
+Status: Ready to plan
+Last activity: 2026-09-23 — v1.3 roadmap created (Phases 16–22, 31/31 requirements mapped)
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -73,7 +75,7 @@ Last activity: 2026-09-23 — Milestone v1.3 started
 **Recent Trend:**
 
 - Last 5 plans: 05-06, 05-05, 05-04, 05-03, 05-02 (v1.0 close-out)
-- Trend: v1.0/v1.1 complete; v1.2 roadmap created, no plans executed yet
+- Trend: v1.0/v1.1/v1.2 complete; v1.3 roadmap created, no plans executed yet
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**
@@ -210,6 +212,23 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 15.1]: Phase 15.1 Plan 03: D-12 filter bar/column rebuild with runtime+subfamily axes, unified date range, and D-16 null-vs-zero rendering implemented per the cross-AI-reviewed plan verbatim. — date column placement resolves a gap in D-12's own wording (planner decision, not a user decision); the date-range wrapper span was renamed off the filter-* id prefix to avoid false-matching the clear-filters coverage test.
 - [Phase 15.1]: Phase 15.1 Plan 04: turnKey() SD-4 dedup identity replaces the under-counting session-grouping key (D-16 session dup) and refined_store.py's docstring now states it; a full-command detail dialog (indexByRawRef/stepEntries) makes the two-line command clamp lossless (D-14); empty/loading/error page states added with an SD-10 double-requestAnimationFrame paint guarantee for the loading bar. Plan 05 must reuse turnKey and match the corrected docstring wording in SKILL.md.
 - [Phase 15.2]: Phase 15.2 Plan 01: closed all four Phase 15.2 SCs — PairRow TypedDict for pyright 0 errors (SC1), symmetric flat/grouped sort-key fallback with node regression tests in both directions closing 15.1-REVIEW WR-01/WR-02 (SC2), ruff-clean test file (SC3), 3 resolved v1.1 todos moved to todos/completed (SC4). gsd_run check tdd-red-evidence is Node-TAP-only and could not classify Python unittest RED evidence; verified manually against the plan's documented behavior spec instead.
+- v1.3: Phase numbering continues from v1.2's last phase (Phase 15.2) — v1.3
+  starts at Phase 16, per ROADMAP.md's Phase Numbering convention
+  (2026-09-23). Roadmap derived from this milestone's 31 requirements
+  (SPEC/INV/REC/XAI/SKL/APP/EVAL prefixes — REQUIREMENTS.md's earlier "29
+  total" placeholder was a stale pre-roadmap estimate, corrected to the
+  actual count during roadmap creation) into 7 phases (16-22), following the
+  source spec's §10 delivery-phase split. Phase 17 (originally one
+  "curated-config rewrite" phase per the spec) was split into Phase 17
+  (inventory + recommend) and Phase 18 (cross-AI + skills + apply) because
+  the combined scope (18 requirements) was too large for one phase; EVAL-06
+  (removed-module cleanup, make test/validate green, README/SKILL.md
+  updates) was grouped into Phase 18 rather than Phase 17 since it is the
+  natural finish line for the whole rewrite, not just the inventory/recommend
+  half. Cursor (Phase 21) and pi (Phase 22) live-validation stay their own
+  standalone phases, each depending only on Phase 19 (not on each other or
+  on Phase 20), per the spec's explicit "own phase, may run later, nothing
+  depends on it" framing for both hosts.
 
 ### Pending Todos
 
@@ -301,10 +320,22 @@ even though `.planning/config.json` has `parallelization: true` — that
 setting applies to independent plans within a phase, not to this milestone's
 cross-phase ordering constraint.
 
+**v1.3 (Phases 16-22) — mostly linear, with two independent tail phases
+(2026-09-23).** Phases 16 → 17 → 18 → 19 form a strict build chain (each
+later phase's code depends on the prior phase's modules). Phase 20 (codex +
+opencode) depends on Phase 19's completed, evaluated rewrite. Phases 21
+(cursor) and 22 (pi) each depend only on Phase 19 — they are mutually
+independent of each other and of Phase 20, and may be planned/executed in
+any order, or deferred, without blocking anything else in this milestone.
+
 ### Roadmap Evolution
 
 - Phase 15.1 inserted after Phase 15: Usage Metrics Dashboard UX/Perf Overhaul — 14 UX/perf/bug findings from live dashboard.html review (empty date col, family showing garbage tokens, session-group row dup, no pagination/virtualization causing browser freeze, filter bar unordered, missing runtime column, no launch detection, price always 0, no charts, no MUI styling) (URGENT)
 - Phase 15.2 inserted after Phase 15: v1.2 tech debt cleanup from milestone audit (pyright typing, 15.1 WR-01/WR-02, 15.1 lint, resolved todos) (URGENT)
+- v1.3 roadmap created 2026-09-23: Phases 16-22 derived from 31 v1.3
+  requirements per the approved source spec's §10 delivery-phase split
+  (Phase 17 split into 17/18 for size; cursor/pi kept as separate tail
+  phases per the spec).
 
 ## Deferred Items
 
@@ -324,5 +355,5 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-09-23
-Stopped at: v1.2 milestone archived
+Stopped at: v1.3 roadmap created (Phases 16-22, 31/31 requirements mapped); awaiting user approval
 Resume file: None
