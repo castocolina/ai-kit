@@ -5,6 +5,7 @@ import shutil
 import subprocess
 
 from ai_kit_spec.cache import cache_base
+from ai_kit_spec.model_catalog import split_catalog_meta
 from ai_kit_spec.vendor import _MODEL_TIER_SUFFIXES
 
 RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-static
@@ -16,6 +17,20 @@ RUNTIMES_SCHEMA_VERSION = 2
 # ── Runtime/CLI detection ───────────────────────────────────────────────
 
 KNOWN_CLIS = ("claude", "codex", "opencode", "grok", "cursor-agent")
+
+# 16 D-04: what Claude Code's own `--model` flag resolves (real `claude --help`, version
+# 2.1.281, lists fable/opus/sonnet; haiku is the fourth Agent-tool alias documented in
+# ai-kit-spec-config SKILL.md). Hardcoded because Claude Code has no list-models command --
+# these aliases are the only stable short names the CLI itself documents.
+CLAUDE_MODEL_ALIASES = ("fable", "opus", "sonnet", "haiku")
+
+# 16 D-04: DATED FALLBACK, not a live list -- these four ids were verified present in
+# models.dev's `anthropic` provider on 2026-09-23 (16-RESEARCH.md), one per current family
+# (Fable 5.1, Opus 5.5, Sonnet 5, Haiku 4.5). Used only when model-catalog.json has no
+# recorded anthropic ids; refresh the ids and the date together when a new generation ships.
+CLAUDE_FALLBACK_MODEL_IDS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5",
+                             "claude-haiku-4-5-20251001")
+CLAUDE_FALLBACK_AS_OF = "2026-09-23"
 
 
 def cache_runtimes_path(env: dict) -> str:
@@ -244,16 +259,55 @@ def runtimes_schema_is_current(data) -> bool:
         and version >= RUNTIMES_SCHEMA_VERSION
 
 
-def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run) -> dict:
+def claude_runtime_fields(catalog_raw) -> dict:
+    """16 D-04 hybrid claude model sourcing: `aliases` is what Claude Code's `--model`
+    resolves (see CLAUDE_MODEL_ALIASES); `models` holds full ids taken from
+    model-catalog.json's recorded `anthropic_model_ids` when available
+    (`models_source: "catalog"`, plus `models_as_of` when the record carries a date), or the
+    dated in-code fallback otherwise (`models_source: "dated-fallback"`). Confidence labeling
+    per 16 D-04: the fallback is visibly labeled as dated, never presented as a live list.
+    Nothing is executed here -- claude has no list-models command, and 16 D-07 forbids
+    running the alias-wrapped binary (16 D-07). Never raises: any malformed catalog shape
+    (None, non-dict `_meta`, non-list or junk-filled `anthropic_model_ids`) degrades to the
+    dated fallback or a filtered subset, never an exception. Aliases stay OUT of `models` so
+    catalog discovery (which walks every `models` array) never tries to match a bare alias
+    against models.dev or mint a bogus `anthropic/opus`-style key."""
+    _, meta = split_catalog_meta(catalog_raw)
+    raw_ids = meta.get("anthropic_model_ids")
+    ids: list = []
+    if isinstance(raw_ids, list):
+        seen = set()
+        for item in raw_ids:
+            if not isinstance(item, str) or not item.strip() or item in seen:
+                continue
+            seen.add(item)
+            ids.append(item)
+    if ids:
+        fields = {"aliases": list(CLAUDE_MODEL_ALIASES), "models": ids,
+                  "models_source": "catalog"}
+        as_of = meta.get("anthropic_model_ids_as_of")
+        if isinstance(as_of, str) and as_of.strip():
+            fields["models_as_of"] = as_of
+        return fields
+    return {"aliases": list(CLAUDE_MODEL_ALIASES), "models": list(CLAUDE_FALLBACK_MODEL_IDS),
+            "models_source": "dated-fallback", "models_as_of": CLAUDE_FALLBACK_AS_OF}
+
+
+def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
+                            catalog_fn=None) -> dict:
     """{"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {name: {"installed": bool,
-    "path"?: str, "models"?: [str], "reasoning_modes"?: {model_id: [effort, ...]}}}}.
+    "path"?: str, "models"?: [str], "reasoning_modes"?: {model_id: [effort, ...]},
+    "aliases"?: [str], "models_source"?: str, "models_as_of"?: str}}}.
     `models` is populated
-    for opencode/cursor-agent always, and for codex when `codex debug
-    models` enumeration succeeds; `reasoning_modes` (codex only) maps each
-    enumerated model id to its CLI-reported effort levels, only for ids
-    that actually have a non-empty effort list. Pure function — the caller
-    (this module's CLI entrypoint) decides whether/where to persist this
-    via cache_write_json."""
+    for opencode/cursor-agent always, for codex when `codex debug models` enumeration
+    succeeds, and for claude from the 16 D-04 hybrid (aliases + full ids); `reasoning_modes`
+    (codex only) maps each enumerated model id to its CLI-reported effort levels, only for
+    ids that actually have a non-empty effort list. `catalog_fn` (claude only) is an optional
+    zero-argument callable returning the parsed model-catalog.json or None -- injected rather
+    than imported so the function stays pure and tests stay hermetic; it is called ONLY when
+    claude is installed (claude is never executed, 16 D-07). Pure function -- the caller
+    (this module's CLI entrypoint) decides whether/where to persist this via
+    cache_write_json."""
     installed = detect_installed_clis(which_fn=which_fn)
     snapshot = {"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {}}
     for cli, binpath in installed.items():
@@ -273,8 +327,37 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run) -> dic
                     m["id"]: m["reasoning_modes"]
                     for m in codex_models if m["reasoning_modes"]
                 }
+        elif cli == "claude":
+            # 16 D-04: hybrid alias + catalog-id sourcing; never calls run_fn (claude is
+            # never executed) and never calls catalog_fn unless claude is installed (the
+            # `if not binpath` branch above already continued first).
+            entry.update(claude_runtime_fields(catalog_fn() if catalog_fn is not None else None))
         snapshot["clis"][cli] = entry
     return snapshot
+
+
+def claude_runtime_is_current(runtimes_data, catalog_fn=None) -> bool:
+    """16 D-04/D-12 freshness edge (review cycle 1): runtimes.json's claude ids are DERIVED
+    from model-catalog.json's `_meta`, so the catalog is an input of the runtimes cache -- a
+    catalog change to the recorded anthropic ids or their as-of date makes the cached claude
+    portion stale even while the file's TTL and schema are still fresh. Returns True only
+    when the stored `clis.claude` entry (installed) matches what
+    `claude_runtime_fields(catalog_fn())` yields for `aliases`/`models`/`models_source`/
+    `models_as_of`. An unchanged catalog is always current -- including "no recorded ids" vs
+    a stored dated fallback -- so the edge never loops. Everything the TTL and schema checks
+    already own (a non-dict runtimes payload, a missing/uninstalled claude entry) is True
+    without ever calling `catalog_fn`; never raises."""
+    if not isinstance(runtimes_data, dict):
+        return True
+    clis = runtimes_data.get("clis")
+    if not isinstance(clis, dict):
+        return True
+    stored = clis.get("claude")
+    if not isinstance(stored, dict) or not stored.get("installed"):
+        return True
+    expected = claude_runtime_fields(catalog_fn() if catalog_fn is not None else None)
+    return all(stored.get(k) == expected.get(k)
+               for k in ("aliases", "models", "models_source", "models_as_of"))
 
 
 def detect_tool_availability(which_fn=shutil.which) -> dict:

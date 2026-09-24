@@ -5977,5 +5977,152 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             self.assertEqual(written.get("_meta"), {"schema_version": 2})
 
 
+class TestClaudeEnumerationEndToEnd(unittest.TestCase):
+    """16 D-04 tracer for the REAL refresh order (design spec §3: detect-runtimes
+    --if-stale, then fetch-model-catalog --if-stale): the first detect writes the labeled
+    dated fallback; the fetch records models.dev's anthropic ids in `_meta` AND, in that
+    same fetch, builds an `anthropic/<id>` entry for every one (including an id outside the
+    fallback); the next detect re-detects immediately (no TTL wait) and labels the ids
+    "catalog"; a network-skipping fetch keeps every listed id scoreable; the last detect is
+    skipped. Claude is never executed (16 D-07)."""
+
+    MD = {
+        "anthropic": {"models": {
+            **{mid: {"id": mid, "tool_call": True,
+                     "limit": {"context": 1000000, "output": 128000}}
+               for mid in detection.CLAUDE_FALLBACK_MODEL_IDS},
+            "claude-sonnet-5": {"id": "claude-sonnet-5", "tool_call": True,
+                                 "limit": {"context": 1000000, "output": 64000}},
+            "claude-new-not-in-fallback": {
+                "id": "claude-new-not-in-fallback", "tool_call": True,
+                "limit": {"context": 1000000, "output": 128000}},
+        }},
+        # The live collision shape (2026-09-24): reseller providers list the same bare ids.
+        "reseller": {"models": {
+            "claude-sonnet-5": {"id": "claude-sonnet-5",
+                                 "limit": {"context": 200000, "output": 4096}},
+            "claude-new-not-in-fallback": {"id": "claude-new-not-in-fallback",
+                                            "limit": {"context": 200000, "output": 4096}},
+        }},
+    }
+
+    @staticmethod
+    def _claude_which(name):
+        return "/fake/bin/claude" if name == "claude" else None
+
+    def test_real_refresh_order_makes_a_non_fallback_id_scoreable_without_ttl_wait(self):
+        new = "claude-new-not-in-fallback"
+        with tempfile.TemporaryDirectory() as d:
+            env = {"HOME": d}
+            r = os.path.join(d, "runtimes.json")
+            catalog_path = model_catalog.cache_catalog_path(env)
+            md_calls = self.MD.copy()
+            md_fetch_count = []
+
+            def md_fake():
+                md_fetch_count.append(1)
+                return md_calls, True
+
+            recorded_runs = []
+
+            def recording_run_fn(argv, **kwargs):
+                recorded_runs.append((argv, kwargs))
+                return unittest.mock.MagicMock(returncode=0, stdout="")
+
+            def detect(**overrides):
+                import io
+                from contextlib import redirect_stdout
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = rs.main(
+                        ["detect-runtimes", "--if-stale", r],
+                        which_fn=self._claude_which, run_fn=recording_run_fn,
+                        env_fn=lambda: env, **overrides)
+                return code, buf.getvalue()
+
+            def fetch(**overrides):
+                import io
+                from contextlib import redirect_stdout
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = rs.main(
+                        ["fetch-model-catalog", "--if-stale", "--runtimes-json", r,
+                         "--catalog-path", catalog_path],
+                        which_fn=self._claude_which, fetch_models_dev_fn=md_fake,
+                        fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                        load_secret_fn=lambda env_, key: None,
+                        env_fn=lambda: env, **overrides)
+                return code, buf.getvalue()
+
+            # 1. No runtimes file yet -> detect, writing the dated fallback.
+            code, out = detect()
+            self.assertEqual(code, 0)
+            first = cache_read_json(r)
+            self.assertEqual(first["clis"]["claude"]["models_source"], "dated-fallback")
+            self.assertEqual(first["clis"]["claude"]["models"],
+                             list(detection.CLAUDE_FALLBACK_MODEL_IDS))
+            self.assertNotIn(new, json.dumps(first))
+
+            # 2. Fetch: records the ids in `_meta` AND materializes every one of them.
+            code, out = fetch()
+            self.assertEqual(code, 0)
+            result = json.loads(out)
+            self.assertFalse(result["fetch_skipped"])
+            self.assertEqual(len(md_fetch_count), 1)
+            entries, meta = model_catalog.split_catalog_meta(cache_read_json(catalog_path))
+            self.assertEqual(meta["anthropic_model_ids"],
+                             sorted(list(detection.CLAUDE_FALLBACK_MODEL_IDS) + [new]))
+            self.assertEqual(meta["anthropic_model_ids_as_of"], time.strftime("%Y-%m-%d"))
+            self.assertEqual(meta["schema_version"], 2)
+            for mid in list(detection.CLAUDE_FALLBACK_MODEL_IDS) + [new]:
+                key = f"anthropic/{mid}"
+                self.assertIn(key, entries)
+                self.assertEqual(entries[key]["runtimes"]["claude"]["model_id"], mid)
+                self.assertIsNone(model_catalog.validate_catalog_entry(key, entries[key]))
+            # The anthropic row won the hinted collision, not the reseller's 4096.
+            self.assertEqual(entries["anthropic/claude-sonnet-5"]["max_output_tokens"], 64000)
+            self.assertFalse([k for k in entries if k.startswith("reseller/")])
+            self.assertEqual(result["discovered"], [
+                {"cli": "claude", "model_id": mid}
+                for mid in detection.CLAUDE_FALLBACK_MODEL_IDS])
+            self.assertEqual(result["unmatched"], [])
+
+            # 3. Fresh + schema-current runtimes, but the claude ids changed -> re-detect.
+            code, out = detect()
+            self.assertEqual(code, 0)
+            self.assertNotEqual(json.loads(out), {})
+            second = cache_read_json(r)
+            self.assertEqual(second["clis"]["claude"], {
+                "installed": True, "path": "/fake/bin/claude",
+                "aliases": ["fable", "opus", "sonnet", "haiku"],
+                "models": sorted(list(detection.CLAUDE_FALLBACK_MODEL_IDS) + [new]),
+                "models_source": "catalog",
+                "models_as_of": time.strftime("%Y-%m-%d"),
+            })
+
+            # 4. Network-skipping fetch: every listed id stays scoreable, unmatched empty.
+            code, out = fetch()
+            self.assertEqual(code, 0)
+            result = json.loads(out)
+            self.assertTrue(result["fetch_skipped"])
+            self.assertEqual(len(md_fetch_count), 1)  # still just the one real fetch
+            self.assertIn({"cli": "claude", "model_id": new}, result["discovered"])
+            self.assertEqual(result["unmatched"], [])
+            entries, _ = model_catalog.split_catalog_meta(cache_read_json(catalog_path))
+            self.assertIn(f"anthropic/{new}", entries)
+            self.assertIsNone(model_catalog.validate_catalog_entry(
+                f"anthropic/{new}", entries[f"anthropic/{new}"]))
+            self.assertIn(f"anthropic/{new}", model_catalog.current_candidate_keys(
+                entries, result["discovered"]))
+
+            # 5. Runtimes and catalog now agree -> the third detect is skipped.
+            code, out = detect()
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out), {})
+
+            # 6. Claude was never executed (16 D-07) -- only claude is installed.
+            self.assertEqual(recorded_runs, [])
+
+
 if __name__ == "__main__":
     unittest.main()

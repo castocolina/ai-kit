@@ -23,6 +23,7 @@ from ai_kit_spec.detection import (
     RUNTIMES_TTL_SECONDS,
     build_runtimes_snapshot,
     cache_runtimes_path,
+    claude_runtime_is_current,
     detect_current_runtime,
     detect_tool_availability,
     find_codegraph_alternative,
@@ -33,6 +34,7 @@ from ai_kit_spec.execute_dispatch import dispatch_execute
 from ai_kit_spec.local_secrets import load_secret
 from ai_kit_spec.model_catalog import (
     CATALOG_SCHEMA_VERSION,
+    cache_catalog_path,
     catalog_schema_is_current,
     canonical_key,
     join_catalog_meta,
@@ -252,6 +254,47 @@ def _apply_runtime_meta(entry: dict, runtime_meta: dict | None, cli_name: str,
         entry["reasoning_modes"] = list(modes)
 
 
+# 16 D-04 (review cycle 2): claude only ever runs anthropic models, so its bare ids are
+# matched against models.dev with `anthropic` as the tie-break hint. On live models.dev
+# (2026-09-24) every anthropic id also appears under 9-21 reseller providers (e.g.
+# `claude-sonnet-5` under `opencode`, `github-copilot`, `azure` and more), and
+# match_models_dev returns no match for an unhinted multi-provider bare id -- the hint only
+# breaks ties (a single match still wins regardless of the hint). Every other CLI maps to
+# no hint, which is exactly the pre-16-04 call.
+_FIRST_PARTY_PROVIDER_BY_CLI = {"claude": "anthropic"}
+
+
+def _anthropic_model_ids(models_dev_data) -> list:
+    """Sorted, de-duplicated model ids from models.dev's `anthropic` provider (16 D-04),
+    keeping ONLY well-formed rows: a row must be a dict whose `limit` and `cost` values,
+    for each of those two keys that is present, are dicts too. fetch_models_dev validates
+    only the JSON transport, not the row shape -- match_models_dev spreads the matched row
+    (`{**model, ...}`) and build_model_catalog calls `.get` on the matched row's `limit` and
+    `cost`, so a `null`, string or list row (or one whose `limit`/`cost` is not an object)
+    would otherwise raise inside fetch-model-catalog once its id became a materialization
+    candidate (review cycle 3). A skipped row is neither recorded in `_meta` nor
+    materialized. Never raises: a non-dict payload, a missing/non-dict `anthropic` provider,
+    or a missing/non-dict `models` mapping yields []."""
+    if not isinstance(models_dev_data, dict):
+        return []
+    provider = models_dev_data.get("anthropic")
+    if not isinstance(provider, dict):
+        return []
+    models = provider.get("models")
+    if not isinstance(models, dict):
+        return []
+    ids = set()
+    for model_id, row in models.items():
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        if not isinstance(row, dict):
+            continue
+        if not all(isinstance(row[key], dict) for key in ("limit", "cost") if key in row):
+            continue
+        ids.add(model_id)
+    return sorted(ids)
+
+
 def build_model_catalog(discovered_models: list, models_dev_data: dict, models_dev_ok: bool,
                         aa_models: list, aa_ok: bool, existing_catalog: dict,
                         runtime_meta: dict | None = None) -> tuple:
@@ -371,7 +414,13 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
             if reason:
                 rejections.append(reason)
             continue
-        md_match = match_models_dev(model_id, models_dev_data) if models_dev_ok else None
+        # 16 D-04 (review cycle 2): claude's bare ids get `anthropic` as the provider hint
+        # (see _FIRST_PARTY_PROVIDER_BY_CLI above); every other CLI's hint is None, exactly
+        # the pre-16-04 call. The router/name-purpose path above never consults models.dev.
+        md_match = (match_models_dev(
+            model_id, models_dev_data,
+            provider_hint=_FIRST_PARTY_PROVIDER_BY_CLI.get(cli_name)) if models_dev_ok
+            else None)
         provider_hint = (md_match or {}).get("provider") or (
             model_id.split("/", 1)[0] if "/" in model_id else None)
         aa_match = (match_artificial_analysis(model_id, aa_models, provider_hint=provider_hint)
@@ -567,7 +616,10 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
             "skip detection entirely (print {} and exit 0) when PATH exists, "
             "is fresher than RUNTIMES_TTL_SECONDS, and carries the current "
             "schema_version (a missing or older version always re-detects); "
-            "else detect and --save to PATH"
+            "when claude is installed the skip additionally requires the cached "
+            "claude model list (aliases/full ids/source) to match what the current "
+            "model-catalog.json _meta yields, since those ids are derived from the "
+            "catalog; else detect and --save to PATH"
         ),
     )
 
@@ -762,7 +814,6 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
 
     if args.command == "cache-path":
         env = dict(os.environ)
-        from ai_kit_spec.model_catalog import cache_catalog_path
         if args.kind == "runtimes":
             print(cache_runtimes_path(env))
         elif args.kind == "catalog":
@@ -780,17 +831,27 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
         return 0
 
     if args.command == "detect-runtimes":
+        def _read_default_catalog():
+            # 16 D-04: detect-runtimes has no catalog-path flag -- it reads the standard
+            # cache location derived from env_fn(). A nested def, not an assigned lambda,
+            # so ruff's lambda-assignment rule never fires.
+            return cache_read_json(cache_catalog_path(env_fn()))
+
         # 16 D-12: the skip requires BOTH a fresh mtime AND the current schema_version --
         # a missing or older version forces re-detection whatever the TTL says (Pitfall 3:
         # the refresh condition is "stale OR version not current", never chained ANDs).
         # Plan 16-04 adds a third AND-ed condition (the claude entry matches the current
-        # catalog) to this same expression.
+        # catalog) to this same expression; the catalog is only read when the cache would
+        # otherwise be skipped, and only its claude portion is compared.
         cached_runtimes = cache_read_json(args.if_stale) if args.if_stale else None
         if args.if_stale and not cache_is_stale(args.if_stale, RUNTIMES_TTL_SECONDS) \
-                and runtimes_schema_is_current(cached_runtimes):
+                and runtimes_schema_is_current(cached_runtimes) \
+                and claude_runtime_is_current(cached_runtimes,
+                                              catalog_fn=_read_default_catalog):
             print(json.dumps({}))  # fresh — caller should treat this as "nothing to do"
             return 0
-        snapshot = build_runtimes_snapshot(which_fn=which_fn, run_fn=run_fn)
+        snapshot = build_runtimes_snapshot(which_fn=which_fn, run_fn=run_fn,
+                                            catalog_fn=_read_default_catalog)
         save_path = args.if_stale or args.save
         if save_path:
             cache_write_json(save_path, snapshot)
@@ -888,9 +949,58 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
             if models_dev_ok:
                 catalog_meta = {**catalog_meta, "schema_version": CATALOG_SCHEMA_VERSION}
 
+        # 16 D-04 (review cycle 3): every recorded anthropic id must be a materialization
+        # candidate ONLY if its models.dev row is well-formed -- _anthropic_model_ids keeps
+        # dict rows whose limit/cost are dicts too, so a malformed row can never crash the
+        # enrichment path below and is neither recorded nor materialized.
+        anthropic_ids = _anthropic_model_ids(models_dev_data) \
+            if (not skip_fetch and models_dev_ok) else []
+        # 16 D-04 (review cycle 2 HIGH, "new catalog ids are learned but not materialized
+        # as scored catalog entries"): a fetch that records models.dev's anthropic ids in
+        # `_meta` ALSO passes every recorded id the runtimes snapshot does not already list
+        # to build_model_catalog as an extra claude candidate, so the ids and their
+        # `anthropic/<id>` entries are always written together in the same fetch. Without
+        # this, an id outside the detect-time fallback stays `unmatched` until the 30-day
+        # catalog TTL (the runtimes snapshot's `models` arrays only learn it on the NEXT
+        # detect, and a `--if-stale` fetch then skips models.dev entirely).
+        #
+        # The gate is `which_fn("claude")`, NOT the snapshot: a wizard-narrowed
+        # --runtimes-json may omit claude while still refreshing the shared fetch-meta
+        # sidecar, which would strand the ids unmaterialized until the catalog TTL.
+        claude_candidates = []
+        materialized = False
+        if anthropic_ids and which_fn("claude"):
+            materialized = True
+            listed = {(c["cli"], c["model_id"]) for c in discovered}
+            claude_candidates = [{"cli": "claude", "model_id": model_id}
+                                 for model_id in anthropic_ids
+                                 if ("claude", model_id) not in listed]
+
         catalog, rejections, unmatched = build_model_catalog(
-            discovered, models_dev_data, models_dev_ok, aa_models, aa_ok, existing_catalog,
-            runtime_meta=runtime_meta)
+            discovered + claude_candidates, models_dev_data, models_dev_ok, aa_models,
+            aa_ok, existing_catalog, runtime_meta=runtime_meta)
+        # The extra candidates never enter the printed `discovered` or `unmatched` lists,
+        # so a wizard's narrowed ranking scope never widens (16 D-04); `rejections` stays
+        # as returned (diagnostic only).
+        extra = {("claude", c["model_id"]) for c in claude_candidates}
+        unmatched = [record for record in unmatched
+                     if (record.get("cli"), record.get("model_id")) not in extra]
+        # 16 D-04 (review cycle 3): record the ids AFTER build_model_catalog returned and
+        # BEFORE the catalog is written, narrowed to the ids that really got an
+        # `anthropic/<id>` entry with a claude runtime -- every recorded id has an entry
+        # when materialization ran. A well-shaped row whose entry validate_catalog_entry
+        # rejected (e.g. `"tool_call": "yes"`) is then reported only in `rejections`, never
+        # recorded without an entry. When claude is not on PATH nothing is materialized and
+        # every id _anthropic_model_ids returned is recorded unchanged (the documented
+        # installed-after-the-last-fetch case).
+        if materialized:
+            anthropic_ids = [i for i in anthropic_ids
+                             if canonical_key("anthropic", i) in catalog
+                             and "claude" in catalog[canonical_key("anthropic", i)]
+                             .get("runtimes", {})]
+        if anthropic_ids:
+            catalog_meta["anthropic_model_ids"] = anthropic_ids
+            catalog_meta["anthropic_model_ids_as_of"] = time.strftime("%Y-%m-%d")
         # 16 D-12: `_meta` rides along on every catalog write (entry_count stays entries-only).
         cache_write_json(args.catalog_path, join_catalog_meta(catalog, catalog_meta))
         print(json.dumps({"catalog_path": args.catalog_path, "entry_count": len(catalog),
