@@ -45,10 +45,11 @@
     "cross_ai_execution": true,
     "cross_ai_command": "opencode run --model router-env/my-coding",
     "cross_ai_timeout": 3600,
-    "plan_review_convergence": true
+    "plan_review_convergence": true,
+    "_auto_chain_active": false
   },
   "review": {
-     "reviewer_instances": {
+    "reviewer_instances": {
       "opencode-plan-review": {
         "cli": "opencode",
         "model": "router-env/my-plan-review"
