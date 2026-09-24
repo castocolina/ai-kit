@@ -9,6 +9,10 @@ from ai_kit_spec.vendor import _MODEL_TIER_SUFFIXES
 
 RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-static
 
+# 16 D-12: pre-Phase-16 snapshots carry no key and are treated as version 1; bump this
+# whenever the snapshot shape gains data a consumer relies on.
+RUNTIMES_SCHEMA_VERSION = 2
+
 # ── Runtime/CLI detection ───────────────────────────────────────────────
 
 KNOWN_CLIS = ("claude", "codex", "opencode", "grok", "cursor-agent")
@@ -228,9 +232,22 @@ def group_models_by_family(models: list) -> dict:
     return groups
 
 
+def runtimes_schema_is_current(data) -> bool:
+    """16 D-12: True only when `data` is a dict whose `schema_version` is a non-bool int
+    >= RUNTIMES_SCHEMA_VERSION. Everything else (None, non-dict, missing key, a bool,
+    a string, an older version) is False -- a missing or older version counts as stale
+    whatever the TTL says. Never raises, never mutates its input."""
+    if not isinstance(data, dict):
+        return False
+    version = data.get("schema_version")
+    return isinstance(version, int) and not isinstance(version, bool) \
+        and version >= RUNTIMES_SCHEMA_VERSION
+
+
 def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run) -> dict:
-    """{"clis": {name: {"installed": bool, "path"?: str, "models"?: [str],
-    "reasoning_modes"?: {model_id: [effort, ...]}}}}. `models` is populated
+    """{"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {name: {"installed": bool,
+    "path"?: str, "models"?: [str], "reasoning_modes"?: {model_id: [effort, ...]}}}}.
+    `models` is populated
     for opencode/cursor-agent always, and for codex when `codex debug
     models` enumeration succeeds; `reasoning_modes` (codex only) maps each
     enumerated model id to its CLI-reported effort levels, only for ids
@@ -238,7 +255,7 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run) -> dic
     (this module's CLI entrypoint) decides whether/where to persist this
     via cache_write_json."""
     installed = detect_installed_clis(which_fn=which_fn)
-    snapshot = {"clis": {}}
+    snapshot = {"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {}}
     for cli, binpath in installed.items():
         if not binpath:
             snapshot["clis"][cli] = {"installed": False}

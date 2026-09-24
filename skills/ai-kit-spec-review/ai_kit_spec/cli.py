@@ -27,6 +27,7 @@ from ai_kit_spec.detection import (
     detect_tool_availability,
     find_codegraph_alternative,
     group_models_by_family,
+    runtimes_schema_is_current,
 )
 from ai_kit_spec.execute_dispatch import dispatch_execute
 from ai_kit_spec.local_secrets import load_secret
@@ -556,8 +557,10 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
     p_detect.add_argument(
         "--if-stale", default=None, metavar="PATH",
         help=(
-            "skip detection entirely (print {} and exit 0) when PATH exists "
-            "and is fresher than RUNTIMES_TTL_SECONDS; else detect and --save to PATH"
+            "skip detection entirely (print {} and exit 0) when PATH exists, "
+            "is fresher than RUNTIMES_TTL_SECONDS, and carries the current "
+            "schema_version (a missing or older version always re-detects); "
+            "else detect and --save to PATH"
         ),
     )
 
@@ -768,7 +771,14 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
         return 0
 
     if args.command == "detect-runtimes":
-        if args.if_stale and not cache_is_stale(args.if_stale, RUNTIMES_TTL_SECONDS):
+        # 16 D-12: the skip requires BOTH a fresh mtime AND the current schema_version --
+        # a missing or older version forces re-detection whatever the TTL says (Pitfall 3:
+        # the refresh condition is "stale OR version not current", never chained ANDs).
+        # Plan 16-04 adds a third AND-ed condition (the claude entry matches the current
+        # catalog) to this same expression.
+        cached_runtimes = cache_read_json(args.if_stale) if args.if_stale else None
+        if args.if_stale and not cache_is_stale(args.if_stale, RUNTIMES_TTL_SECONDS) \
+                and runtimes_schema_is_current(cached_runtimes):
             print(json.dumps({}))  # fresh — caller should treat this as "nothing to do"
             return 0
         snapshot = build_runtimes_snapshot(which_fn=which_fn, run_fn=run_fn)

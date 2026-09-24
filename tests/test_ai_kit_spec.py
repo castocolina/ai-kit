@@ -1626,6 +1626,121 @@ class TestDetectCodexModels(unittest.TestCase):
             [])
 
 
+class TestRuntimesSchemaVersion(unittest.TestCase):
+    """16 D-12 tracer: runtimes.json schema_version -- snapshot stamping ->
+    detect-runtimes --if-stale -> an unversioned/older cache forces one re-detect
+    (and re-stamp) even when its mtime is fresh; cache.py stays schema-agnostic."""
+
+    def test_snapshot_carries_current_schema_version(self):
+        snapshot = rs.build_runtimes_snapshot(which_fn=lambda n: None,
+                                               run_fn=lambda *a, **k: None)
+        self.assertEqual(snapshot["schema_version"],
+                          detection.RUNTIMES_SCHEMA_VERSION)
+        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 2)
+
+    def test_fresh_but_unversioned_cache_redetects_and_stamps(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "runtimes.json")
+            rs.cache_write_json(path, {"clis": {}})  # fresh mtime, NO schema_version
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            recorded = []
+            with redirect_stdout(buf):
+                code = rs.main(["detect-runtimes", "--if-stale", path],
+                                which_fn=lambda n: recorded.append(n) or None,
+                                run_fn=lambda *a, **k: None)
+            self.assertEqual(code, 0)
+            self.assertEqual(recorded, list(detection.KNOWN_CLIS))  # detection ran
+            self.assertIn("clis", json.loads(buf.getvalue()))
+            self.assertEqual(rs.cache_read_json(path)["schema_version"],
+                              detection.RUNTIMES_SCHEMA_VERSION)  # re-stamped
+
+    def test_fresh_cache_with_older_version_redetects(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "runtimes.json")
+            rs.cache_write_json(path, {"schema_version": 1, "clis": {}})
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            recorded = []
+            with redirect_stdout(buf):
+                code = rs.main(["detect-runtimes", "--if-stale", path],
+                                which_fn=lambda n: recorded.append(n) or None,
+                                run_fn=lambda *a, **k: None)
+            self.assertEqual(code, 0)
+            self.assertEqual(recorded, list(detection.KNOWN_CLIS))
+            self.assertEqual(rs.cache_read_json(path)["schema_version"], 2)
+
+    def test_fresh_current_cache_is_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "runtimes.json")
+            rs.cache_write_json(path, {"schema_version": 2, "clis": {}})
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            recorded = []
+            with redirect_stdout(buf):
+                code = rs.main(["detect-runtimes", "--if-stale", path],
+                                which_fn=lambda n: recorded.append(n) or None,
+                                run_fn=lambda *a, **k: None)
+            self.assertEqual(code, 0)
+            self.assertEqual(recorded, [])  # detection never ran
+            self.assertEqual(json.loads(buf.getvalue()), {})
+
+    def test_old_mtime_current_version_still_redetects(self):
+        # TTL still honored: a current-version file past RUNTIMES_TTL_SECONDS re-detects.
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "runtimes.json")
+            rs.cache_write_json(path, {"schema_version": 2, "clis": {}})
+            old = time.time() - detection.RUNTIMES_TTL_SECONDS - 60
+            os.utime(path, (old, old))
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            recorded = []
+            with redirect_stdout(buf):
+                code = rs.main(["detect-runtimes", "--if-stale", path],
+                                which_fn=lambda n: recorded.append(n) or None,
+                                run_fn=lambda *a, **k: None)
+            self.assertEqual(code, 0)
+            self.assertEqual(recorded, list(detection.KNOWN_CLIS))
+
+    def test_unreadable_or_non_object_cache_redetects_without_raising(self):
+        for seed_text in ("not json", "[1, 2]"):
+            with self.subTest(seed=seed_text):
+                with tempfile.TemporaryDirectory() as d:
+                    path = os.path.join(d, "runtimes.json")
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(seed_text)
+                    import io
+                    from contextlib import redirect_stdout
+                    buf = io.StringIO()
+                    recorded = []
+                    with redirect_stdout(buf):
+                        code = rs.main(["detect-runtimes", "--if-stale", path],
+                                        which_fn=lambda n: recorded.append(n) or None,
+                                        run_fn=lambda *a, **k: None)
+                    self.assertEqual(code, 0)
+                    self.assertEqual(recorded, list(detection.KNOWN_CLIS))
+
+    def test_version_predicate_rejects_non_int_values(self):
+        f = detection.runtimes_schema_is_current
+        for bad in (None, [], {}, {"schema_version": True}, {"schema_version": "2"},
+                    {"schema_version": 1}):
+            self.assertFalse(f(bad))
+        for good in ({"schema_version": 2}, {"schema_version": 3}):
+            self.assertTrue(f(good))
+
+    def test_cache_is_stale_stays_schema_agnostic(self):
+        # The version check lives in the cli.py caller; cache_is_stale stays a generic
+        # mtime/TTL helper and must never see or judge schema_version.
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "f.json")
+            rs.cache_write_json(path, {"clis": {}})
+            self.assertFalse(rs.cache_is_stale(path, 3600))
+
+
 class TestResolveLadderPick(unittest.TestCase):
     def setUp(self):
         self.reviewers = [
@@ -2560,7 +2675,8 @@ class TestMainCli(unittest.TestCase):
     def test_detect_runtimes_if_stale_skips_detection_when_fresh(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "runtimes.json")
-            rs.cache_write_json(path, {"clis": {}})  # just written -> fresh
+            rs.cache_write_json(path, {"schema_version": detection.RUNTIMES_SCHEMA_VERSION,
+                                       "clis": {}})  # just written -> fresh
             import io
             from contextlib import redirect_stdout
             buf = io.StringIO()
