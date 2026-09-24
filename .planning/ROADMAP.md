@@ -95,7 +95,7 @@ rewrite depends on.
   4. The ranker accepts `planning`, `general`, `mechanical`, `execution`, `review` purposes via the
      ranking-weights file, and existing `review`/`execute` callers keep working unchanged as
      aliases.
-**Plans**: 2/6 plans executed
+**Plans**: 3/6 plans executed
 
 Plans:
 **Wave 1**
@@ -108,7 +108,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 16-03-PLAN.md — `schema_version` on runtimes.json and model-catalog.json (`_meta`); unversioned caches refresh under `--if-stale`
+- [x] 16-03-PLAN.md — `schema_version` on runtimes.json and model-catalog.json (`_meta`); unversioned caches refresh under `--if-stale`
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
