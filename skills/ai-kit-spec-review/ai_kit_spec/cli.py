@@ -31,7 +31,14 @@ from ai_kit_spec.detection import (
 )
 from ai_kit_spec.execute_dispatch import dispatch_execute
 from ai_kit_spec.local_secrets import load_secret
-from ai_kit_spec.model_catalog import canonical_key, merge_catalog_entry
+from ai_kit_spec.model_catalog import (
+    CATALOG_SCHEMA_VERSION,
+    catalog_schema_is_current,
+    canonical_key,
+    join_catalog_meta,
+    merge_catalog_entry,
+    split_catalog_meta,
+)
 from ai_kit_spec.model_heuristics import (
     infer_batch_mode,
     infer_fallback_quota,
@@ -579,8 +586,10 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
              "yet) -- still goes through the same matching/enrichment path as anything else.")
     p_catalog.add_argument(
         "--if-stale", action="store_true",
-        help="gate NETWORK CALLS ONLY: when --catalog-path exists and is fresher than "
-             "CATALOG_TTL_SECONDS, skip fetching models.dev/Artificial Analysis and reuse "
+        help="gate NETWORK CALLS ONLY: when --catalog-path exists, is fresher than "
+             "CATALOG_TTL_SECONDS, and its _meta.schema_version is current (a missing or "
+             "older version is always re-fetched), skip fetching models.dev/Artificial "
+             "Analysis and reuse "
              "cached fields for every already-known candidate -- candidate DISCOVERY/"
              "RECONCILIATION (runtimes snapshot + registered single-provider-CLI models + "
              "--extra-candidate) always runs regardless of this flag, every invocation, so a "
@@ -833,7 +842,11 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
             if cli_name and model_id:
                 discovered.append({"cli": cli_name, "model_id": model_id})
 
-        existing_catalog = cache_read_json(args.catalog_path) or {}
+        # 16 D-12: split the reserved `_meta` metadata object off so build_model_catalog and
+        # _find_existing_key_for_runtime only ever see real `provider/model` entries (every
+        # other top-level key of a catalog file is a model entry; `_meta` never is).
+        existing_catalog, catalog_meta = split_catalog_meta(
+            cache_read_json(args.catalog_path))
         # Important finding (coordinator review): `cache_is_stale(args.catalog_path, ...)` is
         # mtime-based, but `cache_write_json(args.catalog_path, catalog)` below runs on EVERY
         # invocation -- including a skip_fetch run where nothing external was ever queried.
@@ -846,7 +859,12 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
         # on a skipped-fetch run, so its own mtime reflects the last REAL fetch, not the last
         # catalog write.
         fetch_meta_path = args.catalog_path + ".fetch-meta.json"
-        skip_fetch = args.if_stale and not cache_is_stale(fetch_meta_path, CATALOG_TTL_SECONDS)
+        # 16 D-12: the skip requires BOTH a fresh fetch-meta mtime AND the catalog's current
+        # _meta.schema_version -- a missing or older version forces the fetch whatever the
+        # TTL says (Pitfall 3: the refresh condition is "stale OR version not current",
+        # never chained ANDs).
+        skip_fetch = args.if_stale and not cache_is_stale(fetch_meta_path, CATALOG_TTL_SECONDS) \
+            and catalog_schema_is_current(catalog_meta)
         if skip_fetch:
             models_dev_data, models_dev_ok = {}, False
             aa_models, aa_ok = [], False
@@ -863,11 +881,18 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
             aa_ok = aa_fetch_ok and bool(api_key)
             if models_dev_ok or aa_ok:
                 cache_write_json(fetch_meta_path, {"last_fetched": time.time()})
+            # 16 D-12: only a run where models.dev answered stamps the catalog version
+            # current (models.dev is the source of the fields this version adds) -- an
+            # AA-only or failed fetch leaves `_meta` untouched, so the next --if-stale run
+            # retries the fetch instead of trusting an unversioned/older catalog.
+            if models_dev_ok:
+                catalog_meta = {**catalog_meta, "schema_version": CATALOG_SCHEMA_VERSION}
 
         catalog, rejections, unmatched = build_model_catalog(
             discovered, models_dev_data, models_dev_ok, aa_models, aa_ok, existing_catalog,
             runtime_meta=runtime_meta)
-        cache_write_json(args.catalog_path, catalog)
+        # 16 D-12: `_meta` rides along on every catalog write (entry_count stays entries-only).
+        cache_write_json(args.catalog_path, join_catalog_meta(catalog, catalog_meta))
         print(json.dumps({"catalog_path": args.catalog_path, "entry_count": len(catalog),
                            "rejections": rejections, "unmatched": unmatched,
                            "discovered": discovered,
@@ -888,12 +913,14 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
                 "reason": "--entry-json must be an object with a string 'model_id' and an "
                           "object 'entry'"}))
             return 1
-        catalog = cache_read_json(args.catalog_path) or {}
-        catalog, reason = merge_catalog_entry(catalog, payload["model_id"], payload["entry"])
+        # 16 D-12: split `_meta` off before merging so merge_catalog_entry only ever sees
+        # real entries, then write it back verbatim -- confirm never disturbs cache metadata.
+        entries, meta = split_catalog_meta(cache_read_json(args.catalog_path))
+        merged, reason = merge_catalog_entry(entries, payload["model_id"], payload["entry"])
         if reason:
             print(json.dumps({"confirmed": False, "reason": reason}))
             return 1
-        cache_write_json(args.catalog_path, catalog)
+        cache_write_json(args.catalog_path, join_catalog_meta(merged, meta))
         print(json.dumps({"confirmed": True, "model_id": payload["model_id"]}))
         return 0
 
@@ -910,12 +937,14 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
         # correction that would produce a schema-invalid entry is rejected here exactly like
         # confirm-catalog-entry rejects an invalid new entry, never silently written.
         corrections = cache_read_json(args.corrections_json) or {}
-        catalog = cache_read_json(args.catalog_path) or {}
-        catalog, reason = apply_heuristic_corrections(catalog, args.model_id, corrections)
+        # 16 D-12: split `_meta` off before correcting, write it back verbatim -- a
+        # correction never disturbs the catalog's cache metadata.
+        entries, meta = split_catalog_meta(cache_read_json(args.catalog_path))
+        catalog, reason = apply_heuristic_corrections(entries, args.model_id, corrections)
         if reason:
             print(json.dumps({"applied": False, "reason": reason}))
             return 1
-        cache_write_json(args.catalog_path, catalog)
+        cache_write_json(args.catalog_path, join_catalog_meta(catalog, meta))
         print(json.dumps({"applied": True, "model_id": args.model_id}))
         return 0
 

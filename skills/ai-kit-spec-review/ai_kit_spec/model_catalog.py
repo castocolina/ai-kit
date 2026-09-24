@@ -9,6 +9,12 @@ from ai_kit_spec.cache import cache_base
 
 CATALOG_TTL_SECONDS = 30 * 24 * 3600  # ~30 days -- spec Section 8, same order as RUNTIMES_TTL
 
+# 16 D-12: the catalog's own metadata lives in this reserved top-level object because every
+# other top-level key is a `provider/model` canonical key (canonical keys always contain `/`,
+# _meta never does); pre-Phase-16 catalogs have no `_meta` and count as version 1.
+CATALOG_SCHEMA_VERSION = 2
+CATALOG_META_KEY = "_meta"
+
 _MANDATORY_CATALOG_FIELDS = {"provider", "runtimes", "source", "confidence", "last_verified"}
 _VALID_CONFIDENCE = {"high", "medium", "low"}
 _LAST_VERIFIED_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -44,6 +50,39 @@ _VALID_NATIVE_RUNTIME = {"claude", "opencode", "codex", "cursor", "pi", "unknown
 
 def cache_catalog_path(env: dict) -> str:
     return os.path.join(cache_base(env), "model-catalog.json")
+
+
+def split_catalog_meta(raw) -> tuple:
+    """16 D-12: splits a raw catalog file's dict into (entries, meta). Entries is every
+    top-level key except the reserved CATALOG_META_KEY; meta is a shallow copy of that
+    key's value when it is a dict, else {}. Never raises, never mutates its input; a
+    non-dict `raw` (None, a list, a string) splits to ({}, {})."""
+    if not isinstance(raw, dict):
+        return {}, {}
+    entries = {k: v for k, v in raw.items() if k != CATALOG_META_KEY}
+    meta = raw.get(CATALOG_META_KEY)
+    return entries, dict(meta) if isinstance(meta, dict) else {}
+
+
+def join_catalog_meta(entries: dict, meta: dict) -> dict:
+    """16 D-12: inverse of split_catalog_meta -- a new dict of `entries` plus the reserved
+    CATALOG_META_KEY only when `meta` is non-empty (an empty meta writes no `_meta` key).
+    Never mutates either input."""
+    joined = dict(entries)
+    if meta:
+        joined[CATALOG_META_KEY] = dict(meta)
+    return joined
+
+
+def catalog_schema_is_current(meta) -> bool:
+    """16 D-12: mirrors runtimes_schema_is_current -- True only for a dict whose
+    `schema_version` is a non-bool int >= CATALOG_SCHEMA_VERSION. A missing or older
+    version counts as stale whatever the TTL says. Never raises."""
+    if not isinstance(meta, dict):
+        return False
+    version = meta.get("schema_version")
+    return isinstance(version, int) and not isinstance(version, bool) \
+        and version >= CATALOG_SCHEMA_VERSION
 
 
 def canonical_key(provider: str, bare_model_id: str) -> str:
@@ -137,6 +176,8 @@ def merge_catalog_entry(catalog: dict, model_id: str, entry: dict) -> tuple:
     `runtimes` is MERGED into any existing entry at this key, never replaced wholesale --
     this is what lets two different CLIs' runtime mappings for the same real model coexist
     under one canonical key (HIGH finding: catalog identity must not lose runtime mappings)."""
+    if model_id == CATALOG_META_KEY:
+        return catalog, f"{model_id}: reserved catalog key, not a model id"
     reason = validate_catalog_entry(model_id, entry)
     if reason:
         return catalog, reason

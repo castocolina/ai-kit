@@ -5423,6 +5423,12 @@ class TestFetchModelCatalogCli(unittest.TestCase):
         with open(catalog_path + ".fetch-meta.json", "w", encoding="utf-8") as f:
             json.dump({"last_fetched": time.time()}, f)
 
+    def _write_current_schema_catalog(self, catalog_path):
+        # 16 D-12: a skip-fetch run additionally requires the catalog's `_meta.schema_version`
+        # to be current -- seed the versioned empty catalog these tests need.
+        with open(catalog_path, "w", encoding="utf-8") as f:
+            json.dump({"_meta": {"schema_version": model_catalog.CATALOG_SCHEMA_VERSION}}, f)
+
     def _never_fetch_models_dev(self):
         self.fail("fetch_models_dev_fn should not be called on a skip_fetch run")
 
@@ -5435,8 +5441,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
         # missed until the cache goes stale.
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
-            with open(catalog_path, "w", encoding="utf-8") as f:
-                json.dump({}, f)
+            self._write_current_schema_catalog(catalog_path)
             self._write_fresh_fetch_meta(catalog_path)
             runtimes_path = self._write_runtimes(
                 d, {"opencode": {"installed": True, "models": ["vendor/brand-new"]}})
@@ -5467,8 +5472,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
         # skipped run leaves that mtime/content alone rather than refreshing it.
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
-            with open(catalog_path, "w", encoding="utf-8") as f:
-                json.dump({}, f)
+            self._write_current_schema_catalog(catalog_path)
             meta_path = catalog_path + ".fetch-meta.json"
             original_marker = {"last_fetched": 12345.0}
             with open(meta_path, "w", encoding="utf-8") as f:
@@ -5545,8 +5549,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
         # discovery/reconciliation runs unconditionally, network fetching is what's gated.
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
-            with open(catalog_path, "w", encoding="utf-8") as f:
-                json.dump({}, f)
+            self._write_current_schema_catalog(catalog_path)
             self._write_fresh_fetch_meta(catalog_path)
             runtimes_path = self._write_runtimes(d, {})
             import io
@@ -5572,8 +5575,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
         # actually running the suite.
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
-            with open(catalog_path, "w", encoding="utf-8") as f:
-                json.dump({}, f)
+            self._write_current_schema_catalog(catalog_path)
             self._write_fresh_fetch_meta(catalog_path)
             runtimes_path = self._write_runtimes(
                 d, {"codex": {"installed": True}})  # no "models" key -- single-provider
@@ -5683,6 +5685,296 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             result = json.loads(buf.getvalue())
             self.assertFalse(result["applied"])
             self.assertTrue(cache_read_json(catalog_path)["router-env/x"]["is_router"])  # unchanged
+
+
+class TestCatalogSchemaVersion(unittest.TestCase):
+    """16 D-12: model-catalog.json's `_meta.schema_version` -- split/join helpers, the
+    reserved-key guard in merge_catalog_entry, schema-aware --if-stale gating in
+    fetch-model-catalog, and `_meta` preservation across every catalog-writing subcommand."""
+
+    def _write_fresh_fetch_meta(self, catalog_path):
+        with open(catalog_path + ".fetch-meta.json", "w", encoding="utf-8") as f:
+            json.dump({"last_fetched": time.time()}, f)
+
+    @staticmethod
+    def _legacy_entry():
+        return {"provider": "openai", "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol",
+                                                                 "ctx_window": 400000}},
+                "source": {"models_dev": True, "artificial_analysis": False, "manual": False},
+                "confidence": "high", "last_verified": "2026-09-01", "tool_calling": True}
+
+    # ── split_catalog_meta ────────────────────────────────────────────────
+
+    def test_split_rejects_non_dict_input(self):
+        for raw in (None, [], "x"):
+            self.assertEqual(model_catalog.split_catalog_meta(raw), ({}, {}))
+
+    def test_split_separates_entries_from_meta(self):
+        raw = {"a/b": {"provider": "a"}, "_meta": {"schema_version": 2}}
+        entries, meta = model_catalog.split_catalog_meta(raw)
+        self.assertEqual(entries, {"a/b": {"provider": "a"}})
+        self.assertEqual(meta, {"schema_version": 2})
+
+    def test_split_drops_a_non_dict_meta_value(self):
+        entries, meta = model_catalog.split_catalog_meta({"a/b": {"provider": "a"},
+                                                          "_meta": "garbage"})
+        self.assertEqual(entries, {"a/b": {"provider": "a"}})
+        self.assertEqual(meta, {})
+
+    # ── join_catalog_meta ─────────────────────────────────────────────────
+
+    def test_join_with_empty_meta_has_no_meta_key(self):
+        self.assertEqual(model_catalog.join_catalog_meta({"a/b": {}}, {}),
+                          {"a/b": {}})
+
+    def test_join_adds_meta_and_neither_call_mutates_inputs(self):
+        entries = {"a/b": {"provider": "a"}}
+        meta = {"schema_version": 2}
+        joined = model_catalog.join_catalog_meta(entries, meta)
+        self.assertEqual(joined, {**entries, "_meta": {"schema_version": 2}})
+        self.assertEqual(entries, {"a/b": {"provider": "a"}})  # untouched
+        self.assertEqual(meta, {"schema_version": 2})  # untouched
+
+    # ── catalog_schema_is_current ─────────────────────────────────────────
+
+    def test_schema_predicate_rejects_missing_old_and_non_int(self):
+        f = model_catalog.catalog_schema_is_current
+        for bad in ({}, {"schema_version": 1}, {"schema_version": True},
+                    {"schema_version": "2"}, None):
+            self.assertFalse(f(bad))
+        for good in ({"schema_version": 2}, {"schema_version": 3}):
+            self.assertTrue(f(good))
+
+    # ── merge_catalog_entry reserved-key guard ────────────────────────────
+
+    def test_merge_rejects_meta_as_a_model_id(self):
+        catalog = {"_meta": {"schema_version": 2}}
+        valid_entry = {"provider": "p", "runtimes": {"c": {}}, "source": {},
+                        "confidence": "high", "last_verified": "2026-09-02"}
+        updated, reason = model_catalog.merge_catalog_entry(catalog, "_meta", valid_entry)
+        self.assertEqual(updated, catalog)  # unchanged
+        self.assertIn("reserved", reason)
+
+    # ── current_candidate_keys ignores _meta ──────────────────────────────
+
+    def test_current_candidate_keys_never_returns_meta(self):
+        catalog = {
+            "_meta": {"schema_version": 2},
+            "openai/gpt-5.6-sol": {"runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}}},
+        }
+        keys = model_catalog.current_candidate_keys(
+            catalog, [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}])
+        self.assertEqual(keys, {"openai/gpt-5.6-sol"})
+        self.assertNotIn("_meta", keys)
+
+    # ── fetch-model-catalog --if-stale gating (CLI) ───────────────────────
+
+    def test_legacy_catalog_with_fresh_fetch_meta_is_refetched_and_stamped(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                json.dump({"openai/gpt-5.6-sol": self._legacy_entry()}, f)
+            self._write_fresh_fetch_meta(catalog_path)
+            runtimes_path = os.path.join(d, "runtimes.json")
+            with open(runtimes_path, "w", encoding="utf-8") as f:
+                json.dump({"clis": {}}, f)
+            fetches = []
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path, "--if-stale"],
+                    fetch_models_dev_fn=lambda: (fetches.append("md") or ({}, True)),
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    load_secret_fn=lambda env, key: None)
+            self.assertEqual(code, 0)
+            result = json.loads(buf.getvalue())
+            self.assertEqual(fetches, ["md"])  # the version-stale catalog forced one fetch
+            self.assertFalse(result["fetch_skipped"])
+            self.assertEqual(result["entry_count"], 1)  # entries only, `_meta` not counted
+            written = cache_read_json(catalog_path)
+            self.assertEqual(written["_meta"], {"schema_version": 2})
+            self.assertEqual(written["openai/gpt-5.6-sol"], self._legacy_entry())  # preserved
+
+    def test_meta_with_older_version_is_refetched(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                json.dump({"_meta": {"schema_version": 1}}, f)
+            self._write_fresh_fetch_meta(catalog_path)
+            runtimes_path = os.path.join(d, "runtimes.json")
+            with open(runtimes_path, "w", encoding="utf-8") as f:
+                json.dump({"clis": {}}, f)
+            fetches = []
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path, "--if-stale"],
+                    fetch_models_dev_fn=lambda: (fetches.append("md") or ({}, True)),
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    load_secret_fn=lambda env, key: None)
+            self.assertEqual(code, 0)
+            self.assertEqual(fetches, ["md"])  # older version -> fetch
+
+    def test_current_meta_is_preserved_verbatim_on_a_skipped_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                json.dump({"_meta": {"schema_version": 2, "note": "keep"}}, f)
+            self._write_fresh_fetch_meta(catalog_path)
+            runtimes_path = os.path.join(d, "runtimes.json")
+            with open(runtimes_path, "w", encoding="utf-8") as f:
+                json.dump({"clis": {}}, f)
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path, "--if-stale"],
+                    fetch_models_dev_fn=self.fail,
+                    fetch_artificial_analysis_fn=self.fail,
+                    load_secret_fn=lambda env, key: None)
+            self.assertEqual(code, 0)
+            written = cache_read_json(catalog_path)
+            self.assertEqual(written["_meta"], {"schema_version": 2, "note": "keep"})
+
+    def test_models_dev_down_aa_only_never_stamps_meta_so_next_run_refetches(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            runtimes_path = os.path.join(d, "runtimes.json")
+            with open(runtimes_path, "w", encoding="utf-8") as f:
+                json.dump({"clis": {}}, f)
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path],
+                    fetch_models_dev_fn=lambda: ({}, False),  # models.dev down
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    load_secret_fn=lambda env, key: "k")  # AA ok
+            self.assertEqual(code, 0)
+            result = json.loads(buf.getvalue())
+            self.assertFalse(result["models_dev_ok"])
+            self.assertTrue(result["artificial_analysis_ok"])
+            self.assertNotIn("_meta", cache_read_json(catalog_path))  # not stamped
+            # fetch-meta WAS written (existing behavior) but the catalog is still versionless
+            # -- the immediate second --if-stale run must fetch again.
+            self.assertTrue(os.path.exists(catalog_path + ".fetch-meta.json"))
+            fetches = []
+            buf2 = io.StringIO()
+            with redirect_stdout(buf2):
+                code2 = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path, "--if-stale"],
+                    fetch_models_dev_fn=lambda: (fetches.append("md") or ({}, True)),
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    load_secret_fn=lambda env, key: None)
+            self.assertEqual(code2, 0)
+            self.assertEqual(fetches, ["md"])  # retried -- one successful refresh comes first
+
+    # ── confirm-catalog-entry / apply-heuristic-correction preserve _meta ──
+
+    def test_confirm_catalog_entry_preserves_meta(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            original = {"_meta": {"schema_version": 2, "note": "keep"},
+                         "openai/gpt-5.6-sol": self._legacy_entry()}
+            cache_write_json(catalog_path, original)
+            entry_path = os.path.join(d, "entry.json")
+            with open(entry_path, "w", encoding="utf-8") as f:
+                json.dump({"model_id": "vendor/new", "entry": self._legacy_entry()}, f)
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["confirm-catalog-entry", "--catalog-path", catalog_path,
+                                 "--entry-json", entry_path])
+            self.assertEqual(code, 0)
+            written = cache_read_json(catalog_path)
+            self.assertEqual(written["_meta"], {"schema_version": 2, "note": "keep"})
+            self.assertIn("vendor/new", written)
+
+    def test_confirm_catalog_entry_rejects_meta_as_model_id_without_writing(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            original_text = json.dumps(
+                {"_meta": {"schema_version": 2},
+                 "openai/gpt-5.6-sol": self._legacy_entry()})
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                f.write(original_text)
+            entry_path = os.path.join(d, "entry.json")
+            with open(entry_path, "w", encoding="utf-8") as f:
+                json.dump({"model_id": "_meta", "entry": self._legacy_entry()}, f)
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["confirm-catalog-entry", "--catalog-path", catalog_path,
+                                 "--entry-json", entry_path])
+            self.assertEqual(code, 1)
+            self.assertIn("reserved", json.loads(buf.getvalue())["reason"])
+            with open(catalog_path, encoding="utf-8") as f:
+                self.assertEqual(f.read(), original_text)  # byte-identical
+
+    def test_apply_heuristic_correction_preserves_meta(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            cache_write_json(catalog_path, {"_meta": {"schema_version": 2, "note": "keep"},
+                                             "router-env/x": {
+                                                 "provider": "router-env",
+                                                 "runtimes": {"opencode": {}}, "source": {},
+                                                 "confidence": "low",
+                                                 "last_verified": "2026-09-02",
+                                                 "is_router": True}})
+            corrections_path = os.path.join(d, "corrections.json")
+            with open(corrections_path, "w", encoding="utf-8") as f:
+                json.dump({"is_router": False}, f)
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["apply-heuristic-correction", "--catalog-path", catalog_path,
+                                 "--model-id", "router-env/x",
+                                 "--corrections-json", corrections_path])
+            self.assertEqual(code, 0)
+            written = cache_read_json(catalog_path)
+            self.assertEqual(written["_meta"], {"schema_version": 2, "note": "keep"})
+            self.assertFalse(written["router-env/x"]["is_router"])
+
+    # ── E5: garbage catalog file with a real fetch ────────────────────────
+
+    def test_garbage_catalog_file_is_replaced_by_a_valid_fetch(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            with open(catalog_path, "w", encoding="utf-8") as f:
+                f.write("{not json")
+            runtimes_path = os.path.join(d, "runtimes.json")
+            with open(runtimes_path, "w", encoding="utf-8") as f:
+                json.dump({"clis": {}}, f)
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path],
+                    fetch_models_dev_fn=lambda: ({}, True),
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    load_secret_fn=lambda env, key: None)
+            self.assertEqual(code, 0)
+            written = cache_read_json(catalog_path)
+            self.assertIsInstance(written, dict)
+            self.assertEqual(written.get("_meta"), {"schema_version": 2})
 
 
 if __name__ == "__main__":
