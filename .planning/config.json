@@ -65,7 +65,7 @@
     },
     "default_reviewers": [
       "opencode-plan-review",
-      "opencode"
+      "codex-sol-high"
     ],
     "models": {
       "opencode": "xai/grok-4.6"
