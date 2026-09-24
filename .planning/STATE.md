@@ -3,18 +3,18 @@ gsd_state_version: "1.0"
 milestone: v1.2
 current_phase: "15.2"
 current_phase_name: v1.2 Tech Debt Cleanup (pre-close)
-current_plan: Not started
-status: executing
-stopped_at: Phase 15.1 complete — all phases complete
-last_updated: "2026-09-24T00:24:16.828Z"
+current_plan: 1
+status: verifying
+stopped_at: Completed 15.2-01-PLAN.md
+last_updated: "2026-09-24T00:34:44.205Z"
 last_activity: 2026-09-23
-last_activity_desc: Phase 15.2 inserted (v1.2 tech-debt cleanup from milestone audit)
-state_head: ff528575fa6f2aa465df17bf9160562b6b0b656c
+last_activity_desc: Phase 15.2 execution started
+state_head: 2a52b254ccbe1b9fb4d2aa5259d917bceeac5057
 progress:
   total_phases: 19
   completed_phases: 16
   total_plans: 37
-  completed_plans: 36
+  completed_plans: 37
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -25,15 +25,15 @@ milestone_name: ai-kit Rules Skill Family
 See: .planning/PROJECT.md (updated 2026-09-10)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 15.1 (INSERTED) - Usage Metrics Dashboard UX/Perf Overhaul, urgent gap-closure for Phase 5 dashboard
+**Current focus:** Phase 15.2 — v1.2 Tech Debt Cleanup (pre-close)
 
 ## Current Position
 
-Phase: 15.2 (v1.2 Tech Debt Cleanup (pre-close)) — READY TO EXECUTE
-Current Plan: Not started
+Phase: 15.2 (v1.2 Tech Debt Cleanup (pre-close)) — EXECUTING
+Current Plan: 1
 Total Plans in Phase: 1
-Status: Ready to execute
-Last activity: 2026-09-23 — Phase 15.2 inserted (v1.2 tech-debt cleanup from milestone audit)
+Status: Phase complete — ready for verification
+Last activity: 2026-09-23 — Phase 15.2 execution started
 
 ## Performance Metrics
 
@@ -117,6 +117,7 @@ Last activity: 2026-09-23 — Phase 15.2 inserted (v1.2 tech-debt cleanup from m
 | Phase 15.1 P02 | 55min | 3 tasks | 3 files |
 | Phase 15.1 P03 | 75min | 3 tasks | 3 files |
 | Phase 15.1 P04 | ~70min | 3 tasks | 4 files |
+| Phase 15.2 P01 | ~35min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -214,6 +215,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 15.1]: subfamily_of() deliberately not wired into _build_row and adds no refined_commands column -- subfamily is derived at dashboard render time to avoid a three-place schema-change hazard
 - [Phase 15.1]: Phase 15.1 Plan 03: D-12 filter bar/column rebuild with runtime+subfamily axes, unified date range, and D-16 null-vs-zero rendering implemented per the cross-AI-reviewed plan verbatim. — date column placement resolves a gap in D-12's own wording (planner decision, not a user decision); the date-range wrapper span was renamed off the filter-* id prefix to avoid false-matching the clear-filters coverage test.
 - [Phase 15.1]: Phase 15.1 Plan 04: turnKey() SD-4 dedup identity replaces the under-counting session-grouping key (D-16 session dup) and refined_store.py's docstring now states it; a full-command detail dialog (indexByRawRef/stepEntries) makes the two-line command clamp lossless (D-14); empty/loading/error page states added with an SD-10 double-requestAnimationFrame paint guarantee for the loading bar. Plan 05 must reuse turnKey and match the corrected docstring wording in SKILL.md.
+- [Phase 15.2]: Phase 15.2 Plan 01: closed all four Phase 15.2 SCs — PairRow TypedDict for pyright 0 errors (SC1), symmetric flat/grouped sort-key fallback with node regression tests in both directions closing 15.1-REVIEW WR-01/WR-02 (SC2), ruff-clean test file (SC3), 3 resolved v1.1 todos moved to todos/completed (SC4). gsd_run check tdd-red-evidence is Node-TAP-only and could not classify Python unittest RED evidence; verified manually against the plan's documented behavior spec instead.
 
 ### Pending Todos
 
@@ -327,6 +329,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-22T00:45:25.585Z
-Stopped at: Phase 15.1 complete — all phases complete
+Last session: 2026-09-24T00:34:44.149Z
+Stopped at: Completed 15.2-01-PLAN.md
 Resume file: None
