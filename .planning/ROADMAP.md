@@ -82,10 +82,10 @@ rewrite depends on.
 **Requirements**: SPEC-01, SPEC-02, SPEC-03, SPEC-04
 **Success Criteria** (what must be TRUE):
   1. `detect-current-runtime` correctly identifies pi (`PI_CODING_AGENT`) and codex
-     (`CODEX_THREAD_ID`/`CODEX_SANDBOX`) sessions in addition to opencode/cursor/claude, honoring
+     (`CODEX_THREAD_ID`/`CODEX_VERSION`) sessions in addition to opencode/cursor/claude, honoring
      precedence pi > opencode > cursor > claude > codex when several signals are set.
-  2. `detect-runtimes` enumerates real model lists for pi (`pi --list-models`), codex
-     (`codex debug models`), and claude (static alias + full-id list) by invoking the actual
+  2. `detect-runtimes` enumerates real model lists for codex
+     (`codex debug models`), and claude (hardcoded aliases + catalog full ids + dated fallback) by invoking the actual
      binaries — never shell functions/aliases — with parsers validated against fixtures captured
      from real CLI output.
   3. Model catalog entries can carry optional `image_input` and `reasoning_levels` fields, and
@@ -179,7 +179,7 @@ the two open verifications the spec left pending.
 **Requirements**: EVAL-04, EVAL-05
 **Success Criteria** (what must be TRUE):
   1. A live smoke run from the codex host (`inventory` + `recommend` + `apply`) completes
-     successfully, and the codex session env signal (`CODEX_THREAD_ID`/`CODEX_SANDBOX`) is
+     successfully, and the codex session env signal (`CODEX_THREAD_ID`/`CODEX_VERSION`) is
      confirmed live rather than only source-inspected.
   2. A live smoke run from the opencode host completes successfully, and whether the opencode
      review lane is usable from an opencode host is confirmed and reflected in the recommendation
@@ -191,11 +191,13 @@ the two open verifications the spec left pending.
 "not live-validated" label is lifted.
 **Depends on**: Phase 19 (independent of Phase 20; may run any time afterward, and nothing
 downstream depends on it)
-**Requirements**: EVAL-07
+**Requirements**: EVAL-07, SPEC-06
 **Success Criteria** (what must be TRUE):
   1. A live smoke run from the cursor host (`inventory` + `recommend` + `apply`, dry-run then
      real) completes successfully on a scratch project.
   2. SKILL.md's "not live-validated" label for cursor is removed once the smoke run passes.
+  3. `cursor-agent` is detected and enumerated even when wrapped by a shell function/alias
+     (SPEC-06, deferred from Phase 16).
 **Plans**: TBD
 
 ### Phase 22: Pi Live Validation
@@ -203,12 +205,14 @@ downstream depends on it)
 label is lifted.
 **Depends on**: Phase 19 (independent of Phases 20–21; may run any time afterward, and nothing
 downstream depends on it)
-**Requirements**: EVAL-08
+**Requirements**: EVAL-08, SPEC-05
 **Success Criteria** (what must be TRUE):
   1. A live smoke run from the pi host (`inventory` + `recommend` + `apply`, dry-run then real)
      completes successfully on a scratch project, including per-agent `pi --model` process wiring
      via the subagent extension.
   2. SKILL.md's "not live-validated" label for pi is removed once the smoke run passes.
+  3. `detect-runtimes` enumerates pi models (`pi --list-models`) via a fixture-backed parser
+     (SPEC-05, deferred from Phase 16).
 **Plans**: TBD
 
 ## Backlog
