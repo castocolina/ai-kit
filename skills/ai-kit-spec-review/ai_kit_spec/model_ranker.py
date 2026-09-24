@@ -30,7 +30,8 @@ DEFAULT_WEIGHTS = {
     "general": {"intelligence_index": 0.25, "coding_index": 0.15, "agentic_index": 0.15,
                 "context_window": 0.10, "tool_calling": 0.05, "price": 0.20, "speed": 0.10},
     "mechanical": {"intelligence_index": 0.05, "coding_index": 0.15, "agentic_index": 0.05,
-                   "context_window": 0.05, "tool_calling": 0.05, "price": 0.55, "speed": 0.10},
+                   "context_window": 0.05, "tool_calling": 0.05, "price": 0.55, "speed": 0.10,
+                   "floor": {"coding_index": 35}},
     "bonuses": {"batch_mode": 8, "fallback_quota": 5, "bonus_cap": 15},
 }
 
@@ -105,6 +106,22 @@ def _is_valid_purpose_section(section) -> bool:
         for axis, minimum in floor.items():
             if axis not in _FLOORABLE_AXES or not _is_finite_number(minimum):
                 return False
+    return True
+
+
+def _passes_floor(entry: dict, floor: dict) -> bool:
+    """Check if a candidate passes the floor constraints (16 D-11). For each (axis, minimum),
+    the candidate's raw entry["scores"][axis] must exist (scores must be a dict), pass
+    _is_finite_number, and be >= minimum; otherwise False. If floor is empty, returns True."""
+    if not floor:
+        return True
+    scores = entry.get("scores")
+    if not isinstance(scores, dict):
+        return False
+    for axis, minimum in floor.items():
+        value = scores.get(axis)
+        if not _is_finite_number(value) or value < minimum:
+            return False
     return True
 
 
@@ -203,21 +220,27 @@ def score_candidates(entries: list, purpose: str, weights: dict) -> list:
         axis_weights = weights[canonical]
     else:
         axis_weights = weights[purpose]  # Hand-built legacy dict keyed "execute" keeps working
-    price_raw = {e["key"]: e.get("pricing", {}).get("input_per_1m") for e in entries}
+
+    # Apply floor filter BEFORE normalization so excluded candidates don't affect scoring
+    floor = axis_weights.get(_FLOOR_KEY) or {}
+    survivors = [e for e in entries if _passes_floor(e, floor)]
+
+    # Normalize only on survivors to prevent excluded candidates from skewing the ranges
+    price_raw = {e["key"]: e.get("pricing", {}).get("input_per_1m") for e in survivors}
     price_norm = _normalize_minmax(price_raw, invert=True)
-    speed_norm = _normalize_minmax({e["key"]: e.get("tokens_per_sec") for e in entries})
+    speed_norm = _normalize_minmax({e["key"]: e.get("tokens_per_sec") for e in survivors})
     ctx_raw = {e["key"]: (math.log10(w) if (w := _max_context_window(e)) else None)
-               for e in entries}
+               for e in survivors}
     ctx_norm = _normalize_minmax(ctx_raw)
     intelligence_norm = _normalize_minmax(
-        {e["key"]: e.get("scores", {}).get("intelligence_index") for e in entries})
+        {e["key"]: e.get("scores", {}).get("intelligence_index") for e in survivors})
     coding_norm = _normalize_minmax(
-        {e["key"]: e.get("scores", {}).get("coding_index") for e in entries})
+        {e["key"]: e.get("scores", {}).get("coding_index") for e in survivors})
     agentic_norm = _normalize_minmax(
-        {e["key"]: e.get("scores", {}).get("agentic_index") for e in entries})
+        {e["key"]: e.get("scores", {}).get("agentic_index") for e in survivors})
 
     scored = []
-    for e in entries:
+    for e in survivors:
         tool_call = e.get("tool_calling")
         axis_values = {
             "intelligence_index": intelligence_norm[e["key"]],

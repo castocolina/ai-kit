@@ -333,6 +333,10 @@ The phase CONTEXT files are authoritative where they differ from the sections ab
 **Evaluation (§9)**
 - The pressure scenarios are B/C/D/E, with no-skill and v1 baselines (Phase 19 D-01/D-02).
 
+**Ranker**
+- Purposes are `planning`, `general`, `mechanical`, `execution`, `review`; `execute` is an alias of `execution` (and `review` of itself). The bundled file renames `[execute]` to `[execution]`; an older file with only `[review]`/`[execute]` still loads, and missing purposes come from the defaults. `execute` callers therefore rank with the `execution` weights, whose price weight is higher than the old `execute` section's (Phase 16 D-10).
+- `[mechanical.floor] coding_index = 35` applies to the raw Artificial Analysis coding index: a candidate below it, or without that score, is excluded from the result. Without an `ARTIFICIAL_ANALYSIS_API_KEY` no entry carries scores, so the mechanical ranking is empty and the caller must fall back (the §4 "no catalog" path) (Phase 16 D-11).
+
 **Cache**
 - `runtimes.json` carries a top-level integer `schema_version` (currently 2);
   `model-catalog.json` carries it inside a reserved top-level `_meta` object, because every

@@ -53,6 +53,13 @@ tool_calling = 0.05
 price = 0.55
 speed = 0.10
 
+[mechanical.floor]
+# Optional per-purpose floor on the RAW Artificial Analysis score (not normalized); a candidate
+# below it, or without that score, is excluded from the ranking, not zero-scored; any purpose may
+# declare one; only mechanical ships with one; without an ARTIFICIAL_ANALYSIS_API_KEY no entry
+# has scores, so the mechanical ranking is empty.
+coding_index = 35
+
 [bonuses]
 # Applied additively to the 0-100 weighted score, capped combined at bonus_cap.
 # NOTE: design spec 2026-09-02 Section 6 also names a task_affinity_match=2 bonus, scoped to

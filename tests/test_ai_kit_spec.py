@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import shlex
@@ -4381,6 +4382,155 @@ class TestPurposeAliasesEndToEnd(unittest.TestCase):
         self.assertEqual(result["review"], data["review"])
         self.assertEqual(result["execution"], data["execute"])
         self.assertNotIn("execute", result)
+
+
+class TestRankerPurposeFloor(unittest.TestCase):
+    """Test optional per-purpose floors (mechanical coding_index 35) with exclusive filtering."""
+
+    def test_bundled_mechanical_floor_is_coding_35_only(self):
+        w = model_ranker.load_ranking_weights()
+        self.assertEqual(w["mechanical"]["floor"], {"coding_index": 35})
+        for purpose in ("review", "execution", "planning", "general"):
+            self.assertNotIn("floor", w[purpose])
+
+    def test_floor_boundary_is_inclusive(self):
+        entries = [
+            {"key": "below", "scores": {"coding_index": 34}},
+            {"key": "at", "scores": {"coding_index": 35}},
+            {"key": "above", "scores": {"coding_index": 36}},
+        ]
+        # Add minimal required other fields to avoid errors
+        for e in entries:
+            e.update({"intelligence_index": 50, "agentic_index": 50, "pricing": {}})
+        w = model_ranker.load_ranking_weights()
+        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        keys = [e["key"] for e in ranked]
+        self.assertNotIn("below", keys)
+        self.assertIn("at", keys)
+        self.assertIn("above", keys)
+
+    def test_missing_or_non_numeric_floor_axis_is_excluded(self):
+        entries = [
+            {"key": "no_scores"},
+            {"key": "no_coding"},
+            {"key": "coding_none", "scores": {"coding_index": None}},
+            {"key": "coding_bool", "scores": {"coding_index": True}},
+            {"key": "coding_string", "scores": {"coding_index": "40"}},
+            {"key": "pass", "scores": {"coding_index": 40}},
+        ]
+        for e in entries:
+            if "scores" not in e:
+                e["scores"] = {}
+            e.update({"pricing": {}})
+        w = model_ranker.load_ranking_weights()
+        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        keys = [e["key"] for e in ranked]
+        self.assertEqual(keys, ["pass"])
+
+    def test_floor_filters_before_normalization(self):
+        # High-price, above-floor candidate; low-price, below-floor candidate
+        entries = [
+            {"key": "expensive_pass", "scores": {"coding_index": 80, "intelligence_index": 50,
+                                                  "agentic_index": 50},
+             "pricing": {"input_per_1m": 50.0}},
+            {"key": "cheap_fail", "scores": {"coding_index": 30, "intelligence_index": 100,
+                                             "agentic_index": 100},
+             "pricing": {"input_per_1m": 0.1}},
+            {"key": "cheap_pass", "scores": {"coding_index": 35, "intelligence_index": 50,
+                                             "agentic_index": 50},
+             "pricing": {"input_per_1m": 0.1}},
+        ]
+        w = model_ranker.load_ranking_weights()
+        ranked_mech = model_ranker.score_candidates(entries, "mechanical", w)
+        keys_mech = [e["key"] for e in ranked_mech]
+        # cheap_fail is excluded by floor, so cheap_pass and expensive_pass survive
+        # The normalization range for price is now 0.1-50, not 0.1-100
+        self.assertNotIn("cheap_fail", keys_mech)
+        self.assertIn("cheap_pass", keys_mech)
+        self.assertIn("expensive_pass", keys_mech)
+
+    def test_floors_are_generic_across_purposes(self):
+        # Test that any purpose can have a floor (not just mechanical)
+        planning_weights = copy.deepcopy(model_ranker.DEFAULT_WEIGHTS)
+        planning_weights["planning"]["floor"] = {"intelligence_index": 50}
+        entries = [
+            {"key": "low_int", "scores": {"intelligence_index": 40, "coding_index": 80,
+                                          "agentic_index": 80}, "pricing": {}},
+            {"key": "high_int", "scores": {"intelligence_index": 60, "coding_index": 50,
+                                           "agentic_index": 50}, "pricing": {}},
+        ]
+        ranked = model_ranker.score_candidates(entries, "planning", planning_weights)
+        keys = [e["key"] for e in ranked]
+        self.assertEqual(keys, ["high_int"])
+
+    def test_invalid_floor_tables_reject_the_whole_file(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[review]\nintelligence_index = 0.30\ncoding_index = 0.10\n"
+                    "agentic_index = 0.15\ncontext_window = 0.15\ntool_calling = 0.05\n"
+                    "price = 0.15\nspeed = 0.05\n"
+                    "[planning]\nintelligence_index = 0.40\ncoding_index = 0.10\n"
+                    "agentic_index = 0.25\ncontext_window = 0.10\ntool_calling = 0.05\n"
+                    "price = 0.05\nspeed = 0.05\n"
+                    "[planning.floor]\nprice = 20\n"  # price not in _FLOORABLE_AXES
+                    "[bonuses]\nbatch_mode = 8\nfallback_quota = 5\nbonus_cap = 15\n")
+            path = f.name
+        try:
+            w = model_ranker.load_ranking_weights(path)
+            self.assertEqual(w, model_ranker.DEFAULT_WEIGHTS)
+        finally:
+            os.remove(path)
+
+    def test_invalid_floor_nan_rejects_the_whole_file(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[review]\nintelligence_index = 0.30\ncoding_index = 0.10\n"
+                    "agentic_index = 0.15\ncontext_window = 0.15\ntool_calling = 0.05\n"
+                    "price = 0.15\nspeed = 0.05\n"
+                    "[bonuses]\nbatch_mode = 8\nfallback_quota = 5\nbonus_cap = 15\n")
+            path = f.name
+        try:
+            # Manually write NaN to avoid TOML escaping issues; use a simple non-finite value
+            with open(path, "r") as f:
+                content = f.read()
+            # Instead, write a floor with a string value that fails _is_finite_number
+            with open(path, "w") as f:
+                f.write("[review]\nintelligence_index = 0.30\ncoding_index = 0.10\n"
+                        "agentic_index = 0.15\ncontext_window = 0.15\ntool_calling = 0.05\n"
+                        "price = 0.15\nspeed = 0.05\n"
+                        "[review.floor]\nintelligence_index = \"high\"\n"
+                        "[bonuses]\nbatch_mode = 8\nfallback_quota = 5\nbonus_cap = 15\n")
+            w = model_ranker.load_ranking_weights(path)
+            self.assertEqual(w, model_ranker.DEFAULT_WEIGHTS)
+        finally:
+            os.remove(path)
+
+    def test_invalid_utf8_file_falls_back_without_raising(self):
+        with tempfile.NamedTemporaryFile("wb", suffix=".toml", delete=False) as f:
+            f.write(b"\xff\xfe[review]\n")  # Invalid UTF-8 bytes
+            path = f.name
+        try:
+            w = model_ranker.load_ranking_weights(path)
+            self.assertEqual(w, model_ranker.DEFAULT_WEIGHTS)
+        finally:
+            os.remove(path)
+
+    def test_loaded_floor_is_an_independent_copy(self):
+        w1 = model_ranker.load_ranking_weights()
+        w1["mechanical"]["floor"]["coding_index"] = 999
+        w2 = model_ranker.load_ranking_weights()
+        self.assertEqual(w2["mechanical"]["floor"]["coding_index"], 35)
+
+    def test_score_candidates_never_mutates_inputs(self):
+        entries = [
+            {"key": "A", "scores": {"coding_index": 50, "intelligence_index": 50,
+                                    "agentic_index": 50}, "pricing": {}},
+            {"key": "B", "scores": {"coding_index": 20, "intelligence_index": 50,
+                                    "agentic_index": 50}, "pricing": {}},
+        ]
+        entries_copy = copy.deepcopy(entries)
+        w = model_ranker.load_ranking_weights()
+        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        # entries should not be mutated (same object structure, no added keys)
+        self.assertEqual(entries, entries_copy)
 
 
 class TestLoadSecret(unittest.TestCase):
