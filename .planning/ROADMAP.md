@@ -112,7 +112,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 16-04-PLAN.md — claude enumeration: aliases + catalog full ids + dated fallback, never executing claude
+- [ ] 16-04-PLAN.md — claude enumeration: aliases + catalog full ids + dated fallback, never executing claude; catalog-aware `--if-stale` so the real detect → fetch order reaches catalog ids without waiting for the TTL
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -120,7 +120,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 16-06-PLAN.md — ranker purposes planning/general/mechanical/execution/review, execute/review aliases, mechanical floor
+- [ ] 16-06-PLAN.md — ranker purposes planning/general/mechanical/execution/review, execute/review aliases, mechanical floor; phase gate (`make test` + `make validate`)
 
 ### Phase 17: Curated-Config Inventory & Recommendation Engine
 
