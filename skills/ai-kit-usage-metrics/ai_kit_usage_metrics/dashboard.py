@@ -715,7 +715,8 @@ var PRICE_UNKNOWN_TOOLTIP = "unknown \\u2014 model not in catalog";
    measuring token savings, not a model call). Showing the catalog-miss
    tooltip on those rows falsely implies rtk should have a priceable
    model, so it gets its own distinct message. */
-var PRICE_NOT_APPLICABLE_TOOLTIP = "not applicable \\u2014 rtk measures token savings, not model cost";
+var PRICE_NOT_APPLICABLE_TOOLTIP =
+  "not applicable \\u2014 rtk measures token savings, not model cost";
 
 function priceCellText(price) {
   return price == null ? EM_DASH : String(price);
@@ -1815,6 +1816,18 @@ function chartJsAvailable() {
   // every row) with zero visual indication anything is unsorted.
   var GROUPED_SORT_KEYS = ["session_id", "count", "tokens_input", "tokens_output", "price"];
 
+  // WR-01 (15.2 mirror): the flat-mode analog of the grouped fallback above.
+  // A grouped-only key such as "count" stays in sortKey after
+  // group-by-session is unchecked, and without this guard every flat row's
+  // row[sortKey] is undefined, so sortRows treats every pair as equal and
+  // silently does nothing -- insertion order, no visual indication anything
+  // is unsorted.
+  var FLAT_SORT_KEYS = [
+    "runtime", "model", "family", "subfamily", "command_text",
+    "exec_duration_ms", "date", "tokens_input", "tokens_output", "price",
+    "source_confidence", "execution_certain", "session_id"
+  ];
+
   // SD-6: the sole entry point that recomputes currentRows from the current
   // filter criteria and the current sort/grouping -- shared by applyFilters
   // (which recomputes currentFiltered too) and applySort (which re-sorts the
@@ -1833,7 +1846,11 @@ function chartJsAvailable() {
       );
       currentBuilder = groupedRowBuilder;
     } else {
-      currentRows = sortRows(currentFiltered, sortKey, sortDir);
+      // WR-01 (15.2): symmetric guard for the flat branch -- never mutate
+      // the shared sortKey (re-checking group-by-session must restore the
+      // user's grouped-mode choice unchanged).
+      var flatKey = FLAT_SORT_KEYS.indexOf(sortKey) === -1 ? "date" : sortKey;
+      currentRows = sortRows(currentFiltered, flatKey, sortDir);
       currentBuilder = flatRowBuilder;
     }
   }

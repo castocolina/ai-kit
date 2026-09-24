@@ -1276,7 +1276,11 @@ def _codex_function_call_line():
 
 
 def _codex_custom_tool_call_line(
-    cmd, workdir=None, tool_name="exec_command", timestamp="2026-01-15T12:00:02Z", call_id="call_ctc_1"
+    cmd,
+    workdir=None,
+    tool_name="exec_command",
+    timestamp="2026-01-15T12:00:02Z",
+    call_id="call_ctc_1",
 ):
     """Verbatim-shaped codex `custom_tool_call`/"exec" record (RESEARCH.md Pitfall 5).
 
@@ -2750,6 +2754,75 @@ def _extract_js_function_body(text, function_name):
     raise AssertionError("unterminated function body: " + function_name)
 
 
+# WR-01/WR-02 (15.2): matches every `var NAME_SORT_KEYS = [...];` declaration
+# inside the generated IIFE (currently FLAT_SORT_KEYS and GROUPED_SORT_KEYS).
+# re.DOTALL lets the bracketed literal span multiple lines -- FLAT_SORT_KEYS
+# is deliberately wrapped across lines to stay under ruff's E501 line-length
+# limit -- and the pattern is intentionally unanchored (no ^) since both
+# declarations sit indented inside the page IIFE, not at column 0.
+_SORT_KEY_DECL_RE = re.compile(r"var ([A-Z_]+_SORT_KEYS) = (\[[^\]]*\]);", re.DOTALL)
+
+
+def _extract_sort_key_decls(html):
+    # Collects EVERY matching declaration (not a single named lookup) so that,
+    # before the WR-01 fix lands, this returns only GROUPED_SORT_KEYS -- the
+    # flat-mode fallback test then fails on its ordering assertion instead of
+    # crashing on a missing dict key.
+    decls = {}
+    for match in _SORT_KEY_DECL_RE.finditer(html):
+        decls[match.group(1)] = match.group(0)
+    return decls
+
+
+# Synthetic fixture rows for the WR-01/WR-02 sort-fallback regression tests.
+# Insertion order deliberately differs from every sort order under test, so a
+# naive pass-through (no fallback) is distinguishable from a real sort.
+_SORT_FALLBACK_ROWS = [
+    {
+        "raw_ref": "r1",
+        "session_id": "s-c",
+        "turn_id": "t1",
+        "date": "2026-01-03",
+        "tokens_input": 5,
+    },
+    {
+        "raw_ref": "r2",
+        "session_id": "s-a",
+        "turn_id": "t2",
+        "date": "2026-01-01",
+        "tokens_input": 30,
+    },
+    {
+        "raw_ref": "r3",
+        "session_id": "s-b",
+        "turn_id": "t3",
+        "date": "2026-01-02",
+        "tokens_input": 10,
+    },
+    {
+        "raw_ref": "r4",
+        "session_id": "s-b",
+        "turn_id": "t4",
+        "date": "2026-01-04",
+        "tokens_input": 20,
+    },
+    {
+        "raw_ref": "r5",
+        "session_id": "s-b",
+        "turn_id": "t5",
+        "date": "2026-01-05",
+        "tokens_input": 1,
+    },
+    {
+        "raw_ref": "r6",
+        "session_id": "s-a",
+        "turn_id": "t6",
+        "date": "2026-01-06",
+        "tokens_input": 2,
+    },
+]
+
+
 class TestDashboardFull(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="ai-kit-um-dash-full-")
@@ -3800,7 +3873,7 @@ class TestDashboardFull(unittest.TestCase):
         # active state on initial page load.
         html, _out = self._seed_and_generate()
         for preset in ("today", "week", "month", "current-month", "all"):
-            self.assertIn('data-preset="%s"' % preset, html)
+            self.assertIn(f'data-preset="{preset}"', html)
         body = _extract_js_function_body(html, "applyDatePreset")
         self.assertIn('"filter-date-from"', body)
         self.assertIn('"filter-date-to"', body)
@@ -4281,6 +4354,157 @@ class TestDashboardFull(unittest.TestCase):
         script = html[script_start:]
         bootstrap_tail = script[script.index("setFilterControlsDisabled(true);") :]
         self.assertIn("requestAnimationFrame", bootstrap_tail[:400])
+
+    def _run_build_current_rows_via_node(self, html, scenarios):
+        # Runs the REAL shipped buildCurrentRowsFromFiltered() body (plus the
+        # sortRows/groupBySession pure functions it calls) under node, against
+        # a hand-built document/state stand-in for the handful of globals that
+        # function reads or writes. Mirrors
+        # test_virtualizer_fallback_timer_reversed_by_late_mount_via_node's
+        # extract-real-source-and-wrap pattern.
+        decls = _extract_sort_key_decls(html)
+        body = _extract_js_function_body(html, "buildCurrentRowsFromFiltered")
+        wrapper = os.path.join(self.root, "build_current_rows_check.js")
+        with open(wrapper, "w", encoding="utf-8") as handle:
+            handle.write(_extract_pure_js(html))
+            handle.write(
+                "\nvar sortKey, sortDir, currentFiltered, currentRows, currentBuilder;\n"
+                "function flatRowBuilder() {}\n"
+                "function groupedRowBuilder() {}\n"
+                "var groupBySessionEl = {checked: false};\n"
+                "var document = {\n"
+                "  getElementById: function (id) {\n"
+                '    if (id === "group-by-session") return groupBySessionEl;\n'
+                '    throw new Error("unexpected getElementById: " + id);\n'
+                "  }\n"
+                "};\n"
+            )
+            for decl in decls.values():
+                handle.write(decl + "\n")
+            handle.write("function buildCurrentRowsFromFiltered() " + body + "\n")
+            handle.write("var FIXTURE = " + json.dumps(_SORT_FALLBACK_ROWS) + ";\n")
+            handle.write("var SCENARIOS = " + json.dumps(scenarios) + ";\n")
+            handle.write(
+                "var results = [];\n"
+                "for (var i = 0; i < SCENARIOS.length; i++) {\n"
+                "  var sc = SCENARIOS[i];\n"
+                "  groupBySessionEl.checked = sc.grouped;\n"
+                "  sortKey = sc.sortKey;\n"
+                "  sortDir = sc.sortDir;\n"
+                "  currentFiltered = FIXTURE;\n"
+                "  buildCurrentRowsFromFiltered();\n"
+                "  var builderName = currentBuilder === groupedRowBuilder\n"
+                '    ? "grouped"\n'
+                "    : (currentBuilder === flatRowBuilder ? \"flat\" : \"other\");\n"
+                "  results.push({rows: currentRows, builder: builderName, "
+                "sortKeyAfter: sortKey});\n"
+                "}\n"
+                "console.log(JSON.stringify(results));\n"
+            )
+        proc = subprocess.run(["node", wrapper], capture_output=True, text=True, check=True)
+        return json.loads(proc.stdout)
+
+    def test_grouped_mode_sort_falls_back_from_flat_only_key_via_node(self):
+        # WR-01 (15.2, re-review regression lock): the grouped branch's
+        # existing groupedKey fallback (dashboard.py's own WR-01 comment)
+        # must keep working -- this test regression-locks that b9d8a52
+        # behavior rather than re-testing something new.
+        #
+        # Explicit non-coverage: no real DOM, no real checkbox click events,
+        # no virtualized painting -- see
+        # test_virtualizer_fallback_timer_reversed_by_late_mount_via_node's
+        # docstring for the shared rationale.
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        scenarios = [
+            {"grouped": True, "sortKey": "date", "sortDir": "asc"},
+            {"grouped": True, "sortKey": "count", "sortDir": "desc"},
+        ]
+        results = self._run_build_current_rows_via_node(html, scenarios)
+        flat_only = results[0]
+        self.assertEqual(
+            [row["session_id"] for row in flat_only["rows"]], ["s-a", "s-b", "s-c"]
+        )
+        self.assertEqual(flat_only["builder"], "grouped")
+        self.assertEqual(flat_only["sortKeyAfter"], "date")
+        valid_grouped = results[1]
+        self.assertEqual(
+            [row["session_id"] for row in valid_grouped["rows"]], ["s-b", "s-a", "s-c"]
+        )
+        self.assertEqual(valid_grouped["builder"], "grouped")
+        self.assertEqual(valid_grouped["sortKeyAfter"], "count")
+
+    def test_flat_mode_sort_falls_back_from_grouped_only_key_via_node(self):
+        # WR-01 (15.2): the flat branch of buildCurrentRowsFromFiltered() had
+        # no equivalent guard -- a grouped-only key (e.g. "count") left active
+        # in sortKey after unchecking group-by-session silently sorted
+        # nothing (every row's row["count"] is undefined). This test proves
+        # the new FLAT_SORT_KEYS guard fixes that, symmetric to the grouped
+        # branch's existing fallback.
+        #
+        # Explicit non-coverage: no real DOM, no real checkbox click events,
+        # no virtualized painting -- see
+        # test_virtualizer_fallback_timer_reversed_by_late_mount_via_node's
+        # docstring for the shared rationale.
+        if shutil.which("node") is None:
+            self.skipTest("node not available — shipped-JS execution test skipped")
+        html, _out = self._seed_and_generate()
+        scenarios = [
+            {"grouped": False, "sortKey": "count", "sortDir": "asc"},
+            {"grouped": False, "sortKey": "tokens_input", "sortDir": "asc"},
+        ]
+        results = self._run_build_current_rows_via_node(html, scenarios)
+        grouped_only = results[0]
+        self.assertEqual(
+            [row["raw_ref"] for row in grouped_only["rows"]],
+            ["r2", "r3", "r1", "r4", "r5", "r6"],
+        )
+        self.assertEqual(grouped_only["builder"], "flat")
+        self.assertEqual(grouped_only["sortKeyAfter"], "count")
+        valid_flat = results[1]
+        self.assertEqual(
+            [row["raw_ref"] for row in valid_flat["rows"]],
+            ["r5", "r6", "r1", "r3", "r4", "r2"],
+        )
+        self.assertEqual(valid_flat["builder"], "flat")
+        self.assertEqual(valid_flat["sortKeyAfter"], "tokens_input")
+
+    def test_sort_key_lists_match_thead_columns(self):
+        # WR-01/WR-02 (15.2) drift guard: pins FLAT_SORT_KEYS and
+        # GROUPED_SORT_KEYS to their header rows' data-sort-key columns, so
+        # neither allowlist can drift open (accept a stale/removed column) or
+        # drop a real one (silently disabling that column's sort). No node
+        # required -- this is a static-source assertion only.
+        html, _out = self._seed_and_generate()
+        flat_thead = re.search(
+            r'<tr id="thead-flat"[^>]*>(.*?)</tr>', html, re.DOTALL
+        )
+        grouped_thead = re.search(
+            r'<tr id="thead-grouped"[^>]*>(.*?)</tr>', html, re.DOTALL
+        )
+        self.assertIsNotNone(flat_thead)
+        self.assertIsNotNone(grouped_thead)
+        flat_header_keys = re.findall(r'data-sort-key="([^"]+)"', flat_thead.group(1))
+        grouped_header_keys = re.findall(
+            r'data-sort-key="([^"]+)"', grouped_thead.group(1)
+        )
+        decls = _extract_sort_key_decls(html)
+        self.assertIn("FLAT_SORT_KEYS", decls)
+        self.assertIn("GROUPED_SORT_KEYS", decls)
+
+        def _decl_array(decl_source):
+            array_text = decl_source[decl_source.index("[") : decl_source.rindex("]") + 1]
+            return json.loads(array_text)
+
+        flat_keys = _decl_array(decls["FLAT_SORT_KEYS"])
+        grouped_keys = _decl_array(decls["GROUPED_SORT_KEYS"])
+        self.assertEqual(set(flat_keys), set(flat_header_keys))
+        self.assertEqual(len(flat_keys), len(flat_header_keys))
+        self.assertEqual(set(grouped_keys), set(grouped_header_keys))
+        self.assertEqual(len(grouped_keys), len(grouped_header_keys))
+        self.assertIn("date", flat_keys)
+        self.assertIn("session_id", grouped_keys)
 
 
 class TestPermissions(unittest.TestCase):
