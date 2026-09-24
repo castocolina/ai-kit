@@ -6508,6 +6508,352 @@ class TestImageInputEndToEnd(unittest.TestCase):
             self.assertNotIn("image_input_source", persisted_entry)
 
 
+class TestOpencodeVerboseImageInput(unittest.TestCase):
+    """End-to-end opencode models --verbose image_input detection, provenance tracking,
+    and fetch-skipped transitions (16 D-09 source 2)."""
+
+    def test_parse_real_fixture_returns_expected_models(self):
+        """Fixture parsing: two real blocks with correct image capability."""
+        with open(OPENCODE_VERBOSE_FIXTURE_PATH, encoding="utf-8") as f:
+            text = f.read()
+        result = detection.parse_opencode_verbose_image_input(text)
+        self.assertEqual(result, {"openai/gpt-5.6-sol": True, "router-env/my-coding": False})
+
+    def test_parse_non_string_input_returns_empty(self):
+        """Non-string input (None, int, list) returns {}."""
+        for val in (None, 42, [], {}):
+            with self.subTest(val=val):
+                self.assertEqual(detection.parse_opencode_verbose_image_input(val), {})
+
+    def test_parse_headerless_json_stops_early(self):
+        """Text starting with { (no header line) returns {}."""
+        self.assertEqual(detection.parse_opencode_verbose_image_input('{"id": "x"}'), {})
+
+    def test_parse_garbage_block_stops_parsing(self):
+        """Header followed by unparseable JSON stops parsing, keeps prior blocks."""
+        text = "valid/model\n{}\ngarbage/model\nno json here\n"
+        result = detection.parse_opencode_verbose_image_input(text)
+        self.assertEqual(result, {})
+
+    def test_parse_first_valid_then_garbage_keeps_first(self):
+        """Valid block, then garbage, keeps the valid one."""
+        text = 'openai/gpt-5.6-sol\n{"providerID":"openai","id":"gpt-5.6-sol","capabilities":{"input":{"image":true}}}\ngarbage\n'
+        result = detection.parse_opencode_verbose_image_input(text)
+        self.assertEqual(result, {"openai/gpt-5.6-sol": True})
+
+    def test_parse_mismatched_header_and_id_skips_block(self):
+        """Header does not match providerID/id, block is skipped."""
+        text = 'openai/gpt-5.6-sol\n{"providerID":"openai","id":"different","capabilities":{"input":{"image":true}}}\n'
+        result = detection.parse_opencode_verbose_image_input(text)
+        self.assertEqual(result, {})
+
+    def test_parse_swapped_headers_result_is_empty(self):
+        """Both blocks present but headers swapped — both skipped."""
+        fixture = open(OPENCODE_VERBOSE_FIXTURE_PATH, encoding="utf-8").read()
+        # Find the two blocks and swap them
+        blocks = fixture.split('\n\n')
+        if len(blocks) >= 2:
+            swapped_text = '\n\n'.join([blocks[1], blocks[0]])
+            result = detection.parse_opencode_verbose_image_input(swapped_text)
+            self.assertEqual(result, {})
+
+    def test_parse_mismatched_then_matching_keeps_matching(self):
+        """Mismatched block, then matched block — only matched is returned."""
+        text = '''mismatched/header
+{"providerID":"openai","id":"gpt-5.6-sol","capabilities":{"input":{"image":true}}}
+openai/gpt-5.6-sol
+{"providerID":"openai","id":"gpt-5.6-sol","capabilities":{"input":{"image":true}}}
+'''
+        result = detection.parse_opencode_verbose_image_input(text)
+        self.assertEqual(result, {"openai/gpt-5.6-sol": True})
+
+    def test_parse_missing_capabilities_skips_block(self):
+        """Block without capabilities key is skipped."""
+        text = 'openai/gpt-5.6-sol\n{"providerID":"openai","id":"gpt-5.6-sol"}\n'
+        result = detection.parse_opencode_verbose_image_input(text)
+        self.assertEqual(result, {})
+
+    def test_parse_missing_image_key_skips_block(self):
+        """Capabilities without image key is skipped."""
+        text = 'openai/gpt-5.6-sol\n{"providerID":"openai","id":"gpt-5.6-sol","capabilities":{"input":{"text":true}}}\n'
+        result = detection.parse_opencode_verbose_image_input(text)
+        self.assertEqual(result, {})
+
+    def test_parse_non_bool_image_value_skips_block(self):
+        """Image value that is not bool (e.g., "yes") is skipped."""
+        text = 'openai/gpt-5.6-sol\n{"providerID":"openai","id":"gpt-5.6-sol","capabilities":{"input":{"image":"yes"}}}\n'
+        result = detection.parse_opencode_verbose_image_input(text)
+        self.assertEqual(result, {})
+
+    def test_detect_nonzero_exit_with_valid_output_returns_empty(self):
+        """Non-zero exit code returns {} even if stdout is valid JSON."""
+        def fake_run(argv, **kwargs):
+            fixture = open(OPENCODE_VERBOSE_FIXTURE_PATH, encoding="utf-8").read()
+            return unittest.mock.MagicMock(returncode=1, stdout=fixture)
+        result = detection.detect_opencode_image_input("/fake/bin/opencode", run_fn=fake_run)
+        self.assertEqual(result, {})
+
+    def test_detect_timeout_returns_empty(self):
+        """subprocess.TimeoutExpired returns {}."""
+        def fake_run(argv, **kwargs):
+            raise subprocess.TimeoutExpired("cmd", 15)
+        result = detection.detect_opencode_image_input("/fake/bin/opencode", run_fn=fake_run)
+        self.assertEqual(result, {})
+
+    def test_detect_oserror_returns_empty(self):
+        """OSError (missing binary) returns {}."""
+        def fake_run(argv, **kwargs):
+            raise OSError("not found")
+        result = detection.detect_opencode_image_input("/fake/bin/opencode", run_fn=fake_run)
+        self.assertEqual(result, {})
+
+    def test_detect_missing_returncode_returns_empty(self):
+        """Result object without returncode attribute returns {}."""
+        def fake_run(argv, **kwargs):
+            return None
+        result = detection.detect_opencode_image_input("/fake/bin/opencode", run_fn=fake_run)
+        self.assertEqual(result, {})
+
+    def test_full_size_listing_parses_quickly(self):
+        """110 generated blocks parse within 5 seconds."""
+        blocks = []
+        for i in range(110):
+            header = f"vendor/m-{i}"
+            obj = {"id": f"m-{i}", "providerID": "vendor", "capabilities": {"input": {"image": True}}}
+            blocks.append(f"{header}\n{json.dumps(obj, indent=2)}")
+        text = "\n".join(blocks)
+        start = time.perf_counter()
+        result = detection.parse_opencode_verbose_image_input(text)
+        elapsed = time.perf_counter() - start
+        self.assertEqual(len(result), 110)
+        self.assertLess(elapsed, 5.0, f"Parsing took {elapsed:.2f}s, expected < 5.0s")
+
+    def test_unmatched_router_candidate_carries_image_input(self):
+        """Unmatched opencode candidate with image_input on fetch-model-catalog unmatched list."""
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            r = os.path.join(d, "runtimes.json")
+            cache_write_json(r, {"schema_version": 2, "clis": {"opencode": {
+                "installed": True, "models": ["router-env/custom"],
+                "image_input": {"router-env/custom": True}
+            }}})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["fetch-model-catalog", "--runtimes-json", r,
+                                "--catalog-path", os.path.join(d, "catalog.json")],
+                               fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                               fetch_models_dev_fn=lambda: ({}, True),
+                               load_secret_fn=lambda env, key: None,
+                               env_fn=lambda: {"HOME": d},
+                               which_fn=lambda name: None)
+            self.assertEqual(code, 0)
+            result = json.loads(buf.getvalue())
+            unmatched = [u for u in result.get("unmatched", []) if u["model_id"] == "router-env/custom"]
+            self.assertEqual(len(unmatched), 1)
+            self.assertEqual(unmatched[0]["cli"], "opencode")
+            self.assertEqual(unmatched[0].get("image_input"), True)
+            self.assertEqual(unmatched[0].get("image_input_source"), "opencode")
+
+    def test_vendor_unknown_router_candidate_carries_image_input(self):
+        """Vendor-unknown router carries image_input from runtime metadata."""
+        result = {}
+        with tempfile.TemporaryDirectory() as d:
+            result = cli.build_model_catalog(
+                [{"cli": "opencode", "model_id": "local-llm-coding"}],
+                {}, True, [], True, {},
+                runtime_meta={("opencode", "local-llm-coding"): {"image_input": False}})
+            catalog, rejections, unmatched = result
+            self.assertEqual(len(unmatched), 1)
+            self.assertEqual(unmatched[0]["vendor_unknown"], True)
+            self.assertEqual(unmatched[0].get("image_input"), False)
+            self.assertEqual(unmatched[0].get("image_input_source"), "opencode")
+
+    def test_fetch_skipped_runtime_true_to_false_transition(self):
+        """Fetch-skipped run: runtime value changes True -> False (review cycle 2 MEDIUM)."""
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "model-catalog.json")
+            r = os.path.join(d, "runtimes.json")
+            # Run 1: fresh fetch with runtime True
+            cache_write_json(r, {"schema_version": 2, "clis": {"opencode": {
+                "installed": True, "models": ["vendor/no-modalities"],
+                "image_input": {"vendor/no-modalities": True}
+            }}})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
+                               fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                               fetch_models_dev_fn=lambda: ({"vendor": {"models": {
+                                   "no-modalities": {"id": "no-modalities"}}}}, True),
+                               load_secret_fn=lambda env, key: None,
+                               env_fn=lambda: {"HOME": d},
+                               which_fn=lambda name: None)
+            self.assertEqual(code, 0)
+            catalog = cache_read_json(c)
+            entries, meta = model_catalog.split_catalog_meta(catalog)
+            self.assertEqual(entries["vendor/no-modalities"]["image_input"], True)
+            self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "opencode")
+            # Run 2: skip fetch, runtime changes to False
+            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(r, {"schema_version": 2, "clis": {"opencode": {
+                "installed": True, "models": ["vendor/no-modalities"],
+                "image_input": {"vendor/no-modalities": False}
+            }}})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["fetch-model-catalog", "--if-stale", "--runtimes-json", r,
+                                "--catalog-path", c],
+                               fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                               fetch_models_dev_fn=lambda: self.fail("should skip fetch"),
+                               load_secret_fn=lambda env, key: None,
+                               env_fn=lambda: {"HOME": d},
+                               which_fn=lambda name: None)
+            self.assertEqual(code, 0)
+            catalog = cache_read_json(c)
+            entries, meta = model_catalog.split_catalog_meta(catalog)
+            self.assertEqual(entries["vendor/no-modalities"]["image_input"], False)
+            self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "opencode")
+
+    def test_fetch_skipped_models_dev_value_beats_new_runtime_reading(self):
+        """Fetch-skipped: models.dev value stays True even when runtime says False."""
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "model-catalog.json")
+            r = os.path.join(d, "runtimes.json")
+            # Run 1: models.dev says True
+            cache_write_json(r, {"schema_version": 2, "clis": {"opencode": {
+                "installed": True, "models": ["vendor/no-modalities"],
+                "image_input": {"vendor/no-modalities": False}
+            }}})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
+                               fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                               fetch_models_dev_fn=lambda: ({"vendor": {"models": {
+                                   "no-modalities": {"id": "no-modalities", "modalities": {"input": ["text", "image"]}}}}}, True),
+                               load_secret_fn=lambda env, key: None,
+                               env_fn=lambda: {"HOME": d},
+                               which_fn=lambda name: None)
+            self.assertEqual(code, 0)
+            # Run 2: skip, runtime now says False
+            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(r, {"schema_version": 2, "clis": {"opencode": {
+                "installed": True, "models": ["vendor/no-modalities"],
+                "image_input": {"vendor/no-modalities": False}
+            }}})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["fetch-model-catalog", "--if-stale", "--runtimes-json", r,
+                                "--catalog-path", c],
+                               fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                               fetch_models_dev_fn=lambda: self.fail("should skip"),
+                               load_secret_fn=lambda env, key: None,
+                               env_fn=lambda: {"HOME": d},
+                               which_fn=lambda name: None)
+            self.assertEqual(code, 0)
+            catalog = cache_read_json(c)
+            entries, meta = model_catalog.split_catalog_meta(catalog)
+            # models.dev value (True) stays, not overridden by runtime (False)
+            self.assertEqual(entries["vendor/no-modalities"]["image_input"], True)
+            self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "models_dev")
+
+    def test_fetch_skipped_runtime_silence_keeps_cached_value(self):
+        """Fetch-skipped: no runtime image_input in new snapshot keeps cached runtime value."""
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "model-catalog.json")
+            r = os.path.join(d, "runtimes.json")
+            # Run 1: runtime says True
+            cache_write_json(r, {"schema_version": 2, "clis": {"opencode": {
+                "installed": True, "models": ["vendor/no-modalities"],
+                "image_input": {"vendor/no-modalities": True}
+            }}})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
+                               fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                               fetch_models_dev_fn=lambda: ({"vendor": {"models": {
+                                   "no-modalities": {"id": "no-modalities"}}}}, True),
+                               load_secret_fn=lambda env, key: None,
+                               env_fn=lambda: {"HOME": d},
+                               which_fn=lambda name: None)
+            # Run 2: skip, no image_input in runtime snapshot
+            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(r, {"schema_version": 2, "clis": {"opencode": {
+                "installed": True, "models": ["vendor/no-modalities"]
+            }}})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["fetch-model-catalog", "--if-stale", "--runtimes-json", r,
+                                "--catalog-path", c],
+                               fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                               fetch_models_dev_fn=lambda: self.fail("should skip"),
+                               load_secret_fn=lambda env, key: None,
+                               env_fn=lambda: {"HOME": d},
+                               which_fn=lambda name: None)
+            self.assertEqual(code, 0)
+            catalog = cache_read_json(c)
+            entries, meta = model_catalog.split_catalog_meta(catalog)
+            # Cached value stays (source silence is not removal)
+            self.assertEqual(entries["vendor/no-modalities"]["image_input"], True)
+            self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "opencode")
+
+    def test_sourceless_cached_value_is_treated_as_runtime_derived(self):
+        """Cached value without image_input_source (e.g., older wizard) is treated as runtime-derived."""
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "model-catalog.json")
+            r = os.path.join(d, "runtimes.json")
+            # Seed: entry without image_input_source
+            cache_write_json(c, {"_meta": {"schema_version": 2}, "vendor/no-modalities": {
+                "provider": "vendor", "runtimes": {"opencode": {"model_id": "vendor/no-modalities"}},
+                "source": {"models_dev": False}, "confidence": "low",
+                "last_verified": "2026-09-24",
+                "image_input": True
+            }})
+            # Skip fetch, but runtime now says False
+            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(r, {"schema_version": 2, "clis": {"opencode": {
+                "installed": True, "models": ["vendor/no-modalities"],
+                "image_input": {"vendor/no-modalities": False}
+            }}})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["fetch-model-catalog", "--if-stale", "--runtimes-json", r,
+                                "--catalog-path", c],
+                               fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                               fetch_models_dev_fn=lambda: self.fail("should skip"),
+                               load_secret_fn=lambda env, key: None,
+                               env_fn=lambda: {"HOME": d},
+                               which_fn=lambda name: None)
+            self.assertEqual(code, 0)
+            catalog = cache_read_json(c)
+            entries, meta = model_catalog.split_catalog_meta(catalog)
+            # Sourceless value is treated as runtime-derived, replaced by new runtime reading
+            self.assertEqual(entries["vendor/no-modalities"]["image_input"], False)
+            self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "opencode")
+
+    def test_runtime_image_input_is_read_from_opencode_only(self):
+        """Runtime image_input is read from clis.opencode only, not codex/claude."""
+        result = {}
+        result = cli._runtime_meta_from_snapshot({
+            "clis": {
+                "codex": {"installed": True, "models": ["gpt-x"], "image_input": {"gpt-x": True}},
+                "opencode": {"installed": True, "models": ["vendor/x"], "image_input": {"vendor/x": False}}
+            }
+        })
+        # opencode's image_input is extracted
+        self.assertIn(("opencode", "vendor/x"), result)
+        self.assertEqual(result[("opencode", "vendor/x")]["image_input"], False)
+        # codex's image_input is NOT extracted
+        self.assertNotIn(("codex", "gpt-x"), result)
+
+
 class TestClaudeRuntimeFreshness(unittest.TestCase):
     """The catalog -> runtimes freshness edge (review cycle 1): runtimes.json's claude ids
     are derived from model-catalog.json `_meta`, so a catalog change re-detects a fresh

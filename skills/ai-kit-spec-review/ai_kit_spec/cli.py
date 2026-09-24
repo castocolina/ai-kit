@@ -274,14 +274,16 @@ def _runtime_meta_from_snapshot(runtimes: dict) -> dict:
                         or not all(isinstance(m, str) for m in modes)):
                     continue
                 meta.setdefault((cli_name, model_id), {})["reasoning_modes"] = list(modes)
-        image_map = cli_data.get("image_input")
-        if isinstance(image_map, dict):
-            for model_id, image in image_map.items():
-                if not isinstance(model_id, str) or not model_id.strip():
-                    continue
-                if not isinstance(image, bool):
-                    continue
-                meta.setdefault((cli_name, model_id), {})["image_input"] = image
+        # D-09 source 2: image_input is only read from opencode runtime metadata
+        if cli_name == "opencode":
+            image_map = cli_data.get("image_input")
+            if isinstance(image_map, dict):
+                for model_id, image in image_map.items():
+                    if not isinstance(model_id, str) or not model_id.strip():
+                        continue
+                    if not isinstance(image, bool):
+                        continue
+                    meta.setdefault((cli_name, model_id), {})["image_input"] = image
     return meta
 
 
