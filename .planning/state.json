@@ -1,12 +1,48 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v1.3",
-  "phases": [],
+  "milestone": "v1.3 — GSD Curated Config v2",
+  "phases": [
+    {
+      "number": "16",
+      "name": "ai_kit_spec Extensions",
+      "status": "in_progress"
+    },
+    {
+      "number": "17",
+      "name": "Curated-Config Inventory & Recommendation Engine",
+      "status": "pending"
+    },
+    {
+      "number": "18",
+      "name": "Cross-AI, Skills & Apply Pipeline",
+      "status": "pending"
+    },
+    {
+      "number": "19",
+      "name": "Evaluation on Claude",
+      "status": "pending"
+    },
+    {
+      "number": "20",
+      "name": "Live Validation on Codex + Opencode",
+      "status": "pending"
+    },
+    {
+      "number": "21",
+      "name": "Cursor Live Validation",
+      "status": "pending"
+    },
+    {
+      "number": "22",
+      "name": "Pi Live Validation",
+      "status": "pending"
+    }
+  ],
   "next": {
-    "command": "/gsd:discuss-phase",
-    "label": "Discuss the first phase",
-    "reason": "Project initialized — plan your first phase"
+    "command": "/gsd:progress --next",
+    "label": "Advance to the next step",
+    "reason": "Phase 16 of 7 · 0% · executing"
   },
-  "updated_at": "2026-09-24T01:23:09.514Z"
+  "updated_at": "2026-09-24T03:41:37.777Z"
 }
