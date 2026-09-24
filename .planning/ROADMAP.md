@@ -95,12 +95,12 @@ rewrite depends on.
   4. The ranker accepts `planning`, `general`, `mechanical`, `execution`, `review` purposes via the
      ranking-weights file, and existing `review`/`execute` callers keep working unchanged as
      aliases.
-**Plans**: 6 plans
+**Plans**: 1/6 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 16-01-PLAN.md — codex model enumeration (`codex debug models` fixture) end-to-end into runtimes.json and catalog `reasoning_modes`
+- [x] 16-01-PLAN.md — codex model enumeration (`codex debug models` fixture) end-to-end into runtimes.json and catalog `reasoning_modes`
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
