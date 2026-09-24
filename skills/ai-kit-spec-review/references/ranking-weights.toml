@@ -1,8 +1,10 @@
 # Default weighted-ranking configuration for ai-kit-spec-config's model discovery
 # (docs/superpowers/specs/2026-09-02-model-discovery-curation-design.md, Section 6).
+# Purposes: planning, general, mechanical, execution, review; execute is an alias of execution.
 # Fixed defaults -- the user is never asked to tune these per wizard run.
 
 [review]
+# Review-focused: balanced intelligence with low price weight
 intelligence_index = 0.30
 coding_index = 0.10
 agentic_index = 0.15
@@ -11,13 +13,44 @@ tool_calling = 0.05
 price = 0.15
 speed = 0.05
 
-[execute]
-intelligence_index = 0.15
-coding_index = 0.30
+[execution]
+# Execution-focused: high coding and agentic with high price weight
+intelligence_index = 0.10
+coding_index = 0.25
+agentic_index = 0.20
+context_window = 0.05
+tool_calling = 0.10
+price = 0.25
+speed = 0.05
+
+[planning]
+# Planning-focused: max intelligence and agentic, low price weight
+intelligence_index = 0.40
+coding_index = 0.10
 agentic_index = 0.25
 context_window = 0.10
-tool_calling = 0.15
-price = 0.15
+tool_calling = 0.05
+price = 0.05
+speed = 0.05
+
+[general]
+# General-purpose: balanced score/price
+intelligence_index = 0.25
+coding_index = 0.15
+agentic_index = 0.15
+context_window = 0.10
+tool_calling = 0.05
+price = 0.20
+speed = 0.10
+
+[mechanical]
+# Mechanical-focused: price-dominant; applies optional floor on raw coding_index
+intelligence_index = 0.05
+coding_index = 0.15
+agentic_index = 0.05
+context_window = 0.05
+tool_calling = 0.05
+price = 0.55
 speed = 0.10
 
 [bonuses]

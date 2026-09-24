@@ -4004,14 +4004,14 @@ class TestLoadRankingWeights(unittest.TestCase):
     def test_loads_the_real_bundled_weights_file(self):
         weights = model_ranker.load_ranking_weights()
         self.assertAlmostEqual(weights["review"]["intelligence_index"], 0.30)
-        self.assertAlmostEqual(weights["execute"]["coding_index"], 0.30)
+        self.assertAlmostEqual(weights["execution"]["coding_index"], 0.25)
         self.assertEqual(weights["bonuses"]["batch_mode"], 8)
         self.assertEqual(weights["bonuses"]["bonus_cap"], 15)
 
     def test_missing_file_falls_back_to_default_weights(self):
         weights = model_ranker.load_ranking_weights("/nonexistent/path.toml")
         self.assertIn("review", weights)
-        self.assertIn("execute", weights)
+        self.assertIn("execution", weights)
         self.assertIn("bonuses", weights)
 
     def test_fallback_returns_an_independent_copy_each_call(self):
@@ -4028,7 +4028,7 @@ class TestLoadRankingWeights(unittest.TestCase):
         try:
             weights = model_ranker.load_ranking_weights(path)
             self.assertIn("review", weights)
-            self.assertIn("execute", weights)
+            self.assertIn("execution", weights)
         finally:
             os.remove(path)
 
@@ -4203,6 +4203,184 @@ class TestScoreCandidates(unittest.TestCase):
         ]
         ranked = model_ranker.score_candidates(entries, "review", self.weights)
         self.assertEqual(ranked[0]["key"], "high")
+
+
+class TestPurposeAliasesEndToEnd(unittest.TestCase):
+    """Test the 5-purpose ranker with execute/review aliases (16 D-10)."""
+
+    def setUp(self):
+        # Candidates with coding_index >= 40 so Task 2's mechanical floor never excludes them
+        self.entries = [
+            {"key": "A", "scores": {"intelligence_index": 90, "coding_index": 50,
+                                    "agentic_index": 80}, "pricing": {"input_per_1m": 15.0}},
+            {"key": "B", "scores": {"intelligence_index": 50, "coding_index": 50,
+                                    "agentic_index": 40}, "pricing": {"input_per_1m": 0.5}},
+            {"key": "C", "scores": {"intelligence_index": 70, "coding_index": 80,
+                                    "agentic_index": 60}, "pricing": {"input_per_1m": 3.0},
+             "tool_calling": True},
+        ]
+
+    def test_bundled_file_loads_every_canonical_purpose_and_mirrors_defaults(self):
+        w = model_ranker.load_ranking_weights()
+        self.assertEqual(set(w.keys()), set(model_ranker.CANONICAL_PURPOSES) | {"bonuses"})
+        self.assertEqual(w, model_ranker.DEFAULT_WEIGHTS)
+
+    def test_execute_alias_ranks_identically_to_execution(self):
+        weights = model_ranker.load_ranking_weights()
+        ranked_exec = [(e["key"], e["score"])
+                       for e in model_ranker.score_candidates(self.entries, "execute", weights)]
+        ranked_execution = [(e["key"], e["score"])
+                            for e in model_ranker.score_candidates(self.entries, "execution",
+                                                                    weights)]
+        self.assertEqual(ranked_exec, ranked_execution)
+
+    def test_review_resolves_to_itself(self):
+        self.assertEqual(model_ranker.resolve_purpose("review"), "review")
+
+    def test_resolve_purpose_maps_aliases_only(self):
+        self.assertEqual(model_ranker.resolve_purpose("execute"), "execution")
+        self.assertEqual(model_ranker.resolve_purpose("review"), "review")
+        self.assertEqual(model_ranker.resolve_purpose("planning"), "planning")
+        self.assertEqual(model_ranker.resolve_purpose("banana"), "banana")
+
+    def test_every_canonical_purpose_ranks_all_candidates(self):
+        weights = model_ranker.load_ranking_weights()
+        for purpose in model_ranker.CANONICAL_PURPOSES:
+            ranked = model_ranker.score_candidates(self.entries, purpose, weights)
+            self.assertEqual(len(ranked), 3)
+            for e in ranked:
+                self.assertGreaterEqual(e["score"], 0)
+                self.assertLessEqual(e["score"], 100)
+
+    def test_planning_prefers_intelligence_and_mechanical_prefers_price(self):
+        weights = model_ranker.load_ranking_weights()
+        ranked_planning = model_ranker.score_candidates(self.entries, "planning", weights)
+        ranked_mechanical = model_ranker.score_candidates(self.entries, "mechanical", weights)
+        # A has highest intelligence (90), should rank first in planning (planning_weight=0.40)
+        self.assertEqual(ranked_planning[0]["key"], "A")
+        # Mechanical ranks by price (weight=0.55), so lower price > high intelligence
+        # C has price $3.0 with good scores; B has price $0.5 but lower scores
+        # Both rank ahead of A at $15.0, proving price dominates mechanical
+        planning_order = [e["key"] for e in ranked_planning]
+        mechanical_order = [e["key"] for e in ranked_mechanical]
+        self.assertNotEqual(planning_order, mechanical_order)
+
+    def test_unknown_purpose_raises_key_error(self):
+        weights = model_ranker.load_ranking_weights()
+        with self.assertRaises(KeyError):
+            model_ranker.score_candidates(self.entries, "unknown_purpose", weights)
+
+    def test_hand_built_legacy_weights_dict_still_ranks_execute(self):
+        legacy = {
+            "review": model_ranker.DEFAULT_WEIGHTS["review"].copy(),
+            "execute": model_ranker.DEFAULT_WEIGHTS["execution"].copy(),
+            "bonuses": model_ranker.DEFAULT_WEIGHTS["bonuses"].copy(),
+        }
+        ranked = model_ranker.score_candidates(self.entries, "execute", legacy)
+        self.assertEqual(len(ranked), 3)
+
+    def test_old_two_purpose_file_still_loads(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[review]\nintelligence_index = 0.33\ncoding_index = 0.10\n"
+                    "agentic_index = 0.15\ncontext_window = 0.15\ntool_calling = 0.05\n"
+                    "price = 0.15\nspeed = 0.05\n"
+                    "[execute]\nintelligence_index = 0.15\ncoding_index = 0.77\n"
+                    "agentic_index = 0.25\ncontext_window = 0.10\ntool_calling = 0.15\n"
+                    "price = 0.15\nspeed = 0.10\n"
+                    "[bonuses]\nbatch_mode = 8\nfallback_quota = 5\nbonus_cap = 15\n")
+            path = f.name
+        try:
+            w = model_ranker.load_ranking_weights(path)
+            self.assertAlmostEqual(w["review"]["intelligence_index"], 0.33)
+            self.assertAlmostEqual(w["execution"]["coding_index"], 0.77)
+            self.assertEqual(w["planning"], model_ranker.DEFAULT_WEIGHTS["planning"])
+            self.assertNotIn("execute", w)
+        finally:
+            os.remove(path)
+
+    def test_canonical_section_wins_over_alias_section(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[execute]\nintelligence_index = 0.15\ncoding_index = 0.77\n"
+                    "agentic_index = 0.25\ncontext_window = 0.10\ntool_calling = 0.15\n"
+                    "price = 0.15\nspeed = 0.10\n"
+                    "[execution]\nintelligence_index = 0.15\ncoding_index = 0.66\n"
+                    "agentic_index = 0.25\ncontext_window = 0.10\ntool_calling = 0.15\n"
+                    "price = 0.15\nspeed = 0.10\n"
+                    "[review]\nintelligence_index = 0.30\ncoding_index = 0.10\n"
+                    "agentic_index = 0.15\ncontext_window = 0.15\ntool_calling = 0.05\n"
+                    "price = 0.15\nspeed = 0.05\n"
+                    "[bonuses]\nbatch_mode = 8\nfallback_quota = 5\nbonus_cap = 15\n")
+            path = f.name
+        try:
+            w = model_ranker.load_ranking_weights(path)
+            self.assertAlmostEqual(w["execution"]["coding_index"], 0.66)
+        finally:
+            os.remove(path)
+
+    def test_malformed_new_section_rejects_whole_file(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[planning]\nintelligence_index = 0.40\n"  # missing all other axes
+                    "[review]\nintelligence_index = 0.33\ncoding_index = 0.10\n"
+                    "agentic_index = 0.15\ncontext_window = 0.15\ntool_calling = 0.05\n"
+                    "price = 0.15\nspeed = 0.05\n"
+                    "[bonuses]\nbatch_mode = 8\nfallback_quota = 5\nbonus_cap = 15\n")
+            path = f.name
+        try:
+            w = model_ranker.load_ranking_weights(path)
+            self.assertEqual(w["review"]["intelligence_index"],
+                             model_ranker.DEFAULT_WEIGHTS["review"]["intelligence_index"])
+        finally:
+            os.remove(path)
+
+    def test_bool_axis_weight_rejects_whole_file(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[review]\nintelligence_index = true\ncoding_index = 0.10\n"
+                    "agentic_index = 0.15\ncontext_window = 0.15\ntool_calling = 0.05\n"
+                    "price = 0.15\nspeed = 0.05\n"
+                    "[bonuses]\nbatch_mode = 8\nfallback_quota = 5\nbonus_cap = 15\n")
+            path = f.name
+        try:
+            w = model_ranker.load_ranking_weights(path)
+            self.assertEqual(w, model_ranker.DEFAULT_WEIGHTS)
+        finally:
+            os.remove(path)
+
+    def test_bool_bonus_rejects_whole_file(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write("[review]\nintelligence_index = 0.30\ncoding_index = 0.10\n"
+                    "agentic_index = 0.15\ncontext_window = 0.15\ntool_calling = 0.05\n"
+                    "price = 0.15\nspeed = 0.05\n"
+                    "[bonuses]\nbatch_mode = true\nfallback_quota = 5\nbonus_cap = 15\n")
+            path = f.name
+        try:
+            w = model_ranker.load_ranking_weights(path)
+            self.assertEqual(w, model_ranker.DEFAULT_WEIGHTS)
+        finally:
+            os.remove(path)
+
+    def test_is_finite_number_rejects_bool_and_non_finite(self):
+        self.assertTrue(model_ranker._is_finite_number(0))
+        self.assertTrue(model_ranker._is_finite_number(0.25))
+        self.assertTrue(model_ranker._is_finite_number(35))
+        self.assertFalse(model_ranker._is_finite_number(True))
+        self.assertFalse(model_ranker._is_finite_number(False))
+        self.assertFalse(model_ranker._is_finite_number(float("nan")))
+        self.assertFalse(model_ranker._is_finite_number(float("inf")))
+        self.assertFalse(model_ranker._is_finite_number("1"))
+        self.assertFalse(model_ranker._is_finite_number(None))
+
+    def test_review_self_alias_section_is_kept_as_is(self):
+        data = {
+            "review": {"intelligence_index": 0.30, "coding_index": 0.10, "agentic_index": 0.15,
+                       "context_window": 0.15, "tool_calling": 0.05, "price": 0.15, "speed": 0.05},
+            "execute": {"intelligence_index": 0.10, "coding_index": 0.25, "agentic_index": 0.20,
+                        "context_window": 0.05, "tool_calling": 0.10, "price": 0.25, "speed": 0.05},
+            "bonuses": {"batch_mode": 8, "fallback_quota": 5, "bonus_cap": 15},
+        }
+        result = model_ranker._normalize_purpose_aliases(data)
+        self.assertEqual(result["review"], data["review"])
+        self.assertEqual(result["execution"], data["execute"])
+        self.assertNotIn("execute", result)
 
 
 class TestLoadSecret(unittest.TestCase):
