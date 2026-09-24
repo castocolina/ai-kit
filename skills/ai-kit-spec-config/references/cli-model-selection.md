@@ -17,7 +17,7 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
     **The CLIs to consider were already chosen in SKILL.md's Step 2.2 stub** — do not re-ask.
     Group each kept multi-provider CLI's raw model list BEFORE any of it is
     discovered/matched/ranked. For each CLI the user kept, if it's multi-provider
-    (`models` array present — e.g. `opencode`, `cursor-agent`), **never hand its raw
+    (`models` array present — e.g. `opencode`, `cursor-agent`, and `codex` when `codex debug models` enumerated it), **never hand its raw
     model list to `fetch-model-catalog` as-is** — a
     multi-provider CLI's raw list can be very long (confirmed live: cursor-agent's catalog is
    ~200 ids, a handful of base model families each multiplied out by effort/thinking/fast-tier
@@ -62,9 +62,10 @@ json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
    this step scopes discovery upstream, at the input snapshot, before the subcommand ever runs,
    rather than duplicating the family-grouping judgment call this step already makes with the
    user.
-2. **For any single-provider CLI (no `models` array — e.g. codex, grok) the user wants to
-   consider that has NO existing `review-spec.toml` entry yet** (first-time setup): ask the user
-   for a candidate model id now (never guess or trust training knowledge — WebSearch it for
+2. **For any single-provider CLI (no `models` array — e.g. grok, or codex when `codex debug
+   models` enumeration yielded nothing) the user wants to
+   consider that has NO existing `review-spec.toml` entry yet** (first-time setup): ask the
+   user for a candidate model id now (never guess or trust training knowledge — WebSearch it for
    recency first, per this skill's `NEVER` list; confirmed live 2026-08-28 that guessing here,
    `gpt-5.6-sol-high` instead of the real `gpt-5.6-sol`, produces a candidate that fails
    outright at Step 2.5's live test). Collect these as `--extra-candidate <cli>:<model-id>`
@@ -152,6 +153,13 @@ JSON
    above, in this same step — without it, Step 8 later in this same wizard run would re-ask
    `is_router`/`batch_mode`/`fallback_quota` for this same candidate, since it has no other way
    to know those three fields were already confirmed here.
+
+   When the `unmatched` entry carries `reasoning_modes` (the effort levels `detect-runtimes`
+   read from the CLI itself, e.g. `codex debug models`), copy that list verbatim into the
+   confirmation `entry` as `"reasoning_modes": [...]`. It is CLI-reported data, not a guess, so
+   it is not one of the fields the user is asked to confirm. Omit the key when the unmatched
+   entry has none.
+
    (When the user does NOT correct the provider — the common case — `$CONFIRMED_KEY` always
    equals `unmatched.key` exactly, since both are `canonical_key` applied to the same provider
    and bare model id; nothing changes for that path.)

@@ -1165,6 +1165,53 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
                                                run_fn=lambda *a, **k: None)
         self.assertNotIn("models", snapshot["clis"]["codex"])
 
+    @staticmethod
+    def _fixture_text():
+        with open(CODEX_FIXTURE_PATH, encoding="utf-8") as f:
+            return f.read()
+
+    def test_codex_models_and_reasoning_modes_from_fixture(self):
+        fixture_text = self._fixture_text()
+
+        def fake_which(name):
+            return "/fake/volta/bin/codex" if name == "codex" else None
+
+        snapshot = rs.build_runtimes_snapshot(
+            which_fn=fake_which,
+            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fixture_text))
+        codex = snapshot["clis"]["codex"]
+        self.assertEqual(codex["path"], "/fake/volta/bin/codex")
+        self.assertEqual(codex["models"],
+                         ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"])
+        self.assertEqual(sorted(codex["reasoning_modes"]),
+                         sorted(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]))
+        self.assertEqual(codex["reasoning_modes"]["gpt-5.5"], ["low", "medium", "high", "xhigh"])
+
+    def test_codex_enumeration_failure_omits_models_key(self):
+        def fake_which(name):
+            return "/fake/volta/bin/codex" if name == "codex" else None
+
+        def fake_run_fn(*a, **k):
+            raise OSError("codex debug models failed to launch")
+
+        snapshot = rs.build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run_fn)
+        self.assertEqual(snapshot["clis"]["codex"],
+                         {"installed": True, "path": "/fake/volta/bin/codex"})
+
+    def test_codex_nonzero_exit_omits_models_key(self):
+        # A failing command that still prints stale or partial JSON must not populate
+        # models -- the entry degrades to bare installed/path (16 D-05's degrade path).
+        fixture_text = self._fixture_text()
+
+        def fake_which(name):
+            return "/fake/volta/bin/codex" if name == "codex" else None
+
+        snapshot = rs.build_runtimes_snapshot(
+            which_fn=fake_which,
+            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=1, stdout=fixture_text))
+        self.assertEqual(snapshot["clis"]["codex"],
+                         {"installed": True, "path": "/fake/volta/bin/codex"})
+
 
 class TestCodexEnumerationEndToEnd(unittest.TestCase):
     """Tracer for the full path: `codex debug models` (fixture text standing in for the
@@ -1177,7 +1224,7 @@ class TestCodexEnumerationEndToEnd(unittest.TestCase):
             return f.read()
 
     def _run_both(self, d, models_dev_data):
-        fixture_text = open(CODEX_FIXTURE_PATH, encoding="utf-8").read()
+        fixture_text = self._read_file(CODEX_FIXTURE_PATH)
         recorded = []
 
         def fake_run_fn(argv, **kwargs):
@@ -1285,6 +1332,147 @@ class TestCodexEnumerationEndToEnd(unittest.TestCase):
             self.assertEqual(gpt55[0]["reasoning_modes"], ["low", "medium", "high", "xhigh"])
             self.assertFalse([k for k in cache_read_json(
                 os.path.join(d, "model-catalog.json")) if k.endswith("/gpt-5.5")])
+
+
+class TestParseCodexDebugModels(unittest.TestCase):
+    """Pins parse_codex_debug_models's degrade contract (16 D-05): every malformed input
+    degrades to [] or a partial list and never raises."""
+
+    @staticmethod
+    def _fixture_text():
+        with open(CODEX_FIXTURE_PATH, encoding="utf-8") as f:
+            return f.read()
+
+    def test_fixture_yields_only_listed_slugs_in_output_order(self):
+        parsed = detection.parse_codex_debug_models(self._fixture_text())
+        self.assertEqual([m["id"] for m in parsed],
+                         ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"])
+
+    def test_fixture_effort_lists_match_supported_reasoning_levels(self):
+        parsed = detection.parse_codex_debug_models(self._fixture_text())
+        efforts = {m["id"]: m["reasoning_modes"] for m in parsed}
+        self.assertEqual(efforts["gpt-5.6-sol"],
+                         ["low", "medium", "high", "xhigh", "max", "ultra"])
+        self.assertEqual(efforts["gpt-5.6-terra"],
+                         ["low", "medium", "high", "xhigh", "max", "ultra"])
+        self.assertEqual(efforts["gpt-5.6-luna"], ["low", "medium", "high", "xhigh", "max"])
+        self.assertEqual(efforts["gpt-5.5"], ["low", "medium", "high", "xhigh"])
+
+    def test_non_string_input_returns_empty(self):
+        self.assertEqual(detection.parse_codex_debug_models(None), [])
+        self.assertEqual(detection.parse_codex_debug_models(b"{}"), [])
+        self.assertEqual(detection.parse_codex_debug_models(42), [])
+
+    def test_invalid_json_returns_empty(self):
+        self.assertEqual(detection.parse_codex_debug_models(""), [])
+        self.assertEqual(detection.parse_codex_debug_models("not json"), [])
+        self.assertEqual(detection.parse_codex_debug_models("{"), [])
+
+    def test_unexpected_top_level_shapes_return_empty(self):
+        self.assertEqual(detection.parse_codex_debug_models("[]"), [])
+        self.assertEqual(detection.parse_codex_debug_models("{}"), [])
+        self.assertEqual(detection.parse_codex_debug_models('{"models": {}}'), [])
+        self.assertEqual(detection.parse_codex_debug_models('{"models": null}'), [])
+
+    def test_malformed_items_are_skipped_not_fatal(self):
+        stdout = json.dumps({"models": [
+            3, "x", {},
+            {"slug": "", "visibility": "list"},
+            {"slug": 5, "visibility": "list"},
+            {"slug": "ok", "visibility": "list"},
+        ]})
+        self.assertEqual(detection.parse_codex_debug_models(stdout),
+                         [{"id": "ok", "reasoning_modes": []}])
+
+    def test_missing_or_malformed_levels_degrade_to_empty_modes(self):
+        base = {"slug": "m", "visibility": "list"}
+        cases = [
+            {**base},                                        # key missing
+            {**base, "supported_reasoning_levels": "high"},  # a string, not a list
+            {**base, "supported_reasoning_levels":
+                [1, {"effort": ""}, {"effort": "low"}, {"effort": "low"}, {"x": 1}]},
+        ]
+        for item in cases:
+            stdout = json.dumps({"models": [item]})
+            self.assertEqual(detection.parse_codex_debug_models(stdout),
+                             [{"id": "m", "reasoning_modes": ["low"]} if
+                              "supported_reasoning_levels" in item and
+                              isinstance(item["supported_reasoning_levels"], list)
+                              else {"id": "m", "reasoning_modes": []}])
+
+    def test_missing_visibility_is_treated_as_hidden(self):
+        stdout = json.dumps({"models": [{"slug": "m"}]})
+        self.assertEqual(detection.parse_codex_debug_models(stdout), [])
+
+    def test_duplicate_slug_keeps_first(self):
+        stdout = json.dumps({"models": [
+            {"slug": "m", "visibility": "list",
+             "supported_reasoning_levels": [{"effort": "low"}]},
+            {"slug": "m", "visibility": "list",
+             "supported_reasoning_levels": [{"effort": "high"}]},
+        ]})
+        self.assertEqual(detection.parse_codex_debug_models(stdout),
+                         [{"id": "m", "reasoning_modes": ["low"]}])
+
+
+class TestDetectCodexModels(unittest.TestCase):
+    """Pins detect_codex_models's real-binary argv (16 D-07) and its never-raise degrade
+    contract, including the non-zero-exit-is-failure gate."""
+
+    @staticmethod
+    def _fixture_text():
+        with open(CODEX_FIXTURE_PATH, encoding="utf-8") as f:
+            return f.read()
+
+    def test_invokes_the_resolved_real_binary_with_an_argv_list(self):
+        recorded = {}
+
+        def fake_run_fn(argv, **kwargs):
+            recorded["argv"] = argv
+            recorded["kwargs"] = kwargs
+            return unittest.mock.MagicMock(returncode=0, stdout=self._fixture_text())
+
+        models = detection.detect_codex_models("/fake/volta/bin/codex", run_fn=fake_run_fn)
+        self.assertEqual([m["id"] for m in models],
+                         ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"])
+        self.assertEqual(recorded["argv"], ["/fake/volta/bin/codex", "debug", "models"])
+        self.assertEqual(recorded["kwargs"].get("timeout"), 15)
+        self.assertFalse(recorded["kwargs"].get("shell"))
+
+    def test_oserror_returns_empty(self):
+        def fake_run_fn(*a, **k):
+            raise OSError("binary vanished")
+        self.assertEqual(detection.detect_codex_models("/fake/codex",
+                                                        run_fn=fake_run_fn), [])
+
+    def test_timeout_returns_empty(self):
+        def fake_run_fn(*a, **k):
+            raise subprocess.TimeoutExpired(cmd="codex", timeout=15)
+        self.assertEqual(detection.detect_codex_models("/fake/codex",
+                                                        run_fn=fake_run_fn), [])
+
+    def test_none_result_returns_empty(self):
+        self.assertEqual(detection.detect_codex_models("/fake/codex",
+                                                        run_fn=lambda *a, **k: None), [])
+
+    def test_empty_stdout_returns_empty(self):
+        result = unittest.mock.MagicMock(returncode=0, stdout="")
+        self.assertEqual(
+            detection.detect_codex_models("/fake/codex", run_fn=lambda *a, **k: result), [])
+
+    def test_nonzero_exit_with_valid_json_returns_empty(self):
+        # A failing command that still prints stale or partial JSON must not populate
+        # models -- non-zero exit is a failure, not a success with a payload.
+        result = unittest.mock.MagicMock(returncode=1, stdout=self._fixture_text())
+        self.assertEqual(
+            detection.detect_codex_models("/fake/codex", run_fn=lambda *a, **k: result), [])
+
+    def test_result_without_returncode_returns_empty(self):
+        class NoReturnCode:
+            stdout = self._fixture_text()
+        self.assertEqual(
+            detection.detect_codex_models("/fake/codex", run_fn=lambda *a, **k: NoReturnCode()),
+            [])
 
 
 class TestResolveLadderPick(unittest.TestCase):
