@@ -88,7 +88,7 @@ rewrite depends on.
      (`codex debug models`), and claude (hardcoded aliases + catalog full ids + dated fallback) by invoking the actual
      binaries — never shell functions/aliases — with parsers validated against fixtures captured
      from real CLI output.
-  3. Model catalog entries can carry optional `image_input` and `reasoning_levels` fields, and
+  3. Model catalog entries can carry optional `image_input` and `reasoning_modes` (existing field) data, and
      cache files written before this change (without these fields) still load without error.
   4. The ranker accepts `planning`, `general`, `mechanical`, `execution`, `review` purposes via the
      ranking-weights file, and existing `review`/`execute` callers keep working unchanged as

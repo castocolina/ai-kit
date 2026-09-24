@@ -32,7 +32,7 @@ runtime hosting the session. Source spec (approved 2026-09-23):
 
 **Target features:**
 - `ai_kit_spec` extensions — host detection pi > opencode > cursor > codex > claude;
-  pi/codex/claude model enumeration; `image_input`/`reasoning_levels` catalog fields;
+  pi/codex/claude model enumeration; `image_input`/`reasoning_modes` catalog data;
   planning/general/mechanical/execution/review ranker purposes
 - Curated-config rewrite — inventory → recommend → `plan.json` → plan-set → apply
   (dry-run, backup/restore); three model layers plus an execution override; rigor

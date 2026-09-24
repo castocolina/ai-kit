@@ -14,7 +14,7 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 
 - [ ] **SPEC-01**: `detect-current-runtime` identifies pi (`PI_CODING_AGENT`) and codex (`CODEX_THREAD_ID`/`CODEX_VERSION`) in addition to opencode/cursor/claude, with precedence pi > opencode > cursor > codex > claude when several signals are set
 - [ ] **SPEC-02**: `detect-runtimes` enumerates codex (`codex debug models`) and claude (hardcoded aliases + full ids from the catalog + dated fallback), invoking real binaries (never shell functions/aliases); parsers covered by fixtures captured from real CLI output (pi moved to SPEC-05 per Phase 16 D-06)
-- [ ] **SPEC-03**: Model catalog entries carry optional `image_input` and `reasoning_levels`; cache files without them still load
+- [ ] **SPEC-03**: Model catalog entries carry optional `image_input` and populated `reasoning_modes` (existing field, per 16 D-08); cache files without them still load
 - [ ] **SPEC-05**: `detect-runtimes` enumerates pi (`pi --list-models`) with a fixture-backed parser, and `pi` is a known CLI (deferred from SPEC-02 to the pi phase, Phase 16 D-06)
 - [ ] **SPEC-06**: `cursor-agent` is detected and enumerated even when the user's shell wraps it as a function/alias (real binary located without executing the wrapper; Phase 16 D-06)
 - [ ] **SPEC-04**: Ranker supports purposes `planning`, `general`, `mechanical`, `execution`, `review` via the ranking-weights file; `review`/`execute` keep working as aliases
