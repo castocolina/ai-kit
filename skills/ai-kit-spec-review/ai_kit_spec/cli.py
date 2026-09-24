@@ -205,8 +205,48 @@ def _preserved_or_fresh_aa_fields(aa_match: dict | None, aa_ok: bool,
     return fields
 
 
+def _runtime_meta_from_snapshot(runtimes: dict) -> dict:
+    """Extracts per-model runtime metadata from a runtimes snapshot dict,
+    keyed by `(cli_name, model_id)` tuples. Today it carries each entry's
+    `reasoning_modes` value (a dict mapping model id -> effort list, which
+    `build_runtimes_snapshot` populates for codex when `codex debug models`
+    enumerates) into a flat `{"reasoning_modes": [...]}` record per model.
+    Anything malformed is skipped, never raised: a non-dict `clis` entry,
+    a non-dict `reasoning_modes`, a blank/`str`-keyed lookup, or an
+    effort list that is not a non-empty list made only of `str`."""
+    meta = {}
+    for cli_name, cli_data in (runtimes or {}).get("clis", {}).items():
+        if not isinstance(cli_data, dict):
+            continue
+        modes_map = cli_data.get("reasoning_modes")
+        if not isinstance(modes_map, dict):
+            continue
+        for model_id, modes in modes_map.items():
+            if not isinstance(model_id, str) or not model_id.strip():
+                continue
+            if (not isinstance(modes, list) or not modes
+                    or not all(isinstance(m, str) for m in modes)):
+                continue
+            meta[(cli_name, model_id)] = {"reasoning_modes": list(modes)}
+    return meta
+
+
+def _apply_runtime_meta(entry: dict, runtime_meta: dict | None, cli_name: str,
+                        model_id: str) -> None:
+    """Copies per-model runtime metadata (from `_runtime_meta_from_snapshot`)
+    onto `entry` IN PLACE. Only a non-empty CLI-reported `reasoning_modes`
+    list is applied; when the (cli_name, model_id) lookup misses, `entry` is
+    left untouched — an absent key lets `merge_catalog_entry` preserve
+    whatever the cache already had."""
+    meta = (runtime_meta or {}).get((cli_name, model_id)) or {}
+    modes = meta.get("reasoning_modes") or []
+    if modes:
+        entry["reasoning_modes"] = list(modes)
+
+
 def build_model_catalog(discovered_models: list, models_dev_data: dict, models_dev_ok: bool,
-                         aa_models: list, aa_ok: bool, existing_catalog: dict) -> tuple:
+                        aa_models: list, aa_ok: bool, existing_catalog: dict,
+                        runtime_meta: dict | None = None) -> tuple:
     """Pure orchestration (design spec 2026-09-02, Section 4 steps 2-5): match each discovered
     {"cli", "model_id"} candidate against both external sources, enrich deterministically from
     whatever matched (or preserve cached fields when a source is down -- see the _preserved_
@@ -233,7 +273,15 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
     (HIGH finding: it must never become its own vendor by falling through to the model id
     itself). Artificial Analysis pricing fills in when models.dev has no match for that
     candidate (HIGH finding: AA data must not be discarded just because models.dev didn't
-    match)."""
+    match). The optional `runtime_meta` dict (from `_runtime_meta_from_snapshot`, keyed by
+    (cli_name, model_id)) carries CLI-reported per-model runtime metadata — today each
+    codex model's `reasoning_modes` effort list, read from the CLI itself via
+    `codex debug models` — onto BOTH the matched entries AND the `unmatched` records
+    (a brand-new codex slug no external source knows exits through the unmatched branch,
+    and its effort levels must still reach the wizard's confirmation payload; the wizard
+    copies that CLI-reported list verbatim, per ai-kit-spec-config's own
+    cli-model-selection.md). The metadata key is only added when the lookup actually has
+    one, so callers that pass no `runtime_meta` see byte-identical records as before."""
     catalog = dict(existing_catalog)
     rejections = []
     unmatched = []
@@ -267,10 +315,12 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
                 # the existing unmatched-path convention (an empty provider is the existing
                 # convention for "no vendor to infer from," used identically by the ordinary
                 # unmatched path a few lines below in the function's existing body).
-                unmatched.append({"cli": cli_name, "model_id": model_id, "provider": None,
-                                   "key": None, "vendor_unknown": True,
-                                   "name_declared_purpose": name_purpose,
-                                   **_infer_heuristics("", model_id)})
+                record = {"cli": cli_name, "model_id": model_id, "provider": None,
+                          "key": None, "vendor_unknown": True,
+                          "name_declared_purpose": name_purpose,
+                          **_infer_heuristics("", model_id)}
+                _apply_runtime_meta(record, runtime_meta, cli_name, model_id)
+                unmatched.append(record)
                 continue
             key = existing_key or canonical_key(provider, bare_model_part(model_id))
             existing_entry = catalog.get(key)
@@ -308,6 +358,7 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
             pricing = (existing_entry or {}).get("pricing")
             if pricing:
                 entry["pricing"] = pricing
+            _apply_runtime_meta(entry, runtime_meta, cli_name, model_id)
             catalog, reason = merge_catalog_entry(catalog, key, entry)
             if reason:
                 rejections.append(reason)
@@ -407,9 +458,11 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
         # above) which always implies `existing_entry is None`, so this is a pure widening of the
         # routing condition, not a new state to reconcile with the second clause.
         if provider is None or (md_match is None and aa_match is None and existing_entry is None):
-            unmatched.append({"cli": cli_name, "model_id": model_id, "provider": provider,
-                               "key": key, "vendor_unknown": vendor_unknown,
-                               **_infer_heuristics(provider or "", model_id)})
+            record = {"cli": cli_name, "model_id": model_id, "provider": provider,
+                      "key": key, "vendor_unknown": vendor_unknown,
+                      **_infer_heuristics(provider or "", model_id)}
+            _apply_runtime_meta(record, runtime_meta, cli_name, model_id)
+            unmatched.append(record)
             continue
 
         md_fields = _preserved_or_fresh_md_fields(md_match, models_dev_ok, existing_entry,
@@ -473,6 +526,7 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
         elif clear_pricing:
             entry["pricing"] = None    # explicit clear signal -- see merge_catalog_entry
         entry.update(aa_fields)
+        _apply_runtime_meta(entry, runtime_meta, cli_name, model_id)
         catalog, reason = merge_catalog_entry(catalog, key, entry)
         if reason:
             rejections.append(reason)
@@ -738,21 +792,24 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
         from ai_kit_spec.model_catalog import CATALOG_TTL_SECONDS
 
         runtimes = cache_read_json(args.runtimes_json) or {}
+        runtime_meta = _runtime_meta_from_snapshot(runtimes)
         discovered = [
             {"cli": cli_name, "model_id": model_id}
             for cli_name, cli_data in runtimes.get("clis", {}).items()
             for model_id in cli_data.get("models", [])
         ]
-        # Single-provider CLIs (codex, grok, claude/native, or any future CLI with no "models"
-        # array -- confirmed live: detect_installed_clis' build_runtimes_snapshot only ever
-        # populates "models" for opencode/cursor-agent) have no discoverable catalog to
-        # enumerate. Their EXACT candidate source is whatever review-spec.toml already has
-        # registered for that CLI -- re-running this subcommand re-enriches/re-ranks a model
-        # the wizard already confirmed once. A model not yet registered for a single-provider
-        # CLI stays on ai-kit-spec-config's existing manual per-model research path (SKILL.md
-        # Step 2.2) until the user adds it as a reviewer -- the NEXT run of this subcommand
-        # then picks it up here. This reconciliation ALWAYS runs -- see the --if-stale note
-        # above; only the two external-source fetches below are gated by it.
+        # Single-provider CLIs are any installed CLI whose snapshot entry has no "models"
+        # array -- grok, native, and codex whenever `codex debug models` enumeration
+        # yielded nothing (build_runtimes_snapshot always populates "models" for
+        # opencode/cursor-agent, and for codex when enumeration succeeds). They have no
+        # discoverable catalog to enumerate. Their EXACT candidate source is whatever
+        # review-spec.toml already has registered for that CLI -- re-running this
+        # subcommand re-enriches/re-ranks a model the wizard already confirmed once. A
+        # model not yet registered for a single-provider CLI stays on ai-kit-spec-config's
+        # existing manual per-model research path (SKILL.md Step 2.2) until the user adds
+        # it as a reviewer -- the NEXT run of this subcommand then picks it up here. This
+        # reconciliation ALWAYS runs -- see the --if-stale note above; only the two
+        # external-source fetches below are gated by it.
         single_provider_clis = {name for name, data in runtimes.get("clis", {}).items()
                                  if data.get("installed") and "models" not in data}
         if single_provider_clis:
@@ -798,7 +855,8 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
                 cache_write_json(fetch_meta_path, {"last_fetched": time.time()})
 
         catalog, rejections, unmatched = build_model_catalog(
-            discovered, models_dev_data, models_dev_ok, aa_models, aa_ok, existing_catalog)
+            discovered, models_dev_data, models_dev_ok, aa_models, aa_ok, existing_catalog,
+            runtime_meta=runtime_meta)
         cache_write_json(args.catalog_path, catalog)
         print(json.dumps({"catalog_path": args.catalog_path, "entry_count": len(catalog),
                            "rejections": rejections, "unmatched": unmatched,

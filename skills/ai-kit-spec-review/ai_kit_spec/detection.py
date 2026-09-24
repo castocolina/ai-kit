@@ -1,3 +1,4 @@
+import json
 import os
 import shlex
 import shutil
@@ -73,10 +74,11 @@ def detect_current_runtime(env: dict | None = None) -> str:
 
 def detect_opencode_models(binary: str, run_fn=subprocess.run) -> list:
     """Runs `<binary> models`; one model id per non-blank line. opencode is
-    the only known-installed multi-provider CLI today (confirmed live:
-    lists opencode-go/kimi-k3, opencode-go/qwen3.8-max, opencode-go/grok-4.6,
-    etc. under its own routing) — other CLIs name their model directly on
-    invocation with no separate list subcommand to parse."""
+    one of the known-installed multi-provider CLIs (confirmed live: lists
+    opencode-go/kimi-k3, opencode-go/qwen3.8-max, opencode-go/grok-4.6,
+    etc. under its own routing) — codex is enumerated separately via its
+    own `codex debug models` (detect_codex_models); claude and grok have
+    no list subcommand."""
     try:
         result = run_fn([binary, "models"], capture_output=True, text=True,
                          check=False, timeout=15)
@@ -106,6 +108,87 @@ def detect_cursor_agent_models(binary: str, run_fn=subprocess.run) -> list:
     return models
 
 
+def parse_codex_debug_models(stdout) -> list:
+    """Parses the JSON stdout of `codex debug models` into
+    `[{"id": <slug>, "reasoning_modes": [<effort>, ...]}, ...]`, one entry
+    per listed model, in output order. Built from a real capture
+    (codex-cli 0.147.0, resolved via PATH — a volta shim, i.e. a real
+    executable, not an alias/function; see
+    tests/fixtures/codex_debug_models.json). Only models whose
+    `visibility` is exactly the string "list" are returned: the "hide"
+    entries (gpt-reserve, codex-auto-review) read as internal/reserved
+    slugs, not user-selectable models, and a MISSING `visibility` key
+    counts as hidden too. `reasoning_modes` collects each
+    `supported_reasoning_levels[].effort` value, in order, without
+    duplicates. Every malformed input degrades to [] (or to skipping just
+    the malformed item) and never raises: a non-`str` input, invalid JSON,
+    a non-dict top level, a missing/non-list `models`, a non-dict item, a
+    non-str/blank `slug`, a duplicate slug (first occurrence wins), or a
+    missing/non-list `supported_reasoning_levels`. The function reads only
+    `slug`, `visibility` and `supported_reasoning_levels[].effort` — the
+    real payload is ~260KB, almost all of it `model_messages`/
+    `base_instructions` prompt text that must never be copied."""
+    if not isinstance(stdout, str):
+        return []
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, dict) or not isinstance(data.get("models"), list):
+        return []
+    parsed = []
+    seen = set()
+    for item in data["models"]:
+        if not isinstance(item, dict):
+            continue
+        slug = item.get("slug")
+        if not isinstance(slug, str) or not slug.strip():
+            continue
+        if item.get("visibility") != "list":
+            continue
+        if slug in seen:
+            continue
+        seen.add(slug)
+        levels = item.get("supported_reasoning_levels")
+        modes = []
+        if isinstance(levels, list):
+            for level in levels:
+                if not isinstance(level, dict):
+                    continue
+                effort = level.get("effort")
+                if not isinstance(effort, str) or not effort.strip():
+                    continue
+                if effort in modes:
+                    continue
+                modes.append(effort)
+        parsed.append({"id": slug, "reasoning_modes": modes})
+    return parsed
+
+
+def detect_codex_models(binary: str, run_fn=subprocess.run) -> list:
+    """Runs `<binary> debug models` (codex-cli 0.147.0, resolved via PATH —
+    a volta shim, i.e. a real executable, not an alias/function) and
+    parses its JSON stdout via `parse_codex_debug_models`, keeping only
+    models whose `visibility` is "list" (the "hide" entries are
+    internal/reserved slugs, not user-selectable). A non-zero exit is a
+    FAILURE, not a success with a stale/partial payload: a failing command
+    that still prints JSON must never populate models, so the result's
+    `returncode` must be exactly 0 (the same gate
+    ai_kit_gsd_curated_config/model_detect.py already applies); a `run_fn`
+    stub returning None or an object without a `returncode` attribute
+    yields []. Like every parser in this file, any failure degrades to []
+    and never raises — an OSError/TimeoutExpired, invalid JSON, or an
+    unexpected shape all return [] rather than crashing detection."""
+    try:
+        result = run_fn([binary, "debug", "models"], capture_output=True, text=True,
+                        check=False, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if getattr(result, "returncode", 1) != 0:
+        return []
+    return parse_codex_debug_models(getattr(result, "stdout", None))
+
+
 def group_models_by_family(models: list) -> dict:
     """Collapses tier/effort/mode variants of the same base model into one
     group, e.g. ["claude-opus-5-high", "claude-opus-5-high-fast",
@@ -132,9 +215,14 @@ def group_models_by_family(models: list) -> dict:
 
 
 def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run) -> dict:
-    """{"clis": {name: {"installed": bool, "path"?: str, "models"?: [str]}}}.
-    Pure function — the caller (this module's CLI entrypoint) decides
-    whether/where to persist this via cache_write_json."""
+    """{"clis": {name: {"installed": bool, "path"?: str, "models"?: [str],
+    "reasoning_modes"?: {model_id: [effort, ...]}}}}. `models` is populated
+    for opencode/cursor-agent always, and for codex when `codex debug
+    models` enumeration succeeds; `reasoning_modes` (codex only) maps each
+    enumerated model id to its CLI-reported effort levels, only for ids
+    that actually have a non-empty effort list. Pure function — the caller
+    (this module's CLI entrypoint) decides whether/where to persist this
+    via cache_write_json."""
     installed = detect_installed_clis(which_fn=which_fn)
     snapshot = {"clis": {}}
     for cli, binpath in installed.items():
@@ -146,6 +234,14 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run) -> dic
             entry["models"] = detect_opencode_models(binpath, run_fn=run_fn)
         elif cli == "cursor-agent":
             entry["models"] = detect_cursor_agent_models(binpath, run_fn=run_fn)
+        elif cli == "codex":
+            codex_models = detect_codex_models(binpath, run_fn=run_fn)
+            if codex_models:
+                entry["models"] = [m["id"] for m in codex_models]
+                entry["reasoning_modes"] = {
+                    m["id"]: m["reasoning_modes"]
+                    for m in codex_models if m["reasoning_modes"]
+                }
         snapshot["clis"][cli] = entry
     return snapshot
 
@@ -262,9 +358,10 @@ def check_codegraph_mcp_healthy(cli: str, run_fn=subprocess.run) -> bool:
     return _codegraph_entry_healthy_in_list_output(list_result.stdout)
 
 
-# The two multi-provider CLIs with their own per-model catalog (KNOWN_CLIS' other three --
-# claude, codex, grok -- have no "models" list in build_runtimes_snapshot's own output at all,
-# so they can never be a *target* alternative here; only a *source* cli being checked).
+# The two multi-provider CLIs with their own per-model catalog (a single-vendor CLI's
+# list - codex's enumerated slugs included - only ever serves that one vendor's models, so
+# it can never be a *target* alternative for another CLI's model here; only these two
+# multi-provider CLIs can).
 _CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS = ("cursor-agent", "opencode")
 
 

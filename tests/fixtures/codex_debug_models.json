@@ -1,0 +1,236 @@
+{
+  "models": [
+    {
+      "slug": "gpt-reserve",
+      "display_name": "GPT-Reserve",
+      "description": "Fast and affordable agentic coding model.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        }
+      ],
+      "visibility": "hide",
+      "priority": 3,
+      "context_window": 272000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "model_messages": {
+        "instructions_template": "trimmed: the real value is a multi-kilobyte prompt template that the parser must ignore"
+      }
+    },
+    {
+      "slug": "gpt-5.6-sol",
+      "display_name": "GPT-5.6-Sol",
+      "description": "Older coding model for complex work.",
+      "default_reasoning_level": "low",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        },
+        {
+          "effort": "ultra",
+          "description": "Maximum reasoning with automatic task delegation"
+        }
+      ],
+      "visibility": "list",
+      "priority": 4,
+      "context_window": 272000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "model_messages": {
+        "instructions_template": "trimmed: the real value is a multi-kilobyte prompt template that the parser must ignore"
+      }
+    },
+    {
+      "slug": "gpt-5.6-terra",
+      "display_name": "GPT-5.6-Terra",
+      "description": "Older balanced model for straightforward work.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        },
+        {
+          "effort": "ultra",
+          "description": "Maximum reasoning with automatic task delegation"
+        }
+      ],
+      "visibility": "list",
+      "priority": 7,
+      "context_window": 272000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "model_messages": {
+        "instructions_template": "trimmed: the real value is a multi-kilobyte prompt template that the parser must ignore"
+      }
+    },
+    {
+      "slug": "gpt-5.6-luna",
+      "display_name": "GPT-5.6-Luna",
+      "description": "Older fast and efficient model.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        }
+      ],
+      "visibility": "list",
+      "priority": 8,
+      "context_window": 272000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "model_messages": {
+        "instructions_template": "trimmed: the real value is a multi-kilobyte prompt template that the parser must ignore"
+      }
+    },
+    {
+      "slug": "gpt-5.5",
+      "display_name": "GPT-5.5",
+      "description": "Legacy coding model.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        }
+      ],
+      "visibility": "list",
+      "priority": 12,
+      "context_window": 272000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "model_messages": {
+        "instructions_template": "trimmed: the real value is a multi-kilobyte prompt template that the parser must ignore"
+      }
+    },
+    {
+      "slug": "codex-auto-review",
+      "display_name": "Codex Auto Review",
+      "description": "Automatic approval review model for Codex.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        }
+      ],
+      "visibility": "hide",
+      "priority": 43,
+      "context_window": 272000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "model_messages": {
+        "instructions_template": "trimmed: the real value is a multi-kilobyte prompt template that the parser must ignore"
+      }
+    }
+  ]
+}

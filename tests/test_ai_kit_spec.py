@@ -92,6 +92,25 @@ from ai_kit_spec.review_reports import (  # noqa: F401
 from ai_kit_spec.vendor import infer_vendor_from_model  # noqa: F401
 
 
+# Fixture provenance (JSON cannot hold comments, so the record lives here, next to the
+# constant the tests read the fixture through):
+# - Source command: `codex debug models` (CLI version codex-cli 0.147.0, the real binary
+#   resolved via PATH -- a volta shim, i.e. a real executable, not an alias/function).
+# - Captured 2026-09-23 on the maintainer's machine
+#   (.planning/phases/16-ai-kit-spec-extensions/16-RESEARCH.md, Pattern 2).
+# - Kept verbatim: the six slugs and their order, display_name, description,
+#   default_reasoning_level, every supported_reasoning_levels effort and description,
+#   visibility, and priority.
+# - Replaced: `model_messages` by a placeholder string; `context_window` and
+#   `input_modalities` are set to one representative value for every model (not verified
+#   per model; the parser never reads either).
+# - Why the raw capture is not committed: it is 259 KB, almost all of it the vendor's
+#   `model_messages.instructions_template` prompt text, which the parser never reads and
+#   the repo should not carry.
+CODEX_FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures",
+                                  "codex_debug_models.json")
+
+
 # Back-compat shim so every existing `rs.<name>` call in this file keeps working verbatim --
 # avoids touching 146 existing test bodies for a pure module-boundary change. Explicit name
 # list, not dir()-based reflection: a missing/misspelled export raises KeyError here (from
@@ -1145,6 +1164,127 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         snapshot = rs.build_runtimes_snapshot(which_fn=fake_which,
                                                run_fn=lambda *a, **k: None)
         self.assertNotIn("models", snapshot["clis"]["codex"])
+
+
+class TestCodexEnumerationEndToEnd(unittest.TestCase):
+    """Tracer for the full path: `codex debug models` (fixture text standing in for the
+    real binary's stdout) -> detect-runtimes -> runtimes.json -> fetch-model-catalog ->
+    model-catalog.json's existing `reasoning_modes` field (Phase 16 D-05/D-08)."""
+
+    @staticmethod
+    def _read_file(path):
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def _run_both(self, d, models_dev_data):
+        fixture_text = open(CODEX_FIXTURE_PATH, encoding="utf-8").read()
+        recorded = []
+
+        def fake_run_fn(argv, **kwargs):
+            recorded.append((argv, kwargs))
+            return unittest.mock.MagicMock(returncode=0, stdout=fixture_text)
+
+        def fake_which(name):
+            return "/fake/volta/bin/codex" if name == "codex" else None
+
+        runtimes_path = os.path.join(d, "runtimes.json")
+        catalog_path = os.path.join(d, "model-catalog.json")
+        with open(catalog_path, "w", encoding="utf-8") as f:
+            json.dump({}, f)
+
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = rs.main(["detect-runtimes", "--save", runtimes_path],
+                           which_fn=fake_which, run_fn=fake_run_fn,
+                           env_fn=lambda: {"HOME": d})
+        self.assertEqual(code, 0)
+        buf2 = io.StringIO()
+        with redirect_stdout(buf2):
+            code = rs.main(["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                            "--catalog-path", catalog_path],
+                           fetch_models_dev_fn=lambda: (models_dev_data, True),
+                           fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                           load_secret_fn=lambda env, key: None,
+                           env_fn=lambda: {"HOME": d})
+        self.assertEqual(code, 0)
+        return catalog_path, runtimes_path, recorded, buf2.getvalue()
+
+    @staticmethod
+    def _models_dev_data(slugs):
+        return {"openai": {"models": {
+            slug: {"id": slug, "tool_call": True,
+                   "limit": {"context": 272000, "output": 128000}}
+            for slug in slugs
+        }}}
+
+    def test_codex_models_flow_from_debug_models_into_the_catalog(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path, runtimes_path, recorded, _ = self._run_both(
+                d, self._models_dev_data(["gpt-5.6-sol", "gpt-5.6-terra",
+                                          "gpt-5.6-luna", "gpt-5.5"]))
+            runtimes = cache_read_json(runtimes_path)
+            self.assertEqual(runtimes["clis"]["codex"]["models"],
+                             ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"])
+            first_argv, first_kwargs = recorded[0]
+            self.assertEqual(first_argv, ["/fake/volta/bin/codex", "debug", "models"])
+            self.assertEqual(first_kwargs.get("timeout"), 15)
+            self.assertFalse(first_kwargs.get("shell"))
+            catalog = cache_read_json(catalog_path)
+            terra = catalog["openai/gpt-5.6-terra"]
+            self.assertEqual(terra["runtimes"]["codex"]["model_id"], "gpt-5.6-terra")
+            self.assertEqual(terra["reasoning_modes"],
+                             ["low", "medium", "high", "xhigh", "max", "ultra"])
+            self.assertEqual(catalog["openai/gpt-5.5"]["reasoning_modes"],
+                             ["low", "medium", "high", "xhigh"])
+
+    def test_hidden_codex_models_never_reach_runtimes_or_catalog(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path, runtimes_path, _, _ = self._run_both(
+                d, self._models_dev_data(["gpt-5.6-sol", "gpt-5.6-terra",
+                                          "gpt-5.6-luna", "gpt-5.5"]))
+            catalog_raw = self._read_file(catalog_path)
+            runtimes_raw = self._read_file(runtimes_path)
+            for hidden in ("gpt-reserve", "codex-auto-review"):
+                self.assertNotIn(hidden, runtimes_raw)
+                self.assertNotIn(hidden, catalog_raw)
+
+    def test_instruction_payload_is_never_persisted(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path, runtimes_path, _, _ = self._run_both(
+                d, self._models_dev_data(["gpt-5.6-sol", "gpt-5.6-terra",
+                                          "gpt-5.6-luna", "gpt-5.5"]))
+            for path in (catalog_path, runtimes_path):
+                raw = self._read_file(path)
+                self.assertNotIn("instructions_template", raw)
+                self.assertNotIn("model_messages", raw)
+
+    def test_every_written_codex_entry_passes_catalog_validation(self):
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path, _, _, _ = self._run_both(
+                d, self._models_dev_data(["gpt-5.6-sol", "gpt-5.6-terra",
+                                          "gpt-5.6-luna", "gpt-5.5"]))
+            catalog = cache_read_json(catalog_path)
+            self.assertTrue(catalog)
+            for key, entry in catalog.items():
+                if "codex" in entry.get("runtimes", {}):
+                    self.assertIsNone(model_catalog.validate_catalog_entry(key, entry))
+
+    def test_unmatched_codex_slug_carries_reasoning_modes_to_the_wizard(self):
+        # A brand-new codex slug no external source knows exits through build_model_catalog's
+        # unmatched branch -- its CLI-reported effort levels must still reach the wizard's
+        # confirmation payload (review cycle 1 finding).
+        with tempfile.TemporaryDirectory() as d:
+            _, _, _, printed = self._run_both(
+                d, self._models_dev_data(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]))
+            result = json.loads(printed)
+            gpt55 = [u for u in result["unmatched"] if u["model_id"] == "gpt-5.5"]
+            self.assertEqual(len(gpt55), 1)
+            self.assertEqual(gpt55[0]["cli"], "codex")
+            self.assertEqual(gpt55[0]["reasoning_modes"], ["low", "medium", "high", "xhigh"])
+            self.assertFalse([k for k in cache_read_json(
+                os.path.join(d, "model-catalog.json")) if k.endswith("/gpt-5.5")])
 
 
 class TestResolveLadderPick(unittest.TestCase):
