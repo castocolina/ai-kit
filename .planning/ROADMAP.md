@@ -75,12 +75,14 @@ runtime hosting the session. Source spec:
 ## Phase Details
 
 ### Phase 16: ai_kit_spec Extensions
+
 **Goal**: The shared `ai_kit_spec` package correctly detects pi and codex host sessions, enumerates
 all five hosts' real models, and carries the richer catalog/ranker fields the curated-config
 rewrite depends on.
 **Depends on**: Nothing (first phase of v1.3)
 **Requirements**: SPEC-01, SPEC-02, SPEC-03, SPEC-04
 **Success Criteria** (what must be TRUE):
+
   1. `detect-current-runtime` correctly identifies pi (`PI_CODING_AGENT`) and codex
      (`CODEX_THREAD_ID`/`CODEX_VERSION`) sessions in addition to opencode/cursor/claude, honoring
      precedence pi > opencode > cursor > codex > claude when several signals are set.
@@ -96,20 +98,39 @@ rewrite depends on.
 **Plans**: 6 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 16-01-PLAN.md — codex model enumeration (`codex debug models` fixture) end-to-end into runtimes.json and catalog `reasoning_modes`
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 16-02-PLAN.md — pi/codex host detection with pi > opencode > cursor > codex > claude precedence; `pi` accepted as native_runtime
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 16-03-PLAN.md — `schema_version` on runtimes.json and model-catalog.json (`_meta`); unversioned caches refresh under `--if-stale`
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 16-04-PLAN.md — claude enumeration: aliases + catalog full ids + dated fallback, never executing claude
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 16-05-PLAN.md — optional `image_input` from models.dev modalities and `opencode models --verbose`
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 16-06-PLAN.md — ranker purposes planning/general/mechanical/execution/review, execute/review aliases, mechanical floor
 
 ### Phase 17: Curated-Config Inventory & Recommendation Engine
+
 **Goal**: The rewritten `ai-kit-gsd-curated-config` can inventory a target project/host and turn
 that inventory plus a profile/rigor choice into a pure, explainable, minimal recommendation
 plan — without writing anything.
 **Depends on**: Phase 16
 **Requirements**: INV-01, INV-02, INV-03, REC-01, REC-02, REC-03, REC-04, REC-05, REC-06
 **Success Criteria** (what must be TRUE):
+
   1. `inventory --project-dir` emits one JSON document covering host, the host's own gsd-core
      (path/version/valid keys), host models (scores, price, `image_input`, reasoning levels),
      other CLIs' models, skills, project facts, existing config, and detected conflicts
@@ -132,12 +153,14 @@ plan — without writing anything.
 **Plans**: TBD
 
 ### Phase 18: Cross-AI, Skills & Apply Pipeline
+
 **Goal**: A user can adjust the recommended plan, have cross-AI review/execution and per-agent
 skills wired in, and safely apply the result to a target project's `.planning/config.json` —
 with the v2 flow living alongside the unchanged v1 CLI.
 **Depends on**: Phase 17
 **Requirements**: XAI-01, XAI-02, SKL-01, SKL-02, SKL-03, APP-01, APP-02, APP-03, APP-04, EVAL-06
 **Success Criteria** (what must be TRUE):
+
   1. The user can adjust the plan with `plan-set`/`plan-unset`, and each adjustment is recorded
      with `source: user`.
   2. Cross-AI review sets `plan_review_convergence` + `review.default_reviewers` (lane ≠ host,
@@ -165,12 +188,14 @@ with the v2 flow living alongside the unchanged v1 CLI.
 **Plans**: TBD
 
 ### Phase 19: Evaluation on Claude
+
 **Goal**: The rewritten skill is proven correct end to end from inside a real Claude Code
 session — pressure-tested, code-reviewed, and confirmed to make `gsd-tools` resolve every agent's
 model exactly as planned.
 **Depends on**: Phase 18
 **Requirements**: EVAL-01, EVAL-02, EVAL-03, APP-05
 **Success Criteria** (what must be TRUE):
+
   1. SKILL.md (rewritten for the four-question + review flow) passes `writing-skills` RED/GREEN
      pressure scenarios B (Claude Rigorous + cross-AI), C (opencode + routers, no catalog),
      D (existing v1 config) and E ("just apply it"), with no-skill and v1 baselines.
@@ -183,11 +208,13 @@ model exactly as planned.
 **Plans**: TBD
 
 ### Phase 20: Live Validation on Codex + Opencode
+
 **Goal**: The skill is confirmed working from real codex and opencode host sessions, resolving
 the two open verifications the spec left pending.
 **Depends on**: Phase 19
 **Requirements**: EVAL-04, EVAL-05
 **Success Criteria** (what must be TRUE):
+
   1. A live smoke run from the codex host (`inventory` + `recommend` + `apply`) completes
      successfully, and the codex session env signal (`CODEX_THREAD_ID`/`CODEX_VERSION`) is
      confirmed live rather than only source-inspected.
@@ -197,12 +224,14 @@ the two open verifications the spec left pending.
 **Plans**: TBD
 
 ### Phase 21: Cursor Live Validation
+
 **Goal**: The skill is confirmed working from a real cursor host session; cursor's
 "not live-validated" label is lifted.
 **Depends on**: Phase 19 (independent of Phase 20; may run any time afterward, and nothing
 downstream depends on it)
 **Requirements**: EVAL-07, SPEC-06
 **Success Criteria** (what must be TRUE):
+
   1. A live smoke run from the cursor host (`inventory` + `recommend` + `apply`, dry-run then
      real) completes successfully on a scratch project.
   2. SKILL.md's "not live-validated" label for cursor is removed once the smoke run passes.
@@ -211,12 +240,14 @@ downstream depends on it)
 **Plans**: TBD
 
 ### Phase 22: Pi Live Validation
+
 **Goal**: The skill is confirmed working from a real pi host session; pi's "not live-validated"
 label is lifted.
 **Depends on**: Phase 19 (independent of Phases 20–21; may run any time afterward, and nothing
 downstream depends on it)
 **Requirements**: EVAL-08, SPEC-05
 **Success Criteria** (what must be TRUE):
+
   1. A live smoke run from the pi host (`inventory` + `recommend` + `apply`, dry-run then real)
      completes successfully on a scratch project, including per-agent `pi --model` process wiring
      via the subagent extension.
