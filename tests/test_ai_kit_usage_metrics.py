@@ -42,6 +42,8 @@ from ai_kit_usage_metrics.cwd_state import CwdState
 from ai_kit_usage_metrics.dashboard import generate
 from ai_kit_usage_metrics.decomposer import classify_segment, decompose, scan_command
 from ai_kit_usage_metrics.raw_store import CaptureResult
+from ai_kit_usage_metrics.paths import catalog_path
+from ai_kit_usage_metrics.pricing import estimate_price
 from ai_kit_usage_metrics.refiner import refine_all
 
 SIMPLE_COMMAND = "ls -la"
@@ -2528,6 +2530,45 @@ class TestPricing(unittest.TestCase):
         )
         self.assertIsNone(price)
         self.assertEqual(confidence, "unknown")
+
+    def _write_meta_catalog(self, env):
+        # Regression pin (Phase 16 plan 03 / 16 D-12): the catalog now reserves the
+        # top-level `_meta` key for cache metadata. estimate_price looks entries up by
+        # canonical `provider/model` key, so `_meta` can never collide -- pinned here.
+        path = catalog_path(env)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "_meta": {"schema_version": 2},
+                    "anthropic/claude-x": {
+                        "pricing": {"input_per_1m": 3.0, "output_per_1m": 15.0}
+                    },
+                }
+            ,
+                handle,
+            )
+        return path
+
+    def test_reserved_meta_key_does_not_disturb_price_lookup(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = {"HOME": d, "XDG_CACHE_HOME": os.path.join(d, ".cache")}
+            self._write_meta_catalog(env)
+            price, confidence = estimate_price(
+                "anthropic", "claude-x", 1000000, 0, env
+            )
+            self.assertEqual(price, 3.0)
+            self.assertEqual(confidence, "high")
+
+    def test_meta_catalog_missing_model_is_unknown(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = {"HOME": d, "XDG_CACHE_HOME": os.path.join(d, ".cache")}
+            self._write_meta_catalog(env)
+            price, confidence = estimate_price(
+                "anthropic", "absent-model", 1000000, 0, env
+            )
+            self.assertIsNone(price)
+            self.assertEqual(confidence, "unknown")
 
 
 class TestDashboard(unittest.TestCase):

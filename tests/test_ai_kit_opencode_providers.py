@@ -950,6 +950,31 @@ class TestCrossReferenceCatalog(_XrefScratch):
         )
         self.assertEqual(scan_catalog(self.catalog, "synth-router"), [])
 
+    def test_reserved_meta_key_is_never_reported(self):
+        # Regression pin (Phase 16 plan 03 / 16 D-12): model-catalog.json now reserves the
+        # top-level `_meta` key for cache metadata. scan_catalog skips non-model values
+        # naturally (its own non-dict/shape checks) -- this pins that a `_meta` object (even
+        # one carrying strings mentioning a provider id) is never reported as a reference.
+        _write_file(
+            self.catalog,
+            json.dumps(
+                {
+                    "_meta": {
+                        "schema_version": 2,
+                        "anthropic_model_ids": ["synth-router-x"],
+                    },
+                    "synth-router/demo": {
+                        "provider": "synth-router",
+                        "runtimes": {},
+                    },
+                }
+            ),
+        )
+        refs = scan_catalog(self.catalog, "synth-router")
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].locator, "synth-router/demo")
+        self.assertNotEqual(refs[0].locator, "_meta")
+
     def test_dict_provider_is_not_stringified(self):
         blob = {"name": "synth-router", "nested": ["synth-router"]}
         _write_file(

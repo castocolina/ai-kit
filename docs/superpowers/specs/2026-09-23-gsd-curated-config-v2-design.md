@@ -305,3 +305,13 @@ The phase CONTEXT files are authoritative where they differ from the sections ab
 
 **Evaluation (§9)**
 - The pressure scenarios are B/C/D/E, with no-skill and v1 baselines (Phase 19 D-01/D-02).
+
+**Cache**
+- `runtimes.json` carries a top-level integer `schema_version` (currently 2);
+  `model-catalog.json` carries it inside a reserved top-level `_meta` object, because every
+  other key there is a `provider/model` entry. A missing or older version counts as stale under
+  `--if-stale` whatever the TTL says; only a run where models.dev answered stamps the catalog
+  current, so an upgraded cache gets one successful refresh and a failed refresh is retried on the
+  next `--if-stale` run (Phase 16 D-12).
+- Cache writes are single-writer atomic (`cache_write_json`: one fixed `<path>.tmp` +
+  `os.replace`); concurrent writers to the same cache file are not supported.

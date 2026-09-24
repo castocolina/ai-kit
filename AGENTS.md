@@ -81,6 +81,12 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   > `model_catalog.py`'s is forward-compatible-only (no live producer sets a
   > `cli` key there today). Both reject `native_runtime` co-present with a
   > non-null `cli` on the same entry.
+- `model-catalog.json` reserves the top-level key `_meta` for cache metadata such as
+  `schema_version`; every other top-level key is a `provider/model` entry. Code that iterates
+  the catalog must skip `_meta` (the sibling skills that read this file already skip non-model
+  values, pinned by regression tests); writers go through
+  `model_catalog.split_catalog_meta`/`join_catalog_meta`, and `merge_catalog_entry` rejects
+  `_meta` as a model id.
 - `tools/status-line.py` is organized into banner-delimited blocks
   (`# ═══ N. <ROLE> — ...`) with a role-prefix convention on top-level
   functions (`cfg_`/`probe_`/`fmt_`/`util_`/`core_`/`seg_`, plus the
