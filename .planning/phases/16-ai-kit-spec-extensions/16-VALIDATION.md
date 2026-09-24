@@ -22,7 +22,7 @@ created: "2026-09-24"
 | **Framework** | `unittest` (stdlib) |
 | **Config file** | none — invoked via `python3 -m unittest` |
 | **Quick run command** | `python3 -m unittest tests.test_ai_kit_spec.TestDetectCurrentRuntime tests.test_ai_kit_spec.TestBuildRuntimesSnapshot tests.test_ai_kit_spec.TestValidateCatalogEntry tests.test_ai_kit_spec.TestLoadRankingWeights tests.test_ai_kit_spec.TestScoreCandidates tests.test_ai_kit_spec.TestCacheStaleness -v` |
-| **Full suite command** | `python3 -m unittest tests.test_ai_kit_spec -v` (per-plan gate: `make test-unit`; phase gate: `make test` + `make validate` in 16-06-T3) |
+| **Full suite command** | `python3 -m unittest tests.test_ai_kit_spec -v` (per-plan gate: `make test-unit`; phase gate in 16-06-T3: every `make test` tier and every `make validate` hook target run individually, read from the Makefile's `test:` / `validate:` lines) |
 | **Estimated runtime** | ~30 seconds |
 
 ---
@@ -32,8 +32,8 @@ created: "2026-09-24"
 - **After every task commit:** Run the quick run command (the classes for the module just touched)
 - **After every plan wave:** Run `python3 -m unittest tests.test_ai_kit_spec -v`
 - **At each plan's final task (executor-visible, review cycle 1):** `PATH="$HOME/.local/bin:$PATH" UV_NO_SYNC=1 UV_OFFLINE=1 make test-unit`
-- **Before `/gsd-verify-work`:** 16-06 Task 3 has run `make test` (all four tiers) and `make validate` executor-visibly, and the orchestrator-owned blocking `/skill-judge` gate on `skills/ai-kit-spec-config/SKILL.md` has passed
-- **Max feedback latency:** 60 seconds (focused commands; `make test` is the once-per-phase gate and may take several minutes)
+- **Before `/gsd-verify-work`:** 16-06 Task 3 has run every `make test` tier (test-unit, test-integration, e2e-test, arch-test) and every `make validate` hook target individually and executor-visibly, its SUMMARY ends with `GATE PASSED` (a `GATE NOT PASSED — escalate to orchestrator` status blocks phase completion and goes to uz), and the orchestrator-owned blocking `/skill-judge` gate on `skills/ai-kit-spec-config/SKILL.md` has passed
+- **Max feedback latency:** 60 seconds (focused commands; the 16-06-T3 tier/hook loops are the once-per-phase gate and may take several minutes)
 
 ---
 
@@ -56,10 +56,10 @@ Filled in by the planner per task. The requirement-level map (from 16-RESEARCH.m
 All plans are cross-AI executed (`cross_ai: true`) and sequential (waves 1-6), since every plan
 touches `tests/test_ai_kit_spec.py`. Each task commits once; the quick command runs after that
 commit, and the broad stdlib regression command plus `make test-unit` run at each plan's final
-task (revised per cross-AI review cycle 1, 6789a06, and cycle 2, 92c2ef4). Broad regression:
+task (revised per cross-AI review cycle 1, 6789a06, cycle 2, 92c2ef4, and cycle 3, b10b48e). Broad regression:
 `python3 -m unittest tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_superpowers tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_opencode_providers tests.test_ai_kit_usage_metrics`.
 `make test-unit` below means `PATH="$HOME/.local/bin:$PATH" UV_NO_SYNC=1 UV_OFFLINE=1 make test-unit`
-(same prefix for `make test` / `make validate`; the env vars forbid `uv` installs and downloads).
+(same prefix for every tier and hook target 16-06-T3 runs; the env vars forbid `uv` installs and downloads).
 
 | Task | Wave | Req / Decisions (edges, prohibitions) | Type | Automated Command | Status |
 |------|------|-----------------|------|-------------------|--------|
@@ -71,12 +71,12 @@ task (revised per cross-AI review cycle 1, 6789a06, and cycle 2, 92c2ef4). Broad
 | 16-03-T2 | 3 | SPEC-03 / D-12 (E5) | tdd | `python3 -m unittest tests.test_ai_kit_spec.TestCatalogSchemaVersion tests.test_ai_kit_spec.TestFetchModelCatalogCli tests.test_ai_kit_spec.TestMergeCatalogEntry tests.test_ai_kit_spec.TestCurrentCandidateKeys tests.test_ai_kit_spec.TestApplyHeuristicCorrections -v` | ⬜ pending |
 | 16-03-T3 | 3 | SPEC-03 / D-12 (sibling `_meta` readers; single-writer atomicity documented) | tdd | `python3 -m unittest tests.test_ai_kit_opencode_providers.TestCrossReferenceCatalog tests.test_ai_kit_usage_metrics.TestPricing -v` + broad regression + `make test-unit` | ⬜ pending |
 | 16-04-T1 | 4 | SPEC-02 / D-04, D-05, D-07, D-12 (real refresh order; catalog -> runtimes freshness edge; same-fetch materialization of a non-fallback id; `anthropic` hint vs reseller collisions) | tracer | `python3 -m unittest tests.test_ai_kit_spec.TestClaudeEnumerationEndToEnd tests.test_ai_kit_spec.TestRuntimesSchemaVersion tests.test_ai_kit_spec.TestBuildRuntimesSnapshot tests.test_ai_kit_spec.TestCatalogSchemaVersion tests.test_ai_kit_spec.TestBuildModelCatalog tests.test_ai_kit_spec.TestFetchModelCatalogCli tests.test_ai_kit_spec.TestMainCli -v` | ⬜ pending |
-| 16-04-T2 | 4 | SPEC-02 / D-04, D-07, D-12 (E4, P2, P3; no-loop freshness edge; materialization gate, laziness, narrowed scope, claude-only hint) | tdd | `python3 -m unittest tests.test_ai_kit_spec.TestClaudeFallback tests.test_ai_kit_spec.TestClaudeRuntimeFreshness tests.test_ai_kit_spec.TestClaudeCatalogMaterialization tests.test_ai_kit_spec.TestClaudeEnumerationEndToEnd tests.test_ai_kit_spec.TestBuildRuntimesSnapshot -v` + broad regression + `make test-unit` | ⬜ pending |
-| 16-05-T1 | 5 | SPEC-03 / D-09 (`image_input_source` provenance field) | tracer | `python3 -m unittest tests.test_ai_kit_spec.TestImageInputEndToEnd tests.test_ai_kit_spec.TestValidateCatalogEntry tests.test_ai_kit_spec.TestBuildModelCatalog tests.test_ai_kit_spec.TestFetchModelCatalogCli -v` | ⬜ pending |
+| 16-04-T2 | 4 | SPEC-02 / D-04, D-07, D-12 (E4, P2, P3; no-loop freshness edge; materialization gate, laziness, narrowed scope, claude-only hint; malformed anthropic rows skipped and never recorded without an entry) | tdd | `python3 -m unittest tests.test_ai_kit_spec.TestClaudeFallback tests.test_ai_kit_spec.TestClaudeRuntimeFreshness tests.test_ai_kit_spec.TestClaudeCatalogMaterialization tests.test_ai_kit_spec.TestClaudeEnumerationEndToEnd tests.test_ai_kit_spec.TestBuildRuntimesSnapshot -v` + broad regression + `make test-unit` | ⬜ pending |
+| 16-05-T1 | 5 | SPEC-03 / D-09 (`image_input_source` provenance field; validator rejects a non-null source without a bool `image_input`) | tracer | `python3 -m unittest tests.test_ai_kit_spec.TestImageInputEndToEnd tests.test_ai_kit_spec.TestValidateCatalogEntry tests.test_ai_kit_spec.TestBuildModelCatalog tests.test_ai_kit_spec.TestFetchModelCatalogCli -v` | ⬜ pending |
 | 16-05-T2 | 5 | SPEC-03 / D-06, D-07, D-09 (E4, P4; header check, non-zero exit, unmatched carry, size smoke, fetch-skipped provenance transitions) | tdd | `python3 -m unittest tests.test_ai_kit_spec.TestOpencodeVerboseImageInput tests.test_ai_kit_spec.TestImageInputEndToEnd tests.test_ai_kit_spec.TestBuildRuntimesSnapshot tests.test_ai_kit_spec.TestDetectOpencodeModels tests.test_ai_kit_spec.TestCodexEnumerationEndToEnd -v` + broad regression + `make test-unit` | ⬜ pending |
 | 16-06-T1 | 6 | SPEC-04 / D-10 (bool-rejecting numeric check; `review` self-alias; corrected `score_candidates` docstring) | tracer | `python3 -m unittest tests.test_ai_kit_spec.TestPurposeAliasesEndToEnd tests.test_ai_kit_spec.TestLoadRankingWeights tests.test_ai_kit_spec.TestScoreCandidates -v` | ⬜ pending |
 | 16-06-T2 | 6 | SPEC-04 / D-10, D-11 (E6, P5) | tdd | `python3 -m unittest tests.test_ai_kit_spec.TestRankerPurposeFloor tests.test_ai_kit_spec.TestPurposeAliasesEndToEnd tests.test_ai_kit_spec.TestLoadRankingWeights tests.test_ai_kit_spec.TestScoreCandidates -v` + broad regression + `make test-unit` | ⬜ pending |
-| 16-06-T3 | 6 | Phase gate (AGENTS.md Testing) | auto | `make test` then `make validate` (executor-visible), then `git worktree list --porcelain` (no `/tmp/ai-kit-p16-base.*` left). Causal triage: every failure outside PHASE_FILES is reproduced at PHASE_BASE in a detached /tmp worktree and is pre-existing only if it fails the same way there | ⬜ pending |
+| 16-06-T3 | 6 | Phase gate (AGENTS.md Testing; review cycle 3) | auto | `( TIERS="$(sed -n 's/^test: //p' Makefile)"; ...; for t in $TIERS; do PATH="$HOME/.local/bin:$PATH" UV_NO_SYNC=1 UV_OFFLINE=1 make "$t"; ...; echo "GATE-CONSTITUENT $t exit=$s"; ...; done; ... )` and the same loop over the `validate:` prerequisites (every tier and hook target in its own `make` call, one `GATE-CONSTITUENT` line each; any recipe line a failing tier skipped is run directly), then `git worktree list --porcelain` (no `ai-kit-p16-base.` worktree left). Causal triage only after every constituent ran: every failure outside PHASE_FILES is reproduced at PHASE_BASE in a detached `${TMPDIR:-/tmp}/ai-kit-p16-base.*` worktree (removed with `git worktree remove --force`, no prune) and is pre-existing only if it fails the same way there. SUMMARY ends with `GATE PASSED` or `GATE NOT PASSED — escalate to orchestrator` (any unresolved entry forces the latter) | ⬜ pending |
 
 Orchestrator-owned BLOCKING gate (never run by the cross-AI executor, which cannot invoke Claude
 Code skills): `/skill-judge` on `skills/ai-kit-spec-config/SKILL.md` (materially changed by 16-01

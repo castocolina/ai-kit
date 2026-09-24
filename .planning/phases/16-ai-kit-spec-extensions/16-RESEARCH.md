@@ -150,7 +150,7 @@ resolve the `_VALID_NATIVE_RUNTIME`/pi gap explicitly before calling the phase d
 | Model enumeration (codex/claude) | Library (`ai_kit_spec/detection.py`) via subprocess | CLI (`cli.py` `detect-runtimes`) | Same injected-`run_fn` pattern as the existing opencode/cursor-agent parsers; never a new subsystem. |
 | Model catalog schema (`image_input`, `reasoning_modes`) | Library (`ai_kit_spec/model_catalog.py`) | Cache/Storage (`cache.py` JSON files) | Schema validation is pure; `cache.py` only reads/writes the JSON the schema governs. |
 | Purpose-weighted ranking | Library (`ai_kit_spec/model_ranker.py`) | Data (`references/ranking-weights.toml`) | `score_candidates` is a pure function; the TOML is the tunable data it loads, never hardcoded logic. |
-| Cache staleness / schema versioning | Library (`ai_kit_spec/cache.py`) + caller (`cli.py`) | — | `cache_is_stale` is a generic TTL/mtime helper shared with `quota.py` — schema-version awareness belongs in the **caller** (the `detect-runtimes`/`fetch-model-catalog` command bodies in `cli.py`), not inside the shared helper itself (see Pitfall 3). |
+| Cache staleness / schema versioning | Library (`ai_kit_spec/cache.py`) + caller (`cli.py`) | — | `cache_is_stale` is a generic TTL/mtime helper whose only callers are the two `--if-stale` skip tests in `cli.py` (`detect-runtimes`, `fetch-model-catalog`); `quota.py` imports only `cache_base` from `cache.py` (corrected in review cycle 3; the earlier "shared with `quota.py`" wording was wrong) — schema-version awareness belongs in the **caller** (the `detect-runtimes`/`fetch-model-catalog` command bodies in `cli.py`), not inside the generic helper itself (see Pitfall 3). |
 
 ## Standard Stack
 
@@ -493,9 +493,14 @@ floor is meant to be an absolute, cross-run-stable cutoff.
   same-effect alias. Follow the same reasoning for `detect-runtimes`'s `--if-stale`: `schema_version`
   staleness should make the EXISTING `--if-stale` flag return "stale" (forcing a normal refresh),
   never introduce a parallel force-refresh mechanism.
-- **Putting `schema_version` awareness inside `cache_is_stale` itself:** `cache_is_stale` is
-  shared with `quota.py` (`[VERIFIED: skills/ai-kit-spec-review/ai_kit_spec/cache.py:32-36]`,
-  confirmed via grep — `quota.py` is the only other consumer of this exact function) and is a
+- **Putting `schema_version` awareness inside `cache_is_stale` itself:** `cache_is_stale`
+  (`[VERIFIED: skills/ai-kit-spec-review/ai_kit_spec/cache.py:32-36]`) is called only by the two
+  `--if-stale` skip tests in `cli.py` (`detect-runtimes` at `cli.py:717`, `fetch-model-catalog`
+  at `cli.py:782`; `[VERIFIED: grep over skills/, 2026-09-24]`). `quota.py` imports only
+  `cache_base`, not this function. The sibling `cache_write_json` has many writers (`cli.py`,
+  `dispatch.py`, `ai_kit_spec_gsd`, `ai_kit_spec_superpowers`), which is why both helpers stay
+  generic. (Corrected in review cycle 3: an earlier version of this bullet said the function is
+  "shared with `quota.py`", which was wrong.) It is a
   pure mtime/TTL check with no knowledge of the JSON payload's shape. Making it schema-aware
   would couple a generic helper to one specific caller's data format. D-12's check belongs in
   `cli.py`'s `detect-runtimes`/`fetch-model-catalog` command bodies, reading the cached file's
