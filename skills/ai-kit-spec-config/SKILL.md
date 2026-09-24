@@ -85,7 +85,8 @@ python3 "$TOOLS_PY" detect-tools
 ```
 
 Parse the printed JSON: for each CLI marked `"installed": true`, note its
-path; for `opencode`, note its `models` list.
+path, plus its `models` list when present (opencode, codex and claude carry
+one; a CLI whose enumeration failed degrades to no list).
 
 `detect-tools` prints `{"rg": bool, "sd": bool, "bat": bool, "eza": bool, "fd": bool,
 "codegraph": bool}` — informational only, this step does not add new wizard questions.
