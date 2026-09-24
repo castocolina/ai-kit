@@ -480,14 +480,14 @@ Phases execute in numeric order: 1.1 → 1.2 → 2 → 3 → 4 → 5 → 6 → 7
   1. `uv run pyright` reports 0 errors: `REDUNDANT_VS_COMPLEMENTARY_PAIRS` in `skills/_shared/ai_kit_rules_common/tool_catalog.py` is typed so `pair_checks.py:178`'s unpack type-checks, with no runtime behavior change (all rules-checker tests still pass).
   2. Usage-metrics dashboard `buildCurrentRowsFromFiltered()` guards the flat-mode sort key symmetrically to `GROUPED_SORT_KEYS` (WR-01), and node-executed regression tests cover both directions — grouped-only key in flat mode and flat-only key in grouped mode (WR-02).
   3. `uv run ruff check tests/test_ai_kit_usage_metrics.py` is clean (E501 at :1279, UP031 at :3803).
-  4. The 3 pending todos whose `resolves_phase` is 6/7/8 are moved to `.planning/todos/done/`.
+  4. The 3 pending todos whose `resolves_phase` is 6/7/8 are moved to `.planning/todos/completed/` (GSD's `todo complete` convention).
 
 Out of scope: pre-v1.2 lint in `tools/status-line.py`, `tools/wizard_app.py`, `tests/test_ai_kit_spec_superpowers.py`; the mmdc environment failure; Nyquist VALIDATION backfill.
 
 Plans:
 **Wave 1**
 
-- [ ] 15.2-01-PLAN.md — Tracer: symmetric flat/grouped sort-key fallback + node regression tests both directions + test-file ruff fix (WR-01/WR-02, SC2/SC3); PairRow TypedDict for pyright 0 errors (SC1); move resolved todos to todos/done + full gate sweep (SC4)
+- [ ] 15.2-01-PLAN.md — Tracer: symmetric flat/grouped sort-key fallback + node regression tests both directions + test-file ruff fix (WR-01/WR-02, SC2/SC3); PairRow TypedDict for pyright 0 errors (SC1); move resolved todos to todos/completed + full gate sweep (SC4)
 
 ### Phase 15.1: Usage Metrics Dashboard UX/Perf Overhaul: dashboard launch detection, pagination/virtualization for large datasets, filter bar reordered runtime->model->family->subfamily->command, runtime column, MUI-based visual redesign, charts, empty date column bug, price always-zero investigation, family showing garbage tokens, session-group row duplication bug, default last-week prefilter, unified date-range picker (INSERTED)
 
