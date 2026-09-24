@@ -31,7 +31,7 @@ runtime hosting the session. Source spec (approved 2026-09-23):
 `docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md`.
 
 **Target features:**
-- `ai_kit_spec` extensions — host detection pi > opencode > cursor > claude > codex;
+- `ai_kit_spec` extensions — host detection pi > opencode > cursor > codex > claude;
   pi/codex/claude model enumeration; `image_input`/`reasoning_levels` catalog fields;
   planning/general/mechanical/execution/review ranker purposes
 - Curated-config rewrite — inventory → recommend → `plan.json` → plan-set → apply

@@ -30,7 +30,7 @@ Phase 18 owns the selection rules.
   profiles, the ≤7 specialist rules, and the rigor presets. Rigor also enables `intel.enabled`
   (Standard/Rigorous) and `dynamic_routing` (Rigorous).
 - **Phase 16:**
-  - host precedence pi > opencode > cursor > claude > codex;
+  - host precedence pi > opencode > cursor > codex > claude;
   - `image_input` absent = unknown = not vision-eligible;
   - ranker purposes planning/general/mechanical/execution/review;
   - the mechanical purpose has a floor, and a missing floor axis means the model is excluded;

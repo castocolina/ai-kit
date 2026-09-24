@@ -83,7 +83,7 @@ rewrite depends on.
 **Success Criteria** (what must be TRUE):
   1. `detect-current-runtime` correctly identifies pi (`PI_CODING_AGENT`) and codex
      (`CODEX_THREAD_ID`/`CODEX_VERSION`) sessions in addition to opencode/cursor/claude, honoring
-     precedence pi > opencode > cursor > claude > codex when several signals are set.
+     precedence pi > opencode > cursor > codex > claude when several signals are set.
   2. `detect-runtimes` enumerates real model lists for codex
      (`codex debug models`), and claude (hardcoded aliases + catalog full ids + dated fallback) by invoking the actual
      binaries — never shell functions/aliases — with parsers validated against fixtures captured

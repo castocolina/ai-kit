@@ -274,3 +274,34 @@ Execution (question: "delegate plan execution to another CLI?", recommended on C
 4. **Live validation on codex + opencode** — smoke from each host; fix what surfaces; resolve the
    two open verifications (opencode lane from an opencode host, codex session env signal).
 5. *(later)* **cursor live validation**; 6. *(later)* **pi live validation**.
+
+## 11. Errata (decisions taken during phase discussions, 2026-09-23)
+
+The phase CONTEXT files are authoritative where they differ from the sections above.
+
+**Host detection**
+- Order: **pi > opencode > cursor > codex > claude**, with claude last (Phase 20 D-02; it
+  replaces §1/§3.1).
+- Codex signals: `CODEX_THREAD_ID` or `CODEX_VERSION`. `CODEX_SANDBOX` is dropped because it was
+  never observed (Phase 16 D-02).
+- Scope: pi model enumeration moved to Phase 22 (SPEC-05); cursor wrapper resolution moved to
+  Phase 21 (SPEC-06) (Phase 16 D-06).
+
+**Catalog**
+- Reasoning levels use the existing `reasoning_modes` field, not `reasoning_levels`
+  (Phase 16 D-08).
+
+**Skills (§7)**
+- Missing recommended skills are silently omitted, never offered or installed (Phase 18 D-03).
+- The cap per agent depends on rigor instead of a fixed 3 (Phase 18 D-04).
+- Users see bare skill names; the skill translates them to gsd reference forms (Phase 18 D-02).
+
+**v1 coexistence (§3 "Removed")**
+- v1 modules and subcommands are **kept**; v2 coexists with them (Phase 18 D-08).
+
+**opencode**
+- Per-project models only take effect through a **local** gsd install; the global alternative
+  is explained, never run (Phase 20 D-03).
+
+**Evaluation (§9)**
+- The pressure scenarios are B/C/D/E, with no-skill and v1 baselines (Phase 19 D-01/D-02).

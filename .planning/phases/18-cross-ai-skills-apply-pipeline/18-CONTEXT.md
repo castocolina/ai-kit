@@ -75,7 +75,9 @@ to the 11 v1 subcommands, and v1 keeps working unchanged (D-08).
     SKILL.md into each invocation of that agent.
 
 ### Apply
-- **D-05:** Follow-ups get **one grouped confirmation** after a successful `apply`:
+- **D-05:** *(Amended by Phase 20 D-03: on opencode, the install follow-up is a **local** gsd
+  install into the target project; the global alternative is explained, never run.)*
+  Follow-ups get **one grouped confirmation** after a successful `apply`:
   - one yes/no covers the required commands (`gsd install <host>` when the host bakes models
     into agents, e.g. opencode, and `gsd-tools effort sync --apply` when effort keys changed);
   - on yes, the agent runs them and reports each result;

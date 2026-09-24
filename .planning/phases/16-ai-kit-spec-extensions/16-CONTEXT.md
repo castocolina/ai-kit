@@ -25,6 +25,9 @@ detection entry is deferred to their own phases (21 and 22). See D-06 and `<defe
 
 ### Host detection
 - **D-01:** Adopt the spec precedence **globally**: pi > opencode > cursor > claude > codex.
+  - **AMENDED 2026-09-23 by Phase 20 D-02:** the order is now **pi > opencode > cursor > codex >
+    claude**, with claude last. Claude is the user's usual outer orchestrator, so a codex
+    launched from Claude must not read as claude.
   - This replaces decision 01.2 D-02 (claude > opencode > cursor > codex) in
     `detection.py` `_RUNTIME_ENV_SIGNALS`. It applies to every caller, including
     `ai-kit-spec-config`'s `detect-current-runtime` → `native_runtime`.
