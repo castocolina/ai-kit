@@ -1,21 +1,16 @@
 ---
 gsd_state_version: "1.0"
-milestone: v1.2
-current_phase: "15.2"
-current_phase_name: v1.2 Tech Debt Cleanup (pre-close)
-current_plan: 1
-status: milestone_complete
-stopped_at: v1.2 milestone archived
-last_updated: "2026-09-23T00:00:00.000Z"
+milestone: v1.3
+milestone_name: GSD Curated Config v2
+status: planning
+last_updated: "2026-09-24T01:23:09.512Z"
 last_activity: 2026-09-23
-last_activity_desc: v1.2 milestone archived (override closeout); v1.1 and v1.0 roadmap archives written retroactively
-state_head: 2a52b254ccbe1b9fb4d2aa5259d917bceeac5057
 progress:
-  total_phases: 19
-  completed_phases: 19
-  total_plans: 55
-  completed_plans: 55
-milestone_name: ai-kit Rules Skill Family
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,14 +20,14 @@ milestone_name: ai-kit Rules Skill Family
 See: .planning/PROJECT.md (updated 2026-09-23)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Planning next milestone (v1.3 — ai-kit-gsd-curated-config v2)
+**Current focus:** v1.3 GSD Curated Config v2 — defining requirements
 
 ## Current Position
 
-Milestone: v1.2 ai-kit Rules Skill Family — SHIPPED 2026-09-23 (override closeout)
-Phase: none active (all v1.2 phases archived to `.planning/milestones/v1.2-phases/`)
-Status: Milestone complete — ready for `/gsd-new-milestone`
-Last activity: 2026-09-23 — v1.2 milestone archived
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-09-23 — Milestone v1.3 started
 
 ## Performance Metrics
 

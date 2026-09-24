@@ -22,21 +22,25 @@ plus the `ai-kit-project-rules-all` orchestrator) shares
 `skills/_shared/ai_kit_rules_common/`. The usage-metrics dashboard handles the
 real ~85k-row refined store without freezing.
 
-## Next Milestone Goals
+## Current Milestone: v1.3 GSD Curated Config v2
 
-**v1.3 — `ai-kit-gsd-curated-config` v2** (host-aware, role-scored GSD config
-wizard). Source spec:
+**Goal:** Rewrite `ai-kit-gsd-curated-config` into a host-aware, role-scored GSD config wizard
+that configures a target project's `.planning/config.json` in four questions plus one
+review-and-adjust pass, so every GSD agent runs on the model that best fits its role on the
+runtime hosting the session. Source spec (approved 2026-09-23):
 `docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md`.
 
-- Detect the host runtime and inventory the models of every installed runtime.
-- Score models per role (planning, review, execution, mechanical, vision) using
-  the cached `ai_kit_spec` model catalog.
-- Ask a model profile (quality / budget / adaptive) and a product rigor
-  (MVP / Standard / Rigorous).
-- Emit a minimal config: per-phase-type models, `model_profile_overrides` per
-  runtime, and few `model_overrides`.
-- Wire a counterpart-provider cross-AI reviewer and a cheap cross-AI executor.
-- Live-validate on claude, codex and opencode. Cursor and pi are deferred.
+**Target features:**
+- `ai_kit_spec` extensions — host detection pi > opencode > cursor > claude > codex;
+  pi/codex/claude model enumeration; `image_input`/`reasoning_levels` catalog fields;
+  planning/general/mechanical/execution/review ranker purposes
+- Curated-config rewrite — inventory → recommend → `plan.json` → plan-set → apply
+  (dry-run, backup/restore); three model layers plus an execution override; rigor
+  (MVP/Standard/Rigorous) × profile presets; counterpart cross-AI review and cheap
+  cross-AI execution; curated `skill_affinity.json`
+- Evaluation on claude — writing-skills RED/GREEN, `/skill-judge` in code review,
+  real-gsd-tools `resolve-model` check for all 35 agents, live smoke
+- Live validation on codex and opencode (cursor and pi deferred beyond v1.3)
 
 ## Core Value
 
@@ -89,11 +93,12 @@ verified live rather than assumed from a catalog.
 
 ### Active
 
-<!-- v1.3 scope; detailed requirements will live in REQUIREMENTS.md once
-     /gsd-new-milestone defines them. -->
+<!-- v1.3 scope; checkable requirements live in REQUIREMENTS.md. -->
 
-- [ ] `ai-kit-gsd-curated-config` v2 — host-aware, role-scored GSD config
-      wizard (see Next Milestone Goals)
+- [ ] `ai_kit_spec` host detection, enumeration and catalog/ranker extensions
+- [ ] `ai-kit-gsd-curated-config` v2 — inventory/recommend/plan/apply pipeline,
+      rigor × profile presets, cross-AI review/execution, skill affinity
+- [ ] v2 evaluated on claude and live-validated on codex and opencode
 
 ### Out of Scope
 
@@ -213,4 +218,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-23 after v1.2 milestone*
+*Last updated: 2026-09-23 after starting milestone v1.3*
