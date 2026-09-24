@@ -5,16 +5,15 @@ current_phase: "15.1"
 current_plan: Not started
 status: completed
 stopped_at: Phase 15.1 complete — all phases complete
-last_updated: "2026-09-22T01:15:07.488Z"
+last_updated: "2026-09-24T00:01:59.865Z"
 last_activity: 2026-09-21
 last_activity_desc: Phase 15.1 complete
-state_head: 3cca45449c3cf3a06593c451fce806eb325d2ec1
+state_head: 4665031b965b1ccecd83948575242fc171028cd9
 progress:
-  total_phases: 18
+  total_phases: 19
   completed_phases: 16
   total_plans: 36
   completed_plans: 36
-  percent: 100
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -315,6 +314,7 @@ cross-phase ordering constraint.
 ### Roadmap Evolution
 
 - Phase 15.1 inserted after Phase 15: Usage Metrics Dashboard UX/Perf Overhaul — 14 UX/perf/bug findings from live dashboard.html review (empty date col, family showing garbage tokens, session-group row dup, no pagination/virtualization causing browser freeze, filter bar unordered, missing runtime column, no launch detection, price always 0, no charts, no MUI styling) (URGENT)
+- Phase 15.2 inserted after Phase 15: v1.2 tech debt cleanup from milestone audit (pyright typing, 15.1 WR-01/WR-02, 15.1 lint, resolved todos) (URGENT)
 
 ## Deferred Items
 
