@@ -42,8 +42,8 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 ### Skills
 
 - [ ] **SKL-01**: Skill inventory covers host skill dirs, project `skills/`, and Claude plugin skills (Claude host only)
-- [ ] **SKL-02**: `skill_affinity.json` maps skill families to agents gated by project facts (TDD mode, frontend, db), max 3 per agent, written as `agent_skills.<agent>`
-- [ ] **SKL-03**: A recommended-but-missing skill is explained (purpose, effect, alternatives) and offered, never installed without consent; unknown skills get host-agent-proposed mappings the user confirms; a `trusted_global_roots` entry is proposed for symlinked skills escaping the global root
+- [ ] **SKL-02**: `skill_affinity.json` maps skill families to agents gated by project facts (TDD mode, frontend, db), capped per rigor (≈ MVP 2 / Standard 3 / Rigorous 5, file order), shown to the user as bare names and written as `agent_skills.<agent>` in gsd-core's required form (`global:<name>` / project path / `global:<plugin>:<skill>` on claude) (Phase 18 D-02/D-04)
+- [ ] **SKL-03**: A recommended-but-missing skill is silently omitted — never mentioned, offered or installed (Phase 18 D-03); unknown installed skills get host-agent-proposed mappings the user confirms; a `trusted_global_roots` entry is proposed for symlinked skills escaping the global root
 
 ### Plan and Apply
 
@@ -60,7 +60,7 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 - [ ] **EVAL-03**: Live smoke on the claude host — `inventory` + `recommend` + `apply` (dry-run, then real on a scratch project)
 - [ ] **EVAL-04**: Live smoke on the codex host, including confirmation of the codex session env signal
 - [ ] **EVAL-05**: Live smoke on the opencode host, including whether the opencode review lane is usable from an opencode host
-- [ ] **EVAL-06**: Removed modules (`preference_match`, `critical_agents`, `workflow_defaults`) are gone; `make test` and `make validate` green; README row updated; SKILL.md labels cursor and pi "not live-validated" until EVAL-07/EVAL-08 pass
+- [ ] **EVAL-06**: v2 subcommands coexist with the unchanged v1 CLI (no module removal — Phase 18 D-08); v2 registered in all gates; `make test` (v1 tests still passing) and `make validate` green; README row updated; SKILL.md labels cursor and pi "not live-validated" until EVAL-07/EVAL-08 pass
 - [ ] **EVAL-07**: Live smoke on the cursor host (own phase, scheduled after codex/opencode; may run later without blocking earlier phases)
 - [ ] **EVAL-08**: Live smoke on the pi host (own phase, scheduled last; may run later without blocking earlier phases)
 

@@ -126,7 +126,7 @@ plan — without writing anything.
 ### Phase 18: Cross-AI, Skills & Apply Pipeline
 **Goal**: A user can adjust the recommended plan, have cross-AI review/execution and per-agent
 skills wired in, and safely apply the result to a target project's `.planning/config.json` —
-with the old preference-ladder modules fully retired.
+with the v2 flow living alongside the unchanged v1 CLI.
 **Depends on**: Phase 17
 **Requirements**: XAI-01, XAI-02, SKL-01, SKL-02, SKL-03, APP-01, APP-02, APP-03, APP-04, EVAL-06
 **Success Criteria** (what must be TRUE):
@@ -140,17 +140,19 @@ with the old preference-ladder modules fully retired.
      `--cross-ai` while setting `manager.flags.execute`.
   3. Skill inventory covers host skill dirs, project `skills/`, and Claude plugin skills;
      `skill_affinity.json` maps skill families to agents (gated by TDD/frontend/db project facts,
-     max 3 per agent) written as `agent_skills.<agent>`; a recommended-but-missing skill is
-     explained and offered but never auto-installed; unknown skills get user-confirmed proposed
+     capped per rigor) shown as bare names and written in gsd-core's required reference form as
+     `agent_skills.<agent>`; a recommended-but-missing skill is silently omitted (never offered or
+     installed); unknown installed skills get user-confirmed proposed
      mappings, and symlinked skills escaping the global root get a proposed
      `trusted_global_roots` entry.
   4. `apply --dry-run` validates every key against the host gsd-core's valid keys and prints a
      diff without writing; a real `apply` backs up to `config.json.bak-<ts>`, writes only through
      `gsd-tools config-new-project`/`config-set`, restores the backup and names the failing key on
-     any error, and prints (never auto-runs) follow-up commands (`gsd install <host>`,
-     `effort sync --apply`, `/gsd-map-codebase`) for the user to approve.
-  5. The removed modules (`preference_match`, `critical_agents`, `workflow_defaults`) are gone
-     from the codebase, `make test` and `make validate` are green, the README row is updated, and
+     any error (keeping the newest 3 backups), and runs the required follow-ups (`gsd install
+     <host>`, `effort sync --apply`) only after one grouped user approval, recommending
+     `/gsd-map-codebase` separately.
+  5. The v1 CLI and its modules still work unchanged next to the new v2 subcommands (no
+     removal), `make test` (v1 tests included) and `make validate` are green, the README row is updated, and
      SKILL.md labels cursor and pi "not live-validated" until their respective phases pass.
 **Plans**: TBD
 
