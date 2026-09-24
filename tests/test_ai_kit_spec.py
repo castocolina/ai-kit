@@ -6251,6 +6251,251 @@ class TestClaudeFallback(unittest.TestCase):
                                  "catalog" if raw is recorded_raw else "dated-fallback")
 
 
+class TestImageInputEndToEnd(unittest.TestCase):
+    """End-to-end image_input from models.dev — modalities.input -> build_model_catalog
+    -> fetch-model-catalog -> validated catalog entry (16 D-09)."""
+
+    def test_models_dev_modalities_become_image_input(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "model-catalog.json")
+            r = os.path.join(d, "runtimes.json")
+            models_dev_data = {
+                "anthropic": {"models": {
+                    "claude-sonnet-5": {
+                        "id": "claude-sonnet-5", "tool_call": True,
+                        "modalities": {"input": ["text", "image", "pdf"], "output": ["text"]},
+                        "limit": {"context": 200000, "output": 100000}
+                    }
+                }},
+                "vendor": {"models": {
+                    "text-only": {
+                        "id": "text-only", "tool_call": False,
+                        "modalities": {"input": ["text"], "output": ["text"]},
+                        "limit": {"context": 50000, "output": 10000}
+                    },
+                    "no-modalities": {
+                        "id": "no-modalities", "tool_call": False,
+                        "limit": {"context": 40000, "output": 8000}
+                    }
+                }}
+            }
+            # Create a simple runtimes.json with these models
+            cache_write_json(r, {"schema_version": 2, "clis": {"opencode": {
+                "installed": True, "models": [
+                    "anthropic/claude-sonnet-5", "vendor/text-only", "vendor/no-modalities"]}}})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    fetch_models_dev_fn=lambda: (models_dev_data, True),
+                    load_secret_fn=lambda env, key: None,
+                    env_fn=lambda: {"HOME": d},
+                    which_fn=lambda name: None,
+                )
+            self.assertEqual(code, 0)
+            catalog = cache_read_json(c)
+            entries, meta = model_catalog.split_catalog_meta(catalog)
+            # anthropic/claude-sonnet-5 modalities has image -> True
+            self.assertIn("anthropic/claude-sonnet-5", entries)
+            self.assertEqual(
+                entries["anthropic/claude-sonnet-5"].get("image_input"), True)
+            self.assertEqual(
+                entries["anthropic/claude-sonnet-5"].get("image_input_source"),
+                "models_dev")
+            # vendor/text-only modalities input list exists but no image -> False
+            self.assertIn("vendor/text-only", entries)
+            self.assertEqual(entries["vendor/text-only"].get("image_input"), False)
+            self.assertEqual(
+                entries["vendor/text-only"].get("image_input_source"), "models_dev")
+            # vendor/no-modalities has no modalities key -> no image_input key
+            self.assertIn("vendor/no-modalities", entries)
+            self.assertNotIn("image_input", entries["vendor/no-modalities"])
+            self.assertNotIn("image_input_source", entries["vendor/no-modalities"])
+            # All entries pass validation
+            for model_id, entry in entries.items():
+                reason = model_catalog.validate_catalog_entry(model_id, entry)
+                self.assertIsNone(reason, f"{model_id}: {reason}")
+
+    def test_models_dev_outage_preserves_cached_image_input(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "model-catalog.json")
+            r = os.path.join(d, "runtimes.json")
+            # Seed: catalog with vendor/text-only having models_dev-sourced image_input
+            entry = {
+                "provider": "vendor", "runtimes": {"opencode": {"model_id": "vendor/text-only"}},
+                "source": {"models_dev": True}, "confidence": "high",
+                "last_verified": "2026-09-02",
+                "image_input": True, "image_input_source": "models_dev"
+            }
+            cache_write_json(c, {"_meta": {"schema_version": 2}, "vendor/text-only": entry})
+            cache_write_json(r, {"schema_version": 2, "clis": {"opencode": {
+                "installed": True, "models": ["vendor/text-only"]}}})
+            # Create a fetch-meta sidecar so it's "fresh" enough to skip
+            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            fetch_called = []
+
+            def never_fetch_models_dev():
+                fetch_called.append(True)
+                raise Exception("should not fetch models.dev on --if-stale")
+
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--if-stale", "--runtimes-json", r, "--catalog-path", c],
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    fetch_models_dev_fn=never_fetch_models_dev,
+                    load_secret_fn=lambda env, key: None,
+                    env_fn=lambda: {"HOME": d},
+                    which_fn=lambda name: None,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(fetch_called, [])  # Should not have been called
+            catalog = cache_read_json(c)
+            entries, meta = model_catalog.split_catalog_meta(catalog)
+            # Entry still has the cached image_input and source
+            self.assertEqual(entries["vendor/text-only"]["image_input"], True)
+            self.assertEqual(entries["vendor/text-only"]["image_input_source"], "models_dev")
+
+    def test_fresh_answer_without_statement_clears_stale_value(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "model-catalog.json")
+            r = os.path.join(d, "runtimes.json")
+            # Seed: same entry as above
+            entry = {
+                "provider": "vendor", "runtimes": {"opencode": {"model_id": "vendor/no-modalities"}},
+                "source": {"models_dev": True}, "confidence": "high",
+                "last_verified": "2026-09-02",
+                "image_input": True, "image_input_source": "models_dev"
+            }
+            cache_write_json(c, {"vendor/no-modalities": entry})
+            cache_write_json(r, {"schema_version": 2, "clis": {"opencode": {
+                "installed": True, "models": ["vendor/no-modalities"]}}})
+            models_dev_data = {
+                "vendor": {"models": {
+                    "no-modalities": {
+                        "id": "no-modalities", "tool_call": False,
+                        "limit": {"context": 40000, "output": 8000}
+                    }
+                }}
+            }
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(
+                    ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
+                    fetch_artificial_analysis_fn=lambda api_key: ([], True),
+                    fetch_models_dev_fn=lambda: (models_dev_data, True),
+                    load_secret_fn=lambda env, key: None,
+                    env_fn=lambda: {"HOME": d},
+                    which_fn=lambda name: None,
+                )
+            self.assertEqual(code, 0)
+            catalog = cache_read_json(c)
+            entries, meta = model_catalog.split_catalog_meta(catalog)
+            # Fresh fetch found the model but with no modalities -> clears both keys
+            self.assertNotIn("image_input", entries["vendor/no-modalities"])
+            self.assertNotIn("image_input_source", entries["vendor/no-modalities"])
+
+    def test_image_input_schema_accepts_bool_and_none_rejects_other_types(self):
+        valid_entry = {
+            "provider": "test", "runtimes": {"cli": {"model_id": "test"}},
+            "source": {"models_dev": True}, "confidence": "high",
+            "last_verified": "2026-09-02"
+        }
+        model_id = "test/model"
+        # Bool values and None are valid
+        for val in (True, False, None):
+            with self.subTest(image_input=val):
+                self.assertIsNone(
+                    model_catalog.validate_catalog_entry(model_id, {**valid_entry, "image_input": val}))
+        # Non-bool values are rejected
+        for val in ("yes", 1):
+            with self.subTest(image_input=val):
+                reason = model_catalog.validate_catalog_entry(model_id, {**valid_entry, "image_input": val})
+                self.assertIsNotNone(reason)
+                self.assertIn("image_input", reason)
+        # image_input_source with bool image_input is valid
+        for source in ("models_dev", "opencode"):
+            with self.subTest(source=source):
+                self.assertIsNone(
+                    model_catalog.validate_catalog_entry(
+                        model_id, {**valid_entry, "image_input": True, "image_input_source": source}))
+                self.assertIsNone(
+                    model_catalog.validate_catalog_entry(
+                        model_id, {**valid_entry, "image_input": False, "image_input_source": source}))
+        # image_input_source with None image_input alone is valid
+        self.assertIsNone(
+            model_catalog.validate_catalog_entry(
+                model_id, {**valid_entry, "image_input": None, "image_input_source": None}))
+        # Plain entry with neither key is valid (SPEC-03)
+        self.assertIsNone(model_catalog.validate_catalog_entry(model_id, valid_entry))
+
+    def test_image_input_source_requires_a_bool_image_input(self):
+        valid_entry = {
+            "provider": "test", "runtimes": {"cli": {"model_id": "test"}},
+            "source": {"models_dev": True}, "confidence": "high",
+            "last_verified": "2026-09-02"
+        }
+        model_id = "test/model"
+        # Source without bool image_input is rejected (review cycle 3)
+        reason = model_catalog.validate_catalog_entry(
+            model_id, {**valid_entry, "image_input_source": "models_dev"})
+        self.assertIsNotNone(reason)
+        self.assertIn("image_input_source", reason)
+        reason = model_catalog.validate_catalog_entry(
+            model_id, {**valid_entry, "image_input": None, "image_input_source": "opencode"})
+        self.assertIsNotNone(reason)
+        # Legacy entry without source but with value is valid
+        self.assertIsNone(
+            model_catalog.validate_catalog_entry(
+                model_id, {**valid_entry, "image_input": True}))
+        # Paired clear is valid
+        self.assertIsNone(
+            model_catalog.validate_catalog_entry(
+                model_id, {**valid_entry, "image_input": None, "image_input_source": None}))
+        # CLI round trip: confirm-catalog-entry rejects orphan-source
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "catalog.json")
+            e = os.path.join(d, "entry.json")
+            orphan_entry = {**valid_entry, "image_input_source": "models_dev"}
+            with open(e, "w", encoding="utf-8") as f:
+                json.dump({"model_id": model_id, "entry": orphan_entry}, f)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["confirm-catalog-entry", "--catalog-path", c, "--entry-json", e])
+            self.assertEqual(code, 1)
+            # Nothing written
+            self.assertFalse(os.path.exists(c))
+            # Printed "confirmed": false with a reason
+            output = buf.getvalue()
+            self.assertIn('"confirmed": false', output)
+            self.assertIn("reason", output)
+        # CLI round trip: legacy entry is accepted
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "catalog.json")
+            e = os.path.join(d, "entry.json")
+            legacy_entry = {**valid_entry, "image_input": True}
+            with open(e, "w", encoding="utf-8") as f:
+                json.dump({"model_id": model_id, "entry": legacy_entry}, f)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = rs.main(["confirm-catalog-entry", "--catalog-path", c, "--entry-json", e])
+            self.assertEqual(code, 0)
+            # Entry is persisted
+            catalog = cache_read_json(c)
+            persisted_entry = catalog[model_id]
+            self.assertEqual(persisted_entry["image_input"], True)
+            self.assertNotIn("image_input_source", persisted_entry)
+
+
 class TestClaudeRuntimeFreshness(unittest.TestCase):
     """The catalog -> runtimes freshness edge (review cycle 1): runtimes.json's claude ids
     are derived from model-catalog.json `_meta`, so a catalog change re-detects a fresh

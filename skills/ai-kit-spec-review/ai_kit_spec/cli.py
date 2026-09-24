@@ -115,6 +115,21 @@ def _infer_heuristics(provider: str, model_id: str) -> dict:
     }
 
 
+def _image_input_from_models_dev(match: dict | None) -> bool | None:
+    """Returns whether the string 'image' is in match's modalities.input list.
+    Returns None when match is not a dict, when match.get("modalities") is not a dict,
+    or when its input is not a list."""
+    if not isinstance(match, dict):
+        return None
+    modalities = match.get("modalities")
+    if not isinstance(modalities, dict):
+        return None
+    input_list = modalities.get("input")
+    if not isinstance(input_list, list):
+        return None
+    return "image" in input_list
+
+
 def _preserved_or_fresh_md_fields(md_match: dict | None, models_dev_ok: bool,
                                    existing_entry: dict | None,
                                    md_enrich_match: dict | None = None) -> dict:
@@ -136,22 +151,42 @@ def _preserved_or_fresh_md_fields(md_match: dict | None, models_dev_ok: bool,
 
     NEW (design spec 2026-09-05): md_enrich_match is this spec's effort-suffix enrichment
     retry result (cli.py's build_model_catalog loop) -- consulted ONLY when the PRIMARY
-    md_match found nothing this run. It never overrides a real md_match."""
+    md_match found nothing this run. It never overrides a real md_match.
+
+    NEW (16 D-09): image_input (optional bool; present only when models.dev stated it via
+    modalities.input) and image_input_source (field-level provenance; present only when
+    image_input is present) are written and cleared TOGETHER -- both keys always appear in
+    the returned dict for consistency, either as a (bool, "models_dev") pair, explicit Nones
+    for clear, or both omitted to preserve a cached runtime-derived value across a fetch skip."""
     if not models_dev_ok:
         existing_entry = existing_entry or {}
-        return {k: existing_entry[k] for k in
+        result = {k: existing_entry[k] for k in
                 ("tool_calling", "structured_output", "max_output_tokens")
                 if k in existing_entry}
+        # On skip: carry forward only a models_dev-sourced value; a runtime-derived value is
+        # left out so this snapshot's opencode reading can replace it
+        if (existing_entry.get("image_input_source") == "models_dev" and
+                isinstance(existing_entry.get("image_input"), bool)):
+            result["image_input"] = existing_entry["image_input"]
+            result["image_input_source"] = "models_dev"
+        return result
     if md_match:
+        img = _image_input_from_models_dev(md_match)
         return {"tool_calling": md_match.get("tool_call"),
                 "structured_output": md_match.get("structured_output"),
-                "max_output_tokens": md_match.get("limit", {}).get("output")}
+                "max_output_tokens": md_match.get("limit", {}).get("output"),
+                "image_input": img,
+                "image_input_source": "models_dev" if img is not None else None}
     source = md_enrich_match
     if not source:
-        return {"tool_calling": None, "structured_output": None, "max_output_tokens": None}
+        return {"tool_calling": None, "structured_output": None, "max_output_tokens": None,
+                "image_input": None, "image_input_source": None}
+    img = _image_input_from_models_dev(source)
     return {"tool_calling": source.get("tool_call"),
             "structured_output": source.get("structured_output"),
-            "max_output_tokens": source.get("limit", {}).get("output")}
+            "max_output_tokens": source.get("limit", {}).get("output"),
+            "image_input": img,
+            "image_input_source": "models_dev" if img is not None else None}
 
 
 def _preserved_or_fresh_ctx_window(md_match: dict | None, models_dev_ok: bool,

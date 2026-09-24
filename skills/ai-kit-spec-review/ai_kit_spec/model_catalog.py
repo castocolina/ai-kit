@@ -27,6 +27,8 @@ _FIELD_TYPES = {
     "tokens_per_sec": (int, float), "max_output_tokens": int, "structured_output": bool,
     "tool_calling": bool, "native": bool, "reasoning_modes": list, "fast_mode": bool,
     "speed_tier": str, "name_declared_purpose": str, "native_runtime": str,
+    "image_input": bool,  # 16 D-09 — optional; absent means unknown; written only from a source statement
+    "image_input_source": str,  # 16 D-09 (review cycle 2 MEDIUM); field-level provenance of image_input
     # HIGH finding: is_router/batch_mode/fallback_quota have no external source (spec §3) --
     # they are ALWAYS either a naming heuristic's guess or a user's explicit confirmation of
     # that guess, and a plain bool alone cannot tell those two provenances apart. This list
@@ -42,6 +44,7 @@ _NUMERIC_SUBFIELD_TABLES = {
 }
 _RUNTIME_FIELD_TYPES = {"model_id": str, "ctx_window": (int, float)}
 _VALID_NAME_DECLARED_PURPOSE = {"review", "execute"}
+_VALID_IMAGE_INPUT_SOURCE = {"models_dev", "opencode"}
 # Deliberately duplicated with config_io._VALID_NATIVE_RUNTIME -- the two sets must change
 # together (AGENTS.md Architecture). "pi" is here because detect_current_runtime can return it
 # since Phase 16.
@@ -136,6 +139,13 @@ def validate_catalog_entry(model_id: str, entry: dict) -> str | None:
             and entry["name_declared_purpose"] not in _VALID_NAME_DECLARED_PURPOSE:
         return (f"{model_id}: 'name_declared_purpose' must be one of "
                 f"{sorted(_VALID_NAME_DECLARED_PURPOSE)}")
+    if "image_input_source" in entry and entry["image_input_source"] is not None \
+            and entry["image_input_source"] not in _VALID_IMAGE_INPUT_SOURCE:
+        return (f"{model_id}: 'image_input_source' must be one of "
+                f"{sorted(_VALID_IMAGE_INPUT_SOURCE)}")
+    if entry.get("image_input_source") is not None \
+            and not isinstance(entry.get("image_input"), bool):
+        return f"{model_id}: 'image_input_source' requires a bool 'image_input'"
     # Forward-compatible schema support only: no current code path in this
     # codebase produces a model_catalog.py entry with a `cli` key at all
     # (verified this phase: `cli` does not appear anywhere in `_FIELD_TYPES` /
