@@ -95,7 +95,7 @@ rewrite depends on.
   4. The ranker accepts `planning`, `general`, `mechanical`, `execution`, `review` purposes via the
      ranking-weights file, and existing `review`/`execute` callers keep working unchanged as
      aliases.
-**Plans**: 3/6 plans executed
+**Plans**: 4/6 plans executed
 
 Plans:
 **Wave 1**
@@ -112,7 +112,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 16-04-PLAN.md — claude enumeration: aliases + catalog full ids + dated fallback, never executing claude; catalog-aware `--if-stale` so the real detect → fetch order reaches catalog ids without waiting for the TTL, with every recorded id materialized as an `anthropic/<id>` catalog entry in the same fetch
+- [x] 16-04-PLAN.md — claude enumeration: aliases + catalog full ids + dated fallback, never executing claude; catalog-aware `--if-stale` so the real detect → fetch order reaches catalog ids without waiting for the TTL, with every recorded id materialized as an `anthropic/<id>` catalog entry in the same fetch
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
