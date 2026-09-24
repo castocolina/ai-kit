@@ -37,3 +37,4 @@ changes) via a direct `git checkout HEAD -- tools/setup.py` + re-run comparison,
 None of these block Task 1's actual required gate (`make e2e-docker`, which runs
 `make test` + `make lint` only, both green) — recorded here for a future phase or
 dedicated cleanup pass to address, per the executor's Scope Boundary rule.
+  status: acknowledged

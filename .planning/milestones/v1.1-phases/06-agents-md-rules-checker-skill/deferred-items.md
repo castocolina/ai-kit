@@ -30,3 +30,4 @@ Phase 6. `git status --short` for this plan's work shows only:
 all pass. Per the executor's Scope Boundary rule ("only auto-fix issues
 directly caused by the current task's changes"), these three unrelated
 files are NOT fixed here — logged for a future cleanup pass instead.
+  status: acknowledged

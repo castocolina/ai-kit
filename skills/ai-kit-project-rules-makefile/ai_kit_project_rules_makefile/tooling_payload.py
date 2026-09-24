@@ -1,5 +1,5 @@
 """Makefile/pre-commit tooling-payload validator, relocated here by Phase 9
-per `.planning/phases/09-agents-md-checker-prune-ai-kit-project-rules-agents/
+per `.planning/milestones/v1.2-phases/09-agents-md-checker-prune-ai-kit-project-rules-agents/
 09-CONTEXT.md` D-04.
 
 Wired by Phase 10: this skill's `stack_cache.py` imports `ALL_TOOLING_KEYS`/

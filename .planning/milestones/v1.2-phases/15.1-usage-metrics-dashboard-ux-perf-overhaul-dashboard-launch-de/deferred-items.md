@@ -23,6 +23,7 @@ executor's Scope Boundary rule.
   (`refiner.py`, `dashboard.py`, `cli.py`, `tests/test_ai_kit_usage_metrics.py`)
   are implicated — pyright type-checks the whole project, and this finding
   is entirely outside Plan 01's scope.
+  status: acknowledged
 
 ## Plan 03
 
@@ -35,6 +36,7 @@ executor's Scope Boundary rule.
   still fails on this machine for the same pre-existing `mmdc` reason logged
   under Plan 01 above — reconfirmed via `make test-unit`, still the only
   error in the full 2510-test run.
+  status: acknowledged
 
 ## Plan 04
 
@@ -44,6 +46,7 @@ executor's Scope Boundary rule.
   error, 20 skipped — the identical single error). None of this plan's 3
   touched files (`dashboard.py`, `refined_store.py`,
   `tests/test_ai_kit_usage_metrics.py`) are implicated.
+  status: acknowledged
 
 ## Plan 05
 
@@ -58,6 +61,7 @@ executor's Scope Boundary rule.
 - `tests.test_ai_kit_usage_metrics.py:1242` `ruff` `E501` — same
   pre-existing finding logged under Plan 03, still present, still
   untouched by this plan's own additions to the file.
+  status: acknowledged
 
 ## Code review (--fix --auto, iteration 3/3 loop cap)
 
@@ -85,3 +89,4 @@ Follow-up: add a symmetric `FLAT_SORT_KEYS` guard (or a shared
 `resolveSortKey(mode, sortKey)` helper covering both directions) plus a
 node-executed regression test, in a future small fix or the next phase
 that touches this file.
+  status: acknowledged

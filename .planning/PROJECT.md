@@ -6,23 +6,37 @@ Personal agent skills, slash commands, and a one-line installer, built and
 maintained by uz. Skills follow the open [Agent Skills](https://agentskills.io)
 standard, so beyond Claude Code they also load unmodified in any conformant
 tool (opencode, Codex CLI, Gemini CLI, Cursor, Copilot CLI, Kiro, and others).
-The project is now deliberately widening from "a Claude Code installer with
-some skills" toward genuine multi-CLI support — runtime detection, opencode
-provider management, and cross-runtime config diagnostics are all in active
-proposal.
+It has widened from "a Claude Code installer with some skills" into a
+multi-CLI toolkit. It ships runtime detection, opencode provider management,
+cross-runtime config diagnostics, a local usage-metrics dashboard, and a family
+of project-rules checker skills.
 
-## Current Milestone: v1.2 ai-kit Rules Skill Family
+## Current State
 
-**Goal:** Complete the rules-checker skill family designed in `docs/superpowers/specs/2026-09-12-ai-kit-rules-skill-family-design.md` — finish pruning the AGENTS.md checker and build the 5 remaining domain checkers plus an orchestrator, all sharing `skills/_shared/ai_kit_rules_common/` (extracted in the prior, already-merged `ai-kit-rules-shared-package` plan).
+**Shipped:** v1.2 ai-kit Rules Skill Family (2026-09-23). v1.0 and v1.1 were
+archived retroactively during the same close. See `.planning/MILESTONES.md`.
+Phase history lives in `.planning/milestones/v1.{0,1,2}-phases/`.
 
-**Target features:**
-- `ai-kit-project-rules-agents` (renamed from `ai-kit-agents-md-rules-checker`) pruned to AGENTS.md-prose scope only
-- `ai-kit-project-rules-makefile` — inherits the dropped Makefile-specific logic, plus `validate-<category>` parity, help/fail reachability, recipe-length cap, docker build-before-up, shellcheck threshold, advisory ordering heuristic
-- `ai-kit-project-rules-precommit` — Makefile↔pre-commit parity, 6-category tooling taxonomy, enable-everything/duplicate-code/dead-code absence checks, ruff/golangci-lint-specific checks
-- `ai-kit-project-rules-arch` — `arch-test` target existence/AST-only verification, per-stack canonical-tool baseline knowledge; resolves backlog Phase 999.3 at this milestone's scoped-down, form/convention-only ambition
-- `ai-kit-project-rules-docker` — docker-compose target family, healthcheck conventions, `depends_on` discipline, local-dev hot-reload convention, runbook requirement
-- `ai-kit-project-rules-cicd` — CI reuses Makefile/pre-commit/package.json/Gradle commands instead of duplicating tool invocations inline
-- `ai-kit-project-rules-all` (orchestrator) — runs all 6 checkers, aggregates one report, keeps the `/agent-md-refactor` hand-off for AGENTS.md-domain findings only
+The rules-checker family (`ai-kit-project-rules-{agents,makefile,precommit,arch,docker,cicd}`
+plus the `ai-kit-project-rules-all` orchestrator) shares
+`skills/_shared/ai_kit_rules_common/`. The usage-metrics dashboard handles the
+real ~85k-row refined store without freezing.
+
+## Next Milestone Goals
+
+**v1.3 — `ai-kit-gsd-curated-config` v2** (host-aware, role-scored GSD config
+wizard). Source spec:
+`docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md`.
+
+- Detect the host runtime and inventory the models of every installed runtime.
+- Score models per role (planning, review, execution, mechanical, vision) using
+  the cached `ai_kit_spec` model catalog.
+- Ask a model profile (quality / budget / adaptive) and a product rigor
+  (MVP / Standard / Rigorous).
+- Emit a minimal config: per-phase-type models, `model_profile_overrides` per
+  runtime, and few `model_overrides`.
+- Wire a counterpart-provider cross-AI reviewer and a cheap cross-AI executor.
+- Live-validate on claude, codex and opencode. Cursor and pi are deferred.
 
 ## Core Value
 
@@ -58,28 +72,28 @@ verified live rather than assumed from a catalog.
 - ✓ Assorted utility skills — `commit-message`, `cst-refactor`,
   `mermaid-audit`, `markdown-to-pdf`.
 
+- ✓ Multi-CLI runtime foundation — hardened installer fetch, runtime
+  self-detection, opencode sidebar/status research — v1.0
+- ✓ Opencode provider management — list/remove custom providers safely — v1.0
+- ✓ Tool-substitution awareness hook — live-verified rtk briefing at session
+  start — v1.0
+- ✓ Config doctor — cross-runtime config diagnostics with confirmed apply — v1.0
+- ✓ Usage metrics dashboard — local capture/refine/visualize of AI-CLI usage —
+  v1.0, overhauled for scale and data correctness in v1.2 (Phase 15.1)
+- ✓ AGENTS.md rules checker skill — v1.1, pruned to prose scope as
+  `ai-kit-project-rules-agents` in v1.2
+- ✓ Curated GSD config skill (`ai-kit-gsd-curated-config` v1) — v1.1
+- ✓ Status-line quota-color refactor — burn-pace coloring — v1.1
+- ✓ Project-rules checker family (makefile, precommit, arch, docker, cicd)
+  plus the `ai-kit-project-rules-all` orchestrator — v1.2
+
 ### Active
 
-<!-- v1.0 scope: 5 ingested proposal PRDs (all 6 phase directories complete;
-     formal move to Validated happens at /gsd-complete-milestone, not here).
-     v1.1 scope added below: 3 items pulled from the pending todo backlog.
-     Detailed, checkable requirements live in REQUIREMENTS.md; this is the
-     feature-level summary. -->
+<!-- v1.3 scope; detailed requirements will live in REQUIREMENTS.md once
+     /gsd-new-milestone defines them. -->
 
-- [ ] Multi-CLI runtime foundation — hardened installer fetch, runtime
-      self-detection, opencode sidebar/status research
-- [ ] Opencode provider management — list/remove custom providers safely
-- [ ] Tool-substitution awareness hook — live-verified rtk briefing at
-      session start
-- [ ] Config doctor — cross-runtime config diagnostics with confirmed apply
-- [ ] Usage metrics dashboard — local capture/refine/visualize of AI-CLI
-      usage
-- [ ] AGENTS.md rules checker skill — wraps `/agent-md-refactor`, enforces
-      accumulated house rules
-- [ ] Curated GSD config skill — preference-driven `config.json` setup,
-      replacing `gsd-settings`/`gsd-config`'s full interrogation
-- [ ] Status-line quota-color refactor — rate-limit coloring relative to
-      time-left-in-window
+- [ ] `ai-kit-gsd-curated-config` v2 — host-aware, role-scored GSD config
+      wizard (see Next Milestone Goals)
 
 ### Out of Scope
 
@@ -103,12 +117,23 @@ verified live rather than assumed from a catalog.
 - Presenting opencode's "session retention" as a real, settable config value
   in config doctor — no such setting exists upstream; shown informational-only,
   never offered as an apply action.
+- Real dependency-direction/layering enforcement in `ai-kit-project-rules-arch`
+  — v1.2 scoped it to form/convention-only checks. It remains an explicitly
+  flagged known gap (Backlog 999.3).
 
 ## Context
 
 ai-kit is a solo-maintainer (uz) toolkit that started as a Claude-Code-only
-installer + status line and grew a family of spec-review/execute skills. This
-milestone's scope comes from 5 PRDs ingested from `docs/prds/` — all framed
+installer + status line and grew a family of spec-review/execute skills.
+
+**State after v1.2 (2026-09-23):**
+- The unit suite has about 2535 tests.
+- The only failing test is `TestRenderRealMmdc`, caused by an environment problem (an incomplete pnpm-global mermaid-cli install).
+- Pyright reports 0 errors.
+- Known debt: pre-v1.2 ruff/pylint findings in `tools/status-line.py`, `tools/wizard_app.py` and `tests/test_ai_kit_spec_superpowers.py`.
+- No v1.2 phase has a Nyquist VALIDATION.md.
+
+v1.0's scope came from 5 PRDs ingested from `docs/prds/` — all framed
 by their authors as **proposals**, not yet-accepted decisions (no ADRs exist
 in this repo for them). Ingest ran cross-reference cycle detection across the
 5 PRDs; two prior runs found and the user resolved a 3-node then a residual
@@ -163,8 +188,12 @@ introduced without an explicit, justified exception.
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Adopt all 5 ingested proposal PRDs as this milestone's roadmap scope | 0 blockers, 0 competing variants after cycle resolution (`.planning/intel/SYNTHESIS.md`); each PRD already defines its own measurable acceptance criteria | — Pending (roadmap approval is the acceptance step; no PRD is ADR-locked) |
-| Sequence Multi-CLI Runtime Foundation, Opencode Provider Management, and Tool-Substitution Awareness Hook ahead of Config Doctor and Usage Metrics Dashboard | Real cross-PRD reuse dependencies found during ingest (surgical-edit pattern, curated substitution list) — see Context | — Pending |
+| Adopt all 5 ingested proposal PRDs as this milestone's roadmap scope | 0 blockers, 0 competing variants after cycle resolution (`.planning/intel/SYNTHESIS.md`); each PRD already defines its own measurable acceptance criteria | ✓ Good — all 5 shipped in v1.0 |
+| Sequence Multi-CLI Runtime Foundation, Opencode Provider Management, and Tool-Substitution Awareness Hook ahead of Config Doctor and Usage Metrics Dashboard | Real cross-PRD reuse dependencies found during ingest (surgical-edit pattern, curated substitution list) — see Context | ✓ Good — reuse landed as planned |
+| Split the AGENTS.md checker into a single-domain rules family sharing `ai_kit_rules_common` (v1.2) | One checker was accumulating Makefile, pre-commit and prose domains; a shared package prevents divergent copies | ✓ Good — 6 checkers plus an orchestrator, no divergent copies (v1.2 integration check) |
+| Rate-limit coloring by burn pace, not remaining fraction (v1.1, Phase 8.1) | Phase 8's formula flagged early-window light usage as RED | ✓ Good |
+| Close milestones with a cleanup phase before archiving, not with accepted debt (v1.2, Phase 15.2) | The audit found in-milestone defects (pyright error, sort-key asymmetry) that were cheap to fix | ✓ Good — closed at pyright 0 errors |
+| Track `.planning/` in git from 2026-09-16 | Earlier milestones lost their start-date history | ⚠️ Revisit — v1.0 dates are only partially recoverable |
 
 ## Evolution
 
@@ -184,4 +213,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-10 after starting milestone v1.1*
+*Last updated: 2026-09-23 after v1.2 milestone*

@@ -25,6 +25,7 @@ are NOT fixed by this plan. This mirrors Phase 6's own identical precedent (see
 overall gate is blocked by three pre-existing, out-of-Phase-6-scope lint issues").
 
 **This plan's own scope is confirmed clean independently:**
+
 - `uv run ruff check skills/ai-kit-gsd-curated-config/` → `[]` (zero findings)
 - `uv run pyright` (full project, no args — same invocation the pre-commit hook
   uses) → `0 errors, 0 warnings, 0 informations`
@@ -37,6 +38,6 @@ overall gate is blocked by three pre-existing, out-of-Phase-6-scope lint issues"
   only `ruff` and `pylint` fail, and only on the two pre-existing unrelated files
   above.
 
-**Status:** Deferred — not this phase's responsibility to fix. Should be addressed
+**Status:** acknowledged
 in a future phase/plan that legitimately touches `tools/status-line.py`/
 `tools/wizard_app.py`.

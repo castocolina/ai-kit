@@ -4,17 +4,17 @@ milestone: v1.2
 current_phase: "15.2"
 current_phase_name: v1.2 Tech Debt Cleanup (pre-close)
 current_plan: 1
-status: verifying
-stopped_at: Completed 15.2-01-PLAN.md
-last_updated: "2026-09-24T00:34:44.205Z"
+status: milestone_complete
+stopped_at: v1.2 milestone archived
+last_updated: "2026-09-23T00:00:00.000Z"
 last_activity: 2026-09-23
-last_activity_desc: Phase 15.2 execution started
+last_activity_desc: v1.2 milestone archived (override closeout); v1.1 and v1.0 roadmap archives written retroactively
 state_head: 2a52b254ccbe1b9fb4d2aa5259d917bceeac5057
 progress:
   total_phases: 19
-  completed_phases: 16
-  total_plans: 37
-  completed_plans: 37
+  completed_phases: 19
+  total_plans: 55
+  completed_plans: 55
 milestone_name: ai-kit Rules Skill Family
 ---
 
@@ -22,18 +22,17 @@ milestone_name: ai-kit Rules Skill Family
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-09-10)
+See: .planning/PROJECT.md (updated 2026-09-23)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 15.2 — v1.2 Tech Debt Cleanup (pre-close)
+**Current focus:** Planning next milestone (v1.3 — ai-kit-gsd-curated-config v2)
 
 ## Current Position
 
-Phase: 15.2 (v1.2 Tech Debt Cleanup (pre-close)) — EXECUTING
-Current Plan: 1
-Total Plans in Phase: 1
-Status: Phase complete — ready for verification
-Last activity: 2026-09-23 — Phase 15.2 execution started
+Milestone: v1.2 ai-kit Rules Skill Family — SHIPPED 2026-09-23 (override closeout)
+Phase: none active (all v1.2 phases archived to `.planning/milestones/v1.2-phases/`)
+Status: Milestone complete — ready for `/gsd-new-milestone`
+Last activity: 2026-09-23 — v1.2 milestone archived
 
 ## Performance Metrics
 
@@ -219,15 +218,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ### Pending Todos
 
-None outstanding. The 3 pending todos that seeded v1.1
-(`.planning/todos/pending/2026-09-09-agents-md-rules-checker-skill-wrapping-agent-md-refactor.md`,
-`.planning/todos/pending/2026-09-09-curated-gsd-config-skill-replacing-gsd-settings-prompts.md`,
-`.planning/todos/pending/2026-09-10-refactor-status-line-quota-percentage-and-colors-to-be-relat.md`)
-have been promoted into ROADMAP.md Phases 6, 7, and 8 respectively; their
-files are left in place under `todos/pending/` for reference until each
-phase completes. v1.2's scope came from
-`docs/superpowers/specs/2026-09-12-ai-kit-rules-skill-family-design.md`
-directly, not from a pending todo.
+None outstanding. The 3 todos that seeded v1.1 were moved to
+`.planning/todos/completed/` by Phase 15.2.
 
 ### Blockers/Concerns
 
@@ -325,10 +317,17 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 | Category | Item | Status | Deferred At | Milestone |
 |----------|------|--------|-------------|-----------|
-| *(none)* | | | | |
+| deferred_items | Phase 06: pre-existing ruff/pylint in status-line.py / wizard_app.py / test_ai_kit_spec_superpowers.py | acknowledged | 2026-09-23 | v1.2 |
+| deferred_items | Phase 07: same pre-existing ruff/pylint debt blocking `make validate` | acknowledged | 2026-09-23 | v1.2 |
+| deferred_items | Phase 15.1 Plan 01: mmdc real-render test env failure; pyright pair_checks.py:178 (fixed in 15.2) | acknowledged | 2026-09-23 | v1.2 |
+| deferred_items | Phase 15.1 Plan 03: ruff E501 test_ai_kit_usage_metrics.py (fixed in 15.2) | acknowledged | 2026-09-23 | v1.2 |
+| deferred_items | Phase 15.1 Plan 04: mmdc real-render test env failure | acknowledged | 2026-09-23 | v1.2 |
+| deferred_items | Phase 15.1 Plan 05: mmdc env failure; ruff E501 (fixed in 15.2) | acknowledged | 2026-09-23 | v1.2 |
+| deferred_items | Phase 15.1 code review: flat-mode sort-key guard + regression test (fixed in 15.2) | acknowledged | 2026-09-23 | v1.2 |
+| deferred_items | Phase 01.1 (archived v1.0): pre-existing ruff E501/RUF012 in status-line.py / wizard_app.py | acknowledged | 2026-09-23 | v1.2 |
 
 ## Session Continuity
 
-Last session: 2026-09-24T00:34:44.149Z
-Stopped at: Completed 15.2-01-PLAN.md
+Last session: 2026-09-23
+Stopped at: v1.2 milestone archived
 Resume file: None
