@@ -112,15 +112,15 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 16-04-PLAN.md — claude enumeration: aliases + catalog full ids + dated fallback, never executing claude; catalog-aware `--if-stale` so the real detect → fetch order reaches catalog ids without waiting for the TTL
+- [ ] 16-04-PLAN.md — claude enumeration: aliases + catalog full ids + dated fallback, never executing claude; catalog-aware `--if-stale` so the real detect → fetch order reaches catalog ids without waiting for the TTL, with every recorded id materialized as an `anthropic/<id>` catalog entry in the same fetch
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 16-05-PLAN.md — optional `image_input` from models.dev modalities and `opencode models --verbose`
+- [ ] 16-05-PLAN.md — optional `image_input` (with `image_input_source` provenance) from models.dev modalities and `opencode models --verbose`
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 16-06-PLAN.md — ranker purposes planning/general/mechanical/execution/review, execute/review aliases, mechanical floor; phase gate (`make test` + `make validate`)
+- [ ] 16-06-PLAN.md — ranker purposes planning/general/mechanical/execution/review, execute/review aliases, mechanical floor; phase gate (`make test` + `make validate`, causal triage against the pre-phase base)
 
 ### Phase 17: Curated-Config Inventory & Recommendation Engine
 
