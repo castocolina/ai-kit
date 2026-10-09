@@ -1718,9 +1718,8 @@ def util_rate_group_str(
     # is shown whenever it reports a percentage, regardless of whether its reset
     # is in the past or future, so a wrong system clock or timezone change can
     # never hide a bucket. Color, however, now does depend on the clock: the
-    # burn-rate ratio below weighs used_percentage against how much of the
-    # bucket's window has already elapsed (elapsed_fraction, via `now` and each
-    # bucket's resets_at).
+    # gap below weighs used_percentage against how much of the bucket's window
+    # has already elapsed (elapsed pct, via `now` and each bucket's resets_at).
     for key in sorted(rate_limits):
         if _rate_bucket_hourly(key) != hourly:
             continue
@@ -1731,10 +1730,19 @@ def util_rate_group_str(
         pct = float(pct_raw)
         reset_raw: Any = info.get("resets_at")
         reset: int | None = int(reset_raw) if reset_raw is not None else None
-        ratio = util_rate_burn_ratio(pct, key, reset, now)
-        color = util_rate_color(ratio, theme)
+        gap = util_rate_gap(pct, key, reset, now)
+        if gap is None:
+            color = theme.c("WHITE")
+            mark = ""
+        else:
+            color = util_gap_color(abs(gap), theme)
+            # Same tier gate as the reset suffix (spec: the narrow/terse tier
+            # omits the marker) -- seg_alt_h_rate_limit renders the terse
+            # tier via util_rate_group_str(rl, True, False, theme), so an
+            # ungated mark would leak into it.
+            mark = util_gap_sign(gap) if show_reset else ""
         suffix = suffix_fn(reset) if show_reset else ""
-        parts.append(f"{fmt_rate_key_label(key)}: {color}{round(pct)}%{RESET}{suffix}")
+        parts.append(f"{fmt_rate_key_label(key)}: {color}{round(pct)}%{RESET}{mark}{suffix}")
     return util_icon("⚡", " | ".join(parts)) if parts else None
 
 

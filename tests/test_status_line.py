@@ -710,69 +710,76 @@ class TestCooperativeBuilders(unittest.TestCase):
         out = strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
         self.assertIn("7d: 50%", out)
 
-    def test_h_rate_limit_colors_by_pace_more_elapsed_time_is_less_urgent(self):
-        # Pins the pace-based direction (see util_rate_burn_ratio's own
-        # docstring for the 2026-09-13 reversal of 08-01-PLAN.md's "Formula
-        # Direction -- Resolved"): identical used_percentage, MORE elapsed
-        # time (= LESS time remaining) means a slower burn pace and must
-        # render strictly LESS urgently, never more. Two SEPARATE calls --
-        # both fixtures use the SAME "five_hour" key, so a shared dict would
-        # silently collide, leaving only one entry.
+    def test_h_rate_limit_colors_by_absolute_gap(self):
+        # Absolute-gap direction (spec): 45% of a 5h window elapsed, 15%
+        # used is 30 points apart -> RED; 43% used is 2 points -> GREEN.
+        # Reverses the pace ratio's "low usage late in the window is calm".
+        # Separate calls -- same key in a shared dict would collide.
         with mock.patch.object(sl.time, "time", return_value=NOW):
-            rl_4h = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600 * 4}}
-            out_4h = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_4h), 200, THEME)
-            self.assertIn(THEME.c("RED+bold"), out_4h)
+            rl_low = {"five_hour": {"used_percentage": 15, "resets_at": NOW + 9900}}
+            out_low = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_low), 200, THEME)
+            self.assertIn(THEME.c("RED"), out_low)
+            self.assertNotIn(THEME.c("GREEN"), out_low)
+            self.assertIn(" (-30)", strip(out_low))
 
-            rl_1h = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600}}
-            out_1h = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_1h), 200, THEME)
-            self.assertIn(THEME.c("YELLOW"), out_1h)
-            self.assertNotIn(THEME.c("RED+bold"), out_1h)
+            rl_ok = {"five_hour": {"used_percentage": 43, "resets_at": NOW + 9900}}
+            out_ok = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_ok), 200, THEME)
+            self.assertIn(THEME.c("GREEN"), out_ok)
+            self.assertNotIn(THEME.c("RED"), out_ok)
+            self.assertIn(" (-2)", strip(out_ok))
+
+    def test_h_rate_limit_positive_sign_marks_usage_ahead(self):
+        # Signed marker: 50% used with 45% elapsed is 5 points ahead -> (+5).
+        # gap = 50 - (100.0 - 9900.0 * 100.0 / 18000) = 5.0 float-exact, so
+        # abs(gap) hits the GREEN band's <= 5.0 boundary exactly.
+        with mock.patch.object(sl.time, "time", return_value=NOW):
+            rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 9900}}
+            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
+            self.assertIn(" (+5)", strip(out))
+            self.assertIn(THEME.c("GREEN"), out)
+
+    def test_h_rate_limit_unreliable_window_paints_white_no_marker(self):
+        # Past reset and clock skew both make the gap uncomputable: WHITE,
+        # no marker, bucket still visible (spec fallback, not the old ramp).
+        # The marker-absence asserts are per spec ("the fallback case renders
+        # no marker"); the missing-reset case is equality-pinned separately
+        # by test_rate_limit_no_reset_stamp_when_absent.
+        with mock.patch.object(sl.time, "time", return_value=NOW):
+            rl_past = {"five_hour": {"used_percentage": 50, "resets_at": NOW - 1}}
+            out_past = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_past), 200, THEME)
+            self.assertIn(THEME.c("WHITE"), out_past)
+            self.assertNotIn(THEME.c("RED"), out_past)
+            self.assertNotIn(" (+", strip(out_past))
+            self.assertNotIn(" (-", strip(out_past))
+
+            rl_skew = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600 * 6}}
+            out_skew = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_skew), 200, THEME)
+            self.assertIn(THEME.c("WHITE"), out_skew)
+            self.assertNotIn(" (+", strip(out_skew))
+            self.assertNotIn(" (-", strip(out_skew))
+
+    def test_h_rate_limit_live_regression_low_pct_late_in_window_is_red(self):
+        # Reversal pinned by the spec: the Phase 8.1 live case (25% used,
+        # 4h of a 5h window elapsed -> 80%) was GREEN under the pace ratio
+        # (25/0.8 = 31.25); the absolute gap is 55 points -> RED.
+        with mock.patch.object(sl.time, "time", return_value=NOW):
+            rl = {"five_hour": {"used_percentage": 25, "resets_at": NOW + 3600}}
+            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
+            self.assertIn(THEME.c("RED"), out)
+            self.assertNotIn(THEME.c("GREEN"), out)
+            self.assertIn(" (-55)", strip(out))
 
     def test_h_rate_limit_display_unchanged_by_color_refactor(self):
-        # ROADMAP SC2: displayed percentage/reset-suffix text stays
-        # byte-identical -- only which ramp color is picked changes. Full
-        # assertEqual against the complete stripped string, not assertIn.
+        # Rich-tier text is the old format plus the signed gap marker
+        # between the percentage and the reset suffix; the terse/narrow
+        # tier stays byte-identical (its own test pins that).
         with mock.patch.object(sl.time, "time", return_value=NOW):
             rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600}}
             out = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
             self.assertEqual(
                 out,
-                f"⚡️ 5h: 42% (↺ {sl.datetime.fromtimestamp(NOW + 3600).strftime('%H:%M')})",
+                f"⚡️ 5h: 42% (-38) (↺ {sl.datetime.fromtimestamp(NOW + 3600).strftime('%H:%M')})",
             )
-
-    def test_rate_limit_past_reset_color_matches_raw_pct(self):
-        # D-03: a stale resets_at (already in the past) yields
-        # elapsed_fraction > 1.0, so the ratio falls back to raw pct --
-        # zero regression on the existing past-reset fixtures.
-        # Compared against sl.util_rate_color(50, THEME) directly -- NOT
-        # THEME.c(sl.util_pick_color(...)): util_pick_color already returns
-        # a resolved ANSI escape, and wrapping it in THEME.c() a second time
-        # would re-parse it as a color NAME and return "" (08-REVIEWS.md
-        # cycle 3 HIGH, fixed 2026-09-11).
-        with mock.patch.object(sl.time, "time", return_value=NOW):
-            rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW - 1}}
-            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
-            self.assertIn(sl.util_rate_color(50, THEME), out)
-
-    def test_h_rate_limit_clock_skew_falls_back_to_raw_pct(self):
-        # A resets_at further out than the key-parsed window (6h remaining of
-        # a 5h window) yields elapsed_fraction < 0.0; D-03 falls back to raw
-        # pct, not Phase 8's superseded D-03/D-04 clamp.
-        with mock.patch.object(sl.time, "time", return_value=NOW):
-            rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600 * 6}}
-            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
-            self.assertIn(sl.util_rate_color(50, THEME), out)
-
-    def test_h_rate_limit_live_regression_low_pct_late_in_window_is_green(self):
-        # Live-observed regression: 25% used with 4h of a 5h window elapsed.
-        # Landed pace is GREEN (25 / 0.8 = 31.25); superseded formula was
-        # RED+bold (25 / 0.2 = 125).
-        with mock.patch.object(sl.time, "time", return_value=NOW):
-            rl = {"five_hour": {"used_percentage": 25, "resets_at": NOW + 3600}}
-            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
-            self.assertIn(THEME.c("GREEN"), out)
-            self.assertNotIn(THEME.c("YELLOW"), out)
-            self.assertNotIn(THEME.c("RED+bold"), out)
 
     def test_weekly_drops_before_hourly_under_column_pressure(self):
         # No resets_at, so each segment's terse form is its only form: "5h: 42%"
