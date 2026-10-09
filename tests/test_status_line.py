@@ -274,6 +274,75 @@ class TestRateBurnRatio(unittest.TestCase):
         self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("GREEN"))
 
 
+class TestRateGap(unittest.TestCase):
+    """Pure-function tests for util_rate_gap (SIGNED percentage-point gap
+    between used_percentage and the window's elapsed percentage),
+    util_gap_color (absolute-gap band picker, inclusive bounds), and
+    util_gap_sign -- the quota-window coloring defined by
+    docs/superpowers/specs/2026-10-09-statusline-quota-window-gap-design.md."""
+
+    def test_gap_signed_behind_and_ahead(self):
+        # 45% of a 5h window elapsed (reset = NOW + 0.55 * 18000 = NOW + 9900):
+        # 50% used is 5 points AHEAD (+5); 40% used is 5 points BEHIND (-5).
+        self.assertAlmostEqual(sl.util_rate_gap(50, "five_hour", NOW + 9900, NOW), 5.0)
+        self.assertAlmostEqual(sl.util_rate_gap(40, "five_hour", NOW + 9900, NOW), -5.0)
+
+    def test_gap_color_bands_inclusive_bounds(self):
+        cases = [(5.0, "GREEN"), (5.001, "YELLOW"), (10.999, "YELLOW"),
+                 (11.0, "ORANGE"), (15.0, "ORANGE"), (15.001, "RED")]
+        for delta, want in cases:
+            self.assertEqual(sl.util_gap_color(delta, THEME), THEME.c(want), delta)
+
+    def test_gap_live_spec_case_45_elapsed(self):
+        # Spec worked checks: 45% elapsed + 43% used -> delta 2 GREEN;
+        # 45% elapsed + 15% used -> delta 30 RED.
+        gap_ok = sl.util_rate_gap(43, "five_hour", NOW + 9900, NOW)
+        self.assertAlmostEqual(gap_ok, -2.0)
+        self.assertEqual(sl.util_gap_color(abs(gap_ok), THEME), THEME.c("GREEN"))
+        gap_bad = sl.util_rate_gap(15, "five_hour", NOW + 9900, NOW)
+        self.assertAlmostEqual(gap_bad, -30.0)
+        self.assertEqual(sl.util_gap_color(abs(gap_bad), THEME), THEME.c("RED"))
+
+    def test_gap_at_window_start_color_and_gap(self):
+        # elapsed_fraction == 0 (the old 1e-9 guard is gone): 0% used is a
+        # 0 gap, grading GREEN; 6% used is a 6-point gap, grading YELLOW --
+        # the spec's §Tests start-of-window cases pinned at BOTH levels.
+        gap_zero = sl.util_rate_gap(0, "five_hour", NOW + 5 * 3600, NOW)
+        self.assertAlmostEqual(gap_zero, 0.0)
+        self.assertEqual(sl.util_gap_color(gap_zero, THEME), THEME.c("GREEN"))
+        gap_six = sl.util_rate_gap(6, "five_hour", NOW + 5 * 3600, NOW)
+        self.assertAlmostEqual(gap_six, 6.0)
+        self.assertEqual(sl.util_gap_color(gap_six, THEME), THEME.c("YELLOW"))
+
+    def test_gap_at_exact_reset_elapsed_is_100(self):
+        # reset == now: elapsed_pct 100 (remaining_pct 0.0 exact). 100% used
+        # -> 0 gap; 0% used -> -100.
+        self.assertAlmostEqual(sl.util_rate_gap(100, "five_hour", NOW, NOW), 0.0)
+        self.assertAlmostEqual(sl.util_rate_gap(0, "five_hour", NOW, NOW), -100.0)
+
+    def test_gap_missing_reset_is_none(self):
+        self.assertIsNone(sl.util_rate_gap(50, "five_hour", None, NOW))
+
+    def test_gap_past_reset_is_none(self):
+        self.assertIsNone(sl.util_rate_gap(50, "five_hour", NOW - 1, NOW))
+
+    def test_gap_clock_skew_is_none(self):
+        # 6h remaining of a 5h window: remaining_pct = 120 > 100.
+        self.assertIsNone(sl.util_rate_gap(50, "five_hour", NOW + 3600 * 6, NOW))
+
+    def test_gap_unknown_key_is_none(self):
+        self.assertIsNone(sl.util_rate_gap(50, "nonsense_unit", NOW + 3600, NOW))
+
+    def test_gap_sign_marks(self):
+        self.assertEqual(sl.util_gap_sign(5.0), " (+5)")
+        self.assertEqual(sl.util_gap_sign(-5.0), " (-5)")
+        self.assertEqual(sl.util_gap_sign(0.4), "")      # rounds to 0
+        self.assertEqual(sl.util_gap_sign(-0.4), "")     # rounds to 0
+        self.assertEqual(sl.util_gap_sign(0.6), " (+1)")  # banker's: 0.5 -> 0
+        self.assertEqual(sl.util_gap_sign(-0.6), " (-1)")
+        self.assertEqual(sl.util_gap_sign(-55.0), " (-55)")
+
+
 class TestFormatters(unittest.TestCase):
     def test_fmt_number(self):
         self.assertEqual(sl.fmt_number(1234567), "1,234,567")

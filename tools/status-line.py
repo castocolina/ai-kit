@@ -1515,6 +1515,50 @@ def util_rate_burn_ratio(pct: float, key: str, reset: int | None, now: float) ->
     return pct / elapsed_fraction
 
 
+def util_rate_gap(pct: float, key: str, reset: int | None, now: float) -> float | None:
+    """Signed percentage-point gap between used_percentage and the window's
+    elapsed percentage (positive: usage ahead of elapsed time; negative:
+    behind). None when the window can't be reliably derived (unparseable
+    key, missing reset, a resets_at already in the past [remaining_pct < 0],
+    or a resets_at implying more time remaining than the key's parsed
+    window allows [remaining_pct > 100] -- clock skew or window/key
+    mismatch). Replaces the pace ratio (pct / elapsed_fraction): the gap
+    is computed from the remaining percentage directly -- no division by
+    an elapsed fraction -- so elapsed == 0 (window just started) is a
+    normal computable case, not a fallback."""
+    window_seconds = util_rate_window_seconds(key)
+    if window_seconds is None or reset is None:
+        return None
+    remaining_pct = (reset - now) * 100.0 / window_seconds
+    if remaining_pct < 0.0 or remaining_pct > 100.0:
+        return None
+    return pct - (100.0 - remaining_pct)
+
+
+def util_gap_color(delta: float, theme: "Theme") -> str:
+    """Quota-gap band color: |gap| in percentage points graded against the
+    spec's INCLUSIVE bounds (<=5 GREEN, <11 YELLOW, <=15 ORANGE, >15 RED).
+    Deliberately NOT util_pick_color -- that helper is strictly-below and
+    cannot express <=5 / <11 / 11..15-inclusive."""
+    if delta <= 5.0:
+        return theme.c("GREEN")
+    if delta < 11.0:
+        return theme.c("YELLOW")
+    if delta <= 15.0:
+        return theme.c("ORANGE")
+    return theme.c("RED")
+
+
+def util_gap_sign(gap: float) -> str:
+    """' (+N)' / ' (-N)' marker for a signed quota gap (positive: usage
+    ahead of elapsed time; negative: behind); omitted when the gap rounds
+    to 0 (Python banker's rounding: +/-0.5 -> 0, +/-0.6 -> 1)."""
+    n = round(gap)
+    if n == 0:
+        return ""
+    return f" ({'+' if n > 0 else '-'}{abs(n)})"
+
+
 def util_rate_color(pct: float, theme: "Theme") -> str:
     """Pick the rate-limit ramp color for a usage percentage."""
     return util_pick_color(float(pct), theme.ramps["rate"])
