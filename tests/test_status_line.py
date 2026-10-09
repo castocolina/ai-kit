@@ -268,15 +268,15 @@ class TestRateGap(unittest.TestCase):
         self.assertIsNone(sl.util_rate_gap(50, "nonsense_unit", NOW + 3600, NOW))
 
     def test_gap_sign_marks(self):
-        self.assertEqual(sl.util_gap_sign(5.0), " (+5)")
-        self.assertEqual(sl.util_gap_sign(-5.0), " (-5)")
-        self.assertEqual(sl.util_gap_sign(0.4), "")      # rounds to 0
-        self.assertEqual(sl.util_gap_sign(-0.4), "")     # rounds to 0
-        self.assertEqual(sl.util_gap_sign(0.5), "")       # banker's: 0.5 -> 0
-        self.assertEqual(sl.util_gap_sign(-0.5), "")      # banker's: -0.5 -> 0
-        self.assertEqual(sl.util_gap_sign(0.6), " (+1)")  # banker's: 0.5 -> 0
-        self.assertEqual(sl.util_gap_sign(-0.6), " (-1)")
-        self.assertEqual(sl.util_gap_sign(-55.0), " (-55)")
+        # Sign is the INVERTED gap direction, glued to the displayed
+        # percentage by the caller: + = usage at or behind the window clock
+        # (under pace), - = usage ahead (burning faster than the clock).
+        self.assertEqual(sl.util_gap_sign(5.0), "-")
+        self.assertEqual(sl.util_gap_sign(-5.0), "+")
+        self.assertEqual(sl.util_gap_sign(0.0), "+")
+        self.assertEqual(sl.util_gap_sign(0.4), "-")
+        self.assertEqual(sl.util_gap_sign(-0.4), "+")
+        self.assertEqual(sl.util_gap_sign(-55.0), "+")
 
 
 class TestFormatters(unittest.TestCase):
@@ -656,22 +656,23 @@ class TestCooperativeBuilders(unittest.TestCase):
             out_low = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_low), 200, THEME)
             self.assertIn(THEME.c("RED"), out_low)
             self.assertNotIn(THEME.c("GREEN"), out_low)
-            self.assertIn(" (-30)", strip(out_low))
+            self.assertIn("+15%", strip(out_low))
 
             rl_ok = {"five_hour": {"used_percentage": 43, "resets_at": NOW + 9900}}
             out_ok = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_ok), 200, THEME)
             self.assertIn(THEME.c("GREEN"), out_ok)
             self.assertNotIn(THEME.c("RED"), out_ok)
-            self.assertIn(" (-2)", strip(out_ok))
+            self.assertIn("+43%", strip(out_ok))
 
-    def test_h_rate_limit_positive_sign_marks_usage_ahead(self):
-        # Signed marker: 50% used with 45% elapsed is 5 points ahead -> (+5).
-        # gap = 50 - (100.0 - 9900.0 * 100.0 / 18000) = 5.0 float-exact, so
+    def test_h_rate_limit_negative_sign_marks_usage_ahead(self):
+        # Sign inverted from the gap direction: 50% used with 45% elapsed is
+        # 5 points AHEAD of the clock -> '-' glued to the percentage. gap =
+        # 50 - (100.0 - 9900.0 * 100.0 / 18000) = 5.0 float-exact, so
         # abs(gap) hits the GREEN band's <= 5.0 boundary exactly.
         with mock.patch.object(sl.time, "time", return_value=NOW):
             rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 9900}}
             out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
-            self.assertIn(" (+5)", strip(out))
+            self.assertIn("-50%", strip(out))
             self.assertIn(THEME.c("GREEN"), out)
 
     def test_h_rate_limit_unreliable_window_paints_white_no_marker(self):
@@ -685,14 +686,14 @@ class TestCooperativeBuilders(unittest.TestCase):
             out_past = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_past), 200, THEME)
             self.assertIn(THEME.c("WHITE"), out_past)
             self.assertNotIn(THEME.c("RED"), out_past)
-            self.assertNotIn(" (+", strip(out_past))
-            self.assertNotIn(" (-", strip(out_past))
+            self.assertNotIn("+", strip(out_past))
+            self.assertNotIn("-", strip(out_past))
 
             rl_skew = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600 * 6}}
             out_skew = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_skew), 200, THEME)
             self.assertIn(THEME.c("WHITE"), out_skew)
-            self.assertNotIn(" (+", strip(out_skew))
-            self.assertNotIn(" (-", strip(out_skew))
+            self.assertNotIn("+", strip(out_skew))
+            self.assertNotIn("-", strip(out_skew))
 
     def test_h_rate_limit_live_regression_low_pct_late_in_window_is_red(self):
         # Reversal pinned by the spec: the Phase 8.1 live case (25% used,
@@ -703,18 +704,19 @@ class TestCooperativeBuilders(unittest.TestCase):
             out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
             self.assertIn(THEME.c("RED"), out)
             self.assertNotIn(THEME.c("GREEN"), out)
-            self.assertIn(" (-55)", strip(out))
+            self.assertIn("+25%", strip(out))
 
     def test_h_rate_limit_display_unchanged_by_color_refactor(self):
-        # Rich-tier text is the old format plus the signed gap marker
-        # between the percentage and the reset suffix; the terse/narrow
-        # tier stays byte-identical (its own test pins that).
+        # Rich-tier text: the pace sign glued to the percentage (42 used,
+        # 80% elapsed -> usage behind the clock -> '+'), then the reset
+        # suffix; the terse/narrow tier stays byte-identical (its own test
+        # pins that).
         with mock.patch.object(sl.time, "time", return_value=NOW):
             rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600}}
             out = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
             self.assertEqual(
                 out,
-                f"⚡️ 5h: 42% (-38) (↺ {sl.datetime.fromtimestamp(NOW + 3600).strftime('%H:%M')})",
+                f"⚡️ 5h: +42% (↺ {sl.datetime.fromtimestamp(NOW + 3600).strftime('%H:%M')})",
             )
 
     def test_weekly_drops_before_hourly_under_column_pressure(self):

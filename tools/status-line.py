@@ -1524,13 +1524,12 @@ def util_gap_color(delta: float, theme: "Theme") -> str:
 
 
 def util_gap_sign(gap: float) -> str:
-    """' (+N)' / ' (-N)' marker for a signed quota gap (positive: usage
-    ahead of elapsed time; negative: behind); omitted when the gap rounds
-    to 0 (Python banker's rounding: +/-0.5 -> 0, +/-0.6 -> 1)."""
-    n = round(gap)
-    if n == 0:
-        return ""
-    return f" ({'+' if n > 0 else '-'}{abs(n)})"
+    """Pace sign glued to the displayed percentage by the caller: '+' when
+    usage is at or behind the window clock (under pace -- slack), '-' when
+    usage is ahead (burning faster than the clock). The sign is the gap
+    direction INVERTED (gap = used - elapsed_pct); its magnitude is
+    carried by the color band, never shown next to the number."""
+    return "+" if gap <= 0.0 else "-"
 
 
 def util_branch_from_porcelain(header: str) -> str:
@@ -1702,16 +1701,16 @@ def util_rate_group_str(
         gap = util_rate_gap(pct, key, reset, now)
         if gap is None:
             color = theme.c("WHITE")
-            mark = ""
+            sign = ""
         else:
             color = util_gap_color(abs(gap), theme)
             # Same tier gate as the reset suffix (spec: the narrow/terse tier
-            # omits the marker) -- seg_alt_h_rate_limit renders the terse
+            # omits the pace sign) -- seg_alt_h_rate_limit renders the terse
             # tier via util_rate_group_str(rl, True, False, theme), so an
-            # ungated mark would leak into it.
-            mark = util_gap_sign(gap) if show_reset else ""
+            # ungated sign would leak into it.
+            sign = util_gap_sign(gap) if show_reset else ""
         suffix = suffix_fn(reset) if show_reset else ""
-        parts.append(f"{fmt_rate_key_label(key)}: {color}{round(pct)}%{RESET}{mark}{suffix}")
+        parts.append(f"{fmt_rate_key_label(key)}: {color}{sign}{round(pct)}%{RESET}{suffix}")
     return util_icon("⚡", " | ".join(parts)) if parts else None
 
 

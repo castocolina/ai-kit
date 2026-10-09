@@ -11,7 +11,7 @@ This replaces the pace ratio in `util_rate_burn_ratio` (`used_percentage / elaps
 
 ## What stays
 
-- The displayed number is still `round(used_percentage)`, not the gap and not elapsed time. The rich tier adds a signed gap marker after the percentage — `(+N)` when usage is ahead of elapsed time, `(-N)` when behind — omitted when the gap rounds to 0. The narrow/terse tier omits the marker (same tier gate as the reset stamp).
+- The displayed number is still `round(used_percentage)`, not the gap and not elapsed time. The rich tier prefixes it with a pace sign — `+` when usage is at or behind the window clock (under pace: slack), `-` when usage burns faster than the clock — so a 0% reading early in a window renders `+0%`. The sign's magnitude is carried by the color band, never shown next to the number. The narrow/terse tier omits the sign (same tier gate as the reset stamp).
 - The label and reset suffix stay (`5h: 42% (↺ 14:10)`, `7d: 13% (↺ Sun 14:10)`).
 - A bucket is still shown whenever it reports `used_percentage`. A past `resets_at` does not hide it.
 - Window length still comes from the bucket key via `util_rate_window_seconds` (`five_hour` = 5h, `seven_day` = 7d, and any other key that parser already accepts, including `eight_hour` and `one_day`). No new windows.
@@ -30,7 +30,7 @@ delta = abs(used_percentage - elapsed_pct)
 
 `delta` is an absolute difference of percentage points. It is not a ratio, and it is not `abs(used - elapsed) / elapsed`.
 
-The helper returns the SIGNED gap (`used_percentage - elapsed_pct`), not the absolute value: the color bands grade `abs(gap)`, and the `(+N)`/`(-N)` marker shows the sign — positive means usage is ahead of elapsed time (burning faster than the window), negative means behind.
+The helper returns the SIGNED gap (`used_percentage - elapsed_pct`), not the absolute value: the color bands grade `abs(gap)`, and the displayed percentage's prefix sign is the gap direction INVERTED — `+` when the gap is ≤ 0 (usage at or behind the window clock), `-` when the gap is > 0 (usage ahead: burning faster than the window). No magnitude is shown next to the sign.
 
 Color `delta` with these bounds. `11` and `15` belong to orange. `5` belongs to green.
 
@@ -49,7 +49,7 @@ Do not feed `delta` through `util_pick_color`. That helper is strictly-below, so
 
 Color uses the raw `used_percentage`, not the rounded number on screen. A displayed `45%` can be `44.6` and must be colored as `44.6`.
 
-Marker examples at 45% elapsed: 50% used renders `50% (+5)`; 40% used renders `40% (-5)`; 45.4% used renders no marker (`+0.4` rounds to 0; Python banker's rounding puts ±0.5 at 0 and ±0.6 at 1). The fallback case (gap not computable) renders no marker.
+Sign examples at 45% elapsed: 50% used renders `-50%` (gap +5: ahead of the clock); 40% used renders `+40%` (gap -5: behind). The anchor case — 0% used with 0.6% elapsed — renders `+0%`. The fallback case (gap not computable) renders no sign.
 
 ## When elapsed percentage cannot be computed
 
@@ -86,8 +86,8 @@ Replace the pace-ratio assertions in `tests/test_status_line.py` (`TestRateBurnR
 - `delta == 15` is ORANGE. `delta == 15.001` is RED.
 - `elapsed_fraction == 0` with `used_percentage == 0` is GREEN. The same instant with `used_percentage == 6` is YELLOW.
 - Missing reset, past reset, clock skew (`resets_at` further out than the key's window), and unknown key paint WHITE, and the bucket is still visible.
-- `util_gap_sign`: `+5.0 -> " (+5)"`, `-5.0 -> " (-5)"`, `0.4/-0.4 -> ""`, `0.6 -> " (+1)"`, `-0.6 -> " (-1)"`.
-- The narrow/terse tier still renders `5h: 42%` with no marker. The rich tier renders `5h: 42% (-38)` (42 used, 80% elapsed) plus the existing reset suffix. Only color and the marker change.
+- `util_gap_sign`: `+5.0 -> "-"`, `-5.0 -> "+"`, `0.0 -> "+"`, `0.4 -> "-"`, `-0.4 -> "+"`.
+- The narrow/terse tier still renders `5h: 42%` with no sign. The rich tier renders `5h: +42%` (42 used, 80% elapsed: usage behind the clock) plus the existing reset suffix. Only color and the sign prefix change.
 
 Keep `util_rate_window_seconds` parsing tests. They are unchanged.
 
