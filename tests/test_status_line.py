@@ -149,10 +149,15 @@ class TestPickColor(unittest.TestCase):
             self.assertEqual(sl.util_pick_color(pct, THEME.ramps["context"]), want, pct)
 
     def test_rate_ramp_bands(self):
-        cases = [(0, THEME.c("GREEN")), (49, THEME.c("GREEN")), (50, THEME.c("YELLOW")),
-                 (79, THEME.c("YELLOW")), (80, THEME.c("RED+bold")), (100, THEME.c("RED+bold"))]
-        for pct, want in cases:
-            self.assertEqual(sl.util_rate_color(pct, THEME), want, pct)
+        # [ramp.rate] still resolves into theme.ramps["rate"] (config parse
+        # compat, kept so existing overrides don't error) but quota coloring
+        # no longer reads it -- assert the resolved structure directly,
+        # without the pace-era color helper (this refactoring deletes it).
+        self.assertEqual(
+            [(ceil, c) for ceil, c in THEME.ramps["rate"]],
+            [(50.0, THEME.c("GREEN")), (80.0, THEME.c("YELLOW")),
+             (float("inf"), THEME.c("RED+bold"))],
+        )
 
     def test_slowest_ramp_bands(self):
         # The single shared SLO/SLA ramp for the slowest segment: green under the
@@ -176,14 +181,14 @@ class TestPickColor(unittest.TestCase):
         self.assertEqual(sl.util_pick_color(200 * ms, theme.ramps["slowest"]), theme.c("WHITE"))
 
 
-class TestRateBurnRatio(unittest.TestCase):
-    """Pure-function tests for util_rate_window_seconds / util_rate_burn_ratio
-    (the pace-based burn-rate ratio feeding the unchanged util_rate_color/
-    theme.ramps["rate"] ramp -- see util_rate_burn_ratio's own docstring for
-    the 2026-09-13 reversal of 08-01-PLAN.md's "Formula Direction --
-    Resolved"). `now` is passed directly as NOW; no time mocking needed for
-    pure-function calls (that comes in TestCooperativeBuilders' render-level
-    tests)."""
+class TestWindowSeconds(unittest.TestCase):
+    """Pure-function tests for util_rate_window_seconds (the window-key
+    parser util_rate_gap now depends on). The four parsing tests are
+    unchanged from the pace-ratio era; the pace-ratio tests that shared
+    this class are deleted along with their helpers -- per
+    docs/superpowers/specs/2026-10-09-statusline-quota-window-gap-design.md
+    §Tests: "Keep util_rate_window_seconds parsing tests. They are
+    unchanged"."""
 
     def test_window_seconds_parses_known_keys(self):
         self.assertEqual(sl.util_rate_window_seconds("five_hour"), 5 * 3600)
@@ -201,77 +206,6 @@ class TestRateBurnRatio(unittest.TestCase):
         # Mirror case: "five" IS a valid _NUM_WORDS key; "fortnight" is NOT in
         # _UNIT_SECONDS.
         self.assertIsNone(sl.util_rate_window_seconds("five_fortnight"))
-
-    def test_burn_ratio_one_hour_remaining_of_five_hour_window(self):
-        # 1h remaining of a 5h window: remaining_fraction = 3600/18000 = 0.2,
-        # elapsed_fraction = 0.8, ratio = 50/0.8 = 62.5 -- middle (YELLOW)
-        # band. Most of the window has already elapsed at this usage level,
-        # which is a middling (not worst-case) pace.
-        ratio = sl.util_rate_burn_ratio(50, "five_hour", NOW + 3600, NOW)
-        self.assertEqual(ratio, 62.5)
-        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("YELLOW"))
-
-    def test_burn_ratio_four_hours_remaining_same_pct_more_urgent(self):
-        # SAME 50% usage as above, but 4h remaining (remaining_fraction=0.8,
-        # elapsed_fraction=0.2): ratio = 50/0.2 = 250 -- top (RED+bold) band.
-        # Pace direction check: identical pct reached with far LESS elapsed
-        # time is a faster burn rate, and must render strictly more urgently
-        # than the case above, never less.
-        ratio = sl.util_rate_burn_ratio(50, "five_hour", NOW + 3600 * 4, NOW)
-        self.assertAlmostEqual(ratio, 250.0)
-        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("RED+bold"))
-
-    def test_burn_ratio_lower_pct_one_hour_remaining_is_green(self):
-        # 1h remaining (elapsed_fraction=0.8) at a lower usage pct: ratio =
-        # 30/0.8 = 37.5 -- well-paced, most of the window elapsed for modest
-        # usage.
-        ratio = sl.util_rate_burn_ratio(30, "five_hour", NOW + 3600, NOW)
-        self.assertEqual(ratio, 37.5)
-        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("GREEN"))
-
-    def test_burn_ratio_at_exact_window_reset_reduces_to_raw_pct_unclamped(self):
-        # remaining_fraction == 0 (reset == now exactly) -- elapsed_fraction
-        # == 1.0, so ratio == pct unclamped: having used `pct` over the
-        # ENTIRE window is exactly today's raw-percentage signal, not a
-        # special max-urgency case.
-        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", NOW, NOW), 50.0)
-        self.assertEqual(sl.util_rate_burn_ratio(1, "five_hour", NOW, NOW), 1.0)
-        self.assertEqual(sl.util_rate_burn_ratio(0, "five_hour", NOW, NOW), 0.0)
-
-    def test_burn_ratio_at_window_start_falls_back_to_raw_pct(self):
-        # remaining_fraction == 1.0 (reset = now + window_seconds exactly --
-        # elapsed_fraction == 0): too early in the window to extrapolate a
-        # pace from essentially zero elapsed time -- falls back to raw pct
-        # rather than spiking toward INF on no real signal.
-        ratio = sl.util_rate_burn_ratio(50, "five_hour", NOW + 5 * 3600, NOW)
-        self.assertEqual(ratio, 50.0)
-
-    def test_burn_ratio_past_reset_falls_back_to_raw_pct(self):
-        # resets_at already in the past (remaining_fraction < 0.0, so
-        # elapsed_fraction > 1.0) -- "no reliable read on the current
-        # window, don't invent urgency."
-        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", NOW - 1, NOW), 50.0)
-
-    def test_burn_ratio_missing_reset_falls_back_to_raw_pct(self):
-        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", None, NOW), 50.0)
-
-    def test_burn_ratio_remaining_fraction_over_one_falls_back_to_raw_pct(self):
-        # resets_at implies MORE time remaining than the key's parsed
-        # window_seconds allows (clock skew / window-key mismatch) --
-        # remaining_fraction = 6h/5h = 1.2 > 1.0, so elapsed_fraction =
-        # -0.2 < 0.0. Falls back to pct unchanged.
-        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", NOW + 3600 * 6, NOW), 50.0)
-
-    def test_burn_ratio_unknown_key_falls_back_to_raw_pct(self):
-        self.assertEqual(sl.util_rate_burn_ratio(50, "nonsense_unit", NOW + 3600, NOW), 50.0)
-
-    def test_burn_ratio_live_regression_low_pct_late_in_window_is_green(self):
-        # Live-observed regression: 25% used with 4h of a 5h window elapsed
-        # (elapsed_fraction = 0.8). Landed ratio = 25 / 0.8 = 31.25 GREEN.
-        # Superseded formula: 25 / 0.2 = 125 -> RED+bold.
-        ratio = sl.util_rate_burn_ratio(25, "five_hour", NOW + 3600, NOW)
-        self.assertAlmostEqual(ratio, 31.25)
-        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("GREEN"))
 
 
 class TestRateGap(unittest.TestCase):
