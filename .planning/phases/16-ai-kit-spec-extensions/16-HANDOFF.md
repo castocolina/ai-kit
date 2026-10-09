@@ -203,3 +203,66 @@ The user asked to STOP after the Phase 16 review/fix, save state, commit everyth
 ---
 
 **Security Reminder**: Before finalizing, run `validate_handoff.py` to check for accidental secret exposure.
+
+## Session Addendum — 2026-10-09 (quota-window gap coloring, opencode session)
+
+Session run in opencode (glm-5.3-flash orchestrator) on top of this handoff's stop point.
+Everything below is committed on this branch; the work is DONE and merged — next agent picks
+up at the unchanged next steps at the bottom of the original handoff (phase 16 closing steps:
+goal verification, verify:post hooks, phase.complete; then phases 17–20).
+
+What this session did, in order:
+
+1. **Quota-window coloring redesign (spec → plan → execute, superpowers flow).** Replaces the
+   Phase 8.1 pace ratio (`used_percentage / elapsed_fraction`) with an ABSOLUTE gap:
+   `delta = abs(used% − elapsed%)` graded against fixed inclusive bands — ≤5 GREEN,
+   <11 YELLOW, ≤15 ORANGE, >15 RED. Unreliable window (missing/past `resets_at`, clock skew)
+   paints the percentage WHITE with no sign; the old `1e-9` guard is gone (elapsed == 0 is a
+   normal computable case). Spec: `docs/superpowers/specs/2026-10-09-statusline-quota-window-gap-design.md`;
+   plan: `docs/superpowers/plans/2026-10-09-statusline-quota-window-gap.md`.
+2. **Review loop (cross-AI reviewer forced to `opencode/glm-5.2` by the user).** Spec approved
+   iteration 1 (3 non-blocking notes: fate of the deleted helpers, `[ramp.rate]` going inert,
+   arch role-prefix). Plan took 3 iterations — real defects found: replacement code missing
+   the `show_reset` marker gate, the plan's delete step would have dropped the four
+   `test_window_seconds_*` parsing tests the spec mandates keeping, non-float-exact gap
+   arithmetic (fixed with the remaining-percentage-first formulation), and an
+   self-unsatisfiable `rg` verification gate.
+3. **Execution (subagent-driven development):** commits `d23749b` (pure helpers
+   `util_rate_gap`/`util_gap_color`/`util_gap_sign` + 10-test `TestRateGap`), `3ac0ae4`
+   (wired into `util_rate_group_str`, render tests, README), `0a46a0c` (deleted the
+   pace-ratio helpers + their ten tests, kept parsing tests under `TestWindowSeconds`),
+   final whole-branch review fix `5b2011b` (README + `statusline.toml.sample` now say
+   `[ramp.rate]` is parse-compat only and no longer colors quota windows; spec/plan docs
+   committed — repo precedent). All tier tests green at close (unit 2673, integration 131,
+   e2e 13, arch 22).
+4. **Post-merge format amendment (`52def0f`), user-driven.** The `(+N)`/`(-N)` magnitude
+   marker read confusingly next to the percentage (`5h: 0% (-1)`). Now the pace sign is
+   glued to the displayed percentage and INVERTED from the gap direction: `+` = usage at or
+   behind the window clock (under pace), `-` = usage burning faster than the clock.
+   `5h: +0% (↺ 23:30)` early in a window; `5h: -60%` when 60% is used with 45% of the clock
+   gone. Magnitude is carried by the color band only; terse tier stays byte-identical.
+   Spec, README, and test pins updated in the same commit.
+5. **Merge + workspace discipline fix.** `exercise/window-pct` was FF-merged into this branch
+   (`1ccdc1e..52def0f`); `.planning/` untouched by the merge. The exercise worktree
+   `.claude/worktrees/window-pct` and its branch were then deleted. The worktree had been
+   created from HEAD by accident: the base workspace was parked on `gsd/v1.3-curated-config-v2`
+   — this session's user correction of record is: **the base workspace stays on `main`
+   (milestone-closure state); feature/GSD work lives in worktrees branched from the phase tip.**
+   The base workspace is back on `main` @ `de2139c` (v1.2 closure).
+
+Housekeeping state for the next agent (all verified, nothing lost):
+
+- `backup/gap-coloring-52def0f`: local insurance branch pointing at this handoff's tip.
+- Remotes are stale: `main` is 279 commits ahead of `origin/main`; nothing from v1.3 is
+  pushed. Push (`git push origin main gsd/v1.3-curated-config-v2 backup/gap-coloring-52def0f`)
+  is advised before any further surgery.
+- Worktree `context-tools-manager-plan1` holds 21 UNMERGED commits (~2 months old,
+  context-tools Step-0 toggle redesign; its design spec IS committed on this branch) —
+  do NOT delete that worktree or branch.
+- Worktree `agent-af8d0e0c2da92634f` holds exactly 1 unique commit (`ec47392`, docs-only
+  Phase 15.1 halt note) — salvage by cherry-pick before deleting it.
+- Branch `gsd/phase-15.1-…` is fully contained in this branch (0 unique commits; deletable).
+- `.planning/milestone.lock` is untracked and stale (2026-09-24 session id) — harmless.
+- Scope note: the 5 quota-gap commits are OUT of phase 16's literal plan scope. The phase 16
+  verification sweep will see them on this branch; they are clearly labeled and
+  cherry-pickable if they should live on their own line.
