@@ -196,8 +196,9 @@ form when space is tight; with room, the hourly segment adds a time-only reset s
 the weekly segment adds a weekday + time stamp (`7d: 13% (↺ Sun 14:10)`). Color is an absolute
 pace gap: |used% − elapsed%| in percentage points — ≤5 green, under 11 yellow, ≤15 orange, more
 red — with a signed `(+N)`/`(-N)` marker (usage ahead of / behind elapsed time, omitted at 0) in
-the rich tier. An unreliable window (missing/past `resets_at`, clock skew) paints the percentage
-white and shows no marker. In the diagnostics row,
+the rich tier. The legacy `[ramp.rate]` config block is kept only for parse compat and no longer
+colors these segments. An unreliable window (missing/past `resets_at`, clock skew) paints the
+percentage white and shows no marker. In the diagnostics row,
 `alt_h_rate_limit` sits to the left of `alt_w_rate_limit`, so the weekly segment is always the
 first of the two dropped under column pressure.
 

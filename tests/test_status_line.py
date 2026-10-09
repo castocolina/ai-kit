@@ -272,6 +272,8 @@ class TestRateGap(unittest.TestCase):
         self.assertEqual(sl.util_gap_sign(-5.0), " (-5)")
         self.assertEqual(sl.util_gap_sign(0.4), "")      # rounds to 0
         self.assertEqual(sl.util_gap_sign(-0.4), "")     # rounds to 0
+        self.assertEqual(sl.util_gap_sign(0.5), "")       # banker's: 0.5 -> 0
+        self.assertEqual(sl.util_gap_sign(-0.5), "")      # banker's: -0.5 -> 0
         self.assertEqual(sl.util_gap_sign(0.6), " (+1)")  # banker's: 0.5 -> 0
         self.assertEqual(sl.util_gap_sign(-0.6), " (-1)")
         self.assertEqual(sl.util_gap_sign(-55.0), " (-55)")

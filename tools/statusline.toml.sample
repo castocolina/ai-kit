@@ -146,7 +146,9 @@
 # 50 = "RED+bold"
 # inf = "MAGENTA_DARK+bold"
 
-## ─── [ramp.rate] — rate-limit % -> color ────────────────────────────────────
+## ─── [ramp.rate] — kept for config-parse compat only ────────────────────────
+## Quota windows no longer read this ramp: they grade fixed gap bands (README
+## "Rate-limit segments"). Existing [ramp.rate] overrides still parse fine.
 # [ramp.rate]
 # 50 = "GREEN"
 # 80 = "YELLOW"
