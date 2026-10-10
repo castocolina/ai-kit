@@ -328,3 +328,31 @@ existence/chaining/AST-only-ness; the fuller dependency-direction/layering-
 boundary enforcement ambition described above remains an explicitly-flagged
 known gap, not built by Phase 12. This stub is left as-is for history; it is
 not duplicated as a second active roadmap item.
+
+### Phase 999.4: Host-split status line for Claude Code and Cursor CLI (BACKLOG)
+
+**Goal:** [Captured for future planning] Split `tools/status-line.py` into
+reusable `common_*` modules plus per-host `claude_*`/`cursor_*` modules with
+thin `claude-status-line.py`/`cursor-status-line.py` entries, add a
+Cursor-native status line (included quota, billing cycle, on-demand ceiling
+— quota data from an undocumented Cursor API, flagged as inferred), and make
+setup and the wizard run the verify/replace/keep status-line flow per
+detected host.
+**Linked assets:**
+
+- Design spec: [.planning/specs/2026-10-10-host-split-statusline-design.md](specs/2026-10-10-host-split-statusline-design.md)
+- Review record (open findings R3-1..R3-6 to resolve in discuss/plan-phase;
+  owner decisions are final): [.planning/specs/2026-10-10-host-split-statusline-design-REVIEW.md](specs/2026-10-10-host-split-statusline-design-REVIEW.md)
+- External: Cursor CLI `cli-config.json` location and env overrides
+  (`CURSOR_CONFIG_DIR`, `XDG_CONFIG_HOME/cursor`):
+  <https://cursor.com/docs/cli/reference/configuration>. Claude Code status
+  line reference, which Cursor's `statusLine` aligns with:
+  <https://code.claude.com/docs/en/statusline>. Cursor's own `statusLine`
+  schema is documented only in the CLI's bundled `statusline` skill.
+
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
