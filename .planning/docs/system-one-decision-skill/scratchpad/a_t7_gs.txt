@@ -1,0 +1,6 @@
+llm_server_enabled="$(yq -r '.llm_server.enabled' "$CONFIG_PATH")"
+system_one_enabled="$(yq -r '.system_one.enabled' "$CONFIG_PATH")"
+if [ "$llm_server_enabled" != "true" ] && [ "$system_one_enabled" != "true" ]; then
+    log_info "llm-server is disabled (llm_server.enabled: false); no GPU is in use"
+    exit 0
+fi

@@ -1,0 +1,35 @@
+You are editing two implementation-plan documents in the repo at /var/home/bazzite/git/llm-env. Edit ONLY these two files:
+
+- docs/superpowers/plans/2026-10-10-system-one-provisioning.md   ("Plan A")
+- docs/superpowers/plans/2026-10-10-system-one-decision-skill.md ("Plan B")
+
+Read both files fully first. Keep their structure (header, Global Constraints, Review Focus, numbered tasks with checkbox steps, Files / Interfaces blocks, test-first steps, exact code). Do not touch any other file. Do not run git.
+
+## Change 1 — Plan A: move image build and weight download out of `make start` into `make setup`
+
+Rationale from the owner: llama.cpp model files are downloaded during `make setup` (setup/setup.sh Step 4 "Downloading models"), not during `make start`. System One must follow the same lifecycle: `make setup` builds the image and downloads the Laya weights; `make start` only starts what setup already prepared.
+
+Apply this consistently everywhere in Plan A:
+
+1. `make setup` (the setup task, currently Task 6): when System One is enabled, after the GPU detection step, setup must (a) build the image if `podman image exists <system_one.image>` fails, by calling `bash scripts/system-one-build.sh`, and (b) prefetch the weights for `system_one.models` into the named volume, using a one-shot container (no GPU needed), e.g. `podman run --rm -v llm-env-system-one-cache:/home/laya/.cache/huggingface --entrypoint python3 <image> -c "<prefetch>"`. The prefetch must reuse Laya's own checkpoint/revision resolution so the cached snapshot is exactly what `laya-serve` loads offline: add an explicit step telling the implementer to read the installed package inside the image (`laya/router.py`, `laya/revisions.py`, `laya/serve.py`) to find the function/repo ids it uses, and to call that (or `huggingface_hub.snapshot_download` with the same repo id + revision) — do not guess repo ids. Log it as its own clearly named setup sub-step. Add tests to that task: setup with System One enabled calls the build script when the image is missing, does not when present, and runs the prefetch container; setup with System One disabled does neither.
+2. Compose (Task 3): the cache volume must have a fixed name shared by setup and compose: `volumes: {system-one-cache: {name: llm-env-system-one-cache}}` (update the test that asserts `document["volumes"]["system-one-cache"]`). Healthcheck `start_period` drops from 600s to 120s (weights are already on disk; only load-to-GPU remains). Update the compose test accordingly.
+3. `make start` (Task 7): remove the build-if-missing logic. Instead, if System One is enabled and the image does not exist, `die "system-one image missing; run 'make setup'"` (same style as the existing `die "no models enabled; run 'make setup'"`). Replace `LLM_ENV_SYSTEM_ONE_HEALTH_TIMEOUT_SECONDS` default 600 with default 120 and update its comment (load from local cache, not download). Rewrite that task's tests: missing image → nonzero exit with that message and no build; present image → no build call, health wait happens.
+4. `make system-one-build` (Task 2) stays as a standalone target (re-build after a Dockerfile/version bump) and is reused by setup.
+5. `check-setup` (Task 9): add a check that the weights are present, e.g. `podman volume exists llm-env-system-one-cache` plus a one-shot `podman run --rm` that lists the cached snapshot for the configured models (non-empty) — record it with the existing `record_command` helper; skip when disabled.
+6. `make clean` (Task 10): also `podman volume rm -f llm-env-system-one-cache` (setup may have created it even if the stack never started), and mention it in the "This removes" text. Note: `make prune` semantics for llama.cpp models (kept by clean) — state explicitly in the task whether the Laya weights volume is removed by `clean` (yes, it is cheap to re-download ~0.8 GB) and say so in the clean prompt text.
+7. Review Focus item 1 currently says first start downloads weights — rewrite it to: "`make start` with System One enabled but `make setup` never run for it (image or weights missing) → clear `die` pointing at `make setup`, never a silent multi-minute download or a healthcheck timeout." Keep it pinned to the start task.
+8. Task 11 (live E2E) — reorder so `make setup` is where build + prefetch are observed, and `make start` is expected to become healthy within 120 s.
+9. Update the plan header "Architecture" paragraph so it no longer says `make start` builds the image.
+
+## Change 2 — Plan B: the skill stays where it is (global, unversioned in llm-env)
+
+The skill `jev-fast-decision` was created in another session/repo and is installed globally at `~/.claude/skills/jev-fast-decision/`. It must stay there. Apply:
+
+1. Delete the "Open decision" paragraph from Global Constraints. Replace it with a constraint: "The skill lives at `~/.claude/skills/jev-fast-decision/` (global). Nothing about it moves into llm-env. llm-env only provides the Laya endpoint (`system_one.port`, default 8010)."
+2. Remove Task 0's move/copy into `llm-env/skills/` and Task 8's symlink step (and its shell test in tests/test_shell.py). Keep a reduced Task 0 that only snapshots the current skill for RED baselines (to the scratch path already named) and creates the test shim.
+3. Tests move inside the skill: `~/.claude/skills/jev-fast-decision/tests/test_jev_review.py`, with `SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "scripts/jev_review.py"`. Run command everywhere: `uv run --no-project --with pytest pytest ~/.claude/skills/jev-fast-decision/tests -q`. Replace every `uv run pytest tests/test_jev_skill.py`, every `tests/test_jev_skill.py` path, and every `skills/jev-fast-decision/...` relative path with the absolute `~/.claude/skills/jev-fast-decision/...` path.
+4. The skill directory is not a git repo: remove `git commit` / `git add` steps for skill files; replace each with "Checkpoint: run the test command above; record pass/fail in `~/.claude/skills/jev-fast-decision/notes/CHANGELOG.md` (one dated line per task)". Notes produced by the plan (RED baseline, skill-judge report) go under `~/.claude/skills/jev-fast-decision/notes/` instead of `docs/superpowers/notes/`. `make validate` does not cover the skill — drop it from skill-only steps.
+5. Renumber tasks if needed so the final task is "skill-judge" (invoke the `skill-judge` skill on `~/.claude/skills/jev-fast-decision/`, fix findings below "good", re-run, save report to `notes/skill-judge.md`).
+6. Keep everything else in Plan B (backends, probe, per-item Laya dispatch, fallthrough, needs_fallback, eval set, references, RED/GREEN/REFACTOR) unchanged.
+
+When done, print a short list of what you changed per file. Do not summarize the plans.

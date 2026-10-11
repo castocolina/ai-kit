@@ -1,0 +1,16 @@
+
+Owner decision — OpenCode Zen free/paid model ladder (Plan B; apply it, do not ask):
+Facts verified live on 2026-10-11 and from docs:
+- `GET https://opencode.ai/zen/v1/models` lists `jev-1.13-free` and `jev-1.13`; both answer `POST /zen/v1/systemone` (response `model` echoes the request id). On 14 labeled cases jev-1.13-free scored 14/14, no cross-item contamination when batched, ~720 ms p50. Zen choice probabilities come back as integers 0/1.
+- opencode.ai/docs/zen: Jev 1.13 Free is "available on OpenCode for a limited time"; "Prompts and other inputs are not used for training" (TypeSafe privacy policy). No documented rate limit or window.
+- Free-tier throttling is real but undocumented: HTTP 429 body `{"type":"error","error":{"type":"FreeUsageLimitError","message":"Rate limit exceeded. Please try again later."}}`. Reported reset waits range from hours to ~17 h (user report, opencode issue #32391); no Retry-After documented. Community reports (issue #42074) say the gate keys on User-Agent for direct API callers — do NOT spoof the opencode client User-Agent; keep the script's own honest UA.
+- When a free promotion ends, the id disappears from /zen/v1/models and requests return 400 `Model is unavailable`.
+- Paid model failure modes: 429 `Account budget exceeded` (monthly quota), 401/403 (key).
+Design to encode:
+- The `opencode` backend has an ordered model list: `jev-1.13-free` first, then `jev-1.13`. Fall to the paid id only when the free call fails with: 429 (any body, incl. FreeUsageLimitError), 5xx, network error, or 400 whose body says "Model is unavailable". Do not fall back on 400 invalid-request errors (same payload would fail again) or on 401/403.
+- No automatic retry of the free id within the same call; no persistent cooldown state (shortcut: note it as a comment `shortcut: no cooldown memory; add a timestamp file if free 429s become frequent`).
+- Result reports which model answered (`model` field already echoes it) and records the free failure in `attempts` (e.g. `{"backend":"opencode","model":"jev-1.13-free","reason":"http_429"}`).
+- `response_prefix` stays `jev-` so both ids validate.
+- Tests: free 429 → paid called and answers; free 400 "Model is unavailable" → paid; free 400 other → no paid call, unavailable; free OK → paid never called.
+- backends/opencode.md documents all facts above with sources (opencode.ai/docs/zen, issue #42074, issue #32391) and states the reset window is undocumented.
+- The consent rule (JEV_ALLOW_REMOTE=1) covers both ids; the free tier's no-training statement does not remove the consent requirement.

@@ -1,0 +1,15 @@
+system_one_enabled="$(yq -r '.system_one.enabled' "$CONFIG_PATH")"
+if [ "$system_one_enabled" = "true" ]; then
+    system_one_image="$(yq -r '.system_one.image' "$CONFIG_PATH")"
+    system_one_models="$(yq -r '.system_one.models' "$CONFIG_PATH")"
+    podman image exists "$system_one_image" || die "system-one image missing; run 'make setup'"
+    podman volume exists llm-env-system-one-cache \
+        || die "system-one weights cache missing; run 'make setup'"
+    if ! podman run --rm \
+            -e LAYA_REVISION=reviewed -e "LAYA_MODELS=${system_one_models}" \
+            -v llm-env-system-one-cache:/home/laya/.cache/huggingface \
+            -v "${REPO_DIR}/scripts/system-one-cache-check.py:/opt/system-one-cache-check.py:ro,z" \
+            --entrypoint python3 "$system_one_image" /opt/system-one-cache-check.py verify; then
+        die "system-one weights incomplete for configured models; run 'make setup'"
+    fi
+fi

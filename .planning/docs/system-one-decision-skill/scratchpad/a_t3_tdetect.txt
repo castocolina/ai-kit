@@ -1,0 +1,7 @@
+def test_rocr_visible_index_orders_gpu_nodes(tmp_path):
+    nodes = tmp_path / "nodes"
+    for name, gpu_id, minor in (("0", "0", "0"), ("1", "23609", "128"), ("2", "58620", "129")):
+        (nodes / name).mkdir(parents=True)
+        (nodes / name / "gpu_id").write_text(gpu_id + "\n")
+        (nodes / name / "properties").write_text(f"drm_render_minor {minor}\n")
+    assert rocr_visible_index(128, nodes) == 0 and rocr_visible_index(129, nodes) == 1

@@ -1,0 +1,29 @@
+You are the fixer.
+
+Step 1: Read the file at /home/bazzite/.claude/skills/ai-kit-spec-review-fixer/SKILL.md and follow it exactly.
+
+Inputs:
+- Document(s) to edit: /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-provisioning.md /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-decision-skill.md
+- Review report: /tmp/llm-env-main-system-one-provisioning-iter-y9PBqU/iter14-combined.md
+- Codebase root: /var/home/bazzite/git/llm-env (llm-env references); /home/bazzite/.claude/skills/jev-fast-decision (the global skill Plan B edits; not a git repo)
+- FRAMEWORK_PROFILE_PATH: /home/bazzite/.claude/skills/ai-kit-spec-review-checklist/references/frameworks/superpowers.md (Read it and respect the framework's conventions while editing — keep the task-checkbox format).
+
+Extra grounding you are allowed to use while fixing (read-only, never modify these):
+- The local image localhost/laya-rocm:latest contains the installed laya 0.4.2 package. To resolve the placeholder prefetch / cache-listing code, inspect its source read-only, e.g.
+  podman run --rm --entrypoint sh localhost/laya-rocm -c 'cd $(python -c "import laya,os;print(os.path.dirname(laya.__file__))") && sed -n 1,200p revisions.py'
+  and likewise router.py / serve.py. Replace the placeholders with exact repo ids, revision handling, and working Python. Do not start any long-running container and do not touch the GPU.
+- For the skill-judge finding, read /home/bazzite/.claude/skills/skill-judge/SKILL.md and define acceptance using its actual dimensions/scoring.
+- For writing-skills requirements, read /home/bazzite/.claude/plugins/cache/claude-plugins-official/superpowers/6.4.1/skills/writing-skills/SKILL.md.
+- For test-harness findings, read the real helpers in /var/home/bazzite/git/llm-env/tests/test_shell.py (run_setup_no_gpu, run_lifecycle_script, run_check_server, run_check_setup_with_stubs) and specify exact harness extensions.
+
+Apply the skill. Edit the document(s) in place. Emit the structured Fix Summary at the end.
+
+Do not assume any context outside what you read. Do not edit the review report. Do not edit any file other than the two plan documents. Do not run git.
+
+Owner rulings (apply, do not ask):
+- Budget design: System One's RAM reservation lowers llm-server RAM only when the remainder is the binding limit; when the percentage ceiling binds, llm-server is unchanged (the host still fits). Fix the Task 4 cmd_budget test fixture to set resources.llm_server.memory_ceiling_pct = 100 so the remainder binds, and add one sentence stating this behaviour.
+- Idle-CPU fix is NOT a gate for Plan B. Plan B Tasks 5–8 need only System One enabled and healthy on 8010. Remove the idle-CPU condition from Plan A's paired-plan banner and from Plan B's execution order, Task 5/6/8 preconditions; Plan A's idle-CPU task still reports its own pass/fail.
+- Fix every other finding exactly as the reviewers state: ruff/pyright-clean test snippets (no dict(...) kwargs with mixed types — call compute_budget with explicit keywords; sorted imports; drop unused `result`; no duplicate imports), the --system-one-rocr-index argument placed after the render-compose parser, quoted `pci_address: '0000:03:00.0'`, label which lines go in llmenv.py vs pylib/compose.py, keep the `return HEADER_COMMENT + yaml.safe_dump(...)`, `rocr-index` failure via a clean fail() (catch ValueError in cmd_rocr_index), `set -euo pipefail` in the Task 7 calibrate block, and the Task 1 line anchor (end of the llm_server validate block).
+- Verify each test snippet you touch with `ruff check --stdin-filename tests/<file>.py -` (read-only; do not create files in the repo).
+- Keep Task 8 lanes as placeholders. REJECTED (final): full 32-case corpus / generator.
+- Net growth ≤ +15 lines per plan.

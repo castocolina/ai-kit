@@ -1,0 +1,31 @@
+    if "system_one" in cfg:
+        system_one = cfg["system_one"]
+        if not isinstance(system_one, dict):
+            errors.append("section system_one must be a mapping")
+        else:
+            if not isinstance(system_one.get("enabled", False), bool):
+                errors.append("system_one.enabled must be a Boolean")
+            if not _positive_int(system_one.get("port", DEFAULT_SYSTEM_ONE_PORT)):
+                errors.append("system_one.port must be a positive integer")
+            for key in ("image", "models"):
+                value = system_one.get(key, "x")
+                if not isinstance(value, str) or not value.strip():
+                    errors.append(f"system_one.{key} must be a non-empty string")
+            if not _positive_int(system_one.get("vram_reserve_mib", 4096)):
+                errors.append("system_one.vram_reserve_mib must be a positive integer")
+            models_raw = system_one.get("models", "english")
+            if isinstance(models_raw, str):
+                parts = [p.strip() for p in models_raw.split(",")]
+                if not parts or any(not p for p in parts):
+                    errors.append("system_one.models must be a comma-separated list with no empty members")
+                else:
+                    seen: set[str] = set()
+                    for part in parts:
+                        try:
+                            canonical = canonical_laya_model_name(part)
+                        except ValueError:
+                            errors.append(f"system_one.models contains unknown checkpoint name: {part}")
+                            continue
+                        if canonical in seen:
+                            errors.append(f"system_one.models lists {canonical} more than once")
+                        seen.add(canonical)

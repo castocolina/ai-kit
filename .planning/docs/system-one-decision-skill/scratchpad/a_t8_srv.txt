@@ -1,0 +1,37 @@
+if [ "$(yq -r '.system_one.enabled' "$CONFIG_PATH" 2>/dev/null)" = "true" ]; then
+    system_one_base="http://127.0.0.1:$(yq -r '.system_one.port' "$CONFIG_PATH")"
+    log_step "System One"
+    request_record "system-one health" \
+        "curl --silent --show-error --max-time 10 ${system_one_base}/health" \
+        "" "HTTP status: 200 and device=cuda" -- \
+        curl --silent --show-error --max-time 10 "${system_one_base}/health"
+    log_block "Expectation" "$REQUEST_EXPECTATION"
+    if request_failed 200 "system-one health"; then
+        :
+    elif [ "$(jq -r '.device' < "$REQUEST_BODY_FILE")" != cuda ]; then
+        close_diagnostic_capture 1
+        bad "Verdict: FAIL stage=device identity=system-one health reason=not on GPU"
+    else
+        close_diagnostic_capture 0
+        ok "Verdict: PASS identity=system-one health on GPU"
+    fi
+    decision_body='{"model":"jev-1","state":{"ticket":"I was charged twice this month, please refund me"},"questions":{"team":{"type":"choice","instructions":"Which team should handle this ticket?","criteria":{"billing":"charges, invoices, refunds","support":"bugs, crashes, how-to"}}}}'
+    request_record "system-one decision" \
+        "curl --silent --show-error --max-time 10 -H 'Content-Type: application/json' --data-raw '${decision_body}' ${system_one_base}/v1/systemone" \
+        "$decision_body" "HTTP 200 and answers.team.choice == billing" -- \
+        curl --silent --show-error --max-time 10 -H "Content-Type: application/json" \
+        --data-raw "$decision_body" "${system_one_base}/v1/systemone"
+    log_block "Expectation" "$REQUEST_EXPECTATION"
+    if request_failed 200 "system-one decision"; then
+        :
+    elif [ "$(jq -r '.answers.team.choice' < "$REQUEST_BODY_FILE")" != billing ]; then
+        close_diagnostic_capture 1
+        bad "Verdict: FAIL stage=answer identity=system-one decision expected=billing"
+    else
+        close_diagnostic_capture 0
+        ok "Verdict: PASS identity=system-one decision"
+    fi
+else
+    log_step "System One"
+    log_warn "Verdict: SKIP identity=system-one reason=system-one is disabled"
+fi

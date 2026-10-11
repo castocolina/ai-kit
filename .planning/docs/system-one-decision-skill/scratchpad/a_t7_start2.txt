@@ -1,0 +1,11 @@
+if [ "$system_one_enabled" = "true" ]; then
+    log_step "Waiting for System One"
+    system_one_port="$(yq -r '.system_one.port' "$CONFIG_PATH")"
+    if ! LLM_ENV_HEALTH_TIMEOUT_SECONDS="$LLM_ENV_SYSTEM_ONE_HEALTH_TIMEOUT_SECONDS" \
+            wait_for_health "$system_one_port"; then
+        log_error "System One did not become healthy within ${LLM_ENV_SYSTEM_ONE_HEALTH_TIMEOUT_SECONDS}s"
+        echo "  Logs: podman compose -f ${COMPOSE_FILE} logs system-one"
+        exit 1
+    fi
+    log_info "System One is ready"
+fi

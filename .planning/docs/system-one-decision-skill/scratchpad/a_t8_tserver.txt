@@ -1,0 +1,7 @@
+def test_check_server_system_one_passes_when_stubbed(tmp_path: pathlib.Path) -> None:
+    result, _calls = run_check_server(
+        tmp_path, {"gemma4": "ok"}, system_one_enabled=True, llm_server_enabled=False,
+    )
+    text = result.stdout + result.stderr
+    assert "Verdict: PASS identity=system-one health" in text
+    assert "Verdict: PASS identity=system-one decision" in text

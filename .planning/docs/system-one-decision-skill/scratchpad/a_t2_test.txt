@@ -1,0 +1,13 @@
+def test_system_one_build_builds_the_configured_image_from_the_repo_context(tmp_path: pathlib.Path) -> None:
+    result, _config, calls = run_lifecycle_script(
+        tmp_path, "scripts/system-one-build.sh", system_one_enabled=True
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        f"podman build -t localhost/llm-env-system-one:rocm {ROOT}/docker/system-one"
+        in calls.read_text()
+    )
+
+
+def test_makefile_exposes_system_one_build() -> None:
+    assert "system-one-build:" in (ROOT / "Makefile").read_text()

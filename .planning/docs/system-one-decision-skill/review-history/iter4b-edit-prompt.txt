@@ -1,0 +1,39 @@
+You are editing ONE implementation-plan document: /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-decision-skill.md ("Plan B"). Read it fully first. Edit only that file. Do not run git. Keep the superpowers task-checkbox format and keep it as short as correctness allows.
+
+Rewrite Plan B's final task (currently the skill-judge task) into a "Final skill evaluation" task with the owner's requirements below. The task must be executable as written.
+
+## Who evaluates
+Two independent judge lanes, dispatched in parallel as external cursor-agent subagents (never the session's own model):
+- `command cursor-agent -p --trust --force --output-format text --model glm-5.2-max "<prompt>"` (owner asked for "glm-5.3"; cursor only offers glm-5.2-high/max — note this in one line)
+- `command cursor-agent -p --trust --force --output-format text --model gemini-3.1-pro "<prompt>"`
+`--force` is needed only so the judges can run the evaluation commands; every judge prompt must say "do not edit any file". Each lane writes its report to `~/.claude/skills/jev-fast-decision/notes/eval-<lane>-<round>.md`. Give the exact judge prompt text in the plan (it may reference files by absolute path; it must not paste the skill content).
+
+## What each judge evaluates (all three parts, both lanes)
+
+### Part 1 — Anatomy (skill-judge)
+Judge reads /home/bazzite/.claude/skills/skill-judge/SKILL.md and scores ~/.claude/skills/jev-fast-decision/ with its eight dimensions and 120-point scale. Acceptance: each lane's total >= 96/120 (grade B minimum); the LOWER of the two lanes is the one that must pass. Any dimension below 80% of its maximum gets the improvement skill-judge lists for it applied before re-judging.
+
+### Part 2 — Activation mechanism
+Does the skill load when it should and stay out when it should not, and does it route correctly against its neighbours?
+- Commit a fixed activation set at `~/.claude/skills/jev-fast-decision/evals/activation.jsonl`: at least 12 prompts, each `{"prompt": ..., "expect": "jev-fast-decision" | "typesafe-ai" | "none"}` — should-trigger cases (agent needs a quick typed yes/no / choice / score over text it already has, e.g. triaging review findings), should-not-trigger cases (needs code edits, multi-step reasoning, running commands), and confusable cases that belong to `typesafe-ai` (building an application feature with TypeSafe/Jev for end users).
+- The judge is given ONLY the frontmatter `name` + `description` of every skill under ~/.claude/skills/ (it lists them itself, e.g. by reading each SKILL.md frontmatter) and, for each prompt, names the single skill it would load (or none) with one-line reasoning.
+- Acceptance: 100% of should-trigger prompts pick `jev-fast-decision`; 0 should-not-trigger or typesafe-ai prompts pick it.
+- Also check inside SKILL.md that the agent, once loaded, runs `--probe` before the first call and reads `backends/<selected>.md` — judge cites the line.
+
+### Part 3 — Laya functional tests (live; requires Plan A complete: `system_one.enabled: true`, healthy `127.0.0.1:8010`)
+The judge runs these exact commands and records outputs (give each command and its pass criterion in the plan):
+1. `python3 -B ~/.claude/skills/jev-fast-decision/scripts/jev_review.py --probe` → `selected == "laya"`.
+2. A 3-item batch with different contexts via the script (`GSD_PATH_JEV=1 GSD_PATH_JEV_TIMEOUT_SECONDS=20`) → `status ok`, `backend laya`, 3 answers; and `podman logs --since <ts> system-one | rg -c 'POST /v1/systemone'` == 3 (one request per item, proving no cross-item batching).
+3. The contamination regression: the pricing-question case from the plan's fact table sent alone and in a batch with a billing item → its probabilities must be identical (within 1e-3) in both runs.
+4. A low-confidence case → `needs_fallback: true`; a clear case → `needs_fallback: false`.
+5. `JEV_BACKEND=typesafe` with `TYPESAFE_API_KEY` unset → `status unavailable`, `reason backend_unavailable:typesafe:missing_api_key`, and zero new Laya log lines.
+6. `eval_cases.py` against Laya → report accuracy, fallback_rate, accuracy_when_not_fallback; pass = the calibrated threshold from the calibration task meets its own acceptance rule on this run.
+7. `JEV_LAYA_URL=http://192.0.2.1:8010` (non-loopback) → probe reports `non_loopback_url`, nothing sent.
+Acceptance: all 7 pass in both lanes.
+
+## Loop
+After both lanes report: consolidate findings into `notes/eval-findings-<round>.md`; apply fixes with `command cursor-agent -p --trust --force --output-format text --model grok-4.7-high-fast` (edits to skill files only); re-run both lanes. Cap: 3 rounds. If still failing after round 3, stop and report the lowest-scoring lane's report to the owner instead of continuing. Record each round as one dated line in `notes/CHANGELOG.md`.
+
+Remove any previous wording in Plan B that conflicts with this (old per-dimension floors, single-judge wording, "skill-judge only" acceptance). Make sure the plan header's execution-order note says this final task needs Plan A complete.
+
+When done, print a short list of what you changed.

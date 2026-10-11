@@ -1,0 +1,8 @@
+SYSTEM_ONE_CPUS = 2  # 2 cores is plenty at ~12 ms/request; RSS was ~3.5 GB
+SYSTEM_ONE_MEMORY_MIB = 4608
+
+def _floor_words(system_one_enabled: bool) -> str:
+    words = "the host floor and OmniRoute's/remote-setup's fixed allocations"
+    if system_one_enabled:
+        words += f" and System One's reservation ({SYSTEM_ONE_CPUS} CPUs, {SYSTEM_ONE_MEMORY_MIB} MiB)"
+    return words

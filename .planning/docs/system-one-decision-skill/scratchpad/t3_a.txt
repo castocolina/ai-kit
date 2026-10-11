@@ -1,0 +1,54 @@
+class DispatchError(Exception):
+    def __init__(self, sent_bodies, cause):
+        self.sent_bodies = list(sent_bodies)
+        self.cause = cause
+
+
+def _encode(body) -> bytes:
+    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _send(name, body, timeout):
+    if os.environ.get("GSD_PATH_JEV") != "1":
+        raise PermissionError("disabled")
+    if name == "laya" and not _laya_loopback_ok():
+        raise PermissionError("non_loopback_url")
+    if BACKENDS[name]["remote"] and os.environ.get("JEV_ALLOW_REMOTE") != "1":
+        raise PermissionError("consent_required_for_remote")
+    encoded = _encode(body)
+    key = backend_key(name)
+    request = urllib.request.Request(backend_url(name), data=encoded, headers={
+        **({"Authorization": f"Bearer {key}"} if key else {}),
+        "Content-Type": "application/json",
+        # Zen's edge (Cloudflare) blocks the bare "Python-urllib/x.y" default
+        # User-Agent with error 1010. This is the script's own UA. Do not
+        # spoof the OpenCode client UA; reports say the free-tier gate keys on it.
+        "User-Agent": "jev-fast-decision/2.0"})
+    with urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout) as stream:
+        return json.loads(stream.read()), encoded
+
+
+def _dispatch(name, payload, timeout, model=None):
+    model = model or BACKENDS[name]["model"]
+    body, specs = request_body(payload, model)
+    sent_bodies: list[bytes] = []
+
+    def transmit(one):
+        sent_bodies.append(_encode(one))
+        try:
+            response, _encoded = _send(name, one, timeout)
+        except Exception as cause:
+            raise DispatchError(sent_bodies, cause) from cause
+        return response
+
+    if BACKENDS[name]["batch"]:
+        return [transmit(body)], specs, sent_bodies
+    # Laya reads the whole state for every question, so batching different
+    # contexts contaminates answers; one item per request (~12 ms each).
+    # shortcut: sequential; switch to a thread pool if batches grow past ~50 items.
+    head = payload["reviewed_head"]
+    responses = [
+        transmit(request_body({"reviewed_head": head, "items": [item]}, model)[0])
+        for item in payload["items"]
+    ]
+    return responses, specs, sent_bodies

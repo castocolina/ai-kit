@@ -1,0 +1,8 @@
+    system_one = cfg.setdefault("system_one", {})
+    if isinstance(system_one, dict):
+        system_one.setdefault("enabled", False)
+        system_one.setdefault("port", DEFAULT_SYSTEM_ONE_PORT)
+        system_one.setdefault("image", DEFAULT_SYSTEM_ONE_IMAGE)
+        # Measured: english-only preload ~3.5 GiB VRAM vs ~5.8 GiB for all three.
+        system_one.setdefault("models", "english")
+        system_one.setdefault("vram_reserve_mib", 4096)

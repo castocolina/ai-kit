@@ -1,0 +1,107 @@
+def screen():  # only copy; Task 4 does not paste another. hashlib is already imported.
+    if os.environ.get("GSD_PATH_JEV") != "1":
+        return {"status": "disabled"}
+    try:
+        payload = json.load(sys.stdin)
+    except (ValueError, UnicodeError, RecursionError):
+        return {"status": "unavailable", "reason": "invalid_input"}
+    try:
+        timeout = float(os.environ.get("GSD_PATH_JEV_TIMEOUT_SECONDS", ""))
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("invalid_timeout")
+    except ValueError:
+        return {"status": "unavailable", "reason": "invalid_timeout"}
+    try:
+        request_body(payload, "x")
+    except ValueError as error:
+        result = {"status": "unavailable", "reason": "invalid_input"}
+        if str(error).startswith("invalid_input:"):
+            result["item"] = str(error).split(":", 1)[1]
+        return result
+    provenance = {"reviewed_head": payload["reviewed_head"]}
+    try:
+        min_confidence_for("laya")
+    except ValueError:
+        return {"status": "unavailable", "reason": "invalid_min_confidence", **provenance}
+    choice = os.environ.get("JEV_BACKEND", "auto").strip() or "auto"
+    usable, unavailable = candidates()
+
+    def _hash(bodies):
+        return hashlib.sha256(b"".join(bodies)).hexdigest()
+
+    def _consent(attempts):
+        remotes = _remotes_available()
+        if choice != "auto" or os.environ.get("JEV_ALLOW_REMOTE") == "1" or not remotes:
+            return None
+        return {"status": "consent_required_for_remote", "remote_available": remotes,
+                "attempts": attempts, "unavailable": unavailable, **provenance}
+
+    def _attempt(name, reason, model):
+        row = {"backend": name, "reason": reason}
+        if name == "opencode":
+            row["model"] = model
+        return row
+
+    def _retry_opencode(cause):
+        if isinstance(cause, urllib.error.HTTPError):
+            if cause.code == 429 or cause.code >= 500:
+                return True
+            if cause.code == 400 and cause.fp is not None:
+                return b"Model is unavailable" in cause.fp.read()
+            return False
+        return isinstance(cause, (OSError, OverflowError, http.client.HTTPException))
+
+    if not usable:
+        if (stopped := _consent([])) is not None:
+            return stopped
+        reason = (f"backend_unavailable:{choice}:{unavailable.get(choice, 'unavailable')}"
+                  if choice != "auto" and choice in BACKENDS else "no_backend_available")
+        return {"status": "unavailable", "reason": reason, "unavailable": unavailable,
+                "attempts": [], **provenance}
+    attempts = []
+    sent_bodies: list[bytes] = []
+    for name in usable:
+        threshold = min_confidence_for(name)
+        models = BACKENDS[name].get("models", (BACKENDS[name]["model"],))
+        # shortcut: no cooldown memory; add a timestamp file if free 429s become frequent
+        for index, model in enumerate(models):
+            try:
+                responses, specs, sent_bodies = _dispatch(name, payload, timeout, model)
+                result = checked_response(responses, specs, name)
+            except DispatchError as error:
+                sent_bodies = error.sent_bodies
+                provenance["request_sha256"] = _hash(sent_bodies)
+                cause = error.cause
+                if isinstance(cause, urllib.error.HTTPError):
+                    reason = f"http_{cause.code}"
+                elif isinstance(cause, (OSError, OverflowError, http.client.HTTPException)):
+                    reason = "network_error"
+                else:
+                    reason = "invalid_response"
+                retry = name == "opencode" and index + 1 < len(models) and _retry_opencode(cause)
+                if isinstance(cause, urllib.error.HTTPError):
+                    cause.close()
+                attempts.append(_attempt(name, reason, model))
+                if retry:
+                    continue
+                break
+            except ValueError as error:
+                if str(error).startswith("invalid_input"):
+                    raise
+                provenance["request_sha256"] = _hash(sent_bodies)
+                attempts.append(_attempt(name, "invalid_response", model))
+                break
+            provenance["request_sha256"] = _hash(sent_bodies)
+            for identifier, answer in result["answers"].items():
+                if specs[identifier][0] == NOUL:
+                    top = max(answer["noul"], 1 - answer["noul"])
+                else:
+                    top = max(answer["probabilities"].values())
+                answer["needs_fallback"] = top < threshold
+            return {"status": "ok", "backend": name, "attempts": attempts,
+                    "unavailable": unavailable, **provenance, **result}
+        stopped = _consent(attempts)
+        if stopped is not None:
+            return stopped
+    return {"status": "unavailable", "reason": attempts[-1]["reason"],
+            "attempts": attempts, "unavailable": unavailable, **provenance}

@@ -1,0 +1,18 @@
+I'll follow the ai-kit-spec-review-checklist skill exactly for both plan documents.Using ai-kit-spec-review-checklist for a plan-level Superpowers review of both documents. Reading both plans fresh, then grounding claims against the declared codebase roots.Plan B is large — reading it in sections while grounding Plan A against the codebase.Codegraph was rejected — grounding with Read/rg against the declared roots.Continuing Plan B and grounding critical line/API claims against both codebases.## Review: `docs/superpowers/plans/2026-10-10-system-one-provisioning.md`, `docs/superpowers/plans/2026-10-10-system-one-decision-skill.md`
+### Document Type
+Superpowers · plan (both)
+### Files Read
+- `/var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-provisioning.md` (1687 lines)
+- `/var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-decision-skill.md` (1582 lines)
+- Grounding (not reviewed): `pylib/compose.py`, `pylib/resources.py`, `pylib/budget.py`, `pylib/config.py`, `pylib/detect.py`, `llmenv.py`, `scripts/start.sh`, `scripts/check-setup.sh`, `scripts/check-server.sh`, `scripts/gpu-status.sh`, `scripts/print-endpoints.sh`, `setup/setup.sh`, `setup/render-unit.sh`, `tools/lib.sh`, `docker/laya-rocm/Dockerfile`, `tests/test_shell.py`, `tests/test_compose.py`, `tests/test_cli.py`, `~/.claude/skills/jev-fast-decision/scripts/jev_review.py`, `SKILL.md`, `reference.md`, `~/.claude/skills/skill-judge/SKILL.md`
+### CRITICAL
+- **Unknown `JEV_BACKEND` reason string disagrees with Interfaces** — Location: Plan B Task 2 Interfaces (~L139) vs Task 2 `main()` `--probe` branch (~L402–408) and Task 3 `screen()` empty-usable branch (~L679–680). Required: one rule for explicit unknown names (e.g. `JEV_BACKEND=zen`): either `reason` is always `backend_unavailable:<name>:<probe reason>` (including `unknown_backend`), or Interfaces explicitly limit that shape to names in `BACKENDS` and document `no_backend_available` for unknowns — and `main()` / `screen()` match that rule. Why: Interfaces say every explicit unusable backend gets `backend_unavailable:<name>:<probe reason>`; the pasted code only builds that when `choice in BACKENDS`, so unknown names get `no_backend_available` instead — two opposite reason strings for the same env.
+### HIGH
+### MEDIUM
+- **Task 3 compose assembly snippet is easy to mis-paste** — Location: Plan A Task 3 services/volumes assembly (~L475–485). Required: the snippet is clearly an addition after the existing `llm-server` / `omniroute` / `remote-setup` population, not a replacement of that block. Why: taken alone it rebuilds `document` from `services` without showing those assignments; existing compose tests would catch a wipe, but a zero-context paste can still drop them first.
+- **LIVE check 4 assumes vague top stays below calibrated T** — Location: Plan B Task 8 Part 3 check 4 (~L1487–1489) vs Spec table (~L22) and Task 7 calibrate (lowest qualifying T, often 0.50). Required: pass criterion remains true under the measured alone-vague distribution (or the check pins a threshold relationship that cannot flip when calibrate returns 0.50). Why: alone pricing was measured at billing 0.46; if live top lands ≥ calibrated T, `needs_fallback` is false and the round fails despite correct dispatch.
+### Cross-Document Consistency
+- Port 8010 gate, activation env line, idle-CPU non-gate for Plan B Tasks 5–8, and Task 5→6 `notes/eval-results.json` handoff agree across both plans; no cross-doc contradiction found.
+### Status: Issues Found — fix and re-invoke
+
+Skipped: full live ROCm/KFD topology re-measure; risk: unknown-backend reason mismatch alone blocks clean execution of Plan B’s probe/`screen` contract.

@@ -1,0 +1,6 @@
+def test_list_gpus_reads_device_vendor_and_missing_vendor_file(tmp_path):
+    drm = build_drm(tmp_path)
+    (drm / "card1" / "device").resolve().joinpath("vendor").write_text("0x1002\n")
+    gpus = {g["card"]: g for g in list_gpus(drm)}
+    assert gpus["card1"]["vendor"] == "0x1002"
+    assert gpus["card0"]["vendor"] == ""

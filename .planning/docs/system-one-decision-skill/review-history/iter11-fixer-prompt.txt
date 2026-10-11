@@ -1,0 +1,32 @@
+You are the fixer.
+
+Step 1: Read the file at /home/bazzite/.claude/skills/ai-kit-spec-review-fixer/SKILL.md and follow it exactly.
+
+Inputs:
+- Document(s) to edit: /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-provisioning.md /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-decision-skill.md
+- Review report: /tmp/llm-env-main-system-one-provisioning-iter-y9PBqU/iter10-combined.md
+- Codebase root: /var/home/bazzite/git/llm-env (llm-env references); /home/bazzite/.claude/skills/jev-fast-decision (the global skill Plan B edits; not a git repo)
+- FRAMEWORK_PROFILE_PATH: /home/bazzite/.claude/skills/ai-kit-spec-review-checklist/references/frameworks/superpowers.md (Read it and respect the framework's conventions while editing — keep the task-checkbox format).
+
+Extra grounding you are allowed to use while fixing (read-only, never modify these):
+- The local image localhost/laya-rocm:latest contains the installed laya 0.4.2 package. To resolve the placeholder prefetch / cache-listing code, inspect its source read-only, e.g.
+  podman run --rm --entrypoint sh localhost/laya-rocm -c 'cd $(python -c "import laya,os;print(os.path.dirname(laya.__file__))") && sed -n 1,200p revisions.py'
+  and likewise router.py / serve.py. Replace the placeholders with exact repo ids, revision handling, and working Python. Do not start any long-running container and do not touch the GPU.
+- For the skill-judge finding, read /home/bazzite/.claude/skills/skill-judge/SKILL.md and define acceptance using its actual dimensions/scoring.
+- For writing-skills requirements, read /home/bazzite/.claude/plugins/cache/claude-plugins-official/superpowers/6.4.1/skills/writing-skills/SKILL.md.
+- For test-harness findings, read the real helpers in /var/home/bazzite/git/llm-env/tests/test_shell.py (run_setup_no_gpu, run_lifecycle_script, run_check_server, run_check_setup_with_stubs) and specify exact harness extensions.
+
+Apply the skill. Edit the document(s) in place. Emit the structured Fix Summary at the end.
+
+Do not assume any context outside what you read. Do not edit the review report. Do not edit any file other than the two plan documents. Do not run git.
+
+Owner rulings (apply, do not ask):
+- VERIFIED LIVE 2026-10-11 (record in Plan A's measured facts, replace the single-render-node design): passing only `--device /dev/kfd --device /dev/dri/renderD128` gives torch "No CUDA GPUs are available". Working pin: pass `/dev/kfd` and the whole `/dev/dri` (same as the llm-server service, pylib/compose.py:80) and set `ROCR_VISIBLE_DEVICES=<index>`, where index = position of the KFD node whose `properties` has `drm_render_minor <minor>` among nodes under /sys/class/kfd/kfd/topology/nodes/ with `gpu_id` != 0, in node-number order. On this host renderD128 → 0 (RX 9070 XT, only GPU visible), renderD129 → 1 (iGPU). The compose service gets `devices: [/dev/kfd, /dev/dri:/dev/dri]` and `environment.ROCR_VISIBLE_DEVICES`; compute the index in Python (pylib, unit-tested with a fake sysfs tree), not in shell. Update the check-setup render-node check accordingly.
+- Task ordering: the idle-CPU investigation (Plan A Task 8) needs a provisioned, running container. Move it after the live E2E task (Task 11), renumber, and update every cross-reference in both plans (Plan B's "provisioning Task 11" gates). Its last step re-verifies health on 8010.
+- Plan B Task 4: Task 3 already implements the full screen(). Drop the false RED claim; Task 4's tests are regression tests: "expected to pass against Task 3's screen(); a failure means fix screen()".
+- Plan B Task 7: add RED steps for the calibration/override tests (write tests, run, record expected failure) before implementing calibrate().
+- gpu-status: exclude the System One process (cmdline containing `laya-serve`) from contention/offender results; test that System-One-only mode offers no migration of its own workload.
+- Plan B Task 6: `backend_unavailable:<name>:consent_required_for_remote` in an explicit-backend run follows the same ask-consent-and-retry recipe as top-level `consent_required_for_remote`.
+- Cross-doc log: after Plan A's final restart, send one fresh decision request and verify its POST log line; Plan B Task 8 relies on per-check POST deltas only, not on historical log content.
+- REJECTED again: "specify all 32 JSONL cases / deterministic generator".
+- Net growth ≤ +20 lines per plan: delete superseded prose.

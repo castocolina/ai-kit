@@ -1,0 +1,9 @@
+log_step "Model files"
+if [ "$llm_server_enabled" != "false" ]; then
+    record_command "GGUF validation" \
+        "uv run ${REPO_DIR}/llmenv.py --config ${CONFIG_PATH} validate-gguf --models-dir ${MODELS_DIR}" "" \
+        "exit status: 0" "" 0 "Command stdout" "Command stderr" \
+        uv run "${REPO_DIR}/llmenv.py" --config "$CONFIG_PATH" validate-gguf --models-dir "$MODELS_DIR" || true
+else
+    record_section_skip "GGUF validation" "llm-server is disabled"
+fi

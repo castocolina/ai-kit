@@ -1,0 +1,18 @@
+### Plan A (`2026-10-10-system-one-provisioning.md`)
+- **Architecture** — setup owns image build + weight prefetch; start only runs prepared stack.
+- **Review Focus** — items 1 and 5 updated (start must `die` toward setup; clean removes `llm-env-system-one-cache`).
+- **Task 2** — build script used by setup / `system-one-build`; Dockerfile comment updated.
+- **Task 3** — named volume `llm-env-system-one-cache`, healthcheck `start_period` 120s, tests/impl/comments aligned.
+- **Task 6** — title/scope expanded: build-if-missing, prefetch sub-step (read Laya in image), four setup tests, commit message.
+- **Task 7** — no build on start; `die` if image missing; health timeout default 120; tests rewritten.
+- **Task 9** — weights volume + one-shot list check via `record_command`.
+- **Task 10** — `podman volume rm`, clean prompt text vs `prune`, test assertion.
+- **Task 11** — E2E: observe build/prefetch in setup; start healthy within 120s.
+
+### Plan B (`2026-10-10-system-one-decision-skill.md`)
+- **Global Constraints** — global skill path; no llm-env copy; test command + no `make validate` for skill.
+- **Task 0** — snapshot + `test_jev_review.py` shim only; CHANGELOG checkpoint (no git).
+- **Tasks 1–7** — paths under `~/.claude/skills/jev-fast-decision/`; pytest via `uv run --no-project --with pytest … -q`; notes in skill `notes/`; git commits → CHANGELOG checkpoints.
+- **Task 8** — symlink/install task removed; final task is skill-judge → `notes/skill-judge.md`.
+
+Skipped: running tests or validating the two markdown files against the live repo. Risk: Plan A prefetch/check-setup snippets are still placeholders (`<prefetch>`, `<list cached snapshot>`) until implementers read Laya inside the image.

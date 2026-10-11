@@ -1,0 +1,11 @@
+def rocr_visible_index(render_minor: int, nodes_root: Path) -> int:
+    gpus: list[int] = []
+    nodes = sorted((p for p in Path(nodes_root).iterdir() if p.name.isdigit()), key=lambda p: int(p.name))
+    for node in nodes:
+        if (node / "gpu_id").read_text().strip() == "0":
+            continue
+        minor = next(int(b) for a, b in (ln.split() for ln in (node / "properties").read_text().splitlines()) if a == "drm_render_minor")
+        gpus.append(minor)
+    if render_minor not in gpus:
+        raise ValueError(f"no KFD GPU node with drm_render_minor {render_minor}")
+    return gpus.index(render_minor)

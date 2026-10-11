@@ -218,8 +218,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ### Pending Todos
 
-None outstanding. The 3 todos that seeded v1.1 were moved to
-`.planning/todos/completed/` by Phase 15.2.
+- [major] Execute the System One decision-skill plan (jev-fast-decision, 3 backends) — `.planning/todos/pending/2026-10-11-execute-system-one-decision-skill-plan.md`
 
 ### Blockers/Concerns
 

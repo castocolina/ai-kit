@@ -1,0 +1,1 @@
+[{"key": "cursor-auto", "model": "auto", "vendor": "cursor", "cli": "cursor-agent", "command": "cursor-agent -p --output-format text --mode plan --trust --model {model}", "extra": {"purpose": "review"}}]

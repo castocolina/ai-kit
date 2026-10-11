@@ -1,0 +1,33 @@
+You are the fixer.
+
+Step 1: Read the file at /home/bazzite/.claude/skills/ai-kit-spec-review-fixer/SKILL.md and follow it exactly.
+
+Inputs:
+- Document(s) to edit: /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-provisioning.md /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-decision-skill.md
+- Review report: /tmp/llm-env-main-system-one-provisioning-iter-y9PBqU/iter11-combined.md
+- Codebase root: /var/home/bazzite/git/llm-env (llm-env references); /home/bazzite/.claude/skills/jev-fast-decision (the global skill Plan B edits; not a git repo)
+- FRAMEWORK_PROFILE_PATH: /home/bazzite/.claude/skills/ai-kit-spec-review-checklist/references/frameworks/superpowers.md (Read it and respect the framework's conventions while editing — keep the task-checkbox format).
+
+Extra grounding you are allowed to use while fixing (read-only, never modify these):
+- The local image localhost/laya-rocm:latest contains the installed laya 0.4.2 package. To resolve the placeholder prefetch / cache-listing code, inspect its source read-only, e.g.
+  podman run --rm --entrypoint sh localhost/laya-rocm -c 'cd $(python -c "import laya,os;print(os.path.dirname(laya.__file__))") && sed -n 1,200p revisions.py'
+  and likewise router.py / serve.py. Replace the placeholders with exact repo ids, revision handling, and working Python. Do not start any long-running container and do not touch the GPU.
+- For the skill-judge finding, read /home/bazzite/.claude/skills/skill-judge/SKILL.md and define acceptance using its actual dimensions/scoring.
+- For writing-skills requirements, read /home/bazzite/.claude/plugins/cache/claude-plugins-official/superpowers/6.4.1/skills/writing-skills/SKILL.md.
+- For test-harness findings, read the real helpers in /var/home/bazzite/git/llm-env/tests/test_shell.py (run_setup_no_gpu, run_lifecycle_script, run_check_server, run_check_setup_with_stubs) and specify exact harness extensions.
+
+Apply the skill. Edit the document(s) in place. Emit the structured Fix Summary at the end.
+
+Do not assume any context outside what you read. Do not edit the review report. Do not edit any file other than the two plan documents. Do not run git.
+
+Owner rulings (apply, do not ask):
+- REJECTED again: "complete 32-case corpus / deterministic source". Note it in skipped.
+- Execution workflow for Plan B (skill dir is not a git repo, and stays global): Plan B's header says execute with superpowers:executing-plans (native), not subagent-driven-development. Task 0 takes a snapshot `cp -a ~/.claude/skills/jev-fast-decision <scratch>/jev-fast-decision.base`; every task's checkpoint/review uses `diff -ru <snapshot> ~/.claude/skills/jev-fast-decision` instead of commits/SHAs. No `git init` in the skill dir.
+- `_send` rejects a non-loopback Laya URL before opening any socket (raises the same `non_loopback_url` reason); add direct `_send` and `_dispatch` tests proving no connection is attempted.
+- Plan B Task 7 actually runs `eval_cases.py --calibrate`, verifies the script default changed exactly once, reruns the test suite, and records the thresholds in notes/.
+- Plan B Task 8 FIX loop: after each automated fix, run the full skill test suite; if it fails, the round fails and no new evaluation starts.
+- Plan A: add a start.sh test where System One /health never succeeds (nonzero exit, timeout message, the log command hint).
+- Plan A research cleanup is idempotent: each removal tolerates an already-absent artifact (e.g. `podman rm -f laya 2>/dev/null || true`, `podman rmi ... || true`, `podman volume rm ... || true`), then asserts all three are gone.
+- Plan B Task 2: the `laya` fixture takes `clean_env` as a parameter so its URL override runs last.
+- print-endpoints prints a complete runnable example: `GSD_PATH_JEV=1 JEV_BACKEND=laya JEV_LAYA_URL=http://127.0.0.1:<port> ...` including the timeout variable the skill requires; the Plan B Task 6 docs match it.
+- Net growth ≤ +20 lines per plan: delete superseded prose.

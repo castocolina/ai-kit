@@ -1,0 +1,31 @@
+You are the fixer.
+
+Step 1: Read the file at /home/bazzite/.claude/skills/ai-kit-spec-review-fixer/SKILL.md and follow it exactly.
+
+Inputs:
+- Document(s) to edit: /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-provisioning.md /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-decision-skill.md
+- Review report: /tmp/llm-env-main-system-one-provisioning-iter-y9PBqU/iter6-combined.md
+- Codebase root: /var/home/bazzite/git/llm-env (llm-env references); /home/bazzite/.claude/skills/jev-fast-decision (the global skill Plan B edits; not a git repo)
+- FRAMEWORK_PROFILE_PATH: /home/bazzite/.claude/skills/ai-kit-spec-review-checklist/references/frameworks/superpowers.md (Read it and respect the framework's conventions while editing — keep the task-checkbox format).
+
+Extra grounding you are allowed to use while fixing (read-only, never modify these):
+- The local image localhost/laya-rocm:latest contains the installed laya 0.4.2 package. To resolve the placeholder prefetch / cache-listing code, inspect its source read-only, e.g.
+  podman run --rm --entrypoint sh localhost/laya-rocm -c 'cd $(python -c "import laya,os;print(os.path.dirname(laya.__file__))") && sed -n 1,200p revisions.py'
+  and likewise router.py / serve.py. Replace the placeholders with exact repo ids, revision handling, and working Python. Do not start any long-running container and do not touch the GPU.
+- For the skill-judge finding, read /home/bazzite/.claude/skills/skill-judge/SKILL.md and define acceptance using its actual dimensions/scoring.
+- For writing-skills requirements, read /home/bazzite/.claude/plugins/cache/claude-plugins-official/superpowers/6.4.1/skills/writing-skills/SKILL.md.
+- For test-harness findings, read the real helpers in /var/home/bazzite/git/llm-env/tests/test_shell.py (run_setup_no_gpu, run_lifecycle_script, run_check_server, run_check_setup_with_stubs) and specify exact harness extensions.
+
+Apply the skill. Edit the document(s) in place. Emit the structured Fix Summary at the end.
+
+Do not assume any context outside what you read. Do not edit the review report. Do not edit any file other than the two plan documents. Do not run git.
+
+Owner rulings on this report (apply, do not ask):
+- REJECTED again (note in the skipped section, do not change): "provide all 32 JSONL cases" and "provide exact markdown text for every documentation update". Composition rules/exemplars and content bullet lists are the deliberate level of detail for those steps.
+- Kill switch / consent at the boundary: make `send()`/`dispatch()` private (`_send`/`_dispatch`) and have `_send` itself refuse when `GSD_PATH_JEV != "1"` or when the backend is remote and `JEV_ALLOW_REMOTE != "1"`; add tests proving direct calls send nothing.
+- Task 8 live lanes: Parts 1–2 (anatomy, activation) run in parallel; Part 3 (live Laya checks) runs serialized — lane A then lane B — so log counters are not shared.
+- writing-skills: add the missing checklist items where they apply; explicitly mark the ones that do not apply (with a one-line reason) instead of padding.
+- Add `scripts/gpu-status.sh` System-One awareness and its test to Plan A.
+- Plan A Task 11: install `trap` restore immediately after the backup.
+- Fix every other finding (setup fixture answers for the new prompt in every interactive helper; `"type": "noul"` in mocked answers; opencode 5xx/network/401/403 tests; print-endpoints test; Task 6 execution-order dependency on Laya in both headers).
+- Keep both plans as short as correctness allows; delete text no step uses.

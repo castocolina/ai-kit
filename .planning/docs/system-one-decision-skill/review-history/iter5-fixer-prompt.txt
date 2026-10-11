@@ -1,0 +1,32 @@
+You are the fixer.
+
+Step 1: Read the file at /home/bazzite/.claude/skills/ai-kit-spec-review-fixer/SKILL.md and follow it exactly.
+
+Inputs:
+- Document(s) to edit: /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-provisioning.md /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-decision-skill.md
+- Review report: /tmp/llm-env-main-system-one-provisioning-iter-y9PBqU/iter4-merged.md
+- Codebase root: /var/home/bazzite/git/llm-env (llm-env references); /home/bazzite/.claude/skills/jev-fast-decision (the global skill Plan B edits; not a git repo)
+- FRAMEWORK_PROFILE_PATH: /home/bazzite/.claude/skills/ai-kit-spec-review-checklist/references/frameworks/superpowers.md (Read it and respect the framework's conventions while editing — keep the task-checkbox format).
+
+Extra grounding you are allowed to use while fixing (read-only, never modify these):
+- The local image localhost/laya-rocm:latest contains the installed laya 0.4.2 package. To resolve the placeholder prefetch / cache-listing code, inspect its source read-only, e.g.
+  podman run --rm --entrypoint sh localhost/laya-rocm -c 'cd $(python -c "import laya,os;print(os.path.dirname(laya.__file__))") && sed -n 1,200p revisions.py'
+  and likewise router.py / serve.py. Replace the placeholders with exact repo ids, revision handling, and working Python. Do not start any long-running container and do not touch the GPU.
+- For the skill-judge finding, read /home/bazzite/.claude/skills/skill-judge/SKILL.md and define acceptance using its actual dimensions/scoring.
+- For writing-skills requirements, read /home/bazzite/.claude/plugins/cache/claude-plugins-official/superpowers/6.4.1/skills/writing-skills/SKILL.md.
+- For test-harness findings, read the real helpers in /var/home/bazzite/git/llm-env/tests/test_shell.py (run_setup_no_gpu, run_lifecycle_script, run_check_server, run_check_setup_with_stubs) and specify exact harness extensions.
+
+Apply the skill. Edit the document(s) in place. Emit the structured Fix Summary at the end.
+
+Do not assume any context outside what you read. Do not edit the review report. Do not edit any file other than the two plan documents. Do not run git.
+
+Owner decisions that resolve findings (apply them, do not ask):
+- Consent (CRITICAL): remote backends (typesafe, opencode) are only candidates when the env var `JEV_ALLOW_REMOTE=1` is set (the agent sets it only after the user consented this session). Without it, auto mode considers only laya, and a laya failure returns `status: unavailable`, `reason: consent_required_for_remote` (listing which remote backends would have been available) instead of falling through. An explicit `JEV_BACKEND=typesafe|opencode` also requires `JEV_ALLOW_REMOTE=1`. Add tests for both. Update Global Constraints, Task 4, SKILL.md guidance in Task 6, and the Task 8 functional checks accordingly.
+- request_sha256: `send()` returns `(response, encoded_body)`; `dispatch()` returns `(responses, specs, sent_bodies)` and appends each body before sending so a partial failure still hashes exactly what was transmitted; `screen()` hashes the concatenation of `sent_bodies`. Define this in the Interfaces blocks.
+- Labeled cases (Task 5): the plan must NOT embed all 30+ cases. Specify the exact composition (counts per type: choice/noul/score/shorthand, how many intentionally ambiguous), the labeling rule, 6 exemplar lines, and the complete `eval_cases.py` code (scoring rule per type incl. choice and shorthand). Authoring the remaining case lines is an explicit execution step with those rules — state that this is deliberate.
+- Baseline/pressure scenarios (Task 1): run them with Claude Code's own `Agent` tool, `subagent_type: general-purpose`, `model: sonnet` — the skill's real consumer is a Claude Code agent. Specify the exact prompt assembly (scenario text + either nothing or the absolute SKILL.md path to Read), one fresh agent per rep, up to 5 concurrent, and capture each agent's final message verbatim into `notes/baseline/<arm>-<scenario>-<rep>.md`.
+- External lanes (Task 8): capture each background PID, check each exit status, and require a non-empty report whose last line is `VERDICT pass` or `VERDICT fail`; otherwise the lane failed and the round stops. Before round 1, verify both model ids with `command cursor-agent --list-models | rg -x '<id> - .*'`.
+- VRAM gate (Plan A Task 11): measure with llm-server stopped (`systemctl --user stop llm-server.service` is not enough since it owns the stack) — instead: run the gate on a config with `llm_server.enabled: false` and `system_one.enabled: true`, so only System One allocates on the GPU; restore the original config afterwards. State the restore step.
+- check-setup with llm_server disabled must skip the GGUF "Model files" section (with a regression test).
+- Fix every other finding in the report (SELinux `:z` relabel on every transient bind mount, architecture doc scope, execution-order consistency, `sd` instead of `sed`).
+- Keep both plans as short as correctness allows.

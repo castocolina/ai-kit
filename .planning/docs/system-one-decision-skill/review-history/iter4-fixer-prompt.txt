@@ -1,0 +1,30 @@
+You are the fixer.
+
+Step 1: Read the file at /home/bazzite/.claude/skills/ai-kit-spec-review-fixer/SKILL.md and follow it exactly.
+
+Inputs:
+- Document(s) to edit: /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-provisioning.md /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-decision-skill.md
+- Review report: /tmp/llm-env-main-system-one-provisioning-iter-y9PBqU/iter3-cursor-agent-sol.md
+- Codebase root: /var/home/bazzite/git/llm-env (llm-env references); /home/bazzite/.claude/skills/jev-fast-decision (the global skill Plan B edits; not a git repo)
+- FRAMEWORK_PROFILE_PATH: /home/bazzite/.claude/skills/ai-kit-spec-review-checklist/references/frameworks/superpowers.md (Read it and respect the framework's conventions while editing — keep the task-checkbox format).
+
+Extra grounding you are allowed to use while fixing (read-only, never modify these):
+- The local image localhost/laya-rocm:latest contains the installed laya 0.4.2 package. To resolve the placeholder prefetch / cache-listing code, inspect its source read-only, e.g.
+  podman run --rm --entrypoint sh localhost/laya-rocm -c 'cd $(python -c "import laya,os;print(os.path.dirname(laya.__file__))") && sed -n 1,200p revisions.py'
+  and likewise router.py / serve.py. Replace the placeholders with exact repo ids, revision handling, and working Python. Do not start any long-running container and do not touch the GPU.
+- For the skill-judge finding, read /home/bazzite/.claude/skills/skill-judge/SKILL.md and define acceptance using its actual dimensions/scoring.
+- For writing-skills requirements, read /home/bazzite/.claude/plugins/cache/claude-plugins-official/superpowers/6.4.1/skills/writing-skills/SKILL.md.
+- For test-harness findings, read the real helpers in /var/home/bazzite/git/llm-env/tests/test_shell.py (run_setup_no_gpu, run_lifecycle_script, run_check_server, run_check_setup_with_stubs) and specify exact harness extensions.
+
+Apply the skill. Edit the document(s) in place. Emit the structured Fix Summary at the end.
+
+Do not assume any context outside what you read. Do not edit the review report. Do not edit any file other than the two plan documents. Do not run git.
+
+Owner decisions that resolve findings (apply them, do not ask):
+- "uv run is forbidden": it is NOT. The repo rule (AGENTS.md) is that Python runs only as `uv run llmenv.py <subcommand>`; ad-hoc `uv run python3 -c`/heredoc Python in shell steps is what is not allowed. Any Python logic a plan step needs must be an `llmenv.py` subcommand or reuse an existing one. State this rule correctly wherever the plans mention it.
+- Live VRAM gate (Plan A Task 11): reuse what setup already uses. setup Step 2 and Step 7 read VRAM through `llmenv detect` (sysfs `vram_total_mib`/`vram_used_mib` per GPU) and `llmenv budget`. The gate becomes: record the configured GPU's `vram_used_mib` from `llmenv detect | jq` with System One stopped, start it and wait for health plus one decision request, read it again, and assert the delta <= `system_one.vram_reserve_mib` with plain shell arithmetic. No new Python, no fdinfo parsing.
+- skill-judge acceptance (Plan B last task): minimum grade B, i.e. total >= 96/120. Any dimension below 80% of its maximum gets the skill-judge improvement it lists applied before re-judging. Remove the ad-hoc per-dimension floors.
+- Plan A Task 8 (idle CPU) is an investigation by nature: keep it, but make it executable — exact measurement commands, an ordered candidate table with the exact env var/value per candidate, the acceptance threshold (idle < 5% of one core, decision latency <= 20 ms), the test that pins whichever candidate is chosen, and the stop-and-report rule if none qualifies. That bounded placeholder is acceptable; say so explicitly in the task.
+- Every task in Plan A that edits a .py file verifies with `make validate && make test` before its commit.
+- Fix all other findings in the report.
+- Keep the plans as short as correctness allows: do not add prose that no step uses.

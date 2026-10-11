@@ -1,0 +1,69 @@
+# Same persisted-default rule as the llm-server prompt above.
+system_one_default="n"
+[ "$(yq -r '.system_one.enabled' "$CONFIG_PATH" 2>/dev/null)" = "true" ] && system_one_default="y"
+[ "$SYSTEM_ONE" = "1" ] && system_one_default="y"
+[ "$SYSTEM_ONE" = "0" ] && system_one_default="n"
+system_one_answer="$(ask "Enable local System One decisions (Laya on ROCm)? [y/N]: " "$system_one_default")"
+case "$system_one_answer" in
+    [yY]*) system_one_enabled=true ;;
+    *) system_one_enabled=false ;;
+esac
+DRI_PATH="${LLM_ENV_DRI_PATH:-/dev/dri}"
+if [ "$system_one_enabled" != "true" ]; then
+    SYSTEM_ONE_ENABLED=false yq -i '.system_one.enabled = (strenv(SYSTEM_ONE_ENABLED) == "true")' "$CONFIG_PATH"
+elif [ ! -e "$KFD_PATH" ]; then
+    SYSTEM_ONE_ENABLED=false yq -i '.system_one.enabled = (strenv(SYSTEM_ONE_ENABLED) == "true")' "$CONFIG_PATH"
+    die "System One requires an AMD GPU with ROCm (/dev/kfd); not found at ${KFD_PATH}"
+fi
+log_info "system-one (local Laya decisions): ${system_one_enabled}"
+
+if [ "$llm_server_enabled" = "true" ] || [ "$system_one_enabled" = "true" ]; then
+    true # REPLACE THIS LINE with the existing Step 2 body, through log_info "selected ${pci} with ..."
+    PCI_ADDRESS="$pci" yq -i '.gpu.pci_address = strenv(PCI_ADDRESS)' "$CONFIG_PATH"
+    if [ "$system_one_enabled" = "true" ]; then
+        gpu_vendor="$(llmenv detect | jq -r --arg p "$pci" '.gpus[] | select(.pci_address == $p) | .vendor // empty')"
+        if [ -z "$gpu_vendor" ]; then
+            gpu_vendor="$(cat "/sys/bus/pci/devices/${pci}/vendor" 2>/dev/null || echo missing)"
+        fi
+        if [ "$gpu_vendor" != "0x1002" ]; then
+            SYSTEM_ONE_ENABLED=false yq -i '.system_one.enabled = (strenv(SYSTEM_ONE_ENABLED) == "true")' "$CONFIG_PATH"
+            die "System One requires an AMD ROCm GPU at ${pci}; vendor is ${gpu_vendor}"
+        fi
+        system_one_render="$(llmenv detect | jq -r --arg p "$pci" '.gpus[] | select(.pci_address == $p) | .render_node')"
+        if [ -z "$system_one_render" ] || [ ! -r "${DRI_PATH}/${system_one_render}" ]; then
+            SYSTEM_ONE_ENABLED=false yq -i '.system_one.enabled = (strenv(SYSTEM_ONE_ENABLED) == "true")' "$CONFIG_PATH"
+            die "System One: configured GPU ${pci} has no readable render node (${DRI_PATH}/...); re-run make setup"
+        fi
+        system_one_off() { SYSTEM_ONE_ENABLED=false yq -i '.system_one.enabled = (strenv(SYSTEM_ONE_ENABLED) == "true")' "$CONFIG_PATH"; die "$1"; }
+        log_step "System One image and weights"
+        system_one_image="$(yq -r '.system_one.image' "$CONFIG_PATH")"
+        system_one_models="$(yq -r '.system_one.models' "$CONFIG_PATH")"
+        podman image exists "$system_one_image" || bash "${REPO_DIR}/scripts/system-one-build.sh" || system_one_off "System One image build failed"
+        log_step "Prefetching Laya weights (${system_one_models}) into llm-env-system-one-cache"
+        # :z relabels the script bind for Fedora SELinux.
+        podman run --rm \
+            -e LAYA_REVISION=reviewed \
+            -e "LAYA_MODELS=${system_one_models}" \
+            -v llm-env-system-one-cache:/home/laya/.cache/huggingface \
+            -v "${REPO_DIR}/scripts/system-one-cache-check.py:/opt/system-one-cache-check.py:ro,z" \
+            --entrypoint python3 "$system_one_image" /opt/system-one-cache-check.py prefetch \
+            || system_one_off "System One weight prefetch failed"
+        SYSTEM_ONE_ENABLED=true yq -i '.system_one.enabled = (strenv(SYSTEM_ONE_ENABLED) == "true")' "$CONFIG_PATH"
+    fi
+    if [ "$llm_server_enabled" = "true" ]; then
+        true # paste setup/setup.sh:103-208. Starts at `log_step "Step 3/8  Selecting models"`. Ends at the `fi` closing `if llmenv --config "$CONFIG_PATH" budget` (the line after `die "budget infeasible for models_max=..."`). Not the outer `else` at line 210.
+    else
+        log_step "Step 3/8  Selecting models"; log_info "(skipped -- llm-server disabled)"
+        log_step "Step 4/8  Downloading models"; log_info "(skipped -- llm-server disabled)"
+        log_step "Step 5/8  Validating model files"; log_info "(skipped -- llm-server disabled)"
+        log_step "Step 6/8  Preparing Vulkan"; log_info "(skipped -- llm-server disabled)"
+        log_step "Step 7/8  Checking the VRAM budget"; log_info "(skipped -- llm-server disabled)"
+    fi
+else
+    log_step "Step 2/8  Detecting GPUs"; log_info "(skipped -- llm-server disabled)"
+    log_step "Step 3/8  Selecting models"; log_info "(skipped -- llm-server disabled)"
+    log_step "Step 4/8  Downloading models"; log_info "(skipped -- llm-server disabled)"
+    log_step "Step 5/8  Validating model files"; log_info "(skipped -- llm-server disabled)"
+    log_step "Step 6/8  Preparing Vulkan"; log_info "(skipped -- llm-server disabled)"
+    log_step "Step 7/8  Checking the VRAM budget"; log_info "(skipped -- llm-server disabled)"
+fi

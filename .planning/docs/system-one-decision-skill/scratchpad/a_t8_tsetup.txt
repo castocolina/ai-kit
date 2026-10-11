@@ -1,0 +1,46 @@
+def test_check_setup_skips_system_one_when_disabled(tmp_path: pathlib.Path) -> None:
+    result, _calls, _ = run_check_setup_with_stubs(tmp_path)
+    assert "Verdict: SKIP reason=system-one is disabled" in result.stdout + result.stderr
+
+
+def test_check_setup_checks_kfd_and_image_when_system_one_enabled(tmp_path: pathlib.Path) -> None:
+    result, calls, _ = run_check_setup_with_stubs(
+        tmp_path, system_one_enabled=True, llm_server_enabled=False,
+    )
+    recorded = calls.read_text()
+    assert "podman image exists localhost/llm-env-system-one:rocm" in recorded
+    assert "identity=ROCm device" in result.stdout + result.stderr
+
+
+def test_check_setup_checks_system_one_weights_cache_when_enabled(tmp_path: pathlib.Path) -> None:
+    _result, calls, _ = run_check_setup_with_stubs(
+        tmp_path, system_one_enabled=True, llm_server_enabled=False,
+    )
+    recorded = calls.read_text()
+    assert "podman volume exists llm-env-system-one-cache" in recorded
+    assert "system-one-cache-check.py:ro,z" in recorded
+    assert "verify" in recorded
+
+
+def test_check_setup_fails_system_one_when_rocr_index_mismatches(tmp_path: pathlib.Path) -> None:
+    result, _calls, _ = run_check_setup_with_stubs(
+        tmp_path,
+        system_one_enabled=True,
+        llm_server_enabled=False,
+        rocr_index="1",
+    )
+    assert result.returncode != 0
+    assert "rocr" in (result.stdout + result.stderr).lower()
+
+
+def test_check_setup_skips_model_files_when_llm_server_disabled_and_gguf_absent(
+    tmp_path: pathlib.Path,
+) -> None:
+    result, calls, models_dir = run_check_setup_with_stubs(
+        tmp_path, llm_server_enabled=False, real_gguf=True,
+    )
+    assert not (models_dir / "first.gguf").exists()
+    assert not (models_dir / "second.gguf").exists()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "validate-gguf" not in calls.read_text()
+    assert result.stderr.count("Verdict: SKIP reason=llm-server is disabled") == 6

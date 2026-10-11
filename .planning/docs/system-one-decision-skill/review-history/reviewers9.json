@@ -1,0 +1,2 @@
+[{"key": "cursor-sol", "model": "gpt-5.6-sol-high", "vendor": "openai", "cli": "cursor-agent", "command": "cursor-agent -p --output-format text --mode plan --trust --model {model}", "extra": {"purpose": "review"}},
+ {"key": "opencode-glm53", "model": "opencode-go/glm-5.3", "vendor": "zhipu", "cli": "opencode", "command": "opencode run --auto -m {model}", "extra": {"purpose": "review"}}]

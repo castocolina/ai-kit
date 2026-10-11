@@ -1,0 +1,8 @@
+RESEARCH TASK (read-only, do not modify any files; use web search/fetch). Answer in Spanish, concise, with source URLs.
+Context: "Laya" is an open-source project that emulates/serves TypeSafe AI's "Jev" model (a fast "System One" model that answers typed questions: noul=yes/no, choice, score, with calibrated probabilities against a supplied `state`). The user is not sure it is the best open-source Jev-like alternative.
+Find out and report:
+1. What exactly Laya is (repo URL, license, maturity, API shape, model weights/requirements, GPU/CPU needs). Mention if other/better open-source alternatives to Jev exist and why.
+2. How to run Laya in a container (podman preferred, docker ok; Fedora Atomic/Bazzite host with an NVIDIA/AMD GPU possibly): exact Dockerfile/compose or image, ports, volumes, env vars, GPU passthrough flags.
+3. How to test it once up (healthcheck, curl examples of a noul/choice/score request and expected JSON response).
+4. How to use it from LLM agents: OpenAI-compatible endpoint vs custom API, how to wire it into opencode (provider config), Claude Code / MCP, or a small skill/script like a "jev-fast-decision" helper that calls Jev via OpenCode Zen; what to change to point it at the local Laya instead.
+Flag anything you could not verify. End with a short recommended step-by-step.

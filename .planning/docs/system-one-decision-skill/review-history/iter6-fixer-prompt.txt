@@ -1,0 +1,44 @@
+You are the fixer.
+
+Step 1: Read the file at /home/bazzite/.claude/skills/ai-kit-spec-review-fixer/SKILL.md and follow it exactly.
+
+Inputs:
+- Document(s) to edit: /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-provisioning.md /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-decision-skill.md
+- Review report: /tmp/llm-env-main-system-one-provisioning-iter-y9PBqU/iter5-combined.md
+- Codebase root: /var/home/bazzite/git/llm-env (llm-env references); /home/bazzite/.claude/skills/jev-fast-decision (the global skill Plan B edits; not a git repo)
+- FRAMEWORK_PROFILE_PATH: /home/bazzite/.claude/skills/ai-kit-spec-review-checklist/references/frameworks/superpowers.md (Read it and respect the framework's conventions while editing — keep the task-checkbox format).
+
+Extra grounding you are allowed to use while fixing (read-only, never modify these):
+- The local image localhost/laya-rocm:latest contains the installed laya 0.4.2 package. To resolve the placeholder prefetch / cache-listing code, inspect its source read-only, e.g.
+  podman run --rm --entrypoint sh localhost/laya-rocm -c 'cd $(python -c "import laya,os;print(os.path.dirname(laya.__file__))") && sed -n 1,200p revisions.py'
+  and likewise router.py / serve.py. Replace the placeholders with exact repo ids, revision handling, and working Python. Do not start any long-running container and do not touch the GPU.
+- For the skill-judge finding, read /home/bazzite/.claude/skills/skill-judge/SKILL.md and define acceptance using its actual dimensions/scoring.
+- For writing-skills requirements, read /home/bazzite/.claude/plugins/cache/claude-plugins-official/superpowers/6.4.1/skills/writing-skills/SKILL.md.
+- For test-harness findings, read the real helpers in /var/home/bazzite/git/llm-env/tests/test_shell.py (run_setup_no_gpu, run_lifecycle_script, run_check_server, run_check_setup_with_stubs) and specify exact harness extensions.
+
+Apply the skill. Edit the document(s) in place. Emit the structured Fix Summary at the end.
+
+Do not assume any context outside what you read. Do not edit the review report. Do not edit any file other than the two plan documents. Do not run git.
+
+Owner rulings on this report (apply, do not ask):
+- Gemini's "provide the exact 32 JSONL cases" finding: REJECTED by the owner — the composition rule + exemplars + authoring step is deliberate; leave it and note the disagreement in your Fix Summary's skipped section.
+- Ambiguous cases: they are INCLUDED in `n` and in the recorded per-case results but EXCLUDED from accuracy and from calibration's accuracy computation; they count toward fallback_rate (a correct system should flag them). Make text, code and tests agree.
+- Plan A Task 11 must end with System One enabled and healthy on 127.0.0.1:8010 (restore the original config with system_one.enabled: true, make restart, health check) because Plan B's live tasks depend on it.
+- Fix every other finding in the report.
+
+Owner decision — OpenCode Zen free/paid model ladder (Plan B; apply it, do not ask):
+Facts verified live on 2026-10-11 and from docs:
+- `GET https://opencode.ai/zen/v1/models` lists `jev-1.13-free` and `jev-1.13`; both answer `POST /zen/v1/systemone` (response `model` echoes the request id). On 14 labeled cases jev-1.13-free scored 14/14, no cross-item contamination when batched, ~720 ms p50. Zen choice probabilities come back as integers 0/1.
+- opencode.ai/docs/zen: Jev 1.13 Free is "available on OpenCode for a limited time"; "Prompts and other inputs are not used for training" (TypeSafe privacy policy). No documented rate limit or window.
+- Free-tier throttling is real but undocumented: HTTP 429 body `{"type":"error","error":{"type":"FreeUsageLimitError","message":"Rate limit exceeded. Please try again later."}}`. Reported reset waits range from hours to ~17 h (user report, opencode issue #32391); no Retry-After documented. Community reports (issue #42074) say the gate keys on User-Agent for direct API callers — do NOT spoof the opencode client User-Agent; keep the script's own honest UA.
+- When a free promotion ends, the id disappears from /zen/v1/models and requests return 400 `Model is unavailable`.
+- Paid model failure modes: 429 `Account budget exceeded` (monthly quota), 401/403 (key).
+Design to encode:
+- The `opencode` backend has an ordered model list: `jev-1.13-free` first, then `jev-1.13`. Fall to the paid id only when the free call fails with: 429 (any body, incl. FreeUsageLimitError), 5xx, network error, or 400 whose body says "Model is unavailable". Do not fall back on 400 invalid-request errors (same payload would fail again) or on 401/403.
+- No automatic retry of the free id within the same call; no persistent cooldown state (shortcut: note it as a comment `shortcut: no cooldown memory; add a timestamp file if free 429s become frequent`).
+- Result reports which model answered (`model` field already echoes it) and records the free failure in `attempts` (e.g. `{"backend":"opencode","model":"jev-1.13-free","reason":"http_429"}`).
+- `response_prefix` stays `jev-` so both ids validate.
+- Tests: free 429 → paid called and answers; free 400 "Model is unavailable" → paid; free 400 other → no paid call, unavailable; free OK → paid never called.
+- backends/opencode.md documents all facts above with sources (opencode.ai/docs/zen, issue #42074, issue #32391) and states the reset window is undocumented.
+- The consent rule (JEV_ALLOW_REMOTE=1) covers both ids; the free tier's no-training statement does not remove the consent requirement.
+- Keep both plans as short as correctness allows.

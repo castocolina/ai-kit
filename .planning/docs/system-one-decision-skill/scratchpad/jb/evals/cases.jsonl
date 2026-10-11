@@ -1,0 +1,32 @@
+{"item": {"id": "c01", "type": "choice", "instructions": "Which make target should the user run next?", "context": "make start failed: no config at ~/.config/llm-env/models.yml", "criteria": {"setup": "configuration missing or invalid", "check-server": "server running but misbehaving", "clean": "start over from scratch"}}, "expected": "setup", "ambiguous": false}
+{"item": {"id": "c09", "type": "choice", "instructions": "Which make target should the user run next?", "context": "make start is healthy, one model answers nonsense, and check-setup also reports a bad GGUF", "criteria": {"setup": "configuration missing or invalid", "check-server": "server running but misbehaving", "clean": "start over from scratch"}}, "expected": "check-server", "ambiguous": true}
+{"item": {"id": "n01", "type": "noul", "instructions": "Is the system-one section absent from check-setup.sh?", "context": "scripts/check-setup.sh has no system-one block and exits 0"}, "expected": true, "ambiguous": false}
+{"item": {"id": "r01", "type": "score", "instructions": "How severe is this failure?", "context": "make start exits before any container is up because models.yml is missing", "criteria": ["cosmetic", "degraded", "blocking", "data loss"]}, "expected": 2, "ambiguous": false}
+{"item": {"id": "s01", "criterion": "The check-setup failure is a real regression", "evidence": "scripts/check-setup.sh exits 0 while the new system-one section is absent"}, "expected": "supported", "ambiguous": false}
+{"item": {"id": "s06", "criterion": "The VRAM delta is only System One", "evidence": "vram_used_mib changed after make start; the log does not say which container allocated"}, "expected": "unclear", "ambiguous": true}
+{"item": {"id": "c02", "type": "choice", "instructions": "Which?", "context": "ctx", "criteria": {"setup": "configuration missing or invalid", "check-server": "server running but misbehaving", "clean": "start over from scratch"}}, "expected": "setup", "ambiguous": false}
+{"item": {"id": "c03", "type": "choice", "instructions": "Which?", "context": "ctx", "criteria": {"setup": "configuration missing or invalid", "check-server": "server running but misbehaving", "clean": "start over from scratch"}}, "expected": "setup", "ambiguous": false}
+{"item": {"id": "c04", "type": "choice", "instructions": "Which?", "context": "ctx", "criteria": {"setup": "configuration missing or invalid", "check-server": "server running but misbehaving", "clean": "start over from scratch"}}, "expected": "setup", "ambiguous": false}
+{"item": {"id": "c05", "type": "choice", "instructions": "Which?", "context": "ctx", "criteria": {"setup": "configuration missing or invalid", "check-server": "server running but misbehaving", "clean": "start over from scratch"}}, "expected": "setup", "ambiguous": false}
+{"item": {"id": "c06", "type": "choice", "instructions": "Which?", "context": "ctx", "criteria": {"setup": "configuration missing or invalid", "check-server": "server running but misbehaving", "clean": "start over from scratch"}}, "expected": "setup", "ambiguous": false}
+{"item": {"id": "c07", "type": "choice", "instructions": "Which?", "context": "ctx", "criteria": {"setup": "configuration missing or invalid", "check-server": "server running but misbehaving", "clean": "start over from scratch"}}, "expected": "setup", "ambiguous": false}
+{"item": {"id": "c08", "type": "choice", "instructions": "Which?", "context": "ctx", "criteria": {"setup": "configuration missing or invalid", "check-server": "server running but misbehaving", "clean": "start over from scratch"}}, "expected": "setup", "ambiguous": false}
+{"item": {"id": "c10", "type": "choice", "instructions": "Which?", "context": "ctx", "criteria": {"setup": "configuration missing or invalid", "check-server": "server running but misbehaving", "clean": "start over from scratch"}}, "expected": "setup", "ambiguous": true}
+{"item": {"id": "n02", "type": "noul", "instructions": "Is it?", "context": "ctx"}, "expected": true, "ambiguous": false}
+{"item": {"id": "n03", "type": "noul", "instructions": "Is it?", "context": "ctx"}, "expected": true, "ambiguous": false}
+{"item": {"id": "n04", "type": "noul", "instructions": "Is it?", "context": "ctx"}, "expected": true, "ambiguous": false}
+{"item": {"id": "n05", "type": "noul", "instructions": "Is it?", "context": "ctx"}, "expected": true, "ambiguous": false}
+{"item": {"id": "n06", "type": "noul", "instructions": "Is it?", "context": "ctx"}, "expected": true, "ambiguous": false}
+{"item": {"id": "n07", "type": "noul", "instructions": "Is it?", "context": "ctx"}, "expected": true, "ambiguous": false}
+{"item": {"id": "n08", "type": "noul", "instructions": "Is it?", "context": "ctx"}, "expected": true, "ambiguous": false}
+{"item": {"id": "n09", "type": "noul", "instructions": "Is it?", "context": "ctx"}, "expected": true, "ambiguous": false}
+{"item": {"id": "n10", "type": "noul", "instructions": "Is it?", "context": "ctx"}, "expected": true, "ambiguous": true}
+{"item": {"id": "r02", "type": "score", "instructions": "How?", "context": "ctx", "criteria": ["a", "b", "c", "d"]}, "expected": 2, "ambiguous": false}
+{"item": {"id": "r03", "type": "score", "instructions": "How?", "context": "ctx", "criteria": ["a", "b", "c", "d"]}, "expected": 2, "ambiguous": false}
+{"item": {"id": "r04", "type": "score", "instructions": "How?", "context": "ctx", "criteria": ["a", "b", "c", "d"]}, "expected": 2, "ambiguous": false}
+{"item": {"id": "r05", "type": "score", "instructions": "How?", "context": "ctx", "criteria": ["a", "b", "c", "d"]}, "expected": 2, "ambiguous": false}
+{"item": {"id": "r06", "type": "score", "instructions": "How?", "context": "ctx", "criteria": ["a", "b", "c", "d"]}, "expected": 2, "ambiguous": true}
+{"item": {"id": "s02", "criterion": "crit", "evidence": "ev"}, "expected": "supported", "ambiguous": false}
+{"item": {"id": "s03", "criterion": "crit", "evidence": "ev"}, "expected": "supported", "ambiguous": false}
+{"item": {"id": "s04", "criterion": "crit", "evidence": "ev"}, "expected": "supported", "ambiguous": false}
+{"item": {"id": "s05", "criterion": "crit", "evidence": "ev"}, "expected": "supported", "ambiguous": false}

@@ -1,0 +1,18 @@
+DEFAULT_SYSTEM_ONE_IMAGE = "localhost/llm-env-system-one:rocm"
+DEFAULT_SYSTEM_ONE_PORT = 8010
+# Mirrors laya.router canonical names (english | multilingual | typed-decisions).
+LAYA_MODEL_ALIASES = {
+    "en": "english", "laya": "english", "default": "english",
+    "multi": "multilingual", "ml": "multilingual", "laya-multilingual": "multilingual",
+    "typed": "typed-decisions", "typed_decisions": "typed-decisions",
+    "laya-typed-decisions": "typed-decisions", "decisions": "typed-decisions",
+}
+
+
+def canonical_laya_model_name(token: str) -> str:
+    key = token.strip().lower()
+    if key in LAYA_MODEL_ALIASES:
+        return LAYA_MODEL_ALIASES[key]
+    if key in ("english", "multilingual", "typed-decisions"):
+        return key
+    raise ValueError(token)

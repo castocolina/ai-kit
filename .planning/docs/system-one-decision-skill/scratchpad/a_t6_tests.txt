@@ -1,0 +1,85 @@
+def test_setup_persists_system_one_disabled_by_default(tmp_path: pathlib.Path) -> None:
+    result, _calls, config = run_setup_no_gpu(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert yq_value(config, ".system_one.enabled") == "false"
+
+
+def test_setup_refuses_system_one_without_kfd(tmp_path: pathlib.Path) -> None:
+    result, _calls, config = run_setup_no_gpu(
+        tmp_path, system_one_env="1", kfd_path=str(tmp_path / "no-kfd")
+    )
+    assert result.returncode != 0
+    assert "requires an AMD GPU with ROCm (/dev/kfd)" in result.stderr
+    assert yq_value(config, ".system_one.enabled") == "false"
+
+
+def test_setup_refuses_system_one_when_selected_gpu_not_rocm(tmp_path: pathlib.Path) -> None:
+    kfd = tmp_path / "kfd"
+    kfd.touch()
+    result, _calls, config = run_setup_no_gpu(
+        tmp_path,
+        system_one_env="1",
+        kfd_path=str(kfd),
+        env_overrides={"DETECT_GPU_VENDOR": "0x10de"},
+    )
+    assert result.returncode != 0
+    assert "AMD ROCm GPU" in result.stderr
+    assert yq_value(config, ".system_one.enabled") == "false"
+
+
+def test_setup_system_one_runs_gpu_detection_even_without_llm_server(tmp_path: pathlib.Path) -> None:
+    kfd = tmp_path / "kfd"
+    kfd.touch()
+    result, calls, _config = run_setup_no_gpu(tmp_path, system_one_env="1", kfd_path=str(kfd))
+    # Detection is stubbed; the assertion is that setup reached the detect path.
+    assert "detect" in (calls.read_text() if calls.exists() else "")
+    assert "Step 3/8  Selecting models" in result.stdout
+    assert "(skipped -- llm-server disabled)" in result.stdout
+
+
+def test_setup_builds_system_one_image_when_missing(tmp_path: pathlib.Path) -> None:
+    kfd = tmp_path / "kfd"
+    kfd.touch()
+    result, calls, _config = run_setup_no_gpu(
+        tmp_path, system_one_env="1", kfd_path=str(kfd),
+        env_overrides={"PODMAN_IMAGE_MISSING": "1"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "system-one-build.sh" in calls.read_text() and "podman build -t localhost/llm-env-system-one:rocm" in calls.read_text()
+
+
+def test_setup_leaves_system_one_disabled_when_build_fails(tmp_path: pathlib.Path) -> None:
+    kfd = tmp_path / "kfd"
+    kfd.touch()
+    result, _calls, config = run_setup_no_gpu(
+        tmp_path, system_one_env="1", kfd_path=str(kfd),
+        env_overrides={"PODMAN_IMAGE_MISSING": "1", "SYSTEM_ONE_BUILD_FAIL": "1"},
+    )
+    assert result.returncode != 0
+    assert yq_value(config, ".system_one.enabled") == "false"
+
+
+def test_setup_skips_system_one_build_when_image_present(tmp_path: pathlib.Path) -> None:
+    kfd = tmp_path / "kfd"
+    kfd.touch()
+    result, calls, _config = run_setup_no_gpu(tmp_path, system_one_env="1", kfd_path=str(kfd))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "scripts/system-one-build.sh" not in calls.read_text()
+
+
+def test_setup_prefetches_system_one_weights_when_enabled(tmp_path: pathlib.Path) -> None:
+    kfd = tmp_path / "kfd"
+    kfd.touch()
+    _result, calls, _config = run_setup_no_gpu(tmp_path, system_one_env="1", kfd_path=str(kfd))
+    recorded = calls.read_text()
+    assert "llm-env-system-one-cache:/home/laya/.cache/huggingface" in recorded
+    assert "podman run" in recorded and "LAYA_MODELS=english" in recorded and "localhost/llm-env-system-one:rocm" in recorded
+    assert "system-one-cache-check.py:ro,z" in recorded
+    assert yq_value(_config, ".system_one.enabled") == "true"
+
+
+def test_setup_skips_system_one_build_and_prefetch_when_disabled(tmp_path: pathlib.Path) -> None:
+    _result, calls, _config = run_setup_no_gpu(tmp_path)
+    recorded = calls.read_text()
+    assert "scripts/system-one-build.sh" not in recorded
+    assert "llm-env-system-one-cache" not in recorded

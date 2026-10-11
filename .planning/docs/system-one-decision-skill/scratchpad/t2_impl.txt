@@ -1,0 +1,89 @@
+import math  # already present
+import urllib.parse  # file has urllib.error and urllib.request only
+
+
+def _laya_base():
+    return os.environ.get("JEV_LAYA_URL", "http://127.0.0.1:8010").rstrip("/")
+
+
+BACKENDS = {
+    "laya": {"model": "jev-1", "response_prefix": "laya-", "batch": False, "remote": False,
+             "min_confidence": 0.7},
+    "typesafe": {"url": "https://api.typesafe.ai/v1/systemone", "model": "jev-latest",
+                 "response_prefix": "jev-", "batch": True, "remote": True, "min_confidence": 0.7},
+    "opencode": {"url": "https://opencode.ai/zen/v1/systemone",
+                 "model": "jev-1.13-free",
+                 "models": ("jev-1.13-free", "jev-1.13"),
+                 "response_prefix": "jev-", "batch": True, "remote": True, "min_confidence": 0.7},
+}
+AUTO_ORDER = ("laya", "typesafe", "opencode")
+
+
+def _parse_jev_min_confidence():
+    raw = os.environ.get("JEV_MIN_CONFIDENCE", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError("invalid_min_confidence")
+    if not math.isfinite(value) or value < 0 or value > 1:
+        raise ValueError("invalid_min_confidence")
+    return value
+
+
+def min_confidence_for(backend: str) -> float:
+    override = _parse_jev_min_confidence()
+    if override is not None:
+        return override
+    return float(BACKENDS[backend]["min_confidence"])
+
+
+def backend_url(name):
+    return f"{_laya_base()}/v1/systemone" if name == "laya" else BACKENDS[name]["url"]
+
+
+def backend_key(name):
+    env = {"laya": "LAYA_API_KEY", "typesafe": "TYPESAFE_API_KEY", "opencode": "OPENCODE_API_KEY"}[name]
+    key = os.environ.get(env, "").strip()
+    return key or (_opencode_auth_key() if name == "opencode" else "")
+
+
+def _laya_loopback_ok():
+    host = urllib.parse.urlparse(_laya_base()).hostname or ""
+    return host in ("127.0.0.1", "localhost", "::1")
+
+
+def _remotes_available():
+    return [name for name in ("typesafe", "opencode") if backend_key(name)]
+
+
+def probe(name):
+    if name != "laya" and os.environ.get("JEV_ALLOW_REMOTE") != "1":
+        return "consent_required_for_remote"
+    if name == "laya":
+        if not _laya_loopback_ok():
+            return "non_loopback_url"
+        try:
+            with urllib.request.build_opener(NoRedirect()).open(f"{_laya_base()}/health", timeout=1) as stream:
+                return None if stream.status == 200 else "unreachable"
+        except (OSError, ValueError, http.client.HTTPException):
+            return "unreachable"
+    return None if backend_key(name) else "missing_api_key"
+
+
+def candidates():
+    choice = os.environ.get("JEV_BACKEND", "auto").strip() or "auto"
+    if choice != "auto" and choice not in BACKENDS:
+        return [], {choice: "unknown_backend"}
+    names = AUTO_ORDER if choice == "auto" else (choice,)
+    if choice == "auto" and os.environ.get("JEV_ALLOW_REMOTE") != "1":
+        names = ("laya",)
+    usable, reasons = [], {}
+    for name in names:
+        reason = probe(name)
+        if reason is None:
+            usable.append(name)
+        else:
+            reasons[name] = reason
+    return usable, reasons

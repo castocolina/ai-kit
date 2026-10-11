@@ -1,0 +1,2 @@
+SYSTEM_ONE="${LLM_ENV_SYSTEM_ONE:-}"
+KFD_PATH="${LLM_ENV_KFD_PATH:-/dev/kfd}"

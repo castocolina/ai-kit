@@ -1,0 +1,202 @@
+{
+  "repeat_max_prob_diff": 0.0,
+  "results": [
+    {
+      "backend": "laya",
+      "cases": [
+        {
+          "id": "x0",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x1",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x2",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x3",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x4",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x5",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x6",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x7",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x8",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x9",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x10",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x11",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x12",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x13",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x14",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x15",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x16",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x17",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x18",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "x19",
+          "top": 0.9,
+          "correct": true,
+          "ambiguous": false
+        },
+        {
+          "id": "y0",
+          "top": 0.55,
+          "correct": false,
+          "ambiguous": false
+        },
+        {
+          "id": "y1",
+          "top": 0.55,
+          "correct": false,
+          "ambiguous": false
+        },
+        {
+          "id": "y2",
+          "top": 0.55,
+          "correct": false,
+          "ambiguous": false
+        },
+        {
+          "id": "y3",
+          "top": 0.55,
+          "correct": false,
+          "ambiguous": false
+        },
+        {
+          "id": "y4",
+          "top": 0.55,
+          "correct": false,
+          "ambiguous": false
+        },
+        {
+          "id": "y5",
+          "top": 0.55,
+          "correct": false,
+          "ambiguous": false
+        },
+        {
+          "id": "y6",
+          "top": 0.55,
+          "correct": false,
+          "ambiguous": false
+        },
+        {
+          "id": "z0",
+          "top": 0.5,
+          "correct": false,
+          "ambiguous": true
+        },
+        {
+          "id": "z1",
+          "top": 0.5,
+          "correct": false,
+          "ambiguous": true
+        },
+        {
+          "id": "z2",
+          "top": 0.5,
+          "correct": false,
+          "ambiguous": true
+        },
+        {
+          "id": "z3",
+          "top": 0.5,
+          "correct": false,
+          "ambiguous": true
+        },
+        {
+          "id": "z4",
+          "top": 0.5,
+          "correct": false,
+          "ambiguous": true
+        }
+      ]
+    }
+  ]
+}

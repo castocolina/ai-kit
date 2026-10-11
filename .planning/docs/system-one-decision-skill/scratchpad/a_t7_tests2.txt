@@ -1,0 +1,17 @@
+def test_gpu_status_reports_the_gpu_when_only_system_one_is_enabled(tmp_path: pathlib.Path) -> None:
+    result, _, _ = run_gpu_status_with_stubs(
+        tmp_path,
+        config_text=(
+            "llm_server:\n  enabled: false\n"
+            "system_one:\n  enabled: true\n"
+            "gpu:\n  pci_address: \"0000:03:00.0\"\n  vram_budget_ceiling_mib: 15565\n"
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "no GPU is in use" not in result.stdout + result.stderr
+    assert "0000:03:00.0" in result.stdout
+
+
+def test_gpu_status_does_not_offer_to_migrate_system_one(tmp_path: pathlib.Path) -> None:
+    result, _, _ = run_gpu_status_with_stubs(tmp_path, config_text="llm_server:\n  enabled: false\nsystem_one:\n  enabled: true\ngpu:\n  pci_address: \"0000:03:00.0\"\n  vram_budget_ceiling_mib: 15565\n", processes_json='{"processes":[{"pid":9,"comm":"python","exe":"python","cmdline":"laya-serve","vram_mib":4000}]}')
+    assert result.returncode == 0 and "no other processes using the dGPU" in result.stdout and "Move these" not in result.stdout

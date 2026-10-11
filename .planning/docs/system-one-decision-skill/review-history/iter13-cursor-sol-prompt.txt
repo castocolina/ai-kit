@@ -1,0 +1,25 @@
+Read the file at /home/bazzite/.claude/skills/ai-kit-spec-review-checklist/SKILL.md
+and follow it exactly, substituting:
+- ARCHETYPE = plan (both documents)
+- FRAMEWORK_PROFILE_PATH = /home/bazzite/.claude/skills/ai-kit-spec-review-checklist/references/frameworks/superpowers.md
+Read every file under review fresh from disk: /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-provisioning.md /var/home/bazzite/git/llm-env/docs/superpowers/plans/2026-10-10-system-one-decision-skill.md
+Complementary grounding documents (Read for context — DO NOT review,
+score, or emit findings about these): none
+These are the upstream context/research the document under review is
+derived from. Use them to detect drift — where the document under
+review contradicts or omits what its own intent/research established —
+and fold that into findings about the REVIEWED document only. If
+"none", there are none.
+Codebase root(s) for grounding: /var/home/bazzite/git/llm-env (Plan A and Plan B's llm-env references); /home/bazzite/.claude/skills/jev-fast-decision (Plan B's skill files — global skill directory, not a git repo, AUTHORITATIVE location per the plan)
+The paths the document itself declares (worktree/target locations,
+cross-repo references) are AUTHORITATIVE for this review — do not flag
+them or "correct" them just because they differ from CLAUDE.md /
+.claude/worktrees convention; only flag a path if it's internally
+inconsistent or violates a hard constraint.
+ARCHETYPE is the ceiling per document: judge an upstream doc (e.g.
+intent) only at its own level — never demand downstream detail
+(tasks, exact files, interfaces) it isn't meant to have.
+Emit the report following that skill's Output template strictly, ending
+with the ### Status: line. Do not edit any file under review.
+
+Owner rulings already final (do not re-raise): the 32-case calibration corpus stays as composition rules + six exemplars + an authoring step; no full corpus or generator.

@@ -1,0 +1,12 @@
+I'll follow the checklist-reviewer skill exactly. First, loading the skill, its framework profile, and the tooling guidance in parallel.
+Skill and profile loaded. Both docs are plans (superpowers, archetype=plan). Checking file sizes, then reading both plans fully in chunks.
+Provisioning plan read fully. Now reading the decision-skill plan (1556 lines) in two chunks.
+Both plans read in full. Now grounding against the two codebases. Checking repo structure and the skill directory first.
+Repo indexed by codegraph; `docker/laya-rocm/` exists; all three CLIs (`claude`, `opencode`, `cursor-agent`) present. Reading llm-env Python symbols via codegraph and the current skill files in parallel.
+Current `jev_review.py` verified: `math`, `hashlib`, `NoRedirect`, `_PROB_SUM_TOLERANCE`, `probability()` (accepts int), `_check_choice_answer`, `_CHECKERS`, `_opencode_auth_key()`, and the `JEV_API_URL`/`JEV_MODEL`/`JEV_RESPONSE_MODEL` constants all exist as the plans claim; `config.py` line anchors (172/383) match the `llm_server` insertion points. Continuing grounding: resources/budget/detect/compose + llmenv commands.
+`resources.py` and `budget.py` match the plans exactly (four `ResourceError` strings, `cpu_floor`/`memory_floor_mib` variables, `compute_budget` at line 103, `reserve = max(...)`, `model_costs` keys `alias`/`weights_mib`/`kv_mib`). Next: compose/detect/llmenv symbols.
+`render_compose` signature, `_dollar_escape`, `cmd_render_compose` (436), parser (603), `cmd_resources` (362, already passes `llm_server_enabled`) all verified. Checking `cmd_budget`'s two `compute_resource_limits` calls and `list_gpus`.
+`cmd_budget` verified: two `compute_resource_limits` calls exactly at lines 282 and 320; `ram_available_mib` key exists; `list_gpus` has the `device` variable in scope for the `vendor` addition. Now the shell scripts and config example.
+`setup.sh` structure matches the plan's anchors exactly (Step 1 prompt 36-58, wrapper if at 60, Step 3 log at 103, budget `fi` 208, outer `else` 210); `render-unit.sh` render-compose at 67; `models.yml.example` `llm_server:` at 35-37. Now verifying test_shell.py helper/stub claims via targeted rg.
+Line anchors in test_shell.py all verified (538/571/682/786/855/1338/2295/4063/4476/4496/6053/6776, `MIGRATE_CONFIG_PYSTUB` at 91). Now reading the helper bodies the plans modify.
+Helpers verified so far. Reading the remaining test helpers the plans modify.
