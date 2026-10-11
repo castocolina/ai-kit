@@ -328,3 +328,39 @@ existence/chaining/AST-only-ness; the fuller dependency-direction/layering-
 boundary enforcement ambition described above remains an explicitly-flagged
 known gap, not built by Phase 12. This stub is left as-is for history; it is
 not duplicated as a second active roadmap item.
+
+### Phase 999.4: Ponytail as a first-class recommended skill set in curated GSD setup (BACKLOG)
+
+**Goal:** [Captured for future planning] **The user puts strong emphasis on this.** When the
+curated GSD setup (`ai-kit-gsd-curated-config` v2) builds the per-agent skills list
+(`agent_skills.<agent>`), the ponytail plugin must be one of the skills it recommends. The plugin
+is now installed as a Claude plugin, v5.1.0, and provides:
+- `ponytail:ponytail` (smallest complete change);
+- `ponytail:ponytail-audit` (whole-repo audit);
+- `ponytail:ponytail-review`;
+- `ponytail:ponytail-debt`;
+- `ponytail:ponytail-gain`;
+- `ponytail:ponytail-help`.
+
+These cover planning, auditing, execution and review, so they would help across the GSD
+workflow, including on ai-kit itself.
+
+This overlaps Phase 18 (SKL-01..03, design §7 `skill_affinity.json`), which is not executed yet:
+- `18-CONTEXT.md` says ponytail "does not exist … so per D-03 it is simply not mentioned". That
+  is now stale: ponytail is installed and addressable as `global:ponytail:<skill>`, which works on
+  the Claude host only. The plugin also ships `AGENTS.md` and `gemini-extension.json`, so check
+  whether other hosts can address it too.
+- Map each ponytail command to agents, not only the core skill:
+  - core `ponytail` → planner, executor, code-fixer (design §7 "token economy");
+  - `ponytail-review` and `ponytail-audit` → code-reviewer and the auditors;
+  - `ponytail-debt` → planner or verifier.
+- Respect the per-agent skill cap per rigor (2/3/5).
+
+Preferred route: fold this into Phase 18 when it is planned (amend `18-CONTEXT.md` D-03 and the
+§7 mapping), rather than leaving it as a separate later phase.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
