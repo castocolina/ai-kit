@@ -16,6 +16,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, BinaryIO
@@ -874,29 +875,130 @@ def seg_slowest(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
     )
 
 
+def billing_pace_gap(
+    used_pct: float,
+    start_ms: int,
+    end_ms: int,
+    now_ms: int,
+) -> float | None:
+    if end_ms <= start_ms:
+        return None
+    elapsed = 100.0 * (now_ms - start_ms) / (end_ms - start_ms)
+    elapsed = max(0.0, min(100.0, elapsed))
+    return float(used_pct) - elapsed
+
+
+def context_from_quota(quota: dict[str, Any], *, now_ms: int) -> SimpleNamespace:
+    od = quota.get("on_demand") if isinstance(quota.get("on_demand"), dict) else {
+        "kind": "unavailable"
+    }
+    total = quota.get("total_pct")
+    used = float(od.get("used_dollars") or 0)
+    hot = bool(
+        isinstance(total, (int, float))
+        and float(total) >= 100
+        and used > 0
+        and od.get("kind") in {"fixed", "unlimited"}
+    )
+    return SimpleNamespace(
+        total_pct=total,
+        auto_pct=quota.get("auto_pct"),
+        api_pct=quota.get("api_pct"),
+        on_demand=od,
+        cycle_start_ms=int(quota.get("cycle_start_ms") or 0),
+        cycle_end_ms=int(quota.get("cycle_end_ms") or 0),
+        stale=bool(quota.get("stale")),
+        now_ms=now_ms,
+        on_demand_hot=hot,
+    )
+
+
+def _quota_suffix(ctx: SimpleNamespace) -> str:
+    s = f"{_DIM}≈{RESET}"
+    if getattr(ctx, "stale", False):
+        s += " (stale)"
+    return s
+
+
+def _included_label(prefix: str, pct: float, ctx: SimpleNamespace, theme: Theme) -> str:
+    body = f"{prefix} {int(pct)}%"
+    gap = billing_pace_gap(
+        float(pct),
+        int(getattr(ctx, "cycle_start_ms", 0) or 0),
+        int(getattr(ctx, "cycle_end_ms", 0) or 0),
+        int(getattr(ctx, "now_ms", 0) or 0),
+    )
+    if gap is None:
+        return body
+    return f"{util_gap_color(abs(gap), theme)}{body}{RESET}"
+
+
 def seg_included_total(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    pct = getattr(ctx, "total_pct", None)
+    if pct is None:
+        return None
+    text = f"{_included_label('inc', float(pct), ctx, theme)}{_quota_suffix(ctx)}"
+    return util_first_fitting([text], avail)
 
 
 def seg_included_auto(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    pct = getattr(ctx, "auto_pct", None)
+    if pct is None:
+        return None
+    text = f"{_included_label('auto', float(pct), ctx, theme)}{_quota_suffix(ctx)}"
+    return util_first_fitting([text], avail)
 
 
 def seg_included_api(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    pct = getattr(ctx, "api_pct", None)
+    if pct is None:
+        return None
+    text = f"{_included_label('api', float(pct), ctx, theme)}{_quota_suffix(ctx)}"
+    return util_first_fitting([text], avail)
 
 
 def seg_reset(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    del theme
+    end_ms = int(getattr(ctx, "cycle_end_ms", 0) or 0)
+    if not end_ms:
+        return None
+    now_ms = int(getattr(ctx, "now_ms", 0) or 0)
+    days = max(0, math.ceil((end_ms - now_ms) / 86_400_000))
+    date = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc).date().isoformat()
+    text = f"↺ {date} ({days}d){_quota_suffix(ctx)}"
+    return util_first_fitting([text], avail)
 
 
 def seg_on_demand(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    od = getattr(ctx, "on_demand", None) or {}
+    kind = od.get("kind")
+    if kind == "unavailable" or kind is None:
+        return None
+    if kind == "disabled":
+        body = "od off"
+        color = ""
+    elif kind == "fixed":
+        used = float(od.get("used_dollars") or 0)
+        ceil = float(od.get("ceiling_dollars") or 0)
+        body = f"od ${used:.1f}/${ceil:g}"
+        ratio = (100.0 * used / ceil) if ceil > 0 else 0.0
+        if ratio < 50:
+            color = theme.c("GREEN")
+        elif ratio < 80:
+            color = theme.c("YELLOW")
+        else:
+            color = f"\033[1;{theme.palette['RED']}m"
+    elif kind == "unlimited":
+        used = float(od.get("used_dollars") or 0)
+        body = f"od ${used:.1f} no cap"
+        color = theme.c("GREEN")
+    else:
+        return None
+    if getattr(ctx, "on_demand_hot", False):
+        color = "\x1b[1;31m"
+    painted = f"{color}{body}{RESET}" if color else body
+    text = f"{painted}{_quota_suffix(ctx)}"
+    return util_first_fitting([text], avail)
 
 
 BUILDERS: dict[str, Any] = {
@@ -1006,6 +1108,14 @@ def render_for_test(
     config = load_config(env)
     ctx = build_context(payload, env, now=now, theme=theme, config=config)
     ctx.t_start = time.perf_counter_ns()
+    clock = time.time() if now is None else float(now)
+    try:
+        quota = fetch_quota(env, now=clock)
+        qctx = context_from_quota(quota, now_ms=int(clock * 1000))
+        for k, v in vars(qctx).items():
+            setattr(ctx, k, v)
+    except Exception:  # noqa: BLE001 — hide quota, keep local/payload
+        pass
     return core_render(ctx)
 
 

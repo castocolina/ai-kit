@@ -615,5 +615,201 @@ class TestQuotaFetch(unittest.TestCase):
             self.assertEqual(q["on_demand"]["kind"], "unavailable")
 
 
+class TestQuotaSegments(unittest.TestCase):
+    def test_on_demand_fixed_shows_ceiling(self):
+        mod = load_poc()
+        ctx = mod.context_from_quota(
+            {
+                "on_demand": {
+                    "kind": "fixed",
+                    "used_dollars": 1.5,
+                    "ceiling_dollars": 20.0,
+                },
+                "total_pct": 100,
+                "stale": False,
+                "cycle_start_ms": 0,
+                "cycle_end_ms": 10,
+            },
+            now_ms=5,
+        )
+        s = mod.seg_on_demand(ctx, 80, mod.default_theme())
+        self.assertIsNotNone(s)
+        self.assertIn("1.5", s)
+        self.assertIn("20", s)
+        self.assertIn("≈", s)
+
+    def test_on_demand_disabled_unlimited_unavailable(self):
+        mod = load_poc()
+        theme = mod.default_theme()
+        d = mod.context_from_quota(
+            {
+                "on_demand": {"kind": "disabled"},
+                "total_pct": 10,
+                "stale": False,
+                "cycle_start_ms": 0,
+                "cycle_end_ms": 10,
+            },
+            now_ms=5,
+        )
+        self.assertIn("off", mod.seg_on_demand(d, 80, theme).lower())
+        u = mod.context_from_quota(
+            {
+                "on_demand": {"kind": "unlimited", "used_dollars": 3.0},
+                "total_pct": 10,
+                "stale": False,
+                "cycle_start_ms": 0,
+                "cycle_end_ms": 10,
+            },
+            now_ms=5,
+        )
+        su = mod.seg_on_demand(u, 80, theme)
+        self.assertIn("3", su)
+        self.assertRegex(su.lower(), r"no cap|unlimited")
+        x = mod.context_from_quota(
+            {
+                "on_demand": {"kind": "unavailable"},
+                "total_pct": None,
+                "stale": False,
+                "cycle_start_ms": 0,
+                "cycle_end_ms": 10,
+            },
+            now_ms=5,
+        )
+        self.assertIsNone(mod.seg_on_demand(x, 80, theme))
+
+    def test_included_templates(self):
+        mod = load_poc()
+        theme = mod.default_theme()
+        ctx = mod.context_from_quota(
+            {
+                "total_pct": 42,
+                "auto_pct": 10,
+                "api_pct": 32,
+                "stale": False,
+                "on_demand": {"kind": "disabled"},
+                "cycle_start_ms": 0,
+                "cycle_end_ms": 100,
+            },
+            now_ms=50,
+        )
+        self.assertIn("inc 42%", mod.seg_included_total(ctx, 80, theme))
+        self.assertIn("auto 10%", mod.seg_included_auto(ctx, 80, theme))
+        self.assertIn("api 32%", mod.seg_included_api(ctx, 80, theme))
+
+    def test_auto_hidden_when_absent(self):
+        mod = load_poc()
+        ctx = mod.context_from_quota(
+            {
+                "total_pct": 10,
+                "auto_pct": None,
+                "on_demand": {"kind": "disabled"},
+                "stale": False,
+                "cycle_start_ms": 0,
+                "cycle_end_ms": 10,
+            },
+            now_ms=5,
+        )
+        self.assertIsNone(mod.seg_included_auto(ctx, 80, mod.default_theme()))
+
+    def test_stale_marker_and_reset_days(self):
+        mod = load_poc()
+        ctx = mod.context_from_quota(
+            {
+                "total_pct": 10,
+                "on_demand": {"kind": "disabled"},
+                "stale": True,
+                "cycle_start_ms": 0,
+                "cycle_end_ms": 86_400_000,
+            },
+            now_ms=0,
+        )
+        t = mod.seg_included_total(ctx, 80, mod.default_theme())
+        self.assertIn("stale", t.lower())
+        r = mod.seg_reset(ctx, 80, mod.default_theme())
+        self.assertIsNotNone(r)
+        self.assertIn("↺", r)
+        self.assertIn("1d", r)
+
+    def test_pace_gap_formula(self):
+        mod = load_poc()
+        self.assertEqual(
+            mod.billing_pace_gap(80.0, start_ms=0, end_ms=100, now_ms=50), 30.0
+        )
+
+    def test_gap_color_bands(self):
+        mod = load_poc()
+        theme = mod.default_theme()
+        self.assertEqual(mod.util_gap_color(5.0, theme), theme.c("GREEN"))
+        self.assertEqual(mod.util_gap_color(10.0, theme), theme.c("YELLOW"))
+        self.assertEqual(mod.util_gap_color(15.0, theme), theme.c("ORANGE"))
+        self.assertEqual(mod.util_gap_color(16.0, theme), theme.c("RED"))
+
+    def test_on_demand_highlight_when_included_exhausted(self):
+        mod = load_poc()
+        ctx = mod.context_from_quota(
+            {
+                "total_pct": 100,
+                "on_demand": {
+                    "kind": "fixed",
+                    "used_dollars": 0.5,
+                    "ceiling_dollars": 20,
+                },
+                "stale": False,
+                "cycle_start_ms": 0,
+                "cycle_end_ms": 10,
+            },
+            now_ms=5,
+        )
+        s = mod.seg_on_demand(ctx, 80, mod.default_theme())
+        self.assertTrue(ctx.on_demand_hot)
+        self.assertIn("\x1b[1;31m", s)
+
+    def test_render_includes_quota_from_fetch(self):
+        mod = load_poc()
+        payload = {
+            "model": {"display_name": "M"},
+            "workspace": {"current_dir": "/tmp/x"},
+            "context_window": {"used_percentage": 10, "context_window_size": 1000},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
+            mod.write_quota_cache(
+                env,
+                {
+                    "total_pct": 42,
+                    "auto_pct": None,
+                    "api_pct": None,
+                    "on_demand": {"kind": "disabled"},
+                    "stale": False,
+                    "fetched_at": 1,
+                    "cycle_start_ms": 0,
+                    "cycle_end_ms": 10_000,
+                },
+            )
+            out = mod.render_for_test(payload, env, now=50)
+        self.assertIn("M", out)
+        self.assertIn("inc 42%", out)
+        self.assertIn("≈", out)
+
+    def test_render_hides_quota_when_fetch_raises(self):
+        mod = load_poc()
+        payload = {
+            "model": {"display_name": "M"},
+            "workspace": {"current_dir": "/tmp/x"},
+            "context_window": {"used_percentage": 10, "context_window_size": 1000},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
+
+            def boom(*a, **k):
+                raise RuntimeError("quota down")
+
+            mod.fetch_quota = boom
+            out = mod.render_for_test(payload, env, now=50)
+        self.assertIn("M", out)
+        self.assertNotIn("inc ", out)
+        self.assertNotIn("≈", out)
+
+
 if __name__ == "__main__":
     unittest.main()
