@@ -1,0 +1,8 @@
+# Cursor Agent statusline POC sample config
+# Path: ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/cursor-statusline-poc.toml
+# Env override: AI_KIT_CURSOR_POC_CONFIG_FILE
+#
+# [segments] merges over defaults (all True).
+# Any [[line]] present replaces the entire layout (all-or-nothing).
+
+# Stub — Task 2/5 will document every segment default and the four [[line]] blocks.
