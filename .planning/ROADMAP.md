@@ -127,3 +127,50 @@ existence/chaining/AST-only-ness; the fuller dependency-direction/layering-
 boundary enforcement ambition described above remains an explicitly-flagged
 known gap, not built by Phase 12. This stub is left as-is for history; it is
 not duplicated as a second active roadmap item.
+
+### Phase 999.4: Host-split status line for Claude Code and Cursor CLI (BACKLOG)
+
+**Goal:** [Captured for future planning] Split `tools/status-line.py` into
+reusable `common_*` modules plus per-host `claude_*`/`cursor_*` modules with
+thin `claude-status-line.py`/`cursor-status-line.py` entries, add a
+Cursor-native status line (included quota, billing cycle, on-demand ceiling
+— quota data from an undocumented Cursor API, flagged as inferred), and make
+setup and the wizard run the verify/replace/keep status-line flow per
+detected host.
+
+**Linked assets:**
+
+- Design spec + review (open findings R3-1..R3-6; owner decisions final) live
+  on branch/worktree `spec/host-split-statusline` →
+  `.claude/worktrees/host-split-statusline-spec/.planning/specs/2026-10-10-host-split-statusline-design.md`
+  and `…-REVIEW.md` (not yet copied onto `main`).
+- External: Cursor CLI `cli-config.json` location and env overrides
+  (`CURSOR_CONFIG_DIR`, `XDG_CONFIG_HOME/cursor`):
+  <https://cursor.com/docs/cli/reference/configuration>. Claude Code status
+  line reference, which Cursor's `statusLine` aligns with:
+  <https://code.claude.com/docs/en/statusline>. Cursor's own `statusLine`
+  schema is documented only in the CLI's bundled `statusline` skill.
+
+**Spike / POC evidence (not merged; do not treat as production):**
+
+- Branch `poc/cursor-statusline`, worktree
+  `.claude/worktrees/poc-cursor-statusline` —
+  `tools/cursor-status-line-poc.py`, sample TOML, unit tests, and plan
+  `docs/superpowers/plans/2026-10-11-cursor-statusline-poc.md`.
+- Proved: Cursor `statusLine` stdin payload + Dashboard Connect-JSON quota
+  (included/auto/api %, cycle reset, on-demand ceiling); Claude-like column
+  packing/icons/ramps; 3-row layout with quota on row 2; process RSS must
+  match `cursor-agent` via cmdline (Node `comm` is often `MainThread`) using
+  Claude-style `/proc`|`ps` backends — never the statusline script's own RSS.
+- Caveats: quota `%` come from live API/cache (not hardcoded) but look "stuck"
+  when Dashboard fetch times out and the POC serves last-good with `≈`/stale
+  (`_FRESH_TTL=120`, `_NEG_TTL=600`); cold fetch ~1.9s — prefer
+  background/single-flight in the real 999.4 design. Live `cli-config.json`
+  wiring was ephemeral and restored to unset after the spike.
+
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
