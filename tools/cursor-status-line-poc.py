@@ -46,7 +46,26 @@ _PALETTE_DEFAULTS = {
     "BLUE": "38;5;39",
 }
 
-# Resolved ns ceilings for util_pick_color (50ms/150ms, 15ms/40ms).
+# Claude-parity column ergonomics.
+PATH_MAX_LEN = 50
+CONTEXT_BAR_CELLS = 10
+RIGHT_MARGIN = 4
+PINNED = frozenset({"path", "context"})
+
+# Percent ramps (context / rate) + ns ramps (render_time / slowest).
+_RAMP_PCT = {
+    "context": [
+        (10.0, "WHITE"),
+        (15.0, "CYAN"),
+        (20.0, "BLUE"),
+        (25.0, "GREEN"),
+        (30.0, "YELLOW"),
+        (40.0, "ORANGE"),
+        (50.0, "RED"),
+        (math.inf, "RED"),
+    ],
+    "rate": [(50.0, "GREEN"), (80.0, "YELLOW"), (math.inf, "RED")],
+}
 _RAMP_NS = {
     "render_time": [(50_000_000.0, "GREEN"), (150_000_000.0, "YELLOW"), (math.inf, "RED")],
     "slowest": [(15_000_000.0, "GREEN"), (40_000_000.0, "YELLOW"), (math.inf, "RED")],
@@ -55,9 +74,10 @@ _RAMP_NS = {
 SEGMENTS: dict[str, bool] = {
     "path": True,
     "git_branch": True,
-    "alt_git_worktree": True,
     "git_dirty": True,
-    "model_compact": True,
+    "alt_git_worktree": True,
+    "model": True,
+    "context": True,
     "included_total": True,
     "included_auto": True,
     "included_api": True,
@@ -69,11 +89,22 @@ SEGMENTS: dict[str, bool] = {
     "slowest": True,
 }
 
+# Claude-shaped rows: identity → model/context+quota → diagnostics.
 LAYOUT: list[tuple[int, list[str]]] = [
-    (0, ["path", "git_branch", "alt_git_worktree", "git_dirty"]),
-    (0, ["model_compact"]),
-    (0, ["included_total", "included_auto", "included_api", "reset", "on_demand"]),
-    (0, ["process_memory", "system_memory", "render_time", "slowest"]),
+    (0, ["path", "git_branch", "git_dirty", "alt_git_worktree"]),
+    (
+        0,
+        [
+            "model",
+            "context",
+            "included_total",
+            "included_auto",
+            "included_api",
+            "reset",
+            "on_demand",
+        ],
+    ),
+    (0, ["render_time", "process_memory", "system_memory", "slowest"]),
 ]
 
 
@@ -111,11 +142,14 @@ class Theme:
 def default_theme() -> Theme:
     palette = dict(_PALETTE_DEFAULTS)
     ramps: dict[str, list[tuple[float, str]]] = {}
-    for band, pairs in _RAMP_NS.items():
+    for band, pairs in {**_RAMP_PCT, **_RAMP_NS}.items():
         resolved: list[tuple[float, str]] = []
         for ceil, color in pairs:
-            if color == "RED":
+            # Bold red for the top severity band (Claude RED+bold).
+            if color == "RED" and ceil is math.inf:
                 resolved.append((ceil, f"\033[1;{palette['RED']}m"))
+            elif color == "ORANGE":
+                resolved.append((ceil, f"\033[1;{palette['ORANGE']}m"))
             else:
                 resolved.append((ceil, f"\033[{palette[color]}m"))
         ramps[band] = resolved
@@ -169,18 +203,36 @@ def util_icon(glyph: str, text: str) -> str:
     return f"{glyph} {text}"
 
 
-def util_two_state_cap(s: str, high: int, low: int) -> str:
-    if util_visible_width(s) <= high:
+def util_trunc_cols(s: str, limit: int) -> str:
+    if util_visible_width(s) <= limit:
         return s
     out: list[str] = []
     width = 0
     for c in s:
         cw = util_char_width(c)
-        if width + cw > low - 1:
+        if width + cw > limit - 1:
             break
         out.append(c)
         width += cw
     return "".join(out) + "…"
+
+
+def util_two_state_cap(s: str, high: int, low: int) -> str:
+    return s if util_visible_width(s) <= high else util_trunc_cols(s, low)
+
+
+def util_display_dir(work_dir: str, home: str) -> str:
+    """Tiered path: full ~-rel / parent/name / basename — Claude PATH_MAX_LEN."""
+    stripped = work_dir.rstrip("/")
+    full = (
+        ("~" + work_dir[len(home) :])
+        if (home and work_dir.startswith(home))
+        else work_dir
+    )
+    parent = os.path.basename(os.path.dirname(stripped))
+    name = os.path.basename(stripped) or work_dir or "?"
+    structural = util_first_fitting([full, f"{parent}/{name}"], PATH_MAX_LEN)
+    return structural if structural is not None else util_two_state_cap(name, 30, 20)
 
 
 def fmt_tokens(n: int | float) -> str:
@@ -642,15 +694,33 @@ def probe_git_for(ctx: SimpleNamespace) -> dict[str, Any]:
     return ctx._git
 
 
-def _rss_kb_via_proc(pid: int) -> int | None:
-    try:
-        with open(f"/proc/{pid}/status", encoding="utf-8") as fh:
-            for line in fh:
-                if line.startswith("VmRSS:"):
-                    return int(line.split()[1])
-    except (OSError, IndexError, ValueError):
+# Process RSS (Claude-shaped: /proc on Linux, `ps` elsewhere). Cursor's Node
+# host often reports /proc/<pid>/comm as "MainThread", so matching also reads
+# the full command line — never fall back to this script's own RSS.
+_HOST_COMM = frozenset({"cursor-agent", "agent"})
+
+
+def _util_to_int(value: str | None) -> int | None:
+    if value is None:
         return None
-    return None
+    try:
+        return int(value.strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _ps_field(pid: int, fieldname: str) -> str | None:
+    try:
+        out = subprocess.run(
+            ["ps", "-o", f"{fieldname}=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+        ).stdout.strip()
+        return out or None
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def _comm_via_proc(pid: int) -> str | None:
@@ -669,26 +739,84 @@ def _ppid_via_proc(pid: int) -> int | None:
         return None
 
 
-def probe_process_rss_bytes() -> int:
-    """RSS of cursor-agent/agent ancestor, else self RSS. Always int."""
-    self_kb = _rss_kb_via_proc(os.getpid())
-    self_bytes = (self_kb * 1024) if self_kb is not None else 1
-    if not os.path.isdir("/proc"):
-        return self_bytes
+def _rss_kb_via_proc(pid: int) -> int | None:
+    try:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except (OSError, IndexError, ValueError):
+        return None
+    return None
+
+
+def _cmdline_via_proc(pid: int) -> str | None:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    return raw.replace(b"\0", b" ").decode("utf-8", errors="replace").strip() or None
+
+
+def _comm_via_ps(pid: int) -> str | None:
+    return _ps_field(pid, "comm")
+
+
+def _ppid_via_ps(pid: int) -> int | None:
+    return _util_to_int(_ps_field(pid, "ppid"))
+
+
+def _rss_kb_via_ps(pid: int) -> int | None:
+    return _util_to_int(_ps_field(pid, "rss"))
+
+
+def _cmdline_via_ps(pid: int) -> str | None:
+    # macOS/BSD: `command` is argv joined; Linux procps accepts it too.
+    return _ps_field(pid, "command")
+
+
+def _is_cursor_host(comm: str | None, cmdline: str | None) -> bool:
+    """True when this pid is the Cursor agent host (not the statusline script)."""
+    if comm:
+        base = os.path.basename(comm)
+        if base in _HOST_COMM or "cursor-agent" in base:
+            return True
+    if cmdline and "cursor-agent" in cmdline:
+        return True
+    return False
+
+
+def probe_process_rss_bytes() -> int | None:
+    """RSS bytes of an ancestor cursor-agent host, or None if none found.
+
+    Cross-platform like Claude's probe_rss_bytes: Linux /proc, else `ps`.
+    Matches basename `cursor-agent`/`agent` on comm, or `cursor-agent` in the
+    full command line (Node often sets comm to MainThread). Never reports this
+    script's own RSS — a miss hides the segment instead of lying ~20MB.
+    """
+    use_proc = os.path.isdir("/proc")
+    comm_of = _comm_via_proc if use_proc else _comm_via_ps
+    ppid_of = _ppid_via_proc if use_proc else _ppid_via_ps
+    rss_kb_of = _rss_kb_via_proc if use_proc else _rss_kb_via_ps
+    cmdline_of = _cmdline_via_proc if use_proc else _cmdline_via_ps
+
     pid = os.getppid()
     for _ in range(12):
-        name = _comm_via_proc(pid)
-        if name is None:
-            break
-        base = os.path.basename(name)
-        if base in {"cursor-agent", "agent"} or "cursor-agent" in name:
-            kb = _rss_kb_via_proc(pid)
-            return kb * 1024 if kb is not None else self_bytes
-        parent = _ppid_via_proc(pid)
+        name = comm_of(pid)
+        cmdline = cmdline_of(pid)
+        if name is None and cmdline is None:
+            return None
+        if _is_cursor_host(name, cmdline):
+            kb = rss_kb_of(pid)
+            return kb * 1024 if kb is not None else None
+        parent = ppid_of(pid)
         if parent is None or parent in (0, pid):
-            break
+            return None
         pid = parent
-    return self_bytes
+    return None
 
 
 def probe_system_available_bytes() -> int | None:
@@ -753,6 +881,8 @@ def build_context(
         context_pct=context_pct,
         context_max=context_max,
         cols=cols,
+        # Cursor payload has no terminal height; default tall so all rows show.
+        lines=40,
         config=cfg,
         theme=th,
         t_start=None,
@@ -765,35 +895,57 @@ def build_context(
 
 
 def seg_path(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del avail
-    name = os.path.basename(ctx.work_dir.rstrip("/")) or ctx.work_dir or "?"
-    return f"{theme.c('BLUE')}{name}{RESET}"
+    shown = util_display_dir(ctx.work_dir or "?", ctx.home or "")
+    # Degrade further into avail (Claude packs with shrinking avail; path is PINNED).
+    variants = [
+        shown,
+        util_two_state_cap(os.path.basename(ctx.work_dir.rstrip("/")) or shown, 30, 20),
+    ]
+    pick = util_first_fitting(
+        [f"{theme.c('BLUE')}{v}{RESET}" for v in variants], avail
+    )
+    return pick or f"{theme.c('BLUE')}{variants[-1]}{RESET}"
 
 
-def seg_model_compact(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del theme
+def seg_model(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
     name = ctx.model_name
     if not name:
         return None
-    parts = [name]
-    if ctx.context_max > 0:
-        parts.append(fmt_tokens(ctx.context_max))
+    colored = f"{theme.c('CYAN')}{name}{RESET}"
+    extras: list[str] = []
     if ctx.param_summary:
-        parts.append(ctx.param_summary)
-    if ctx.context_pct is not None:
-        parts.append(f"{int(ctx.context_pct)}%")
+        extras.append(str(ctx.param_summary))
     if ctx.max_mode:
-        parts.append("max")
-    text = " · ".join(parts)
-    if util_visible_width(text) > avail > 0:
-        # Truncate coarsely for POC.
-        while parts and util_visible_width(" · ".join(parts)) > avail:
-            if len(parts) > 1:
-                parts.pop()
-            else:
-                break
-        text = " · ".join(parts)
-    return text
+        extras.append("max")
+    rich = colored
+    if extras:
+        rich = f"{colored} · {' · '.join(extras)}"
+    mid = (
+        f"{colored} · max"
+        if ctx.max_mode
+        else colored
+    )
+    return util_first_fitting([rich, mid, colored], avail) or colored
+
+
+def seg_context(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
+    if ctx.context_pct is None:
+        return None
+    pct = int(ctx.context_pct)
+    color = util_pick_color(float(pct), theme.ramps["context"])
+    pct_only = util_icon("📊", f"{color}{pct}%{RESET}")
+    halves = 0 if pct <= 0 else min(2 * CONTEXT_BAR_CELLS, math.ceil(pct / 5))
+    full_n, half = divmod(halves, 2)
+    bar_f = "█" * full_n + ("▌" if half else "")
+    bar_e = "░" * (CONTEXT_BAR_CELLS - full_n - half)
+    bar = f"{color}{bar_f}{theme.c('GREY')}{bar_e}{RESET}"
+    mid = util_icon("📊", f"{bar} {color}{pct}%{RESET}")
+    if ctx.context_max > 0:
+        full = util_icon(
+            "📊", f"{bar} {color}{pct}% of {fmt_tokens(ctx.context_max)}{RESET}"
+        )
+        return util_first_fitting([full, mid, pct_only], avail) or pct_only
+    return util_first_fitting([mid, pct_only], avail) or pct_only
 
 
 def seg_git_branch(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
@@ -830,6 +982,8 @@ def seg_git_dirty(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
 def seg_process_memory(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
     del ctx, theme
     n = probe_process_rss_bytes()
+    if n is None:
+        return None
     return util_first_fitting([util_icon("🧮", fmt_bytes(n))], avail)
 
 
@@ -920,41 +1074,41 @@ def _quota_suffix(ctx: SimpleNamespace) -> str:
     return s
 
 
-def _included_label(prefix: str, pct: float, ctx: SimpleNamespace, theme: Theme) -> str:
-    body = f"{prefix} {int(pct)}%"
-    gap = billing_pace_gap(
-        float(pct),
-        int(getattr(ctx, "cycle_start_ms", 0) or 0),
-        int(getattr(ctx, "cycle_end_ms", 0) or 0),
-        int(getattr(ctx, "now_ms", 0) or 0),
-    )
-    if gap is None:
-        return body
-    return f"{util_gap_color(abs(gap), theme)}{body}{RESET}"
+def _included_body(prefix: str, pct: float, theme: Theme) -> str:
+    """Rate-ramp color on used % (Claude ⚡ buckets), whole label painted."""
+    color = util_pick_color(float(pct), theme.ramps["rate"])
+    return f"{color}{prefix} {int(pct)}%{RESET}"
+
+
+def _included_variants(
+    prefix: str, pct: float, ctx: SimpleNamespace, theme: Theme
+) -> list[str]:
+    body = _included_body(prefix, pct, theme)
+    suf = _quota_suffix(ctx)
+    rich = util_icon("⚡", f"{body}{suf}")
+    mid = util_icon("⚡", body)
+    return [rich, mid, body]
 
 
 def seg_included_total(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
     pct = getattr(ctx, "total_pct", None)
     if pct is None:
         return None
-    text = f"{_included_label('inc', float(pct), ctx, theme)}{_quota_suffix(ctx)}"
-    return util_first_fitting([text], avail)
+    return util_first_fitting(_included_variants("inc", float(pct), ctx, theme), avail)
 
 
 def seg_included_auto(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
     pct = getattr(ctx, "auto_pct", None)
     if pct is None:
         return None
-    text = f"{_included_label('auto', float(pct), ctx, theme)}{_quota_suffix(ctx)}"
-    return util_first_fitting([text], avail)
+    return util_first_fitting(_included_variants("auto", float(pct), ctx, theme), avail)
 
 
 def seg_included_api(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
     pct = getattr(ctx, "api_pct", None)
     if pct is None:
         return None
-    text = f"{_included_label('api', float(pct), ctx, theme)}{_quota_suffix(ctx)}"
-    return util_first_fitting([text], avail)
+    return util_first_fitting(_included_variants("api", float(pct), ctx, theme), avail)
 
 
 def seg_reset(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
@@ -965,8 +1119,11 @@ def seg_reset(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
     now_ms = int(getattr(ctx, "now_ms", 0) or 0)
     days = max(0, math.ceil((end_ms - now_ms) / 86_400_000))
     date = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc).date().isoformat()
-    text = f"↺ {date} ({days}d){_quota_suffix(ctx)}"
-    return util_first_fitting([text], avail)
+    suf = _quota_suffix(ctx)
+    rich = f"↺ {date} ({days}d){suf}"
+    mid = f"↺ {date}{suf}"
+    short = f"↺ {days}d{suf}"
+    return util_first_fitting([rich, mid, short], avail)
 
 
 def seg_on_demand(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
@@ -982,12 +1139,7 @@ def seg_on_demand(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
         ceil = float(od.get("ceiling_dollars") or 0)
         body = f"od ${used:.1f}/${ceil:g}"
         ratio = (100.0 * used / ceil) if ceil > 0 else 0.0
-        if ratio < 50:
-            color = theme.c("GREEN")
-        elif ratio < 80:
-            color = theme.c("YELLOW")
-        else:
-            color = f"\033[1;{theme.palette['RED']}m"
+        color = util_pick_color(ratio, theme.ramps["rate"])
     elif kind == "unlimited":
         used = float(od.get("used_dollars") or 0)
         body = f"od ${used:.1f} no cap"
@@ -997,8 +1149,10 @@ def seg_on_demand(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
     if getattr(ctx, "on_demand_hot", False):
         color = "\x1b[1;31m"
     painted = f"{color}{body}{RESET}" if color else body
-    text = f"{painted}{_quota_suffix(ctx)}"
-    return util_first_fitting([text], avail)
+    suf = _quota_suffix(ctx)
+    rich = util_icon("🪙", f"{painted}{suf}")
+    mid = util_icon("🪙", painted)
+    return util_first_fitting([rich, mid, f"{painted}{suf}"], avail)
 
 
 BUILDERS: dict[str, Any] = {
@@ -1006,7 +1160,8 @@ BUILDERS: dict[str, Any] = {
     "git_branch": seg_git_branch,
     "alt_git_worktree": seg_alt_git_worktree,
     "git_dirty": seg_git_dirty,
-    "model_compact": seg_model_compact,
+    "model": seg_model,
+    "context": seg_context,
     "included_total": seg_included_total,
     "included_auto": seg_included_auto,
     "included_api": seg_included_api,
@@ -1040,12 +1195,16 @@ def _crown_slowest(ctx: SimpleNamespace, key: str, ns: int) -> None:
 def core_render(ctx: SimpleNamespace) -> str:
     cfg: Config = ctx.config
     theme: Theme = ctx.theme
-    budget = ctx.cols
+    # Claude: reserve RIGHT_MARGIN so emoji-width miscounts don't wrap.
+    budget = max(int(ctx.cols) - RIGHT_MARGIN, 1)
     sep_w = util_visible_width(SEP)
     built: dict[tuple[int, str], str] = {}
+    term_lines = int(getattr(ctx, "lines", 40) or 40)
 
-    # Pass A — non-meta
-    for line_i, (_min_rows, keys) in enumerate(cfg.layout):
+    # Pass A — non-meta (shrinking avail per line → builder variants pick fit)
+    for line_i, (min_rows, keys) in enumerate(cfg.layout):
+        if term_lines < min_rows:
+            continue
         used = 0
         for key in keys:
             if not cfg.segments.get(key, False):
@@ -1059,14 +1218,16 @@ def core_render(ctx: SimpleNamespace) -> str:
             ns = time.perf_counter_ns() - t0
             if not s:
                 continue
-            if util_visible_width(s) <= avail or avail == budget:
+            if key in PINNED or util_visible_width(s) <= avail:
                 built[(line_i, key)] = s
                 used += util_visible_width(s) + sep
                 _crown_slowest(ctx, key, ns)
 
-    # Pass B — meta once
+    # Pass B — meta once (full budget; placed per-line in assemble)
     meta_built: dict[str, str] = {}
-    for _min_rows, keys in cfg.layout:
+    for min_rows, keys in cfg.layout:
+        if term_lines < min_rows:
+            continue
         for key in keys:
             if key not in _SLOWEST_META or key in meta_built:
                 continue
@@ -1076,9 +1237,11 @@ def core_render(ctx: SimpleNamespace) -> str:
             if s:
                 meta_built[key] = s
 
-    # Assemble
+    # Assemble — PINNED always kept even if slightly over budget
     lines_out: list[str] = []
-    for line_i, (_min_rows, keys) in enumerate(cfg.layout):
+    for line_i, (min_rows, keys) in enumerate(cfg.layout):
+        if term_lines < min_rows:
+            continue
         line_built = {k: v for (i, k), v in built.items() if i == line_i}
         line_built.update(meta_built)
         kept: list[str] = []
@@ -1090,7 +1253,7 @@ def core_render(ctx: SimpleNamespace) -> str:
             if not s:
                 continue
             sep = sep_w if kept else 0
-            if used + sep + util_visible_width(s) <= budget:
+            if key in PINNED or used + sep + util_visible_width(s) <= budget:
                 kept.append(s)
                 used += util_visible_width(s) + sep
         if kept:

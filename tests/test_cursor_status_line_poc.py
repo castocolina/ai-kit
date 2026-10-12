@@ -93,6 +93,7 @@ class TestPayloadRender(unittest.TestCase):
                 payload, {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
             )
         self.assertIn("· max", out)
+        self.assertIn("📊", out)  # context bar icon (Claude ergonomics)
 
     def test_toml_segments_merge_and_line_replace(self):
         mod = load_poc()
@@ -100,13 +101,29 @@ class TestPayloadRender(unittest.TestCase):
             cfg = Path(td) / "ai-kit" / "cursor-statusline-poc.toml"
             cfg.parent.mkdir(parents=True)
             cfg.write_text(
-                '[segments]\npath = false\n\n[[line]]\nmin_rows = 0\nsegments = ["model_compact"]\n',
+                '[segments]\npath = false\n\n[[line]]\nmin_rows = 0\nsegments = ["model"]\n',
                 encoding="utf-8",
             )
             env = {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
             c = mod.load_config(env)
             self.assertFalse(c.segments["path"])
-            self.assertEqual(c.layout, [(0, ["model_compact"])])
+            self.assertEqual(c.layout, [(0, ["model"])])
+
+    def test_narrow_cols_degrades_context_keeps_pinned(self):
+        mod = load_poc()
+        payload = {
+            "model": {"display_name": "Opus"},
+            "workspace": {"current_dir": "/home/u/very/long/project/name"},
+            "context_window": {"used_percentage": 42, "context_window_size": 200000},
+            "render_width_chars": 28,
+        }
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
+            out = mod.render_for_test(payload, env)
+        # path pinned; context degrades toward pct-only but keeps 📊 when present
+        self.assertIn("name", out)
+        self.assertIn("Opus", out)
+        self.assertRegex(out, r"42%")
 
 
 class TestDumpPayload(unittest.TestCase):
@@ -175,13 +192,75 @@ class TestLocalProbes(unittest.TestCase):
             self.assertIsNotNone(n)
             self.assertGreater(n, 0)
 
-    def test_process_rss_returns_int(self):
-        if not Path("/proc").is_dir():
-            self.skipTest("Linux /proc required for POC RSS probe")
+    def test_process_rss_is_int_or_none(self):
         mod = load_poc()
         n = mod.probe_process_rss_bytes()
-        self.assertIsInstance(n, int)
-        self.assertGreater(n, 0)
+        self.assertTrue(n is None or (isinstance(n, int) and n > 0))
+
+    def test_is_cursor_host_matches_mainthread_cmdline(self):
+        mod = load_poc()
+        self.assertTrue(
+            mod._is_cursor_host(
+                "MainThread",
+                "/home/u/.local/bin/cursor-agent --model x",
+            )
+        )
+        self.assertTrue(mod._is_cursor_host("cursor-agent", None))
+        self.assertTrue(mod._is_cursor_host("/opt/bin/cursor-agent", None))
+        self.assertFalse(mod._is_cursor_host("python3", "python3 -S tools/cursor-status-line-poc.py"))
+        self.assertFalse(mod._is_cursor_host("bash", None))
+
+    def test_process_rss_finds_host_via_cmdline_not_self(self):
+        if not Path("/proc").is_dir():
+            self.skipTest("uses /proc backend mocks")
+        mod = load_poc()
+        fake_host = 4242
+        calls: dict[str, list[int]] = {"rss": []}
+        parent = os.getppid()
+
+        def fake_comm(pid):
+            return {parent: "bash", fake_host: "MainThread"}.get(pid)
+
+        def fake_cmdline(pid):
+            return {
+                parent: "/bin/bash",
+                fake_host: "/usr/bin/cursor-agent --resume=abc",
+            }.get(pid)
+
+        def fake_ppid(pid):
+            return {parent: fake_host, fake_host: 1}.get(pid)
+
+        def fake_rss(pid):
+            calls["rss"].append(pid)
+            return {fake_host: 700 * 1024}.get(pid)  # kB → ~700MB
+
+        mod._comm_via_proc = fake_comm
+        mod._cmdline_via_proc = fake_cmdline
+        mod._ppid_via_proc = fake_ppid
+        mod._rss_kb_via_proc = fake_rss
+        n = mod.probe_process_rss_bytes()
+        self.assertEqual(n, 700 * 1024 * 1024)
+        self.assertEqual(calls["rss"], [fake_host])
+
+    def test_default_layout_puts_quota_on_line_two(self):
+        mod = load_poc()
+        self.assertEqual(mod.LAYOUT[0][1][:1], ["path"])
+        self.assertEqual(
+            mod.LAYOUT[1][1],
+            [
+                "model",
+                "context",
+                "included_total",
+                "included_auto",
+                "included_api",
+                "reset",
+                "on_demand",
+            ],
+        )
+        self.assertEqual(
+            mod.LAYOUT[2][1],
+            ["render_time", "process_memory", "system_memory", "slowest"],
+        )
 
     def test_git_branch_in_repo(self):
         mod = load_poc()
@@ -235,6 +314,13 @@ class TestLocalProbes(unittest.TestCase):
         self.assertIsNotNone(s)
         self.assertIn("🧮", s)
         self.assertRegex(s, r"\d+(\.\d)?MB")
+
+    def test_process_memory_hides_when_no_host(self):
+        mod = load_poc()
+        theme = mod.default_theme()
+        ctx = types.SimpleNamespace()
+        mod.probe_process_rss_bytes = lambda: None
+        self.assertIsNone(mod.seg_process_memory(ctx, 80, theme))
 
     def test_system_memory_long_form(self):
         mod = load_poc()

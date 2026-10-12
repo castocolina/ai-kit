@@ -46,8 +46,8 @@ This POC does **not** close Phase 999.4. It produces evidence (real payload, quo
 ```
 Line 0 (min_rows=0):  path, git_branch, alt_git_worktree, git_dirty
 Line 1 (min_rows=0):  model_compact
-Line 2 (min_rows=0):  included_total, included_auto, included_api, reset, on_demand
-Line 3 (min_rows=0):  process_memory, system_memory, render_time, slowest
+Line 2 (min_rows=0):  model, context, included_total, included_auto, included_api, reset, on_demand
+Line 3 (min_rows=0):  render_time, process_memory, system_memory, slowest
 ```
 
 **`min_rows` policy (POC):** every line uses `min_rows=0`. Do **not** probe
@@ -64,7 +64,7 @@ scope; success criteria assume all four lines can render.)
 | `git_branch` | on | Shared git snapshot (one probe) |
 | `alt_git_worktree` | **on** (unlike Claude default off) | Linked-worktree name or struck marker on main |
 | `git_dirty` | on | Dirty marker from same snapshot |
-| `process_memory` | on | RSS of host process: walk ancestors for `cursor-agent` / `agent` / basename match; fall back to self RSS if none found (unlike Claude's `claude`-only walk) |
+| `process_memory` | on | RSS of host process: Claude-shaped `/proc` (Linux) or `ps` (macOS) walk; match basename `cursor-agent`/`agent` **or** `cursor-agent` in full cmdline (Node often reports comm=`MainThread`). Return `None` (hide segment) if no host — **never** self RSS (that lied ~20MB vs ~700MB agent) |
 | `system_memory` | on | Available RAM: adapt `examples/segments/system_memory` (`MemAvailable` / `vm_stat`) **in-process**, not as external drop-in |
 | `render_time` | on | Whole-script wall time; color bands copy Claude `_RAMP_DEFAULTS["render_time"]` (**50 ms / 150 ms**) |
 | `slowest` | on | Slowest non-meta segment name + ms; bands copy Claude `_RAMP_DEFAULTS["slowest"]` (**15 ms / 40 ms**). Meta segments `render_time`/`slowest` are timed in a **second pass** after other `seg_*` (Claude `_SLOWEST_META` pattern) so they do not win "slowest" of themselves |

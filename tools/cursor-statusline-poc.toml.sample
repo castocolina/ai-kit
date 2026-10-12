@@ -3,13 +3,15 @@
 # Env override: AI_KIT_CURSOR_POC_CONFIG_FILE
 #
 # [segments] merges over defaults. Any [[line]] replaces the entire layout.
+# Layout: identity → model/context + quota/reset → diagnostics (mem/timing).
 
 [segments]
 path = true
 git_branch = true
-alt_git_worktree = true
 git_dirty = true
-model_compact = true
+alt_git_worktree = true
+model = true
+context = true
 included_total = true
 included_auto = true
 included_api = true
@@ -22,16 +24,20 @@ slowest = true
 
 [[line]]
 min_rows = 0
-segments = ["path", "git_branch", "alt_git_worktree", "git_dirty"]
+segments = ["path", "git_branch", "git_dirty", "alt_git_worktree"]
 
 [[line]]
 min_rows = 0
-segments = ["model_compact"]
+segments = [
+  "model",
+  "context",
+  "included_total",
+  "included_auto",
+  "included_api",
+  "reset",
+  "on_demand",
+]
 
 [[line]]
 min_rows = 0
-segments = ["included_total", "included_auto", "included_api", "reset", "on_demand"]
-
-[[line]]
-min_rows = 0
-segments = ["process_memory", "system_memory", "render_time", "slowest"]
+segments = ["render_time", "process_memory", "system_memory", "slowest"]
