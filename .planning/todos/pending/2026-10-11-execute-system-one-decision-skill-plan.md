@@ -30,14 +30,44 @@ The full plan was reviewed over 17 rounds and is at `.planning/docs/system-one-d
 
 ## Notes from the llm-env implementation (2026-10-12)
 
-System One is implemented and running in llm-env (commits `a78b964..4c725d0`). These facts change the Laya backend's assumptions in `PLAN.md`:
+System One is implemented and running in llm-env (commits `a78b964..413faa0`). These facts change the Laya backend's assumptions in `PLAN.md`:
 
-- **Non-English input returns HTTP 500.** The service runs with `HF_HUB_OFFLINE=1` and `LAYA_MAX_LOADED` set to the number of configured models, and only `english` is loaded. Laya routes non-English or non-Latin text to the `multilingual` checkpoint, so such a request now returns `{"detail":"inference failed"}` in about 18 ms instead of downloading a model at runtime. The skill must treat a Laya 500 as `backend_unavailable:laya:http_500`, and then:
-  - **auto mode:** fall through to the next backend;
-  - **explicit `JEV_BACKEND=laya`:** report the failure and do not retry.
-
-  Add a test for this. Accepting non-English input on Laya means adding `multilingual` to `system_one.models`, raising `vram_reserve_mib` by about 3 GB, and re-running `make setup`.
-- **Measured on the real service:** p50 is about 13 ms per request on the RX 9070 XT, VRAM about 2993 MiB with `english` only, and idle CPU is 0%. Use these values instead of the plan's older ~12 ms / 1-core-idle figures. The idle burn was a ROCm 7.14 runtime bug, fixed in llm-env by switching to the torch `rocm7.2` wheels.
 - **Endpoint and activation:** the service listens on `http://127.0.0.1:8010/v1/systemone` and has no auth. `make print-endpoints` prints the activation line: `GSD_PATH_JEV=1 JEV_BACKEND=laya JEV_LAYA_URL=http://127.0.0.1:8010 GSD_PATH_JEV_TIMEOUT_SECONDS=20`.
-- **Live-validated cases:** llm-env's `make check-server` already runs five single-request cases against the live service: choice billing (0.98), choice technical (0.95), noul destructive (0.77), noul safe (0.18), and score urgent (argmax "2", 0.99). Reuse them as Laya exemplars in `evals/cases.jsonl`. They are English, one item per request, and have clear margins.
+- **Languages:** `english` and `multilingual` are both loaded by default. Weights are prefetched at setup and the service runs offline (`HF_HUB_OFFLINE=1`). Laya picks the checkpoint from the language of the `state`, not of the instructions. Non-English, very short, or accented text goes to `multilingual`, and all of it returns 200. To force the english checkpoint, send `"model": "english"` in the body.
+- **Write the prompts in English:** this means `instructions` and `criteria`, whatever language the chat is in. The `state` stays in the user's language. Tests showed English instructions scoring the same or slightly better. The skill must translate or template them in English.
+- **Concrete criteria:** a vague catch-all such as `other: "everything else"` lowers accuracy. Each criterion should name concrete signals, for example `billing: "charges, invoices, refunds"`.
+- **Error taxonomy:** the skill should act on each kind of failure differently.
+
+  | Response | Meaning | Skill action |
+  |---|---|---|
+  | `503` + `Retry-After: 1` | busy; more than 64 requests in flight (`LAYA_MAX_CONCURRENT`), no queue | wait 1 s, retry at most 2 times, then fall back |
+  | `500` `inference failed` | the model failed | fall back without retrying |
+  | `400` / `413` / `422` | bad request from the caller (skill bug) | escalate to the orchestrator; no remote fallback, since it would fail too |
+  | connection refused or timeout | backend unavailable | fall back |
+
+  "Fall back" means the next backend in auto mode. With an explicit `JEV_BACKEND=laya`, the skill reports the failure instead.
+
+  Add a test per row.
+- **Measured on an RX 9070 XT:**
+  - **Sequential:** about 60 req/s at p50 ~15 ms.
+  - **8 to 16 concurrent:** about 78 req/s at p50 100 to 200 ms, because the GPU serialises the work.
+  - **First request after start:** already warm, since start sends a warm-up request.
+  - **After 10 minutes idle:** both models unload (`LAYA_IDLE_UNLOAD_SECONDS=600`), and the next request takes about 0.4 s to reload.
+  - **Idle CPU:** 0%.
+  - **Process VRAM:** about 4.2 GB, against a reserve of 5120 MiB.
+  - **Container RAM:** about 2.2 GB, with a floor of 2.5 GB and a cap of 4.5 GB.
+  - **Leaks:** none. VRAM plateaued over a 20k-request soak.
+
+  Use these values in place of the plan's older figures. `make system-one-benchmark` reproduces them.
+- **Live-validated cases:** llm-env's `make check-server` already runs five single-request cases against the live service:
+
+  | Type | Case | Result |
+  |---|---|---|
+  | choice | billing | 0.98 |
+  | choice | technical | 0.95 |
+  | noul | destructive | 0.77 |
+  | noul | safe | 0.18 |
+  | score | urgent | argmax "2", 0.99 |
+
+  Reuse them as Laya exemplars in `evals/cases.jsonl`. They are English, one item per request, and have clear margins.
 - **Not in the plan:** `make backup` (OmniRoute combos + connections) exists in llm-env since `acd5a17`. It does not touch System One.
