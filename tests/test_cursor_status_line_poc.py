@@ -4,11 +4,34 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import os
 import tempfile
 import types
 import unittest
 from pathlib import Path
+
+PERIOD_FIXED = {
+    "billingCycleStart": "1700000000000",
+    "billingCycleEnd": "1702592000000",
+    "planUsage": {
+        "totalPercentUsed": 42.0,
+        "autoPercentUsed": 10.0,
+        "apiPercentUsed": 32.0,
+        "includedSpend": 840,
+        "limit": 2000,
+    },
+    "spendLimitUsage": {
+        "individualUsed": 150,
+        "individualLimit": 2000,
+        "limitType": "user",
+    },
+}
+HARD_FIXED = {"hardLimit": 20, "noUsageBasedAllowed": False}
+HARD_UNLIMITED = {"hardLimit": 2147483647, "noUsageBasedAllowed": False}
+HARD_DISABLED = {"hardLimit": 0, "noUsageBasedAllowed": True}
+HARD_ZERO_ENABLED = {"hardLimit": 0, "noUsageBasedAllowed": False}
+PLAN = {"planInfo": {"planName": "Pro", "billingCycleEnd": "1702592000000"}}
 
 POC = Path(__file__).resolve().parents[1] / "tools" / "cursor-status-line-poc.py"
 
@@ -258,6 +281,338 @@ class TestLocalProbes(unittest.TestCase):
                 payload, {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
             )
         self.assertEqual(n["calls"], 1)
+
+
+class TestQuotaFetch(unittest.TestCase):
+    def test_normalize_fixed(self):
+        mod = load_poc()
+        q = mod.normalize_quota_responses(PERIOD_FIXED, HARD_FIXED, PLAN)
+        self.assertEqual(q["total_pct"], 42.0)
+        self.assertEqual(q["auto_pct"], 10.0)
+        self.assertEqual(q["api_pct"], 32.0)
+        self.assertEqual(q["on_demand"]["kind"], "fixed")
+        self.assertEqual(q["on_demand"]["used_dollars"], 1.5)
+        self.assertEqual(q["on_demand"]["ceiling_dollars"], 20.0)
+        self.assertEqual(q["cycle_end_ms"], 1702592000000)
+
+    def test_normalize_unlimited_and_disabled(self):
+        mod = load_poc()
+        u = mod.normalize_quota_responses(PERIOD_FIXED, HARD_UNLIMITED, PLAN)
+        self.assertEqual(u["on_demand"]["kind"], "unlimited")
+        self.assertEqual(u["on_demand"]["used_dollars"], 1.5)
+        self.assertIsNone(u["on_demand"].get("ceiling_dollars"))
+        d = mod.normalize_quota_responses(PERIOD_FIXED, HARD_DISABLED, PLAN)
+        self.assertEqual(d["on_demand"]["kind"], "disabled")
+        z = mod.normalize_quota_responses(PERIOD_FIXED, HARD_ZERO_ENABLED, PLAN)
+        self.assertEqual(z["on_demand"]["kind"], "disabled")
+
+    def test_normalize_unavailable_without_plan_usage(self):
+        mod = load_poc()
+        q = mod.normalize_quota_responses(
+            {"billingCycleStart": "0", "billingCycleEnd": "0"}, HARD_FIXED, PLAN
+        )
+        self.assertEqual(q["on_demand"]["kind"], "unavailable")
+
+    def test_cache_does_not_store_token(self):
+        mod = load_poc()
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td, "XDG_CACHE_HOME": td}
+            mod.write_quota_cache(
+                env,
+                {"total_pct": 10, "fetched_at": 1, "on_demand": {"kind": "disabled"}},
+            )
+            text = Path(td, "ai-kit", "cursor-statusline-poc", "usage.json").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn("accessToken", text)
+            self.assertNotIn("eyJ", text)
+
+    def test_cache_path_defaults_without_xdg_cache_home(self):
+        mod = load_poc()
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td}
+            p = mod.quota_cache_path(env)
+            self.assertEqual(
+                p,
+                Path(td) / ".cache" / "ai-kit" / "cursor-statusline-poc" / "usage.json",
+            )
+
+    def test_rejects_non_https_endpoint(self):
+        mod = load_poc()
+        with self.assertRaises(ValueError):
+            mod.quota_endpoint_url({"CURSOR_API_ENDPOINT": "http://evil.example"})
+
+    def test_rejects_cross_host_redirect(self):
+        mod = load_poc()
+        self.assertFalse(
+            mod.redirect_allowed("https://api2.cursor.sh/x", "https://evil.example/x")
+        )
+        self.assertTrue(
+            mod.redirect_allowed("https://api2.cursor.sh/a", "https://api2.cursor.sh/b")
+        )
+
+    def test_default_opener_refuses_cross_host_redirect(self):
+        import urllib.error
+        import urllib.request
+
+        mod = load_poc()
+        self.assertTrue(
+            issubclass(mod.QuotaRedirectHandler, urllib.request.HTTPRedirectHandler)
+        )
+        handler = mod.QuotaRedirectHandler()
+        req = urllib.request.Request(
+            "https://api2.cursor.sh/aiserver.v1.DashboardService/GetHardLimit",
+            data=b"{}",
+            headers={"Authorization": "Bearer tok"},
+            method="POST",
+        )
+        refused = False
+        try:
+            out = handler.redirect_request(
+                req, None, 302, "Found", {}, "https://evil.example/x"
+            )
+            refused = out is None
+        except (urllib.error.HTTPError, ValueError, OSError):
+            refused = True
+        self.assertTrue(refused)
+
+    def test_fetch_quota_posts_three_methods(self):
+        mod = load_poc()
+        calls = []
+
+        def fake_urlopen(req, timeout=None):
+            calls.append(
+                (req.full_url, req.get_header("Authorization"), req.data, timeout)
+            )
+
+            class R:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+                def read(self):
+                    if "GetCurrentPeriodUsage" in req.full_url:
+                        return json.dumps(PERIOD_FIXED).encode()
+                    if "GetHardLimit" in req.full_url:
+                        return json.dumps(HARD_FIXED).encode()
+                    return json.dumps(PLAN).encode()
+
+            return R()
+
+        with tempfile.TemporaryDirectory() as td:
+            auth = Path(td) / "cursor" / "auth.json"
+            auth.parent.mkdir(parents=True)
+            auth.write_text(
+                '{"accessToken":"tok-test","refreshToken":"r"}', encoding="utf-8"
+            )
+            env = {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
+            q = mod.fetch_quota(env, urlopen=fake_urlopen, now=1_700_100_000)
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all(u.startswith("https://api2.cursor.sh/") for u, *_ in calls))
+        self.assertTrue(all(a == "Bearer tok-test" for _, a, *_ in calls))
+        self.assertTrue(all(t == 0.8 for *_, t in calls))
+        self.assertEqual(q["on_demand"]["kind"], "fixed")
+
+    def test_total_pct_from_spend_over_limit(self):
+        mod = load_poc()
+        period = {
+            "billingCycleStart": "1",
+            "billingCycleEnd": "2",
+            "planUsage": {"includedSpend": 50, "limit": 200},
+        }
+        q = mod.normalize_quota_responses(period, HARD_DISABLED, PLAN)
+        self.assertEqual(q["total_pct"], 25.0)
+
+    def test_total_pct_none_when_limit_zero(self):
+        mod = load_poc()
+        period = {
+            "billingCycleStart": "1",
+            "billingCycleEnd": "2",
+            "planUsage": {"includedSpend": 50, "limit": 0},
+        }
+        q = mod.normalize_quota_responses(period, HARD_DISABLED, PLAN)
+        self.assertIsNone(q["total_pct"])
+
+    def test_cycle_end_falls_back_to_planinfo(self):
+        mod = load_poc()
+        period = {"billingCycleStart": "10", "planUsage": {"totalPercentUsed": 1}}
+        q = mod.normalize_quota_responses(period, HARD_DISABLED, PLAN)
+        self.assertEqual(q["cycle_end_ms"], 1702592000000)
+
+    def test_missing_auth_no_network_hides_quota(self):
+        mod = load_poc()
+        calls = []
+
+        def no(req, timeout=None):
+            calls.append(1)
+            raise AssertionError("no network without auth")
+
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
+            q = mod.fetch_quota(env, now=1, urlopen=no)
+            self.assertEqual(calls, [])
+            self.assertTrue(
+                q["on_demand"]["kind"] == "unavailable" or q.get("total_pct") is None
+            )
+
+    def test_missing_auth_still_serves_fresh_cache(self):
+        mod = load_poc()
+        calls = []
+
+        def no(req, timeout=None):
+            calls.append(1)
+            raise AssertionError("no network without auth")
+
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
+            mod.write_quota_cache(
+                env,
+                {
+                    "total_pct": 42,
+                    "fetched_at": 1000,
+                    "stale": False,
+                    "on_demand": {"kind": "disabled"},
+                    "cycle_start_ms": 0,
+                    "cycle_end_ms": 1,
+                },
+            )
+            q = mod.fetch_quota(env, now=1030, urlopen=no)
+            self.assertEqual(calls, [])
+            self.assertEqual(q["total_pct"], 42)
+            self.assertFalse(q.get("stale"))
+
+    def test_malformed_auth_skips_network(self):
+        mod = load_poc()
+        calls = []
+
+        def no(req, timeout=None):
+            calls.append(1)
+            raise AssertionError("no network on bad auth")
+
+        with tempfile.TemporaryDirectory() as td:
+            auth = Path(td) / "cursor" / "auth.json"
+            auth.parent.mkdir(parents=True)
+            auth.write_text("{not-json", encoding="utf-8")
+            env = {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
+            q = mod.fetch_quota(env, now=1, urlopen=no)
+            self.assertEqual(calls, [])
+            self.assertTrue(
+                q["on_demand"]["kind"] == "unavailable" or q.get("total_pct") is None
+            )
+
+    def test_auth_missing_token_skips_network(self):
+        mod = load_poc()
+        calls = []
+
+        def no(req, timeout=None):
+            calls.append(1)
+            raise AssertionError("no network without token")
+
+        with tempfile.TemporaryDirectory() as td:
+            auth = Path(td) / "cursor" / "auth.json"
+            auth.parent.mkdir(parents=True)
+            auth.write_text('{"refreshToken":"x"}', encoding="utf-8")
+            env = {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
+            q = mod.fetch_quota(env, now=1, urlopen=no)
+            self.assertEqual(calls, [])
+            self.assertTrue(
+                q["on_demand"]["kind"] == "unavailable" or q.get("total_pct") is None
+            )
+
+    def test_auth_fallthrough_when_xdg_missing_file(self):
+        mod = load_poc()
+        with tempfile.TemporaryDirectory() as td:
+            xdg = Path(td) / "xdg"
+            home = Path(td) / "home"
+            xdg.mkdir()
+            home.mkdir()
+            auth = home / ".config" / "cursor" / "auth.json"
+            auth.parent.mkdir(parents=True)
+            auth.write_text('{"accessToken":"t"}', encoding="utf-8")
+            env = {"HOME": str(home), "XDG_CONFIG_HOME": str(xdg)}
+            self.assertEqual(mod.resolve_auth_path(env), auth)
+
+    def test_fetch_timeout_writes_negative_cache_and_stops(self):
+        mod = load_poc()
+        n = {"calls": 0}
+
+        def boom(req, timeout=None):
+            n["calls"] += 1
+            raise TimeoutError("slow")
+
+        with tempfile.TemporaryDirectory() as td:
+            auth = Path(td) / "cursor" / "auth.json"
+            auth.parent.mkdir(parents=True)
+            auth.write_text('{"accessToken":"t"}', encoding="utf-8")
+            env = {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
+            mod.write_quota_cache(
+                env,
+                {
+                    "total_pct": 11,
+                    "fetched_at": 800,
+                    "stale": False,
+                    "on_demand": {"kind": "disabled"},
+                    "cycle_start_ms": 0,
+                    "cycle_end_ms": 1,
+                },
+            )
+            q = mod.fetch_quota(env, urlopen=boom, now=1000)
+            self.assertEqual(n["calls"], 1)
+            self.assertTrue(mod.quota_cache_path(env).is_file())
+            self.assertTrue(q.get("error"))
+            self.assertTrue(q.get("stale"))
+            self.assertEqual(q["total_pct"], 11)
+            n["calls"] = 0
+            q2 = mod.fetch_quota(env, urlopen=boom, now=1100)
+            self.assertEqual(n["calls"], 0)
+            self.assertTrue(q2.get("stale"))
+            self.assertEqual(q2["total_pct"], 11)
+
+    def test_fresh_cache_skips_network(self):
+        mod = load_poc()
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td, "XDG_CACHE_HOME": td, "XDG_CONFIG_HOME": td}
+            mod.write_quota_cache(
+                env,
+                {
+                    "total_pct": 7,
+                    "fetched_at": 1000,
+                    "stale": False,
+                    "on_demand": {"kind": "disabled"},
+                    "cycle_start_ms": 0,
+                    "cycle_end_ms": 1,
+                },
+            )
+            calls = []
+
+            def no(req, timeout=None):
+                calls.append(1)
+                raise AssertionError("network should not run")
+
+            q = mod.fetch_quota(env, now=1000 + 30, urlopen=no)
+            self.assertEqual(q["total_pct"], 7)
+            self.assertEqual(calls, [])
+
+    def test_error_only_negative_cache_hides(self):
+        mod = load_poc()
+        calls = []
+
+        def no(req, timeout=None):
+            calls.append(1)
+            raise AssertionError("no network inside negative TTL")
+
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td, "XDG_CACHE_HOME": td, "XDG_CONFIG_HOME": td}
+            mod.write_quota_cache(
+                env,
+                {"error": "timeout", "fetched_at": 1000, "stale": True},
+            )
+            q = mod.fetch_quota(env, now=1100, urlopen=no)
+            self.assertEqual(calls, [])
+            self.assertIsNone(q.get("total_pct"))
+            self.assertEqual(q["on_demand"]["kind"], "unavailable")
 
 
 if __name__ == "__main__":

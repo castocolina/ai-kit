@@ -13,9 +13,17 @@ import tempfile
 import time
 import tomllib
 import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, BinaryIO
+
+_FRESH_TTL = 120
+_NEG_TTL = 600
+_POST_TIMEOUT = 0.8
+_METHODS = ("GetCurrentPeriodUsage", "GetHardLimit", "GetPlanInfo")
 
 # ── constants ──────────────────────────────────────────────────────────────────
 
@@ -249,19 +257,304 @@ def load_config(env: dict[str, str]) -> Config:
     return Config(segments=segments, layout=layout)
 
 
-def fetch_quota(env: dict[str, str], *, now: float | int, urlopen: Any = None) -> dict[str, Any]:
-    """Stub until Task 4 — hide-shaped empty quota."""
-    del env, now, urlopen
-    return {
+def _hide_quota(*, fetched_at: float | int = 0, error: str | None = None) -> dict[str, Any]:
+    q: dict[str, Any] = {
         "total_pct": None,
         "auto_pct": None,
         "api_pct": None,
         "on_demand": {"kind": "unavailable"},
         "cycle_start_ms": 0,
         "cycle_end_ms": 0,
-        "fetched_at": 0,
-        "stale": False,
+        "fetched_at": fetched_at,
+        "stale": True,
     }
+    if error:
+        q["error"] = error
+    return q
+
+
+def _pick(obj: dict[str, Any], *keys: str) -> Any:
+    for k in keys:
+        if k in obj:
+            return obj[k]
+    return None
+
+
+def _as_int(v: Any) -> int | None:
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_float(v: Any) -> float | None:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def resolve_auth_path(env: dict[str, str]) -> Path | None:
+    home = Path(env.get("HOME") or Path.home())
+    cands: list[Path] = []
+    if env.get("CURSOR_CONFIG_DIR"):
+        cands.append(Path(env["CURSOR_CONFIG_DIR"]) / "auth.json")
+    if env.get("XDG_CONFIG_HOME"):
+        cands.append(Path(env["XDG_CONFIG_HOME"]) / "cursor" / "auth.json")
+    cands.append(home / ".config" / "cursor" / "auth.json")
+    cands.append(home / ".cursor" / "auth.json")
+    for p in cands:
+        if p.is_file():
+            return p
+    return None
+
+
+def _read_access_token(env: dict[str, str]) -> str | None:
+    path = resolve_auth_path(env)
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    tok = data.get("accessToken")
+    if isinstance(tok, str) and tok:
+        return tok
+    return None
+
+
+def quota_cache_path(env: dict[str, str]) -> Path:
+    base = env.get("XDG_CACHE_HOME") or os.path.join(env.get("HOME", ""), ".cache")
+    return Path(base) / "ai-kit" / "cursor-statusline-poc" / "usage.json"
+
+
+def write_quota_cache(env: dict[str, str], data: dict[str, Any]) -> None:
+    path = quota_cache_path(env)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Never persist token material.
+    safe = {k: v for k, v in data.items() if k not in {"accessToken", "token"}}
+    text = json.dumps(safe, separators=(",", ":"))
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".usage.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _read_quota_cache(env: dict[str, str]) -> dict[str, Any] | None:
+    path = quota_cache_path(env)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def quota_endpoint_url(env: dict[str, str]) -> str:
+    base = env.get("CURSOR_API_ENDPOINT") or "https://api2.cursor.sh"
+    if not base.startswith("https://"):
+        raise ValueError("CURSOR_API_ENDPOINT must be https://")
+    return base.rstrip("/")
+
+
+def redirect_allowed(from_url: str, to_url: str) -> bool:
+    a = urllib.parse.urlparse(from_url)
+    b = urllib.parse.urlparse(to_url)
+    return a.scheme == "https" and b.scheme == "https" and a.netloc == b.netloc
+
+
+class QuotaRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse cross-host redirects so Bearer tokens never leave api2.cursor.sh."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        old = req.get_full_url()
+        if not redirect_allowed(old, newurl):
+            raise urllib.error.HTTPError(
+                newurl, code, "cross-host redirect refused", headers, None
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _default_urlopen():
+    opener = urllib.request.build_opener(QuotaRedirectHandler())
+    return opener.open
+
+
+def normalize_quota_responses(
+    period: dict[str, Any],
+    hard: dict[str, Any],
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    plan_usage = _pick(period, "planUsage", "plan_usage")
+    spend = _pick(period, "spendLimitUsage", "spend_limit_usage") or {}
+    if not isinstance(spend, dict):
+        spend = {}
+    plan_info = _pick(plan, "planInfo", "plan_info") or {}
+    if not isinstance(plan_info, dict):
+        plan_info = {}
+
+    cycle_start = _as_int(_pick(period, "billingCycleStart", "billing_cycle_start")) or 0
+    cycle_end = _as_int(_pick(period, "billingCycleEnd", "billing_cycle_end")) or 0
+    if not cycle_end:
+        cycle_end = _as_int(_pick(plan_info, "billingCycleEnd", "billing_cycle_end")) or 0
+
+    if not isinstance(plan_usage, dict):
+        return {
+            "cycle_start_ms": cycle_start,
+            "cycle_end_ms": cycle_end,
+            "total_pct": None,
+            "auto_pct": None,
+            "api_pct": None,
+            "on_demand": {"kind": "unavailable"},
+        }
+
+    total = _as_float(_pick(plan_usage, "totalPercentUsed", "total_percent_used"))
+    if total is None:
+        spend_inc = _as_float(_pick(plan_usage, "includedSpend", "included_spend"))
+        limit = _as_float(_pick(plan_usage, "limit"))
+        if spend_inc is not None and limit is not None and limit > 0:
+            total = 100.0 * spend_inc / limit
+        else:
+            total = None
+    auto = _as_float(_pick(plan_usage, "autoPercentUsed", "auto_percent_used"))
+    api = _as_float(_pick(plan_usage, "apiPercentUsed", "api_percent_used"))
+
+    used_cents = _as_float(_pick(spend, "individualUsed", "individual_used")) or 0.0
+    used_dollars = used_cents / 100.0
+    no_usage = bool(_pick(hard, "noUsageBasedAllowed", "no_usage_based_allowed"))
+    hard_limit = _as_float(_pick(hard, "hardLimit", "hard_limit"))
+    if hard_limit is None:
+        hard_limit = 0.0
+
+    if no_usage:
+        on_demand: dict[str, Any] = {"kind": "disabled"}
+    elif hard_limit >= 2147483647:
+        on_demand = {"kind": "unlimited", "used_dollars": used_dollars}
+    elif hard_limit > 0:
+        on_demand = {
+            "kind": "fixed",
+            "used_dollars": used_dollars,
+            "ceiling_dollars": float(hard_limit),
+        }
+    else:
+        on_demand = {"kind": "disabled"}
+
+    return {
+        "cycle_start_ms": cycle_start,
+        "cycle_end_ms": cycle_end,
+        "total_pct": total,
+        "auto_pct": auto,
+        "api_pct": api,
+        "on_demand": on_demand,
+    }
+
+
+def _usable_quota_fields(cache: dict[str, Any]) -> bool:
+    if cache.get("total_pct") is not None:
+        return True
+    od = cache.get("on_demand")
+    return isinstance(od, dict) and od.get("kind") not in (None, "unavailable")
+
+
+def _normalize_error_only(cache: dict[str, Any], now: float | int) -> dict[str, Any]:
+    if _usable_quota_fields(cache):
+        out = dict(cache)
+        out["stale"] = True
+        return out
+    return _hide_quota(fetched_at=cache.get("fetched_at", now), error=cache.get("error"))
+
+
+def fetch_quota(
+    env: dict[str, str],
+    *,
+    now: float | int,
+    urlopen: Any = None,
+) -> dict[str, Any]:
+    """Fetch/normalize Dashboard quota with disk TTL cache. Never raises."""
+    # shortcut: sync sequential fetch; no single-flight; live wire raises interval/timeout
+    cache = _read_quota_cache(env)
+    if cache is not None:
+        fetched_at = float(cache.get("fetched_at") or 0)
+        age = float(now) - fetched_at
+        has_error = bool(cache.get("error"))
+        if not has_error and age < _FRESH_TTL:
+            out = dict(cache)
+            out["stale"] = False
+            return out
+        if has_error and age < _NEG_TTL:
+            return _normalize_error_only(cache, now)
+
+    token = _read_access_token(env)
+    last_good = None
+    if cache is not None and _usable_quota_fields(cache):
+        last_good = {k: v for k, v in cache.items() if k != "error"}
+
+    if not token:
+        if last_good is not None:
+            out = dict(last_good)
+            out["stale"] = True
+            return out
+        return _hide_quota(fetched_at=now)
+
+    open_fn = urlopen if urlopen is not None else _default_urlopen()
+    try:
+        base = quota_endpoint_url(env)
+    except ValueError as exc:
+        neg = {**(last_good or {}), "error": str(exc), "fetched_at": now, "stale": True}
+        if last_good is None:
+            neg = _hide_quota(fetched_at=now, error=str(exc))
+        write_quota_cache(env, neg)
+        return neg
+
+    bodies: list[dict[str, Any]] = []
+    try:
+        for method in _METHODS:
+            url = f"{base}/aiserver.v1.DashboardService/{method}"
+            req = urllib.request.Request(
+                url,
+                data=b"{}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "Connect-Protocol-Version": "1",
+                },
+                method="POST",
+            )
+            with open_fn(req, timeout=_POST_TIMEOUT) as resp:
+                raw = resp.read()
+            bodies.append(json.loads(raw.decode("utf-8")))
+    except Exception as exc:  # noqa: BLE001 — never raise out of fetch_quota
+        neg = {**(last_good or {}), "error": str(exc), "fetched_at": now, "stale": True}
+        if last_good is None:
+            neg = _hide_quota(fetched_at=now, error=str(exc))
+        else:
+            # Keep usable fields from last-good.
+            for k in ("total_pct", "auto_pct", "api_pct", "on_demand",
+                      "cycle_start_ms", "cycle_end_ms"):
+                if k in last_good:
+                    neg[k] = last_good[k]
+        write_quota_cache(env, neg)
+        return neg
+
+    period, hard, plan = bodies[0], bodies[1], bodies[2]
+    q = normalize_quota_responses(period, hard, plan)
+    q["fetched_at"] = now
+    q["stale"] = False
+    q.pop("error", None)
+    write_quota_cache(env, q)
+    return q
 
 
 def util_branch_from_porcelain(header: str) -> str:
