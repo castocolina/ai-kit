@@ -349,22 +349,10 @@ detected host.
   line reference, which Cursor's `statusLine` aligns with:
   <https://code.claude.com/docs/en/statusline>. Cursor's own `statusLine`
   schema is documented only in the CLI's bundled `statusline` skill.
-- POC branch (not merged to main; evidence only): `poc/cursor-statusline`
-  in worktree `.claude/worktrees/poc-cursor-statusline` —
-  `tools/cursor-status-line-poc.py` + plan
-  `docs/superpowers/plans/2026-10-11-cursor-statusline-poc.md`.
 
-**POC findings to fold into discuss/plan (2026-10-12):**
-
-- Cursor Node host often exposes `/proc/<pid>/comm` as `MainThread`; RSS
-  matching must use full cmdline (and Claude-style `/proc` vs `ps`
-  backends). Never fall back to the statusline script's own RSS — that
-  lied at ~20–27MB while the real agent was ~600–700MB.
-- Preferred Cursor layout (POC): line 1 identity; line 2
-  model/context + included/auto/api + reset + on_demand; line 3
-  render_time/process_memory/system_memory/slowest.
-- Production Claude statusline remains the default until 999.4 is promoted;
-  live `~/.cursor/cli-config.json` wiring of the POC is optional/ephemeral.
+**Note:** Spike evidence and the pointer back to this branch live on `main`
+`.planning/ROADMAP.md` §Phase 999.4 / pending todo
+`2026-10-12-promote-cursor-statusline-poc-into-999-4.md` — not duplicated here.
 
 **Requirements:** TBD
 **Plans:** 0 plans
