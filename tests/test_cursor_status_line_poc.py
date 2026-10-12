@@ -144,5 +144,121 @@ class TestDumpPayload(unittest.TestCase):
         self.assertNotIn(b"ModuleNotFoundError", r.stderr)
 
 
+class TestLocalProbes(unittest.TestCase):
+    def test_system_available_bytes_positive_on_linux(self):
+        mod = load_poc()
+        n = mod.probe_system_available_bytes()
+        if os.path.exists("/proc/meminfo"):
+            self.assertIsNotNone(n)
+            self.assertGreater(n, 0)
+
+    def test_process_rss_returns_int(self):
+        if not Path("/proc").is_dir():
+            self.skipTest("Linux /proc required for POC RSS probe")
+        mod = load_poc()
+        n = mod.probe_process_rss_bytes()
+        self.assertIsInstance(n, int)
+        self.assertGreater(n, 0)
+
+    def test_git_branch_in_repo(self):
+        mod = load_poc()
+        root = str(Path(__file__).resolve().parents[1])
+        snap = mod.probe_git_snapshot(root)
+        self.assertIsInstance(snap, dict)
+        self.assertTrue(snap["in_repo"])
+        self.assertIn(snap["dirty"], ("clean", "modified", "untracked"))
+        self.assertTrue(snap["branch"] or snap["is_worktree"])
+
+    def test_worktree_struck_on_main_checkout(self):
+        mod = load_poc()
+        theme = mod.default_theme()
+        ctx = types.SimpleNamespace(work_dir="/tmp/x", home="/tmp")
+        mod.probe_git_snapshot = lambda _wd: {
+            "in_repo": True,
+            "branch": "main",
+            "dirty": "clean",
+            "is_worktree": False,
+            "wt_name": "",
+        }
+        s = mod.seg_alt_git_worktree(ctx, 80, theme)
+        self.assertIsNotNone(s)
+        self.assertIn("⎇", s)
+        self.assertIn("\033[9m", s)
+        self.assertIn(theme.c("GREY"), s)
+
+    def test_worktree_cyan_on_linked(self):
+        mod = load_poc()
+        theme = mod.default_theme()
+        ctx = types.SimpleNamespace(work_dir="/tmp/x", home="/tmp")
+        mod.probe_git_snapshot = lambda _wd: {
+            "in_repo": True,
+            "branch": "feat",
+            "dirty": "clean",
+            "is_worktree": True,
+            "wt_name": "poc-wt",
+        }
+        s = mod.seg_alt_git_worktree(ctx, 80, theme)
+        self.assertIsNotNone(s)
+        self.assertIn("poc-wt", s)
+        self.assertIn(theme.c("CYAN"), s)
+        self.assertNotIn("\033[9m", s)
+
+    def test_process_memory_fmt_shape(self):
+        mod = load_poc()
+        theme = mod.default_theme()
+        ctx = types.SimpleNamespace()
+        mod.probe_process_rss_bytes = lambda: 85 * 1024 * 1024
+        s = mod.seg_process_memory(ctx, 80, theme)
+        self.assertIsNotNone(s)
+        self.assertIn("🧮", s)
+        self.assertRegex(s, r"\d+(\.\d)?MB")
+
+    def test_system_memory_long_form(self):
+        mod = load_poc()
+        theme = mod.default_theme()
+        ctx = types.SimpleNamespace()
+        mod.probe_system_available_bytes = lambda: int(5.5 * 1024**3)
+        s = mod.seg_system_memory(ctx, 80, theme)
+        self.assertIsNotNone(s)
+        self.assertIn("GiB free", s)
+
+    def test_slowest_skips_meta_second_pass(self):
+        mod = load_poc()
+        payload = {
+            "model": {"display_name": "M"},
+            "workspace": {"current_dir": str(Path(__file__).resolve().parents[1])},
+            "context_window": {"used_percentage": 1, "context_window_size": 1000},
+            "render_width_chars": 200,
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = mod.render_for_test(
+                payload, {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
+            )
+        if "🐌" in out:
+            self.assertNotRegex(out, r"🐌\s*(render_time|slowest)\b")
+
+    def test_git_probe_once_per_render(self):
+        mod = load_poc()
+        n = {"calls": 0}
+        real = mod.probe_git_snapshot
+
+        def counted(wd):
+            n["calls"] += 1
+            return real(wd)
+
+        mod.probe_git_snapshot = counted
+        payload = {
+            "model": {"display_name": "M"},
+            "workspace": {"current_dir": str(Path(__file__).resolve().parents[1])},
+            "context_window": {"used_percentage": 1, "context_window_size": 1000},
+            "render_width_chars": 200,
+        }
+        with tempfile.TemporaryDirectory() as td:
+            mod.render_for_test(
+                payload, {"HOME": td, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
+            )
+        self.assertEqual(n["calls"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

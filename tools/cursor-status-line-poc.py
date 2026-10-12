@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -263,6 +264,168 @@ def fetch_quota(env: dict[str, str], *, now: float | int, urlopen: Any = None) -
     }
 
 
+def util_branch_from_porcelain(header: str) -> str:
+    if not header.startswith("## "):
+        return ""
+    rest = header[3:]
+    if rest.startswith("HEAD (no branch)"):
+        return ""
+    for prefix in ("No commits yet on ", "Initial commit on "):
+        if rest.startswith(prefix):
+            return rest[len(prefix):].strip()
+    return rest.split("...", 1)[0].strip()
+
+
+def util_dirty_mark(dirty: str, theme: Theme) -> str:
+    if dirty == "untracked":
+        return f"{theme.c('RED')}✗{RESET}"
+    if dirty == "modified":
+        return f"{theme.c('YELLOW')}~{RESET}"
+    return ""
+
+
+def probe_git_snapshot(work_dir: str) -> dict[str, Any]:
+    """POC plain-dict git snapshot (one rev-parse + porcelain status)."""
+    empty = {
+        "in_repo": False,
+        "branch": "",
+        "dirty": "clean",
+        "is_worktree": False,
+        "wt_name": "",
+    }
+    if not work_dir:
+        return empty
+    try:
+        out = subprocess.run(
+            [
+                "git", "-C", work_dir, "rev-parse", "--path-format=absolute",
+                "--git-dir", "--git-common-dir", "--show-toplevel",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return empty
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return empty
+    is_worktree = lines[0] != lines[1]
+    top = lines[2] if len(lines) >= 3 else ""
+    wt_name = os.path.basename(top.rstrip("/")) if (is_worktree and top) else ""
+    try:
+        st = subprocess.run(
+            ["git", "-C", work_dir, "status", "--porcelain", "--branch"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        ).stdout.splitlines()
+    except (OSError, subprocess.SubprocessError):
+        st = []
+    branch = util_branch_from_porcelain(st[0] if st else "")
+    changes = st[1:]
+    if any(ln.startswith(("??", "A", "D")) or ln.startswith(" D") for ln in changes):
+        dirty = "untracked"
+    elif any(ln.strip() for ln in changes):
+        dirty = "modified"
+    else:
+        dirty = "clean"
+    return {
+        "in_repo": True,
+        "branch": branch,
+        "dirty": dirty,
+        "is_worktree": is_worktree,
+        "wt_name": wt_name,
+    }
+
+
+def probe_git_for(ctx: SimpleNamespace) -> dict[str, Any]:
+    """Memoize one probe_git_snapshot per render on ctx._git."""
+    if getattr(ctx, "_git", None) is None:
+        ctx._git = probe_git_snapshot(ctx.work_dir)
+    return ctx._git
+
+
+def _rss_kb_via_proc(pid: int) -> int | None:
+    try:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except (OSError, IndexError, ValueError):
+        return None
+    return None
+
+
+def _comm_via_proc(pid: int) -> str | None:
+    try:
+        with open(f"/proc/{pid}/comm", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return None
+
+
+def _ppid_via_proc(pid: int) -> int | None:
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
+            return int(fh.read().split()[3])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def probe_process_rss_bytes() -> int:
+    """RSS of cursor-agent/agent ancestor, else self RSS. Always int."""
+    self_kb = _rss_kb_via_proc(os.getpid())
+    self_bytes = (self_kb * 1024) if self_kb is not None else 1
+    if not os.path.isdir("/proc"):
+        return self_bytes
+    pid = os.getppid()
+    for _ in range(12):
+        name = _comm_via_proc(pid)
+        if name is None:
+            break
+        base = os.path.basename(name)
+        if base in {"cursor-agent", "agent"} or "cursor-agent" in name:
+            kb = _rss_kb_via_proc(pid)
+            return kb * 1024 if kb is not None else self_bytes
+        parent = _ppid_via_proc(pid)
+        if parent is None or parent in (0, pid):
+            break
+        pid = parent
+    return self_bytes
+
+
+def probe_system_available_bytes() -> int | None:
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, IndexError, ValueError):
+        pass
+    try:
+        vm = subprocess.run(
+            ["vm_stat"], capture_output=True, text=True, timeout=1, check=False
+        )
+        if vm.returncode == 0:
+            page = 4096
+            free = 0
+            for line in vm.stdout.splitlines():
+                if "page size of" in line:
+                    page = int(
+                        "".join(c for c in line.split("page size of")[1] if c.isdigit())
+                    )
+                for label in ("Pages free", "Pages inactive", "Pages speculative"):
+                    if line.startswith(label + ":"):
+                        free += int(line.rsplit(":", 1)[1].strip().rstrip("."))
+            return free * page
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return None
+
+
 def build_context(
     payload: dict[str, Any],
     env: dict[str, str],
@@ -340,38 +503,82 @@ def seg_model_compact(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | N
 
 
 def seg_git_branch(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    branch = probe_git_for(ctx).get("branch") or ""
+    if not branch:
+        return None
+    shown = util_two_state_cap(branch, 30, 20)
+    return util_first_fitting(
+        [
+            f"{theme.c('GREY')}[{util_icon('🌿', shown)}]{RESET}",
+            f"{theme.c('GREY')}[{shown}]{RESET}",
+        ],
+        avail,
+    )
 
 
 def seg_alt_git_worktree(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    snap = probe_git_for(ctx)
+    if not snap.get("in_repo"):
+        return None
+    if not snap.get("is_worktree"):
+        return util_first_fitting(
+            [f"{theme.c('GREY')}\033[9m⎇ wt{RESET}"], avail
+        )
+    name = util_two_state_cap(snap.get("wt_name") or "", 30, 20)
+    return util_first_fitting([f"{theme.c('CYAN')}⎇ {name}{RESET}"], avail)
 
 
 def seg_git_dirty(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    mark = util_dirty_mark(probe_git_for(ctx).get("dirty") or "clean", theme)
+    return util_first_fitting([mark], avail) if mark else None
 
 
 def seg_process_memory(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    del ctx, theme
+    n = probe_process_rss_bytes()
+    return util_first_fitting([util_icon("🧮", fmt_bytes(n))], avail)
 
 
 def seg_system_memory(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    del ctx
+    n = probe_system_available_bytes()
+    if n is None:
+        return None
+    gib = n / (1024**3)
+    color = (
+        theme.c("GREEN")
+        if gib >= 4
+        else theme.c("YELLOW")
+        if gib >= 1
+        else f"\033[1;{theme.palette['RED']}m"
+    )
+    long_t = f"{color}💻 {gib:.1f} GiB free{RESET}"
+    med_t = f"{color}💻 {gib:.1f}G{RESET}"
+    short_t = f"{color}💻{gib:.0f}G{RESET}"
+    return util_first_fitting([long_t, med_t, short_t], avail)
 
 
 def seg_render_time(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    t0 = ctx.t_start
+    if t0 is None:
+        return None
+    elapsed = time.perf_counter_ns() - t0
+    color = util_pick_color(elapsed, theme.ramps["render_time"])
+    return util_first_fitting(
+        [util_icon("⏱", f"{color}{fmt_duration(elapsed)}{RESET}")], avail
+    )
 
 
 def seg_slowest(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:
-    del ctx, avail, theme
-    return None
+    slow = ctx.slowest
+    if not slow:
+        return None
+    name, ns = slow
+    color = util_pick_color(ns, theme.ramps["slowest"])
+    dur = f"{color}{fmt_duration(ns)}{RESET}"
+    return util_first_fitting(
+        [util_icon("🐌", f"{name} {dur}"), util_icon("🐌", dur)], avail
+    )
 
 
 def seg_included_total(ctx: SimpleNamespace, avail: int, theme: Theme) -> str | None:

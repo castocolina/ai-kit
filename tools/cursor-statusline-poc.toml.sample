@@ -2,7 +2,36 @@
 # Path: ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/cursor-statusline-poc.toml
 # Env override: AI_KIT_CURSOR_POC_CONFIG_FILE
 #
-# [segments] merges over defaults (all True).
-# Any [[line]] present replaces the entire layout (all-or-nothing).
+# [segments] merges over defaults. Any [[line]] replaces the entire layout.
 
-# Stub — Task 2/5 will document every segment default and the four [[line]] blocks.
+[segments]
+path = true
+git_branch = true
+alt_git_worktree = true
+git_dirty = true
+model_compact = true
+included_total = true
+included_auto = true
+included_api = true
+reset = true
+on_demand = true
+process_memory = true
+system_memory = true
+render_time = true
+slowest = true
+
+[[line]]
+min_rows = 0
+segments = ["path", "git_branch", "alt_git_worktree", "git_dirty"]
+
+[[line]]
+min_rows = 0
+segments = ["model_compact"]
+
+[[line]]
+min_rows = 0
+segments = ["included_total", "included_auto", "included_api", "reset", "on_demand"]
+
+[[line]]
+min_rows = 0
+segments = ["process_memory", "system_memory", "render_time", "slowest"]
