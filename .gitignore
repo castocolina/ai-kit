@@ -16,3 +16,6 @@ __pycache__
 .playwright-mcp/
 tmp/
 /*.png
+
+# GSD runtime lock (written while a milestone workflow runs)
+.planning/milestone.lock
