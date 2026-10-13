@@ -785,17 +785,17 @@ def probe_git_worktree_info(work_dir: str) -> tuple[bool, bool, str, str, str]:
         return False, False, "", "", ""                 # not a git repo
     is_worktree = lines[0] != lines[1]          # git-dir != git-common-dir
     common_dir = lines[1].rstrip("/")
-    if os.path.basename(common_dir) == ".git":
-        root_dir = os.path.dirname(common_dir)
-    else:
-        root_dir = common_dir           # bare repo / unusual layout: no ".git" to strip
+    # bare repo / unusual layout: no ".git" to strip
+    root_dir = os.path.dirname(common_dir) if os.path.basename(common_dir) == ".git" else common_dir
     root_name = os.path.basename(root_dir)
     top = lines[2] if len(lines) >= 3 else ""
     name = os.path.basename(top.rstrip("/")) if (is_worktree and top) else ""
     return True, is_worktree, name, root_name, root_dir
 
 
-def probe_worktree_info_cached(work_dir: str, ttl: int, cache_base: str) -> tuple[bool, bool, str, str, str]:
+def probe_worktree_info_cached(
+    work_dir: str, ttl: int, cache_base: str,
+) -> tuple[bool, bool, str, str, str]:
     """probe_git_worktree_info wrapped in an on-disk TTL cache — the worktree rev-parse
     rarely changes, so it is cached ~ttl s keyed by work_dir. The cache is active
     only when ttl > 0 AND a cache_base is resolved: ttl <= 0 forces a fresh
@@ -856,7 +856,8 @@ def probe_git_snapshot(work_dir: str, config: Optional["Config"] = None) -> "Git
         dirty = "modified"
     else:
         dirty = "clean"
-    in_repo, is_worktree, wt_name, root_name, root_path = probe_worktree_info_cached(work_dir, ttl, cache_base)
+    in_repo, is_worktree, wt_name, root_name, root_path = probe_worktree_info_cached(
+        work_dir, ttl, cache_base)
     return GitSnapshot(in_repo, branch, dirty, is_worktree, wt_name, root_name, root_path)
 
 
@@ -1696,8 +1697,8 @@ def util_rate_group_str(
         if pct_raw is None:
             continue
         pct = float(pct_raw)
-        reset_raw: Any = info.get("resets_at")
-        reset: int | None = int(reset_raw) if reset_raw is not None else None
+        reset: int | None = (int(info["resets_at"]) if info.get("resets_at") is not None
+                             else None)
         gap = util_rate_gap(pct, key, reset, now)
         if gap is None:
             color = theme.c("WHITE")
@@ -1709,8 +1710,8 @@ def util_rate_group_str(
             # tier via util_rate_group_str(rl, True, False, theme), so an
             # ungated sign would leak into it.
             sign = util_gap_sign(gap) if show_reset else ""
-        suffix = suffix_fn(reset) if show_reset else ""
-        parts.append(f"{fmt_rate_key_label(key)}: {color}{sign}{round(pct)}%{RESET}{suffix}")
+        parts.append(f"{fmt_rate_key_label(key)}: {color}{sign}{round(pct)}%{RESET}"
+                     + (suffix_fn(reset) if show_reset else ""))
     return util_icon("⚡", " | ".join(parts)) if parts else None
 
 
@@ -2289,12 +2290,15 @@ def seg_path(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     if snap.in_repo and snap.root_name:
         if snap.root_path:
             root = snap.root_path.rstrip("/")
-            full = ("~" + root[len(ctx.home):]) if (ctx.home and root.startswith(ctx.home)) else root
+            in_home = ctx.home and root.startswith(ctx.home)
+            full = ("~" + root[len(ctx.home):]) if in_home else root
             parent = os.path.basename(os.path.dirname(root))
             structural = util_first_fitting([full, f"{parent}/{snap.root_name}"], PATH_MAX_LEN)
-            shown = structural if structural is not None else util_two_state_cap(snap.root_name, 30, 20)
+            shown = (structural if structural is not None
+                     else util_two_state_cap(snap.root_name, 30, 20))
         else:
-            shown = util_two_state_cap(snap.root_name, 30, 20)   # root_path unknown -> name-only floor
+            # root_path unknown -> name-only floor
+            shown = util_two_state_cap(snap.root_name, 30, 20)
     else:
         shown = util_display_dir(ctx.work_dir, ctx.home)
     return f"{theme.c('BLUE')}{shown}{RESET}"  # floor
