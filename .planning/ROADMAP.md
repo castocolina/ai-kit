@@ -56,7 +56,7 @@ Full details: `milestones/v1.2-ROADMAP.md` · phase dirs: `milestones/v1.2-phase
 
 </details>
 
-### 🚧 v1.3 GSD Curated Config v2 (Phases 16–22) — IN PROGRESS
+### 🚧 v1.3 GSD Curated Config v2 (Phases 16–23) — IN PROGRESS
 
 **Milestone Goal:** Rewrite `ai-kit-gsd-curated-config` into a host-aware, role-scored GSD config
 wizard that configures a target project's `.planning/config.json` in four questions plus one
@@ -71,6 +71,7 @@ runtime hosting the session. Source spec:
 - [ ] **Phase 20: Live Validation on Codex + Opencode** - Live smoke runs from the codex and opencode hosts, resolving the two open verifications from the spec
 - [ ] **Phase 21: Cursor Live Validation** - Live smoke run from the cursor host (independent; may run any time after Phase 19)
 - [ ] **Phase 22: Pi Live Validation** - Live smoke run from the pi host (independent; may run any time after Phase 19)
+- [ ] **Phase 23: Host-split status line for Claude Code and Cursor CLI** - Split `tools/status-line.py` per host and ship a Cursor CLI status line with the shared 5/10/15 proximity gauge (promoted from backlog 999.4; independent of Phases 17–22)
 
 ## Phase Details
 
@@ -185,6 +186,13 @@ with the v2 flow living alongside the unchanged v1 CLI.
   5. The v1 CLI and its modules still work unchanged next to the new v2 subcommands (no
      removal), `make test` (v1 tests included) and `make validate` are green, the README row is updated, and
      SKILL.md labels cursor and pi "not live-validated" until their respective phases pass.
+  6. Ponytail (Claude plugin v5.1.0, addressable as `global:ponytail:<skill>`) is a first-class
+     recommended skill set in `skill_affinity.json`: core `ponytail` → planner, executor,
+     code-fixer; `ponytail-review`/`ponytail-audit` → code-reviewer and auditors;
+     `ponytail-debt` → planner or verifier; within the per-rigor cap (2/3/5). Whether non-Claude
+     hosts can address it (the plugin ships `AGENTS.md` and `gemini-extension.json`) is checked
+     and recorded. 18-CONTEXT.md's "ponytail does not exist" note is stale (folded from backlog
+     999.4, 2026-10-13).
 **Plans**: TBD
 
 ### Phase 19: Evaluation on Claude
@@ -264,6 +272,46 @@ downstream depends on it)
      (SPEC-05, deferred from Phase 16).
 **Plans**: TBD
 
+### Phase 23: Host-split status line for Claude Code and Cursor CLI
+
+**Goal**: Ship a Cursor CLI status line next to the Claude Code one. Split `tools/status-line.py`
+into a host-neutral `common_statusline.py`, one module per host (`claude_statusline.py`,
+`cursor_statusline.py`) and an isolated `cursor_quota.py` (the only network and credential code),
+with thin `claude-status-line.py` / `cursor-status-line.py` entries. The Cursor line shows model +
+context and three separate quota segments: API usage, included usage (auto + models), and extra
+(on-demand) usage against its ceiling, plus the billing-cycle reset. Every quota segment on both
+hosts uses one shared proximity gauge: spend % vs elapsed % of its window/cycle, bands of 5 / 10 /
+15 points from optimal (green / yellow / orange / red), keeping the `+`/`-` sign. Cursor quota
+comes from the undocumented Dashboard API and is always marked inferred (`≈`).
+**Depends on**: none inside v1.3 (independent of Phases 17–22). Before planning: decide
+`worktree-context-tools-manager-plan1` (land or shelve; it rewrites the same
+`setup.py`/`wizard_app.py` seams), and copy the host-split spec + REVIEW from branch
+`spec/host-split-statusline` into `.planning/specs/`. The 5 gap-gauge commits `d23749b..52def0f`
+are already on this branch; mark the gap spec accepted and amend PROJECT.md (burn pace superseded).
+**Requirements**: TBD (defined at discuss/plan time)
+**Success Criteria** (what must be TRUE):
+
+  1. Phase A (split): the Claude render is byte-identical before and after the split, the lint
+     debt in `tools/status-line.py` is cleared, and the stale
+     `docs/architecture/status-line-pipeline.md` is fixed or deleted.
+  2. Phase B (Cursor host): the Cursor line renders model, context and the three quota segments
+     (API / included / extra), each individually placeable, all colored by the shared gauge; the
+     cache keeps `data_fetched_at` apart from `last_attempt_at`/`last_error`, hides quota on
+     401/403 and after `cycle_end`, restricts `CURSOR_API_ENDPOINT` to https `*.cursor.sh`, puts
+     timeouts on every `git` call, shows resets in local time, and shows an error segment on a bad
+     TOML value instead of crashing; redacted real Dashboard responses are test fixtures.
+  3. Render vs fetch timing is measured (the user keeps a timing metric) before choosing an inline
+     fetch with a cache or a background refresher; "Cursor kills slow renders" is not assumed.
+  4. Phase C1/C2: `setup.py --with-statusline[=claude,cursor]` wires each detected host headless,
+     and the wizard runs the verify/replace/keep status-line flow per detected host.
+  5. Both entries are reachable after v1.3 merges to `main`; `tests/test_arch.py` banner and
+     role-prefix rules pass for the new modules; `make test` and `make validate` are green.
+
+**Linked assets:** spec + REVIEW on `spec/host-split-statusline`; POC branch
+`poc/cursor-statusline` (reference only, never promoted or merged; inventory what works first);
+research notes 13 and 13b; todo `2026-10-12-promote-cursor-statusline-poc-into-999-4.md` on main.
+**Plans**: TBD
+
 ## Backlog
 
 ### Phase 999.1: Shared core for Config Doctor's TUI and a future CLI variant (BACKLOG)
@@ -300,72 +348,6 @@ daily automation mechanism (cron job, systemd user timer, or equivalent)
 that invokes the already-idempotent pipeline script, without requiring any
 change to the script itself. Deferred explicitly by the user during Phase 5
 discussion ("the cron can stay deferred to the backlog for now").
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-
-### Phase 999.3: Architecture-layer test suite (BACKLOG)
-
-**Goal:** [Captured for future planning] `tests/test_arch.py` currently
-enforces structural invariants (banner-block boundaries, `cfg_`/`probe_`/
-`fmt_`/`util_`/`core_`/`seg_` role-prefix conventions) for a single file,
-`tools/status-line.py`, via AST parsing. The user's proposal: extend this
-into a real architecture-layer test suite following standard
-software-architecture testing practices — e.g. dependency-direction rules
-(runtime code never importing dev-only packages), layering boundaries
-enforced across the whole `tools/`/`skills/` tree (not just one file), and
-similar fitness functions for other structurally-significant modules
-(`tools/setup.py`, the `ai_kit_spec` package). Not built yet — this is a
-note that architecture-fitness testing should generalize beyond the current
-single-file, single-convention check. Raised while drafting this project's
-`AGENTS.md`/`docs/agent-instructions/testing.md`.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-
-**Note (2026-09-13):** Promoted and resolved at a scoped-down,
-form/convention-only ambition by v1.2's Phase 12 (`ai-kit-project-rules-arch`
-— see `REQ-rules-arch`). Phase 12 verifies `arch-test` Makefile target
-existence/chaining/AST-only-ness; the fuller dependency-direction/layering-
-boundary enforcement ambition described above remains an explicitly-flagged
-known gap, not built by Phase 12. This stub is left as-is for history; it is
-not duplicated as a second active roadmap item.
-
-### Phase 999.4: Ponytail as a first-class recommended skill set in curated GSD setup (BACKLOG)
-
-**Goal:** [Captured for future planning] **The user puts strong emphasis on this.** When the
-curated GSD setup (`ai-kit-gsd-curated-config` v2) builds the per-agent skills list
-(`agent_skills.<agent>`), the ponytail plugin must be one of the skills it recommends. The plugin
-is now installed as a Claude plugin, v5.1.0, and provides:
-- `ponytail:ponytail` (smallest complete change);
-- `ponytail:ponytail-audit` (whole-repo audit);
-- `ponytail:ponytail-review`;
-- `ponytail:ponytail-debt`;
-- `ponytail:ponytail-gain`;
-- `ponytail:ponytail-help`.
-
-These cover planning, auditing, execution and review, so they would help across the GSD
-workflow, including on ai-kit itself.
-
-This overlaps Phase 18 (SKL-01..03, design §7 `skill_affinity.json`), which is not executed yet:
-- `18-CONTEXT.md` says ponytail "does not exist … so per D-03 it is simply not mentioned". That
-  is now stale: ponytail is installed and addressable as `global:ponytail:<skill>`, which works on
-  the Claude host only. The plugin also ships `AGENTS.md` and `gemini-extension.json`, so check
-  whether other hosts can address it too.
-- Map each ponytail command to agents, not only the core skill:
-  - core `ponytail` → planner, executor, code-fixer (design §7 "token economy");
-  - `ponytail-review` and `ponytail-audit` → code-reviewer and the auditors;
-  - `ponytail-debt` → planner or verifier.
-- Respect the per-agent skill cap per rigor (2/3/5).
-
-Preferred route: fold this into Phase 18 when it is planned (amend `18-CONTEXT.md` D-03 and the
-§7 mapping), rather than leaving it as a separate later phase.
 **Requirements:** TBD
 **Plans:** 0 plans
 

@@ -185,8 +185,9 @@ to the 11 v1 subcommands, and v1 keeps working unchanged (D-08).
 ## Specific Ideas
 
 - Installed skills on this machine: 132 in `~/.claude/skills` and 112 in `~/.agents/skills`.
-  `reducing-entropy`, `react-dev`, `mermaid-diagrams` and `gsd-debug` exist; `ponytail` does
-  not, so per D-03 it is simply not mentioned.
+  `reducing-entropy`, `react-dev`, `mermaid-diagrams` and `gsd-debug` exist; `ponytail` did
+  not at discussion time. *(Superseded 2026-10-13: ponytail is now installed as a Claude plugin
+  and is a recommended skill set; see ROADMAP Phase 18 success criterion 6.)*
 - Scratch-project probe used for D-07:
   `config-set model_overrides.gsd-planner opus` followed by `… null` → `model_overrides` is `{}`.
 
