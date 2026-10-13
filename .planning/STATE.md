@@ -218,7 +218,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ### Pending Todos
 
-- [major] Execute the System One decision-skill plan (jev-fast-decision, 3 backends) — `.planning/todos/pending/2026-10-11-execute-system-one-decision-skill-plan.md`
+- [2026-10-11] [skills] Execute the System One decision-skill plan (jev-fast-decision, 3 backends) — [todo file](.planning/todos/pending/2026-10-11-execute-system-one-decision-skill-plan.md)
+- [2026-10-12] [statusline] Promote Cursor statusline POC spike into Phase 999.4 discuss/plan — [todo file](.planning/todos/pending/2026-10-12-promote-cursor-statusline-poc-into-999-4.md)
+- [2026-10-13] [agents] Add Cursor subagents pinned to non-fast composer-2.5 and grok — [todo file](.planning/todos/pending/2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md) — Needs TBD. Approach hints:.
 
 ### Blockers/Concerns
 
