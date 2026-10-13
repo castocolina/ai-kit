@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -euo pipefail
 skill=~/.claude/skills/jev-fast-decision
 cp "$skill/scripts/jev_review.py" "$skill/notes/jev_review.py.before-calibrate"

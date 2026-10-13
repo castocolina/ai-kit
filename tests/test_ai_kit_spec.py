@@ -626,7 +626,8 @@ class TestMergeCatalogEntry(unittest.TestCase):
         self.assertNotIn("new", original)
 
     def test_runtimes_merge_across_two_cli_writes_for_the_same_key(self):
-        entry_a = {"provider": "openai", "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}},
+        entry_a = {"provider": "openai",
+                   "runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}},
                    "source": {}, "confidence": "high", "last_verified": "2026-09-02"}
         catalog, _ = model_catalog.merge_catalog_entry({}, "openai/gpt-5.6-sol", entry_a)
         entry_b = {"provider": "openai", "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
@@ -640,8 +641,9 @@ class TestMergeCatalogEntry(unittest.TestCase):
         # CRITICAL finding: a source's provenance flipping to false must actually clear the
         # field it used to own, not leave it behind under plain dict-spread's "absent key
         # means preserve" semantics.
-        existing_entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
-                           "last_verified": "2026-09-02", "scores": {"intelligence_index": 91.0}}
+        existing_entry = {"provider": "p", "runtimes": {"c": {}}, "source": {},
+                          "confidence": "high", "last_verified": "2026-09-02",
+                          "scores": {"intelligence_index": 91.0}}
         catalog = {"k": existing_entry}
         entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
                   "last_verified": "2026-09-02", "scores": None}
@@ -653,8 +655,9 @@ class TestMergeCatalogEntry(unittest.TestCase):
         # Contrast with the test above: OMITTING a key (a source that's simply down this run,
         # never claiming anything about the field) must still preserve the cached value --
         # only an explicit None is a clear signal.
-        existing_entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
-                           "last_verified": "2026-09-02", "scores": {"intelligence_index": 91.0}}
+        existing_entry = {"provider": "p", "runtimes": {"c": {}}, "source": {},
+                          "confidence": "high", "last_verified": "2026-09-02",
+                          "scores": {"intelligence_index": 91.0}}
         catalog = {"k": existing_entry}
         entry = {"provider": "p", "runtimes": {"c": {}}, "source": {}, "confidence": "high",
                   "last_verified": "2026-09-02"}  # no "scores" key at all
@@ -734,7 +737,8 @@ class TestApplyHeuristicCorrections(unittest.TestCase):
             catalog, "router-env/x", {"is_router": "not-a-bool"})
         self.assertIsNotNone(reason)
         self.assertIn("is_router", reason)
-        self.assertTrue(updated["router-env/x"]["is_router"])  # unchanged -- rejected correction never applied
+        # unchanged -- rejected correction never applied
+        self.assertTrue(updated["router-env/x"]["is_router"])
 
 
 class TestCachePaths(unittest.TestCase):
@@ -3738,7 +3742,7 @@ class TestFetchArtificialAnalysis(unittest.TestCase):
             if "page=1" in url:
                 return {"data": [{"id": "1"}], "pagination": {"has_more": True}}
             raise urllib.error.URLError("dropped mid-pagination")
-        data, ok = model_sources.fetch_artificial_analysis("aa_test", fetch_fn=flaky_fetch)
+        _data, ok = model_sources.fetch_artificial_analysis("aa_test", fetch_fn=flaky_fetch)
         self.assertFalse(ok)  # partial data exists but is NOT trustworthy -- caller must not use it
 
 
@@ -3914,7 +3918,8 @@ class TestMatchModelsDev(unittest.TestCase):
 
     def test_fuzzy_match_returns_none_when_no_candidate_is_close_enough(self):
         fuzzy_data = {"openai": {"models": {"gpt-5.6-sol-2": {"id": "gpt-5.6-sol-2"}}}}
-        self.assertIsNone(model_matcher.match_models_dev("totally-different-vendor-model", fuzzy_data))
+        self.assertIsNone(
+            model_matcher.match_models_dev("totally-different-vendor-model", fuzzy_data))
 
     def test_fuzzy_match_with_two_equally_close_candidates_returns_none_rather_than_guess(self):
         # Collision-safety extends to the fuzzy path too -- two near-ties (both an equally
@@ -4360,7 +4365,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                                                  "source": {"manual": True}, "confidence": "low",
                                                  "last_verified": "2026-08-01"}}
         discovered = [{"cli": "opencode", "model_id": "vendor/totally-unknown"}]
-        catalog, rejections, unmatched = cli.build_model_catalog(
+        catalog, _rejections, unmatched = cli.build_model_catalog(
             discovered, {}, True, [], True, existing)
         self.assertEqual(unmatched, [])
         self.assertIn("opencode", catalog["vendor/totally-unknown"]["runtimes"])
@@ -4375,7 +4380,8 @@ class TestBuildModelCatalog(unittest.TestCase):
         # (the unmatched path's own heuristic fields are already covered separately, above).
         discovered = [{"cli": "opencode", "model_id": "router-env/my-plan-review"}]
         models_dev_data = {"router-env": {"models": {"my-plan-review": {"id": "my-plan-review"}}}}
-        catalog, _, unmatched = cli.build_model_catalog(discovered, models_dev_data, True, [], True, {})
+        catalog, _, unmatched = cli.build_model_catalog(
+            discovered, models_dev_data, True, [], True, {})
         self.assertEqual(unmatched, [])
         entry = catalog["router-env/my-plan-review"]
         self.assertTrue(entry["is_router"])
@@ -4514,14 +4520,15 @@ class TestBuildModelCatalog(unittest.TestCase):
         # from the naming heuristic, silently overwriting a user's prior correction
         # (apply_heuristic_corrections, Task 2) on the very next run.
         existing = {"router-env/my-plan-review": {
-            "provider": "router-env", "runtimes": {"opencode": {"model_id": "router-env/my-plan-review"}},
+            "provider": "router-env",
+            "runtimes": {"opencode": {"model_id": "router-env/my-plan-review"}},
             "source": {}, "confidence": "low", "last_verified": "2026-08-01",
             "is_router": False}}  # user corrected this away from the heuristic default (True)
         discovered = [{"cli": "opencode", "model_id": "router-env/my-plan-review"}]
         catalog, _, _ = cli.build_model_catalog(discovered, {}, True, [], True, existing)
         self.assertFalse(catalog["router-env/my-plan-review"]["is_router"])
 
-    def test_bare_model_matched_only_via_artificial_analysis_derives_vendor_from_model_creator(self):
+    def test_bare_model_matched_only_via_artificial_analysis_derives_vendor_from_model_creator(self):  # noqa: E501
         # HIGH finding: a bare model id (codex-style, no "<vendor>/" prefix) with NO
         # models.dev match must not become its own vendor ("gpt-5.6-sol/gpt-5.6-sol") just
         # because model_id.split("/", 1)[0] has nothing to split -- when Artificial Analysis
@@ -4545,7 +4552,7 @@ class TestBuildModelCatalog(unittest.TestCase):
         # or --extra-candidate -- there's no special-casing by origin inside this function.
         discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"},
                       {"cli": "codex", "model_id": "gpt-5.6-alt"}]  # e.g. from --extra-candidate
-        catalog, _, unmatched = cli.build_model_catalog(discovered, {}, True, [], True, {})
+        _catalog, _, unmatched = cli.build_model_catalog(discovered, {}, True, [], True, {})
         self.assertEqual({u["cli"] for u in unmatched}, {"opencode", "codex"})
 
     def test_bare_id_with_both_sources_unavailable_recovers_key_from_existing_catalog(self):
@@ -4985,7 +4992,8 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             local_cfg = os.path.join(d, ".aikit", "review-spec.toml")
             os.makedirs(os.path.dirname(local_cfg))
             with open(local_cfg, "w", encoding="utf-8") as f:
-                f.write('[[reviewers]]\nkey = "codex-primary"\nmodel = "vendor/already-registered"\n'
+                f.write('[[reviewers]]\nkey = "codex-primary"\n'
+                        'model = "vendor/already-registered"\n'
                         'vendor = "vendor"\ncli = "codex"\n')
             import io
             from contextlib import redirect_stdout
@@ -5009,7 +5017,8 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                 json.dump({}, f)
             entry_path = os.path.join(d, "entry.json")
             with open(entry_path, "w", encoding="utf-8") as f:
-                json.dump({"model_id": "vendor/x", "entry": {"provider": "vendor"}}, f)  # missing fields
+                # missing fields
+                json.dump({"model_id": "vendor/x", "entry": {"provider": "vendor"}}, f)
             import io
             from contextlib import redirect_stdout
             buf = io.StringIO()
