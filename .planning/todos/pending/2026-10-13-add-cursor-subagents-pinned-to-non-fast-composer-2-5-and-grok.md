@@ -27,9 +27,33 @@ Facts checked on 2026-10-13 (cursor-agent 2026.10.01-e373342):
   Every one of these has a `-fast` twin. `auto` is the account default.
 - **The user's interactive shell function `cursor-agent` injects `--model gpt-5.6-sol-high`** when no `--model` is given. Scripts don't see shell functions, so subprocess calls must always pass `--model`.
 
+## Verified 2026-10-13 (live, cursor-agent 2026.10.01, parent `--model auto`)
+
+- **Frontmatter the bundle parses** (`index.js`): `name`, `description`, `model`
+  (default `inherit`), `force-default-model`, `readonly: true`, `background`,
+  `tools` (comma list). Cursor's own create-subagent skill documents only the
+  first two.
+- **A per-agent pin works.** `.cursor/agents/composer-worker.md` with
+  `model: composer-2.5`: the Task call ran `custom:composer-worker` with
+  `"model":"composer-2.5"` and created the file (20 s).
+- **A per-call model works too.** An agent with no `model:`, invoked with "set its
+  model parameter to grok-4.7": the Task call carried `"model":"grok-4.7-high"`
+  and created the file (67 s). The Task tool has a `model` argument, so one
+  generic agent can take the model as a parameter.
+- **Variant resolution uses `~/.cursor/cli-config.json` `modelParameters`.** The
+  user stores `composer-2.5: fast=false` and `grok-4.7: reasoning_effort=high,
+  fast=false`; `grok-4.7` resolved to `grok-4.7-high`, with no `-fast`.
+  Unconfirmed: the non-fast billing itself. The stream shows no fast flag, so
+  check one run in the Cursor usage dashboard.
+- **The built-in explore subagent has its own knob:** `cli-config.json`
+  `subagentModels.explore` / `exploreSubagentModel` (`default` or `inherit`, or
+  a model via `/config`).
+- Scratch test workspace:
+  `scratchpad/cursor-subagent-test/` (session e987e526).
+
 ## Solution
 
-TBD. Approach hints:
+Approach hints (see Verified above):
 
 1. **Confirm the schema.** Check Cursor's custom-subagent frontmatter in the official docs (name, description, `model`, readonly or tools fields, and whether `model` accepts exact ids like `composer-2.5` / `grok-4.7-medium` or only aliases). Also check how Cursor resolves the same name across `~/.cursor/agents`, project `.cursor/agents` and `~/.claude/agents`.
 2. **Create a minimal set of user-level agents** in `~/.cursor/agents/*.md`, for example:
