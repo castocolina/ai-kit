@@ -64,6 +64,10 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 - [ ] **EVAL-07**: Live smoke on the cursor host (own phase, scheduled after codex/opencode; may run later without blocking earlier phases)
 - [ ] **EVAL-08**: Live smoke on the pi host (own phase, scheduled last; may run later without blocking earlier phases)
 
+### Cursor Executor Agents
+
+- [ ] **AGT-01**: ai-kit ships Cursor executor subagents `composer-worker` (pinned to non-fast `composer-2.5`) and `grok-worker` (pinned to non-fast `grok-4.7`), with short bodies for executing an already-planned task and names that do not collide with the 35 GSD agents; `tools/setup.py` links them into `~/.cursor/agents` (honoring `CURSOR_CONFIG_DIR`); a live delegation from a cursor parent shows the pinned model in the Task call, and one run is confirmed non-fast in the Cursor usage dashboard (pin an explicit effort-suffixed id if the bare id relies on local `modelParameters`)
+
 ## Future Requirements
 
 None deferred beyond v1.3 at definition time.
@@ -114,12 +118,13 @@ None deferred beyond v1.3 at definition time.
 | EVAL-05 | Phase 20 | Pending |
 | EVAL-07 | Phase 21 | Pending |
 | EVAL-08 | Phase 22 | Pending |
+| AGT-01 | Phase 21 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 33 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 3, APP 5, EVAL 8). SPEC-05 (pi
+- v1.3 requirements: 34 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 3, APP 5, EVAL 8, AGT 1). SPEC-05 (pi
   enumeration) and SPEC-06 (cursor wrapper) were split out of SPEC-02 during the Phase 16
   discussion, 2026-09-23.
-- Mapped to phases: 33/33
+- Mapped to phases: 34/34
 - Unmapped: 0
 
 ---

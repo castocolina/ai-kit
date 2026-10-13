@@ -40,7 +40,8 @@ runtime hosting the session. Source spec (approved 2026-09-23):
   cross-AI execution; curated `skill_affinity.json`
 - Evaluation on claude — writing-skills RED/GREEN, `/skill-judge` in code review,
   real-gsd-tools `resolve-model` check for all 35 agents, live smoke
-- Live validation on codex and opencode (cursor and pi deferred beyond v1.3)
+- Live validation on codex and opencode; cursor (Phase 21) and pi (Phase 22) as independent
+  phases that may run any time after Phase 19
 
 ## Core Value
 

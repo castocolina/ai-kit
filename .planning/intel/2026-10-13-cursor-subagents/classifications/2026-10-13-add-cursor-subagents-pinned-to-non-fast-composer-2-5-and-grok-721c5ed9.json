@@ -1,0 +1,21 @@
+{
+  "source_path": "/var/home/bazzite/git/personal/ai-kit/.planning/todos/pending/2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md",
+  "type": "DOC",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md",
+  "summary": "Todo to add Cursor subagents pinned to non-fast composer-2.5 and grok models to avoid fast-model token cost.",
+  "scope": ["Cursor subagents", "composer-2.5", "grok-4.7", "~/.cursor/agents", "cursor-agent", "cli-config.json", "cross-ai.mjs", "v1.3 Phase 18"],
+  "cross_refs": [
+    "~/.cursor/agents/",
+    "~/.claude/agents",
+    "~/.local/share/cursor-agent/versions/2026.10.01-e373342/1623.index.js",
+    "skills/ai-kit-spec-review/ai_kit_spec/commands.py:116",
+    ".cursor/agents/composer-worker.md",
+    "scratchpad/cursor-subagent-test/",
+    "tools/setup.py"
+  ],
+  "locked": false,
+  "precedence": null,
+  "notes": ""
+}

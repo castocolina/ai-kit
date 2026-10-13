@@ -228,8 +228,9 @@ the two open verifications the spec left pending.
 **Goal**: The skill is confirmed working from a real cursor host session; cursor's
 "not live-validated" label is lifted.
 **Depends on**: Phase 19 (independent of Phase 20; may run any time afterward, and nothing
-downstream depends on it)
-**Requirements**: EVAL-07, SPEC-06
+downstream depends on it). AGT-01 does not depend on Phase 19 and may run first, or any time,
+within this phase.
+**Requirements**: EVAL-07, SPEC-06, AGT-01
 **Success Criteria** (what must be TRUE):
 
   1. A live smoke run from the cursor host (`inventory` + `recommend` + `apply`, dry-run then
@@ -237,6 +238,11 @@ downstream depends on it)
   2. SKILL.md's "not live-validated" label for cursor is removed once the smoke run passes.
   3. `cursor-agent` is detected and enumerated even when wrapped by a shell function/alias
      (SPEC-06, deferred from Phase 16).
+  4. ai-kit ships Cursor executor subagents `composer-worker` and `grok-worker`, each pinned to a
+     non-fast model, linked into `~/.cursor/agents` by `tools/setup.py`; a live delegation shows
+     the pinned model in the Task call and one run is confirmed non-fast in the Cursor usage
+     dashboard (AGT-01; source todo
+     `.planning/todos/pending/2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md`).
 **Plans**: TBD
 
 ### Phase 22: Pi Live Validation
