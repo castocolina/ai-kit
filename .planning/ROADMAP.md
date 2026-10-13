@@ -239,7 +239,9 @@ within this phase.
   3. `cursor-agent` is detected and enumerated even when wrapped by a shell function/alias
      (SPEC-06, deferred from Phase 16).
   4. ai-kit ships Cursor executor subagents `composer-worker` and `grok-worker`, each pinned to a
-     non-fast model, linked into `~/.cursor/agents` by `tools/setup.py`; a live delegation shows
+     non-fast model, from a `cursor-agents/` folder linked into `~/.cursor/agents` by
+     `tools/setup.py` (wizard Choose-step rows when Cursor is detected, plus a headless
+     `--cursor-agents` flag, both tested); a live delegation shows
      the pinned model in the Task call and one run is confirmed non-fast in the Cursor usage
      dashboard (AGT-01; source todo
      `.planning/todos/pending/2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md`).
