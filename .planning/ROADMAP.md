@@ -314,40 +314,21 @@ research notes 13 and 13b; todo `2026-10-12-promote-cursor-statusline-poc-into-9
 
 ## Backlog
 
-### Phase 999.1: Shared core for Config Doctor's TUI and a future CLI variant (BACKLOG)
+### Phase 999.1: Config Doctor reachable from the setup wizard (BACKLOG)
 
-**Goal:** [Captured for future planning] Phase 4 (Config Doctor) builds the
-review screen as a `textual` TUI (D-05/D-06 in
-`.planning/milestones/v1.0-phases/04-config-doctor/04-CONTEXT.md`). The user's proposal: a
-future CLI-mode Config Doctor should never be a second, independently-written
-implementation — the check-running/apply engine (D-01's declarative registry:
-read current value, compare to recommended, apply on confirm) should be
-extracted into a shared core module, with both the TUI and a future
-plain-CLI/scriptable front-end sitting on top of that same core. Not built in
-Phase 4 (which ships TUI-only) — this is a note that Phase 4's engine should
-be written without coupling check/apply logic directly to `textual` widgets,
-so a CLI front-end can be added later without a rewrite. Framed by the user
-as a pattern GSD itself could recognize/scaffold ("core logic shared across a
-TUI and a CLI front-end"), not just an ai-kit-specific task.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-
-### Phase 999.2: Cron/scheduling automation for usage-metrics daily ingestion (BACKLOG)
-
-**Goal:** [Captured for future planning] Phase 5 (Usage Metrics Dashboard)
-builds the ingestion/refinement pipeline script to be idempotent and
-incremental — safe to run once a day (D-07 in
-`.planning/milestones/v1.0-phases/05-usage-metrics-dashboard/05-CONTEXT.md`) — but does not
-wire an actual recurring trigger for it. Not built in Phase 5 (manual
-invocation only) — this is a note that a future phase should add a real
-daily automation mechanism (cron job, systemd user timer, or equivalent)
-that invokes the already-idempotent pipeline script, without requiring any
-change to the script itself. Deferred explicitly by the user during Phase 5
-discussion ("the cron can stay deferred to the backlog for now").
+**Goal:** [Captured for future planning] Config Doctor (v1.0 Phase 4) is a
+standalone `textual` TUI reached only through `setup.py --config-doctor`; the
+setup wizard (`tools/wizard_app.py`: housekeeping, Choose, Arrange, Review,
+Done) never offers it, and `make doctor` runs the different status-line
+doctor. Make Config Doctor reachable from the wizard (for example an entry on
+the Done step, or a dedicated step) reusing the existing stdlib-only engine
+(`config_doctor_checks.py` / `config_doctor_readers.py` /
+`config_doctor_appliers.py`) and `config_doctor_app.py` screen, with no second
+implementation. Coordinate with `worktree-context-tools-manager-plan1`
+(adds a wizard Step 0 on the same seams) and v1.3 Phase 23 C2 (per-host
+status-line step). Candidate rows to add later: the Playwright MCP Chrome path
+on Bazzite. Rewritten 2026-10-13 from the former "shared core for a CLI
+variant" note, whose goal (engine not coupled to the TUI) is already met.
 **Requirements:** TBD
 **Plans:** 0 plans
 
