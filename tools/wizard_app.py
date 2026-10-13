@@ -113,7 +113,8 @@ class WizardContext(NamedTuple):
     external_segments: list     # [{id, name, path, default_on, description,
                                 #   icon, sample, line, provenance}, …]
     component_meta: dict          # {name: description} across all CATEGORIES
-    housekeeping: dict = {}     # {"stale": [...], "predecessors": [...]} — "cat/name"
+    housekeeping: dict = {}  # noqa: RUF012 -- copied on read (__init__), never mutated
+                                # {"stale": [...], "predecessors": [...]} — "cat/name"
                                 #  display strings; empty = nothing pending, gate skipped.
     # Injected by launch_wizard: commit(selection, state) -> {"ok", "adopt", "log"}.
     # Runs the real install (symlinks + doctor-validated status-line write) IN-UI on
@@ -468,7 +469,8 @@ class WizardApp(App):
             gate = (f"[b {WARN}]⚠  {len(items)} link(s) point at a PREVIOUS ai-kit install[/]\n"
                     f"{listing}\n\n"
                     f"[{DIM}]No deletes them — this cannot be undone.[/]\n"
-                    f"[#0d1117 on {WARN}] Y / Enter = re-point to this install · n = delete them [/]")
+                    f"[#0d1117 on {WARN}] Y / Enter = re-point to this install · "
+                    "n = delete them [/]")
         picksbox.update(gate)
 
     def _render_choose(self) -> None:

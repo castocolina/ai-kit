@@ -15,9 +15,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-spec-execute-superpowers"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute"))
 
-from ai_kit_spec_superpowers import dispatch_injection, task_classification
-from ai_kit_spec_superpowers import cli as superpowers_cli
 import detect_framework as router_detect_framework
+from ai_kit_spec_superpowers import cli as superpowers_cli
+from ai_kit_spec_superpowers import dispatch_injection, task_classification
 
 
 class TestClassifyTask(unittest.TestCase):
@@ -127,7 +127,7 @@ class TestAssembleCandidates(unittest.TestCase):
                      "command": "codex exec -m {model}", "purpose": "execute"},
                 ],
             }
-        candidates, top_n_keys = dispatch_injection.assemble_candidates(
+        candidates, _top_n_keys = dispatch_injection.assemble_candidates(
             "/fake/cwd", {}, cfg_resolve_fn=fake_cfg_resolve)
         self.assertEqual(candidates[0]["purpose"], "execute")
 
@@ -615,7 +615,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 stdout=io.StringIO())
         self.assertEqual(captured["sizes"], {"big.py": 4000})
 
-    def test_resolve_injection_emits_controlled_quota_exhausted_when_every_candidate_already_excluded(self):
+    def test_resolve_injection_emits_controlled_quota_exhausted_when_every_candidate_already_excluded(self):  # noqa: E501
         # CRITICAL finding: a single-candidate ladder, already excluded by --exclude-keys-json
         # (e.g. a mid-dispatch "quota" failure caught in Step 3, re-running resolve-injection with
         # that SAME candidate excluded) previously reached build_dispatch_injection_fn with an
@@ -687,7 +687,7 @@ class TestCliResolveInjection(unittest.TestCase):
         # narrowing already rejected is somehow still ranked.
         self.assertEqual(result["ladder_keys"], [])
 
-    def test_resolve_injection_merges_wave_excluded_reasons_with_this_calls_own_quota_exhaustion(self):
+    def test_resolve_injection_merges_wave_excluded_reasons_with_this_calls_own_quota_exhaustion(self):  # noqa: E501
         # CRITICAL finding: mixed quota/auth case -- a caller re-resolving mid-wave (one candidate
         # already excluded for a KNOWN reason from an earlier call, another going quota-exhausted
         # fresh THIS call) must see BOTH reasons in the final output, never just this call's own
