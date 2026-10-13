@@ -291,8 +291,8 @@ are already on this branch; mark the gap spec accepted and amend PROJECT.md (bur
 **Requirements**: TBD (defined at discuss/plan time)
 **Success Criteria** (what must be TRUE):
 
-  1. Phase A (split): the Claude render is byte-identical before and after the split, the lint
-     debt in `tools/status-line.py` is cleared, and the stale
+  1. Phase A (split): the Claude render is byte-identical before and after the split, the split
+     files stay ruff/pylint clean (the old debt was cleared on 2026-10-13), and the stale
      `docs/architecture/status-line-pipeline.md` is fixed or deleted.
   2. Phase B (Cursor host): the Cursor line renders model, context and the three quota segments
      (API / included / extra), each individually placeable, all colored by the shared gauge; the
