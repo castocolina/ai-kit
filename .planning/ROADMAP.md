@@ -358,7 +358,7 @@ comes from the undocumented Dashboard API and is always marked inferred (`≈`).
 `setup.py`/`wizard_app.py` seams), and copy the host-split spec + REVIEW from branch
 `spec/host-split-statusline` into `.planning/specs/`. The 5 gap-gauge commits `d23749b..52def0f`
 are already on this branch; mark the gap spec accepted and amend PROJECT.md (burn pace superseded).
-**Requirements**: TBD (defined at discuss/plan time)
+**Requirements**: STL-01, STL-02, STL-03, STL-04, STL-05 (defined 2026-10-14 in the Phase 23 spec)
 **Success Criteria** (what must be TRUE):
 
   1. Phase A (split): the Claude render is byte-identical before and after the split, the split

@@ -1,7 +1,7 @@
 # Status-line quota windows — absolute gap coloring
 
 Date: 2026-10-09
-Status: draft, awaiting user review
+Status: accepted, implemented on `gsd/v1.3-curated-config-v2` in `d23749b..52def0f` (marked 2026-10-14 per ROADMAP Phase 23)
 
 ## Intent
 

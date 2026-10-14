@@ -90,6 +90,14 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 
 - [ ] **AGT-01**: ai-kit ships Cursor executor subagents `composer-worker` (pinned to non-fast `composer-2.5`) and `grok-worker` (pinned to the explicit non-fast `grok-4.7-medium`; amended 2026-10-14, a bare `grok-4.7` resolves through local `modelParameters`), with short bodies for executing an already-planned task and names that do not collide with the 35 GSD agents. They live in their own `cursor-agents/` folder (never `agents/`, which links into `~/.claude/agents` where Claude would load an unrunnable model pin), added to `tools/setup.py` as a fourth category whose link target is `~/.cursor/agents` (honoring `CURSOR_CONFIG_DIR`). The wizard's Choose step lists the category only when Cursor is detected (same detection as the Cursor hook wiring), and a headless `--cursor-agents=all|name1,name2` flag mirrors `--skills`; tests cover the wizard row and the headless link. Ordered after the `worktree-context-tools-manager-plan1` land-or-shelve decision (same `setup.py`/`wizard_app.py` seams). A live delegation from a cursor parent shows the pinned model in the Task call, and one run is confirmed non-fast in the Cursor usage dashboard (pin an explicit effort-suffixed id if the bare id relies on local `modelParameters`)
 
+### Host-Split Status Line
+
+- [ ] **STL-01**: `tools/status-line.py` splits into host-neutral `common_*` modules, `claude_*` host modules and a thin `claude-status-line.py` entry; the Claude render is byte-identical; a hard rename with an idempotent, atomic migration of the Claude `statusLine.command` and `statusline.toml` ships in the same change; the split files stay ruff/pylint clean; the stale status-line pipeline doc is fixed or deleted
+- [ ] **STL-02**: A `cursor-status-line.py` entry renders model, context and three separately placeable quota segments (API, included, extra against its ceiling) plus the billing-cycle reset; every quota segment on both hosts uses the shared gap gauge (bands 5/10/15, sign kept); Cursor quota is marked inferred (`≈`)
+- [ ] **STL-03**: `cursor_quota.py` is the only network and credential code: HTTPS to `*.cursor.sh` only (`CURSOR_API_ENDPOINT` validated), no cross-origin redirects, token never persisted or logged; the cache separates `data_fetched_at` from `last_attempt_at`/`last_error`, hides quota on 401/403 and after `cycle_end`; every `git` call has a timeout; resets show in local time; a bad TOML value renders an error segment; redacted real Dashboard responses are fixtures
+- [ ] **STL-04**: Render-versus-fetch timing is measured in a spike before choosing an inline fetch with a cache or a background refresher
+- [ ] **STL-05**: `setup.py --with-statusline[=claude,cursor]` wires each detected host headless, and the wizard runs verify/replace/keep per detected host; both entries are reachable after v1.3 merges; `tests/test_arch.py` covers the new modules; `make test` and `make validate` are green
+
 ## Future Requirements
 
 None deferred beyond v1.3 at definition time.
@@ -154,14 +162,19 @@ None deferred beyond v1.3 at definition time.
 | SDC-02 | Phase 24 | Pending |
 | SDC-03 | Phase 24 | Pending |
 | SDC-04 | Phase 24 | Pending |
+| STL-01 | Phase 23 | Pending |
+| STL-02 | Phase 23 | Pending |
+| STL-03 | Phase 23 | Pending |
+| STL-04 | Phase 23 | Pending |
+| STL-05 | Phase 23 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 47 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 4, APP 5, EVAL 8, AGT 1, HARD 5, RTM 3, SDC 4). SPEC-05 (pi
+- v1.3 requirements: 52 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 4, APP 5, EVAL 8, AGT 1, HARD 5, RTM 3, SDC 4, STL 5). SPEC-05 (pi
   enumeration) and SPEC-06 (cursor wrapper) were split out of SPEC-02 during the Phase 16
   discussion, 2026-09-23.
-- Mapped to phases: 47/47
+- Mapped to phases: 52/52
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-09-23*
-*Last updated: 2026-10-14 — Phase 24 (SDC) added, SKL-04 added; earlier: 16.1 (HARD), 18.1 (RTM), XAI-02 amended (100% coverage)*
+*Last updated: 2026-10-14 — Phase 23 (STL) defined; Phase 24 (SDC) added, SKL-04 added; earlier: 16.1 (HARD), 18.1 (RTM), XAI-02 amended (100% coverage)*
