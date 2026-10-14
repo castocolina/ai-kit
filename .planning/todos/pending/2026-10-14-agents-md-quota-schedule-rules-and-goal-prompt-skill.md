@@ -61,3 +61,24 @@ Required additions to the skill:
 - **Deliverable:** the generated .md must contain a ready-to-copy prompt that the user pastes into a separate agent session; that prompt carries everything needed to reach the objectives.
 - **E2E verification:** the file must say how to run e2e tests (real app launch, PTY/TUI drive, browser for web) and require them to pass before declaring done.
 - **Jev-assisted decisions** (`jev-fast-decision`, advisory only, never a gate by itself): score how close the delivered work is to the user's objectives, and, when the user supplied a mockup (image or HTML), judge fidelity of the delivered React screen or TUI against it (similar / worse / better, plus UI and experience quality). Jev answers typed questions on supplied text, so image/HTML judgment needs a textual or rendered-description input; verify the feasibility of this before promising it.
+
+## Research: scheduling primitives exposed as system tools (Sonnet subagent, 2026-10-14)
+
+Requirement: the skill must detect which primitives the host actually exposes (tools, not only slash commands) and instruct the LLM to use them, with an OS fallback when none outlive the session.
+
+Claude Code (official docs: code.claude.com/docs scheduled-tasks, goal, routines, tools-reference):
+- `CronCreate`/`CronList`/`CronDelete`: 5-field cron, 1 min granularity, session-scoped, max 50, recurring tasks expire after 7 days, restored on `--resume`, no catch-up, dies with the session. Prompt: "every 10 minutes check CI and tell me when it's green".
+- `ScheduleWakeup` (self-paced `/loop`): delay 1 min to 1 h, `stop: true` ends it, about 20 min fallback wakeup, not restored on resume.
+- `Monitor` and background Bash: stream or deliver output back as a new turn, not restored on resume.
+- `/goal`: Stop-hook judged, 4,000 char cap, works headless with `claude -p "/goal ..."`, restored on resume with the turn counter reset. Rate/usage limit pauses it and it resumes after reset; auth failure, exhausted credits or an unavailable model clear it.
+- Routines (`RemoteTrigger`, `/schedule`): cloud-run, survive session death, minimum interval 1 h, draw on subscription usage and are rejected when exhausted unless overage is on. Research preview, claude.ai login required.
+
+Others (NOT verified against official docs):
+- Codex CLI: `/goal` (v0.128+, third-party blogs; reportedly `goals = true` in config.toml). No cron primitive found; fall back to `codex exec`.
+- opencode: no native scheduler; community plugins `@bybrawe/opencode-loop` and `opencode-ralph-loop`, an MCP Cron server, external `opencode run` timers.
+- pi: third-party `@jl1990/pi-scheduler` exposes `schedule_task`/`list_scheduled_tasks`/`cancel_scheduled_task` (once/interval/cron, `maxRuns`, `stopOn`, `wakeOn`); persists to `~/.pi/agent/state/scheduler/tasks.json` but needs pi running.
+- jcode: nothing found; check the 1jehuang/jcode repo directly.
+
+OS fallback (general knowledge): cron, systemd timers with `Persistent=true`, or `at` running `claude -p --continue`, `codex exec` or `opencode run`. This survives session death and reboot, but retry on quota failure must live in the script.
+
+Key takeaway: in-session primitives die with the process. Anything that must survive quota exhaustion or session death needs an OS timer or a cloud routine. The skill should pick the primitive by what survives, and say so in the generated prompt.
