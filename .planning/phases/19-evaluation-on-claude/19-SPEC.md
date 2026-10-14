@@ -122,17 +122,27 @@ agent's model and tier exactly as the plan promised.
 
 ## Edge Coverage
 
-**Coverage:** 12/16 applicable edges resolved · 4 unresolved
+**Coverage:** 27/28 applicable edges resolved · 1 unresolved (floor recomputed 2026-10-14 against the current requirement text)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
+| adjacency | R1 | ✅ covered | The v2 flow is the one primary path and v1 stays documented as secondary, so the two never merge |
+| empty | R1 | ✅ covered | SKILL.md must contain each listed step, so a missing step fails |
+| ordering | R1 | ✅ covered | Acceptance requires the steps in the listed order, so no two steps may swap |
 | idempotency | R1 | 🧪 backstop | Re-reading SKILL.md gives the same step order |
 | concurrency | R1 | 🧪 backstop | Documentation only |
-| adjacency | R2 | ✅ covered | B and E share a host; E's pressure must not change B's plan |
+| boundary | R2 | ✅ covered | B needs exactly 2 lanes, and an agent may hold up to Rigorous's cap of 5 skills (18 R8) but not 6 |
+| adjacency | R2 | ✅ covered | E reuses B's answers with an empty `other_clis` (D-11), so its plan differs from B's and always carries a `needs_choice` |
 | empty | R2 | ✅ covered | C's no-catalog inventory yields `needs_choice`, never invented models |
 | ordering | R2 | ✅ covered | The dry run always precedes the real apply, even in E |
-| unclassified | R3 | ⚠ UNRESOLVED | No shape cue; baselines are specified in Acceptance |
-| unclassified | R4 | ⚠ UNRESOLVED | No shape cue; the gate fields are specified |
+| precision | R2 | ✅ covered | Lane and skill counts are whole numbers checked against fixed limits, so nothing rounds |
+| idempotency | R2 | ✅ covered | A second run rebuilds its fixture from the real tools (D-11), so it starts from the same state |
+| concurrency | R2 | ✅ covered | Each run is a fresh-context headless `claude -p` session from a scratch cwd (D-12), so runs share no context |
+| adjacency | R3 | ✅ covered | B and D each get two separate baselines, no skill and v1, and each is graded on its own |
+| empty | R3 | ✅ covered | A baseline that shows no failure must state why its scenario still discriminates |
+| ordering | R3 | ✅ covered | Each baseline is a separate fresh-context run (D-12), so run order cannot change a result |
+| boundary | R4 | ✅ covered | Exactly 96/120 with no Critical or Important finding passes, 95 or one such finding fails, and 3 unmet iterations go to the user |
+| precision | R4 | ✅ covered | The skill-judge total is a sum of eight whole-number dimension scores, so it compares with 96 exactly |
 | idempotency | R5 | ✅ covered | A second apply on the same scratch project changes nothing but adds a backup |
 | concurrency | R5 | 🧪 backstop | Smoke steps run sequentially |
 | adjacency | R6 | ✅ covered | Specialists with an override versus their tier are checked separately |
@@ -140,8 +150,10 @@ agent's model and tier exactly as the plan promised.
 | ordering | R6 | ✅ covered | Agents are checked in sorted order, and the report is stable |
 | idempotency | R6 | ✅ covered | Two runs of the matrix give the same report |
 | concurrency | R6 | 🧪 backstop | Combinations run in separate scratch projects |
-| unclassified | R7 | ⚠ UNRESOLVED | No shape cue; file fields are specified |
-| unclassified | R8 | ⚠ UNRESOLVED | No shape cue; gate-only requirement |
+| concurrency | R7 | ✅ covered | Acceptance needs all three files with their fields, so a partial set left by an interrupted run fails |
+| adjacency | R8 | ✅ covered | Every defect gets a regression test, even when one fix closes several |
+| empty | R8 | ✅ covered | With no defects found, R8 reduces to `make test` and `make validate` being green |
+| ordering | R8 | ⚠ UNRESOLVED | Must the GREEN runs repeat when a later fix, such as a judge-loop edit, changes SKILL.md? |
 
 ## Prohibitions (must-NOT)
 
