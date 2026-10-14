@@ -6,12 +6,12 @@ current_phase: 16
 current_phase_name: ai-kit-spec-extensions
 status: verifying
 stopped_at: Phase 20 context gathered
-last_updated: "2026-09-24T14:48:06.313Z"
+last_updated: "2026-10-14T02:56:43.467Z"
 last_activity: 2026-09-24
 last_activity_desc: Phase 16 execution started
-state_head: b407f8f0420fa6ed91df8e5a8a3c0b83255240fc
+state_head: 344773bafd0582441e3f4d44e5a84329a126d6f3
 progress:
-  total_phases: 7
+  total_phases: 10
   completed_phases: 0
   total_plans: 6
   completed_plans: 6
@@ -341,6 +341,8 @@ any order, or deferred, without blocking anything else in this milestone.
   requirements per the approved source spec's §10 delivery-phase split
   (Phase 17 split into 17/18 for size; cursor/pi kept as separate tail
   phases per the spec).
+- Phase 16.1 inserted after Phase 16: Hardening: gate scope, sibling-first imports, security/correctness fixes from the 2026-10-13 audit; closes Phase 16
+- Phase 18.1 inserted after Phase 18: One runtime model: (runtime, model) candidates, native_runtime removed
 
 ## Deferred Items
 

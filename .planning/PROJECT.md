@@ -34,10 +34,14 @@ runtime hosting the session. Source spec (approved 2026-09-23):
 - `ai_kit_spec` extensions — host detection pi > opencode > cursor > codex > claude;
   pi/codex/claude model enumeration; `image_input`/`reasoning_modes` catalog data;
   planning/general/mechanical/execution/review ranker purposes
+- Hardening (Phase 16.1) — gate scope, sibling-first imports, security and correctness fixes
+  from the 2026-10-13 audit; closes Phase 16
 - Curated-config rewrite — inventory → recommend → `plan.json` → plan-set → apply
   (dry-run, backup/restore); three model layers plus an execution override; rigor
   (MVP/Standard/Rigorous) × profile presets; counterpart cross-AI review and cheap
-  cross-AI execution; curated `skill_affinity.json`
+  cross-AI execution through a generated `.planning/scripts/cross-ai.mjs`
+  (pi > cursor > opencode); curated `skill_affinity.json`
+- One runtime model (Phase 18.1) — model candidates as (runtime, model) pairs
 - Evaluation on claude — writing-skills RED/GREEN, `/skill-judge` in code review,
   real-gsd-tools `resolve-model` check for all 35 agents, live smoke
 - Live validation on codex and opencode; cursor (Phase 21) and pi (Phase 22) as independent

@@ -25,11 +25,12 @@ to the 11 v1 subcommands, and v1 keeps working unchanged (D-08).
 - **Spec §6/§7:**
   - the reviewer lane is never the host (pi has no lane);
   - the reviewer provider differs from the planning-slot provider;
-  - execution is delegated to the best `execution` score in another CLI, using
-    `build_execute_command` with the bare CLI name;
+  - execution is delegated to the best `execution` score in another CLI
+    *(amended 2026-10-13: through the generated `.planning/scripts/cross-ai.mjs`, not
+    `build_execute_command` with the bare CLI name; see "Amendment 2026-10-13" below)*;
   - execution defaults to yes on claude/codex and no on opencode/cursor/pi;
   - the report tells the user to run `--cross-ai` and sets `manager.flags.execute`;
-  - the timeout is 300 s (MVP) or 600 s.
+  - ~~the timeout is 300 s (MVP) or 600 s~~ *(superseded 2026-10-13: `workflow.cross_ai_timeout` ≥ 1800 s)*.
 - **Phase 17:**
   - D-04: a user-curated router wins the slot for its declared role
     (`router-env/my-plan-review` → review lane model, `router-env/my-coding` → execution);
@@ -37,6 +38,27 @@ to the 11 v1 subcommands, and v1 keeps working unchanged (D-08).
   - D-06: deterministic ties;
   - D-08: plan-managed families are authoritative (`op: unset`, `existing` diff).
 - **v1 D-01:** every write goes through `gsd-tools` (`config-new-project` / `config-set`).
+
+### Amendment 2026-10-13 (cross-AI execution runner)
+
+Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-02 amended to match.
+- **D-09:** curated-config generates `.planning/scripts/cross-ai.mjs` per project from a template
+  (prototype: `research/2026-10-13-audit/cross-ai.mjs`) and sets
+  `cross_ai_command = node .planning/scripts/cross-ai.mjs`. A sha256 header protects user edits
+  (an edited file is never overwritten; the new version goes to `.mjs.new`).
+- **D-10:** Preference order default pi > cursor > opencode, a model per CLI. grok is not a
+  target; its models are reached through opencode or router-env. Claude is the main agent, never
+  a cross-AI target. Every target runs unattended: no sandbox, no ask mode, no permission waits.
+- **D-11:** Bare tool profile by default (pi `--no-skills --no-extensions`, opencode with its
+  Claude-skill loading off); specific skills by SKILL.md path or MCP servers are opt-in.
+- **D-12:** `workflow.cross_ai_timeout` ≥ 1800 s; the script's own deadline sits below it.
+- **D-13:** Supervision contract: finite stdin, model pre-validated, process-group kill, errors
+  matched on stderr and structured fields only, one `AIKIT-XAI status=… action=…` line, success
+  only when HEAD moved or the tree changed, fallback only when both are unchanged.
+- **D-14:** Every write goes through `gsd-tools query config-set` (it resolves the active
+  workstream's config path). Effort keys need `gsd-tools effort sync --apply` to take effect, and
+  the sync targets the project's local gsd-core install when one exists (D-05 follow-up).
+- Review lanes keep GSD's own lane definitions; `cross-ai.mjs` is for execution only.
 
 ### Cross-AI review
 - **D-01:** The number of reviewer lanes depends on rigor:

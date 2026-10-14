@@ -37,7 +37,7 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 ### Cross-AI
 
 - [ ] **XAI-01**: Cross-AI review sets `plan_review_convergence` + `review.default_reviewers` (lane ≠ host, reviewer provider ≠ planning provider, best `review` score) + `review.models.<lane>` / `review.effort.<lane>`
-- [ ] **XAI-02**: Cross-AI execution sets `cross_ai_execution` + `cross_ai_command` (built by `build_execute_command`, bare CLI name) with a rigor-dependent timeout, picking the best `execution` score in another CLI; default yes on Claude/Codex and no on opencode/cursor/pi; the report says to run `--cross-ai` and sets `manager.flags.execute`
+- [ ] **XAI-02**: Cross-AI execution sets `cross_ai_execution` + `cross_ai_command = node .planning/scripts/cross-ai.mjs`, picking the best `execution` score in another CLI; default yes on Claude/Codex and no on opencode/cursor/pi; the report says to run `--cross-ai` and sets `manager.flags.execute`. *(Amended 2026-10-13, replacing "built by `build_execute_command`, bare CLI name, rigor-dependent timeout".)* curated-config generates the script per project from a template: preference order (default pi > cursor > opencode; grok is not a target), a model per CLI, unattended full-permission flags per CLI, a bare tool profile by default with opt-in skills (SKILL.md paths) or MCP servers. A sha256 header protects user edits: an edited script is never overwritten, and the new version goes to `cross-ai.mjs.new`. `workflow.cross_ai_timeout` is ≥ 1800 s, with the script's own deadline below it. The script follows the supervision contract: finite stdin, model pre-validated against the CLI's list, process-group kill, errors matched on stderr and structured fields only, exit codes 0/1/2/69/75/124/127, one `AIKIT-XAI status=… action=fallback|retry-later|stop` line, falls back to the next CLI only when HEAD and the tree are unchanged, and counts success only when HEAD moved or the tree changed. Every config write goes through `gsd-tools query config-set`; effort keys take effect only after `gsd-tools effort sync --apply`
 
 ### Skills
 
@@ -63,6 +63,20 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 - [ ] **EVAL-06**: v2 subcommands coexist with the unchanged v1 CLI (no module removal — Phase 18 D-08); v2 registered in all gates; `make test` (v1 tests still passing) and `make validate` green; README row updated; SKILL.md labels cursor and pi "not live-validated" until EVAL-07/EVAL-08 pass
 - [ ] **EVAL-07**: Live smoke on the cursor host (own phase, scheduled after codex/opencode; may run later without blocking earlier phases)
 - [ ] **EVAL-08**: Live smoke on the pi host (own phase, scheduled last; may run later without blocking earlier phases)
+
+### Hardening
+
+- [ ] **HARD-01**: The pre-commit gate covers every shipped Python file and `make validate` runs every test module; `make validate` is green
+- [ ] **HARD-02**: Skill-embedded Python resolves sibling packages before `~/.claude/skills`, with a test proving a branch checkout imports branch code
+- [ ] **HARD-03**: No project-supplied reviewer command runs with `shell=True`; the dashboard escapes `<` against case-variant `</script` breakouts
+- [ ] **HARD-04**: A failed review lane never merges into Approved; error classifiers read only stderr and structured error fields; inherited host env signals are scrubbed from child processes; the claude execute builder runs under GSD's no-shell splitting; `gsd_config.py` writes via `config-set`
+- [ ] **HARD-05**: The audit's smaller safety items are fixed (codegraph probe timeout and no silent global install, reported `review-spec.toml` parse errors, `install.sh --branch`/`--dry-run` on an existing clone, unique cache temp names, atomic uninstall write, AGENTS.md checker image links)
+
+### One Runtime Model
+
+- [ ] **RTM-01**: Model candidates are (runtime, model) pairs: native subagent when the runtime is the current host and the host can select the model, subprocess through `cross-ai.mjs` otherwise; `native_runtime` is removed, and old configs carrying it load with a visible note
+- [ ] **RTM-02**: The `native_claude` naming and the cursor / cursor-agent split are removed (one `cursor` runtime id, binary `cursor-agent`)
+- [ ] **RTM-03**: Affected SKILL.md files and AGENTS.md's Architecture section use the one-model wording; each rewritten SKILL.md passes `/skill-judge`
 
 ### Cursor Executor Agents
 
@@ -119,14 +133,22 @@ None deferred beyond v1.3 at definition time.
 | EVAL-07 | Phase 21 | Pending |
 | EVAL-08 | Phase 22 | Pending |
 | AGT-01 | Phase 21 | Pending |
+| HARD-01 | Phase 16.1 | Pending |
+| HARD-02 | Phase 16.1 | Pending |
+| HARD-03 | Phase 16.1 | Pending |
+| HARD-04 | Phase 16.1 | Pending |
+| HARD-05 | Phase 16.1 | Pending |
+| RTM-01 | Phase 18.1 | Pending |
+| RTM-02 | Phase 18.1 | Pending |
+| RTM-03 | Phase 18.1 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 34 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 3, APP 5, EVAL 8, AGT 1). SPEC-05 (pi
+- v1.3 requirements: 42 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 3, APP 5, EVAL 8, AGT 1, HARD 5, RTM 3). SPEC-05 (pi
   enumeration) and SPEC-06 (cursor wrapper) were split out of SPEC-02 during the Phase 16
   discussion, 2026-09-23.
-- Mapped to phases: 34/34
+- Mapped to phases: 42/42
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-09-23*
-*Last updated: 2026-09-23 after v1.3 roadmap creation (Phases 16–22, 100% coverage)*
+*Last updated: 2026-10-13 — Phases 16.1 (HARD) and 18.1 (RTM) inserted, XAI-02 amended (100% coverage)*

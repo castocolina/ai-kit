@@ -37,6 +37,11 @@
       "number": "22",
       "name": "Pi Live Validation",
       "status": "pending"
+    },
+    {
+      "number": "23",
+      "name": "Host-split status line for Claude Code and Cursor CLI",
+      "status": "pending"
     }
   ],
   "next": {
@@ -44,5 +49,5 @@
     "label": "Advance to the next step (verify)",
     "reason": "Phase 16 of 7 · 0% · ready to verify"
   },
-  "updated_at": "2026-10-13T18:34:16.955Z"
+  "updated_at": "2026-10-14T02:55:25.334Z"
 }

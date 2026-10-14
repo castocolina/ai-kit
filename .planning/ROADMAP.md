@@ -65,8 +65,10 @@ runtime hosting the session. Source spec:
 `docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md`.
 
 - [ ] **Phase 16: ai_kit_spec Extensions** - Host detection, model enumeration, and catalog/ranker extensions for pi and codex, plus richer catalog fields
+- [ ] **Phase 16.1: Hardening** (INSERTED) - Gate scope, sibling-first imports, security and correctness fixes from the 2026-10-13 audit; closes Phase 16
 - [ ] **Phase 17: Curated-Config Inventory & Recommendation Engine** - Read-only project/host inventory and a pure `recommend` function that produces an explainable `plan.json`
 - [ ] **Phase 18: Cross-AI, Skills & Apply Pipeline** - Plan adjustment, cross-AI review/execution wiring, skill-affinity mapping, and a safe backup/restore apply flow
+- [ ] **Phase 18.1: One runtime model** (INSERTED) - Model candidates become (runtime, model) pairs; `native_runtime` and the `native_claude`/cursor-agent naming go away
 - [ ] **Phase 19: Evaluation on Claude** - Skill pressure-testing, `/skill-judge` gate, and a live smoke run + `resolve-model` proof from the claude host
 - [ ] **Phase 20: Live Validation on Codex + Opencode** - Live smoke runs from the codex and opencode hosts, resolving the two open verifications from the spec
 - [ ] **Phase 21: Cursor Live Validation** - Live smoke run from the cursor host (independent; may run any time after Phase 19)
@@ -123,12 +125,48 @@ Plans:
 
 - [x] 16-06-PLAN.md — ranker purposes planning/general/mechanical/execution/review, execute/review aliases, mechanical floor; phase gate (`make test` + `make validate`, causal triage against the pre-phase base)
 
+### Phase 16.1: Hardening (INSERTED)
+
+**Goal**: The quality gate checks the code that actually ships, v1.3 tests exercise v1.3 code,
+and the security and correctness defects found by the 2026-10-13 audit are fixed, so Phase 16
+can be verified and closed on trustworthy evidence. Source:
+`.planning/research/2026-10-13-audit/00-SYNTHESIS.md` §A, §B, §P.
+**Depends on**: Phase 16
+**Requirements**: HARD-01, HARD-02, HARD-03, HARD-04, HARD-05
+**Success Criteria** (what must be TRUE):
+
+  1. The ruff and py-compile hook scopes cover every shipped Python file (the 36 skipped ones
+     included, `ai_kit_spec/` and superpowers among them), `make validate` runs every test module
+     the repo has, and `make validate` is green.
+  2. `model_detect.py` (curated-config) and `dispatch.py` (rules-all) resolve their own sibling
+     packages before `~/.claude/skills`, and a test proves a branch checkout imports the branch's
+     `ai_kit_spec`, not the installed one.
+  3. No reviewer `command` from a project's `.aikit/review-spec.toml` runs through `shell=True`;
+     the usage-metrics dashboard escapes `<` so no `</script` variant (any case) breaks out.
+  4. A `Status: Failure` lane never merges into Approved; the quota/transient classifiers match
+     only stderr and structured error fields, never the model's answer text; inherited host
+     signals (`AI_AGENT` and similar) are scrubbed from child environments; the claude execute
+     builder string runs under GSD's no-shell word splitting; `gsd_config.py` writes through
+     `gsd-tools query config-set` instead of editing the JSON.
+  5. The smaller safety items are fixed: codegraph probe timeout and no silent global install, a
+     `review-spec.toml` parse error is reported instead of disabling cross-AI, `install.sh
+     --branch`/`--dry-run` honored on an existing clone, unique cache temp names, an atomic
+     uninstall `settings.json` write, and the AGENTS.md checker survives image links.
+  6. Phase 16 is closed: its VERIFICATION.md exists, the live checks ran (`runtimes.json` carries
+     `schema_version`, `model-catalog.json` exists), and STATE, REQUIREMENTS and ROADMAP show it
+     complete. The stale v1.3 facts are refreshed before Phase 17 planning (gsd-core 1.16, GSD
+     installs missing on other hosts, `~/.gsd/defaults.json` `runtime: codex`, price-only ranking
+     without an Artificial Analysis key).
+  7. The phase is executed through `.planning/scripts/cross-ai.mjs` (pi first), as the dogfood run
+     for Phase 18's runner. The usage-metrics store compaction (audit A10) stays out of scope.
+**Plans**: TBD
+
 ### Phase 17: Curated-Config Inventory & Recommendation Engine
 
 **Goal**: The rewritten `ai-kit-gsd-curated-config` can inventory a target project/host and turn
 that inventory plus a profile/rigor choice into a pure, explainable, minimal recommendation
 plan — without writing anything.
-**Depends on**: Phase 16
+**Depends on**: Phase 16.1
 **Requirements**: INV-01, INV-02, INV-03, REC-01, REC-02, REC-03, REC-04, REC-05, REC-06
 **Success Criteria** (what must be TRUE):
 
@@ -166,10 +204,13 @@ with the v2 flow living alongside the unchanged v1 CLI.
      with `source: user`.
   2. Cross-AI review sets `plan_review_convergence` + `review.default_reviewers` (lane ≠ host,
      reviewer provider ≠ planning provider, best `review` score) + `review.models.<lane>` /
-     `review.effort.<lane>`; cross-AI execution sets `cross_ai_execution` + `cross_ai_command`
-     (bare CLI name via `build_execute_command`) with a rigor-dependent timeout, defaulting on
-     for Claude/Codex and off for opencode/cursor/pi, and the report tells the user to run
-     `--cross-ai` while setting `manager.flags.execute`.
+     `review.effort.<lane>`; review lanes keep GSD's own lane definitions. Cross-AI execution
+     sets `cross_ai_execution` + `cross_ai_command = node .planning/scripts/cross-ai.mjs`, a
+     script generated per project (amended 2026-10-13, see XAI-02): preference order default
+     pi > cursor > opencode (grok is not a target), a model per CLI, unattended full-permission
+     flags, bare tool profile by default; `workflow.cross_ai_timeout` ≥ 1800 s; the supervision
+     contract holds. Execution defaults on for Claude/Codex and off for opencode/cursor/pi, and
+     the report tells the user to run `--cross-ai` while setting `manager.flags.execute`.
   3. Skill inventory covers host skill dirs, project `skills/`, and Claude plugin skills;
      `skill_affinity.json` maps skill families to agents (gated by TDD/frontend/db project facts,
      capped per rigor) shown as bare names and written in gsd-core's required reference form as
@@ -195,12 +236,31 @@ with the v2 flow living alongside the unchanged v1 CLI.
      999.4, 2026-10-13).
 **Plans**: TBD
 
+### Phase 18.1: One runtime model (INSERTED)
+
+**Goal**: ai-kit describes every model candidate the same way, as a (runtime, model) pair, so
+"native" stops being a special schema field and routing no longer depends on vendor-specific
+names. Source: `.planning/research/2026-10-13-audit/18-runtime-detection-and-subprocess-supervision.md`.
+**Depends on**: Phase 18
+**Requirements**: RTM-01, RTM-02, RTM-03
+**Success Criteria** (what must be TRUE):
+
+  1. A candidate resolves to a native subagent when its runtime is the current host and the host
+     can select that model, and to a subprocess through `cross-ai.mjs` otherwise; `native_runtime`
+     is gone from the schema and code, and an old config that still carries it loads with a
+     visible note.
+  2. The `native_claude` naming and the cursor / cursor-agent split are gone: one `cursor`
+     runtime id, whose binary is `cursor-agent`.
+  3. The affected SKILL.md files and AGENTS.md's Architecture section use the one-model wording,
+     and every rewritten SKILL.md passes `/skill-judge` in code review.
+**Plans**: TBD
+
 ### Phase 19: Evaluation on Claude
 
 **Goal**: The rewritten skill is proven correct end to end from inside a real Claude Code
 session — pressure-tested, code-reviewed, and confirmed to make `gsd-tools` resolve every agent's
 model exactly as planned.
-**Depends on**: Phase 18
+**Depends on**: Phase 18.1
 **Requirements**: EVAL-01, EVAL-02, EVAL-03, APP-05
 **Success Criteria** (what must be TRUE):
 
