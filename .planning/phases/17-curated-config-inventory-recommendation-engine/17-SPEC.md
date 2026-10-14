@@ -53,6 +53,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
    - Target:
      - `model_policy` in the project config is a conflict.
      - `model_policy` in `~/.gsd/defaults.json` is a conflict only when no project config exists (creating one copies it). With a project config present, gsd-tools ignores the global file, so it is listed under `info` as inert.
+     - A project `resolve_model_ids: "omit"` on a claude host is a conflict: every agent without a per-agent override then resolves to `model: ""` and inherits the session model (verified 2026-10-14; `config-new-project` copies it from global defaults).
      - A project `runtime` that differs from the host is a conflict. A global `runtime` is never a conflict: gsd-tools fills an absent project runtime from env or an install marker, never from global defaults. It is listed under `info`.
    - Acceptance: fixtures for policy-in-project, policy-in-global with and without a project config, a project runtime mismatch, and a global runtime each yield the expected entry.
 
@@ -106,6 +107,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
       - An undecidable required slot becomes `{status: "needs_choice", value: null, candidates: top 3 with score/price/why}`.
       - Ties break by score descending (the ranker's unrounded `score_exact`), then price ascending, then model id ascending.
       - An existing key in a managed family that the plan does not set becomes `op: "unset"` with a `why`.
+      - On a claude host, a project `resolve_model_ids: "omit"` is proposed for unset.
       - A project `model_policy` is always proposed for unset, one entry per leaf (`model_policy.provider|budget|high|medium|low`): gsd-core 1.16 rejects `config-set model_policy null` on the whole object.
     - Acceptance: tie fixtures resolve identically on reordered input. A leftover v1 `model_overrides.gsd-planner` becomes an unset entry. A no-catalog cursor plan lists `needs_choice` slots with 3 candidates each.
 

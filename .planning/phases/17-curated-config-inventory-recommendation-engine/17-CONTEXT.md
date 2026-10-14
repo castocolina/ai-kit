@@ -168,6 +168,14 @@ Phase 18 owns the selection rules.
   lists (cursor, opencode, codex, claude). pi is synthetic and labelled so. The 15 golden plans
   regenerate with a flag; property tests (ordering, ties, purity) are separate.
 
+- **D-21: `resolve_model_ids` is a managed key (added 2026-10-14 from the Phase 19 spec).**
+  `config-new-project` copies `~/.gsd/defaults.json`, including the codex installer's
+  `resolve_model_ids: "omit"`. A project-explicit `omit` on a claude host makes `resolve-model`
+  return `model: ""` for every agent without a per-agent override, so the tier layer has no
+  effect. On a claude host it is a conflict (R5) and is proposed for unset. On other hosts it is
+  the installer's intended value and is left alone. jev: Laya manage_and_reconcile 0.49 (fb),
+  TypeSafe 0.99.
+
 ### Claude's Discretion
 - The exact percentile per rigor level.
 - The plan.json schema details: top-level `schema_version`, inventory digest, and the entry

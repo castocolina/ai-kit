@@ -23,7 +23,7 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 
 - [ ] **INV-01**: `inventory --project-dir` emits one JSON with host, the host's own gsd-core (path/version/valid keys), model candidates as (runtime, model) pairs (scores, price, `image_input`, reasoning levels; amended 2026-10-14 from separate host/other-CLI lists, per Phase 18.1), skills, project facts (frontend, db, instruction files `AGENTS.md`/`CLAUDE.md`, intel index), existing config and conflicts
 - [ ] **INV-02**: Catalog is read from `~/.cache/ai-kit/spec` and refreshed `--if-stale`; a stale cache is used with a warning when refresh fails; with no cache, Claude/Codex use native tier maps and Cursor/opencode/pi ask the user per slot; a catalog with prices but no scores takes the same path (amended 2026-10-14)
-- [ ] **INV-03**: Conflicts are detected only when they change resolution: `model_policy` in the project config, `model_policy` in `~/.gsd/defaults.json` when no project config exists, and a project `runtime` set to another host. A global value gsd-tools ignores (a global `model_policy` beside a project config, any global `runtime`) is info only (amended 2026-10-14)
+- [ ] **INV-03**: Conflicts are detected only when they change resolution: `model_policy` in the project config, `model_policy` in `~/.gsd/defaults.json` when no project config exists, a project `resolve_model_ids: "omit"` on a claude host, and a project `runtime` set to another host. A global value gsd-tools ignores (a global `model_policy` beside a project config, any global `runtime`) is info only (amended 2026-10-14)
 
 ### Recommendation
 
@@ -50,7 +50,7 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 
 - [ ] **APP-01**: The user adjusts the plan with `plan-set` / `plan-unset` (`source: user`)
 - [ ] **APP-02**: `apply --dry-run` validates every key against the host gsd-core's valid keys and prints a diff without writing
-- [ ] **APP-03**: `apply` backs up to `config.json.bak-<ts>`, writes only through `gsd-tools` `config-new-project` / `config-set`, and on any failure restores the backup and names the failing key
+- [ ] **APP-03**: `apply` backs up to `config.json.bak-<ts>`, writes only through `gsd-tools` `config-new-project` / `config-set`, reconciles keys `config-new-project` copied from global defaults against the plan, and on any failure restores the backup and names the failing key
 - [ ] **APP-04**: Follow-ups (gsd-core's own installer pinned to the resolved version with local scope, `npx -y @opengsd/gsd-core@<version> --<host> --local`; `effort sync --apply`) run only after one grouped user approval; `/gsd-map-codebase` is only recommended *(amended 2026-10-14: the bare `gsd` binary is a different package)*
 - [ ] **APP-05**: After `apply`, `gsd-tools resolve-model <agent>` with `GSD_RUNTIME=<host>` returns the planned model for all 35 agents (integration test against the real gsd-tools)
 

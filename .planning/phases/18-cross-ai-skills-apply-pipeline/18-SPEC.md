@@ -161,7 +161,7 @@ keeps working unchanged.
     - Current: v1 writes per key with no backup.
     - Target:
       - `apply` backs up to `.planning/config.json.bak-<timestamp>` and keeps the newest 3.
-      - It creates the config with `gsd-tools config-new-project` when it is absent, then writes each entry with `gsd-tools query config-set`, unsetting object-valued keys per leaf (18 D-07 as amended).
+      - It creates the config with `gsd-tools config-new-project` when it is absent. That command copies `~/.gsd/defaults.json`, so `apply` re-reads the new config and reconciles the copied keys against the plan's managed families (for example a copied `resolve_model_ids: "omit"` on claude, or a copied `model_policy`) before writing. It then writes each entry with `gsd-tools query config-set`, unsetting object-valued keys per leaf (18 D-07 as amended).
       - On any failure it restores the backup and names the failing key.
       - It reuses Phase 16.1's shared gsd-tools resolver, ownership sidecar and undo log.
     - Acceptance:
