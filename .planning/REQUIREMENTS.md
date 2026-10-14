@@ -103,8 +103,8 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 - [ ] **QTA-01**: A per-CLI table of quota, limit and billing message patterns, built from observed child output and labelled verified/unverified, classifies a stop as wait-recoverable or not by route: billing or limit errors on a router-backed route (`infer_fallback_quota`) are wait-recoverable (fallback chains return to subscription tiers within minutes or hours); billing or access errors on a direct third-party provider route (OpenCode Zen, Cursor API models) are not
 - [ ] **QTA-02**: Limits are detected live in the child's stdout/stderr and after the fact (timeout or partial exit), feeding the shared typed reason (16.1 D-13) and the runner's status line (18 D-27, 18.1 D-12)
 - [ ] **QTA-03**: A wait-recoverable stop is re-checked every 10 minutes for at most 4 hours; resume checks the working tree and re-dispatches only unfinished work; after 4 hours it stops and reports; the policy runs in the runner and in `ai-kit-spec-review`/`ai-kit-spec-execute*`, replacing the hourly `CronCreate` wake
-- [ ] **QTA-04**: The orchestrating session sets an hourly self-wake that survives its own quota stall, chosen per host by survival (OS timer or cloud routine over in-session primitives), with unverified host behavior flagged
-- [ ] **QTA-05**: `ai-kit-project-rules-agents` gains an OpenGSD-only rule that checks and remediates the session-resume and subprocess-quota directives as separate items
+- [ ] **QTA-04**: The orchestrating session sets an hourly self-wake that survives its own quota stall, chosen per host by survival (OS timer or cloud routine over in-session primitives), with unverified host behavior flagged *(amended 2026-10-14, 26 D-03: the wake resumes the exact session id; cloud routines cannot re-enter a local session, so the surviving primitive is an OS timer)*
+- [ ] **QTA-05**: `ai-kit-project-rules-agents` gains an OpenGSD-only rule that checks and remediates the session-resume and subprocess-quota directives as separate items *(amended 2026-10-14, 26-SPEC R7: two rules, R18 and R19)*
 
 ### Goal-Prompt Skill
 

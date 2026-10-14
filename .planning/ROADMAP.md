@@ -454,7 +454,7 @@ before the runner is planned.
 wake mechanism that survives the stall, and OpenGSD projects get both quota directives in their
 AGENTS.md. Source: the same todo (part 1, mechanism A and the rules-skill rule).
 **Depends on**: Phase 25 (the subprocess directive's wording). A spike runs before planning:
-whether `claude -p --continue` (or each host's equivalent) started from an OS timer re-enters the
+whether `claude -p --continue` *(amended 2026-10-14, 26-SPEC R3: `--resume <session-id>`, never "most recent")* (or each host's equivalent) started from an OS timer re-enters the
 right session; codex, pi and opencode facts are third-party only so far.
 **Requirements**: QTA-04, QTA-05
 **Success Criteria** (what must be TRUE):
@@ -464,7 +464,7 @@ right session; codex, pi and opencode facts are third-party only so far.
      survival. Unverified host behavior is flagged.
   2. The main agent sets an hourly wake that re-enters the same session; the session-resume
      mechanism and the subprocess mechanism (Phase 25) stay separate, each with its own trigger.
-  3. `ai-kit-project-rules-agents` gains a rule, active only for OpenGSD projects, that checks
+  3. `ai-kit-project-rules-agents` gains a rule *(amended 2026-10-14: two rules, R18 and R19)*, active only for OpenGSD projects, that checks
      and remediates both directives as separate items.
 **Plans**: TBD
 

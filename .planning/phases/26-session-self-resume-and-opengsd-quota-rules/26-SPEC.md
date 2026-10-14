@@ -63,6 +63,7 @@ subprocess quota (Phase 25).
      unverified.
    - Acceptance: the matrix is data with a test that every row has a source label; a host with
      no surviving primitive reports that instead of claiming one.
+   - *Amended 2026-10-14 (26 D-04):* hosts are keyed by runtime labels (`claude`, `codex`, `pi`, `opencode`, `cursor`, the native-runtime vocabulary), not `KNOWN_CLIS`, which has no `pi`. The OS-timer rows are systemd only (D-14).
 
 2. **Spike before planning** (QTA-04).
    - Current: the headless re-entry behavior is untested.
@@ -87,6 +88,7 @@ subprocess quota (Phase 25).
      never forks.
    - Acceptance: a test with two sessions in one directory resumes the recorded one; arming
      without a session id fails with a clear message.
+   - *Amended 2026-10-14 (26 D-08, D-09):* "working directory" is the host process's launch directory (from `/proc/<pid>/cwd`), not the shell's: the transcript is keyed by it. Because pi `--session-id` and opencode `--session` create a missing session, the wake checks that the session exists before resuming.
 
 4. **Layered firing** (QTA-04).
    - Current: none.
@@ -122,6 +124,7 @@ subprocess quota (Phase 25).
      with a visible warning (launchd and Windows are unverified).
    - Acceptance: tests against a scratch unit directory and a fake `systemctl` on `PATH`; the
      user's real systemd directory is never touched in tests.
+   - *Amended 2026-10-14 (26 D-12..D-14):* the timer uses `OnCalendar=hourly` (`Persistent=true` has no effect with `OnUnitActiveSec=`, `man systemd.timer`); `arm` enables it, and `disarm` also removes the wants-symlink and the persistent stamp (`clean --what=state`). The cron fallback is dropped: it would edit the user's crontab, which the write constraint forbids. Without systemd the wake reports "no surviving primitive" and falls back to the in-session primitive with a warning.
 
 7. **Two mechanisms, two rules** (QTA-05).
    - Current: no OpenGSD-only rule.
@@ -133,6 +136,7 @@ subprocess quota (Phase 25).
      Each rule is checked and remediated on its own. The condition is true only when `.planning/`
      exists and `gsd-tools runtime-identity` proves `@opengsd/gsd-core`. When the identity
      cannot be proven, both rules are skipped with an unverified notice.
+   - *Amended 2026-10-14 (26 D-17..D-19):* the identity tool is found in upstream's order (project-local installs, then host homes, then `gsd_run` on `PATH`; never a bare `gsd-tools`). An original-GSD install without the identity verb is indistinguishable from "unverified", so the test cases are: proven OpenGSD; valid identity JSON naming another package (not OpenGSD); no identity (unverified, skipped). The unverified notice reaches the remediation and aggregate outputs.
    - Acceptance: tests for an OpenGSD project, an original-GSD project, a project with no GSD
      tool on `PATH`, and AGENTS.md text that has one directive and lacks the other. Each rule
      gets a non-vacuity case.
@@ -146,6 +150,7 @@ subprocess quota (Phase 25).
      `/skill-judge`.
    - Acceptance: tests show arm and disarm around a run. No code path writes the other
      mechanism's state file. Skill-judge evidence is committed.
+   - *Amended 2026-10-14 (26 D-23):* "multi-plan" means two or more work units: PLAN.md files for `-gsd`, tasks for `-superpowers` (which always runs one plan).
 
 ## Boundaries
 
@@ -187,13 +192,13 @@ subprocess quota (Phase 25).
 
 ## Edge Coverage
 
-**Coverage:** 36/36 applicable edges resolved · 0 unresolved
+**Coverage:** 37/37 applicable edges resolved · 0 unresolved (floor recomputed 2026-10-14 after the R1/R3/R6/R7/R8 amendments)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
 | adjacency | R1 | ✅ covered | A primitive that survives a stall but not process death is its own survival class, never merged with the stronger one |
 | empty | R1 | ✅ covered | A host with no row, or with no surviving primitive, reports "no surviving primitive" |
-| encoding | R1 | 🧪 backstop | Hosts are keyed by `KNOWN_CLIS` names, never by display text |
+| encoding | R1 | 🧪 backstop | ~~Hosts are keyed by `KNOWN_CLIS` names, never by display text~~ *(superseded, D-04)* Hosts are keyed by runtime labels, never by display text |
 | ordering | R1 | ✅ covered | Primitives rank by survival (reboot > process death > stall only); equal rank keeps table order, pinned by a test |
 | boundary | R2 | ✅ covered | A spike step that cannot run (no free model reachable) records `unverified`, never a guess |
 | adjacency | R2 | ✅ covered | A spike finding that contradicts this SPEC amends it before planning |
@@ -206,6 +211,7 @@ subprocess quota (Phase 25).
 | encoding | R3 | ✅ covered | The session id is used verbatim and validated against a safe charset before it enters a unit-file name |
 | precision | R3 | ✅ covered | The state file records the exact id, never a prefix or "most recent" |
 | concurrency | R3 | ✅ covered | The wake-state file is written atomically (mkstemp + replace) |
+| idempotency | R3 | ✅ covered | Re-arming the same session (for example from the resumed agent) refreshes the recorded process id and keeps the wake count (added after the 2026-10-14 amendment) |
 | adjacency | R4 | ✅ covered | A recorded process id reused by an unrelated process does not count as alive (the start time is checked too) |
 | empty | R4 | ✅ covered | A missing wake-state file at fire time disarms the timer and exits |
 | ordering | R4 | 🧪 backstop | Each wake checks done marker, cap, liveness, then the lock, in that order |
@@ -217,7 +223,7 @@ subprocess quota (Phase 25).
 | precision | R5 | ✅ covered | The wake count lives in the state file, not in the timer's own counters |
 | concurrency | R5 | ✅ covered | `disarm` during a running resume waits for the lock, then removes everything |
 | concurrency | R6 | ✅ covered | Two armed sessions get two distinctly named timers that never touch each other |
-| boundary | R7 | ✅ covered | A `.planning/` with no provable identity skips both rules with an unverified notice |
+| boundary | R7 | ✅ covered | A `.planning/` with no provable identity skips both rules with an unverified notice that reaches remediation and aggregate output |
 | adjacency | R7 | ✅ covered | AGENTS.md with only one directive yields one present and one missing rule, never a merged result |
 | empty | R7 | ✅ covered | No AGENTS.md: both rules are missing (when the condition holds) |
 | encoding | R7 | 🧪 backstop | Signals match the same lowercase phrase heuristic as R01–R17 |
