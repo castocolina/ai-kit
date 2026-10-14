@@ -71,3 +71,13 @@ System One is implemented and running in llm-env (commits `a78b964..413faa0`). T
 
   Reuse them as Laya exemplars in `evals/cases.jsonl`. They are English, one item per request, and have clear margins.
 - **Not in the plan:** `make backup` (OmniRoute combos + connections) exists in llm-env since `acd5a17`. It does not touch System One.
+
+## Notes from live use in tools-installer (2026-10-13/14)
+
+The live skill was used for 19 decisions while specifying and discussing tools-installer Phases 17–25 (session 0a994334). These findings change the plan:
+
+- **TypeSafe direct rounds probabilities to 2 decimals.** With the plan's `_PROB_SUM_TOLERANCE = 1e-3` (also in `scratchpad/v3/skill`), valid answers came back `invalid_response`. The live skill now uses `2e-2`; the plan must carry the same value, with a test that a 2-decimal answer summing to 0.99 or 1.01 is accepted.
+- **Laya is weak on design questions.** It scored ≤0.05–0.67 on them (mostly `needs_fallback`), against TypeSafe's 0.60–1.00. The escalation that worked: Laya first, one item per call; TypeSafe direct on `needs_fallback` (batching is fine there); the main model's own reasoning when both are low. The plan's auto mode should implement exactly this ladder.
+- **The live TypeSafe activation:** `JEV_API_URL=https://api.typesafe.ai/v1/systemone JEV_MODEL=jev-latest JEV_RESPONSE_MODEL=jev-1.13.0`, with the key read from a file into `JEV_API_KEY` and never printed.
+- **The Zen budget is exhausted.** It returns 429 "Policy budget exceeded" on `jev-1.13-free` too; bare `jev-free` gives "Model is unavailable". The free→paid ladder has to treat a 429 budget error as "backend unavailable", not as a transient error to retry.
+- **Decisions must be logged:** each decision needs a Laya column, a TypeSafe column and the locked decision with its reason, and an override when the project docs contradict the model. ai-kit will ship this chain as a spec/discuss skill (v1.3 roadmap), with the decision models optional.
