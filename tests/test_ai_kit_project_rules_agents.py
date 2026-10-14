@@ -222,7 +222,7 @@ class TestRuleChecker(unittest.TestCase):
 
 
 class TestCliCheck(unittest.TestCase):
-    def test_check_returns_workflow_only_and_orders_by_criticality(self):
+    def test_check_returns_workflow_and_links_keys(self):
         with tempfile.TemporaryDirectory() as repo:
             _write(
                 os.path.join(repo, "AGENTS.md"),
@@ -230,9 +230,10 @@ class TestCliCheck(unittest.TestCase):
             )
             result = cli.check(repo)
             # ROADMAP Success Criterion 1's machine-checkable form: `check`
-            # is single-kind post-prune -- the second ("makefile") key
-            # this skill used to return is gone entirely, not merely empty.
-            self.assertEqual(set(result.keys()), {"workflow"})
+            # stays workflow-only for rule findings. `links` is the separate
+            # broken-link key (RUN-11); it is not a second rule kind.
+            self.assertEqual(set(result.keys()), {"workflow", "links"})
+            self.assertEqual(result["links"], [])
             ids = [f["id"] for f in result["workflow"]]
             self.assertIn("R01", ids)
             self.assertIn("R17", ids)
@@ -297,6 +298,132 @@ class TestCliCheck(unittest.TestCase):
             result = cli.check(repo)
             ids = [f["id"] for f in result["workflow"]]
             self.assertIn("R03", ids)
+
+
+def _listing(root):
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for name in sorted(filenames):
+            found.append(os.path.relpath(os.path.join(dirpath, name), root))
+    return found
+
+
+class TestLinkHandling(unittest.TestCase):
+    def test_image_link_to_binary_png_is_not_decoded(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "![logo](img/logo.png)\n",
+            )
+            png = os.path.join(repo, "img", "logo.png")
+            os.makedirs(os.path.dirname(png))
+            with open(png, "wb") as handle:
+                handle.write(b"\x89PNG\r\n\x1a\n\x00\x01")
+            result = cli.check(repo)
+            self.assertEqual(result["links"], [])
+
+    def test_anchored_link_appends_target_text(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "[guide](docs/guide.md#setup)\n",
+            )
+            _write(
+                os.path.join(repo, "docs", "guide.md"),
+                "Every commit is one coherent logical commit, after a "
+                "compaction pass.",
+            )
+            result = cli.check(repo)
+            self.assertEqual(result["links"], [])
+            ids = [f["id"] for f in result["workflow"]]
+            self.assertNotIn("R03", ids)
+
+    def test_query_and_title_are_stripped_before_the_path_check(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                '[x](docs/guide.md?plain=1 "Title")\n',
+            )
+            _write(
+                os.path.join(repo, "docs", "guide.md"),
+                "Every commit is one coherent logical commit, after a "
+                "compaction pass.",
+            )
+            result = cli.check(repo)
+            self.assertEqual(result["links"], [])
+            ids = [f["id"] for f in result["workflow"]]
+            self.assertNotIn("R03", ids)
+
+    def test_anchor_only_link_is_skipped(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "AGENTS.md"), "[top](#section)\n")
+            result = cli.check(repo)
+            self.assertEqual(result["links"], [])
+
+    def test_missing_markdown_target_is_a_broken_link(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "[gone](docs/missing.md)\n",
+            )
+            result = cli.check(repo)
+            self.assertEqual(
+                result["links"],
+                [
+                    {
+                        "kind": "link",
+                        "status": "broken",
+                        "target": "docs/missing.md",
+                        "source": "AGENTS.md",
+                    }
+                ],
+            )
+
+    def test_missing_image_target_is_a_broken_link(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "![gone](img/missing.png)\n",
+            )
+            result = cli.check(repo)
+            self.assertEqual(
+                [finding["target"] for finding in result["links"]],
+                ["img/missing.png"],
+            )
+            self.assertEqual(result["links"][0]["kind"], "link")
+            self.assertEqual(result["links"][0]["status"], "broken")
+
+    def test_url_scheme_and_absolute_links_are_skipped(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "[web](https://example.com/a.md) "
+                "[mail](mailto:a@b.example) "
+                "[abs](/etc/passwd)\n",
+            )
+            result = cli.check(repo)
+            self.assertEqual(result["links"], [])
+
+    def test_check_is_read_only_and_repeatable(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "![logo](img/logo.png) [gone](docs/missing.md)\n",
+            )
+            png = os.path.join(repo, "img", "logo.png")
+            os.makedirs(os.path.dirname(png))
+            with open(png, "wb") as handle:
+                handle.write(bytes(range(256)))
+            before = _listing(repo)
+            first = cli.check(repo)
+            second = cli.check(repo)
+            self.assertEqual(first, second)
+            self.assertEqual(_listing(repo), before)
+            self.assertEqual(
+                [finding["target"] for finding in first["links"]],
+                ["docs/missing.md"],
+            )
 
 
 class TestRemediation(unittest.TestCase):
