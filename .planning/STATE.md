@@ -5,11 +5,11 @@ milestone_name: GSD Curated Config v2
 current_phase: 16
 current_phase_name: ai-kit-spec-extensions
 status: verifying
-stopped_at: Phase 20 context gathered
-last_updated: "2026-10-14T10:39:17.770Z"
+stopped_at: Phase 16.1 context gathered (assumptions mode)
+last_updated: "2026-10-14T11:05:09.407Z"
 last_activity: 2026-09-24
 last_activity_desc: Phase 16 execution started
-state_head: ef2daf626f2df37accc59e84b23e0f38c591b5d2
+state_head: 40fcadc869b837a6f4a64a11a7ddb409d5710852
 progress:
   total_phases: 11
   completed_phases: 0
@@ -362,6 +362,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-24T02:49:31.215Z
-Stopped at: Phase 20 context gathered
-Resume file: .planning/phases/20-live-validation-on-codex-opencode/20-CONTEXT.md
+Last session: 2026-10-14T11:05:09.388Z
+Stopped at: Phase 16.1 context gathered (assumptions mode)
+Resume file: .planning/phases/16.1-hardening/16.1-CONTEXT.md
