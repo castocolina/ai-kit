@@ -8,13 +8,14 @@ imports resolve too. This is the ONLY thing SKILL.md ever invokes by absolute pa
 Usage: python3 <this file> resolve-dispatch ...   -> ai_kit_spec_gsd.cli.main
        python3 <this file> config-path ...         -> ai_kit_spec_gsd.cli.main
        (every ai_kit_spec_gsd.cli subcommand -- there is no separate wrapper subcommand)"""
+import importlib
 import os
 import sys
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_THIS_DIR, "..", "ai-kit-spec-review"))
 
-from ai_kit_spec_gsd.cli import main  # noqa: E402 -- import must follow the sys.path insert above
+main = importlib.import_module("ai_kit_spec_gsd.cli").main
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
