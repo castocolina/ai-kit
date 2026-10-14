@@ -139,7 +139,7 @@ can be verified and closed on trustworthy evidence. Source:
 **Requirements**: HARD-01, HARD-02, HARD-03, HARD-04, HARD-05
 **Success Criteria** (what must be TRUE):
 
-  1. The ruff and py-compile hook scopes cover every shipped Python file (the 36 skipped ones
+  1. The ruff and py-compile hook scopes cover every shipped Python file (the 34 skipped ones *(amended 2026-10-14 from 36; 16.1-SPEC counts 157 of 191 selected)*
      included, `ai_kit_spec/` and superpowers among them), `make validate` runs every test module
      the repo has, and `make validate` is green.
   2. `model_detect.py` (curated-config) and `dispatch.py` (rules-all) resolve their own sibling
