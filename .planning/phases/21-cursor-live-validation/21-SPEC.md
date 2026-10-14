@@ -60,7 +60,7 @@ linked by `tools/setup.py`.
 4. **Wrapper-proof detection** (SPEC-06).
    - Current: `KNOWN_CLIS` names `cursor-agent` only.
    - Target:
-     - Detection resolves cursor by PATH lookup over the runtime-id table's binaries (`cursor-agent`, then `agent`). It never runs an interactive shell and never executes a wrapper.
+     - Detection resolves cursor by PATH lookup over the runtime-id table's binaries: `cursor-agent`, then `agent` only when its real path's basename is `cursor-agent` (`~/.grok/bin/agent` also exists; 18.1 D-02). It never runs an interactive shell and never executes a wrapper.
      - Enumeration runs the resolved real binary with an explicit argv, through a fixture-backed parser of captured `models` output.
      - The resolved real path is recorded in `runtimes.json`.
    - Acceptance: fixtures with only `agent` on PATH, only `cursor-agent`, both, and a shell function of the same name (invisible to the subprocess) resolve correctly. A test proves no shell is spawned. The parser test uses captured output.
