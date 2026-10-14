@@ -1,17 +1,112 @@
 #!/usr/bin/env python3
 """Run unittest modules in parallel, one subprocess per module.
 
-Usage: run_unittest_parallel.py tests.test_a tests.test_b ...
+Usage:
+    run_unittest_parallel.py MODULE [MODULE ...]
+    run_unittest_parallel.py --group NAME [--group NAME ...]
 
 Each module runs under the same interpreter as this script, so the caller picks
 the runtime (system python3 or `uv run python`). Output is buffered per module and
 printed whole, so failures never interleave. Exits 1 if any module fails.
+
+Groups (each discovered tests/test_*.py lands in exactly one):
+    unit        everything not named in an explicit set below (system python3)
+    arch        ARCH_MODULES
+    unit-uv     UNIT_UV_MODULES (needs the uv env)
+    integration INTEGRATION_MODULES (Textual app and PTY-driven, under uv)
+    e2e         E2E_MODULES (make e2e-test only; the one set kept out of validate)
+
+Workers are a share of the available CPUs, capped at 40 percent
+(os.process_cpu_count(), then the affinity mask, then os.cpu_count()).
+AI_KIT_TEST_CPU_SHARE may lower that share, never raise it.
 """
+import math
 import os
 import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TESTS_DIR = REPO_ROOT / "tests"
+
+# arch-test tier: the AST architecture-fitness module.
+ARCH_MODULES = frozenset({"tests.test_arch"})
+# Needs PyYAML, which only the uv env provides.
+UNIT_UV_MODULES = frozenset({"tests.test_framework_profiles"})
+# Textual app and PTY-driven suites; they run under uv.
+INTEGRATION_MODULES = frozenset({
+    "tests.test_wizard_app",
+    "tests.test_wizard_pty",
+    "tests.test_config_doctor_pty",
+    "tests.test_config_doctor",
+})
+# Real git worktrees and memory checks; make e2e-test only, out of validate.
+E2E_MODULES = frozenset({
+    "tests.test_worktree_e2e",
+    "tests.test_system_memory_e2e",
+})
+EXPLICIT_GROUPS = {
+    "arch": ARCH_MODULES,
+    "unit-uv": UNIT_UV_MODULES,
+    "integration": INTEGRATION_MODULES,
+    "e2e": E2E_MODULES,
+}
+
+MAX_CPU_SHARE = 0.40
+CPU_SHARE_ENV = "AI_KIT_TEST_CPU_SHARE"
+
+
+def discover_modules(tests_dir: Path = TESTS_DIR) -> list[str]:
+    """Sorted `tests.<stem>` names for every test_*.py directly in tests_dir."""
+    return sorted(f"tests.{path.stem}" for path in tests_dir.glob("test_*.py"))
+
+
+def group_modules(discovered: list[str]) -> dict[str, list[str]]:
+    """Every discovered module in exactly one group; `unit` is the remainder."""
+    found = set(discovered)
+    groups = {
+        name: sorted(modules & found) for name, modules in EXPLICIT_GROUPS.items()
+    }
+    groups["unit"] = sorted(found - set().union(*EXPLICIT_GROUPS.values()))
+    return groups
+
+
+def stale_exception_names(discovered: list[str]) -> list[str]:
+    """Explicit-set names that have no matching tests file."""
+    found = set(discovered)
+    return sorted(
+        name for modules in EXPLICIT_GROUPS.values() for name in modules if name not in found
+    )
+
+
+def available_cpus() -> int | None:
+    """CPUs this process may use: process count, then affinity, then cpu_count."""
+    process_cpu_count = getattr(os, "process_cpu_count", None)
+    if process_cpu_count is not None:
+        count = process_cpu_count()
+        if isinstance(count, int) and count > 0:
+            return count
+    get_affinity = getattr(os, "sched_getaffinity", None)
+    if get_affinity is not None:
+        return len(get_affinity(0))
+    return os.cpu_count()
+
+
+def worker_count(n_modules: int, cpus: int | None, share_env: str | None = None) -> int:
+    """At most the 40% share of cpus, never more than the module count, at least 1."""
+    share = MAX_CPU_SHARE
+    if share_env is not None:
+        try:
+            requested = float(share_env)
+        except ValueError:
+            requested = None
+        if requested is not None and 0 < requested < MAX_CPU_SHARE:
+            share = requested
+    if not cpus or cpus <= 0:
+        return 1
+    return min(n_modules, max(1, math.floor(share * cpus)))
 
 
 def run_module(module: str) -> tuple[str, int, str, float]:
@@ -23,12 +118,58 @@ def run_module(module: str) -> tuple[str, int, str, float]:
     return module, proc.returncode, proc.stdout + proc.stderr, time.monotonic() - start
 
 
-def main(modules: list[str]) -> int:
+def _parse_groups(argv: list[str]) -> tuple[list[str] | None, str | None]:
+    """Group names from repeatable `--group NAME` pairs, or an error string."""
+    groups: list[str] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] != "--group":
+            return None, "usage: run_unittest_parallel.py --group NAME [--group NAME ...]"
+        if index + 1 >= len(argv):
+            return None, "error: --group needs a NAME"
+        name = argv[index + 1]
+        if name not in (*EXPLICIT_GROUPS, "unit"):
+            return None, f"error: unknown group {name}"
+        groups.append(name)
+        index += 2
+    return groups, None
+
+
+def _modules_for_groups(argv: list[str]) -> tuple[list[str] | None, str | None]:
+    groups, error = _parse_groups(argv)
+    if error or groups is None:
+        return None, error
+    discovered = discover_modules()
+    stale = stale_exception_names(discovered)
+    if stale:
+        return None, "error: stale exception names: " + " ".join(stale)
+    grouped = group_modules(discovered)
+    return [module for name in groups for module in grouped[name]], None
+
+
+def main(argv: list[str]) -> int:
+    if "--group" in argv:
+        selected, error = _modules_for_groups(argv)
+        if error or selected is None:
+            print(error, file=sys.stderr)
+            return 2
+        modules = selected
+    else:
+        modules = argv
     if not modules:
         print("usage: run_unittest_parallel.py MODULE [MODULE ...]", file=sys.stderr)
         return 2
+    failed = _run_all(modules)
+    print(f"{len(modules) - len(failed)}/{len(modules)} modules passed")
+    if failed:
+        print("failed: " + " ".join(sorted(failed)))
+    return 1 if failed else 0
+
+
+def _run_all(modules: list[str]) -> list[str]:
+    workers = worker_count(len(modules), available_cpus(), os.environ.get(CPU_SHARE_ENV))
     failed: list[str] = []
-    with ThreadPoolExecutor(max_workers=min(len(modules), os.cpu_count() or 4)) as pool:
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         for fut in as_completed([pool.submit(run_module, m) for m in modules]):
             module, rc, output, secs = fut.result()
             ran = next((ln for ln in output.splitlines() if ln.startswith("Ran ")), "")
@@ -37,10 +178,7 @@ def main(modules: list[str]) -> int:
             if rc != 0:
                 failed.append(module)
                 print(output)
-    print(f"{len(modules) - len(failed)}/{len(modules)} modules passed")
-    if failed:
-        print("failed: " + " ".join(sorted(failed)))
-    return 1 if failed else 0
+    return failed
 
 
 if __name__ == "__main__":

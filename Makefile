@@ -57,9 +57,9 @@ e2e-test:
 	uv run python -m unittest tests.test_worktree_e2e tests.test_wizard_pty tests.test_system_memory_e2e
 	bash tests/test_install.sh
 
-# AST architecture-fitness check (tests/test_arch.py) — no import/execution.
+# AST architecture-fitness check (the runner's `arch` group) — no import/execution.
 arch-test:
-	python3 -m unittest tests.test_arch
+	python3 tools/run_unittest_parallel.py --group arch
 
 # `test` is the aggregate entrypoint: tiers stay single-source-of-truth in
 # their own targets above, never duplicated here.
