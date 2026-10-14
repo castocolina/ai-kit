@@ -6,6 +6,7 @@ import time
 from ai_kit_spec.cache import cache_base
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
 from ai_kit_spec.config_io import _KNOWN_REVIEWER_FIELDS
+from ai_kit_spec.dispatch import child_env
 from ai_kit_spec.execute_selection import purpose_matches
 
 QUOTA_TTL_SECONDS = 3600                 # 1 hour: quota/context headroom is highly dynamic
@@ -193,7 +194,9 @@ def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) ->
     """Native (cli-less) entries are never probed — there is nothing to
     shell out to, and dispatch mechanics there are the current session's
     own concern, not a quota this module can observe. For CLI entries: run
-    a trivial prompt through the reviewer's own command and classify
+    a trivial prompt through the reviewer's own command (an ARGV list from
+    render_reviewer_command, spawned with no shell and a scrubbed child environment via
+    child_env -- D-10/D-14) and classify
     availability generically — a nonzero exit code, or stdout/stderr
     containing a case-insensitive usage/quota/rate-limit phrase, means
     unavailable; anything else (including plain success) means available.
@@ -234,8 +237,8 @@ def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) ->
     except ValueError as exc:
         return {"available": False, "checked_at": time.time(), "detail": str(exc)}
     try:
-        result = run_fn(filled, shell=True, input=probe_prompt, capture_output=True,
-                         text=True, check=False, timeout=30)
+        result = run_fn(filled, input=probe_prompt, capture_output=True, encoding="utf-8",
+                         errors="replace", check=False, timeout=30, env=child_env())
     except subprocess.TimeoutExpired:
         return {"available": False, "checked_at": time.time(),
                 "detail": "timed out after 30s"}

@@ -3220,7 +3220,7 @@ class TestDispatchExecute(unittest.TestCase):
         candidate = {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
         captured = {}
         def fake_dispatch(command, prompt, heartbeat_interval, timeout):
-            captured["command"] = shlex.split(command) if isinstance(command, str) else command
+            captured["command"] = command
             captured["prompt"] = prompt
             captured["heartbeat_interval"] = heartbeat_interval
             captured["timeout"] = timeout
@@ -3292,7 +3292,7 @@ class TestDispatchExecute(unittest.TestCase):
                      "effort": "high", "service_tier": "priority"}
         captured = {}
         def fake_dispatch(command, prompt, heartbeat_interval, timeout):
-            captured["command"] = shlex.split(command) if isinstance(command, str) else command
+            captured["command"] = command
             return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
         execute_dispatch.dispatch_execute(
             candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch)
@@ -7889,6 +7889,84 @@ class TestFakePopenArgvContract(unittest.TestCase):
         self.assertEqual(result["returncode"], 127)
         self.assertIn("No such file or directory", result["stderr"])
         self.assertFalse(result["timed_out"])
+
+
+class TestProbeArgv(unittest.TestCase):
+    """D-10/D-14: the quota probe spawns an argv list, no shell, scrubbed env."""
+
+    def test_probe_calls_run_fn_with_argv_no_shell_and_scrubbed_env(self):
+        resolved = rs.ResolvedReviewer(key="k", model="m", vendor="v", cli="codex",
+                                        command="codex exec -m {model}", extra={})
+        captured = {}
+
+        class FakeResult:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+
+        def fake_run(argv, **kw):
+            captured["argv"] = argv
+            captured.update(kw)
+            return FakeResult()
+
+        rs.probe_reviewer_quota(resolved, run_fn=fake_run)
+        self.assertEqual(captured["argv"], ["codex", "exec", "-m", "m"])
+        self.assertNotIn("shell", captured)
+        self.assertEqual(captured["input"], "Only say: Hello world!")
+        self.assertEqual(captured["timeout"], 30)
+        self.assertNotIn("AI_AGENT", captured["env"])
+
+    def test_probe_with_nonexistent_binary_reports_oserror_not_exception(self):
+        resolved = rs.ResolvedReviewer(key="k", model="m", vendor="v", cli="codex",
+                                        command="definitely-not-a-real-binary-xyz --flag",
+                                        extra={})
+        result = rs.probe_reviewer_quota(resolved)
+        self.assertFalse(result["available"])
+        self.assertIn("definitely-not-a-real-binary-xyz", result["detail"])
+
+    def test_probe_on_shell_syntax_template_is_unavailable_naming_the_key(self):
+        resolved = rs.ResolvedReviewer(key="k", model="m", vendor="v", cli="codex",
+                                        command="codex exec $HOME", extra={})
+        result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("must fail before any spawn")))
+        self.assertFalse(result["available"])
+        self.assertIn("k", result["detail"])
+
+
+class TestDispatchExecuteArgv(unittest.TestCase):
+    """D-10: execute dispatch splits the template, formats per token, reports shlex.join."""
+
+    def test_target_dir_with_braces_reaches_the_child_verbatim_as_one_argument(self):
+        candidate = {"cli": "opencode", "model": "m", "key": "opencode/m"}
+        captured = {}
+
+        def fake_dispatch(argv, prompt, heartbeat_interval, timeout):
+            captured["argv"] = argv
+            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "dir with {x}")
+            os.makedirs(target)
+            result = execute_dispatch.dispatch_execute(
+                candidate, "do the task", target, 30, 600,
+                build_tooling_guidance_fn=lambda *a, **kw: "",
+                dispatch_fn=fake_dispatch)
+        self.assertIn(target, captured["argv"])
+        self.assertEqual(result["command"], shlex.join(captured["argv"]))
+
+    def test_result_command_is_shlex_join_of_the_argv(self):
+        candidate = {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
+        captured = {}
+
+        def fake_dispatch(argv, prompt, heartbeat_interval, timeout):
+            captured["argv"] = argv
+            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+
+        result = execute_dispatch.dispatch_execute(
+            candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch)
+        self.assertEqual(result["command"], shlex.join(captured["argv"]))
+        self.assertIn("-m", captured["argv"])
+        self.assertIn("gpt-5.6-sol", captured["argv"])
 
 
 if __name__ == "__main__":

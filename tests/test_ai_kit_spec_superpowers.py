@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import shlex
 import sys
 import tempfile
 import unittest
@@ -513,8 +514,8 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
                       "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
         captured_command = {}
 
-        def fake_dispatch_fn(command, prompt, heartbeat_interval, timeout):
-            captured_command["value"] = command
+        def fake_dispatch_fn(argv, prompt, heartbeat_interval, timeout):
+            captured_command["value"] = argv
             return {"returncode": 0, "stdout": "DONE", "stderr": "", "timed_out": False}
 
         def dispatch_execute_with_fake_subprocess(candidate, prompt, target_dir,
@@ -525,9 +526,10 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
         result = dispatch_injection.dispatch_superpowers_task(
             injection, "do the task", "/real/scratch/dir", 60, 900,
             dispatch_execute_fn=dispatch_execute_with_fake_subprocess)
+        # argv dispatch: the reported "command" is the shlex.join of the dispatched argv
         self.assertIn("workspace-write", captured_command["value"])
         self.assertIn("/real/scratch/dir", captured_command["value"])
-        self.assertEqual(result["command"], captured_command["value"])
+        self.assertEqual(result["command"], shlex.join(captured_command["value"]))
 
 
 class TestClassifyDispatchFailure(unittest.TestCase):

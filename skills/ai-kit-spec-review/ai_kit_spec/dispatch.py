@@ -124,6 +124,30 @@ def dispatch_with_heartbeat(argv: list[str], prompt: str, heartbeat_interval: in
                 "timed_out": False}
 
 
+def _read_output(path: str) -> str:
+    with open(path, "rb") as f:
+        return f.read().decode("utf-8", errors="replace")
+
+
+def _report_tier_progress(print_fn, tier_index, tier_timeout, elapsed, path, last_size) -> int:
+    """Emits dispatch_with_polling's one-line size-delta progress report and returns the new
+    last_size. Extracted only to keep dispatch_with_polling itself within the repo's pylint
+    statement/branch thresholds -- the behavior is trivial by design (see its docstring)."""
+    # No out_f.flush() here: nothing is ever written through THIS file object
+    # (the child writes to the dup'd fd directly), so our own buffer is always
+    # empty and getsize() already sees everything the child has flushed.
+    size = os.path.getsize(path) if os.path.exists(path) else 0
+    delta = size - last_size
+    ts_elapsed = int(elapsed)
+    if delta:
+        print_fn(f"tier {tier_index} ({tier_timeout}s): +{delta} bytes "
+                 f"since last check (total {size}, {ts_elapsed}s elapsed)")
+    else:
+        print_fn(f"tier {tier_index} ({tier_timeout}s): no growth "
+                 f"({ts_elapsed}s elapsed)")
+    return size
+
+
 def dispatch_with_polling(argv: list[str], prompt: str, timeout_tiers: list[int],
                            poll_interval: int = 150, popen_fn=subprocess.Popen,
                            time_fn=time.time, sleep_fn=time.sleep,
@@ -153,11 +177,7 @@ def dispatch_with_polling(argv: list[str], prompt: str, timeout_tiers: list[int]
     process that exits in one second is noticed in about one second instead of up to
     `poll_interval` (150s) later. Without that split, a fast-failing dispatch (bad model id,
     auth error -- the CLI exits immediately) would cost the caller a full poll interval of dead
-    time for nothing, and every normal review would pay it once at the end.
-
-    Raises `ValueError` for an empty `timeout_tiers`: with no tier there is nothing to run and
-    no result to return, and silently returning None would surface downstream as an opaque
-    TypeError in whichever caller subscripts the result."""
+    time for nothing, and every normal review would pay it once at the end."""
     if not timeout_tiers:
         raise ValueError("timeout_tiers must name at least one tier -- got an empty list")
     if not argv:
@@ -169,7 +189,9 @@ def dispatch_with_polling(argv: list[str], prompt: str, timeout_tiers: list[int]
             f.write(prompt)
         stdout_path = os.path.join(tmp_dir, "stdout")
         stderr_path = os.path.join(tmp_dir, "stderr")
-        last_result = None
+        # Never None at the final return: timeout_tiers is non-empty (checked above), so the
+        # loop body runs at least once and either returns or assigns last_result.
+        last_result: dict = {}
         for tier_index, tier_timeout in enumerate(timeout_tiers, start=1):
             start = time_fn()
             last_size = 0
@@ -208,23 +230,10 @@ def dispatch_with_polling(argv: list[str], prompt: str, timeout_tiers: list[int]
                     if elapsed < next_report_at:
                         continue
                     next_report_at = elapsed + poll_interval
-                    # No out_f.flush() here: nothing is ever written through THIS file object
-                    # (the child writes to the dup'd fd directly), so our own buffer is always
-                    # empty and getsize() already sees everything the child has flushed.
-                    size = os.path.getsize(stdout_path) if os.path.exists(stdout_path) else 0
-                    delta = size - last_size
-                    ts_elapsed = int(elapsed)
-                    if delta:
-                        print_fn(f"tier {tier_index} ({tier_timeout}s): +{delta} bytes "
-                                 f"since last check (total {size}, {ts_elapsed}s elapsed)")
-                    else:
-                        print_fn(f"tier {tier_index} ({tier_timeout}s): no growth "
-                                 f"({ts_elapsed}s elapsed)")
-                    last_size = size
-            with open(stdout_path, "rb") as f:
-                stdout = f.read().decode("utf-8", errors="replace")
-            with open(stderr_path, "rb") as f:
-                stderr = f.read().decode("utf-8", errors="replace")
+                    last_size = _report_tier_progress(print_fn, tier_index, tier_timeout,
+                                                       elapsed, stdout_path, last_size)
+            stdout = _read_output(stdout_path)
+            stderr = _read_output(stderr_path)
             last_result = {"returncode": proc.returncode, "stdout": stdout, "stderr": stderr,
                             "timed_out": timed_out, "tiers_tried": tier_index,
                             "final_timeout": tier_timeout}

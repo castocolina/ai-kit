@@ -4,9 +4,12 @@ which only exists to tell GSD's OWN execute-phase step what to shell out to, and
 after a whole GSD-specific config round-trip). This module IS the dispatch: it builds the real
 command via commands.build_execute_command, composes a reinforced prompt (model-selection
 override, incremental progress, honest failure reporting, tool/MCP guidance, and -- for the two
-CLIs with no OS-level write confinement -- an explicit soft-confinement instruction), and runs it
-for real via dispatch.dispatch_with_heartbeat. A native (cli is None) candidate is never routed
-here -- it has no subprocess to dispatch at all; the caller executes it in-process."""
+CLIs with no OS-level write confinement -- an explicit soft-confinement instruction), and runs
+it for real via dispatch.dispatch_with_heartbeat as an ARGV list with no shell (D-10). A native
+(cli is None) candidate is never routed here -- it has no subprocess to dispatch at all; the
+caller executes it in-process."""
+import shlex
+
 from ai_kit_spec.commands import NO_HARD_SANDBOX_CLIS, build_execute_command
 from ai_kit_spec.dispatch import dispatch_with_heartbeat
 from ai_kit_spec.dispatch_guidance import build_dispatch_reinforcement_guidance
@@ -57,7 +60,11 @@ def dispatch_execute(candidate: dict, prompt: str, target_dir: str, heartbeat_in
     command_template = build_execute_command_fn(
         cli, target_dir=target_dir, effort=candidate.get("effort"),
         service_tier=candidate.get("service_tier"))
-    command = command_template.format(model=candidate["model"])
+    # argv dispatch (D-10): split FIRST, then format each token -- the prompt path never goes
+    # through a shell, and a brace-escaped target_dir token (see _require_target_dir) formats
+    # back to its literal braces here.
+    argv = [token.format(model=candidate["model"])
+            for token in shlex.split(command_template)]
     resolved_label = f"{cli}, model {candidate['model']}"
     guidance_sections = [build_reinforcement_fn(resolved_label, format_block)]
     tool_guidance = build_tooling_guidance_fn(
@@ -68,5 +75,5 @@ def dispatch_execute(candidate: dict, prompt: str, target_dir: str, heartbeat_in
     if cli in NO_HARD_SANDBOX_CLIS:
         guidance_sections.append(build_soft_confinement_fn(target_dir))
     full_prompt = "\n\n".join(guidance_sections) + "\n\n" + prompt
-    result = dispatch_fn(command, full_prompt, heartbeat_interval, timeout)
-    return {"cli": cli, "model": candidate["model"], "command": command, **result}
+    result = dispatch_fn(argv, full_prompt, heartbeat_interval, timeout)
+    return {"cli": cli, "model": candidate["model"], "command": shlex.join(argv), **result}
