@@ -3,13 +3,13 @@ gsd_state_version: "1.0"
 milestone: v1.3
 milestone_name: GSD Curated Config v2
 current_phase: 16
-current_phase_name: ai-kit-spec-extensions
-status: verifying
+current_phase_name: ai_kit_spec Extensions
+status: executing
 stopped_at: Phases 25-27 spec + discuss done (CONTEXT committed); 26-SPEC R2 spike can run early; planning follows dependency order (25 after 18.1, 26 after 25, 27 after 26)
-last_updated: "2026-10-14T14:24:28.773Z"
-last_activity: 2026-09-24
+last_updated: "2026-10-14T15:47:18.063Z"
+last_activity: 2026-10-14
 last_activity_desc: Phase 16 execution started
-state_head: 378e5c0312afa7f56b1f6ef7420b7122fb0ad312
+state_head: 325609070e8451586b01fd378beccd77c4f085d7
 progress:
   total_phases: 14
   completed_phases: 0
@@ -25,14 +25,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-23)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 16 — ai-kit-spec-extensions
+**Current focus:** Phase 16 — ai_kit_spec Extensions
 
 ## Current Position
 
-Phase: 16 (ai-kit-spec-extensions) — EXECUTING
-Plan: 6 of 6
-Status: Phase complete — ready for verification
-Last activity: 2026-09-24 — Phase 16 execution started
+Phase: 16 (ai_kit_spec Extensions) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 16
+Last activity: 2026-10-14 — Phase 16 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -344,6 +344,14 @@ any order, or deferred, without blocking anything else in this milestone.
 - Phase 16.1 inserted after Phase 16: Hardening: gate scope, sibling-first imports, security/correctness fixes from the 2026-10-13 audit; closes Phase 16
 - Phase 18.1 inserted after Phase 18: One runtime model: (runtime, model) candidates, native_runtime removed
 - Phase 24 added after Phase 23: Spec-and-discuss chain skill (learned from the tools-installer run, 2026-10-14)
+
+## Deferred Verification
+
+| Phase | State | Resume |
+|-------|-------|--------|
+| 16 | verification_deferred_human | /gsd-verify-work 16 |
+
+Phase 16: 4/4 success criteria verified 2026-10-14; the one human item (real codex/pi host signal) is scheduled for Phases 20 and 22.
 
 ## Deferred Items
 
