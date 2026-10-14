@@ -34,7 +34,7 @@ python3 "$ENTRYPOINT" check <repo_root>
 python3 "$ENTRYPOINT" remediate <repo_root>
 ```
 
-`check` returns `{"workflow": [...]}`. `remediate` runs `check` internally and returns the ordered hand-off payload this skill wraps around: `{"remediate": [...ordered...], "blocked": [...]}` — the shared builder always returns both keys, but this skill has no research-dispatch domain, so `blocked` is always empty here. Trimmed example:
+`check` returns `{"workflow": [...], "links": [...]}`. `links` lists broken relative links from the root instruction file (image links included, `#anchor`/`?query` stripped, anchor-only links skipped); fix a broken link by correcting or removing it, since `remediate` does not touch links. `remediate` runs `check` internally and returns the ordered hand-off payload this skill wraps around: `{"remediate": [...ordered...], "blocked": [...]}` — the shared builder always returns both keys, but this skill has no research-dispatch domain, so `blocked` is always empty here. Trimmed example:
 
 ```json
 {
