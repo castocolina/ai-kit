@@ -5,25 +5,25 @@ titles: json
 findings:
   - id: WR-01
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "Unsorted import block fails the gated ruff hook"
   - id: WR-02
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "Two new `_FIELD_TYPES` comment lines exceed the 100-column ruff limit"
   - id: WR-03
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "Nested `if` in `_apply_runtime_meta` (SIM102)"
   - id: WR-04
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "Nested `if` and if/else block flagged in `model_ranker.py` (SIM102/SIM108)"
   - id: IN-01
     severity: info
-    disposition: open
+    disposition: fixed
     title: "Awkward `json.dump` call formatting in a new test helper"
-open: 5
+open: 0
 total: 5
 recorded: 2026-10-14T15:50:17.994Z
 ---
@@ -32,11 +32,11 @@ recorded: 2026-10-14T15:50:17.994Z
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| WR-01 | warning | open | - |
-| WR-02 | warning | open | - |
-| WR-03 | warning | open | - |
-| WR-04 | warning | open | - |
-| IN-01 | info | open | - |
+| WR-01 | warning | fixed | 16-REVIEW-FIX.md, commit 99ccb98 |
+| WR-02 | warning | fixed | 16-REVIEW-FIX.md, commit 99ccb98 |
+| WR-03 | warning | fixed | 16-REVIEW-FIX.md, commit 99ccb98 |
+| WR-04 | warning | fixed | 16-REVIEW-FIX.md, commit 99ccb98 |
+| IN-01 | info | fixed | 16-REVIEW-FIX.md, commit 99ccb98 |
 
 Dispositions: `open` (recorded, not yet triaged), `fixed`, `skipped`, `deferred`.
 Set `deferred` by hand and put the reason in the Source cell; both are preserved. A `|` in the reason is kept as prose and escaped on the next run.
