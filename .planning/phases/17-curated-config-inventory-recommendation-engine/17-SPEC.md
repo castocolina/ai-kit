@@ -155,30 +155,51 @@ explainable, minimal `plan.json`, with nothing written to the project.
 
 ## Edge Coverage
 
-**Coverage:** 19/25 applicable edges resolved · 6 unresolved
+**Coverage:** 40/46 applicable edges resolved · 6 unresolved (engine floor recomputed 2026-10-14 after the requirement amendments)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
 | boundary | R1 | ✅ covered | The read-only project directory test |
 | precision | R1 | 🧪 backstop | Prices keep catalog precision (no rounding before `recommend`) |
-| unclassified | R2 | ⚠ UNRESOLVED | No shape cue; planner treats local-vs-global version skew as an assumption |
-| unclassified | R3 | ⚠ UNRESOLVED | No shape cue; the three states are specified in Acceptance |
-| unclassified | R4 | ⚠ UNRESOLVED | No shape cue; unscored behavior is specified in Acceptance |
-| unclassified | R5 | ⚠ UNRESOLVED | No shape cue; the four conflict fixtures are specified |
+| adjacency | R2 | ✅ covered | A local and a global install never merge: the local one wins, with its `scope` recorded (R2 acceptance, D-11) |
+| empty | R2 | ✅ covered | A missing gsd-core exits 2 and lists the searched paths (R2 acceptance) |
+| ordering | R2 | ✅ covered | Installs are searched in GSD's launcher order, project-local first (16.1 D-18, D-11) |
+| adjacency | R3 | ✅ covered | The three states never merge: each yields its own marker (R3 acceptance) |
+| empty | R3 | ✅ covered | No catalog marks `catalog: none` (R3), and an empty or unscored catalog fills slots as none (R4) |
+| ordering | R3 | ✅ covered | The refresh order is fixed: `detect-runtimes` before `fetch-model-catalog` (R3 target) |
+| concurrency | R3 | ✅ covered | A failed refresh keeps the stale cache plus a warning (R3), and concurrent cache writes stay valid (16.1 R15) |
+| boundary | R4 | ✅ covered | Zero score axes is never auto-picked except as a declared-purpose router, and one axis or more ranks with the 49/100 missing-axis default (R4, D-12) |
+| precision | R4 | ⚠ UNRESOLVED | Are `no scores` candidates chosen for the top 3 by price then model id, or by the ranker's 49-default score? |
+| adjacency | R5 | ✅ covered | A project runtime equal to the host is no conflict, and a project and a global value never merge into one entry (R5) |
+| empty | R5 | ⚠ UNRESOLVED | With no project config, is a global `resolve_model_ids: "omit"` a claude conflict like a global `model_policy` (18 R13 reconciles the copy)? |
+| ordering | R5 | ✅ covered | Project config takes precedence: beside it, a global `model_policy` or `runtime` is inert `info` (R5) |
+| concurrency | R5 | ✅ covered | Conflict detection only reads configs, and `inventory` writes nothing outside ai-kit's cache (R1) |
+| empty | R6 | ✅ covered | The neither, `AGENTS.md`-only and `CLAUDE.md`-only fixtures pin the empty and single cases (R6 acceptance) |
+| encoding | R6 | 🧪 backstop | Exact file names are checked with `isfile`, as `claude_md_detect` does today, so the filesystem decides case |
 | concurrency | R6 | 🧪 backstop | Detection is read-only; concurrent inventories do not interfere |
+| boundary | R7 | ⚠ UNRESOLVED | Does `recommend` refuse an inventory whose `schema_version` is older or newer than it supports? |
 | adjacency | R7 | ✅ covered | Reordered input candidates give an identical plan (tie test) |
 | empty | R7 | ✅ covered | An inventory with zero candidates yields `needs_choice` entries, never a crash |
 | ordering | R7 | ✅ covered | Plan entries are sorted by key for byte-stable output |
+| precision | R7 | 🧪 backstop | The two-run byte-identical test pins number output, and comparisons use the unrounded `score_exact` (R13) |
+| concurrency | R7 | ✅ covered | Pure runs share no state (R7), and a partial `plan.json` fails to load in `apply` (18 D-22) |
 | adjacency | R8 | ✅ covered | Standard sets no `models.*` |
 | empty | R8 | 🧪 backstop | Unknown profile name rejected with exit 2 |
 | ordering | R8 | 🧪 backstop | `models.*` written after `model_profile` in plan order |
 | boundary | R9 | ✅ covered | A price exactly at the ceiling counts as within |
+| adjacency | R9 | ✅ covered | Effort variants collapse into one family for the percentile, and a `-fast` twin yields to its non-fast model (R9) |
+| empty | R9 | ✅ covered | A cap that passes nothing uses the cheapest eligible model, and no eligible model gives `needs_choice` (R9, R13) |
+| ordering | R9 | ✅ covered | Equal candidates for a slot follow R13's tie order: `score_exact`, then price, then model id |
 | precision | R9 | 🧪 backstop | The percentile ceiling is computed over eligible prices only (unpriced excluded) |
 | unclassified | R10 | ⚠ UNRESOLVED | No shape cue; the specialist rules are specified in Acceptance |
 | adjacency | R11 | ✅ covered | MVP ↔ Standard ↔ Rigorous tables differ only where §5 says |
 | empty | R11 | 🧪 backstop | Unknown rigor rejected with exit 2 |
 | ordering | R11 | 🧪 backstop | Preset keys merge before catalog-driven keys |
-| unclassified | R12 | ⚠ UNRESOLVED | No shape cue; the drop-with-note behavior is specified |
+| adjacency | R12 | ⚠ UNRESOLVED | Do several rejected `dynamic_routing.*` keys get one note each (R12 target) or one note in total (R12 acceptance)? |
+| empty | R12 | ⚠ UNRESOLVED | Is a failed `isValidConfigKey` probe an exit-2 error like a missing gsd-core, or an inventory warning? |
+| ordering | R12 | 🧪 backstop | The two-run byte-identical test (R7) pins the order of the drop notes |
+| idempotency | R12 | ✅ covered | A rerun on the same inventory drops the same keys with the same notes (R7 byte-identical) |
+| concurrency | R12 | ✅ covered | The key probe only reads the host gsd-core, and `inventory` writes nothing outside ai-kit's cache (R1) |
 | boundary | R13 | ✅ covered | Exactly 3 candidates (fewer when fewer exist) |
 | adjacency | R13 | ✅ covered | Equal score and price → model id decides |
 | empty | R13 | ✅ covered | No existing config → no unset entries |
