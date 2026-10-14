@@ -61,3 +61,21 @@ was held in Spanish at the user's choice; this log is in English per the project
 
 - The decision on v1's future → a later milestone.
 - The cursor and pi scenarios → Phases 21/22.
+
+---
+
+# Update 2026-10-14 (assumptions mode)
+
+**Mode:** assumptions (`--analyze --all --batch`, lean calibration), jev screening, best over easy, CodeGraph
+**Input:** `19-SPEC.md` (a5b3fab) plus the locked D-01..D-07. The analyzer (sonnet, 49 tool calls) verified the `GSD_HOME` copy source, the policy-before-omit order, `config-set model_policy null` rejection, which values gsd-tools rejects at write time, and the installed-skill symlink pointing at the main checkout.
+
+| Item | Laya | TypeSafe | Outcome |
+|---|---|---|---|
+| C1 matrix | both_plus_controls 0.61 (fb) | both_plus_controls 0.97 | D-09 |
+| C2 oracle | expected_field 0.45 (fb) | independent_oracle 0.79 | D-10 |
+| C3 fixtures | frozen 0.82 | runtime_builder 0.99 (second opinion) | **Laya overridden:** frozen fixtures can make a scenario unfailable (D-11) |
+| C4 harness | agent_jsonl 0.38 (fb) | headless_claude_p 0.99 | D-12 (refines the "subagent" wording) |
+| C5 smoke home | bash 0.40 (fb) | tests_helper 0.59 (fb) | **Own reasoning:** dev-only `tests/` helper, following the `wizard_fixtures.py` precedent (D-13, ledger) |
+| C6 forced failure | real_rejection 0.69 (fb) | real_rejection 1.00 | D-14 |
+
+No user corrections. D-01/D-02 were refined (headless fresh-context runs), not replaced.

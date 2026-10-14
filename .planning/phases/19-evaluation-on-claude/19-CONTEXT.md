@@ -1,6 +1,6 @@
 # Phase 19: Evaluation on Claude - Context
 
-**Gathered:** 2026-09-23
+**Gathered:** 2026-09-23 (interactive); updated 2026-10-14 (assumptions mode, after `19-SPEC.md`)
 **Status:** Ready for planning
 
 <domain>
@@ -98,6 +98,78 @@ not.
   decides whether to accept or keep fixing. It never passes silently and never blocks without
   the user.
 
+### Added 2026-10-14 (assumptions-mode discuss, jev-screened)
+- **D-08: Matrix isolation.**
+  - Every gsd-tools subprocess in the matrix gets `GSD_HOME=<tmp>` holding a synthetic
+    `.gsd/defaults.json` of `{"resolve_model_ids":"omit","runtime":"codex"}`, plus
+    `GSD_RUNTIME=claude`. `HOME` stays real, because v1's search roots and the inventory are
+    `$HOME`-relative.
+  - The poison fixture carries no `model_policy`: a policy resolves before the omit gate and
+    would hide the bug.
+  - `GSD_HOME` does not cover `effort sync` or the installer, so the matrix never runs them.
+- **D-09: The matrix runs 5 combinations × 2 start paths, plus 2 controls.**
+  - P1: no config at start; `apply` creates it and reconciles.
+  - P2: a pre-poisoned config; the plan carries the unset.
+  - Control 1 skips the fix and must fail every agent that has no override.
+  - Control 2 uses clean defaults and must pass.
+  - Measured cost: about 30 s for 350 calls. TypeSafe 0.97.
+- **D-10: An independent oracle.**
+  - It is built from the plan's set entries plus gsd-core's live `MODEL_PROFILES` and
+    `AGENT_TO_PHASE_TYPE`, and asserts that the two tables have the same agent keys.
+  - It is host-parameterized, so Phase 20 reuses it, and `recommend` emits no new field.
+  - Module: `tests/test_ai_kit_gsd_curated_config_matrix.py`, registered in both test lists
+    (or covered by 16.1's discovery), with `skipUnless` for real gsd-tools and node.
+  - TypeSafe 0.79, over Laya expected_field 0.45 fb.
+- **D-11: Fixtures are built at run time** by one builder from the real tools:
+  - B: real `config-new-project` under the poisoned `GSD_HOME`;
+  - C: 17 D-20's tables builder, opencode host, unscored, with both routers;
+  - D: real v1 subcommands plus per-leaf `model_policy` keys;
+  - E: B's answers with an empty `other_clis`, so a `needs_choice` is guaranteed.
+
+  No absolute paths are committed. **Laya overridden** (frozen 0.82): a frozen fixture can stop
+  matching real v1 output, and then the scenario cannot fail. TypeSafe second opinion
+  runtime_builder 0.99.
+- **D-12 (refines D-01/D-02's "subagent" wording): Pressure runs are headless, fresh-context
+  `claude -p` sessions.**
+  - Each runs from a scratch cwd with a tool allowlist (`Read,Bash,Glob,Grep`, no Skill tool),
+    limited `--setting-sources` and `--output-format stream-json`, under the 16.1 `child_env`
+    scrub.
+  - The skill and CLI are pinned to the worktree by a path discovered at run time.
+  - Any Skill-tool call counts as a harness failure.
+  - Grading is per expectation: scripted end-state checks, ordering read from the documented
+    transcript, and rationalizations quoted verbatim.
+  - The scenario files live in `skills/ai-kit-gsd-curated-config/evals/NN-*.md`.
+  - RED-b uses the v1 SKILL.md frozen from git (`2c16b26`).
+  - Why: in-session subagents inherit this repo's AGENTS.md and a global skill listing that
+    includes the v1 skill, which contaminates the no-skill baseline. TypeSafe 0.99.
+- **D-13: The smoke and matrix share one dev-only stdlib helper**, `tests/gsd_curated_eval.py`
+  (`smoke`, `matrix`, `fixture`, `snapshot`).
+  - It resolves the skill from its own repo location, never the installed symlink, and evidence
+    paths use placeholders.
+  - It is not shipped and is not a skill subcommand (R8).
+  - Precedent: `tests/wizard_fixtures.py`.
+  - Own reasoning; both models were low (Laya bash 0.40 fb, TypeSafe tests_helper 0.59 fb).
+    Provisional, so it is on the ledger.
+- **D-14: The smoke steps.**
+  1. Snapshot sha256 of the protected set: ai-kit's `config.json`, its backups,
+     `cross-ai.mjs*`, and the real `~/.gsd/defaults.json` (read only). Not all of `.planning/`,
+     because STATE changes during a session.
+  2. On ai-kit, run only inventory, recommend and the dry run.
+  3. Project (a): resolve `needs_choice` with the first candidate ("smoke-auto"), dry run, then
+     apply. Validate, then check that a second apply adds no extra state.
+  4. Forced failure on a copy: a non-array `review.default_reviewers`, which the real gsd-tools
+     rejects (verified; most other garbage values are accepted).
+  5. Project (b): created with the real `GSD_HOME`. The reconcile is family-wide (17 D-08),
+     and only key paths are recorded, never values.
+  6. Run the matrix.
+  7. Re-snapshot, and exit 1 on any change.
+
+  TypeSafe real_rejection 1.00.
+- **Finding, not fixed here:** the v1 integration tests run `ensure-project` without isolation
+  (`tests/test_ai_kit_gsd_curated_config.py:182-219,1188-1274`), so they copy the developer's
+  real global defaults. 18 R15 keeps the v1 tests unmodified, so this is recorded for the
+  v1-future decision.
+
 ### Claude's Discretion
 - Where the evidence files live: suggested `19-SKILL-JUDGE.md`, `19-PRESSURE-TESTS.md` and
   `19-SMOKE.md` in the phase dir.
@@ -181,4 +253,4 @@ not.
 ---
 
 *Phase: 19-evaluation-on-claude*
-*Context gathered: 2026-09-23*
+*Context gathered: 2026-09-23; updated 2026-10-14*
