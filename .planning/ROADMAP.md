@@ -179,7 +179,7 @@ Plans:
   - [ ] 16.1-05-PLAN.md — `install.sh --branch`/`--dry-run` on existing clones; atomic uninstall write
 - Wave 3
   - [ ] 16.1-06-PLAN.md — argv-only reviewer dispatch and host-signal scrubbing
-  - [ ] 16.1-07-PLAN.md — shared project-local-first gsd-tools resolver
+  - [ ] 16.1-07-PLAN.md — shared project-local-first gsd-tools resolver and wrappers; curated-config imports them
 - Wave 4
   - [ ] 16.1-08-PLAN.md — trust gate for project-local reviewer commands; loud config errors
   - [ ] 16.1-30-PLAN.md — host-signal scrub pinned through every dispatcher with real children
@@ -198,18 +198,19 @@ Plans:
   - [ ] 16.1-26-PLAN.md — lint sweep: makefile and precommit project-rules skills, shared library
   - [ ] 16.1-31-PLAN.md — execute-gsd SKILL.md: config-set subcommands, project-local GSD, report-only probe; skill-judge
 - Wave 8
-  - [ ] 16.1-14-PLAN.md — lint sweep: execute-gsd adapter
   - [ ] 16.1-17-PLAN.md — lint sweep: usage-metrics
   - [ ] 16.1-25-PLAN.md — lint sweep: tools/ wizard; tools-wide zero findings
   - [ ] 16.1-27-PLAN.md — lint sweep: remaining ai-kit-spec-review modules
-  - [ ] 16.1-28-PLAN.md — lint sweep: execute-superpowers adapter and detect_framework
 - Wave 9
-  - [ ] 16.1-20-PLAN.md — spec-family tests clean under pyright and vulture
+  - [ ] 16.1-14-PLAN.md — lint sweep: execute-gsd adapter
+  - [ ] 16.1-28-PLAN.md — lint sweep: execute-superpowers adapter and detect_framework
   - [ ] 16.1-21-PLAN.md — tools-side tests clean under pyright and vulture
   - [ ] 16.1-22-PLAN.md — skills-side tests clean under pyright and vulture
 - Wave 10
-  - [ ] 16.1-23-PLAN.md — widen the gate over every shipped Python file; full gate green
+  - [ ] 16.1-20-PLAN.md — spec-family tests clean under pyright and vulture
 - Wave 11
+  - [ ] 16.1-23-PLAN.md — widen the gate over every shipped Python file; full gate green
+- Wave 12
   - [ ] 16.1-24-PLAN.md — Phase 16 live checks, verifier re-run and completion
 
 ### Phase 17: Curated-Config Inventory & Recommendation Engine
