@@ -5,11 +5,11 @@ milestone_name: GSD Curated Config v2
 current_phase: 16
 current_phase_name: ai-kit-spec-extensions
 status: verifying
-stopped_at: Phase 16.1 context gathered (assumptions mode)
-last_updated: "2026-10-14T11:05:09.407Z"
+stopped_at: Phase 17 context gathered (assumptions mode)
+last_updated: "2026-10-14T11:27:59.640Z"
 last_activity: 2026-09-24
 last_activity_desc: Phase 16 execution started
-state_head: 40fcadc869b837a6f4a64a11a7ddb409d5710852
+state_head: c3b8eecbc42c8eb3ed6a3a8a2b69475a974170cd
 progress:
   total_phases: 11
   completed_phases: 0
@@ -362,6 +362,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-14T11:05:09.388Z
-Stopped at: Phase 16.1 context gathered (assumptions mode)
-Resume file: .planning/phases/16.1-hardening/16.1-CONTEXT.md
+Last session: 2026-10-14T11:27:59.619Z
+Stopped at: Phase 17 context gathered (assumptions mode)
+Resume file: .planning/phases/17-curated-config-inventory-recommendation-engine/17-CONTEXT.md
