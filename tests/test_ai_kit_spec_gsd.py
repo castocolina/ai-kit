@@ -441,28 +441,33 @@ class TestResolveGsdDispatch(unittest.TestCase):
 
     @mock.patch("ai_kit_spec_gsd.adapter.build_cross_ai_command")
     def test_falls_through_to_cross_ai_when_no_tier_and_no_native_runtime(self, mock_build):
-        mock_build.return_value = "future-cli exec -C /repo -m grok-4-fast"
-        candidates = [{"cli": "grok", "model": "grok-4-fast", "key": "grok/grok-4-fast",
-                       "vendor": "xai", "task_affinity": None, "context_limit": None,
-                       "tier": None}]
+        # D-15 (Phase 16.1): only SUPPORTED_EXECUTE_CLIS entries survive the ladder screen, so
+        # this uses opencode (supported, no curated tier) instead of the removed grok path.
+        mock_build.return_value = "opencode run -m router-env/my-coding -C /repo"
+        candidates = [{"cli": "opencode", "model": "router-env/my-coding",
+                       "key": "opencode/router-env-my-coding", "vendor": "opencode",
+                       "task_affinity": None, "context_limit": None, "tier": None}]
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["grok/grok-4-fast"], {}, "/repo/.planning/config.json", "/repo")
+            candidates, ["opencode/router-env-my-coding"], {},
+            "/repo/.planning/config.json", "/repo")
         self.assertEqual(result["mode"], "cross_ai_hook")
-        self.assertEqual(result["cli"], "grok")
-        self.assertEqual(result["cross_ai_command"], "future-cli exec -C /repo -m grok-4-fast")
+        self.assertEqual(result["cli"], "opencode")
+        self.assertEqual(result["cross_ai_command"],
+                         "opencode run -m router-env/my-coding -C /repo")
         self.assertEqual(result["provenance"], "resolved_candidate")
 
     @mock.patch("ai_kit_spec_gsd.adapter.build_cross_ai_command")
     def test_escalates_past_an_unusable_candidate_to_a_later_native_one(self, mock_build):
         mock_build.return_value = None
         candidates = [
-            {"cli": "grok", "model": "grok-4-fast", "key": "grok/grok-4-fast", "vendor": "xai",
+            {"cli": "opencode", "model": "router-env/my-coding",
+             "key": "opencode/router-env-my-coding", "vendor": "opencode",
              "task_affinity": None, "context_limit": None, "tier": None},
             {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
              "vendor": "openai", "task_affinity": None, "context_limit": None, "tier": "sonnet"},
         ]
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["grok/grok-4-fast", "codex/gpt-5.6-sol"], {},
+            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {},
             "/repo/.planning/config.json", "/repo", write_tier_fn=lambda *a, **k: {},
             write_runtime_fn=lambda *a, **k: {})
         self.assertEqual(result["mode"], "native_tier")
@@ -470,44 +475,51 @@ class TestResolveGsdDispatch(unittest.TestCase):
 
     def test_skips_a_candidate_with_no_quota_and_uses_the_next_one(self):
         candidates = [
-            {"cli": "grok", "model": "grok-4-fast", "key": "grok/grok-4-fast", "vendor": "xai",
+            {"cli": "opencode", "model": "router-env/my-coding",
+             "key": "opencode/router-env-my-coding", "vendor": "opencode",
              "task_affinity": None, "context_limit": None, "tier": None},
             {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
              "vendor": "openai", "task_affinity": None, "context_limit": None, "tier": "sonnet"},
         ]
-        quota = {"grok/grok-4-fast": {"available": False}}
+        quota = {"opencode/router-env-my-coding": {"available": False}}
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["grok/grok-4-fast", "codex/gpt-5.6-sol"], {},
+            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {},
             "/repo/.planning/config.json", "/repo", quota=quota, write_tier_fn=lambda *a, **k: {},
             write_runtime_fn=lambda *a, **k: {})
         self.assertEqual(result["mode"], "native_tier")
         self.assertEqual(result["model"], "gpt-5.6-sol")
 
-    def test_falls_back_with_no_usable_dispatch_when_nothing_can_carry_it(self):
-        # real (unmocked) build_cross_ai_command: gemini has no live-verified execute
-        # builder -- returns None for real, and no curated tier exists.
+    def test_unsupported_cli_roster_falls_back_with_a_visible_warning(self):
+        # D-15 (Phase 16.1): a roster naming a CLI with no execute builder (gemini) is screened
+        # out of the ladder with a stderr warning -- never silently -- and the empty remainder
+        # produces an honest fallback notice, never a silent fallback dispatch to another CLI.
+        import contextlib
+        import io
+        stderr = io.StringIO()
         candidates = [{"cli": "gemini", "model": "gemini-3.1-pro",
                        "key": "gemini/gemini-3.1-pro", "vendor": "google",
                        "task_affinity": None, "context_limit": None, "tier": None}]
-        result = adapter.resolve_gsd_dispatch(
-            candidates, ["gemini/gemini-3.1-pro"], {}, "/repo/.planning/config.json",
-            "/repo")
+        with contextlib.redirect_stderr(stderr):
+            result = adapter.resolve_gsd_dispatch(
+                candidates, ["gemini/gemini-3.1-pro"], {}, "/repo/.planning/config.json",
+                "/repo")
         self.assertEqual(result["mode"], "fallback_notice")
-        self.assertIn("gemini/gemini-3.1-pro", result["message"])
-        self.assertEqual(result["reason"], "no_usable_dispatch")
         self.assertEqual(result["provenance"], "fallback")
+        self.assertIn("gemini/gemini-3.1-pro", stderr.getvalue())
+        self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
 
     def test_every_candidate_lacks_quota_falls_back_quota_exhausted(self):
         candidates = [
-            {"cli": "grok", "model": "grok-4-fast", "key": "grok/grok-4-fast", "vendor": "xai",
+            {"cli": "opencode", "model": "router-env/my-coding",
+             "key": "opencode/router-env-my-coding", "vendor": "opencode",
              "task_affinity": None, "context_limit": None, "tier": None},
             {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
              "vendor": "openai", "task_affinity": None, "context_limit": None, "tier": "sonnet"},
         ]
-        quota = {"grok/grok-4-fast": {"available": False},
+        quota = {"opencode/router-env-my-coding": {"available": False},
                  "codex/gpt-5.6-sol": {"available": False}}
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["grok/grok-4-fast", "codex/gpt-5.6-sol"], {},
+            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {},
             "/repo/.planning/config.json", "/repo", quota=quota)
         self.assertEqual(result["mode"], "fallback_notice")
         self.assertEqual(result["reason"], "quota_exhausted")
@@ -519,13 +531,14 @@ class TestResolveGsdDispatch(unittest.TestCase):
 
     def test_all_candidates_present_but_context_rejected_gets_a_distinct_reason_code(self):
         candidates = [
-            {"cli": "grok", "model": "grok-4-fast", "key": "grok/grok-4-fast", "vendor": "xai",
+            {"cli": "opencode", "model": "router-env/my-coding",
+             "key": "opencode/router-env-my-coding", "vendor": "opencode",
              "task_affinity": None, "context_limit": 1000, "tier": None},
             {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
              "vendor": "openai", "task_affinity": None, "context_limit": 2000, "tier": "sonnet"},
         ]
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["grok/grok-4-fast", "codex/gpt-5.6-sol"], {},
+            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {},
             "/repo/.planning/config.json", "/repo", required_context=1_000_000)
         self.assertEqual(result["mode"], "fallback_notice")
         self.assertEqual(result["reason"], "all_candidates_context_rejected")
@@ -643,6 +656,69 @@ class TestCliResolveDispatch(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         json.loads(stdout.getvalue())
         self.assertIn("phase-prompt.md", stderr.getvalue())
+
+    def test_resolve_dispatch_purpose_execute_claude_entry_exits_2_before_any_write(self):
+        # D-15 (Phase 16.1): an explicit purpose = "execute" entry naming claude is a hard
+        # config error -- exit 2 naming the supported CLIs, zero config writes, never a
+        # silent fallback to another CLI.
+        import contextlib
+        import io
+        def fake_assemble(cwd, env):
+            return ([{"cli": "claude", "model": "opus", "key": "claude/opus",
+                       "vendor": "anthropic", "purpose": "execute", "task_affinity": None,
+                       "context_limit": None, "tier": None}],
+                    ["claude/opus"])
+        write_calls = []
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = cli.main(
+                ["resolve-dispatch", "--cwd", "/repo",
+                 "--config-path", "/repo/.planning/config.json", "--target-dir", "/repo",
+                 "--quota-path", "/cache/quota.json"],
+                assemble_candidates_fn=fake_assemble,
+                read_gsd_config_fn=lambda p, warn_fn=None: ({}, "missing"),
+                refresh_quota_cache_fn=lambda *a, **k: {}, cache_read_json_fn=lambda p: {},
+                cache_write_json_fn=lambda p, d: None,
+                write_tier_fn=lambda *a, **k: write_calls.append(a),
+                write_runtime_fn=lambda *a, **k: write_calls.append(a), stdout=stdout)
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(write_calls, [])
+        self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
+        self.assertIn("ai-kit-spec-execute-gsd:", stderr.getvalue())
+        self.assertNotIn("\"mode\"", stdout.getvalue())  # no JSON result is emitted on rejection
+
+    def test_resolve_dispatch_purpose_none_grok_entry_is_skipped_with_a_warning(self):
+        # D-15: a purpose-unset grok ladder entry is dropped with one visible stderr warning
+        # naming the key; the remaining codex entry still resolves normally.
+        import contextlib
+        import io
+        import json
+        def fake_assemble(cwd, env):
+            return ([{"cli": "grok", "model": "grok-4.6", "key": "grok/grok-4.6",
+                       "vendor": "xai", "task_affinity": None, "context_limit": None,
+                       "tier": None},
+                      {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+                       "vendor": "openai", "task_affinity": None, "context_limit": None,
+                       "tier": "sonnet"}],
+                    ["grok/grok-4.6", "codex/gpt-5.6-sol"])
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = cli.main(
+                ["resolve-dispatch", "--cwd", "/repo",
+                 "--config-path", "/repo/.planning/config.json", "--target-dir", "/repo",
+                 "--quota-path", "/cache/quota.json"],
+                assemble_candidates_fn=fake_assemble,
+                read_gsd_config_fn=lambda p, warn_fn=None: ({}, "missing"),
+                refresh_quota_cache_fn=lambda *a, **k: {}, cache_read_json_fn=lambda p: {},
+                cache_write_json_fn=lambda p, d: None, write_tier_fn=lambda *a, **k: {},
+                write_runtime_fn=lambda *a, **k: {}, stdout=stdout)
+        self.assertEqual(exit_code, 0)
+        result = json.loads(stdout.getvalue())
+        self.assertEqual(result["mode"], "native_tier")
+        self.assertEqual(result["cli"], "codex")
+        warnings = [line for line in stderr.getvalue().splitlines() if "grok/grok-4.6" in line]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("codex, cursor-agent, opencode", warnings[0])
 
 
 class TestCliConfigPath(unittest.TestCase):

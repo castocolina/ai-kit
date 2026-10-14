@@ -151,15 +151,18 @@ def main(argv: list, assemble_candidates_fn=assemble_candidates,
         with open(args.task_file, encoding="utf-8") as f:
             task_markdown = f.read()
         sizes = derive_files_touched_sizes_fn(task_markdown, args.cwd)
-        # CRITICAL finding (Rounds 4-5 capability escalation, incomplete ladder): ladder_keys is
-        # the FULL ordered candidate-key list -- via compute_ladder_keys_fn's own narrowing/
-        # ranking, never list(top_n_keys), which silently omits any candidate outside
-        # policy.ladder -- computed over the FULL, pre-exclusion candidate set (never narrowed by
-        # whichever keys happen to be excluded on THIS call), so Task 4's SKILL.md can compute
-        # "every candidate ranked strictly above the stuck one" for a genuine capability bump,
-        # including one that never appeared in policy.ladder at all.
-        ladder_keys = compute_ladder_keys_fn(task_markdown, full_candidates, sizes, {},
-                                              full_top_n_keys)
+        # D-15 (Phase 16.1): compute_ladder_keys_fn walks the same narrowing/ranking as the real
+        # resolution, so an explicit purpose = "execute" entry naming an unsupported CLI
+        # (claude/grok) raises before anything is dispatched -- fail with exit 2, never a silent
+        # fallback to another CLI.
+        try:
+            ladder_keys = compute_ladder_keys_fn(task_markdown, full_candidates, sizes, {},
+                                                  full_top_n_keys)
+        except ValueError as exc:
+            if "cannot be an execution CLI" in str(exc):
+                print(f"ai-kit-spec-execute-superpowers: {exc}", file=sys.stderr)
+                return 2
+            raise
         task_type = classify_task_fn(task_markdown)
         excluded_reasons = json.loads(args.excluded_reasons_json)
         exclude = set(json.loads(args.exclude_keys_json))
@@ -256,6 +259,11 @@ def main(argv: list, assemble_candidates_fn=assemble_candidates,
             # as a "nothing configured can run this task" no_candidate result. Re-raise it instead
             # so it surfaces as an uncaught crash the agent can actually diagnose.
             if not str(exc).startswith("no execute candidate survived"):
+                if "cannot be an execution CLI" in str(exc):
+                    # D-15 (Phase 16.1): an explicit claude/grok executor choice is a hard config
+                    # error -- exit 2 naming the supported CLIs, never a fallback.
+                    print(f"ai-kit-spec-execute-superpowers: {exc}", file=sys.stderr)
+                    return 2
                 raise
             stdout.write(json.dumps({
                 "mode": "no_candidate", "task_type": task_type, "detail": str(exc),

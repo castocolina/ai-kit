@@ -8,6 +8,7 @@ ai_kit_spec.execute_dispatch.dispatch_execute path, never a raw dispatch_with_he
 never a target_dir placeholder baked in ahead of the real dispatch call (HIGH finding)."""
 import os
 import re
+import sys
 
 from ai_kit_spec.commands import build_execute_command
 from ai_kit_spec.config_io import cfg_resolve
@@ -233,14 +234,12 @@ _PROBE_TARGET_DIR = "/__ai_kit_spec_execute_superpowers_dispatch_probe__"
 
 def _is_dispatchable(candidate: dict, build_execute_command_fn) -> bool:
     """True for a native candidate (cli is None -- always executes in-process via the Agent
-    tool). For ANY CLI-set candidate, including cli == "claude" (CRITICAL finding: only cli is
-    None is a native Agent-tool alias -- "claude" is a real, subprocess-invoked entry with its
-    own registered execute-mode builder, ai_kit_spec.commands._build_claude_execute_command, and
-    must be probed/dispatched exactly like any other CLI), True only if build_execute_command_fn
-    actually has a registered execute-mode builder for its cli (raises ValueError otherwise,
-    design spec Section 12's "execute-mode builder not yet live-verified for a CLI: refuse ...
-    never attempt an unverified invocation" rule) -- CRITICAL finding: this is what makes
-    "usable-dispatch filtering" real instead of assumed."""
+    tool). For ANY CLI-set candidate, True only if build_execute_command_fn actually has a
+    registered execute-mode builder for its cli (raises ValueError otherwise, design spec
+    Section 12's "execute-mode builder not yet live-verified for a CLI: refuse ... never
+    attempt an unverified invocation" rule). Since Phase 16.1's D-15 screen, claude and grok
+    have no execute builder at all -- resolve_execute_candidates drops/warns them before this
+    probe would even see them -- so this is a backstop, not the primary D-15 gate."""
     cli = candidate.get("cli")
     if cli is None:
         return True
@@ -260,8 +259,12 @@ def _narrow_and_rank(task_markdown: str, candidates: list, files_touched_sizes: 
     resolve_execute_candidates. Returns (task_type, required_context, ranked)."""
     task_type = classify_task(task_markdown)
     required_context = estimate_required_context(task_markdown, files_touched_sizes)
+    # D-15 (Phase 16.1): purpose-unset/"both" claude/grok ladder entries are dropped with a
+    # stderr warning; an explicit purpose = "execute" entry raises ValueError, which the CLI
+    # turns into an exit-2 error. Never silently routed to another CLI.
     ranked = resolve_execute_candidates(
-        candidates, task_type, required_context, affinity_table, top_n_keys)
+        candidates, task_type, required_context, affinity_table, top_n_keys,
+        warn_fn=lambda msg: print(msg, file=sys.stderr))
     return task_type, required_context, ranked
 
 
@@ -310,10 +313,10 @@ def build_dispatch_injection(task_markdown: str, candidates: list, files_touched
             remaining_ladder = [k for k in remaining_ladder if k != pick.key]
             continue
         cli = candidate["cli"]
-        # CRITICAL finding: only cli is None is a native Agent-tool alias. cli == "claude" is a
-        # real, subprocess-invoked entry (ai_kit_spec.commands.py registers a real
-        # (_EXECUTE, "claude") builder for it) -- it falls through to the external_cli branch
-        # below like any other CLI-set entry, never silently treated as native.
+        # CRITICAL finding: only cli is None is a native Agent-tool alias. Every other surviving
+        # candidate here is a real, subprocess-invoked entry whose cli is in
+        # ai_kit_spec.commands.SUPPORTED_EXECUTE_CLIS (claude/grok were removed per D-15) -- it
+        # falls through to the external_cli branch below, never silently treated as native.
         if cli is None:
             return {"mode": "native_claude", "model": candidate["model"], "key": candidate["key"]}
         return {

@@ -1,7 +1,11 @@
 """Pure command-string formatting for GSD's own workflow.cross_ai_command hook -- confirmed a
 general shell-command hook, already fully implemented by GSD itself (Task 1 finding 1). This
 module builds ONE string; GSD's own cross_ai_delegation step does the piping/capture/retry. No
-wrapper program, no subprocess dispatch, no heartbeat routing lives in this plan at all."""
+wrapper program, no subprocess dispatch, no heartbeat routing lives in this plan at all.
+
+Only the CLIs in ai_kit_spec.commands.SUPPORTED_EXECUTE_CLIS (currently codex, cursor-agent,
+opencode) ever get a command built here; claude and grok have no execute builder (Phase 16.1
+D-15 removed both), so their ValueError degrades to None like any other unsupported CLI."""
 from ai_kit_spec.commands import build_execute_command
 
 
@@ -32,5 +36,6 @@ def build_cross_ai_command(resolved_candidate: dict, target_dir: str,
                                        effort=resolved_candidate.get("effort"),
                                        service_tier=resolved_candidate.get("service_tier"))
     except ValueError:
-        return None  # no live-verified execute-mode builder for this CLI -- decline, don't guess
+        return None  # cli not in SUPPORTED_EXECUTE_CLIS (e.g. claude/grok per D-15) -- decline,
+        # never guess at an untested invocation
     return template.format(model=resolved_candidate["model"])

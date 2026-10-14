@@ -1,3 +1,4 @@
+import contextlib
 import io
 import json
 import os
@@ -226,13 +227,10 @@ class TestBuildDispatchInjection(unittest.TestCase):
         # CRITICAL finding: a candidate can have quota AND still be undispatchable (its cli has no
         # registered execute-mode builder -- build_execute_command raises ValueError for it). This
         # must be dropped, not returned as a broken external_cli injection that blows up later.
-        # MEDIUM finding: "gemini" is used here, not "grok" -- ai_kit_spec.commands._COMMAND_
-        # BUILDERS (confirmed by reading commands.py) registers a real (_EXECUTE, "grok") builder
-        # today, so "grok" would misstate an existing capability as absent; "gemini" has NO entry
-        # in _COMMAND_BUILDERS at all -- review builders are exactly codex/claude/grok/opencode/
-        # cursor-agent, and gemini is not among them either -- so this fixture matches a real gap
-        # in today's code (build_execute_command("gemini") raises ValueError) rather than
-        # simulating one that doesn't exist.
+        # "gemini" is used here because it has NO entry in ai_kit_spec.commands._COMMAND_BUILDERS
+        # at all (review builders are exactly codex/claude/grok/opencode/cursor-agent, and gemini
+        # is not among them either) -- so this fixture matches a real gap in today's code rather
+        # than simulating one that doesn't exist.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
             {"key": "gemini/main", "cli": "gemini", "model": "gemini-3-pro",
@@ -252,24 +250,63 @@ class TestBuildDispatchInjection(unittest.TestCase):
             build_execute_command_fn=fake_build_execute_command)
         self.assertEqual(result["key"], "codex/terra")
 
-    def test_cli_claude_is_routed_external_not_treated_as_native(self):
-        # CRITICAL finding: only cli is None guarantees a native Agent-tool alias. cli == "claude"
-        # is a real, subprocess-invoked entry -- ai_kit_spec.commands._COMMAND_BUILDERS registers
-        # a real (_EXECUTE, "claude") builder for it -- and must be routed through external_cli
-        # mode like any other CLI-set entry, never silently folded into native_claude.
+    def test_cli_claude_ladder_entry_is_skipped_with_warning(self):
+        # D-15 (Phase 16.1): claude has NO execute builder anymore -- the old (_EXECUTE, "claude")
+        # registration was deleted. A purpose-unset ladder entry naming claude is skipped with a
+        # stderr warning (never silently, never routed to external_cli or folded into
+        # native_claude); an explicit purpose = "execute" choice is a hard ValueError.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [{"key": "claude-cli/opus-5", "cli": "claude", "model": "opus",
+                        "task_affinity": "backend", "context_limit": 1_000_000},
+                      {"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
                         "task_affinity": "backend", "context_limit": 1_000_000}]
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            result = dispatch_injection.build_dispatch_injection(
+                task, candidates, {}, {}, ["claude-cli/opus-5", "codex/terra"], quota={})
+        self.assertEqual(result["mode"], "external_cli")
+        self.assertEqual(result["cli"], "codex")
+        self.assertIn("claude-cli/opus-5", stderr.getvalue())
+        self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
 
-        def fake_build_execute_command(cli, **params):
-            return "claude -p --model {model}"
+    def test_cli_claude_purpose_execute_raises_value_error_naming_the_supported_clis(self):
+        # D-15: an explicit purpose = "execute" claude entry is a hard error, never a fallback.
+        task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
+        candidates = [{"key": "claude-cli/opus-5", "cli": "claude", "model": "opus",
+                        "purpose": "execute", "task_affinity": "backend",
+                        "context_limit": 1_000_000}]
+        with self.assertRaises(ValueError) as ctx:
+            dispatch_injection.build_dispatch_injection(
+                task, candidates, {}, {}, ["claude-cli/opus-5"], quota={})
+        self.assertIn("codex, cursor-agent, opencode", str(ctx.exception))
 
-        result = dispatch_injection.build_dispatch_injection(
-            task, candidates, {}, {}, ["claude-cli/opus-5"], quota={},
-            build_execute_command_fn=fake_build_execute_command)
-        self.assertEqual(result, {"mode": "external_cli", "key": "claude-cli/opus-5",
-                                   "cli": "claude", "model": "opus", "effort": None,
-                                   "service_tier": None})
+    def test_cli_purpose_execute_exits_2_with_the_supported_list_on_stderr(self):
+        candidates = [{"key": "claude-cli/opus-5", "cli": "claude", "model": "opus",
+                        "vendor": "anthropic", "purpose": "execute", "task_affinity": None,
+                        "context_limit": None}]
+
+        def fake_assemble(cwd, env):
+            return candidates, ["claude-cli/opus-5"]
+
+        out, stderr = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w") as f:
+                f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
+            quota_path = os.path.join(tmp, "quota.json")
+            with contextlib.redirect_stderr(stderr):
+                rc = superpowers_cli.main(
+                    ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                     "--quota-path", quota_path],
+                    assemble_candidates_fn=fake_assemble,
+                    cache_read_json_fn=lambda path: {},
+                    cache_write_json_fn=lambda path, data: None,
+                    refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                    stdout=out)
+        self.assertEqual(rc, 2)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
+        self.assertIn("ai-kit-spec-execute-superpowers:", stderr.getvalue())
 
     def test_no_surviving_candidates_raises_value_error(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"

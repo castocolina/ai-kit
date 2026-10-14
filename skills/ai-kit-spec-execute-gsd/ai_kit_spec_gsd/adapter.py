@@ -5,6 +5,8 @@ curated `tier` writes runtime + model_profile_overrides.<runtime>.<tier> directl
 curated tier but with a real cross-AI command falls to cross_ai_hook (command string only -- the
 write into workflow.cross_ai_command happens in Task 5, after checking the plan's own cross_ai:
 true frontmatter); otherwise an honest fallback notice that makes no unenforced vendor claim."""
+import sys
+
 from ai_kit_spec.config_io import cfg_resolve
 from ai_kit_spec.execute_selection import candidates_to_ladder, resolve_execute_candidates
 from ai_kit_spec.quota import resolve_ladder_pick
@@ -89,7 +91,11 @@ def resolve_gsd_dispatch(candidates: list, top_n_keys: list, gsd_config: dict,
 
     # task_type is execute_selection's own frontend/backend/mixed "task_affinity" axis -- no
     # curated data exists yet, so this is always None (see Global Constraints).
-    ranked = resolve_execute_candidates(candidates, None, required_context, {}, top_n_keys)
+    # D-15 (Phase 16.1): the screen drops purpose-unset/"both" claude/grok ladder entries with a
+    # stderr warning and raises ValueError on an explicit purpose = "execute" -- the ValueError
+    # is deliberately NOT caught here; the CLI turns it into an exit-2 error.
+    ranked = resolve_execute_candidates(candidates, None, required_context, {}, top_n_keys,
+                                         warn_fn=lambda msg: print(msg, file=sys.stderr))
     if not ranked:
         return _fallback_notice(
             None, "all_candidates_context_rejected",

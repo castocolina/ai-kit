@@ -149,11 +149,19 @@ def main(argv: list, assemble_candidates_fn=assemble_candidates,
                 print(f"ai-kit-spec-execute-gsd: could not read --phase-prompt-file "
                       f"{args.phase_prompt_file!r} ({exc}) -- falling back to "
                       f"required_context=0", file=sys.stderr)
-        result = resolve_gsd_dispatch(
-            candidates, top_n_keys, gsd_config, args.config_path, args.target_dir,
-            current_runtime=resolve_active_runtime(gsd_config), required_context=required_context,
-            quota=quota, run_id=run_id, write_tier_fn=write_tier_fn,
-            write_runtime_fn=write_runtime_fn, write_model_profile_fn=write_model_profile_fn)
+        try:
+            result = resolve_gsd_dispatch(
+                candidates, top_n_keys, gsd_config, args.config_path, args.target_dir,
+                current_runtime=resolve_active_runtime(gsd_config),
+                required_context=required_context,
+                quota=quota, run_id=run_id, write_tier_fn=write_tier_fn,
+                write_runtime_fn=write_runtime_fn, write_model_profile_fn=write_model_profile_fn)
+        except ValueError as exc:
+            # D-15 (Phase 16.1): an explicit purpose = "execute" entry naming an unsupported CLI
+            # (claude/grok) is a hard config error -- fail before any config write, never fall
+            # back to another CLI.
+            print(f"ai-kit-spec-execute-gsd: {exc}", file=sys.stderr)
+            return 2
         result["run_id"] = run_id
         stdout.write(json.dumps(result))
         return 0
