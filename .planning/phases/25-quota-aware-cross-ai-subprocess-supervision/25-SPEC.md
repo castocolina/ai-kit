@@ -44,7 +44,7 @@ moves on. It never fails blindly and never loops forever.
     `"codex_error_info":"usage_limit_exceeded"` with `purchase more credits or try again at Aug
     1st, 2026 3:36 PM`;
   - cursor: `ActionRequiredError: You've hit your usage limit` (monthly Agent usage limit);
-  - opencode on `openai/gpt-5.6-sol`: `usage limit reached`;
+  - opencode on `openai/gpt-5.6-sol`: `usage limit reached`; *(amended 2026-10-14, 25 D-04: the live stdout event is `{"type":"error",…"name":"APIError","data":{"message":"The usage limit has been reached","statusCode":429}}`; codex's `codex_error_info` was seen only in its private rollout files, never on `exec --json` stdout)*
   - xai via opencode: 403 spending limit (memory, 2026-09-14); OpenCode Zen: 403 `Model access
     is disabled` (2026-10-14);
   - claude: `Overloaded ... try again in a moment` (capacity, not quota);
@@ -56,6 +56,7 @@ moves on. It never fails blindly and never loops forever.
    - Current: phrase sets live in the runner's two regexes and in the Python classifier.
    - Target: one per-CLI table of limit, billing and access patterns (pi, opencode, cursor, codex, claude). Structured fields win over text (codex `codex_error_info`). Every pattern carries its evidence and a `verified` or `unverified` label. The runner and the Python classifier read the same table.
    - Acceptance: every observed message in Background is a fixture with its expected class; an unverified pattern is reported as unverified in the status detail.
+   - *Amended 2026-10-14 (25 D-01..D-04):* the table and matcher live only in the runner (Python reads the status line); structured fields mean stdout error events where the CLI emits them (opencode, codex JSONL, cursor result); codex matches on text until its field is seen on stdout; bare status codes match last.
 
 2. **Route-aware classes** (QTA-01).
    - Current: billing is always fatal and quota always means "fall back now".
@@ -65,6 +66,7 @@ moves on. It never fails blindly and never loops forever.
      - on an unknown route, quota and rate-limit messages are `quota_wait` and billing or access messages are `billing_or_access`.
 
      `quota_wait` exits 75 with `action=retry-later`; `billing_or_access` exits 69. 18 D-27 is amended to match.
+   - *Amended 2026-10-14 (25 D-05..D-08):* route kind comes from the catalog's user-confirmable `fallback_quota` (`infer_fallback_quota` is only the default); "direct" is a closed evidence-labelled prefix list; on a direct route known monthly/account-cap wordings are `billing_or_access` and other quota text follows the unknown-route rule; on a router route, fallback-tail access and credential errors are `quota_wait` and only the router's own entry-point auth is `auth`.
    - Acceptance: fixtures cover each class on each route kind, including a billing message on a router route and on a direct route.
 
 3. **Reset time** (QTA-03).
@@ -93,7 +95,7 @@ moves on. It never fails blindly and never loops forever.
    - Acceptance: a fixture with partial edits produces a resume prompt that lists them; a clean tree produces the original prompt.
 
 8. **Skills follow the policy** (QTA-03).
-   - Current: `ai-kit-spec-review`, `ai-kit-spec-execute-gsd` and `-superpowers` describe an hourly wake.
+   - Current: `ai-kit-spec-execute-gsd` and `-superpowers` describe an hourly wake. *(amended 2026-10-14, 25 D-22: `ai-kit-spec-review` has none; it gains the policy, with a waiting lane marked pending)*
    - Target: their SKILL.md files and code follow R2–R7 and drop the hourly wake for subprocess limits (the session's own resume is Phase 26). Each touched SKILL.md passes `/skill-judge`.
    - Acceptance: no hourly-wake instruction remains for subprocess limits; skill-judge evidence is committed.
 
@@ -142,7 +144,7 @@ moves on. It never fails blindly and never loops forever.
 | ordering | R1 | 🧪 backstop | Table order is fixed and pinned by a test |
 | precision | R1 | ✅ covered | Status codes match on word boundaries (`\b402\b`), so `4021 tokens` never matches |
 | adjacency | R2 | ✅ covered | The same billing message is `quota_wait` on a router route and `billing_or_access` on a direct route |
-| boundary | R2 | ✅ covered | A route counts as router-backed exactly when `infer_fallback_quota` is true |
+| boundary | R2 | ✅ covered | ~~A route counts as router-backed exactly when `infer_fallback_quota` is true~~ *(superseded, D-05)* A route is router-backed when the catalog's confirmed `fallback_quota` says so, defaulting to `infer_fallback_quota` |
 | concurrency | R2 | 🧪 backstop | Classification is a pure function of (pattern table, message, route) |
 | empty | R2 | ✅ covered | No route information means the unknown-route rule |
 | encoding | R2 | 🧪 backstop | Route kind comes from the candidate's runtime and model id, not from message text |
