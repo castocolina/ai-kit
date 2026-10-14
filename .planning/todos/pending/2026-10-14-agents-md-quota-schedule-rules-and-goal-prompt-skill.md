@@ -52,3 +52,12 @@ Prompt patterns to template in the skill:
 5. Quota-aware resume: on Claude Code, credit exhaustion, auth failure, context overflow or an unavailable model clears the goal; a rate/usage limit pauses it and it resumes on reset; `--resume` restores it but resets counters. Keep state in files and use `/loop` or a cloud routine for schedule-driven resume.
 
 Open: GSD behavior on rate-limit stops; native goal/loop on pi, jcode, opencode.
+
+## Clarification (user, 2026-10-14): purpose of the prompt research
+
+The prompt-framework research exists so the skill can pick the best-matching execution strategy from what the user states. The outcome may be one, two or three strategies, depending on whether the fit is a `/goal`, a schedule/`/loop`, or OpenGSD autonomous. The skill therefore needs a strategy-selection matrix, not a single template.
+
+Required additions to the skill:
+- **Deliverable:** the generated .md must contain a ready-to-copy prompt that the user pastes into a separate agent session; that prompt carries everything needed to reach the objectives.
+- **E2E verification:** the file must say how to run e2e tests (real app launch, PTY/TUI drive, browser for web) and require them to pass before declaring done.
+- **Jev-assisted decisions** (`jev-fast-decision`, advisory only, never a gate by itself): score how close the delivered work is to the user's objectives, and, when the user supplied a mockup (image or HTML), judge fidelity of the delivered React screen or TUI against it (similar / worse / better, plus UI and experience quality). Jev answers typed questions on supplied text, so image/HTML judgment needs a textual or rendered-description input; verify the feasibility of this before promising it.
