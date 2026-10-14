@@ -56,7 +56,7 @@
       },
       "opencode-glm": {
         "cli": "opencode",
-        "model": "zai/glm-5.3"
+        "model": "zai-coding-plan/glm-5.3"
       },
       "opencode-sol": {
         "cli": "opencode",
