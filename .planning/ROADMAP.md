@@ -332,8 +332,11 @@ downstream depends on it)
 **Success Criteria** (what must be TRUE):
 
   1. A live smoke run from the pi host (`inventory` + `recommend` + `apply`, dry-run then real)
-     completes successfully on a scratch project, including per-agent `pi --model` process wiring
-     via the subagent extension.
+     completes successfully on a scratch project. A live spike first settles whether per-agent
+     models take effect on a pi host at all (gsd-core 1.16's registry declares pi with
+     `namedDispatch: false`, `maxDepth: 0` and a plugin-only install), and pi plans claim only
+     the verified effect (amended 2026-10-14, replacing "per-agent `pi --model` wiring via the
+     subagent extension").
   2. SKILL.md's "not live-validated" label for pi is removed once the smoke run passes.
   3. `detect-runtimes` enumerates pi models (`pi --list-models`) via a fixture-backed parser
      (SPEC-05, deferred from Phase 16).

@@ -176,6 +176,12 @@ Phase 18 owns the selection rules.
   the installer's intended value and is left alone. jev: Laya manage_and_reconcile 0.49 (fb),
   TypeSafe 0.99.
 
+- **D-22: pi-host plans claim no unverified effect (added 2026-10-14 from the Phase 22 spec).**
+  gsd-core 1.16's registry gives pi no named dispatch (`namedDispatch: false`, `maxDepth: 0`,
+  plugin-only install). Until Phase 22's spike proves an effect, a pi-host plan writes no
+  per-agent `model_overrides`, and its model-layer entries carry
+  `effect unverified on pi (gsd-core registry: namedDispatch false)`.
+
 ### Claude's Discretion
 - The exact percentile per rigor level.
 - The plan.json schema details: top-level `schema_version`, inventory digest, and the entry
