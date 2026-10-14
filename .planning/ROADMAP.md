@@ -354,9 +354,9 @@ context and three separate quota segments: API usage, included usage (auto + mod
 hosts uses one shared proximity gauge: spend % vs elapsed % of its window/cycle, bands of 5 / 10 /
 15 points from optimal (green / yellow / orange / red), keeping the `+`/`-` sign. Cursor quota
 comes from the undocumented Dashboard API and is always marked inferred (`≈`).
-**Depends on**: none inside v1.3 (independent of Phases 17–22). Before planning: decide
-`worktree-context-tools-manager-plan1` (land or shelve; it rewrites the same
-`setup.py`/`wizard_app.py` seams), and copy the host-split spec + REVIEW from branch
+**Depends on**: none inside v1.3 (independent of Phases 17–22). Before planning: ~~decide
+`worktree-context-tools-manager-plan1`~~ *(decided by uz 2026-10-14: it does not land in ai-kit;
+its useful parts are a tools-installer todo)*, and copy the host-split spec + REVIEW from branch
 `spec/host-split-statusline` into `.planning/specs/`. The 5 gap-gauge commits `d23749b..52def0f`
 are already on this branch; mark the gap spec accepted and amend PROJECT.md (burn pace superseded).
 **Requirements**: STL-01, STL-02, STL-03, STL-04, STL-05 (defined 2026-10-14 in the Phase 23 spec)
@@ -429,8 +429,8 @@ doctor. Make Config Doctor reachable from the wizard (for example an entry on
 the Done step, or a dedicated step) reusing the existing stdlib-only engine
 (`config_doctor_checks.py` / `config_doctor_readers.py` /
 `config_doctor_appliers.py`) and `config_doctor_app.py` screen, with no second
-implementation. Coordinate with `worktree-context-tools-manager-plan1`
-(adds a wizard Step 0 on the same seams) and v1.3 Phase 23 C2 (per-host
+implementation. Coordinate with v1.3 Phase 23 C2 (per-host
+status-line step); `worktree-context-tools-manager-plan1` no longer lands (2026-10-14) and v1.3 Phase 23 C2 (per-host
 status-line step). Candidate rows to add later: the Playwright MCP Chrome path
 on Bazzite. Rewritten 2026-10-13 from the former "shared core for a CLI
 variant" note, whose goal (engine not coupled to the TUI) is already met.

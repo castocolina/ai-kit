@@ -1,7 +1,7 @@
 # Phase 23: Host-split status line for Claude Code and Cursor CLI - Context
 
 **Gathered:** 2026-10-14 (assumptions mode, `--analyze --all --batch`, jev screening, best over easy)
-**Status:** Ready for planning (Parts A and C wait on the plan1 decision; Part B waits on the R5 spike)
+**Status:** Ready for planning (Part B waits on the R5 spike)
 
 <domain>
 ## Phase Boundary
@@ -250,7 +250,7 @@ design's open findings R3-1..R3-6.
 <specifics>
 ## Specific Ideas
 
-- **Precondition owned by uz:** land or shelve `worktree-context-tools-manager-plan1`. It rewrites the same `setup.py`/`wizard_app.py` seams, and Part A's migration code edits `setup.py` too, so it blocks Part A and Part C planning.
+- ~~**Precondition owned by uz:** land or shelve `worktree-context-tools-manager-plan1`.~~ *(resolved 2026-10-14: uz decided it does not land in ai-kit; third-party installs belong to tools-installer, which got a todo to port the useful parts. Parts A and C plan against main's `setup.py`/`wizard_app.py`.)*
 - Spike-only facts (R5): the real payload on a parameterized model (`param_summary` stays conditional); real Dashboard responses (optional fields on Pro, `total_percent_used` vs auto/API, `included_usage_period`, `on_demand_spend_disabled_by_organization`, units); concurrent vs sequential p50/p95 and cadence during streaming; whether a `/dev/tty` size probe works under the CLI's piped spawn and the right Cursor margin; token lifetime and whether the CLI rewrites `auth.json` while a refresher reads it.
 - Re-check the `statusLine` schema, update/kill semantics and config-dir resolver against current Cursor docs at spike time (the docs say the XDG leg is Linux/BSD only; the bundle has no gate).
 - `os.link` fallback on FAT and some FUSE/NFS is covered by failure injection.

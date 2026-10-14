@@ -1,7 +1,7 @@
 # Phase 21: Cursor Live Validation - Context
 
 **Gathered:** 2026-10-14 (assumptions mode, `--analyze --all --batch`, jev screening, best over easy)
-**Status:** Ready for planning (AGT-01 planning waits on the plan1 decision and the D-01 spike)
+**Status:** Ready for planning (AGT-01 planning waits on the D-01 spike)
 
 <domain>
 ## Phase Boundary
@@ -132,7 +132,7 @@ behind the shell wrapper, and ai-kit ships two pinned non-fast Cursor subagents 
 <specifics>
 ## Specific Ideas
 
-- **Precondition owned by uz:** land or shelve `worktree-context-tools-manager-plan1` before AGT-01 planning. D-04 keeps either outcome cheap.
+- ~~**Precondition owned by uz:** land or shelve `worktree-context-tools-manager-plan1` before AGT-01 planning.~~ *(resolved 2026-10-14: it does not land in ai-kit; D-04's disjoint layout stays, as it costs nothing.)*
 - Open for research: server-side validation of an invalid frontmatter `model` (error or silent inherit), and whether `grok-4.7-medium` is subagent-eligible on other accounts.
 - R1–R3 (smoke, matrix, label) reuse Phases 19/20's helper and oracle unchanged.
 </specifics>

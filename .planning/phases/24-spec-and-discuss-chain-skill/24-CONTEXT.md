@@ -1,7 +1,7 @@
 # Phase 24: Spec-and-discuss chain skill - Context
 
 **Gathered:** 2026-10-14 (assumptions mode, `--analyze --all --batch`, jev screening, best over easy)
-**Status:** Ready for planning (D-10 consent model needs uz's confirmation)
+**Status:** Plan 01 executed
 
 <domain>
 ## Phase Boundary
@@ -83,9 +83,9 @@ locked in `24-SPEC.md` (R1–R13, amended 2026-10-14). This file locks the HOW.
   endpoint host, dated. `consent grant` runs only after the user answers the one range/consent
   question (naming the host, "summaries only", and how to revoke). Every run announces "using
   TypeSafe (consent recorded <date>; revoke with ...)". With no record, a remote call returns
-  `no_consent` and makes no call. **Own reasoning, needs uz's confirmation** (Laya session_only
-  0.65 fb, TypeSafe user_level_persistent 0.60 fb): SPEC R2/R6 want consent recorded once; the
-  jev skill's own rule is per-session confirmation. Ledger.
+  `no_consent` and makes no call. **Confirmed by uz 2026-10-14** ("once per user"), after
+  own reasoning (Laya session_only 0.65 fb, TypeSafe user_level_persistent 0.60 fb): SPEC R2/R6
+  want consent recorded once; the jev skill's per-session rule is overridden for this skill.
 - **D-11: The payload guard is a schema:** item keys limited to `id`, `type`, `instructions`,
   `context`, `criteria`; non-empty `instructions`/`context`; `choice` needs ≥ 2 criteria; fields
   capped at ~1500 characters (real max 649); code fences rejected; a small secret-pattern scan

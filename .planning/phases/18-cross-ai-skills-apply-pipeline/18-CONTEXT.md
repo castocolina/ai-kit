@@ -14,7 +14,7 @@ This phase completes the v2 pipeline on top of Phase 17's `inventory`/`recommend
 - registration and green gates (EVAL-06, amended).
 
 **Scope change from the discussion:** v1 is **not** removed. The v2 subcommands are added next
-to the 11 v1 subcommands, and v1 keeps working unchanged (D-08).
+to the 11 v1 subcommands, and v1 keeps working unchanged (D-08). *(amended 2026-10-14, 18.1 D-14, confirmed by uz: v1's command builders are replaced by the shared runner; v1 keeps every feature, and its tests change only where the generated command text changes.)*
 
 </domain>
 
