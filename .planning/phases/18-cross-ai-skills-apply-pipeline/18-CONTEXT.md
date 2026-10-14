@@ -223,6 +223,8 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
   SPEC-05 moves to Phase 18.
   - **Laya overridden** (needs_choice 0.79, high): Phase 19's scenario B expects pi with
     `router-env/my-coding`. TypeSafe second opinion: parser_now 0.79.
+  - *(amended 2026-10-14, 22 D-04)* The parser reads pi's RPC `get_available_models` JSON, not
+    the `--list-models` table (lossy `K`/`M` sizes, exit 0 on every failure).
 - **D-26: The runner template is runnable in place.**
   - It lives in `ai-kit-spec-review` (18.1 D-10) with header `sha256=UNSTAMPED` and a default
     CONFIG, so `node <template> --self-test` works in the repo.

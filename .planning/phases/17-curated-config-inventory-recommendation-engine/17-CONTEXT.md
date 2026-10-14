@@ -181,6 +181,9 @@ Phase 18 owns the selection rules.
   plugin-only install). Until Phase 22's spike proves an effect, a pi-host plan writes no
   per-agent `model_overrides`, and its model-layer entries carry
   `effect unverified on pi (gsd-core registry: namedDispatch false)`.
+  - *(amended 2026-10-14, 22 D-02, D-05, D-06)* The expected verdict is session-steer, sonnet
+    key only. `agent_skills.*` is labelled no-effect on pi too, and the only model write offered
+    is an opt-in `model_profile_overrides.pi.sonnet` with a bare id of the session provider.
 
 - **D-23: `runtime` is a managed key on opencode and codex (added 2026-10-14 from the Phase 20
   discussion).** The gsd-core installer bakes agent models from the project `runtime`, else

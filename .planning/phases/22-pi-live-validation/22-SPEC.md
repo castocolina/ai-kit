@@ -42,6 +42,7 @@ effect on a pi host at all, and the plan says only what was proven.
    - Current: Phase 18 adds the parser (18 D-25).
    - Target: `detect-runtimes` runs `pi --list-models` (argv, host-signal scrub) and parses the table into candidates. Each candidate carries `provider/model`, context, max output, thinking (to `reasoning_modes`) and images (to `image_input`). `pi` is in the runtime-id table.
    - Acceptance: a parser test on captured output (header, aligned columns, the `K`/`M` suffixes, yes/no flags) yields 85 entries with the right provider split. An empty or garbled output gives a structured error, not a crash.
+   - *Amended 2026-10-14 (22 D-04):* the source is pi's RPC `get_available_models` (`pi --mode rpc --offline --no-session --no-extensions --no-skills --no-context-files --no-mcp`), which returns the same 85 models with exact `contextWindow`/`maxTokens` and per-model `thinkingLevelMap`. The table's `K`/`M` cells are lossy (`toFixed(1)`), and every table failure mode exits 0. Acceptance: a parser test on a trimmed RPC capture (no `baseUrl` values) yields 85 entries with exact integers; an empty list, a non-JSON line or a missing response is a structured error.
 
 2. **Per-agent model spike**.
    - Current: assumed, not verified.
@@ -51,11 +52,13 @@ effect on a pi host at all, and the plan says only what was proven.
 
      It records which `resolve-model` keys, if any, change the model a GSD step actually uses.
    - Acceptance: `22-SPIKE-PI-AGENTS.md` shows the observed spawn commands or their absence, the model actually used per step, and a verdict: per-agent effective, tier-only effective, or inert.
+   - *Amended 2026-10-14 (22 D-01, D-02):* a fourth verdict, **session-steer (sonnet key only)**, is added with per-key labels. Static and mock evidence: GSD on pi spawns nothing; its one `before_provider_request` hook replaces the wire `model` with `model_profile_overrides.pi.sonnet` on every request of a trusted project's session; `pi.opus`, `pi.haiku` and per-agent `model_overrides` are inert. The unit of "model actually used" is the session request (`message.model` vs `message.responseModel` in the session JSONL).
 
 3. **Honest plans on pi**.
    - Current: Phase 17 would write overrides for a pi host like any other host.
    - Target: until R2 proves an effect, a pi-host plan writes no per-agent `model_overrides`, and every model-layer entry for pi carries `effect unverified on pi (gsd-core registry: namedDispatch false)`. After R2, the label and the rule follow the verdict.
    - Acceptance: golden pi plans match the verdict, and a test pins the label text while it applies.
+   - *Amended 2026-10-14 (22 D-05, D-06):* `agent_skills.*` (and other agent-bound keys) are labelled `no effect on pi (no GSD agent files installed)` too. If the verdict is session-steer, the plan offers only `model_profile_overrides.pi.sonnet` as an opt-in `needs_choice` limited to bare ids of the session's active provider, labelled session-wide.
 
 4. **pi smoke** (EVAL-08).
    - Current: none.
@@ -111,11 +114,11 @@ effect on a pi host at all, and the plan says only what was proven.
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
-| boundary | R1 | ✅ covered | A row with exactly six columns parses; five or seven is a structured error |
+| boundary | R1 | ✅ covered | ~~A row with exactly six columns parses~~ *(superseded, D-04)* A response with exactly one `get_available_models` result parses; a second or missing result is a structured error |
 | adjacency | R1 | ✅ covered | Two providers serving the same model name stay distinct `provider/model` entries |
-| empty | R1 | ✅ covered | Header only (no models) yields an empty list, not an error |
+| empty | R1 | ✅ covered | ~~Header only~~ *(superseded, D-04)* An empty `models` array yields an empty list, not an error |
 | ordering | R1 | 🧪 backstop | Entries keep the CLI's order; consumers sort |
-| precision | R1 | ✅ covered | `1M`/`128K`/`200K` parse to exact integers |
+| precision | R1 | ✅ covered | ~~`1M`/`128K`/`200K` parse to exact integers~~ *(superseded, D-04)* `contextWindow`/`maxTokens` are exact JSON integers |
 | unclassified | R2 | ⚠ UNRESOLVED | No shape cue; the spike verdict and its evidence are specified |
 | adjacency | R3 | ✅ covered | A tier-only verdict keeps tier entries and still writes no per-agent overrides |
 | empty | R3 | ✅ covered | With no verdict yet, every pi model-layer entry carries the label |
