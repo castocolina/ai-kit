@@ -74,6 +74,7 @@ runtime hosting the session. Source spec:
 - [ ] **Phase 21: Cursor Live Validation** - Live smoke run from the cursor host (independent; may run any time after Phase 19)
 - [ ] **Phase 22: Pi Live Validation** - Live smoke run from the pi host (independent; may run any time after Phase 19)
 - [ ] **Phase 23: Host-split status line for Claude Code and Cursor CLI** - Split `tools/status-line.py` per host and ship a Cursor CLI status line with the shared 5/10/15 proximity gauge (promoted from backlog 999.4; independent of Phases 17–22)
+- [ ] **Phase 24: Spec-and-discuss chain skill** - Installable skill that runs spec → discuss over a phase range with optional Laya/TypeSafe decisions, quality over simplicity unless MVP mode
 
 ## Phase Details
 
@@ -199,7 +200,7 @@ plan — without writing anything.
 skills wired in, and safely apply the result to a target project's `.planning/config.json` —
 with the v2 flow living alongside the unchanged v1 CLI.
 **Depends on**: Phase 17
-**Requirements**: XAI-01, XAI-02, SKL-01, SKL-02, SKL-03, APP-01, APP-02, APP-03, APP-04, EVAL-06
+**Requirements**: XAI-01, XAI-02, SKL-01, SKL-02, SKL-03, SKL-04, APP-01, APP-02, APP-03, APP-04, EVAL-06
 **Success Criteria** (what must be TRUE):
 
   1. The user can adjust the plan with `plan-set`/`plan-unset`, and each adjustment is recorded
@@ -236,6 +237,9 @@ with the v2 flow living alongside the unchanged v1 CLI.
      hosts can address it (the plugin ships `AGENTS.md` and `gemini-extension.json`) is checked
      and recorded. 18-CONTEXT.md's "ponytail does not exist" note is stale (folded from backlog
      999.4, 2026-10-13).
+  7. When a System One backend is detected (local Laya or a TypeSafe key), `jev-fast-decision` is
+     recommended in `agent_skills` for `gsd-advisor-researcher` and `gsd-assumptions-analyzer`
+     (the discuss-phase decision agents), and is never recommended when no backend is present.
 **Plans**: TBD
 
 ### Phase 18.1: One runtime model (INSERTED)
@@ -372,6 +376,35 @@ are already on this branch; mark the gap spec accepted and amend PROJECT.md (bur
 **Linked assets:** spec + REVIEW on `spec/host-split-statusline`; POC branch
 `poc/cursor-statusline` (reference only, never promoted or merged; inventory what works first);
 research notes 13 and 13b; todo `2026-10-12-promote-cursor-statusline-poc-into-999-4.md` on main.
+**Plans**: TBD
+
+### Phase 24: Spec-and-discuss chain skill
+
+**Goal**: ai-kit ships an installable, shareable skill that takes a range of GSD phases through
+`/gsd-spec-phase --auto` and then `/gsd-discuss-phase --analyze --all --batch --assumptions`, one
+phase at a time. Gray-area decisions go through an optional decision-model ladder (local Laya →
+TypeSafe direct → the main model's own reasoning) and are logged. The design rule is
+quality over simplicity, except under `workflow.mvp_mode`. Learned from the tools-installer
+run of 2026-10-13/14 and this milestone's own Phases 16.1–23.
+**Depends on**: none inside v1.3 (it drives GSD workflows; it is dogfooded on Phases 16.1–23)
+**Requirements**: SDC-01, SDC-02, SDC-03, SDC-04
+**Success Criteria** (what must be TRUE):
+
+  1. Given a phase range (`--from N --to M`, or a list), the skill runs spec then discuss for each
+     phase in order with the learned flags. With no range it reads the roadmap, proposes the
+     not-yet-discussed range, and asks the user once.
+  2. Decision models are optional and detected, never assumed: Laya through its health endpoint,
+     TypeSafe through its key file, jev-fast-decision through its install. With none
+     present, every decision falls to the main model's reasoning, and the chain still completes.
+     Remote backends need the user's standing consent, and only summaries are sent.
+  3. Every decision is logged with one column per backend used plus the locked decision and its
+     reason. A model answer that contradicts the project docs is overridden and the override is
+     logged. The chain stops only on a critical, contradictory question.
+  4. Under `workflow.mvp_mode: true` the recommendation favors the simpler design without lowering
+     the quality of what reaches the product's user. Otherwise the best design wins over the
+     smallest diff, and ponytail findings feed the choice without deciding it.
+  5. The skill name is chosen in its own spec (candidate: `ai-kit-gsd-spec-discuss`). It is
+     registered in `tools/setup.py` and the README, and it passes `/skill-judge` in code review.
 **Plans**: TBD
 
 ## Backlog

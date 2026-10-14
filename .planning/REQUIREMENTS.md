@@ -44,6 +44,7 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 - [ ] **SKL-01**: Skill inventory covers host skill dirs, project `skills/`, and Claude plugin skills (Claude host only)
 - [ ] **SKL-02**: `skill_affinity.json` maps skill families to agents gated by project facts (TDD mode, frontend, db), capped per rigor (≈ MVP 2 / Standard 3 / Rigorous 5, file order), shown to the user as bare names and written as `agent_skills.<agent>` in gsd-core's required form (`global:<name>` / project path / `global:<plugin>:<skill>` on claude) (Phase 18 D-02/D-04)
 - [ ] **SKL-03**: A recommended-but-missing skill is silently omitted — never mentioned, offered or installed (Phase 18 D-03); unknown installed skills get host-agent-proposed mappings the user confirms; a `trusted_global_roots` entry is proposed for symlinked skills escaping the global root
+- [ ] **SKL-04**: When a System One backend is detected, `jev-fast-decision` is recommended in `agent_skills` for `gsd-advisor-researcher` and `gsd-assumptions-analyzer`; never when no backend is present
 
 ### Plan and Apply
 
@@ -77,6 +78,13 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 - [ ] **RTM-01**: Model candidates are (runtime, model) pairs: native subagent when the runtime is the current host and the host can select the model, subprocess through `cross-ai.mjs` otherwise; `native_runtime` is removed, and old configs carrying it load with a visible note
 - [ ] **RTM-02**: The `native_claude` naming and the cursor / cursor-agent split are removed (one `cursor` runtime id, binary `cursor-agent`)
 - [ ] **RTM-03**: Affected SKILL.md files and AGENTS.md's Architecture section use the one-model wording; each rewritten SKILL.md passes `/skill-judge`
+
+### Spec-and-Discuss Chain Skill
+
+- [ ] **SDC-01**: An installable ai-kit skill runs `/gsd-spec-phase N --auto` then `/gsd-discuss-phase --analyze --all --batch --assumptions N` for each phase of a given range, or proposes the not-yet-discussed range and asks once
+- [ ] **SDC-02**: Decision models are optional and detected (Laya health, TypeSafe key file, jev-fast-decision install); the ladder is Laya (one item per call) → TypeSafe direct on `needs_fallback` → the main model's reasoning; with no backend the chain still completes; remote calls need standing consent and carry summaries only
+- [ ] **SDC-03**: Each decision is logged with one column per backend and the locked decision with its reason; doc-contradicting model answers are overridden and logged; the chain stops only on a critical, contradictory question
+- [ ] **SDC-04**: The best design wins over the smallest diff, except under `workflow.mvp_mode` (simpler design, without lowering what reaches the product's user); the skill is registered in setup and README and passes `/skill-judge`
 
 ### Cursor Executor Agents
 
@@ -119,6 +127,7 @@ None deferred beyond v1.3 at definition time.
 | SKL-01 | Phase 18 | Pending |
 | SKL-02 | Phase 18 | Pending |
 | SKL-03 | Phase 18 | Pending |
+| SKL-04 | Phase 18 | Pending |
 | APP-01 | Phase 18 | Pending |
 | APP-02 | Phase 18 | Pending |
 | APP-03 | Phase 18 | Pending |
@@ -141,14 +150,18 @@ None deferred beyond v1.3 at definition time.
 | RTM-01 | Phase 18.1 | Pending |
 | RTM-02 | Phase 18.1 | Pending |
 | RTM-03 | Phase 18.1 | Pending |
+| SDC-01 | Phase 24 | Pending |
+| SDC-02 | Phase 24 | Pending |
+| SDC-03 | Phase 24 | Pending |
+| SDC-04 | Phase 24 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 42 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 3, APP 5, EVAL 8, AGT 1, HARD 5, RTM 3). SPEC-05 (pi
+- v1.3 requirements: 47 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 4, APP 5, EVAL 8, AGT 1, HARD 5, RTM 3, SDC 4). SPEC-05 (pi
   enumeration) and SPEC-06 (cursor wrapper) were split out of SPEC-02 during the Phase 16
   discussion, 2026-09-23.
-- Mapped to phases: 42/42
+- Mapped to phases: 47/47
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-09-23*
-*Last updated: 2026-10-13 — Phases 16.1 (HARD) and 18.1 (RTM) inserted, XAI-02 amended (100% coverage)*
+*Last updated: 2026-10-14 — Phase 24 (SDC) added, SKL-04 added; earlier: 16.1 (HARD), 18.1 (RTM), XAI-02 amended (100% coverage)*

@@ -9,6 +9,11 @@
       "status": "in_progress"
     },
     {
+      "number": "16.1",
+      "name": "Hardening",
+      "status": "pending"
+    },
+    {
       "number": "17",
       "name": "Curated-Config Inventory & Recommendation Engine",
       "status": "pending"
@@ -16,6 +21,11 @@
     {
       "number": "18",
       "name": "Cross-AI, Skills & Apply Pipeline",
+      "status": "pending"
+    },
+    {
+      "number": "18.1",
+      "name": "One runtime model",
       "status": "pending"
     },
     {
@@ -47,7 +57,7 @@
   "next": {
     "command": "/gsd:progress --next",
     "label": "Advance to the next step (verify)",
-    "reason": "Phase 16 of 7 · 0% · ready to verify"
+    "reason": "Phase 16 of 10 · 0% · ready to verify"
   },
-  "updated_at": "2026-10-14T02:55:25.334Z"
+  "updated_at": "2026-10-14T10:38:39.049Z"
 }

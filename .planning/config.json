@@ -82,7 +82,14 @@
   },
   "project_code": null,
   "phase_naming": "sequential",
-  "agent_skills": {},
+  "agent_skills": {
+    "gsd-assumptions-analyzer": [
+      "global:jev-fast-decision"
+    ],
+    "gsd-advisor-researcher": [
+      "global:jev-fast-decision"
+    ]
+  },
   "claude_md_path": "./CLAUDE.md",
   "plan_review": {
     "source_grounding": true,
