@@ -166,14 +166,14 @@ can be verified and closed on trustworthy evidence. Source:
      Artificial Analysis key, so the ranking is scored).
   7. The phase is executed through `.planning/scripts/cross-ai.mjs` (pi first), as the dogfood run
      for Phase 18's runner. The usage-metrics store compaction (audit A10) stays out of scope.
-**Plans**: 3/31 plans executed
+**Plans**: 4/31 plans executed
 
 Plans:
 - Wave 1
   - [x] 16.1-02-PLAN.md — dashboard payload `<` escaping and AGENTS.md checker link handling
   - [x] 16.1-03-PLAN.md — parallel test-runner groups with a 40% CPU cap; every tier and hook through the runner
   - [x] 16.1-04-PLAN.md — sibling-first skill resolution and pylint/pyright groundwork
-  - [ ] 16.1-29-PLAN.md — `cache_write_json` through mkstemp: unique temp names per writer
+  - [x] 16.1-29-PLAN.md — `cache_write_json` through mkstemp: unique temp names per writer
 - Wave 2
   - [ ] 16.1-01-PLAN.md — delete claude/grok execute builders; unsupported execute CLIs fail with exit 2
   - [ ] 16.1-05-PLAN.md — `install.sh --branch`/`--dry-run` on existing clones; atomic uninstall write
