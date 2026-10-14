@@ -175,8 +175,8 @@ plan — without writing anything.
 **Success Criteria** (what must be TRUE):
 
   1. `inventory --project-dir` emits one JSON document covering host, the host's own gsd-core
-     (path/version/valid keys), host models (scores, price, `image_input`, reasoning levels),
-     other CLIs' models, skills, project facts, existing config, and detected conflicts
+     (path/version/valid keys), model candidates as (runtime, model) pairs (scores, price,
+     `image_input`, reasoning levels), skills, project facts, existing config, and detected conflicts
      (`model_policy` presence, cross-host `runtime` mismatch) — reading the catalog from
      `~/.cache/ai-kit/spec` and refreshing `--if-stale`, falling back to a stale-cache warning
      when refresh fails, and to native tier maps (Claude/Codex) or per-slot prompts

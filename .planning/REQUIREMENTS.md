@@ -21,15 +21,15 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 
 ### Inventory
 
-- [ ] **INV-01**: `inventory --project-dir` emits one JSON with host, the host's own gsd-core (path/version/valid keys), host models (scores, price, `image_input`, reasoning levels), other CLIs' models, skills, project facts (frontend, db, CLAUDE.md, intel index), existing config and conflicts
-- [ ] **INV-02**: Catalog is read from `~/.cache/ai-kit/spec` and refreshed `--if-stale`; a stale cache is used with a warning when refresh fails; with no cache, Claude/Codex use native tier maps and Cursor/opencode/pi ask the user per slot
-- [ ] **INV-03**: Conflicts are detected: `model_policy` in the project or `~/.gsd/defaults.json`, and `runtime` set to another host
+- [ ] **INV-01**: `inventory --project-dir` emits one JSON with host, the host's own gsd-core (path/version/valid keys), model candidates as (runtime, model) pairs (scores, price, `image_input`, reasoning levels; amended 2026-10-14 from separate host/other-CLI lists, per Phase 18.1), skills, project facts (frontend, db, instruction files `AGENTS.md`/`CLAUDE.md`, intel index), existing config and conflicts
+- [ ] **INV-02**: Catalog is read from `~/.cache/ai-kit/spec` and refreshed `--if-stale`; a stale cache is used with a warning when refresh fails; with no cache, Claude/Codex use native tier maps and Cursor/opencode/pi ask the user per slot; a catalog with prices but no scores takes the same path (amended 2026-10-14)
+- [ ] **INV-03**: Conflicts are detected: `model_policy` in the project or `~/.gsd/defaults.json`, and an effective `runtime` (project config first, then global defaults) set to another host; a global value the project overrides is info only (amended 2026-10-14)
 
 ### Recommendation
 
 - [ ] **REC-01**: `recommend` is a pure function of inventory + profile + rigor + cross-AI answers; every `plan.json` entry has `key`, `value`, `why`, `source`
 - [ ] **REC-02**: Tier layer — `model_profile` (quality/balanced/budget/adaptive, adaptive recommended) plus `models.<phase_type>` only where the rigor preset shifts a whole phase
-- [ ] **REC-03**: Tier→model layer — `model_profile_overrides.<host>.{opus,sonnet,haiku}` chosen by role score under the rigor price ceiling (Claude skips unless pinned; Codex ids with `reasoning_effort`; Cursor effort-suffixed ids)
+- [ ] **REC-03**: Tier→model layer — `model_profile_overrides.<host>.{opus,sonnet,haiku}` chosen by role score under the rigor price ceiling (Claude skips unless pinned; Codex ids with `reasoning_effort`; Cursor effort-suffixed ids; `-fast` twins never auto-chosen when the non-fast model exists, amended 2026-10-14)
 - [ ] **REC-04**: ≤7 specialist `model_overrides` — plan-checker counterpart provider to the planning slot; code-reviewer ≠ execution provider; ui-auditor/dom-verifier with `image_input`; ui-researcher frontend-capable when a frontend exists; executor + code-fixer on the execution role with effort `medium`. A single-provider host gets an explicit "no in-runtime counterpart → use cross-AI review" note
 - [ ] **REC-05**: MVP/Standard/Rigorous presets set granularity, effort tiers, gates (nyquist, TDD, code-review depth, ASVS, UI review), `intel.enabled` (Standard and Rigorous) and `dynamic_routing` (Rigorous) per spec §5
 - [ ] **REC-06**: Keys unknown to the host's gsd-core version are dropped from the plan with a note
