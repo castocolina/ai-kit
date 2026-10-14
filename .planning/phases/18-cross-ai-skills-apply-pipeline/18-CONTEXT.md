@@ -113,6 +113,9 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
   - Also verified: object values (`model_profile_overrides.<host>.<tier>` =
     `{"model", "reasoning_effort"}`) and list values (`review.default_reviewers`) are accepted
     by `config-set`.
+  - **Amended 2026-10-14 (Phase 17 discuss):** gsd-core 1.16 rejects `config-set model_policy
+    null` on the whole object, so an unset of an object-valued key goes per leaf
+    (`model_policy.provider|budget|high|medium|low`). Phase 17 R13 emits per-leaf unsets.
 
 ### v1 coexistence
 - **D-08:** **v1 is kept intact.**

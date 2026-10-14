@@ -1,6 +1,6 @@
 # Phase 17: Curated-Config Inventory & Recommendation Engine - Context
 
-**Gathered:** 2026-09-23
+**Gathered:** 2026-09-23 (interactive); updated 2026-10-14 (assumptions mode, after `17-SPEC.md`)
 **Status:** Ready for planning
 
 <domain>
@@ -104,9 +104,69 @@ Phase 18 owns the selection rules.
     add/change/keep/remove diff. The user keeps anything via `plan-unset` in Phase 18.
   - A pre-existing `model_policy` (project config) is always proposed for removal, because it
     shadows layer 2 (spec §8).
-  - One in `~/.gsd/defaults.json` is reported as a conflict only, never edited.
+  - One in `~/.gsd/defaults.json` is never edited. **Refined 2026-10-14 by live gsd-core 1.16
+    behavior (D-10):** it is a conflict only when no project config exists; otherwise it is
+    reported as inert `info`.
+  - **Amended 2026-10-14:** the unset is emitted per leaf
+    (`model_policy.provider|budget|high|medium|low`), because gsd-core 1.16 rejects
+    `config-set model_policy null` on the whole object.
   - **Reversibility:** reversible — nothing is written in this phase; the removal only happens
     at Phase 18 `apply`, with a backup.
+
+### Added 2026-10-14 (assumptions-mode discuss, jev-screened)
+- **D-09: Valid keys are probed, not re-implemented.** `inventory` calls the host gsd-core's
+  `isValidConfigKey` once per key in the closed set `recommend` can propose, and stores the
+  accepted and rejected keys. The live check accepts 125 central keys, 16 dynamic patterns and
+  86 capability-federated keys; dumping only the central set would reject valid capability
+  keys. `recommend` reads the stored result (R12).
+- **D-10: Conflicts follow verified gsd-tools behavior (R5, INV-03).**
+  - With a project config present, gsd-tools ignores `~/.gsd/defaults.json` for resolution.
+    Creating a project config copies the global `model_policy`, not `runtime`.
+  - A project `model_policy` is a conflict. A global one is a conflict only when no project
+    config exists; otherwise it is inert `info`.
+  - A project `runtime` that differs from the host is a conflict. A global `runtime` is never
+    one (an absent project runtime comes from env or an install marker), so it is `info`.
+- **D-11: gsd-core scope is labelled.** Resolution follows GSD's own launcher order
+  (`git rev-parse --show-toplevel`, then `.claude/gsd-core`, then global installs). The
+  inventory records `scope: local|global`, and warns when it resolved global inside a worktree
+  whose main checkout has a local install (they can differ in version).
+- **D-12: Unscored is decided per pool and per pick (R4).** A candidate with zero score axes is
+  never auto-picked; it appears only in `needs_choice` with a `no scores` tag. A partly scored
+  candidate keeps the ranker's 49/100 missing-axis default. The only exception is a
+  user-confirmed router winning by declared purpose (D-04). This refines D-04's last bullet:
+  "price unknown" still applies to priced-unknown but scored models.
+- **D-13: `fast_twin_of` lives in the catalog adapter.** It is computed once per inventory
+  candidate and only read by `recommend`. Phase 18's `plan-set` reuses it to warn when the user
+  pins a `-fast` twin.
+- **D-14: Counterpart providers compare an inferred vendor, strictly.** The catalog provider is
+  whichever reseller row matched (the same Claude model appears under anthropic, 302ai, venice
+  and others), so it cannot be compared as-is. Vendor = id prefix, else catalog provider. A
+  candidate whose vendor cannot be inferred is ineligible for the automatic plan-checker and
+  code-reviewer counterpart pick; it can still be chosen with `plan-set`.
+- **D-15: The ranker gains an unrounded `score_exact`.** The shared ranker rounds to 1 decimal
+  and sorts by the rounded value, which breaks D-06's full-precision tie order. The field is
+  additive and backward-compatible; existing callers keep the rounded `score`.
+- **D-16: The price ceiling percentile is taken over model families.** Effort variants of one
+  family share a price (cursor lists about 142 priced ids in about 37 families), so the sample
+  collapses them. This keeps the cap tied to price spread, not to how many variants a vendor
+  ships.
+- **D-17: Only used tier slots are filled.** A tier slot is filled or asked about only when
+  some agent resolves to it under the chosen profile, the rigor phase shifts and dynamic
+  routing (Rigorous can escalate to the heavy tier). Budget never asks about opus; quality
+  never asks about haiku.
+- **D-18: Plan schema gains `op: keep` and `source: router-declared` (R7).**
+  - `keep` writes nothing and carries the explanation of a kept gsd default (D-02), so Phase
+    18's review diff can show it.
+  - `router-declared` marks a D-04 router win.
+  - Unsets of leftover keys use `source: preset`.
+- **D-19: Cross-AI answers reserve placeholders.** When an answer is yes, the plan carries the
+  boolean keys plus `needs_choice` placeholder entries for the reviewer list and the execution
+  command, owned by Phase 18. `apply` therefore refuses until Phase 18 fills them. An omitted
+  flag defaults from rigor and host and is recorded as `defaulted`.
+- **D-20: Golden plans come from a shared tables builder.** One fixture file holds the gsd-core
+  tables captured once; a small builder assembles each host inventory from trimmed real model
+  lists (cursor, opencode, codex, claude). pi is synthetic and labelled so. The 15 golden plans
+  regenerate with a flag; property tests (ordering, ties, purity) are separate.
 
 ### Claude's Discretion
 - The exact percentile per rigor level.
@@ -134,15 +194,18 @@ Phase 18 owns the selection rules.
 - `.planning/phases/16-ai-kit-spec-extensions/16-CONTEXT.md` — detection, catalog fields,
   ranker purposes/floor and cache decisions this phase consumes.
 
-### gsd-core (read from the host's own install; claude = `~/.claude/gsd-core`, v1.14.0)
+### gsd-core (read from the host's own install; claude = `~/.claude/gsd-core`, v1.16.0 as of 2026-10-14)
 - `bin/lib/model-catalog.cjs`:
   - `AGENT_TO_PHASE_TYPE` (35 agents / 6 phase types);
   - `MODEL_PROFILES` (per-agent tier per profile);
   - `RUNTIME_PROFILE_MAP` (native tier → model, used by D-02);
   - `CODEX_MODEL_EFFORT`;
   - `VALID_PROFILES` / `VALID_PHASE_TYPES`.
-- `bin/lib/config-schema.cjs` — `VALID_CONFIG_KEYS` (120) plus `DYNAMIC_KEY_PATTERNS` (16) via
-  `isValidConfigKey`. This is the source for REC-06 unknown-key dropping.
+- `bin/lib/config-schema.cjs` — `isValidConfigKey` (1.16: 125 central keys, 16 dynamic
+  patterns, 86 capability-federated keys). This is the source for REC-06 unknown-key dropping,
+  probed per key (D-09).
+- 1.16 shape traps found live: some exports are `Set`s and some plain objects, so the node
+  query must serialize each explicitly. `RUNTIME_PROFILE_MAP.pi` is new in 1.16.
 - `bin/lib/model-resolver.cjs` — `resolveModelInternal`, the resolution order.
 
 ### v1 decisions still in force
@@ -167,6 +230,9 @@ Phase 18 owns the selection rules.
   `ai_kit_spec` for `catalog_adapter.py`.
 - `ai_kit_spec` (after Phase 16): the `detect-current-runtime`, `detect-runtimes --if-stale` and
   `fetch-model-catalog --if-stale` CLIs; `score_candidates` with the new purposes and floor.
+  It rounds scores to 1 decimal (D-15 adds `score_exact`).
+- Phase 16.1 creates `ai_kit_spec/gsd_tools.py`, the shared gsd-tools resolver. It does not
+  exist yet; Phase 17 consumes it rather than adding another copy.
 
 ### Established Patterns
 - CLI subcommands emit JSON; subprocess calls take an injected `run_fn`; missing tools degrade
@@ -199,20 +265,29 @@ Phase 18 owns the selection rules.
   per-agent overrides (spec §4).
 - **The user's opencode** lists 81 models (`opencode-go/*`, `router-env/*`). The routers
   `router-env/my-coding` and `router-env/my-plan-review` are the canonical D-04 examples.
-- **Current machine state:** `~/.cache/ai-kit/spec/model-catalog.json` does not exist yet
-  (see the Phase 16 specifics), so the no-catalog path (D-05) is the real first-run path here.
+- **Current machine state (2026-10-14):** an Artificial Analysis key is configured, and a
+  live fetch scored 196 of 254 catalog entries. The real first run is scored but partial, so
+  D-12's per-pick rule matters in practice. The no-catalog path (D-05) remains for other
+  machines.
+- **Live join coverage:** cursor 143 of 259 ids match the catalog; `composer-2.5` is
+  unmatched. All 79 cursor `-fast` ids have a non-fast twin.
+- **Live price percentiles** for codex: [0.2, 2, 4, 10] (per million tokens).
+- **`claude_md_detect` already prefers `AGENTS.md`.** The stale value is this repo's
+  `.planning/config.json` `claude_md_path: ./CLAUDE.md`; the inventory reports both the
+  detected file and the stale config value.
 
 </specifics>
 
 <deferred>
 ## Deferred Ideas
 
-None — the discussion stayed within the phase scope. The margin-based upgrade of valid native
-slots was considered and rejected (D-02), not deferred.
+- Visibility of skills per host belongs to Phase 18 (SKL-*); this phase only lists the skill
+  directories it finds.
+- The margin-based upgrade of valid native slots was rejected (D-02), not deferred.
 
 </deferred>
 
 ---
 
 *Phase: 17-curated-config-inventory-recommendation-engine*
-*Context gathered: 2026-09-23*
+*Context gathered: 2026-09-23; updated 2026-10-14*

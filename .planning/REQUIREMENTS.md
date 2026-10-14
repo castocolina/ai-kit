@@ -23,7 +23,7 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 
 - [ ] **INV-01**: `inventory --project-dir` emits one JSON with host, the host's own gsd-core (path/version/valid keys), model candidates as (runtime, model) pairs (scores, price, `image_input`, reasoning levels; amended 2026-10-14 from separate host/other-CLI lists, per Phase 18.1), skills, project facts (frontend, db, instruction files `AGENTS.md`/`CLAUDE.md`, intel index), existing config and conflicts
 - [ ] **INV-02**: Catalog is read from `~/.cache/ai-kit/spec` and refreshed `--if-stale`; a stale cache is used with a warning when refresh fails; with no cache, Claude/Codex use native tier maps and Cursor/opencode/pi ask the user per slot; a catalog with prices but no scores takes the same path (amended 2026-10-14)
-- [ ] **INV-03**: Conflicts are detected: `model_policy` in the project or `~/.gsd/defaults.json`, and an effective `runtime` (project config first, then global defaults) set to another host; a global value the project overrides is info only (amended 2026-10-14)
+- [ ] **INV-03**: Conflicts are detected only when they change resolution: `model_policy` in the project config, `model_policy` in `~/.gsd/defaults.json` when no project config exists, and a project `runtime` set to another host. A global value gsd-tools ignores (a global `model_policy` beside a project config, any global `runtime`) is info only (amended 2026-10-14)
 
 ### Recommendation
 

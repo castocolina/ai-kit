@@ -159,8 +159,8 @@ can be verified and closed on trustworthy evidence. Source:
   6. Phase 16 is closed: its VERIFICATION.md exists, the live checks ran (`runtimes.json` carries
      `schema_version`, `model-catalog.json` exists), and STATE, REQUIREMENTS and ROADMAP show it
      complete. The stale v1.3 facts are refreshed before Phase 17 planning (gsd-core 1.16, GSD
-     installs missing on other hosts, `~/.gsd/defaults.json` `runtime: codex`, price-only ranking
-     without an Artificial Analysis key).
+     installs missing on other hosts, `~/.gsd/defaults.json` `runtime: codex`, a configured
+     Artificial Analysis key, so the ranking is scored).
   7. The phase is executed through `.planning/scripts/cross-ai.mjs` (pi first), as the dogfood run
      for Phase 18's runner. The usage-metrics store compaction (audit A10) stays out of scope.
 **Plans**: TBD

@@ -18,10 +18,10 @@ explainable, minimal `plan.json`, with nothing written to the project.
   - gsd-core is 1.16.0 (the spec assumed 1.14);
   - GSD is installed per repo;
   - `~/.gsd/defaults.json` sets `runtime: codex`.
-- **The catalog has prices but no scores.** There is no Artificial Analysis key on this machine, so the ranking is price-only and the mechanical purpose returns nothing by design (Phase 16 D-11).
+- **The catalog is partly scored.** An Artificial Analysis key is configured, and a live fetch scored 196 of 254 entries (intelligence ~77%, coding ~47%, agentic ~44%). The shared ranker scores a missing axis as 49/100 and rounds scores to 1 decimal.
 - **Phase 18.1 will turn every model candidate into a (runtime, model) pair** and remove `native_runtime`.
 - **The user measured Cursor's `-fast` twins at about 5× the token spend** and wants the non-fast variants (2026-10-13 todo, AGT-01).
-- **`claude_md_detect.py` targets `./CLAUDE.md`.** This repo's instruction file is `AGENTS.md`, and the audit found `claude_md_path` pointing at a missing file.
+- **`claude_md_path` is stale.** `claude_md_detect.py` already prefers `AGENTS.md`, but this repo's `.planning/config.json` still holds the v1 literal `claude_md_path: ./CLAUDE.md`, which points at a missing file.
 - **Phase 17's CONTEXT (2026-09-23) already locks D-01..D-08:** the Claude layer-2 skip, keeping native slots, the percentile price ceiling, router preference, `needs_choice`, deterministic ties, non-blocking specialists, and authoritative managed families. This SPEC keeps all of them.
 
 ## Requirements
@@ -43,7 +43,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
 
 4. **Unscored catalog**: prices without scores never fake a ranking.
    - Current: undefined.
-   - Target: a catalog with no score axes counts as no catalog for slot filling.
+   - Target: a catalog with no score axes counts as no catalog for slot filling. Unscored is also decided per pick: a candidate with zero score axes is never auto-picked; it appears only in `needs_choice` tagged `no scores`. The one exception is a user-confirmed router winning a slot by its declared purpose.
      - Claude and Codex keep their native tier maps.
      - Cursor, opencode and pi get `needs_choice` entries whose candidates show prices and a `no scores` note.
    - Acceptance: with an unscored fixture catalog, the Claude and Codex plans contain no `model_profile_overrides`, and the opencode plan has a `needs_choice` per non-native slot with that note.
@@ -51,10 +51,10 @@ explainable, minimal `plan.json`, with nothing written to the project.
 5. **Conflicts**: reported only when they change resolution.
    - Current: none.
    - Target:
-     - `model_policy` in the project config, or in `~/.gsd/defaults.json`, is a conflict.
-     - An effective runtime (project config first, then global defaults) that differs from the host is a conflict.
-     - A global `runtime` that the project config overrides is listed under `info`, not `conflicts`.
-   - Acceptance: fixtures for policy-in-project, policy-in-global, a project runtime mismatch, and a global runtime overridden by the project each yield the expected entry.
+     - `model_policy` in the project config is a conflict.
+     - `model_policy` in `~/.gsd/defaults.json` is a conflict only when no project config exists (creating one copies it). With a project config present, gsd-tools ignores the global file, so it is listed under `info` as inert.
+     - A project `runtime` that differs from the host is a conflict. A global `runtime` is never a conflict: gsd-tools fills an absent project runtime from env or an install marker, never from global defaults. It is listed under `info`.
+   - Acceptance: fixtures for policy-in-project, policy-in-global with and without a project config, a project runtime mismatch, and a global runtime each yield the expected entry.
 
 6. **Project facts**: the instruction file is found by its real name.
    - Current: `claude_md_detect` assumes `CLAUDE.md`.
@@ -63,7 +63,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
 
 7. **Pure, deterministic recommend**: same inputs, same bytes.
    - Current: none.
-   - Target: `recommend --inventory --profile --rigor [--cross-ai-review y|n] [--cross-ai-exec y|n] --out plan.json` performs no subprocess, network, clock or filesystem read beyond its input file. Every entry carries `key`, `value`, `why`, `source` (`preset | catalog-score | curated-affinity | user | native`) and `existing`. The plan carries `schema_version` and the inventory digest.
+   - Target: `recommend --inventory --profile --rigor [--cross-ai-review y|n] [--cross-ai-exec y|n] --out plan.json` performs no subprocess, network, clock or filesystem read beyond its input file. Every entry carries `key`, `value`, `why`, `op` (`set | unset | keep`), `source` (`preset | catalog-score | curated-affinity | router-declared | user | native`) and `existing`. `keep` writes nothing and explains a kept gsd default; `router-declared` marks a user-confirmed router winning by declared purpose. The plan carries `schema_version` and the inventory digest.
    - Acceptance: two runs on the same inputs are byte-identical. A test patches `subprocess`, `socket`, `time` and `open` (except the input) to raise, and `recommend` still succeeds.
 
 8. **Tier layer**: `model_profile` plus phase shifts only.
@@ -73,7 +73,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
 
 9. **Tier → model layer**: overrides only where the native slot fails.
    - Current: none.
-   - Target: `model_profile_overrides.<host>.<tier>` is written only when the native slot's model is missing from the host's candidates or is above the rigor price ceiling. Claude is skipped unless pinned. A router with a user-confirmed declared purpose wins its slot and is exempt from the ceiling. A `-fast` twin is excluded from automatic filling whenever its non-fast model exists.
+   - Target: `model_profile_overrides.<host>.<tier>` is written only when the native slot's model is missing from the host's candidates or is above the rigor price ceiling. Claude is skipped unless pinned. A router with a user-confirmed declared purpose wins its slot and is exempt from the ceiling. A `-fast` twin is excluded from automatic filling whenever its non-fast model exists. The twin link is computed once in the catalog adapter (`fast_twin_of` on each inventory candidate). The ceiling percentile is taken over distinct model families (effort variants collapsed), and only tier slots some agent resolves to under the profile, phase shifts and dynamic routing are filled or asked about.
    - Acceptance:
      - Golden plans for codex (native kept), opencode (`anthropic/*` replaced), and cursor (no native map, `-fast` never chosen, the user's router chosen for its role).
      - A cap test shows a slot is never emptied: when nothing passes, the cheapest eligible model is used with that `why`.
@@ -81,7 +81,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
 10. **Specialists**: at most 7 `model_overrides`.
     - Current: v1 critical agents.
     - Target:
-      - `gsd-plan-checker` uses a provider other than the planning slot's;
+      - `gsd-plan-checker` uses a provider other than the planning slot's (provider = inferred vendor: id prefix, else catalog provider; a candidate whose vendor cannot be inferred is not eligible for the automatic counterpart pick);
       - `gsd-code-reviewer` uses a provider other than the execution model's;
       - `gsd-ui-auditor` and `gsd-dom-verifier` require `image_input`;
       - `gsd-ui-researcher` is frontend-capable, only when a frontend exists;
@@ -97,16 +97,16 @@ explainable, minimal `plan.json`, with nothing written to the project.
 
 12. **Unknown keys dropped**: the plan never proposes a key the host's gsd-core rejects.
     - Current: none.
-    - Target: every candidate key is checked with the host gsd-core's `isValidConfigKey`. A rejected key is removed and a `notes` entry names it.
+    - Target: `inventory` calls the host gsd-core's `isValidConfigKey` once per key in the closed set `recommend` can propose (central keys, dynamic patterns and capability keys all apply) and stores accepted and rejected keys. `recommend` drops a rejected key and adds a `notes` entry naming it.
     - Acceptance: a fixture `valid_keys` without `dynamic_routing.*` gives a Rigorous plan with no such keys and one note.
 
 13. **Undecidable slots and existing keys**: explicit, never silent.
     - Current: none.
     - Target:
       - An undecidable required slot becomes `{status: "needs_choice", value: null, candidates: top 3 with score/price/why}`.
-      - Ties break by score descending, then price ascending, then model id ascending.
+      - Ties break by score descending (the ranker's unrounded `score_exact`), then price ascending, then model id ascending.
       - An existing key in a managed family that the plan does not set becomes `op: "unset"` with a `why`.
-      - A project `model_policy` is always proposed for unset.
+      - A project `model_policy` is always proposed for unset, one entry per leaf (`model_policy.provider|budget|high|medium|low`): gsd-core 1.16 rejects `config-set model_policy null` on the whole object.
     - Acceptance: tie fixtures resolve identically on reordered input. A leftover v1 `model_overrides.gsd-planner` becomes an unset entry. A no-catalog cursor plan lists `needs_choice` slots with 3 candidates each.
 
 ## Boundaries
@@ -131,7 +131,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
 - Runtime code stays stdlib-only. Node is used only to read the host gsd-core's `.cjs` tables, as `gsd_catalog.query_agent_catalog` does today.
 - All I/O lives in `inventory`; `recommend` has none (REC-01).
 - The gsd-core tables are read from the resolved install, never copied into ai-kit.
-- Without an Artificial Analysis key the real first run is the unscored path (R4). It must be useful there, not only in fixtures.
+- The real first run here is scored, but partly: R4's per-pick rule must keep unscored candidates out of automatic picks, and the fully unscored path must stay useful for machines without a key.
 
 ## Acceptance Criteria
 
@@ -209,7 +209,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
 
 | Round | Perspective | Question summary | Laya (advisory) | TypeSafe (advisory) | Decision locked |
 |-------|-------------|------------------|-----------------|---------------------|-----------------|
-| 1 | Researcher | What changed since the 2026-09-23 discussion? | – | – | gsd-core 1.16, GSD per repo, no AA key, `runtime: codex` in global defaults, 18.1 pairs, `AGENTS.md` (Background) |
+| 1 | Researcher | What changed since the 2026-09-23 discussion? | – | – | gsd-core 1.16, GSD per repo, no AA key (corrected in discuss: a key is configured), `runtime: codex` in global defaults, 18.1 pairs, `AGENTS.md` (Background) |
 | 1 | Failure Analyst | Catalog with prices but no scores? | no_scores_fallback p=0.83 | – | R4: treat as no catalog; never fake a ranking |
 | 1 | Simplifier | Cursor `-fast` twins? | exclude_fast 0.55 (fb) | exclude_fast 1.00 | R9: excluded from auto-fill when the non-fast model exists |
 | 1 | Boundary Keeper | Candidate shape, given 18.1? | pairs_now 0.68 (fb) | pairs_now 0.98 | R1: (runtime, model) pairs now |
