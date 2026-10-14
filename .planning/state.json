@@ -6,12 +6,12 @@
     {
       "number": "16",
       "name": "ai_kit_spec Extensions",
-      "status": "in_progress"
+      "status": "pending"
     },
     {
       "number": "16.1",
       "name": "Hardening",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "number": "17",
@@ -77,7 +77,7 @@
   "next": {
     "command": "/gsd:progress --next",
     "label": "Advance to the next step",
-    "reason": "Phase 16 of 14 · 0% · executing"
+    "reason": "Phase 16.1 of 14 · 0% · executing"
   },
-  "updated_at": "2026-10-14T15:47:18.075Z"
+  "updated_at": "2026-10-14T20:30:17.428Z"
 }
