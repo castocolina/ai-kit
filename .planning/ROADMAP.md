@@ -206,10 +206,10 @@ with the v2 flow living alongside the unchanged v1 CLI.
 
   1. The user can adjust the plan with `plan-set`/`plan-unset`, and each adjustment is recorded
      with `source: user`.
-  2. Cross-AI review sets `plan_review_convergence` + `review.default_reviewers` (lane ≠ host,
+  2. Cross-AI review sets `workflow.plan_review_convergence` + `review.default_reviewers` (lane ≠ host,
      reviewer provider ≠ planning provider, best `review` score) + `review.models.<lane>` /
      `review.effort.<lane>`; review lanes keep GSD's own lane definitions. Cross-AI execution
-     sets `cross_ai_execution` + `cross_ai_command = node .planning/scripts/cross-ai.mjs`, a
+     sets `workflow.cross_ai_execution` + `workflow.cross_ai_command = node .planning/scripts/cross-ai.mjs`, a
      script generated per project (amended 2026-10-13, see XAI-02): preference order default
      pi > cursor > opencode (grok is not a target), a model per CLI, unattended full-permission
      flags, bare tool profile by default; `workflow.cross_ai_timeout` ≥ 1800 s; the supervision
@@ -225,8 +225,8 @@ with the v2 flow living alongside the unchanged v1 CLI.
   4. `apply --dry-run` validates every key against the host gsd-core's valid keys and prints a
      diff without writing; a real `apply` backs up to `config.json.bak-<ts>`, writes only through
      `gsd-tools config-new-project`/`config-set`, restores the backup and names the failing key on
-     any error (keeping the newest 3 backups), and runs the required follow-ups (`gsd install
-     <host>`, `effort sync --apply`) only after one grouped user approval, recommending
+     any error (keeping the newest 3 backups), and runs the required follow-ups (gsd-core's own installer
+     pinned to the resolved version, local scope; `effort sync --apply`) only after one grouped user approval, recommending
      `/gsd-map-codebase` separately.
   5. The v1 CLI and its modules still work unchanged next to the new v2 subcommands (no
      removal), `make test` (v1 tests included) and `make validate` are green, the README row is updated, and

@@ -139,7 +139,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
 - [ ] The inventory reports the project-local gsd-core over a global one, and exits 2 with the searched paths when none exists
 - [ ] The fresh, stale-with-warning and no-catalog states each appear in the inventory
 - [ ] With an unscored catalog, the Claude/Codex plans have no `model_profile_overrides`, and the opencode/cursor plans carry `needs_choice` with a `no scores` note
-- [ ] Policy-in-project, policy-in-global and an effective-runtime mismatch are conflicts; a global runtime overridden by the project is info only
+- [ ] Policy-in-project, policy-in-global without a project config, and a project-runtime mismatch are conflicts; an inert global policy and any global runtime are info only
 - [ ] `AGENTS.md`-only, `CLAUDE.md`-only, both and neither are reported correctly
 - [ ] Two `recommend` runs on the same inputs are byte-identical, and `recommend` succeeds with subprocess, socket, clock and extra file reads patched to raise
 - [ ] `models.*` keys appear only where the rigor preset shifts a whole phase
