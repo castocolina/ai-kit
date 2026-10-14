@@ -18,11 +18,17 @@
 #   (none)/install · reconfigure · uninstall · doctor · check · --dry-run · --help
 #   e.g.  curl … | bash -s -- --doctor      curl … | bash -s -- reconfigure
 #
-# Fetch-target flag (BOOTSTRAP only; consumed here, not passed to setup.py) — install
-# any branch WITHOUT merging to main:
+# Fetch-target flag (BOOTSTRAP and LOCAL; consumed here, not passed to setup.py) —
 #   --branch name       (or --branch=name)       override the branch to fetch
 #   e.g.  curl … feat/x/tools/install.sh | bash -s -- --branch feat/x
 #   (a fork is selected via the AI_KIT_REPO env override below.)
+# On an EXISTING clone an explicit branch (flag or AI_KIT_BRANCH — the default
+# `main` never counts) validates the name with `git check-ref-format --branch`,
+# refuses when the tree is dirty or an index.lock is present (no auto-recovery),
+# then runs: remote set-branches --add origin B → fetch --depth 1 origin B →
+# switch -C B --track origin/B. Without an explicit branch an existing clone
+# keeps `pull --ff-only`. --dry-run prints the planned git commands and runs
+# no fetch, pull, switch, set-branches or clone.
 #
 # Env overrides (--branch takes precedence over AI_KIT_BRANCH):
 #   AI_KIT_REPO       owner/name        (default: castocolina/ai-kit)
@@ -36,6 +42,11 @@ set -euo pipefail
 REPO_SLUG="${AI_KIT_REPO:-castocolina/ai-kit}"
 REPO_BRANCH="${AI_KIT_BRANCH:-main}"
 INSTALL_DIR="${AI_KIT_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-kit}"
+# An explicit branch request (env now, or --branch in normalize_args) is the ONLY
+# thing that switches an existing clone; the default `main` does not count (D-21).
+BRANCH_EXPLICIT=0
+[ -n "${AI_KIT_BRANCH:-}" ] && BRANCH_EXPLICIT=1
+DRY_RUN=0
 
 if [ -t 2 ]; then
   C_RESET=$'\033[0m'; C_RED=$'\033[31m'; C_BLUE=$'\033[34m'
@@ -83,8 +94,9 @@ normalize_args() {
       --check)       ARGS+=(check) ;;
       --reconfigure) ARGS+=(reconfigure) ;;
       --uninstall)   ARGS+=(uninstall) ;;
-      --branch)      REPO_BRANCH="${2:?--branch needs a value}"; shift ;;
-      --branch=*)    REPO_BRANCH="${1#*=}" ;;
+      --branch)      REPO_BRANCH="${2:?--branch needs a value}"; BRANCH_EXPLICIT=1; shift ;;
+      --branch=*)    REPO_BRANCH="${1#*=}"; BRANCH_EXPLICIT=1 ;;
+      --dry-run)     DRY_RUN=1; ARGS+=("$1") ;;
       *)             ARGS+=("$1") ;;
     esac
     shift
@@ -96,8 +108,35 @@ fetch_repo() {
   local url="https://github.com/${REPO_SLUG}.git"
   local tarball="https://github.com/${REPO_SLUG}/archive/refs/heads/${REPO_BRANCH}.tar.gz"
   if [ -d "$INSTALL_DIR/.git" ]; then
-    info "updating $INSTALL_DIR"
-    git -C "$INSTALL_DIR" pull --ff-only
+    if [ "$BRANCH_EXPLICIT" = 1 ]; then
+      # Reject option-like / malformed names BEFORE any inspection or mutation
+      # (T-16.1-11); the check is read-only so --dry-run may still run it.
+      git check-ref-format --branch "$REPO_BRANCH" >/dev/null 2>&1 \
+        || die "invalid branch name: $REPO_BRANCH"
+      refuse_if_dirty
+      if [ "$DRY_RUN" = 1 ]; then
+        info "dry run: would run: git -C $INSTALL_DIR remote set-branches --add origin $REPO_BRANCH"
+        info "dry run: would run: git -C $INSTALL_DIR fetch --depth 1 origin $REPO_BRANCH"
+        info "dry run: would run: git -C $INSTALL_DIR switch -C $REPO_BRANCH --track origin/$REPO_BRANCH"
+        return
+      fi
+      # set-branches only when the refspec is not already listed (idempotent rerun,
+      # RUN-11); the match is exact-line (-Fxq), never a partial/refspec-prefix hit.
+      local refspec="+refs/heads/$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH"
+      if ! git -C "$INSTALL_DIR" config --get-all remote.origin.fetch 2>/dev/null \
+        | grep -Fxq -- "$refspec"; then
+        git -C "$INSTALL_DIR" remote set-branches --add origin "$REPO_BRANCH"
+      fi
+      git -C "$INSTALL_DIR" fetch --depth 1 origin "$REPO_BRANCH"
+      git -C "$INSTALL_DIR" switch -C "$REPO_BRANCH" --track "origin/$REPO_BRANCH"
+    else
+      info "updating $INSTALL_DIR"
+      if [ "$DRY_RUN" = 1 ]; then
+        info "dry run: would run: git -C $INSTALL_DIR pull --ff-only"
+        return
+      fi
+      git -C "$INSTALL_DIR" pull --ff-only
+    fi
   elif have git; then
     info "cloning $REPO_SLUG into $INSTALL_DIR"
     # --depth 1 already implies --single-branch (git-scm.com/docs/git-clone) unless
@@ -152,6 +191,15 @@ fetch_repo() {
   fi
 }
 
+refuse_if_dirty() {
+  # R14 / RUN-11: a dirty tree or a leftover index.lock (an interrupted run)
+  # refuses the switch and never auto-recovers — the user resolves it.
+  if [ -e "$INSTALL_DIR/.git/index.lock" ] \
+    || [ -n "$(git -C "$INSTALL_DIR" status --porcelain)" ]; then
+    die "$INSTALL_DIR has local changes or an unfinished git operation; inspect it with: git -C $INSTALL_DIR status"
+  fi
+}
+
 # --- ensure python3 ---------------------------------------------------------
 ensure_python() {
   if have python3; then return; fi
@@ -173,6 +221,10 @@ main() {
   normalize_args "$@"
   detect_mode
   if [ "$MODE" = bootstrap ]; then
+    if [ "$DRY_RUN" = 1 ] && [ ! -f "$INSTALL_DIR/tools/setup.py" ]; then
+      info "dry run: no checkout at $INSTALL_DIR yet; stopping before setup.py"
+      exit 0
+    fi
     fetch_repo
   else
     info "local checkout — skipping fetch ($INSTALL_DIR)"
