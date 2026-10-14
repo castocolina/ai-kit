@@ -86,9 +86,18 @@
       "global:jev-fast-decision"
     ]
   },
-  "claude_md_path": "./CLAUDE.md",
+  "claude_md_path": "./AGENTS.md",
   "plan_review": {
     "source_grounding": true,
     "source_grounding_authority": "grep"
+  },
+  "effort": {
+    "default": "high",
+    "agent_overrides": {
+      "gsd-planner": "xhigh",
+      "gsd-plan-checker": "xhigh",
+      "gsd-code-reviewer": "xhigh",
+      "gsd-ui-auditor": "xhigh"
+    }
   }
 }
