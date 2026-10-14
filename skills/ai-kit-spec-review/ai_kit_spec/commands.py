@@ -138,6 +138,28 @@ def _build_cursor_agent_command(mode="plan", **_params):
     return f"cursor-agent -p --output-format text --mode {mode} --trust --model {{model}}"
 
 
+def split_command_template(key: str, template: str | None) -> list[str]:
+    """Tokenizes a reviewer `command` template into the exact argv list argv dispatch would
+    run -- the consent display (`trust-local --show`) prints THIS result, so what a user
+    approves is byte-for-byte what executes (D-10). Raises `ValueError` naming `key` when
+    the template is missing/empty/whitespace (a config error, never a silent no-op or a
+    Popen IndexError) or when it relies on shell syntax: a token made only of `();<>|&`
+    punctuation, a `$` or a backtick anywhere in the template. Argv dispatch runs no shell,
+    so such a template would silently change meaning -- it fails loudly instead."""
+    if not template or not template.strip():
+        raise ValueError(f"reviewer {key!r} has an empty command template")
+    if "$" in template or "`" in template:
+        raise ValueError(f"reviewer {key!r} command uses shell syntax, which argv dispatch "
+                         f"does not run: {template!r}")
+    lexer = shlex.shlex(template, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    tokens = list(lexer)
+    if any(tok and all(ch in "();<>|&" for ch in tok) for tok in tokens):
+        raise ValueError(f"reviewer {key!r} command uses shell syntax, which argv dispatch "
+                         f"does not run: {template!r}")
+    return shlex.split(template)
+
+
 def _require_target_dir(cli_name, target_dir):
     if not target_dir:
         raise ValueError(
@@ -145,7 +167,10 @@ def _require_target_dir(cli_name, target_dir):
             f"CLI invoked without an explicit scratch directory would write to the "
             f"orchestrator's own cwd instead, which is never the intended target."
         )
-    return shlex.quote(target_dir)
+    # Braces are doubled AFTER quoting so a target_dir containing `{` or `}` survives both
+    # argv dispatch (shlex.split restores the doubled braces) and GSD's own
+    # `.format(model=...)` string path (which un-doubles them) without a KeyError.
+    return shlex.quote(target_dir).replace("{", "{{").replace("}", "}}")
 
 
 def _build_codex_execute_command(target_dir=None, effort=None, service_tier=None, **_params):
@@ -326,47 +351,38 @@ def build_reviewer_model_id(cli: str, base_model: str, effort=None, fast=None,
     return base_model
 
 
-def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> str:
-    """Fill a resolved reviewer's `command` template. {model} and {prompt}
-    are always available; any of the entry's extra fields (effort,
-    service_tier, ...) fill their own {placeholder} when the command
-    references it. Shared by probe_reviewer_quota (below) and
-    review-spec/SKILL.md's real dispatch step (via the `render-command`
-    CLI subcommand), so probing and dispatching can never drift apart.
+def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> list[str]:
+    """Fill a resolved reviewer's `command` template and return the argv LIST to run -- argv
+    dispatch with no shell (D-10). The template is tokenized by split_command_template
+    (which rejects shell syntax loudly), then each token is formatted: {model} and {prompt}
+    are always available; any of the entry's extra fields (effort, service_tier, ...) fill
+    their own {placeholder} when the command references it. Shared by probe_reviewer_quota
+    (below) and review-spec/SKILL.md's real dispatch step (via the `render-command` CLI
+    subcommand), so probing and dispatching can never drift apart.
 
-    Only {prompt} is shell-escaped (via shlex.quote) before substitution —
-    it is free text built from document paths/content signals and MUST
-    survive as exactly one shell argument no matter what it contains (this
-    fixes a real command-injection risk: an unescaped {prompt} spliced into
-    a `shell=True` command string via a document path containing `"`, `$`,
-    or `` ` `` would corrupt or inject into the command). {model} and any
-    `extra` field are deliberately left unescaped — they're short,
-    human-typed config values, and some CLIs need their own literal
-    quoting idiom in the template around them (e.g. codex's `-c
-    key='"{effort}"'`), which auto-quoting would break. Command templates
-    must therefore write a bare `{prompt}` (never `"{prompt}"` or
-    `'{prompt}'` — the quoting is already applied here).
+    The prompt is substituted RAW and UNQUOTED: it is already one argv element by
+    construction (tokenization happens before substitution), so no quoting is needed -- free
+    text built from document paths/content can never inject into anything because no shell
+    ever re-splits it. Templates may write `{prompt}` bare or quoted ("{prompt}" and
+    '{prompt}' both tokenize to the same single token under posix shlex). {model} and extra
+    fields are likewise substituted raw -- short, human-typed config values.
 
-    Raises `ValueError` — never a raw `KeyError`/`AttributeError`/
-    `IndexError`/`TypeError` — when `resolved.command` is missing (a
-    `cli`-set entry with no `command` is a malformed config, per the
-    schema's "required iff `cli` present"), the template references a
-    placeholder that isn't `{model}`/`{prompt}`/one of `extra`'s keys,
-    contains a literal unescaped brace, or `extra` itself defines a
-    `model`/`prompt` key (a hand-written config collision with the two
-    reserved placeholder names — `str.format`'s duplicate-keyword-argument
-    `TypeError` in that case is exactly as much a malformed-config problem
-    as a bad placeholder, and gets the same treatment). A malformed
-    `review-spec.toml` entry must surface as a reportable config error,
-    never crash the caller."""
+    Raises `ValueError` -- never a raw `KeyError`/`AttributeError`/`IndexError`/`TypeError`
+    -- when `resolved.command` is missing (a `cli`-set entry with no `command` is a
+    malformed config, per the schema's "required iff `cli` present"), the template is empty
+    or uses shell syntax (see split_command_template), references a placeholder that isn't
+    {model}/{prompt}/one of `extra`'s keys, contains a literal unescaped brace, or `extra`
+    itself defines a `model`/`prompt` key (a hand-written config collision with the two
+    reserved placeholder names). A malformed `review-spec.toml` entry must surface as a
+    reportable config error, never crash the caller."""
     if not resolved.command:
         raise ValueError(
             f"reviewer {resolved.key!r} has cli={resolved.cli!r} set but no command template"
         )
     try:
-        return resolved.command.format(
-            model=resolved.model, prompt=shlex.quote(prompt), **resolved.extra
-        )
+        tokens = split_command_template(resolved.key, resolved.command)
+        return [token.format(model=resolved.model, prompt=prompt, **resolved.extra)
+                for token in tokens]
     except (KeyError, IndexError, ValueError, TypeError) as exc:
         raise ValueError(
             f"reviewer {resolved.key!r} has a malformed command template: {exc}"

@@ -35,11 +35,11 @@ def dispatch_reviewer(reviewer_entry: dict, prompt: str, timeout_tiers: list[int
        child is silently discarded for exactly the CLI this guidance exists for (grok has no
        AGENTS.md/GROK.md ingestion of its own). Rendering the command from the already-prefixed
        prompt means the guidance reaches stdin readers AND command-line readers alike.
-    2. A pre-rendered command handed back through a `--command "<string>"` shell argument gets
-       evaluated twice -- once by the orchestrator's own shell, once by `shell=True` here --
-       which reintroduces the very `$`/backtick/backslash injection hazard
-       `render_reviewer_command`'s shlex.quote exists to prevent. Rendering inside this process
-       means the rendered string never round-trips through a second shell evaluation.
+    2. Command templates are dispatched as argv lists with no shell (D-10): the rendered
+       value is the exact argv list (see split_command_template), and each element is passed
+       to the child verbatim -- free prompt text can never be re-split or expanded by a
+       shell, so the old double-evaluation injection hazard (orchestrator shell + shell=True)
+       no longer exists at all.
 
     `reviewer_entry` is one element of `resolve-reviewers`' saved JSON array (key/model/vendor/
     cli/command/extra). `cli` may be None for a hand-written/unknown-CLI reviewer entry

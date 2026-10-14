@@ -2176,8 +2176,8 @@ class TestBuildReviewerCommand(unittest.TestCase):
         resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
                                         cli="codex", command=cmd, extra={})
         filled = rs.render_reviewer_command(resolved, "hello")
-        self.assertIn("-m gpt-5.2", filled)
-        self.assertIn("model_reasoning_effort='\"high\"'", filled)
+        self.assertIn("gpt-5.2", filled)
+        self.assertIn('model_reasoning_effort="high"', filled)
         self.assertNotIn("hello", filled)
 
 
@@ -2206,7 +2206,7 @@ class TestRenderReviewerCommand(unittest.TestCase):
                                         cli="codex", command='codex exec -m {model} {prompt}',
                                         extra={})
         self.assertEqual(rs.render_reviewer_command(resolved, "hello"),
-                          'codex exec -m gpt-5.2 hello')
+                          ["codex", "exec", "-m", "gpt-5.2", "hello"])
 
     def test_fills_extra_fields(self):
         cmd = "codex exec -m {model} -c service_tier='\"{service_tier}\"' {prompt}"
@@ -2214,7 +2214,7 @@ class TestRenderReviewerCommand(unittest.TestCase):
                                         cli="codex", command=cmd,
                                         extra={"service_tier": "fast"})
         out = rs.render_reviewer_command(resolved, "hi")
-        self.assertIn("service_tier='\"fast\"'", out)
+        self.assertIn('service_tier="fast"', out)
 
     def test_prompt_is_shell_escaped_but_extra_fields_are_not(self):
         # {prompt} is free text built from document paths/content signals —
@@ -2228,9 +2228,8 @@ class TestRenderReviewerCommand(unittest.TestCase):
                                         extra={})
         dangerous_prompt = 'Read this; rm -rf / #'
         out = rs.render_reviewer_command(resolved, dangerous_prompt)
-        import shlex as _shlex
-        tokens = _shlex.split(out)
-        self.assertEqual(tokens[-1], dangerous_prompt)  # survives as ONE argument
+        # argv dispatch, no shell: the prompt survives verbatim as ONE argv element
+        self.assertEqual(out[-1], dangerous_prompt)
 
     def test_missing_command_raises_value_error_not_attribute_error(self):
         # a cli-set entry with no command is a malformed config (schema:
@@ -2898,7 +2897,8 @@ class TestMainCli(unittest.TestCase):
                 code = rs.main(["render-command", "--reviewers-json", reviewers_path,
                                  "--index", "0", "--prompt-file", prompt_path])
             self.assertEqual(code, 0)
-            self.assertEqual(buf.getvalue().strip(), "codex exec -m gpt-5.2 hello")
+            self.assertEqual(json.loads(buf.getvalue()),
+                             ["codex", "exec", "-m", "gpt-5.2", "hello"])
 
     def test_render_command_returns_nonzero_on_malformed_template(self):
         with tempfile.TemporaryDirectory() as d:
@@ -3220,7 +3220,7 @@ class TestDispatchExecute(unittest.TestCase):
         candidate = {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
         captured = {}
         def fake_dispatch(command, prompt, heartbeat_interval, timeout):
-            captured["command"] = command
+            captured["command"] = shlex.split(command) if isinstance(command, str) else command
             captured["prompt"] = prompt
             captured["heartbeat_interval"] = heartbeat_interval
             captured["timeout"] = timeout
@@ -3229,8 +3229,8 @@ class TestDispatchExecute(unittest.TestCase):
             candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch)
         self.assertEqual(
             captured["command"],
-            "codex exec --sandbox workspace-write --skip-git-repo-check -C /scratch/run1 "
-            "-m gpt-5.6-sol")
+            ["codex", "exec", "--sandbox", "workspace-write", "--skip-git-repo-check",
+             "-C", "/scratch/run1", "-m", "gpt-5.6-sol"])
         self.assertIn("codex, model gpt-5.6-sol", captured["prompt"])
         self.assertIn("do not re-select", captured["prompt"])
         self.assertIn("incrementally", captured["prompt"])
@@ -3292,12 +3292,12 @@ class TestDispatchExecute(unittest.TestCase):
                      "effort": "high", "service_tier": "priority"}
         captured = {}
         def fake_dispatch(command, prompt, heartbeat_interval, timeout):
-            captured["command"] = command
+            captured["command"] = shlex.split(command) if isinstance(command, str) else command
             return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
         execute_dispatch.dispatch_execute(
             candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch)
-        self.assertIn("-c model_reasoning_effort='\"high\"'", captured["command"])
-        self.assertIn("-c service_tier='\"priority\"'", captured["command"])
+        self.assertIn('model_reasoning_effort="high"', captured["command"])
+        self.assertIn('service_tier="priority"', captured["command"])
 
 
 class TestEnsureCodegraphRegistered(unittest.TestCase):
@@ -3477,7 +3477,7 @@ class TestDispatchWithPolling(unittest.TestCase):
     def test_single_tier_success_writes_prompt_and_returns_captured_output(self):
         written = {}
 
-        def fake_popen(command, shell, stdin, stdout, stderr, start_new_session):
+        def fake_popen(command, stdin, stdout, stderr, start_new_session, env):
             written["command"] = command
             written["prompt"] = stdin.read()
             # flush(): a REAL child writes straight to the dup'd fd, so its output is on
@@ -3491,11 +3491,11 @@ class TestDispatchWithPolling(unittest.TestCase):
 
         times = iter([0.0, 10.0, 20.0])
         result = dispatch.dispatch_with_polling(
-            "echo hi", "the prompt", timeout_tiers=[600], poll_interval=50,
+            ["echo", "hi"], "the prompt", timeout_tiers=[600], poll_interval=50,
             popen_fn=fake_popen, time_fn=lambda: next(times), sleep_fn=lambda s: None,
             kill_fn=self._fake_kill, print_fn=lambda *a: None)
 
-        self.assertEqual(written["command"], "echo hi")
+        self.assertEqual(written["command"], ["echo", "hi"])
         self.assertEqual(written["prompt"], b"the prompt")
         self.assertEqual(result["stdout"], "real report text")
         self.assertEqual(result["returncode"], 0)
@@ -3511,7 +3511,7 @@ class TestDispatchWithPolling(unittest.TestCase):
             killed.append(proc)
             self._fake_kill(proc)
 
-        def fake_popen(command, shell, stdin, stdout, stderr, start_new_session):
+        def fake_popen(command, stdin, stdout, stderr, start_new_session, env):
             attempt_index = len(attempts)
             attempts.append(attempt_index)
             if attempt_index == 0:
@@ -3526,7 +3526,7 @@ class TestDispatchWithPolling(unittest.TestCase):
         # finishes on first poll() call (returncode_after_polls=0).
         times = iter([0.0, 15.0, 15.0, 16.0])
         result = dispatch.dispatch_with_polling(
-            "slow-cmd", "p", timeout_tiers=[10, 600], poll_interval=50,
+            ["slow-cmd"], "p", timeout_tiers=[10, 600], poll_interval=50,
             popen_fn=fake_popen, time_fn=lambda: next(times), sleep_fn=lambda s: None,
             kill_fn=recording_kill, print_fn=lambda *a: None)
 
@@ -3541,14 +3541,14 @@ class TestDispatchWithPolling(unittest.TestCase):
         self.assertEqual(result["stdout"], "finished on tier 2")
 
     def test_all_tiers_exhausted_returns_timed_out_with_last_tier_partial_output(self):
-        def fake_popen(command, shell, stdin, stdout, stderr, start_new_session):
+        def fake_popen(command, stdin, stdout, stderr, start_new_session, env):
             stdout.write(b"partial from last tier")
             stdout.flush()
             return self._FakeProc(returncode_after_polls=10_000)
 
         times = iter([0.0, 15.0, 15.0, 25.0])
         result = dispatch.dispatch_with_polling(
-            "never-finishes", "p", timeout_tiers=[10, 10], poll_interval=50,
+            ["never-finishes"], "p", timeout_tiers=[10, 10], poll_interval=50,
             popen_fn=fake_popen, time_fn=lambda: next(times), sleep_fn=lambda s: None,
             kill_fn=self._fake_kill, print_fn=lambda *a: None)
 
@@ -3559,7 +3559,7 @@ class TestDispatchWithPolling(unittest.TestCase):
     def test_progress_lines_report_byte_growth_between_polls(self):
         printed = []
 
-        def fake_popen(command, shell, stdin, stdout, stderr, start_new_session):
+        def fake_popen(command, stdin, stdout, stderr, start_new_session, env):
             stdout.write(b"x" * 100)
             stdout.flush()
             return self._FakeProc(returncode_after_polls=10_000)
@@ -3567,7 +3567,7 @@ class TestDispatchWithPolling(unittest.TestCase):
         # Two poll checks before the tier's own timeout hits.
         times = iter([0.0, 5.0, 8.0, 12.0])
         dispatch.dispatch_with_polling(
-            "cmd", "p", timeout_tiers=[10], poll_interval=3,
+            ["cmd"], "p", timeout_tiers=[10], poll_interval=3,
             popen_fn=fake_popen, time_fn=lambda: next(times), sleep_fn=lambda s: None,
             kill_fn=self._fake_kill, print_fn=lambda *a: printed.append(" ".join(map(str, a))))
 
@@ -3586,13 +3586,13 @@ class TestDispatchWithPolling(unittest.TestCase):
             ticks["t"] += 1.0
             return now
 
-        def fake_popen(command, shell, stdin, stdout, stderr, start_new_session):
+        def fake_popen(command, stdin, stdout, stderr, start_new_session, env):
             stdout.write(b"done fast")
             stdout.flush()
             return self._FakeProc(returncode_after_polls=2)
 
         result = dispatch.dispatch_with_polling(
-            "fast-cmd", "p", timeout_tiers=[600], poll_interval=150,
+            ["fast-cmd"], "p", timeout_tiers=[600], poll_interval=150,
             popen_fn=fake_popen, time_fn=fake_time, sleep_fn=sleeps.append,
             kill_fn=self._fake_kill, print_fn=lambda *a: printed.append(" ".join(map(str, a))))
 
@@ -3610,7 +3610,7 @@ class TestDispatchWithPolling(unittest.TestCase):
         # downstream as an opaque TypeError where the CLI subscripts result["stdout"].
         with self.assertRaises(ValueError):
             dispatch.dispatch_with_polling(
-                "cmd", "p", timeout_tiers=[], popen_fn=lambda *a, **k: None)
+                [], "p", timeout_tiers=[], popen_fn=lambda *a, **k: None)
 
 
 class TestBuildExecuteCommand(unittest.TestCase):
@@ -3958,7 +3958,8 @@ class TestDispatchReviewer(unittest.TestCase):
         self.assertEqual(captured["timeout_tiers"], [600, 1200])
         self.assertIn("TOOLING GUIDANCE HERE", captured["prompt"])
         self.assertIn("Read the checklist and review...", captured["prompt"])
-        self.assertEqual(captured["command"], "codex exec --sandbox read-only -m gpt-5.6-sol")
+        self.assertEqual(captured["command"],
+                         ["codex", "exec", "--sandbox", "read-only", "-m", "gpt-5.6-sol"])
         self.assertEqual(result["stdout"], "## Review\n### Status: Approved\n")
 
     def test_command_line_prompt_cli_receives_the_tooling_guidance_prefix_too(self):
@@ -3982,9 +3983,11 @@ class TestDispatchReviewer(unittest.TestCase):
             resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
             codegraph_health_fn=lambda cli: False)
 
-        self.assertIn("SHARED_TOOLING_PATH = /fake/tooling-guidance.md", captured["command"])
-        self.assertIn("TOOL_AVAILABILITY = ", captured["command"])
-        self.assertIn("Read the checklist and review...", captured["command"])
+        # argv dispatch: the full prompt (guidance + caller prompt) is ONE argv element
+        prompt_element = captured["command"][2]
+        self.assertIn("SHARED_TOOLING_PATH = /fake/tooling-guidance.md", prompt_element)
+        self.assertIn("TOOL_AVAILABILITY = ", prompt_element)
+        self.assertIn("Read the checklist and review...", prompt_element)
 
     def test_codegraph_health_is_resolved_internally_not_asked_of_the_caller(self):
         asked = []
@@ -7730,6 +7733,162 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
             # A well-shaped row whose entry validation rejected ("tool_call": "yes") is
             # reported, never recorded without an entry.
             self.assertTrue(any("claude-bad-tool" in r for r in result["rejections"]))
+
+
+class TestArgvRendering(unittest.TestCase):
+    """D-10: reviewer templates render to argv lists; shell syntax fails loudly."""
+
+    def _resolved(self, command, extra=None):
+        return rs.ResolvedReviewer(key="k", model="m", vendor="v", cli="codex",
+                                    command=command, extra=extra or {})
+
+    def test_split_command_template_tokenizes(self):
+        self.assertEqual(commands.split_command_template("k", "codex exec -m {model} {prompt}"),
+                         ["codex", "exec", "-m", "{model}", "{prompt}"])
+
+    def test_render_returns_argv_with_raw_prompt_and_formatted_extra(self):
+        argv = rs.render_reviewer_command(
+            self._resolved("codex exec -m {model} -c effort='\"{effort}\"' {prompt}",
+                           extra={"effort": "high"}),
+            'a "b" $c `d`')
+        self.assertEqual(argv, ["codex", "exec", "-m", "m", "-c", 'effort="high"',
+                                'a "b" $c `d`'])
+
+    def test_shell_syntax_templates_raise_value_error_naming_key_and_template(self):
+        for template in ("x; rm -rf /", "x | y", "x && y", "x > f", "x $HOME", "x `id`"):
+            with self.subTest(template=template):
+                with self.assertRaises(ValueError) as ctx:
+                    commands.split_command_template("k", template)
+                self.assertIn("k", str(ctx.exception))
+                self.assertIn(template, str(ctx.exception))
+
+    def test_render_surfaces_shell_syntax_rejection(self):
+        with self.assertRaises(ValueError):
+            rs.render_reviewer_command(self._resolved("x; rm -rf /"), "p")
+
+    def test_empty_and_whitespace_templates_raise_value_error_naming_key(self):
+        for template in ("", "   "):
+            with self.subTest(template=template):
+                with self.assertRaises(ValueError) as ctx:
+                    commands.split_command_template("k", template)
+                self.assertIn("k", str(ctx.exception))
+
+    def test_unknown_placeholder_and_literal_brace_still_raise_value_error(self):
+        with self.assertRaises(ValueError):
+            rs.render_reviewer_command(self._resolved("codex -m {model} {nope}"), "p")
+        with self.assertRaises(ValueError):
+            rs.render_reviewer_command(self._resolved("codex -m {model} {}"), "p")
+
+
+class TestChildEnv(unittest.TestCase):
+    """D-14: HOST_SIGNAL_ENV_VARS covers every R9 signal plus CODEX_VERSION; child_env scrubs
+    them, then applies extra."""
+
+    def test_host_signal_env_vars_exact_set(self):
+        self.assertEqual(detection.HOST_SIGNAL_ENV_VARS,
+                         {"AI_AGENT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
+                          "CLAUDE_CODE_SSE_PORT", "OPENCODE", "CURSOR_AGENT",
+                          "PI_CODING_AGENT", "CODEX_THREAD_ID", "CODEX_SANDBOX",
+                          "GROK_AGENT", "CODEX_VERSION"})
+
+    def test_scrubs_host_signals_and_passes_the_rest_through(self):
+        self.assertEqual(dispatch.child_env(env={"PATH": "p", "AI_AGENT": "x"}),
+                         {"PATH": "p"})
+
+    def test_no_signals_set_environment_equals_the_parents(self):
+        env = {k: v for k, v in os.environ.items() if k not in detection.HOST_SIGNAL_ENV_VARS}
+        self.assertEqual(dispatch.child_env(env=env), env)
+
+    def test_extra_is_applied_after_the_scrub(self):
+        self.assertEqual(dispatch.child_env(extra={"AI_AGENT": "y"}, env={"AI_AGENT": "x"}),
+                         {"AI_AGENT": "y"})
+
+    def test_defaults_copy_os_environ(self):
+        self.assertEqual(dispatch.child_env(env={"PATH": "p"}), {"PATH": "p"})
+
+
+class TestDispatchReviewerRealChild(unittest.TestCase):
+    """R9 tracer: a REAL child spawned through dispatch_reviewer with all eleven host
+    signal variables set sees none of them; PATH and HOME pass through."""
+
+    def test_real_child_sees_none_of_the_host_signals(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = os.path.join(d, "dump_env.py")
+            with open(script, "w", encoding="utf-8") as f:
+                f.write("import json, os, sys\n"
+                        "with open(sys.argv[1], 'w', encoding='utf-8') as f:\n"
+                        "    f.write(json.dumps(sorted(os.environ)))\n")
+            outfile = os.path.join(d, "env.json")
+            command = f"{shlex.quote(sys.executable)} {shlex.quote(script)} {shlex.quote(outfile)}"
+            signals = ["AI_AGENT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
+                       "CLAUDE_CODE_SSE_PORT", "OPENCODE", "CURSOR_AGENT",
+                       "PI_CODING_AGENT", "CODEX_THREAD_ID", "CODEX_SANDBOX",
+                       "GROK_AGENT", "CODEX_VERSION"]
+            env = dict(os.environ)
+            env.update({s: "1" for s in signals})
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                result = reviewer_dispatch.dispatch_reviewer(
+                    {"key": "k", "model": "m", "vendor": "v", "cli": None,
+                     "command": command, "extra": {}},
+                    "p", timeout_tiers=[60], tool_availability={},
+                    dispatch_fn=dispatch.dispatch_with_polling,
+                    build_tooling_guidance_fn=lambda *a, **kw: "",
+                    resolve_shared_reference_fn=lambda: None,
+                    codegraph_health_fn=lambda cli: False)
+            self.assertEqual(result["returncode"], 0, result["stderr"])
+            with open(outfile, encoding="utf-8") as f:
+                child_env_keys = set(json.load(f))
+            self.assertEqual(child_env_keys & set(signals), set())
+            self.assertIn("PATH", child_env_keys)
+            self.assertIn("HOME", child_env_keys)
+
+
+class TestFakePopenArgvContract(unittest.TestCase):
+    """Fakes recording popen kwargs must see: no shell, a scrubbed env, a new session."""
+
+    def test_heartbeat_popen_receives_argv_no_shell_and_scrubbed_env(self):
+        class FakeProcess:
+            returncode = 0
+            stdin = unittest.mock.MagicMock()
+
+            def communicate(self, input=None, timeout=None):
+                return ("done", "")
+
+        recorded = {}
+
+        def fake_popen(*a, **kw):
+            recorded["argv"] = a[0] if a else kw.get("args")
+            recorded.update(kw)
+            return FakeProcess()
+
+        dispatch.dispatch_with_heartbeat(
+            ["echo", "hi"], "prompt", heartbeat_interval=60, timeout=30,
+            popen_fn=fake_popen, print_fn=lambda *a: None)
+        self.assertEqual(recorded["argv"], ["echo", "hi"])
+        self.assertFalse(recorded.get("shell", False))
+        self.assertNotIn("AI_AGENT", recorded["env"])
+        self.assertTrue(recorded["start_new_session"])
+
+    def test_heartbeat_empty_argv_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            dispatch.dispatch_with_heartbeat([], "p", heartbeat_interval=60, timeout=30,
+                                              print_fn=lambda *a: None)
+
+    def test_polling_empty_argv_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            dispatch.dispatch_with_polling([], "p", timeout_tiers=[60],
+                                            popen_fn=lambda *a, **k: None)
+
+    def test_heartbeat_spawn_oserror_maps_to_returncode_127(self):
+        def failing_popen(*a, **kw):
+            raise OSError("No such file or directory: 'nope-cli'")
+
+        result = dispatch.dispatch_with_heartbeat(
+            ["nope-cli"], "p", heartbeat_interval=60, timeout=30,
+            popen_fn=failing_popen, print_fn=lambda *a: None)
+        self.assertEqual(result["returncode"], 127)
+        self.assertIn("No such file or directory", result["stderr"])
+        self.assertFalse(result["timed_out"])
 
 
 if __name__ == "__main__":

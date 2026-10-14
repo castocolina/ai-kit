@@ -56,6 +56,16 @@ _RUNTIME_ENV_SIGNALS = (
     ("claude", "CLAUDECODE"),
 )
 
+# Every variable runtime detection reads (D-14), plus host identity markers not tied to a
+# specific runtime (AI_AGENT, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_SSE_PORT, CODEX_SANDBOX,
+# GROK_AGENT), so a cross-AI child spawned by dispatch never mistakes itself for the host.
+# Phase 18 note: cross-ai.mjs's own SCRUB_ENV lacks AI_AGENT and CODEX_VERSION -- this set is
+# the authoritative superset.
+HOST_SIGNAL_ENV_VARS = frozenset({var for _, var in _RUNTIME_ENV_SIGNALS} | {
+    "AI_AGENT", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT",
+    "CODEX_SANDBOX", "GROK_AGENT",
+})
+
 
 def detect_current_runtime(env: dict | None = None) -> str:
     """Which CLI is hosting THIS process right now.

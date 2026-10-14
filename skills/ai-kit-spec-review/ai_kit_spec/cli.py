@@ -1176,7 +1176,8 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
         with open(args.prompt_file, encoding="utf-8") as f:
             prompt = f.read()
         try:
-            print(render_reviewer_command(resolved, prompt))
+            # argv dispatch (D-10): print the rendered argv as a JSON array, not a string
+            print(json.dumps(render_reviewer_command(resolved, prompt)))
         except ValueError as exc:
             # Deliberately no "### Status:" substring — same fail-closed
             # convention as merge-reports: review-spec/SKILL.md's existing

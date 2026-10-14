@@ -1,7 +1,8 @@
 """Generic process dispatcher shared by review's future JSONL-findings work and
 ai-kit-spec-execute: deadlock-safe stdin prompt delivery, timestamped heartbeat while draining
 output, process-GROUP timeout enforcement. Never CLI-specific -- takes an already-built command
-string as an opaque unit."""
+ARGV LIST as an opaque unit and spawns it with NO shell (D-10); the child environment is
+scrubbed of the host's own identity variables (D-14, see child_env)."""
 import datetime
 import os
 import shutil
@@ -12,6 +13,7 @@ import tempfile
 import time
 
 from ai_kit_spec.cache import cache_write_json
+from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 
 # How long dispatch_with_polling waits between proc.poll() checks. Deliberately NOT
 # configurable and deliberately NOT poll_interval: this is completion-detection latency
@@ -33,9 +35,9 @@ def _default_print_fn(*args) -> None:
 
 
 def _default_kill_process_group(proc) -> None:
-    """Kills the WHOLE process group, not just the direct child -- under shell=True, proc.kill()
-    alone only kills the shell; a descendant it spawned (e.g. sleep) can survive holding
-    stdout/stderr open, hanging the post-kill communicate() drain (confirmed by live
+    """Kills the WHOLE process group, not just the direct child -- proc.kill()
+    alone can leave a descendant the child spawned (e.g. a grandchild tool call) alive, holding
+    stdout/stderr open and hanging the post-kill communicate() drain (confirmed by live
     reproduction, 2026-08-29). Requires the Popen call to have used start_new_session=True."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
@@ -43,11 +45,27 @@ def _default_kill_process_group(proc) -> None:
         proc.kill()  # fallback: at least kill the direct child if group-kill isn't possible
 
 
-def dispatch_with_heartbeat(command: str, prompt: str, heartbeat_interval: int, timeout: int,
+def child_env(extra: dict | None = None, env: dict | None = None) -> dict:
+    """Builds the environment for a cross-AI child (D-14): copies `env` (or os.environ),
+    removes every HOST_SIGNAL_ENV_VARS entry so the child never mistakes itself for the host,
+    then applies `extra` -- an explicit per-runtime `env` addition survives the scrub because
+    it is applied last."""
+    base = dict(os.environ if env is None else env)
+    for name in HOST_SIGNAL_ENV_VARS:
+        base.pop(name, None)
+    if extra:
+        base.update(extra)
+    return base
+
+
+def dispatch_with_heartbeat(argv: list[str], prompt: str, heartbeat_interval: int, timeout: int,
                              popen_fn=subprocess.Popen, time_fn=time.time,
                              kill_fn=_default_kill_process_group,
                              print_fn=_default_print_fn) -> dict:
-    """Runs `command` (shell=True, in its own process group via start_new_session=True).
+    """Runs `argv` (a command argv list, spawned with NO shell, in its own process group via
+    start_new_session=True) with a scrubbed child environment (child_env). Raises ValueError
+    for an empty argv -- an empty command is a config error, never something to let Popen
+    crash on with an opaque IndexError.
 
     Deadlock-safe by construction: `prompt` is delivered via `communicate(input=prompt,
     timeout=...)` -- NEVER via a manual `proc.stdin.write()` -- because CPython's own
@@ -63,12 +81,20 @@ def dispatch_with_heartbeat(command: str, prompt: str, heartbeat_interval: int, 
     FIRST call ever passes `input=prompt`.
 
     On real timeout (elapsed >= `timeout`), `kill_fn` kills the whole process group (not just
-    the shell), then a final `communicate()` drains and returns whatever output was actually
+    the direct child), then a final `communicate()` drains and returns whatever output was actually
     collected before the kill -- never force-discarded to empty strings, which would erase real
     diagnostics from a dispatch that ran a while before timing out."""
     start = time_fn()
-    proc = popen_fn(command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                     stderr=subprocess.PIPE, text=True, start_new_session=True)
+    if not argv:
+        raise ValueError("empty command argv")
+    try:
+        proc = popen_fn(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                        errors="replace", start_new_session=True, env=child_env())
+    except OSError as exc:
+        # Binary missing / not executable: map to the shell's conventional 127 so callers
+        # see a normal failed-dispatch result instead of an unhandled spawn exception.
+        return {"returncode": 127, "stdout": "", "stderr": str(exc), "timed_out": False}
     pending_input = prompt
     while True:
         elapsed = time_fn() - start
@@ -98,14 +124,19 @@ def dispatch_with_heartbeat(command: str, prompt: str, heartbeat_interval: int, 
                 "timed_out": False}
 
 
-def dispatch_with_polling(command: str, prompt: str, timeout_tiers: list[int],
+def dispatch_with_polling(argv: list[str], prompt: str, timeout_tiers: list[int],
                            poll_interval: int = 150, popen_fn=subprocess.Popen,
                            time_fn=time.time, sleep_fn=time.sleep,
                            kill_fn=_default_kill_process_group, print_fn=_default_print_fn,
                            tmp_dir_fn=tempfile.mkdtemp, rmtree_fn=shutil.rmtree) -> dict:
     """Escalates across `timeout_tiers` (seconds, in order), each tier a FRESH process -- a
     killed CLI cannot resume its own reasoning state, so a tier restart is a real, accepted
-    cost (design spec §4/§14), not an oversight. `stdout`/`stderr` are redirected to real
+    cost (design spec §4/§14), not an oversight. `argv` is a command argv list spawned with
+    NO shell and a scrubbed child environment (child_env). Raises ValueError for an empty
+    argv (a config error, never a Popen IndexError) and for an empty `timeout_tiers`: with
+    no tier there is nothing to run and no result to return, and silently returning None
+    would surface downstream as an opaque TypeError in whichever caller subscripts the result.
+    `stdout`/`stderr` are redirected to real
     files (never PIPE): this removes the deadlock condition `dispatch_with_heartbeat`'s own
     docstring documents (stdin fill racing an undrained stdout pipe) because nothing routes
     through our own process's pipes here, so `prompt` is delivered via a plain file handed to
@@ -129,6 +160,8 @@ def dispatch_with_polling(command: str, prompt: str, timeout_tiers: list[int],
     TypeError in whichever caller subscripts the result."""
     if not timeout_tiers:
         raise ValueError("timeout_tiers must name at least one tier -- got an empty list")
+    if not argv:
+        raise ValueError("empty command argv")
     tmp_dir = tmp_dir_fn(prefix="ai-kit-spec-dispatch-")
     try:
         prompt_path = os.path.join(tmp_dir, "prompt")
@@ -147,8 +180,15 @@ def dispatch_with_polling(command: str, prompt: str, timeout_tiers: list[int],
             with open(prompt_path, "rb") as in_f, \
                  open(stdout_path, "wb") as out_f, \
                  open(stderr_path, "wb") as err_f:
-                proc = popen_fn(command, shell=True, stdin=in_f, stdout=out_f, stderr=err_f,
-                                 start_new_session=True)
+                try:
+                    proc = popen_fn(argv, stdin=in_f, stdout=out_f, stderr=err_f,
+                                    start_new_session=True, env=child_env())
+                except OSError as exc:
+                    # Binary missing / not executable: conventional 127, same as heartbeat.
+                    last_result = {"returncode": 127, "stdout": "", "stderr": str(exc),
+                                    "timed_out": False, "tiers_tried": tier_index,
+                                    "final_timeout": tier_timeout}
+                    return last_result
                 timed_out = False
                 while proc.poll() is None:
                     elapsed = time_fn() - start
