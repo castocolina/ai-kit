@@ -1,6 +1,9 @@
 """Deterministic candidate resolution for ai-kit-spec-execute: task-type affinity + context-size
 fit. Never LLM judgment per-execution -- both signals come from data curated once at
 ai-kit-spec-config time (design spec Section 5)."""
+import sys
+
+from ai_kit_spec import commands
 
 
 def purpose_matches(purpose: str | None, wanted: str) -> bool:
@@ -53,8 +56,33 @@ def filter_by_context(candidates: list, required_context: int) -> list:
             if c.get("context_limit") is None or c["context_limit"] >= required_context]
 
 
+def screen_execute_clis(candidates: list, warn_fn=None) -> list:
+    """D-15 hardening screen: a candidate naming a CLI without a real execute builder (claude,
+    grok -- Phase 16.1 removed both) is never silently routed to another CLI. An entry whose
+    purpose explicitly declares it an executor (`purpose == "execute"`) raises ValueError
+    naming the supported CLIs; an entry that merely includes execution (purpose unset or
+    "both") is dropped with a visible stderr warning instead of being silently executed.
+    Native candidates (cli None) and purpose-"review" entries pass through untouched."""
+    if warn_fn is None:
+        def warn_fn(msg):
+            print(msg, file=sys.stderr)
+    kept = []
+    for c in candidates:
+        cli = c.get("cli")
+        if cli is not None and cli not in commands.SUPPORTED_EXECUTE_CLIS \
+                and purpose_matches(c.get("purpose"), "execute"):
+            if c.get("purpose") == "execute":
+                raise ValueError(f"reviewer {c['key']!r} sets purpose = \"execute\": "
+                                 + commands.execute_cli_error(cli))
+            warn_fn(f"ai-kit-spec: skipping {c['key']!r} for execution: "
+                    + commands.execute_cli_error(cli))
+            continue
+        kept.append(c)
+    return kept
+
+
 def resolve_execute_candidates(candidates: list, task_type: str, required_context: int,
-                                affinity_table: dict, top_n_keys: list) -> list:
+                                affinity_table: dict, top_n_keys: list, warn_fn=None) -> list:
     """Full candidate-narrowing pipeline. The result's ORDER is what a caller feeds to
     quota.py's resolve_ladder_pick (via candidates_to_ladder, below) for live-availability
     escalation -- this function only narrows and ranks, it never itself probes quota.
@@ -77,6 +105,7 @@ def resolve_execute_candidates(candidates: list, task_type: str, required_contex
     bonus actually applies -- it needs a real task_type, which only exists here, at real
     dispatch time, never at Plan A's generic wizard-time ranking (see that plan's Global
     Constraints)."""
+    candidates = screen_execute_clis(candidates, warn_fn)
     narrowed = filter_by_context(
         filter_by_affinity(filter_by_purpose(candidates, "execute"), task_type, affinity_table),
         required_context)

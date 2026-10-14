@@ -2639,7 +2639,7 @@ class TestMainCli(unittest.TestCase):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = rs.main(
-                    ["dispatch-execute", "--cli", "grok", "--model", "grok-4.6",
+                    ["dispatch-execute", "--cli", "codex", "--model", "gpt-5.6-sol",
                      "--target-dir", "/scratch/run1", "--prompt-file", prompt_path,
                      "--timeout", "600", "--format-block-file", format_path],
                     dispatch_execute_fn=fake_dispatch)
@@ -2672,7 +2672,8 @@ class TestMainCli(unittest.TestCase):
         import io
         from contextlib import redirect_stderr
         def raising_dispatch(*a, **kw):
-            raise ValueError("no execute-mode command builder for 'gemini' yet")
+            raise ValueError("'gemini' cannot be an execution CLI; supported execute CLIs: "
+                             "codex, cursor-agent, opencode")
         with tempfile.TemporaryDirectory() as d:
             prompt_path = os.path.join(d, "prompt.txt")
             with open(prompt_path, "w", encoding="utf-8") as f:
@@ -2680,12 +2681,12 @@ class TestMainCli(unittest.TestCase):
             buf = io.StringIO()
             with redirect_stderr(buf):
                 code = rs.main(
-                    ["dispatch-execute", "--cli", "gemini", "--model", "gemini-3.1-pro",
+                    ["dispatch-execute", "--cli", "codex", "--model", "gpt-5.6-sol",
                      "--target-dir", "/scratch/run1", "--prompt-file", prompt_path,
                      "--timeout", "600"],
                     dispatch_execute_fn=raising_dispatch)
         self.assertEqual(code, 1)
-        self.assertIn("no execute-mode command builder", buf.getvalue())
+        self.assertIn("cannot be an execution CLI", buf.getvalue())
 
     def test_dispatch_execute_prompt_file_dash_reads_stdin(self):
         # The exact shape needed to drop this subcommand into GSD's own workflow.cross_ai_command,
@@ -2701,7 +2702,7 @@ class TestMainCli(unittest.TestCase):
         with mock.patch.object(cli.sys, "stdin", io.StringIO("piped prompt text")), \
              redirect_stdout(buf):
             code = rs.main(
-                ["dispatch-execute", "--cli", "grok", "--model", "grok-4.6",
+                ["dispatch-execute", "--cli", "codex", "--model", "gpt-5.6-sol",
                  "--target-dir", "/scratch/run1", "--prompt-file", "-", "--timeout", "600"],
                 dispatch_execute_fn=fake_dispatch)
         self.assertEqual(code, 0)
@@ -3262,7 +3263,7 @@ class TestDispatchExecute(unittest.TestCase):
         self.assertNotIn("NO operating-system-level write confinement", captured["prompt"])
 
     def test_includes_tool_guidance_when_provided(self):
-        candidate = {"cli": "claude", "model": "sonnet", "key": "claude/sonnet"}
+        candidate = {"cli": "cursor-agent", "model": "sonnet", "key": "cursor-agent/sonnet"}
         captured = {}
         def fake_dispatch(command, prompt, heartbeat_interval, timeout):
             captured["prompt"] = prompt
@@ -3275,7 +3276,8 @@ class TestDispatchExecute(unittest.TestCase):
         self.assertIn("codegraph_explore", captured["prompt"])
 
     def test_includes_output_format_block_when_given(self):
-        candidate = {"cli": "grok", "model": "grok-4.6", "key": "grok/grok-4.6"}
+        candidate = {"cli": "opencode", "model": "router-env/my-coding",
+                     "key": "opencode/router-env/my-coding"}
         captured = {}
         def fake_dispatch(command, prompt, heartbeat_interval, timeout):
             captured["prompt"] = prompt
@@ -3657,44 +3659,121 @@ class TestBuildExecuteCommand(unittest.TestCase):
         cmd = commands.build_execute_command("codex", target_dir="/tmp/a b$(x)")
         self.assertIn(shlex.quote("/tmp/a b$(x)"), cmd)
 
-    def test_grok_uses_workspace_sandbox_with_stdin_bridge(self):
-        # Live-verified 2026-08-30: --sandbox workspace confines writes to --cwd; --always-approve
-        # is required for a headless run (no interactive terminal to approve tool-use); the
-        # sh -c '... "$(cat)"' wrapper bridges GSD's stdin-only prompt delivery into grok's
-        # positional -p/--single value requirement -- confirmed live end-to-end with a piped prompt.
-        cmd = commands.build_execute_command("grok", target_dir="/scratch/run1")
-        self.assertIn("--sandbox workspace", cmd)
-        self.assertIn("--cwd /scratch/run1", cmd)
-        self.assertIn("--always-approve", cmd)
-        self.assertIn("-m {model}", cmd)
-        self.assertIn('"$(cat)"', cmd)
-        self.assertTrue(cmd.startswith("sh -c '") and cmd.endswith("'"))
+    def test_grok_execute_is_a_hard_error_naming_the_supported_clis(self):
+        # D-15 (Phase 16.1): the grok execute builder was deleted -- it nested `sh -c` and
+        # could not run under GSD's no-shell word splitting. An explicit choice is an error,
+        # never a fallback to another CLI.
+        with self.assertRaises(ValueError) as ctx:
+            commands.build_execute_command("grok", target_dir="/scratch/run1")
+        self.assertIn("codex, cursor-agent, opencode", str(ctx.exception))
 
-    def test_grok_execute_requires_target_dir(self):
-        with self.assertRaises(ValueError):
-            commands.build_execute_command("grok")
+    def test_claude_execute_is_a_hard_error_naming_the_supported_clis(self):
+        # D-15 (Phase 16.1): same deletion for claude -- claude is the main agent and was never
+        # a valid execute target; the explicit choice must fail before any spawn.
+        with self.assertRaises(ValueError) as ctx:
+            commands.build_execute_command("claude", target_dir="/scratch/run1")
+        self.assertIn("codex, cursor-agent, opencode", str(ctx.exception))
 
-    def test_claude_uses_restricted_mode_with_cd_wrapper(self):
-        # Live-verified 2026-08-30: --restricted + --permission-mode acceptEdits genuinely
-        # confines file-tool writes to the working directory (a write outside it was refused
-        # with the CLI's own real error). claude has no -C/--cwd flag, so this wraps the whole
-        # invocation in sh -c 'cd <dir> && exec claude ...' -- confirmed live end-to-end with a
-        # piped prompt, matching how GSD actually invokes this command.
-        cmd = commands.build_execute_command("claude", target_dir="/scratch/run1")
-        self.assertIn("--restricted", cmd)
-        self.assertIn("--permission-mode acceptEdits", cmd)
-        self.assertIn("cd /scratch/run1", cmd)
-        self.assertIn("exec claude", cmd)
-        self.assertIn("--model {model}", cmd)
-        self.assertTrue(cmd.startswith("sh -c '") and cmd.endswith("'"))
-
-    def test_claude_execute_requires_target_dir(self):
-        with self.assertRaises(ValueError):
+    def test_execute_error_message_is_shared_by_the_factory_and_the_checker(self):
+        # Both paths surface the SAME supported-list message: the registry factory above and
+        # execute_cli_error (the pre-spawn screen every CLI calls first).
+        self.assertEqual(commands.execute_cli_error("claude"),
+                         f"'claude' cannot be an execution CLI; supported execute CLIs: "
+                         f"{', '.join(commands.SUPPORTED_EXECUTE_CLIS)}")
+        with self.assertRaises(ValueError) as ctx:
             commands.build_execute_command("claude")
+        self.assertIn(str(commands.execute_cli_error("claude")), str(ctx.exception))
 
     def test_unknown_cli_raises_value_error(self):
         with self.assertRaises(ValueError):
             commands.build_execute_command("nonexistent-cli")
+
+
+class TestExecuteCliRejection(unittest.TestCase):
+    """D-15 (Phase 16.1): an explicit claude/grok executor choice fails before any spawn."""
+
+    def _rejected_dispatch_run(self, cli_name):
+        import io
+        from contextlib import redirect_stderr
+        def failing_dispatch(*a, **kw):
+            self.fail("dispatch_execute_fn must never be called for a rejected CLI")
+        with tempfile.TemporaryDirectory() as d:
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("task")
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                code = rs.main(
+                    ["dispatch-execute", "--cli", cli_name, "--model", "m",
+                     "--target-dir", d, "--prompt-file", "-", "--timeout", "5"],
+                    dispatch_execute_fn=failing_dispatch)
+        return code, buf.getvalue()
+
+    def test_dispatch_execute_rejects_claude_grok_and_case_variant(self):
+        for cli_name in ("claude", "grok", "Claude"):
+            with self.subTest(cli=cli_name):
+                code, stderr = self._rejected_dispatch_run(cli_name)
+                self.assertEqual(code, 2)
+                self.assertIn("codex, cursor-agent, opencode", stderr)
+
+    def test_rejection_is_idempotent_across_reruns(self):
+        # D-15: nothing is written before the check, so a rejected executor fails identically
+        # on every run.
+        first = self._rejected_dispatch_run("claude")
+        second = self._rejected_dispatch_run("claude")
+        self.assertEqual(first, second)
+
+    def test_supported_execute_clis_and_builders_are_gone(self):
+        self.assertEqual(commands.SUPPORTED_EXECUTE_CLIS,
+                         ("codex", "cursor-agent", "opencode"))
+        self.assertFalse(hasattr(commands, "_build_claude_execute_command")
+                         or hasattr(commands, "_build_grok_execute_command"))
+
+    def test_review_builders_for_claude_and_grok_are_unchanged(self):
+        # R10/D-15 boundary: only the EXECUTE builders were deleted; the review side keeps
+        # its claude and grok builders.
+        self.assertTrue(commands.build_reviewer_command("claude"))
+        self.assertTrue(commands.build_reviewer_command("grok"))
+
+
+class TestExecuteLadderScreen(unittest.TestCase):
+    """D-15: unsupported CLIs in the execute ladder are screened loudly, never silently."""
+
+    def _screen(self, candidates, warn_fn=None):
+        return execute_selection.resolve_execute_candidates(
+            candidates, None, 0, {}, [], warn_fn=warn_fn)
+
+    def test_purpose_none_claude_entry_is_skipped_with_a_warning(self):
+        warnings = []
+        candidates = [{"key": "cla", "cli": "claude", "model": "m"},
+                      {"key": "oc", "cli": "opencode", "model": "m"}]
+        result = self._screen(candidates, warn_fn=warnings.append)
+        self.assertEqual([c["key"] for c in result], ["oc"])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("cla", warnings[0])
+        self.assertIn("codex, cursor-agent, opencode", warnings[0])
+
+    def test_purpose_both_grok_entry_is_skipped_with_a_warning(self):
+        warnings = []
+        candidates = [{"key": "gk", "cli": "grok", "model": "m", "purpose": "both"}]
+        result = self._screen(candidates, warn_fn=warnings.append)
+        self.assertEqual(result, [])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("gk", warnings[0])
+
+    def test_purpose_execute_claude_entry_raises_value_error(self):
+        candidates = [{"key": "cla", "cli": "claude", "model": "m", "purpose": "execute"}]
+        with self.assertRaises(ValueError) as ctx:
+            self._screen(candidates, warn_fn=lambda msg: self.fail("must raise, not warn"))
+        self.assertIn("codex, cursor-agent, opencode", str(ctx.exception))
+        self.assertIn("cla", str(ctx.exception))
+
+    def test_purpose_review_claude_entry_passes_through_untouched(self):
+        warnings = []
+        candidates = [{"key": "cla", "cli": "claude", "model": "m", "purpose": "review"}]
+        result = self._screen(candidates, warn_fn=warnings.append)
+        self.assertEqual([c["key"] for c in result], ["cla"])
+        self.assertEqual(warnings, [])
 
 
 class TestFilterByAffinity(unittest.TestCase):

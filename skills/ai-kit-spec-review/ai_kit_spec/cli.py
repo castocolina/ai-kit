@@ -11,6 +11,7 @@ from ai_kit_spec.commands import (
     ResolvedReviewer,
     build_reviewer_command,
     build_reviewer_model_id,
+    execute_cli_error,
     render_reviewer_command,
 )
 from ai_kit_spec.config_io import (
@@ -1232,6 +1233,12 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
         return 0
 
     if args.command == "dispatch-execute":
+        # D-15 hardening: an explicit claude/grok executor choice is rejected before the prompt
+        # is read or any dispatch function is called -- nothing is spawned, ever.
+        rejection = execute_cli_error(args.cli)
+        if rejection:
+            print(f"ai-kit-spec: {rejection}", file=sys.stderr)
+            return 2
         if args.prompt_file == "-":
             prompt = sys.stdin.read()
         else:

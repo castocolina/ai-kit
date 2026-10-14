@@ -180,52 +180,6 @@ def _build_codex_execute_command(target_dir=None, effort=None, service_tier=None
     return " ".join(parts)
 
 
-def _build_grok_execute_command(target_dir=None, **_params):
-    """--sandbox workspace --cwd <target_dir> --always-approve -- confirmed live 2026-08-30: a
-    write inside target_dir succeeded, a write to an absolute path outside it failed with a real
-    "Permission denied (os error 13)". `--always-approve` is required for a headless run -- without
-    it grok stalls indefinitely on an unapproved tool-use permission prompt with no interactive
-    terminal to answer it (confirmed live: two prior attempts without this flag produced no file
-    writes and no error, just silence until the process was killed).
-
-    Unlike every other execute builder in this module, this one is wrapped in `sh -c '... "$(cat)"'`
-    -- grok's `-p`/`--single <PROMPT>` is a required VALUE, not a stdin reader (confirmed via
-    `grok --help`), but GSD's own cross_ai_delegation step only ever pipes the prompt via stdin
-    (`echo "$TASK_PROMPT" | ... ${CROSS_AI_CMD}`), never fills a `{prompt}` placeholder. This
-    wrapper bridges that gap: the outer pipe's stdin is captured by `$(cat)` inside the `sh -c`
-    string and handed to grok as its positional prompt argument -- confirmed live end-to-end with
-    a real piped prompt, the exact way GSD invokes this command.
-
-    CAVEAT, same class as codex's own: never pass a target_dir under /tmp expecting confinement --
-    not separately confirmed for grok's sandbox, but codex's own workspace-write sandbox has this
-    exact carve-out, and target_dir here is always a real project/worktree path in practice."""
-    quoted = _require_target_dir("grok", target_dir)
-    return (f"sh -c 'grok --sandbox workspace --cwd {quoted} -m {{model}} --always-approve "
-            f"--output-format plain -p \"$(cat)\"'")
-
-
-def _build_claude_execute_command(target_dir=None, **_params):
-    """`--restricted --permission-mode acceptEdits` -- confirmed live 2026-08-30: `--restricted`
-    ("confines the file tools to the working directories") plus `acceptEdits` (auto-approves file
-    edits so a headless run doesn't stall on an interactive permission prompt) genuinely confines
-    writes -- a write inside the working directory succeeded, a write to an absolute path outside
-    it was refused with the CLI's own real error naming the confining directory. `--restricted`
-    also strips Bash/PowerShell/REPL/WebFetch by design (per --help), which is fine here: this
-    dispatch only ever needs file-edit tools, never arbitrary command execution.
-
-    Unlike codex/grok, claude has no `-C`/`--cwd` flag to pass target_dir directly -- confinement
-    is anchored to the process's own working directory at launch, which is exactly why this
-    builder (like grok's) wraps the whole invocation in `sh -c 'cd <dir> && exec claude ...'`
-    rather than relying on whatever cwd GSD's own orchestrator happens to be running from.
-    `exec` replaces the shell so stdin (GSD's own prompt delivery mechanism, per `claude -p`'s
-    stdin-reading behavior -- see _build_claude_command's docstring) still reaches claude
-    directly. Confirmed live end-to-end with a real piped prompt, the exact way GSD invokes this
-    command."""
-    quoted = _require_target_dir("claude", target_dir)
-    return (f"sh -c 'cd {quoted} && exec claude -p --restricted --permission-mode acceptEdits "
-            f"--model {{model}} --output-format text'")
-
-
 def _build_cursor_agent_execute_command(target_dir=None, **_params):
     """NO real OS-level write confinement -- re-confirmed live 2026-08-30 even WITH the CLI's own
     `--sandbox enabled` flag (an earlier test only tried `--workspace`, a plain cwd default; this
@@ -268,24 +222,6 @@ def _build_opencode_execute_command(target_dir=None, **_params):
     return f"opencode run -m {{model}} --dir {quoted} --auto"
 
 
-# CLIs whose execute builder above is real and dispatchable but provides NO operating-system-level
-# write confinement -- accepted-risk decision, not an oversight (see each builder's own docstring
-# for the live re-tests that ruled out every confinement flag each CLI actually exposes). A caller
-# dispatching to one of these MUST append ai_kit_spec.execute_dispatch's own soft-confinement
-# guidance to the prompt -- it is the only mitigation that exists for these two.
-NO_HARD_SANDBOX_CLIS = {"cursor-agent", "opencode"}
-
-
-def _unimplemented_execute_command(cli_name):
-    def _builder(**_params):
-        raise ValueError(
-            f"no execute-mode (write-capable) command builder for {cli_name!r} yet -- "
-            f"mechanism not yet verified live (design spec open risk). Refusing rather "
-            f"than guessing at an untested invocation."
-        )
-    return _builder
-
-
 _COMMAND_BUILDERS = {
     (_REVIEW, "codex"): _build_codex_command,
     (_REVIEW, "claude"): _build_claude_command,
@@ -293,11 +229,33 @@ _COMMAND_BUILDERS = {
     (_REVIEW, "opencode"): _build_opencode_command,
     (_REVIEW, "cursor-agent"): _build_cursor_agent_command,
     (_EXECUTE, "codex"): _build_codex_execute_command,
-    (_EXECUTE, "grok"): _build_grok_execute_command,
-    (_EXECUTE, "claude"): _build_claude_execute_command,
     (_EXECUTE, "cursor-agent"): _build_cursor_agent_execute_command,
     (_EXECUTE, "opencode"): _build_opencode_execute_command,
 }
+
+# CLIs whose execute builder above is real and dispatchable but provides NO operating-system-level
+# write confinement -- accepted-risk decision, not an oversight (see each builder's own docstring
+# for the live re-tests that ruled out every confinement flag each CLI actually exposes). A caller
+# dispatching to one of these MUST append ai_kit_spec.execute_dispatch's own soft-confinement
+# guidance to the prompt -- it is the only mitigation that exists for these two.
+NO_HARD_SANDBOX_CLIS = {"cursor-agent", "opencode"}
+
+# The CLIs with a real, live-verified execute builder in the registry above. Derived, never
+# hand-maintained: deleting a registry entry automatically drops it from this set (and makes any
+# explicit choice of it a hard error via execute_cli_error, below). claude and grok were removed
+# on purpose (Phase 16.1 D-15): both builders nested `sh -c` and could not run under GSD's
+# no-shell word splitting.
+SUPPORTED_EXECUTE_CLIS = tuple(sorted(cli for kind, cli in _COMMAND_BUILDERS if kind == _EXECUTE))
+
+
+def execute_cli_error(cli) -> str | None:
+    """None when `cli` is a supported execute CLI (exact, case-sensitive match -- the same
+    convention as KNOWN_CLIS), otherwise the human-readable error naming the supported set.
+    Callers must fail before any spawn or config write when this returns a message."""
+    if cli in SUPPORTED_EXECUTE_CLIS:
+        return None
+    return (f"{cli!r} cannot be an execution CLI; supported execute CLIs: "
+            f"{', '.join(SUPPORTED_EXECUTE_CLIS)}")
 
 
 def _build_command(kind: str, cli: str, **params) -> str:
@@ -308,14 +266,15 @@ def _build_command(kind: str, cli: str, **params) -> str:
     simply unused by grok's builder rather than raising). Raises ValueError for a `(kind, cli)`
     pair with no registered builder at all — never falls back to a guessed shape — and for
     structural params a specific builder rejects as unsafe (e.g. cursor-agent's write-capable
-    review modes). A `cli` that IS registered for `kind` but whose builder itself always raises
-    (e.g. `_unimplemented_execute_command`'s placeholders above) is a different, intentional
-    case — that builder's own message explains why, not this function's."""
+    review modes). For `kind == execute`, an unregistered `cli` raises execute_cli_error's
+    message naming the supported execute CLIs -- an explicit claude/grok executor choice is a
+    hard error (D-15), never a fallback to another CLI."""
     builder = _COMMAND_BUILDERS.get((kind, cli))
     if builder is None:
+        if kind == _EXECUTE:
+            raise ValueError(execute_cli_error(cli))
         known = ", ".join(sorted(c for k, c in _COMMAND_BUILDERS if k == kind))
-        label = "command" if kind == _REVIEW else "execute-mode (write-capable) command"
-        raise ValueError(f"no {label} builder registered for cli={cli!r} (known {kind} CLIs: "
+        raise ValueError(f"no command builder registered for cli={cli!r} (known {kind} CLIs: "
                           f"{known})")
     return builder(**params)
 
