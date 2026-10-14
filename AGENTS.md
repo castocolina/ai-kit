@@ -126,14 +126,25 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 ## Testing
 
-- `make test` is the aggregate over four pyramid tiers, never a duplicated
-  unittest list: `test-unit` (in-process stdlib modules, plus
-  `tests.test_framework_profiles` under `uv`), `test-integration` (Textual
-  app / PTY-driven subprocesses), `e2e-test` (real git worktrees,
-  PTY-spawned wizard/setup, and `bash tests/test_install.sh`), and
-  `arch-test` (AST architecture-fitness via `tests/test_arch.py`). Run
-  `make test` before considering work done — the Python suite alone
-  doesn't cover installer behavior (fetch, symlink, wiring).
+- `make test` is the aggregate over four pyramid tiers, each a runner group:
+  `test-unit` runs `unit` under system python3 plus `unit-uv` under uv;
+  `test-integration` runs `integration`, the Textual app and PTY suites;
+  `e2e-test` runs `e2e`, the real git worktrees and memory checks, plus
+  `bash tests/test_install.sh`; `arch-test` runs `arch`. Run `make test`
+  before considering work done — the Python suite alone doesn't cover
+  installer behavior (fetch, symlink, wiring).
+- Every tier runs one subprocess per module, in parallel, through
+  `tools/run_unittest_parallel.py --group <name>`, never a sequential
+  `python3 -m unittest` list. A new `tests/test_*.py` joins the `unit` group
+  automatically. A module that needs uv, a PTY or Textual run, or must stay
+  out of `make validate` goes into the matching commented exception set in
+  the runner; a module that cannot run in parallel goes into an explicit,
+  commented exception set, never a silent sequential path.
+  `tests/test_gate_scope.py` enforces this.
+- Parallelism is a share of the available CPUs (`os.process_cpu_count()`,
+  then the affinity mask, then `os.cpu_count()`), capped at 40%.
+  `AI_KIT_TEST_CPU_SHARE` may lower the share, never raise it. Never
+  hardcode a worker or core count.
 - `make lint` — shellcheck + `py_compile`. `make validate` — the same
   pre-commit hooks that gate commits, run across all files via the
   per-hook single-tool targets (`ruff`, `pylint`, `pyright`, `vulture`,

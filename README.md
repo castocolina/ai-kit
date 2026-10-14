@@ -514,7 +514,7 @@ user's own `python3` with no dependencies. The lint/type toolchain below is
 
 ```bash
 make dev        # uv sync + install pre-commit hooks (sets up the dev env)
-make test       # full test suite on system python3 (real runtime fidelity)
+make test       # full suite in parallel, one subprocess per module, through tools/run_unittest_parallel.py (system python3 for the unit group)
 make lint       # shellcheck + py_compile (quick static checks)
 make validate   # the full quality gate (see below)
 ```
