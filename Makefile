@@ -4,6 +4,14 @@
 INSTALL_SH := tools/install.sh
 SETUP_PY   := tools/setup.py
 
+# BEGIN GENERATED test groups
+# arch: tests.test_arch
+# unit-uv: tests.test_framework_profiles
+# integration: tests.test_wizard_app tests.test_wizard_pty
+# e2e: tests.test_system_memory_e2e tests.test_worktree_e2e
+# unit: tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_gsd_spec_discuss tests.test_ai_kit_opencode_providers tests.test_ai_kit_project_rules_agents tests.test_ai_kit_project_rules_all tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_cicd tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_makefile tests.test_ai_kit_project_rules_precommit tests.test_ai_kit_rules_common tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_superpowers tests.test_ai_kit_usage_metrics tests.test_config_doctor tests.test_config_doctor_pty tests.test_external_segments tests.test_gate_scope tests.test_markdown_to_pdf tests.test_mermaid_style tests.test_run_unittest_parallel tests.test_setup tests.test_status_line tests.test_statusline_doctor tests.test_tool_substitution_hook
+# END GENERATED test groups
+
 .PHONY: install reconfigure uninstall doctor check test lint dev setup-env validate e2e-docker \
         test-unit test-integration e2e-test arch-test \
         py-compile pylint pyright ruff shellcheck vulture unittest unittest-wizard \
@@ -40,21 +48,21 @@ check:
 	bash $(INSTALL_SH) --check
 
 # In-process modules with no subprocess/PTY/container — the fast, pure-unit tier.
-# Runs under bare system python3 (stdlib-only, matching the runtime) except
-# test_framework_profiles, which needs PyYAML (uv's venv, not the system python3).
+# `unit` runs under bare system python3 (stdlib-only, matching the runtime);
+# `unit-uv` needs PyYAML, and the config-doctor pair needs Textual, both from uv.
 test-unit:
-	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_markdown_to_pdf tests.test_mermaid_style tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_superpowers tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_ai_kit_usage_metrics tests.test_ai_kit_project_rules_agents tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_gsd_spec_discuss tests.test_ai_kit_rules_common tests.test_ai_kit_project_rules_makefile tests.test_ai_kit_project_rules_precommit tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_cicd tests.test_ai_kit_project_rules_all
-	uv run python3 -m unittest tests.test_framework_profiles
+	python3 tools/run_unittest_parallel.py --group unit --runtime system
+	uv run python3 tools/run_unittest_parallel.py --group unit --group unit-uv --runtime uv
 
-# Multiple real components wired together (Textual app, PTY-driven subprocess)
-# without being a full install/E2E flow.
+# The `integration` group: Textual app and PTY-driven subprocesses wired
+# together, without being a full install/E2E flow.
 test-integration:
-	uv run python -m unittest tests.test_wizard_app tests.test_config_doctor_pty tests.test_config_doctor
+	uv run python tools/run_unittest_parallel.py --group integration
 
-# Genuine end-to-end flows: real git worktrees, PTY-spawned wizard/setup
-# subprocesses, and the shell-level install script.
+# The `e2e` group: real git worktrees and memory checks, plus the
+# shell-level install script.
 e2e-test:
-	uv run python -m unittest tests.test_worktree_e2e tests.test_wizard_pty tests.test_system_memory_e2e
+	uv run python tools/run_unittest_parallel.py --group e2e
 	bash tests/test_install.sh
 
 # AST architecture-fitness check (the runner's `arch` group) — no import/execution.

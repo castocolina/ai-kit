@@ -39,6 +39,10 @@ UNIT_UV_MODULES = frozenset({"tests.test_framework_profiles"})
 INTEGRATION_MODULES = frozenset({
     "tests.test_wizard_app",
     "tests.test_wizard_pty",
+})
+# Needs uv wherever it is grouped: the config-doctor pair stays in `unit`
+# because its gate-registration tests search the `unittest` hook entry.
+UV_MODULES = UNIT_UV_MODULES | frozenset({
     "tests.test_config_doctor_pty",
     "tests.test_config_doctor",
 })
@@ -71,6 +75,15 @@ def group_modules(discovered: list[str]) -> dict[str, list[str]]:
     }
     groups["unit"] = sorted(found - set().union(*EXPLICIT_GROUPS.values()))
     return groups
+
+
+def hook_groups() -> dict[str, list[str]]:
+    """What each validate hook runs. The uv-only unit modules stay on `unittest`."""
+    groups = group_modules(discover_modules())
+    return {
+        "unittest": groups["unit"] + groups["arch"],
+        "unittest-wizard": groups["unit-uv"] + groups["integration"],
+    }
 
 
 def stale_exception_names(discovered: list[str]) -> list[str]:
@@ -136,6 +149,13 @@ def _parse_groups(argv: list[str]) -> tuple[list[str] | None, str | None]:
 
 
 def _modules_for_groups(argv: list[str]) -> tuple[list[str] | None, str | None]:
+    runtime = None
+    if "--runtime" in argv:
+        where = argv.index("--runtime")
+        if where + 1 >= len(argv) or argv[where + 1] not in ("system", "uv"):
+            return None, "error: --runtime needs system or uv"
+        runtime = argv[where + 1]
+        argv = argv[:where] + argv[where + 2:]
     groups, error = _parse_groups(argv)
     if error or groups is None:
         return None, error
@@ -144,10 +164,30 @@ def _modules_for_groups(argv: list[str]) -> tuple[list[str] | None, str | None]:
     if stale:
         return None, "error: stale exception names: " + " ".join(stale)
     grouped = group_modules(discovered)
-    return [module for name in groups for module in grouped[name]], None
+    modules = [module for name in groups for module in grouped[name]]
+    if runtime == "system":
+        modules = [module for module in modules if module not in UV_MODULES]
+    elif runtime == "uv":
+        modules = [module for module in modules if module in UV_MODULES]
+    return modules, None
+
+
+def _emit_group_listing() -> int:
+    """Print one `group: module ...` line per group, for the generated listings."""
+    for name, names in group_modules(discover_modules()).items():
+        print(f"{name}: {' '.join(names)}")
+    for name, names in hook_groups().items():
+        print(f"hook {name}: {' '.join(names)}")
+    return 0
 
 
 def main(argv: list[str]) -> int:
+    if argv == ["--list-groups"]:
+        return _emit_group_listing()
+    # Names after `--` are the generated listing: discovery decides what runs,
+    # and the names keep the hook entry searchable by module.
+    if "--" in argv:
+        argv = argv[:argv.index("--")]
     if "--group" in argv:
         selected, error = _modules_for_groups(argv)
         if error or selected is None:
