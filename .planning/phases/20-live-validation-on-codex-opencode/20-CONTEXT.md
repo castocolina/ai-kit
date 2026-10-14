@@ -1,6 +1,6 @@
 # Phase 20: Live Validation on Codex + Opencode - Context
 
-**Gathered:** 2026-09-23
+**Gathered:** 2026-09-23 (interactive); updated 2026-10-14 (assumptions mode, after 20-SPEC.md)
 **Status:** Ready for planning
 
 <domain>
@@ -90,11 +90,74 @@ Cursor and pi are out of scope (Phases 21/22).
   - update the detection docstring label from "observed in session snapshots" to
     "live-verified";
   - drop whichever signal does not appear.
+  - **Refined 2026-10-14:** `CODEX_VERSION` has 0 hits in the codex 0.153.4 binary; its only hits
+    under `~/.codex/sessions` are the user's own `env | grep` probe. `CODEX_THREAD_ID` is a
+    shell-snapshot override in the binary and appears in 20 snapshots. Expected outcome:
+    `CODEX_THREAD_ID` confirmed, `CODEX_VERSION` dropped from `_RUNTIME_ENV_SIGNALS` and from
+    the 16.1 D-14 scrub list. `CODEX_THREAD_ID` stays scrubbed (gsd-core reads it as a
+    workstream key). The interactive run prints all `CODEX_*` names, names only. If
+    `CODEX_THREAD_ID` is also absent, codex env detection is empty and a replacement signal is
+    chosen from that names list.
 - **D-06:** The opencode lane from an opencode host:
   - determine whether `/gsd-review` self-skips the opencode lane on an opencode host, or whether
     it can be used intentionally (e.g. a different provider/model through the same CLI);
   - reflect the answer in `recommend`'s lane eligibility and in SKILL.md. Until settled, the
     spec's default stands: not recommended.
+
+### Added 2026-10-14 (assumptions mode, after 20-SPEC.md)
+- **D-07: "Planned == baked" is its own check.** The `GSD_RUNTIME=<host>` `resolve-model`
+  matrix cannot prove R5/R7.
+  - The installer bakes through `readGsdRuntimeProfileResolver`, whose runtime is the project
+    config's `runtime`, else `~/.gsd/defaults.json`'s, else null (bakes nothing). It never
+    reads `GSD_RUNTIME` (gsd-core 1.16.0 `install-model-override-resolver.cjs:172-197`).
+  - Scratch experiment: with this machine's global `runtime: "codex"` and no project
+    `runtime`, opencode agents bake bare `gpt-5.6-*` ids, which `opencode debug agent` parses
+    as `providerID=gpt-5.6-terra, modelID=""`.
+  - The chain recorded per agent: plan → project-local `resolve-model` → baked `model:` line →
+    `opencode debug agent <name>` (model-free; non-empty `providerID`/`modelID`, id in
+    `opencode models`). Codex: explicit `model_overrides` pins only, read from
+    `.codex/agents/gsd-*.toml` with `tomllib`.
+  - Baked values are compared only after the post-apply installer run (18 D-37). R1's
+    idempotency edge holds only for unchanged config.
+- **D-08: `runtime` is a managed key on opencode and codex** (amends 17 R5 and adds 17 D-23).
+  `recommend` emits `runtime: <host>` (`source: preset`). On codex the tier layer is labelled
+  "resolve-model only": `generateCodexAgentToml` embeds `model =` only for an explicit
+  `model_overrides` entry (#3241). Laya amend_both 0.90.
+- **D-09: Scratch installs run under a throwaway HOME** seeded with a copy of the real
+  `~/.gsd/defaults.json`.
+  - A `--local` install still runs `writeNonClaudeDefaults` (rewrites `~/.gsd/defaults.json`)
+    and `cleanupLegacyGsdCc` (scans `~/.config/opencode`, `~/.codex`) (`bin/install.js:6972-7014,
+    12234, 14360-14375`). On this machine the write is a no-op by luck.
+  - `GSD_TEST_MODE=1` is rejected: it also skips the opencode permission writer.
+  - 18 D-37's approval block must disclose these global writes (amended there).
+  - Laya isolated_home 0.44 (fb), TypeSafe 0.96.
+- **D-10: The "global config unchanged" prohibition is a semantic allowlist guard**, not a
+  directory checksum.
+  - Files: `~/.codex/{config.toml, agents, hooks.json}`,
+    `~/.config/opencode/{opencode.jsonc, agents, commands, skills, plugins}`,
+    `~/.gsd/defaults.json`.
+  - `config.toml` is compared with `tomllib` minus any `projects."<scratch path>"` table: the
+    codex TUI persists project trust there (`tui-project-trust-write`).
+  - opencode's own `package.json`/`bun.lock` refresh is excluded. The 20-SPEC prohibition row
+    is amended.
+- **D-11: The host is never a review lane** (settles D-06's policy half).
+  - gsd-core has no code-level self-skip: `SELF_CLI` is deterministic only for antigravity,
+    cursor and claude, and `auto` (LLM-judged) elsewhere (`workflows/review.md:126-149`).
+    `resolveReviewerSelection` takes no host input.
+  - `recommend` never proposes the host slug, with a test. A copied
+    `review.default_reviewers=["opencode"]` on an opencode host is flagged for replacement
+    (17 D-08). SKILL.md documents the manual `review.reviewer_instances` route as user-owned.
+  - The live run still records the mechanics both ways (`--opencode` and `default_reviewers`),
+    two trials each.
+  - Laya instance_after_proof 0.41 (fb), TypeSafe never_host_lane 0.98.
+- **D-12: GSD-generated paths are gitignored by prefix; baked output is never committed.**
+  - opencode: `.opencode/{gsd-core/, agents/gsd-*, commands/gsd-*, skills/gsd-*,
+    plugins/gsd-core.js, gsd-*.json}`; the `.codex/` equivalents.
+  - Codex agent TOMLs bake an absolute `gsd-core/` path; the opencode permission writer adds an
+    absolute allow and an unpinned `mcp.gsd`.
+  - A blanket ignore is wrong: opencode drops its own `.gitignore` into `.opencode/`, so the
+    dir is shared by design. curated-config only reports this; it never edits `.gitignore`.
+  - Answers D-03's open gitignore question. Laya prefix_ignore 0.50 (fb), TypeSafe 0.86.
 
 ### Claude's Discretion
 - The headless command templates.
@@ -145,6 +208,8 @@ Cursor and pi are out of scope (Phases 21/22).
 - The user's global opencode config (`~/.config/opencode/`) must stay untouched (D-03).
 - The codex sandbox may restrict writes outside the project. Scratch projects should live under
   a path codex can write to.
+- The v2 code (`inventory`, `recommend`, `apply`, the Phase 19 smoke script, `child_env`) is not
+  in the tree yet; the touch points above are contracts.
 
 </code_context>
 
@@ -162,6 +227,11 @@ Cursor and pi are out of scope (Phases 21/22).
 <deferred>
 ## Deferred Ideas
 
+- Open for research (2026-10-14): whether `-c 'projects."<scratch>".trust_level="trusted"'`
+  gives session-only codex trust, and whether project `.codex` agents load only after trust;
+  whether `CODEX_THREAD_ID` is present in the TUI shell and `codex exec`; the opencode
+  background `@opencode-ai/plugin` install inside scratch `.opencode/` dirs (a network side
+  effect); an upstream gsd-core issue about `--local` writing `~/.gsd/defaults.json`.
 - **Process-tree host detection** (walking parent PIDs for the nearest CLI) was considered and
   not chosen. Revisit only if env-signal ordering proves insufficient in real use.
 

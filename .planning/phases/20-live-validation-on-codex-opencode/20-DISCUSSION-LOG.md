@@ -47,3 +47,40 @@ constraint.
 
 ## Deferred Ideas
 - Process-tree host detection.
+
+# Update 2026-10-14 (assumptions mode)
+
+**Input:** `20-SPEC.md` (committed in `b7fc32c`) and the 2026-09-23 CONTEXT (D-01..D-06 kept).
+**Mode:** assumptions (`--analyze --all --batch`), jev screening, best over easy, CodeGraph.
+
+## Assumptions Presented
+
+The analyzer was `gsd-assumptions-analyzer` (sonnet), with 102 tool calls. It ran scratch
+experiments against the real gsd-core 1.16.0 modules under a temp HOME and ran no installer
+or model.
+
+| Assumption | Confidence | Evidence |
+|---|---|---|
+| Planned == baked is its own check | Confident | `install-model-override-resolver.cjs:172-197`; scratch bake experiment |
+| `runtime` must be a project managed key | Likely | `17-SPEC.md` R5; `bin/install.js:4139-4181` |
+| Scratch installs need an isolated HOME | Likely | `bin/install.js:6972-7014,12234,14360-14375` |
+| Global-config guard is semantic, not a checksum | Confident | codex TUI trust writes; opencode lockfile refresh |
+| `CODEX_VERSION` absent, `CODEX_THREAD_ID` present | Likely | binary strings; 20 session snapshots |
+| No code-level opencode self-skip | Likely | `workflows/review.md:126-149`; `review-reviewer-selection.cjs:214-300` |
+| Prefix-specific gitignore | Likely | absolute paths in baked TOMLs; opencode's own `.gitignore` |
+
+## jev screening
+
+| Item | Laya | TypeSafe | Outcome |
+|---|---|---|---|
+| A1 runtime key | amend_both 0.90 | – | D-08, 17 D-23 |
+| A2 HOME isolation | isolated_home 0.44 (fb) | isolated_home 0.96 | D-09 |
+| A3 host lane | instance_after_proof 0.41 (fb) | never_host_lane 0.98 | D-11 |
+| A4 gitignore | prefix_ignore 0.50 (fb) | prefix_ignore 0.86 | D-12 |
+
+## Live facts that changed the plan
+
+- The installer ignores `GSD_RUNTIME` and bakes from the project or global `runtime`. This
+  amends 17-SPEC R5 and adds 17 D-23.
+- A `--local` non-Claude install writes `~/.gsd/defaults.json`. This amends 18 D-37.
+- `CODEX_VERSION` is not in the codex binary. This annotates 16 D-02 and REQUIREMENTS SPEC-01.

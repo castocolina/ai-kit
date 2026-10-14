@@ -182,6 +182,14 @@ Phase 18 owns the selection rules.
   per-agent `model_overrides`, and its model-layer entries carry
   `effect unverified on pi (gsd-core registry: namedDispatch false)`.
 
+- **D-23: `runtime` is a managed key on opencode and codex (added 2026-10-14 from the Phase 20
+  discussion).** The gsd-core installer bakes agent models from the project `runtime`, else
+  `~/.gsd/defaults.json`'s, and ignores `GSD_RUNTIME`. With this machine's global
+  `runtime: "codex"`, opencode agents would bake codex ids. `recommend` emits
+  `runtime: <host>` (`source: preset`) on opencode and codex; codex tier entries carry
+  `effect: resolve-model only (codex bakes only explicit model_overrides)`. Laya amend_both
+  0.90.
+
 ### Claude's Discretion
 - The exact percentile per rigor level.
 - The plan.json schema details: top-level `schema_version`, inventory digest, and the entry

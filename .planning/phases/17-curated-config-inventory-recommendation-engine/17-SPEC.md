@@ -54,7 +54,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
      - `model_policy` in the project config is a conflict.
      - `model_policy` in `~/.gsd/defaults.json` is a conflict only when no project config exists (creating one copies it). With a project config present, gsd-tools ignores the global file, so it is listed under `info` as inert.
      - A project `resolve_model_ids: "omit"` on a claude host is a conflict: every agent without a per-agent override then resolves to `model: ""` and inherits the session model (verified 2026-10-14; `config-new-project` copies it from global defaults).
-     - A project `runtime` that differs from the host is a conflict. A global `runtime` is never a conflict: gsd-tools fills an absent project runtime from env or an install marker, never from global defaults. It is listed under `info`.
+     - A project `runtime` that differs from the host is a conflict. A global `runtime` is never a `resolve-model` conflict: gsd-tools fills an absent project runtime from env or an install marker, never from global defaults. It is listed under `info`. *(amended 2026-10-14, 20 D-08: the installer's model bake does read the global `runtime` when the project has none, so `recommend` writes project `runtime: <host>` as a managed key on opencode and codex — 17 D-23.)*
    - Acceptance: fixtures for policy-in-project, policy-in-global with and without a project config, a project runtime mismatch, and a global runtime each yield the expected entry.
 
 6. **Project facts**: the instruction file is found by its real name.

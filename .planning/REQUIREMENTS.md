@@ -12,7 +12,7 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 
 ### ai_kit_spec Extensions
 
-- [ ] **SPEC-01**: `detect-current-runtime` identifies pi (`PI_CODING_AGENT`) and codex (`CODEX_THREAD_ID`/`CODEX_VERSION`) in addition to opencode/cursor/claude, with precedence pi > opencode > cursor > codex > claude when several signals are set
+- [ ] **SPEC-01**: `detect-current-runtime` identifies pi (`PI_CODING_AGENT`) and codex (`CODEX_THREAD_ID`/`CODEX_VERSION`) in addition to opencode/cursor/claude, with precedence pi > opencode > cursor > codex > claude when several signals are set *(2026-10-14: `CODEX_VERSION` is absent from the codex 0.153.4 binary and is expected to be dropped by Phase 20 D-05)*
 - [ ] **SPEC-02**: `detect-runtimes` enumerates codex (`codex debug models`) and claude (hardcoded aliases + full ids from the catalog + dated fallback), invoking real binaries (never shell functions/aliases); parsers covered by fixtures captured from real CLI output (pi moved to SPEC-05 per Phase 16 D-06)
 - [ ] **SPEC-03**: Model catalog entries carry optional `image_input` and populated `reasoning_modes` (existing field, per 16 D-08); cache files without them still load
 - [ ] **SPEC-05**: `detect-runtimes` enumerates pi (`pi --list-models`) with a fixture-backed parser, and `pi` is a known CLI (deferred from SPEC-02, Phase 16 D-06; moved from Phase 22 to Phase 18 on 2026-10-14, because cross-AI execution prefers pi)

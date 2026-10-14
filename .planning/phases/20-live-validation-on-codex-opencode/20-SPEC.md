@@ -164,7 +164,7 @@ env signal, and the opencode lane from an opencode host.
 
 | Prohibition (must-NOT statement) | Requirement | Status | Verification / Reason |
 |----------------------------------|-------------|--------|------------------------|
-| MUST NOT modify the user's global opencode or codex configuration | R5 | resolved | test (checksum before/after in the smoke script) |
+| MUST NOT modify the user's global opencode or codex configuration | R5 | resolved | test (semantic allowlist guard before/after in the smoke script; amended 2026-10-14, 20 D-10) |
 | MUST NOT write a secret or an env-variable value into the evidence | R3 | resolved | judgment |
 
 ## Ambiguity Report

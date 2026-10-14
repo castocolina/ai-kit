@@ -335,6 +335,9 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
     Claude install, so `--local` is always explicit (`install.js:872-873,14816-14850`).
   - The approval block prints each argv, its cwd, purpose and alternative, says `npx -y`
     downloads and runs an npm package, and names `pnpm dlx` as the equivalent.
+  - *(amended 2026-10-14, 20 D-09)* It also discloses that a non-Claude `--local` install
+    rewrites `~/.gsd/defaults.json` (`runtime`, `resolve_model_ids`) and scans home host dirs
+    for legacy artifacts unless `--no-legacy-cleanup` is passed.
 - **D-38: Effort sync** runs only when an `effort.*` key changed and the host is claude, codex
   or opencode. Its argv: `node <project-local gsd-tools> effort sync --apply --runtime <host>
   --config-dir <project>/<host dir> --project-dir <project>`.

@@ -41,6 +41,8 @@ detection entry is deferred to their own phases (21 and 22). See D-06 and `<defe
   - `CODEX_THREAD_ID` was observed in real codex session shell snapshots under
     `~/.codex/sessions` (20 occurrences).
   - `CODEX_VERSION` stays; it was source-inspected in 01.2.
+    *(amended 2026-10-14, 20 D-05: the shipped codex 0.153.4 binary has no `CODEX_VERSION`
+    string; Phase 20's live check is expected to drop it.)*
   - Drop `CODEX_SANDBOX` from the spec: it was never observed.
   - The codex label stays "not live-verified" until Phase 20 (EVAL-04) confirms it from a real
     codex host.
