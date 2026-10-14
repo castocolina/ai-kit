@@ -1788,6 +1788,68 @@ class TestRecipeAndUnwire(unittest.TestCase):
             data = json.load(f)
         self.assertEqual(data["statusLine"]["command"], "/usr/bin/mybar")
 
+    # --- D-22: uninstall writes atomically, never clobbers unreadable files ---
+
+    def _ai_kit_settings(self, settings, install_dir, extra=None):
+        data = {"statusLine": {"type": "command",
+                               "command": "python3 -S " + install_dir
+                                          + "/tools/status-line.py"}}
+        if extra:
+            data.update(extra)
+        with open(settings, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+    def test_unwire_atomic_replace_and_byte_format(self):
+        settings = os.path.join(self.tmp, "settings.json")
+        install_dir = os.path.join(self.tmp, "ai-kit")
+        self._ai_kit_settings(settings, install_dir, extra={"theme": "x"})
+        with mock.patch.object(setup.os, "replace",
+                                        wraps=os.replace) as spy:
+            setup.unwire_statusline(settings, install_dir, dry=False)
+        self.assertEqual(spy.call_count, 1)
+        self.assertEqual(spy.call_args[0][1], os.path.realpath(settings))
+        with open(settings, "rb") as f:
+            self.assertEqual(f.read(),
+                             json.dumps({"theme": "x"}, indent=2).encode("utf-8")
+                             + b"\n")
+
+    def test_unwire_absent_settings_writes_nothing(self):
+        settings = os.path.join(self.tmp, "settings.json")
+        install_dir = os.path.join(self.tmp, "ai-kit")
+        with mock.patch.object(setup.os, "replace", wraps=os.replace) as spy:
+            setup.unwire_statusline(settings, install_dir, dry=False)
+        spy.assert_not_called()
+        self.assertFalse(os.path.exists(settings))
+
+    def test_unwire_unparseable_or_nonobject_writes_nothing(self):
+        install_dir = os.path.join(self.tmp, "ai-kit")
+        cases = [b"", b"{not json", b"[1, 2]"]
+        for raw in cases:
+            settings = os.path.join(self.tmp, "s.json")
+            with open(settings, "wb") as f:
+                f.write(raw)
+            with mock.patch.object(setup.os, "replace",
+                                            wraps=os.replace) as spy:
+                setup.unwire_statusline(settings, install_dir, dry=False)
+            spy.assert_not_called()
+            with open(settings, "rb") as f:
+                self.assertEqual(f.read(), raw)
+
+    def test_detect_statusline_unset_for_absent_and_unreadable(self):
+        from types import SimpleNamespace
+        absent = SimpleNamespace(settings=os.path.join(self.tmp, "nope.json"),
+                                 status_line="sl.py")
+        self.assertEqual(setup.detect_statusline(absent)["state"], "unset")
+        bad = os.path.join(self.tmp, "bad.json")
+        with open(bad, "w") as f:
+            f.write("{not json")
+        unreadable = SimpleNamespace(settings=bad, status_line="sl.py")
+        self.assertEqual(setup.detect_statusline(unreadable)["state"], "unset")
+
+    def test_non_atomic_json_helpers_are_gone(self):
+        self.assertFalse(hasattr(setup, "_write_json"))
+        self.assertFalse(hasattr(setup, "_read_json"))
+
 
 class TestCmdInstall(unittest.TestCase):
     def setUp(self):

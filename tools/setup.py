@@ -1372,26 +1372,6 @@ def _install_root(entries):
     return ""
 
 
-def _read_json(path):
-    """Load a JSON object, or {} on any error / non-dict (mirrors install.sh)."""
-    if not os.path.isfile(path):
-        return {}
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (ValueError, OSError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _write_json(path, data):
-    """Write JSON with a 2-space indent + trailing newline, creating parents."""
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-
-
 JSON_STATE_ABSENT = "absent"
 JSON_STATE_OK = "ok"
 JSON_STATE_UNREADABLE = "unreadable"
@@ -1409,10 +1389,11 @@ CURSOR_HOOK_MARKER = os.path.join("tools", "hooks", "cursor_session_start.py")
 def _read_json_checked(path):
     """Three-state JSON reader: absent / ok-dict / unreadable.
 
-    Distinct from `_read_json`, which collapses all three into `{}`. Treating
-    that `{}` as "fresh file, safe to create" would replace an existing but
-    unparseable settings.json with a brand-new file containing only ai-kit's
-    entry — the corruption PROJECT.md's core value forbids.
+    Collapsing all three states into `{}` would treat a corrupted file as
+    "fresh file, safe to create" and replace an existing but unparseable
+    settings.json with a brand-new file containing only ai-kit's entry — the
+    corruption PROJECT.md's core value forbids. Pair it with
+    `_atomic_write_json`, never with a plain open-for-write.
     """
     if not os.path.isfile(path):
         return JSON_STATE_ABSENT, {}
@@ -1746,7 +1727,9 @@ def detect_statusline(paths):
 
     statusLine may be a bare string or an object with a string "command" (both
     shapes are supported by Claude Code).  Writes nothing."""
-    data = _read_json(paths.settings)
+    state, data = _read_json_checked(paths.settings)
+    if state != JSON_STATE_OK:
+        data = {}
     # _statusline_command returns "" for unset and None for an unsupported
     # shape; both are falsy, so both fall through to "unset" below.
     cur_cmd = _statusline_command(data.get("statusLine"))
@@ -1775,8 +1758,15 @@ def copy_recipe_if_absent(sample, config_toml, dry):
 
 def unwire_statusline(settings, install_dir, dry):
     """Uninstall: remove the statusLine ONLY if it points into install_dir (never
-    clobber a foreign one). Preserves all other settings keys."""
-    data = _read_json(settings)
+    clobber a foreign one). Preserves all other settings keys.
+
+    Reads through `_read_json_checked` and writes through `_atomic_write_json`
+    (D-22): an absent, empty or unparseable settings.json is never written, and
+    the rewrite is a same-directory os.replace — the old bytes survive intact
+    until the new content is complete."""
+    state, data = _read_json_checked(settings)
+    if state != JSON_STATE_OK:
+        return
     cur = data.get("statusLine")
     cur_cmd = cur.get("command", "") if isinstance(cur, dict) else ""
     if not (cur_cmd and _is_inside_str(install_dir, cur_cmd)):
@@ -1785,7 +1775,10 @@ def unwire_statusline(settings, install_dir, dry):
         print("would clear ai-kit statusLine")
         return
     data.pop("statusLine", None)
-    _write_json(settings, data)
+    try:
+        _atomic_write_json(settings, data)
+    except OSError as exc:
+        print(f"warn: failed to write {settings}: {exc}", file=sys.stderr)
 
 
 def _entry_is_ours_nested(entry, marker):

@@ -34,7 +34,7 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   `tools/setup.py`) — never a silent runtime import.
 - Every write to a runtime's config file (opencode.jsonc, Codex TOML, Claude
   JSON, ai-kit's own `settings.json` wiring) is atomic (`tempfile.mkstemp()`
-  + `os.replace()`), reusing `_read_json()`/`_write_json()`. JSONC surgical
+  + `os.replace()`), reusing `_read_json_checked()`/`_atomic_write_json()`. JSONC surgical
   edits preserve every other byte untouched — comments, formatting,
   unrelated entries.
 - No diagnostic, detection, or catalog result is presented with more
