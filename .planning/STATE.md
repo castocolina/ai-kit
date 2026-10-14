@@ -3,13 +3,13 @@ gsd_state_version: "1.0"
 milestone: v1.3
 milestone_name: GSD Curated Config v2
 current_phase: "16.1"
-current_phase_name: hardening
+current_phase_name: Hardening
 status: executing
 stopped_at: Phases 25-27 spec + discuss done (CONTEXT committed); 26-SPEC R2 spike can run early; planning follows dependency order (25 after 18.1, 26 after 25, 27 after 26)
-last_updated: "2026-10-14T21:35:12.616Z"
+last_updated: "2026-10-14T21:37:43.485Z"
 last_activity: 2026-10-14
-last_activity_desc: Phase 16 execution started
-state_head: dd90cafd507beeef68241a6f96b542e5cfe72716
+last_activity_desc: Phase 16.1 execution started
+state_head: accf43ce7d9edd24dcc01277a189a0d59b72f440
 progress:
   total_phases: 14
   completed_phases: 0
@@ -25,14 +25,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-23)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 16 — ai_kit_spec Extensions
+**Current focus:** Phase 16.1 — Hardening
 
 ## Current Position
 
-Phase: 16.1 (hardening) — READY TO EXECUTE
-Plan: 1 of 6
-Status: Ready to execute
-Last activity: 2026-10-14 — Phase 16 execution started
+Phase: 16.1 (Hardening) — EXECUTING
+Plan: 1 of 31
+Status: Executing Phase 16.1
+Last activity: 2026-10-14 — Phase 16.1 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
