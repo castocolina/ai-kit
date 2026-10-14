@@ -141,6 +141,10 @@ HOW. The skill never runs the prompt it generates.
   - Research item 3 decides.
   - TypeSafe orchestrator_runs_task_dispatch 0.82, Laya inline_in_plan_subagent 0.44 (fb).
     **Ledger for uz:** the no-nesting branch changes the SPEC's literal "one subagent per plan".
+  - **Refined 2026-10-14 (uz):** the orchestrator is the user-facing session (the one that got
+    the first prompt), and it can launch subagents, so no nesting is needed. The prompt tells
+    the orchestrator to dispatch plan work to subagents and to decide by its own judgment
+    whether to reuse a subagent or start a fresh one. Research item 3 no longer decides D-09.
 - **D-16: The readiness check proves three things without calling any model.**
   - The runner: `workflow.cross_ai_execution` is true, `cross_ai_command` is set, and its
     executable and script exist.
@@ -261,7 +265,7 @@ Research questions for `gsd-phase-researcher`:
    counted in characters?
 2. Does the whole multi-paragraph rest of a message become `$ARGUMENTS`? What are the other
    hosts' equivalents?
-3. Is the Agent tool unavailable at depth 1 in Claude Code 2.1.299? This decides D-09.
+3. ~~Is the Agent tool unavailable at depth 1 in Claude Code 2.1.299? This decides D-09.~~ *(moot 2026-10-14, D-09 refined)*
 4. What are codex 0.162.1's `/goal` syntax and its loop or schedule primitives?
 5. Does original GSD have `/gsd-autonomous`, `runtime-identity` and `verification.status`?
 6. What do pytest, jest, vitest, Playwright, Cypress, `go test` and `cargo test` print or

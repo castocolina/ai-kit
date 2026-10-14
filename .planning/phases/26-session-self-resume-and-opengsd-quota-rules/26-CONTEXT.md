@@ -164,6 +164,9 @@ must confirm.
   bypassed, read from `/proc` cmdline). The other is to require an explicit mode. TypeSafe
   explicit_at_arm 0.81 locks the explicit-and-printed part; the default is a safety call for
   uz and does not block the spike.
+  - **Refined 2026-10-14 (uz):** the default copies the original session's permission flags
+    (read from the host process's command line at `arm`), recorded in the state file and
+    printed by `arm` and `status`; `--permission-mode` on `arm` overrides it.
 
 ### The rules skill
 - **D-17: The identity check is a separate probe, `ai_kit_rules_common/gsd_identity.py`.**
@@ -283,7 +286,7 @@ The spike must measure:
 <deferred>
 ## Deferred Ideas
 
-- **For uz:** the default permission mode for an unattended resume (D-21).
+- ~~**For uz:** the default permission mode for an unattended resume (D-21).~~ *(resolved 2026-10-14: copy the original session's flags)*
 - Research questions:
   - Does `claude --resume <id>` look up sessions across projects and worktrees?
   - What exactly do `--bg --resume` and `claude agents` do?

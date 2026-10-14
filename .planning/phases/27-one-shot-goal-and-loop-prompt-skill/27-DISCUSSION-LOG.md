@@ -92,3 +92,7 @@ answer contradicted the evidence, so no second opinion was needed. Summaries onl
 ## External Research
 
 The open questions are listed in CONTEXT `<deferred>`.
+
+# Update 2026-10-14 (uz answer)
+
+- D-09: the orchestrator is the user-facing session and can launch subagents; reusing a subagent or starting a fresh one is its judgment. SPEC R4 amendment superseded; research item 3 moot.

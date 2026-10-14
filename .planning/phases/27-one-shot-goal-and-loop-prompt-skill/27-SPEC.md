@@ -110,7 +110,7 @@ prompt for a separate agent session. The prompt carries everything needed to fin
      that depend on it; the rest continue. The orchestrator owns AGENTS.md compliance.
    - Acceptance: a fixture with a dependency chain and an independent plan yields an order and
      stop-scope that match.
-   - *Amended 2026-10-14 (27 D-08, D-09):* superpowers plans have no dependency field; ai-kit reads an optional `**Depends on:**` line (backticked plan files become edges; free text is asked inside the work-set question). Whether a per-plan subagent can itself dispatch per-task subagents is open research; where it cannot, the orchestrator dispatches each plan's tasks itself, plan by plan (provisional, ledgered for uz).
+   - *Amended 2026-10-14 (27 D-08, D-09):* superpowers plans have no dependency field; ai-kit reads an optional `**Depends on:**` line (backticked plan files become edges; free text is asked inside the work-set question). ~~Whether a per-plan subagent can itself dispatch per-task subagents is open research; where it cannot, the orchestrator dispatches each plan's tasks itself, plan by plan (provisional, ledgered for uz).~~ *(superseded 2026-10-14 by uz, 27 D-09)* The orchestrator is the user-facing session; it dispatches plan work to subagents and decides by its own judgment whether to reuse one or start a fresh one.
 
 5. **OpenGSD cross-AI** (GPS-02).
    - Current: none.

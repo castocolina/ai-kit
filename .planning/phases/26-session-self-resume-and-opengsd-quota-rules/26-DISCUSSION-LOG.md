@@ -90,3 +90,7 @@ answers that contradicted the evidence got a TypeSafe `--second-opinion`. Summar
 ## External Research
 
 Open questions and the spike list are in CONTEXT `<specifics>` and `<deferred>`.
+
+# Update 2026-10-14 (uz answer)
+
+- D-21 default: copy the original session's permission flags (refined in CONTEXT).
