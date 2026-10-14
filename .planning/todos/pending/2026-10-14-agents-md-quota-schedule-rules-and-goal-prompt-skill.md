@@ -82,3 +82,23 @@ Others (NOT verified against official docs):
 OS fallback (general knowledge): cron, systemd timers with `Persistent=true`, or `at` running `claude -p --continue`, `codex exec` or `opencode run`. This survives session death and reboot, but retry on quota failure must live in the script.
 
 Key takeaway: in-session primitives die with the process. Anything that must survive quota exhaustion or session death needs an OS timer or a cloud routine. The skill should pick the primitive by what survives, and say so in the generated prompt.
+
+## Clarification (user, 2026-10-14): two distinct quota mechanisms (do not conflate)
+
+The skill and the AGENTS.md directives must keep these separate; each has its own trigger and its own detection.
+
+### A. Session resume (main agent's own quota)
+
+- Applies to the orchestrating session itself. The main agent creates a detached wake-up mechanism (hourly) that re-enters this same session, so work resumes after its own quota runs out.
+- Example: created now, quota hit at +15 min, session usable again at +45 min; the wake-up must act on this session (e.g. `claude -p --continue`/`--resume`, or an in-session primitive when it outlives the stall).
+- Constraint from the research above: in-session primitives die with the process; prefer an OS timer or cloud routine so the wake-up survives the stall. Which one is detected per host.
+
+### B. Subprocess quota failure (cross-AI child: pi / opencode / cursor / codex)
+
+- Applies when the orchestrator spawns a child agent CLI with a timeout (e.g. 30 min for work that takes about 25).
+- Two cases to handle:
+  1. Active watching: the limit-reached message is seen in the live stdout/stderr, so react immediately.
+  2. Post-hoc: the child hit its timeout, or exited, having done only part of the work. Inspect stdout and stderr for quota, limit-reached or rate-limit patterns before treating it as a plain failure.
+- Policy: on a quota signal, retry every 10 min for up to 4 h, until the error stops. Beyond 4 h, stop and report; never loop forever.
+- The retry must resume or re-dispatch only the unfinished work, and must check the working tree first, since the child may have left partial edits.
+- Needs a per-CLI table of quota/limit message patterns (the todo's "interpret these different messages"); build it from observed outputs rather than guesses, and flag unverified patterns.
