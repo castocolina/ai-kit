@@ -57,6 +57,10 @@
       "opencode-glm": {
         "cli": "opencode",
         "model": "zai/glm-5.3"
+      },
+      "opencode-sol": {
+        "cli": "opencode",
+        "model": "openai/gpt-6.1-sol"
       }
     },
     "default_reviewers": [
