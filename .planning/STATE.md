@@ -5,13 +5,13 @@ milestone_name: GSD Curated Config v2
 current_phase: 16
 current_phase_name: ai-kit-spec-extensions
 status: verifying
-stopped_at: Phase 24 plan 01 shipped (ai-kit-gsd-spec-discuss, skill-judge 106/120); ledger pending user review; 16.1-19 SPEC edge floors need regeneration before planning
-last_updated: "2026-10-14T12:29:36.904Z"
+stopped_at: Phases 25-27 spec + discuss done (CONTEXT committed); 26-SPEC R2 spike can run early; planning follows dependency order (25 after 18.1, 26 after 25, 27 after 26)
+last_updated: "2026-10-14T14:24:28.773Z"
 last_activity: 2026-09-24
 last_activity_desc: Phase 16 execution started
-state_head: f6e055dc4058ba7ca20ec5af1b6ded8c719ed53e
+state_head: 378e5c0312afa7f56b1f6ef7420b7122fb0ad312
 progress:
-  total_phases: 11
+  total_phases: 14
   completed_phases: 0
   total_plans: 7
   completed_plans: 7
@@ -362,6 +362,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-14T12:29:36.882Z
-Stopped at: Phase 24 plan 01 shipped (ai-kit-gsd-spec-discuss, skill-judge 106/120); ledger pending user review; 16.1-19 SPEC edge floors need regeneration before planning
-Resume file: .planning/phases/24-spec-and-discuss-chain-skill/24-01-SUMMARY.md
+Last session: 2026-10-14T14:24:28.750Z
+Stopped at: Phases 25-27 spec + discuss done (CONTEXT committed); 26-SPEC R2 spike can run early; planning follows dependency order (25 after 18.1, 26 after 25, 27 after 26)
+Resume file: .planning/phases/25-quota-aware-cross-ai-subprocess-supervision/25-CONTEXT.md
