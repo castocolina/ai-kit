@@ -347,7 +347,8 @@ downstream depends on it)
 **Goal**: Ship a Cursor CLI status line next to the Claude Code one. Split `tools/status-line.py`
 into a host-neutral `common_statusline.py`, one module per host (`claude_statusline.py`,
 `cursor_statusline.py`) and an isolated `cursor_quota.py` (the only network and credential code),
-with thin `claude-status-line.py` / `cursor-status-line.py` entries. The Cursor line shows model +
+with thin `claude-status-line.py` / `cursor-status-line.py` entries (module names are shorthand: the
+layout follows the owner-reviewed role split, 23 D-02). The Cursor line shows model +
 context and three separate quota segments: API usage, included usage (auto + models), and extra
 (on-demand) usage against its ceiling, plus the billing-cycle reset. Every quota segment on both
 hosts uses one shared proximity gauge: spend % vs elapsed % of its window/cycle, bands of 5 / 10 /
@@ -428,6 +429,23 @@ implementation. Coordinate with `worktree-context-tools-manager-plan1`
 status-line step). Candidate rows to add later: the Playwright MCP Chrome path
 on Bazzite. Rewritten 2026-10-13 from the former "shared core for a CLI
 variant" note, whose goal (engine not coupled to the TUI) is already met.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.2: Cursor hooks path ignores CURSOR_CONFIG_DIR (BACKLOG)
+
+**Goal:** [Captured for future planning] `tools/setup.py`'s single `Paths.cursor_dir`
+(`CURSOR_CONFIG_DIR` or `~/.cursor`) is used for Cursor hook wiring, but the Cursor CLI
+(2026.10.01 bundle) always reads user hooks from `~/.cursor/hooks.json` and ignores both
+`CURSOR_CONFIG_DIR` and `XDG_CONFIG_HOME`. When `CURSOR_CONFIG_DIR` is set, ai-kit writes hooks
+where the CLI never looks. Resolve the hooks path separately from the config dir (Phase 23 D-21
+adds the config-dir resolver for the status line), re-verify against current Cursor docs, and
+check Phase 21's `cursor-agents` destination against the same split. Found by the Phase 23
+assumptions analysis, 2026-10-14.
 **Requirements:** TBD
 **Plans:** 0 plans
 

@@ -221,6 +221,9 @@ Extend `tests/test_arch.py` (never bypass it):
   `cursor_payload` fall back to the common terminal-size probe. Probed
   terminal width necessarily overestimates the space available when
   `padding` is configured.
+  *(Amended 2026-10-14, 23 D-03: the 2026.10.01 bundle sets
+  `render_width_chars = max(0, stdout.columns - 4)`, so Claude's `RIGHT_MARGIN` is not applied
+  again; the Phase 23 spike confirms the Cursor margin.)*
 - Ignored in the first cut: `autorun`, `vim`, `session_name`, `worktree`
   (the git probe already covers worktrees), `output_style`.
 
@@ -249,6 +252,8 @@ Extend `tests/test_arch.py` (never bypass it):
   - `disabled`: dim "on-demand off".
   - `fixed`: `$used / $ceiling`; color ramp driven by `used / ceiling`
     (closer to the ceiling is hotter). This is NOT the pace ramp.
+    *(Superseded 2026-10-14, 23 D-08: the ROADMAP's shared gauge applies — used/ceiling % against
+    billing-cycle elapsed %, with the 5/10/15 bands.)*
   - `unlimited`: `$used` with "no cap", no ramp.
   - `unavailable`: hidden (doctor explains).
   - Highlight state: included quota exhausted (`total_percent_used >= 100`)

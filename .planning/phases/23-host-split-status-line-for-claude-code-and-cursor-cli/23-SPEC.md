@@ -52,6 +52,7 @@ The phase delivers three parts in order:
    - Current: `tools/status-line.py`, about 141 top-level definitions.
    - Target: a table of every top-level definition with its target module, its reason (host-neutral versus Claude-only data or semantics) and its fate (reused, generalized, deleted). A definition is host-neutral only if neither its data source nor its logic names a host.
    - Acceptance: the table covers 100% of the AST's top-level definitions (checked by a script) and is committed before Part A planning closes.
+   - *Amended 2026-10-14 (23 D-01):* "definition" includes the 41 module-level assignments (`SEGMENTS`, `LAYOUT`, `PINNED`, the effort and ramp tables), so the table has 182 rows with the 141 def/class rows as a subtotal.
 
 2. **Split** (STL-01).
    - Current: one file.
@@ -70,18 +71,18 @@ The phase delivers three parts in order:
      - `setup.py`'s statusline refresh rewrites a Claude `statusLine.command` that points at ai-kit's old script, idempotently and atomically.
      - It moves `ai-kit/statusline.toml` to `claude-statusline.toml` when the destination is absent; when both exist, it warns and changes nothing.
      - A foreign command is untouched.
-     - Every reference is updated: `rg "status-line\.py|statusline\.toml"` returns only migration code and history.
+     - Every reference is updated: `rg "status-line\.py|statusline\.toml"` returns only migration code and history. *(Amended 2026-10-14, 23 D-04: the check is the anchored `rg -P '(?<![\w-])(status-line\.py|statusline\.toml)'`, so `claude-status-line.py` does not match, with the history allowlist `.planning/**`, `docs/superpowers/**`, `docs/prds/**`.)*
    - Acceptance: upgrade-path tests (old to new, second run is a no-op, both-present warns, foreign untouched).
 
 4. **Shared gap gauge** (STL-02).
    - Current: the Claude quota windows use it.
    - Target: one gauge function in `common_*` colors every quota segment on both hosts. It compares spend % against elapsed % of the window or cycle (bands ≤5 green, <11 yellow, 11–15 orange, >15 red) and keeps the `+`/`-` sign.
-   - Acceptance: Claude renders are unchanged. Cursor segments use the same function (an import test) with cycle-based elapsed time.
+   - Acceptance: Claude renders are unchanged. Cursor segments use the same function (an import test) with cycle-based elapsed time. *(Amended 2026-10-14, 23 D-09: each Cursor segment declares its own window — the included-usage period for included and API, the billing cycle for extra; an underivable window renders neutral with no sign.)*
 
 5. **Spike before Part B planning** (STL-04).
    - Current: facts from the bundle only.
    - Target:
-     - Capture one real Cursor statusLine payload. This edits the real `~/.cursor/cli-config.json`, so it needs the user's explicit approval, an atomic backup and a verified restore.
+     - Capture one real Cursor statusLine payload. This edits the real `~/.cursor/cli-config.json`, so it needs the user's explicit approval, an atomic backup and a verified restore. *(Amended 2026-10-14, 23 D-14: the capture runs `cursor-agent` with `CURSOR_CONFIG_DIR` pointing at a scratch copy, so the real file is never written. The CLI rewrites its own config during use, so a byte-identical restore is unreliable. Approval is still needed: the run reads the real token through `auth.json` and consumes quota.)*
      - Call the three Dashboard methods from a throwaway script under `./tmp/` and record units and on-demand classification.
      - Measure call latency (p50/p95) and the real update cadence, including a kill by the next update.
      - Choose an inline fetch with a cache, or a background refresher, from the data.
@@ -157,7 +158,7 @@ The phase delivers three parts in order:
 ## Constraints
 
 - Runtime code stays stdlib-only, and network code exists only in `cursor_quota.py`.
-- Any write to the real `~/.cursor/cli-config.json` (spike or setup) needs the user's approval, with an atomic backup and restore.
+- Any write to the real `~/.cursor/cli-config.json` (spike or setup) needs the user's approval, with an atomic backup and restore. The spike avoids it entirely (D-14); setup re-reads and re-classifies immediately before its atomic write (D-23).
 - Never use real configs or tokens as fixtures; real Dashboard responses are redacted.
 - The hard-rename upgrade gap is accepted (owner decision) and is not reopened.
 
@@ -198,7 +199,7 @@ The phase delivers three parts in order:
 | adjacency | R4 | ✅ covered | A gap of exactly 5 is green, 11 orange, 15 orange, 15.01 red |
 | empty | R4 | ✅ covered | An uncomputable elapsed % renders white with no sign |
 | ordering | R4 | 🧪 backstop | The sign is applied after rounding the display, color on the raw value |
-| idempotency | R5 | ✅ covered | The restore leaves `cli-config.json` byte-identical to the backup |
+| idempotency | R5 | ✅ covered | ~~The restore leaves `cli-config.json` byte-identical to the backup~~ *(superseded, D-14)* The real `cli-config.json` is never written; the scratch dir is deleted after the capture |
 | concurrency | R5 | ✅ covered | The kill-by-next-update test is part of the spike |
 | adjacency | R6 | ✅ covered | Included and extra segments render independently when one is absent |
 | empty | R6 | ✅ covered | A payload with no `model.param_summary` omits it |
@@ -206,7 +207,7 @@ The phase delivers three parts in order:
 | concurrency | R6 | 🧪 backstop | Render reads the cache only |
 | unclassified | R7 | ⚠ UNRESOLVED | No shape cue; normalization tables are specified in Acceptance |
 | boundary | R8 | ✅ covered | `api2.cursor.sh` passes; `cursor.sh.evil.com` and `http://api2.cursor.sh` fail |
-| adjacency | R8 | ✅ covered | A same-origin redirect is followed; a cross-origin one is refused |
+| adjacency | R8 | ✅ covered | ~~A same-origin redirect is followed~~ *(superseded, D-15)* Every redirect is refused and reported as a network error (urllib turns a redirected POST into a bodiless GET carrying the bearer) |
 | empty | R8 | ✅ covered | No `auth.json` means no fetch and a hidden quota |
 | ordering | R8 | 🧪 backstop | Endpoint validation precedes the token read |
 | precision | R8 | 🧪 backstop | Host matching is exact-suffix on a dot boundary |
