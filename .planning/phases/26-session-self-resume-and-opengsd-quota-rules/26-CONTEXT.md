@@ -40,6 +40,7 @@ must confirm.
   - Run inside `fire`'s child, `disarm` falls back to writing the marker instead of waiting on
     its own parent's lock.
   - Laya no_wait_flag 0.43 (fb), TypeSafe done_command 0.94.
+  - **Refined 2026-10-14 (27 D-06):** `matrix --json` is a public contract for Phase 27: one row per (host, primitive) with kind (goal, loop, schedule, wake, OS timer), surface (tool, slash command, CLI), the three survival flags, source label and version floor. Phase 27 reads it through the CLI, never by import.
 - **D-03: The wake always resumes the exact recorded session id.** It never uses "continue
   most recent" and never forks (SPEC R3). Settled at spec time; restated because ROADMAP and
   QTA-04 were amended to match.

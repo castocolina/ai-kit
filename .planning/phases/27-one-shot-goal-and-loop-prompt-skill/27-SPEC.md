@@ -67,6 +67,7 @@ prompt for a separate agent session. The prompt carries everything needed to fin
    - Acceptance: fixture projects for OpenGSD with mixed phase states, for original GSD, for
      superpowers plans only, and for neither. A non-current target host's primitives come out
      unverified.
+   - *Amended 2026-10-14 (27 D-04..D-07):* tool primitives are reported by the agent (only it sees its tool list; deferred tools unseen are "unverified", never "absent"); each primitive carries two labels, availability here and usage source; Phase 26's matrix is read through its `matrix --json` CLI, all-unverified when missing.
 
 2. **Strategy matrix** (GPS-01).
    - Current: none.
@@ -84,6 +85,7 @@ prompt for a separate agent session. The prompt carries everything needed to fin
        VERIFICATION.md.
    - Acceptance: one table test per row. A host with no goal primitive never gets `/goal`. An
      OpenGSD phase range always offers `/gsd-autonomous`.
+   - *Amended 2026-10-14 (27 D-10, D-12):* `/gsd-autonomous` greps all of its arguments for flags (`autonomous.md:21-62`), so its line carries flags only and the rails live in the file. "Must outlive" and "provable" are derived and shown, never asked.
 
 3. **Prompt and rails file** (GPS-02).
    - Current: none.
@@ -97,6 +99,7 @@ prompt for a separate agent session. The prompt carries everything needed to fin
 
      The file goes in the planning directory when one exists. Otherwise it goes where the user
      says, defaulting to an ignored scratch directory. Paths in the prompt are repo-relative.
+   - *Amended 2026-10-14 (27 D-15):* the file is committable in a dated `goals/` subfolder (`.planning/goals/` for GSD, `docs/superpowers/goals/` for superpowers, never under `plans/`), because a run that creates a new worktree cannot see ignored files.
    - Acceptance: a test checks that the generated condition is at most 4,000 characters and
      that every rails section is present. No absolute path and no secret appears in the file.
 
@@ -107,6 +110,7 @@ prompt for a separate agent session. The prompt carries everything needed to fin
      that depend on it; the rest continue. The orchestrator owns AGENTS.md compliance.
    - Acceptance: a fixture with a dependency chain and an independent plan yields an order and
      stop-scope that match.
+   - *Amended 2026-10-14 (27 D-08, D-09):* superpowers plans have no dependency field; ai-kit reads an optional `**Depends on:**` line (backticked plan files become edges; free text is asked inside the work-set question). Whether a per-plan subagent can itself dispatch per-task subagents is open research; where it cannot, the orchestrator dispatches each plan's tasks itself, plan by plan (provisional, ledgered for uz).
 
 5. **OpenGSD cross-AI** (GPS-02).
    - Current: none.
@@ -116,6 +120,7 @@ prompt for a separate agent session. The prompt carries everything needed to fin
      execution and reports what to fix, unless native execution was chosen when the prompt was
      generated; the prompt then says so plainly.
    - Acceptance: fixtures for a ready setup, a missing runner and native execution chosen.
+   - *Amended 2026-10-14 (27 D-16, D-17):* "declared in each plan" is PLAN.md frontmatter `cross_ai: true` (AND-ed with config, `execute-phase.md:415`; absent from GSD's plan template) and a phase `REVIEWS.md` from `--converge`. Readiness proves the runner exists, `--print-argv` lists an installed CLI, and the reviewer CLIs are installed, labelled "installed, not quota- or auth-verified".
 
 6. **E2E is the core of done** (GPS-03).
    - Current: none.
@@ -186,7 +191,7 @@ prompt for a separate agent session. The prompt carries everything needed to fin
 
 ## Edge Coverage
 
-**Coverage:** 30/31 applicable edges resolved · 1 unresolved
+**Coverage:** 34/35 applicable edges resolved · 1 unresolved (floor recomputed 2026-10-14 after the R1/R2/R4 amendments)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -194,9 +199,11 @@ prompt for a separate agent session. The prompt carries everything needed to fin
 | empty | R1 | ✅ covered | No GSD and no superpowers plans: the skill reports that and asks for the work set as free text |
 | ordering | R1 | 🧪 backstop | Phases are listed in roadmap numeric order (handles `16.1`) |
 | concurrency | R1 | 🧪 backstop | Detection is read-only; it never writes to the project |
+| encoding | R1 | ✅ covered | Agent-reported tool names are matched exactly against the matrix's primitive names; an unknown name is listed as unrecognized (added after the 2026-10-14 amendment) |
 | adjacency | R2 | ✅ covered | Two strategies of equal rank keep matrix order; exactly one is marked recommended |
 | empty | R2 | ✅ covered | A host with no goal, loop or schedule primitive gets a plain prompt plus the OS-timer wake, flagged |
 | ordering | R2 | ✅ covered | At most three strategies, ranked by fit, pinned by a test |
+| concurrency | R2 | 🧪 backstop | Strategy selection is a pure function of the detection result and the answers (added after the 2026-10-14 amendment) |
 | boundary | R3 | ✅ covered | A condition of exactly 4,000 characters passes; 4,001 fails generation with a clear error |
 | adjacency | R3 | ✅ covered | Quota A and B are two separate sections even when both apply |
 | empty | R3 | ✅ covered | No candidate skills: the section says "none" rather than being omitted |
@@ -207,6 +214,8 @@ prompt for a separate agent session. The prompt carries everything needed to fin
 | adjacency | R4 | ✅ covered | An independent plan after a failed one still runs |
 | empty | R4 | ✅ covered | One plan: one subagent, no ordering section |
 | ordering | R4 | ✅ covered | Ties in dependency order keep the plan files' numeric order |
+| encoding | R4 | ✅ covered | A `**Depends on:**` entry links only an exact backticked plan filename; anything else is free text asked about (added after the 2026-10-14 amendment) |
+| concurrency | R4 | ✅ covered | Plans run one at a time; no two plan subagents share the working tree at once (added after the 2026-10-14 amendment) |
 | adjacency | R5 | ✅ covered | A plan that already declares cross-AI is left as is; only missing declarations are required |
 | empty | R5 | ✅ covered | No cross-AI runner and native not chosen: the readiness gate stops the run before execution |
 | ordering | R5 | 🧪 backstop | The readiness check runs before any plan is executed |
