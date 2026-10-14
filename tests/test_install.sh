@@ -133,7 +133,7 @@ if [ "${1:-}" = clone ]; then
   exit 0
 fi
 if [ "${1:-}" = "-C" ]; then
-  shift  # the clone dir
+  shift 2  # the -C flag and the clone dir
   case "${1:-}" in
     status)
       if [ "${2:-}" = --porcelain ] && [ -n "${AIKIT_FAKE_DIRTY:-}" ]; then
@@ -204,15 +204,15 @@ check "tarball fetch failure leaves no orphan .ai-kit.* temp dir" no_orphan_tmp_
 # Fixture: a fake clone ($dir/.git/ directory) whose setup.py echoes a marker;
 # the bootstrapper runs from a COPY (bootstrap mode) pointed at it via AI_KIT_DIR.
 # The recording fake git lets every case assert exactly which git commands ran.
-boot_run() { # <fixture_dir> <logfile> [extra env as VAR=val ...] -- args...
+boot_run() { # <fixture_dir> <logfile> [VAR=val ...] -- args...; sets OUT (stdout+stderr) and RC
   local dir="$1" log="$2"; shift 2
   : > "$log"
   local envs=()
   while [ "${1:-}" != "--" ]; do envs+=("$1"); shift; done
   shift
-  env -i HOME="$WORK" PATH="$FAKEGIT:$PATH" AI_KIT_DIR="$dir" AIKIT_GIT_LOG="$log" \
+  OUT="$(env -i HOME="$WORK" PATH="$FAKEGIT:$PATH" AI_KIT_DIR="$dir" AIKIT_GIT_LOG="$log" \
     AIKIT_REAL_GIT="$AIKIT_REAL_GIT" AIKIT_FETCH_MARKER="$MARKER" "${envs[@]}" \
-    bash "$BOOT/install.sh" "$@"
+    bash "$BOOT/install.sh" "$@" 2>&1)"; RC=$?
 }
 new_clone_fixture() { # <dir>
   mkdir -p "$1/.git" "$1/tools"
@@ -233,15 +233,117 @@ cp "$INSTALL_SH" "$BOOT/install.sh"
 
 CLONE="$WORK/clone"; new_clone_fixture "$CLONE"
 LOG="$WORK/clone.log"
-out="$(boot_run "$CLONE" "$LOG" -- install --branch gsd/v1.3-x 2>/dev/null)"
+boot_run "$CLONE" "$LOG" -- install --branch gsd/v1.3-x
 check "existing clone + --branch: status precedes set-branches/fetch/switch" \
   log_order "$LOG" "status --porcelain" \
     "remote set-branches --add origin gsd/v1.3-x" \
     "fetch --depth 1 origin gsd/v1.3-x" \
     "switch -C gsd/v1.3-x --track origin/gsd/v1.3-x"
 check "existing clone + --branch: no pull runs" log_lacks "$LOG" "pull --ff-only"
-check "existing clone + --branch: setup.py runs after the switch" \
-  bash -c '[ "'"$out"'" = "SETUP_RAN install" ]'
+setup_ran_installed() { case "$OUT" in *"SETUP_RAN install"*) return 0;; (*) return 1;; esac; }
+check "existing clone + --branch: setup.py runs after the switch" setup_ran_installed
+
+# --- 4f. R14 edges: dirty, index.lock, idempotent, dry-run, default, invalid --
+rc_nonzero()   { [ "$RC" -ne 0 ]; }
+rc_zero()      { [ "$RC" -eq 0 ]; }
+log_count_is() { [ "$(grep -Fc -- "$2" "$1")" = "${3:-1}" ]; }
+out_has()      { case "$OUT" in *"$1"*) return 0;; (*) return 1;; esac; }
+
+# dirty tree refuses before any mutation, naming the git status command
+CLONE="$WORK/clone_dirty"; new_clone_fixture "$CLONE"; LOG="$WORK/dirty.log"
+boot_run "$CLONE" "$LOG" AIKIT_FAKE_DIRTY=" M x" -- install --branch b
+dirty_names_status() {
+  case "$OUT" in *"git -C"*"status"*) return 0;; (*) return 1;; esac;
+}
+dirty_no_mutation() {
+  log_lacks "$LOG" fetch && log_lacks "$LOG" switch && \
+    log_lacks "$LOG" set-branches && log_lacks "$LOG" pull
+}
+check "dirty tree + --branch refuses non-zero" rc_nonzero
+check "dirty refusal names git -C ... status" dirty_names_status
+check "dirty refusal runs no fetch/switch/set-branches/pull" dirty_no_mutation
+
+# an interrupted run (leftover index.lock) refuses the same way
+CLONE="$WORK/clone_lock"; new_clone_fixture "$CLONE"; LOG="$WORK/lock.log"
+: > "$CLONE/.git/index.lock"
+boot_run "$CLONE" "$LOG" -- install --branch b
+lock_names_status() {
+  case "$OUT" in *"git -C"*"status"*) return 0;; (*) return 1;; esac;
+}
+lock_no_inspection() {
+  log_lacks "$LOG" status && log_lacks "$LOG" fetch && log_lacks "$LOG" switch
+}
+check "leftover index.lock + --branch refuses non-zero" rc_nonzero
+check "index.lock refusal names git -C ... status" lock_names_status
+check "index.lock refusal runs no status/fetch/switch" lock_no_inspection
+
+# idempotent rerun: refspec already listed exactly -> set-branches skipped
+CLONE="$WORK/clone_idem"; new_clone_fixture "$CLONE"; LOG="$WORK/idem.log"
+boot_run "$CLONE" "$LOG" \
+  AIKIT_FAKE_FETCH_REFS="+refs/heads/b:refs/remotes/origin/b" -- install --branch b
+idem_rerun() {
+  log_lacks "$LOG" set-branches && log_has "$LOG" "fetch --depth 1 origin b" && \
+    log_has "$LOG" "switch -C b --track origin/b"
+}
+check "idempotent rerun: set-branches skipped, fetch+switch run" idem_rerun
+
+# a DIFFERENT refspec for the same branch still runs set-branches (exact match only)
+CLONE="$WORK/clone_pin"; new_clone_fixture "$CLONE"; LOG="$WORK/pin.log"
+boot_run "$CLONE" "$LOG" \
+  AIKIT_FAKE_FETCH_REFS="refs/heads/b:refs/remotes/origin/b-pinned" -- install --branch b
+check "different refspec for same branch: exactly one set-branches" \
+  log_count_is "$LOG" "remote set-branches --add origin b" 1
+
+# --dry-run with an explicit branch: plan only, setup.py still runs with --dry-run
+CLONE="$WORK/clone_dry"; new_clone_fixture "$CLONE"; LOG="$WORK/dry.log"
+boot_run "$CLONE" "$LOG" -- install --branch b --dry-run
+dry_plan_ok() { rc_zero && out_has "dry run"; }
+dry_no_mutation() {
+  log_lacks "$LOG" fetch && log_lacks "$LOG" pull && log_lacks "$LOG" switch && \
+    log_lacks "$LOG" set-branches && log_lacks "$LOG" "clone --single-branch"
+}
+dry_setup_ran() {
+  case "$OUT" in *"SETUP_RAN install --dry-run"*) return 0;; (*) return 1;; esac;
+}
+check "--dry-run + --branch exits 0 and mentions the plan" dry_plan_ok
+check "--dry-run records no git mutation" dry_no_mutation
+check "--dry-run on existing clone still runs setup.py with --dry-run" dry_setup_ran
+
+# --dry-run with no branch: prints the pull plan, runs nothing
+CLONE="$WORK/clone_drynobr"; new_clone_fixture "$CLONE"; LOG="$WORK/drynobr.log"
+boot_run "$CLONE" "$LOG" -- install --dry-run
+check "--dry-run without a branch: no pull runs" log_lacks "$LOG" "pull"
+
+# no explicit branch: today's behavior — exactly one pull --ff-only, no switch
+CLONE="$WORK/clone_plain"; new_clone_fixture "$CLONE"; LOG="$WORK/plain.log"
+boot_run "$CLONE" "$LOG" -- install
+plain_default() { log_count_is "$LOG" "pull --ff-only" 1 && log_lacks "$LOG" switch; }
+check "no explicit branch: exactly one pull --ff-only, no switch" plain_default
+
+# AI_KIT_BRANCH env counts as explicit even without the flag
+CLONE="$WORK/clone_envbr"; new_clone_fixture "$CLONE"; LOG="$WORK/envbr.log"
+boot_run "$CLONE" "$LOG" AI_KIT_BRANCH=b -- install
+envbr_switches() {
+  log_has "$LOG" "switch -C b --track origin/b" && log_has "$LOG" "fetch --depth 1 origin b"
+}
+check "AI_KIT_BRANCH env drives the switch path" envbr_switches
+
+# bootstrap with no clone + --dry-run: stop before setup.py, clone nothing
+NOCLONE="$WORK/noclone"; rm -rf "$NOCLONE"; LOG="$WORK/noclone.log"
+boot_run "$NOCLONE" "$LOG" -- install --dry-run
+bootstrap_dry_stops() {
+  rc_zero && log_lacks "$LOG" "clone --single-branch" && \
+    case "$OUT" in *SETUP_RAN*) return 1;; (*) return 0;; esac
+}
+check "bootstrap --dry-run with no clone: exit 0, no clone, no setup.py" bootstrap_dry_stops
+
+# an invalid branch name is rejected before ANY git inspection
+CLONE="$WORK/clone_badbr"; new_clone_fixture "$CLONE"; LOG="$WORK/badbr.log"
+boot_run "$CLONE" "$LOG" -- install --branch bad..name
+badbr_rejected() {
+  rc_nonzero && log_lacks "$LOG" status && log_lacks "$LOG" fetch && log_lacks "$LOG" switch
+}
+check "invalid branch name rejected before any status/fetch/switch" badbr_rejected
 
 # --- 5. shellcheck stays clean ----------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then

@@ -379,8 +379,22 @@ install.sh --branch <name>      # fetch a specific branch  (or --branch=<name>; 
 install.sh reconfigure          # re-open the wizard pre-loaded with your current selection + layout
 ```
 
-**Try a branch without merging it.** `--branch <name>` is consumed by the bootstrapper (not passed
-to the wizard) and overrides which branch is fetched. A fork is selected with the `AI_KIT_REPO` env
+**Try a branch without merging it.** `--branch <name>` (or `--branch=<name>`, or the
+`AI_KIT_BRANCH` env var) is consumed by the bootstrapper (not passed to the wizard) and overrides
+which branch is fetched. On an **existing clone** an explicit branch is honored too: when the tree
+is clean, install.sh runs `git remote set-branches --add origin B` → `git fetch --depth 1 origin B`
+→ `git switch -C B --track origin/B`; when the tree is dirty or a `.git/index.lock` is left over
+from an interrupted run it refuses (naming the `git -C <dir> status` command to run to inspect it)
+and never auto-recovers. The default `main` never triggers a switch — with no explicit branch an
+existing clone just gets `git pull --ff-only`. `set-branches` is skipped when the branch's refspec
+is already configured, so re-running is idempotent.
+
+`--dry-run` prints the planned git commands (the switch sequence above, the `pull --ff-only`, or
+the clone/tarball command on a fresh bootstrap) and runs no fetch, pull, switch, set-branches or
+clone; on an existing clone it still hands `--dry-run` to the wizard, and on a not-yet-fetched
+bootstrap it stops before running setup.py.
+
+A fork is selected with the `AI_KIT_REPO` env
 var; the default is `castocolina/ai-kit`.
 
 One catch: the `install.sh` you pipe must itself be a *flag-aware* version — `--branch` only exists
