@@ -582,6 +582,7 @@ class TestAiKitSpecImportGracefulDegradation(unittest.TestCase):
     def test_cross_ai_build_imports_without_crashing_and_degrades_to_none(self):
         reimported = self._reimport_with_ai_kit_spec_blocked("cross_ai_build")
         self.assertIsNone(reimported.build_execute_command)
+        self.assertIsNone(reimported.execute_cli_error)
         result = reimported.build_execution_command("opencode", "some-model", "/fake/project")
         self.assertIsNone(result)
 
@@ -876,6 +877,41 @@ class TestApplyExecutionCli(unittest.TestCase):
         summary = json.loads(buf.getvalue())
         self.assertFalse(summary["cross_ai_command_written"])
         self.assertEqual(summary["degraded_reason"], "no_builder")
+
+    def test_rejected_executor_cli_exits_2_before_any_config_write(self):
+        # D-15 (Phase 16.1): an explicit claude/grok (or case-variant) executor choice fails
+        # BEFORE the first config-set -- workflow.cross_ai_execution included -- so the GSD
+        # config is left completely untouched on every run.
+        for cli_name in ("claude", "grok", "Claude"):
+            with self.subTest(cli=cli_name):
+                run = make_fake_run([])
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    exit_code = cli.main(
+                        ["apply-execution", "--project-dir", "/fake/project",
+                         "--cli", cli_name, "--model", "m"],
+                        which_fn=_which_stub(),
+                        run_fn=run,
+                        env_fn=self.env_fn,
+                    )
+                self.assertEqual(exit_code, 2)
+                self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
+                config_set_calls = [call for call in run.calls if "config-set" in call]
+                self.assertEqual(config_set_calls, [])
+                # A rerun fails identically: nothing was written before the check.
+                rerun_run = make_fake_run([])
+                rerun_stderr = io.StringIO()
+                with contextlib.redirect_stderr(rerun_stderr):
+                    rerun_code = cli.main(
+                        ["apply-execution", "--project-dir", "/fake/project",
+                         "--cli", cli_name, "--model", "m"],
+                        which_fn=_which_stub(),
+                        run_fn=rerun_run,
+                        env_fn=self.env_fn,
+                    )
+                self.assertEqual(rerun_code, 2)
+                self.assertEqual(rerun_stderr.getvalue(), stderr.getvalue())
+                self.assertEqual([c for c in rerun_run.calls if "config-set" in c], [])
 
 
 class TestApplyReviewCli(unittest.TestCase):

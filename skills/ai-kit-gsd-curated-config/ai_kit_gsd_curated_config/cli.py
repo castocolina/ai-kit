@@ -161,6 +161,15 @@ def _cmd_detect_review_candidate(args, which_fn, run_fn, env_fn):
 
 
 def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
+    # D-15 (Phase 16.1): validate `--cli` BEFORE the first config-set, workflow.cross_ai_execution
+    # included -- a rejected executor (claude/grok, or any unsupported name) must leave the GSD
+    # config completely untouched, on every run.
+    if args.cli and cross_ai_build.execute_cli_error is not None:
+        rejection = cross_ai_build.execute_cli_error(args.cli)
+        if rejection:
+            print(f"ai-kit-gsd-curated-config: {rejection}", file=sys.stderr)
+            return 2
+
     node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
     if error:
         print(error, file=sys.stderr)
