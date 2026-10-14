@@ -106,6 +106,8 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 - [ ] **QTA-04**: The orchestrating session sets an hourly self-wake that survives its own quota stall, chosen per host by survival (OS timer or cloud routine over in-session primitives), with unverified host behavior flagged *(amended 2026-10-14, 26 D-03: the wake resumes the exact session id; cloud routines cannot re-enter a local session, so the surviving primitive is an OS timer)*
 - [ ] **QTA-05**: `ai-kit-project-rules-agents` gains an OpenGSD-only rule that checks and remediates the session-resume and subprocess-quota directives as separate items *(amended 2026-10-14, 26-SPEC R7: two rules, R18 and R19)*
 
+- [ ] **QTA-06**: `ai-kit-project-rules-agents` gains a language-agnostic rule, active for every project with a detected stack, that checks and remediates an AGENTS.md rule: unit tests run in parallel with a worker count of at most 40% of the available CPUs, never a hardcoded core count, written in the detected stack's own form *(added 2026-10-14 by uz; 26 D-27)*
+
 ### Goal-Prompt Skill
 
 - [ ] **GPS-01**: A skill detects the host, its goal/loop/schedule primitives (tools, not only slash commands) and the GSD/OpenGSD or superpowers scope, and picks one to three strategies from a selection matrix (`/goal`, schedule or `/loop`, `/gsd-autonomous`)
@@ -187,6 +189,7 @@ None deferred beyond v1.3 at definition time.
 | QTA-03 | Phase 25 | Pending |
 | QTA-04 | Phase 26 | Pending |
 | QTA-05 | Phase 26 | Pending |
+| QTA-06 | Phase 26 | Pending |
 | GPS-01 | Phase 27 | Pending |
 | GPS-02 | Phase 27 | Pending |
 | GPS-03 | Phase 27 | Pending |

@@ -152,6 +152,21 @@ subprocess quota (Phase 25).
      mechanism's state file. Skill-judge evidence is committed.
    - *Amended 2026-10-14 (26 D-23):* "multi-plan" means two or more work units: PLAN.md files for `-gsd`, tasks for `-superpowers` (which always runs one plan).
 
+9. **Parallel tests capped at a CPU share** (QTA-06). *Added 2026-10-14 by uz.*
+   - Current: no rule; ai-kit's own runner is fixed in 16.1 D-06, but projects get no such rule.
+   - Target: `ai-kit-project-rules-agents` gains a rule that is active whenever `detect_stacks`
+     finds a stack. AGENTS.md must state that unit tests run in parallel, that the worker count
+     is a share of the available CPUs capped at 40% (never a hardcoded core or worker count), and
+     the stack's own form of it. For example: `pytest -n` with a computed count, `go test -p`,
+     jest/vitest `--maxWorkers=40%`, `cargo test -- --test-threads`, Maven `-T` per core, and the
+     stdlib unittest runner pattern from 16.1 D-06. Remediation writes the form for each detected
+     stack into the rules section. Each stack's form comes from one table keyed by the shared
+     `tool_catalog` test-runner group, never from code branches per language. A stack without a
+     known form gets the generic sentence and an `unverified` flag.
+   - Acceptance: tests for a python, a node, a go and a rust fixture, a multi-stack repo (one
+     clause per stack), a repo with no stack (rule not applicable), and AGENTS.md text that
+     hardcodes a core count (flagged). Each case has a non-vacuity counterpart.
+
 ## Boundaries
 
 **In scope:**

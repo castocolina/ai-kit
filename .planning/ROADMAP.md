@@ -456,7 +456,7 @@ AGENTS.md. Source: the same todo (part 1, mechanism A and the rules-skill rule).
 **Depends on**: Phase 25 (the subprocess directive's wording). A spike runs before planning:
 whether `claude -p --continue` *(amended 2026-10-14, 26-SPEC R3: `--resume <session-id>`, never "most recent")* (or each host's equivalent) started from an OS timer re-enters the
 right session; codex, pi and opencode facts are third-party only so far.
-**Requirements**: QTA-04, QTA-05
+**Requirements**: QTA-04, QTA-05, QTA-06 *(QTA-06 added 2026-10-14)*
 **Success Criteria** (what must be TRUE):
 
   1. Per host, the skill detects which wake primitives outlive the session (an OS timer or a cloud
@@ -466,6 +466,10 @@ right session; codex, pi and opencode facts are third-party only so far.
      mechanism and the subprocess mechanism (Phase 25) stay separate, each with its own trigger.
   3. `ai-kit-project-rules-agents` gains a rule *(amended 2026-10-14: two rules, R18 and R19)*, active only for OpenGSD projects, that checks
      and remediates both directives as separate items.
+  4. *(Added 2026-10-14, QTA-06.)* The same checker gains a language-agnostic rule for every
+     project with a detected stack: AGENTS.md says unit tests run in parallel, with workers capped
+     at 40% of the available CPUs and never a hardcoded core count, in the detected stack's own
+     form. Remediation writes that form into the rules section.
 **Plans**: TBD
 
 ### Phase 27: One-shot goal and loop prompt skill

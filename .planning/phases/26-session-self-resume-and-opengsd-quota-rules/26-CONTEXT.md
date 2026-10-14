@@ -207,6 +207,16 @@ must confirm.
   - **Laya overridden** (flat 0.88): a flat list counts half the clauses as present. TypeSafe
     second opinion groups 0.94.
 
+- **D-27: R20, the parallel-test CPU-share rule (QTA-06, added 2026-10-14 by uz).** It is a
+  `workflow` rule appended after R19 and is NOT gated on `opengsd`: its condition is "a stack is
+  detected". The text is language-agnostic. It states parallel unit tests, a worker count capped
+  at 40% of the available CPUs, and no hardcoded core count. The per-stack form comes from one
+  table keyed by the `tool_catalog` "test-runner" group. A stack missing from the table gets the
+  generic sentence with an `unverified` flag. Signals include "parallel", "40%" and a CPU-share
+  phrase. A literal core count (for example `-j 8` or `-n 12`) next to a test command is a
+  finding. The "19 rules" strings from D-22 become 20. Every per-stack flag is live-verified at
+  plan time against current tool docs (AGENTS.md: verify before trusting training data).
+
 ### Executors
 - **D-23: Arming is threshold-based, and both executors get an explicit end step that writes
   `done`.**
