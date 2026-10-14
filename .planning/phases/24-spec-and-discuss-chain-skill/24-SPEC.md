@@ -127,6 +127,7 @@ This SPEC encodes what was learned in the tools-installer run of 2026-10-13/14 (
      - Ponytail findings inform how code is written, not which design wins.
      - The rule goes into every analyzer brief.
    - Acceptance: SKILL.md reads `workflow.mvp_mode` through `gsd-tools config-get` and states both branches. The analyzer brief template contains the rule.
+   - *Amended 2026-10-14 (24 D-16):* the mode is read through the engine's `gsd-tools query phase.mvp-mode <N>` (flag, then ROADMAP `**Mode:** mvp`, then `workflow.mvp_mode`, then false), with `config-get workflow.mvp_mode --default false --raw` as the fallback; a bare `config-get` exits "Key not found" when unset.
 
 10. **CodeGraph in every brief**.
     - Current: manual.

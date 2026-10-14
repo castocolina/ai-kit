@@ -386,20 +386,22 @@ research notes 13 and 13b; todo `2026-10-12-promote-cursor-statusline-poc-into-9
 ### Phase 24: Spec-and-discuss chain skill
 
 **Goal**: ai-kit ships an installable, shareable skill that takes a range of GSD phases through
-`/gsd-spec-phase --auto` and then `/gsd-discuss-phase --analyze --all --batch --assumptions`, one
-phase at a time. Gray-area decisions go through an optional decision-model ladder (local Laya →
+`/gsd-spec-phase --auto` and then the assumptions-mode discuss (the intent of the user's
+`--analyze --all --batch --assumptions` invocation; the literal `--assumptions` flag writes no
+files, 24 D-01), one phase at a time. Gray-area decisions go through an optional decision-model ladder (local Laya →
 TypeSafe direct → the main model's own reasoning) and are logged. The design rule is
 quality over simplicity, except under `workflow.mvp_mode`. Learned from the tools-installer
 run of 2026-10-13/14 and this milestone's own Phases 16.1–23.
-**Depends on**: none inside v1.3 (it drives GSD workflows; it is dogfooded on Phases 16.1–23)
+**Depends on**: Phase 16.1's gate widening (D-01, D-06) for R13's regex-based gate coverage (24 D-23); otherwise none inside v1.3 (it drives GSD workflows; it is dogfooded on Phases 16.1–23)
 **Requirements**: SDC-01, SDC-02, SDC-03, SDC-04
 **Success Criteria** (what must be TRUE):
 
   1. Given a phase range (`--from N --to M`, or a list), the skill runs spec then discuss for each
-     phase in order with the learned flags. With no range it reads the roadmap, proposes the
+     phase in order with the learned behavior (24 D-01). With no range it reads the roadmap, proposes the
      not-yet-discussed range, and asks the user once.
-  2. Decision models are optional and detected, never assumed: Laya through its health endpoint,
-     TypeSafe through its key file, jev-fast-decision through its install. With none
+  2. Decision models are optional and detected, never assumed: Laya through TCP reachability of a
+     configured local URL, TypeSafe through a key present by name, jev-fast-decision through its
+     install (amended 2026-10-14, 18 D-36 / 24 D-08, D-09). With none
      present, every decision falls to the main model's reasoning, and the chain still completes.
      Remote backends need the user's standing consent, and only summaries are sent.
   3. Every decision is logged with one column per backend used plus the locked decision and its
@@ -409,7 +411,7 @@ run of 2026-10-13/14 and this milestone's own Phases 16.1–23.
      the quality of what reaches the product's user. Otherwise the best design wins over the
      smallest diff, and ponytail findings feed the choice without deciding it.
   5. The skill is named `ai-kit-gsd-spec-discuss` (chosen in its spec, 2026-10-14). It is
-     registered in `tools/setup.py` and the README, and it passes `/skill-judge` in code review.
+     auto-discovered by `tools/setup.py` (no registry entry), has a README row, and it passes `/skill-judge` in code review.
 **Plans**: TBD
 
 ## Backlog
