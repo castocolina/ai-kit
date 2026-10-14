@@ -142,12 +142,13 @@ can be verified and closed on trustworthy evidence. Source:
   2. `model_detect.py` (curated-config) and `dispatch.py` (rules-all) resolve their own sibling
      packages before `~/.claude/skills`, and a test proves a branch checkout imports the branch's
      `ai_kit_spec`, not the installed one.
-  3. No reviewer `command` from a project's `.aikit/review-spec.toml` runs through `shell=True`;
+  3. A reviewer `command` from a project's `.aikit/review-spec.toml` never runs until the user
+     trusts that file (per content hash), and no reviewer command runs through `shell=True`;
      the usage-metrics dashboard escapes `<` so no `</script` variant (any case) breaks out.
   4. A `Status: Failure` lane never merges into Approved; the quota/transient classifiers match
      only stderr and structured error fields, never the model's answer text; inherited host
-     signals (`AI_AGENT` and similar) are scrubbed from child environments; the claude execute
-     builder string runs under GSD's no-shell word splitting; `gsd_config.py` writes through
+     signals (`AI_AGENT` and similar) are scrubbed from child environments; the unrunnable claude and grok
+     execute builders are deleted; `gsd_config.py` writes through
      `gsd-tools query config-set` instead of editing the JSON.
   5. The smaller safety items are fixed: codegraph probe timeout and no silent global install, a
      `review-spec.toml` parse error is reported instead of disabling cross-AI, `install.sh
