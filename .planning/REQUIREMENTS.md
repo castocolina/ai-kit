@@ -70,7 +70,7 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 - [ ] **HARD-02**: Skill-embedded Python resolves sibling packages before `~/.claude/skills`, with a test proving a branch checkout imports branch code
 - [ ] **HARD-03**: No project-supplied reviewer command runs with `shell=True`; the dashboard escapes `<` against case-variant `</script` breakouts
 - [ ] **HARD-04**: A failed review lane never merges into Approved; error classifiers read only stderr and structured error fields; inherited host env signals are scrubbed from child processes; the claude execute builder runs under GSD's no-shell splitting; `gsd_config.py` writes via `config-set`
-- [ ] **HARD-05**: The audit's smaller safety items are fixed (codegraph probe timeout and no silent global install, reported `review-spec.toml` parse errors, `install.sh --branch`/`--dry-run` on an existing clone, unique cache temp names, atomic uninstall write, AGENTS.md checker image links)
+- [ ] **HARD-05**: The audit's smaller safety items are fixed (codegraph probe timeout and no silent global install, reported `review-spec.toml` parse errors, `install.sh --branch`/`--dry-run` on an existing clone, unique cache temp names, atomic uninstall write, AGENTS.md checker image links); GSD-adjacent code resolves the project-local gsd-core before any global one
 
 ### One Runtime Model
 

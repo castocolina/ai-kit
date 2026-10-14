@@ -152,6 +152,8 @@ can be verified and closed on trustworthy evidence. Source:
      `review-spec.toml` parse error is reported instead of disabling cross-AI, `install.sh
      --branch`/`--dry-run` honored on an existing clone, unique cache temp names, an atomic
      uninstall `settings.json` write, and the AGENTS.md checker survives image links.
+     `gsd_catalog.py` and `ai-kit-spec-execute-gsd/SKILL.md` resolve the project-local
+     `.claude/gsd-core` before any global one (GSD is installed per repo).
   6. Phase 16 is closed: its VERIFICATION.md exists, the live checks ran (`runtimes.json` carries
      `schema_version`, `model-catalog.json` exists), and STATE, REQUIREMENTS and ROADMAP show it
      complete. The stale v1.3 facts are refreshed before Phase 17 planning (gsd-core 1.16, GSD
