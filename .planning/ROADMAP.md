@@ -407,7 +407,7 @@ run of 2026-10-13/14 and this milestone's own Phases 16.1–23.
   4. Under `workflow.mvp_mode: true` the recommendation favors the simpler design without lowering
      the quality of what reaches the product's user. Otherwise the best design wins over the
      smallest diff, and ponytail findings feed the choice without deciding it.
-  5. The skill name is chosen in its own spec (candidate: `ai-kit-gsd-spec-discuss`). It is
+  5. The skill is named `ai-kit-gsd-spec-discuss` (chosen in its spec, 2026-10-14). It is
      registered in `tools/setup.py` and the README, and it passes `/skill-judge` in code review.
 **Plans**: TBD
 
