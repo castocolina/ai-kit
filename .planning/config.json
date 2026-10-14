@@ -68,6 +68,9 @@
     ],
     "timeouts": {
       "opencode": 1800
+    },
+    "effort": {
+      "opencode": "inherit"
     }
   },
   "ship": {
