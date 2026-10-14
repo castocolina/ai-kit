@@ -429,6 +429,36 @@ class TestEdgeFloor(unittest.TestCase):
             with unittest.mock.patch("sys.stderr"):
                 self.assertEqual(edge_floor.main(["check", str(spec)], env=env), 2)
 
+    @staticmethod
+    def _engine_at(root: Path) -> str:
+        path = root / "gsd-core" / "bin" / "lib" / "edge-probe.cjs"
+        path.parent.mkdir(parents=True)
+        path.write_text("")
+        return str(path)
+
+    def test_project_local_engine_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._engine_at(Path(tmp) / "proj" / ".claude")
+            env = {"HOME": str(Path(tmp) / "home"), "RUNTIME_DIR": str(Path(tmp) / "proj")}
+            self.assertEqual(edge_floor.find_engine(env, tmp, None), engine)
+
+    def test_project_local_beats_host_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._engine_at(Path(tmp) / "home" / ".claude")
+            local = self._engine_at(Path(tmp) / "proj")
+            env = {"HOME": str(Path(tmp) / "home"), "RUNTIME_DIR": str(Path(tmp) / "proj")}
+            self.assertEqual(edge_floor.find_engine(env, tmp, None), local)
+
+    def test_gsd_run_on_path_is_last_resort(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._engine_at(Path(tmp) / "elsewhere")
+            launcher = Path(engine).parent.parent / "gsd_run"
+            launcher.write_text("#!/bin/sh\n")
+            launcher.chmod(0o755)
+            env = {"HOME": str(Path(tmp) / "home"), "RUNTIME_DIR": str(Path(tmp) / "proj"),
+                   "PATH": str(launcher.parent)}
+            self.assertEqual(edge_floor.find_engine(env, tmp, None), engine)
+
     @unittest.skipUnless(shutil.which("node") and edge_floor.find_engine(os.environ, os.getcwd(),
                                                                           None),
                          "node or gsd-core edge-probe.cjs not installed")
