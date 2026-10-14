@@ -509,8 +509,7 @@ the Done step, or a dedicated step) reusing the existing stdlib-only engine
 (`config_doctor_checks.py` / `config_doctor_readers.py` /
 `config_doctor_appliers.py`) and `config_doctor_app.py` screen, with no second
 implementation. Coordinate with v1.3 Phase 23 C2 (per-host
-status-line step); `worktree-context-tools-manager-plan1` no longer lands (2026-10-14) and v1.3 Phase 23 C2 (per-host
-status-line step). Candidate rows to add later: the Playwright MCP Chrome path
+status-line step); `worktree-context-tools-manager-plan1` no longer lands (2026-10-14). Candidate rows to add later: the Playwright MCP Chrome path
 on Bazzite. Rewritten 2026-10-13 from the former "shared core for a CLI
 variant" note, whose goal (engine not coupled to the TUI) is already met.
 **Requirements:** TBD

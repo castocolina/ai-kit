@@ -219,6 +219,16 @@ HOW. The skill never runs the prompt it generates.
 
   Analyzer: Confident.
 
+### Added 2026-10-14 (uz feedback on the hand-written v1.3 prompt)
+- **D-25: The generated file stays short.** uz found the first hand-written v1.3 prompt too
+  long. Budget: the paste block at most about 1,500 characters; the rails at most about 60
+  lines, one line per rule; anything AGENTS.md or a phase's SPEC/CONTEXT already says is
+  referenced, never restated. A test pins both budgets. The hand-written reference is
+  `.planning/goals/2026-10-14-v1.3-phases-16-27.md` (second version).
+- **D-26: The generated rails end with a cleanup step:** stray files committed, ignored or
+  removed; finished backlog items cleared; the branch merged into the main checkout (never
+  pushed); every intermediate worktree removed after archiving unmerged work as a tag.
+
 ### Claude's Discretion
 - The delimiter character, the exact question wording, the slug rules, and the golden case's
   inputs.
@@ -234,7 +244,7 @@ HOW. The skill never runs the prompt it generates.
   policy reference the prompt quotes).
 - `.planning/phases/24-spec-and-discuss-chain-skill/24-CONTEXT.md`: the skill patterns,
   D-07/D-10/D-11 (`decide.py`).
-- `.planning/ONESHOT-ENTRY-PROMPT.md`, `.planning/ONESHOT-RULES.md` and
+- `.planning/ONESHOT-ENTRY-PROMPT.md`, `.planning/ONESHOT-RULES.md` (deleted 2026-10-14 as stale v1.2 artifacts; read them from git history) and
   `docs/superpowers/LOOP-GUIDE-e7.md`: uz's prior art.
 - `~/.claude/gsd-core/workflows/autonomous.md`, `execute-phase.md:415` and
   `plan-review-convergence.md:171`: upstream, read-only.

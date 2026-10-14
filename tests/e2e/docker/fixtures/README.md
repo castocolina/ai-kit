@@ -17,7 +17,7 @@ fixture into the container. A volume mount reaches outside the image build and
 defeats the entire point of a clean-room harness. For the same reason, **never**
 volume-mount any of uz's real `~/.claude`, `~/.cursor`, `~/.config/opencode`, or
 `~/.codex` into the container — that would corrupt the "genuinely fresh" guarantee
-this harness exists to prove (see `.planning/ONESHOT-RULES.md` Rules 5/6).
+this harness exists to prove (see `AGENTS.md`, Testing: never use uz's real config files as fixtures).
 
 ## The actual fixture-usage pattern: copy into a scratch tree
 

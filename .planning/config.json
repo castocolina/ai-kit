@@ -54,22 +54,14 @@
         "cli": "opencode",
         "model": "router-env/my-plan-review"
       },
-      "opencode-sol": {
+      "opencode-glm": {
         "cli": "opencode",
-        "model": "openai/gpt-5.6-sol"
-      },
-      "codex-sol-high": {
-        "cli": "codex",
-        "model": "gpt-5.6-sol"
+        "model": "zai/glm-5.3"
       }
     },
     "default_reviewers": [
-      "opencode-plan-review",
-      "codex-sol-high"
+      "opencode-plan-review"
     ],
-    "models": {
-      "opencode": "xai/grok-4.6"
-    },
     "timeouts": {
       "opencode": 1800
     }
