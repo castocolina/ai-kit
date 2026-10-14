@@ -2620,10 +2620,62 @@ class TestDashboard(unittest.TestCase):
             html = handle.read()
         start = html.find('<script type="application/json" id="usage-metrics-data">')
         self.assertNotEqual(start, -1)
-        end = html.find("</script>", start)
-        embedded = html[start:end]
-        self.assertNotIn("</script", embedded.replace("<script type", ""))
-        self.assertIn("<\\/script", embedded)
+        open_end = html.find(">", start)
+        end = html.find("</script>", open_end)
+        embedded = html[open_end + 1 : end]
+        self.assertNotIn("<", embedded)
+        self.assertEqual(_parse_embedded_rows(html)[0]["command_text"], SCRIPT_COMMAND)
+
+    def test_case_variant_script_breakouts_are_escaped(self):
+        payloads = ("</SCRIPT>", "</ScRiPt>", "<!-- x", "<\\/script>")
+        conn = refined_store.open_refined_db(self.env)
+        self.addCleanup(conn.close)
+        refined_store.insert_commands(
+            conn,
+            [
+                _dashboard_row(command_text=payloads[0], family=payloads[1]),
+                _dashboard_row(
+                    raw_ref="claude:/a.jsonl:2",
+                    command_text=payloads[2],
+                    family=payloads[3],
+                ),
+            ],
+        )
+        out = os.path.join(self.root, "dashboard.html")
+        generate(conn, out)
+        with open(out, encoding="utf-8") as handle:
+            html = handle.read()
+        start = html.find('<script type="application/json" id="usage-metrics-data">')
+        open_end = html.find(">", start)
+        close = html.find("</script>", open_end)
+        block = html[open_end + 1 : close].lower()
+        self.assertNotIn("</script", block)
+        self.assertNotIn("<!--", block)
+        rows = _parse_embedded_rows(html)
+        self.assertEqual(
+            (rows[0]["command_text"], rows[0]["family"]),
+            (payloads[0], payloads[1]),
+        )
+        self.assertEqual(
+            (rows[1]["command_text"], rows[1]["family"]),
+            (payloads[2], payloads[3]),
+        )
+
+    def test_empty_payload_renders(self):
+        conn = refined_store.open_refined_db(self.env)
+        self.addCleanup(conn.close)
+        out = os.path.join(self.root, "dashboard.html")
+        generate(conn, out)
+        with open(out, encoding="utf-8") as handle:
+            html = handle.read()
+        self.assertEqual(_parse_embedded_rows(html), [])
+
+    def test_escape_runs_after_serialization(self):
+        from ai_kit_usage_metrics.dashboard import _encode_payload
+
+        encoded = _encode_payload([{"k": "<"}])
+        self.assertNotIn("<", encoded)
+        self.assertEqual(json.loads(encoded), [{"k": "<"}])
 
 
 _DASHBOARD_PY = os.path.join(
@@ -2739,7 +2791,7 @@ def _parse_embedded_rows(html):
         raise AssertionError("embedded JSON script tag missing")
     open_end = html.find(">", start)
     close = html.find("</script>", open_end)
-    payload = html[open_end + 1 : close].replace("<\\/script", "</script")
+    payload = html[open_end + 1 : close]
     return json.loads(payload)
 
 

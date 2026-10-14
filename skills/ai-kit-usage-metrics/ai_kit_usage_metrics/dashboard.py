@@ -2037,7 +2037,9 @@ def _query_rows(conn: sqlite3.Connection | None) -> list[dict]:
 
 def _encode_payload(rows: list[dict]) -> str:
     payload = json.dumps(rows, ensure_ascii=False, default=str)
-    return payload.replace("</script", "<\\/script")
+    # Escaping every `<` after serialization blocks `</script` in any case
+    # and `<!--`; JSON.parse decodes `\u003c` back to `<`.
+    return payload.replace("<", "\\u003c")
 
 
 def _render_html(payload: str) -> str:
