@@ -181,7 +181,7 @@ The phase delivers three parts in order:
 
 ## Edge Coverage
 
-**Coverage:** 35/38 applicable edges resolved · 3 unresolved
+**Coverage:** 36/39 applicable edges resolved · 3 unresolved (floor recomputed 2026-10-14 after the R4 amendment)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -199,6 +199,7 @@ The phase delivers three parts in order:
 | adjacency | R4 | ✅ covered | A gap of exactly 5 is green, 11 orange, 15 orange, 15.01 red |
 | empty | R4 | ✅ covered | An uncomputable elapsed % renders white with no sign |
 | ordering | R4 | 🧪 backstop | The sign is applied after rounding the display, color on the raw value |
+| concurrency | R4 | 🧪 backstop | The gauge is a pure function of (percent, window, now); each segment computes its own |
 | idempotency | R5 | ✅ covered | ~~The restore leaves `cli-config.json` byte-identical to the backup~~ *(superseded, D-14)* The real `cli-config.json` is never written; the scratch dir is deleted after the capture |
 | concurrency | R5 | ✅ covered | The kill-by-next-update test is part of the spike |
 | adjacency | R6 | ✅ covered | Included and extra segments render independently when one is absent |

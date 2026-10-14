@@ -18,13 +18,13 @@ repos:
         # Scoped to the refactor's modules + tests, plus review-spec.py.
         # The rest of skills/ joins the gate later (the "enforce more
         # after the refactor" expansion).
-        files: ^((tools|tests)/.*|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-project-rules-agents/.*|skills/ai-kit-project-rules-makefile/.*|skills/ai-kit-project-rules-precommit/.*|skills/ai-kit-project-rules-arch/.*|skills/ai-kit-project-rules-docker/.*|skills/ai-kit-project-rules-cicd/.*|skills/ai-kit-project-rules-all/.*|skills/ai-kit-gsd-curated-config/.*|skills/_shared/.*)\.py$
+        files: ^((tools|tests)/.*|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-project-rules-agents/.*|skills/ai-kit-project-rules-makefile/.*|skills/ai-kit-project-rules-precommit/.*|skills/ai-kit-project-rules-arch/.*|skills/ai-kit-project-rules-docker/.*|skills/ai-kit-project-rules-cicd/.*|skills/ai-kit-project-rules-all/.*|skills/ai-kit-gsd-curated-config/.*|skills/ai-kit-gsd-spec-discuss/.*|skills/_shared/.*)\.py$
         require_serial: true
       - id: pylint
         name: pylint
         entry: uv run pylint
         language: system
-        files: ^tools/(status-line|statusline-doctor|setup)\.py$
+        files: ^(tools/(status-line|statusline-doctor|setup)|skills/ai-kit-gsd-spec-discuss/scripts/[a-z_]+)\.py$
         require_serial: true
       - id: pyright
         name: pyright
@@ -47,13 +47,13 @@ repos:
         name: py-compile
         entry: python3 -m py_compile
         language: system
-        files: ^(tools/(status-line|statusline-doctor|setup)|tools/hooks/[a-z_]+|tools/config_doctor_[a-z_]+|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-project-rules-agents/.*|skills/ai-kit-project-rules-makefile/.*|skills/ai-kit-project-rules-precommit/.*|skills/ai-kit-project-rules-arch/.*|skills/ai-kit-project-rules-docker/.*|skills/ai-kit-project-rules-cicd/.*|skills/ai-kit-project-rules-all/.*|skills/ai-kit-gsd-curated-config/.*|skills/_shared/.*)\.py$
+        files: ^(tools/(status-line|statusline-doctor|setup)|tools/hooks/[a-z_]+|tools/config_doctor_[a-z_]+|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-project-rules-agents/.*|skills/ai-kit-project-rules-makefile/.*|skills/ai-kit-project-rules-precommit/.*|skills/ai-kit-project-rules-arch/.*|skills/ai-kit-project-rules-docker/.*|skills/ai-kit-project-rules-cicd/.*|skills/ai-kit-project-rules-all/.*|skills/ai-kit-gsd-curated-config/.*|skills/ai-kit-gsd-spec-discuss/.*|skills/_shared/.*)\.py$
       # Tests run on the user's real runtime (system python3, stdlib-only), matching
       # how the status line actually runs. Minimal core set for now; expands post-refactor.
       # One subprocess per module, in parallel (tools/run_unittest_parallel.py, stdlib-only).
       - id: unittest
         name: unittest (core)
-        entry: python3 tools/run_unittest_parallel.py tests.test_run_unittest_parallel tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_config_doctor tests.test_config_doctor_pty tests.test_ai_kit_usage_metrics tests.test_ai_kit_project_rules_agents tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_rules_common tests.test_ai_kit_project_rules_makefile tests.test_ai_kit_project_rules_precommit tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_cicd tests.test_ai_kit_project_rules_all
+        entry: python3 tools/run_unittest_parallel.py tests.test_run_unittest_parallel tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_config_doctor tests.test_config_doctor_pty tests.test_ai_kit_usage_metrics tests.test_ai_kit_project_rules_agents tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_gsd_spec_discuss tests.test_ai_kit_rules_common tests.test_ai_kit_project_rules_makefile tests.test_ai_kit_project_rules_precommit tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_cicd tests.test_ai_kit_project_rules_all
         language: system
         pass_filenames: false
         always_run: true

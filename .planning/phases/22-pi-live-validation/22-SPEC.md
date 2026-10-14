@@ -110,7 +110,7 @@ effect on a pi host at all, and the plan says only what was proven.
 
 ## Edge Coverage
 
-**Coverage:** 23/24 applicable edges resolved · 1 unresolved
+**Coverage:** 32/32 applicable edges resolved · 0 unresolved (floor recomputed 2026-10-14 after the R1–R3 amendments)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -118,12 +118,20 @@ effect on a pi host at all, and the plan says only what was proven.
 | adjacency | R1 | ✅ covered | Two providers serving the same model name stay distinct `provider/model` entries |
 | empty | R1 | ✅ covered | ~~Header only~~ *(superseded, D-04)* An empty `models` array yields an empty list, not an error |
 | ordering | R1 | 🧪 backstop | Entries keep the CLI's order; consumers sort |
+| concurrency | R1 | 🧪 backstop | One RPC process per enumeration; closing stdin ends it and the supervisor kills it on timeout |
 | precision | R1 | ✅ covered | ~~`1M`/`128K`/`200K` parse to exact integers~~ *(superseded, D-04)* `contextWindow`/`maxTokens` are exact JSON integers |
-| unclassified | R2 | ⚠ UNRESOLVED | No shape cue; the spike verdict and its evidence are specified |
+| adjacency | R2 | ✅ covered | Runs with and without the override differ only in the wire `model`; selection (`message.model`) and served model (`responseModel`) are recorded side by side |
+| concurrency | R2 | 🧪 backstop | Spike rungs run one at a time, one mock provider per run, killed afterwards |
+| empty | R2 | ✅ covered | With no override set the hook fails open and the wire model equals the selection |
+| encoding | R2 | 🧪 backstop | Model ids are compared as exact strings; the hook passes them verbatim |
+| ordering | R2 | 🧪 backstop | Rungs run L0 → L3; L3 only after approval |
 | adjacency | R3 | ✅ covered | A tier-only verdict keeps tier entries and still writes no per-agent overrides |
 | empty | R3 | ✅ covered | With no verdict yet, every pi model-layer entry carries the label |
 | encoding | R3 | 🧪 backstop | The label text is pinned verbatim by a test |
 | ordering | R3 | 🧪 backstop | Entries stay sorted by key |
+| boundary | R3 | ✅ covered | Exactly one opt-in key (`pi.sonnet`) is offered; `pi.opus`/`pi.haiku` are never written |
+| concurrency | R3 | 🧪 backstop | Plans are pure functions of the inventory, with no shared state |
+| precision | R3 | ✅ covered | The label text is pinned verbatim; the opt-in value is a bare id matched exactly against the session provider's list |
 | adjacency | R4 | ✅ covered | Two scratch projects run in separate dirs |
 | empty | R4 | ✅ covered | A failed local install stops the smoke before `inventory` |
 | ordering | R4 | ✅ covered | The dry run always precedes the real apply |

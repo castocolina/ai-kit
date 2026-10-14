@@ -412,7 +412,10 @@ run of 2026-10-13/14 and this milestone's own Phases 16.1–23.
      smallest diff, and ponytail findings feed the choice without deciding it.
   5. The skill is named `ai-kit-gsd-spec-discuss` (chosen in its spec, 2026-10-14). It is
      auto-discovered by `tools/setup.py` (no registry entry), has a README row, and it passes `/skill-judge` in code review.
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [x] 24-01-PLAN.md — the skill, its three scripts, tests, gates and README row
 
 ## Backlog
 
