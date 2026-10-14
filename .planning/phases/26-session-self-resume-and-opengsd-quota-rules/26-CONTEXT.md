@@ -183,6 +183,9 @@ must confirm.
   It strictly parses `packageName == "@opengsd/gsd-core"` with a short timeout.
   `gsd_catalog.resolve_gsd_tools_path`'s drifted 16-home list moves onto it. Laya
   new_shared_upstream 0.69 (fb), TypeSafe new_shared_upstream 1.00.
+  - **Amended 2026-10-14:** Phase 16.1 D-18 already moves `gsd_catalog` onto one resolver in
+    `ai_kit_spec/gsd_tools.py`, with this order. This phase extends that resolver with the
+    identity check and does not create a second one.
 - **D-19: When identity is `unverified`, R18 and R19 come out `not_applicable` with
   `unverified: true` and a reason.** `build_remediation` copies them into `notices`, and the
   rules-all aggregate merges `notices`. Valid identity JSON naming another package is "not
