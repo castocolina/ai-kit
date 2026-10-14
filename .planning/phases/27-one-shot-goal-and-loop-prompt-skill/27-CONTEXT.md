@@ -229,6 +229,28 @@ HOW. The skill never runs the prompt it generates.
   removed; finished backlog items cleared; the branch merged into the main checkout (never
   pushed); every intermediate worktree removed after archiving unmerged work as a tag.
 
+### Added 2026-10-14 (uz review of the second hand-written prompt)
+- **D-27: An OpenGSD scope always gets `/gsd-autonomous --converge` with `--from/--to/--only`
+  on the first line, and nothing else as the strategy.** The rails follow it in the same
+  block and must contain no flag-like tokens, since the workflow greps its whole argument
+  string. Their first rule makes every PLAN.md carry `cross_ai: true`; without it GSD skips
+  cross-AI for that plan. `/goal` or a loop is emitted only when:
+  - the project is not OpenGSD;
+  - the user explicitly asks for one;
+  - the plans are not OpenGSD plans.
+
+  This supersedes D-12's optional `/goal` wrapper and D-13's per-strategy blocks for OpenGSD
+  scopes.
+- **D-28: The prompt uses labeled sections** (OBJECTIVE, ROLE, RULES FOR EVERY PLAN, ORDER,
+  QUOTA, DECISIONS, SAFETY, DONE WHEN, CLEANUP, STOP IF, REPORT). Each section holds one-line
+  rules. The structure follows the Objective / Scope / Done-when / If-blocked goal frame from
+  the todo's research, extended with order, quota, safety and cleanup. The whole prompt sits in
+  one fenced code block between the COPY markers. Outside the block there is at most a
+  three-sentence summary of why this strategy fits, written for a delegate. Rationale for
+  tooling gaps (such as missing reviewer adapters) never goes into the file. This refines D-25:
+  the wrapper must be a small fraction of the prompt, and a test pins that ratio. Reference:
+  `.planning/goals/2026-10-14-v1.3-phases-16-27.md` (third version).
+
 ### Claude's Discretion
 - The delimiter character, the exact question wording, the slug rules, and the golden case's
   inputs.

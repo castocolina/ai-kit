@@ -86,6 +86,7 @@ prompt for a separate agent session. The prompt carries everything needed to fin
    - Acceptance: one table test per row. A host with no goal primitive never gets `/goal`. An
      OpenGSD phase range always offers `/gsd-autonomous`.
    - *Amended 2026-10-14 (27 D-10, D-12):* `/gsd-autonomous` greps all of its arguments for flags (`autonomous.md:21-62`), so its line carries flags only and the rails live in the file. "Must outlive" and "provable" are derived and shown, never asked.
+   - *Amended 2026-10-14 (27 D-27, D-28, uz):* an OpenGSD scope yields one strategy, `/gsd-autonomous --converge` with `--from/--to/--only`. Its rails require `cross_ai: true` on every plan. `/goal` or a loop only when the project or the plans are not OpenGSD, or the user asks. The prompt is one fenced block of labeled sections; the wrapper is a short summary.
 
 3. **Prompt and rails file** (GPS-02).
    - Current: none.
