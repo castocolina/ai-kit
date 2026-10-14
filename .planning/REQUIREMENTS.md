@@ -98,6 +98,21 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 - [ ] **STL-04**: Render-versus-fetch timing is measured in a spike before choosing an inline fetch with a cache or a background refresher
 - [ ] **STL-05**: `setup.py --with-statusline[=claude,cursor]` wires each detected host headless, and the wizard runs verify/replace/keep per detected host; both entries are reachable after v1.3 merges; `tests/test_arch.py` covers the new modules; `make test` and `make validate` are green
 
+### Quota Resilience
+
+- [ ] **QTA-01**: A per-CLI table of quota, limit and billing message patterns, built from observed child output and labelled verified/unverified, classifies a stop as wait-recoverable or not by route: billing or limit errors on a router-backed route (`infer_fallback_quota`) are wait-recoverable (fallback chains return to subscription tiers within minutes or hours); billing or access errors on a direct third-party provider route (OpenCode Zen, Cursor API models) are not
+- [ ] **QTA-02**: Limits are detected live in the child's stdout/stderr and after the fact (timeout or partial exit), feeding the shared typed reason (16.1 D-13) and the runner's status line (18 D-27, 18.1 D-12)
+- [ ] **QTA-03**: A wait-recoverable stop is re-checked every 10 minutes for at most 4 hours; resume checks the working tree and re-dispatches only unfinished work; after 4 hours it stops and reports; the policy runs in the runner and in `ai-kit-spec-review`/`ai-kit-spec-execute*`, replacing the hourly `CronCreate` wake
+- [ ] **QTA-04**: The orchestrating session sets an hourly self-wake that survives its own quota stall, chosen per host by survival (OS timer or cloud routine over in-session primitives), with unverified host behavior flagged
+- [ ] **QTA-05**: `ai-kit-project-rules-agents` gains an OpenGSD-only rule that checks and remediates the session-resume and subprocess-quota directives as separate items
+
+### Goal-Prompt Skill
+
+- [ ] **GPS-01**: A skill detects the host, its goal/loop/schedule primitives (tools, not only slash commands) and the GSD/OpenGSD or superpowers scope, and picks one to three strategies from a selection matrix (`/goal`, schedule or `/loop`, `/gsd-autonomous`)
+- [ ] **GPS-02**: It emits a `.md` with a ready-to-paste prompt carrying rails (AGENTS.md first, candidate skills, pre-commit, done checks, stop-if, final summary), one subagent per superpowers plan, cross-AI convergence declared per OpenGSD plan, and the QTA quota directives
+- [ ] **GPS-03**: The definition of done requires the project's real e2e tests (app launch, PTY/TUI drive, browser for web) to pass, with the evidence printed into the transcript; with no e2e suite, creating one comes first
+- [ ] **GPS-04**: jev is advisory and text-only (objective closeness), never a gate and never a UI-quality or mockup-fidelity judge; the skill passes `/skill-judge`
+
 ## Future Requirements
 
 None deferred beyond v1.3 at definition time.
@@ -167,14 +182,23 @@ None deferred beyond v1.3 at definition time.
 | STL-03 | Phase 23 | Pending |
 | STL-04 | Phase 23 | Pending |
 | STL-05 | Phase 23 | Pending |
+| QTA-01 | Phase 25 | Pending |
+| QTA-02 | Phase 25 | Pending |
+| QTA-03 | Phase 25 | Pending |
+| QTA-04 | Phase 26 | Pending |
+| QTA-05 | Phase 26 | Pending |
+| GPS-01 | Phase 27 | Pending |
+| GPS-02 | Phase 27 | Pending |
+| GPS-03 | Phase 27 | Pending |
+| GPS-04 | Phase 27 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 52 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 4, APP 5, EVAL 8, AGT 1, HARD 5, RTM 3, SDC 4, STL 5). SPEC-05 (pi
+- v1.3 requirements: 61 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 4, APP 5, EVAL 8, AGT 1, HARD 5, RTM 3, SDC 4, STL 5, QTA 5, GPS 4). SPEC-05 (pi
   enumeration) and SPEC-06 (cursor wrapper) were split out of SPEC-02 during the Phase 16
   discussion, 2026-09-23.
-- Mapped to phases: 52/52
+- Mapped to phases: 61/61
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-09-23*
-*Last updated: 2026-10-14 — Phase 23 (STL) defined; Phase 24 (SDC) added, SKL-04 added; earlier: 16.1 (HARD), 18.1 (RTM), XAI-02 amended (100% coverage)*
+*Last updated: 2026-10-14 — Phases 25–27 (QTA, GPS) added from the quota/goal-prompt todo; Phase 23 (STL) defined; Phase 24 (SDC) added, SKL-04 added; earlier: 16.1 (HARD), 18.1 (RTM), XAI-02 amended (100% coverage)*

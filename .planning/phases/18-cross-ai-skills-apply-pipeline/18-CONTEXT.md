@@ -245,6 +245,11 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
   - Closed exit classes:
     - 69: permission_blocked, bad_model, auth, billing;
     - 75: quota, and capacity after retries;
+    - *(amended 2026-10-14, Phase 25 QTA-01)* the 69/75 split is route-aware: a billing or
+      limit error on a router-backed route (`infer_fallback_quota`) is 75 (`retry-later`),
+      because the router's fallback chain returns to subscription tiers; on a direct
+      third-party provider route it stays 69. Phase 25 owns the pattern table and the
+      10-minute / 4-hour wait;
     - 1: crash or empty answer;
     - 2: usage, no model, empty stdin;
     - 124: deadline;

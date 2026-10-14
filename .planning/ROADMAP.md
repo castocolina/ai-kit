@@ -56,7 +56,7 @@ Full details: `milestones/v1.2-ROADMAP.md` · phase dirs: `milestones/v1.2-phase
 
 </details>
 
-### 🚧 v1.3 GSD Curated Config v2 (Phases 16–23) — IN PROGRESS
+### 🚧 v1.3 GSD Curated Config v2 (Phases 16–27) — IN PROGRESS
 
 **Milestone Goal:** Rewrite `ai-kit-gsd-curated-config` into a host-aware, role-scored GSD config
 wizard that configures a target project's `.planning/config.json` in four questions plus one
@@ -75,6 +75,9 @@ runtime hosting the session. Source spec:
 - [ ] **Phase 22: Pi Live Validation** - Live smoke run from the pi host (independent; may run any time after Phase 19)
 - [ ] **Phase 23: Host-split status line for Claude Code and Cursor CLI** - Split `tools/status-line.py` per host and ship a Cursor CLI status line with the shared 5/10/15 proximity gauge (promoted from backlog 999.4; independent of Phases 17–22)
 - [ ] **Phase 24: Spec-and-discuss chain skill** - Installable skill that runs spec → discuss over a phase range with optional Laya/TypeSafe decisions, quality over simplicity unless MVP mode
+- [ ] **Phase 25: Quota-aware cross-AI subprocess supervision** - Route-aware quota classification and a 10-minute / 4-hour wait-and-resume for cross-AI children (from todo 2026-10-14)
+- [ ] **Phase 26: Session self-resume and OpenGSD quota rules** - The orchestrating session wakes itself after its own quota stalls; `ai-kit-project-rules-agents` emits both quota directives for OpenGSD projects (spike first)
+- [ ] **Phase 27: One-shot goal and loop prompt skill** - A skill that picks `/goal`, schedule/loop or `/gsd-autonomous` for a set of phases or plans and emits a ready-to-paste prompt whose definition of done requires green e2e tests
 
 ## Phase Details
 
@@ -416,6 +419,82 @@ run of 2026-10-13/14 and this milestone's own Phases 16.1–23.
 
 Plans:
 - [x] 24-01-PLAN.md — the skill, its three scripts, tests, gates and README row
+
+### Phase 25: Quota-aware cross-AI subprocess supervision
+
+**Goal**: When a cross-AI child (pi, opencode, cursor, codex) stops on a usage limit, the
+orchestrator tells a limit that recovers by waiting from one that never will, waits and resumes
+only the unfinished work for the first, and stops and reports for the second, instead of
+failing or retrying blindly. Source: todo
+`2026-10-14-agents-md-quota-schedule-rules-and-goal-prompt-skill.md` (part 1, mechanism B).
+**Depends on**: Phase 18.1 (one runner, closed status table); amends 18 D-27's exit classes
+before the runner is planned.
+**Requirements**: QTA-01, QTA-02, QTA-03
+**Success Criteria** (what must be TRUE):
+
+  1. A per-CLI table of quota, limit and billing message patterns is built from observed child
+     output, each pattern labelled verified or unverified.
+  2. Classification is route-aware. On a router-backed route (`infer_fallback_quota`, e.g.
+     `router-env/*`), a billing or limit error can come from the last paid model of a fallback
+     chain whose subscription tiers recover within minutes or hours, so it is wait-recoverable.
+     On a direct third-party provider route (OpenCode Zen, Cursor API models) a billing or
+     access error is not recoverable by waiting: report it and move to the next candidate.
+  3. Limits are detected both live (stdout/stderr while the child runs) and after the fact (a
+     timeout or an exit with partial work).
+  4. A wait-recoverable limit is re-checked every 10 minutes for at most 4 hours. Before resuming,
+     the working tree is checked and only the unfinished work is re-dispatched (the runner's
+     per-CLI `resume`). After 4 hours it stops and reports; it never loops forever.
+  5. The same policy runs in the runner and in `ai-kit-spec-review` / `ai-kit-spec-execute*`,
+     replacing their hourly `CronCreate` wake.
+**Plans**: TBD
+
+### Phase 26: Session self-resume and OpenGSD quota rules
+
+**Goal**: An orchestrating session that runs out of its own quota resumes by itself, through a
+wake mechanism that survives the stall, and OpenGSD projects get both quota directives in their
+AGENTS.md. Source: the same todo (part 1, mechanism A and the rules-skill rule).
+**Depends on**: Phase 25 (the subprocess directive's wording). A spike runs before planning:
+whether `claude -p --continue` (or each host's equivalent) started from an OS timer re-enters the
+right session; codex, pi and opencode facts are third-party only so far.
+**Requirements**: QTA-04, QTA-05
+**Success Criteria** (what must be TRUE):
+
+  1. Per host, the skill detects which wake primitives outlive the session (an OS timer or a cloud
+     routine) and which die with it (`CronCreate`, `ScheduleWakeup`, `/loop`), and picks by
+     survival. Unverified host behavior is flagged.
+  2. The main agent sets an hourly wake that re-enters the same session; the session-resume
+     mechanism and the subprocess mechanism (Phase 25) stay separate, each with its own trigger.
+  3. `ai-kit-project-rules-agents` gains a rule, active only for OpenGSD projects, that checks
+     and remediates both directives as separate items.
+**Plans**: TBD
+
+### Phase 27: One-shot goal and loop prompt skill
+
+**Goal**: The user names a set of GSD phases or superpowers plans and gets a ready-to-paste
+prompt for a separate agent session that carries everything needed to finish them: the chosen
+execution strategy, rails, quota handling and a definition of done that requires green e2e
+tests. Source: the same todo (part 2).
+**Depends on**: Phases 25 and 26 (quota directives); reuses Phase 24's skill patterns.
+**Requirements**: GPS-01, GPS-02, GPS-03, GPS-04
+**Success Criteria** (what must be TRUE):
+
+  1. After a few questions, the skill detects the host and its goal, loop and schedule primitives
+     (tools, not only slash commands), the GSD/OpenGSD scope (phases; spec, discuss and plan files
+     present) or the superpowers plans, and picks one to three strategies from a selection matrix
+     (`/goal`, schedule or `/loop`, `/gsd-autonomous`).
+  2. The generated `.md` holds the copy-paste prompt with rails: AGENTS.md first, candidate
+     skills, pre-commit enforced, definition-of-done checks, stop-if rules and a final summary.
+     Superpowers plans get one subagent per plan; OpenGSD plans get cross-AI convergence declared
+     in each plan, with a path for projects whose cross-AI setup is incomplete.
+  3. **E2E is the core of the definition of done.** The prompt names the project's real e2e
+     commands (real app launch, PTY/TUI drive, a browser for web), requires them green before
+     "done", and makes the agent print the evidence (command output, screenshots or TUI
+     snapshots) where a transcript-judged `/goal` can see it. With no e2e suite, creating one
+     comes first.
+  4. jev is used only for advisory, text-based checks (e.g. how close the delivered work is to
+     the stated objectives); never as a gate and never to judge UI quality or mockup fidelity,
+     since it answers typed questions on text. The skill passes `/skill-judge`.
+**Plans**: TBD
 
 ## Backlog
 
