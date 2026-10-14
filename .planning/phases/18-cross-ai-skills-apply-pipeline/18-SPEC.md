@@ -77,6 +77,7 @@ keeps working unchanged.
      - `workflow.cross_ai_execution` defaults to yes on claude and codex hosts, no on opencode, cursor and pi.
      - The targets are the preference order (default pi > cursor > opencode) filtered to installed CLIs that are not the host. grok is never a target.
      - Each target's model is a declared `execute` router first, otherwise the best `execution` score within the rigor ceiling (17 D-03).
+     - pi's models come from a `pi --list-models` parser added to `ai_kit_spec` in this phase (SPEC-05 moved here from Phase 22; amended 2026-10-14, 18 D-25).
      - An empty target list leaves a `needs_choice`.
      - The report tells the user to run `--cross-ai`, and the plan sets `manager.flags.execute` to `--cross-ai`.
    - Acceptance: golden plans on a claude host pick pi with `router-env/my-coding`. A fixture without pi falls to cursor. A fixture with no other CLI keeps `needs_choice`.
@@ -84,7 +85,7 @@ keeps working unchanged.
 4. **Script generation** (XAI-02): the per-project runner never loses a user edit.
    - Current: the hand-placed dogfood file.
    - Target:
-     - `apply` renders `.planning/scripts/cross-ai.mjs` from a versioned template shipped with the skill.
+     - `apply` renders `.planning/scripts/cross-ai.mjs` from a versioned template that ships inside `ai-kit-spec-review` (18.1 D-10; curated-config reaches it through its sibling bridge).
      - The header records the generator, the template version and the sha256 of the body.
      - An absent file, or one whose body still matches its header, is written atomically.
      - An edited file is never overwritten: the new render goes to `cross-ai.mjs.new` with a note.
@@ -100,7 +101,7 @@ keeps working unchanged.
      - Errors are matched on stderr and structured fields only, never on the answer text.
      - Exit codes are 0, 1, 2, 69, 75, 124 and 127, and exactly one `AIKIT-XAI status=… action=fallback|retry-later|stop` line is printed.
      - It falls back to the next CLI only when HEAD and the working tree are unchanged.
-     - Success counts only when HEAD moved or the tree changed.
+     - In `exec` mode, success counts only when HEAD moved or the tree changed, where "tree" means a tree id computed with a temporary git index (it sees re-edits of already-dirty and untracked files). In `review` mode, success needs an unchanged tree (amended 2026-10-14, 18 D-27 and 18.1 coupling).
    - Acceptance: the script's offline `--self-test` covers each exit code, the status line, process-group kill and both git-state rules. A Python test runs the self-test of a rendered script.
 
 6. **Timeout** (XAI-02): the outer limit always wins the race.
@@ -137,7 +138,7 @@ keeps working unchanged.
 10. **Ponytail set** (ROADMAP SC6): first-class on Claude, checked elsewhere.
     - Current: 18-CONTEXT's "ponytail does not exist" note is stale.
     - Target:
-      - `skill_affinity.json` maps `ponytail` → planner, executor, code-fixer; `ponytail-review`/`ponytail-audit` → code-reviewer and the auditors; `ponytail-debt` → planner or verifier, within the cap.
+      - `skill_affinity.json` maps `ponytail` → planner, executor, code-fixer; `ponytail-review`/`ponytail-audit` → code-reviewer and the auditors; `ponytail-debt` → verifier (amended 2026-10-14, 18 D-33: the planner already holds core `ponytail`, and the MVP cap is 2), within the cap.
       - On claude these are written as `global:ponytail:<skill>`.
       - For every other host, the inventory checks whether the skills are visible in that host's global skills directory, and records the result. A host that cannot address them gets nothing (R9).
     - Acceptance: golden plans on claude include the set within the cap. A non-Claude fixture without visible ponytail skills has none. The check result is recorded in SKILL.md.
@@ -146,7 +147,8 @@ keeps working unchanged.
     - Current: this repo sets it by hand.
     - Target:
       - `jev-fast-decision` is recommended for `gsd-advisor-researcher` and `gsd-assumptions-analyzer` only when the skill is installed and a backend is detected.
-      - A backend means either a health probe succeeding at `JEV_API_URL` (or the documented local default), or a key present by name in `JEV_API_KEY` or ai-kit's secrets file.
+      - A backend means either a TCP reachability check succeeding for `JEV_API_URL` when it is set (reported as "reachable, not verified as System One"), or a key present by name in `JEV_API_KEY` or ai-kit's secrets file. No default URL is probed: the jev skill has no health endpoint, its built-in default is remote Zen, and the local URL in its docs is only an example (amended 2026-10-14, 18 D-36).
+      - The plan notes that the skill is inert unless the agent session sets `GSD_PATH_JEV=1` and `GSD_PATH_JEV_TIMEOUT_SECONDS`.
       - No machine-specific path is used, and no key value enters the inventory or the plan.
     - Acceptance: fixtures for skill without backend (none), backend without skill (none), skill with a healthy probe and skill with a key by name (both recommended). A test asserts that the key value never appears in output.
 
@@ -162,7 +164,7 @@ keeps working unchanged.
     - Target:
       - `apply` backs up to `.planning/config.json.bak-<timestamp>` and keeps the newest 3.
       - It creates the config with `gsd-tools config-new-project` when it is absent. That command copies `~/.gsd/defaults.json`, so `apply` re-reads the new config and reconciles the copied keys against the plan's managed families (for example a copied `resolve_model_ids: "omit"` on claude, or a copied `model_policy`) before writing. It then writes each entry with `gsd-tools query config-set`, unsetting object-valued keys per leaf (18 D-07 as amended).
-      - On any failure it restores the backup and names the failing key.
+      - On any failure it restores the backup verbatim and atomically, and names the failing key. That restore is the one sanctioned write outside gsd-tools: a gsd-tools revert was shown live to leave an empty parent object and reformat the file (amended 2026-10-14, 18 D-21).
       - It reuses Phase 16.1's shared gsd-tools resolver, ownership sidecar and undo log.
     - Acceptance:
       - an integration test against the real gsd-tools in a scratch project applies a golden plan;
@@ -282,7 +284,7 @@ keeps working unchanged.
 | empty | R13 | ✅ covered | An absent config is created with `config-new-project` first |
 | encoding | R13 | 🧪 backstop | Values are passed as JSON for objects and lists |
 | ordering | R13 | ✅ covered | Unsets run before sets in the same family |
-| idempotency | R13 | ✅ covered | Re-applying an applied plan changes nothing but a new backup |
+| idempotency | R13 | ✅ covered | Re-applying an applied plan changes nothing; no new backup when the newest is byte-identical (amended, 18 D-20) |
 | concurrency | R13 | 🧪 backstop | `apply` refuses when another apply's undo log is open |
 | idempotency | R14 | ✅ covered | An approved re-run reports already-current results |
 | concurrency | R14 | 🧪 backstop | Follow-ups run sequentially |
@@ -300,7 +302,7 @@ keeps working unchanged.
 | MUST NOT name, offer or install a missing skill | R9 | resolved | test |
 | MUST NOT run a follow-up or an installer without the grouped approval | R14 | resolved | test |
 | MUST NOT make the host CLI a review lane or an execution target | R2, R3 | resolved | test |
-| MUST NOT write `.planning/config.json` except through gsd-tools | R13 | resolved | test |
+| MUST NOT write `.planning/config.json` except through gsd-tools, with one named exception: the verbatim atomic restore of a backup after a failed apply (amended 2026-10-14, 18 D-21) | R13 | resolved | test |
 
 ## Ambiguity Report
 

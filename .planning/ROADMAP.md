@@ -234,7 +234,7 @@ with the v2 flow living alongside the unchanged v1 CLI.
   6. Ponytail (Claude plugin v5.1.0, addressable as `global:ponytail:<skill>`) is a first-class
      recommended skill set in `skill_affinity.json`: core `ponytail` → planner, executor,
      code-fixer; `ponytail-review`/`ponytail-audit` → code-reviewer and auditors;
-     `ponytail-debt` → planner or verifier; within the per-rigor cap (2/3/5). Whether non-Claude
+     `ponytail-debt` → verifier (amended 2026-10-14); within the per-rigor cap (2/3/5). Whether non-Claude
      hosts can address it (the plugin ships `AGENTS.md` and `gemini-extension.json`) is checked
      and recorded. 18-CONTEXT.md's "ponytail does not exist" note is stale (folded from backlog
      999.4, 2026-10-13).
@@ -328,7 +328,7 @@ within this phase.
 label is lifted.
 **Depends on**: Phase 19 (independent of Phases 20–21; may run any time afterward, and nothing
 downstream depends on it)
-**Requirements**: EVAL-08, SPEC-05
+**Requirements**: EVAL-08
 **Success Criteria** (what must be TRUE):
 
   1. A live smoke run from the pi host (`inventory` + `recommend` + `apply`, dry-run then real)
@@ -338,8 +338,8 @@ downstream depends on it)
      the verified effect (amended 2026-10-14, replacing "per-agent `pi --model` wiring via the
      subagent extension").
   2. SKILL.md's "not live-validated" label for pi is removed once the smoke run passes.
-  3. `detect-runtimes` enumerates pi models (`pi --list-models`) via a fixture-backed parser
-     (SPEC-05, deferred from Phase 16).
+  3. `detect-runtimes`' pi parser (added in Phase 18 for SPEC-05) is re-verified against the live
+     `pi --list-models` output.
 **Plans**: TBD
 
 ### Phase 23: Host-split status line for Claude Code and Cursor CLI

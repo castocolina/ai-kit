@@ -1,6 +1,6 @@
 # Phase 18: Cross-AI, Skills & Apply Pipeline - Context
 
-**Gathered:** 2026-09-23
+**Gathered:** 2026-09-23 (interactive); updated 2026-10-14 (assumptions mode, after `18-SPEC.md`)
 **Status:** Ready for planning
 
 <domain>
@@ -58,7 +58,9 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
 - **D-14:** Every write goes through `gsd-tools query config-set` (it resolves the active
   workstream's config path). Effort keys need `gsd-tools effort sync --apply` to take effect, and
   the sync targets the project's local gsd-core install when one exists (D-05 follow-up).
-- Review lanes keep GSD's own lane definitions; `cross-ai.mjs` is for execution only.
+- Review lanes keep GSD's own lane definitions; `cross-ai.mjs` is for execution only. *(Refined
+  2026-10-14: GSD's review lanes are unchanged, but the shipped runner also serves
+  ai-kit-spec-review's own review dispatch in `--mode review` (18.1 D-10/D-11).)*
 
 ### Cross-AI review
 - **D-01:** The number of reviewer lanes depends on rigor:
@@ -134,6 +136,213 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
     updated, and cursor/pi labeled "not live-validated".
   - **Reversibility:** reversible.
 
+### Added 2026-10-14 (assumptions-mode discuss, jev-screened)
+
+**Module layout and write path**
+- **D-15: Subcommand dispatch.** `cli.py` registers subcommands through a name-to-handler
+  table. The v1 `_cmd_*` handlers stay untouched.
+  - New flat modules: `plan_edit.py` (pure plan-set/unset), `apply.py`, `config_backup.py`,
+    `followups.py`, `cross_ai.py` (lane and target selection, pure), `cross_ai_script.py`
+    (renderer) and `skills.py`.
+  - v2 tests go in new modules, never in the v1 test file.
+  - TypeSafe 0.89.
+- **D-16: The v2 write path is 16.1's shared `ai_kit_spec/gsd_tools.py`** (`query config-set`,
+  one call per entry), with a strict value encoder:
+  - bool → `true`/`false`, `None` → `null`, dict/list → compact JSON, numbers → `str`;
+  - a `str` that config-set would re-type (`true`, `false`, `null`, a finite number, a leading
+    `[`/`{`) is refused, naming the key.
+  - v1 `gsd_write.config_set` keeps its exact argv.
+  - TypeSafe 0.96 over Laya legacy_widened 0.56 fb.
+- **D-17: `plan-set` and `plan-unset` take `--plan` and `--inventory`.** The inventory defaults
+  to a sibling `inventory.json`, and its digest is checked against the plan's.
+  - Rejected keys come from the inventory's probe (17 D-09). `-fast` warnings come from
+    `fast_twin_of` (17 D-13). Non-candidates come from the `needs_choice` top 3.
+  - Two refusals ignore `--force`: a `workflow.cross_ai_timeout` below 1800, and `plan-unset`
+    of an absent key.
+  - Own reasoning; both models were low (Laya needs_choice_only 0.66 fb, TypeSafe
+    require_inventory 0.69 fb). Provisional, so it is on the ledger.
+
+**Apply**
+- **D-18: Dry run and pre-flight validate keys with one read-only node call** to the host
+  gsd-core's `isValidConfigKey(key, projectDir)`, plus the strict encoder. They never call
+  `config-set`, not even with its `--dry-run`: the cached gsd-core 1.13.0 ignored that flag and
+  wrote the key (verified live).
+- **D-19: Backups live beside `gsd-tools config-path`**, which is workstream-aware: a
+  workstream's config is `.planning/workstreams/<ws>/config.json`.
+  - Name: `config.json.bak-<UTC YYYYMMDDTHHMMSSZ>`, plus `-<n>` on a collision, claimed by an
+    exclusive create (`os.link` of a mkstemp copy).
+  - Prune parses (timestamp, n), matches only that exact pattern, keeps the newest 3, and runs
+    after a successful apply. `config.json.bak-manual` is never touched.
+- **D-20 (amends 18-CONTEXT D-06 and SPEC R13's edge): No new backup** when the newest backup
+  is byte-identical to the current config; the report says it was reused. Three no-op applies
+  would otherwise evict every real earlier state. TypeSafe 0.77.
+- **D-21: Restore is a verbatim atomic restore of the backup bytes** (mkstemp +
+  `os.replace`). It is the one named exception to "only through gsd-tools", and the SPEC
+  prohibition is amended.
+  - Evidence (live, 1.16): a gsd-tools revert leaves `"model_overrides": {}` and rewrites
+    4-space indentation as 2-space.
+  - The 16.1 undo log stays as the failure record and the "apply in progress" marker; a
+    leftover log makes the next apply refuse.
+  - When no config existed before, restore deletes the file `config-new-project` created.
+  - TypeSafe 0.92.
+- **D-22: Apply order:**
+  1. load, validate, and refuse any `needs_choice`;
+  2. refuse if an undo log is open;
+  3. back up;
+  4. run `config-new-project` if the config is absent, then re-read and reconcile the copied
+     global keys (SPEC R13);
+  5. render `cross-ai.mjs`, so `workflow.cross_ai_command` never points at a failed render;
+  6. send entries sorted by (first key segment, unset before set, key), skipping `keep`
+     entries and unsets of absent keys;
+  7. run `gsd-tools query agent-skills <agent> --json` per wired agent, under
+     `GSD_RUNTIME=<host>`, and report its `warnings`;
+  8. prune and close the log.
+
+  A failure in steps 4–6 restores (D-21) and names the key.
+- **D-23: Two test layers.**
+  - Unit tests use a fake `run_fn`.
+  - An integration module (the `test-integration` tier) uses the real gsd-tools, resolved by
+    `gsd_catalog.resolve_gsd_tools_path`. It skips with a stated reason when gsd-tools is
+    absent or older than 1.16, and works on a `mkdtemp` scratch project.
+  - The Nth-key failure is injected by wrapping `run_fn`. Same-second backups use an injected
+    `now_fn`.
+
+**Cross-AI**
+- **D-24: The lane vocabulary is read from the host gsd-core's capability registry** at
+  inventory time (`loadRegistry({includeInstalled, cwd})`). It is stored as `review_lanes:
+  [{slug, binary|null, transport, model_key|null, effort_key|null, default_effort}]`.
+  - `model_key`/`effort_key` are used verbatim: antigravity's model key is `review.models.agy`,
+    and `review.effort.cursor` does not exist.
+  - Auto-eligible: the binary is on PATH, `model_key` is non-null, the slug is not the host,
+    and the inventory has enumerated models for that runtime.
+  - Lanes without model data (agy, kimi) are reachable only through `plan-set`.
+  - v1 `CLI_TO_REVIEWER_SLUG` stays in v1 until 18.1 D-04 removes it.
+  - TypeSafe 0.97.
+- **D-25: pi is enumerated in this phase** by one `pi --list-models` parser in `ai_kit_spec`,
+  so the pi pick is real on the first claude-host run. Phase 22 re-verifies and extends it, and
+  SPEC-05 moves to Phase 18.
+  - **Laya overridden** (needs_choice 0.79, high): Phase 19's scenario B expects pi with
+    `router-env/my-coding`. TypeSafe second opinion: parser_now 0.79.
+- **D-26: The runner template is runnable in place.**
+  - It lives in `ai-kit-spec-review` (18.1 D-10) with header `sha256=UNSTAMPED` and a default
+    CONFIG, so `node <template> --self-test` works in the repo.
+  - Header line 2: `// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=<N>
+    sha256=<hex>`.
+  - The hash covers the raw bytes after the second `\n`, CONFIG included. Python and Node both
+    hash bytes, with no decoding or newline normalization. TypeSafe 0.81.
+  - Pristine or absent means an atomic write; anything else means `.new` (a stale `.new` is
+    overwritten).
+  - CONFIG holds `prefer`, `models`, `outerTimeoutS`, `scrubEnv` (injected from 16.1's
+    `HOST_SIGNAL_ENV_VARS`), per-CLI `extraArgs` (opt-in skills and MCP) and the
+    retry/backoff/heartbeat constants. It is rendered with `json.dumps(indent=2)` between the
+    `// <config>` markers.
+  - The grok block is dropped. The codex block stays, marked unverified and outside the
+    default `prefer`. opencode gets `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1` by default. The
+    version is `template=2`.
+- **D-27: The XAI-02 changes to the prototype.**
+  - Closed exit classes:
+    - 69: permission_blocked, bad_model, auth, billing;
+    - 75: quota, and capacity after retries;
+    - 1: crash or empty answer;
+    - 2: usage, no model, empty stdin;
+    - 124: deadline;
+    - 127: no CLI installed.
+  - Exactly one last-line `AIKIT-XAI status=… cli= model= exit= cli_rc= elapsed= out=
+    tree=clean|dirty action=fallback|retry-later|stop`, from every exit path.
+  - Errors are matched on stderr and structured fields only (the prototype included the answer
+    text).
+  - Models are preflighted against each CLI's own list; it continues with a note if the
+    listing fails.
+  - The process group is killed after every child exit.
+  - `exec` success needs exit 0, a non-empty answer, and a moved HEAD or tree. `review` needs
+    an unchanged tree.
+  - The `--self-test` is black-box: fake CLIs on PATH, one subprocess per exit code, a
+    grandchild-kill check, and both git rules in a temp repo.
+  - "Tree" = a tree id from a temporary git index (`GIT_INDEX_FILE=tmp git add -A; git
+    write-tree`), because `status --porcelain` missed a re-edit of a dirty file live. TypeSafe
+    0.79.
+- **D-28: The script's data is a typed `artifacts[]` block in plan.json** (path, template,
+  version, `config{prefer, models, outer_timeout_s}`, source/why/status), with its own diff
+  kinds: add, change, keep-pristine, new-as-`.new`.
+  - `plan-set` addresses it with reserved pseudo-keys (`script:cross-ai.model.pi`), which are
+    never probed or sent to `config-set`.
+  - 17 D-19's execution-command placeholder is satisfied when every target has a model.
+  - TypeSafe 0.98.
+- **D-29: The timeout is baked and also checked live.**
+  - The rendered script bakes `outerTimeoutS`, and at run time takes the minimum with the live,
+    workstream-aware config value (`GSD_WORKSTREAM`).
+  - inner = outer − min(30, floor(outer/5)), which is 1770 for 1800.
+  - TypeSafe 0.79.
+- **D-30: Runner couplings from 18.1.**
+  - A review-only claude block; it has no exec formula, so `--mode exec` exits 2.
+  - Python dispatchers pass `--no-preamble`.
+  - Runner flags for per-candidate knobs: codex `effort`/`service_tier`, cursor `mode`.
+  - The status vocabulary and exit codes are a documented stable contract.
+
+**Skills**
+- **D-31: Global skills roots come from `gsd-tools skills-root <host>`**, plus
+  `<project>/skills`. An entry is a directory containing `SKILL.md`.
+  - `name` must match `^[A-Za-z0-9_-]+$`; otherwise it is `addressable:false` and never wired.
+  - `escapes_root` compares the realpath of the skill directory with the realpath of the root.
+  - `skill-manifest` is not used: it lacks the opencode, pi and cursor-global roots, and live
+    it reported 74 of the 134 claude skills.
+  - A project that keeps skills in `.claude/skills` is a stated limit in SKILL.md.
+  - Both models agreed at low confidence (0.50/0.56 fb); the evidence decides.
+- **D-32: A Claude plugin skill is visible only when all of these hold:**
+  - it is installed in `<claude dir>/plugins/installed_plugins.json` with a matching scope
+    (user, or `projectPath` == the project);
+  - it is enabled in the layered `enabledPlugins` (user, project, local; last wins);
+  - its skill file exists.
+
+  The reference is `global:<plugin>:<dir>`. Wiring precedence is project, then global, then
+  plugin. gsd-core emits plugin directives without an existence check, so ai-kit checks.
+  TypeSafe 0.88.
+- **D-33: `skill_affinity.json`** sits beside the package, with `schema_version`, `as_of` and
+  `families[]` (`{id, skills, agents, when}`) in priority order.
+  - Facts (`tdd_mode`, `frontend`, `db`, `system_one_backend`) come from the plan and
+    inventory.
+  - Resolution walks families, then skills, in file order. It skips failed gates and
+    uninstalled or unaddressable skills, dedupes per agent, and stops at the cap.
+  - Agent names are validated against the live `AGENT_TO_PHASE_TYPE`; an unknown name is
+    dropped with a note.
+  - `ponytail-debt` goes to `gsd-verifier` only. The planner already holds core `ponytail`,
+    and the MVP cap is 2. Own reasoning (Laya both 0.91; TypeSafe second opinion
+    one_agent_curated 0.55 fb); provisional, so it is on the ledger.
+  - `agent_skills.<agent>` is the whole list, plan-managed.
+- **D-34: Trusted roots.** Wire the project-relative `skills/<name>` whenever the same skill
+  exists in the project (no root needed). Otherwise propose one entry per wired skill's real
+  directory, `~/`-relative, as a separate approval item. A common-ancestor root is never
+  proposed.
+  - Own reasoning; both models were low and split (Laya per_skill_dir 0.50 fb, TypeSafe
+    prefer_project_path 0.53 fb). Provisional, so it is on the ledger.
+- **D-35: Ponytail on non-Claude hosts:** the six names are checked in each host's
+  `skills-root`. On this machine none is visible outside the Claude plugin cache, so non-Claude
+  hosts get no ponytail entries, and SKILL.md records a dated result. Other hosts' own plugin
+  routes are not addressable through `agent_skills` and are never run.
+- **D-36: System One detection is a reachability check, not a health check.**
+  - It is a TCP connect (1–2 s) to `JEV_API_URL`'s host and port when the variable is set,
+    reported as "reachable, not verified as System One". A key present by name also counts:
+    `JEV_API_KEY`, or a new presence-only helper over `~/.config/ai-kit/secrets.env` that never
+    returns the value.
+  - No default URL is probed.
+  - The plan notes the `GSD_PATH_JEV=1` / `GSD_PATH_JEV_TIMEOUT_SECONDS` session gate.
+  - TypeSafe 1.00. This amends SPEC R11 and 24 R5.
+
+**Follow-ups**
+- **D-37: The installer argv** is `["npx","-y","@opengsd/gsd-core@<VERSION>","--<host>","--local"]`
+  with `cwd=<project>`, where `<VERSION>` is the version the inventory resolved, never `latest`.
+  - Without a location flag the installer prompts, and with no TTY it defaults to a global
+    Claude install, so `--local` is always explicit (`install.js:872-873,14816-14850`).
+  - The approval block prints each argv, its cwd, purpose and alternative, says `npx -y`
+    downloads and runs an npm package, and names `pnpm dlx` as the equivalent.
+- **D-38: Effort sync** runs only when an `effort.*` key changed and the host is claude, codex
+  or opencode. Its argv: `node <project-local gsd-tools> effort sync --apply --runtime <host>
+  --config-dir <project>/<host dir> --project-dir <project>`.
+  - The project-local gsd-tools is re-resolved after the installer runs.
+  - pi and cursor are skipped (no `effort:` frontmatter).
+  - The approval block shows a `--dry-run` change count first.
+  - TypeSafe 0.98.
+
 ### Claude's Discretion
 - The exact skill caps per rigor (around 2/3/5).
 - The backup timestamp format.
@@ -163,7 +372,7 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
   plan.json contract (`needs_choice`, `op: unset`, `existing`, routers).
 - `.planning/phases/16-ai-kit-spec-extensions/16-CONTEXT.md` — host detection and catalog.
 
-### gsd-core (host install; claude = `~/.claude/gsd-core`, v1.14.0)
+### gsd-core (host install; claude = `~/.claude/gsd-core`, v1.16.0 as of 2026-10-14)
 - `bin/lib/init.cjs` — agent-skills resolution (around lines 3400–3530): `global:` handling,
   project-path containment, `trusted_global_roots`, the plugin directive (claude only). This is
   the evidence for D-02.
@@ -213,6 +422,15 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
   `reducing-entropy`, `react-dev`, `mermaid-diagrams` and `gsd-debug` exist; `ponytail` did
   not at discussion time. *(Superseded 2026-10-13: ponytail is now installed as a Claude plugin
   and is a recommended skill set; see ROADMAP Phase 18 success criterion 6.)*
+- **Dogfood file state (2026-10-14):** this repo's `.planning/scripts/cross-ai.mjs` header says
+  `41d4a79c…` while its body hashes to `c1cb32d6…`, so it reads as user-edited. The first real
+  `apply` here (never during v1.3, 19 D-03) would produce `.new`, and the report must explain why.
+- **Open questions for the researcher:**
+  - whether each review lane honours `xhigh` (`review.effort.*` accepts any string);
+  - `cursor-agent models` offline and unauthenticated behaviour (the preflight timeout);
+  - whether `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1` also hides `~/.agents/skills`;
+  - whether `@opengsd/gsd-core@<version>` is published for the pinned version;
+  - the `enabledPlugins` layering and `plugin.json` custom skill paths (docs only so far).
 - Scratch-project probe used for D-07:
   `config-set model_overrides.gsd-planner opus` followed by `… null` → `model_overrides` is `{}`.
 
@@ -229,4 +447,4 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
 ---
 
 *Phase: 18-cross-ai-skills-apply-pipeline*
-*Context gathered: 2026-09-23*
+*Context gathered: 2026-09-23; updated 2026-10-14*

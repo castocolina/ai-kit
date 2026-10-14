@@ -91,7 +91,7 @@ This SPEC encodes what was learned in the tools-installer run of 2026-10-13/14 (
 5. **Decision ladder script** (SDC-02).
    - Current: an untracked prototype.
    - Target: `scripts/decide.py` (stdlib only) does the whole ladder:
-     - it detects the backends: Laya by a health probe at `JEV_API_URL` or the documented local default; TypeSafe by a key present by name (`JEV_API_KEY`, or a key file named by an env variable or ai-kit's secrets file); the jev skill by its install;
+     - it detects the backends: Laya by a TCP reachability check of a configured local URL (an env variable; no default URL is probed, because the jev skill has no health endpoint and its built-in default is remote Zen; 18 D-36); TypeSafe by a key present by name (`JEV_API_KEY`, or a key file named by an env variable or ai-kit's secrets file); the jev skill by its install;
      - it validates every item (non-empty `instructions`, `context`, 2+ criteria);
      - it sends one item per call to Laya, and batches `needs_fallback` or errored items to TypeSafe;
      - a `--second-opinion` mode sends chosen items to TypeSafe directly;

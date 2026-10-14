@@ -38,8 +38,8 @@ effect on a pi host at all, and the plan says only what was proven.
 
 ## Requirements
 
-1. **pi enumeration** (SPEC-05).
-   - Current: no pi parser; `pi` is not a known CLI.
+1. **pi enumeration** (SPEC-05, delivered by Phase 18 as of 2026-10-14; this phase re-verifies it live and extends it).
+   - Current: Phase 18 adds the parser (18 D-25).
    - Target: `detect-runtimes` runs `pi --list-models` (argv, host-signal scrub) and parses the table into candidates. Each candidate carries `provider/model`, context, max output, thinking (to `reasoning_modes`) and images (to `image_input`). `pi` is in the runtime-id table.
    - Acceptance: a parser test on captured output (header, aligned columns, the `K`/`M` suffixes, yes/no flags) yields 85 entries with the right provider split. An empty or garbled output gives a structured error, not a crash.
 
