@@ -1,4 +1,5 @@
 import copy
+import glob
 import json
 import os
 import shlex
@@ -815,6 +816,43 @@ class TestCacheReadWrite(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as f:
                 f.write("{not valid json")
             self.assertIsNone(rs.cache_read_json(path))
+
+
+class TestCacheWriteJsonAtomic(unittest.TestCase):
+    def test_output_bytes_and_no_tmp_left(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "data.json")
+            rs.cache_write_json(path, {"b": 1, "a": [1, 2]})
+            with open(path, "rb") as f:
+                self.assertEqual(
+                    f.read(),
+                    json.dumps({"b": 1, "a": [1, 2]}, indent=2).encode("utf-8"))
+            self.assertEqual(glob.glob(os.path.join(d, "*.tmp")), [])
+
+    def test_creates_missing_parent_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "sub", "dir", "data.json")
+            rs.cache_write_json(path, {"a": 1})
+            self.assertEqual(rs.cache_read_json(path), {"a": 1})
+
+    def test_error_leaves_original_and_no_tmp(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "data.json")
+            rs.cache_write_json(path, {"a": 1})
+            with open(path, "rb") as f:
+                original = f.read()
+            real_dump = json.dump
+
+            def boom(*args, **kwargs):
+                raise ValueError("injected")
+
+            with unittest.mock.patch.object(json, "dump", boom), \
+                    self.assertRaises(ValueError):
+                rs.cache_write_json(path, {"a": 2})
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(), original)
+            self.assertEqual(glob.glob(os.path.join(d, "*.tmp")), [])
+            del real_dump
 
 
 class TestCacheStaleness(unittest.TestCase):

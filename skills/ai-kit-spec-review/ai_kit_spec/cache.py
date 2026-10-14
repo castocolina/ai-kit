@@ -1,6 +1,8 @@
 """Generic JSON cache read/write with TTL staleness, shared by detection.py and quota.py."""
+import contextlib
 import json
 import os
+import tempfile
 import time
 
 
@@ -19,14 +21,22 @@ def cache_read_json(path: str) -> dict | None:
 
 
 def cache_write_json(path: str, data: dict) -> None:
-    """Atomic write (tmp file + os.replace) so a crash mid-write never leaves a half-written
-    cache file for the next reader -- preserved verbatim from the current review-spec.py
-    implementation, not simplified away during the move."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, path)
+    """Crash-safe atomic write: each writer gets its own mkstemp temp file (unique name,
+    mode 0600) in the target directory, then os.replace moves it over the target, so two
+    concurrent sessions writing the same cache or trust record never collide on a shared
+    temp name and a crash mid-write never leaves a half-written cache file behind."""
+    parent = os.path.dirname(path)
+    os.makedirs(parent, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+        raise
 
 
 def cache_is_stale(path: str, ttl_seconds: int) -> bool:
