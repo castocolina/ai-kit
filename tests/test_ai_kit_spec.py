@@ -3,9 +3,11 @@ import glob
 import json
 import os
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import unittest.mock
@@ -853,6 +855,35 @@ class TestCacheWriteJsonAtomic(unittest.TestCase):
                 self.assertEqual(f.read(), original)
             self.assertEqual(glob.glob(os.path.join(d, "*.tmp")), [])
             del real_dump
+
+    def test_concurrent_writers_both_succeed(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "shared.json")
+            errors = []
+
+            def writer(w):
+                try:
+                    for i in range(50):
+                        rs.cache_write_json(path, {"w": w, "i": i})
+                except Exception as exc:  # pragma-ish: recorded and asserted below
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=writer, args=(w,)) for w in (1, 2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            self.assertEqual(errors, [])
+            final = rs.cache_read_json(path)
+            self.assertIsInstance(final, dict)
+            self.assertIn(final["w"], (1, 2))
+            self.assertEqual(glob.glob(os.path.join(d, "*.tmp")), [])
+
+    def test_created_file_mode_is_0600(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "data.json")
+            rs.cache_write_json(path, {"a": 1})
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
 
 
 class TestCacheStaleness(unittest.TestCase):
