@@ -166,13 +166,14 @@ can be verified and closed on trustworthy evidence. Source:
      Artificial Analysis key, so the ranking is scored).
   7. The phase is executed through `.planning/scripts/cross-ai.mjs` (pi first), as the dogfood run
      for Phase 18's runner. The usage-metrics store compaction (audit A10) stays out of scope.
-**Plans**: 24 plans
+**Plans**: 31 plans
 
 Plans:
 - Wave 1
   - [ ] 16.1-02-PLAN.md — dashboard payload `<` escaping and AGENTS.md checker link handling
   - [ ] 16.1-03-PLAN.md — parallel test-runner groups with a 40% CPU cap; every tier and hook through the runner
   - [ ] 16.1-04-PLAN.md — sibling-first skill resolution and pylint/pyright groundwork
+  - [ ] 16.1-29-PLAN.md — `cache_write_json` through mkstemp: unique temp names per writer
 - Wave 2
   - [ ] 16.1-01-PLAN.md — delete claude/grok execute builders; unsupported execute CLIs fail with exit 2
   - [ ] 16.1-05-PLAN.md — `install.sh --branch`/`--dry-run` on existing clones; atomic uninstall write
@@ -180,7 +181,8 @@ Plans:
   - [ ] 16.1-06-PLAN.md — argv-only reviewer dispatch and host-signal scrubbing
   - [ ] 16.1-07-PLAN.md — shared project-local-first gsd-tools resolver
 - Wave 4
-  - [ ] 16.1-08-PLAN.md — trust gate for project-local reviewer commands; loud config errors; atomic cache writes
+  - [ ] 16.1-08-PLAN.md — trust gate for project-local reviewer commands; loud config errors
+  - [ ] 16.1-30-PLAN.md — host-signal scrub pinned through every dispatcher with real children
 - Wave 5
   - [ ] 16.1-09-PLAN.md — shared error classifier and Failure-aware report merging
   - [ ] 16.1-10-PLAN.md — GSD config writes through gsd-tools config-set with an undo log
@@ -188,18 +190,23 @@ Plans:
   - [ ] 16.1-11-PLAN.md — codegraph probe with timeout and no install; no `shell=True` rule
   - [ ] 16.1-12-PLAN.md — spec-review/spec-config SKILL.md failure, trust and argv wording
 - Wave 7
-  - [ ] 16.1-13-PLAN.md — lint sweep: ai-kit-spec-review (dispatch-table CLI)
-  - [ ] 16.1-15-PLAN.md — lint sweep: tools/ (hooks, config doctor, wizard)
+  - [ ] 16.1-13-PLAN.md — lint sweep: ai-kit-spec CLI dispatch table and dispatch modules
+  - [ ] 16.1-15-PLAN.md — lint sweep: tools/ SessionStart hooks and config doctor
   - [ ] 16.1-16-PLAN.md — lint sweep: markdown-to-pdf, mermaid-audit, cst-refactor template as data
-  - [ ] 16.1-17-PLAN.md — lint sweep: usage-metrics
   - [ ] 16.1-18-PLAN.md — lint sweep: opencode-providers, curated-config, spec-discuss
-  - [ ] 16.1-19-PLAN.md — lint sweep: project-rules skills and shared library
+  - [ ] 16.1-19-PLAN.md — lint sweep: agents, all, arch, cicd and docker project-rules skills
+  - [ ] 16.1-26-PLAN.md — lint sweep: makefile and precommit project-rules skills, shared library
+  - [ ] 16.1-31-PLAN.md — execute-gsd SKILL.md: config-set subcommands, project-local GSD, report-only probe; skill-judge
 - Wave 8
-  - [ ] 16.1-14-PLAN.md — lint sweep: execute-gsd and execute-superpowers adapters
-  - [ ] 16.1-21-PLAN.md — tools-side tests clean under pyright and vulture
-  - [ ] 16.1-22-PLAN.md — skills-side tests clean under pyright and vulture
+  - [ ] 16.1-14-PLAN.md — lint sweep: execute-gsd adapter
+  - [ ] 16.1-17-PLAN.md — lint sweep: usage-metrics
+  - [ ] 16.1-25-PLAN.md — lint sweep: tools/ wizard; tools-wide zero findings
+  - [ ] 16.1-27-PLAN.md — lint sweep: remaining ai-kit-spec-review modules
+  - [ ] 16.1-28-PLAN.md — lint sweep: execute-superpowers adapter and detect_framework
 - Wave 9
   - [ ] 16.1-20-PLAN.md — spec-family tests clean under pyright and vulture
+  - [ ] 16.1-21-PLAN.md — tools-side tests clean under pyright and vulture
+  - [ ] 16.1-22-PLAN.md — skills-side tests clean under pyright and vulture
 - Wave 10
   - [ ] 16.1-23-PLAN.md — widen the gate over every shipped Python file; full gate green
 - Wave 11
