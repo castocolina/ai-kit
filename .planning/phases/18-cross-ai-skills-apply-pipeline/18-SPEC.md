@@ -237,7 +237,7 @@ keeps working unchanged.
 
 ## Edge Coverage
 
-**Coverage:** 47/49 applicable edges resolved · 2 unresolved
+**Coverage:** 73/77 applicable edges resolved · 4 unresolved (74 engine floor rows plus 3 marked additions; regenerated from the floor 2026-10-14)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -245,36 +245,57 @@ keeps working unchanged.
 | empty | R1 | ✅ covered | `plan-unset` of an absent key exits 2 naming it |
 | ordering | R1 | ✅ covered | Entries stay sorted by key after every edit |
 | boundary | R2 | ✅ covered | Exactly one eligible lane under Rigorous gives 1 lane plus the note |
+| adjacency | R2 | ✅ covered | A candidate whose inferred vendor matches the planner's, or under Rigorous the first reviewer's, is never picked |
+| empty | R2 | ⚠ UNRESOLVED | With no eligible lane, does the reviewer placeholder stay `needs_choice` (as R3 does for targets) or does convergence turn off with a note? |
+| encoding | R2 | ✅ covered | Keys come verbatim from the registry, so antigravity writes `review.models.agy` and cursor gets no effort key (18 D-24) |
+| ordering | R2 | ✅ covered | Equal `review` scores fall to 17 D-06's lower price, then model id, so the pick is stable |
 | precision | R2 | 🧪 backstop | Review scores compare at full precision (`score_exact`) |
 | boundary | R3 | ✅ covered | A host that is itself the first preference is skipped |
 | adjacency | R3 | ✅ covered | Equal execution scores break by price, then id |
 | empty | R3 | ✅ covered | No other installed CLI leaves `needs_choice` |
+| encoding | R3 | ✅ covered | pi's model list is read from RPC `get_available_models` JSON, not the `--list-models` table (18 D-25 as amended by 22 D-04) |
 | ordering | R3 | ✅ covered | The target order follows the preference list, not the install order |
 | precision | R3 | 🧪 backstop | A price exactly at the ceiling counts as within |
-| adjacency | R4 | ✅ covered | A body differing only in a trailing newline counts as edited |
-| empty | R4 | ✅ covered | An absent `.planning/scripts/` is created |
-| ordering | R4 | 🧪 backstop | The header is always the second line after the shebang |
+| idempotency | R3 | 🧪 backstop | Selection is pure (18 D-15), so the golden plans pin the same targets on every run |
+| concurrency | R3 | ✅ covered | Selection is pure (18 D-15) and the plan write is atomic (Constraints), so an interrupted run leaves the old plan |
 | idempotency | R4 | ✅ covered | Re-rendering an unedited file gives identical bytes |
 | concurrency | R4 | 🧪 backstop | Atomic replace; a stale `.new` is overwritten, never the original |
-| adjacency | R5 | ✅ covered | A HEAD move with a clean tree counts as success |
+| adjacency | R4 | ✅ covered | A body differing only in a trailing newline counts as edited (added 2026-10-14: 18 D-26 hashes raw bytes, so a one-byte edit must still count) |
+| empty | R4 | ✅ covered | An absent `.planning/scripts/` is created (added 2026-10-14: a project's first render has no `.planning/scripts/` yet) |
+| ordering | R4 | 🧪 backstop | The header is always the second line after the shebang (added 2026-10-14: 18 D-26 hashes the bytes after line 2, so the header position is load-bearing) |
+| adjacency | R5 | ⚠ UNRESOLVED | In `review` mode, does a HEAD move with an unchanged tree id count as success, as the literal rule allows? |
 | empty | R5 | ✅ covered | Empty stdin exits 2 |
+| encoding | R5 | ✅ covered | An answer that quotes an error phrase is never classified, since errors are matched on stderr and structured fields only |
 | ordering | R5 | ✅ covered | The status line is the last stderr line |
-| unclassified | R6 | ⚠ UNRESOLVED | No shape cue; the 1800 floor and the strict inequality are in Acceptance |
+| idempotency | R5 | ✅ covered | A second CLI never runs over the first one's edits, because fallback needs HEAD and the tree unchanged |
+| concurrency | R5 | ✅ covered | The deadline kills the whole process group (the self-test checks a grandchild), and gsd-core runs cross-AI plans one at a time |
+| boundary | R6 | ✅ covered | 1800 is accepted, 1799 is refused even with `--force` (18 D-17), and 1800 gives an inner deadline of 1770 (18 D-29) |
+| adjacency | R6 | ✅ covered | An inner deadline equal to the outer timeout is invalid, since it must be strictly below |
+| empty | R6 | ⚠ UNRESOLVED | An absent key makes gsd-core's outer limit 300 s (checked live): is `plan-unset` of it refused, and does the script read an absent value as 300? |
+| ordering | R6 | ✅ covered | The inner deadline fires before the outer timeout, so exit 124 and the status line come from the script, not from an outer kill |
+| precision | R6 | ✅ covered | 18 D-29 fixes the inner deadline at outer − min(30, floor(outer/5)), with an explicit floor |
 | adjacency | R7 | ✅ covered | A skill visible in two roots is listed once per root with its real path |
 | empty | R7 | ✅ covered | No skills directory gives an empty list, not an error |
+| encoding | R7 | ✅ covered | A name outside `^[A-Za-z0-9_-]+$` is recorded `addressable:false`, and root escape compares realpaths (18 D-31) |
 | ordering | R7 | ✅ covered | Skills are sorted by root, then name |
+| boundary | R8 | ✅ covered | An agent at exactly its cap keeps every skill, and the next skill in file order is dropped |
 | empty | R8 | ✅ covered | No matching family gives no `agent_skills` entry for that agent |
 | encoding | R8 | ✅ covered | Plugin references use only `[A-Za-z0-9_-]` segments (gsd-core's own pattern) |
+| precision | R8 | ✅ covered | No scores are involved: the cap counts deduped skills per agent, and file order breaks every tie (18 D-33) |
 | idempotency | R8 | ✅ covered | Applying the same plan twice writes the same values |
 | concurrency | R8 | 🧪 backstop | Writes are sequential through gsd-tools |
-| unclassified | R9 | ⚠ UNRESOLVED | No shape cue; omission and proposals are specified in Acceptance |
+| empty | R9 | ⚠ UNRESOLVED | Is an unknown skill with an empty description skipped, or proposed with no mapping? |
+| encoding | R9 | ✅ covered | A proposed trusted root is the skill's real directory written `~/`-relative, never an absolute machine path (18 D-34) |
 | boundary | R10 | ✅ covered | The set is cut at the rigor cap in file order |
 | adjacency | R10 | ✅ covered | An agent that already holds a ponytail skill from another family gets no duplicate |
 | empty | R10 | ✅ covered | No ponytail plugin gives no entries |
 | ordering | R10 | ✅ covered | File order decides which skills survive the cap |
 | precision | R10 | 🧪 backstop | Visibility is recorded per host, not inferred from one host |
-| empty | R11 | ✅ covered | An empty `JEV_API_URL` falls back to the documented default only |
+| adjacency | R11 | ✅ covered | A reachable URL and a key together still give one recommendation per agent, since either alone counts |
+| empty | R11 | ✅ covered | An unset or empty `JEV_API_URL` gives no URL backend, because no default URL is probed (18 D-36) |
 | encoding | R11 | ✅ covered | The key is checked by name only; its value never enters output |
+| ordering | R11 | ✅ covered | jev takes its place in each agent's list by `skill_affinity.json` file order, gated by `system_one_backend` (18 D-33) |
+| concurrency | R11 | ✅ covered | The TCP check is bounded at 1–2 s (18 D-36), so an unreachable host only means no URL backend |
 | adjacency | R12 | ✅ covered | A key whose value equals `existing` shows as keep |
 | empty | R12 | ✅ covered | An empty plan prints an empty diff and exits 0 |
 | ordering | R12 | ✅ covered | The diff is sorted by key |
@@ -286,10 +307,17 @@ keeps working unchanged.
 | ordering | R13 | ✅ covered | Unsets run before sets in the same family |
 | idempotency | R13 | ✅ covered | Re-applying an applied plan changes nothing; no new backup when the newest is byte-identical (amended, 18 D-20) |
 | concurrency | R13 | 🧪 backstop | `apply` refuses when another apply's undo log is open |
+| adjacency | R14 | ✅ covered | When the installer and effort sync are both required, one grouped yes/no covers both |
+| empty | R14 | ✅ covered | With no required follow-up there is nothing to approve, so nothing runs |
+| ordering | R14 | ✅ covered | The installer runs before effort sync, and the project-local gsd-tools is re-resolved in between (18 D-38) |
 | idempotency | R14 | ✅ covered | An approved re-run reports already-current results |
 | concurrency | R14 | 🧪 backstop | Follow-ups run sequentially |
+| adjacency | R15 | ✅ covered | v2's `apply` and v1's `apply-*` subcommands dispatch by exact name, so neither shadows the other |
 | empty | R15 | ✅ covered | No new subcommand changes a v1 subcommand's output |
 | encoding | R15 | 🧪 backstop | The README row stays ASCII-table compatible |
+| ordering | R15 | ✅ covered | SKILL.md presents v2 as the primary flow and v1 as the kept secondary path |
+| idempotency | R15 | ✅ covered | v1-written values are just `existing` to v2's managed families (17 D-08), and a repeated `apply` changes nothing (18 D-20) |
+| concurrency | R15 | ✅ covered | v1 stays unchanged and never reads v2's undo log, so only another v2 `apply` refuses while one is open (18 D-08, D-21) |
 
 ## Prohibitions (must-NOT)
 
