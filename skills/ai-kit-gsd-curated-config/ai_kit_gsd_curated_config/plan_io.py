@@ -22,42 +22,22 @@ def _missing(inv: dict, key: str) -> str | None:
     return None
 
 
-def _type_of(value) -> str:
-    if isinstance(value, bool):
-        return "bool"
-    if isinstance(value, int):
-        return "int"
-    if isinstance(value, str):
-        return "str"
-    if isinstance(value, list):
-        return "list"
-    if isinstance(value, dict):
-        return "dict"
-    return type(value).__name__
-
-
-def _ill(inv: dict, key: str, expected: str) -> str | None:
-    """Type-checks `inv[key]` against `expected` ("int", "str", "list", "dict" or
-    "str-or-null"), never treating a bool as an int/str."""
+def _ill(inv: dict, key: str, expected: type) -> str | None:
     value = inv.get(key)
-    if expected == "str-or-null":
-        if value is None or isinstance(value, str):
-            return None
-        return f"key {key}: expected str or null, got {_type_of(value)}"
-    if expected in ("int", "str") and isinstance(value, bool):
-        return f"key {key}: expected {expected}, got bool"
-    if not isinstance(value, {"int": int, "str": str, "list": list, "dict": dict}[expected]):
-        return f"key {key}: expected {expected}, got {_type_of(value)}"
-    return None
-
+    if isinstance(value, expected):
+        return None
+    return f"key {key}: expected {expected.__name__}, got {type(value).__name__}"
 
 
 def _schema_version_problem(inv: dict) -> str | None:
     schema_version = inv.get("schema_version")
-    if isinstance(schema_version, bool) or not isinstance(schema_version, int):
-        return f"schema_version {schema_version!r} unsupported (expected 1)"
-    if schema_version != INVENTORY_SCHEMA_VERSION:
-        return f"schema_version {schema_version} unsupported (expected 1)"
+    # A bool or a float 1.0 compares equal to 1 but is not schema version 1.
+    exact_int = isinstance(schema_version, int) and not isinstance(schema_version, bool)
+    if not exact_int or schema_version != INVENTORY_SCHEMA_VERSION:
+        return (
+            f"schema_version {schema_version!r} unsupported "
+            f"(expected {INVENTORY_SCHEMA_VERSION})"
+        )
     return None
 
 
@@ -70,13 +50,13 @@ def _validate_inventory(inv) -> str | None:
     if problem:
         return problem
     for key, expected in (
-        ("host", "str"),
-        ("gsd_core", "dict"),
-        ("candidates", "list"),
-        ("project", "dict"),
-        ("existing_config", "dict"),
-        ("global_defaults", "dict"),
-        ("conflicts", "list"),
+        ("host", str),
+        ("gsd_core", dict),
+        ("candidates", list),
+        ("project", dict),
+        ("existing_config", dict),
+        ("global_defaults", dict),
+        ("conflicts", list),
     ):
         problem = _missing(inv, key) or _ill(inv, key, expected)
         if problem:
@@ -86,6 +66,7 @@ def _validate_inventory(inv) -> str | None:
         _validate_project(inv["project"]),
         _validate_config_section(inv["existing_config"], "existing_config"),
         _validate_candidates(inv["candidates"]),
+        _validate_conflicts(inv["conflicts"]),
     ):
         if problem:
             return problem
@@ -105,13 +86,10 @@ def _validate_gsd_core(gsd_core: dict) -> str | None:
     problem = _model_profiles_problem(gsd_core["model_profiles"])
     if problem:
         return problem
-    for key in ("path", "scope"):
+    for key in ("path", "scope", "version"):
         value = gsd_core.get(key)
         if value is not None and not isinstance(value, str):
             return f"key gsd_core.{key}: expected str or null"
-    version = gsd_core.get("version")
-    if version is not None and not isinstance(version, str):
-        return "key gsd_core.version: expected str or null"
     return None
 
 
@@ -225,9 +203,6 @@ def load_inventory(path: str) -> tuple[dict | None, str | None]:
     except ValueError:  # JSONDecodeError and UnicodeDecodeError
         return None, f"inventory {path}: invalid JSON{_ERROR_SUFFIX}"
     problem = _validate_inventory(inventory)
-    if problem:
-        return None, f"inventory {path}: {problem}{_ERROR_SUFFIX}"
-    problem = _validate_conflicts(inventory["conflicts"])
     if problem:
         return None, f"inventory {path}: {problem}{_ERROR_SUFFIX}"
     return inventory, None

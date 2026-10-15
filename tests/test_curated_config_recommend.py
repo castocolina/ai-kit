@@ -1778,7 +1778,7 @@ class TestInventoryValidation(unittest.TestCase):
                              "--rigor", kw.get("rigor", "standard"))
 
     def test_bad_schema_versions_fail_closed(self):
-        for bad in (0, 2, "1", True):
+        for bad in (0, 2, "1", True, 1.0):
             inv = make_inventory()
             inv["schema_version"] = bad
             code, plan, plan_bytes, err = self._run(inv)
