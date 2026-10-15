@@ -876,6 +876,8 @@ def _runtime_entries(ctx: PlanCtx) -> tuple[list, list]:
 def _reconcile_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     """Last layer: runtime, conflict-driven unsets, then managed leftovers (D-08)."""
     planned = {entry["key"] for entry in prior_entries}
+    # A rejected key cannot be unset either; an earlier layer already noted its drop.
+    planned.update(ctx.inv["gsd_core"]["valid_keys"]["rejected"])
     runtime_entries, notes = _runtime_entries(ctx)
     conflict_entries = _conflict_unsets(ctx)
     planned.update(entry["key"] for entry in conflict_entries)
@@ -934,8 +936,10 @@ def _merge_layers(ctx: PlanCtx) -> tuple[list, list]:
             if entry["key"] in seen:
                 raise ValueError(f"duplicate plan key {entry['key']}")
             seen.add(entry["key"])
+        # Filter per layer so later layers only see entries that will be written.
+        entries, drop_notes = _drop_rejected(ctx, entries)
         all_entries.extend(entries)
-        all_notes.extend(notes)
+        all_notes.extend(notes + drop_notes)
     return all_entries, all_notes
 
 
@@ -960,8 +964,6 @@ def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
         preset=presets.preset_values(opts.rigor, inventory["project"]),
     )
     entries, notes = _merge_layers(ctx)
-    entries, drop_notes = _drop_rejected(ctx, entries)
-    notes.extend(drop_notes)
     return {
         "schema_version": plan_io.PLAN_SCHEMA_VERSION,
         "inventory_digest": plan_io.inventory_digest(_digest_inventory(inventory)),

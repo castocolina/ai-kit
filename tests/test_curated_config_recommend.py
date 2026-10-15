@@ -1562,6 +1562,18 @@ class TestKeyDrop(unittest.TestCase):
         )
 
 
+class TestPerLayerDrop(unittest.TestCase):
+    def test_specialists_see_only_written_slots(self):
+        """A-WR-08: a rejected slot is not treated as the executor's effective model."""
+        rejected = ("model_profile_overrides.opencode.sonnet",)
+        inv = make_inventory(
+            host="opencode", candidates=SPECIALIST_OPENCODE[:-1], rejected=rejected
+        )
+        em = entry_map(build(inv))
+        self.assertNotIn(rejected[0], em)
+        self.assertEqual(em["model_overrides.gsd-executor"]["value"], "zai-coding-plan/glm-5.3")
+
+
 class TestUnprobedKeys(unittest.TestCase):
     def test_unprobed_key_fails_closed_not_dropped(self):
         """A-WR-07: a key in neither valid_keys list exits 2 instead of a false drop note."""
