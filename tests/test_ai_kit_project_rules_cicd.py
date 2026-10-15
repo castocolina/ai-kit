@@ -882,6 +882,7 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_project_rules_cicd", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):

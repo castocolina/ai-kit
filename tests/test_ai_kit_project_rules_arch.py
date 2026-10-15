@@ -191,9 +191,15 @@ class TestScopeCollectorDispatch(unittest.TestCase):
         self.assertIn("inner", collector.scope_assignments[sync_fn])
         self.assertIn("async_inner", collector.scope_assignments[async_fn])
         self.assertEqual(len(collector.call_scope), 3)
-        module_call = tree.body[3].value
-        inner_sync_call = sync_fn.body[1].value
-        inner_async_call = async_fn.body[1].value
+        module_expr = tree.body[3]
+        sync_expr = sync_fn.body[1]
+        async_expr = async_fn.body[1]
+        assert isinstance(module_expr, ast.Expr)
+        assert isinstance(sync_expr, ast.Expr)
+        assert isinstance(async_expr, ast.Expr)
+        module_call = module_expr.value
+        inner_sync_call = sync_expr.value
+        inner_async_call = async_expr.value
         self.assertIs(collector.call_scope[module_call], tree)
         self.assertIs(collector.call_scope[inner_sync_call], sync_fn)
         self.assertIs(collector.call_scope[inner_async_call], async_fn)
@@ -920,6 +926,7 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_project_rules_arch", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):

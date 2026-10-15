@@ -847,6 +847,7 @@ class TestCliSurface(unittest.TestCase):
                 "python", cache_root=cache_root
             )
             self.assertFalse(needs_research)
+            assert tooling is not None
             self.assertIn("dead-code", tooling)
 
     def test_cache_update_rejects_unknown_key_without_traceback(self):
@@ -881,6 +882,7 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_project_rules_precommit", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):
@@ -1123,8 +1125,10 @@ class TestReadYamlValueBlockSequenceContract(unittest.TestCase):
             disable = config_read.read_yaml_value(path, ("linters", "disable"))
             enable = config_read.read_yaml_value(path, ("linters", "enable"))
             enable_all = config_read.read_yaml_value(path, ("linters", "enable-all"))
-            self.assertEqual(list(disable), ["staticcheck", "errcheck"])
-            self.assertEqual(list(enable), ["govet", "ineffassign"])
+            assert isinstance(disable, list)
+            assert isinstance(enable, list)
+            self.assertEqual(disable, ["staticcheck", "errcheck"])
+            self.assertEqual(enable, ["govet", "ineffassign"])
             self.assertEqual(str(enable_all).lower(), "false")
 
 

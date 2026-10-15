@@ -120,6 +120,12 @@ class TestRuleChecker(unittest.TestCase):
                 return finding
         return None
 
+    @classmethod
+    def _require_find(cls, findings, rule_id):
+        finding = cls._find(findings, rule_id)
+        assert finding is not None
+        return finding
+
     def _always_false_presence(self):
         presence = {"rtk": False, "modern-cli": False, "codegraph": False,
                     "graphify": False, "gsd": False}
@@ -134,26 +140,26 @@ class TestRuleChecker(unittest.TestCase):
         missing = rule_checker.check_workflow_rules(
             "nothing related here", presence, include_present=True
         )
-        self.assertEqual(self._find(missing, "R01")["status"], "missing")
+        self.assertEqual(self._require_find(missing, "R01")["status"], "missing")
 
         present = rule_checker.check_workflow_rules(
             "All docs are english-only and this is non-negotiable.",
             presence,
             include_present=True,
         )
-        self.assertEqual(self._find(present, "R01")["status"], "present")
+        self.assertEqual(self._require_find(present, "R01")["status"], "present")
 
         near = rule_checker.check_workflow_rules(
             "We write docs in english only.", presence, include_present=True
         )
-        self.assertEqual(self._find(near, "R01")["status"], "near_miss")
+        self.assertEqual(self._require_find(near, "R01")["status"], "near_miss")
 
     def test_tool_presence_condition_not_applicable(self):
         presence = {"rtk": False}
         findings = rule_checker.check_workflow_rules(
             "no rtk mention here", presence, include_present=True
         )
-        self.assertEqual(self._find(findings, "R05")["status"], "not_applicable")
+        self.assertEqual(self._require_find(findings, "R05")["status"], "not_applicable")
 
     def test_r02_included_by_signals_not_category(self):
         presence = self._always_false_presence()
@@ -169,7 +175,7 @@ class TestRuleChecker(unittest.TestCase):
         review_only = rule_checker.check_workflow_rules(
             "we run cross-ai review on every plan", presence, include_present=True
         )
-        self.assertEqual(self._find(review_only, "R04")["status"], "near_miss")
+        self.assertEqual(self._require_find(review_only, "R04")["status"], "near_miss")
 
         all_groups = rule_checker.check_workflow_rules(
             "we run cross-ai review, cheap-model execution, and "
@@ -177,12 +183,12 @@ class TestRuleChecker(unittest.TestCase):
             presence,
             include_present=True,
         )
-        self.assertEqual(self._find(all_groups, "R04")["status"], "present")
+        self.assertEqual(self._require_find(all_groups, "R04")["status"], "present")
 
         none_present = rule_checker.check_workflow_rules(
             "no relevant text here", presence, include_present=True
         )
-        self.assertEqual(self._find(none_present, "R04")["status"], "missing")
+        self.assertEqual(self._require_find(none_present, "R04")["status"], "missing")
 
     def test_r06_tool_scoped_groups_only_require_installed_tools(self):
         presence = self._always_false_presence()
@@ -193,14 +199,14 @@ class TestRuleChecker(unittest.TestCase):
         rg_only = rule_checker.check_workflow_rules(
             "use ripgrep instead of grep", presence, include_present=True
         )
-        r06 = self._find(rg_only, "R06")
+        r06 = self._require_find(rg_only, "R06")
         self.assertEqual(r06["status"], "near_miss")
         self.assertEqual(r06["missing_tools"], ["bat"])
 
         both = rule_checker.check_workflow_rules(
             "use ripgrep and bat instead of grep/cat", presence, include_present=True
         )
-        r06 = self._find(both, "R06")
+        r06 = self._require_find(both, "R06")
         self.assertEqual(r06["status"], "present")
         self.assertEqual(r06["missing_tools"], [])
 
@@ -208,14 +214,14 @@ class TestRuleChecker(unittest.TestCase):
         findings = rule_checker.check_workflow_rules(
             "use ripgrep and bat instead of grep/cat", no_tools, include_present=True
         )
-        self.assertEqual(self._find(findings, "R06")["status"], "not_applicable")
+        self.assertEqual(self._require_find(findings, "R06")["status"], "not_applicable")
 
     def test_matched_signals_field(self):
         presence = self._always_false_presence()
         findings = rule_checker.check_workflow_rules(
             "we write docs in english only", presence, include_present=True
         )
-        r01 = self._find(findings, "R01")
+        r01 = self._require_find(findings, "R01")
         self.assertEqual(r01["status"], "near_miss")
         self.assertTrue(r01["matched_signals"])
         self.assertTrue(set(r01["matched_signals"]) <= set(rules.RULES[0]["signals"]))
@@ -501,6 +507,7 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_project_rules_agents", match.group(1))
         self.assertIn("tests.test_ai_kit_rules_common", match.group(1))
 
@@ -533,6 +540,7 @@ class TestGateRegistration(unittest.TestCase):
             makefile = handle.read()
         match = re.search(r"^validate:\s*(.*)$", makefile, re.MULTILINE)
         self.assertIsNotNone(match, "no validate: target in Makefile")
+        assert match is not None
         prerequisites = match.group(1).split()
         makefile_targets = set(
             re.findall(r"^(?!\.)([A-Za-z0-9_.-]+)\s*:(?!=)", makefile, re.MULTILINE)

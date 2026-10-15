@@ -1003,9 +1003,11 @@ class TestAdvisoryOrdering(unittest.TestCase):
     def test_speed_tier_pinned(self):
         self.assertIsNotNone(makefile_checker.speed_tier("unittest"))
         self.assertIsNotNone(makefile_checker.speed_tier("ruff"))
-        self.assertGreater(
-            makefile_checker.speed_tier("unittest"), makefile_checker.speed_tier("ruff")
-        )
+        unittest_tier = makefile_checker.speed_tier("unittest")
+        ruff_tier = makefile_checker.speed_tier("ruff")
+        assert unittest_tier is not None
+        assert ruff_tier is not None
+        self.assertGreater(unittest_tier, ruff_tier)
         self.assertEqual(
             makefile_checker.speed_tier("pytest"), makefile_checker.speed_tier("unittest")
         )
@@ -1087,6 +1089,7 @@ class TestCacheUpdateCLI(unittest.TestCase):
                 "python", cache_root=cache_root
             )
             self.assertFalse(needs_research)
+            assert tooling is not None
             self.assertIn("setup-env", tooling)
             self.assertIn("formatter", tooling)
 
@@ -1200,6 +1203,7 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_project_rules_makefile", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):
