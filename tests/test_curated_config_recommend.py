@@ -654,6 +654,18 @@ class TestSlotTracer(unittest.TestCase):
         self.assertTrue(opus["why"].startswith("gsd default gpt-5.6-sol above ceiling"))
         self.assertEqual(em["model_profile_overrides.codex.sonnet"]["op"], "keep")
 
+    def test_codex_effort_without_listed_modes_is_marked_unverified(self):
+        """A-IN-11: an effort the picked model does not list is flagged in `why`."""
+        no_modes = [dict(c, reasoning_modes=[]) for c in CODEX]
+        opus = entry_map(build(make_inventory(host="codex", candidates=no_modes), rigor="mvp"))[
+            "model_profile_overrides.codex.opus"
+        ]
+        self.assertEqual(opus["value"]["reasoning_effort"], "high")
+        self.assertIn("; effort high unverified (not among the model's reasoning modes)",
+                      opus["why"])
+        listed = entry_map(build(make_inventory(host="codex", candidates=CODEX), rigor="mvp"))
+        self.assertNotIn("unverified", listed["model_profile_overrides.codex.opus"]["why"])
+
     def test_opencode_standard_overrides_all_used_tiers(self):
         inv = make_inventory(host="opencode", candidates=OPENCODE)
         plan = build(inv, rigor="standard")

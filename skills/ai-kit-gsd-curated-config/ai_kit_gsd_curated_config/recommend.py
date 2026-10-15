@@ -225,14 +225,16 @@ def _catalog_pick_entry(req: _PickRequest, cands: list):
     if pick is None:
         return None
     why = f"{req.reason}; {roles.pick_why(pick, req.purpose, req.target, req.ceiling)}"
-    return make_entry(
-        req.ctx,
-        req.key,
-        _slot_value(req.ctx.host, pick.candidate, req.target),
-        "catalog-score",
-        why,
-        **req.extra,
-    )
+    value = _slot_value(req.ctx.host, pick.candidate, req.target)
+    if isinstance(value, dict) and value["reasoning_effort"] not in pick.candidate.get(
+        "reasoning_modes", []
+    ):
+        # clamp_effort keeps the raw target when the model lists no usable level.
+        why += (
+            f"; effort {value['reasoning_effort']} unverified "
+            "(not among the model's reasoning modes)"
+        )
+    return make_entry(req.ctx, req.key, value, "catalog-score", why, **req.extra)
 
 
 def _override_reason(ctx: PlanCtx, native_id: str | None, native_c: dict | None, ceiling) -> str:
