@@ -91,14 +91,17 @@ def _build_write_context(cwd: str, run_id: str, deps: CliDeps) -> GsdWriteContex
     for the workstream-aware config path, and prints the `ai-kit: gsd-core <version> at <path>`
     banner to stderr so a previousValue contract drift on a non-1.16 gsd-core is diagnosable
     from every config-writing run. Returns None (after naming the miss) when node or gsd-tools
-    cannot be resolved."""
+    cannot be resolved, or gsd-tools cannot resolve the config path -- never a guessed
+    `<cwd>/.planning/config.json`, which in a workstream project is the wrong file (A-WR-04)."""
     node, tools_path = _resolve_gsd_tooling(cwd, deps)
     if node is None or tools_path is None:
         return None
     tools = gsd_tools.GsdTools(node_bin=node, gsd_tools_path=tools_path)
     config_path = gsd_tools.config_path(tools, cwd, run_fn=deps.run_fn)
     if not config_path:
-        config_path = os.path.join(cwd, ".planning", "config.json")
+        print(f"ai-kit-spec-execute-gsd: gsd-tools could not resolve a config path for {cwd}",
+              file=sys.stderr)
+        return None
     version = gsd_tools.gsd_core_version(tools_path)
     print(f"ai-kit: gsd-core {version or 'unknown'} at {tools_path}", file=sys.stderr)
     return GsdWriteContext(tools=tools, project_dir=cwd, config_path=config_path,
@@ -200,10 +203,15 @@ def _parse_workflow_set_specs(specs: list[str]) -> list:
 
 
 def _cmd_write_workflow_keys(args: argparse.Namespace, deps: CliDeps) -> int:
+    try:
+        changes = _parse_workflow_set_specs(args.set)
+    except ValueError as exc:
+        print(f"ai-kit-spec-execute-gsd: --set needs KEY=JSON ({exc})", file=sys.stderr)
+        return 2
     ctx = _build_write_context(args.cwd, args.run_id, deps)
     if ctx is None:
         return 2
-    result = apply_changes(ctx, _parse_workflow_set_specs(args.set))
+    result = apply_changes(ctx, changes)
     deps.stdout.write(json.dumps(result._asdict()))
     return 1 if result.failed else 0
 

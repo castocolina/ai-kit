@@ -957,6 +957,47 @@ class TestWorkflowKeysViaConfigSet(unittest.TestCase):
             run_fn=fake.run_fn, which_fn=_node_which,
             resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path, stdout=stdout)
 
+    def test_non_json_set_value_is_a_usage_error_with_no_gsd_call(self):
+        # ponytail L5: `--set k=notjson` exits 2 with a one-line message, never a traceback.
+        import contextlib
+        import io
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code = self._run_write(fake, t, ["cross_ai_timeout=notjson"], io.StringIO())
+            self.assertEqual(code, 2)
+            self.assertIn("--set needs KEY=JSON", err.getvalue())
+            self.assertEqual(fake.calls, [])
+
+    def test_unresolvable_config_path_exits_2_and_writes_nothing(self):
+        # A-WR-04: never guess <cwd>/.planning/config.json when gsd-tools' config-path fails
+        # (in a workstream project that is the wrong file).
+        import contextlib
+        import io
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t)
+            calls = []
+
+            def run(argv, **kw):
+                calls.append(argv[2])
+                if argv[2] == "config-path":
+                    return subprocess.CompletedProcess(argv, 1, "", "unknown command")
+                return fake.run_fn(argv, **kw)
+
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code = cli.main(["write-workflow-keys", "--cwd", t, "--run-id", "r1",
+                                 "--set", "cross_ai_execution=true"],
+                                run_fn=run, which_fn=_node_which,
+                                resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path,
+                                stdout=io.StringIO())
+            self.assertEqual(code, 2)
+            self.assertIn("could not resolve a config path", err.getvalue())
+            self.assertEqual(calls, ["config-path"])
+
     def test_three_keys_go_through_config_set_one_call_each_in_plan_order(self):
         import io
         import json
