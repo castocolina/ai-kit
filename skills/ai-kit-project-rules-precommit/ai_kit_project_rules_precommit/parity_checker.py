@@ -159,9 +159,9 @@ def classify_target_shape(name: str, recipe_text: str, prerequisites: set[str]) 
     """
     real_lines = _real_recipe_lines(recipe_text)
     if len(real_lines) > 2:
-        return _NOT_TOOL_SHAPED
+        return dict(_NOT_TOOL_SHAPED)
     if not real_lines and prerequisites:
-        return _NOT_TOOL_SHAPED
+        return dict(_NOT_TOOL_SHAPED)
 
     delegate_shape = _shape_from_delegate_lines(real_lines)
     if delegate_shape is not None:
@@ -174,7 +174,7 @@ def classify_target_shape(name: str, recipe_text: str, prerequisites: set[str]) 
     if catalog_shape is not None:
         return catalog_shape
 
-    return _NOT_TOOL_SHAPED
+    return dict(_NOT_TOOL_SHAPED)
 
 
 def _parity_hook_without_target_findings(
