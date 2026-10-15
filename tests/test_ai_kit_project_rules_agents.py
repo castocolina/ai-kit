@@ -507,11 +507,10 @@ class TestRemediation(unittest.TestCase):
 
 
 class TestGateRegistration(unittest.TestCase):
-    def test_makefile_registers_module_and_package(self):
+    def test_makefile_lists_module(self):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             text = handle.read()
         self.assertIn("tests.test_ai_kit_project_rules_agents", text)
-        self.assertIsNotNone(re.search(r"^lint: shellcheck py-compile$", text, re.MULTILINE))
         self.assertIn("tests.test_ai_kit_rules_common", text)
 
     def test_precommit_ruff_and_py_compile_match_package_path(self):

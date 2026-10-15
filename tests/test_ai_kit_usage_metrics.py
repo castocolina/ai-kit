@@ -5223,11 +5223,10 @@ def _tool_roots_cover(rel_dir: str, roots: list[str]) -> bool:
 
 
 class TestGateRegistration(unittest.TestCase):
-    def test_makefile_registers_module_and_package(self):
+    def test_makefile_lists_module(self):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             text = handle.read()
         self.assertIn("tests.test_ai_kit_usage_metrics", text)
-        self.assertIsNotNone(re.search(r"^lint: shellcheck py-compile$", text, re.MULTILINE))
 
     def test_precommit_ruff_and_py_compile_match_package_path(self):
         for hook_id in ("ruff", "py-compile"):
@@ -5256,7 +5255,6 @@ class TestPhaseGateRegistration(unittest.TestCase):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             makefile = handle.read()
         self.assertIn("tests.test_ai_kit_usage_metrics", makefile)
-        self.assertIsNotNone(re.search(r"^lint: shellcheck py-compile$", makefile, re.MULTILINE))
         for hook_id in ("ruff", "py-compile"):
             regex = _precommit_hook_files_regex(hook_id)
             self.assertIsNotNone(

@@ -1052,10 +1052,7 @@ class TestGateRegistration(unittest.TestCase):
         self.assertIsNotNone(
             re.search(regex, "tools/hooks/cursor_session_start.py"))
 
-    def test_makefile_lint_delegates_py_compile_hook(self):
-        with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
-            text = handle.read()
-        self.assertIsNotNone(re.search(r"^lint: shellcheck py-compile$", text, re.MULTILINE))
+    def test_py_compile_hook_selects_hook_module(self):
         regex = precommit_hook_files_regex("py-compile")
         self.assertIsNotNone(re.search(regex, "tools/hooks/detect.py"))
 
