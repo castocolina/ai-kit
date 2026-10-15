@@ -750,7 +750,113 @@ def _cross_ai_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     return entries, []
 
 
-_LAYERS = (_preset_layer, _tier_layer, _slot_layer, _specialist_layer, _cross_ai_layer)
+_LEFTOVER_WHY = "managed by the curated plan (D-08); not set by this plan"
+_MODEL_POLICY_UNSET_TAIL = (
+    "unset per leaf: gsd-core 1.16 rejects config-set model_policy null on the whole object (D-08)"
+)
+_RUNTIME_WHY = (
+    "the gsd-core installer bakes agent models from the project runtime, else "
+    "~/.gsd/defaults.json's, and ignores GSD_RUNTIME (D-23)"
+)
+
+
+def _conflict_extra(item: dict) -> dict:
+    return {"effect": item["effect"]} if "effect" in item else {}
+
+
+def _model_policy_unsets(ctx: PlanCtx, item: dict) -> list:
+    flat = presets.flatten_config({"model_policy": item["value"]})
+    base = item["why"]
+    why = f"{base}; {_MODEL_POLICY_UNSET_TAIL}"
+    extra = _conflict_extra(item)
+    return [
+        make_entry(ctx, key, None, "preset", why, op="unset", **extra)
+        for key in sorted(flat)
+    ]
+
+
+def _conflict_unsets(ctx: PlanCtx) -> list:
+    entries: list = []
+    for item in ctx.inv["conflicts"]:
+        kind = item["kind"]
+        if kind == "model_policy":
+            entries.extend(_model_policy_unsets(ctx, item))
+        elif kind == "resolve_model_ids":
+            entries.append(
+                make_entry(
+                    ctx,
+                    "resolve_model_ids",
+                    None,
+                    "preset",
+                    item["why"],
+                    op="unset",
+                    **_conflict_extra(item),
+                )
+            )
+    return entries
+
+
+def _leftover_unsets(ctx: PlanCtx, planned: set[str]) -> list:
+    entries: list = []
+    for key in sorted(presets.flatten_config(ctx.existing)):
+        if key in planned or not presets.is_managed(key, ctx.host):
+            continue
+        entries.append(make_entry(ctx, key, None, "preset", _LEFTOVER_WHY, op="unset"))
+    return entries
+
+
+def _runtime_mismatch_note(ctx: PlanCtx, runtime: str, source: str) -> dict:
+    text = (
+        f"runtime {runtime} from {source} differs from host {ctx.host}; "
+        f"the plan writes no runtime entry on {ctx.host} (D-30); "
+        f"change it with plan-set runtime {ctx.host}"
+    )
+    return {"kind": "runtime_mismatch", "key": "runtime", "text": text}
+
+
+def _observed_runtime(ctx: PlanCtx) -> tuple[str | None, str]:
+    proj = ctx.existing.get("runtime")
+    if isinstance(proj, str):
+        return proj, "the project config"
+    global_vals = ctx.inv["global_defaults"].get("values") or {}
+    global_rt = global_vals.get("runtime")
+    if isinstance(global_rt, str):
+        path = ctx.inv["global_defaults"].get("path")
+        label = path if isinstance(path, str) else "global defaults"
+        return global_rt, label
+    return None, ""
+
+
+def _runtime_entries(ctx: PlanCtx) -> tuple[list, list]:
+    if ctx.host in presets.RUNTIME_MANAGED_HOSTS:
+        entry = make_entry(ctx, "runtime", ctx.host, "preset", _RUNTIME_WHY)
+        return [entry], []
+    runtime, source = _observed_runtime(ctx)
+    if runtime is None or runtime == ctx.host:
+        return [], []
+    return [], [_runtime_mismatch_note(ctx, runtime, source)]
+
+
+def _reconcile_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
+    """Last layer: runtime, conflict-driven unsets, then managed leftovers (D-08)."""
+    planned = {entry["key"] for entry in prior_entries}
+    runtime_entries, notes = _runtime_entries(ctx)
+    conflict_entries = _conflict_unsets(ctx)
+    planned.update(entry["key"] for entry in conflict_entries)
+    planned.update(entry["key"] for entry in runtime_entries)
+    leftover_entries = _leftover_unsets(ctx, planned)
+    entries = runtime_entries + conflict_entries + leftover_entries
+    return entries, notes
+
+
+_LAYERS = (
+    _preset_layer,
+    _tier_layer,
+    _slot_layer,
+    _specialist_layer,
+    _cross_ai_layer,
+    _reconcile_layer,
+)
 
 
 def _drop_rejected(ctx: PlanCtx, entries: list) -> tuple[list, list]:

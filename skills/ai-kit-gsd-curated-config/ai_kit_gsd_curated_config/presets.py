@@ -128,6 +128,43 @@ PRICE_PERCENTILE = {"mvp": 0.40, "standard": 0.75, "rigorous": None}
 
 CODEX_EFFECT = "resolve-model only (codex bakes only explicit model_overrides)"
 
+MANAGED_PREFIXES = (
+    "models.",
+    "model_overrides.",
+    "effort.",
+    "dynamic_routing.",
+    "review.",
+    "agent_skills.",
+)
+
+
+def _managed_key_set() -> frozenset:
+    keys: set = set()
+    for table in PRESETS.values():
+        keys.update(table)
+    keys.update(CONDITIONAL_KEYS)
+    keys.update(CROSS_AI_KEYS)
+    keys.add("model_profile")
+    return frozenset(keys)
+
+
+MANAGED_KEYS = _managed_key_set()
+
+RUNTIME_MANAGED_HOSTS = ("opencode", "codex")
+
+
+def is_managed(key: str, host: str) -> bool:
+    """True when `key` belongs to a plan-managed config family for `host`.
+
+    `runtime`, `resolve_model_ids` and `model_policy` are reconciled from inventory
+    conflicts, never by family (D-08, D-21, D-23)."""
+    if key in MANAGED_KEYS:
+        return True
+    for prefix in MANAGED_PREFIXES:
+        if key.startswith(prefix):
+            return True
+    return key.startswith(f"model_profile_overrides.{host}.")
+
 
 def preset_values(rigor: str, project: dict) -> dict:
     """The §5 preset dict for `rigor` plus its conditional keys, resolved from the

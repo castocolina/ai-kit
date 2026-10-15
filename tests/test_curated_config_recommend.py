@@ -246,7 +246,7 @@ SPECIALIST_OPENCODE = [
 
 def make_inventory(
     host="codex", candidates=(), project=None, existing=None, conflicts=(), rejected=(),
-    global_values=None,
+    global_values=None, global_path=None,
 ):
     """A full schema-version-1 inventory (17-02-PLAN <interfaces>) with token paths."""
     if project is None:
@@ -255,10 +255,14 @@ def make_inventory(
         existing = {"exists": False, "values": {}}
     if global_values is None:
         global_values = {}
-    accepted = sorted(
-        (set(presets.closed_key_set(host)) | set(presets.flatten_config(existing["values"])))
-        - set(rejected)
+    accepted = set(presets.closed_key_set(host)) | set(
+        presets.flatten_config(existing["values"])
     )
+    policy = global_values.get("model_policy")
+    if isinstance(policy, dict):
+        accepted |= set(presets.flatten_config({"model_policy": policy}))
+    accepted = sorted(accepted - set(rejected))
+    gpath = global_path if global_path is not None else "<global>/.gsd/defaults.json"
     return {
         "schema_version": 1,
         "host": host,
@@ -274,7 +278,7 @@ def make_inventory(
         "candidates": list(candidates),
         "project": dict(project),
         "existing_config": existing,
-        "global_defaults": {"values": dict(global_values)},
+        "global_defaults": {"path": gpath, "values": dict(global_values)},
         "conflicts": list(conflicts),
     }
 
@@ -499,6 +503,7 @@ class TestPresets(unittest.TestCase):
                         e["key"]: e["value"]
                         for e in plan["entries"]
                         if e["source"] == "preset"
+                        and e["key"] != "runtime"
                         and not e["key"].startswith(
                             ("models.", "workflow.plan_review_convergence",
                              "workflow.cross_ai", "review.", "model_profile")
@@ -1706,6 +1711,358 @@ class TestInventoryValidation(unittest.TestCase):
                     ])
                 self.assertEqual(caught.exception.code, 2)
                 self.assertFalse(os.path.exists(os.path.join(tmp, "plan.json")))
+
+
+class TestReconcileTracer(unittest.TestCase):
+    """Task 17-08-1: managed leftovers and policy conflicts on a claude host."""
+
+    _LEFTOVER_WHY = "managed by the curated plan (D-08); not set by this plan"
+
+    def _v1_inv(self):
+        return make_inventory(
+            host="claude",
+            existing={
+                "exists": True,
+                "values": {
+                    "model_overrides": {"gsd-planner": "opus"},
+                    "model_policy": {"provider": "generic", "high": "x"},
+                    "resolve_model_ids": "omit",
+                    "workflow": {"live_dom_uat": True, "auto_advance": True},
+                    "model_profile_overrides": {
+                        "codex": {"opus": {"model": "m", "reasoning_effort": "high"}},
+                    },
+                    "brave_search": True,
+                },
+            },
+            conflicts=[
+                {
+                    "kind": "model_policy",
+                    "scope": "project",
+                    "key": "model_policy",
+                    "value": {"provider": "generic", "high": "x"},
+                    "why": "legacy v1 model_policy",
+                },
+                {
+                    "kind": "resolve_model_ids",
+                    "scope": "project",
+                    "key": "resolve_model_ids",
+                    "value": "omit",
+                    "why": "claude resolve_model_ids conflict",
+                },
+            ],
+        )
+
+    def test_v1_claude_managed_unsets(self):
+        code, plan, _, err = run_recommend(
+            self._v1_inv(), "--profile", "adaptive", "--rigor", "standard"
+        )
+        self.assertEqual((code, err), (0, ""))
+        assert plan is not None
+        em = entry_map(plan)
+        mo = em["model_overrides.gsd-planner"]
+        self.assertEqual(mo["op"], "unset")
+        self.assertEqual(mo["source"], "preset")
+        self.assertEqual(mo["existing"], "opus")
+        self.assertEqual(mo["why"], self._LEFTOVER_WHY)
+        for key in ("model_policy.high", "model_policy.provider"):
+            self.assertEqual(em[key]["op"], "unset")
+        rid = em["resolve_model_ids"]
+        self.assertEqual(rid["op"], "unset")
+        self.assertEqual(rid["existing"], "omit")
+        for bad in (
+            "workflow.live_dom_uat",
+            "workflow.auto_advance",
+            "model_profile_overrides.codex.opus",
+            "brave_search",
+        ):
+            self.assertNotIn(bad, em)
+
+    def test_is_managed_matrix(self):
+        yes = (
+            ("model_overrides.gsd-planner", "claude"),
+            ("models.planning", "claude"),
+            ("effort.default", "claude"),
+            ("workflow.tdd_mode", "claude"),
+            ("model_profile_overrides.claude.opus", "claude"),
+        )
+        no = (
+            ("workflow.live_dom_uat", "claude"),
+            ("model_profile_overrides.codex.opus", "claude"),
+            ("runtime", "claude"),
+            ("model_policy.provider", "claude"),
+            ("claude_md_path", "claude"),
+        )
+        for key, host in yes:
+            self.assertTrue(presets.is_managed(key, host), key)
+        for key, host in no:
+            self.assertFalse(presets.is_managed(key, host), key)
+
+
+class TestReconcileConflicts(unittest.TestCase):
+    """Task 17-08-2: runtime, latent globals, malformed conflicts."""
+
+    def test_opencode_runtime_set(self):
+        inv = make_inventory(host="opencode", candidates=OPENCODE)
+        entry = entry_map(build(inv))["runtime"]
+        self.assertEqual(entry["op"], "set")
+        self.assertEqual(entry["value"], "opencode")
+        self.assertEqual(entry["source"], "preset")
+        self.assertIsNone(entry["existing"])
+
+    def test_codex_runtime_existing(self):
+        inv = make_inventory(
+            host="codex",
+            candidates=CODEX,
+            existing={"exists": True, "values": {"runtime": "codex"}},
+        )
+        entry = entry_map(build(inv))["runtime"]
+        self.assertEqual(entry["value"], "codex")
+        self.assertEqual(entry["existing"], "codex")
+
+    def test_claude_runtime_mismatch_project(self):
+        inv = make_inventory(
+            host="claude",
+            existing={"exists": True, "values": {"runtime": "codex"}},
+        )
+        plan = build(inv)
+        self.assertNotIn("runtime", entry_map(plan))
+        notes = [n for n in plan["notes"] if n["kind"] == "runtime_mismatch"]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("the project config", notes[0]["text"])
+
+    def test_cursor_runtime_mismatch_global_path(self):
+        inv = make_inventory(
+            host="cursor",
+            global_values={"runtime": "codex"},
+            global_path="gsd-home/.gsd/defaults.json",
+        )
+        plan = build(inv)
+        notes = [n for n in plan["notes"] if n["kind"] == "runtime_mismatch"]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("gsd-home/.gsd/defaults.json", notes[0]["text"])
+        self.assertNotIn("~/.gsd", notes[0]["text"])
+
+    def test_pi_runtime_match_no_note(self):
+        inv = make_inventory(
+            host="pi",
+            existing={"exists": True, "values": {"runtime": "pi"}},
+        )
+        plan = build(inv)
+        self.assertFalse(any(n["kind"] == "runtime_mismatch" for n in plan["notes"]))
+
+    def test_latent_global_resolve_model_ids(self):
+        inv = make_inventory(
+            host="claude",
+            conflicts=[
+                {
+                    "kind": "resolve_model_ids",
+                    "scope": "global",
+                    "key": "resolve_model_ids",
+                    "value": "omit",
+                    "why": "w",
+                    "effect": "latent (copied into the project config by config-new-project)",
+                },
+            ],
+        )
+        entry = entry_map(build(inv))["resolve_model_ids"]
+        self.assertEqual(entry["op"], "unset")
+        self.assertIsNone(entry["existing"])
+        self.assertEqual(
+            entry["effect"], "latent (copied into the project config by config-new-project)"
+        )
+
+    def test_latent_global_model_policy_leaves(self):
+        policy = {"provider": "generic", "budget": "b"}
+        inv = make_inventory(
+            host="claude",
+            global_values={"model_policy": policy},
+            conflicts=[
+                {
+                    "kind": "model_policy",
+                    "scope": "global",
+                    "key": "model_policy",
+                    "value": policy,
+                    "why": "global policy",
+                    "effect": "latent (copied into the project config by config-new-project)",
+                },
+            ],
+        )
+        em = entry_map(build(inv))
+        for key in ("model_policy.budget", "model_policy.provider"):
+            self.assertEqual(em[key]["op"], "unset")
+            self.assertEqual(
+                em[key]["effect"], "latent (copied into the project config by config-new-project)"
+            )
+
+    def test_codex_resolve_model_ids_not_managed(self):
+        inv = make_inventory(
+            host="codex",
+            candidates=CODEX,
+            existing={"exists": True, "values": {"resolve_model_ids": "omit"}},
+        )
+        self.assertNotIn("resolve_model_ids", entry_map(build(inv)))
+
+    def test_runtime_tiers_object_leaves(self):
+        existing = {
+            "model_policy": {
+                "provider": "generic",
+                "runtime_tiers": {
+                    "codex": {"opus": {"model": "m", "reasoning_effort": "high"}},
+                },
+            },
+        }
+        inv = make_inventory(
+            host="claude",
+            existing={"exists": True, "values": existing},
+            conflicts=[
+                {
+                    "kind": "model_policy",
+                    "scope": "project",
+                    "key": "model_policy",
+                    "value": existing["model_policy"],
+                    "why": "policy",
+                },
+            ],
+        )
+        em = entry_map(build(inv))
+        mp_keys = [k for k in em if k.startswith("model_policy.")]
+        self.assertEqual(
+            sorted(mp_keys),
+            ["model_policy.provider", "model_policy.runtime_tiers.codex.opus"],
+        )
+        tier = em["model_policy.runtime_tiers.codex.opus"]
+        self.assertEqual(tier["op"], "unset")
+        self.assertEqual(tier["existing"], {"model": "m", "reasoning_effort": "high"})
+        self.assertFalse(any(k.endswith(".model") or k.endswith(".reasoning_effort") for k in em))
+
+    def test_r13_empty_no_unsets(self):
+        for host in ("claude", "codex", "opencode", "cursor", "pi"):
+            cands = CODEX if host == "codex" else (OPENCODE if host == "opencode" else ())
+            plan = build(make_inventory(host=host, candidates=cands))
+            self.assertFalse(any(e["op"] == "unset" for e in plan["entries"]), host)
+
+    def test_cross_ai_review_y_no_duplicate_unset(self):
+        inv = make_inventory(
+            existing={
+                "exists": True,
+                "values": {"review": {"default_reviewers": ["x"]}},
+            },
+        )
+        plan = build(inv, cross_ai_review="y")
+        em = entry_map(plan)
+        self.assertEqual(em["review.default_reviewers"]["status"], "needs_choice")
+        unsets = [
+            e for e in plan["entries"]
+            if e["key"] == "review.default_reviewers" and e["op"] == "unset"
+        ]
+        self.assertFalse(unsets)
+
+    def test_cross_ai_review_n_unsets_reviewers(self):
+        inv = make_inventory(
+            existing={
+                "exists": True,
+                "values": {"review": {"default_reviewers": ["x"]}},
+            },
+        )
+        entry = entry_map(build(inv, cross_ai_review="n"))["review.default_reviewers"]
+        self.assertEqual(entry["op"], "unset")
+
+    def test_malformed_conflicts_exit_2(self):
+        cases = (
+            '["x"]',
+            '[{"kind": "model_policy", "scope": "local", "key": "model_policy"}]',
+            '[{"kind": "model_policy", "scope": "project"}]',
+        )
+        for raw in cases:
+            inv = make_inventory()
+            inv["conflicts"] = json.loads(raw)
+            code, _, _, err = run_recommend(
+                json.dumps(inv), "--profile", "adaptive", "--rigor", "standard"
+            )
+            self.assertEqual(code, 2, raw)
+            self.assertIn("conflicts[0]", err)
+            self.assertIn("rerun inventory", err)
+
+
+class TestReconcileComposition(unittest.TestCase):
+    """Task 17-08-3: reconcile composes with earlier layers."""
+
+    def test_codex_slot_not_leftover(self):
+        inv = make_inventory(
+            host="codex",
+            candidates=CODEX,
+            existing={
+                "exists": True,
+                "values": {
+                    "model_profile_overrides": {
+                        "codex": {"opus": {"model": "old", "reasoning_effort": "low"}},
+                    },
+                },
+            },
+        )
+        entry = entry_map(build(inv))["model_profile_overrides.codex.opus"]
+        leftover = "managed by the curated plan (D-08); not set by this plan"
+        self.assertNotEqual(entry["why"], leftover)
+
+    def test_rigorous_research_unset_planning_set(self):
+        inv = make_inventory(
+            existing={
+                "exists": True,
+                "values": {"models": {"research": "haiku", "planning": "sonnet"}},
+            },
+        )
+        em = entry_map(build(inv, rigor="rigorous"))
+        self.assertEqual(em["models.research"]["op"], "unset")
+        self.assertEqual(em["models.planning"]["op"], "set")
+        self.assertEqual(em["models.planning"]["existing"], "sonnet")
+
+    def test_dynamic_routing_standard_unset_rigorous_set(self):
+        base = {"exists": True, "values": {"dynamic_routing": {"enabled": True}}}
+        std = entry_map(build(make_inventory(existing=base), rigor="standard"))
+        self.assertEqual(std["dynamic_routing.enabled"]["op"], "unset")
+        rig = entry_map(build(make_inventory(existing=base), rigor="rigorous"))
+        self.assertEqual(rig["dynamic_routing.enabled"]["op"], "set")
+
+    def test_pi_stale_override_and_sonnet_needs_choice(self):
+        inv = make_inventory(
+            host="pi",
+            existing={"exists": True, "values": {"model_overrides": {"gsd-executor": "opus"}}},
+        )
+        em = entry_map(build(inv))
+        self.assertEqual(em["model_overrides.gsd-executor"]["op"], "unset")
+        self.assertEqual(em["model_profile_overrides.pi.sonnet"]["status"], "needs_choice")
+
+    def test_agent_skills_leftover(self):
+        inv = make_inventory(
+            existing={"exists": True, "values": {"agent_skills": {"gsd-executor": True}}},
+        )
+        self.assertEqual(entry_map(build(inv))["agent_skills.gsd-executor"]["op"], "unset")
+
+    def test_rejected_managed_key_dropped(self):
+        key = "dynamic_routing.enabled"
+        inv = make_inventory(rejected=(key,), existing={"exists": True, "values": {key: True}})
+        plan = build(inv, rigor="rigorous")
+        self.assertNotIn(key, entry_map(plan))
+        notes = [n for n in plan["notes"] if n["kind"] == "dropped_key"]
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0]["key"], key)
+
+    def test_reordered_existing_byte_identical_plan(self):
+        values = {
+            "model_overrides": {"gsd-planner": "opus", "gsd-executor": "sonnet"},
+            "effort": {"routing_tier_defaults": {"heavy": "max"}},
+            "dynamic_routing": {"enabled": True},
+        }
+        inv_a = make_inventory(host="claude", existing={"exists": True, "values": values})
+        nested = json.loads(json.dumps(values))
+        inv_b = make_inventory(host="claude", existing={"exists": True, "values": nested})
+        _, _, bytes_a, _ = run_recommend(
+            inv_a, "--profile", "adaptive", "--rigor", "standard"
+        )
+        _, _, bytes_b, _ = run_recommend(
+            inv_b, "--profile", "adaptive", "--rigor", "standard"
+        )
+        self.assertEqual(bytes_a, bytes_b)
 
 
 if __name__ == "__main__":
