@@ -26,7 +26,8 @@ repos:
         name: pylint
         entry: uv run pylint
         language: system
-        files: ^(tools/(status-line|statusline-doctor|setup)|skills/ai-kit-gsd-spec-discuss/scripts/[a-z_]+)\.py$
+        # Pylint covers every shipped Python file under tools and skills (not tests).
+        files: ^(tools|skills)/.*\.py$
         require_serial: true
       - id: pyright
         name: pyright

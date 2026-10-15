@@ -96,13 +96,13 @@ disable = [
 # ─────────────────────────── vulture ───────────────────────────
 [tool.vulture]
 min_confidence = 80
-paths = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-project-rules-agents", "skills/ai-kit-project-rules-makefile", "skills/ai-kit-project-rules-precommit", "skills/ai-kit-project-rules-arch", "skills/ai-kit-project-rules-docker", "skills/ai-kit-project-rules-cicd", "skills/ai-kit-project-rules-all", "skills/ai-kit-gsd-curated-config", "skills/ai-kit-gsd-spec-discuss", "skills/_shared"]
+paths = ["tools", "skills", "tests"]
 # signal-handler / context-manager params required by their signature
 ignore_names = ["signum", "frame", "offset", "whence"]
 
 # ─────────────────────────── pyright ───────────────────────────
 [tool.pyright]
-include = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "tools/hooks", "tools/config_doctor_checks.py", "tools/config_doctor_readers.py", "tools/config_doctor_app.py", "tools/config_doctor_appliers.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-project-rules-agents", "skills/ai-kit-project-rules-makefile", "skills/ai-kit-project-rules-precommit", "skills/ai-kit-project-rules-arch", "skills/ai-kit-project-rules-docker", "skills/ai-kit-project-rules-cicd", "skills/ai-kit-project-rules-all", "skills/ai-kit-gsd-curated-config", "skills/ai-kit-gsd-spec-discuss", "skills/_shared"]
+include = ["tools", "skills", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
 extraPaths = [

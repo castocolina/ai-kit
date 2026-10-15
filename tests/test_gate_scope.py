@@ -6,12 +6,33 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 MAKEFILE = REPO_ROOT / "Makefile"
 HOOKS = REPO_ROOT / ".pre-commit-config.yaml"
+PYPROJECT = REPO_ROOT / "pyproject.toml"
 RUNNER = REPO_ROOT / "tools" / "run_unittest_parallel.py"
+PYLINT_DISABLE_NAMES = frozenset({
+    "too-many-lines",
+    "unused-argument",
+    "duplicate-code",
+    "fixme",
+    "too-few-public-methods",
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+})
+PYLINT_DISABLE_CODES = frozenset({"C0114", "C0115", "C0116"})
+PYLINT_DESIGN = {
+    "max-args": 5,
+    "max-positional-arguments": 5,
+    "max-locals": 15,
+    "max-branches": 12,
+    "max-returns": 6,
+    "max-statements": 50,
+}
 SHIPPED_SUBDIRS = ("tools", "skills", "tests")
 PRE_WIDEN_RUFF_FILES = (
     r"^((tools|tests)/.*|skills/ai-kit-spec-review/ai-kit-spec-review|"
@@ -141,6 +162,91 @@ def make_target_line(makefile: str, name: str) -> str | None:
     return None
 
 
+def hook_require_serial(text: str, hook_id: str) -> bool | None:
+    """Return whether a hook sets ``require_serial: true``."""
+    current: str | None = None
+    for line in text.splitlines():
+        id_match = re.match(r"\s*- id: (\S+)", line)
+        if id_match:
+            current = id_match.group(1)
+            continue
+        if current == hook_id and (serial_match := re.match(
+            r"\s*require_serial:\s*(true|false)", line
+        )):
+            return serial_match.group(1) == "true"
+    return None
+
+
+def pylint_disable_drift(disable_list: list[str]) -> list[str]:
+    """Report pylint disables outside the pinned set."""
+    errors: list[str] = []
+    for entry in disable_list:
+        token = entry.strip().strip("'\"")
+        if token in PYLINT_DISABLE_NAMES or token in PYLINT_DISABLE_CODES:
+            continue
+        errors.append(f"unexpected pylint disable: {token}")
+    expected = len(PYLINT_DISABLE_NAMES)
+    if len(disable_list) != expected:
+        errors.append(f"disable count {len(disable_list)} != {expected}")
+    return errors
+
+
+def pylint_design_drift(design: dict[str, int]) -> list[str]:
+    errors: list[str] = []
+    for key, value in PYLINT_DESIGN.items():
+        if design.get(key) != value:
+            errors.append(f"{key}: got {design.get(key)!r}, want {value}")
+    for key in design:
+        if key not in PYLINT_DESIGN:
+            errors.append(f"unexpected design key: {key}")
+    return errors
+
+
+def path_under_roots(rel_path: str, roots: list[str]) -> bool:
+    return any(
+        rel_path == root or rel_path.startswith(f"{root}/")
+        for root in roots
+    )
+
+
+def lint_config_drift(tool: dict) -> list[str]:
+    """Drift in pinned ruff, vulture, pylint basic and pyright settings."""
+    errors: list[str] = []
+    ruff = tool.get("ruff", {}).get("lint", {})
+    select = set(ruff.get("select", []))
+    if select != {"E", "F", "W", "I", "UP", "B", "SIM", "RUF"}:
+        errors.append(f"ruff select drift: {sorted(select)}")
+    ignore = set(ruff.get("ignore", []))
+    if ignore != {"RUF001", "RUF002", "RUF003"}:
+        errors.append(f"ruff ignore drift: {sorted(ignore)}")
+    per_file = ruff.get("per-file-ignores", {})
+    tests_ignores = set(per_file.get("tests/*", []))
+    if tests_ignores != {"E741", "E731", "E402", "E702", "E401", "RUF012"}:
+        errors.append(f"ruff per-file-ignores drift: {sorted(tests_ignores)}")
+    vulture = tool.get("vulture", {})
+    if vulture.get("min_confidence") != 80:
+        errors.append("vulture min_confidence drift")
+    names = set(vulture.get("ignore_names", []))
+    if names != {"signum", "frame", "offset", "whence"}:
+        errors.append(f"vulture ignore_names drift: {sorted(names)}")
+    basic = tool.get("pylint", {}).get("basic", {})
+    if set(basic.keys()) != {"bad-names", "good-names", "module-rgx"}:
+        errors.append(f"pylint basic keys drift: {sorted(basic.keys())}")
+    if basic.get("good-names") != ["tomllib"]:
+        errors.append("pylint good-names drift")
+    pyright = tool.get("pyright", {})
+    if pyright.get("pythonVersion") != "3.12":
+        errors.append("pyright pythonVersion drift")
+    if pyright.get("typeCheckingMode") != "basic":
+        errors.append("pyright typeCheckingMode drift")
+    return errors
+
+
+def load_pyproject_tool() -> dict:
+    with PYPROJECT.open("rb") as handle:
+        return tomllib.load(handle)["tool"]
+
+
 class TestGateScope(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -229,6 +335,57 @@ class TestGateScope(unittest.TestCase):
         self.assertEqual(make_target_line(self.makefile, "lint"), "lint: shellcheck py-compile")
         self.assertEqual(recipe_lines(self.makefile, "lint"), [])
 
+    def test_pylint_selects_tools_and_skills_py(self) -> None:
+        regex = hook_files_regex(self.hooks, "pylint")
+        self.assertIsNotNone(regex)
+        paths = iter_py_files(REPO_ROOT, ("tools", "skills"))
+        self.assertEqual(unselected_files(paths, regex or ""), [])
+
+    def test_pyright_and_vulture_paths_cover_tree(self) -> None:
+        tool = load_pyproject_tool()
+        pyright_roots = tool["pyright"]["include"]
+        vulture_roots = tool["vulture"]["paths"]
+        for sub in SHIPPED_SUBDIRS:
+            self.assertTrue(
+                any(r == sub or r.startswith(f"{sub}/") for r in pyright_roots),
+                f"pyright missing {sub}",
+            )
+            self.assertTrue(
+                any(r == sub or r.startswith(f"{sub}/") for r in vulture_roots),
+                f"vulture missing {sub}",
+            )
+        paths = iter_py_files(REPO_ROOT, SHIPPED_SUBDIRS)
+        for path in paths:
+            self.assertTrue(path_under_roots(path, pyright_roots), path)
+            self.assertTrue(path_under_roots(path, vulture_roots), path)
+
+    def test_pinned_pylint_disable_and_design(self) -> None:
+        tool = load_pyproject_tool()
+        disable = tool["pylint"]["messages control"]["disable"]
+        self.assertEqual(pylint_disable_drift(disable), [])
+        design = tool["pylint"]["design"]
+        self.assertEqual(pylint_design_drift(design), [])
+
+    def test_hook_order_and_serial_runs(self) -> None:
+        ids = hook_ids(self.hooks)
+        self.assertLess(ids.index("ruff"), ids.index("pylint"))
+        self.assertLess(ids.index("pylint"), ids.index("unittest"))
+        self.assertLess(ids.index("unittest"), ids.index("unittest-wizard"))
+        self.assertTrue(hook_require_serial(self.hooks, "ruff"))
+        self.assertTrue(hook_require_serial(self.hooks, "pylint"))
+
+    def test_pylint_files_are_subset_of_ruff(self) -> None:
+        ruff_re = hook_files_regex(self.hooks, "ruff")
+        pylint_re = hook_files_regex(self.hooks, "pylint")
+        self.assertIsNotNone(ruff_re)
+        self.assertIsNotNone(pylint_re)
+        pylint_paths = iter_py_files(REPO_ROOT, ("tools", "skills"))
+        extra = unselected_files(pylint_paths, ruff_re or "")
+        self.assertEqual(extra, [])
+
+    def test_lint_config_pinned(self) -> None:
+        self.assertEqual(lint_config_drift(load_pyproject_tool()), [])
+
 
 class TestGateScopeNonVacuity(unittest.TestCase):
     def test_flags_a_module_in_two_groups(self) -> None:
@@ -259,6 +416,39 @@ class TestGateScopeNonVacuity(unittest.TestCase):
             self.assertEqual(paths, [])
             wide = r"^(tools|skills|tests)/.*\.py$"
             self.assertEqual(unselected_files(paths, wide), [])
+
+    def test_extra_pylint_disable_reported(self) -> None:
+        drift = pylint_disable_drift([*PYLINT_DISABLE_NAMES, "broad-except"])
+        self.assertTrue(any("broad-except" in err for err in drift))
+
+    def test_raised_design_threshold_reported(self) -> None:
+        design = dict(PYLINT_DESIGN)
+        design["max-args"] = 99
+        self.assertTrue(pylint_design_drift(design))
+
+    def test_lint_config_drift_on_extra_ruff_ignore(self) -> None:
+        tool = load_pyproject_tool()
+        bad = {**tool, "ruff": {**tool["ruff"], "lint": {
+            **tool["ruff"]["lint"],
+            "ignore": [*tool["ruff"]["lint"]["ignore"], "E999"],
+        }}}
+        self.assertTrue(lint_config_drift(bad))
+
+    def test_lint_config_drift_on_extra_vulture_name(self) -> None:
+        tool = load_pyproject_tool()
+        bad = {**tool, "vulture": {
+            **tool["vulture"],
+            "ignore_names": [*tool["vulture"]["ignore_names"], "unused"],
+        }}
+        self.assertTrue(lint_config_drift(bad))
+
+    def test_lint_config_drift_on_extra_pylint_basic_key(self) -> None:
+        tool = load_pyproject_tool()
+        bad = {**tool, "pylint": {**tool["pylint"], "basic": {
+            **tool["pylint"]["basic"],
+            "extra-key": "x",
+        }}}
+        self.assertTrue(lint_config_drift(bad))
 
 
 if __name__ == "__main__":
