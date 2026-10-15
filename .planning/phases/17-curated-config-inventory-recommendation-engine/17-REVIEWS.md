@@ -306,3 +306,11 @@ None (single reviewer). Orchestrator triage of its MEDIUM/LOW concerns against t
 ### Divergent Views
 
 None (single reviewer).
+
+## Orchestrator disposition (cycle 1)
+
+- 17-08 (LOW) `runtime_mismatch` note hardcoded `~/.gsd/defaults.json`: **incorporated**. The
+  note now names `ctx.inv["global_defaults"]["path"]` (17-07 resolves `$GSD_HOME`), and a Task 2
+  behavior case sets a `GSD_HOME`-style path. Done in the plan text, so no replan cycle was needed.
+- All other MEDIUM/LOW concerns: already handled in the plans or not plan changes, as the review
+  summary above records. No HIGH concerns. **Converged at cycle 1.**
