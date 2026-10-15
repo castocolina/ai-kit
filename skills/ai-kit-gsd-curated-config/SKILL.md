@@ -52,8 +52,10 @@ actually containing this `SKILL.md`.
 
 ## Run the curated flow
 
-Every subcommand below is invoked as `python3 "$ENTRYPOINT" <subcommand>
---project-dir <target_dir> [...]`. Before running any `apply-*` subcommand,
+Every project-touching subcommand below is invoked as `python3 "$ENTRYPOINT"
+<subcommand> --project-dir <target_dir> [...]`. The two
+`detect-*-candidate` subcommands take no flags (they probe installed CLIs,
+not the project); passing `--project-dir` to them exits 2. Before running any `apply-*` subcommand,
 ask yourself: has `ensure-project` already run for THIS `--project-dir` in
 this session, and — for the two detect/apply pairs (Steps 4-6) — did the
 matching `detect-*` call already run and get shown to the user this same
@@ -171,8 +173,8 @@ a read or write.
   over any of it, that is exactly what `gsd-settings --advanced` is for,
   not a reason to add more questions here.
 - **Never treat this repo's own `.planning/config.json` as the write
-  target implicitly.** Every subcommand takes an explicit `--project-dir`
-  for the TARGET project being configured — never assume the current
+  target implicitly.** Every project-touching subcommand takes an explicit
+  `--project-dir` for the TARGET project being configured — never assume the current
   working directory when it wasn't given explicitly.
 
 ## Common mistakes
