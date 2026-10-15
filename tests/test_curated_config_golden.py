@@ -87,13 +87,38 @@ def _fixture_rejected_keys() -> set[str]:
     return set(vk.get("rejected", []))
 
 
-def tables_answer(keys: list[str]) -> dict:
+def _extra_probe_keys(body: dict) -> list[str]:
+    extra = [f"agent_skills.{agent}" for agent in body.get("agent_to_phase_type", {})]
+    for lane in body.get("review_lanes") or []:
+        if not isinstance(lane, dict):
+            continue
+        for field in ("model_key", "effort_key"):
+            val = lane.get(field)
+            if isinstance(val, str) and val:
+                extra.append(val)
+    return extra
+
+
+def _skills_roots_for_home(home: str) -> dict[str, str]:
+    return {
+        "claude": os.path.join(home, ".claude", "skills"),
+        "codex": os.path.join(home, ".agents", "skills"),
+        "opencode": os.path.join(home, ".config", "opencode", "skills"),
+        "cursor": os.path.join(home, ".cursor", "skills"),
+        "pi": os.path.join(home, ".pi", "agent", "skills"),
+    }
+
+
+def tables_answer(keys: list[str], home=None) -> dict:
     body = _tables_body()
     rejected_set = _fixture_rejected_keys()
-    accepted = sorted(k for k in keys if k not in rejected_set)
-    rejected = sorted(k for k in keys if k in rejected_set)
+    probe = sorted(set(keys) | set(_extra_probe_keys(body)))
+    accepted = sorted(k for k in probe if k not in rejected_set)
+    rejected = sorted(k for k in probe if k in rejected_set)
     out = dict(body)
     out["valid_keys"] = {"accepted": accepted, "rejected": rejected}
+    if home is not None:
+        out["skills_roots"] = _skills_roots_for_home(home)
     return out
 
 
@@ -130,7 +155,9 @@ def build_golden_inventory(
             "PATH": "",
         }
         fake = FakeRun(
-            node_stdout=lambda argv: json.dumps(tables_answer(json.loads(argv[6]))),
+            node_stdout=lambda argv, h=home: json.dumps(
+                tables_answer(json.loads(argv[6]), h)
+            ),
             config_path_stdout=config_path,
         )
         code, parsed, _err = run_inventory(project, env, fake, "--host", host_name)
@@ -200,6 +227,12 @@ class TestFixtureShape(unittest.TestCase):
         profiles = _tables_body()["model_profiles"]
         self.assertIn("gsd-planner", profiles)
         self.assertIn("adaptive", profiles["gsd-planner"])
+
+    def test_fixture_has_review_lanes(self):
+        lanes = _tables_body().get("review_lanes")
+        self.assertIsInstance(lanes, list)
+        assert isinstance(lanes, list)
+        self.assertTrue(lanes)
 
 
 class TestGoldenPlans(unittest.TestCase):

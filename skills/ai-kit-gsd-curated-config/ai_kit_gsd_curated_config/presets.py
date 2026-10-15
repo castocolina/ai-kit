@@ -119,6 +119,13 @@ CROSS_AI_KEYS = (
     "review.default_reviewers",
 )
 
+# Probed so later layers may emit them; never managed (17 D-08 unset would drop hand-set values).
+PROBED_EXTRA_KEYS = (
+    "workflow.cross_ai_timeout",
+    "manager.flags.execute",
+    "agent_skills_security.trusted_global_roots",
+)
+
 DYNAMIC_ROUTING_EFFECT = (
     "unverified: no tier_models; resolve-model --attempt unchanged in gsd-core 1.16"
 )
@@ -187,7 +194,7 @@ def closed_key_set(host: str) -> list:
     of the preset tables over all rigors, the conditional and cross-AI keys, the
     tier-layer keys and one `model_overrides.<agent>` per specialist. `inventory`
     probes these against the host gsd-core's `isValidConfigKey`."""
-    keys = set(MANAGED_KEYS) | {"runtime", "resolve_model_ids"}
+    keys = set(MANAGED_KEYS) | set(PROBED_EXTRA_KEYS) | {"runtime", "resolve_model_ids"}
     for phases in PHASE_SHIFTS.values():
         keys.update(f"models.{phase}" for phase in phases)
     for tier in TIERS:
