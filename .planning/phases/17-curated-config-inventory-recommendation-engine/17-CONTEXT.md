@@ -193,6 +193,24 @@ Phase 18 owns the selection rules.
   `effect: resolve-model only (codex bakes only explicit model_overrides)`. Laya amend_both
   0.90.
 
+- **D-24: Restore the opencode `image_input` source on opencode 2.x (added 2026-10-15, live
+  finding at Phase 16 close-out).** Live on opencode v2.0.29: `opencode models --verbose` is gone
+  (`opencode models [--standalone | --server <url>]`), and `opencode serve` now starts "the v2 API
+  and web server". The 16-05 parser therefore gets no input and fails closed, so every
+  opencode-only model reads as unknown, which means not vision-eligible. Before planning, run a
+  spike (theory → hypothesis → spike):
+  - run opencode under a scratch HOME/XDG, never the real `~/.config/opencode`;
+  - find which 2.x surface (the v2 API behind `serve`/`--standalone`, or the `models` output)
+    exposes per-model input modalities, and record the exact command or endpoint, the version, and
+    a captured sample;
+  - kill every server it starts.
+
+  If a surface exists, Phase 17 adds a version-gated parser next to `parse_opencode_verbose_image_input`
+  (keeping the 1.x path) with `image_input_source` provenance. If none does, models.dev
+  `modalities.input` stays the only source and the gap is labelled `unverified on opencode 2.x`,
+  never inferred. Either way, `skills/ai-kit-spec-config/references/cli-model-selection.md:159` stops
+  citing `--verbose` as current. The carried-forward fail-closed rule means nothing waits on this.
+
 ### Claude's Discretion
 - The exact percentile per rigor level.
 - The plan.json schema details: top-level `schema_version`, inventory digest, and the entry
