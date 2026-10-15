@@ -3,6 +3,7 @@
 drops (D-26/R12), effect labels (D-22), fail-closed inventory loading (D-31) and the
 purity guarantee (REC-01). All fixtures live in temp dirs; no real HOME is touched.
 """
+import ast
 import contextlib
 import io
 import json
@@ -259,6 +260,286 @@ class TestRecommendTracer(unittest.TestCase):
                 "model_policy": {"runtime_tiers": {"codex": {"opus": {"model": "m"}}}}
             }))
         )
+
+
+# Literal spec §5 expected tables (per rigor); `frontend`/`intel` substituted in.
+_EXPECTED_PRESETS = {
+    "mvp": lambda frontend: {
+        "granularity": "coarse",
+        "workflow.mvp_mode": True,
+        "effort.routing_tier_defaults.heavy": "high",
+        "effort.routing_tier_defaults.standard": "medium",
+        "effort.routing_tier_defaults.light": "minimal",
+        "effort.agent_overrides.gsd-executor": "medium",
+        "effort.agent_overrides.gsd-code-fixer": "medium",
+        "workflow.research": True,
+        "workflow.plan_check": True,
+        "workflow.verifier": True,
+        "workflow.pattern_mapper": True,
+        "workflow.nyquist_validation": False,
+        "workflow.tdd_mode": False,
+        "workflow.code_review_depth": "quick",
+        "workflow.security_asvs_level": 1,
+        "workflow.security_block_on": "critical",
+        "workflow.ui_phase": frontend,
+        "workflow.ui_review": False,
+        "intel.enabled": False,
+    },
+    "standard": lambda frontend: {
+        "granularity": "standard",
+        "effort.routing_tier_defaults.heavy": "xhigh",
+        "effort.routing_tier_defaults.standard": "high",
+        "effort.routing_tier_defaults.light": "low",
+        "effort.agent_overrides.gsd-executor": "medium",
+        "effort.agent_overrides.gsd-code-fixer": "medium",
+        "workflow.research": True,
+        "workflow.plan_check": True,
+        "workflow.verifier": True,
+        "workflow.pattern_mapper": True,
+        "workflow.nyquist_validation": True,
+        "workflow.tdd_mode": False,
+        "workflow.code_review_depth": "standard",
+        "workflow.security_asvs_level": 1,
+        "workflow.security_block_on": "high",
+        "workflow.ui_phase": frontend,
+        "workflow.ui_review": frontend,
+        "intel.enabled": True,
+    },
+    "rigorous": lambda frontend: {
+        "granularity": "fine",
+        "effort.routing_tier_defaults.heavy": "xhigh",
+        "effort.routing_tier_defaults.standard": "high",
+        "effort.routing_tier_defaults.light": "low",
+        "effort.agent_overrides.gsd-executor": "medium",
+        "effort.agent_overrides.gsd-code-fixer": "medium",
+        "effort.agent_overrides.gsd-code-reviewer": "xhigh",
+        "workflow.research": True,
+        "workflow.plan_check": True,
+        "workflow.verifier": True,
+        "workflow.pattern_mapper": True,
+        "workflow.nyquist_validation": True,
+        "workflow.tdd_mode": True,
+        "workflow.code_review_depth": "deep",
+        "workflow.security_asvs_level": 2,
+        "workflow.security_block_on": "medium",
+        "workflow.ui_phase": frontend,
+        "workflow.ui_review": True,
+        "intel.enabled": True,
+        "code_quality.fallow.enabled": True,
+        "code_quality.fallow.profile": "standard",
+        "refactor.trigger_enabled": True,
+        "dynamic_routing.enabled": True,
+        "dynamic_routing.escalate_on_failure": True,
+        "dynamic_routing.max_escalations": 1,
+    },
+}
+
+
+class TestPresets(unittest.TestCase):
+    """Task 2: the §5 preset table, pinned literally per rigor and project facts."""
+
+    def test_table_per_rigor_and_facts(self):
+        for rigor in presets.RIGORS:
+            for frontend in (False, True):
+                for intel in (False, True):
+                    project = {"frontend": frontend, "intel_index_present": intel}
+                    inv = make_inventory(host="codex", project=project)
+                    plan = build(inv, rigor=rigor)
+                    got = {
+                        e["key"]: e["value"]
+                        for e in plan["entries"]
+                        if e["source"] == "preset"
+                        and not e["key"].startswith(
+                            ("models.", "workflow.plan_review_convergence",
+                             "workflow.cross_ai", "review.", "model_profile")
+                        )
+                    }
+                    expected = _EXPECTED_PRESETS[rigor](frontend)
+                    if rigor == "rigorous" and intel:
+                        expected["plan_review.source_grounding_authority"] = "intel"
+                    self.assertEqual(got, expected, f"{rigor} frontend={frontend} intel={intel}")
+
+
+class TestPhaseShifts(unittest.TestCase):
+    """`models.<phase>` appears only where the rigor shifts a whole phase (R8)."""
+
+    def test_mvp(self):
+        plan = build(make_inventory(), rigor="mvp")
+        self.assertEqual(
+            {e["key"]: e["value"] for e in plan["entries"] if e["key"].startswith("models.")},
+            {"models.research": "haiku", "models.verification": "haiku"},
+        )
+
+    def test_standard_sets_no_models_key(self):
+        plan = build(make_inventory(), rigor="standard")
+        self.assertFalse(any(e["key"].startswith("models.") for e in plan["entries"]))
+
+    def test_rigorous(self):
+        plan = build(make_inventory(), rigor="rigorous")
+        self.assertEqual(
+            {e["key"]: e["value"] for e in plan["entries"] if e["key"].startswith("models.")},
+            {"models.planning": "opus", "models.verification": "sonnet"},
+        )
+
+
+class TestCrossAi(unittest.TestCase):
+    """D-19: booleans mirror the answers; a yes reserves a needs_choice slot."""
+
+    def test_review_yes(self):
+        plan = build(make_inventory(), rigor="standard", cross_ai_review="y")
+        self.assertTrue(entry_map(plan)["workflow.plan_review_convergence"]["value"])
+        reserved = entry_map(plan)["review.default_reviewers"]
+        self.assertEqual(
+            {k: reserved[k] for k in ("op", "value", "status", "candidates", "source")},
+            {"op": "set", "value": None, "status": "needs_choice", "candidates": [],
+             "source": "preset"},
+        )
+        self.assertEqual(reserved["why"], "reserved for Phase 18 cross-AI selection (D-19)")
+
+    def test_review_no(self):
+        plan = build(make_inventory(), rigor="standard", cross_ai_review="n")
+        self.assertFalse(entry_map(plan)["workflow.plan_review_convergence"]["value"])
+        self.assertNotIn("review.default_reviewers", entry_map(plan))
+
+    def test_exec_yes(self):
+        plan = build(make_inventory(), rigor="standard", cross_ai_exec="y")
+        self.assertTrue(entry_map(plan)["workflow.cross_ai_execution"]["value"])
+        reserved = entry_map(plan)["workflow.cross_ai_command"]
+        self.assertEqual(reserved["status"], "needs_choice")
+        self.assertEqual(reserved["value"], None)
+        self.assertEqual(reserved["candidates"], [])
+
+    def test_exec_no(self):
+        plan = build(make_inventory(), rigor="standard", cross_ai_exec="n")
+        self.assertFalse(entry_map(plan)["workflow.cross_ai_execution"]["value"])
+        self.assertNotIn("workflow.cross_ai_command", entry_map(plan))
+
+    def test_defaults(self):
+        other = [cand("some/other-model", runtime="codex", is_host=False)]
+        cases = [
+            # (host, candidates, rigor, review, exec)
+            ("codex", (), "rigorous", "y", "n"),
+            ("codex", other, "standard", "y", "n"),
+            ("opencode", other, "standard", "n", "n"),
+            ("claude", other, "mvp", "n", "y"),
+            ("claude", (), "mvp", "n", "n"),
+        ]
+        for host, candidates, rigor, want_review, want_exec in cases:
+            inv = make_inventory(host=host, candidates=candidates)
+            plan = build(inv, rigor=rigor)
+            self.assertEqual(
+                plan["cross_ai"]["review"], {"answer": want_review, "defaulted": True}, host
+            )
+            self.assertEqual(
+                plan["cross_ai"]["exec"], {"answer": want_exec, "defaulted": True}, host
+            )
+            self.assertEqual(
+                entry_map(plan)["workflow.plan_review_convergence"]["value"],
+                want_review == "y",
+                host,
+            )
+
+    def test_explicit_flag_not_defaulted(self):
+        plan = build(make_inventory(), rigor="mvp", cross_ai_review="y")
+        self.assertEqual(plan["cross_ai"]["review"], {"answer": "y", "defaulted": False})
+
+
+class TestKeyDrop(unittest.TestCase):
+    """REC-06/D-26/R12: unknown keys dropped, one note each, idempotent."""
+
+    REJECTED = (
+        "dynamic_routing.enabled",
+        "dynamic_routing.escalate_on_failure",
+        "dynamic_routing.max_escalations",
+    )
+
+    def _plan(self):
+        return build(make_inventory(host="codex", rejected=self.REJECTED), rigor="rigorous")
+
+    def test_rigorous_drops_dynamic_routing_with_three_notes(self):
+        plan = self._plan()
+        keys = {e["key"] for e in plan["entries"]}
+        for key in self.REJECTED:
+            self.assertNotIn(key, keys)
+        notes = [n for n in plan["notes"] if n["kind"] == "dropped_key"]
+        self.assertEqual(len(notes), 3)
+        self.assertEqual({n["key"] for n in notes}, set(self.REJECTED))
+        for note in notes:
+            self.assertIn(note["key"], note["text"])
+            self.assertIn("1.16.0", note["text"])
+
+    def test_rerun_drops_the_same_keys_with_the_same_notes(self):
+        first, second = self._plan(), self._plan()
+        self.assertEqual(
+            [n for n in first["notes"] if n["kind"] == "dropped_key"],
+            [n for n in second["notes"] if n["kind"] == "dropped_key"],
+        )
+
+
+class TestEffectLabels(unittest.TestCase):
+    """D-22/D-29 effect labels and the live_dom_uat note."""
+
+    def test_dynamic_routing_effect(self):
+        plan = build(make_inventory(host="codex"), rigor="rigorous")
+        for entry in plan["entries"]:
+            if entry["key"].startswith("dynamic_routing."):
+                self.assertEqual(entry["effect"], presets.DYNAMIC_ROUTING_EFFECT)
+
+    def test_pi_effect_on_model_layer(self):
+        inv = make_inventory(host="pi")
+        plan = build(inv, rigor="rigorous")
+        for entry in plan["entries"]:
+            if entry["key"] == "model_profile" or entry["key"].startswith("models."):
+                self.assertEqual(entry["effect"], presets.PI_EFFECT)
+
+    def test_rigorous_frontend_gets_live_dom_uat_note_only(self):
+        inv = make_inventory(host="codex", project={"frontend": True, "intel_index_present": True})
+        plan = build(inv, rigor="rigorous")
+        notes = [n for n in plan["notes"] if n["kind"] == "live_dom_uat"]
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(
+            notes[0]["text"],
+            "enable workflow.live_dom_uat via plan-set if a browser MCP is available",
+        )
+
+    def test_live_dom_uat_never_set_in_any_rigor(self):
+        for rigor in presets.RIGORS:
+            for frontend in (False, True):
+                inv = make_inventory(
+                    host="codex", project={"frontend": frontend, "intel_index_present": True}
+                )
+                plan = build(inv, rigor=rigor)
+                self.assertNotIn("workflow.live_dom_uat", entry_map(plan))
+
+
+FORBIDDEN_IMPORT_ROOTS = frozenset((
+    "subprocess", "socket", "time", "datetime", "os", "urllib", "http", "shutil",
+    "tempfile", "random", "pathlib", "glob", "io", "ai_kit_spec",
+))
+ALLOWED_RELATIVE_IMPORTS = frozenset(("presets", "roles", "plan_io"))
+
+
+def forbidden_imports(source):
+    """AST guard: every import root in `source` that breaks the recommend purity
+    boundary (REC-01). Relative `from . import X` may only name the pure sibling
+    modules."""
+    flagged = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] in FORBIDDEN_IMPORT_ROOTS:
+                    flagged.append(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                names = [alias.name for alias in node.names]
+                if node.module:
+                    names.append(node.module)
+                for name in names:
+                    if name.split(".")[0] not in ALLOWED_RELATIVE_IMPORTS:
+                        flagged.append(f".{name}")
+            elif node.module.split(".")[0] in FORBIDDEN_IMPORT_ROOTS:
+                flagged.append(node.module)
+    return flagged
 
 
 if __name__ == "__main__":
