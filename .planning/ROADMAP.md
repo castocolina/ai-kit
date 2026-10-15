@@ -313,27 +313,70 @@ with the v2 flow living alongside the unchanged v1 CLI.
 **Plans**: 22 plans (strictly serial waves 1-22, cross-AI executed)
 
 Plans:
+**Wave 1**
 - [ ] 18-01-PLAN.md — pi RPC model enumeration + router merge proof, strict config-set encoder, presence-only secret check
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 18-02-PLAN.md — inventory: gsd-core review lanes, skills roots, extra key probes (schema 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 18-03-PLAN.md — skill scan (real paths, root escape, Claude plugins), ponytail visibility, System One backend
+
+**Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 18-04-PLAN.md — cross-AI execution tracer: pi target, script artifact (plan schema 2), purity guard
+
+**Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 18-05-PLAN.md — execution target selection edges and the D-39 default matrix
+
+**Wave 6** *(blocked on Wave 5 completion)*
 - [ ] 18-06-PLAN.md — review lanes from the gsd-core registry (vendor, ranking, claude alias, effort)
+
+**Wave 7** *(blocked on Wave 6 completion)*
 - [ ] 18-07-PLAN.md — skill_affinity.json + skills layer (caps, reference forms, missing-skill rule)
+
+**Wave 8** *(blocked on Wave 7 completion)*
 - [ ] 18-08-PLAN.md — trusted-root choice, capped unknown-skill proposals, jev gate, pi effect
+
+**Wave 9** *(blocked on Wave 8 completion)*
 - [ ] 18-09-PLAN.md — runner template: hermetic black-box self-test, runtime blocks, status line
+
+**Wave 10** *(blocked on Wave 9 completion)*
 - [ ] 18-10-PLAN.md — runner: stderr classification, exit classes, tree id, fallback, group kill
+
+**Wave 11** *(blocked on Wave 10 completion)*
 - [ ] 18-11-PLAN.md — runner: model preflight and transient retries
+
+**Wave 12** *(blocked on Wave 11 completion)*
 - [ ] 18-12-PLAN.md — runner: review contract, claude review block, live deadline, knobs
+
+**Wave 13** *(blocked on Wave 12 completion)*
 - [ ] 18-13-PLAN.md — runner renderer with sha256 header and .new edit protection
+
+**Wave 14** *(blocked on Wave 13 completion)*
 - [ ] 18-14-PLAN.md — plan-set (refusals, force, D-44 guard, trusted-root approval)
+
+**Wave 15** *(blocked on Wave 14 completion)*
 - [ ] 18-15-PLAN.md — script pseudo-keys, plan-unset, execution toggles
+
+**Wave 16** *(blocked on Wave 15 completion)*
 - [ ] 18-16-PLAN.md — config backups, verbatim restore, apply marker
+
+**Wave 17** *(blocked on Wave 16 completion)*
 - [ ] 18-17-PLAN.md — apply --dry-run (diff, refusals, inventory digest)
+
+**Wave 18** *(blocked on Wave 17 completion)*
 - [ ] 18-18-PLAN.md — apply write path through gsd-tools + agent-skills check (real gsd-tools E2E)
+
+**Wave 19** *(blocked on Wave 18 completion)*
 - [ ] 18-19-PLAN.md — apply proofs: Nth-key restore, prune, re-apply per D-20, reconcile, write discipline
+
+**Wave 20** *(blocked on Wave 19 completion)*
 - [ ] 18-20-PLAN.md — follow-ups behind one approval (pinned installer, effort sync, opencode local root)
+
+**Wave 21** *(blocked on Wave 20 completion)*
 - [ ] 18-21-PLAN.md — SKILL.md v2 flow, README row, command drift test, skill-judge self-check
+
+**Wave 22** *(blocked on Wave 21 completion)*
 - [ ] 18-22-PLAN.md — full gate run and source-of-truth amendments
 
 ### Phase 18.1: One runtime model (INSERTED)
