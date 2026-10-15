@@ -139,6 +139,11 @@ alongside the excluded keys, not just the keys** — the merge of `$PRIOR_REASON
 `$WAVE_REASONS_JSON`, never `$WAVE_REASONS_JSON` alone. Full rationale (two distinct bugs this
 prevents) is in `references/state-management.md` — read it if this call's shape is ever in doubt.
 
+If `resolve-injection` stderr prints `ignoring untrusted project-local config`, relay that line to
+the user verbatim, offer `python3 "$TOOLS_PY" trust-local --cwd "$CWD" --show` (the review the
+message names), and run `trust-local` only after an explicit yes — never trust on the user's
+behalf (without trust, the project's local execute ladder is silently absent from this dispatch).
+
 **Record both printed lines, then branch on `$INJECTION_MODE` BEFORE reading any other field —
 CRITICAL finding (recurrence guard): the `quota_exhausted` shape (`mode`, `task_type`, `tried`,
 `reasons`, `all_auth_failures`, `any_quota_recoverable`) carries no `key`/`cli` at all** (Task 3's
