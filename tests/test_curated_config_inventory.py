@@ -1711,6 +1711,36 @@ class TestConflictMatrix(unittest.TestCase):
         self.assertEqual(parsed["existing_config"]["values"], {})
         self.assertTrue(any("unreadable" in w for w in parsed["warnings"]))
 
+    def test_non_utf8_project_config_warning(self):
+        """T-17-25: a Latin-1 config.json is unreadable-and-ignored, never a traceback."""
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        os.makedirs(os.path.join(project, ".planning"), exist_ok=True)
+        with open(os.path.join(project, ".planning", "config.json"), "wb") as handle:
+            handle.write(b'{"model_profile": "caf\xe9"}')
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        code, parsed, _err = run_inventory(
+            project, _inventory_env(home), FakeRun(), "--host", "codex"
+        )
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertEqual(parsed["existing_config"]["values"], {})
+        self.assertTrue(any("unreadable" in w for w in parsed["warnings"]))
+
+    def test_deeply_nested_json_is_unreadable(self):
+        """T-17-25: json's RecursionError on pathological nesting is unreadable too."""
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        path = os.path.join(scratch, "config.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("[" * 200000 + "]" * 200000)
+        data, warn = inventory._read_json_object(path)
+        self.assertIsNone(data)
+        assert warn is not None
+        self.assertIn("unreadable", warn)
+
 
 class TestProjectFacts(unittest.TestCase):
     def _facts(self, project):

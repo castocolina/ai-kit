@@ -71,7 +71,7 @@ def _read_json_object(path: str) -> tuple[dict | None, str | None]:
     try:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, RecursionError):  # ValueError covers JSON + UTF-8 decode
         return None, f"{path} unreadable; ignored"
     if not isinstance(data, dict):
         return None, f"{path} unreadable; ignored"

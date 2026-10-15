@@ -158,6 +158,17 @@ class TestLocalFirst(unittest.TestCase):
         self.assertIsNone(gsd_tools.resolve_gsd_tools({"HOME": home}, start=start))
 
 
+class TestCoreVersion(unittest.TestCase):
+    def test_non_utf8_version_file_is_none(self):
+        """T-17-25: a non-UTF-8 VERSION file reads as unknown, never a traceback."""
+        root = _mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        os.makedirs(os.path.join(root, "bin"))
+        with open(os.path.join(root, "VERSION"), "wb") as f:
+            f.write(b"1.16\xff\n")
+        self.assertIsNone(gsd_tools.gsd_core_version(os.path.join(root, "bin", "gsd-tools.cjs")))
+
+
 class TestWrappers(unittest.TestCase):
     """The config-* wrapper argv shapes and the `previousValue` contract (D-17/RUN-11)."""
 
