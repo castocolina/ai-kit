@@ -166,7 +166,7 @@ can be verified and closed on trustworthy evidence. Source:
      Artificial Analysis key, so the ranking is scored).
   7. The phase is executed through `.planning/scripts/cross-ai.mjs` (pi first), as the dogfood run
      for Phase 18's runner. The usage-metrics store compaction (audit A10) stays out of scope.
-**Plans**: 21/31 plans executed
+**Plans**: 22/31 plans executed
 
 Plans:
 - Wave 1
@@ -198,7 +198,7 @@ Plans:
   - [x] 16.1-26-PLAN.md — lint sweep: makefile and precommit project-rules skills, shared library
   - [x] 16.1-31-PLAN.md — execute-gsd SKILL.md: config-set subcommands, project-local GSD, report-only probe; skill-judge
 - Wave 8
-  - [ ] 16.1-17-PLAN.md — lint sweep: usage-metrics
+  - [x] 16.1-17-PLAN.md — lint sweep: usage-metrics
   - [ ] 16.1-25-PLAN.md — lint sweep: tools/ wizard; tools-wide zero findings
   - [ ] 16.1-27-PLAN.md — lint sweep: remaining ai-kit-spec-review modules
 - Wave 9
