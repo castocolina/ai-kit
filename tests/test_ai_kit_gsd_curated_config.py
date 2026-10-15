@@ -230,7 +230,10 @@ class TestRealIntegration(unittest.TestCase):
 
     _REAL_GSD_TOOLS = gsd_catalog.resolve_gsd_tools_path(dict(os.environ))
 
-    @unittest.skipUnless(_REAL_GSD_TOOLS is not None, "no installed gsd-core found on this machine")
+    @unittest.skipUnless(
+        _REAL_GSD_TOOLS is not None and shutil.which("node"),
+        "no installed gsd-core, or no node to run it, on this machine",
+    )
     def test_tracer_against_real_installed_gsd_tools(self):
         scratch = tempfile.mkdtemp()
         try:
@@ -244,7 +247,10 @@ class TestRealIntegration(unittest.TestCase):
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
 
-    @unittest.skipUnless(_REAL_GSD_TOOLS is not None, "no installed gsd-core found on this machine")
+    @unittest.skipUnless(
+        _REAL_GSD_TOOLS is not None and shutil.which("node"),
+        "no installed gsd-core, or no node to run it, on this machine",
+    )
     def test_this_repos_own_config_is_never_touched(self):
         repo_config_path = os.path.join(
             os.path.dirname(__file__), "..", ".planning", "config.json"
@@ -1246,7 +1252,8 @@ class TestMergeModeEndToEnd(unittest.TestCase):
         return d
 
     @unittest.skipUnless(
-        _REAL_GSD_TOOLS is not None, "no installed gsd-core found on this machine"
+        _REAL_GSD_TOOLS is not None and shutil.which("node"),
+        "no installed gsd-core, or no node to run it, on this machine",
     )
     def test_merge_mode_end_to_end(self):
         # (1) Fresh project, no .planning/ at all -- must fall through ensure-project first.
