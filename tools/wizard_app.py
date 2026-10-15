@@ -168,7 +168,6 @@ class FlowState:
     help_open: bool = False
     gate_done: bool = False
     result: WizardResult | None = None
-    exception: BaseException | None = None
 
 
 @dataclass
@@ -290,48 +289,6 @@ class WizardApp(App):
         self._build_lists_from_state()
         self.board.initial_lines = [list(x) for x in self.board.lines]
         self.board.initial_tray = list(self.board.tray)
-
-    def __getattr__(self, name: str) -> object:
-        """Legacy flat attribute paths used by tests and key handlers."""
-        try:
-            model = object.__getattribute__(self, "model")
-            board = object.__getattribute__(self, "board")
-            flow = object.__getattribute__(self, "flow")
-            commit = object.__getattribute__(self, "commit")
-            hk = object.__getattribute__(self, "hk")
-        except AttributeError:
-            raise AttributeError(name) from None
-        table: dict[str, object] = {
-            "sel": model.sel,
-            "state": model.state,
-            "meta": model.meta,
-            "ext_by_id": model.ext_by_id,
-            "home_line": model.home_line,
-            "lines": board.lines,
-            "tray": board.tray,
-            "focus_zp": board.focus_zp,
-            "step": flow.step,
-            "help_open": flow.help_open,
-            "gate_done": flow.gate_done,
-            "result": flow.result,
-            "_exception": flow.exception,
-            "_committing": commit.committing,
-            "_commit_outcome": commit.outcome,
-            "_commit_state": commit.commit_state,
-            "housekeeping": hk.data,
-            "housekeeping_done": hk.done,
-            "_hk_pending": hk.pending,
-            "_hk_stage": hk.stage,
-            "_hk_answers": hk.answers,
-            "_hk_applying": hk.applying,
-            "_hk_error": hk.error,
-            "_min_rows": board.min_rows,
-            "_initial_lines": board.initial_lines,
-            "_initial_tray": board.initial_tray,
-        }
-        if name in table:
-            return table[name]
-        raise AttributeError(name)
 
     # ---- model -----------------------------------------------------------
     def _build_lists_from_state(self) -> None:
@@ -475,12 +432,6 @@ class WizardApp(App):
 
     def on_mount(self) -> None:
         self._render()
-
-    def on_exception(self, exception: BaseException) -> None:
-        """Textual lifecycle hook — capture the unhandled exception so that
-        run_wizard can re-raise it as WizardCrash after app.run() returns."""
-        self.flow.exception = exception
-        self.exit()
 
     # ---- render ----------------------------------------------------------
     _STEP_PANEL = ("step-choose", "step-arrange", "step-review", "step-done")
@@ -1119,4 +1070,4 @@ def run_wizard(ctx: WizardContext) -> WizardResult | None:
     exc = getattr(app, "_exception", None)  # private Textual 8.x attr; getattr degrades safely
     if exc is not None:                     # Textual swallows; re-signal as crash
         raise WizardCrash(exc) from exc
-    return object.__getattribute__(app, "flow").result
+    return app.flow.result

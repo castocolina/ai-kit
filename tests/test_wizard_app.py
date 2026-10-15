@@ -626,9 +626,9 @@ class TestHousekeepingGate(unittest.IsolatedAsyncioTestCase):
 
     async def test_second_keypress_during_apply_is_noop(self):
         # A keypress that arrives while the apply worker is still in flight
-        # (_hk_applying=True) must not re-enter _key_housekeeping's
-        # self._hk_pending[self._hk_stage] indexing — by the time the last
-        # pending answer is recorded, self._hk_stage == len(self._hk_pending),
+        # (hk.applying=True) must not re-enter _key_housekeeping's
+        # self.hk.pending[self.hk.stage] indexing — by the time the last
+        # pending answer is recorded, self.hk.stage == len(self.hk.pending),
         # so an unguarded second read raises IndexError.
         release = threading.Event()
         seen = {"calls": 0}
