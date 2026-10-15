@@ -20,6 +20,7 @@ from ai_kit_spec.execute_selection import (
     ExecuteResolveOptions,
     candidates_to_ladder,
     resolve_execute_candidates,
+    screen_execute_clis,
 )
 from ai_kit_spec.quota import entry_reason, resolve_ladder_pick
 
@@ -273,7 +274,10 @@ def compute_ladder_keys(task_markdown: str, candidates: list, files_touched_size
     still gets a real, ordered (last-ranked) position, so a caller computing "every candidate
     ranked strictly above the stuck one" (Task 4's SKILL.md escalation rule) never silently misses
     an out-of-ladder candidate the live walk could actually have picked."""
-    _, _, ranked = _narrow_and_rank(task_markdown, candidates, files_touched_sizes,
+    # Pre-screen silently: resolve-injection runs build_dispatch_injection right after, which
+    # emits the same D-15 skip warnings once (A-IN-06). A purpose="execute" error still raises.
+    screened = screen_execute_clis(candidates, lambda _msg: None)
+    _, _, ranked = _narrow_and_rank(task_markdown, screened, files_touched_sizes,
                                      affinity_table, top_n_keys)
     return candidates_to_ladder(ranked)
 

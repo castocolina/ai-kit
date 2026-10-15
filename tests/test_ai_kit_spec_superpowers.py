@@ -460,6 +460,32 @@ class TestBuildDispatchInjection(unittest.TestCase):
         self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
         self.assertIn("ai-kit-spec-execute-superpowers:", stderr.getvalue())
 
+    def test_resolve_injection_prints_the_d15_skip_warning_once(self):
+        # A-IN-06: the ladder pass and the build pass both screen; warn only once.
+        candidates = [
+            {"key": "g", "cli": "grok", "model": "m", "vendor": "x", "purpose": None,
+             "task_affinity": None, "context_limit": None},
+            {"key": "c", "cli": "codex", "model": "m", "vendor": "o", "purpose": None,
+             "task_affinity": None, "context_limit": None},
+        ]
+        out, stderr = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w") as f:
+                f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
+            with contextlib.redirect_stderr(stderr):
+                rc = superpowers_cli.main(
+                    ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                     "--quota-path", os.path.join(tmp, "quota.json")],
+                    assemble_candidates_fn=lambda cwd, env: (candidates, ["g", "c"]),
+                    cache_read_json_fn=lambda path: {},
+                    cache_write_json_fn=lambda path, data: None,
+                    refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
+                    stdout=out,
+                )
+        self.assertEqual(rc, 0)
+        self.assertEqual(stderr.getvalue().count("skipping 'g'"), 1)
+
     def test_no_surviving_candidates_raises_value_error(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         with self.assertRaises(ValueError):
