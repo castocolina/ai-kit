@@ -133,6 +133,17 @@ class TestConfigPaths(unittest.TestCase):
         env = {"HOME": "/home/u"}
         self.assertEqual(cfg_global_path(env), "/home/u/.config/ai-kit/review-spec.toml")
 
+    def test_base_is_never_relative_to_the_cwd(self):
+        # A-WR-01: an unset/relative HOME or XDG_CONFIG_HOME must not resolve under the
+        # project (a repo could then ship its own "global" config and trust store).
+        with unittest.mock.patch.object(config_io.os.path, "expanduser", lambda p: "/pw/home"):
+            self.assertEqual(config_io.cfg_config_base({}), "/pw/home/.config/ai-kit")
+            self.assertEqual(config_io.cfg_config_base({"XDG_CONFIG_HOME": "rel", "HOME": "/h"}),
+                             "/h/.config/ai-kit")
+        with unittest.mock.patch.object(config_io.os.path, "expanduser", lambda p: "~"), \
+                self.assertRaises(config_io.ConfigError):
+            config_io.cfg_trust_store_dir({})
+
 
 class TestLoadToml(unittest.TestCase):
     def test_missing_file_returns_empty_dict(self):
