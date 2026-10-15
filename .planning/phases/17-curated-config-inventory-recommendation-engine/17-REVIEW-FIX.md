@@ -151,3 +151,22 @@ All 30 in-scope ids (including the duplicates listed above) are fixed. None were
 - `make validate`: exit 0 (ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest core and wizard).
 - `make e2e-test`: exit 0. 17 tests in 5/5 modules, none skipped on this machine, plus 45/45 install.sh checks.
 - No live CLI probes and no network calls were made.
+
+## Pass 4 (security)
+
+**Scope:** the phase 17 security-audit findings. Commits 79d1aea..08a235a. Each fix was written test-first.
+
+- T-17-25: 79d1aea. `inventory._read_json_object` now catches `ValueError` (JSON and UTF-8 decode errors) and `RecursionError`. `gsd_tools.gsd_core_version` now catches `ValueError`; it never parses JSON, so it cannot raise `RecursionError`. Both report the file as unreadable, the same way an OSError is handled. 3 tests: a Latin-1 `config.json`, deeply nested JSON, and a non-UTF-8 `VERSION`.
+- NF-1/NF-2/NF-3: fd69fc1. `opencode models`, `--version` and the 1.x `models --verbose` now run through one shared helper, `_run_opencode`, which uses the same `_opencode_private_dir()` + `_probe_env()` as the `serve` probe. Only their cwd and env changed. Global opencode config still loads, so providers scoped to the caller's project no longer leak into the global runtimes cache. `_probe_env` sets both `OPENCODE_DISABLE_PROJECT_CONFIG` and `OPENCODE_CONFIG_PROJECT_DISABLE` to `1`, overriding inherited values, and drops `OPENCODE_PASSWORD` as well as `OPENCODE_SERVER_PASSWORD`. The private dir is a 0700 `mkdtemp` under `cache_base()` (ai-kit's user cache). It falls back to `tempfile` only when that fails or when the base is relative (no HOME). 3 new tests and 1 widened test.
+- Info, redirected auth: 44d2ee6. The loopback request adds `Authorization` with `add_unredirected_header`, so a redirect never carries the password.
+- Info, orphan race: 1b19826. `_stop_server` waits 5 s after SIGTERM and now 2 s after SIGKILL (it was 5 s). `_TERM_GRACE_S` goes from 10 to 15, so the outer SIGKILL no longer lands while cleanup is still running. A test pins grace >= worst case + 5 s.
+- Info, `--out` help: 08a235a. I widened the guard rather than rewording the help, because 17-SPEC says "never write to ... its `.planning/`". The guard now protects the nearest `.planning` ancestor of the resolved config, which covers workstream configs. When the config has no `.planning` ancestor, it protects the config's own dir. The help text says exactly this. 1 test.
+- Not changed: `probe_codegraph`'s `opencode mcp list` still runs in the caller's cwd. That is deliberate: it checks a project-level MCP registration, and NF-1 did not list it.
+
+### Verification (pass 4)
+
+- Ran in the checkout `.claude/worktrees/v13-curated-config-v2` (no extra worktree) with `PATH="$HOME/.local/bin:$PATH" UV_NO_SYNC=1 UV_OFFLINE=1`.
+- `make test`: exit 0. 3396 Python tests passed: unit 3208 (31/31 modules), unit-uv 6, integration 139, e2e 17 (5/5 modules) and arch 26. The 45/45 install.sh checks also passed.
+- `make validate`: exit 0 (ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest core and wizard).
+- `make e2e-test`: exit 0. 17 tests in 5/5 modules, plus 45/45 install.sh checks.
+- No live CLI probes and no network calls were made. No `ai-kit-opencode-probe-*` dirs were left in the cache or in the temp dir.
