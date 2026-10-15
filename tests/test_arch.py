@@ -24,9 +24,11 @@ Conventions parsed from the source:
 """
 import ast
 import importlib.util
+import io
 import os
 import re
 import sys
+import tokenize
 import unittest
 
 _TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
@@ -377,6 +379,43 @@ def check_no_shell_true(tree):
     return violations
 
 
+# Rule 9: the only places allowed to swallow every exception. Each is a documented
+# backstop that keeps one failure from blanking the status line or killing a TUI.
+_BROAD_EXCEPT_BACKSTOPS = frozenset({
+    ("tools/wizard_app.py", "_apply_housekeeping"),
+    ("tools/wizard_app.py", "_run_commit"),
+    ("tools/status-line.py", "core_safe_build"),
+    ("tools/status-line.py", "safe_render"),
+    ("tools/statusline-doctor.py", "cmd_doctor"),
+    ("tools/config_doctor_checks.py", "apply_row"),
+})
+
+
+def broad_except_sites(src):
+    """Rule 9 helper: (line, enclosing function or None) for every comment that
+    disables pylint's broad-exception-caught."""
+    tree = ast.parse(src)
+    funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    sites = []
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        if tok.type != tokenize.COMMENT or "broad-exception-caught" not in tok.string:
+            continue
+        line = tok.start[0]
+        enclosing = [f for f in funcs if f.lineno <= line <= (f.end_lineno or f.lineno)]
+        inner = max(enclosing, key=lambda f: f.lineno, default=None)
+        sites.append((line, inner.name if inner else None))
+    return sites
+
+
+def check_broad_except_allowlist(relpath, src):
+    """Rule 9: a broad-exception-caught suppression only inside an allowlisted backstop."""
+    return [
+        f"{relpath}:{line}: broad-exception-caught suppressed outside a listed backstop"
+        for line, func in broad_except_sites(src)
+        if (relpath, func) not in _BROAD_EXCEPT_BACKSTOPS
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Live-tree tests — every rule must pass against the real render module.
 # --------------------------------------------------------------------------- #
@@ -433,6 +472,24 @@ class TestArchitecture(unittest.TestCase):
                     for msg in check_no_shell_true(tree):
                         violations.append(f"{os.path.relpath(path, repo_root)}: {msg}")
         self.assertEqual([], violations)
+
+    def test_rule9_broad_except_only_in_listed_backstops(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        violations, seen = [], set()
+        for top in ("tools", "skills"):
+            for dirpath, _dirnames, filenames in os.walk(os.path.join(repo_root, top)):
+                for filename in filenames:
+                    if not filename.endswith(".py"):
+                        continue
+                    path = os.path.join(dirpath, filename)
+                    relpath = os.path.relpath(path, repo_root).replace(os.sep, "/")
+                    with open(path, encoding="utf-8") as handle:
+                        src = handle.read()
+                    violations += check_broad_except_allowlist(relpath, src)
+                    seen.update((relpath, func) for _, func in broad_except_sites(src))
+        self.assertEqual([], violations)
+        # A listed backstop that no longer suppresses anything is a stale entry.
+        self.assertEqual(set(), _BROAD_EXCEPT_BACKSTOPS - seen)
 
     def test_rule7b_doctor_symbols_present_in_doctor(self):
         """Companion to rule 7: the doctor symbols were EXTRACTED, not deleted.
@@ -627,6 +684,21 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertEqual(1, len(check_no_shell_true(bad_true)))
         self.assertEqual(1, len(check_no_shell_true(bad_var)))
         self.assertEqual([], check_no_shell_true(good))
+
+
+    def test_rule9_flags_unlisted_broad_except(self):
+        src = (
+            "def apply_row():\n"
+            "    try:\n"
+            "        pass\n"
+            "    except Exception:  # pylint: disable=broad-exception-caught\n"
+            "        pass\n"
+        )
+        self.assertEqual([], check_broad_except_allowlist("tools/config_doctor_checks.py", src))
+        self.assertEqual(1, len(check_broad_except_allowlist("tools/other.py", src)))
+        renamed = src.replace("apply_row", "helper")
+        flagged = check_broad_except_allowlist("tools/config_doctor_checks.py", renamed)
+        self.assertEqual(1, len(flagged))
 
 
 class TestSegmentInventory(unittest.TestCase):
