@@ -110,8 +110,8 @@ def _fallback_notice(top_choice_key, reason_code: str, reason_prose: str) -> dic
 def _write_failed(apply_result: ApplyResult, runtime, tier, cli, key) -> dict:
     return {"mode": "write_failed", "applied": apply_result.applied,
             "failed": apply_result.failed, "reverted": apply_result.reverted,
-            "error": apply_result.error, "runtime": runtime, "tier": tier, "cli": cli,
-            "key": key}
+            "revert_failed": apply_result.revert_failed, "error": apply_result.error,
+            "runtime": runtime, "tier": tier, "cli": cli, "key": key}
 
 
 def _native_tier_result(outcome: NativeTierOutcome) -> dict:

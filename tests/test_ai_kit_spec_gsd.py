@@ -97,7 +97,7 @@ def _ctx(config_path="/repo/.planning/config.json", run_fn=None, project_dir="/r
 
 
 def _ok_apply(ctx, changes):
-    return gsd_config.ApplyResult([key for key, _ in changes], None, None, [])
+    return gsd_config.ApplyResult([key for key, _ in changes], None, None, [], [])
 
 
 class TestIsAdapterOwned(unittest.TestCase):
@@ -185,6 +185,32 @@ class TestUndoLog(unittest.TestCase):
             self.assertEqual(keys_and_values,
                              [("a", "1"), ("b", "2"), ("c", "3"),
                               ("b", "null"), ("a", "1")])  # reverse order; b was absent
+
+    def test_a_failed_revert_is_reported_as_revert_failed_not_reverted(self):
+        # A-WR-03/M2: a revert that itself fails (or cannot spawn node) must never be
+        # reported as reverted -- that key still holds the new value.
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t, fail_keys={"c"})
+            seen = []
+
+            def run(argv, **kwargs):
+                key = argv[3] if len(argv) > 3 and argv[2] == "config-set" else None
+                seen.append(key)
+                if key == "a" and seen.count("a") == 2:
+                    return subprocess.CompletedProcess(argv, 1, "", "lock busy")
+                if key == "b" and seen.count("b") == 2:
+                    raise FileNotFoundError("node")
+                return fake.run_fn(argv, **kwargs)
+
+            ctx = _ctx(config_path=os.path.join(t, ".planning", "config.json"), run_fn=run,
+                       project_dir=t, tools=gsd_tools.GsdTools("node", fake.gsd_tools_path))
+            result = gsd_config.apply_changes(ctx, [("a", 1), ("b", 2), ("c", 3)])
+            self.assertEqual(result.failed, "c")
+            self.assertEqual(result.reverted, [])
+            self.assertEqual(result.revert_failed, ["b", "a"])
+            assert result.error is not None
+            self.assertIn("revert also failed for b, a", result.error)
 
     def test_failure_on_the_first_key_makes_no_revert_call(self):
         import tempfile
@@ -380,7 +406,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         seen = []
         def fake_apply(ctx, changes):
             seen.append((ctx, changes))
-            return gsd_config.ApplyResult([key for key, _ in changes], None, None, [])
+            return gsd_config.ApplyResult([key for key, _ in changes], None, None, [], [])
         result = _resolve_gsd_dispatch(
             candidates, ["codex/gpt-5.6-sol"], {}, _ctx(), "/repo", apply_changes_fn=fake_apply)
         self.assertEqual(result, {"mode": "native_tier", "runtime": "codex", "tier": "sonnet",
@@ -401,7 +427,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         _resolve_gsd_dispatch(
             candidates, ["codex/gpt-5.6-sol"], {}, _ctx(), "/repo", current_runtime="codex",
             apply_changes_fn=lambda ctx, changes: seen.append(changes)
-            or gsd_config.ApplyResult([key for key, _ in changes], None, None, []))
+            or gsd_config.ApplyResult([key for key, _ in changes], None, None, [], []))
         # Only the tier override is written -- runtime already matches.
         self.assertEqual(seen, [[("model_profile_overrides.codex.sonnet", "gpt-5.6-sol")]])
 
@@ -415,7 +441,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         result = _resolve_gsd_dispatch(
             candidates, ["opus-native"], {}, _ctx(), "/repo",
             apply_changes_fn=lambda ctx, changes: seen.append(changes)
-            or gsd_config.ApplyResult([key for key, _ in changes], None, None, []))
+            or gsd_config.ApplyResult([key for key, _ in changes], None, None, [], []))
         self.assertEqual(result["runtime"], "claude")
         self.assertEqual(result["tier"], "opus")
         self.assertIsNone(result["cli"])
@@ -431,7 +457,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         result = _resolve_gsd_dispatch(
             candidates, ["opus-native"], cfg, _ctx(), "/repo",
             apply_changes_fn=lambda ctx, changes: seen.append(changes)
-            or gsd_config.ApplyResult([], None, None, []))
+            or gsd_config.ApplyResult([], None, None, [], []))
         self.assertEqual(result["model"], "budget")
         self.assertFalse(result["written"])
         self.assertEqual(result["provenance"], "existing_gsd_config")
@@ -446,7 +472,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         result = _resolve_gsd_dispatch(
             candidates, ["codex/gpt-5.6-sol"], cfg, _ctx(), "/repo", current_runtime="codex",
             apply_changes_fn=lambda ctx, changes: seen.append(changes)
-            or gsd_config.ApplyResult([], None, None, []))
+            or gsd_config.ApplyResult([], None, None, [], []))
         self.assertEqual(result["model"], "hand-picked-model")
         self.assertFalse(result["written"])
         self.assertEqual(result["provenance"], "existing_gsd_config")
@@ -469,7 +495,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
         failing = gsd_config.ApplyResult(["runtime"], "model_profile_overrides.codex.sonnet",
-                                          "config-set failed", ["runtime"])
+                                          "config-set failed", ["runtime"], [])
         result = _resolve_gsd_dispatch(
             candidates, ["codex/gpt-5.6-sol"], {}, _ctx(), "/repo", current_runtime="claude",
             apply_changes_fn=lambda ctx, changes: failing)
@@ -1026,7 +1052,7 @@ class TestWorkflowKeysViaConfigSet(unittest.TestCase):
                 config_path=os.path.join(t, ".planning", "config.json"),
                 run_id="r1", run_fn=fake.run_fn)
             result = gsd_config.apply_changes(ctx, [])
-            self.assertEqual(result, gsd_config.ApplyResult([], None, None, []))
+            self.assertEqual(result, gsd_config.ApplyResult([], None, None, [], []))
             self.assertEqual(fake.calls, [])
 
     def test_gsd_core_version_banner_printed_once_with_version_file(self):

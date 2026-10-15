@@ -160,14 +160,18 @@ def config_set(
     """Runs `config-set <key> <value> --project-dir <dir>` WITHOUT `--raw` (per RUN-11 the
     undo log reads the prior value from the JSON result's `previousValue`, which `--raw`
     would reduce to `key=value`). Returns `(True, stdout)` on exit 0, `(False, stderr)`
-    otherwise -- never raises on a subprocess failure."""
-    result = run_fn(
-        [tools.node_bin, tools.gsd_tools_path, "config-set", key, _coerce_value(value),
-         "--project-dir", project_dir],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    otherwise -- never raises on a subprocess failure, including a spawn `OSError` (a
+    missing `node`), which reads as `(False, str(exc))`."""
+    try:
+        result = run_fn(
+            [tools.node_bin, tools.gsd_tools_path, "config-set", key, _coerce_value(value),
+             "--project-dir", project_dir],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return False, str(exc)
     if result.returncode == 0:
         return True, result.stdout.strip()
     return False, result.stderr.strip()

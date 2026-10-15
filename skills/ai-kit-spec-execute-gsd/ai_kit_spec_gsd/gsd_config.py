@@ -63,13 +63,14 @@ class GsdWriteContext(NamedTuple):
 
 class ApplyResult(NamedTuple):
     """Outcome of one `apply_changes` run: the keys whose `config-set` succeeded, the one key
-    that failed (None on full success), its error text, and the earlier keys reverted in
-    reverse order."""
+    that failed (None on full success), its error text, the earlier keys reverted in reverse
+    order, and the earlier keys whose revert itself failed (they still hold the new value)."""
 
     applied: list
     failed: str | None
     error: str | None
     reverted: list
+    revert_failed: list
 
 
 OWNERSHIP_SIDECAR = "ai-kit-gsd-owned.json"
@@ -112,9 +113,9 @@ def apply_changes(ctx: GsdWriteContext, changes: list) -> ApplyResult:
     in reverse order and the failed key keeps its new value. gsd-tools owns locking and
     validation; this module never writes config.json itself."""
     if not changes:
-        return ApplyResult([], None, None, [])
+        return ApplyResult([], None, None, [], [])
     _backup_once(ctx.config_path, shutil.copy2, os.path.isfile, ctx.run_id)
-    applied, reverts, reverted = [], [], []
+    applied, reverts, reverted, revert_failed = [], [], [], []
     failed, error = None, None
     for key, value in changes:
         ok, output = gsd_tools.config_set(ctx.tools, ctx.project_dir, key, value,
@@ -132,8 +133,11 @@ def apply_changes(ctx: GsdWriteContext, changes: list) -> ApplyResult:
         applied.append(key)
     if failed is not None:
         for key, prior in reversed(reverts):
-            gsd_tools.config_set(ctx.tools, ctx.project_dir, key, prior, run_fn=ctx.run_fn)
-            reverted.append(key)
+            ok, _ = gsd_tools.config_set(ctx.tools, ctx.project_dir, key, prior,
+                                         run_fn=ctx.run_fn)
+            (reverted if ok else revert_failed).append(key)
+        if revert_failed:
+            error = f"{error}; revert also failed for {', '.join(revert_failed)} (new value kept)"
     else:
         owned = read_ownership(ctx.config_path)
         for key, value in changes:
@@ -142,7 +146,7 @@ def apply_changes(ctx: GsdWriteContext, changes: list) -> ApplyResult:
             else:
                 owned[key] = value
         write_ownership(ctx.config_path, owned)
-    return ApplyResult(applied, failed, error, reverted)
+    return ApplyResult(applied, failed, error, reverted, revert_failed)
 
 
 def read_gsd_config(path: str, read_fn=open, warn_fn=print) -> tuple:
