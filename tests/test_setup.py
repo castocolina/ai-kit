@@ -15,6 +15,7 @@ def load_module():
     here = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(here, "..", "tools", "setup.py")
     spec = importlib.util.spec_from_file_location("setup", path)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -108,6 +109,7 @@ class TestTomlRead(unittest.TestCase):
         sl_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                                "tools", "status-line.py")
         spec = importlib.util.spec_from_file_location("status_line_drift", sl_path)
+        assert spec is not None and spec.loader is not None
         sl = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = sl       # register so @dataclass can resolve cls.__module__
         spec.loader.exec_module(sl)
@@ -383,6 +385,7 @@ class TestGoldenPreservation(unittest.TestCase):
         diffs = _diff_lines(before, after)
         self.assertEqual(len(diffs), 1, diffs)               # exactly one line changed
         _, old, new = diffs[0]
+        assert isinstance(old, str) and isinstance(new, str)
         self.assertIn("cost = false", old)
         self.assertIn("cost = true", new)
         # palette / ramp / external / version / comment all intact
@@ -466,6 +469,7 @@ class TestDiscoverExampleSegments(unittest.TestCase):
         sl_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                                "tools", "status-line.py")
         spec = importlib.util.spec_from_file_location("status_line_hdr_drift", sl_path)
+        assert spec is not None and spec.loader is not None
         sl = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = sl       # register so @dataclass can resolve cls.__module__
         spec.loader.exec_module(sl)
@@ -548,6 +552,7 @@ class TestDiscoverExampleSegments(unittest.TestCase):
             os.path.join(repo, "examples", "segments"))
         sm = next((e for e in found if e["id"] == "system_memory"), None)
         self.assertIsNotNone(sm, "system_memory not found in examples/segments/")
+        assert sm is not None
         self.assertEqual(sm["name"], "System memory")
         self.assertEqual(sm["description"], "System available RAM")
         self.assertEqual(sm["sample"], "12.0 GiB free")
@@ -1876,6 +1881,7 @@ class TestCmdInstall(unittest.TestCase):
         # Textual TUI. After Task 10 the statusLine wiring + recipe copy are gated
         # on the wizard's adopt decision via persist_statusline — not pre-wizard.
         def _apply_defaults(paths, entries, installed, tty, dry, counts, examples_flag=None):
+            del examples_flag
             default = setup._default_selection(entries, installed)
             setup.apply_selection(default, entries, paths.claude_dir, dry, counts)
             state = {"segments": dict(setup.SEGMENT_DEFAULTS),
@@ -1895,6 +1901,7 @@ class TestCmdInstall(unittest.TestCase):
         # must write no statusline.toml and never touch settings.json statusLine —
         # because cmd_install no longer wires the status line pre-wizard.
         def _components_only(paths, entries, installed, tty, dry, counts, examples_flag=None):
+            del examples_flag
             default = setup._default_selection(entries, installed)
             setup.apply_selection(default, entries, paths.claude_dir, dry, counts)
             # no persist_statusline call — adopt is implicitly False

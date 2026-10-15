@@ -18,6 +18,7 @@ _MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
 
 def load_module():
     spec = importlib.util.spec_from_file_location("status_line", _MODULE_PATH)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod          # register so @dataclass can resolve cls.__module__
     spec.loader.exec_module(mod)
@@ -863,7 +864,7 @@ class TestMetaPositionIndependent(unittest.TestCase):
         time.sleep(0.005)
         return "SLOW"
 
-    def _make_cfg_with_slowest_on_line(self, line_idx: int) -> "sl.Config":
+    def _make_cfg_with_slowest_on_line(self, line_idx: int):
         """A two-line config: `slow_seg` always lives on line 1 (so it is the
         global slowest), while the `slowest` readout is placed on `line_idx`."""
         cfg = sl.cfg_default_config()
@@ -921,18 +922,23 @@ class TestSlowestTiming(unittest.TestCase):
         with mock.patch.object(sl, "probe_git_snapshot", side_effect=slow_git):
             _pack(["git_branch"], ctx, 200, cfg=cfg)
         # The probe must have run during the measure phase (proves laziness via probe_cache):
-        self.assertIsNotNone(ctx.probe_cache.get("git"))
+        cache = ctx.probe_cache
+        self.assertIsNotNone(cache)
+        assert cache is not None
+        self.assertIsNotNone(cache.get("git"))
         name, ns = ctx.slowest
         self.assertEqual(name, "git_branch")
         self.assertGreaterEqual(ns, 4_000_000)   # >= ~4ms: probe cost is inside the build
 
     @staticmethod
     def _slow(data, avail, theme):
+        del avail
         time.sleep(0.005)
         return "SLOW"
 
     @staticmethod
     def _fast(data, avail, theme):
+        del avail
         return "FAST"
 
     def test_pack_line_records_slowest_builder(self):
@@ -963,6 +969,7 @@ class TestSlowestTiming(unittest.TestCase):
         # A segment that crashes never rendered, so its time must not crown it the
         # slowest culprit (else seg_slowest would name a broken segment).
         def boom(data, avail, theme):
+            del avail
             raise RuntimeError("nope")
         builders = {"boom": boom, "fast_seg": self._fast}
         cfg = sl.cfg_default_config()
@@ -975,6 +982,7 @@ class TestSlowestTiming(unittest.TestCase):
         # A segment that renders nothing (e.g. a failing external provider that is
         # gracefully omitted) is not a visible culprit, so it isn't crowned slowest.
         def empty(data, avail, theme):
+            del avail
             return None
         builders = {"empty_seg": empty, "fast_seg": self._fast}
         cfg = sl.cfg_default_config()
@@ -1007,6 +1015,7 @@ class TestSlowestTiming(unittest.TestCase):
     def test_render_time_not_crowned_slowest(self):
         # M1: render_time is a meta-segment (reports the whole render); never a culprit.
         def slow_rt(data, avail, theme):
+            del avail
             time.sleep(0.005)
             return "RT"
         builders = {"render_time": slow_rt, "fast_seg": self._fast}
@@ -1020,6 +1029,7 @@ class TestSlowestTiming(unittest.TestCase):
         # L1: a slow segment whose output is too wide to fit is dropped — it never
         # rendered, so it must not be crowned slowest.
         def slow_wide(data, avail, theme):
+            del avail
             time.sleep(0.005)
             return "X" * 100
         builders = {"wide_seg": slow_wide, "fast_seg": self._fast}
@@ -1136,6 +1146,7 @@ class TestProcAndGit(unittest.TestCase):
         # probe_git_snapshot parses branch + dirty from the porcelain --branch output;
         # mock subprocess so the test is independent of the live working tree.
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 returncode = 0
                 stdout = ("## main...origin/main [ahead 1]\n M tools/x.py\n?? new.py\n"
@@ -1156,6 +1167,7 @@ class TestProcAndGit(unittest.TestCase):
         cfg = sl.cfg_default_config()._replace(cache_base=sl.cfg_cache_base(env))
         seen = []
         def fake_run(cmd, *, _seen=seen, **kw):
+            del kw
             _seen.append(cmd)
             class R:
                 returncode = 0
@@ -1173,6 +1185,7 @@ class TestProcAndGit(unittest.TestCase):
         cfg = sl.cfg_default_config()._replace(cache_base=sl.cfg_cache_base(env))
         seen = []
         def fake_run(cmd, *, _seen=seen, **kw):
+            del kw
             _seen.append(cmd)
             class R:
                 returncode = 0
@@ -1184,6 +1197,7 @@ class TestProcAndGit(unittest.TestCase):
 
     def test_git_snapshot_clean_and_worktree_name(self):
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 returncode = 0
                 stdout = ("## main\n" if "status" in cmd
@@ -1202,6 +1216,7 @@ class TestProcAndGit(unittest.TestCase):
 
     def test_git_snapshot_root_name_non_worktree(self):
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 returncode = 0
                 stdout = ("## main\n" if "status" in cmd
@@ -1219,6 +1234,7 @@ class TestProcAndGit(unittest.TestCase):
         # --git-common-dir must be absolute or root_name's dirname() math breaks.
         seen = []
         def fake_run(cmd, **kw):
+            del kw
             seen.append(cmd)
             class R:
                 returncode = 0
@@ -1235,6 +1251,7 @@ class TestProcAndGit(unittest.TestCase):
         # to the common-dir's own basename instead of walking one level too
         # far up (which would report the bare repo's PARENT dir as the name).
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 returncode = 0
                 stdout = "/srv/bare-repo\n/srv/bare-repo\n/srv/bare-repo\n"
@@ -1252,6 +1269,7 @@ class TestProcAndGit(unittest.TestCase):
         cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 100})
         calls = []
         def fake_run(cmd, **kw):
+            del kw
             calls.append(cmd)
             class R:
                 returncode = 0
@@ -1268,6 +1286,7 @@ class TestProcAndGit(unittest.TestCase):
         cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
         calls = []
         def fake_run(cmd, **kw):
+            del kw
             calls.append(cmd)
             class R:
                 returncode = 0
@@ -1286,6 +1305,7 @@ class TestProcAndGit(unittest.TestCase):
         cache_base = sl.cfg_cache_base(env)
         cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
@@ -1488,6 +1508,7 @@ class TestLazyCompute(unittest.TestCase):
             # probe_git_snapshot receives the config; the ttl is read off it.
             args = gs.call_args
             passed_cfg = args.args[1] if args.args[1:] else args.kwargs.get("config")
+            assert passed_cfg is not None
             self.assertEqual((passed_cfg.git or {}).get("cache_ttl"), 42)
 
     def test_git_probe_fires_for_any_git_segment_agnostically(self):
@@ -1882,6 +1903,7 @@ class TestProcRssMacOS(unittest.TestCase):
 class TestTputFallback(unittest.TestCase):
     def test_tput_used_when_stty_yields_nothing(self):
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 stdout = ""
             r = R()
@@ -2518,6 +2540,7 @@ class TestRendererRobustness(unittest.TestCase):
 
     def test_safe_build_passes_through_ok_builder(self):
         def good(data, avail, theme):
+            del avail
             return "HELLO"
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": good}):
@@ -2527,6 +2550,7 @@ class TestRendererRobustness(unittest.TestCase):
 
     def test_safe_build_records_and_marks_on_raise(self):
         def boom(data, avail, theme):
+            del avail
             raise RuntimeError("kaboom")
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": boom}):
@@ -2537,6 +2561,7 @@ class TestRendererRobustness(unittest.TestCase):
 
     def test_safe_build_bare_marker_when_no_room_for_name(self):
         def boom(data, avail, theme):
+            del avail
             raise RuntimeError("x")
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"context": boom}):
@@ -2548,9 +2573,11 @@ class TestRendererRobustness(unittest.TestCase):
         # "path" is PINNED — even when its builder raises, the line still renders
         # the other segments and records the failure.
         def boom(data, avail, theme):
+            del avail
             raise ValueError("nope")
         cfg = sl.cfg_default_config()
         def ok(data, avail, theme):
+            del avail
             return "CTX"
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": boom, "context": ok}):
@@ -2569,6 +2596,7 @@ class TestRendererRobustness(unittest.TestCase):
 
     def test_render_appends_diagnostic_on_builder_crash(self):
         def boom(data, avail, theme):
+            del avail
             raise RuntimeError("x")
         cfg = sl.cfg_default_config()
         layout = [sl.Line(0, ["path"])]
@@ -2792,7 +2820,7 @@ class TestThinContext(unittest.TestCase):
 class TestGitProbeMemoized(unittest.TestCase):
     def test_probe_git_for_runs_once_per_render(self):
         calls = []
-        def fake(work_dir, conf):
+        def fake(work_dir, _conf):
             calls.append(work_dir)
             return sl.GitSnapshot(in_repo=True, branch="main", dirty="clean",
                                   is_worktree=False, wt_name="")
