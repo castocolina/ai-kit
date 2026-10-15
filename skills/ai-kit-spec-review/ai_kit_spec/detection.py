@@ -135,8 +135,7 @@ def detect_opencode_models(binary: str, run_fn=subprocess.run) -> list:
     own `codex debug models` (detect_codex_models); claude and grok have
     no list subcommand."""
     try:
-        result = run_fn([binary, "models"], capture_output=True, text=True,
-                         check=False, timeout=15)
+        result = _run_opencode(run_fn, [binary, "models"], timeout=15)
     except (OSError, subprocess.TimeoutExpired):
         return []
     return [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
@@ -356,8 +355,7 @@ def opencode_major_version(binary: str, run_fn=subprocess.run) -> int | None:
     non-str stdout, or stdout that does not fully match the version pattern. Like
     every detector here, it never raises."""
     try:
-        result = run_fn([binary, "--version"], capture_output=True, text=True,
-                        check=False, timeout=10)
+        result = _run_opencode(run_fn, [binary, "--version"], timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if getattr(result, "returncode", 1) != 0:
@@ -421,13 +419,55 @@ def _read_opencode_banner(stream) -> tuple:
     return port, token
 
 
+# Both spellings opencode has used for the project-config opt-out (NF-2).
+_OPENCODE_PROJECT_CONFIG_OFF = ("OPENCODE_DISABLE_PROJECT_CONFIG",
+                                "OPENCODE_CONFIG_PROJECT_DISABLE")
+# A caller's server password suppresses the one-time password line (C-WR-02, NF-3).
+_OPENCODE_PASSWORD_VARS = frozenset({"OPENCODE_SERVER_PASSWORD", "OPENCODE_PASSWORD"})
+_PRIVATE_DIR_PREFIX = "ai-kit-opencode-probe-"
+
+
 def _probe_env() -> dict:
-    """The probe server's env: never project config from the cwd or its ancestors (a
-    planted opencode.json could run MCP commands, C-CR-01), and never a caller's
-    OPENCODE_SERVER_PASSWORD, which suppresses the one-time password line (C-WR-02)."""
-    env = {k: v for k, v in os.environ.items() if k != "OPENCODE_SERVER_PASSWORD"}
-    env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
+    """The env of every opencode subprocess: never project config from the cwd or its
+    ancestors (a planted opencode.json could run MCP commands, C-CR-01) under either
+    opt-out name, overriding any inherited value, and never a caller's server password."""
+    env = {k: v for k, v in os.environ.items() if k not in _OPENCODE_PASSWORD_VARS}
+    env.update(dict.fromkeys(_OPENCODE_PROJECT_CONFIG_OFF, "1"))
     return env
+
+
+def _private_dir() -> str:
+    """A fresh 0700 dir under ai-kit's user-owned cache, so no ancestor is a shared,
+    world-writable temp root another user could plant opencode.json in (NF-2). tempfile
+    is only the fallback, also when the cache base is relative (no HOME) and would land
+    in the caller's cwd."""
+    base = cache_base(dict(os.environ))
+    if os.path.isabs(base):
+        try:
+            os.makedirs(base, mode=0o700, exist_ok=True)
+            return tempfile.mkdtemp(prefix=_PRIVATE_DIR_PREFIX, dir=base)
+        except OSError:
+            pass
+    return tempfile.mkdtemp(prefix=_PRIVATE_DIR_PREFIX)
+
+
+@contextlib.contextmanager
+def _opencode_private_dir():
+    """The private cwd of one opencode subprocess, removed afterwards: opencode loads
+    opencode.json from its cwd and every ancestor (NF-1)."""
+    path = _private_dir()
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _run_opencode(run_fn, argv: list, timeout: int):
+    """`run_fn(argv, ...)` from a private cwd with `_probe_env()` -- the one path every
+    non-server opencode subprocess takes (NF-1)."""
+    with _opencode_private_dir() as cwd:
+        return run_fn(argv, capture_output=True, text=True, check=False, timeout=timeout,
+                      cwd=cwd, env=_probe_env())
 
 
 def _signal_server(proc, sig) -> None:
@@ -487,9 +527,9 @@ def probe_opencode_api_image_input(binary: str,
     (17 D-24/D-32). Returns `{"providerID/id": bool}` via
     `parse_opencode_api_models`; any failure returns {}.
 
-    The server runs in its own session from a private mkdtemp dir (removed afterwards)
-    with OPENCODE_DISABLE_PROJECT_CONFIG=1: opencode loads opencode.json from its cwd
-    and every ancestor, and can execute MCP commands declared there. Only the process
+    The server runs in its own session from `_opencode_private_dir()` with
+    `_probe_env()`: opencode loads opencode.json from its cwd and every ancestor, and can
+    execute MCP commands declared there. Only the process
     group this function started is ever signalled -- a user's long-running
     `opencode serve --service` is never touched. The request bypasses proxies. The
     password stays in a local variable and never enters a return value, an exception
@@ -498,12 +538,8 @@ def probe_opencode_api_image_input(binary: str,
     group (SIGTERM -> wait -> SIGKILL). opencode writes its own state (db, log) in its
     XDG data dir, never config. opencode 1.x must not reach this (see
     opencode_image_input_with_source)."""
-    probe_dir = tempfile.mkdtemp(prefix="ai-kit-opencode-probe-")
-    try:
-        with _sigterm_unwinds():
-            return _probe_from(binary, probe_dir, popen_fn, urlopen_fn)
-    finally:
-        shutil.rmtree(probe_dir, ignore_errors=True)
+    with _opencode_private_dir() as probe_dir, _sigterm_unwinds():
+        return _probe_from(binary, probe_dir, popen_fn, urlopen_fn)
 
 
 def _probe_from(binary, probe_dir, popen_fn, urlopen_fn) -> dict:
@@ -565,8 +601,7 @@ def detect_opencode_verbose_image_input(binary: str, run_fn=subprocess.run) -> d
     subprocess.TimeoutExpired, invalid JSON, unexpected shape) degrades to
     {} and never raises."""
     try:
-        result = run_fn([binary, "models", "--verbose"], capture_output=True, text=True,
-                        check=False, timeout=15)
+        result = _run_opencode(run_fn, [binary, "models", "--verbose"], timeout=15)
     except (OSError, subprocess.TimeoutExpired):
         return {}
     if getattr(result, "returncode", 1) != 0:

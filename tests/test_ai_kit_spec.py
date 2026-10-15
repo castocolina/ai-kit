@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import signal
 import socket
 import stat
@@ -10234,16 +10235,75 @@ class TestOpencodeApiImageInput(unittest.TestCase):
         self.assertFalse(os.path.exists(cwd))  # the private dir is removed afterwards
         self.assertTrue(popen.kwargs.get("start_new_session"))
 
+    # Inherited values the hardened env must override or drop (C-CR-01, C-WR-02, NF-2/3).
+    HOSTILE_ENV = {"OPENCODE_SERVER_PASSWORD": "users-own", "OPENCODE_PASSWORD": "legacy",
+                   "OPENCODE_DISABLE_PROJECT_CONFIG": "0",
+                   "OPENCODE_CONFIG_PROJECT_DISABLE": "false"}
+
+    def setUp(self):
+        cache = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, cache, ignore_errors=True)
+        patcher = mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.private_base = os.path.join(cache, "ai-kit", "spec")
+
+    def _assert_hardened(self, kwargs):
+        env = kwargs["env"]
+        self.assertEqual(env["OPENCODE_DISABLE_PROJECT_CONFIG"], "1")
+        self.assertEqual(env["OPENCODE_CONFIG_PROJECT_DISABLE"], "1")
+        self.assertNotIn("OPENCODE_SERVER_PASSWORD", env)
+        self.assertNotIn("OPENCODE_PASSWORD", env)
+        cwd = kwargs["cwd"]
+        self.assertEqual(os.path.dirname(cwd), self.private_base)
+        self.assertTrue(os.path.basename(cwd).startswith("ai-kit-opencode-probe-"))
+
     def test_probe_env_disables_project_config_and_drops_password(self):
-        """C-CR-01/C-WR-02: no opencode.json from cwd/ancestors; opencode always prints
-        its own one-time password."""
+        """C-CR-01/C-WR-02/NF-2/NF-3: no opencode.json from cwd/ancestors under either
+        disable name; opencode always prints its own one-time password."""
         popen = self.FakePopen()
-        with mock.patch.dict(os.environ, {"OPENCODE_SERVER_PASSWORD": "users-own"}):
+        with mock.patch.dict(os.environ, self.HOSTILE_ENV):
             detection.probe_opencode_api_image_input(
                 "/fake/bin/opencode", popen_fn=popen, urlopen_fn=self._fake_urlopen())
-        env = popen.kwargs["env"]
-        self.assertEqual(env["OPENCODE_DISABLE_PROJECT_CONFIG"], "1")
-        self.assertNotIn("OPENCODE_SERVER_PASSWORD", env)
+        self._assert_hardened(popen.kwargs)
+
+    def test_every_opencode_subprocess_runs_hardened(self):
+        """NF-1: `models`, `--version` and 1.x `models --verbose` get the probe's env and a
+        private cwd (removed afterwards), never the caller's project config."""
+        seen = []
+
+        def fake_run(argv, **kwargs):
+            seen.append((argv[1:], kwargs))
+            self.assertTrue(os.path.isdir(kwargs["cwd"]))
+            stdout = "opencode v1.18.32\n" if argv[1:] == ["--version"] else ""
+            return unittest.mock.MagicMock(returncode=0, stdout=stdout)
+
+        with mock.patch.dict(os.environ, self.HOSTILE_ENV):
+            detection.detect_opencode_models("/fake/bin/opencode", run_fn=fake_run)
+            detection.opencode_image_input_with_source("/fake/bin/opencode", run_fn=fake_run)
+        self.assertEqual([argv for argv, _ in seen],
+                         [["models"], ["--version"], ["models", "--verbose"]])
+        for _argv, kwargs in seen:
+            self._assert_hardened(kwargs)
+            self.assertFalse(os.path.exists(kwargs["cwd"]))
+
+    def test_private_dir_is_user_only(self):
+        """NF-2: the private cwd is mode 0700 under ai-kit's own cache, not the temp root."""
+        with detection._opencode_private_dir() as path:
+            self.assertEqual(os.path.dirname(path), self.private_base)
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o700)
+        self.assertFalse(os.path.exists(path))
+
+    def test_private_dir_falls_back_to_tempfile(self):
+        """NF-2: an unusable cache base (here a regular file) falls back to tempfile; a
+        relative base (no HOME, no XDG_CACHE_HOME) never lands in the caller's cwd."""
+        blocker = os.path.join(tempfile.mkdtemp(), "file")
+        self.addCleanup(shutil.rmtree, os.path.dirname(blocker), ignore_errors=True)
+        open(blocker, "w").close()
+        for env in ({"XDG_CACHE_HOME": blocker}, {"XDG_CACHE_HOME": "", "HOME": ""}):
+            with self.subTest(env=env), mock.patch.dict(os.environ, env), \
+                    detection._opencode_private_dir() as path:
+                self.assertEqual(os.path.dirname(path), tempfile.gettempdir())
 
     def test_default_opener_bypasses_http_proxy(self):
         """C-WR-01: the loopback request never reaches a configured http_proxy."""
