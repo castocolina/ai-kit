@@ -7,7 +7,7 @@ import re
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from . import cross_ai, presets
+from . import cross_ai, plan_io, presets
 
 _SKILL_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 _LIST_KEYS_PREFIXES = ("agent_skills.",)
@@ -17,6 +17,12 @@ LIST_KEYS = (
 )
 LIST_KEYS_PREFIXES = _LIST_KEYS_PREFIXES
 _USER_WHY = "set by the user (plan-set)"
+_UNSET_WHY = "kept at the current config value by the user (plan-unset)"
+_EXEC_STRIP_KEYS = (
+    "workflow.cross_ai_command",
+    "workflow.cross_ai_timeout",
+    "manager.flags.execute",
+)
 SCRIPT_MODEL_PREFIX = "script:cross-ai.model."
 SCRIPT_PREFER_KEY = "script:cross-ai.prefer"
 _EMPTY_PREFER_MSG = (
@@ -115,7 +121,23 @@ def _price_sort_key(row: dict) -> tuple:
 def plan_unset(call: EditCall, key: str) -> tuple[dict, list[str]]:
     if key.startswith(SCRIPT_MODEL_PREFIX):
         return _plan_unset_script_model(call, key)
-    raise PlanEditError("plan-unset is not available in this build")
+    entry = _find_entry(call.plan, key)
+    if entry is None:
+        raise PlanEditError(f"{key} is not in the plan; nothing to unset")
+    _unset_refusal(call.plan, key, entry)
+    plan = copy.deepcopy(call.plan)
+    entry = _find_entry(plan, key)
+    assert entry is not None
+    existing = entry.get("existing")
+    entry["op"] = "keep"
+    entry["value"] = existing
+    entry["source"] = "user"
+    entry["why"] = _UNSET_WHY
+    entry.pop("status", None)
+    entry.pop("candidates", None)
+    entry.pop("forced", None)
+    plan["entries"] = sorted(plan.get("entries") or [], key=lambda row: row["key"])
+    return plan, []
 
 
 def plan_set(call: EditCall, key: str, raw: str) -> tuple[dict, list[str]]:
@@ -140,6 +162,8 @@ def plan_set(call: EditCall, key: str, raw: str) -> tuple[dict, list[str]]:
         }
         plan.setdefault("entries", []).append(entry)
     parsed = parse_value(key, raw, current)
+    if key == "workflow.cross_ai_execution" and parsed is True:
+        _require_script_artifact(call.plan)
     parsed, forced = _special_keys(call, key, entry, parsed, warnings)
     _candidate_refusal(call, key, entry, parsed, forced)
     warnings.extend(_fast_twin_warnings(call.inv, parsed))
@@ -148,6 +172,8 @@ def plan_set(call: EditCall, key: str, raw: str) -> tuple[dict, list[str]]:
     except ValueError as exc:
         raise PlanEditError(str(exc)) from exc
     _apply_entry(entry, parsed, forced)
+    if key == "workflow.cross_ai_execution" and parsed is False:
+        _strip_execution_deps(plan)
     if key == "workflow.cross_ai_timeout":
         _sync_artifact_timeout(plan, parsed)
     plan["entries"] = sorted(plan["entries"], key=lambda row: row["key"])
@@ -256,6 +282,46 @@ def _script_artifact(plan: dict) -> dict:
             "no cross-AI script artifact; rerun recommend with --cross-ai-exec y"
         )
     return artifacts[0]
+
+
+def _require_script_artifact(plan: dict) -> None:
+    artifacts = plan.get("artifacts") or []
+    if not artifacts:
+        raise PlanEditError(
+            "no cross-AI script artifact; rerun recommend with --cross-ai-exec y"
+        )
+
+
+def _strip_execution_deps(plan: dict) -> None:
+    plan["artifacts"] = []
+    drop = set(_EXEC_STRIP_KEYS)
+    plan["entries"] = [row for row in plan.get("entries") or [] if row.get("key") not in drop]
+    plan["notes"] = [
+        note
+        for note in plan.get("notes") or []
+        if not (isinstance(note, dict) and note.get("kind") == "cross_ai_run")
+    ]
+
+
+def _unset_refusal(plan: dict, key: str, entry: dict) -> None:
+    if key == "workflow.cross_ai_timeout" and plan_io.execution_effective_on(plan):
+        raise PlanEditError(
+            "workflow.cross_ai_timeout is required while workflow.cross_ai_execution is on"
+        )
+    if key == "workflow.cross_ai_command" and plan_io.execution_effective_on(plan):
+        existing = entry.get("existing")
+        if existing != cross_ai.CROSS_AI_COMMAND:
+            raise PlanEditError(
+                "workflow.cross_ai_command is required while "
+                "workflow.cross_ai_execution is on"
+            )
+    if key == "workflow.cross_ai_execution":
+        artifacts = plan.get("artifacts") or []
+        existing = entry.get("existing")
+        if artifacts and existing is False:
+            raise PlanEditError(
+                "a cross-AI script artifact needs workflow.cross_ai_execution on"
+            )
 
 
 def _assert_runner_target(call: EditCall, runner_id: str) -> None:

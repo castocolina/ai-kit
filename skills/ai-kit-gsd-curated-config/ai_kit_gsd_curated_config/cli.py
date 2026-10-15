@@ -553,10 +553,11 @@ def _gsd_tools_encode():
 def _print_plan_set_ok(args, edited: dict, warnings: list[str]) -> None:
     for warning in warnings:
         print(f"ai-kit-gsd-curated-config: warning: {warning}", file=sys.stderr)
-    entry = next(e for e in edited["entries"] if e["key"] == args.key)
+    entry = next((e for e in edited["entries"] if e["key"] == args.key), None)
+    op = entry["op"] if entry is not None else "artifact"
     print(
         json.dumps(
-            {"key": args.key, "op": entry["op"], "plan": args.plan, "warnings": warnings}
+            {"key": args.key, "op": op, "plan": args.plan, "warnings": warnings}
         )
     )
 
@@ -589,22 +590,44 @@ def _cmd_plan_set(args, which_fn, run_fn, env_fn) -> int:
     return 0
 
 
+def _print_plan_unset_ok(args, edited: dict, warnings: list[str]) -> None:
+    for warning in warnings:
+        print(f"ai-kit-gsd-curated-config: warning: {warning}", file=sys.stderr)
+    entry = next((e for e in edited["entries"] if e["key"] == args.key), None)
+    op = entry["op"] if entry is not None else "artifact"
+    print(
+        json.dumps(
+            {"key": args.key, "op": op, "plan": args.plan, "warnings": warnings}
+        )
+    )
+
+
 def _cmd_plan_unset(args, which_fn, run_fn, env_fn) -> int:
     del which_fn, run_fn, env_fn
     loaded = _load_plan_inputs(args)
     if loaded is None:
         return 2
-    plan, inv, _inv_path, _digest = loaded
     encode = _gsd_tools_encode()
     if encode is None:
         return 2
+    plan, inv, _inv_path, _digest = loaded
     call = plan_edit.EditCall(plan, inv, force=False, encode=encode)
     try:
-        plan_edit.plan_unset(call, args.key)
+        edited, warnings = plan_edit.plan_unset(call, args.key)
     except plan_edit.PlanEditError as exc:
         print(f"ai-kit-gsd-curated-config: {exc}", file=sys.stderr)
         return 2
-    return 2
+    problem = plan_io.validate_plan(edited)
+    if problem:
+        print(f"ai-kit-gsd-curated-config: {problem}", file=sys.stderr)
+        return 2
+    try:
+        plan_io.write_plan(args.plan, edited)
+    except OSError as exc:
+        print(f"ai-kit-gsd-curated-config: cannot write {args.plan}: {exc}", file=sys.stderr)
+        return 2
+    _print_plan_unset_ok(args, edited, warnings)
+    return 0
 
 
 def _register_plan_edit_parsers(sub) -> None:

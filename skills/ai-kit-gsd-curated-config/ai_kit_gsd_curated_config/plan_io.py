@@ -440,6 +440,30 @@ def check_plan_inventory(plan: dict, inv: dict) -> str | None:
     return None
 
 
+def entry_effective_value(entry: dict | None):
+    """Effective config value: ``set`` uses ``value``, ``keep`` uses ``existing``."""
+    if entry is None:
+        return None
+    op = entry.get("op")
+    if op == "set":
+        return entry.get("value")
+    if op == "keep":
+        return entry.get("existing")
+    return None
+
+
+def execution_effective_on(plan: dict) -> bool:
+    entry = _plan_entry(plan, "workflow.cross_ai_execution")
+    return entry_effective_value(entry) is True
+
+
+def _plan_entry(plan: dict, key: str) -> dict | None:
+    for entry in plan.get("entries") or []:
+        if entry.get("key") == key:
+            return entry
+    return None
+
+
 def validate_plan(plan: dict) -> str | None:
     """Shared executable-schema and policy validator; first problem or ``None``."""
     plan_host = plan.get("host")
@@ -448,7 +472,50 @@ def validate_plan(plan: dict) -> str | None:
     problem = _validate_entries(plan.get("entries"))
     if problem:
         return problem
-    return _validate_artifacts(plan.get("artifacts"), plan_host)
+    problem = _validate_artifacts(plan.get("artifacts"), plan_host)
+    if problem:
+        return problem
+    return _validate_execution_coupling(plan)
+
+
+def _validate_execution_coupling(plan: dict) -> str | None:
+    exec_on = execution_effective_on(plan)
+    artifacts = plan.get("artifacts") or []
+    if not exec_on:
+        if artifacts:
+            return "a cross-AI script artifact needs workflow.cross_ai_execution on"
+        return None
+    cmd_entry = _plan_entry(plan, "workflow.cross_ai_command")
+    cmd_val = entry_effective_value(cmd_entry)
+    ok_cmd = cmd_entry is not None and (
+        cmd_entry.get("status") == "needs_choice"
+        or cmd_entry.get("forced")
+        or cmd_val == cross_ai.CROSS_AI_COMMAND
+    )
+    if not ok_cmd:
+        return (
+            "workflow.cross_ai_command is required while "
+            "workflow.cross_ai_execution is on"
+        )
+    if cmd_val != cross_ai.CROSS_AI_COMMAND:
+        return None
+    if len(artifacts) != 1:
+        return (
+            "the cross-AI script artifact must exist while "
+            "workflow.cross_ai_command runs it; rerun recommend"
+        )
+    return _validate_runner_timeout(plan)
+
+
+def _validate_runner_timeout(plan: dict) -> str | None:
+    timeout_entry = _plan_entry(plan, "workflow.cross_ai_timeout")
+    timeout = entry_effective_value(timeout_entry)
+    floor = cross_ai.MIN_TIMEOUT_S
+    if not isinstance(timeout, int) or isinstance(timeout, bool):
+        return f"workflow.cross_ai_timeout must be an integer >= {floor}"
+    if timeout < floor:
+        return f"workflow.cross_ai_timeout must be an integer >= {floor} (got {timeout})"
+    return None
 
 
 def _plan_envelope_problem(plan: dict) -> str | None:

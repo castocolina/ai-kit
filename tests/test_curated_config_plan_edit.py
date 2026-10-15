@@ -36,6 +36,14 @@ def _run_plan_set(plan_path, inv_path, key, value, *, force=False):
     return code, out.getvalue(), err.getvalue()
 
 
+def _run_plan_unset(plan_path, inv_path, key):
+    flags = ["plan-unset", key, "--plan", plan_path, "--inventory", inv_path]
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        code = cli.main(flags)
+    return code, out.getvalue(), err.getvalue()
+
+
 def _write_pair(tmp, host="claude", rigor="standard"):
     inv = build_golden_inventory(host)
     inv_path = os.path.join(tmp, "inventory.json")
@@ -606,6 +614,214 @@ class TestScriptPseudoKeys(unittest.TestCase):
             self.assertNotIn("pi", art["config"]["models"])
             self.assertIn("pi", art["choices"])
             self.assertEqual(art["status"], "needs_choice")
+
+
+class TestPlanUnset(unittest.TestCase):
+    def test_set_same_as_existing_is_keep(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, plan = _write_pair(tmp)
+            key = "workflow.plan_review_convergence"
+            entry = next(e for e in plan["entries"] if e["key"] == key)
+            existing = entry.get("existing")
+            if existing is None:
+                self.skipTest("no existing snapshot for convergence")
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, key, "true" if existing else "false"
+            )
+            self.assertEqual(code, 0, err)
+            reloaded, _ = plan_io.load_plan(plan_path)
+            assert reloaded is not None
+            row = next(e for e in reloaded["entries"] if e["key"] == key)
+            self.assertEqual(row["op"], "keep")
+            self.assertEqual(row["source"], "user")
+
+    def test_unset_absent_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp)
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_unset(plan_path, inv_path, "nonexistent.key")
+            self.assertEqual(code, 2)
+            self.assertIn("nonexistent.key", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
+
+    def test_unset_script_model_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, inv, plan = _write_pair(tmp)
+            partial = _partial_runner_plan(inv, plan)
+            _save_plan(plan_path, inv, partial)
+            encode = _strict_encode()
+            direct, _ = plan_edit.plan_unset(
+                plan_edit.EditCall(copy.deepcopy(partial), inv, False, encode),
+                "script:cross-ai.model.pi",
+            )
+            code, _, err = _run_plan_unset(
+                plan_path, inv_path, "script:cross-ai.model.pi"
+            )
+            self.assertEqual(code, 0, err)
+            reloaded, _ = plan_io.load_plan(plan_path)
+            assert reloaded is not None
+            self.assertEqual(
+                reloaded["artifacts"][0]["choices"],
+                direct["artifacts"][0]["choices"],
+            )
+
+    def test_unset_sorts_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "workflow.live_dom_uat", "true"
+            )
+            self.assertEqual(code, 0, err)
+            code, _, err = _run_plan_unset(
+                plan_path, inv_path, "workflow.plan_review_convergence"
+            )
+            self.assertEqual(code, 0, err)
+            reloaded, _ = plan_io.load_plan(plan_path)
+            assert reloaded is not None
+            keys = [e["key"] for e in reloaded["entries"]]
+            self.assertEqual(keys, sorted(keys))
+
+    def test_decline_trusted_roots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, plan = _write_pair(tmp)
+            entry = next(
+                e
+                for e in plan["entries"]
+                if e["key"] == "agent_skills_security.trusted_global_roots"
+            )
+            existing = entry.get("existing")
+            code, _, err = _run_plan_unset(
+                plan_path,
+                inv_path,
+                "agent_skills_security.trusted_global_roots",
+            )
+            self.assertEqual(code, 0, err)
+            reloaded, _ = plan_io.load_plan(plan_path)
+            assert reloaded is not None
+            row = next(
+                e
+                for e in reloaded["entries"]
+                if e["key"] == "agent_skills_security.trusted_global_roots"
+            )
+            self.assertEqual(row["op"], "keep")
+            self.assertEqual(row["value"], existing)
+            self.assertEqual(row["source"], "user")
+            self.assertNotIn("status", row)
+
+    def test_unset_timeout_while_execution_on(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp)
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_unset(
+                plan_path, inv_path, "workflow.cross_ai_timeout"
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("workflow.cross_ai_timeout", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
+
+    def test_unset_command_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, inv, plan = _write_pair(tmp)
+            for entry in plan["entries"]:
+                if entry["key"] == "workflow.cross_ai_command":
+                    entry["existing"] = None
+            _save_plan(plan_path, inv, plan)
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_unset(
+                plan_path, inv_path, "workflow.cross_ai_command"
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("workflow.cross_ai_command", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
+
+    def test_unset_command_keeps_runner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, inv, plan = _write_pair(tmp)
+            for entry in plan["entries"]:
+                if entry["key"] == "workflow.cross_ai_command":
+                    entry["existing"] = "node .planning/scripts/cross-ai.mjs"
+            _save_plan(plan_path, inv, plan)
+            code, _, err = _run_plan_unset(
+                plan_path, inv_path, "workflow.cross_ai_command"
+            )
+            self.assertEqual(code, 0, err)
+            reloaded, _ = plan_io.load_plan(plan_path)
+            assert reloaded is not None
+            row = next(
+                e for e in reloaded["entries"] if e["key"] == "workflow.cross_ai_command"
+            )
+            self.assertEqual(row["op"], "keep")
+
+    def test_unset_execution_with_artifact_existing_false(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, inv, plan = _write_pair(tmp)
+            for entry in plan["entries"]:
+                if entry["key"] == "workflow.cross_ai_execution":
+                    entry["existing"] = False
+            _save_plan(plan_path, inv, plan)
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_unset(
+                plan_path, inv_path, "workflow.cross_ai_execution"
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("artifact", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
+
+    def test_unset_execution_existing_true(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, inv, plan = _write_pair(tmp)
+            for entry in plan["entries"]:
+                if entry["key"] == "workflow.cross_ai_execution":
+                    entry["existing"] = True
+            _save_plan(plan_path, inv, plan)
+            code, _, err = _run_plan_unset(
+                plan_path, inv_path, "workflow.cross_ai_execution"
+            )
+            self.assertEqual(code, 0, err)
+
+
+class TestExecutionToggle(unittest.TestCase):
+    def test_execution_off_strips_deps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "workflow.cross_ai_execution", "false"
+            )
+            self.assertEqual(code, 0, err)
+            reloaded, _ = plan_io.load_plan(plan_path)
+            assert reloaded is not None
+            self.assertEqual(reloaded["artifacts"], [])
+            keys = {e["key"] for e in reloaded["entries"]}
+            self.assertNotIn("workflow.cross_ai_command", keys)
+            self.assertNotIn("workflow.cross_ai_timeout", keys)
+            self.assertNotIn("manager.flags.execute", keys)
+            kinds = {n.get("kind") for n in reloaded["notes"]}
+            self.assertNotIn("cross_ai_run", kinds)
+
+    def test_execution_on_without_artifact_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp)
+            _run_plan_set(plan_path, inv_path, "workflow.cross_ai_execution", "false")
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "workflow.cross_ai_execution", "true"
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("artifact", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
+
+    def test_invalid_plan_blocks_plan_set_at_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, inv, plan = _write_pair(tmp)
+            plan["artifacts"] = []
+            _save_plan(plan_path, inv, plan)
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "workflow.plan_review_convergence", "false"
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("artifact", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
 
 
 class TestPlanSetExtra(unittest.TestCase):
