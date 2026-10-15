@@ -35,7 +35,7 @@ class TestFindFences(unittest.TestCase):
 
 class TestRenderAll(unittest.TestCase):
     def _fake_run_ok(self):
-        def run(cmd, capture_output=True, text=True):
+        def run(cmd, capture_output=True, text=True, **kwargs):
             # assert mmdc was called with high-DPI scale flag
             self.assertIn("-s", cmd)
             self.assertEqual(cmd[cmd.index("-s") + 1], "3")
@@ -55,7 +55,7 @@ class TestRenderAll(unittest.TestCase):
 
     def test_aborts_with_line_and_stderr_on_failure(self):
         md = "a\n```mermaid\nbroken!!!\n```\n"
-        def run_fail(cmd, capture_output=True, text=True):
+        def run_fail(cmd, capture_output=True, text=True, **kwargs):
             return type("P", (), {"returncode": 1,
                                   "stderr": "Parse error on line 2: ...", "stdout": ""})()
         with self.assertRaises(rm.MermaidRenderError) as cm:
@@ -131,7 +131,7 @@ class TestBuildCommand(unittest.TestCase):
 
 class TestConvert(unittest.TestCase):
     def _stub_run_writes_pdf(self):
-        def run(cmd, capture_output=True, text=True):
+        def run(cmd, capture_output=True, text=True, **kwargs):
             out = cmd[cmd.index("-o") + 1] if "-o" in cmd else cmd[cmd.index("--output") + 1]
             with open(out, "wb") as fh:
                 fh.write(b"%PDF-1.7\n")
@@ -149,8 +149,9 @@ class TestConvert(unittest.TestCase):
         with open(src, "rb") as fh:
             before = fh.read()
         which = lambda n: "/x/" + n if n in {"pandoc", "pdflatex"} else None
-        res = m2p.convert(src, which=which, run=self._stub_run_writes_pdf(),
-                          render=self._fake_render)
+        opts = m2p.ConvertOptions(which=which, run=self._stub_run_writes_pdf(),
+                                  render=self._fake_render)
+        res = m2p.convert(src, opts)
         self.assertEqual(res.backend, "pandoc-latex")
         self.assertTrue(res.out.endswith("doc.pdf"))
         self.assertTrue(os.path.exists(res.out))
@@ -165,8 +166,13 @@ class TestConvert(unittest.TestCase):
         which = lambda n: "/x/" + n if n in {"md-to-pdf"} else None
         # sub/ is intentionally NOT pre-created — convert() must make it
         out = os.path.join(d, "sub", "x.pdf")
-        res = m2p.convert(src, out_path=out, which=which,
-                          run=self._stub_run_writes_pdf(), render=self._fake_render)
+        opts = m2p.ConvertOptions(
+            out_path=out,
+            which=which,
+            run=self._stub_run_writes_pdf(),
+            render=self._fake_render,
+        )
+        res = m2p.convert(src, opts)
         self.assertEqual(res.out, out)
 
     def test_no_backend_raises_backend_unavailable(self):
@@ -174,7 +180,7 @@ class TestConvert(unittest.TestCase):
         with open(src, "w") as fh:
             fh.write("hi\n")
         with self.assertRaises(m2p.BackendUnavailable) as cm:
-            m2p.convert(src, which=lambda n: None, render=self._fake_render)
+            m2p.convert(src, m2p.ConvertOptions(which=lambda n: None, render=self._fake_render))
         self.assertEqual(cm.exception.recommend.name, "typst")
 
     def test_render_failure_propagates_and_emits_nothing(self):
@@ -185,13 +191,16 @@ class TestConvert(unittest.TestCase):
             raise render_mermaid.MermaidRenderError(1, "Parse error on line 1")
         which = lambda n: "/x/" + n if n in {"pandoc", "pdflatex"} else None
         with self.assertRaises(render_mermaid.MermaidRenderError):
-            m2p.convert(src, which=which, run=self._stub_run_writes_pdf(), render=bad_render)
+            m2p.convert(
+                src,
+                m2p.ConvertOptions(which=which, run=self._stub_run_writes_pdf(), render=bad_render),
+            )
         self.assertFalse(os.path.exists(os.path.join(d, "doc.pdf")))
 
 
 class TestDeckAndMain(unittest.TestCase):
     def _stub_run_writes(self, flag="-o"):
-        def run(cmd, capture_output=True, text=True):
+        def run(cmd, capture_output=True, text=True, **kwargs):
             out = cmd[cmd.index(flag) + 1]
             with open(out, "wb") as fh:
                 fh.write(b"%PDF")
@@ -203,9 +212,13 @@ class TestDeckAndMain(unittest.TestCase):
         with open(src, "w") as fh:
             fh.write("# slide\n")
         out = os.path.join(d, "s.pdf")
-        res = m2p.convert_deck(
-            src, out_path=out, which=lambda n: "/x/marp" if n == "marp" else None,
-            run=self._stub_run_writes(), render=lambda t, w, fmt="svg", run=None: t)
+        opts = m2p.ConvertOptions(
+            out_path=out,
+            which=lambda n: "/x/marp" if n == "marp" else None,
+            run=self._stub_run_writes(),
+            render=lambda t, w, fmt="svg", run=None: t,
+        )
+        res = m2p.convert_deck(src, opts)
         self.assertEqual(res.backend, "marp-cli")
         self.assertTrue(os.path.exists(out))
 
@@ -214,7 +227,13 @@ class TestDeckAndMain(unittest.TestCase):
         with open(src, "w") as fh:
             fh.write("x\n")
         with self.assertRaises(m2p.BackendUnavailable) as cm:
-            m2p.convert_deck(src, which=lambda n: None, render=lambda t, w, fmt="svg", run=None: t)
+            m2p.convert_deck(
+                src,
+                m2p.ConvertOptions(
+                    which=lambda n: None,
+                    render=lambda t, w, fmt="svg", run=None: t,
+                ),
+            )
         self.assertEqual(cm.exception.recommend.name, "marp-cli")
 
     def test_main_mermaid_abort_returns_2(self):
@@ -257,7 +276,7 @@ class TestDeckAndMain(unittest.TestCase):
             with open(img, "wb") as fh:
                 fh.write(b"<svg/>")
             return f"# deck\n![diagram]({img})\n"
-        out = m2p.render_only(src, render=fake_render)
+        out = m2p.render_only(src, m2p.ConvertOptions(render=fake_render))
         self.assertTrue(out.endswith(".rendered.md"))
         with open(out) as fh:
             body = fh.read()
