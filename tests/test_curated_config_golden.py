@@ -144,6 +144,10 @@ def build_golden_inventory(
 
 
 def mask_digest(plan_bytes: bytes) -> bytes:
+    """Goldens pin plan content only: an unmasked digest would churn all 17 goldens on any
+    inventory field change. The inventory -> digest link is pinned instead by
+    test_curated_config_recommend (plan digest == plan_schema.inventory_digest(inv), and
+    its candidate-order independence)."""
     plan = json.loads(plan_bytes.decode("utf-8"))
     plan["inventory_digest"] = "<digest>"
     return plan_io.canonical_json(plan).encode("utf-8")
@@ -157,24 +161,26 @@ def check_golden(test: unittest.TestCase, name: str, data: bytes) -> None:
     if os.environ.get("UPDATE_GOLDEN"):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
-        return
+        # Loud, not silent: an UPDATE_GOLDEN left exported must never pass as green.
+        test.skipTest(f"UPDATE_GOLDEN set: rewrote {path.name}; assertion skipped")
     test.assertEqual(data, path.read_bytes(), f"Golden drift: regenerate with {regen}")
 
 
-def real_gsd_paths() -> tuple[gsd_catalog.GsdCorePaths, str] | None:
+def real_gsd_paths() -> tuple[gsd_catalog.GsdCorePaths, str] | str:
+    """The checkout-local gsd-core 1.16.0 paths, or the reason they are unusable."""
     node_bin = _real_node_executable()
     if node_bin is None:
-        return None
+        return "no node executable"
     tools = REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs"
     if not tools.is_file():
-        return None
+        return "no checkout-local .claude/gsd-core"
     version = gsd_tools.gsd_core_version(str(tools))
     if version != "1.16.0":
-        return None
+        return f"checkout-local gsd-core is {version}; gsd_tables_1_16.json pins 1.16.0"
     model_catalog = gsd_catalog.resolve_model_catalog_cjs_path(str(tools))
     config_schema = gsd_catalog.resolve_config_schema_cjs_path(str(tools))
     if not model_catalog or not config_schema:
-        return None
+        return "gsd-core lib/model-catalog.cjs or lib/config-schema.cjs missing"
     paths = gsd_catalog.GsdCorePaths(node_bin, model_catalog, config_schema)
     return paths, version
 
@@ -207,8 +213,8 @@ class TestGoldenTables(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._paths = real_gsd_paths()
-        if cls._paths is None:
-            raise unittest.SkipTest("no node or gsd-core 1.16.0 in checkout")
+        if isinstance(cls._paths, str):
+            raise unittest.SkipTest(f"fixture not re-validated: {cls._paths}")
         cls.paths, cls.gsd_version = cls._paths
         cls.scratch = tempfile.mkdtemp()
         cls.child_env = {
@@ -257,7 +263,7 @@ class TestGoldenTables(unittest.TestCase):
             (FIXTURES / "gsd_tables_1_16.json").write_text(
                 plan_io.canonical_json(payload) + "\n", encoding="utf-8"
             )
-            return
+            self.skipTest("UPDATE_GOLDEN set: rewrote gsd_tables_1_16.json; assertion skipped")
         body = _tables_body()
         self.assertEqual(raw_profiles, body["model_profiles"])
         expected = {**body, "model_profiles": gsd_catalog.profile_first(body["model_profiles"])}
