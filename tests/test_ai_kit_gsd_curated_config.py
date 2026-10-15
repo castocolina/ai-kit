@@ -56,6 +56,54 @@ def fake_run(returncode, stdout="", stderr=""):
 FAKE_NODE_BIN = "/usr/bin/node"
 
 
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+class _RealGsdTestCase(unittest.TestCase):
+    """Runs the CLI against the real gsd-tools it resolves for a temp project, under a
+    temp HOME so gsd-core never reads the caller's real `~/.gsd` defaults or host homes.
+    `RUNTIME_DIR` (resolver only, never the child env) points at this checkout, whose
+    project-local gsd-core is the one the CLI then finds; without it, or without node,
+    the test skips."""
+
+    def setUp(self):
+        super().setUp()
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.child_env = {"PATH": os.environ.get("PATH", ""), "HOME": home}
+        self.resolve_env = {**self.child_env, "RUNTIME_DIR": _REPO_ROOT}
+
+    def require_real_gsd(self, project_dir):
+        self.node_bin = _real_node_executable()
+        tools = gsd_catalog.resolve_gsd_tools_path(self.resolve_env, start=project_dir)
+        if self.node_bin is None or tools is None:
+            self.skipTest("no node, or no gsd-tools the CLI resolves for a temp project")
+
+    def run_cli(self, argv):
+        child_env, resolve_env, node_bin = self.child_env, self.resolve_env, self.node_bin
+        return cli.main(
+            argv,
+            which_fn=lambda name: node_bin if name == "node" else None,
+            env_fn=lambda: dict(resolve_env),
+            run_fn=lambda cmd, **kw: subprocess.run(cmd, env=child_env, **kw),
+        )
+
+
+def _real_node_executable():
+    """node's real binary, not a version-manager shim (volta, asdf, ...) that would look
+    for its own state under the temp HOME; `None` when node is missing or broken."""
+    if shutil.which("node") is None:
+        return None
+    try:
+        proc = subprocess.run(
+            ["node", "-e", "process.stdout.write(process.execPath)"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout if proc.returncode == 0 and os.path.isfile(proc.stdout) else None
+
+
 def _which_stub(path=FAKE_NODE_BIN):
     return lambda name: path if name == "node" else None
 
@@ -223,46 +271,32 @@ class TestApplyExecutionLocalFirst(unittest.TestCase):
             self.assertEqual(call[1], local)
 
 
-class TestRealIntegration(unittest.TestCase):
-    """Skips itself when no gsd-core is actually installed on the machine running the suite --
-    the hermetic unit tests above never depend on this, but a dev box or CI box with gsd-core
-    installed gets one real end-to-end proof."""
+class TestRealIntegration(_RealGsdTestCase):
+    """Skips itself when the CLI cannot resolve a real gsd-core for a temp project -- the
+    hermetic unit tests above never depend on this, but a box with gsd-core installed in
+    this checkout gets one real end-to-end proof."""
 
-    _REAL_GSD_TOOLS = gsd_catalog.resolve_gsd_tools_path(dict(os.environ))
-
-    @unittest.skipUnless(
-        _REAL_GSD_TOOLS is not None and shutil.which("node"),
-        "no installed gsd-core, or no node to run it, on this machine",
-    )
     def test_tracer_against_real_installed_gsd_tools(self):
         scratch = tempfile.mkdtemp()
-        try:
-            exit1 = cli.main(["ensure-project", "--project-dir", scratch])
-            self.assertEqual(exit1, 0)
-            exit2 = cli.main(["apply-profile", "--project-dir", scratch, "--profile", "budget"])
-            self.assertEqual(exit2, 0)
-            with open(os.path.join(scratch, ".planning", "config.json"), encoding="utf-8") as f:
-                config = json.load(f)
-            self.assertEqual(config.get("model_profile"), "budget")
-        finally:
-            shutil.rmtree(scratch, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        self.require_real_gsd(scratch)
+        exit1 = self.run_cli(["ensure-project", "--project-dir", scratch])
+        self.assertEqual(exit1, 0)
+        exit2 = self.run_cli(["apply-profile", "--project-dir", scratch, "--profile", "budget"])
+        self.assertEqual(exit2, 0)
+        with open(os.path.join(scratch, ".planning", "config.json"), encoding="utf-8") as f:
+            config = json.load(f)
+        self.assertEqual(config.get("model_profile"), "budget")
 
-    @unittest.skipUnless(
-        _REAL_GSD_TOOLS is not None and shutil.which("node"),
-        "no installed gsd-core, or no node to run it, on this machine",
-    )
     def test_this_repos_own_config_is_never_touched(self):
-        repo_config_path = os.path.join(
-            os.path.dirname(__file__), "..", ".planning", "config.json"
-        )
+        repo_config_path = os.path.join(_REPO_ROOT, ".planning", "config.json")
         with open(repo_config_path, "rb") as f:
             before = f.read()
         scratch = tempfile.mkdtemp()
-        try:
-            cli.main(["ensure-project", "--project-dir", scratch])
-            cli.main(["apply-profile", "--project-dir", scratch, "--profile", "budget"])
-        finally:
-            shutil.rmtree(scratch, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        self.require_real_gsd(scratch)
+        self.run_cli(["ensure-project", "--project-dir", scratch])
+        self.run_cli(["apply-profile", "--project-dir", scratch, "--profile", "budget"])
         with open(repo_config_path, "rb") as f:
             after = f.read()
         self.assertEqual(before, after)
@@ -1227,7 +1261,7 @@ class TestApplyClaudeMdPathCli(unittest.TestCase):
         self.assertFalse(summary["applied"])
 
 
-class TestMergeModeEndToEnd(unittest.TestCase):
+class TestMergeModeEndToEnd(_RealGsdTestCase):
     """D-09 (07-CONTEXT.md): proves merge mode's two contracts end-to-end against a REAL
     installed gsd-core -- (1) a brand-new project correctly falls through Plan 01's
     `ensure-project` before this plan's own subcommands apply the curated bundle, and (2) an
@@ -1237,9 +1271,8 @@ class TestMergeModeEndToEnd(unittest.TestCase):
     require the REAL `config-set`/`config-new-project` subcommands actually mutating a file on
     disk, not a faked subprocess."""
 
-    _REAL_GSD_TOOLS = gsd_catalog.resolve_gsd_tools_path(dict(os.environ))
-
     def setUp(self):
+        super().setUp()
         self._scratch_dirs = []
         self.addCleanup(self._cleanup_scratch_dirs)
 
@@ -1252,16 +1285,13 @@ class TestMergeModeEndToEnd(unittest.TestCase):
         self._scratch_dirs.append(d)
         return d
 
-    @unittest.skipUnless(
-        _REAL_GSD_TOOLS is not None and shutil.which("node"),
-        "no installed gsd-core, or no node to run it, on this machine",
-    )
     def test_merge_mode_end_to_end(self):
         # (1) Fresh project, no .planning/ at all -- must fall through ensure-project first.
         fresh = self._mkscratch()
-        exit_ensure = cli.main(["ensure-project", "--project-dir", fresh])
+        self.require_real_gsd(fresh)
+        exit_ensure = self.run_cli(["ensure-project", "--project-dir", fresh])
         self.assertEqual(exit_ensure, 0)
-        exit_bundle = cli.main(
+        exit_bundle = self.run_cli(
             [
                 "apply-workflow-defaults",
                 "--project-dir",
@@ -1293,7 +1323,7 @@ class TestMergeModeEndToEnd(unittest.TestCase):
         with open(existing_config_path, "w", encoding="utf-8") as f:
             json.dump(fixture, f)
 
-        exit_bundle_existing = cli.main(
+        exit_bundle_existing = self.run_cli(
             [
                 "apply-workflow-defaults",
                 "--project-dir",
