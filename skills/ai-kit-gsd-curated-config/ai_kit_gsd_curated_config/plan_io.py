@@ -138,6 +138,26 @@ def _validate_config_section(section: dict, name: str) -> str | None:
     return None
 
 
+def _conflict_item_problem(item, index: int) -> str | None:
+    if not isinstance(item, dict):
+        return f"conflicts[{index}] malformed"
+    if not isinstance(item.get("kind"), str):
+        return f"conflicts[{index}] malformed"
+    if not isinstance(item.get("key"), str):
+        return f"conflicts[{index}] malformed"
+    if item.get("scope") not in ("project", "global"):
+        return f"conflicts[{index}] malformed"
+    return None
+
+
+def _validate_conflicts(conflicts: list) -> str | None:
+    for index, item in enumerate(conflicts):
+        problem = _conflict_item_problem(item, index)
+        if problem:
+            return problem
+    return None
+
+
 def _validate_candidates(candidates: list) -> str | None:
     for index, cand in enumerate(candidates):
         if not isinstance(cand, dict):
@@ -163,6 +183,9 @@ def load_inventory(path: str) -> tuple[dict | None, str | None]:
     except json.JSONDecodeError:
         return None, f"inventory {path}: invalid JSON{_ERROR_SUFFIX}"
     problem = _validate_inventory(inventory)
+    if problem:
+        return None, f"inventory {path}: {problem}{_ERROR_SUFFIX}"
+    problem = _validate_conflicts(inventory["conflicts"])
     if problem:
         return None, f"inventory {path}: {problem}{_ERROR_SUFFIX}"
     return inventory, None
