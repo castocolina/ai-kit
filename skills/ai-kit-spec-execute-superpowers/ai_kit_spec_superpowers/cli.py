@@ -19,6 +19,7 @@ import subprocess
 import sys
 
 from ai_kit_spec.cache import cache_read_json, cache_write_json
+from ai_kit_spec.config_io import ConfigError
 from ai_kit_spec.detection import (
     CODEGRAPH_INDEX_TIMEOUT_SECONDS,
     build_codegraph_index_command,
@@ -50,7 +51,18 @@ _REPORT_FALLBACK_MARKER = (
 )
 
 
-def main(argv: list, assemble_candidates_fn=assemble_candidates,
+def main(argv: list, **kwargs) -> int:
+    """Wrapper around _main that turns a ConfigError (D-11/R13) into a loud failure: print
+    the path + parser message to stderr and exit 2 -- a broken review-spec.toml must stop
+    the CLI, never silently disable cross-AI review."""
+    try:
+        return _main(argv, **kwargs)
+    except ConfigError as exc:
+        print(f"ai-kit-spec-execute-superpowers: config error: {exc}", file=sys.stderr)
+        return 2
+
+
+def _main(argv: list, assemble_candidates_fn=assemble_candidates,
          build_dispatch_injection_fn=build_dispatch_injection,
          derive_files_touched_sizes_fn=derive_files_touched_sizes,
          compute_ladder_keys_fn=compute_ladder_keys, reasons_summary_fn=reasons_summary,

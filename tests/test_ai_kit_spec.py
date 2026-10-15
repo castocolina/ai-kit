@@ -169,12 +169,16 @@ class TestLoadToml(unittest.TestCase):
     def test_missing_file_returns_empty_dict(self):
         self.assertEqual(rs.cfg_load_toml("/no/such/file.toml"), {})
 
-    def test_malformed_toml_returns_empty_dict(self):
+    def test_malformed_toml_raises_config_error(self):
+        # D-11/R13 (Plan 16.1-08): a broken review-spec.toml fails LOUDLY (ConfigError with
+        # the path and parser message) instead of silently disabling cross-AI review.
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "bad.toml")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("this is not [ valid toml")
-            self.assertEqual(rs.cfg_load_toml(path), {})
+            with self.assertRaises(config_io.ConfigError) as ctx:
+                rs.cfg_load_toml(path)
+            self.assertIn(path, str(ctx.exception))
 
     def test_valid_toml_parses(self):
         with tempfile.TemporaryDirectory() as d:

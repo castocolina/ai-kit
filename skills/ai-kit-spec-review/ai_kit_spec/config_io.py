@@ -39,31 +39,57 @@ def cfg_global_path(env: dict) -> str:
     return os.path.join(cfg_config_base(env), "review-spec.toml")
 
 
+class ConfigError(ValueError):
+    """A review-spec.toml exists but cannot be parsed (malformed TOML, non-UTF-8 bytes, or
+    no tomllib on this interpreter). Carries the path and the parser message; the CLI mains
+    catch it, print it to stderr, and exit 2 (D-11/R13) -- a broken config must stop the
+    CLIs loudly, never silently disable cross-AI review."""
+
+    def __init__(self, path: str, message: str):
+        super().__init__(f"{path}: {message}")
+        self.path = path
+        self.message = message
+
+    def __str__(self) -> str:
+        return f"{self.path}: {self.message}"
+
+
 def cfg_load_toml(path: str) -> dict:
-    """Parse the TOML at path. Missing/malformed/no-tomllib -> {}. Never
-    raises (mirrors tools/status-line.py's cfg_load_toml exactly, since
-    this module runs under the same bare system python3, not the .venv)."""
+    """Parse the TOML at path. A missing file is a valid empty config -> {} (a missing
+    review-spec.toml is the normal no-config state, never an error). Any OTHER problem
+    raises ConfigError (D-11/R13): an existing malformed or non-UTF-8 file, an unreadable
+    file, or tomllib missing on Python < 3.11. Unlike tools/status-line.py's never-raise
+    loader, this module FAILS LOUDLY -- a silently-ignored broken review-spec.toml would
+    switch cross-AI review off without the user ever knowing."""
     if tomllib is None:
+        if os.path.exists(path):
+            raise ConfigError(path, "reading TOML needs Python 3.11+")
         return {}
     try:
         with open(path, "rb") as f:
             return cfg_parse_toml_bytes(f.read(), path)
     except FileNotFoundError:
         return {}
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
+    except ConfigError:
+        raise
+    except OSError as exc:
+        raise ConfigError(path, str(exc)) from exc
 
 
 def cfg_parse_toml_bytes(raw: bytes, path: str) -> dict:
-    """Parse already-read TOML bytes (same no-raise-on-bad-input contract as cfg_load_toml:
-    malformed bytes -> {}). Kept separate so cfg_resolve can hash and parse the SAME bytes
-    it read once -- no check-then-read gap between the trust decision and the parse."""
+    """Parse already-read TOML bytes; raise ConfigError naming `path` for malformed TOML
+    or non-UTF-8 bytes. Kept separate so cfg_resolve can hash and parse the SAME bytes it
+    read once -- no check-then-read gap between the trust decision and the parse."""
     if tomllib is None:
-        return {}
+        raise ConfigError(path, "reading TOML needs Python 3.11+")
     try:
-        return tomllib.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
-        return {}
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ConfigError(path, f"not valid UTF-8 ({exc})") from exc
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(path, str(exc)) from exc
 
 
 def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
@@ -106,8 +132,11 @@ def cfg_resolve(cwd: str, env: dict, warn_fn=None) -> dict:
     if os.path.exists(local_path):
         with open(local_path, "rb") as f:
             raw = f.read()
+        # Parsing happens BEFORE the trust check (D-08 interpretation): a malformed file is
+        # reported (R13) whether or not it is trusted -- parsing executes nothing.
+        parsed = cfg_parse_toml_bytes(raw, local_path)
         if is_trusted(cfg_trust_store_dir(env), os.path.realpath(local_path), raw):
-            local = cfg_parse_toml_bytes(raw, local_path)
+            local = parsed
         else:
             warn_fn(
                 f"ai-kit-spec: ignoring untrusted project-local config {local_path}; "

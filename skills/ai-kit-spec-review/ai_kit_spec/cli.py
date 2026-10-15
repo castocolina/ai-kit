@@ -17,6 +17,7 @@ from ai_kit_spec.commands import (
     split_command_template,
 )
 from ai_kit_spec.config_io import (
+    ConfigError,
     cfg_local_path,
     cfg_parse_toml_bytes,
     cfg_render_toml,
@@ -650,7 +651,18 @@ def build_model_catalog(discovered_models: list, models_dev_data: dict, models_d
     return catalog, rejections, unmatched
 
 
-def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
+def main(argv: list, **kwargs) -> int:
+    """Wrapper around _main that turns a ConfigError (D-11/R13) into a loud failure: print
+    the path + parser message to stderr and exit 2 -- a broken review-spec.toml must stop
+    the CLI, never silently disable cross-AI review."""
+    try:
+        return _main(argv, **kwargs)
+    except ConfigError as exc:
+        print(f"ai-kit-spec: config error: {exc}", file=sys.stderr)
+        return 2
+
+
+def _main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
          dispatch_execute_fn=dispatch_execute, dispatch_reviewer_fn=dispatch_reviewer,
          env_fn=lambda: dict(os.environ),
          load_secret_fn=load_secret, fetch_models_dev_fn=fetch_models_dev,

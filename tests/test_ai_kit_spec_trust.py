@@ -13,6 +13,10 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
+                                 "ai-kit-spec-execute-gsd"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
+                                 "ai-kit-spec-execute-superpowers"))
 
 from ai_kit_spec import cli, config_io, trust
 
@@ -222,3 +226,119 @@ class TestTrustLifecycle(TrustEnvTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLoudConfigErrors(TrustEnvTestCase):
+    """R13 (Plan 16.1-08 Task 2): a malformed or non-UTF-8 review-spec.toml raises
+    ConfigError and stops all three CLIs with exit 2 + the path on stderr; a missing file
+    stays a silent default and a zero-byte file is valid TOML."""
+
+    def test_missing_file_is_still_empty_dict(self):
+        self.assertEqual(config_io.cfg_load_toml(os.path.join(self.cwd, "nope.toml")), {})
+
+    def test_zero_byte_file_is_valid_toml(self):
+        path = os.path.join(self.cwd, "empty.toml")
+        open(path, "wb").close()
+        self.assertEqual(config_io.cfg_load_toml(path), {})
+
+    def test_malformed_toml_raises_with_path_and_parser_message(self):
+        path = self.write_local(b"[[reviewers]\nkey=")
+        with self.assertRaises(config_io.ConfigError) as ctx:
+            config_io.cfg_load_toml(path)
+        self.assertIn(path, str(ctx.exception))
+        self.assertIn(path, ctx.exception.path)
+
+    def test_non_utf8_bytes_raise_config_error_naming_path(self):
+        path = self.write_local(b"\xff\xfe = 1")
+        with self.assertRaises(config_io.ConfigError) as ctx:
+            config_io.cfg_load_toml(path)
+        self.assertEqual(ctx.exception.path, path)
+
+    def test_missing_tomllib_on_existing_file_raises(self):
+        path = self.write_local(b'[policy]\nmode = "single"\n')
+        with mock.patch.object(config_io, "tomllib", None), \
+                self.assertRaises(config_io.ConfigError) as ctx:
+            config_io.cfg_load_toml(path)
+        self.assertIn("Python 3.11+", ctx.exception.message)
+
+    def test_two_readers_of_one_malformed_file_both_report(self):
+        path = self.write_local(b"[[reviewers]\nkey=")
+        errors = []
+
+        def reader():
+            try:
+                config_io.cfg_load_toml(path)
+            except config_io.ConfigError as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=reader) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(len(errors), 2)
+        for exc in errors:
+            self.assertEqual(exc.path, path)
+
+    def _write_global(self, raw: bytes) -> None:
+        cfg_dir = os.path.join(self.xdg, "ai-kit")
+        os.makedirs(cfg_dir, exist_ok=True)
+        with open(os.path.join(cfg_dir, "review-spec.toml"), "wb") as f:
+            f.write(raw)
+
+    def test_review_spec_main_exits_2_on_malformed_local(self):
+        self.write_local(b"[[reviewers]\n")
+        quota_path = os.path.join(self.cwd, "quota.json")
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(["resolve-reviewers", "--cwd", self.cwd,
+                             "--quota-path", quota_path])
+        self.assertEqual(code, 2)
+        self.assertIn(config_io.cfg_local_path(self.cwd), err.getvalue())
+
+    def test_review_spec_main_exits_2_on_malformed_global(self):
+        self._write_global(b"[[reviewers]\n")
+        quota_path = os.path.join(self.cwd, "quota.json")
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(["resolve-reviewers", "--cwd", self.cwd,
+                             "--quota-path", quota_path])
+        self.assertEqual(code, 2)
+        self.assertIn(os.path.join(self.xdg, "ai-kit", "review-spec.toml"), err.getvalue())
+
+    def test_gsd_cli_exits_2_on_malformed_local(self):
+        from ai_kit_spec_gsd import cli as gsd_cli
+        self.write_local(b"[[reviewers]\n")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = gsd_cli.main(["resolve-dispatch", "--cwd", self.cwd,
+                                 "--config-path", os.path.join(self.cwd, "gsd-config.json"),
+                                 "--target-dir", self.cwd,
+                                 "--quota-path", os.path.join(self.cwd, "quota.json")])
+        self.assertEqual(code, 2)
+        self.assertIn(config_io.cfg_local_path(self.cwd), err.getvalue())
+
+    def test_superpowers_cli_exits_2_on_malformed_local(self):
+        from ai_kit_spec_superpowers import cli as superpowers_cli
+        self.write_local(b"[[reviewers]\n")
+        task_path = os.path.join(self.cwd, "task-1-brief.md")
+        with open(task_path, "w", encoding="utf-8") as f:
+            f.write("### Task 1\n**Files:**\n- Create: `a.py`\n")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = superpowers_cli.main(["resolve-injection", "--cwd", self.cwd,
+                                         "--task-file", task_path,
+                                         "--quota-path", os.path.join(self.cwd, "q.json")])
+        self.assertEqual(code, 2)
+        self.assertIn(config_io.cfg_local_path(self.cwd), err.getvalue())
+
+    def test_malformed_untrusted_local_still_exits_2(self):
+        # Parsing happens BEFORE the trust check (D-08 interpretation) -- the malformed
+        # file here was never trusted, and the loud error fires regardless.
+        self.write_local(b"[[reviewers]\n")
+        quota_path = os.path.join(self.cwd, "quota.json")
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = cli.main(["probe-quota", "--cwd", self.cwd, "--quota-path", quota_path])
+        self.assertEqual(code, 2)
+        self.assertIn(config_io.cfg_local_path(self.cwd), err.getvalue())
