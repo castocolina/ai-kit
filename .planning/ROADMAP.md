@@ -241,7 +241,7 @@ plan — without writing anything.
      counterpart" note on single-provider hosts.
   4. Keys unknown to the host's installed gsd-core version are dropped from the plan with a
      visible note rather than silently written.
-**Plans**: 8/9 plans executed
+**Plans**: 9/9 plans executed
 
 Plans (sequential, one wave each: plans land one at a time in a shared checkout, and each
 plan's checks also run the modules the previous plan touched):
@@ -262,7 +262,7 @@ plan's checks also run the modules the previous plan touched):
 - Wave 8
   - [x] 17-08-PLAN.md — reconcile layer: managed-family unsets, policy leaves, runtime per host
 - Wave 9
-  - [ ] 17-09-PLAN.md — shared-fixture goldens for 5 hosts x 3 rigors, properties, phase gate
+  - [x] 17-09-PLAN.md — shared-fixture goldens for 5 hosts x 3 rigors, properties, phase gate
 
 ### Phase 18: Cross-AI, Skills & Apply Pipeline
 
