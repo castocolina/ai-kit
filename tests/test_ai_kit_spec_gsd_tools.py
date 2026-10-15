@@ -1,10 +1,9 @@
 """Tests for the one shared gsd-tools resolver and config write wrappers
 (`ai_kit_spec.gsd_tools`, D-18): launcher-order candidates pinned to `edge_floor.py`'s
-`engine_candidates`, project-local-first resolution (R17), the wrapper argv shapes, and --
-via a `skipUnless` class -- the real gsd-core `previousValue` contract the plan 16.1-10
-undo log relies on. All filesystem fixtures live in tempfile dirs; the only real
-gsd-tools run is `TestRealGsdTools` against the checkout's own `.claude/gsd-core` on a
-scratch project."""
+`engine_candidates`, project-local-first resolution (R17) and the wrapper argv shapes. All
+filesystem fixtures live in tempfile dirs. The real gsd-core `previousValue` contract the plan
+16.1-10 undo log relies on is pinned by `TestRealGsdTools` in the e2e-tier
+`tests/test_ai_kit_spec_e2e.py`."""
 import importlib
 import importlib.util
 import os
@@ -265,71 +264,6 @@ class TestWrappers(unittest.TestCase):
         self.assertFalse(
             gsd_tools.ensure_config_exists(self.TOOLS, "/p", run_fn=recording_run([(1, "", "")]))
         )
-
-
-class TestRealGsdTools(unittest.TestCase):
-    """Pins the real gsd-core 1.16 contract the undo log assumes, against the checkout's own
-    `.claude/gsd-core` on a scratch project. gsd-tools never reads the real ~/.gsd: HOME is
-    pointed at a temp dir for every subprocess."""
-
-    _REAL_GSD_TOOLS = os.path.join(_REPO_ROOT, ".claude", "gsd-core", "bin", "gsd-tools.cjs")
-    _SKIPPED_BECAUSE = (
-        f"checkout-local gsd-tools.cjs not found at {_REAL_GSD_TOOLS}"
-        if not os.path.isfile(_REAL_GSD_TOOLS)
-        else "node not found on PATH"
-        if shutil.which("node") is None
-        else None
-    )
-
-    def setUp(self):
-        if self._SKIPPED_BECAUSE:
-            self.skipTest(self._SKIPPED_BECAUSE)
-        self.project = _mkdtemp()
-        self.addCleanup(shutil.rmtree, self.project, ignore_errors=True)
-        self.home = _mkdtemp()
-        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
-        self.tools = gsd_tools.GsdTools(shutil.which("node"), self._REAL_GSD_TOOLS)
-
-    def _run(self, argv, **kwargs):
-        env = dict(os.environ)
-        env["HOME"] = self.home
-        kwargs["env"] = env
-        return subprocess.run(argv, **kwargs)
-
-    def test_previous_value_contract_on_real_gsd_core(self):
-        self.assertTrue(gsd_tools.ensure_config_exists(self.tools, self.project, run_fn=self._run))
-        resolved = gsd_tools.config_path(self.tools, self.project, run_fn=self._run)
-        self.assertIsNotNone(resolved)
-        self.assertTrue(resolved.endswith(os.path.join(".planning", "config.json")))
-
-        ok, output = gsd_tools.config_set(
-            self.tools, self.project, "workflow.cross_ai_timeout", 900, run_fn=self._run
-        )
-        self.assertTrue(ok)
-        self.assertEqual(gsd_tools.prior_value(output), (False, None))
-
-        ok, output = gsd_tools.config_set(
-            self.tools, self.project, "workflow.cross_ai_timeout", 600, run_fn=self._run
-        )
-        self.assertTrue(ok)
-        self.assertEqual(gsd_tools.prior_value(output), (True, 900))
-
-        ok, output = gsd_tools.config_set(
-            self.tools, self.project, "workflow.cross_ai_timeout", None, run_fn=self._run
-        )
-        self.assertTrue(ok)
-        self.assertEqual(gsd_tools.prior_value(output), (True, 600))
-        got = gsd_tools.config_get(
-            self.tools, self.project, "workflow.cross_ai_timeout", run_fn=self._run
-        )
-        self.assertEqual(got.found, False)
-        self.assertIsNone(got.error)
-
-        ok, output = gsd_tools.config_set(
-            self.tools, self.project, "_ai_kit_unknown", 1, run_fn=self._run
-        )
-        self.assertFalse(ok)
-        self.assertIn("unknown", output.lower())
 
 
 if __name__ == "__main__":

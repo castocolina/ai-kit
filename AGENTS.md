@@ -129,7 +129,8 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 - `make test` is the aggregate over four pyramid tiers, each a runner group:
   `test-unit` runs `unit` under system python3 plus `unit-uv` under uv;
   `test-integration` runs `integration`, the Textual app and PTY suites;
-  `e2e-test` runs `e2e`, the real git worktrees and memory checks, plus
+  `e2e-test` runs `e2e`, the real git worktrees, memory checks and real
+  `node` runs against the checkout-local gsd-core, plus
   `bash tests/test_install.sh`; `arch-test` runs `arch`. Run `make test`
   before considering work done — the Python suite alone doesn't cover
   installer behavior (fetch, symlink, wiring).

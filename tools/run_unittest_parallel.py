@@ -48,10 +48,14 @@ INTEGRATION_MODULES = frozenset({
     "tests.test_wizard_app",
     "tests.test_wizard_pty",
 })
-# Real git worktrees and memory checks; make e2e-test only, out of validate.
+# Real git worktrees, memory checks, and real `node` runs against the checkout-local
+# gsd-core; make e2e-test only, out of validate.
 E2E_MODULES = frozenset({
     "tests.test_worktree_e2e",
     "tests.test_system_memory_e2e",
+    "tests.test_curated_config_e2e",
+    "tests.test_ai_kit_spec_e2e",
+    "tests.test_ai_kit_gsd_spec_discuss_e2e",
 })
 EXPLICIT_GROUPS = {
     "arch": ARCH_MODULES,

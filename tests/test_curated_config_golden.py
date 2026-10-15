@@ -5,6 +5,8 @@ trimmed from models.dev whose scores/tokens_per_sec are synthetic rank-preservin
 Artificial Analysis data; labelled in ``_meta.fixture_note``), gsd-core 1.16 tables as the node
 query emits them, and synthetic pi models (labelled in runtimes).
 Regenerate goldens: ``UPDATE_GOLDEN=1 python3 -m unittest tests.test_curated_config_golden``.
+The tables fixture is re-checked against real gsd-core by ``TestGoldenTables`` in the e2e-tier
+``tests/test_curated_config_e2e.py``.
 """
 from __future__ import annotations
 
@@ -22,14 +24,11 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_gsd_curated_config import gsd_catalog, host, plan_io, presets, roles
-from ai_kit_spec import gsd_tools
+from ai_kit_gsd_curated_config import host, plan_io, presets, roles
 
-from tests.test_ai_kit_gsd_curated_config import _real_node_executable
 from tests.test_curated_config_inventory import (
     FakeRun,
     make_gsd_install,
-    real_gsd_run,
     run_inventory,
     seed_cache,
 )
@@ -166,25 +165,6 @@ def check_golden(test: unittest.TestCase, name: str, data: bytes) -> None:
     test.assertEqual(data, path.read_bytes(), f"Golden drift: regenerate with {regen}")
 
 
-def real_gsd_paths() -> tuple[gsd_catalog.GsdCorePaths, str] | str:
-    """The checkout-local gsd-core 1.16.0 paths, or the reason they are unusable."""
-    node_bin = _real_node_executable()
-    if node_bin is None:
-        return "no node executable"
-    tools = REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs"
-    if not tools.is_file():
-        return "no checkout-local .claude/gsd-core"
-    version = gsd_tools.gsd_core_version(str(tools))
-    if version != "1.16.0":
-        return f"checkout-local gsd-core is {version}; gsd_tables_1_16.json pins 1.16.0"
-    model_catalog = gsd_catalog.resolve_model_catalog_cjs_path(str(tools))
-    config_schema = gsd_catalog.resolve_config_schema_cjs_path(str(tools))
-    if not model_catalog or not config_schema:
-        return "gsd-core lib/model-catalog.cjs or lib/config-schema.cjs missing"
-    paths = gsd_catalog.GsdCorePaths(node_bin, model_catalog, config_schema)
-    return paths, version
-
-
 def resolve_host_candidates(inventory: dict, value) -> list[dict]:
     if value is None:
         return []
@@ -207,81 +187,6 @@ def resolve_host_candidates(inventory: dict, value) -> list[dict]:
 
 def _strip_fake(inv: dict) -> dict:
     return {k: v for k, v in inv.items() if k != "_fake_argv_log"}
-
-
-class TestGoldenTables(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls._paths = real_gsd_paths()
-        if isinstance(cls._paths, str):
-            raise unittest.SkipTest(f"fixture not re-validated: {cls._paths}")
-        cls.paths, cls.gsd_version = cls._paths
-        cls.scratch = tempfile.mkdtemp()
-        cls.child_env = {
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": cls.scratch,
-            "GSD_HOME": cls.scratch,
-        }
-        # Store on instance dict via list so unittest does not bind the nested _run fn.
-        cls._gsd_runner = [real_gsd_run(cls.child_env, cls.paths.node_bin)]
-        cls.project = os.path.join(cls.scratch, "project")
-        os.makedirs(cls.project)
-
-    @classmethod
-    def tearDownClass(cls):
-        import shutil
-
-        shutil.rmtree(cls.scratch, ignore_errors=True)
-
-    def _union_keys(self) -> list[str]:
-        keys: set[str] = set()
-        for host_name in host.HOSTS:
-            keys.update(presets.closed_key_set(host_name))
-        return sorted(keys)
-
-    def test_union_keys_match_fixture(self):
-        keys = self._union_keys()
-        raw_stdout: list[str] = []
-
-        def capture(cmd, **kw):
-            res = self._gsd_runner[0](cmd, **kw)
-            raw_stdout.append(res.stdout)
-            return res
-
-        result = gsd_catalog.query_gsd_tables(self.paths, self.project, keys, run_fn=capture)
-        self.assertIsNotNone(result)
-        assert result is not None
-        self.assertEqual(result["valid_keys"]["rejected"], [])
-        raw_profiles = json.loads(raw_stdout[-1])["model_profiles"]
-        if os.environ.get("UPDATE_GOLDEN"):
-            meta = {
-                "gsd_core_version": self.gsd_version,
-                "keys": "union of presets.closed_key_set over host.HOSTS",
-            }
-            # The fixture stores gsd-core's raw agent-first MODEL_PROFILES (the node output).
-            payload = {**result, "model_profiles": raw_profiles, "_meta": meta}
-            (FIXTURES / "gsd_tables_1_16.json").write_text(
-                plan_io.canonical_json(payload) + "\n", encoding="utf-8"
-            )
-            self.skipTest("UPDATE_GOLDEN set: rewrote gsd_tables_1_16.json; assertion skipped")
-        body = _tables_body()
-        self.assertEqual(raw_profiles, body["model_profiles"])
-        expected = {**body, "model_profiles": gsd_catalog.profile_first(body["model_profiles"])}
-        self.assertEqual(result, expected)
-
-    def test_model_policy_unset_keys_accepted(self):
-        flat = presets.flatten_config({"model_policy": POLICY})
-        keys = sorted(flat)
-        result = gsd_catalog.query_gsd_tables(
-            self.paths, self.project, keys, run_fn=self._gsd_runner[0]
-        )
-        self.assertIsNotNone(result)
-        assert result is not None
-        self.assertEqual(result["valid_keys"]["rejected"], [])
-        self.assertIn(
-            "model_policy.runtime_tiers.codex.opus",
-            result["valid_keys"]["accepted"],
-        )
 
 
 class TestFixtureShape(unittest.TestCase):

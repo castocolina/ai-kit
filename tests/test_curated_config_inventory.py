@@ -1,4 +1,5 @@
-"""Inventory tracer, gsd-core resolution, probe fail-closed paths, and real-gsd smoke (17-03)."""
+"""Inventory tracer, gsd-core resolution and probe fail-closed paths (17-03). The real-gsd
+smoke runs live in the e2e-tier tests/test_curated_config_e2e.py."""
 import contextlib
 import hashlib
 import io
@@ -22,7 +23,6 @@ from ai_kit_gsd_curated_config import (
     catalog_adapter,
     cli,
     gsd_catalog,
-    host,
     inventory,
     plan_io,
     presets,
@@ -30,10 +30,7 @@ from ai_kit_gsd_curated_config import (
 )
 from ai_kit_spec import gsd_tools
 
-from tests.test_ai_kit_gsd_curated_config import _RealGsdTestCase
 from tests.test_curated_config_recommend import build, entry_map, make_inventory
-
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 def make_gsd_install(install_root, version="1.16.0", *, include_config_schema=True):
@@ -266,66 +263,6 @@ class TestInventoryTracer(unittest.TestCase):
         run2 = real_gsd_run(child_env, node, fallback=fake)
         run2([sys.executable, "x/ai-kit-spec.py", "detect-runtimes"])
         self.assertEqual(len(seen), 1)
-
-
-class TestRealGsdInventory(_RealGsdTestCase):
-    def _recommend_round_trip(self, inv, host_name):
-        """The real inventory feeds recommend with no test-side reshaping (CR-01)."""
-        with tempfile.TemporaryDirectory() as tmp:
-            inv_path = os.path.join(tmp, "inventory.json")
-            with open(inv_path, "w", encoding="utf-8") as handle:
-                handle.write(plan_io.canonical_json(inv))
-            err = io.StringIO()
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-                code = cli.main(
-                    [
-                        "recommend", "--inventory", inv_path, "--profile", "adaptive",
-                        "--rigor", "standard", "--out", os.path.join(tmp, "plan.json"),
-                    ]
-                )
-            self.assertEqual(code, 0, f"{host_name}: {err.getvalue()}")
-
-    def test_inventory_each_host_against_checkout_gsd_core(self):
-        project = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
-        self.require_real_gsd(project)
-        xdg = os.path.join(self.child_env["HOME"], "xdg-cache")
-        seed_cache(xdg, {"clis": {}}, {"_meta": {"schema_version": 1}})
-        self.child_env["XDG_CACHE_HOME"] = xdg
-        self.resolve_env["XDG_CACHE_HOME"] = xdg
-        version_path = os.path.join(_REPO_ROOT, ".claude", "gsd-core", "VERSION")
-        with open(version_path, encoding="utf-8") as fh:
-            expected_version = fh.read().strip()
-        for host_name in host.HOSTS:
-            spec_fake = FakeRun()
-            stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
-                code = cli.main(
-                    ["inventory", "--project-dir", project, "--host", host_name],
-                    which_fn=lambda name, **_kw: self.node_bin if name == "node" else None,
-                    env_fn=lambda: dict(self.resolve_env),
-                    run_fn=real_gsd_run(
-                        self.child_env, self.node_bin, fallback=spec_fake
-                    ),
-                )
-            self.assertEqual(code, 0, host_name)
-            parsed = json.loads(stdout.getvalue())
-            self.assertEqual(parsed["gsd_core"]["version"], expected_version)
-            self.assertEqual(parsed["gsd_core"]["scope"], "local")
-            self.assertIn("gsd-planner", parsed["gsd_core"]["model_profiles"]["adaptive"])
-            self.assertEqual(parsed["gsd_core"]["valid_keys"]["rejected"], [])
-            self._recommend_round_trip(parsed, host_name)
-            spec_calls = [
-                a
-                for a in spec_fake.argv_log
-                if len(a) >= 3 and str(a[1]).endswith("ai-kit-spec.py")
-            ]
-            self.assertEqual(len(spec_calls), 2, host_name)
-            self.assertEqual(spec_calls[0][2], "detect-runtimes")
-            self.assertEqual(spec_calls[1][2], "fetch-model-catalog")
-            for argv, kw in zip(spec_fake.argv_log, spec_fake.kw_log, strict=True):
-                if len(argv) >= 3 and str(argv[1]).endswith("ai-kit-spec.py"):
-                    self.assertEqual(kw.get("env"), self.resolve_env)
 
 
 class TestCatalogTracer(unittest.TestCase):
@@ -1942,35 +1879,6 @@ class TestReadOnly(unittest.TestCase):
             code, _parsed, _err = run_inventory(
                 project, _inventory_env(home), FakeRun(), "--host", "codex"
             )
-            self.assertEqual(code, 0)
-        finally:
-            _unlock_tree(saved)
-        self.assertEqual(before, _tree_snapshot(project))
-
-
-class TestReadOnlyRealGsd(_RealGsdTestCase):
-    def test_real_gsd_inventory_read_only(self):
-        ro = TestReadOnly()
-        ro.setUp()
-        self.addCleanup(ro.doCleanups)
-        _home, project = ro._readonly_project()
-        self.require_real_gsd(project)
-        xdg = os.path.join(self.child_env["HOME"], "xdg-cache")
-        seed_cache(xdg, {"clis": {}}, {"_meta": {"schema_version": 1}})
-        self.child_env["XDG_CACHE_HOME"] = xdg
-        self.resolve_env["XDG_CACHE_HOME"] = xdg
-        before = _tree_snapshot(project)
-        saved = _lock_tree(project)
-        self.addCleanup(_unlock_tree, saved)
-        spec_fake = FakeRun()
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                code = cli.main(
-                    ["inventory", "--project-dir", project, "--host", "codex"],
-                    which_fn=lambda name, **_kw: self.node_bin if name == "node" else None,
-                    env_fn=lambda: dict(self.resolve_env),
-                    run_fn=real_gsd_run(self.child_env, self.node_bin, fallback=spec_fake),
-                )
             self.assertEqual(code, 0)
         finally:
             _unlock_tree(saved)

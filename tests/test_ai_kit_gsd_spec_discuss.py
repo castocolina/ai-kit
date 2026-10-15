@@ -459,15 +459,6 @@ class TestEdgeFloor(unittest.TestCase):
                    "PATH": str(launcher.parent)}
             self.assertEqual(edge_floor.find_engine(env, tmp, None), engine)
 
-    @unittest.skipUnless(shutil.which("node") and edge_floor.find_engine(os.environ, os.getcwd(),
-                                                                          None),
-                         "node or gsd-core edge-probe.cjs not installed")
-    def test_real_engine_floor(self):
-        engine = edge_floor.find_engine(os.environ, os.getcwd(), None)
-        assert engine is not None
-        floor = edge_floor.run_engine(engine, edge_floor.requirements(SPEC))
-        self.assertTrue({i["requirement_id"] for i in floor["items"]} <= {"R1", "R2"})
-
 
 if __name__ == "__main__":
     unittest.main()
