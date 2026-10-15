@@ -31,6 +31,9 @@ _MODEL_VENDOR_PREFIXES = (
     ("composer-", "cursor"),
 )
 
+# Every vendor the prefix table can infer (curated-config's catalog-provider allow-list).
+KNOWN_VENDORS = frozenset(vendor for _prefix, vendor in _MODEL_VENDOR_PREFIXES)
+
 
 def infer_vendor_from_model(model: str) -> str | None:
     """Deterministic best-effort vendor lookup from a model id's known

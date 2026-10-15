@@ -29,9 +29,6 @@ CANDIDATE_HEURISTIC_FIELDS = ("family", "fast_twin_of", "vendor")
 
 _SCORE_AXIS_NAMES = ("intelligence_index", "coding_index", "agentic_index")
 _ROUTER_PURPOSES = frozenset({"review", "execute"})
-_KNOWN_VENDORS = frozenset(
-    {"anthropic", "openai", "xai", "google", "zhipu", "moonshot", "alibaba", "cursor"}
-)
 
 
 class CatalogState(NamedTuple):
@@ -458,6 +455,6 @@ def _candidate_vendor(model: str, entry: dict, vendor_mod) -> str | None:
         if vendor:
             return vendor
     provider = entry.get("provider")
-    if isinstance(provider, str) and provider in _KNOWN_VENDORS:
+    if isinstance(provider, str) and provider in vendor_mod.KNOWN_VENDORS:
         return provider
     return None
