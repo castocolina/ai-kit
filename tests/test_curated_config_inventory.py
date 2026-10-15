@@ -186,6 +186,16 @@ def real_gsd_run(child_env, node_bin, fallback=None):
 
 
 class TestInventoryTracer(unittest.TestCase):
+    def test_missing_project_dir_exits_2(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        missing = os.path.join(home, "does-not-exist-typo")
+        fake = FakeRun()
+        code, parsed, err = run_inventory(missing, _inventory_env(home), fake)
+        self.assertEqual((code, parsed), (2, None))
+        self.assertIn("is not a directory", err)
+        self.assertEqual(fake.argv_log, [])
+
     def test_end_to_end_fake_claude_gsd_core(self):
         home = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)

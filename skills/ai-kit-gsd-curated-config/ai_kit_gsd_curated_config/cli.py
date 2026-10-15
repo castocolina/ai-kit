@@ -435,9 +435,17 @@ def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
 
 
 def _cmd_inventory(args, which_fn, run_fn, env_fn) -> int:
+    project_dir = os.path.abspath(args.project_dir)
+    if not os.path.isdir(project_dir):
+        # A typo must not read as a plausible fresh project (B-WR-02).
+        print(
+            f"ai-kit-gsd-curated-config: --project-dir {project_dir} is not a directory",
+            file=sys.stderr,
+        )
+        return 2
     deps = host.InventoryDeps(which_fn, run_fn, env_fn)
     inv, error = inventory.build_inventory(
-        os.path.abspath(args.project_dir),
+        project_dir,
         inventory.InventoryOpts(args.host, refresh=args.refresh),
         deps,
     )
