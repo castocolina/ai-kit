@@ -19,6 +19,7 @@ before `ast_only.py` existed. Task 3 promotes them into the permanent,
 fully paired coverage classes.
 """
 
+import ast
 import os
 import re
 import sys
@@ -31,7 +32,7 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-project-rules-arch"),
 )
 
-from ai_kit_project_rules_arch import arch_checker, cli
+from ai_kit_project_rules_arch import arch_checker, ast_only, cli
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
@@ -164,6 +165,38 @@ def _ast_only_repo_raw(recipe, files):
 def _ast_only_repo(backing_file_body, recipe="python3 -m unittest tests.test_arch"):
     files = dict(_AST_ONLY_SRC_FILES, **{"tests/test_arch.py": backing_file_body})
     return _ast_only_repo_raw(recipe, files)
+
+
+class TestScopeCollectorDispatch(unittest.TestCase):
+    def test_visit_dispatch_records_scopes_assignments_and_calls(self):
+        source = (
+            "module_val = 1\n"
+            "def sync_fn():\n"
+            "    inner = 2\n"
+            "    sync_fn()\n"
+            "async def async_fn():\n"
+            "    async_inner = 3\n"
+            "    async_fn()\n"
+            "top_call()\n"
+        )
+        tree = ast.parse(source)
+        sync_fn = tree.body[1]
+        async_fn = tree.body[2]
+        collector = ast_only._ScopeCollector()
+        collector.visit(tree)
+        self.assertIn(tree, collector.scope_assignments)
+        self.assertIn(sync_fn, collector.scope_assignments)
+        self.assertIn(async_fn, collector.scope_assignments)
+        self.assertIn("module_val", collector.scope_assignments[tree])
+        self.assertIn("inner", collector.scope_assignments[sync_fn])
+        self.assertIn("async_inner", collector.scope_assignments[async_fn])
+        self.assertEqual(len(collector.call_scope), 3)
+        module_call = tree.body[3].value
+        inner_sync_call = sync_fn.body[1].value
+        inner_async_call = async_fn.body[1].value
+        self.assertIs(collector.call_scope[module_call], tree)
+        self.assertIs(collector.call_scope[inner_sync_call], sync_fn)
+        self.assertIs(collector.call_scope[inner_async_call], async_fn)
 
 
 class TestTracerAstOnlyTargetAware(unittest.TestCase):

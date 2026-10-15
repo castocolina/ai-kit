@@ -106,6 +106,7 @@ def run_domain(domain: str, repo_root: str) -> dict:
             capture_output=True,
             text=True,
             timeout=DOMAIN_TIMEOUT_SECONDS,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return {
