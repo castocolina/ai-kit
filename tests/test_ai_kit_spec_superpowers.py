@@ -3,6 +3,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import sys
 import tempfile
 import unittest
@@ -1914,6 +1915,7 @@ class TestUntrustedLocalExecuteEntry(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as xdg:
             env = {"HOME": home, "XDG_CONFIG_HOME": xdg}
             cwd = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, cwd, True)
             local_dir = os.path.join(cwd, ".aikit")
             os.makedirs(local_dir)
             local_path = os.path.join(local_dir, "review-spec.toml")

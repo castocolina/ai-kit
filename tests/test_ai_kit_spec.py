@@ -1699,7 +1699,7 @@ class TestProbeCodegraph(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             fake_claude = os.path.join(tmp, "claude")
             with open(fake_claude, "w", encoding="utf-8") as f:
-                f.write("#!/bin/sh\nsleep 30\n")
+                f.write("#!/bin/sh\nexec sleep 30\n")  # exec: the probe timeout kills sleep itself
             os.chmod(fake_claude, stat.S_IRWXU)
             env = os.environ.copy()
             env["PATH"] = tmp + os.pathsep + env.get("PATH", "")

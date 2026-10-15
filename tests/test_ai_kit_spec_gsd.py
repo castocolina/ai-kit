@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -734,7 +735,7 @@ class TestCliResolveDispatch(unittest.TestCase):
 
     def test_resolve_dispatch_prints_json_dispatch_decision_and_writes_via_config_set(self):
         import json
-        fake = FakeGsdTools("/tmp")  # config-path answered in-memory; nothing touches /tmp
+        fake = FakeGsdTools(tempfile.gettempdir())  # config-path is answered in memory
         code, out = self._main(self._codex_assemble(), fake)
         self.assertEqual(code, 0)
         result = json.loads(out)
@@ -1403,6 +1404,7 @@ class TestUntrustedLocalExecuteEntry(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as xdg:
             env = {"HOME": home, "XDG_CONFIG_HOME": xdg}
             cwd = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, cwd, True)
             local_dir = os.path.join(cwd, ".aikit")
             os.makedirs(local_dir)
             local_path = os.path.join(local_dir, "review-spec.toml")

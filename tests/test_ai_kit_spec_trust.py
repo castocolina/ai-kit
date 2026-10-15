@@ -316,9 +316,6 @@ class TestTrustLifecycle(TrustEnvTestCase):
         self.assertTrue(trust.is_trusted(self.store, real, raw))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestLoudConfigErrors(TrustEnvTestCase):
     """R13 (Plan 16.1-08 Task 2): a malformed or non-UTF-8 review-spec.toml raises
@@ -433,3 +430,7 @@ class TestLoudConfigErrors(TrustEnvTestCase):
             code = cli.main(["probe-quota", "--cwd", self.cwd, "--quota-path", quota_path])
         self.assertEqual(code, 2)
         self.assertIn(config_io.cfg_local_path(self.cwd), err.getvalue())
+
+
+if __name__ == "__main__":
+    unittest.main()
