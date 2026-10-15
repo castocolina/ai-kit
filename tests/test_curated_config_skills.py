@@ -14,7 +14,7 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_gsd_curated_config import host
+from ai_kit_gsd_curated_config import host, skill_scan
 
 from tests.test_curated_config_golden import tables_answer
 from tests.test_curated_config_inventory import (
@@ -149,3 +149,196 @@ class TestSkillInventoryEndToEnd(unittest.TestCase):
         self.assertEqual(code, 0)
         assert parsed is not None
         self.assertEqual(parsed["skills"], [])
+
+
+def write_enabled_layers(home, project, plugin_id, user=None, project_val=None, local=None):
+    if user is not None:
+        os.makedirs(os.path.join(home, ".claude"), exist_ok=True)
+        with open(os.path.join(home, ".claude", "settings.json"), "w", encoding="utf-8") as fh:
+            json.dump({"enabledPlugins": {plugin_id: user}}, fh)
+    if project_val is not None:
+        os.makedirs(os.path.join(project, ".claude"), exist_ok=True)
+        with open(
+            os.path.join(project, ".claude", "settings.json"), "w", encoding="utf-8"
+        ) as fh:
+            json.dump({"enabledPlugins": {plugin_id: project_val}}, fh)
+    if local is not None:
+        os.makedirs(os.path.join(project, ".claude"), exist_ok=True)
+        with open(
+            os.path.join(project, ".claude", "settings.local.json"), "w", encoding="utf-8"
+        ) as fh:
+            json.dump({"enabledPlugins": {plugin_id: local}}, fh)
+
+
+class TestScanSkills(unittest.TestCase):
+    def test_adjacent_same_name_in_global_and_project(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        os.makedirs(project)
+        gdir = os.path.join(home, ".claude", "skills")
+        add_skill(gdir, "dup")
+        add_skill(os.path.join(project, "skills"), "dup")
+        roots = {"claude": gdir, "codex": None}
+        rows = skill_scan.scan_skills(project, "claude", roots, home)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["root_kind"] for r in rows}, {"global", "project"})
+        self.assertNotEqual(rows[0]["real_dir"], rows[1]["real_dir"])
+
+    def test_empty_roots_and_missing_dirs(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        rows = skill_scan.scan_skills(project, "codex", {"codex": None}, "/tmp/home")
+        self.assertEqual(rows, [])
+
+    def test_encoding_and_symlink_escape(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        gdir = os.path.join(home, ".claude", "skills")
+        for name in ("bad name", "dot.name"):
+            add_skill(gdir, name)
+        add_skill(gdir, "in")
+        outer = os.path.join(root, "outside")
+        add_skill(outer, "link-out")
+        os.symlink(os.path.join(outer, "link-out"), os.path.join(gdir, "link-out"))
+        rows = {r["name"]: r for r in skill_scan.scan_root(gdir, "global", gdir, home)}
+        self.assertFalse(rows["bad name"]["addressable"])
+        self.assertFalse(rows["dot.name"]["addressable"])
+        self.assertTrue(rows["link-out"]["escapes_root"])
+        self.assertFalse(rows["in"]["escapes_root"])
+
+    def test_skill_md_symlink_outside_root(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        gdir = os.path.join(home, ".claude", "skills")
+        skill_dir = os.path.join(gdir, "inner")
+        os.makedirs(skill_dir)
+        outside = os.path.join(home, "vault", "desc.md")
+        os.makedirs(os.path.dirname(outside), exist_ok=True)
+        with open(outside, "w", encoding="utf-8") as fh:
+            fh.write("---\ndescription: x\n---\n")
+        os.symlink(outside, os.path.join(skill_dir, "SKILL.md"))
+        row = skill_scan.scan_root(gdir, "global", gdir, home)[0]
+        self.assertTrue(row["escapes_root"])
+        self.assertTrue(row["real_dir"].endswith("vault"))
+        self.assertEqual(row["real_dir_home"], "~/vault")
+
+    def test_ordering_by_root_kind_root_name(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        os.makedirs(project)
+        gdir = os.path.join(home, ".claude", "skills")
+        for name in ("z-skill", "a-skill"):
+            add_skill(gdir, name)
+        add_skill(os.path.join(project, "skills"), "m-skill")
+        rows = skill_scan.scan_skills(project, "claude", {"claude": gdir}, home)
+        self.assertEqual([r["name"] for r in rows], ["a-skill", "z-skill", "m-skill"])
+
+    def test_ignores_non_skill_dirs_and_truncates_description(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        gdir = os.path.join(root, "skills")
+        os.makedirs(gdir)
+        add_skill(gdir, "keep", "x" * 500)
+        os.makedirs(os.path.join(gdir, "empty"), exist_ok=True)
+        with open(os.path.join(gdir, "plain.txt"), "w", encoding="utf-8") as fh:
+            fh.write("n")
+        row = skill_scan.scan_root(gdir, "project", "skills", root)[0]
+        self.assertEqual(len(row["description"]), skill_scan.DESCRIPTION_MAX)
+
+    def test_unreadable_skill_md_keeps_entry(self):
+        if os.geteuid() == 0:
+            self.skipTest("chmod 000 ineffective as root")
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        gdir = os.path.join(root, "skills")
+        add_skill(gdir, "locked")
+        skill_md = os.path.join(gdir, "locked", "SKILL.md")
+        os.chmod(skill_md, 0)
+        self.addCleanup(os.chmod, skill_md, 0o644)
+        row = skill_scan.scan_root(gdir, "project", "skills", root)[0]
+        self.assertEqual(row["description"], "")
+
+
+class TestPluginSkills(unittest.TestCase):
+    def test_project_scope_and_enabled_layers(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        other = os.path.join(root, "other")
+        os.makedirs(project)
+        os.makedirs(other)
+        plugin_id = "p@m"
+        add_plugin(home, "p", "m", ["s1"], scope="project", project_path=other, enabled=True)
+        claude_dir = os.path.join(home, ".claude")
+        rows = skill_scan.plugin_skills(claude_dir, project, home)
+        self.assertEqual(rows, [])
+        add_plugin(home, "p", "m", ["s1"], scope="project", project_path=project, enabled=True)
+        rows = skill_scan.plugin_skills(claude_dir, project, home)
+        self.assertEqual(len(rows), 1)
+        write_enabled_layers(home, project, plugin_id, user=True, local=False)
+        rows = skill_scan.plugin_skills(claude_dir, project, home)
+        self.assertEqual(rows, [])
+        write_enabled_layers(home, project, plugin_id, local=True)
+        rows = skill_scan.plugin_skills(claude_dir, project, home)
+        self.assertEqual(len(rows), 1)
+
+    def test_bad_plugin_name_not_addressable(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        version_dir = add_plugin(home, "bad.plugin", "m", ["ok"], enabled=True)
+        with open(
+            os.path.join(version_dir, ".claude-plugin", "plugin.json"), "w", encoding="utf-8"
+        ) as fh:
+            json.dump({"name": "bad.plugin"}, fh)
+        rows = skill_scan.plugin_skills(os.path.join(home, ".claude"), root, home)
+        self.assertFalse(rows[0]["addressable"])
+
+    def test_missing_install_and_nonstandard_layout(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        version_dir = add_plugin(home, "p", "m", ["s1"], enabled=True)
+        shutil.rmtree(version_dir)
+        rows = skill_scan.plugin_skills(os.path.join(home, ".claude"), root, home)
+        self.assertEqual(rows, [])
+        version_dir = add_plugin(home, "p2", "m", [], enabled=True)
+        add_skill(version_dir, "root-skill")
+        with open(os.path.join(version_dir, "SKILL.md"), "w", encoding="utf-8") as fh:
+            fh.write("---\n---\n")
+        with open(
+            os.path.join(version_dir, ".claude-plugin", "plugin.json"), "w", encoding="utf-8"
+        ) as fh:
+            json.dump({"name": "p2", "skills": ["../outside"]}, fh)
+        rows = skill_scan.plugin_skills(os.path.join(home, ".claude"), root, home)
+        self.assertEqual(rows, [])
+
+
+class TestPonytailVisibility(unittest.TestCase):
+    def test_per_host_global_roots_only(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        codex_root = os.path.join(home, ".agents", "skills")
+        os.makedirs(codex_root, exist_ok=True)
+        add_skill(codex_root, "ponytail")
+        add_skill(codex_root, "ponytail-review")
+        roots = {
+            "claude": os.path.join(home, ".claude", "skills"),
+            "codex": codex_root,
+            "opencode": None,
+            "cursor": None,
+            "pi": None,
+        }
+        vis = skill_scan.ponytail_visibility(roots)
+        self.assertEqual(vis["codex"], ["ponytail", "ponytail-review"])
+        for host_name in host.HOSTS:
+            if host_name != "codex":
+                self.assertEqual(vis[host_name], [])
