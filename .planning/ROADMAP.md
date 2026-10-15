@@ -241,14 +241,14 @@ plan — without writing anything.
      counterpart" note on single-provider hosts.
   4. Keys unknown to the host's installed gsd-core version are dropped from the plan with a
      visible note rather than silently written.
-**Plans**: 1/9 plans executed
+**Plans**: 2/9 plans executed
 
 Plans (sequential, one wave each: plans land one at a time in a shared checkout, and each
 plan's checks also run the modules the previous plan touched):
 - Wave 1
   - [x] 17-01-PLAN.md — opencode 2.x `/api/model` image_input probe, runtimes schema 3, ranker `score_exact`
 - Wave 2
-  - [ ] 17-02-PLAN.md — `recommend` tracer: presets, canonical plan.json, cross-AI reservations, key drop
+  - [x] 17-02-PLAN.md — `recommend` tracer: presets, canonical plan.json, cross-AI reservations, key drop
 - Wave 3
   - [ ] 17-03-PLAN.md — `inventory` tracer: project-local gsd-core, tables and probed valid keys
 - Wave 4
