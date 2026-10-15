@@ -4,6 +4,7 @@ import copy
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -1084,6 +1085,301 @@ class TestDryRunTracer(unittest.TestCase):
                 self.assertNotIn("config-set", joined)
                 self.assertNotIn("config-new-project", joined)
 
+
+
+from ai_kit_gsd_curated_config import gsd_catalog
+
+
+def _strict_encode():
+    mod = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
+    assert mod is not None
+    return mod.encode_value_strict
+
+
+def _write_apply(plan_path, inv_path, project, env, run_fn):
+    plan, _ = plan_io.load_plan(plan_path)
+    inv, _ = plan_io.load_inventory(inv_path)
+    assert plan is not None and inv is not None
+    inputs = apply_mod.Inputs(plan, plan_path, inv, inv_path, project)
+    deps = apply_mod.ApplyDeps(
+        lambda name: "node" if name == "node" else None,
+        run_fn,
+        lambda: dict(env),
+        now_fn=_fixed_now,
+    )
+    return apply_mod.run_apply(inputs, deps, _strict_encode())
+
+
+class _RecordingRun:
+    def __init__(self, base: FakeRun, *, fail_config_set: int | None = None):
+        self._base = base
+        self.argv_log: list[list[str]] = []
+        self.env_log: list[dict] = []
+        self._fail_config_set = fail_config_set
+        self._set_calls = 0
+
+    def __call__(self, cmd, **kw):
+        row = [str(part) for part in cmd]
+        self.argv_log.append(row)
+        env = kw.get("env")
+        self.env_log.append(dict(env) if env else {})
+        if len(row) >= 4 and row[0] == "node" and row[2] == "query" and row[3] == "config-set":
+            self._set_calls += 1
+            if self._fail_config_set is not None and self._set_calls == self._fail_config_set:
+                return subprocess.CompletedProcess(cmd, 1, "", "injected")
+            return subprocess.CompletedProcess(cmd, 0, '{"updated": true}', "")
+        if len(row) >= 3 and row[0] == "node" and row[2] == "config-new-project":
+            return subprocess.CompletedProcess(cmd, 0, "created", "")
+        if len(row) >= 4 and row[0] == "node" and row[2] == "query" and row[3] == "agent-skills":
+            return subprocess.CompletedProcess(cmd, 0, '{"warnings": []}', "")
+        return self._base(cmd, **kw)
+
+
+def _minimal_plan(host: str, inv: dict, entries: list, artifacts: list | None = None) -> dict:
+    plan = {
+        "schema_version": 2,
+        "host": host,
+        "profile": "adaptive",
+        "rigor": "standard",
+        "inventory_digest": plan_schema.inventory_digest(inv),
+        "cross_ai": {"review": False, "execution": False},
+        "skill_affinity": {},
+        "entries": entries,
+        "artifacts": artifacts or [],
+        "notes": [],
+    }
+    problem = plan_io.validate_plan(plan)
+    if problem:
+        raise AssertionError(problem)
+    return plan
+
+
+def _config_set_keys(log: list[list[str]]) -> list[str]:
+    keys: list[str] = []
+    for row in log:
+        if len(row) >= 5 and row[2] == "query" and row[3] == "config-set":
+            keys.append(row[4])
+    return keys
+
+
+class TestApplyWritePath(unittest.TestCase):
+    def test_held_marker_refuses_with_recovery_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            config_backup.acquire_marker(config_path, True, _fixed_now)
+            config_backup.update_marker(config_path, backup="config.json.bak-20261015T120000Z")
+            with open(config_path, "rb") as handle:
+                before = handle.read()
+            rec = _RecordingRun(fake)
+            code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 2)
+            expected = config_backup.recovery_text(
+                config_backup.read_marker(config_path), config_path
+            )
+            self.assertEqual(report["error"], expected)
+            with open(config_path, "rb") as handle:
+                self.assertEqual(handle.read(), before)
+
+    def test_write_order_unset_before_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, config_path = _setup_scratch_project(tmp)
+            with open(config_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "model_profile": "balanced",
+                        "model_policy": {"provider": "cursor", "budget": "medium"},
+                    },
+                    handle,
+                )
+            fake = _tables_fake(config_path, env["HOME"])
+            inv_path = os.path.join(tmp, "inventory.json")
+            inv = scratch_inventory(project, env, fake, inv_path, host_name="codex")
+            plan = _minimal_plan(
+                "codex",
+                inv,
+                [
+                    {"key": "model_policy.provider", "op": "unset", "source": "preset"},
+                    {"key": "model_policy.budget", "op": "set", "value": "low", "source": "preset"},
+                    {
+                        "key": "models.planning",
+                        "op": "set",
+                        "value": "openai/gpt-5",
+                        "source": "preset",
+                    },
+                ],
+            )
+            plan_path = os.path.join(tmp, "plan.json")
+            plan_io.write_plan(plan_path, plan)
+            rec = _RecordingRun(fake)
+            code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual((code, report["applied"]), (0, True))
+            self.assertEqual(
+                _config_set_keys(rec.argv_log),
+                ["model_policy.provider", "model_policy.budget", "models.planning"],
+            )
+
+    def test_skips_equal_live_and_absent_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, config_path = _setup_scratch_project(tmp)
+            fake = _tables_fake(config_path, env["HOME"])
+            inv_path = os.path.join(tmp, "inventory.json")
+            inv = scratch_inventory(project, env, fake, inv_path, host_name="codex")
+            plan = _minimal_plan(
+                "codex",
+                inv,
+                [
+                    {
+                        "key": "model_profile",
+                        "op": "set",
+                        "value": "balanced",
+                        "source": "preset",
+                    },
+                    {"key": "models.planning", "op": "unset", "source": "preset"},
+                    {"key": "models.research", "op": "keep", "existing": None},
+                ],
+            )
+            plan_path = os.path.join(tmp, "plan.json")
+            plan_io.write_plan(plan_path, plan)
+            rec = _RecordingRun(fake)
+            code, _report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            self.assertEqual(_config_set_keys(rec.argv_log), [])
+
+    def test_restore_on_second_config_set_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            rec = _RecordingRun(fake, fail_config_set=2)
+            real_restore = config_backup.restore_backup
+            with mock.patch.object(
+                config_backup, "restore_backup", wraps=real_restore
+            ) as restore:
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            keys = _config_set_keys(rec.argv_log)
+            self.assertGreaterEqual(len(keys), 2)
+            self.assertEqual(report["failed_key"], keys[1])
+            runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
+            self.assertFalse(os.path.exists(runner))
+            self.assertIsNone(config_backup.read_marker(config_path))
+            self.assertGreaterEqual(restore.call_count, 2)
+
+    def test_backup_step_failure_leaves_config_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            with open(config_path, "rb") as handle:
+                before = handle.read()
+            with mock.patch.object(
+                config_backup, "create_backup", side_effect=OSError("disk full")
+            ), mock.patch.object(config_backup, "restore_backup") as restore:
+                code, report = _write_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 1)
+            self.assertIn("disk full", report["error"])
+            restore.assert_not_called()
+            with open(config_path, "rb") as handle:
+                self.assertEqual(handle.read(), before)
+            self.assertIsNone(config_backup.read_marker(config_path))
+
+    def test_restore_failure_keeps_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            rec = _RecordingRun(fake, fail_config_set=2)
+            real_restore = config_backup.restore_backup
+
+            def boom(path, backup):
+                if os.path.abspath(path) == os.path.abspath(config_path):
+                    raise OSError("restore broke")
+                real_restore(path, backup)
+
+            with mock.patch.object(config_backup, "restore_backup", side_effect=boom):
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            self.assertIn("restore broke", report["restore_error"])
+            self.assertIsNotNone(config_backup.read_marker(config_path))
+            code2, _report2 = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code2, 2)
+
+    def test_pi_skips_agent_skills_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, config_path = _setup_scratch_project(tmp)
+            fake = _tables_fake(config_path, env["HOME"])
+            inv_path = os.path.join(tmp, "inventory.json")
+            inv = scratch_inventory(project, env, fake, inv_path, host_name="pi")
+            plan = _minimal_plan(
+                "pi",
+                inv,
+                [{"key": "model_profile", "op": "set", "value": "quality", "source": "preset"}],
+            )
+            plan_path = os.path.join(tmp, "plan.json")
+            plan_io.write_plan(plan_path, plan)
+            rec = _RecordingRun(fake)
+            code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            self.assertIn("skipped", report["skill_check"])
+
+    def test_forced_command_warning_in_apply_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, _inv, fake = _decided_plan(tmp)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            entry = next(
+                e for e in plan["entries"] if e["key"] == "workflow.cross_ai_command"
+            )
+            entry["forced"] = True
+            plan_io.write_plan(plan_path, plan)
+            rec = _RecordingRun(fake)
+            code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            self.assertTrue(any("full permissions" in w for w in report["warnings"]))
+
+
+    def test_absent_config_new_project_precedes_config_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, config_path = _setup_scratch_project(tmp)
+            fake = _tables_fake(config_path, env["HOME"])
+            inv_path = os.path.join(tmp, "inv.json")
+            inv = scratch_inventory(project, env, fake, inv_path, host_name="codex")
+            planning = os.path.join(project, ".planning")
+            shutil.rmtree(planning)
+            plan = _minimal_plan(
+                "codex",
+                inv,
+                [{"key": "model_profile", "op": "set", "value": "balanced", "source": "preset"}],
+            )
+            plan_path = os.path.join(tmp, "plan.json")
+            plan_io.write_plan(plan_path, plan)
+            rec = _RecordingRun(fake)
+            code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            joined = [" ".join(r) for r in rec.argv_log]
+            new_idx = next(i for i, s in enumerate(joined) if "config-new-project" in s)
+            set_idx = next(i for i, s in enumerate(joined) if "config-set" in s)
+            self.assertLess(new_idx, set_idx)
+            self.assertTrue(report["created_config"])
+
+    def test_agent_skills_carries_gsd_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _config_path, _inv, fake = _decided_plan(tmp)
+            rec = _RecordingRun(fake)
+            code, _report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            for row, call_env in zip(rec.argv_log, rec.env_log, strict=False):
+                if len(row) >= 5 and row[3] == "agent-skills":
+                    self.assertEqual(call_env.get("GSD_RUNTIME"), "codex")
+
+    def test_clear_marker_failure_still_commits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            rec = _RecordingRun(fake)
+            with mock.patch.object(config_backup, "clear_marker", side_effect=OSError("busy")):
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            self.assertTrue(report["applied"])
+            self.assertTrue(any("marker" in w for w in report["warnings"]))
+            marker = config_backup.read_marker(config_path)
+            self.assertTrue(marker and marker.get("committed"))
+            code2, report2 = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code2, 2)
+            self.assertIn("do not restore the backup", report2["error"])
 
 if __name__ == "__main__":
     unittest.main()
