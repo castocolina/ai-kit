@@ -1,40 +1,36 @@
 ---
 name: ai-kit-gsd-curated-config
-description: Curated, one-question GSD config setup for a target project's `.planning/config.json` — asks only `model_profile` (quality/balanced/budget/adaptive), then writes preference-driven defaults through gsd-tools' own schema-validated `config-set`/`config-new-project`: critical-agent opus/high overrides derived live from the installed gsd-core's own `AGENT_DEFAULT_TIERS` (never a hardcoded agent list), cross-AI execution/plan-review CLI+model selection from live-detected opencode/cursor-agent candidates, `claude_md_path`/frontend-based `ui_phase`/`ui_review` detection, and a fixed workflow-flag bundle. Use when a project needs GSD configured fast without the full `gsd-settings`/`gsd-config` interrogation (power-user knobs, API keys/integrations) — this is a faster alternative entry point, not a replacement or wrapper for either.
+description: Curated GSD `.planning/config.json` setup for a target project — v2 flow (inventory → recommend → plan edits → apply → follow-ups) or the kept v1 one-question `model_profile` path. Writes only through gsd-tools' schema-validated `config-set`/`config-new-project`, cross-AI execution via a generated `.planning/scripts/cross-ai.mjs`, skill wiring, and grouped post-apply follow-ups. Use when a project needs GSD configured fast without the full `gsd-settings`/`gsd-config` interrogation — a faster alternative, not a replacement.
 ---
 
 # ai-kit-gsd-curated-config
 
 ## Scope
 
-This skill wraps the already-built `ai-kit-gsd-curated-config.py` CLI. It writes
-`.planning/config.json` for a target GSD project through ONE curated question
-(`model_profile`) plus a fixed set of preference-driven defaults this
-project's own maintainer already locked in:
-effort/model overrides for GSD's own critical agents, cross-AI
-execution/plan-review CLI+model selection, `claude_md_path`/frontend
-detection, and a 27-key workflow-flag bundle. It never invents new GSD
-behavior — every write goes through gsd-tools' own `config-set`/
-`config-new-project`, so the real schema manifest validates every key this
-skill touches, exactly as if `gsd-settings`/`gsd-config` had written it.
+This skill wraps `ai-kit-gsd-curated-config.py`. **Primary path:** the v2 pipeline
+(`inventory` → `recommend` → `plan-set`/`plan-unset` → `apply` → follow-up approval).
+**Secondary path:** the kept v1 curated flow (one `model_profile` question plus fixed
+presets) — see [v1 path](#v1-path-kept-secondary).
 
-**Prerequisites.** The `ai-kit-spec-review` skill must be installed next to
-this one: every `ensure-project`/`apply-*` write goes through its shared
-gsd-tools wrappers, and the `detect-*` calls use its `detect-runtimes`. `node`
-and an installed gsd-core are required too.
+Every write goes through the shared `ai_kit_spec.gsd_tools` wrappers (`config-set` /
+`config-new-project`), never a hand-edited JSON file. The `ai-kit-spec-review` skill must
+be installed beside this one; `node` and a resolvable gsd-core are required.
 
-**Trust model.** gsd-core's `gsd-tools.cjs` is resolved the way GSD's own
-launcher does it, project-local first: `<root>/gsd-core`,
-`<root>/.claude/gsd-core`, `<root>/.codex/gsd-core` (root is `RUNTIME_DIR`,
-else the git top level of `--project-dir`), then the per-host global
-installs. It runs under `node` with no trust step, so pointing this skill at
-a cloned repo that ships its own gsd-core runs that repo's JavaScript. Only
-use it on a `--project-dir` you would already run GSD in.
+## Prerequisites and trust model
+
+**Trusted checkouts only.** `inventory` runs the target project's own gsd-core under
+`node` (project-local gsd-core wins over global). Point `--project-dir` only at trees you
+would already run GSD in. gsd-core resolution matches GSD's launcher:
+`<root>/gsd-core`, `<root>/.claude/gsd-core`, `<root>/.codex/gsd-core`, then global
+installs.
+
+Exit `2` (install problem, not a logic bug): sibling `ai-kit-spec-review` missing,
+`node` missing, or no `gsd-tools.cjs` found. Surface stderr verbatim; do not retry.
+Exit `1`: a gsd-tools read/write failed.
 
 ## Resolve the entrypoint
 
-Resolve once per invocation, in one Bash call, and record the printed path
-as a literal absolute path:
+Resolve once per invocation, in one Bash call, and record the printed path:
 
 ```bash
 for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-gsd-curated-config}" \
@@ -46,149 +42,189 @@ for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-gsd-curated-co
 done
 ```
 
-If no candidate exists, stop and report that the skill is not installed. The
-fifth candidate covers a from-checkout invocation — substitute the directory
-actually containing this `SKILL.md`.
+If none exists, stop — the skill is not installed. Substitute the directory containing
+this `SKILL.md` for the fifth candidate when invoked from a checkout.
 
-## Run the curated flow
+## Run the v2 flow
 
-Every project-touching subcommand below is invoked as `python3 "$ENTRYPOINT"
-<subcommand> --project-dir <target_dir> [...]`. The two
-`detect-*-candidate` subcommands take no flags (they probe installed CLIs,
-not the project); passing `--project-dir` to them exits 2. Before running any `apply-*` subcommand,
-ask yourself: has `ensure-project` already run for THIS `--project-dir` in
-this session, and — for the two detect/apply pairs (Steps 4-6) — did the
-matching `detect-*` call already run and get shown to the user this same
-invocation? Skipping `ensure-project` is a silent footgun, not a hard
-failure: `gsd-tools`' own `config-set` happily creates `.planning/config.json`
-from an empty `{}` if nothing exists yet, so the call "succeeds" — but the
-result is a one-key file missing every other schema default
-`config-new-project`'s `buildNewProjectConfig` would have populated (the same
-full default set `gsd-settings` itself produces), not a genuinely merged
-project config. Likewise, guessing `--cli`/`--model` for
-`apply-execution`/`apply-review` instead of passing the actual `detect-*`
-output through unchanged writes a command that may not correspond to
-anything installed on this machine. Follow the exact order below — later
-steps assume `.planning/config.json` already exists with its full default
-shape (Step 1), and Steps 4-6 are always detect-then-ask-then-apply, never
-apply without first showing the detected candidate.
+Resolve `$ENTRYPOINT` once (see above). Every project-touching subcommand:
+`python3 "$ENTRYPOINT" <subcommand> --project-dir <target> [...]`.
 
-1. **Ensure the config exists.** `ensure-project` — idempotent: succeeds
-   whether it creates a fresh `.planning/config.json` or finds one already
-   there (merge mode: every later step only touches its own specific
-   keys, never regenerates the whole file).
-2. **Ask the ONE curated question.** Which `model_profile`: `quality` /
-   `balanced` / `budget` / `adaptive`? Then `apply-profile --profile
-   <answer>`.
-3. **Apply critical-agent overrides — no question asked.**
-   `apply-critical-agents` derives its writes live from the installed
-   gsd-core's own `AGENT_DEFAULT_TIERS` export (never a baked-in agent
-   list): `gsd-code-reviewer` gets opus/high unconditionally (the user's
-   explicit top-up), `gsd-executor` and the `models.research`/
-   `models.execution` phase-type floor get haiku unconditionally, and every
-   OTHER agent the live catalog classifies `heavy` tier also gets opus/high
-   — `gsd-executor` is excluded from that sweep even if a future gsd-core
-   reclassifies it heavy, so its haiku floor can never be contradicted by a
-   conflicting high-effort override. Degrades gracefully (writes only the
-   five unconditional pairs, reports `degraded_reason`) when the live
-   catalog can't be queried — never a hard failure.
-4. **Detect and apply execution delegation.** `detect-execution-candidate`
-   prints the best opencode/cursor-agent match against the execution
-   preference ladder (`coding`/`executor` name match, then
-   composer>=2.5, grok>=4.6, deepseek-flash, luna — see
-   `ai_kit_gsd_curated_config/preference_match.py` for the exact rule order). Show
-   the detected `{cli, model, rule}` to the user, then `apply-execution
-   --cli <cli> --model <model>` (omit both flags when nothing matched —
-   `workflow.cross_ai_execution` still gets written `true`, just with no
-   `cross_ai_command`).
-5. **Detect and apply plan-review delegation.** `detect-review-candidate`
-   always resolves to something — when no opencode/cursor-agent model
-   matches the plan-review ladder (`plan-review` name match, `gpt-<ver>-sol`
-   pattern, glm-5.2/5.3), it returns the native last resort (`claude`/
-   `opus`). Show it, then `apply-review --cli <cli> --model <model>` (always
-   both flags — `apply-review` has no no-candidate branch).
-6. **Detect and apply `claude_md_path` + frontend-driven UI flags.**
-   `detect-claude-md-path` checks `AGENTS.md` / `CLAUDE.local.md` /
-   `AGENTS.local.md` / `CLAUDE.md` in that priority order and returns the
-   first hit (or `null` if none exist — in which case skip
-   `apply-claude-md-path` entirely; it does not accept an empty path).
-   `detect-frontend` scans `package.json` dependencies and `README.md` text
-   for a frontend-framework signal. Then `apply-workflow-defaults --ui-phase
-   <true|false> --ui-review <true|false>` using that frontend boolean for
-   BOTH flags — this same call also writes the fixed 27-key
-   `workflow.*` defaults bundle (research/plan_check/verifier/nyquist_validation/
-   code_review/security_enforcement and 21 more; see
-   `ai_kit_gsd_curated_config/workflow_defaults.py` for the literal list).
+1. **Inventory.** Snapshot models, skills, plugins, and config shape (read-only):
+
+```bash
+python3 ai-kit-gsd-curated-config.py inventory --project-dir <target> --host claude
+python3 ai-kit-gsd-curated-config.py inventory --project-dir <target> --refresh
+```
+
+2. **Recommend.** Build `plan.json` from inventory + rigor/profile answers:
+
+```bash
+python3 ai-kit-gsd-curated-config.py recommend --inventory <inv.json> --profile quality --rigor mvp --out <dir>/plan.json --cross-ai-review n --cross-ai-exec y
+```
+
+3. **Review** the JSON: `needs_choice` entries, notes, warnings, unverified flags. Resolve
+   each choice with `plan-set` or `plan-unset` (never skip silently).
+
+```bash
+python3 ai-kit-gsd-curated-config.py plan-set model_profile quality --plan <plan.json> --inventory <inv.json>
+python3 ai-kit-gsd-curated-config.py plan-set workflow.cross_ai_command "node .planning/scripts/cross-ai.mjs" --plan <plan.json> --force
+python3 ai-kit-gsd-curated-config.py plan-unset agent_skills_security.trusted_global_roots --plan <plan.json>
+```
+
+4. **Dry-run apply** (refuses while `needs_choice` remains; inventory digest must match):
+
+```bash
+python3 ai-kit-gsd-curated-config.py apply --plan <plan.json> --inventory <inv.json> --project-dir <target> --dry-run
+```
+
+5. **Apply** (backup + marker `config.json.ai-kit-apply-marker`, runner snapshot
+   `.ai-kit-apply-backup`):
+
+```bash
+python3 ai-kit-gsd-curated-config.py apply --plan <plan.json> --inventory <inv.json> --project-dir <target>
+```
+
+6. **Follow-up approval.** After exit 0, read the `followups` block in the apply report.
+   Ask **one grouped yes/no** listing each required follow-up's argv, cwd, purpose,
+   alternative, disclosures, and unverified notes. On yes, run the resolved entrypoint
+   followed by the report's `approve_with` string **unchanged** — it starts at
+   the `followups` subcommand and includes `--require` for the keys apply wrote:
+
+```bash
+python3 ai-kit-gsd-curated-config.py followups --plan <plan.json> --inventory <inv.json> --project-dir <target>
+python3 ai-kit-gsd-curated-config.py followups --plan <plan.json> --inventory <inv.json> --project-dir <target> --approve --require installer
+```
+
+**Failure states to report as such:**
+
+- **`restore_error` (exit 1):** rollback failed — marker, config backup, and runner
+  snapshot stay. Do not delete the marker blindly. The next `apply` refuses and prints
+  recovery steps recorded in the marker; follow them.
+- **Exit 0 with cleanup warnings:** the apply **committed** — config and runner hold the
+  applied state; **never** restore its backup. Delete only leftovers the warning names
+  (marker, runner snapshot, stale backups). If a marker remains, the next apply's refusal
+  must agree after its `apply --dry-run` check (recovery follows what that apply recorded).
+- **Runner `unverified` status** (git tree could not be read): stop — claim nothing about
+  success/fallback; report the status line only.
+- **Effort sync** is not offered when the inventory points at a workstream config (gsd-core
+  sync reads only the root config).
+
+## Cross-AI execution
+
+Apply sets `workflow.cross_ai_command` to `node .planning/scripts/cross-ai.mjs` and
+renders the runner from the bundled template. **Targets run unattended with full permissions**
+(no sandbox, no ask mode). After every external dispatch, print the
+`AIKIT-XAI status=…` line from stderr **verbatim** (one line, stable vocabulary).
+
+**Bare profile by default** (pi `--no-skills --no-extensions`, opencode with Claude-skill
+loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
+`~/.config/opencode/skills` still load — document that honestly.
+
+**Live timeout:** only `GSD_WORKSTREAM` is honored when the runner reads
+`workflow.cross_ai_timeout` from config (baked outer timeout is the minimum with live).
+
+**Opt-in skills and MCP servers:** set by hand-editing the generated script's CONFIG
+`extraArgs` per target (D-11). The next apply then writes `cross-ai.mjs.new` instead of
+overwriting the live runner.
+
+**`.new` is not active:** the runner at `.planning/scripts/cross-ai.mjs` keeps its old
+CONFIG; apply reports `script.active: false`. Merge `.new` by hand (keep customizations),
+verify the **active** runner with:
+
+```bash
+node .planning/scripts/cross-ai.mjs --print-argv
+```
+
+(each target's argv with its model and the deadline line — no CLI dispatch), then delete
+`.new`.
+
+## Skills
+
+- **Bare names only** in the plan; the skill translates to `global:…` or project-relative
+  paths when writing `agent_skills.<agent>`.
+- **Trusted-root approval** is one `needs_choice`: if the user **declined**, the skill stays
+  wired and gsd-core skips paths outside trusted roots with a reported warning (use
+  `plan-unset` on decline).
+- Unknown installed skills: capped proposals from descriptions only — never auto-install.
+- **Jev session gate:** `GSD_PATH_JEV=1` and `GSD_PATH_JEV_TIMEOUT_SECONDS` apply when
+  System One reachability is detected (TCP/key presence only — not a health check).
+- **Ponytail visibility (2026-10-15):** on this machine the six ponytail names are visible
+  only through the Claude plugin cache, not other hosts' skill roots.
+- **Limit:** skills kept only in `.claude/skills` inside a project are **not** scanned.
+- **Plugin skills:** require install + layered `enabledPlugins` (user, project, local).
+  Per-key layering across those files is **unverified** (D-32) — inventory notes when it
+  assumes last-wins per key.
+
+## Limits
+
+| Topic | Limit |
+|---|---|
+| cursor / pi | **not live-validated** on this maintainer's machine |
+| opencode providers | Providers defined only in a project's `opencode.json` are not candidates |
+| effort sync | Skipped for workstream configs; `--config-dir <project>/<host dir>` value **unverified** |
+| local gsd root | `.opencode/gsd-core` install root **unverified** until Phase 20 |
+
+## v1 path (kept, secondary)
+
+One curated question (`model_profile`) plus detected/preset steps — unchanged behavior.
+Use when v2 is unnecessary. Order: `ensure-project` → `apply-profile` →
+`apply-critical-agents` → detect/apply execution → detect/apply review → detect frontend
+→ `apply-workflow-defaults` (and optional `apply-claude-md-path`). See v1 subcommands
+below; never mix v1 writes with an in-progress v2 plan on the same config without intent.
+
+```bash
+python3 ai-kit-gsd-curated-config.py ensure-project --project-dir <target>
+python3 ai-kit-gsd-curated-config.py apply-profile --project-dir <target> --profile balanced
+python3 ai-kit-gsd-curated-config.py apply-critical-agents --project-dir <target>
+python3 ai-kit-gsd-curated-config.py detect-execution-candidate
+python3 ai-kit-gsd-curated-config.py apply-execution --project-dir <target> --cli opencode --model x
+python3 ai-kit-gsd-curated-config.py detect-review-candidate
+python3 ai-kit-gsd-curated-config.py apply-review --project-dir <target> --cli claude --model x
+python3 ai-kit-gsd-curated-config.py detect-claude-md-path --project-dir <target>
+python3 ai-kit-gsd-curated-config.py detect-frontend --project-dir <target>
+python3 ai-kit-gsd-curated-config.py apply-claude-md-path --project-dir <target> --path AGENTS.md
+python3 ai-kit-gsd-curated-config.py apply-workflow-defaults --project-dir <target> --ui-phase false --ui-review false
+```
 
 ## Subcommand reference
 
-| Subcommand | Required flags | What it writes |
-|---|---|---|
-| `ensure-project` | `--project-dir` | Creates `.planning/config.json` if absent; no-op if present |
-| `apply-profile` | `--project-dir`, `--profile {quality,balanced,budget,adaptive}` | `model_profile` |
-| `apply-critical-agents` | `--project-dir` | `model_overrides.*`/`effort.agent_overrides.*` for `gsd-code-reviewer` + live heavy-tier sweep; `models.research`/`models.execution` |
-| `detect-execution-candidate` | — | Prints `{cli, model, rule}` or all-`null`; writes nothing |
-| `detect-review-candidate` | — | Prints `{cli, model, rule}` (never null — native last resort); writes nothing |
-| `apply-execution` | `--project-dir`; `--cli`/`--model` optional | `workflow.cross_ai_execution` (always); `workflow.cross_ai_command` (the rendered execute command, only when `--cli`/`--model` given) |
-| `apply-review` | `--project-dir`, `--cli`, `--model` | `workflow.plan_review_convergence`, `review.effort.opencode`, `review.default_reviewers` (dedupe-merged), `review.models.<slug>` |
-| `detect-claude-md-path` | `--project-dir` | Prints `{path}` (nullable); writes nothing |
-| `detect-frontend` | `--project-dir` | Prints `{frontend_present}`; writes nothing |
-| `apply-claude-md-path` | `--project-dir`, `--path` | `claude_md_path` (no-op with `reason: empty_path` when `--path` is empty) |
-| `apply-workflow-defaults` | `--project-dir`, `--ui-phase {true,false}`, `--ui-review {true,false}` | The fixed 27-key `workflow.*` bundle, plus `workflow.ui_phase`/`workflow.ui_review` |
+**v2**
 
-`ensure-project` and every `apply-*` subcommand exit `2`, with a one-line
-stderr message, for one of three install problems: the `ai-kit-spec-review`
-sibling skill is not installed next to this skill, `node` is not on PATH, or
-no gsd-core `gsd-tools.cjs` was found (project-local first, then the global
-installs). `apply-execution` also exits `2` when `--cli` names an unsupported
-executor, before writing anything. Surface the message verbatim and tell the
-user what to install; do not retry. Exit `1` means a gsd-tools call failed on
-a read or write.
+| Subcommand | Required flags | Role |
+|---|---|---|
+| `inventory` | `--project-dir` | Read-only snapshot via project's gsd-core |
+| `recommend` | `--inventory`, `--profile`, `--rigor`, `--out` | Write `plan.json` |
+| `plan-set` | `key`, `value`, `--plan` | Resolve a plan entry |
+| `plan-unset` | `key`, `--plan` | Decline / remove a plan entry |
+| `apply` | `--plan`, `--inventory`, `--project-dir` | Write config + runner (`--dry-run` previews) |
+| `followups` | `--plan`, `--inventory`, `--project-dir` | List or `--approve` post-apply commands |
+
+**v1** — same as prior skill: `ensure-project`, `apply-profile`, `apply-critical-agents`,
+`detect-*`, `apply-*`, `apply-workflow-defaults` (see v1 path).
 
 ## NEVER
 
-- **Never replace or wrap `gsd-settings`/`gsd-config`.** Those remain the
-  entry points for power-user knobs (`--advanced`) and third-party API
-  keys/integrations (`--integrations`) this curated skill intentionally
-  skips. This skill is a faster ALTERNATIVE, invoked
-  instead of them, never routed through them and never routing to them.
-- **Never hand-write `.planning/config.json`.** Every write in this skill's
-  own CLI goes through `gsd-tools config-set`/`config-new-project` via the shared
-  `ai_kit_spec.gsd_tools` wrappers -- the only module in ai-kit that shells out to
-  gsd-tools for a write -- this is what keeps every key this
-  skill touches schema-validated the same way `gsd-settings` output is,
-  never a parallel, unvalidated write path.
-- **Never hand-write or edit `workflow.cross_ai_command`.** `apply-execution`
-  writes the rendered execute command, e.g.
-  `opencode run -m <model> --dir <project> --auto` or
-  `cursor-agent --sandbox enabled --workspace <project> -p ... --model <model> ...`.
-  The binary is the bare name (`opencode`, `cursor-agent`), resolved via
-  `PATH` at dispatch time, because a venv/nvm/brew-resolved binary path
-  breaks once the venv is rebuilt. The `--dir`/`--workspace` value is the
-  absolute `--project-dir`, so after moving or re-cloning the project, re-run
-  `detect-execution-candidate` and `apply-execution` there.
-- **Never ask more than the one curated question (`model_profile`).**
-  Everything else in the Run the curated flow section above is a detected
-  default or a fixed preset, by design — if a user wants deeper control
-  over any of it, that is exactly what `gsd-settings --advanced` is for,
-  not a reason to add more questions here.
-- **Never treat this repo's own `.planning/config.json` as the write
-  target implicitly.** Every project-touching subcommand takes an explicit
-  `--project-dir` for the TARGET project being configured — never assume the current
-  working directory when it wasn't given explicitly.
+- **Never replace `gsd-settings` / `gsd-config`.** Power-user and integration knobs stay there.
+- **Never hand-write `.planning/config.json` or `plan.json`.** Use the CLI subcommands only.
+- **Never run `inventory` on untrusted checkouts** (it executes project JavaScript).
+- **Never delete an apply marker** without following the recovery text the next apply prints.
+- **Never treat `cross-ai.mjs.new` as active** without merge + `--print-argv` on the live runner.
+- **Never ask follow-up questions beyond what v1/v2 already expose** — route tuning to
+  `gsd-settings --advanced`.
 
 ## Common mistakes
 
-| Mistake | Why it's wrong | Fix |
-|---|---|---|
-| Calling `apply-profile`/`apply-critical-agents`/etc. against a project that never had `ensure-project` run | `config-set` doesn't fail here — it silently creates a sparse `.planning/config.json` containing only the one key you set, missing every other schema default `config-new-project` would have populated. No error to notice; the gap only surfaces later as a project with an incomplete config | Always run `ensure-project` first, once per `--project-dir`, even if you believe a config already exists (it's idempotent — a no-op when one is already there) |
-| Writing `--cli opencode --model <guessed-id>` to `apply-execution`/`apply-review` without first running the matching `detect-*` call | Skips the live preference-ladder match entirely — you may write a model id that isn't even installed on this machine, or miss a better-ranked candidate the ladder would have found | Always run `detect-execution-candidate`/`detect-review-candidate` first and pass its exact `{cli, model}` output through unchanged |
-| Asking the user follow-up questions beyond `model_profile` (e.g. "which effort level for gsd-code-reviewer?") | Defeats the entire point of this skill — those overrides are locked presets, and a user who wants to tune them individually should be routed to `gsd-settings --advanced`, not asked here | Ask only `model_profile`; treat every other value in this flow as detected or preset |
-| Treating `apply-execution`'s `--cli`/`--model` as required like `apply-review`'s | `apply-execution` has a real no-candidate path (`workflow.cross_ai_execution: true` written with no `cross_ai_command`) that `apply-review` does not — copying one subcommand's flag pattern onto the other produces a spurious required-argument error | Check the Subcommand reference table's "Required flags" column per subcommand, not by analogy |
+| Mistake | Fix |
+|---|---|
+| `apply` while `needs_choice` remains | Run `plan-set`/`plan-unset` until dry-run is clean |
+| Stale inventory digest | Re-run `inventory` and `recommend`, or pass matching `--inventory` |
+| Editing CONFIG then expecting immediate runner behavior | Merge `.new` or wait for pristine overwrite; check `script.active` |
+| Running `approve_with` without the entrypoint prefix | Always `python3 "$ENTRYPOINT"` then the exact `approve_with` argv tail |
+| Restoring backup after a committed apply with cleanup warnings | Delete named leftovers only; config/runner already match the plan |
 
 ## Reporting rule
 
-Report the curated question's answer and every applied default/detection
-result inline in the conversation, in the order Run the curated flow lists
-them — never a separate persisted report file; the resulting
-`.planning/config.json` diff is already the record of what changed.
+Report inventory/recommend/apply JSON inline in conversation order — no separate report file.
+For cross-AI dispatches, include the verbatim `AIKIT-XAI` line. Flag every **unverified**
+inventory/recommend note instead of upgrading it to fact.

@@ -6,6 +6,8 @@ import errno
 import io
 import json
 import os
+import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -1889,6 +1891,100 @@ def _apply_write_path_findings(tree: ast.AST) -> list[str]:
 
     Visitor().visit(tree)
     return findings
+
+
+_V2_SUBCOMMANDS = frozenset(
+    {"inventory", "recommend", "plan-set", "plan-unset", "apply", "followups"}
+)
+_SKILL_MD = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "skills",
+    "ai-kit-gsd-curated-config",
+    "SKILL.md",
+)
+_SCRIPT_NAME = "ai-kit-gsd-curated-config.py"
+
+
+def _skill_md_text() -> str:
+    with open(_SKILL_MD, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _bash_fenced_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    in_bash = False
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("```"):
+            if stripped == "```bash":
+                in_bash = True
+                continue
+            in_bash = False
+            continue
+        if in_bash and _SCRIPT_NAME in raw and "python3" in raw:
+            lines.append(raw.strip())
+    return lines
+
+
+def _argv_after_script(command_line: str) -> list[str]:
+    replaced = re.sub(r"<[^>]+>", "x", command_line)
+    parts = shlex.split(replaced)
+    for idx, token in enumerate(parts):
+        if token.endswith(_SCRIPT_NAME):
+            return parts[idx + 1 :]
+    raise AssertionError(f"no script name in command line: {command_line!r}")
+
+
+class TestSkillDocCommands(unittest.TestCase):
+    def test_documented_commands_parse(self) -> None:
+        parser = cli._build_parser()
+        seen_v2: set[str] = set()
+        for line in _bash_fenced_lines(_skill_md_text()):
+            argv = _argv_after_script(line)
+            self.assertTrue(argv, line)
+            args = parser.parse_args(argv)
+            cmd = args.command
+            if cmd in _V2_SUBCOMMANDS:
+                seen_v2.add(cmd)
+        self.assertEqual(seen_v2, _V2_SUBCOMMANDS)
+
+    def test_v2_is_primary(self) -> None:
+        headings = re.findall(r"^## (.+)$", _skill_md_text(), re.MULTILINE)
+        flow_idx = next(i for i, title in enumerate(headings) if "flow" in title.lower())
+        v1_idx = next(i for i, title in enumerate(headings) if "v1" in title.lower())
+        self.assertLess(flow_idx, v1_idx)
+        self.assertIn("v2", headings[flow_idx].lower())
+
+    def test_required_statements(self) -> None:
+        text = _skill_md_text()
+        required = (
+            "not live-validated",
+            "trusted checkouts",
+            "opencode.json",
+            ".claude/skills",
+            "GSD_WORKSTREAM",
+            "GSD_PATH_JEV=1",
+            "AIKIT-XAI",
+            "full permissions",
+            "2026-10-15",
+            ".opencode/gsd-core",
+            "enabledPlugins",
+            "unverified",
+            "declined",
+            "extraArgs",
+            ".new",
+            "not active",
+            "--print-argv",
+            "ai-kit-apply-marker",
+            "approve_with",
+            "--require",
+            "committed",
+        )
+        missing = [phrase for phrase in required if phrase not in text]
+        self.assertEqual(missing, [])
+
+
 
 
 class TestWritePathDiscipline(unittest.TestCase):
