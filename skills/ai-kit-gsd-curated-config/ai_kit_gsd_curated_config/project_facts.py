@@ -44,9 +44,11 @@ def detect_db_present(project_dir: str) -> bool:
 
 def detect_intel_index(project_dir: str) -> bool:
     intel_dir = os.path.join(project_dir, ".planning", "intel")
-    if not os.path.isdir(intel_dir):
+    try:
+        names = os.listdir(intel_dir)
+    except OSError:
         return False
-    for name in os.listdir(intel_dir):
+    for name in names:
         if name.endswith(".json") and os.path.isfile(os.path.join(intel_dir, name)):
             return True
     return False
@@ -56,9 +58,11 @@ def list_skills(project_dir: str) -> list[dict]:
     out: list[dict] = []
     for root in SKILL_ROOTS:
         root_path = os.path.join(project_dir, root)
-        if not os.path.isdir(root_path):
+        try:
+            names = sorted(os.listdir(root_path))
+        except OSError:
             continue
-        for name in sorted(os.listdir(root_path)):
+        for name in names:
             skill_md = os.path.join(root_path, name, "SKILL.md")
             if os.path.isfile(skill_md):
                 out.append({"name": name, "root": root})

@@ -1560,6 +1560,25 @@ class TestProjectFacts(unittest.TestCase):
     def _facts(self, project):
         return project_facts.project_facts(project, None)
 
+    def test_non_utf8_files_degrade_never_raise(self):
+        """B-CR-03: a Latin-1 README.md/package.json is a degraded fact, not a traceback."""
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        with open(os.path.join(project, "README.md"), "wb") as handle:
+            handle.write(b"Caf\xe9 React app\n")
+        with open(os.path.join(project, "package.json"), "wb") as handle:
+            handle.write(b'{"dependencies": {"pg": "1"}, "description": "caf\xe9"}')
+        facts = self._facts(project)
+        self.assertTrue(facts["frontend"])
+        self.assertTrue(facts["db"])
+
+    def test_unreadable_dirs_degrade(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        with mock.patch.object(project_facts.os, "listdir", side_effect=PermissionError):
+            self.assertFalse(project_facts.detect_intel_index(project))
+            self.assertEqual(project_facts.list_skills(project), [])
+
     def test_instruction_files_neither(self):
         project = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, project, ignore_errors=True)

@@ -25,7 +25,8 @@ _README_FRAMEWORK_HINTS = ("react", "vue", "svelte", "angular", "next.js")
 
 
 def _read_text(path):
-    with open(path, encoding="utf-8") as f:
+    # errors="replace": a non-UTF-8 README/package.json degrades, never raises.
+    with open(path, encoding="utf-8", errors="replace") as f:
         return f.read()
 
 
@@ -43,7 +44,7 @@ def package_json_deps(project_dir, isfile_fn=os.path.isfile, read_fn=_read_text)
         return {}
     try:
         manifest = json.loads(read_fn(package_json_path))
-    except (json.JSONDecodeError, OSError):
+    except (OSError, ValueError):  # ValueError covers JSONDecodeError and UnicodeDecodeError
         return {}
     if not isinstance(manifest, dict):
         return {}
@@ -68,7 +69,7 @@ def _readme_signals_frontend(project_dir, isfile_fn, read_fn):
         return False
     try:
         text = read_fn(readme_path)
-    except OSError:
+    except (OSError, ValueError):
         return False
     lowered = text.lower()
     return any(_hint_matches(hint, lowered) for hint in _README_FRAMEWORK_HINTS)
