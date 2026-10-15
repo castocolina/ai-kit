@@ -39,7 +39,7 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 ### Cross-AI
 
 - [x] **XAI-01**: Cross-AI review sets `workflow.plan_review_convergence` + `review.default_reviewers` (lane ≠ host, reviewer provider ≠ planning provider, best `review` score) + `review.models.<lane>` / `review.effort.<lane>`
-- [ ] **XAI-02**: Cross-AI execution sets `workflow.cross_ai_execution` + `workflow.cross_ai_command = node .planning/scripts/cross-ai.mjs`, picking the best `execution` score in another CLI; default yes on Claude/Codex and no on opencode/cursor/pi; the report says to run `--cross-ai` and sets `manager.flags.execute`. *(Amended 2026-10-13, replacing "built by `build_execute_command`, bare CLI name, rigor-dependent timeout".)* curated-config generates the script per project from a template: preference order (default pi > cursor > opencode; grok is not a target), a model per CLI, unattended full-permission flags per CLI, a bare tool profile by default with opt-in skills (SKILL.md paths) or MCP servers. A sha256 header protects user edits: an edited script is never overwritten, and the new version goes to `cross-ai.mjs.new`. `workflow.cross_ai_timeout` is ≥ 1800 s, with the script's own deadline below it. The script follows the supervision contract: finite stdin, model pre-validated against the CLI's list, process-group kill, errors matched on stderr and structured fields only, exit codes 0/1/2/69/75/124/127, one `AIKIT-XAI status=… action=fallback|retry-later|stop` line, falls back to the next CLI only when HEAD and the tree are unchanged, and counts success only when HEAD moved or the tree changed. Every config write goes through `gsd-tools query config-set`; effort keys take effect only after `gsd-tools effort sync --apply`
+- [x] **XAI-02**: Cross-AI execution sets `workflow.cross_ai_execution` + `workflow.cross_ai_command = node .planning/scripts/cross-ai.mjs`, picking the best `execution` score in another CLI; default yes on Claude/Codex and no on opencode/cursor/pi; the report says to run `--cross-ai` and sets `manager.flags.execute`. *(Amended 2026-10-13, replacing "built by `build_execute_command`, bare CLI name, rigor-dependent timeout".)* curated-config generates the script per project from a template: preference order (default pi > cursor > opencode; grok is not a target), a model per CLI, unattended full-permission flags per CLI, a bare tool profile by default with opt-in skills (SKILL.md paths) or MCP servers. A sha256 header protects user edits: an edited script is never overwritten, and the new version goes to `cross-ai.mjs.new`. `workflow.cross_ai_timeout` is ≥ 1800 s, with the script's own deadline below it. The script follows the supervision contract: finite stdin, model pre-validated against the CLI's list, process-group kill, errors matched on stderr and structured fields only, exit codes 0/1/2/69/75/124/127, one `AIKIT-XAI status=… action=fallback|retry-later|stop` line, falls back to the next CLI only when HEAD and the tree are unchanged, and counts success only when HEAD moved or the tree changed. Every config write goes through `gsd-tools query config-set`; effort keys take effect only after `gsd-tools effort sync --apply`
 
 ### Skills
 
@@ -50,7 +50,7 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 
 ### Plan and Apply
 
-- [ ] **APP-01**: The user adjusts the plan with `plan-set` / `plan-unset` (`source: user`)
+- [x] **APP-01**: The user adjusts the plan with `plan-set` / `plan-unset` (`source: user`)
 - [ ] **APP-02**: `apply --dry-run` validates every key against the host gsd-core's valid keys and prints a diff without writing
 - [ ] **APP-03**: `apply` backs up to `config.json.bak-<ts>`, writes only through `gsd-tools` `config-new-project` / `config-set`, reconciles keys `config-new-project` copied from global defaults against the plan, and on any failure restores the backup and names the failing key
 - [ ] **APP-04**: Follow-ups (gsd-core's own installer pinned to the resolved version with local scope, `npx -y @opengsd/gsd-core@<version> --<host> --local`; `effort sync --apply`) run only after one grouped user approval; `/gsd-map-codebase` is only recommended *(amended 2026-10-14: the bare `gsd` binary is a different package)*
@@ -150,12 +150,12 @@ None deferred beyond v1.3 at definition time.
 | REC-05 | Phase 17 | Complete |
 | REC-06 | Phase 17 | Complete |
 | XAI-01 | Phase 18 | Complete |
-| XAI-02 | Phase 18 | Pending |
+| XAI-02 | Phase 18 | Complete |
 | SKL-01 | Phase 18 | Complete |
 | SKL-02 | Phase 18 | Pending |
 | SKL-03 | Phase 18 | Complete |
 | SKL-04 | Phase 18 | Complete |
-| APP-01 | Phase 18 | Pending |
+| APP-01 | Phase 18 | Complete |
 | APP-02 | Phase 18 | Pending |
 | APP-03 | Phase 18 | Pending |
 | APP-04 | Phase 18 | Pending |
