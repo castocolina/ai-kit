@@ -127,7 +127,7 @@ def _parse_data(raw_text: str) -> tuple[str, object | None]:
         return "malformed", None
 
 
-def _base_envelope_from_args(args: _OpencodeEnvelopeArgs) -> dict:
+def _base_envelope(args: _OpencodeEnvelopeArgs) -> dict:
     status, payload = _parse_data(args.raw_text)
     return {
         "raw_ref": f"opencode:{args.source_file}:{args.source_kind}:{args.record_id}",
@@ -146,28 +146,6 @@ def _base_envelope_from_args(args: _OpencodeEnvelopeArgs) -> dict:
     }
 
 
-def _base_envelope(*args: object) -> dict:
-    if len(args) == 1 and isinstance(args[0], _OpencodeEnvelopeArgs):
-        return _base_envelope_from_args(args[0])
-    if len(args) == 8:
-        time_created = args[7]
-        tc: int | None
-        tc = time_created if isinstance(time_created, int) or time_created is None else None
-        return _base_envelope_from_args(
-            _OpencodeEnvelopeArgs(
-                str(args[0]),
-                str(args[1]),
-                str(args[2]),
-                str(args[3]),
-                str(args[4]),
-                args[5] if isinstance(args[5], str) or args[5] is None else None,
-                args[6] if isinstance(args[6], str) or args[6] is None else None,
-                tc,
-            )
-        )
-    raise TypeError("_base_envelope expects _OpencodeEnvelopeArgs or eight positional fields")
-
-
 def _session_raw_text(row: dict) -> str:
     # session has no free-form JSON `data` column; dump the whole row as the
     # best available "original text" for lossless capture.
@@ -178,7 +156,7 @@ def _envelope_from_row(db_path: str, table: str, row: dict, captured_at: str) ->
     record_id = str(row["id"])
     time_created = row.get("time_created")
     if table == "session":
-        return _base_envelope_from_args(
+        return _base_envelope(
             _OpencodeEnvelopeArgs(
                 db_path,
                 "session",
@@ -193,7 +171,7 @@ def _envelope_from_row(db_path: str, table: str, row: dict, captured_at: str) ->
     data_value = row.get("data")
     raw_text = data_value if isinstance(data_value, str) else ""
     if table == "message":
-        return _base_envelope_from_args(
+        return _base_envelope(
             _OpencodeEnvelopeArgs(
                 db_path,
                 "message",
@@ -205,7 +183,7 @@ def _envelope_from_row(db_path: str, table: str, row: dict, captured_at: str) ->
                 time_created,
             )
         )
-    return _base_envelope_from_args(
+    return _base_envelope(
         _OpencodeEnvelopeArgs(
             db_path,
             "part",
@@ -291,7 +269,7 @@ def _capture_storage(
         except (OSError, UnicodeDecodeError):
             stats["unreadable_files"].append(path)
             continue
-        rec = _base_envelope_from_args(
+        rec = _base_envelope(
             _OpencodeEnvelopeArgs(
                 storage,
                 "legacy_storage_file",

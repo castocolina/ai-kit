@@ -1816,54 +1816,60 @@ class TestRefinerFull(unittest.TestCase):
         session_id = "ses_cwd"
         message_id = "msg_cwd"
         message = capture_opencode._base_envelope(
-            "/opencode.db",
-            "message",
-            message_id,
-            json.dumps(
-                {
-                    "role": "assistant",
-                    "tokens": {"input": 5, "output": 5},
-                    "modelID": MODEL,
-                    "providerID": "anthropic",
-                    "path": {"cwd": "/repo"},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "message",
+                message_id,
+                json.dumps(
+                    {
+                        "role": "assistant",
+                        "tokens": {"input": 5, "output": 5},
+                        "modelID": MODEL,
+                        "providerID": "anthropic",
+                        "path": {"cwd": "/repo"},
+                    }
+                ),
+                captured_at,
+                session_id,
+                None,
+                10,
             ),
-            captured_at,
-            session_id,
-            None,
-            10,
         )
         cd_part = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "prt_cd",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "cd src"}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "prt_cd",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "cd src"}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                20,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            20,
         )
         grep_part = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "prt_grep",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "grep -r FIXME ."}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "prt_grep",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "grep -r FIXME ."}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                30,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            30,
         )
         rows = refine_all([message, cd_part, grep_part])
         by_text = {row["command_text"]: row for row in rows}
@@ -2002,48 +2008,54 @@ class TestRefinerFull(unittest.TestCase):
         session_id = "ses_rebase"
         message_id = "msg_rebase"
         message = capture_opencode._base_envelope(
-            "/opencode.db",
-            "message",
-            message_id,
-            json.dumps({"path": {"cwd": "/repo"}}),
-            captured_at,
-            session_id,
-            None,
-            10,
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "message",
+                message_id,
+                json.dumps({"path": {"cwd": "/repo"}}),
+                captured_at,
+                session_id,
+                None,
+                10,
+            ),
         )
         with_workdir = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "prt_wd",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {
-                        "input": {"command": "echo hi", "workdir": "/rebased"},
-                    },
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "prt_wd",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {
+                            "input": {"command": "echo hi", "workdir": "/rebased"},
+                        },
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                20,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            20,
         )
         without_workdir = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "prt_later",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "grep -r TODO ."}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "prt_later",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "grep -r TODO ."}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                30,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            30,
         )
         rows = refine_all([message, with_workdir, without_workdir])
         by_text = {row["command_text"]: row for row in rows}
@@ -2189,12 +2201,14 @@ class TestRefinerFull(unittest.TestCase):
             "savings_pct": 20.0,
         }
         history = capture_rtk._envelope(
-            "/rtk/history.db",
-            "history",
-            "1",
-            history_payload,
-            captured_at,
-            json.dumps(history_payload),
+            capture_rtk._RtkEnvelopeArgs(
+                "/rtk/history.db",
+                "history",
+                "1",
+                history_payload,
+                captured_at,
+                json.dumps(history_payload),
+            ),
         )
         tee_payload = {
             "source_type": "tee",
@@ -2202,21 +2216,25 @@ class TestRefinerFull(unittest.TestCase):
             "content": "ignored",
         }
         tee = capture_rtk._envelope(
-            "/rtk/tee/1_cmd.log",
-            "tee",
-            "1_cmd.log:abc",
-            tee_payload,
-            captured_at,
-            "ignored",
+            capture_rtk._RtkEnvelopeArgs(
+                "/rtk/tee/1_cmd.log",
+                "tee",
+                "1_cmd.log:abc",
+                tee_payload,
+                captured_at,
+                "ignored",
+            ),
         )
         failure_payload = {"source_type": "parse_failure", "id": 1, "raw_command": "x"}
         failure = capture_rtk._envelope(
-            "/rtk/history.db",
-            "parse_failure",
-            "1",
-            failure_payload,
-            captured_at,
-            json.dumps(failure_payload),
+            capture_rtk._RtkEnvelopeArgs(
+                "/rtk/history.db",
+                "parse_failure",
+                "1",
+                failure_payload,
+                captured_at,
+                json.dumps(failure_payload),
+            ),
         )
         rows = refine_all([history, tee, failure])
         self.assertEqual(len(rows), 1)
@@ -2245,62 +2263,70 @@ class TestRefinerFull(unittest.TestCase):
         session_id = "ses_chrono"
         message_id = "msg_chrono"
         message = capture_opencode._base_envelope(
-            "/opencode.db",
-            "message",
-            message_id,
-            json.dumps({"path": {"cwd": "/repo"}}),
-            captured_at,
-            session_id,
-            None,
-            1,
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "message",
+                message_id,
+                json.dumps({"path": {"cwd": "/repo"}}),
+                captured_at,
+                session_id,
+                None,
+                1,
+            ),
         )
         later_grep = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "b",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "grep -r TODO ."}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "b",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "grep -r TODO ."}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                300,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            300,
         )
         middle = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "a",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "echo mid"}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "a",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "echo mid"}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                200,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            200,
         )
         first_cd = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "c",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "cd src"}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "c",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "cd src"}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                100,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            100,
         )
         rows = refine_all([message, later_grep, middle, first_cd])
         by_text = {row["command_text"]: row for row in rows}
@@ -2498,20 +2524,22 @@ class TestRefinerFull(unittest.TestCase):
         message_id = "msg_date_check"
         time_created = 1758000000000
         rec = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "prt_date_check",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "echo hi"}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "prt_date_check",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "echo hi"}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                time_created,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            time_created,
         )
         self.assertNotIn("timestamp", rec)
         self.assertIsNone(rec["payload"].get("timestamp"))

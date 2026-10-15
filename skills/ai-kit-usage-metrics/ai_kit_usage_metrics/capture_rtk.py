@@ -66,7 +66,7 @@ def _row_dict(cursor: sqlite3.Cursor, row: tuple) -> dict:
     return {col[0]: row[i] for i, col in enumerate(cursor.description)}
 
 
-def _envelope_from_args(args: _RtkEnvelopeArgs) -> dict:
+def _envelope(args: _RtkEnvelopeArgs) -> dict:
     return {
         "raw_ref": f"rtk:{args.source_file}:{args.source_type}:{args.record_id}",
         "captured_at": args.captured_at,
@@ -77,26 +77,6 @@ def _envelope_from_args(args: _RtkEnvelopeArgs) -> dict:
         "raw_text": args.raw_text,
         "payload": args.payload,
     }
-
-
-def _envelope(*args: object) -> dict:
-    if len(args) == 1 and isinstance(args[0], _RtkEnvelopeArgs):
-        return _envelope_from_args(args[0])
-    if len(args) == 6:
-        payload = args[3]
-        if not isinstance(payload, dict):
-            raise TypeError("payload must be a dict")
-        return _envelope_from_args(
-            _RtkEnvelopeArgs(
-                str(args[0]),
-                str(args[1]),
-                str(args[2]),
-                payload,
-                str(args[4]),
-                str(args[5]),
-            )
-        )
-    raise TypeError("_envelope expects _RtkEnvelopeArgs or six positional fields")
 
 
 def _capture_commands(source: _RtkDbSource) -> None:
@@ -111,7 +91,7 @@ def _capture_commands(source: _RtkDbSource) -> None:
         payload["source_type"] = "history"
         raw_text = json.dumps(row, ensure_ascii=False, default=str)
         source.records.append(
-            _envelope_from_args(
+            _envelope(
                 _RtkEnvelopeArgs(
                     source.db_path,
                     "history",
@@ -139,7 +119,7 @@ def _capture_parse_failures(source: _RtkDbSource) -> None:
         payload["source_type"] = "parse_failure"
         raw_text = json.dumps(row, ensure_ascii=False, default=str)
         source.records.append(
-            _envelope_from_args(
+            _envelope(
                 _RtkEnvelopeArgs(
                     source.db_path,
                     "parse_failure",
@@ -191,7 +171,7 @@ def _tee_record_from_file(
         "filename_hint": hint,
         "content": content,
     }
-    rec = _envelope_from_args(
+    rec = _envelope(
         _RtkEnvelopeArgs(path, "tee", f"{basename}:{digest}", payload, captured_at, content)
     )
     return rec, basename, digest
