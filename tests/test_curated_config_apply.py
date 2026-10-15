@@ -21,7 +21,15 @@ sys.path.insert(
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
 from ai_kit_gsd_curated_config import apply as apply_mod
-from ai_kit_gsd_curated_config import cli, config_backup, cross_ai, plan_io, plan_schema
+from ai_kit_gsd_curated_config import (
+    cli,
+    config_backup,
+    cross_ai,
+    cross_ai_script,
+    plan_io,
+    plan_schema,
+)
+from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 
 from tests.test_curated_config_golden import load_fixture, tables_answer
 from tests.test_curated_config_inventory import (
@@ -1162,6 +1170,57 @@ def _config_set_keys(log: list[list[str]]) -> list[str]:
     return keys
 
 
+def _setup_reapply_change(
+    tmp: str,
+) -> tuple[str, dict, str, str, str, dict, FakeRun, str, bytes, int]:
+    project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+    template, tmpl_err = cross_ai_script.load_template()
+    if template is None:
+        raise AssertionError(tmpl_err)
+    plan, _ = plan_io.load_plan(plan_path)
+    assert plan is not None
+    art = copy.deepcopy(plan["artifacts"][0])
+    rendered = cross_ai_script.render(
+        template,
+        cross_ai_script.runner_config(template, art, HOST_SIGNAL_ENV_VARS),
+    )
+    runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
+    os.makedirs(os.path.dirname(runner), exist_ok=True)
+    with open(runner, "wb") as handle:
+        handle.write(rendered)
+    os.chmod(runner, 0o755)
+    before_bytes = rendered
+    before_mode = stat.S_IMODE(os.stat(runner).st_mode)
+    art2 = copy.deepcopy(art)
+    art2["config"] = dict(art2["config"])
+    models = dict(art2["config"]["models"])
+    model_key = next(iter(models))
+    models[model_key] = "openai/gpt-5-alt"
+    art2["config"]["models"] = models
+    plan["artifacts"] = [art2]
+    with open(config_path, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "model_profile": "balanced",
+                "workflow": {"cross_ai_command": "node .planning/scripts/cross-ai.mjs"},
+            },
+            handle,
+        )
+    plan_io.write_plan(plan_path, plan)
+    return (
+        project,
+        env,
+        inv_path,
+        plan_path,
+        config_path,
+        _inv,
+        fake,
+        runner,
+        before_bytes,
+        before_mode,
+    )
+
+
 class TestApplyWritePath(unittest.TestCase):
     def test_held_marker_refuses_with_recovery_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1380,6 +1439,186 @@ class TestApplyWritePath(unittest.TestCase):
             code2, report2 = _write_apply(plan_path, inv_path, project, env, rec)
             self.assertEqual(code2, 2)
             self.assertIn("do not restore the backup", report2["error"])
+
+    def test_reapply_runner_rollback_restores_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (
+                project,
+                env,
+                inv_path,
+                plan_path,
+                config_path,
+                _inv,
+                fake,
+                runner,
+                before_bytes,
+                before_mode,
+            ) = _setup_reapply_change(tmp)
+            rec = _RecordingRun(fake, fail_config_set=1)
+            code, _report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            with open(runner, "rb") as handle:
+                self.assertEqual(handle.read(), before_bytes)
+            self.assertEqual(stat.S_IMODE(os.stat(runner).st_mode), before_mode)
+            snap = runner + ".ai-kit-apply-backup"
+            self.assertFalse(os.path.exists(snap))
+            self.assertIsNone(config_backup.read_marker(config_path))
+
+    def test_reapply_change_success_discards_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (
+                project,
+                env,
+                inv_path,
+                plan_path,
+                config_path,
+                _inv,
+                fake,
+                runner,
+                before_bytes,
+                _before_mode,
+            ) = _setup_reapply_change(tmp)
+            rec = _RecordingRun(fake)
+            code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual((code, report["applied"]), (0, True))
+            self.assertFalse(os.path.exists(runner + ".ai-kit-apply-backup"))
+            with open(runner, "rb") as handle:
+                self.assertNotEqual(handle.read(), before_bytes)
+            self.assertIsNone(config_backup.read_marker(config_path))
+
+    def test_edited_runner_writes_new_without_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            template, tmpl_err = cross_ai_script.load_template()
+            if template is None:
+                raise AssertionError(tmpl_err)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            art = plan["artifacts"][0]
+            rendered = cross_ai_script.render(
+                template,
+                cross_ai_script.runner_config(template, art, HOST_SIGNAL_ENV_VARS),
+            )
+            runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
+            os.makedirs(os.path.dirname(runner), exist_ok=True)
+            edited = rendered + b"\n"
+            with open(runner, "wb") as handle:
+                handle.write(edited)
+            rec = _RecordingRun(fake)
+            code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            script = report["script"]
+            assert script is not None
+            self.assertEqual(script["kind"], "new-as-.new")
+            self.assertFalse(script["active"])
+            self.assertTrue(any("is not active" in w for w in report["warnings"]))
+            with open(runner, "rb") as handle:
+                self.assertEqual(handle.read(), edited)
+            new_path = runner + ".new"
+            self.assertTrue(os.path.isfile(new_path))
+            with open(new_path, "rb") as handle:
+                self.assertEqual(cross_ai_script.script_state(handle.read()), "pristine")
+            self.assertIsNone(config_backup.read_marker(config_path))
+
+    def test_edited_runner_failed_write_keeps_runner_and_new(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            template, tmpl_err = cross_ai_script.load_template()
+            if template is None:
+                raise AssertionError(tmpl_err)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            art = plan["artifacts"][0]
+            rendered = cross_ai_script.render(
+                template,
+                cross_ai_script.runner_config(template, art, HOST_SIGNAL_ENV_VARS),
+            )
+            runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
+            os.makedirs(os.path.dirname(runner), exist_ok=True)
+            edited = rendered + b"\n"
+            with open(runner, "wb") as handle:
+                handle.write(edited)
+            rec = _RecordingRun(fake, fail_config_set=2)
+            code, _report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            with open(runner, "rb") as handle:
+                self.assertEqual(handle.read(), edited)
+            self.assertTrue(os.path.isfile(runner + ".new"))
+            self.assertIsNone(config_backup.read_marker(config_path))
+
+    def test_render_failure_before_config_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            rec = _RecordingRun(fake)
+            real_restore = config_backup.restore_backup
+            with mock.patch.object(
+                cross_ai_script, "plan_script", side_effect=ValueError("template missing")
+            ), mock.patch.object(
+                config_backup, "restore_backup", wraps=real_restore
+            ) as restore:
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            self.assertIn("template missing", report["error"])
+            self.assertGreaterEqual(restore.call_count, 1)
+            self.assertEqual(_config_set_keys(rec.argv_log), [])
+            self.assertIsNone(config_backup.read_marker(config_path))
+
+    def test_fresh_project_failed_write_removes_planning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _config_path, _inv, fake = _decided_plan(tmp)
+            planning = os.path.join(project, ".planning")
+            shutil.rmtree(planning)
+            rec = _RecordingRun(fake, fail_config_set=2)
+            code, _report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            self.assertFalse(os.path.exists(planning))
+            joined = [" ".join(r) for r in rec.argv_log]
+            new_idx = next(i for i, s in enumerate(joined) if "config-new-project" in s)
+            set_indices = [i for i, s in enumerate(joined) if "config-set" in s]
+            self.assertTrue(set_indices)
+            self.assertLess(new_idx, min(set_indices))
+
+    def test_prune_failure_after_commit_still_exits_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            rec = _RecordingRun(fake)
+            with mock.patch.object(
+                config_backup, "prune_backups", side_effect=OSError("prune fail")
+            ), mock.patch.object(config_backup, "restore_backup") as restore:
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            self.assertTrue(report["applied"])
+            self.assertTrue(any("prune" in w for w in report["warnings"]))
+            restore.assert_not_called()
+            self.assertIsNone(config_backup.read_marker(config_path))
+
+    def test_discard_snapshot_failure_after_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (
+                project,
+                env,
+                inv_path,
+                plan_path,
+                config_path,
+                _inv,
+                fake,
+                runner,
+                before_bytes,
+                _before_mode,
+            ) = _setup_reapply_change(tmp)
+            rec = _RecordingRun(fake)
+            with mock.patch.object(
+                config_backup, "discard_snapshot", side_effect=OSError("snap fail")
+            ), mock.patch.object(config_backup, "restore_backup") as restore:
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            self.assertTrue(report["applied"])
+            self.assertTrue(any("snapshot" in w for w in report["warnings"]))
+            restore.assert_not_called()
+            with open(runner, "rb") as handle:
+                self.assertNotEqual(handle.read(), before_bytes)
+            self.assertIsNone(config_backup.read_marker(config_path))
+
 
 if __name__ == "__main__":
     unittest.main()
