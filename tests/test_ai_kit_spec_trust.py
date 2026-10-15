@@ -312,7 +312,6 @@ class TestLoudConfigErrors(TrustEnvTestCase):
         err = io.StringIO()
         with redirect_stderr(err):
             code = gsd_cli.main(["resolve-dispatch", "--cwd", self.cwd,
-                                 "--config-path", os.path.join(self.cwd, "gsd-config.json"),
                                  "--target-dir", self.cwd,
                                  "--quota-path", os.path.join(self.cwd, "quota.json")])
         self.assertEqual(code, 2)

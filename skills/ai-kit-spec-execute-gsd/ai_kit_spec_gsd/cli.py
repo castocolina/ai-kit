@@ -42,9 +42,6 @@ from ai_kit_spec_gsd.gsd_config import (
     is_adapter_owned,
     read_gsd_config,
     resolve_active_runtime,
-    write_active_runtime,
-    write_model_profile,
-    write_native_tier_override,
 )
 
 
@@ -103,8 +100,6 @@ def main(argv: list, **kwargs) -> int:
 def _main(argv: list, assemble_candidates_fn=assemble_candidates,
          read_gsd_config_fn=read_gsd_config, refresh_quota_cache_fn=refresh_quota_cache,
          cache_read_json_fn=cache_read_json, cache_write_json_fn=cache_write_json,
-         write_tier_fn=write_native_tier_override, write_runtime_fn=write_active_runtime,
-         write_model_profile_fn=write_model_profile,
          which_fn=shutil.which, resolve_gsd_tools_fn=_default_resolve_gsd_tools,
          detect_tool_availability_fn=detect_tool_availability,
          resolve_agents_tooling_path_fn=resolve_agents_tooling_path,
@@ -118,7 +113,6 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
 
     p_resolve = sub.add_parser("resolve-dispatch")
     p_resolve.add_argument("--cwd", required=True)
-    p_resolve.add_argument("--config-path", required=True)
     p_resolve.add_argument("--target-dir", required=True)
     p_resolve.add_argument("--quota-path", required=True)
     p_resolve.add_argument("--phase-prompt-file", default=None,
@@ -126,8 +120,8 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
     p_resolve.add_argument("--run-id", default=None,
                             help="omit to generate one -- this call's resolved run_id is ALSO "
                                  "printed in the JSON result (result['run_id']) so the caller can "
-                                 "thread the SAME id into any later write-workflow-key/"
-                                 "clear-workflow-key calls in the same wave")
+                                 "thread the SAME id into any later write-workflow-keys/"
+                                 "clear-workflow-keys calls in the same wave")
 
     p_config_path = sub.add_parser("config-path")
     p_config_path.add_argument("--cwd", required=True)
@@ -169,18 +163,26 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
     args = parser.parse_args(argv)
 
     if args.command == "resolve-dispatch":
+        run_id = args.run_id if args.run_id else generate_run_id()
+        # cfg_resolve (inside assemble) runs FIRST: a malformed local review-spec.toml is a
+        # loud ConfigError/exit 2 (D-11/R13) before any gsd-tools run or config write (D-15).
+        candidates, top_n_keys = assemble_candidates_fn(args.cwd, dict(os.environ))
+        # D-17: the config path comes from gsd-tools config-path (workstream-aware); the
+        # gsd-core version banner prints here too, before any config-set this run may make.
+        ctx = _build_write_context(args.cwd, run_id, which_fn=which_fn,
+                                    resolve_gsd_tools_fn=resolve_gsd_tools_fn, run_fn=run_fn)
+        if ctx is None:
+            return 2
         gsd_config, status = read_gsd_config_fn(
-            args.config_path, warn_fn=lambda msg: print(msg, file=sys.stderr))
+            ctx.config_path, warn_fn=lambda msg: print(msg, file=sys.stderr))
         if status == "malformed":
             result = {"mode": "fallback_notice", "key": None, "cli": None,
                       "provenance": "fallback", "reason": "malformed_config",
-                      "message": f"{args.config_path} is malformed/unreadable -- refusing to "
+                      "message": f"{ctx.config_path} is malformed/unreadable -- refusing to "
                                  f"write over it. Fix or remove it by hand, then re-run.",
-                      "run_id": args.run_id if args.run_id else generate_run_id()}
+                      "run_id": run_id}
             stdout.write(json.dumps(result))
             return 0
-        run_id = args.run_id if args.run_id else generate_run_id()
-        candidates, top_n_keys = assemble_candidates_fn(args.cwd, dict(os.environ))
         existing_quota = cache_read_json_fn(args.quota_path) or {}
         quota = refresh_quota_cache_fn(
             {"reviewers": [
@@ -201,11 +203,9 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
                       f"required_context=0", file=sys.stderr)
         try:
             result = resolve_gsd_dispatch(
-                candidates, top_n_keys, gsd_config, args.config_path, args.target_dir,
+                candidates, top_n_keys, gsd_config, ctx, args.target_dir,
                 current_runtime=resolve_active_runtime(gsd_config),
-                required_context=required_context,
-                quota=quota, run_id=run_id, write_tier_fn=write_tier_fn,
-                write_runtime_fn=write_runtime_fn, write_model_profile_fn=write_model_profile_fn)
+                required_context=required_context, quota=quota)
         except ValueError as exc:
             # D-15 (Phase 16.1): an explicit purpose = "execute" entry naming an unsupported CLI
             # (claude/grok) is a hard config error -- fail before any config write, never fall
@@ -214,7 +214,7 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
             return 2
         result["run_id"] = run_id
         stdout.write(json.dumps(result))
-        return 0
+        return 1 if result.get("mode") == "write_failed" else 0
 
     if args.command == "config-path":
         node, tools_path = _resolve_gsd_tooling(args.cwd, which_fn, resolve_gsd_tools_fn)

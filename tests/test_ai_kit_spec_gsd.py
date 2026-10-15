@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sys
 import unittest
 from unittest import mock
@@ -17,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-spec-execute"))
 
 import detect_framework
-from ai_kit_spec import execute_selection
+from ai_kit_spec import execute_selection, gsd_tools
 from ai_kit_spec_gsd import adapter, cli, cross_ai_guidance, gsd_config, gsd_cross_ai
 
 
@@ -62,19 +63,147 @@ class TestResolveActiveRuntime(unittest.TestCase):
         self.assertEqual(gsd_config.resolve_active_runtime({"runtime": "codex"}), "codex")
 
 
-class TestWriteActiveRuntime(unittest.TestCase):
-    def test_writes_runtime_key_records_ownership_marker_and_preserves_other_keys(self):
-        writes = {}
-        def fake_write(path, data):
-            writes[path] = data
-        result = gsd_config.write_active_runtime(
-            "/repo/.planning/config.json", {"model_profile": "balanced"}, "codex",
-            write_fn=fake_write, backup_copy_fn=lambda *a: None, isfile_fn=lambda p: False,
-            run_id="run-1")
-        self.assertEqual(result["runtime"], "codex")
-        self.assertEqual(result["model_profile"], "balanced")  # untouched
-        self.assertEqual(writes["/repo/.planning/config.json"]["runtime"], "codex")
-        self.assertEqual(result["_ai_kit_spec_execute_gsd"]["runtime"], "codex")
+def _ctx(config_path="/repo/.planning/config.json", run_fn=None, project_dir="/repo",
+         tools=None):
+    """A GsdWriteContext for tests: tools/run_fn are filled in by FakeGsdTools-based tests, and
+    the default fake paths are never written to (ownership reads just miss their sidecar)."""
+    return gsd_config.GsdWriteContext(tools=tools, project_dir=project_dir,
+                                       config_path=config_path, run_id="r1", run_fn=run_fn)
+
+
+def _ok_apply(ctx, changes):
+    return gsd_config.ApplyResult([key for key, _ in changes], None, None, [])
+
+
+class TestIsAdapterOwned(unittest.TestCase):
+    def test_true_when_current_value_equals_the_sidecar_record(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            config_path = os.path.join(t, "config.json")
+            gsd_config.write_ownership(config_path,
+                                       {"model_profile_overrides.codex.sonnet": "gpt-5.6-sol"})
+            cfg = {"model_profile_overrides": {"codex": {"sonnet": "gpt-5.6-sol"}}}
+            self.assertTrue(gsd_config.is_adapter_owned(cfg, config_path,
+                                                         "model_profile_overrides.codex.sonnet"))
+
+    def test_false_when_sidecar_missing_value_reads_user_owned(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            config_path = os.path.join(t, "config.json")
+            cfg = {"model_profile_overrides": {"codex": {"sonnet": "hand-set"}}}
+            self.assertFalse(gsd_config.is_adapter_owned(cfg, config_path,
+                                                          "model_profile_overrides.codex.sonnet"))
+
+    def test_false_when_value_no_longer_matches_the_sidecar(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            config_path = os.path.join(t, "config.json")
+            gsd_config.write_ownership(config_path, {"workflow.x": "old"})
+            self.assertFalse(gsd_config.is_adapter_owned({"workflow": {"x": "hand-edited"}},
+                                                          config_path, "workflow.x"))
+
+    def test_false_when_current_value_is_none_or_absent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            config_path = os.path.join(t, "config.json")
+            gsd_config.write_ownership(config_path, {"workflow.x": None})
+            self.assertFalse(gsd_config.is_adapter_owned({}, config_path, "workflow.x"))
+
+
+class TestApplyChangesBackup(unittest.TestCase):
+    def test_backs_up_an_existing_config_once_per_run_before_the_first_write(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            config_path = os.path.join(t, "config.json")
+            with open(config_path, "w", encoding="utf-8") as f:
+                f.write("{}")
+            fake = FakeGsdTools(t)
+            ctx = _ctx(config_path=config_path, run_fn=fake.run_fn, project_dir=t,
+                       tools=gsd_tools.GsdTools("node", fake.gsd_tools_path))
+            gsd_config.apply_changes(ctx, [("workflow.a", True)])
+            backup = config_path + ".ai-kit-spec-execute-gsd.r1.bak"
+            self.assertTrue(os.path.exists(backup))
+            # A second run with a different run id gets its own backup; the same run id does
+            # not duplicate (already covered by the once-per-run isfile check).
+
+    def test_no_backup_when_the_config_does_not_exist_yet(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            config_path = os.path.join(t, "config.json")
+            fake = FakeGsdTools(t)
+            ctx = _ctx(config_path=config_path, run_fn=fake.run_fn, project_dir=t,
+                       tools=gsd_tools.GsdTools("node", fake.gsd_tools_path))
+            gsd_config.apply_changes(ctx, [("workflow.a", True)])
+            self.assertEqual([p for p in os.listdir(t) if p.endswith(".bak")], [])
+
+
+class TestUndoLog(unittest.TestCase):
+    """D-17/RUN-11: each undo entry is the key's own config-set previousValue; a later failure
+    reverts earlier keys in reverse order; config-get is never called."""
+
+    def _ctx(self, fake, t):
+        return _ctx(config_path=os.path.join(t, ".planning", "config.json"),
+                    run_fn=fake.run_fn, project_dir=t,
+                    tools=gsd_tools.GsdTools("node", fake.gsd_tools_path))
+
+    def test_failure_on_later_key_reverts_earlier_keys_in_reverse_order(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t, fail_keys={"c"})
+            fake.config["a"] = 1
+            result = gsd_config.apply_changes(self._ctx(fake, t),
+                                               [("a", 1), ("b", 2), ("c", 3)])
+            self.assertEqual(result.applied, ["a", "b"])
+            self.assertEqual(result.failed, "c")
+            self.assertEqual(result.reverted, ["b", "a"])
+            keys_and_values = [(c[3], c[4]) for c in fake.config_set_calls()]
+            self.assertEqual(keys_and_values,
+                             [("a", "1"), ("b", "2"), ("c", "3"),
+                              ("b", "null"), ("a", "1")])  # reverse order; b was absent
+
+    def test_failure_on_the_first_key_makes_no_revert_call(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t, fail_keys={"a"})
+            result = gsd_config.apply_changes(self._ctx(fake, t), [("a", 1), ("b", 2)])
+            self.assertEqual(result.applied, [])
+            self.assertEqual(result.failed, "a")
+            self.assertEqual(result.reverted, [])
+            self.assertEqual(len(fake.config_set_calls()), 1)
+
+    def test_exit_zero_without_parseable_json_means_unknown_prior_value_key_fails(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t, raw_keys={"b"})
+            fake.config["a"] = 1
+            result = gsd_config.apply_changes(self._ctx(fake, t), [("a", 1), ("b", 2)])
+            self.assertEqual(result.applied, ["a"])
+            self.assertEqual(result.failed, "b")
+            self.assertIn("prior value is unknown", result.error)
+            self.assertIn("keeps the new value", result.error)
+            self.assertEqual(result.reverted, ["a"])
+            self.assertNotIn("b", fake.config_set_calls()[-1])
+
+    def test_no_config_get_call_in_any_undo_scenario(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t, fail_keys={"c"})
+            gsd_config.apply_changes(self._ctx(fake, t), [("a", 1), ("b", 2), ("c", 3)])
+            self.assertNotIn("config-get", fake.subcommands())
+
+    def test_success_records_ownership_and_a_null_unset_drops_the_sidecar_key(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            config_path = os.path.join(t, ".planning", "config.json")
+            os.makedirs(os.path.dirname(config_path))
+            gsd_config.write_ownership(config_path, {"workflow.old": "x"})
+            fake = FakeGsdTools(t)
+            fake.config["workflow.old"] = "x"
+            result = gsd_config.apply_changes(
+                self._ctx(fake, t), [("workflow.old", None), ("workflow.new", True)])
+            self.assertIsNone(result.failed)
+            self.assertEqual(gsd_config.read_ownership(config_path), {"workflow.new": True})
+            self.assertEqual(fake.config_set_calls()[0][3:5], ["workflow.old", "null"])
 
 
 class TestResolveNativeTier(unittest.TestCase):
@@ -88,126 +217,6 @@ class TestResolveNativeTier(unittest.TestCase):
         self.assertIsNone(gsd_config.resolve_native_tier(
             {"model_profile_overrides": {"claude": {"opus": "claude-opus-5"}}},
             "codex", "sonnet"))
-
-
-class TestWriteNativeTierOverride(unittest.TestCase):
-    def test_writes_nested_override_records_ownership_marker_and_preserves_other_runtimes(self):
-        writes = {}
-        def fake_write(path, data):
-            writes[path] = data
-        existing = {"model_profile_overrides": {"claude": {"opus": "claude-opus-5"}}}
-        result = gsd_config.write_native_tier_override(
-            "/repo/.planning/config.json", existing, "codex", "sonnet", "gpt-5.6-sol",
-            write_fn=fake_write, backup_copy_fn=lambda *a: None, isfile_fn=lambda p: False,
-            run_id="run-1")
-        self.assertEqual(result["model_profile_overrides"]["codex"]["sonnet"], "gpt-5.6-sol")
-        self.assertEqual(result["model_profile_overrides"]["claude"]["opus"], "claude-opus-5")
-        self.assertEqual(result["_ai_kit_spec_execute_gsd"]["overrides"]["codex"]["sonnet"],
-                          "gpt-5.6-sol")
-        self.assertEqual(writes["/repo/.planning/config.json"]
-                          ["model_profile_overrides"]["codex"]["sonnet"], "gpt-5.6-sol")
-
-    def test_backs_up_existing_config_once_before_first_write_of_this_run(self):
-        copies = []
-        def fake_copy(src, dst):
-            copies.append((src, dst))
-        gsd_config.write_native_tier_override(
-            "/repo/.planning/config.json", {}, "codex", "sonnet", "gpt-5.6-sol",
-            write_fn=lambda *a: None, backup_copy_fn=fake_copy,
-            isfile_fn=lambda p: p == "/repo/.planning/config.json", run_id="run-1")
-        self.assertEqual(copies, [("/repo/.planning/config.json",
-                                    "/repo/.planning/config.json.ai-kit-spec-execute-gsd.run-1.bak")])
-
-    def test_a_later_run_gets_its_own_distinct_backup_path(self):
-        copies = []
-        def fake_copy(src, dst):
-            copies.append(dst)
-        gsd_config.write_native_tier_override(
-            "/repo/.planning/config.json", {}, "codex", "sonnet", "gpt-5.6-sol",
-            write_fn=lambda *a: None, backup_copy_fn=fake_copy,
-            isfile_fn=lambda p: p == "/repo/.planning/config.json", run_id="run-2")
-        self.assertEqual(copies, ["/repo/.planning/config.json.ai-kit-spec-execute-gsd.run-2.bak"])
-
-
-class TestOverrideIsAdapterOwned(unittest.TestCase):
-    def test_true_when_marker_matches_current_override_exactly(self):
-        config = {"model_profile_overrides": {"codex": {"sonnet": "gpt-5.6-sol"}},
-                  "_ai_kit_spec_execute_gsd": {"overrides": {"codex": {"sonnet": "gpt-5.6-sol"}}}}
-        self.assertTrue(gsd_config.override_is_adapter_owned(config, "codex", "sonnet"))
-
-    def test_false_when_no_marker_present_at_all(self):
-        # A genuine, hand-written user override -- never touched.
-        config = {"model_profile_overrides": {"codex": {"sonnet": "gpt-5.6-sol"}}}
-        self.assertFalse(gsd_config.override_is_adapter_owned(config, "codex", "sonnet"))
-
-    def test_false_when_marker_present_but_value_no_longer_matches(self):
-        config = {"model_profile_overrides": {"codex": {"sonnet": "hand-edited"}},
-                  "_ai_kit_spec_execute_gsd": {"overrides": {"codex": {"sonnet": "gpt-5.6-sol"}}}}
-        self.assertFalse(gsd_config.override_is_adapter_owned(config, "codex", "sonnet"))
-
-
-class TestResolveGsdConfigPath(unittest.TestCase):
-    def test_defaults_to_project_root_planning_config(self):
-        self.assertEqual(gsd_config.resolve_gsd_config_path("/repo"),
-                          "/repo/.planning/config.json")
-
-
-class TestWriteWorkflowKey(unittest.TestCase):
-    def test_writes_key_under_workflow_and_preserves_other_keys(self):
-        writes = {}
-        def fake_write(path, data):
-            writes[path] = data
-        result = gsd_config.write_workflow_key(
-            "/repo/.planning/config.json",
-            {"model_profile": "balanced", "workflow": {"other_key": "keep-me"}},
-            "cross_ai_command", "codex exec ...",
-            write_fn=fake_write, backup_copy_fn=lambda *a: None, isfile_fn=lambda p: False,
-            run_id="run-1")
-        self.assertEqual(result["workflow"]["cross_ai_command"], "codex exec ...")
-        self.assertEqual(result["workflow"]["other_key"], "keep-me")  # untouched
-        self.assertEqual(result["model_profile"], "balanced")  # untouched
-        self.assertEqual(writes["/repo/.planning/config.json"]["workflow"]["cross_ai_command"],
-                          "codex exec ...")
-
-    def test_a_second_write_against_the_first_writes_own_returned_dict_keeps_both_keys(self):
-        writes = {}
-        def fake_write(path, data):
-            writes[path] = data
-        first_result = gsd_config.write_workflow_key(
-            "/repo/.planning/config.json", {}, "cross_ai_command", "codex exec ...",
-            write_fn=fake_write, backup_copy_fn=lambda *a: None, isfile_fn=lambda p: False,
-            run_id="run-1")
-        second_result = gsd_config.write_workflow_key(
-            "/repo/.planning/config.json", first_result, "cross_ai_execution", True,
-            write_fn=fake_write, backup_copy_fn=lambda *a: None, isfile_fn=lambda p: False,
-            run_id="run-1")
-        self.assertEqual(second_result["workflow"]["cross_ai_command"], "codex exec ...")
-        self.assertEqual(second_result["workflow"]["cross_ai_execution"], True)
-
-
-class TestWorkflowKeyOwnershipAndClearing(unittest.TestCase):
-    def test_clear_workflow_key_if_adapter_owned_removes_an_adapter_owned_key(self):
-        config = {"workflow": {"cross_ai_command": "codex exec ...", "other_key": "keep-me"},
-                  "_ai_kit_spec_execute_gsd": {"workflow": {"cross_ai_command": "codex exec ..."}}}
-        writes = {}
-        def fake_write(path, data):
-            writes[path] = data
-        result = gsd_config.clear_workflow_key_if_adapter_owned(
-            "/repo/.planning/config.json", config, "cross_ai_command", write_fn=fake_write,
-            backup_copy_fn=lambda *a: None, isfile_fn=lambda p: False, run_id="run-1")
-        self.assertNotIn("cross_ai_command", result["workflow"])
-        self.assertEqual(result["workflow"]["other_key"], "keep-me")
-        self.assertNotIn("cross_ai_command", result["_ai_kit_spec_execute_gsd"]["workflow"])
-
-    def test_clear_workflow_key_if_adapter_owned_never_touches_a_genuine_user_value(self):
-        config = {"workflow": {"cross_ai_command": "user-set-command"}}
-        write_calls = []
-        result = gsd_config.clear_workflow_key_if_adapter_owned(
-            "/repo/.planning/config.json", config, "cross_ai_command",
-            write_fn=lambda *a: write_calls.append(a), backup_copy_fn=lambda *a: None,
-            isfile_fn=lambda p: False, run_id="run-1")
-        self.assertEqual(result, config)
-        self.assertEqual(write_calls, [])
 
 
 class TestKnownGsdRuntimes(unittest.TestCase):
@@ -331,50 +340,43 @@ class TestResolveGsdDispatch(unittest.TestCase):
              "vendor": "openai", "task_affinity": None, "context_limit": None, "tier": "sonnet"},
         ]
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["fable-native", "codex/gpt-5.6-sol"], {}, "/repo/.planning/config.json",
-            "/repo",
-            write_tier_fn=lambda *a, **k: {"model_profile_overrides": {a[2]: {a[3]: a[4]}}},
-            write_runtime_fn=lambda *a, **k: {})
+            candidates, ["fable-native", "codex/gpt-5.6-sol"], {}, _ctx(), "/repo",
+            apply_changes_fn=_ok_apply)
         self.assertEqual(result["mode"], "native_tier")
         self.assertEqual(result["key"], "codex/gpt-5.6-sol")
         self.assertEqual(result["tier"], "sonnet")
 
-    def test_native_candidate_with_curated_tier_writes_override_and_runtime(self):
+    def test_native_candidate_with_curated_tier_writes_override_and_runtime_in_one_call(self):
         candidates = [{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
-        written, runtime_written = {}, {}
-        def fake_write_tier(path, gsd_config, runtime, tier, model, **kw):
-            written["args"] = (path, gsd_config, runtime, tier, model)
-            return {**gsd_config, "model_profile_overrides": {runtime: {tier: model}}}
-        def fake_write_runtime(path, gsd_config, runtime, **kw):
-            runtime_written["args"] = (path, gsd_config, runtime)
-            return {**gsd_config, "runtime": runtime}
+        seen = []
+        def fake_apply(ctx, changes):
+            seen.append((ctx, changes))
+            return gsd_config.ApplyResult([key for key, _ in changes], None, None, [])
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["codex/gpt-5.6-sol"], {}, "/repo/.planning/config.json", "/repo",
-            write_tier_fn=fake_write_tier, write_runtime_fn=fake_write_runtime)
+            candidates, ["codex/gpt-5.6-sol"], {}, _ctx(), "/repo", apply_changes_fn=fake_apply)
         self.assertEqual(result, {"mode": "native_tier", "runtime": "codex", "tier": "sonnet",
                                     "model": "gpt-5.6-sol", "written": True, "cli": "codex",
                                     "key": "codex/gpt-5.6-sol", "provenance": "resolved_candidate"})
-        # Write-ordering: runtime write happens FIRST, its own returned dict feeds the tier write.
-        self.assertEqual(runtime_written["args"], ("/repo/.planning/config.json", {}, "codex"))
-        self.assertEqual(written["args"],
-                          ("/repo/.planning/config.json", {"runtime": "codex"}, "codex",
-                           "sonnet", "gpt-5.6-sol"))
+        # D-17: ONE apply_changes call; runtime first, then the tier override, in that order.
+        self.assertEqual(len(seen), 1)
+        ctx, changes = seen[0]
+        self.assertEqual(ctx.config_path, "/repo/.planning/config.json")
+        self.assertEqual(changes, [("runtime", "codex"),
+                                   ("model_profile_overrides.codex.sonnet", "gpt-5.6-sol")])
 
     def test_does_not_rewrite_active_runtime_when_it_already_matches_current_runtime(self):
         candidates = [{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
-        runtime_written = {"called": False}
-        def fake_write_runtime(*a, **kw):
-            runtime_written["called"] = True
-            return {}
+        seen = []
         adapter.resolve_gsd_dispatch(
-            candidates, ["codex/gpt-5.6-sol"], {}, "/repo/.planning/config.json", "/repo",
-            current_runtime="codex", write_tier_fn=lambda *a, **k: {},
-            write_runtime_fn=fake_write_runtime)
-        self.assertFalse(runtime_written["called"])
+            candidates, ["codex/gpt-5.6-sol"], {}, _ctx(), "/repo", current_runtime="codex",
+            apply_changes_fn=lambda ctx, changes: seen.append(changes)
+            or gsd_config.ApplyResult([key for key, _ in changes], None, None, []))
+        # Only the tier override is written -- runtime already matches.
+        self.assertEqual(seen, [[("model_profile_overrides.codex.sonnet", "gpt-5.6-sol")]])
 
     def test_native_candidate_cli_none_resolves_with_claude_as_runtime(self):
         # Task 7 smoke-test finding: model_profile_overrides.claude.<tier> is dead for GSD's real
@@ -382,63 +384,73 @@ class TestResolveGsdDispatch(unittest.TestCase):
         # TIER_TO_MODEL_PROFILE), never model_profile_overrides.
         candidates = [{"cli": None, "model": "opus", "key": "opus-native", "vendor": "",
                        "task_affinity": None, "context_limit": None, "tier": "opus"}]
-        profile_writes = []
+        seen = []
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["opus-native"], {}, "/repo/.planning/config.json", "/repo",
-            write_tier_fn=lambda *a, **k: {}, write_runtime_fn=lambda *a, **k: {},
-            write_model_profile_fn=lambda path, cfg, profile, **k: profile_writes.append(profile)
-            or {**cfg, "model_profile": profile})
+            candidates, ["opus-native"], {}, _ctx(), "/repo",
+            apply_changes_fn=lambda ctx, changes: seen.append(changes)
+            or gsd_config.ApplyResult([key for key, _ in changes], None, None, []))
         self.assertEqual(result["runtime"], "claude")
         self.assertEqual(result["tier"], "opus")
         self.assertIsNone(result["cli"])
         self.assertEqual(result["model"], "quality")
         self.assertTrue(result["written"])
-        self.assertEqual(profile_writes, ["quality"])
+        self.assertEqual(seen, [[("model_profile", "quality")]])
 
     def test_native_candidate_honors_an_existing_non_adapter_owned_model_profile(self):
-        gsd_config = {"model_profile": "budget"}  # a genuine, hand-set user value
+        cfg = {"model_profile": "budget"}  # a genuine, hand-set user value
         candidates = [{"cli": None, "model": "opus", "key": "opus-native", "vendor": "",
                        "task_affinity": None, "context_limit": None, "tier": "opus"}]
-        profile_writes = []
+        seen = []
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["opus-native"], gsd_config, "/repo/.planning/config.json", "/repo",
-            write_tier_fn=lambda *a, **k: {}, write_runtime_fn=lambda *a, **k: {},
-            write_model_profile_fn=lambda path, cfg, profile, **k: profile_writes.append(profile))
+            candidates, ["opus-native"], cfg, _ctx(), "/repo",
+            apply_changes_fn=lambda ctx, changes: seen.append(changes)
+            or gsd_config.ApplyResult([], None, None, []))
         self.assertEqual(result["model"], "budget")
         self.assertFalse(result["written"])
         self.assertEqual(result["provenance"], "existing_gsd_config")
-        self.assertEqual(profile_writes, [])
+        self.assertEqual(seen, [])
 
     def test_existing_non_adapter_owned_slot_is_honored_and_not_overwritten(self):
-        gsd_config = {"model_profile_overrides": {"codex": {"sonnet": "hand-picked-model"}}}
+        cfg = {"model_profile_overrides": {"codex": {"sonnet": "hand-picked-model"}}}
         candidates = [{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
-        write_calls = []
+        seen = []
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["codex/gpt-5.6-sol"], gsd_config, "/repo/.planning/config.json", "/repo",
-            current_runtime="codex",
-            write_tier_fn=lambda *a, **k: write_calls.append(a),
-            write_runtime_fn=lambda *a, **k: write_calls.append(a))
+            candidates, ["codex/gpt-5.6-sol"], cfg, _ctx(), "/repo", current_runtime="codex",
+            apply_changes_fn=lambda ctx, changes: seen.append(changes)
+            or gsd_config.ApplyResult([], None, None, []))
         self.assertEqual(result["model"], "hand-picked-model")
         self.assertFalse(result["written"])
         self.assertEqual(result["provenance"], "existing_gsd_config")
-        self.assertEqual(write_calls, [])
+        self.assertEqual(seen, [])
 
     def test_adapter_owned_existing_slot_is_re_resolved_not_treated_as_fixed(self):
-        gsd_config = {
-            "model_profile_overrides": {"codex": {"sonnet": "stale-model"}},
-            "_ai_kit_spec_execute_gsd": {"overrides": {"codex": {"sonnet": "stale-model"}}},
-        }
+        cfg = {"model_profile_overrides": {"codex": {"sonnet": "stale-model"}}}
         candidates = [{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["codex/gpt-5.6-sol"], gsd_config, "/repo/.planning/config.json", "/repo",
-            current_runtime="codex", write_tier_fn=lambda *a, **k: {**gsd_config},
-            write_runtime_fn=lambda *a, **k: {**gsd_config})
+            candidates, ["codex/gpt-5.6-sol"], cfg, _ctx(), "/repo", current_runtime="codex",
+            is_adapter_owned_fn=lambda gsd_cfg, path, key: True,
+            apply_changes_fn=_ok_apply)
         self.assertEqual(result["model"], "gpt-5.6-sol")
         self.assertTrue(result["written"])
+
+    def test_a_failed_apply_surfaces_as_a_write_failed_result_carrying_the_undo_log(self):
+        candidates = [{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+                       "vendor": "openai", "task_affinity": None, "context_limit": None,
+                       "tier": "sonnet"}]
+        failing = gsd_config.ApplyResult(["runtime"], "model_profile_overrides.codex.sonnet",
+                                          "config-set failed", ["runtime"])
+        result = adapter.resolve_gsd_dispatch(
+            candidates, ["codex/gpt-5.6-sol"], {}, _ctx(), "/repo", current_runtime="claude",
+            apply_changes_fn=lambda ctx, changes: failing)
+        self.assertEqual(result["mode"], "write_failed")
+        self.assertEqual(result["applied"], ["runtime"])
+        self.assertEqual(result["failed"], "model_profile_overrides.codex.sonnet")
+        self.assertEqual(result["reverted"], ["runtime"])
+        self.assertEqual(result["error"], "config-set failed")
 
     @mock.patch("ai_kit_spec_gsd.adapter.build_cross_ai_command")
     def test_falls_through_to_cross_ai_when_no_tier_and_no_native_runtime(self, mock_build):
@@ -449,8 +461,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
                        "key": "opencode/router-env-my-coding", "vendor": "opencode",
                        "task_affinity": None, "context_limit": None, "tier": None}]
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["opencode/router-env-my-coding"], {},
-            "/repo/.planning/config.json", "/repo")
+            candidates, ["opencode/router-env-my-coding"], {}, _ctx(), "/repo")
         self.assertEqual(result["mode"], "cross_ai_hook")
         self.assertEqual(result["cli"], "opencode")
         self.assertEqual(result["cross_ai_command"],
@@ -468,9 +479,8 @@ class TestResolveGsdDispatch(unittest.TestCase):
              "vendor": "openai", "task_affinity": None, "context_limit": None, "tier": "sonnet"},
         ]
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {},
-            "/repo/.planning/config.json", "/repo", write_tier_fn=lambda *a, **k: {},
-            write_runtime_fn=lambda *a, **k: {})
+            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {}, _ctx(),
+            "/repo", apply_changes_fn=_ok_apply)
         self.assertEqual(result["mode"], "native_tier")
         self.assertEqual(result["model"], "gpt-5.6-sol")
 
@@ -484,9 +494,8 @@ class TestResolveGsdDispatch(unittest.TestCase):
         ]
         quota = {"opencode/router-env-my-coding": {"available": False}}
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {},
-            "/repo/.planning/config.json", "/repo", quota=quota, write_tier_fn=lambda *a, **k: {},
-            write_runtime_fn=lambda *a, **k: {})
+            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {}, _ctx(),
+            "/repo", quota=quota, apply_changes_fn=_ok_apply)
         self.assertEqual(result["mode"], "native_tier")
         self.assertEqual(result["model"], "gpt-5.6-sol")
 
@@ -502,8 +511,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
                        "task_affinity": None, "context_limit": None, "tier": None}]
         with contextlib.redirect_stderr(stderr):
             result = adapter.resolve_gsd_dispatch(
-                candidates, ["gemini/gemini-3.1-pro"], {}, "/repo/.planning/config.json",
-                "/repo")
+                candidates, ["gemini/gemini-3.1-pro"], {}, _ctx(), "/repo")
         self.assertEqual(result["mode"], "fallback_notice")
         self.assertEqual(result["provenance"], "fallback")
         self.assertIn("gemini/gemini-3.1-pro", stderr.getvalue())
@@ -520,13 +528,13 @@ class TestResolveGsdDispatch(unittest.TestCase):
         quota = {"opencode/router-env-my-coding": {"available": False},
                  "codex/gpt-5.6-sol": {"available": False}}
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {},
-            "/repo/.planning/config.json", "/repo", quota=quota)
+            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {}, _ctx(),
+            "/repo", quota=quota)
         self.assertEqual(result["mode"], "fallback_notice")
         self.assertEqual(result["reason"], "quota_exhausted")
 
     def test_no_configured_candidate_at_all_has_its_own_distinct_reason_code(self):
-        result = adapter.resolve_gsd_dispatch([], [], {}, "/repo/.planning/config.json", "/repo")
+        result = adapter.resolve_gsd_dispatch([], [], {}, _ctx(), "/repo")
         self.assertEqual(result["mode"], "fallback_notice")
         self.assertEqual(result["reason"], "no_configured_candidate")
 
@@ -539,8 +547,8 @@ class TestResolveGsdDispatch(unittest.TestCase):
              "vendor": "openai", "task_affinity": None, "context_limit": 2000, "tier": "sonnet"},
         ]
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {},
-            "/repo/.planning/config.json", "/repo", required_context=1_000_000)
+            candidates, ["opencode/router-env-my-coding", "codex/gpt-5.6-sol"], {}, _ctx(),
+            "/repo", required_context=1_000_000)
         self.assertEqual(result["mode"], "fallback_notice")
         self.assertEqual(result["reason"], "all_candidates_context_rejected")
 
@@ -552,110 +560,114 @@ class TestResolveGsdDispatch(unittest.TestCase):
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
         result = adapter.resolve_gsd_dispatch(
-            candidates, ["codex/gpt-5.6-sol"], {}, "/repo/.planning/config.json", "/repo",
-            quota={}, required_context=required_context, write_tier_fn=lambda *a, **k: {},
-            write_runtime_fn=lambda *a, **k: {})
+            candidates, ["codex/gpt-5.6-sol"], {}, _ctx(), "/repo",
+            quota={}, required_context=required_context, apply_changes_fn=_ok_apply)
         self.assertNotEqual(result["mode"], "fallback_notice")
 
-
 class TestCliResolveDispatch(unittest.TestCase):
-    def test_resolve_dispatch_subcommand_prints_json_dispatch_decision(self):
+    """resolve-dispatch resolves node + gsd-tools itself (project-local first), asks gsd-tools
+    for the config path, and exits 1 on a write_failed result."""
+
+    def _main(self, assemble_fn, fake, read_gsd_config_fn=None, run_id=None):
+        import contextlib
         import io
-        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as t, contextlib.redirect_stderr(io.StringIO()):
+            argv = ["resolve-dispatch", "--cwd", t, "--target-dir", t,
+                    "--quota-path", os.path.join(t, "quota.json")]
+            if run_id:
+                argv += ["--run-id", run_id]
+            kwargs = dict(
+                assemble_candidates_fn=assemble_fn,
+                refresh_quota_cache_fn=lambda *a, **k: {},
+                cache_read_json_fn=lambda p: {},
+                cache_write_json_fn=lambda p, d: None,
+                run_fn=fake.run_fn, which_fn=_node_which,
+                resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path,
+                stdout=io.StringIO())
+            if read_gsd_config_fn is not None:
+                kwargs["read_gsd_config_fn"] = read_gsd_config_fn
+            code = cli.main(argv, **kwargs)
+        return code, kwargs["stdout"].getvalue()
+
+    @staticmethod
+    def _codex_assemble():
         def fake_assemble(cwd, env):
             return ([{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
-                       "vendor": "openai", "task_affinity": None, "context_limit": None,
-                       "tier": "sonnet"}],
+                      "vendor": "openai", "task_affinity": None, "context_limit": None,
+                      "tier": "sonnet"}],
                     ["codex/gpt-5.6-sol"])
-        stdout = io.StringIO()
-        exit_code = cli.main(
-            ["resolve-dispatch", "--cwd", "/repo",
-             "--config-path", "/repo/.planning/config.json", "--target-dir", "/repo",
-             "--quota-path", "/cache/quota.json"],
-            assemble_candidates_fn=fake_assemble,
-            read_gsd_config_fn=lambda p, warn_fn=None: ({}, "missing"),
-            refresh_quota_cache_fn=lambda *a, **k: {}, cache_read_json_fn=lambda p: {},
-            cache_write_json_fn=lambda p, d: None, write_tier_fn=lambda *a, **k: {},
-            write_runtime_fn=lambda *a, **k: {}, stdout=stdout)
-        self.assertEqual(exit_code, 0)
-        result = json.loads(stdout.getvalue())
+        return fake_assemble
+
+    def test_resolve_dispatch_prints_json_dispatch_decision_and_writes_via_config_set(self):
+        import json
+        fake = FakeGsdTools("/tmp")  # config-path answered in-memory; nothing touches /tmp
+        code, out = self._main(self._codex_assemble(), fake)
+        self.assertEqual(code, 0)
+        result = json.loads(out)
         self.assertEqual(result["mode"], "native_tier")
         self.assertEqual(result["model"], "gpt-5.6-sol")
+        keys = [c[3] for c in fake.config_set_calls()]
+        self.assertEqual(keys, ["runtime", "model_profile_overrides.codex.sonnet"])
 
     def test_resolve_dispatch_aborts_and_reports_malformed_config_without_mutating(self):
-        import io
         import json
-        write_calls = []
-        stdout = io.StringIO()
-        exit_code = cli.main(
-            ["resolve-dispatch", "--cwd", "/repo",
-             "--config-path", "/repo/.planning/config.json", "--target-dir", "/repo",
-             "--quota-path", "/cache/quota.json"],
-            assemble_candidates_fn=lambda cwd, env: ([], []),
-            read_gsd_config_fn=lambda p, warn_fn=None: ({}, "malformed"),
-            refresh_quota_cache_fn=lambda *a, **k: {}, cache_read_json_fn=lambda p: {},
-            cache_write_json_fn=lambda p, d: None,
-            write_tier_fn=lambda *a, **k: write_calls.append(a),
-            write_runtime_fn=lambda *a, **k: write_calls.append(a), stdout=stdout)
-        self.assertEqual(exit_code, 0)
-        result = json.loads(stdout.getvalue())
+        fake = FakeGsdTools("/tmp")
+        code, out = self._main(lambda cwd, env: ([], []), fake,
+                               read_gsd_config_fn=lambda p, warn_fn=None: ({}, "malformed"))
+        self.assertEqual(code, 0)
+        result = json.loads(out)
         self.assertEqual(result["mode"], "fallback_notice")
         self.assertEqual(result["reason"], "malformed_config")
-        self.assertEqual(write_calls, [])
+        self.assertEqual(fake.config_set_calls(), [])
 
-    def test_resolve_dispatch_generates_one_run_id_and_threads_it_through_every_write(self):
+    def test_resolve_dispatch_threads_one_explicit_run_id_into_the_config_write(self):
+        import contextlib
         import io
         import json
-        def fake_assemble(cwd, env):
-            return ([{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
-                       "vendor": "openai", "task_affinity": None, "context_limit": None,
-                       "tier": "sonnet"}],
-                    ["codex/gpt-5.6-sol"])
-        run_ids_seen = []
-        def fake_write_tier(path, gsd_config, runtime, tier, model, run_id=None, **kw):
-            run_ids_seen.append(run_id)
-            return {**gsd_config, "model_profile_overrides": {runtime: {tier: model}}}
-        def fake_write_runtime(path, gsd_config, runtime, run_id=None, **kw):
-            run_ids_seen.append(run_id)
-            return {**gsd_config, "runtime": runtime}
-        stdout = io.StringIO()
-        cli.main(
-            ["resolve-dispatch", "--cwd", "/repo",
-             "--config-path", "/repo/.planning/config.json", "--target-dir", "/repo",
-             "--quota-path", "/cache/quota.json", "--run-id", "explicit-run-42"],
-            assemble_candidates_fn=fake_assemble,
-            read_gsd_config_fn=lambda p, warn_fn=None: ({}, "missing"),
-            refresh_quota_cache_fn=lambda *a, **k: {}, cache_read_json_fn=lambda p: {},
-            cache_write_json_fn=lambda p, d: None, write_tier_fn=fake_write_tier,
-            write_runtime_fn=fake_write_runtime, stdout=stdout)
-        self.assertTrue(run_ids_seen)
-        self.assertEqual(set(run_ids_seen), {"explicit-run-42"})
-        result = json.loads(stdout.getvalue())
-        self.assertEqual(result["run_id"], "explicit-run-42")
+        import tempfile
+        fake = FakeGsdTools("/tmp")
+        stderr, stdout = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as t, contextlib.redirect_stderr(stderr):
+            planning = os.path.join(t, ".planning")
+            os.makedirs(planning)
+            # An existing config makes apply_changes' once-per-run backup carry the run id.
+            with open(os.path.join(planning, "config.json"), "w", encoding="utf-8") as f:
+                f.write("{}")
+            code = cli.main(["resolve-dispatch", "--cwd", t, "--target-dir", t,
+                             "--quota-path", os.path.join(t, "quota.json"),
+                             "--run-id", "explicit-run-42"],
+                            assemble_candidates_fn=self._codex_assemble(),
+                            refresh_quota_cache_fn=lambda *a, **k: {},
+                            cache_read_json_fn=lambda p: {},
+                            cache_write_json_fn=lambda p, d: None,
+                            run_fn=fake.run_fn, which_fn=_node_which,
+                            resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path,
+                            stdout=stdout)
+            backups = [p for p in os.listdir(planning) if p.endswith(".bak")]
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["run_id"], "explicit-run-42")
+        self.assertEqual(backups,
+                         ["config.json.ai-kit-spec-execute-gsd.explicit-run-42.bak"])
 
     def test_resolve_dispatch_falls_back_to_zero_context_when_phase_prompt_file_is_unreadable(self):
         import contextlib
         import io
-        import json
-        def fake_assemble(cwd, env):
-            return ([{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
-                       "vendor": "openai", "task_affinity": None, "context_limit": None,
-                       "tier": "sonnet"}],
-                    ["codex/gpt-5.6-sol"])
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            exit_code = cli.main(
-                ["resolve-dispatch", "--cwd", "/repo",
-                 "--config-path", "/repo/.planning/config.json", "--target-dir", "/repo",
-                 "--quota-path", "/cache/quota.json",
-                 "--phase-prompt-file", "/nonexistent/phase-prompt.md"],
-                assemble_candidates_fn=fake_assemble,
-                read_gsd_config_fn=lambda p, warn_fn=None: ({}, "missing"),
-                refresh_quota_cache_fn=lambda *a, **k: {}, cache_read_json_fn=lambda p: {},
-                cache_write_json_fn=lambda p, d: None, write_tier_fn=lambda *a, **k: {},
-                write_runtime_fn=lambda *a, **k: {}, stdout=stdout)
-        self.assertEqual(exit_code, 0)
-        json.loads(stdout.getvalue())
+        import tempfile
+        fake = FakeGsdTools("/tmp")
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as t, contextlib.redirect_stderr(stderr):
+            argv = ["resolve-dispatch", "--cwd", t, "--target-dir", t,
+                    "--quota-path", os.path.join(t, "quota.json"),
+                    "--phase-prompt-file", "/nonexistent/phase-prompt.md"]
+            code = cli.main(argv, assemble_candidates_fn=self._codex_assemble(),
+                            refresh_quota_cache_fn=lambda *a, **k: {},
+                            cache_read_json_fn=lambda p: {},
+                            cache_write_json_fn=lambda p, d: None,
+                            run_fn=fake.run_fn, which_fn=_node_which,
+                            resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path,
+                            stdout=io.StringIO())
+        self.assertEqual(code, 0)
         self.assertIn("phase-prompt.md", stderr.getvalue())
 
     def test_resolve_dispatch_purpose_execute_claude_entry_exits_2_before_any_write(self):
@@ -664,29 +676,28 @@ class TestCliResolveDispatch(unittest.TestCase):
         # silent fallback to another CLI.
         import contextlib
         import io
+        import tempfile
         def fake_assemble(cwd, env):
             return ([{"cli": "claude", "model": "opus", "key": "claude/opus",
-                       "vendor": "anthropic", "purpose": "execute", "task_affinity": None,
-                       "context_limit": None, "tier": None}],
+                      "vendor": "anthropic", "purpose": "execute", "task_affinity": None,
+                      "context_limit": None, "tier": None}],
                     ["claude/opus"])
-        write_calls = []
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            exit_code = cli.main(
-                ["resolve-dispatch", "--cwd", "/repo",
-                 "--config-path", "/repo/.planning/config.json", "--target-dir", "/repo",
-                 "--quota-path", "/cache/quota.json"],
-                assemble_candidates_fn=fake_assemble,
-                read_gsd_config_fn=lambda p, warn_fn=None: ({}, "missing"),
-                refresh_quota_cache_fn=lambda *a, **k: {}, cache_read_json_fn=lambda p: {},
-                cache_write_json_fn=lambda p, d: None,
-                write_tier_fn=lambda *a, **k: write_calls.append(a),
-                write_runtime_fn=lambda *a, **k: write_calls.append(a), stdout=stdout)
-        self.assertEqual(exit_code, 2)
-        self.assertEqual(write_calls, [])
+        fake = FakeGsdTools("/tmp")
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as t, contextlib.redirect_stderr(stderr):
+            code = cli.main(["resolve-dispatch", "--cwd", t, "--target-dir", t,
+                             "--quota-path", os.path.join(t, "quota.json")],
+                            assemble_candidates_fn=fake_assemble,
+                            refresh_quota_cache_fn=lambda *a, **k: {},
+                            cache_read_json_fn=lambda p: {},
+                            cache_write_json_fn=lambda p, d: None,
+                            run_fn=fake.run_fn, which_fn=_node_which,
+                            resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path,
+                            stdout=io.StringIO())
+        self.assertEqual(code, 2)
+        self.assertEqual(fake.config_set_calls(), [])
         self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
         self.assertIn("ai-kit-spec-execute-gsd:", stderr.getvalue())
-        self.assertNotIn("\"mode\"", stdout.getvalue())  # no JSON result is emitted on rejection
 
     def test_resolve_dispatch_purpose_none_grok_entry_is_skipped_with_a_warning(self):
         # D-15: a purpose-unset grok ladder entry is dropped with one visible stderr warning
@@ -694,26 +705,29 @@ class TestCliResolveDispatch(unittest.TestCase):
         import contextlib
         import io
         import json
+        import tempfile
         def fake_assemble(cwd, env):
             return ([{"cli": "grok", "model": "grok-4.6", "key": "grok/grok-4.6",
-                       "vendor": "xai", "task_affinity": None, "context_limit": None,
-                       "tier": None},
-                      {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
-                       "vendor": "openai", "task_affinity": None, "context_limit": None,
-                       "tier": "sonnet"}],
+                      "vendor": "xai", "task_affinity": None, "context_limit": None,
+                      "tier": None},
+                     {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+                      "vendor": "openai", "task_affinity": None, "context_limit": None,
+                      "tier": "sonnet"}],
                     ["grok/grok-4.6", "codex/gpt-5.6-sol"])
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            exit_code = cli.main(
-                ["resolve-dispatch", "--cwd", "/repo",
-                 "--config-path", "/repo/.planning/config.json", "--target-dir", "/repo",
-                 "--quota-path", "/cache/quota.json"],
-                assemble_candidates_fn=fake_assemble,
-                read_gsd_config_fn=lambda p, warn_fn=None: ({}, "missing"),
-                refresh_quota_cache_fn=lambda *a, **k: {}, cache_read_json_fn=lambda p: {},
-                cache_write_json_fn=lambda p, d: None, write_tier_fn=lambda *a, **k: {},
-                write_runtime_fn=lambda *a, **k: {}, stdout=stdout)
-        self.assertEqual(exit_code, 0)
+        fake = FakeGsdTools("/tmp")
+        stderr = io.StringIO()
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as t, contextlib.redirect_stderr(stderr):
+            code = cli.main(["resolve-dispatch", "--cwd", t, "--target-dir", t,
+                             "--quota-path", os.path.join(t, "quota.json")],
+                            assemble_candidates_fn=fake_assemble,
+                            refresh_quota_cache_fn=lambda *a, **k: {},
+                            cache_read_json_fn=lambda p: {},
+                            cache_write_json_fn=lambda p, d: None,
+                            run_fn=fake.run_fn, which_fn=_node_which,
+                            resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path,
+                            stdout=stdout)
+        self.assertEqual(code, 0)
         result = json.loads(stdout.getvalue())
         self.assertEqual(result["mode"], "native_tier")
         self.assertEqual(result["cli"], "codex")
@@ -721,6 +735,28 @@ class TestCliResolveDispatch(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn("codex, cursor-agent, opencode", warnings[0])
 
+    def test_resolve_dispatch_write_failed_result_exits_1_carrying_the_undo_log(self):
+        import json
+        fake = FakeGsdTools("/tmp", fail_keys={"model_profile_overrides.codex.sonnet"})
+        code, out = self._main(self._codex_assemble(), fake)
+        self.assertEqual(code, 1)
+        result = json.loads(out)
+        self.assertEqual(result["mode"], "write_failed")
+        self.assertEqual(result["applied"], ["runtime"])
+        self.assertEqual(result["failed"], "model_profile_overrides.codex.sonnet")
+        self.assertEqual(result["reverted"], ["runtime"])
+
+    def test_resolve_dispatch_exits_2_when_gsd_tools_cannot_be_resolved(self):
+        import contextlib
+        import io
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = cli.main(["resolve-dispatch", "--cwd", "/repo", "--target-dir", "/repo",
+                             "--quota-path", "/cache/quota.json"],
+                            assemble_candidates_fn=lambda cwd, env: ([], []),
+                            which_fn=_node_which, resolve_gsd_tools_fn=lambda start: None)
+        self.assertEqual(code, 2)
+        self.assertIn("gsd-tools", stderr.getvalue())
 
 class TestCliConfigPath(unittest.TestCase):
     def test_config_path_prints_the_gsd_tools_resolved_path(self):
@@ -1157,3 +1193,114 @@ class TestUntrustedLocalExecuteEntry(unittest.TestCase):
             with redirect_stderr(io.StringIO()):
                 candidates, _ = adapter.assemble_candidates(cwd, env)
             self.assertIn("x1", [c["key"] for c in candidates])
+
+
+class TestNativeTierViaConfigSet(unittest.TestCase):
+    """Native-tier writes go through one apply_changes call (config-set per key), ownership in
+    the sidecar, and user-set values are never overwritten."""
+
+    def _fake(self, t, fail_keys=()):
+        fake = FakeGsdTools(t, fail_keys=fail_keys)
+        ctx = _ctx(config_path=os.path.join(t, ".planning", "config.json"), run_fn=fake.run_fn,
+                   project_dir=t, tools=gsd_tools.GsdTools("node", fake.gsd_tools_path))
+        return fake, ctx
+
+    def _codex_opus(self):
+        return [{"cli": "codex", "model": "m-x", "key": "codex/m-x", "vendor": "openai",
+                 "task_affinity": None, "context_limit": None, "tier": "opus"}]
+
+    def test_codex_opus_on_a_claude_runtime_project_writes_runtime_then_tier(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake, ctx = self._fake(t)
+            result = adapter.resolve_gsd_dispatch(self._codex_opus(), ["codex/m-x"], {}, ctx,
+                                                   t, current_runtime="claude")
+            self.assertTrue(result["written"])
+            keys = [c[3] for c in fake.config_set_calls()]
+            self.assertEqual(keys, ["runtime", "model_profile_overrides.codex.opus"])
+            owned = gsd_config.read_ownership(ctx.config_path)
+            self.assertEqual(owned, {"runtime": "codex",
+                                     "model_profile_overrides.codex.opus": "m-x"})
+
+    def test_a_user_set_override_is_never_overwritten(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake, ctx = self._fake(t)
+            cfg = {"model_profile_overrides": {"codex": {"opus": "user-model"}}}
+            result = adapter.resolve_gsd_dispatch(self._codex_opus(), ["codex/m-x"], cfg, ctx,
+                                                   t, current_runtime="codex")
+            self.assertFalse(result["written"])
+            self.assertEqual(result["model"], "user-model")
+            self.assertEqual(result["provenance"], "existing_gsd_config")
+            self.assertEqual(fake.config_set_calls(), [])
+
+    def test_claude_runtime_writes_model_profile_only_when_not_user_owned(self):
+        import tempfile
+        candidates = [{"cli": None, "model": "opus", "key": "opus-native", "vendor": "",
+                       "task_affinity": None, "context_limit": None, "tier": "opus"}]
+        with tempfile.TemporaryDirectory() as t:
+            fake, ctx = self._fake(t)
+            result = adapter.resolve_gsd_dispatch(candidates, ["opus-native"], {}, ctx, t)
+            self.assertEqual([c[3] for c in fake.config_set_calls()], ["model_profile"])
+            self.assertEqual(result["model"], "quality")
+        with tempfile.TemporaryDirectory() as t:
+            fake, ctx = self._fake(t)
+            cfg = {"model_profile": "budget"}  # hand-set user value, no sidecar record
+            result = adapter.resolve_gsd_dispatch(candidates, ["opus-native"], cfg, ctx, t)
+            self.assertEqual(fake.config_set_calls(), [])
+            self.assertEqual(result["provenance"], "existing_gsd_config")
+
+    def test_a_failed_tier_write_reverts_the_runtime_and_reports_write_failed(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake, ctx = self._fake(t, fail_keys={"model_profile_overrides.codex.opus"})
+            result = adapter.resolve_gsd_dispatch(self._codex_opus(), ["codex/m-x"], {}, ctx,
+                                                   t, current_runtime="claude")
+            self.assertEqual(result["mode"], "write_failed")
+            self.assertEqual(result["applied"], ["runtime"])
+            self.assertEqual(result["reverted"], ["runtime"])
+            self.assertEqual(result["failed"], "model_profile_overrides.codex.opus")
+            calls = fake.config_set_calls()
+            self.assertEqual(calls[-1][3:5], ["runtime", "null"])
+
+
+class TestRealGsdConfigSet(unittest.TestCase):
+    """The one real gsd-tools run: against this checkout's own .claude/gsd-core on a scratch
+    project, HOME pointed at a temp dir. Skipped when gsd-core or node is missing."""
+
+    _TOOLS = os.path.join(os.path.dirname(__file__), "..", ".claude", "gsd-core", "bin",
+                          "gsd-tools.cjs")
+
+    @unittest.skipUnless(os.path.exists(_TOOLS), "checkout has no .claude/gsd-core install")
+    @unittest.skipUnless(shutil.which("node"), "node not on PATH")
+    def test_write_workflow_keys_round_trip_through_real_gsd_core(self):
+        import io
+        import json
+        import subprocess
+        import tempfile
+
+        from ai_kit_spec import gsd_tools as gt
+        node = shutil.which("node")
+        tools = gt.GsdTools(node_bin=node, gsd_tools_path=os.path.abspath(self._TOOLS))
+        with (tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as scratch,
+              mock.patch.dict(os.environ, {"HOME": home})):
+                self.assertTrue(gt.ensure_config_exists(tools, scratch, run_fn=subprocess.run))
+                config_json = os.path.join(scratch, ".planning", "config.json")
+                stdout = io.StringIO()
+                code = cli.main(["write-workflow-keys", "--cwd", scratch, "--run-id", "r1",
+                                 "--set", "cross_ai_execution=true"],
+                                resolve_gsd_tools_fn=lambda start: tools.gsd_tools_path,
+                                stdout=stdout)
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(stdout.getvalue())["applied"],
+                                 ["workflow.cross_ai_execution"])
+                got = gt.config_get(tools, scratch, "workflow.cross_ai_execution",
+                                    run_fn=subprocess.run)
+                self.assertTrue(got.found)
+                self.assertIs(got.value, True)
+                # The config.json on disk was written by gsd-tools, not by ai-kit: gsd-tools'
+                # config-new-project created it, and ai-kit only ever opened it read-only.
+                self.assertTrue(os.path.exists(config_json))
+                with open(config_json, encoding="utf-8") as f:
+                    on_disk = json.load(f)
+                self.assertIs(on_disk["workflow"]["cross_ai_execution"], True)

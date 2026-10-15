@@ -14,11 +14,9 @@ from ai_kit_spec.quota import resolve_ladder_pick
 from ai_kit_spec_gsd.gsd_config import (
     KNOWN_GSD_TIERS,
     TIER_TO_MODEL_PROFILE,
-    model_profile_is_adapter_owned,
-    override_is_adapter_owned,
-    write_active_runtime,
-    write_model_profile,
-    write_native_tier_override,
+    apply_changes,
+    is_adapter_owned,
+    resolve_native_tier,
 )
 from ai_kit_spec_gsd.gsd_cross_ai import build_cross_ai_command
 
@@ -74,12 +72,18 @@ def _fallback_notice(top_choice_key, reason_code: str, reason_prose: str) -> dic
     }
 
 
+def _write_failed(apply_result, runtime, tier, cli, key) -> dict:
+    return {"mode": "write_failed", "applied": apply_result.applied,
+            "failed": apply_result.failed, "reverted": apply_result.reverted,
+            "error": apply_result.error, "runtime": runtime, "tier": tier, "cli": cli,
+            "key": key}
+
+
 def resolve_gsd_dispatch(candidates: list, top_n_keys: list, gsd_config: dict,
-                          gsd_config_path: str, target_dir: str, current_runtime: str = "claude",
+                          ctx, target_dir: str, current_runtime: str = "claude",
                           required_context: int = 0, quota: dict | None = None,
-                          run_id: str | None = None, write_tier_fn=write_native_tier_override,
-                          write_runtime_fn=write_active_runtime,
-                          write_model_profile_fn=write_model_profile,
+                          apply_changes_fn=apply_changes,
+                          is_adapter_owned_fn=is_adapter_owned,
                           resolve_ladder_pick_fn=resolve_ladder_pick) -> dict:
     quota = dict(quota or {})
 
@@ -135,29 +139,38 @@ def resolve_gsd_dispatch(candidates: list, top_n_keys: list, gsd_config: dict,
                 # a genuine hand-set "balanced" pin, so it treats both the same way (never
                 # overwrite) -- meaning in practice this branch rarely ever reaches the write
                 # below in a real, freshly-scaffolded project. Confirmed the write mechanism
-                # itself works correctly when model_profile is genuinely unset (write_model_profile
-                # writes "quality"/"balanced"/"budget" and GSD's own tooling reads it back
-                # correctly) -- the gap is only in this condition, and it's being kept as-is:
+                # itself works correctly when model_profile is genuinely unset (the config-set
+                # write of "quality"/"balanced"/"budget" is read back correctly by GSD's own
+                # tooling) -- the gap is only in this condition, and it's being kept as-is:
                 # never risking a genuine user pin is worth more than this adapter's own tier
                 # decision reliably taking effect.
-                if existing_profile is not None and not model_profile_is_adapter_owned(gsd_config):
+                if existing_profile is not None and not is_adapter_owned_fn(
+                        gsd_config, ctx.config_path, "model_profile"):
                     return {"mode": "native_tier", "runtime": runtime, "tier": tier,
                             "model": existing_profile, "written": False, "cli": cli, "key": None,
                             "provenance": "existing_gsd_config"}
-                gsd_config = write_model_profile_fn(gsd_config_path, gsd_config, profile,
-                                                      run_id=run_id)
+                applied = apply_changes_fn(ctx, [("model_profile", profile)])
+                if applied.failed:
+                    return _write_failed(applied, runtime, tier, cli, candidate["key"])
                 return {"mode": "native_tier", "runtime": runtime, "tier": tier,
                         "model": profile, "written": True, "cli": cli,
                         "key": candidate["key"], "provenance": "resolved_candidate"}
-            existing = gsd_config.get("model_profile_overrides", {}).get(runtime, {}).get(tier)
-            if existing is not None and not override_is_adapter_owned(gsd_config, runtime, tier):
+            tier_dotted = f"model_profile_overrides.{runtime}.{tier}"
+            existing = resolve_native_tier(gsd_config, runtime, tier)
+            if existing is not None and not is_adapter_owned_fn(gsd_config, ctx.config_path,
+                                                                 tier_dotted):
                 return {"mode": "native_tier", "runtime": runtime, "tier": tier,
                         "model": existing, "written": False, "cli": cli, "key": None,
                         "provenance": "existing_gsd_config"}
+            # D-17: runtime first, then the tier override -- one apply_changes call, one
+            # config-set per key, undo log inside.
+            changes = []
             if current_runtime != runtime:
-                gsd_config = write_runtime_fn(gsd_config_path, gsd_config, runtime, run_id=run_id)
-            gsd_config = write_tier_fn(gsd_config_path, gsd_config, runtime, tier,
-                                        candidate["model"], run_id=run_id)
+                changes.append(("runtime", runtime))
+            changes.append((tier_dotted, candidate["model"]))
+            applied = apply_changes_fn(ctx, changes)
+            if applied.failed:
+                return _write_failed(applied, runtime, tier, cli, candidate["key"])
             return {"mode": "native_tier", "runtime": runtime, "tier": tier,
                     "model": candidate["model"], "written": True, "cli": cli,
                     "key": candidate["key"], "provenance": "resolved_candidate"}
