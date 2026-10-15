@@ -24,7 +24,7 @@ from tests.test_curated_config_inventory import (
     make_gsd_install,
     run_inventory,
 )
-from tests.test_curated_config_recommend import make_inventory, run_recommend
+from tests.test_curated_config_recommend import entry_map, make_inventory, run_recommend
 
 
 def make_home(root: str) -> str:
@@ -483,8 +483,20 @@ class TestSystemOneBackend(unittest.TestCase):
         self.assertEqual(out["via"], [])
 
 
-def _inv(host="claude", skills=None, project=None, backend=None) -> dict:
-    inv = make_inventory(host=host, project=project)
+def _inv(
+    host="claude",
+    skills=None,
+    project=None,
+    backend=None,
+    existing=None,
+    extra_accepted=(),
+) -> dict:
+    inv = make_inventory(
+        host=host,
+        project=project,
+        existing=existing,
+        extra_accepted=extra_accepted,
+    )
     if skills is not None:
         inv["skills"] = skills
     if backend is not None:
@@ -499,16 +511,49 @@ def _skill_row(
     plugin: str | None = None,
     addressable: bool = True,
     root: str | None = None,
+    escapes_root: bool = False,
+    real_dir_home: str | None = None,
+    real_dir: str | None = None,
+    description: str = "",
 ) -> dict:
     label = root or ("skills" if root_kind == "project" else "~/.claude/skills")
-    return {
+    row = {
         "name": name,
         "root_kind": root_kind,
         "root": label,
         "plugin": plugin,
-        "escapes_root": False,
+        "escapes_root": escapes_root,
         "addressable": addressable,
+        "description": description,
     }
+    if real_dir_home is not None:
+        row["real_dir_home"] = real_dir_home
+    if real_dir is not None:
+        row["real_dir"] = real_dir
+    return row
+
+
+def _inv_existing_roots(roots: list[str], **kwargs) -> dict:
+    existing = {
+        "exists": True,
+        "values": {"agent_skills_security": {"trusted_global_roots": roots}},
+    }
+    return _inv(existing=existing, **kwargs)
+
+
+def _escaping_global(
+    name: str,
+    home_rel: str,
+    *,
+    real_dir: str | None = None,
+) -> dict:
+    return _skill_row(
+        name,
+        "global",
+        escapes_root=True,
+        real_dir_home=home_rel,
+        real_dir=real_dir or home_rel.replace("~/", "home/user/"),
+    )
 
 
 def _shipped_affinity() -> dict:
@@ -773,6 +818,249 @@ class TestAffinityResolve(unittest.TestCase):
         plan = _plan_with_affinity(inv, rigor="standard")
         blob = json.dumps(plan)
         self.assertNotIn("jev-fast-decision", blob)
+
+
+class TestTrustedRoots(unittest.TestCase):
+    def test_two_escaping_skills_sorted_candidates(self):
+        wired = {
+            "z-skill": _escaping_global("z-skill", "~/.vault/z-skill"),
+            "a-skill": _escaping_global("a-skill", "~/.vault/a-skill"),
+        }
+        candidates, _notes = skills.trusted_roots(wired, _inv())
+        self.assertEqual(
+            [item["value"] for item in candidates],
+            ["~/.vault/a-skill", "~/.vault/z-skill"],
+        )
+
+    def test_same_real_dir_deduped(self):
+        wired = {
+            "one": _escaping_global("one", "~/.vault/shared"),
+            "two": _escaping_global("two", "~/.vault/shared"),
+        }
+        candidates, _notes = skills.trusted_roots(wired, _inv())
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["value"], "~/.vault/shared")
+
+    def test_usable_project_copy_suppresses_candidate(self):
+        wired = {
+            "react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev"),
+        }
+        inv = _inv(skills=[
+            _skill_row("react-dev", "project"),
+            _escaping_global("react-dev", "~/.agents/skills/react-dev"),
+        ])
+        candidates, _notes = skills.trusted_roots(wired, inv)
+        self.assertEqual(candidates, [])
+
+    def test_existing_roots_cover_all_proposed(self):
+        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
+        inv = _inv_existing_roots(["~/.agents/skills/react-dev"])
+        candidates, _notes = skills.trusted_roots(wired, inv)
+        self.assertEqual(candidates, [])
+
+    def test_partial_existing_trust_merged_why(self):
+        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
+        inv = _inv_existing_roots(["~/vault"])
+        candidates, _notes = skills.trusted_roots(wired, inv)
+        self.assertEqual(candidates[0]["value"], "~/.agents/skills/react-dev")
+        why = skills.merged_trusted_roots_why(candidates, inv)
+        self.assertIn('["~/vault","~/.agents/skills/react-dev"]', why)
+
+    def test_absolute_existing_root_kept_in_merged_why(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        vault = os.path.join(root, "vault")
+        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
+        inv = _inv_existing_roots([vault])
+        candidates, _notes = skills.trusted_roots(wired, inv)
+        why = skills.merged_trusted_roots_why(candidates, inv)
+        self.assertTrue(why.startswith("approve with plan-set"))
+        self.assertIn(vault, why)
+        self.assertIn("~/.agents/skills/react-dev", why)
+
+    def test_ancestor_home_root_covers(self):
+        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
+        inv = _inv_existing_roots(["~/.agents/skills"])
+        candidates, _notes = skills.trusted_roots(wired, inv)
+        self.assertEqual(candidates, [])
+
+    def test_absolute_ancestor_covers(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        parent = os.path.join(root, "agents", "skills")
+        real = os.path.join(parent, "react-dev")
+        wired = {
+            "react-dev": _escaping_global(
+                "react-dev",
+                "~/.agents/skills/react-dev",
+                real_dir=real,
+            ),
+        }
+        inv = _inv_existing_roots([parent])
+        candidates, _notes = skills.trusted_roots(wired, inv)
+        self.assertEqual(candidates, [])
+
+    def test_similar_prefix_does_not_cover(self):
+        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
+        inv = _inv_existing_roots(["~/.agents/skills-other"])
+        candidates, _notes = skills.trusted_roots(wired, inv)
+        self.assertEqual(len(candidates), 1)
+
+    def test_covered_lexical(self):
+        self.assertTrue(
+            skills.covered("~/.agents/skills/x", "/any", ["~/.agents/skills"])
+        )
+        self.assertFalse(
+            skills.covered("~/.agents/skills/x", "/any", ["~/.agents/skills-other"])
+        )
+
+    def test_escaping_project_skipped_global_wins(self):
+        inv = _inv(skills=[
+            _skill_row("foo", "project", escapes_root=True),
+            _skill_row("foo", "global"),
+        ])
+        row = skills.locate("foo", inv)
+        assert row is not None
+        self.assertEqual(row["root_kind"], "global")
+
+    def test_project_only_escaping_unwired_note(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {"id": "f", "skills": ["foo"], "agents": ["gsd-planner"], "when": None},
+            ],
+        }
+        inv = _inv(skills=[_skill_row("foo", "project", escapes_root=True)])
+        facts = skills.skill_facts(inv, [], {})
+        _resolved, notes = skills.resolve(affinity, inv, facts, "standard")
+        self.assertEqual(len(notes), 1)
+        self.assertIn("outside the project", notes[0]["text"])
+        self.assertNotIn("/", notes[0]["text"].split("outside the project")[0])
+
+    def test_outside_home_global_unwired(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {"id": "f", "skills": ["away"], "agents": ["gsd-planner"], "when": None},
+            ],
+        }
+        inv = _inv(skills=[
+            _skill_row(
+                "away",
+                "global",
+                escapes_root=True,
+                real_dir="/outside/away",
+                real_dir_home=None,
+            ),
+        ])
+        resolved, notes = skills.resolve(affinity, inv, skills.skill_facts(inv, [], {}), "standard")
+        self.assertEqual(resolved, {})
+        self.assertEqual(len(notes), 1)
+        self.assertIn("outside the home directory", notes[0]["text"])
+
+    def test_project_outside_home_still_wired(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {"id": "f", "skills": ["local"], "agents": ["gsd-planner"], "when": None},
+            ],
+        }
+        inv = _inv(skills=[
+            _skill_row(
+                "local",
+                "project",
+                real_dir="/outside/local",
+                real_dir_home=None,
+            ),
+        ])
+        resolved, _notes = skills.resolve(
+            affinity, inv, skills.skill_facts(inv, [], {}), "standard",
+        )
+        self.assertEqual(resolved.get("gsd-planner"), ["local"])
+
+
+class TestProposals(unittest.TestCase):
+    def test_unknown_skill_with_description(self):
+        inv = _inv(skills=[_skill_row("chart", "global", description="Draws charts")])
+        notes = skills.proposals(_shipped_affinity(), inv)
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0]["kind"], "skill_proposal")
+        self.assertIn("Draws charts", notes[0]["text"])
+
+    def test_empty_description_skipped(self):
+        inv = _inv(skills=[_skill_row("quiet", "global", description="")])
+        self.assertEqual(skills.proposals(_shipped_affinity(), inv), [])
+
+    def test_gsd_prefix_skipped(self):
+        inv = _inv(skills=[_skill_row("gsd-foo", "global", description="x")])
+        self.assertEqual(skills.proposals(_shipped_affinity(), inv), [])
+
+    def test_family_skill_skipped(self):
+        inv = _inv(skills=[_skill_row("ponytail", "global", description="x")])
+        self.assertEqual(skills.proposals(_shipped_affinity(), inv), [])
+
+    def test_cap_and_more_note(self):
+        rows = [
+            _skill_row(f"skill-{idx:02d}", "global", description="d")
+            for idx in range(12)
+        ]
+        inv = _inv(skills=rows)
+        notes = skills.proposals(_shipped_affinity(), inv)
+        proposals_only = [n for n in notes if n["kind"] == "skill_proposal"]
+        self.assertEqual(len(proposals_only), skills.PROPOSAL_CAP)
+        self.assertEqual(proposals_only[0]["key"], "skill-00")
+        more = [n for n in notes if n["kind"] == "skill_proposal_more"]
+        self.assertEqual(len(more), 1)
+        self.assertIn("2 more", more[0]["text"])
+
+
+class TestSkillNotes(unittest.TestCase):
+    def test_jev_wired_session_gate_note(self):
+        inv = _inv(
+            skills=[_skill_row("jev-fast-decision", "global")],
+            backend={"detected": True, "via": ["key_present"], "note": ""},
+            extra_accepted=[
+                "agent_skills.gsd-advisor-researcher",
+                "agent_skills.gsd-assumptions-analyzer",
+            ],
+        )
+        inv["gsd_core"]["agent_to_phase_type"]["gsd-advisor-researcher"] = "research"
+        inv["gsd_core"]["agent_to_phase_type"]["gsd-assumptions-analyzer"] = "research"
+        plan = _plan_with_affinity(inv)
+        kinds = [n["kind"] for n in plan["notes"]]
+        self.assertIn("jev_session_gate", kinds)
+        gate = next(n for n in plan["notes"] if n["kind"] == "jev_session_gate")
+        self.assertIn("GSD_PATH_JEV=1", gate["text"])
+        self.assertIn("GSD_PATH_JEV_TIMEOUT_SECONDS", gate["text"])
+
+    def test_jev_unwired_no_gate_note(self):
+        inv = _inv(skills=[_skill_row("jev-fast-decision", "global")])
+        plan = _plan_with_affinity(inv)
+        self.assertFalse(any(n["kind"] == "jev_session_gate" for n in plan["notes"]))
+
+    def test_pi_agent_skills_effect(self):
+        inv = _inv(host="pi", skills=[_skill_row("ponytail", "global")])
+        plan = _plan_with_affinity(inv, rigor="mvp")
+        skill_entries = [e for e in plan["entries"] if e["key"].startswith("agent_skills.")]
+        self.assertTrue(skill_entries)
+        for entry in skill_entries:
+            self.assertEqual(entry["effect"], "no effect on pi (no GSD agent files installed)")
+
+    def test_trusted_root_entry_on_escaping_global(self):
+        inv = _inv(
+            project={"frontend": True, "intel_index_present": False, "db": False},
+            skills=[_escaping_global("react-dev", "~/.agents/skills/react-dev")],
+        )
+        plan = _plan_with_affinity(inv)
+        em = entry_map(plan)
+        entry = em["agent_skills_security.trusted_global_roots"]
+        self.assertEqual(entry["status"], "needs_choice")
+        self.assertIsNone(entry["value"])
+        self.assertIn("plan-unset", entry["why"])
+        self.assertIn("skips", entry["why"])
 
 
 class TestSkillsLayer(unittest.TestCase):
