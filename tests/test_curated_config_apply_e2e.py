@@ -24,12 +24,20 @@ sys.path.insert(
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
 from ai_kit_gsd_curated_config import apply as apply_mod
-from ai_kit_gsd_curated_config import cli, config_backup, cross_ai_script, gsd_catalog, plan_io
+from ai_kit_gsd_curated_config import (
+    cli,
+    config_backup,
+    cross_ai_script,
+    gsd_catalog,
+    plan_io,
+    presets,
+)
 from ai_kit_spec import gsd_tools
 
 from tests.test_curated_config_apply import (
     FakeRun,
     _decide_all_choices,
+    _fixed_now,
     _scratch_env,
     scratch_inventory,
 )
@@ -426,7 +434,131 @@ class TestRealApply(_RealGsdTestCase):
         self.assertFalse(os.path.isfile(snap))
 
 
+    def test_fourth_apply_prunes(self) -> None:
+        node_bin = _gsd16_or_skip(self)
+        tools = str(REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs")
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        bundle = _golden_bundle(scratch)
+        config_path = bundle["config_path"]
+        planning = os.path.dirname(config_path)
+        manual = os.path.join(planning, "config.json.bak-manual")
+        with open(manual, "wb") as handle:
+            handle.write(b"manual\n")
+        real = _real_run(bundle["child_env"])
+        gt = gsd_tools.GsdTools(node_bin, tools)
 
+        def run(cmd, **kw):
+            call_env = kw.pop("env", None) or {}
+            return subprocess.run(cmd, env={**bundle["child_env"], **call_env}, **kw)
+
+        for index in range(4):
+            code, report = _direct_apply(
+                bundle["plan_path"],
+                bundle["inv_path"],
+                bundle["project"],
+                bundle["resolve_env"],
+                node_bin,
+                real,
+                now_fn=_fixed_now,
+            )
+            self.assertEqual((code, report["applied"]), (0, True))
+            if index < 3:
+                gsd_tools.config_set_strict(
+                    gsd_tools.ConfigCall(gt, bundle["project"], run, bundle["child_env"]),
+                    "model_profile",
+                    f"balanced-{index}",
+                )
+        rows = config_backup.list_backups(config_path)
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(os.path.isfile(manual))
+
+    def test_reapply_is_noop(self) -> None:
+        node_bin = _gsd16_or_skip(self)
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        bundle = _golden_bundle(scratch)
+        config_path = bundle["config_path"]
+        real = _real_run(bundle["child_env"])
+        code1, _report1 = _direct_apply(
+            bundle["plan_path"],
+            bundle["inv_path"],
+            bundle["project"],
+            bundle["resolve_env"],
+            node_bin,
+            real,
+        )
+        self.assertEqual(code1, 0)
+        with open(config_path, "rb") as handle:
+            s1 = handle.read()
+        rows1 = config_backup.list_backups(config_path)
+        backups_after_1 = [os.path.basename(p) for p, _s, _n in rows1]
+        wrapper2 = _ConfigSetWrapper(real)
+        code2, report2 = _direct_apply(
+            bundle["plan_path"],
+            bundle["inv_path"],
+            bundle["project"],
+            bundle["resolve_env"],
+            node_bin,
+            wrapper2,
+        )
+        self.assertEqual(code2, 0)
+        self.assertEqual(_config_set_keys(wrapper2.argv_log), [])
+        with open(config_path, "rb") as handle:
+            self.assertEqual(handle.read(), s1)
+        self.assertFalse(report2["backup"]["reused"])
+        rows2 = config_backup.list_backups(config_path)
+        backups_after_2 = [os.path.basename(p) for p, _s, _n in rows2]
+        self.assertEqual(len(backups_after_2), len(backups_after_1) + 1)
+        wrapper3 = _ConfigSetWrapper(real)
+        code3, report3 = _direct_apply(
+            bundle["plan_path"],
+            bundle["inv_path"],
+            bundle["project"],
+            bundle["resolve_env"],
+            node_bin,
+            wrapper3,
+        )
+        self.assertEqual(code3, 0)
+        self.assertTrue(report3["backup"]["reused"])
+        rows3 = config_backup.list_backups(config_path)
+        backups_after_3 = [os.path.basename(p) for p, _s, _n in rows3]
+        self.assertEqual(backups_after_3, backups_after_2)
+
+    def test_absent_config_reconciles(self) -> None:
+        node_bin = _gsd16_or_skip(self)
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        bundle = _golden_bundle(scratch, with_planning=False)
+        gsd_dir = os.path.join(bundle["child_env"]["GSD_HOME"], ".gsd")
+        os.makedirs(gsd_dir, exist_ok=True)
+        defaults = {
+            "resolve_model_ids": "omit",
+            "model_policy": {"provider": "cursor", "budget": "low"},
+            "custom_unrelated": "keepme",
+        }
+        with open(os.path.join(gsd_dir, "defaults.json"), "w", encoding="utf-8") as handle:
+            json.dump(defaults, handle)
+        real = _real_run(bundle["child_env"])
+        code, report = _direct_apply(
+            bundle["plan_path"],
+            bundle["inv_path"],
+            bundle["project"],
+            bundle["resolve_env"],
+            node_bin,
+            real,
+        )
+        self.assertEqual((code, report["applied"]), (0, True))
+        self.assertTrue(report["created_config"])
+        live, warn = plan_io.read_json_object(bundle["config_path"])
+        assert live is not None and warn is None
+        self.assertNotIn("resolve_model_ids", live)
+        flat = presets.flatten_config(live)
+        self.assertFalse(any(key.startswith("model_policy.") for key in flat))
+        self.assertEqual(live.get("custom_unrelated"), "keepme")
+        reconciled = report["reconciled"]
+        self.assertIn("resolve_model_ids", reconciled)
+        self.assertTrue(any(k.startswith("model_policy.") for k in reconciled))
 
 
 if __name__ == "__main__":
