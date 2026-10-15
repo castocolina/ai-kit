@@ -51,7 +51,9 @@ from ai_kit_spec.cache import (
     cache_base,
     cache_is_stale,
     cache_read_json,
+    cache_write_bytes,
     cache_write_json,
+    cache_write_text,
 )
 from ai_kit_spec.cli import main
 from ai_kit_spec.commands import (
@@ -1132,6 +1134,45 @@ class TestCacheWriteJsonAtomic(unittest.TestCase):
             path = os.path.join(d, "data.json")
             cache_write_json(path, {"a": 1})
             self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+
+
+class TestCacheWriteBytes(unittest.TestCase):
+    def test_writes_exact_bytes_including_non_utf8(self):
+        payload = b"line\r\n\xff"
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "bin.dat")
+            cache_write_bytes(path, payload)
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(), payload)
+            self.assertEqual(glob.glob(os.path.join(d, "*.tmp")), [])
+
+    def test_applies_mode_when_given(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "mode.dat")
+            cache_write_bytes(path, b"x", mode=0o640)
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o640)
+
+    def test_error_leaves_original_and_no_tmp(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "data.dat")
+            cache_write_bytes(path, b"one")
+            with open(path, "rb") as f:
+                original = f.read()
+            with unittest.mock.patch(
+                "ai_kit_spec.cache.os.replace", side_effect=OSError("injected")
+            ), self.assertRaises(OSError):
+                cache_write_bytes(path, b"two")
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(), original)
+            self.assertEqual(glob.glob(os.path.join(d, "*.tmp")), [])
+
+    def test_cache_write_text_utf8_round_trip_unchanged(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "text.json")
+            text = json.dumps({"a": 1}, indent=2)
+            cache_write_text(path, text)
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(), text.encode("utf-8"))
 
 
 class TestCacheStaleness(unittest.TestCase):

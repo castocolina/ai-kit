@@ -224,11 +224,12 @@ def write_script(plan: ScriptPlan) -> ScriptPlan:
             "merge it by hand"
         )
         performed = _divert_to_new(plan, note)
-        _publish(performed.write_path, performed.data)
+        _publish(plan.path + ".new", performed.data)
         return performed
     if plan.kind == "keep-pristine":
         return plan
-    if plan.write_path is None:
+    write_path = plan.write_path
+    if write_path is None:
         return plan
-    _publish(plan.write_path, plan.data)
+    _publish(write_path, plan.data)
     return plan
