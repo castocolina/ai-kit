@@ -210,6 +210,9 @@ Phase 18 owns the selection rules.
   `modalities.input` stays the only source and the gap is labelled `unverified on opencode 2.x`,
   never inferred. Either way, `skills/ai-kit-spec-config/references/cli-model-selection.md:159` stops
   citing `--verbose` as current. The carried-forward fail-closed rule means nothing waits on this.
+  - *(spike done 2026-10-15, `17-SPIKE-opencode-image-input.md`)* First branch: `GET /api/model` on
+    the v2 API (`opencode serve`, basic auth `opencode:<printed token>`) returns
+    `capabilities.input`; `"image" in input` means vision-capable.
 
 ### Claude's Discretion
 - The exact percentile per rigor level.
