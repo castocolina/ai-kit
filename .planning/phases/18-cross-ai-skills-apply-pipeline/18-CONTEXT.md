@@ -477,3 +477,36 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
 
 *Phase: 18-cross-ai-skills-apply-pipeline*
 *Context gathered: 2026-09-23; updated 2026-10-14*
+
+### Amendments 2026-10-15 (research corrections, 18-22)
+
+- D-18's 1.13 `--dry-run` claim is a 1.13 fact (1.16 honors it; the decision stands).
+- D-21's undo log is the D-40 apply marker beside the config, not execute-gsd's in-memory list.
+- D-23's integration module is the **e2e** tier (`E2E_MODULES`), not `test-integration`.
+- D-22 step 7 checks `warnings == []` and is skipped on pi (`GSD_RUNTIME=pi` does not
+  canonicalize in gsd-core 1.16).
+- Plan schema 2 was introduced in 18-04; inventory schema 2 in 18-02.
+- `host.resolve_gsd_core` tries `<root>/.opencode/gsd-core` first on opencode hosts (18-02),
+  unverified until Phase 20 runs the installer.
+- D-31's escape check uses the realpath of `SKILL.md`, as gsd-core does; a project copy that
+  escapes is not preferred (18-03, 18-08).
+- D-40's marker is created exclusively and also records the runner snapshot; D-21's restore
+  covers the runner (18-16, 18-18).
+- D-42's digest pairing is joined by the destination binding (18-17).
+- The runner gains status `unverified` when git tree state cannot be read (18-10, 18-12).
+- Effort sync is not offered for a workstream config because gsd-core's sync reads only the root
+  config (18-20).
+- D-32's per-key `enabledPlugins` layering is unverified (research O13) and labelled so in the
+  inventory and SKILL.md.
+- **`--force deviation (18-14)`:** besides D-17's two refusals, a key the probe rejected, a
+  re-typable string, a skill that is not installed or not addressable, and a **new** trusted
+  root that is not `~/`-relative also refuse with `--force` (an already-configured root is
+  accepted in its recorded form). 18-15's `script:cross-ai.prefer` id checks take no `--force`.
+- D-22's restore set (steps 4-6) is the apply commit point: a later failure only warns (18-18).
+- D-40's marker records `committed`; recovery steps follow what the apply recorded, checking with
+  `apply --dry-run` before any restore when the commit record may be missing (18-16, 18-18).
+- D-44's `forced` marker is unauthenticated; control is the repeated full-permissions warning in
+  dry run and apply (18-14, 18-17, 18-18).
+- D-38's "an `effort.*` key changed" means the plan's value differs from the entry's recorded
+  `existing`, united at apply time with the keys apply wrote or reconciled and carried to
+  `followups` as `--require` (18-20), so `followups` after apply sees the same block.

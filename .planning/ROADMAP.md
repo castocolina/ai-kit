@@ -317,7 +317,7 @@ Plans:
 - [x] 18-01-PLAN.md — pi RPC model enumeration + router merge proof, strict config-set encoder, presence-only secret check
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [x] 18-02-PLAN.md — inventory: gsd-core review lanes, skills roots, extra key probes (schema 2)
+- [x] 18-02-PLAN.md — inventory: gsd-core review lanes, skills roots, extra key probes (schema 2), opencode local root
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [x] 18-03-PLAN.md — skill scan (real paths, root escape, Claude plugins), ponytail visibility, System One backend
@@ -371,7 +371,7 @@ Plans:
 - [x] 18-19-PLAN.md — apply proofs: Nth-key restore, prune, re-apply per D-20, reconcile, write discipline
 
 **Wave 20** *(blocked on Wave 19 completion)*
-- [x] 18-20-PLAN.md — follow-ups behind one approval (pinned installer, effort sync, opencode local root)
+- [x] 18-20-PLAN.md — follow-ups behind one approval (pinned installer, effort sync)
 
 **Wave 21** *(blocked on Wave 20 completion)*
 - [x] 18-21-PLAN.md — SKILL.md v2 flow, README row, command drift test, skill-judge self-check

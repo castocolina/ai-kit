@@ -59,6 +59,10 @@ keeps working unchanged.
      - A model that is not a candidate of a `needs_choice` slot is refused unless `--force`.
      - Pinning a model that has `fast_twin_of` set warns.
      - Filling a cross-AI placeholder clears its `needs_choice`.
+     - `plan-set workflow.cross_ai_command` refuses any value other than
+       `node .planning/scripts/cross-ai.mjs` unless `--force` (D-44). A `forced` marker
+       records only keys set with `plan-set --force` and is re-checked on every plan load
+       (amended 2026-10-15, 18-22, D-44, 18-14).
    - Acceptance: fixtures cover a rejected key (exit 2), a non-candidate refused and then forced, the `-fast` warning, and a filled placeholder. Output is byte-stable.
 
 2. **Review lanes** (XAI-01): reviewers are another CLI and another vendor.
@@ -74,11 +78,14 @@ keeps working unchanged.
 3. **Execution targets** (XAI-02): another CLI runs the plans, with one model each.
    - Current: v1 `apply-execution` with a bare CLI name.
    - Target:
-     - `workflow.cross_ai_execution` defaults to yes on claude and codex hosts, no on opencode, cursor and pi.
+     - `workflow.cross_ai_execution` defaults to yes on claude and codex hosts, no on opencode,
+       cursor and pi (amended 2026-10-15, 18-22, D-39). With zero eligible targets the default
+       is no with a note, not `needs_choice`; an explicit yes keeps `needs_choice` when empty
+       (amended 2026-10-15, 18-22, D-39).
      - The targets are the preference order (default pi > cursor > opencode) filtered to installed CLIs that are not the host. grok is never a target.
      - Each target's model is a declared `execute` router first, otherwise the best `execution` score within the rigor ceiling (17 D-03).
      - pi's models come from pi's RPC `get_available_models`, read by a parser added to `ai_kit_spec` in this phase (SPEC-05 moved here from Phase 22; amended 2026-10-14, 18 D-25; source amended 2026-10-15 per 22 D-04, not the `--list-models` table).
-     - An empty target list leaves a `needs_choice`.
+     - An empty target list leaves a `needs_choice` when the user explicitly enabled execution.
      - The report tells the user to run `--cross-ai`, and the plan sets `manager.flags.execute` to `--cross-ai`.
    - Acceptance: golden plans on a claude host pick pi with `router-env/my-coding`. A fixture without pi falls to cursor. A fixture with no other CLI keeps `needs_choice`.
 
@@ -90,7 +97,7 @@ keeps working unchanged.
      - An absent file, or one whose body still matches its header, is written atomically.
      - An edited file is never overwritten: the new render goes to `cross-ai.mjs.new` with a note.
      - `workflow.cross_ai_command` is `node .planning/scripts/cross-ai.mjs`.
-     - The tool profile is bare by default (pi `--no-skills --no-extensions`, opencode with Claude-skill loading off). Skills by SKILL.md path, or MCP servers, are opt-in.
+     - The tool profile is bare by default (pi `--no-skills --no-extensions`, opencode with Claude-skill loading off). The opencode bare profile is partial: `~/.agents/skills` and `~/.config/opencode/skills` still load (amended 2026-10-15, 18-22, research correction 12). Skills by SKILL.md path, or MCP servers, are opt-in.
    - Acceptance: tests for absent, unedited (same bytes on re-render), edited (`.new` written, original untouched) and a template-version bump. The rendered command splits into argv without a shell.
 
 5. **Supervision contract** (XAI-02): GSD can trust the script's outcome.
@@ -99,7 +106,13 @@ keeps working unchanged.
      - stdin is finite, and the model is validated against the CLI's own list before spawning.
      - The deadline kills the whole process group.
      - Errors are matched on stderr and structured fields only, never on the answer text.
-     - Exit codes are 0, 1, 2, 69, 75, 124 and 127, and exactly one `AIKIT-XAI status=… action=fallback|retry-later|stop` line is printed.
+     - Exit codes are 0, 1, 2, 69, 75, 124, 127 and `128+n` on a signal; there is no idle
+       watchdog (amended 2026-10-15, 18-22, D-43, backlog 999.5). Status `unverified` (exit 1,
+       action stop) when the git tree state cannot be read before or after a run (amended
+       2026-10-15, 18-22, 18-10, 18-12).
+     - Exactly one `AIKIT-XAI status=… action=fallback|retry-later|stop` line is the runner's
+       last output; every child end path runs one finalizer; review retries re-run the fresh
+       review argv instead of resuming (amended 2026-10-15, 18-22, 18-10, 18-12).
      - It falls back to the next CLI only when HEAD and the working tree are unchanged.
      - In `exec` mode, success counts only when HEAD moved or the tree changed, where "tree" means a tree id computed with a temporary git index (it sees re-edits of already-dirty and untracked files). In `review` mode, success needs an unchanged tree (amended 2026-10-14, 18 D-27 and 18.1 coupling).
    - Acceptance: the script's offline `--self-test` covers each exit code, the status line, process-group kill and both git-state rules. A Python test runs the self-test of a rendered script.
@@ -125,14 +138,17 @@ keeps working unchanged.
      - `skill_affinity.json` maps skill families to agents, gated by project facts (TDD mode, frontend, db), and is capped per rigor (MVP 2, Standard 3, Rigorous 5) in file order.
      - `plan.json` shows bare names.
      - `apply` writes `agent_skills.<agent>` as `global:<name>` (host global dir), a project-relative path (project `skills/`), or `global:<plugin>:<skill>` (Claude plugin, claude host only).
-   - Acceptance: golden plans never exceed the cap. A frontend-gated skill appears only with a frontend fixture. The written values pass gsd-core's own reference check (`agent-skills` resolution in a scratch project) with no skip warning.
+   - Acceptance: golden plans never exceed the cap. A frontend-gated skill appears only with a frontend fixture. The written values pass gsd-core's own reference check (`agent-skills` resolution in a scratch project) with no skip warning, except a skill whose trusted root the user declined with `plan-unset`: the skill stays wired, gsd-core skips it, and apply reports the warning (amended 2026-10-15, 18-22, D-41).
 
 9. **Missing and unknown skills** (SKL-03): nothing is offered or installed.
    - Current: none.
    - Target:
      - A recommended skill that is not installed is omitted, with no mention.
      - An unknown installed skill gets a proposed mapping from its description, which the user confirms.
-     - A symlinked skill whose real path escapes the global root gets a proposed `agent_skills_security.trusted_global_roots` entry.
+     - A symlinked skill whose real path escapes the global root gets one `needs_choice` entry for
+       `agent_skills_security.trusted_global_roots`, decided with `plan-set` / `plan-unset`
+       (D-41). Unknown-skill proposals are capped at 10 with one summary note (amended
+       2026-10-15, 18-22, D-41, 18-08).
    - Acceptance: plan, report and notes never name an uninstalled recommended skill. An unknown skill appears only as a proposal. An escaping symlink yields one proposed trusted root.
 
 10. **Ponytail set** (ROADMAP SC6): first-class on Claude, checked elsewhere.
@@ -155,17 +171,39 @@ keeps working unchanged.
 12. **Dry run** (APP-02): see everything, write nothing.
     - Current: none.
     - Target:
+      - One shared plan validator runs in `plan-set`, `plan-unset`, `apply` and `followups`
+        (amended 2026-10-15, 18-22, 18-14, 18-15). It requires a model or an open choice for
+        every runner target and a keep's value equal to its non-null `existing` (amended
+        2026-10-15, 18-22, 18-14, 18-15). `followups` reuses apply's destination binding
+        (amended 2026-10-15, 18-22, 18-20).
       - `apply --dry-run` re-validates every key against the host gsd-core at apply time and refuses (exit 2) while any `needs_choice` remains.
+      - `apply` requires `--inventory` with a digest matching the plan's (D-42) and refuses when
+        the config path `gsd-tools config-path` resolves is not the inventory's (amended
+        2026-10-15, 18-22, D-42, 18-17).
       - It prints an add / change / keep / remove diff (from `op`, `existing` and `value`) and writes nothing.
     - Acceptance: a dry run leaves the project byte-identical. A plan with one `needs_choice` exits 2 naming it. The diff shows all four kinds.
 
 13. **Apply** (APP-03): safe writes with a way back.
     - Current: v1 writes per key with no backup.
     - Target:
+      - `apply` requires `--inventory` with a matching digest (D-42; amended 2026-10-15, 18-22,
+        D-42).
+      - An apply marker beside the config (D-40) is acquired by exclusive create before the
+        backup; a replaced pristine runner is snapshotted and restored on failure, and a failed
+        restore keeps the marker, backup and snapshot and reports both errors (amended
+        2026-10-15, 18-22, 18-16, 18-18).
       - `apply` backs up to `.planning/config.json.bak-<timestamp>` and keeps the newest 3.
       - It creates the config with `gsd-tools config-new-project` when it is absent. That command copies `~/.gsd/defaults.json`, so `apply` re-reads the new config and reconciles the copied keys against the plan's managed families (for example a copied `resolve_model_ids: "omit"` on claude, or a copied `model_policy`) before writing. It then writes each entry with `gsd-tools query config-set`, unsetting object-valued keys per leaf (18 D-07 as amended).
-      - On any failure it restores the backup verbatim and atomically, and names the failing key. That restore is the one sanctioned write outside gsd-tools: a gsd-tools revert was shown live to leave an empty parent object and reformat the file (amended 2026-10-14, 18 D-21).
-      - It reuses Phase 16.1's shared gsd-tools resolver, ownership sidecar and undo log.
+      - On failure before the apply commit point it restores the backup verbatim and atomically,
+        and names the failing key. That restore is the one sanctioned write outside gsd-tools: a
+        gsd-tools revert was shown live to leave an empty parent object and reformat the file
+        (amended 2026-10-14, 18 D-21). After the commit point, recording `committed`, the skill
+        check, snapshot discard, pruning and marker removal only warn and never restore; a held
+        marker's recovery steps follow what that apply recorded (amended 2026-10-15, 18-22,
+        18-16, 18-18). Apply works on a fresh project with no `.planning/` and removes dirs a
+        failed run created (amended 2026-10-15, 18-22, 18-16, 18-18, 18-19).
+      - It reuses Phase 16.1's shared gsd-tools resolver and an apply marker beside the config
+        (D-40); the execute-gsd ownership sidecar is not used (amended 2026-10-15, 18-22, D-40).
     - Acceptance:
       - an integration test against the real gsd-tools in a scratch project applies a golden plan;
       - an injected failure on the Nth key restores the original bytes and names the key;
@@ -306,8 +344,8 @@ keeps working unchanged.
 | empty | R13 | ✅ covered | An absent config is created with `config-new-project` first |
 | encoding | R13 | 🧪 backstop | Values are passed as JSON for objects and lists |
 | ordering | R13 | ✅ covered | Unsets run before sets in the same family |
-| idempotency | R13 | ✅ covered | Re-applying an applied plan changes nothing; no new backup when the newest is byte-identical (amended, 18 D-20) |
-| concurrency | R13 | 🧪 backstop | `apply` refuses when another apply's undo log is open |
+| idempotency | R13 | ✅ covered | Re-applying an applied plan changes nothing; no new backup when the newest is byte-identical (amended, 18 D-20). The first re-apply backs up the applied state once, later re-applies reuse it, and no re-apply writes a key (amended 2026-10-15, 18-22, D-20) |
+| concurrency | R13 | 🧪 backstop | `apply` refuses when another apply marker is held (amended 2026-10-15, 18-22, D-40) |
 | adjacency | R14 | ✅ covered | When the installer and effort sync are both required, one grouped yes/no covers both |
 | empty | R14 | ✅ covered | With no required follow-up there is nothing to approve, so nothing runs |
 | ordering | R14 | ✅ covered | The installer runs before effort sync, and the project-local gsd-tools is re-resolved in between (18 D-38) |
