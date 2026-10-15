@@ -6065,6 +6065,33 @@ class TestScoreCandidates(unittest.TestCase):
         ranked = model_ranker.score_candidates(entries, "review", self.weights)
         self.assertEqual(ranked[0]["key"], "high")
 
+    def test_score_exact_is_unrounded_and_rounds_to_score(self):
+        # 17 D-15: every returned copy carries the unrounded score next to the
+        # unchanged rounded one.
+        entries = [
+            {"key": "a", "scores": {"intelligence_index": 40.0}},
+            {"key": "b", "scores": {"intelligence_index": 50.0}},
+        ]
+        ranked = model_ranker.score_candidates(entries, "planning", self.weights)
+        for e in ranked:
+            self.assertIsInstance(e["score_exact"], float)
+            self.assertEqual(round(e["score_exact"], 1), e["score"])
+
+    def test_score_exact_separates_scores_that_round_equal(self):
+        # Two candidates whose exact scores differ by < 0.05 share the same rounded
+        # "score" but carry different unrounded "score_exact" values. Two anchors (0
+        # and 100) compress the min-max spread so 40.0 vs 40.04 stays a sub-0.05 gap.
+        entries = [
+            {"key": "lo", "scores": {"intelligence_index": 0.0}},
+            {"key": "a", "scores": {"intelligence_index": 40.0}},
+            {"key": "b", "scores": {"intelligence_index": 40.04}},
+            {"key": "hi", "scores": {"intelligence_index": 100.0}},
+        ]
+        ranked = model_ranker.score_candidates(entries, "planning", self.weights)
+        by_key = {e["key"]: e for e in ranked}
+        self.assertEqual(by_key["a"]["score"], by_key["b"]["score"])
+        self.assertNotEqual(by_key["a"]["score_exact"], by_key["b"]["score_exact"])
+
 
 class TestPurposeAliasesEndToEnd(unittest.TestCase):
     """Test the 5-purpose ranker with execute/review aliases (16 D-10)."""

@@ -247,7 +247,7 @@ def _score_one_entry(entry: dict, axis_weights: dict, norm_maps: dict, bonuses: 
         bonus += bonuses["fallback_quota"]
     bonus = min(bonus, bonuses["bonus_cap"])
     score = min(100.0, base + bonus)
-    return {**entry, "score": round(score, 1)}
+    return {**entry, "score": round(score, 1), "score_exact": score}
 
 
 def score_candidates(entries: list, purpose: str, weights: dict) -> list:
@@ -259,9 +259,12 @@ def score_candidates(entries: list, purpose: str, weights: dict) -> list:
     before any normalization, so the 49.0 default can never satisfy a floor.
     price and context_window/speed are normalized RELATIVE TO THIS CALL'S entries (never a
     fixed global ceiling) -- price inverted (cheaper scores higher). Returns shallow copies of
-    `entries`, each with an added "score" (0-100, rounded to 1 decimal), sorted descending;
-    never mutates the input list/dicts. No task_affinity bonus -- see ranking-weights.toml's
-    own note on why that spec-named bonus is deliberately absent from this implementation."""
+    `entries`, each with an added "score" (0-100, rounded to 1 decimal) and "score_exact"
+    (the same 0-100 score UNROUNDED -- used for full-precision tie order, 17 D-15; the
+    returned sort itself stays by the rounded `score` so existing callers keep working),
+    sorted descending; never mutates the input list/dicts. No task_affinity bonus -- see
+    ranking-weights.toml's own note on why that spec-named bonus is deliberately absent
+    from this implementation."""
     # Resolve purpose alias (e.g., "execute" -> "execution")
     canonical = resolve_purpose(purpose)
     # A hand-built legacy dict keyed "execute" keeps working via the fallback.
