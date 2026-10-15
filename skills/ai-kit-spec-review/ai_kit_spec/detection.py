@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -338,6 +339,9 @@ OPENCODE_API_MIN_MAJOR = 2
 OPENCODE_API_IMAGE_SOURCE = "opencode-api"
 _OPENCODE_PROBE_DEADLINE_S = 15
 _OPENCODE_BANNER_MAX_LINES = 50
+# The probe talks to its own loopback server only: never through an http_proxy, which would
+# receive the Basic-auth password (17-REVIEW C-WR-01).
+_LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 # fullmatch on the stripped stdout, so a model listing (e.g. "openai/gpt-5.6-sol") can
 # never read as a version string.
 _OPENCODE_VERSION_RE = re.compile(r"(?:opencode\s+)?v?(\d+)\.\d+\.\d+\S*")
@@ -415,9 +419,65 @@ def _read_opencode_banner(stream) -> tuple:
     return port, token
 
 
+def _probe_env() -> dict:
+    """The probe server's env: never project config from the cwd or its ancestors (a
+    planted opencode.json could run MCP commands, C-CR-01), and never a caller's
+    OPENCODE_SERVER_PASSWORD, which suppresses the one-time password line (C-WR-02)."""
+    env = {k: v for k, v in os.environ.items() if k != "OPENCODE_SERVER_PASSWORD"}
+    env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
+    return env
+
+
+def _signal_server(proc, sig) -> None:
+    """Signals the probe server's whole process group (it runs in its own session), so a
+    launcher shim or an MCP child cannot outlive it (C-WR-03); plain terminate/kill where
+    process groups do not exist."""
+    with contextlib.suppress(OSError):
+        killpg = getattr(os, "killpg", None)
+        pid = getattr(proc, "pid", None)
+        if killpg is not None and isinstance(pid, int):
+            killpg(pid, sig)
+        elif sig == signal.SIGTERM:
+            proc.terminate()
+        else:
+            proc.kill()
+
+
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+
+
+@contextlib.contextmanager
+def _sigterm_unwinds():
+    """While the probe runs, SIGTERM raises SystemExit so the `finally` below still stops
+    the server when a caller times this process out with SIGTERM (B-WR-05)."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _raise(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    previous = signal.signal(signal.SIGTERM, _raise)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _stop_server(proc) -> None:
+    _signal_server(proc, signal.SIGTERM)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=5)
+    _signal_server(proc, _SIGKILL)  # stragglers in the group; ESRCH when none is left
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=5)
+    with contextlib.suppress(OSError, AttributeError):
+        proc.stdout.close()
+
+
 def probe_opencode_api_image_input(binary: str,
                                    popen_fn: Callable[..., Any] = subprocess.Popen,
-                                   urlopen_fn: Callable[..., Any] = urllib.request.urlopen,
+                                   urlopen_fn: Callable[..., Any] = _LOOPBACK_OPENER.open,
                                    ) -> dict:
     """Starts a private `opencode serve --hostname 127.0.0.1 --port 0`, reads the
     printed loopback port and one-time password from its stdout, and calls
@@ -425,26 +485,35 @@ def probe_opencode_api_image_input(binary: str,
     (17 D-24/D-32). Returns `{"providerID/id": bool}` via
     `parse_opencode_api_models`; any failure returns {}.
 
-    Only the server PID this function started is ever signalled -- a user's
-    long-running `opencode serve --service` is never touched. The password stays in a
-    local variable and never enters a return value, an exception message or any output
-    (17 T-17-01). A daemon threading.Timer kills a silent server so `readline` cannot
-    block forever; the `finally` block always stops the server (terminate -> wait ->
-    kill). opencode writes its own state (db, log) in its XDG data dir, never config;
-    `cwd=tempfile.gettempdir()` is a precaution (serve's cwd effect is unverified).
-    opencode 1.x must not reach this (see opencode_image_input_with_source)."""
-    proc = None
-    timer = None
+    The server runs in its own session from a private mkdtemp dir (removed afterwards)
+    with OPENCODE_DISABLE_PROJECT_CONFIG=1: opencode loads opencode.json from its cwd
+    and every ancestor, and can execute MCP commands declared there. Only the process
+    group this function started is ever signalled -- a user's long-running
+    `opencode serve --service` is never touched. The request bypasses proxies. The
+    password stays in a local variable and never enters a return value, an exception
+    message or any output (17 T-17-01). A daemon threading.Timer kills a silent server
+    so `readline` cannot block forever; the `finally` block always stops the server
+    group (SIGTERM -> wait -> SIGKILL). opencode writes its own state (db, log) in its
+    XDG data dir, never config. opencode 1.x must not reach this (see
+    opencode_image_input_with_source)."""
+    probe_dir = tempfile.mkdtemp(prefix="ai-kit-opencode-probe-")
     try:
-        # precaution: serve's cwd effect is unverified; never the caller's project dir
+        with _sigterm_unwinds():
+            return _probe_from(binary, probe_dir, popen_fn, urlopen_fn)
+    finally:
+        shutil.rmtree(probe_dir, ignore_errors=True)
+
+
+def _probe_from(binary, probe_dir, popen_fn, urlopen_fn) -> dict:
+    try:
         proc = popen_fn([binary, "serve", "--hostname", "127.0.0.1", "--port", "0"],
                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-                        cwd=tempfile.gettempdir())
+                        cwd=probe_dir, env=_probe_env(), start_new_session=True)
     except OSError:
         return {}
+    timer = threading.Timer(_OPENCODE_PROBE_DEADLINE_S, _signal_server, (proc, _SIGKILL))
+    timer.daemon = True
     try:
-        timer = threading.Timer(_OPENCODE_PROBE_DEADLINE_S, proc.kill)
-        timer.daemon = True
         timer.start()
         port, token = _read_opencode_banner(proc.stdout)
         if port is None or token is None:
@@ -454,23 +523,20 @@ def probe_opencode_api_image_input(binary: str,
             headers={"Authorization": "Basic "
                      + base64.b64encode(f"opencode:{token}".encode()).decode()},
         )
-        body = urlopen_fn(request, timeout=10).read()
+        with urlopen_fn(request, timeout=10) as response:
+            body = response.read()
         return parse_opencode_api_models(json.loads(body))
     except (OSError, subprocess.TimeoutExpired, urllib.error.URLError,
             http.client.HTTPException, ValueError):
         return {}
     finally:
-        if timer is not None:
-            timer.cancel()
-        for signal_fn in (proc.terminate, proc.kill):
-            with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-                signal_fn()
-                proc.wait(timeout=5)
+        timer.cancel()
+        _stop_server(proc)
 
 
 def opencode_image_input_with_source(binary: str, run_fn=subprocess.run,
                                      popen_fn: Callable[..., Any] = subprocess.Popen,
-                                     urlopen_fn: Callable[..., Any] = urllib.request.urlopen,
+                                     urlopen_fn: Callable[..., Any] = _LOOPBACK_OPENER.open,
                                      ) -> tuple:
     """Version-gated image-capability detection for opencode. Returns
     `(map, source)` where source is OPENCODE_API_IMAGE_SOURCE ("opencode-api", the
@@ -508,7 +574,7 @@ def detect_opencode_verbose_image_input(binary: str, run_fn=subprocess.run) -> d
 
 def detect_opencode_image_input(binary: str, run_fn=subprocess.run,
                                 popen_fn: Callable[..., Any] = subprocess.Popen,
-                                urlopen_fn: Callable[..., Any] = urllib.request.urlopen,
+                                urlopen_fn: Callable[..., Any] = _LOOPBACK_OPENER.open,
                                 ) -> dict:
     """Returns the image-capability map for opencode: on 2.x, the v2 HTTP API probe
     (`GET /api/model` through a private `opencode serve`, 17 D-24); on 1.x (or an
@@ -595,7 +661,8 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
                             catalog_fn=None) -> dict:
     """{"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {name: {"installed": bool,
     "path"?: str, "models"?: [str], "reasoning_modes"?: {model_id: [effort, ...]},
-    "aliases"?: [str], "models_source"?: str, "models_as_of"?: str}}}.
+    "aliases"?: [str], "models_source"?: str, "models_as_of"?: str, "image_input"?: {id: bool},
+    "image_input_source"?: str, "image_input_probe"?: "failed"}}}.
     `models` is populated
     for opencode/cursor-agent always, for codex when `codex debug models` enumeration
     succeeds, and for claude from the 16 D-04 hybrid (aliases + full ids); `reasoning_modes`
@@ -620,6 +687,9 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
             if image_input_map:
                 entry["image_input"] = image_input_map
                 entry["image_input_source"] = image_input_source
+            elif image_input_source == OPENCODE_API_IMAGE_SOURCE:
+                # A failed 2.x probe is a recorded gap, never silently "no data" (D-24).
+                entry["image_input_probe"] = "failed"
         elif cli == "cursor-agent":
             entry["models"] = detect_cursor_agent_models(binpath, run_fn=run_fn)
         elif cli == "codex":
@@ -736,7 +806,7 @@ _UNHEALTHY_SIGNALS = ("✘", "failed to connect", "not connected")
 
 def _text_is_healthy(text: str) -> bool:
     lowered = text.lower()
-    return not any(signal.lower() in lowered for signal in _UNHEALTHY_SIGNALS)
+    return not any(marker.lower() in lowered for marker in _UNHEALTHY_SIGNALS)
 
 
 CODEGRAPH_PROBE_TIMEOUT_SECONDS = 15

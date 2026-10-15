@@ -5,12 +5,15 @@ import io
 import json
 import os
 import shlex
+import signal
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import typing
 import unittest
 import unittest.mock
 import urllib.error
@@ -10145,7 +10148,8 @@ class TestOpencodeApiImageInput(unittest.TestCase):
                                    "server password s3cr3t\n"):
             self.argv: list | None = None
             self.kwargs: dict = {}
-            self.stdout = io.StringIO(banner)
+            self.stdout: typing.Any = io.StringIO(banner)
+            self.pid: int | None = None
             self.calls = []
 
         def __call__(self, argv, **kwargs):
@@ -10166,6 +10170,12 @@ class TestOpencodeApiImageInput(unittest.TestCase):
         def __init__(self, body):
             self.body = body
             self.read = lambda: self.body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
 
     def _fake_urlopen(self, body=None):
         recorded = {}
@@ -10207,7 +10217,99 @@ class TestOpencodeApiImageInput(unittest.TestCase):
             popen.argv,
             ["/fake/bin/opencode", "serve", "--hostname", "127.0.0.1", "--port", "0"],
         )
-        self.assertEqual(popen.kwargs.get("cwd"), tempfile.gettempdir())
+        cwd = popen.kwargs["cwd"]
+        assert isinstance(cwd, str)
+        self.assertNotEqual(cwd, tempfile.gettempdir())
+        self.assertTrue(os.path.basename(cwd).startswith("ai-kit-opencode-probe-"))
+        self.assertFalse(os.path.exists(cwd))  # the private dir is removed afterwards
+        self.assertTrue(popen.kwargs.get("start_new_session"))
+
+    def test_probe_env_disables_project_config_and_drops_password(self):
+        """C-CR-01/C-WR-02: no opencode.json from cwd/ancestors; opencode always prints
+        its own one-time password."""
+        popen = self.FakePopen()
+        with mock.patch.dict(os.environ, {"OPENCODE_SERVER_PASSWORD": "users-own"}):
+            detection.probe_opencode_api_image_input(
+                "/fake/bin/opencode", popen_fn=popen, urlopen_fn=self._fake_urlopen())
+        env = popen.kwargs["env"]
+        self.assertEqual(env["OPENCODE_DISABLE_PROJECT_CONFIG"], "1")
+        self.assertNotIn("OPENCODE_SERVER_PASSWORD", env)
+
+    def test_default_opener_bypasses_http_proxy(self):
+        """C-WR-01: the loopback request never reaches a configured http_proxy."""
+        import http.server
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"direct")
+
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        dead = socket.socket()
+        dead.bind(("127.0.0.1", 0))
+        dead_port = dead.getsockname()[1]
+        dead.close()  # a proxy port nobody listens on: going through it would fail
+        try:
+            proxy = f"http://127.0.0.1:{dead_port}"
+            with mock.patch.dict(os.environ, {"http_proxy": proxy, "HTTP_PROXY": proxy,
+                                              "no_proxy": "", "NO_PROXY": ""}):
+                url = f"http://127.0.0.1:{server.server_address[1]}/api/model"
+                with detection._LOOPBACK_OPENER.open(url, timeout=5) as resp:
+                    self.assertEqual(resp.read(), b"direct")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_probe_signals_the_process_group(self):
+        """C-WR-03: the whole server group is signalled, never just the direct PID."""
+        popen = self.FakePopen()
+        popen.pid = 424242
+        sent = []
+        with mock.patch.object(detection.os, "killpg", side_effect=lambda p, s: sent.append((p, s)),
+                               create=True):
+            detection.probe_opencode_api_image_input(
+                "/fake/bin/opencode", popen_fn=popen, urlopen_fn=self._fake_urlopen())
+        self.assertEqual(sent, [(424242, signal.SIGTERM), (424242, detection._SIGKILL)])
+        self.assertNotIn("terminate", popen.calls)
+
+    def test_blocked_stdout_hits_deadline_and_kills_group(self):
+        """C-WR-03: a server that never prints (pipe held open) is killed at the deadline."""
+        read_fd, write_fd = os.pipe()
+        popen = self.FakePopen()
+        popen.stdout = os.fdopen(read_fd, "r")
+        popen.pid = 434343
+        writer: dict[str, int | None] = {"fd": write_fd}
+        sent = []
+
+        def fake_killpg(pid, sig):
+            sent.append((pid, sig))
+            fd = writer["fd"]
+            if fd is not None:  # the group dies: its end of the pipe closes
+                os.close(fd)
+                writer["fd"] = None
+
+        with mock.patch.object(detection, "_OPENCODE_PROBE_DEADLINE_S", 0.2), \
+                mock.patch.object(detection.os, "killpg", side_effect=fake_killpg, create=True):
+            started = time.monotonic()
+            result = detection.probe_opencode_api_image_input(
+                "/fake/bin/opencode", popen_fn=popen, urlopen_fn=self._fake_urlopen())
+        self.assertEqual(result, {})
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(sent[0], (434343, detection._SIGKILL))
+
+    def test_sigterm_during_probe_unwinds_through_finally(self):
+        """B-WR-05: a caller's SIGTERM timeout still runs the probe's cleanup."""
+        previous = signal.getsignal(signal.SIGTERM)
+        with self.assertRaises(SystemExit), detection._sigterm_unwinds():
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(1)
+        self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
 
     def test_probe_request_url_and_basic_auth(self):
         popen = self.FakePopen()
@@ -10430,6 +10532,14 @@ class TestOpencodeApiImageInput(unittest.TestCase):
                 returncode=0, stdout="opencode-go/kimi-k3\n"))
         self.assertNotIn("image_input", snapshot["clis"]["opencode"])
         self.assertNotIn("image_input_source", snapshot["clis"]["opencode"])
+        self.assertNotIn("image_input_probe", snapshot["clis"]["opencode"])
+
+        # C-WR-02: a failed 2.x probe is recorded, not silently absent.
+        with mock.patch.object(detection, "probe_opencode_api_image_input", return_value={}):
+            snapshot = build_runtimes_snapshot(
+                which_fn=fake_which, run_fn=self._fake_version_run())
+        self.assertEqual(snapshot["clis"]["opencode"]["image_input_probe"], "failed")
+        self.assertNotIn("image_input", snapshot["clis"]["opencode"])
 
     def test_catalog_meta_carries_provenance_label(self):
         from ai_kit_spec.catalog_build import _apply_runtime_meta, _runtime_meta_from_snapshot
