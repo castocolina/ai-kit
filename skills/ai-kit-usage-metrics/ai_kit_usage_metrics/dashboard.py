@@ -1998,7 +1998,7 @@ def _ensure_private_dir(directory: str) -> None:
 
 
 def _atomic_write_text(path: str, text: str) -> None:
-    """Ported from `tools/config_doctor_appliers.py::_atomic_write_text`."""
+    """Ported from `tools/config_doctor_appliers.py::atomic_write_text`."""
     directory = os.path.dirname(path) or "."
     _ensure_private_dir(directory)
     target = os.path.realpath(path)
