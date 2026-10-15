@@ -263,7 +263,8 @@ This `prepare-tooling` subcommand (Task 4) runs `detect_tool_availability()`,
 `resolve_agents_tooling_path()`, then `probe_codegraph(cli)` (report-only, 15 s timeout; skipped
 when `--cli` is omitted). When codegraph is missing or unhealthy, the shim prints the exact install
 command on stderr — relay that line to the user verbatim and never run it on their behalf
-(installing is the user's call through their own tooling). Only after a healthy probe does it run
+(installing is the user's call through their own tooling). Only when the probe finds codegraph
+registered and not known unhealthy (codex health is unknown, so it gets a stderr note) does it run
 `run_codegraph_index(target_dir)` (`codegraph sync`, then `codegraph init` on failure), per design
 spec §9's ordering guarantee. Writing the guidance into the phase file itself (idempotently,
 marker-guarded) means it reaches GSD's own execution regardless of which dispatch mode Step 2
