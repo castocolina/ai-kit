@@ -465,6 +465,10 @@ def _cmd_recommend(args, which_fn, run_fn, env_fn) -> int:
     if loaded is None:
         print(error, file=sys.stderr)
         return 2
+    refusal = plan_io.out_path_problem(args.out, args.inventory, loaded)
+    if refusal:
+        print(f"ai-kit-gsd-curated-config: {refusal}", file=sys.stderr)
+        return 2
     opts = recommend.RecommendOpts(
         profile=args.profile,
         rigor=args.rigor,
@@ -558,7 +562,7 @@ def _build_parser():
     p_recommend.add_argument(
         "--out",
         required=True,
-        help="written atomically; keep it outside the project's .planning/",
+        help="written atomically; refused inside .planning/ or onto an input/config file",
     )
 
     p_apply_workflow_defaults = sub.add_parser("apply-workflow-defaults")

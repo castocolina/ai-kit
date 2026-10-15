@@ -1739,6 +1739,37 @@ class TestRelativeOut(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(tmp, "plan.json")))
 
 
+class TestOutGuard(unittest.TestCase):
+    def test_out_never_overwrites_inputs_or_planning(self):
+        """B-WR-09: --out cannot target the inventory, a GSD config or .planning/."""
+        with tempfile.TemporaryDirectory() as tmp:
+            planning = os.path.join(tmp, "project", ".planning")
+            os.makedirs(planning)
+            config = os.path.join(planning, "config.json")
+            with open(config, "w", encoding="utf-8") as handle:
+                handle.write('{"model_profile": "balanced"}')
+            inv = make_inventory(
+                existing={"exists": True, "path": config, "values": {}},
+                global_path=os.path.join(tmp, "defaults.json"),
+            )
+            inv_path = os.path.join(tmp, "inventory.json")
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                json.dump(inv, handle)
+            for out in (config, os.path.join(planning, "plan.json"), inv_path,
+                        os.path.join(tmp, "defaults.json")):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    code = cli.main([
+                        "recommend", "--inventory", inv_path, "--profile", "adaptive",
+                        "--rigor", "standard", "--out", out,
+                    ])
+                self.assertEqual(code, 2, out)
+                self.assertIn("--out", err.getvalue())
+            with open(config, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), '{"model_profile": "balanced"}')
+            self.assertFalse(os.path.exists(os.path.join(planning, "plan.json")))
+
+
 class TestInventoryValidation(unittest.TestCase):
     """D-31/R7 boundary: bad inventories exit 2 with `rerun inventory`, write nothing."""
 

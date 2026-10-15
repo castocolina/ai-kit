@@ -233,6 +233,25 @@ def load_inventory(path: str) -> tuple[dict | None, str | None]:
     return inventory, None
 
 
+def out_path_problem(out: str, inventory_path: str, inventory: dict) -> str | None:
+    """SPEC must-not: `--out` never replaces the inventory, a GSD config file or anything
+    under the project's config dir (normally `.planning/`). Returns the refusal reason."""
+    target = os.path.realpath(out)
+    protected = [os.path.realpath(inventory_path)]
+    for section in ("existing_config", "global_defaults"):
+        path = inventory[section].get("path")
+        if isinstance(path, str):
+            protected.append(os.path.realpath(path))
+    if target in protected:
+        return f"--out {out} would overwrite an input or GSD config file"
+    config_path = inventory["existing_config"].get("path")
+    if isinstance(config_path, str):
+        config_dir = os.path.realpath(os.path.dirname(config_path))
+        if target.startswith(config_dir + os.sep):
+            return f"--out {out} is inside the project's config dir {config_dir}"
+    return None
+
+
 def write_plan(path: str, plan: dict) -> None:
     """Writes `canonical_json(plan)` atomically (mkstemp + os.replace) through the
     shared `ai_kit_spec.cache` writer. Raises `OSError` when the ai-kit-spec-review
