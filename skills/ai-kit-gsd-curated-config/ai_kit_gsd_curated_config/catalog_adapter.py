@@ -358,16 +358,11 @@ def _purpose_scores_by_key(entries, join_index, weights, ranker) -> dict[str, di
 
 
 def _scoring_pool(entries, join_index) -> list[dict]:
-    seen: set[str] = set()
     pool: list[dict] = []
     for key in sorted(set(join_index.values())):
-        if key in seen:
-            continue
         entry = entries.get(key)
-        if not isinstance(entry, dict) or _score_axes(entry) <= 0:
-            continue
-        seen.add(key)
-        pool.append({**entry, "key": key})
+        if isinstance(entry, dict) and _score_axes(entry) > 0:
+            pool.append({**entry, "key": key})
     return pool
 
 
@@ -412,12 +407,7 @@ def _one_candidate(join: _JoinCtx, ctx: _RuntimeCtx, model: str) -> dict:
 
 
 def _score_axes(entry: dict | None) -> int:
-    if not entry:
-        return 0
-    scores = entry.get("scores") or {}
-    return sum(
-        1 for name in _SCORE_AXIS_NAMES if isinstance(scores.get(name), (int, float))
-    )
+    return len(_entry_scores(entry)) if entry else 0
 
 
 def _entry_scores(entry: dict) -> dict:
@@ -452,8 +442,7 @@ def _fast_twin_of(model: str, model_set: set[str]) -> str | None:
 
 
 def _candidate_vendor(model: str, entry: dict, vendor_mod) -> str | None:
-    if entry.get("is_router"):
-        return None
+    """Callers skip routers (D-14: a router has no inferred vendor)."""
     for candidate_id in (model, model.rsplit("/", 1)[-1]):
         vendor = vendor_mod.infer_vendor_from_model(candidate_id)
         if vendor:
