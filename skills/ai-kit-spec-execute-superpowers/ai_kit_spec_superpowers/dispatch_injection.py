@@ -12,38 +12,16 @@ import sys
 
 from ai_kit_spec.commands import build_execute_command
 from ai_kit_spec.config_io import cfg_resolve
+from ai_kit_spec.error_classifier import classify_error
 from ai_kit_spec.execute_dispatch import dispatch_execute
 from ai_kit_spec.execute_selection import candidates_to_ladder, resolve_execute_candidates
-from ai_kit_spec.quota import resolve_ladder_pick
+from ai_kit_spec.quota import entry_reason, resolve_ladder_pick
 
 from ai_kit_spec_superpowers.task_classification import (
     classify_task,
     estimate_required_context,
     extract_touched_paths,
 )
-
-# Rate/usage-limit signals only -- genuinely time-bound, worth an hourly quota-wake retry.
-_DISPATCH_QUOTA_SIGNALS = ("usage limit", "quota", "rate limit", "rate_limit")
-# Auth/entitlement/setup signals -- HIGH finding: these never get better by waiting, so they must
-# classify as real_error (never "quota"), or an unauthenticated CLI triggers a futile hourly
-# CronCreate wake loop forever. Mirrors ai_kit_spec.quota's own private _UNAVAILABLE_SIGNALS
-# auth-flavored entries (duplicated, not imported -- that name is a private implementation detail
-# of quota.py's probe_reviewer_quota, not a shared public constant). Keep in sync by hand.
-_AUTH_SIGNALS = ("actionrequirederror", "not authenticated", "not logged in")
-# A probe timeout -- quota.py's own probe_reviewer_quota literally returns this exact detail text
-# ("timed out after 30s") on subprocess.TimeoutExpired. Never quota-recoverable: a hung/broken CLI
-# invocation does not get better by waiting for quota to refill (HIGH finding).
-_TIMEOUT_SIGNAL = "timed out"
-# A malformed/missing command template -- ai_kit_spec.commands.render_reviewer_command's own
-# ValueError text ("... has cli=... set but no command template" / "... has a malformed command
-# template: ..."), confirmed by reading commands.py. A config problem, not a quota problem --
-# waiting an hour never fixes a bad template (HIGH finding).
-_CONFIGURATION_SIGNALS = ("command template", "no command builder registered",
-                           "no execute-mode")
-# The CLI binary itself could not be invoked at all -- quota.py's probe_reviewer_quota returns the
-# raw OSError text verbatim on a failed subprocess launch (e.g. the binary isn't on PATH). Also
-# never quota-recoverable (HIGH finding).
-_DISPATCH_UNAVAILABLE_SIGNALS = ("no such file or directory", "command not found", "errno 2")
 
 
 def reasons_summary(reasons: dict) -> dict:
@@ -68,20 +46,19 @@ class QuotaExhaustedError(RuntimeError):
     mechanism for this task. `tried` carries every candidate key the walk actually visited, in
     ladder order, so a caller can persist the complete excluded set verbatim into resumable state
     (design spec Section 10, HIGH finding) -- never a bare string a caller has to re-parse.
-    `reasons` maps each tried key to why it was skipped -- one of SEVEN typed reasons (HIGH finding:
+    `reasons` maps each tried key to why it was skipped -- a typed reason from
+    ai_kit_spec.error_classifier.REASONS (quota/auth/timeout/configuration/dispatch_unavailable/
+    real_error -- the one shared, stderr-and-exit-status-only classifier, D-13; HIGH finding:
     a real probe/dispatch failure has more shapes than "quota" vs "auth", and only one of them is
-    ever worth an hourly wait):
+    ever worth an hourly wait), PLUS one superpowers-local reason:
       - "quota": a genuine, time-bound rate/usage-limit signal -- worth the hourly wake.
       - "auth": an authentication/entitlement/setup problem -- never fixed by waiting.
       - "timeout": the probe itself hung/timed out -- a broken invocation, not a rate limit.
       - "configuration": a missing/malformed command template -- a config problem.
-      - "dispatch_unavailable": the CLI binary itself could not be invoked (OSError) --
-        no registered execute-mode builder falls under this same umbrella via "no_usable_dispatch"
-        below, which is set directly by build_dispatch_injection's own dispatchability check, not
-        by _unavailability_reason.
+      - "dispatch_unavailable": the CLI binary itself could not be invoked (OSError).
       - "no_usable_dispatch": had quota, but build_execute_command_fn has no registered
-        execute-mode builder for this candidate's cli (set directly by build_dispatch_injection,
-        never by _unavailability_reason -- see the drop-and-continue branch below).
+        execute-mode builder for this candidate's cli (superpowers-local, set directly by
+        build_dispatch_injection, never by _unavailability_reason).
       - "real_error": anything else -- a real, non-time-bound failure (a bad model id, an
         unrelated nonzero exit) that must never be mistaken for a recoverable quota wait.
     `all_auth_failures` is True only when every entry in `reasons` is "auth" (kept for the
@@ -196,28 +173,13 @@ def derive_files_touched_sizes(task_markdown: str, cwd: str, isfile_fn=os.path.i
 
 
 def _unavailability_reason(quota: dict, key: str) -> str:
-    """Classifies why a quota-unavailable candidate is unavailable, from the SAME `detail` text
-    quota.py's probe_reviewer_quota already records. HIGH finding (fixed this revision): the
-    probe's own generic heuristic marks a candidate unavailable on ANY nonzero exit, a timeout, an
-    OSError, or a malformed command template -- NOT only on a genuine rate/usage-limit signal --
-    so this function must positively MATCH each typed reason from the real `detail` text rather
-    than defaulting everything non-auth to "quota". Only a signal in _DISPATCH_QUOTA_SIGNALS ever
-    returns "quota"; every other case returns its own typed reason, and an unmatched/ambiguous/
-    empty detail returns "real_error" (never "quota") -- a false "quota" here would wrongly
-    schedule an hourly CronCreate wake for a failure that will never improve by waiting, exactly
-    the bug this finding closes."""
-    detail = (quota.get(key) or {}).get("detail", "").lower()
-    if any(signal in detail for signal in _AUTH_SIGNALS):
-        return "auth"
-    if any(signal in detail for signal in _DISPATCH_QUOTA_SIGNALS):
-        return "quota"
-    if _TIMEOUT_SIGNAL in detail:
-        return "timeout"
-    if any(signal in detail for signal in _CONFIGURATION_SIGNALS):
-        return "configuration"
-    if any(signal in detail for signal in _DISPATCH_UNAVAILABLE_SIGNALS):
-        return "dispatch_unavailable"
-    return "real_error"
+    """Why a quota-unavailable candidate is unavailable: the TYPED `reason` the shared
+    classifier (ai_kit_spec.error_classifier, D-13) already stored on the quota.json entry
+    at probe time -- never a re-parse of the human-readable `detail` text. A legacy entry
+    written before reasons existed reads "real_error" (never "quota" -- a false "quota"
+    here would wrongly schedule an hourly CronCreate wake for a failure that will never
+    improve by waiting, exactly the bug the HIGH finding closed)."""
+    return entry_reason(quota.get(key) or {}) or "real_error"
 
 
 # A non-empty sentinel ONLY for _is_dispatchable's own probe call below -- build_execute_command's
@@ -361,22 +323,19 @@ def dispatch_superpowers_task(injection: dict, prompt: str, target_dir: str,
 
 
 def classify_dispatch_failure(dispatch_result: dict) -> str:
-    """Classifies a completed dispatch_superpowers_task result: "ok" (returncode 0), "quota"
-    (nonzero returncode + a genuine rate/usage-limit signal in combined stdout+stderr -- retry
-    with the next ladder candidate, never this same one), or "real_error" (anything else,
-    including a timeout regardless of its own text, AND an auth/entitlement/setup signal --
-    HIGH finding: those never get better by waiting, so they must never come back "quota" and
-    trigger the caller's hourly CronCreate wake loop -- surfaced honestly to the harness's own
-    BLOCKED/fix-loop path instead, design spec Section 12's explicit "never silently retry
-    disguised as quota-wait" rule)."""
-    if dispatch_result.get("timed_out"):
-        return "real_error"
+    """Classifies a completed dispatch_superpowers_task result via the ONE shared classifier
+    (ai_kit_spec.error_classifier.classify_error, D-13): "ok" (returncode 0 -- the model's
+    answer on stdout is never classified), "quota" when the classifier reads the nonzero
+    exit's STDERR as a time-bound rate/usage limit (retry with the next ladder candidate,
+    never this same one), or "real_error" (anything else, including a timeout and every
+    auth/entitlement/setup signal -- HIGH finding: those never get better by waiting, so
+    they must never come back "quota" and trigger the caller's hourly CronCreate wake loop
+    -- surfaced honestly to the harness's own BLOCKED/fix-loop path instead, design spec
+    Section 12's explicit "never silently retry disguised as quota-wait" rule)."""
+    timed_out = bool(dispatch_result.get("timed_out"))
     returncode = dispatch_result.get("returncode", 0)
     if returncode == 0:
         return "ok"
-    combined = (dispatch_result.get("stdout", "") + dispatch_result.get("stderr", "")).lower()
-    if any(signal in combined for signal in _AUTH_SIGNALS):
-        return "real_error"
-    if any(signal in combined for signal in _DISPATCH_QUOTA_SIGNALS):
+    if classify_error(returncode, dispatch_result.get("stderr", ""), timed_out) == "quota":
         return "quota"
     return "real_error"

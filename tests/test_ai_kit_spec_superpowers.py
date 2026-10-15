@@ -318,7 +318,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [{"key": "claude/opus-5", "cli": None, "model": "opus",
                         "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota = {"claude/opus-5": {"available": False, "detail": "usage limit reached"}}
+        quota = {"claude/opus-5": {"available": False, "reason": "quota",
+                                    "detail": "usage limit reached"}}
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
                 task, candidates, {}, {}, ["claude/opus-5"], quota=quota)
@@ -334,7 +335,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [{"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
                         "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota = {"codex/terra": {"available": False, "detail": "Error: not authenticated"}}
+        quota = {"codex/terra": {"available": False, "reason": "auth",
+                                  "detail": "Error: not authenticated"}}
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
                 task, candidates, {}, {}, ["codex/terra"], quota=quota)
@@ -348,7 +350,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [{"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
                         "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota = {"codex/terra": {"available": False, "detail": "timed out after 30s"}}
+        quota = {"codex/terra": {"available": False, "reason": "timeout",
+                                  "detail": "timed out after 30s"}}
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
                 task, candidates, {}, {}, ["codex/terra"], quota=quota)
@@ -362,7 +365,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [{"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
                         "task_affinity": "backend", "context_limit": 1_000_000}]
         quota = {"codex/terra": {"available": False,
-                                   "detail": "reviewer 'codex/terra' has a malformed command "
+                                   "reason": "configuration",
+                                  "detail": "reviewer 'codex/terra' has a malformed command "
                                              "template: KeyError"}}
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
@@ -376,7 +380,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [{"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
                         "task_affinity": "backend", "context_limit": 1_000_000}]
         quota = {"codex/terra": {"available": False,
-                                   "detail": "[Errno 2] No such file or directory: 'codex'"}}
+                                   "reason": "dispatch_unavailable",
+                                  "detail": "[Errno 2] No such file or directory: 'codex'"}}
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
                 task, candidates, {}, {}, ["codex/terra"], quota=quota)
@@ -390,7 +395,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [{"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
                         "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota = {"codex/terra": {"available": False, "detail": "Error: unrecognized model id"}}
+        quota = {"codex/terra": {"available": False, "reason": "real_error",
+                                  "detail": "Error: unrecognized model id"}}
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
                 task, candidates, {}, {}, ["codex/terra"], quota=quota)
@@ -408,8 +414,10 @@ class TestBuildDispatchInjection(unittest.TestCase):
             {"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
              "task_affinity": "backend", "context_limit": 1_000_000},
         ]
-        quota = {"claude/opus-5": {"available": False, "detail": "usage limit reached"},
-                  "codex/terra": {"available": False, "detail": "not authenticated"}}
+        quota = {"claude/opus-5": {"available": False, "reason": "quota",
+                                    "detail": "usage limit reached"},
+                  "codex/terra": {"available": False, "reason": "auth",
+                                  "detail": "not authenticated"}}
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
                 task, candidates, {}, {}, ["claude/opus-5", "codex/terra"], quota=quota)
@@ -459,7 +467,8 @@ class TestComputeResumeExclusions(unittest.TestCase):
         # again -- never permanently locked out by its own earlier exhaustion event.
         candidates = [{"key": "claude/opus-5", "cli": None, "model": "opus",
                         "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota_when_exhausted = {"claude/opus-5": {"available": False, "detail": "usage limit"}}
+        quota_when_exhausted = {"claude/opus-5": {"available": False, "reason": "quota",
+                                                  "detail": "usage limit"}}
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
@@ -532,6 +541,18 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
         self.assertEqual(result["command"], shlex.join(captured_command["value"]))
 
 
+class TestUnavailabilityReason(unittest.TestCase):
+    """D-13: _unavailability_reason reads the stored typed reason, never the detail text."""
+
+    def test_stored_reason_wins_over_detail_text(self):
+        quota = {"k": {"available": False, "reason": "auth", "detail": "quota"}}
+        self.assertEqual(dispatch_injection._unavailability_reason(quota, "k"), "auth")
+
+    def test_legacy_entry_without_reason_reads_real_error(self):
+        quota = {"k": {"available": False, "detail": "usage limit reached"}}
+        self.assertEqual(dispatch_injection._unavailability_reason(quota, "k"), "real_error")
+
+
 class TestClassifyDispatchFailure(unittest.TestCase):
     def test_ok_on_zero_returncode(self):
         self.assertEqual(dispatch_injection.classify_dispatch_failure(
@@ -539,19 +560,36 @@ class TestClassifyDispatchFailure(unittest.TestCase):
 
     def test_quota_on_quota_signal_and_nonzero_returncode(self):
         self.assertEqual(dispatch_injection.classify_dispatch_failure(
-            {"returncode": 1, "stdout": "Error: usage limit reached", "stderr": "",
+            {"returncode": 1, "stdout": "", "stderr": "Error: usage limit reached",
+             "timed_out": False}), "quota")
+
+    def test_answer_text_on_success_is_never_classified(self):
+        # R8/D-13: the model's answer (stdout) is never classified -- an answer saying
+        # "quota exceeded" with exit 0 and empty stderr is a success.
+        self.assertEqual(dispatch_injection.classify_dispatch_failure(
+            {"returncode": 0, "stdout": "quota exceeded", "stderr": "",
+             "timed_out": False}), "ok")
+
+    def test_quota_on_stderr_quota_signal_and_nonzero_returncode(self):
+        self.assertEqual(dispatch_injection.classify_dispatch_failure(
+            {"returncode": 1, "stdout": "", "stderr": "rate limit",
              "timed_out": False}), "quota")
 
     def test_real_error_on_auth_signal_even_with_nonzero_returncode(self):
         # HIGH finding: an auth/entitlement/setup failure must classify as real_error, never
         # quota -- it will never be fixed by an hourly quota-wake retry.
         self.assertEqual(dispatch_injection.classify_dispatch_failure(
-            {"returncode": 1, "stdout": "Error: not authenticated", "stderr": "",
+            {"returncode": 1, "stdout": "", "stderr": "Error: not authenticated",
              "timed_out": False}), "real_error")
 
     def test_real_error_on_unrelated_nonzero_returncode(self):
         self.assertEqual(dispatch_injection.classify_dispatch_failure(
             {"returncode": 1, "stdout": "SyntaxError", "stderr": "", "timed_out": False}),
+            "real_error")
+
+    def test_real_error_on_stderr_auth_signal(self):
+        self.assertEqual(dispatch_injection.classify_dispatch_failure(
+            {"returncode": 1, "stderr": "not logged in", "timed_out": False}),
             "real_error")
 
     def test_real_error_on_timeout_even_with_quota_looking_text(self):
@@ -608,7 +646,8 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, ttl: (
-                    {"claude/opus-5": {"available": False, "detail": "usage limit reached"}}),
+                    {"claude/opus-5": {"available": False, "reason": "quota",
+                                     "detail": "usage limit reached"}}),
                 stdout=out)
         self.assertEqual(rc, 0)
         result = json.loads(out.getvalue())
@@ -753,7 +792,8 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, ttl: (
-                    {"claude/opus-5": {"available": False, "detail": "usage limit reached"}}),
+                    {"claude/opus-5": {"available": False, "reason": "quota",
+                                     "detail": "usage limit reached"}}),
                 stdout=out)
         self.assertEqual(rc, 0)
         result = json.loads(out.getvalue())
@@ -975,7 +1015,7 @@ class TestCliDispatchTask(unittest.TestCase):
 class TestCliClassifyDispatchFailure(unittest.TestCase):
     def test_prints_the_classification_string(self):
         out = io.StringIO()
-        result = {"returncode": 1, "stdout": "usage limit reached", "stderr": "",
+        result = {"returncode": 1, "stdout": "", "stderr": "usage limit reached",
                   "timed_out": False}
         rc = superpowers_cli.main(
             ["classify-dispatch-failure", "--dispatch-result-json", json.dumps(result)],
