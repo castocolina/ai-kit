@@ -757,7 +757,7 @@ def _cross_ai_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
                 ctx,
                 flag_key,
                 yes,
-                "preset",
+                "preset" if answer["defaulted"] else "user",
                 _cross_ai_why(ctx, answers_key, answer),
             )
         )

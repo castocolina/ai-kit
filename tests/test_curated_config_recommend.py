@@ -1458,6 +1458,13 @@ class TestCrossAi(unittest.TestCase):
         )
         self.assertEqual(reserved["why"], "reserved for Phase 18 cross-AI selection (D-19)")
 
+    def test_explicit_answer_source_user_default_preset(self):
+        """A-WR-09: R7 `source: user` marks an explicit answer, `preset` a rigor default."""
+        plan = build(make_inventory(), rigor="standard", cross_ai_review="n")
+        em = entry_map(plan)
+        self.assertEqual(em["workflow.plan_review_convergence"]["source"], "user")
+        self.assertEqual(em["workflow.cross_ai_execution"]["source"], "preset")
+
     def test_review_no(self):
         plan = build(make_inventory(), rigor="standard", cross_ai_review="n")
         self.assertFalse(entry_map(plan)["workflow.plan_review_convergence"]["value"])
