@@ -129,10 +129,11 @@
       "installed": true,
       "models": [
         "anthropic/claude-sonnet-5",
-        "openai/gpt-5.6-terra"
+        "openai/gpt-5.6-terra",
+        "router-env/my-coding"
       ],
       "synthetic": true
     }
   },
-  "schema_version": 3
+  "schema_version": 4
 }

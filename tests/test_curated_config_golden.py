@@ -393,6 +393,20 @@ class TestGoldenProperties(unittest.TestCase):
                     self.assertEqual(sonnet.get("status"), "needs_choice")
                     self.assertEqual(sonnet.get("candidates"), [])
 
+    def test_exec_targets_never_host(self):
+        forbidden = {"grok", "claude"}
+        for host_name, rigor, profile in ALL_GOLDEN_CASES:
+            with self.subTest(host=host_name, rigor=rigor, profile=profile):
+                plan = self._load_golden(golden_basename(host_name, rigor, profile))
+                self.assertIsInstance(plan.get("artifacts"), list)
+                for artifact in plan["artifacts"]:
+                    if artifact.get("kind") != "cross-ai-script":
+                        continue
+                    prefer = artifact.get("config", {}).get("prefer", [])
+                    for cli_id in prefer:
+                        self.assertNotIn(cli_id, forbidden, host_name)
+                        self.assertNotEqual(cli_id, host_name, host_name)
+
 
 class TestConflictsEndToEnd(unittest.TestCase):
     def _entry(self, plan: dict, key: str) -> dict:

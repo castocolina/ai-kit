@@ -25,6 +25,7 @@ from ai_kit_gsd_curated_config import (
     gsd_catalog,
     inventory,
     plan_io,
+    plan_schema,
     presets,
     project_facts,
 )
@@ -1741,7 +1742,7 @@ class TestCompleteInventory(unittest.TestCase):
             self.assertEqual(rec_code, 0)
             with open(out_path, encoding="utf-8") as handle:
                 plan = json.load(handle)
-            self.assertEqual(plan["schema_version"], 1)
+            self.assertEqual(plan["schema_version"], plan_schema.PLAN_SCHEMA_VERSION)
             keys = {e["key"]: e for e in plan["entries"]}
             self.assertEqual(keys["model_profile"]["value"], "adaptive")
             for tier in ("opus", "sonnet", "haiku"):

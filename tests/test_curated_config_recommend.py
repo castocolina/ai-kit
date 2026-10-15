@@ -25,6 +25,7 @@ sys.path.insert(
 
 from ai_kit_gsd_curated_config import (
     cli,
+    cross_ai,
     gsd_catalog,
     plan_io,
     plan_schema,
@@ -338,7 +339,7 @@ class TestRecommendTracer(unittest.TestCase):
         data = json.loads(self._stdout_of(inv))
         for key in ("out", "entries", "needs_choice", "notes"):
             self.assertIn(key, data)
-        self.assertEqual(plan["schema_version"], 1)
+        self.assertEqual(plan["schema_version"], plan_schema.PLAN_SCHEMA_VERSION)
         self.assertTrue(plan["inventory_digest"].startswith("sha256:"))
         self.assertEqual(plan["inventory_digest"], plan_schema.inventory_digest(inv))
         # A-IN-08: the public digest itself ignores candidate order.
@@ -1568,6 +1569,7 @@ class TestCrossAi(unittest.TestCase):
         self.assertEqual(reserved["status"], "needs_choice")
         self.assertEqual(reserved["value"], None)
         self.assertEqual(reserved["candidates"], [])
+        self.assertEqual(reserved["why"], cross_ai.NO_TARGET_TEXT)
 
     def test_exec_no(self):
         plan = build(make_inventory(), rigor="standard", cross_ai_exec="n")
@@ -1575,41 +1577,37 @@ class TestCrossAi(unittest.TestCase):
         self.assertNotIn("workflow.cross_ai_command", entry_map(plan))
 
     def test_defaults(self):
+        pi_router = cand(
+            "router-env/my-coding",
+            runtime="pi",
+            is_host=False,
+            is_router=True,
+            router_confirmed=True,
+            name_declared_purpose="execute",
+        )
+        cursor_cand = cand(
+            "composer-2.5",
+            runtime="cursor-agent",
+            is_host=False,
+            price=1,
+            score_axes=3,
+            purpose_scores={**_SCORES, "execution": 8.0},
+        )
         other = [cand("some/other-model", runtime="codex", is_host=False)]
-        claude_mvp_cheap = [
-            cand("host-a", runtime="claude", price=1, score_axes=3, purpose_scores=_SCORES),
-            cand("host-b", runtime="claude", price=10, score_axes=3, purpose_scores=_SCORES),
-            cand(
-                "cheap/other",
-                runtime="codex",
-                is_host=False,
-                price=0.2,
-                score_axes=3,
-                purpose_scores=_SCORES,
-            ),
-        ]
-        claude_mvp_dear = [
-            cand("host-a", runtime="claude", price=1, score_axes=3, purpose_scores=_SCORES),
-            cand(
-                "dear/other",
-                runtime="codex",
-                is_host=False,
-                price=20,
-                score_axes=3,
-                purpose_scores=_SCORES,
-            ),
-        ]
         cases = [
-            # (host, candidates, rigor, review, exec)
-            ("codex", (), "rigorous", "y", "n"),
-            ("codex", other, "standard", "y", "n"),
-            ("opencode", other, "standard", "n", "n"),
-            ("claude", claude_mvp_cheap, "mvp", "n", "y"),
-            ("claude", claude_mvp_dear, "mvp", "n", "n"),
-            ("claude", (), "mvp", "n", "n"),
+            # (host, candidates, installed, rigor, review, exec)
+            ("codex", (), [], "rigorous", "y", "n"),
+            ("codex", other, [], "standard", "y", "n"),
+            ("opencode", other, ["opencode"], "standard", "n", "n"),
+            ("claude", (pi_router,), ["pi"], "mvp", "n", "y"),
+            ("claude", (pi_router,), ["pi"], "standard", "y", "y"),
+            ("claude", (pi_router,), ["pi"], "rigorous", "y", "y"),
+            ("claude", (), [], "mvp", "n", "n"),
+            ("codex", (cursor_cand,), ["cursor-agent"], "standard", "y", "y"),
         ]
-        for host, candidates, rigor, want_review, want_exec in cases:
+        for host, candidates, installed, rigor, want_review, want_exec in cases:
             inv = make_inventory(host=host, candidates=candidates)
+            inv["installed_runtimes"] = list(installed)
             plan = build(inv, rigor=rigor)
             self.assertEqual(
                 plan["cross_ai"]["review"], {"answer": want_review, "defaulted": True}, host
@@ -1622,6 +1620,12 @@ class TestCrossAi(unittest.TestCase):
                 want_review == "y",
                 host,
             )
+        inv = make_inventory(host="claude", candidates=())
+        inv["installed_runtimes"] = []
+        plan = build(inv, rigor="standard")
+        notes = [n for n in plan["notes"] if n["kind"] == "cross_ai_exec"]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("pi, cursor-agent, opencode", notes[0]["text"])
 
     def test_explicit_flag_not_defaulted(self):
         plan = build(make_inventory(), rigor="mvp", cross_ai_review="y")
@@ -1724,7 +1728,7 @@ FORBIDDEN_IMPORT_ROOTS = frozenset((
     "subprocess", "socket", "time", "datetime", "os", "urllib", "http", "shutil",
     "tempfile", "random", "pathlib", "glob", "io", "ai_kit_spec",
 ))
-ALLOWED_RELATIVE_IMPORTS = frozenset(("presets", "roles", "plan_schema"))
+ALLOWED_RELATIVE_IMPORTS = frozenset(("cross_ai", "presets", "roles", "plan_schema"))
 
 
 def forbidden_imports(source):
@@ -1768,7 +1772,7 @@ class TestPurity(unittest.TestCase):
         self.assertEqual(plan_io.canonical_json(first), plan_io.canonical_json(second))
 
     def test_recommend_and_presets_import_nothing_forbidden(self):
-        for module in ("recommend", "presets", "roles", "plan_schema"):
+        for module in ("recommend", "presets", "roles", "plan_schema", "cross_ai"):
             with open(
                 os.path.join(
                     REPO_ROOT, "skills", "ai-kit-gsd-curated-config", "ai_kit_gsd_curated_config",

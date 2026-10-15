@@ -1020,6 +1020,10 @@
       "opencode": {
         "ctx_window": null,
         "model_id": "router-env/my-coding"
+      },
+      "pi": {
+        "ctx_window": null,
+        "model_id": "router-env/my-coding"
       }
     },
     "source": {

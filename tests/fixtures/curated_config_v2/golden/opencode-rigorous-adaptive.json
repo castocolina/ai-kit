@@ -1,4 +1,5 @@
 {
+  "artifacts": [],
   "cross_ai": {
     "exec": {
       "answer": "n",
@@ -229,7 +230,7 @@
       "op": "set",
       "source": "preset",
       "value": false,
-      "why": "cross-AI exec answer: n (defaulted)"
+      "why": "cross-AI exec answer: n (defaulted); execution stays on the host for opencode (spec §6)"
     },
     {
       "existing": null,
@@ -341,5 +342,5 @@
   ],
   "profile": "adaptive",
   "rigor": "rigorous",
-  "schema_version": 1
+  "schema_version": 2
 }

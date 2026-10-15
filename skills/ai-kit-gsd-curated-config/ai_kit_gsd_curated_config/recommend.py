@@ -1,12 +1,12 @@
 """The pure recommendation engine (REC-01): inventory + profile + rigor + the two
 cross-AI answers -> one canonical, sorted, explainable plan dict. No subprocess, no
 network, no clock, no environment, no filesystem: everything arrives through the
-inventory. Imports only `typing` names, `.presets`, `.roles` and `.plan_schema`
-(guarded by the tests' AST import check).
+inventory. Imports only `typing` names, `.cross_ai`, `.presets`, `.roles` and
+`.plan_schema` (guarded by the tests' AST import check).
 """
 from typing import Any, NamedTuple
 
-from . import plan_schema, presets, roles
+from . import cross_ai, plan_schema, presets, roles
 
 
 class RecommendOpts(NamedTuple):
@@ -93,19 +93,10 @@ def make_entry(ctx: PlanCtx, key: str, value: Any, source: str, why: str, **extr
     return entry
 
 
-def _cheap_exec_default(ctx: PlanCtx) -> str:
-    if ctx.opts.rigor != "mvp" or ctx.host not in ("claude", "codex"):
-        return "n"
-    q = presets.PRICE_PERCENTILE["mvp"]
-    cheap = roles.cheap_other_cli(ctx.inv["candidates"], q)
-    return "y" if cheap is not None else "n"
-
-
 def cross_ai_answers(ctx: PlanCtx) -> dict:
-    """Resolves the two cross-AI answers (17 D-19). An explicit flag wins with
+    """Resolves the two cross-AI answers (17 D-19, 18 D-39). An explicit flag wins with
     `defaulted: False`; an omitted flag defaults from rigor and host and is recorded
-    as `defaulted: True`. MVP exec defaults to yes only when a cheap other-CLI
-    candidate exists (spec §5)."""
+    as `defaulted: True`."""
     other_cli = any(not c.get("is_host", False) for c in ctx.inv["candidates"])
     claude_or_codex = ctx.host in ("claude", "codex")
 
@@ -116,7 +107,8 @@ def cross_ai_answers(ctx: PlanCtx) -> dict:
     standard_qualified = ctx.opts.rigor == "standard" and claude_or_codex and other_cli
     if ctx.opts.rigor == "rigorous" or standard_qualified:
         review_default = "y"
-    exec_default = _cheap_exec_default(ctx)
+    targets = cross_ai.exec_targets(ctx.inv, ctx.opts.rigor)
+    exec_default, _ = cross_ai.exec_default(ctx.host, targets)
     return {
         "review": _resolve(ctx.opts.cross_ai_review, review_default),
         "exec": _resolve(ctx.opts.cross_ai_exec, exec_default),
@@ -730,22 +722,29 @@ def _specialist_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
 def _cross_ai_why(ctx: PlanCtx, answers_key: str, answer: dict) -> str:
     defaulted = " (defaulted)" if answer["defaulted"] else ""
     base = f"cross-AI {answers_key} answer: {answer['answer']}{defaulted}"
-    if answers_key != "exec" or answer["answer"] != "y" or not answer["defaulted"]:
+    if answers_key != "exec" or not answer["defaulted"]:
         return base
-    cheap = roles.cheap_other_cli(ctx.inv["candidates"], presets.PRICE_PERCENTILE["mvp"])
-    if cheap is None:
-        return base + "; no cheap other-CLI candidate within the MVP ceiling"
-    return (
-        f"{base}; cheap candidate {cheap['runtime']} {cheap['model']} at "
-        f"{cheap['price']:g}/1M within the MVP ceiling"
-    )
+    targets = cross_ai.exec_targets(ctx.inv, ctx.opts.rigor)
+    _, def_why = cross_ai.exec_default(ctx.host, targets)
+    return f"{base}; {def_why}"
+
+
+def _exec_command_why(targets: list[cross_ai.Target]) -> str:
+    missing = [t for t in targets if t.model is None]
+    if missing:
+        return (
+            "set each missing target model with plan-set script:cross-ai.model.<cli> <model>"
+        )
+    names = ", ".join(t.cli for t in targets)
+    return f"cross-AI execution runner (18 D-09); targets: {names}"
 
 
 def _cross_ai_layer(ctx: PlanCtx, _prior_entries: list) -> tuple[list, list]:
-    """Layer 3: the cross-AI boolean keys mirror the answers; each yes reserves a
-    needs_choice slot for the Phase 18 selection key (17 D-19)."""
+    """Layer 3: cross-AI booleans mirror the answers; exec yes wires runner keys (18 D-09)."""
     answers = cross_ai_answers(ctx)
     entries = []
+    notes = []
+    targets = cross_ai.exec_targets(ctx.inv, ctx.opts.rigor)
     for answers_key, flag_key, command_key in (
         ("review", "workflow.plan_review_convergence", "review.default_reviewers"),
         ("exec", "workflow.cross_ai_execution", "workflow.cross_ai_command"),
@@ -761,7 +760,9 @@ def _cross_ai_layer(ctx: PlanCtx, _prior_entries: list) -> tuple[list, list]:
                 _cross_ai_why(ctx, answers_key, answer),
             )
         )
-        if yes:
+        if not yes:
+            continue
+        if answers_key == "review":
             entries.append(
                 make_entry(
                     ctx,
@@ -773,7 +774,68 @@ def _cross_ai_layer(ctx: PlanCtx, _prior_entries: list) -> tuple[list, list]:
                     candidates=[],
                 )
             )
-    return entries, []
+            continue
+        if not targets:
+            entries.append(
+                make_entry(
+                    ctx,
+                    command_key,
+                    None,
+                    "preset",
+                    cross_ai.NO_TARGET_TEXT,
+                    status="needs_choice",
+                    candidates=[],
+                )
+            )
+            continue
+        cmd_extra: dict = {}
+        if any(t.model is None for t in targets):
+            cmd_extra = {"status": "needs_choice", "candidates": []}
+        entries.append(
+            make_entry(
+                ctx,
+                command_key,
+                cross_ai.CROSS_AI_COMMAND,
+                "preset",
+                _exec_command_why(targets),
+                **cmd_extra,
+            )
+        )
+        timeout_key = "workflow.cross_ai_timeout"
+        entries.append(
+            make_entry(
+                ctx,
+                timeout_key,
+                cross_ai.timeout_value(presets.get_dotted(ctx.existing, timeout_key)),
+                "preset",
+                f"cross-AI outer timeout (18 D-12); minimum {cross_ai.MIN_TIMEOUT_S}s",
+            )
+        )
+        mgr_key = "manager.flags.execute"
+        entries.append(
+            make_entry(
+                ctx,
+                mgr_key,
+                cross_ai.manager_flags_value(presets.get_dotted(ctx.existing, mgr_key)),
+                "preset",
+                "append --cross-ai for cross-AI execution (18 D-09)",
+            )
+        )
+        notes.append({
+            "kind": "cross_ai_run",
+            "key": mgr_key,
+            "text": "cross-AI execution is on: run phases with --cross-ai",
+        })
+    exec_ans = answers["exec"]
+    if exec_ans["answer"] == "n" and exec_ans["defaulted"]:
+        _, def_why = cross_ai.exec_default(ctx.host, targets)
+        if def_why == cross_ai.NO_TARGET_TEXT:
+            notes.append({
+                "kind": "cross_ai_exec",
+                "key": "workflow.cross_ai_execution",
+                "text": f"{cross_ai.NO_TARGET_TEXT}; execution stays on the host",
+            })
+    return entries, notes
 
 
 _LEFTOVER_WHY = "managed by the curated plan (D-08); not set by this plan"
@@ -954,13 +1016,22 @@ def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
         preset=presets.preset_values(opts.rigor, inventory["project"]),
     )
     entries, notes = _merge_layers(ctx)
+    answers = cross_ai_answers(ctx)
+    exec_yes = answers["exec"]["answer"] == "y"
+    targets = cross_ai.exec_targets(ctx.inv, opts.rigor) if exec_yes else []
+    artifacts: list = []
+    if exec_yes and targets:
+        timeout_key = "workflow.cross_ai_timeout"
+        timeout = cross_ai.timeout_value(presets.get_dotted(ctx.existing, timeout_key))
+        artifacts = [cross_ai.script_artifact(targets, timeout)]
     return {
         "schema_version": plan_schema.PLAN_SCHEMA_VERSION,
         "inventory_digest": plan_schema.inventory_digest(inventory),
         "host": ctx.host,
         "profile": opts.profile,
         "rigor": opts.rigor,
-        "cross_ai": cross_ai_answers(ctx),
+        "cross_ai": answers,
+        "artifacts": artifacts,
         "entries": sorted(entries, key=lambda entry: entry["key"]),
         "notes": sorted(
             notes, key=lambda note: (note["kind"], note.get("key") or "", note["text"])

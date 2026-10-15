@@ -4,7 +4,8 @@ depend on it without reaching any I/O module (REC-01)."""
 import hashlib
 import json
 
-PLAN_SCHEMA_VERSION = 1
+# 18-04 adds top-level ``artifacts`` on plans.
+PLAN_SCHEMA_VERSION = 2
 
 
 def canonical_json(obj) -> str:

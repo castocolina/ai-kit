@@ -1,7 +1,37 @@
 {
+  "artifacts": [
+    {
+      "choices": {},
+      "config": {
+        "models": {
+          "cursor": "gemini-3.8-flash-low",
+          "opencode": "router-env/my-coding",
+          "pi": "router-env/my-coding"
+        },
+        "outer_timeout_s": 1800,
+        "prefer": [
+          "pi",
+          "cursor",
+          "opencode"
+        ],
+        "router_backed": {
+          "cursor": false,
+          "opencode": true,
+          "pi": true
+        }
+      },
+      "kind": "cross-ai-script",
+      "path": ".planning/scripts/cross-ai.mjs",
+      "source": "preset",
+      "status": "ok",
+      "template": "cross-ai.mjs",
+      "version": 2,
+      "why": "cross-AI execution runner (18 D-09); pi: user-curated router (declared purpose: execute); cursor: best execution score within ceiling (<= 4/1M, 75th pct of 4 families); effort variant low of inferred family gemini-3.8-flash for target medium (nearest lower); opencode: user-curated router (declared purpose: execute)"
+    }
+  ],
   "cross_ai": {
     "exec": {
-      "answer": "n",
+      "answer": "y",
       "defaulted": true
     },
     "review": {
@@ -65,6 +95,14 @@
       "source": "preset",
       "value": true,
       "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "manager.flags.execute",
+      "op": "set",
+      "source": "preset",
+      "value": "--cross-ai",
+      "why": "append --cross-ai for cross-AI execution (18 D-09)"
     },
     {
       "existing": null,
@@ -154,11 +192,27 @@
     },
     {
       "existing": null,
+      "key": "workflow.cross_ai_command",
+      "op": "set",
+      "source": "preset",
+      "value": "node .planning/scripts/cross-ai.mjs",
+      "why": "cross-AI execution runner (18 D-09); targets: pi, cursor, opencode"
+    },
+    {
+      "existing": null,
       "key": "workflow.cross_ai_execution",
       "op": "set",
       "source": "preset",
-      "value": false,
-      "why": "cross-AI exec answer: n (defaulted)"
+      "value": true,
+      "why": "cross-AI exec answer: y (defaulted); D-39: cross-AI execution defaults on codex with target(s) pi, cursor, opencode"
+    },
+    {
+      "existing": null,
+      "key": "workflow.cross_ai_timeout",
+      "op": "set",
+      "source": "preset",
+      "value": 1800,
+      "why": "cross-AI outer timeout (18 D-12); minimum 1800s"
     },
     {
       "existing": null,
@@ -256,9 +310,14 @@
       "key": null,
       "kind": "counterpart",
       "text": "no in-runtime counterpart for gsd-plan-checker and gsd-code-reviewer on codex (single provider): use cross-AI review"
+    },
+    {
+      "key": "manager.flags.execute",
+      "kind": "cross_ai_run",
+      "text": "cross-AI execution is on: run phases with --cross-ai"
     }
   ],
   "profile": "adaptive",
   "rigor": "standard",
-  "schema_version": 1
+  "schema_version": 2
 }
