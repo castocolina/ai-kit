@@ -28,6 +28,7 @@ from ai_kit_spec.config_io import (
     cfg_combine,
     cfg_local_path,
     cfg_parse_toml_bytes,
+    cfg_read_bytes,
     cfg_render_toml,
     cfg_resolve,
     cfg_trust_store_dir,
@@ -714,23 +715,22 @@ def _trust_local_argv_lines(config: dict, env: dict) -> list[dict]:
 
 def _cmd_trust_local(args: argparse.Namespace, deps: CliDeps) -> int:
     local_path = cfg_local_path(args.cwd)
-    if not os.path.exists(local_path):
-        print(f"no project-local config at {local_path}", file=sys.stderr)
-        return 1
     real = os.path.realpath(local_path)
     env = dict(os.environ)
     store = cfg_trust_store_dir(env)
-    with open(local_path, "rb") as f:
-        raw = f.read()
+    if args.revoke:  # works after the file was deleted or moved (A-IN-07)
+        n = trust.revoke_trust(store, real)
+        print(f"revoked {n} trust record(s) for {real}")
+        return 0
+    if not os.path.exists(local_path):
+        print(f"no project-local config at {local_path}", file=sys.stderr)
+        return 1
+    raw = cfg_read_bytes(local_path)
     for line in _trust_local_argv_lines(cfg_parse_toml_bytes(raw, local_path), env):
         if args.show and "argv" in line:
             line.update(trusted=trust.is_trusted(store, real, raw), path=real)
         print(json.dumps(line))
     if args.show:
-        return 0
-    if args.revoke:
-        n = trust.revoke_trust(store, real)
-        print(f"revoked {n} trust record(s) for {real}")
         return 0
     sha = trust.content_sha256(raw)
     trust.record_trust(store, real, raw)

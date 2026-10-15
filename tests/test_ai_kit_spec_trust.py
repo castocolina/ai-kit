@@ -200,6 +200,48 @@ class TestTrustLifecycle(TrustEnvTestCase):
         _, calls, _, _ = self.probe_quota()
         self.assertEqual(calls, [])
 
+    def test_revoke_works_after_the_file_is_deleted(self):
+        # A-IN-07: records of a deleted/moved config must stay removable through the CLI.
+        path = self.write_local(_local_spec(self.PROBE_CMD))
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.main(["trust-local", "--cwd", self.cwd]), 0)
+        os.unlink(path)
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.main(["trust-local", "--cwd", self.cwd, "--revoke"]), 0)
+        self.assertIn("revoked 1 trust record(s)", out.getvalue())
+        self.assertEqual(os.listdir(self.store), [])
+
+    def test_non_object_trust_record_reads_untrusted_and_revoke_skips_it(self):
+        # A-IN-01: a trust record holding a JSON list/string must not crash the gate.
+        path = self.write_local(_local_spec(self.PROBE_CMD))
+        with open(path, "rb") as f:
+            raw = f.read()
+        real = os.path.realpath(path)
+        os.makedirs(self.store, exist_ok=True)
+        name = trust.trust_key(real, trust.content_sha256(raw)) + ".json"
+        with open(os.path.join(self.store, name), "w", encoding="utf-8") as f:
+            f.write("[1, 2]")
+        self.assertFalse(trust.is_trusted(self.store, real, raw))
+        self.assertEqual(trust.revoke_trust(self.store, real), 0)
+        _, calls, _, err = self.probe_quota()
+        self.assertEqual(calls, [])
+        self.assertIn("trust-local", err)
+
+    def test_surrogate_escaped_path_hashes_without_raising(self):
+        self.assertEqual(len(trust.trust_key("/p/\udcff.toml", "0" * 64)), 64)
+
+    def test_unreadable_local_config_exits_2(self):
+        # A-IN-01: a directory where the file should be is a ConfigError (exit 2), not a raw
+        # IsADirectoryError traceback.
+        os.makedirs(config_io.cfg_local_path(self.cwd))
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = cli.main(["probe-quota", "--cwd", self.cwd, "--quota-path",
+                             os.path.join(self.cwd, "q.json")], run_fn=lambda *a, **k: None)
+        self.assertEqual(code, 2)
+        self.assertIn("config error", err.getvalue())
+
     def test_global_only_reviewer_needs_no_trust(self):
         calls = []
 

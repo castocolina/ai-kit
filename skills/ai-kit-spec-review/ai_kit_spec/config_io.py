@@ -82,6 +82,16 @@ def cfg_load_toml(path: str) -> dict:
         raise ConfigError(path, str(exc)) from exc
 
 
+def cfg_read_bytes(path: str) -> bytes:
+    """Read a config file's raw bytes once (the trust gate hashes and parses the same
+    buffer); an unreadable file (permissions, a directory) is a ConfigError, exit 2."""
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except OSError as exc:
+        raise ConfigError(path, str(exc)) from exc
+
+
 def cfg_parse_toml_bytes(raw: bytes, path: str) -> dict:
     """Parse already-read TOML bytes; raise ConfigError naming `path` for malformed TOML
     or non-UTF-8 bytes. Kept separate so cfg_resolve can hash and parse the SAME bytes it
@@ -138,8 +148,7 @@ def cfg_resolve(cwd: str, env: dict, warn_fn=None) -> dict:
     local_path = cfg_local_path(cwd)
     local = {}
     if os.path.exists(local_path):
-        with open(local_path, "rb") as f:
-            raw = f.read()
+        raw = cfg_read_bytes(local_path)
         # Parsing happens BEFORE the trust check (D-08 interpretation): a malformed file is
         # reported (R13) whether or not it is trusted -- parsing executes nothing.
         parsed = cfg_parse_toml_bytes(raw, local_path)

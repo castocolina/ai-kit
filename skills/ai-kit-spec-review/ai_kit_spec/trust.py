@@ -27,7 +27,8 @@ def content_sha256(raw: bytes) -> str:
 def trust_key(real_path: str, sha: str) -> str:
     """Record name: sha256(realpath NUL content-sha256) -- binds consent to both the exact
     file (via realpath) and its exact content."""
-    return hashlib.sha256(real_path.encode("utf-8") + b"\0" + sha.encode("ascii")).hexdigest()
+    # fsencode, not .encode("utf-8"): a surrogate-escaped (non-UTF-8) path must not raise.
+    return hashlib.sha256(os.fsencode(real_path) + b"\0" + sha.encode("ascii")).hexdigest()
 
 
 def is_trusted(store_dir: str, real_path: str, raw: bytes) -> bool:
@@ -35,7 +36,7 @@ def is_trusted(store_dir: str, real_path: str, raw: bytes) -> bool:
     values -- a record is never trusted on filename alone."""
     record = cache_read_json(os.path.join(store_dir, trust_key(real_path, content_sha256(raw))
                                           + ".json"))
-    if record is None:
+    if not isinstance(record, dict):  # missing, or a non-object JSON value
         return False
     return record.get("path") == real_path and record.get("sha256") == content_sha256(raw)
 
@@ -65,7 +66,7 @@ def revoke_trust(store_dir: str, real_path: str) -> int:
         if not name.endswith(".json"):
             continue
         record = cache_read_json(os.path.join(store_dir, name))
-        if record is not None and record.get("path") == real_path:
+        if isinstance(record, dict) and record.get("path") == real_path:
             try:
                 os.unlink(os.path.join(store_dir, name))
                 count += 1
