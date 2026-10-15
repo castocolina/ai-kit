@@ -12,15 +12,17 @@ every test class is guarded by ``@skipUnless(HAVE_TEXTUAL, ...)``.
 Static-content accessor in Textual 8.2.7 is ``str(widget.content)`` (not
 ``.render()``).
 """
+import importlib.util
 import threading
 import unittest
 
-try:
-    from textual.widgets import Static
-    HAVE_TEXTUAL = True
-except ImportError:  # pragma: no cover - exercised only when textual is absent
-    HAVE_TEXTUAL = False
-    Static = object  # type: ignore[assignment,misc]
+HAVE_TEXTUAL = importlib.util.find_spec("textual") is not None
+
+
+def _query_static(app, selector: str):
+    from textual.widgets import Static as _Static
+
+    return app.query_one(selector, _Static)
 
 from tools import wizard_app as wa
 
@@ -50,8 +52,8 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
             app._render()
             await pilot.pause()
             lane_text = " ".join(
-                str(app.query_one(f"#lane{i}", Static).content) for i in range(3))
-            for seg in app.tray:
+                str(_query_static(app, f"#lane{i}").content) for i in range(3))
+            for seg in app.board.tray:
                 self.assertNotIn(seg, lane_text,
                                  f"OFF segment {seg!r} leaked into a lane")
 
@@ -64,9 +66,9 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
             app._render()
             await pilot.pause()
             lane_text = " ".join(
-                str(app.query_one(f"#lane{i}", Static).content) for i in range(3))
+                str(_query_static(app, f"#lane{i}").content) for i in range(3))
             for i in range(3):
-                for seg in app.lines[i]:
+                for seg in app.board.lines[i]:
                     icon = app._icon(seg)
                     if icon:
                         self.assertIn(icon, lane_text, f"{seg} missing icon")
@@ -75,8 +77,8 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(make_ctx(with_external=True))
         async with app.run_test() as pilot:
             await pilot.pause()
-            box = str(app.query_one("#picksbox", Static).content)
-            for seg in app.state["segments"]:
+            box = str(_query_static(app, "#picksbox").content)
+            for seg in app.model.state["segments"]:
                 self.assertNotIn(seg, box, f"segment {seg!r} leaked onto Choose")
 
 
@@ -86,32 +88,32 @@ class TestChoose(unittest.IsolatedAsyncioTestCase):
 
     async def test_down_up_wrap_cursor(self):
         app = wa.WizardApp(make_ctx())
-        n = len(app.sel.items)
+        n = len(app.model.sel.items)
         async with app.run_test() as pilot:
             await pilot.pause()
-            self.assertEqual(app.sel.cursor, 0)
+            self.assertEqual(app.model.sel.cursor, 0)
             await pilot.press("up")            # wrap to last
-            self.assertEqual(app.sel.cursor, n - 1)
+            self.assertEqual(app.model.sel.cursor, n - 1)
             await pilot.press("down")          # wrap back to first
-            self.assertEqual(app.sel.cursor, 0)
+            self.assertEqual(app.model.sel.cursor, 0)
 
     async def test_space_toggles_cursor_item(self):
         app = wa.WizardApp(make_ctx())
-        before = app.sel.items[0][2]
+        before = app.model.sel.items[0][2]
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("space")
-        self.assertEqual(app.sel.items[0][2], not before)
+        self.assertEqual(app.model.sel.items[0][2], not before)
 
     async def test_a_n_set_cursor_category(self):
         app = wa.WizardApp(make_ctx())  # cursor 0 → category "agents" (2 items)
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("n")
-            agents = [it for it in app.sel.items if it[0] == "agents"]
+            agents = [it for it in app.model.sel.items if it[0] == "agents"]
             self.assertTrue(all(not it[2] for it in agents))
             # other categories untouched
-            self.assertTrue(app.sel.items[2][2])  # commands/code-review still on
+            self.assertTrue(app.model.sel.items[2][2])  # commands/code-review still on
             await pilot.press("a")
             self.assertTrue(all(it[2] for it in agents))
 
@@ -120,23 +122,23 @@ class TestChoose(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("N")
-            self.assertTrue(all(not it[2] for it in app.sel.items))
+            self.assertTrue(all(not it[2] for it in app.model.sel.items))
             await pilot.press("A")
-            self.assertTrue(all(it[2] for it in app.sel.items))
+            self.assertTrue(all(it[2] for it in app.model.sel.items))
 
     async def test_tab_is_noop(self):
         app = wa.WizardApp(make_ctx())
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("tab")
-            self.assertEqual(app.step, wa.STEP_CHOOSE)
+            self.assertEqual(app.flow.step, wa.STEP_CHOOSE)
 
     async def test_enter_advances_to_arrange(self):
         app = wa.WizardApp(make_ctx())
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")
-            self.assertEqual(app.step, wa.STEP_ARRANGE)
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
@@ -148,12 +150,12 @@ class TestAdoptionGate(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange
-            self.assertFalse(app.gate_done)
+            self.assertFalse(app.flow.gate_done)
             await pilot.press("enter")          # answer gate (default Yes)
-            self.assertTrue(app.gate_done)
-            self.assertIs(app.state["adopt"], True)
+            self.assertTrue(app.flow.gate_done)
+            self.assertIs(app.model.state["adopt"], True)
             # Accepted → stays on the Arrange board (segments to arrange).
-            self.assertEqual(app.step, wa.STEP_ARRANGE)
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
 
     async def test_foreign_enter_declines_and_skips_arrange(self):
         app = wa.WizardApp(make_ctx(sl_state="foreign"))
@@ -161,10 +163,10 @@ class TestAdoptionGate(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange (gate)
             await pilot.press("enter")          # answer gate (default No for foreign)
-            self.assertTrue(app.gate_done)
-            self.assertIs(app.state["adopt"], False)
+            self.assertTrue(app.flow.gate_done)
+            self.assertIs(app.model.state["adopt"], False)
             # Declined → segment arrangement is skipped; jump straight to Review.
-            self.assertEqual(app.step, wa.STEP_REVIEW)
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
 
     async def test_unset_n_declines_and_skips_arrange(self):
         app = wa.WizardApp(make_ctx(sl_state="unset"))
@@ -172,8 +174,8 @@ class TestAdoptionGate(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange (gate)
             await pilot.press("n")              # decline
-            self.assertIs(app.state["adopt"], False)
-            self.assertEqual(app.step, wa.STEP_REVIEW)
+            self.assertIs(app.model.state["adopt"], False)
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
 
     async def test_y_n_force(self):
         app = wa.WizardApp(make_ctx(sl_state="foreign"))
@@ -181,9 +183,9 @@ class TestAdoptionGate(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")
             await pilot.press("y")
-            self.assertIs(app.state["adopt"], True)
-            self.assertTrue(app.gate_done)
-            self.assertEqual(app.step, wa.STEP_ARRANGE)   # accepted → board
+            self.assertIs(app.model.state["adopt"], True)
+            self.assertTrue(app.flow.gate_done)
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)   # accepted → board
 
     async def test_gate_escape_returns_to_choose(self):
         app = wa.WizardApp(make_ctx(sl_state="foreign"))
@@ -191,8 +193,8 @@ class TestAdoptionGate(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange (gate)
             await pilot.press("escape")         # back out of the gate
-            self.assertEqual(app.step, wa.STEP_CHOOSE)
-            self.assertFalse(app.gate_done)     # gate re-asks on next entry
+            self.assertEqual(app.flow.step, wa.STEP_CHOOSE)
+            self.assertFalse(app.flow.gate_done)     # gate re-asks on next entry
 
     async def test_review_escape_after_decline_returns_to_choose(self):
         app = wa.WizardApp(make_ctx(sl_state="foreign"))
@@ -200,15 +202,15 @@ class TestAdoptionGate(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange (gate)
             await pilot.press("n")              # decline → Review (arrange skipped)
-            self.assertEqual(app.step, wa.STEP_REVIEW)
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             await pilot.press("escape")         # back from Review
             # Arrange was skipped, so Esc returns to Choose, not Arrange.
-            self.assertEqual(app.step, wa.STEP_CHOOSE)
+            self.assertEqual(app.flow.step, wa.STEP_CHOOSE)
 
     async def test_ours_skips_gate_at_init(self):
         app = wa.WizardApp(make_ctx(sl_state="ours"))
-        self.assertTrue(app.gate_done)
-        self.assertIs(app.state["adopt"], True)
+        self.assertTrue(app.flow.gate_done)
+        self.assertIs(app.model.state["adopt"], True)
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
@@ -221,14 +223,14 @@ class TestArrangeMoves(unittest.IsolatedAsyncioTestCase):
 
     async def test_space_lane_chip_moves_to_tray(self):
         app = await self._arrange_app()
-        seg = app.lines[0][0]
+        seg = app.board.lines[0][0]
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange (gate done)
             app.board.focus_zp = (0, 0)
             await pilot.press("space")
-            self.assertIn(seg, app.tray)
-            self.assertNotIn(seg, app.lines[0])
+            self.assertIn(seg, app.board.tray)
+            self.assertNotIn(seg, app.board.lines[0])
             self.assertIs(app._serialize_state()["segments"][seg], False)
 
     async def test_space_tray_chip_reactivates_home(self):
@@ -236,25 +238,25 @@ class TestArrangeMoves(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")
-            seg = app.tray[0]
-            home = app.home_line.get(seg, 2)
+            seg = app.board.tray[0]
+            home = app.model.home_line.get(seg, 2)
             app.board.focus_zp = (3, 0)
             await pilot.press("space")
-            self.assertIn(seg, app.lines[home])
-            self.assertNotIn(seg, app.tray)
+            self.assertIn(seg, app.board.lines[home])
+            self.assertNotIn(seg, app.board.tray)
 
     async def test_left_right_reorder(self):
         app = await self._arrange_app()
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")
-            first, second = app.lines[0][0], app.lines[0][1]
+            first, second = app.board.lines[0][0], app.board.lines[0][1]
             app.board.focus_zp = (0, 0)
             await pilot.press("right")
-            self.assertEqual(app.lines[0][0], second)
-            self.assertEqual(app.lines[0][1], first)
+            self.assertEqual(app.board.lines[0][0], second)
+            self.assertEqual(app.board.lines[0][1], first)
             await pilot.press("left")
-            self.assertEqual(app.lines[0][0], first)
+            self.assertEqual(app.board.lines[0][0], first)
 
     async def test_up_from_line1_to_tray(self):
         app = await self._arrange_app()
@@ -262,10 +264,10 @@ class TestArrangeMoves(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")
-            seg = app.lines[0][0]
+            seg = app.board.lines[0][0]
             app.board.focus_zp = (0, 0)
             await pilot.press("up")             # Line 1 → tray
-            self.assertIn(seg, app.tray)
+            self.assertIn(seg, app.board.tray)
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
@@ -274,17 +276,17 @@ class TestExternal(unittest.IsolatedAsyncioTestCase):
 
     async def test_external_starts_in_tray(self):
         app = wa.WizardApp(make_ctx(with_external=True, sl_state="ours"))
-        self.assertIn("system_memory", app.tray)
+        self.assertIn("system_memory", app.board.tray)
 
     async def test_external_toggle_on_persists(self):
         app = wa.WizardApp(make_ctx(with_external=True, sl_state="ours"))
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange
-            app.board.focus_zp = (3, app.tray.index("system_memory"))
+            app.board.focus_zp = (3, app.board.tray.index("system_memory"))
             await pilot.press("space")
-            self.assertNotIn("system_memory", app.tray)
-            placed = any("system_memory" in ln for ln in app.lines)
+            self.assertNotIn("system_memory", app.board.tray)
+            placed = any("system_memory" in ln for ln in app.board.lines)
             self.assertTrue(placed)
             self.assertIs(
                 app._serialize_state()["segments"]["system_memory"], True)
@@ -298,12 +300,12 @@ class TestExternal(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange
-            app.board.focus_zp = (3, app.tray.index("system_memory"))
+            app.board.focus_zp = (3, app.board.tray.index("system_memory"))
             await pilot.press("space")          # tray -> its home line
-            home = next(i for i in range(3) if "system_memory" in app.lines[i])
-            app.lines[home].remove("system_memory")
-            app.lines[0].append("system_memory")
-            app.board.focus_zp = (0, len(app.lines[0]) - 1)
+            home = next(i for i in range(3) if "system_memory" in app.board.lines[i])
+            app.board.lines[home].remove("system_memory")
+            app.board.lines[0].append("system_memory")
+            app.board.focus_zp = (0, len(app.board.lines[0]) - 1)
             st = app._serialize_state()
             self.assertIn("system_memory", st["layout"][0]["segments"])
             for i in range(1, 3):
@@ -315,7 +317,7 @@ class TestExternal(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")          # render arrange
             await pilot.pause()
-            tray_text = str(app.query_one("#tray", Static).content)
+            tray_text = str(_query_static(app, "#tray").content)
             self.assertIn("◆", tray_text)
             self.assertIn("system_memory", tray_text)
 
@@ -329,7 +331,7 @@ class TestWriteback(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")
-            seg = app.lines[0][0]               # a built-in on Line 1 (home 0)
+            seg = app.board.lines[0][0]               # a built-in on Line 1 (home 0)
             app.board.focus_zp = (0, 0)
             await pilot.press("space")          # → tray (off)
             st = app._serialize_state()
@@ -337,7 +339,7 @@ class TestWriteback(unittest.IsolatedAsyncioTestCase):
             # not in any row's ON portion, but still listed via off-home
             self.assertIn(seg, st["layout"][0]["segments"])
             # every original segment key survives
-            self.assertEqual(set(st["segments"]), set(app.state["segments"]))
+            self.assertEqual(set(st["segments"]), set(app.model.state["segments"]))
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
@@ -350,7 +352,7 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange
             await pilot.press("enter")          # arrange → review
-            self.assertEqual(app.step, wa.STEP_REVIEW)
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
 
     async def test_review_enter_commits_and_done(self):
         app = wa.WizardApp(make_ctx(sl_state="unset"))
@@ -360,9 +362,11 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
             await pilot.press("y")              # gate: adopt
             await pilot.press("enter")          # arrange → review
             await pilot.press("enter")          # review → commit
-            self.assertEqual(app.step, wa.STEP_DONE)
-            self.assertIsInstance(app.result, wa.WizardResult)
-            self.assertIs(app.result.state["adopt"], True)
+            self.assertEqual(app.flow.step, wa.STEP_DONE)
+            result = app.flow.result
+            self.assertIsInstance(result, wa.WizardResult)
+            assert result is not None
+            self.assertIs(result.state["adopt"], True)
 
     async def test_q_before_confirm_leaves_no_result(self):
         app = wa.WizardApp(make_ctx(sl_state="ours"))
@@ -370,7 +374,7 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange
             await pilot.press("q")              # abort
-        self.assertIsNone(app.result)
+        self.assertIsNone(app.flow.result)
 
     async def test_review_enter_no_change_blocks(self):
         app = wa.WizardApp(make_ctx(sl_state="unset"))
@@ -379,11 +383,11 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
             await pilot.press("N")              # all components off == initial
             await pilot.press("enter")          # choose → arrange (gate)
             await pilot.press("n")              # decline → jumps to Review
-            self.assertEqual(app.step, wa.STEP_REVIEW)
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             await pilot.press("enter")          # review → blocked (no net change)
-            self.assertEqual(app.step, wa.STEP_REVIEW)
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             self.assertIn("Nothing to write",
-                          str(app.query_one("#cta", Static).content))
+                          str(_query_static(app, "#cta").content))
 
     async def test_decline_omits_status_line_on_review_and_done(self):
         app = wa.WizardApp(make_ctx(sl_state="foreign"))
@@ -391,16 +395,18 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange (gate)
             await pilot.press("n")              # decline → Review (arrange skipped)
-            self.assertEqual(app.step, wa.STEP_REVIEW)
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             # status-line preview panel is hidden; CTA & "what" omit segments
-            self.assertFalse(app.query_one("#rev-preview", Static).display)
-            self.assertNotIn("segments", str(app.query_one("#cta", Static).content))
+            self.assertFalse(_query_static(app, "#rev-preview").display)
+            self.assertNotIn("segments", str(_query_static(app, "#cta").content))
             self.assertIn("left unchanged",
-                          str(app.query_one("#rev-what", Static).content))
+                          str(_query_static(app, "#rev-what").content))
             await pilot.press("enter")          # commit (components are a net change)
-            self.assertEqual(app.step, wa.STEP_DONE)
-            self.assertIs(app.result.state["adopt"], False)
-            sub = str(app.query_one("#step-sub", Static).content)
+            self.assertEqual(app.flow.step, wa.STEP_DONE)
+            result = app.flow.result
+            assert result is not None
+            self.assertIs(result.state["adopt"], False)
+            sub = str(_query_static(app, "#step-sub").content)
             self.assertNotIn("status line is ready", sub)
             self.assertNotIn("segments", sub)
             self.assertIn("left unchanged", sub)
@@ -412,9 +418,9 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")          # choose → arrange (gate)
             await pilot.press("y")              # accept
             await pilot.press("enter")          # arrange → review
-            self.assertEqual(app.step, wa.STEP_REVIEW)
-            self.assertTrue(app.query_one("#rev-preview", Static).display)
-            self.assertIn("segments", str(app.query_one("#cta", Static).content))
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            self.assertTrue(_query_static(app, "#rev-preview").display)
+            self.assertIn("segments", str(_query_static(app, "#cta").content))
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
@@ -437,15 +443,15 @@ class TestInUICommit(unittest.IsolatedAsyncioTestCase):
             await app.workers.wait_for_complete()   # let the worker finish
             await pilot.pause()
             return {
-                "step": app.step,
-                "committing": app._committing,
-                "outcome": app._commit_outcome,
-                "result": app.result,
-                "sel": app.sel,
-                "art": str(app.query_one("#done-art", Static).content),
-                "next": str(app.query_one("#done-next", Static).content),
-                "title": str(app.query_one("#step-title", Static).content),
-                "sub": str(app.query_one("#step-sub", Static).content),
+                "step": app.flow.step,
+                "committing": app.commit.committing,
+                "outcome": app.commit.outcome,
+                "result": app.flow.result,
+                "sel": app.model.sel,
+                "art": str(_query_static(app, "#done-art").content),
+                "next": str(_query_static(app, "#done-next").content),
+                "title": str(_query_static(app, "#step-title").content),
+                "sub": str(_query_static(app, "#step-sub").content),
             }
 
     async def test_commit_invoked_with_selection_and_state(self):
@@ -501,10 +507,10 @@ class TestInUICommit(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.press("enter")
             await pilot.pause()
-            self.assertEqual(app.step, wa.STEP_DONE)
-            self.assertIsInstance(app.result, wa.WizardResult)
-            self.assertIsNone(app._commit_outcome)
-            self.assertFalse(app._committing)
+            self.assertEqual(app.flow.step, wa.STEP_DONE)
+            self.assertIsInstance(app.flow.result, wa.WizardResult)
+            self.assertIsNone(app.commit.outcome)
+            self.assertFalse(app.commit.committing)
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
@@ -515,7 +521,7 @@ class TestChrome(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(make_ctx())
         async with app.run_test() as pilot:
             await pilot.pause()
-            right = str(app.query_one("#header-right", Static).content)
+            right = str(_query_static(app, "#header-right").content)
             self.assertEqual(right.count("●") + right.count("○"), 3)
 
     async def test_done_header_all_green(self):
@@ -524,7 +530,7 @@ class TestChrome(unittest.IsolatedAsyncioTestCase):
             app.flow.step = wa.STEP_DONE
             app._render()
             await pilot.pause()
-            right = str(app.query_one("#header-right", Static).content)
+            right = str(_query_static(app, "#header-right").content)
             self.assertEqual(right.count("●"), 3)
             self.assertIn(wa.GREEN, right)
 
@@ -532,7 +538,7 @@ class TestChrome(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(make_ctx())
         async with app.run_test() as pilot:
             await pilot.pause()
-            left = str(app.query_one("#footer-left", Static).content)
+            left = str(_query_static(app, "#footer-left").content)
             for _label, cap, _primary in wa.FOOTERS[wa.STEP_CHOOSE]:
                 self.assertIn(cap, left)
 
@@ -545,10 +551,10 @@ class TestHousekeepingGate(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_candidates_skips_gate(self):
         app = wa.WizardApp(self._ctx())
-        self.assertTrue(app.housekeeping_done)
+        self.assertTrue(app.hk.done)
         async with app.run_test() as pilot:
             await pilot.pause()
-            self.assertIn("of", str(app.query_one("#picksCount", Static).content))
+            self.assertIn("of", str(_query_static(app, "#picksCount").content))
 
     async def test_stale_only_prune_on_yes(self):
         seen = {}
@@ -557,13 +563,13 @@ class TestHousekeepingGate(unittest.IsolatedAsyncioTestCase):
             return {"selection": None, "initial_enabled": {}}
         ctx = self._ctx(stale=["skills/gone"])._replace(apply_housekeeping=apply_hk)
         app = wa.WizardApp(ctx)
-        self.assertFalse(app.housekeeping_done)
+        self.assertFalse(app.hk.done)
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("y")
             await app.workers.wait_for_complete()
             await pilot.pause()
-        self.assertTrue(app.housekeeping_done)
+        self.assertTrue(app.hk.done)
         self.assertEqual(seen["prune"], True)
 
     async def test_stale_then_predecessors_sequenced(self):
@@ -576,13 +582,13 @@ class TestHousekeepingGate(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(ctx)
         async with app.run_test() as pilot:
             await pilot.pause()
-            self.assertFalse(app.housekeeping_done)
+            self.assertFalse(app.hk.done)
             await pilot.press("n")               # stale: decline prune
-            self.assertFalse(app.housekeeping_done)   # predecessors still pending
+            self.assertFalse(app.hk.done)   # predecessors still pending
             await pilot.press("y")               # predecessors: repoint
             await app.workers.wait_for_complete()
             await pilot.pause()
-        self.assertTrue(app.housekeeping_done)
+        self.assertTrue(app.hk.done)
         self.assertEqual(seen["prune"], False)
         self.assertEqual(seen["repoint"], True)
 
@@ -596,7 +602,7 @@ class TestHousekeepingGate(unittest.IsolatedAsyncioTestCase):
             await pilot.press("y")
             await app.workers.wait_for_complete()
             await pilot.pause()
-        self.assertTrue(app.housekeeping_done)
+        self.assertTrue(app.hk.done)
 
     async def test_apply_housekeeping_raises_resolves_gate(self):
         # apply_housekeeping raising must not leave the wizard stuck showing
@@ -612,9 +618,11 @@ class TestHousekeepingGate(unittest.IsolatedAsyncioTestCase):
             await pilot.press("y")
             await app.workers.wait_for_complete()
             await pilot.pause()
-        self.assertTrue(app.housekeeping_done)   # gate resolved, no hang
-        self.assertFalse(app._hk_applying)
-        self.assertIn("disk exploded", app._hk_error)
+        self.assertTrue(app.hk.done)   # gate resolved, no hang
+        self.assertFalse(app.hk.applying)
+        hk_error = app.hk.error
+        assert hk_error is not None
+        self.assertIn("disk exploded", hk_error)
 
     async def test_second_keypress_during_apply_is_noop(self):
         # A keypress that arrives while the apply worker is still in flight
@@ -635,13 +643,13 @@ class TestHousekeepingGate(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("y")             # kicks off the apply worker
-            self.assertTrue(app._hk_applying)  # still in flight (blocked on release)
+            self.assertTrue(app.hk.applying)  # still in flight (blocked on release)
             await pilot.press("y")             # arrives mid-flight; must be a no-op
             self.assertEqual(seen["calls"], 1)   # guard swallowed the second keypress
             release.set()
             await app.workers.wait_for_complete()
             await pilot.pause()
-        self.assertTrue(app.housekeeping_done)
+        self.assertTrue(app.hk.done)
         self.assertEqual(seen["calls"], 1)
 
 
