@@ -593,6 +593,33 @@ class TestRolesHelpers(unittest.TestCase):
         self.assertEqual(chosen["model"], "composer-2.5")
         self.assertEqual(rule, "bare")
 
+    def test_pick_variant_off_ladder_target_is_order_independent(self):
+        """A-IN-02: an off-ladder target with no bare id picks the lowest ladder step,
+        whatever the member order, and never labels a suffixed id "bare"."""
+        purpose = "general"
+        members = [
+            cand("m-xhigh", family="m", purpose_scores={purpose: 3}),
+            cand("m-low", family="m", purpose_scores={purpose: 1}),
+        ]
+        for order in (members, members[::-1]):
+            chosen, rule = roles.pick_variant(order, purpose, "turbo")
+            self.assertEqual((chosen["model"], rule), ("m-low", "lowest available"))
+
+    def test_lone_max_suffix_is_a_product_name(self):
+        """A-IN-10: gpt-5.1-codex-max next to a bare gpt-5.1-codex is a distinct model,
+        so a medium target ranks both by score instead of taking -max as an effort step."""
+        purpose = "general"
+        members = [
+            cand("gpt-5.1-codex", family="gpt-5.1-codex", purpose_scores={purpose: 5}),
+            cand("gpt-5.1-codex-max", family="gpt-5.1-codex", purpose_scores={purpose: 4}),
+        ]
+        chosen, rule = roles.pick_variant(members, purpose, "medium")
+        self.assertEqual((chosen["model"], rule), ("gpt-5.1-codex", "bare"))
+        with_sibling = [*members, cand("gpt-5.1-codex-low", family="gpt-5.1-codex",
+                                       purpose_scores={purpose: 1})]
+        chosen, rule = roles.pick_variant(with_sibling, purpose, "max")
+        self.assertEqual((chosen["model"], rule), ("gpt-5.1-codex-max", "exact"))
+
 
 class TestSlotTracer(unittest.TestCase):
     """Task 1: codex keep/override and opencode catalog-score overrides."""

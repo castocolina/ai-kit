@@ -42,11 +42,25 @@ def claude_alias_rows(cands: list) -> list:
     return [best[alias] for alias in sorted(best)]
 
 
-def _ladder_index(token: str) -> int:
-    for idx, step in enumerate(EFFORT_LADDER):
-        if step == token:
-            return idx
-    return -1
+def _ladder_index(token: str | None) -> int:
+    return EFFORT_LADDER.index(token) if token in EFFORT_LADDER else -1
+
+
+def _nearest_effort(target: str, tokens) -> tuple[str, str] | None:
+    """`(token, rule)`: exact, else the nearest lower ladder step, else the nearest
+    higher (D-27); `None` when `target` is off the ladder or nothing is on it."""
+    if target in tokens:
+        return target, "exact"
+    t_idx = _ladder_index(target)
+    if t_idx < 0:
+        return None
+    lower = [t for t in tokens if 0 <= _ladder_index(t) < t_idx]
+    if lower:
+        return max(lower, key=_ladder_index), "nearest lower"
+    higher = [t for t in tokens if _ladder_index(t) > t_idx]
+    if higher:
+        return min(higher, key=_ladder_index), "nearest higher"
+    return None
 
 
 class Ceiling(NamedTuple):
@@ -75,18 +89,8 @@ def effort_token(model: str) -> str | None:
 
 
 def clamp_effort(target: str, modes: list) -> str:
-    if not modes or target in modes:
-        return target
-    if _ladder_index(target) < 0:
-        return target
-    t_idx = _ladder_index(target)
-    lower = [m for m in modes if 0 <= _ladder_index(m) < t_idx]
-    if lower:
-        return max(lower, key=_ladder_index)
-    higher = [m for m in modes if _ladder_index(m) > t_idx]
-    if higher:
-        return min(higher, key=_ladder_index)
-    return target
+    hit = _nearest_effort(target, modes)
+    return hit[0] if hit is not None else target
 
 
 def tie_key(c: dict, purpose: str) -> tuple:
@@ -129,9 +133,15 @@ def ceiling_text(c: Ceiling) -> str:
 
 
 def _variant_groups(members: list) -> dict[str | None, list]:
+    tokens = [effort_token(m["model"]) for m in members]
+    suffixed = sum(token is not None for token in tokens)
     groups: dict[str | None, list] = {}
-    for m in members:
-        token = effort_token(m["model"])
+    for m, token in zip(members, tokens, strict=True):
+        # shortcut: a lone -max (gpt-5.1-codex-max beside gpt-5.1-codex) is read as a
+        # product name, -max with another ladder-suffixed sibling as an effort step;
+        # upgrade when a host reports real effort variants.
+        if token == "max" and suffixed < 2:
+            token = None
         groups.setdefault(token, []).append(m)
     return groups
 
@@ -140,29 +150,17 @@ def pick_variant(members: list, purpose: str, target: str) -> tuple[dict, str]:
     # shortcut: the family grouping (vendor._MODEL_TIER_SUFFIXES) does not strip
     # minimal/ultra, so such ids form their own family; upgrade when a host lists them.
     groups = _variant_groups(members)
-    if target in groups:
-        chosen = min(groups[target], key=lambda c: tie_key(c, purpose))
-        return chosen, "exact"
-    t_idx = _ladder_index(target)
-    if t_idx >= 0:
-        lower_tokens = [
-            t for t in groups if t is not None and 0 <= _ladder_index(t) < t_idx
-        ]
-        if lower_tokens:
-            best_t = max(lower_tokens, key=_ladder_index)
-            chosen = min(groups[best_t], key=lambda c: tie_key(c, purpose))
-            return chosen, "nearest lower"
-        higher_tokens = [t for t in groups if t is not None and _ladder_index(t) > t_idx]
-        if higher_tokens:
-            best_t = min(higher_tokens, key=_ladder_index)
-            chosen = min(groups[best_t], key=lambda c: tie_key(c, purpose))
-            return chosen, "nearest higher"
+
+    def best(token: str | None) -> dict:
+        return min(groups[token], key=lambda c: tie_key(c, purpose))
+
+    hit = _nearest_effort(target, groups)
+    if hit is not None:
+        return best(hit[0]), hit[1]
     if None in groups:
-        chosen = min(groups[None], key=lambda c: tie_key(c, purpose))
-        return chosen, "bare"
-    token = next(iter(groups))
-    chosen = min(groups[token], key=lambda c: tie_key(c, purpose))
-    return chosen, "bare"
+        return best(None), "bare"
+    # Only an off-ladder target gets here: pick independent of input order (R7).
+    return best(min(groups, key=_ladder_index)), "lowest available"
 
 
 def _eligible_pool(cands: list, purpose: str, keep) -> list:
@@ -227,7 +225,7 @@ def pick_why(pick: Pick, purpose: str, target: str, ceiling: Ceiling) -> str:
         head = f"no family within ceiling ({ct}); cheapest eligible used"
     else:
         head = f"best {purpose} score within ceiling ({ct})"
-    token = effort_token(c["model"])
+    token = None if pick.rule == "bare" else effort_token(c["model"])
     token_label = token if token is not None else "bare"
     tail = (
         f"; effort variant {token_label} of inferred family {c['family']} "
