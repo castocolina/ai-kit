@@ -7,6 +7,44 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
 import mermaid_style as ms
 
 
+class TestFenceExtractor(unittest.TestCase):
+    def test_iter_md_yields_sorted_md_under_directory(self):
+        with tempfile.TemporaryDirectory() as root:
+            sub = os.path.join(root, "nested")
+            os.makedirs(sub)
+            paths = {
+                os.path.join(sub, "b.md"),
+                os.path.join(sub, "a.md"),
+                os.path.join(root, "skip.txt"),
+            }
+            for p in paths:
+                with open(p, "w", encoding="utf-8") as fh:
+                    fh.write("# x\n")
+            found = list(ms.iter_md([root]))
+            self.assertEqual(found, sorted([os.path.join(sub, "a.md"), os.path.join(sub, "b.md")]))
+
+    def test_extract_yields_start_line_and_body(self):
+        md = (
+            "# title\n\n"
+            "```mermaid\n"
+            "flowchart TD\n"
+            "    A --> B\n"
+            "```\n"
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
+            fh.write(md)
+            path = fh.name
+        try:
+            blocks = list(ms.extract(path))
+            self.assertEqual(len(blocks), 1)
+            start, body = blocks[0]
+            self.assertEqual(start, 3)
+            self.assertIn("flowchart TD", body)
+            self.assertIn("A --> B", body)
+        finally:
+            os.remove(path)
+
+
 class TestExtract(unittest.TestCase):
     def test_parses_nodes_shapes_classdefs_edges(self):
         block = (
