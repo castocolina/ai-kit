@@ -34,7 +34,7 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 - [ ] **REC-03**: Tier→model layer — `model_profile_overrides.<host>.{opus,sonnet,haiku}` chosen by role score under the rigor price ceiling (Claude skips unless pinned; Codex ids with `reasoning_effort`; Cursor effort-suffixed ids; `-fast` twins never auto-chosen when the non-fast model exists, amended 2026-10-14)
 - [ ] **REC-04**: ≤7 specialist `model_overrides` — plan-checker counterpart provider to the planning slot; code-reviewer ≠ execution provider; ui-auditor/dom-verifier with `image_input`; ui-researcher frontend-capable when a frontend exists; executor + code-fixer on the execution role with effort `medium`. A single-provider host gets an explicit "no in-runtime counterpart → use cross-AI review" note
 - [x] **REC-05**: MVP/Standard/Rigorous presets set granularity, effort tiers, gates (nyquist, TDD, code-review depth, ASVS, UI review), `intel.enabled` (Standard and Rigorous) and `dynamic_routing` (Rigorous) per spec §5
-- [ ] **REC-06**: Keys unknown to the host's gsd-core version are dropped from the plan with a note
+- [x] **REC-06**: Keys unknown to the host's gsd-core version are dropped from the plan with a note
 
 ### Cross-AI
 
@@ -148,7 +148,7 @@ None deferred beyond v1.3 at definition time.
 | REC-03 | Phase 17 | Pending |
 | REC-04 | Phase 17 | Pending |
 | REC-05 | Phase 17 | Complete |
-| REC-06 | Phase 17 | Pending |
+| REC-06 | Phase 17 | Complete |
 | XAI-01 | Phase 18 | Pending |
 | XAI-02 | Phase 18 | Pending |
 | SKL-01 | Phase 18 | Pending |
