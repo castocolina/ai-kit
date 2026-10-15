@@ -17,6 +17,12 @@ LIST_KEYS = (
 )
 LIST_KEYS_PREFIXES = _LIST_KEYS_PREFIXES
 _USER_WHY = "set by the user (plan-set)"
+SCRIPT_MODEL_PREFIX = "script:cross-ai.model."
+SCRIPT_PREFER_KEY = "script:cross-ai.prefer"
+_EMPTY_PREFER_MSG = (
+    "removing every target would leave no execution target; plan-set "
+    "workflow.cross_ai_execution false instead"
+)
 
 
 class PlanEditError(ValueError):
@@ -87,12 +93,35 @@ def _parse_fallback(raw: str):
     return parsed
 
 
-def plan_unset(_call: EditCall, _key: str) -> tuple[dict, list[str]]:
+def runtime_candidates(inv: dict, runner_id: str) -> list[dict]:
+    """Up to three inventory models for ``runner_id``, cheapest first."""
+    runtime = cross_ai.RUNNER_CLI[runner_id]
+    rows = [
+        row
+        for row in inv.get("candidates") or []
+        if isinstance(row, dict) and row.get("runtime") == runtime
+    ]
+    rows.sort(key=_price_sort_key)
+    return [{"model": row["model"], "price": row.get("price")} for row in rows[:3]]
+
+
+def _price_sort_key(row: dict) -> tuple:
+    price = row.get("price")
+    if isinstance(price, (int, float)):
+        return (price, row.get("model") or "")
+    return (float("inf"), row.get("model") or "")
+
+
+def plan_unset(call: EditCall, key: str) -> tuple[dict, list[str]]:
+    if key.startswith(SCRIPT_MODEL_PREFIX):
+        return _plan_unset_script_model(call, key)
     raise PlanEditError("plan-unset is not available in this build")
 
 
 def plan_set(call: EditCall, key: str, raw: str) -> tuple[dict, list[str]]:
     """Return a new plan dict and stderr warnings; raise PlanEditError to refuse."""
+    if _is_script_pseudo_key(key):
+        return _plan_set_script(call, key, raw)
     warnings: list[str] = []
     _key_probe_refusal(call, key)
     warnings.extend(_unprobed_warning(call, key))
@@ -123,6 +152,155 @@ def plan_set(call: EditCall, key: str, raw: str) -> tuple[dict, list[str]]:
         _sync_artifact_timeout(plan, parsed)
     plan["entries"] = sorted(plan["entries"], key=lambda row: row["key"])
     return plan, warnings
+
+
+def _is_script_pseudo_key(key: str) -> bool:
+    return key == SCRIPT_PREFER_KEY or key.startswith(SCRIPT_MODEL_PREFIX)
+
+
+def _plan_set_script(call: EditCall, key: str, raw: str) -> tuple[dict, list[str]]:
+    if key == SCRIPT_PREFER_KEY:
+        return _plan_set_script_prefer(call, raw)
+    runner_id = key[len(SCRIPT_MODEL_PREFIX) :]
+    if not runner_id:
+        raise PlanEditError(f"{key}: missing runner id")
+    return _plan_set_script_model(call, runner_id, raw)
+
+
+def _plan_set_script_model(
+    call: EditCall, runner_id: str, raw: str,
+) -> tuple[dict, list[str]]:
+    _assert_runner_target(call, runner_id)
+    model = raw
+    plan = copy.deepcopy(call.plan)
+    artifact = _script_artifact(plan)
+    config = artifact.setdefault("config", {})
+    prefer = config.get("prefer") or []
+    if runner_id not in prefer:
+        raise PlanEditError(f"script target {runner_id} is not in config.prefer")
+    row = _find_inventory_model(call.inv, runner_id, model)
+    if row is None and not call.force:
+        runtime = cross_ai.RUNNER_CLI[runner_id]
+        raise PlanEditError(
+            f"{model!r} is not listed for {runtime} in the inventory; "
+            "pass --force to pin it anyway"
+        )
+    router = bool(row.get("is_router")) if row else False
+    models = config.setdefault("models", {})
+    router_map = config.setdefault("router_backed", {})
+    models[runner_id] = model
+    router_map[runner_id] = router
+    artifact.setdefault("choices", {}).pop(runner_id, None)
+    _finish_script_artifact(artifact)
+    _sync_artifact_command(plan, artifact)
+    plan["entries"] = sorted(plan.get("entries") or [], key=lambda row: row["key"])
+    return plan, []
+
+
+def _plan_set_script_prefer(call: EditCall, raw: str) -> tuple[dict, list[str]]:
+    ids = _parse_string_list(SCRIPT_PREFER_KEY, raw)
+    if not ids:
+        raise PlanEditError(_EMPTY_PREFER_MSG)
+    for runner_id in ids:
+        _assert_runner_target(call, runner_id)
+    if len(set(ids)) != len(ids):
+        raise PlanEditError(f"{SCRIPT_PREFER_KEY}: ids must be unique")
+    plan = copy.deepcopy(call.plan)
+    artifact = _script_artifact(plan)
+    config = artifact.setdefault("config", {})
+    old_prefer = list(config.get("prefer") or [])
+    config["prefer"] = ids
+    models = config.setdefault("models", {})
+    router_map = config.setdefault("router_backed", {})
+    choices = artifact.setdefault("choices", {})
+    for dropped in set(old_prefer) - set(ids):
+        models.pop(dropped, None)
+        router_map.pop(dropped, None)
+        choices.pop(dropped, None)
+    for runner_id in ids:
+        if runner_id in models:
+            continue
+        if runner_id not in choices:
+            choices[runner_id] = {"candidates": runtime_candidates(call.inv, runner_id)}
+    _finish_script_artifact(artifact)
+    _sync_artifact_command(plan, artifact)
+    plan["entries"] = sorted(plan.get("entries") or [], key=lambda row: row["key"])
+    return plan, []
+
+
+def _plan_unset_script_model(call: EditCall, key: str) -> tuple[dict, list[str]]:
+    runner_id = key[len(SCRIPT_MODEL_PREFIX) :]
+    if not runner_id:
+        raise PlanEditError(f"{key}: missing runner id")
+    plan = copy.deepcopy(call.plan)
+    artifact = _script_artifact(plan)
+    config = artifact.setdefault("config", {})
+    prefer = config.get("prefer") or []
+    if runner_id not in prefer:
+        raise PlanEditError(f"script target {runner_id} is not in config.prefer")
+    config.setdefault("models", {}).pop(runner_id, None)
+    config.setdefault("router_backed", {}).pop(runner_id, None)
+    artifact.setdefault("choices", {})[runner_id] = {
+        "candidates": runtime_candidates(call.inv, runner_id),
+    }
+    _finish_script_artifact(artifact)
+    _sync_artifact_command(plan, artifact)
+    plan["entries"] = sorted(plan.get("entries") or [], key=lambda row: row["key"])
+    return plan, []
+
+
+def _script_artifact(plan: dict) -> dict:
+    artifacts = plan.get("artifacts") or []
+    if not artifacts or not isinstance(artifacts[0], dict):
+        raise PlanEditError(
+            "no cross-AI script artifact; rerun recommend with --cross-ai-exec y"
+        )
+    return artifacts[0]
+
+
+def _assert_runner_target(call: EditCall, runner_id: str) -> None:
+    host_name = call.plan.get("host")
+    installed = set(call.inv.get("installed_runtimes") or [])
+    runtime = cross_ai.RUNNER_CLI.get(runner_id)
+    bad = (
+        runtime is None
+        or runner_id == host_name
+        or runtime not in installed
+    )
+    if bad:
+        raise PlanEditError(
+            f"script target {runner_id} is not one of pi, cursor, opencode, codex, "
+            "is the host, or is not installed"
+        )
+
+
+def _find_inventory_model(inv: dict, runner_id: str, model: str) -> dict | None:
+    runtime = cross_ai.RUNNER_CLI[runner_id]
+    for row in inv.get("candidates") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("runtime") == runtime and row.get("model") == model:
+            return row
+    return None
+
+
+def _finish_script_artifact(artifact: dict) -> None:
+    choices = artifact.get("choices") or {}
+    artifact["source"] = "user"
+    artifact["status"] = "needs_choice" if choices else "ok"
+
+
+def _sync_artifact_command(plan: dict, artifact: dict) -> None:
+    command = _find_entry(plan, "workflow.cross_ai_command")
+    if command is None:
+        return
+    choices = artifact.get("choices") or {}
+    if choices:
+        command["status"] = "needs_choice"
+        command["candidates"] = []
+    else:
+        command.pop("status", None)
+        command.pop("candidates", None)
 
 
 def _default_current(key: str, inv: dict) -> Any:
