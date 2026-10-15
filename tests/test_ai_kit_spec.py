@@ -16,12 +16,9 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-# Bare module imports -- test classes in this file call module-qualified names like
-# `detection.detect_tool_availability(...)`, `commands.build_execute_command(...)`, which need
-# the module itself in scope, separately from the individual-function imports below. Only the
-# modules actually referenced qualified (`module.attr(...)`) somewhere in this file belong here --
-# a module whose members are ALL reached only via the individually-named imports below (and thus
-# only via the `rs.<name>` shim) has no reason to be re-imported bare too.
+# Bare module imports -- test classes call module-qualified names like
+# `detection.detect_tool_availability(...)`, which need the module in scope alongside the
+# individually-named imports below.
 from ai_kit_spec import (
     cli,
     commands,
@@ -42,25 +39,21 @@ from ai_kit_spec import (
     tooling_guidance,
     trust,
 )
-
-# Every name imported below is used only reflectively (see the `globals()[_name]` loop building
-# `rs` further down) -- ruff's static analysis cannot see that use and flags all of them F401;
-# `noqa: F401` on each is therefore intentional, not an oversight.
-from ai_kit_spec.cache import (  # noqa: F401
+from ai_kit_spec.cache import (
     cache_base,
     cache_is_stale,
     cache_read_json,
     cache_write_json,
 )
-from ai_kit_spec.cli import main  # noqa: F401
-from ai_kit_spec.commands import (  # noqa: F401
+from ai_kit_spec.cli import main
+from ai_kit_spec.commands import (
     ResolvedReviewer,
     build_cursor_agent_model_id,
     build_reviewer_command,
     build_reviewer_model_id,
     render_reviewer_command,
 )
-from ai_kit_spec.config_io import (  # noqa: F401
+from ai_kit_spec.config_io import (
     cfg_global_path,
     cfg_load_toml,
     cfg_local_path,
@@ -70,7 +63,7 @@ from ai_kit_spec.config_io import (  # noqa: F401
     cfg_write_toml,
     tomllib,
 )
-from ai_kit_spec.detection import (  # noqa: F401
+from ai_kit_spec.detection import (
     KNOWN_CLIS,
     build_runtimes_snapshot,
     cache_runtimes_path,
@@ -80,7 +73,7 @@ from ai_kit_spec.detection import (  # noqa: F401
     group_models_by_family,
 )
 from ai_kit_spec.error_classifier import REASONS, classify_error
-from ai_kit_spec.quota import (  # noqa: F401
+from ai_kit_spec.quota import (
     NO_CONFIG_FALLBACK,
     cache_quota_path,
     entry_reason,
@@ -89,13 +82,13 @@ from ai_kit_spec.quota import (  # noqa: F401
     resolve_ladder_pick,
     resolve_reviewers,
 )
-from ai_kit_spec.review_reports import (  # noqa: F401
+from ai_kit_spec.review_reports import (
     merge_findings,
     parse_findings,
     render_merged_report,
     report_status,
 )
-from ai_kit_spec.vendor import infer_vendor_from_model  # noqa: F401
+from ai_kit_spec.vendor import infer_vendor_from_model
 
 # Fixture provenance (JSON cannot hold comments, so the record lives here, next to the
 # constant the tests read the fixture through):
@@ -128,76 +121,22 @@ OPENCODE_VERBOSE_FIXTURE_PATH = os.path.join(
 )
 
 
-# Back-compat shim so every existing `rs.<name>` call in this file keeps working verbatim --
-# avoids touching 146 existing test bodies for a pure module-boundary change. Explicit name
-# list, not dir()-based reflection: a missing/misspelled export raises KeyError here (from
-# globals()[_name]), at import time, instead of silently disappearing from `rs`.
-class _RS:
-    pass
-
-
-rs = _RS()
-for _name in (
-    "cache_base",
-    "cache_read_json",
-    "cache_write_json",
-    "cache_is_stale",
-    "cache_runtimes_path",
-    "detect_installed_clis",
-    "detect_opencode_models",
-    "detect_cursor_agent_models",
-    "group_models_by_family",
-    "build_runtimes_snapshot",
-    "KNOWN_CLIS",
-    "infer_vendor_from_model",
-    "ResolvedReviewer",
-    "resolve_ladder_pick",
-    "resolve_reviewers",
-    "cache_quota_path",
-    "probe_reviewer_quota",
-    "refresh_quota_cache",
-    "NO_CONFIG_FALLBACK",
-    "build_reviewer_command",
-    "build_cursor_agent_model_id",
-    "build_reviewer_model_id",
-    "render_reviewer_command",
-    "cfg_local_path",
-    "cfg_global_path",
-    "cfg_load_toml",
-    "cfg_merge_reviewers",
-    "cfg_resolve",
-    "cfg_render_toml",
-    "cfg_write_toml",
-    "report_status",
-    "parse_findings",
-    "merge_findings",
-    "render_merged_report",
-    "classify_error",
-    "REASONS",
-    "entry_reason",
-    "main",
-    "tomllib",
-    "os",
-):
-    setattr(rs, _name, globals()[_name])
-
-
 class TestConfigPaths(unittest.TestCase):
     def test_local_path_under_cwd_aikit(self):
-        self.assertEqual(rs.cfg_local_path("/repo"), "/repo/.aikit/review-spec.toml")
+        self.assertEqual(cfg_local_path("/repo"), "/repo/.aikit/review-spec.toml")
 
     def test_global_path_uses_xdg_config_home(self):
         env = {"XDG_CONFIG_HOME": "/x/config"}
-        self.assertEqual(rs.cfg_global_path(env), "/x/config/ai-kit/review-spec.toml")
+        self.assertEqual(cfg_global_path(env), "/x/config/ai-kit/review-spec.toml")
 
     def test_global_path_falls_back_to_home_dot_config(self):
         env = {"HOME": "/home/u"}
-        self.assertEqual(rs.cfg_global_path(env), "/home/u/.config/ai-kit/review-spec.toml")
+        self.assertEqual(cfg_global_path(env), "/home/u/.config/ai-kit/review-spec.toml")
 
 
 class TestLoadToml(unittest.TestCase):
     def test_missing_file_returns_empty_dict(self):
-        self.assertEqual(rs.cfg_load_toml("/no/such/file.toml"), {})
+        self.assertEqual(cfg_load_toml("/no/such/file.toml"), {})
 
     def test_malformed_toml_raises_config_error(self):
         # D-11/R13 (Plan 16.1-08): a broken review-spec.toml fails LOUDLY (ConfigError with
@@ -207,7 +146,7 @@ class TestLoadToml(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as f:
                 f.write("this is not [ valid toml")
             with self.assertRaises(config_io.ConfigError) as ctx:
-                rs.cfg_load_toml(path)
+                cfg_load_toml(path)
             self.assertIn(path, str(ctx.exception))
 
     def test_valid_toml_parses(self):
@@ -215,26 +154,26 @@ class TestLoadToml(unittest.TestCase):
             path = os.path.join(d, "good.toml")
             with open(path, "w", encoding="utf-8") as f:
                 f.write('[policy]\nmode = "double"\n')
-            self.assertEqual(rs.cfg_load_toml(path), {"policy": {"mode": "double"}})
+            self.assertEqual(cfg_load_toml(path), {"policy": {"mode": "double"}})
 
 
 class TestMergeReviewers(unittest.TestCase):
     def test_local_overrides_matching_key_fields_only(self):
         global_list = [{"key": "codex-gpt", "model": "gpt-5.2", "effort": "high"}]
         local_list = [{"key": "codex-gpt", "effort": "low"}]
-        merged = rs.cfg_merge_reviewers(global_list, local_list)
+        merged = cfg_merge_reviewers(global_list, local_list)
         self.assertEqual(merged, [{"key": "codex-gpt", "model": "gpt-5.2", "effort": "low"}])
 
     def test_local_only_key_is_appended(self):
         global_list = [{"key": "a", "model": "m1"}]
         local_list = [{"key": "b", "model": "m2"}]
-        merged = rs.cfg_merge_reviewers(global_list, local_list)
+        merged = cfg_merge_reviewers(global_list, local_list)
         self.assertEqual([r["key"] for r in merged], ["a", "b"])
 
     def test_global_only_key_is_preserved(self):
         global_list = [{"key": "a", "model": "m1"}, {"key": "b", "model": "m2"}]
         local_list = [{"key": "a", "model": "m1-override"}]
-        merged = rs.cfg_merge_reviewers(global_list, local_list)
+        merged = cfg_merge_reviewers(global_list, local_list)
         self.assertEqual([r["key"] for r in merged], ["a", "b"])
         self.assertEqual(merged[0]["model"], "m1-override")
 
@@ -243,7 +182,7 @@ class TestMergeReviewers(unittest.TestCase):
         # whole orchestrator (matches cfg_load_toml's never-raises contract)
         global_list = [{"key": "a", "model": "m1"}, {"model": "no-key-here"}]
         local_list = [{"model": "also-no-key"}]
-        merged = rs.cfg_merge_reviewers(global_list, local_list)
+        merged = cfg_merge_reviewers(global_list, local_list)
         self.assertEqual([r["key"] for r in merged], ["a"])
 
 
@@ -279,7 +218,7 @@ class TestResolveConfig(unittest.TestCase):
         )
 
     def test_no_local_file_uses_global_only(self):
-        resolved = rs.cfg_resolve(self.tmp, self.env)
+        resolved = cfg_resolve(self.tmp, self.env)
         self.assertEqual(resolved["policy"]["mode"], "single")
         self.assertEqual(resolved["reviewers"][0]["key"], "a")
 
@@ -289,7 +228,7 @@ class TestResolveConfig(unittest.TestCase):
         with open(local_path, "w", encoding="utf-8") as f:
             f.write('strategy = "local-only"\n[policy]\nmode = "double"\n')
         self._trust_local_file(local_path)
-        resolved = rs.cfg_resolve(self.tmp, self.env)
+        resolved = cfg_resolve(self.tmp, self.env)
         self.assertEqual(resolved["policy"]["mode"], "double")
         # local declared no reviewers, global not consulted
         self.assertEqual(resolved["reviewers"], [])
@@ -300,21 +239,21 @@ class TestResolveConfig(unittest.TestCase):
         with open(local_path, "w", encoding="utf-8") as f:
             f.write('[[reviewers]]\nkey = "a"\nmodel = "m1"\nvendor = "openai"\neffort = "low"\n')
         self._trust_local_file(local_path)
-        resolved = rs.cfg_resolve(self.tmp, self.env)
+        resolved = cfg_resolve(self.tmp, self.env)
         self.assertEqual(resolved["policy"]["mode"], "single")  # inherited from global
         self.assertEqual(resolved["reviewers"][0]["effort"], "low")  # local override applied
 
 
 class TestRenderAndWriteToml(unittest.TestCase):
-    @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
+    @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_round_trips_through_tomllib(self):
-        import tomllib  # noqa: F811 -- local re-import shadows the reflection-only module-level one
+        import tomllib
 
         config = {
             "policy": {"mode": "double", "ladder": ["a", "b"]},
             "reviewers": [{"key": "a", "model": "m1", "vendor": "openai"}],
         }
-        rendered = rs.cfg_render_toml(config)
+        rendered = cfg_render_toml(config)
         parsed = tomllib.loads(rendered)
         self.assertEqual(parsed["policy"]["mode"], "double")
         self.assertEqual(parsed["policy"]["ladder"], ["a", "b"])
@@ -323,40 +262,40 @@ class TestRenderAndWriteToml(unittest.TestCase):
     def test_write_toml_creates_parent_dirs(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "nested", "review-spec.toml")
-            rs.cfg_write_toml(path, {"policy": {"mode": "single"}, "reviewers": []})
+            cfg_write_toml(path, {"policy": {"mode": "single"}, "reviewers": []})
             self.assertTrue(os.path.exists(path))
 
-    @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
+    @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_escapes_quotes_and_backslashes_in_strings(self):
-        rendered = rs.cfg_render_toml(
+        rendered = cfg_render_toml(
             {"policy": {}, "reviewers": [{"key": "a", "command": 'echo "hi" \\ done'}]}
         )
-        import tomllib  # noqa: F811 -- local re-import shadows the reflection-only module-level one
+        import tomllib
 
         parsed = tomllib.loads(rendered)
         self.assertEqual(parsed["reviewers"][0]["command"], 'echo "hi" \\ done')
 
-    @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
+    @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_renders_top_level_strategy_when_present(self):
-        rendered = rs.cfg_render_toml(
+        rendered = cfg_render_toml(
             {"strategy": "local-only", "policy": {"mode": "single"}, "reviewers": []}
         )
-        import tomllib  # noqa: F811 -- local re-import shadows the reflection-only module-level one
+        import tomllib
 
         parsed = tomllib.loads(rendered)
         self.assertEqual(parsed["strategy"], "local-only")
 
-    @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
+    @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_omits_strategy_line_when_absent(self):
-        rendered = rs.cfg_render_toml({"policy": {"mode": "single"}, "reviewers": []})
-        import tomllib  # noqa: F811 -- local re-import shadows the reflection-only module-level one
+        rendered = cfg_render_toml({"policy": {"mode": "single"}, "reviewers": []})
+        import tomllib
 
         parsed = tomllib.loads(rendered)
         self.assertNotIn("strategy", parsed)
 
-    @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
+    @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_ladder_renders_as_priority_fallback_comment(self):
-        rendered = rs.cfg_render_toml(
+        rendered = cfg_render_toml(
             {
                 "policy": {"mode": "double", "ladder": ["codex-gpt", "sonnet-native"]},
                 "reviewers": [],
@@ -365,19 +304,19 @@ class TestRenderAndWriteToml(unittest.TestCase):
         self.assertIn("# Priority fallback order", rendered)
         self.assertIn("#   1. codex-gpt", rendered)
         self.assertIn("#   2. sonnet-native", rendered)
-        import tomllib  # noqa: F811 -- local re-import shadows the reflection-only module-level one
+        import tomllib
 
         parsed = tomllib.loads(rendered)  # comment must not break parsing
         self.assertEqual(parsed["policy"]["ladder"], ["codex-gpt", "sonnet-native"])
 
-    @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
+    @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_empty_ladder_renders_no_priority_comment(self):
-        rendered = rs.cfg_render_toml({"policy": {"mode": "single", "ladder": []}, "reviewers": []})
+        rendered = cfg_render_toml({"policy": {"mode": "single", "ladder": []}, "reviewers": []})
         self.assertNotIn("# Priority fallback order", rendered)
 
-    @unittest.skipIf(rs.tomllib is None, "tomllib not available on this interpreter")
+    @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_single_mode_ladder_comment_omits_secondary_clause(self):
-        rendered = rs.cfg_render_toml(
+        rendered = cfg_render_toml(
             {
                 "policy": {"mode": "single", "ladder": ["codex-gpt", "sonnet-native"]},
                 "reviewers": [],
@@ -1012,41 +951,41 @@ class TestApplyHeuristicCorrections(unittest.TestCase):
 class TestCachePaths(unittest.TestCase):
     def test_base_uses_xdg_cache_home(self):
         env = {"XDG_CACHE_HOME": "/x/cache"}
-        self.assertEqual(rs.cache_base(env), "/x/cache/ai-kit/spec")
+        self.assertEqual(cache_base(env), "/x/cache/ai-kit/spec")
 
     def test_base_falls_back_to_home_dot_cache(self):
         env = {"HOME": "/home/u"}
-        self.assertEqual(rs.cache_base(env), "/home/u/.cache/ai-kit/spec")
+        self.assertEqual(cache_base(env), "/home/u/.cache/ai-kit/spec")
 
     def test_runtimes_and_quota_paths(self):
         env = {"HOME": "/home/u"}
-        self.assertEqual(rs.cache_runtimes_path(env), "/home/u/.cache/ai-kit/spec/runtimes.json")
-        self.assertEqual(rs.cache_quota_path(env), "/home/u/.cache/ai-kit/spec/quota.json")
+        self.assertEqual(cache_runtimes_path(env), "/home/u/.cache/ai-kit/spec/runtimes.json")
+        self.assertEqual(cache_quota_path(env), "/home/u/.cache/ai-kit/spec/quota.json")
 
 
 class TestCacheReadWrite(unittest.TestCase):
     def test_read_missing_file_returns_none(self):
-        self.assertIsNone(rs.cache_read_json("/no/such/file.json"))
+        self.assertIsNone(cache_read_json("/no/such/file.json"))
 
     def test_write_then_read_round_trips(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "sub", "data.json")
-            rs.cache_write_json(path, {"a": 1})
-            self.assertEqual(rs.cache_read_json(path), {"a": 1})
+            cache_write_json(path, {"a": 1})
+            self.assertEqual(cache_read_json(path), {"a": 1})
 
     def test_read_malformed_json_returns_none(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "bad.json")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("{not valid json")
-            self.assertIsNone(rs.cache_read_json(path))
+            self.assertIsNone(cache_read_json(path))
 
 
 class TestCacheWriteJsonAtomic(unittest.TestCase):
     def test_output_bytes_and_no_tmp_left(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "data.json")
-            rs.cache_write_json(path, {"b": 1, "a": [1, 2]})
+            cache_write_json(path, {"b": 1, "a": [1, 2]})
             with open(path, "rb") as f:
                 self.assertEqual(
                     f.read(), json.dumps({"b": 1, "a": [1, 2]}, indent=2).encode("utf-8")
@@ -1056,13 +995,13 @@ class TestCacheWriteJsonAtomic(unittest.TestCase):
     def test_creates_missing_parent_directory(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "sub", "dir", "data.json")
-            rs.cache_write_json(path, {"a": 1})
-            self.assertEqual(rs.cache_read_json(path), {"a": 1})
+            cache_write_json(path, {"a": 1})
+            self.assertEqual(cache_read_json(path), {"a": 1})
 
     def test_error_leaves_original_and_no_tmp(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "data.json")
-            rs.cache_write_json(path, {"a": 1})
+            cache_write_json(path, {"a": 1})
             with open(path, "rb") as f:
                 original = f.read()
             real_dump = json.dump
@@ -1071,7 +1010,7 @@ class TestCacheWriteJsonAtomic(unittest.TestCase):
                 raise ValueError("injected")
 
             with unittest.mock.patch.object(json, "dump", boom), self.assertRaises(ValueError):
-                rs.cache_write_json(path, {"a": 2})
+                cache_write_json(path, {"a": 2})
             with open(path, "rb") as f:
                 self.assertEqual(f.read(), original)
             self.assertEqual(glob.glob(os.path.join(d, "*.tmp")), [])
@@ -1085,7 +1024,7 @@ class TestCacheWriteJsonAtomic(unittest.TestCase):
             def writer(w):
                 try:
                     for i in range(50):
-                        rs.cache_write_json(path, {"w": w, "i": i})
+                        cache_write_json(path, {"w": w, "i": i})
                 except Exception as exc:  # pragma-ish: recorded and asserted below
                     errors.append(exc)
 
@@ -1095,7 +1034,7 @@ class TestCacheWriteJsonAtomic(unittest.TestCase):
             for t in threads:
                 t.join()
             self.assertEqual(errors, [])
-            final = rs.cache_read_json(path)
+            final = cache_read_json(path)
             self.assertIsInstance(final, dict)
             self.assertIn(final["w"], (1, 2))
             self.assertEqual(glob.glob(os.path.join(d, "*.tmp")), [])
@@ -1103,27 +1042,27 @@ class TestCacheWriteJsonAtomic(unittest.TestCase):
     def test_created_file_mode_is_0600(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "data.json")
-            rs.cache_write_json(path, {"a": 1})
+            cache_write_json(path, {"a": 1})
             self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
 
 
 class TestCacheStaleness(unittest.TestCase):
     def test_missing_file_is_stale(self):
-        self.assertTrue(rs.cache_is_stale("/no/such/file.json", 3600))
+        self.assertTrue(cache_is_stale("/no/such/file.json", 3600))
 
     def test_fresh_file_is_not_stale(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "f.json")
-            rs.cache_write_json(path, {})
-            self.assertFalse(rs.cache_is_stale(path, 3600))
+            cache_write_json(path, {})
+            self.assertFalse(cache_is_stale(path, 3600))
 
     def test_old_file_is_stale(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "f.json")
-            rs.cache_write_json(path, {})
+            cache_write_json(path, {})
             old = time.time() - 7200
             os.utime(path, (old, old))
-            self.assertTrue(rs.cache_is_stale(path, 3600))
+            self.assertTrue(cache_is_stale(path, 3600))
 
 
 class TestDetectInstalledClis(unittest.TestCase):
@@ -1131,14 +1070,14 @@ class TestDetectInstalledClis(unittest.TestCase):
         def fake_which(name):
             return f"/usr/bin/{name}" if name in ("claude", "codex") else None
 
-        result = rs.detect_installed_clis(which_fn=fake_which)
+        result = detect_installed_clis(which_fn=fake_which)
         self.assertEqual(result["claude"], "/usr/bin/claude")
         self.assertEqual(result["codex"], "/usr/bin/codex")
         self.assertIsNone(result["cursor-agent"])
 
     def test_covers_all_known_clis(self):
-        result = rs.detect_installed_clis(which_fn=lambda n: None)
-        self.assertEqual(set(result.keys()), set(rs.KNOWN_CLIS))
+        result = detect_installed_clis(which_fn=lambda n: None)
+        self.assertEqual(set(result.keys()), set(KNOWN_CLIS))
 
 
 class TestDetectCurrentRuntime(unittest.TestCase):
@@ -1182,7 +1121,7 @@ class TestPiHostEndToEnd(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(
+            code = main(
                 ["detect-current-runtime"],
                 env_fn=lambda: {"PI_CODING_AGENT": "1", "CLAUDECODE": "1"},
             )
@@ -1195,7 +1134,7 @@ class TestPiHostEndToEnd(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            rs.main(
+            main(
                 ["detect-current-runtime"],
                 env_fn=lambda: {"PI_CODING_AGENT": "1", "CLAUDECODE": "1"},
             )
@@ -1230,7 +1169,7 @@ class TestPiHostEndToEnd(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(
+            code = main(
                 ["detect-current-runtime"],
                 env_fn=lambda: {"CODEX_THREAD_ID": "t-1", "CLAUDECODE": "1"},
             )
@@ -1360,14 +1299,14 @@ class TestDetectOpencodeModels(unittest.TestCase):
         class FakeResult:
             stdout = "opencode-go/kimi-k3\nopencode-go/qwen3.8-max\n\n"
 
-        result = rs.detect_opencode_models("/usr/bin/opencode", run_fn=lambda *a, **k: FakeResult())
+        result = detect_opencode_models("/usr/bin/opencode", run_fn=lambda *a, **k: FakeResult())
         self.assertEqual(result, ["opencode-go/kimi-k3", "opencode-go/qwen3.8-max"])
 
     def test_returns_empty_list_on_failure(self):
         def fake_run(*a, **k):
             raise OSError("not found")
 
-        self.assertEqual(rs.detect_opencode_models("/usr/bin/opencode", run_fn=fake_run), [])
+        self.assertEqual(detect_opencode_models("/usr/bin/opencode", run_fn=fake_run), [])
 
 
 class TestDetectCursorAgentModels(unittest.TestCase):
@@ -1383,7 +1322,7 @@ class TestDetectCursorAgentModels(unittest.TestCase):
                 "glm-5.2-high - GLM 5.2\n"
             )
 
-        result = rs.detect_cursor_agent_models(
+        result = detect_cursor_agent_models(
             "/usr/bin/cursor-agent", run_fn=lambda *a, **k: FakeResult()
         )
         self.assertEqual(result, ["auto", "kimi-k3-high", "glm-5.2-high"])
@@ -1392,7 +1331,7 @@ class TestDetectCursorAgentModels(unittest.TestCase):
         class FakeResult:
             stdout = "Available models\n\nauto - Auto (current, default)\n"
 
-        result = rs.detect_cursor_agent_models(
+        result = detect_cursor_agent_models(
             "/usr/bin/cursor-agent", run_fn=lambda *a, **k: FakeResult()
         )
         self.assertEqual(result, ["auto"])
@@ -1402,29 +1341,29 @@ class TestDetectCursorAgentModels(unittest.TestCase):
             raise OSError("not found")
 
         self.assertEqual(
-            rs.detect_cursor_agent_models("/usr/bin/cursor-agent", run_fn=fake_run), []
+            detect_cursor_agent_models("/usr/bin/cursor-agent", run_fn=fake_run), []
         )
 
 
 class TestInferVendorFromModel(unittest.TestCase):
     def test_opencode_namespaced_ids(self):
-        self.assertEqual(rs.infer_vendor_from_model("opencode-go/kimi-k3"), "moonshot")
-        self.assertEqual(rs.infer_vendor_from_model("opencode-go/qwen3.8-max"), "alibaba")
-        self.assertEqual(rs.infer_vendor_from_model("opencode-go/grok-4.6"), "xai")
-        self.assertEqual(rs.infer_vendor_from_model("opencode-go/gpt-5.6-luna"), "openai")
+        self.assertEqual(infer_vendor_from_model("opencode-go/kimi-k3"), "moonshot")
+        self.assertEqual(infer_vendor_from_model("opencode-go/qwen3.8-max"), "alibaba")
+        self.assertEqual(infer_vendor_from_model("opencode-go/grok-4.6"), "xai")
+        self.assertEqual(infer_vendor_from_model("opencode-go/gpt-5.6-luna"), "openai")
 
     def test_cursor_agent_bare_ids(self):
-        self.assertEqual(rs.infer_vendor_from_model("claude-opus-5-thinking-high"), "anthropic")
-        self.assertEqual(rs.infer_vendor_from_model("gpt-5.3-codex"), "openai")
-        self.assertEqual(rs.infer_vendor_from_model("cursor-grok-4.6-high"), "xai")
-        self.assertEqual(rs.infer_vendor_from_model("glm-5.2-high"), "zhipu")
-        self.assertEqual(rs.infer_vendor_from_model("kimi-k3-high"), "moonshot")
-        self.assertEqual(rs.infer_vendor_from_model("gemini-3.7-flash-high"), "google")
-        self.assertEqual(rs.infer_vendor_from_model("composer-2.5"), "cursor")
+        self.assertEqual(infer_vendor_from_model("claude-opus-5-thinking-high"), "anthropic")
+        self.assertEqual(infer_vendor_from_model("gpt-5.3-codex"), "openai")
+        self.assertEqual(infer_vendor_from_model("cursor-grok-4.6-high"), "xai")
+        self.assertEqual(infer_vendor_from_model("glm-5.2-high"), "zhipu")
+        self.assertEqual(infer_vendor_from_model("kimi-k3-high"), "moonshot")
+        self.assertEqual(infer_vendor_from_model("gemini-3.7-flash-high"), "google")
+        self.assertEqual(infer_vendor_from_model("composer-2.5"), "cursor")
 
     def test_unknown_prefix_returns_none(self):
-        self.assertIsNone(rs.infer_vendor_from_model("auto"))
-        self.assertIsNone(rs.infer_vendor_from_model("ollama-cloud/llama-70b"))
+        self.assertIsNone(infer_vendor_from_model("auto"))
+        self.assertIsNone(infer_vendor_from_model("ollama-cloud/llama-70b"))
 
 
 class TestGroupModelsByFamily(unittest.TestCase):
@@ -1434,17 +1373,17 @@ class TestGroupModelsByFamily(unittest.TestCase):
             "claude-opus-5-high",
             "claude-opus-5-low-fast",
         ]
-        groups = rs.group_models_by_family(models)
+        groups = group_models_by_family(models)
         self.assertEqual(groups, {"claude-opus-5": models})
 
     def test_keeps_different_versions_as_separate_families(self):
         # confirmed live: cursor-grok-4.5-* and cursor-grok-4.6-* are
         # genuinely different model generations, must never merge
-        groups = rs.group_models_by_family(["cursor-grok-4.5-high", "cursor-grok-4.6-high"])
+        groups = group_models_by_family(["cursor-grok-4.5-high", "cursor-grok-4.6-high"])
         self.assertEqual(set(groups), {"cursor-grok-4.5", "cursor-grok-4.6"})
 
     def test_id_with_no_recognized_suffix_is_its_own_family(self):
-        groups = rs.group_models_by_family(["auto", "composer-2.5", "kimi-k2.7-code"])
+        groups = group_models_by_family(["auto", "composer-2.5", "kimi-k2.7-code"])
         self.assertEqual(
             groups,
             {
@@ -1455,10 +1394,10 @@ class TestGroupModelsByFamily(unittest.TestCase):
         )
 
     def test_empty_list_returns_empty_dict(self):
-        self.assertEqual(rs.group_models_by_family([]), {})
+        self.assertEqual(group_models_by_family([]), {})
 
     def test_preserves_first_seen_order_of_families(self):
-        groups = rs.group_models_by_family(["b-high", "a-high", "b-low"])
+        groups = group_models_by_family(["b-high", "a-high", "b-low"])
         self.assertEqual(list(groups), ["b", "a"])
 
 
@@ -1760,7 +1699,7 @@ class TestRunCodegraphIndex(unittest.TestCase):
 
 class TestBuildRuntimesSnapshot(unittest.TestCase):
     def test_marks_missing_clis_not_installed(self):
-        snapshot = rs.build_runtimes_snapshot(which_fn=lambda n: None, run_fn=lambda *a, **k: None)
+        snapshot = build_runtimes_snapshot(which_fn=lambda n: None, run_fn=lambda *a, **k: None)
         self.assertFalse(snapshot["clis"]["grok"]["installed"])
 
     def test_lists_opencode_models_when_installed(self):
@@ -1770,7 +1709,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         def fake_which(name):
             return "/usr/bin/opencode" if name == "opencode" else None
 
-        snapshot = rs.build_runtimes_snapshot(
+        snapshot = build_runtimes_snapshot(
             which_fn=fake_which, run_fn=lambda *a, **k: FakeResult()
         )
         self.assertTrue(snapshot["clis"]["opencode"]["installed"])
@@ -1783,7 +1722,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         def fake_which(name):
             return "/usr/bin/cursor-agent" if name == "cursor-agent" else None
 
-        snapshot = rs.build_runtimes_snapshot(
+        snapshot = build_runtimes_snapshot(
             which_fn=fake_which, run_fn=lambda *a, **k: FakeResult()
         )
         self.assertTrue(snapshot["clis"]["cursor-agent"]["installed"])
@@ -1793,7 +1732,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         def fake_which(name):
             return "/usr/bin/codex" if name == "codex" else None
 
-        snapshot = rs.build_runtimes_snapshot(which_fn=fake_which, run_fn=lambda *a, **k: None)
+        snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=lambda *a, **k: None)
         self.assertNotIn("models", snapshot["clis"]["codex"])
 
     @staticmethod
@@ -1807,7 +1746,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         def fake_which(name):
             return "/fake/volta/bin/codex" if name == "codex" else None
 
-        snapshot = rs.build_runtimes_snapshot(
+        snapshot = build_runtimes_snapshot(
             which_fn=fake_which,
             run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fixture_text),
         )
@@ -1829,7 +1768,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         def fake_run_fn(*a, **k):
             raise OSError("codex debug models failed to launch")
 
-        snapshot = rs.build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run_fn)
+        snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run_fn)
         self.assertEqual(
             snapshot["clis"]["codex"], {"installed": True, "path": "/fake/volta/bin/codex"}
         )
@@ -1842,7 +1781,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         def fake_which(name):
             return "/fake/volta/bin/codex" if name == "codex" else None
 
-        snapshot = rs.build_runtimes_snapshot(
+        snapshot = build_runtimes_snapshot(
             which_fn=fake_which,
             run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=1, stdout=fixture_text),
         )
@@ -1882,7 +1821,7 @@ class TestCodexEnumerationEndToEnd(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(
+            code = main(
                 ["detect-runtimes", "--save", runtimes_path],
                 which_fn=fake_which,
                 run_fn=fake_run_fn,
@@ -1891,7 +1830,7 @@ class TestCodexEnumerationEndToEnd(unittest.TestCase):
         self.assertEqual(code, 0)
         buf2 = io.StringIO()
         with redirect_stdout(buf2):
-            code = rs.main(
+            code = main(
                 [
                     "fetch-model-catalog",
                     "--runtimes-json",
@@ -2187,21 +2126,21 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
     (and re-stamp) even when its mtime is fresh; cache.py stays schema-agnostic."""
 
     def test_snapshot_carries_current_schema_version(self):
-        snapshot = rs.build_runtimes_snapshot(which_fn=lambda n: None, run_fn=lambda *a, **k: None)
+        snapshot = build_runtimes_snapshot(which_fn=lambda n: None, run_fn=lambda *a, **k: None)
         self.assertEqual(snapshot["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
         self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 2)
 
     def test_fresh_but_unversioned_cache_redetects_and_stamps(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "runtimes.json")
-            rs.cache_write_json(path, {"clis": {}})  # fresh mtime, NO schema_version
+            cache_write_json(path, {"clis": {}})  # fresh mtime, NO schema_version
             import io
             from contextlib import redirect_stdout
 
             buf = io.StringIO()
             recorded = []
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["detect-runtimes", "--if-stale", path],
                     which_fn=lambda n: recorded.append(n) or None,
                     run_fn=lambda *a, **k: None,
@@ -2210,39 +2149,39 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             self.assertEqual(recorded, list(detection.KNOWN_CLIS))  # detection ran
             self.assertIn("clis", json.loads(buf.getvalue()))
             self.assertEqual(
-                rs.cache_read_json(path)["schema_version"], detection.RUNTIMES_SCHEMA_VERSION
+                cache_read_json(path)["schema_version"], detection.RUNTIMES_SCHEMA_VERSION
             )  # re-stamped
 
     def test_fresh_cache_with_older_version_redetects(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "runtimes.json")
-            rs.cache_write_json(path, {"schema_version": 1, "clis": {}})
+            cache_write_json(path, {"schema_version": 1, "clis": {}})
             import io
             from contextlib import redirect_stdout
 
             buf = io.StringIO()
             recorded = []
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["detect-runtimes", "--if-stale", path],
                     which_fn=lambda n: recorded.append(n) or None,
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
             self.assertEqual(recorded, list(detection.KNOWN_CLIS))
-            self.assertEqual(rs.cache_read_json(path)["schema_version"], 2)
+            self.assertEqual(cache_read_json(path)["schema_version"], 2)
 
     def test_fresh_current_cache_is_skipped(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "runtimes.json")
-            rs.cache_write_json(path, {"schema_version": 2, "clis": {}})
+            cache_write_json(path, {"schema_version": 2, "clis": {}})
             import io
             from contextlib import redirect_stdout
 
             buf = io.StringIO()
             recorded = []
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["detect-runtimes", "--if-stale", path],
                     which_fn=lambda n: recorded.append(n) or None,
                     run_fn=lambda *a, **k: None,
@@ -2255,7 +2194,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
         # TTL still honored: a current-version file past RUNTIMES_TTL_SECONDS re-detects.
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "runtimes.json")
-            rs.cache_write_json(path, {"schema_version": 2, "clis": {}})
+            cache_write_json(path, {"schema_version": 2, "clis": {}})
             old = time.time() - detection.RUNTIMES_TTL_SECONDS - 60
             os.utime(path, (old, old))
             import io
@@ -2264,7 +2203,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             buf = io.StringIO()
             recorded = []
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["detect-runtimes", "--if-stale", path],
                     which_fn=lambda n: recorded.append(n) or None,
                     run_fn=lambda *a, **k: None,
@@ -2284,7 +2223,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
                 buf = io.StringIO()
                 recorded = []
                 with redirect_stdout(buf):
-                    code = rs.main(
+                    code = main(
                         ["detect-runtimes", "--if-stale", path],
                         which_fn=lambda n, _r=recorded: _r.append(n) or None,
                         run_fn=lambda *a, **k: None,
@@ -2311,8 +2250,8 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
         # mtime/TTL helper and must never see or judge schema_version.
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "f.json")
-            rs.cache_write_json(path, {"clis": {}})
-            self.assertFalse(rs.cache_is_stale(path, 3600))
+            cache_write_json(path, {"clis": {}})
+            self.assertFalse(cache_is_stale(path, 3600))
 
 
 class TestResolveLadderPick(unittest.TestCase):
@@ -2323,26 +2262,26 @@ class TestResolveLadderPick(unittest.TestCase):
         ]
 
     def test_picks_first_available_non_same_vendor(self):
-        pick = rs.resolve_ladder_pick(
+        pick = resolve_ladder_pick(
             self.reviewers, ["codex-gpt", "grok-flagship"], skip_vendor="anthropic", quota={}
         )
         self.assertEqual(pick.key, "codex-gpt")
 
     def test_skips_same_vendor_as_source(self):
-        pick = rs.resolve_ladder_pick(
+        pick = resolve_ladder_pick(
             self.reviewers, ["codex-gpt", "grok-flagship"], skip_vendor="openai", quota={}
         )
         self.assertEqual(pick.key, "grok-flagship")
 
     def test_skips_candidate_without_quota(self):
         quota = {"codex-gpt": {"available": False}}
-        pick = rs.resolve_ladder_pick(
+        pick = resolve_ladder_pick(
             self.reviewers, ["codex-gpt", "grok-flagship"], skip_vendor="anthropic", quota=quota
         )
         self.assertEqual(pick.key, "grok-flagship")
 
     def test_no_quota_entry_means_available(self):
-        pick = rs.resolve_ladder_pick(
+        pick = resolve_ladder_pick(
             self.reviewers, ["codex-gpt"], skip_vendor="anthropic", quota={}
         )
         self.assertEqual(pick.key, "codex-gpt")
@@ -2350,25 +2289,25 @@ class TestResolveLadderPick(unittest.TestCase):
     def test_falls_back_to_same_vendor_before_giving_up(self):
         # only same-vendor-as-source candidate exists and has quota -> still picked,
         # rather than returning None
-        pick = rs.resolve_ladder_pick(self.reviewers, ["codex-gpt"], skip_vendor="openai", quota={})
+        pick = resolve_ladder_pick(self.reviewers, ["codex-gpt"], skip_vendor="openai", quota={})
         self.assertEqual(pick.key, "codex-gpt")
 
     def test_returns_none_when_nothing_survives(self):
         quota = {"codex-gpt": {"available": False}}
-        pick = rs.resolve_ladder_pick(
+        pick = resolve_ladder_pick(
             [self.reviewers[0]], ["codex-gpt"], skip_vendor="anthropic", quota=quota
         )
         self.assertIsNone(pick)
 
     def test_unknown_ladder_key_is_skipped(self):
-        pick = rs.resolve_ladder_pick(
+        pick = resolve_ladder_pick(
             self.reviewers, ["nonexistent", "grok-flagship"], skip_vendor="anthropic", quota={}
         )
         self.assertEqual(pick.key, "grok-flagship")
 
     def test_entry_missing_model_resolves_to_empty_string_not_a_crash(self):
         reviewers = [{"key": "no-model", "vendor": "openai"}]
-        pick = rs.resolve_ladder_pick(reviewers, ["no-model"], skip_vendor="anthropic", quota={})
+        pick = resolve_ladder_pick(reviewers, ["no-model"], skip_vendor="anthropic", quota={})
         self.assertEqual(pick.model, "")
 
 
@@ -2390,21 +2329,21 @@ class TestResolveReviewers(unittest.TestCase):
         }
 
     def test_no_cross_ai_returns_only_the_no_config_fallback(self):
-        result = rs.resolve_reviewers(
+        result = resolve_reviewers(
             self.config, quota={}, source_vendor="anthropic", cross_ai=False
         )
-        self.assertEqual(result, [rs.NO_CONFIG_FALLBACK])
+        self.assertEqual(result, [NO_CONFIG_FALLBACK])
 
     def test_no_config_at_all_falls_back_to_session_default(self):
         config = {"policy": {"mode": "single", "ladder": []}, "reviewers": []}
-        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
-        self.assertEqual(result, [rs.NO_CONFIG_FALLBACK])
+        result = resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
+        self.assertEqual(result, [NO_CONFIG_FALLBACK])
 
     def test_single_mode_skips_same_vendor_as_source(self):
         # single mode's whole point is an independent perspective, so the two
         # same-vendor-as-source (anthropic) ladder entries are skipped even
         # though they're earlier in the ladder
-        result = rs.resolve_reviewers(
+        result = resolve_reviewers(
             self.config, quota={}, source_vendor="anthropic", cross_ai=True
         )
         self.assertEqual(len(result), 1)
@@ -2412,7 +2351,7 @@ class TestResolveReviewers(unittest.TestCase):
 
     def test_single_mode_falls_through_tiers_when_flagship_lacks_quota(self):
         quota = {"codex-gpt": {"available": False}}
-        result = rs.resolve_reviewers(
+        result = resolve_reviewers(
             self.config, quota=quota, source_vendor="anthropic", cross_ai=True
         )
         # only same-vendor entries left with quota -> the vendor-skip fallback picks
@@ -2423,7 +2362,7 @@ class TestResolveReviewers(unittest.TestCase):
     def test_double_mode_primary_is_first_ladder_entry_tier_aware(self):
         config = dict(self.config)
         config["policy"] = {"mode": "double", "ladder": self.config["policy"]["ladder"]}
-        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
+        result = resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(len(result), 2)
         # first ladder entry, regardless of native/external (here it happens
         # to also be native, since claude-opus leads the ladder)
@@ -2434,7 +2373,7 @@ class TestResolveReviewers(unittest.TestCase):
         config = dict(self.config)
         config["policy"] = {"mode": "double", "ladder": self.config["policy"]["ladder"]}
         quota = {"claude-opus": {"available": False}}
-        result = rs.resolve_reviewers(config, quota=quota, source_vendor="anthropic", cross_ai=True)
+        result = resolve_reviewers(config, quota=quota, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(result[0].key, "claude-sonnet")  # falls through the tier ladder
         self.assertEqual(result[1].key, "codex-gpt")
 
@@ -2442,14 +2381,14 @@ class TestResolveReviewers(unittest.TestCase):
         config = dict(self.config)
         config["policy"] = {"mode": "double", "ladder": self.config["policy"]["ladder"]}
         quota = {"codex-gpt": {"available": False}}
-        result = rs.resolve_reviewers(config, quota=quota, source_vendor="anthropic", cross_ai=True)
+        result = resolve_reviewers(config, quota=quota, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(len(result), 1)  # no cross-vendor survivor -> just the primary
         self.assertEqual(result[0].key, "claude-opus")
 
     def test_double_mode_with_empty_ladder_falls_back_to_session_default(self):
         config = {"policy": {"mode": "double", "ladder": []}, "reviewers": []}
-        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
-        self.assertEqual(result, [rs.NO_CONFIG_FALLBACK])
+        result = resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
+        self.assertEqual(result, [NO_CONFIG_FALLBACK])
 
     def test_double_mode_primary_is_external_when_it_leads_the_ladder(self):
         # CHANGED 2026-08-29: native entries are no longer given automatic
@@ -2463,7 +2402,7 @@ class TestResolveReviewers(unittest.TestCase):
             "policy": {"mode": "double", "ladder": ["codex-gpt", "claude-opus", "claude-sonnet"]},
             "reviewers": self.config["reviewers"],
         }
-        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
+        result = resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(result[0].key, "codex-gpt")  # first ladder entry, external
         self.assertEqual(result[0].cli, "codex")
         self.assertEqual(result[1].key, "claude-opus")  # first different-vendor entry
@@ -2477,7 +2416,7 @@ class TestResolveReviewers(unittest.TestCase):
             "policy": {"mode": "double", "ladder": ["codex-gpt"]},
             "reviewers": [self.config["reviewers"][2]],  # codex-gpt only, no native entries at all
         }
-        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
+        result = resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].key, "codex-gpt")
 
@@ -2502,7 +2441,7 @@ class TestResolveReviewers(unittest.TestCase):
                 },
             ],
         }
-        result = rs.resolve_reviewers(config, quota={}, source_vendor="openai", cross_ai=True)
+        result = resolve_reviewers(config, quota={}, source_vendor="openai", cross_ai=True)
         self.assertEqual(len(result), 1)  # secondary dropped, not substituted
         self.assertEqual(result[0].key, "claude-opus")
 
@@ -2525,7 +2464,7 @@ class TestResolveReviewers(unittest.TestCase):
                 },
             ],
         }
-        result = rs.resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
+        result = resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(len(result), 1)  # secondary dropped, not substituted
         self.assertEqual(result[0].key, "claude-cli-opus")
 
@@ -2609,7 +2548,7 @@ class TestFilterLadderByPurpose(unittest.TestCase):
 
 class TestBuildReviewerCommand(unittest.TestCase):
     def test_codex_bakes_effort_and_service_tier_as_separate_dash_c_flags(self):
-        cmd = rs.build_reviewer_command("codex", effort="low", service_tier="fast")
+        cmd = build_reviewer_command("codex", effort="low", service_tier="fast")
         self.assertIn("-m {model}", cmd)
         self.assertIn("model_reasoning_effort='\"low\"'", cmd)
         self.assertIn("service_tier='\"fast\"'", cmd)
@@ -2617,7 +2556,7 @@ class TestBuildReviewerCommand(unittest.TestCase):
         self.assertIn("--sandbox read-only", cmd)
 
     def test_codex_omits_unset_knobs(self):
-        cmd = rs.build_reviewer_command("codex")
+        cmd = build_reviewer_command("codex")
         self.assertNotIn("model_reasoning_effort", cmd)
         self.assertNotIn("service_tier", cmd)
 
@@ -2625,7 +2564,7 @@ class TestBuildReviewerCommand(unittest.TestCase):
         # no {prompt} — confirmed live: `claude -p` with no positional
         # prompt reads it from stdin
         self.assertEqual(
-            rs.build_reviewer_command("claude"), "claude -p --model {model} --output-format text"
+            build_reviewer_command("claude"), "claude -p --model {model} --output-format text"
         )
 
     def test_grok_command_shape(self):
@@ -2633,22 +2572,22 @@ class TestBuildReviewerCommand(unittest.TestCase):
         # string "-" as the prompt (confirmed live). {prompt} is the correct placeholder,
         # shlex-quoted by render_reviewer_command like every other builder.
         self.assertEqual(
-            rs.build_reviewer_command("grok"), "grok -p {prompt} -m {model} --output-format plain"
+            build_reviewer_command("grok"), "grok -p {prompt} -m {model} --output-format plain"
         )
 
     def test_gemini_no_longer_registered(self):
         # removed 2026-08-29 -- Gemini CLI is deprecated; never fall back to
         # a guessed shape for a CLI outside the registry
         with self.assertRaises(ValueError):
-            rs.build_reviewer_command("gemini")
+            build_reviewer_command("gemini")
 
     def test_opencode_command_shape(self):
         # no {prompt} — confirmed live: `opencode run -m {model}` with no
         # positional message reads it from stdin
-        self.assertEqual(rs.build_reviewer_command("opencode"), "opencode run -m {model}")
+        self.assertEqual(build_reviewer_command("opencode"), "opencode run -m {model}")
 
     def test_cursor_agent_defaults_to_plan_mode(self):
-        cmd = rs.build_reviewer_command("cursor-agent")
+        cmd = build_reviewer_command("cursor-agent")
         self.assertIn("--mode plan", cmd)
         self.assertIn("--trust", cmd)
         self.assertIn("--model {model}", cmd)
@@ -2658,16 +2597,16 @@ class TestBuildReviewerCommand(unittest.TestCase):
         self.assertIn("cursor-agent -p ", cmd)
 
     def test_cursor_agent_accepts_ask_mode(self):
-        cmd = rs.build_reviewer_command("cursor-agent", mode="ask")
+        cmd = build_reviewer_command("cursor-agent", mode="ask")
         self.assertIn("--mode ask", cmd)
 
     def test_cursor_agent_rejects_a_write_capable_mode(self):
         with self.assertRaises(ValueError):
-            rs.build_reviewer_command("cursor-agent", mode="default")
+            build_reviewer_command("cursor-agent", mode="default")
 
     def test_unknown_cli_raises_value_error(self):
         with self.assertRaises(ValueError):
-            rs.build_reviewer_command("nonexistent-cli")
+            build_reviewer_command("nonexistent-cli")
 
     def test_built_command_renders_through_render_reviewer_command(self):
         # the factory's output must still be a valid command template —
@@ -2676,11 +2615,11 @@ class TestBuildReviewerCommand(unittest.TestCase):
         # render_reviewer_command just leaves the prompt text unused here
         # — delivery happens via probe_reviewer_quota's/the orchestrator's
         # stdin redirect instead, not by string substitution.
-        cmd = rs.build_reviewer_command("codex", effort="high")
-        resolved = rs.ResolvedReviewer(
+        cmd = build_reviewer_command("codex", effort="high")
+        resolved = ResolvedReviewer(
             key="codex-gpt", model="gpt-5.2", vendor="openai", cli="codex", command=cmd, extra={}
         )
-        filled = rs.render_reviewer_command(resolved, "hello")
+        filled = render_reviewer_command(resolved, "hello")
         self.assertIn("gpt-5.2", filled)
         self.assertIn('model_reasoning_effort="high"', filled)
         self.assertNotIn("hello", filled)
@@ -2688,27 +2627,27 @@ class TestBuildReviewerCommand(unittest.TestCase):
 
 class TestBuildReviewerModelId(unittest.TestCase):
     def test_cursor_agent_adds_bracket_overrides(self):
-        model_id = rs.build_cursor_agent_model_id(
+        model_id = build_cursor_agent_model_id(
             "claude-opus-4-8", effort="high", fast=False, context="1m"
         )
         self.assertEqual(model_id, "claude-opus-4-8[effort=high,fast=false,context=1m]")
 
     def test_cursor_agent_no_overrides_returns_base_model_unchanged(self):
-        self.assertEqual(rs.build_cursor_agent_model_id("claude-opus-4-8"), "claude-opus-4-8")
+        self.assertEqual(build_cursor_agent_model_id("claude-opus-4-8"), "claude-opus-4-8")
 
     def test_dispatches_via_cli_name(self):
         self.assertEqual(
-            rs.build_reviewer_model_id("cursor-agent", "gpt-5.3-codex", effort="low"),
+            build_reviewer_model_id("cursor-agent", "gpt-5.3-codex", effort="low"),
             "gpt-5.3-codex[effort=low]",
         )
 
     def test_non_cursor_cli_returns_base_model_unchanged(self):
-        self.assertEqual(rs.build_reviewer_model_id("codex", "gpt-5.2", effort="high"), "gpt-5.2")
+        self.assertEqual(build_reviewer_model_id("codex", "gpt-5.2", effort="high"), "gpt-5.2")
 
 
 class TestRenderReviewerCommand(unittest.TestCase):
     def test_fills_model_and_prompt(self):
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
@@ -2717,13 +2656,13 @@ class TestRenderReviewerCommand(unittest.TestCase):
             extra={},
         )
         self.assertEqual(
-            rs.render_reviewer_command(resolved, "hello"),
+            render_reviewer_command(resolved, "hello"),
             ["codex", "exec", "-m", "gpt-5.2", "hello"],
         )
 
     def test_fills_extra_fields(self):
         cmd = "codex exec -m {model} -c service_tier='\"{service_tier}\"' {prompt}"
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
@@ -2731,7 +2670,7 @@ class TestRenderReviewerCommand(unittest.TestCase):
             command=cmd,
             extra={"service_tier": "fast"},
         )
-        out = rs.render_reviewer_command(resolved, "hi")
+        out = render_reviewer_command(resolved, "hi")
         self.assertIn('service_tier="fast"', out)
 
     def test_prompt_is_shell_escaped_but_extra_fields_are_not(self):
@@ -2741,7 +2680,7 @@ class TestRenderReviewerCommand(unittest.TestCase):
         # human-typed config values whose own quoting idiom (e.g. codex's
         # -c key='"value"') the template author controls directly — auto-
         # quoting those would break that idiom, so only {prompt} is quoted.
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
@@ -2750,7 +2689,7 @@ class TestRenderReviewerCommand(unittest.TestCase):
             extra={},
         )
         dangerous_prompt = "Read this; rm -rf / #"
-        out = rs.render_reviewer_command(resolved, dangerous_prompt)
+        out = render_reviewer_command(resolved, dangerous_prompt)
         # argv dispatch, no shell: the prompt survives verbatim as ONE argv element
         self.assertEqual(out[-1], dangerous_prompt)
 
@@ -2758,16 +2697,16 @@ class TestRenderReviewerCommand(unittest.TestCase):
         # a cli-set entry with no command is a malformed config (schema:
         # command is "required iff cli present") — must be a reportable
         # ValueError, never a raw AttributeError from `None.format(...)`
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt", model="gpt-5.2", vendor="openai", cli="codex", command=None, extra={}
         )
         with self.assertRaises(ValueError):
-            rs.render_reviewer_command(resolved, "hello")
+            render_reviewer_command(resolved, "hello")
 
     def test_malformed_template_raises_value_error_not_key_error(self):
         # {unknown_field} isn't {model}/{prompt}/in extra -> str.format
         # raises KeyError; must surface as a reportable ValueError instead
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
@@ -2776,14 +2715,14 @@ class TestRenderReviewerCommand(unittest.TestCase):
             extra={},
         )
         with self.assertRaises(ValueError):
-            rs.render_reviewer_command(resolved, "hello")
+            render_reviewer_command(resolved, "hello")
 
     def test_extra_field_colliding_with_reserved_placeholder_raises_value_error(self):
         # a hand-written config entry that defines extra={"prompt": ...} or
         # extra={"model": ...} collides with the reserved keyword args
         # passed to str.format, raising a TypeError that must not escape
         # as a raw crash either
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
@@ -2792,15 +2731,15 @@ class TestRenderReviewerCommand(unittest.TestCase):
             extra={"prompt": "oops"},
         )
         with self.assertRaises(ValueError):
-            rs.render_reviewer_command(resolved, "hello")
+            render_reviewer_command(resolved, "hello")
 
 
 class TestProbeReviewerQuota(unittest.TestCase):
     def test_native_entry_is_always_available(self):
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="claude-opus", model="opus", vendor="anthropic", cli=None, command=None, extra={}
         )
-        result = rs.probe_reviewer_quota(
+        result = probe_reviewer_quota(
             resolved,
             run_fn=lambda *a, **k: (_ for _ in ()).throw(
                 AssertionError("should never shell out for a native entry")
@@ -2809,7 +2748,7 @@ class TestProbeReviewerQuota(unittest.TestCase):
         self.assertTrue(result["available"])
 
     def test_successful_call_is_available(self):
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
@@ -2823,12 +2762,12 @@ class TestProbeReviewerQuota(unittest.TestCase):
             stdout = "ok\n"
             stderr = ""
 
-        result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
+        result = probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
         self.assertTrue(result["available"])
         self.assertIsNone(result["reason"])
 
     def test_nonzero_exit_is_unavailable(self):
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
@@ -2842,13 +2781,13 @@ class TestProbeReviewerQuota(unittest.TestCase):
             stdout = ""
             stderr = "some error"
 
-        result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
+        result = probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
         self.assertFalse(result["available"])
 
     def test_answer_containing_quota_text_on_exit_zero_is_a_success(self):
         # R8/D-13: the model's answer (stdout) is never classified — an answer
         # saying "quota exceeded" with exit 0 and empty stderr is a success.
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
@@ -2862,12 +2801,12 @@ class TestProbeReviewerQuota(unittest.TestCase):
             stdout = "The reviewer reports: quota exceeded"
             stderr = ""
 
-        result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
+        result = probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
         self.assertTrue(result["available"])
         self.assertIsNone(result["reason"])
 
     def test_stderr_quota_error_on_nonzero_exit_records_reason_quota(self):
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
@@ -2881,13 +2820,13 @@ class TestProbeReviewerQuota(unittest.TestCase):
             stdout = ""
             stderr = "Error: usage limit reached"
 
-        result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
+        result = probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
         self.assertFalse(result["available"])
         self.assertEqual(result["reason"], "quota")
         self.assertIn("usage limit", result["detail"])
 
     def test_timeout_is_unavailable(self):
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
@@ -2899,7 +2838,7 @@ class TestProbeReviewerQuota(unittest.TestCase):
         def fake_run(*a, **k):
             raise subprocess.TimeoutExpired(cmd="sleep 999", timeout=30)
 
-        result = rs.probe_reviewer_quota(resolved, run_fn=fake_run)
+        result = probe_reviewer_quota(resolved, run_fn=fake_run)
         self.assertFalse(result["available"])
         self.assertEqual(result["reason"], "timeout")
 
@@ -2908,7 +2847,7 @@ class TestProbeReviewerQuota(unittest.TestCase):
         # (input=), never inlined as a shell argument — this is what
         # makes codex/claude/grok/opencode/cursor-agent's stdin-only
         # command templates (no {prompt} placeholder) actually work
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt", model="gpt-5.2", vendor="openai", cli="codex", command="cat", extra={}
         )
         captured = {}
@@ -2922,7 +2861,7 @@ class TestProbeReviewerQuota(unittest.TestCase):
             captured.update(k)
             return FakeResult()
 
-        rs.probe_reviewer_quota(resolved, run_fn=fake_run)
+        probe_reviewer_quota(resolved, run_fn=fake_run)
         self.assertEqual(captured.get("input"), "Only say: Hello world!")
 
     def test_cli_entry_with_missing_command_is_unavailable_not_true(self):
@@ -2930,10 +2869,10 @@ class TestProbeReviewerQuota(unittest.TestCase):
         # actually be dispatched — must classify as unavailable, not
         # silently `available: True` (which would let it win a ladder
         # walk and only fail later, in real dispatch)
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="codex-gpt", model="gpt-5.2", vendor="openai", cli="codex", command=None, extra={}
         )
-        result = rs.probe_reviewer_quota(
+        result = probe_reviewer_quota(
             resolved,
             run_fn=lambda *a, **k: (_ for _ in ()).throw(
                 AssertionError("should never shell out for a malformed command")
@@ -3032,7 +2971,7 @@ class TestRefreshQuotaCache(unittest.TestCase):
             stdout = "ok"
             stderr = ""
 
-        updated = rs.refresh_quota_cache(
+        updated = refresh_quota_cache(
             self.config,
             ["codex-gpt"],
             existing={},
@@ -3047,7 +2986,7 @@ class TestRefreshQuotaCache(unittest.TestCase):
         def fail_if_called(*a, **k):
             raise AssertionError("should not re-probe a fresh entry")
 
-        updated = rs.refresh_quota_cache(
+        updated = refresh_quota_cache(
             self.config, ["codex-gpt"], existing, ttl_seconds=3600, run_fn=fail_if_called
         )
         self.assertFalse(updated["codex-gpt"]["available"])  # untouched
@@ -3060,7 +2999,7 @@ class TestRefreshQuotaCache(unittest.TestCase):
             stdout = "ok"
             stderr = ""
 
-        updated = rs.refresh_quota_cache(
+        updated = refresh_quota_cache(
             self.config,
             ["codex-gpt"],
             existing,
@@ -3093,7 +3032,7 @@ superpowers · design
 
 class TestParseFindings(unittest.TestCase):
     def test_extracts_title_location_required_why_and_severity(self):
-        findings = rs.parse_findings(_REPORT_A)
+        findings = parse_findings(_REPORT_A)
         self.assertEqual(len(findings), 2)
         self.assertEqual(findings[0]["severity"], "CRITICAL")
         self.assertEqual(findings[0]["title"], "Missing field")
@@ -3102,7 +3041,7 @@ class TestParseFindings(unittest.TestCase):
 
     def test_report_with_no_findings_returns_empty_list(self):
         approved = "## Review: spec.md\n### Status: Approved\n"
-        self.assertEqual(rs.parse_findings(approved), [])
+        self.assertEqual(parse_findings(approved), [])
 
     def test_cross_document_consistency_bullets_are_not_misattributed(self):
         report = """## Review: a.md, b.md
@@ -3112,7 +3051,7 @@ class TestParseFindings(unittest.TestCase):
 - **Docs disagree** — Location: §2 vs §3. Required: reconcile. Why: contradiction.
 ### Status: Issues Found — fix and re-invoke
 """
-        findings = rs.parse_findings(report)
+        findings = parse_findings(report)
         self.assertEqual(len(findings), 2)
         self.assertEqual(findings[0]["severity"], "HIGH")
         self.assertEqual(findings[1]["severity"], "CROSS-DOC")
@@ -3128,7 +3067,7 @@ class TestParseFindings(unittest.TestCase):
 - **Trailing whitespace** — Location: §4. Required: trim it. Why: lint noise.
 ### Status: Issues Found — fix and re-invoke
 """
-        findings = rs.parse_findings(report)
+        findings = parse_findings(report)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["severity"], "LOW")
 
@@ -3137,24 +3076,24 @@ class TestReportStatus(unittest.TestCase):
     """D-12: closed status vocabulary read from the last ### Status: line."""
 
     def test_approved(self):
-        self.assertEqual(rs.report_status("x\n### Status: Approved\n"), "approved")
+        self.assertEqual(report_status("x\n### Status: Approved\n"), "approved")
 
     def test_issues_found(self):
-        self.assertEqual(rs.report_status("### Status: Issues Found — fix and re-invoke"), "issues")
+        self.assertEqual(report_status("### Status: Issues Found — fix and re-invoke"), "issues")
 
     def test_failure(self):
-        self.assertEqual(rs.report_status("### Status: Failure — input not on disk"), "failure")
+        self.assertEqual(report_status("### Status: Failure — input not on disk"), "failure")
 
     def test_unknown_status_text_reads_issues(self):
-        self.assertEqual(rs.report_status("### Status: Something odd"), "issues")
+        self.assertEqual(report_status("### Status: Something odd"), "issues")
 
     def test_no_status_line_reads_none(self):
-        self.assertIsNone(rs.report_status("no status line at all"))
-        self.assertIsNone(rs.report_status(""))
+        self.assertIsNone(report_status("no status line at all"))
+        self.assertIsNone(report_status(""))
 
     def test_last_status_line_wins(self):
         text = "### Status: Approved\nmid\n### Status: Issues Found — fix\n"
-        self.assertEqual(rs.report_status(text), "issues")
+        self.assertEqual(report_status(text), "issues")
 
 
 class TestMergeReportsFailure(unittest.TestCase):
@@ -3169,7 +3108,7 @@ class TestMergeReportsFailure(unittest.TestCase):
             args.append(f"{key}={files[key]}")
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(args)
+            code = main(args)
         return code, buf.getvalue()
 
     def _write(self, tmp, name, text):
@@ -3243,20 +3182,20 @@ class TestMergeReportsFailure(unittest.TestCase):
 
 class TestMergeFindings(unittest.TestCase):
     def test_same_severity_and_location_merges_into_one_tagged_entry(self):
-        merged = rs.merge_findings([("claude-opus", _REPORT_A), ("codex-gpt", _REPORT_B)])
+        merged = merge_findings([("claude-opus", _REPORT_A), ("codex-gpt", _REPORT_B)])
         crit = [f for f in merged if f["severity"] == "CRITICAL"]
         self.assertEqual(len(crit), 1)  # both CRITICAL findings share (CRITICAL, "§2.1")
         self.assertEqual(crit[0]["reviewers"], ["claude-opus", "codex-gpt"])
 
     def test_distinct_locations_stay_separate_each_tagged_with_its_own_source(self):
-        merged = rs.merge_findings([("claude-opus", _REPORT_A), ("codex-gpt", _REPORT_B)])
+        merged = merge_findings([("claude-opus", _REPORT_A), ("codex-gpt", _REPORT_B)])
         high = [f for f in merged if f["severity"] == "HIGH"]
         medium = [f for f in merged if f["severity"] == "MEDIUM"]
         self.assertEqual(high[0]["reviewers"], ["claude-opus"])
         self.assertEqual(medium[0]["reviewers"], ["codex-gpt"])
 
     def test_single_report_passthrough(self):
-        merged = rs.merge_findings([("claude-opus", _REPORT_A)])
+        merged = merge_findings([("claude-opus", _REPORT_A)])
         self.assertEqual(len(merged), 2)
         self.assertTrue(all(f["reviewers"] == ["claude-opus"] for f in merged))
 
@@ -3272,7 +3211,7 @@ class TestMergeFindings(unittest.TestCase):
 - **Second issue** — Location: §3. Required: fix B. Why: reason B.
 ### Status: Issues Found — fix and re-invoke
 """
-        merged = rs.merge_findings([("claude-opus", report)])
+        merged = merge_findings([("claude-opus", report)])
         self.assertEqual(len(merged), 2)
         titles = {f["title"] for f in merged}
         self.assertEqual(titles, {"First issue", "Second issue"})
@@ -3281,8 +3220,8 @@ class TestMergeFindings(unittest.TestCase):
 
 class TestRenderMergedReport(unittest.TestCase):
     def test_groups_by_severity_and_tags_reviewers(self):
-        merged = rs.merge_findings([("claude-opus", _REPORT_A), ("codex-gpt", _REPORT_B)])
-        rendered = rs.render_merged_report(merged, "spec.md")
+        merged = merge_findings([("claude-opus", _REPORT_A), ("codex-gpt", _REPORT_B)])
+        rendered = render_merged_report(merged, "spec.md")
         self.assertIn("### CRITICAL", rendered)
         self.assertIn("### HIGH", rendered)
         self.assertIn("### MEDIUM", rendered)
@@ -3290,7 +3229,7 @@ class TestRenderMergedReport(unittest.TestCase):
         self.assertIn("### Status: Issues Found — fix and re-invoke", rendered)
 
     def test_no_findings_renders_approved_status(self):
-        rendered = rs.render_merged_report([], "spec.md")
+        rendered = render_merged_report([], "spec.md")
         self.assertIn("### Status: Approved", rendered)
         self.assertNotIn("Issues Found", rendered)
 
@@ -3305,7 +3244,7 @@ class TestRenderMergedReport(unittest.TestCase):
                 "reviewers": ["claude-opus"],
             }
         ]
-        rendered = rs.render_merged_report(findings, "a.md, b.md")
+        rendered = render_merged_report(findings, "a.md, b.md")
         self.assertIn("### Cross-Document Consistency", rendered)
         self.assertNotIn("### CROSS-DOC", rendered)
 
@@ -3320,7 +3259,7 @@ class TestRenderMergedReport(unittest.TestCase):
                 "reviewers": ["claude-opus"],
             }
         ]
-        rendered = rs.render_merged_report(findings, "plan.md")
+        rendered = render_merged_report(findings, "plan.md")
         self.assertIn("### LOW", rendered)
         self.assertNotIn("### MEDIUM", rendered)
 
@@ -3329,12 +3268,12 @@ class TestRenderMergedReport(unittest.TestCase):
         # bullet(s) fail _BULLET_RE's strict single-line shape (e.g. a
         # wrapped Required: clause) — parse_findings then returns nothing
         # for it, but the merge must never report Approved in that case.
-        rendered = rs.render_merged_report([], "spec.md", any_source_issues=True)
+        rendered = render_merged_report([], "spec.md", any_source_issues=True)
         self.assertIn("### Status: Issues Found — fix and re-invoke", rendered)
         self.assertNotIn("### Status: Approved", rendered)
 
     def test_any_source_issues_false_still_renders_approved_when_no_findings(self):
-        rendered = rs.render_merged_report([], "spec.md", any_source_issues=False)
+        rendered = render_merged_report([], "spec.md", any_source_issues=False)
         self.assertIn("### Status: Approved", rendered)
 
 
@@ -3364,7 +3303,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(
+            code = main(
                 ["detect-runtimes"], which_fn=lambda n: None, run_fn=lambda *a, **k: None
             )
         self.assertEqual(code, 0)
@@ -3377,7 +3316,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(["detect-current-runtime"], env_fn=lambda: {"CLAUDECODE": "1"})
+            code = main(["detect-current-runtime"], env_fn=lambda: {"CLAUDECODE": "1"})
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(buf.getvalue()), {"native_runtime": "claude"})
 
@@ -3387,20 +3326,20 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(["detect-current-runtime"], env_fn=lambda: {})
+            code = main(["detect-current-runtime"], env_fn=lambda: {})
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(buf.getvalue()), {"native_runtime": "unknown"})
 
     def test_detect_runtimes_save_writes_cache_file(self):
         with tempfile.TemporaryDirectory() as d:
             save_path = os.path.join(d, "runtimes.json")
-            code = rs.main(
+            code = main(
                 ["detect-runtimes", "--save", save_path],
                 which_fn=lambda n: None,
                 run_fn=lambda *a, **k: None,
             )
             self.assertEqual(code, 0)
-            self.assertIn("clis", rs.cache_read_json(save_path))
+            self.assertIn("clis", cache_read_json(save_path))
 
     def test_dispatch_execute_reads_prompt_file_and_prints_json_result(self):
         import io
@@ -3431,7 +3370,7 @@ class TestMainCli(unittest.TestCase):
                 f.write("do the phase task")
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "dispatch-execute",
                         "--cli",
@@ -3487,7 +3426,7 @@ class TestMainCli(unittest.TestCase):
                 f.write("FORMAT-BLOCK-MARKER")
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "dispatch-execute",
                         "--cli",
@@ -3531,7 +3470,7 @@ class TestMainCli(unittest.TestCase):
             with open(prompt_path, "w", encoding="utf-8") as f:
                 f.write("task")
             with redirect_stdout(io.StringIO()):
-                code = rs.main(
+                code = main(
                     [
                         "dispatch-execute",
                         "--cli",
@@ -3571,7 +3510,7 @@ class TestMainCli(unittest.TestCase):
                 f.write("task")
             buf = io.StringIO()
             with redirect_stderr(buf):
-                code = rs.main(
+                code = main(
                     [
                         "dispatch-execute",
                         "--cli",
@@ -3615,7 +3554,7 @@ class TestMainCli(unittest.TestCase):
             mock.patch.object(cli.sys, "stdin", io.StringIO("piped prompt text")),
             redirect_stdout(buf),
         ):
-            code = rs.main(
+            code = main(
                 [
                     "dispatch-execute",
                     "--cli",
@@ -3655,7 +3594,7 @@ class TestMainCli(unittest.TestCase):
                 f.write("task")
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "dispatch-execute",
                         "--cli",
@@ -3696,7 +3635,7 @@ class TestMainCli(unittest.TestCase):
             with open(prompt_path, "w", encoding="utf-8") as f:
                 f.write("task")
             with redirect_stdout(io.StringIO()):
-                code = rs.main(
+                code = main(
                     [
                         "dispatch-execute",
                         "--cli",
@@ -3721,8 +3660,8 @@ class TestMainCli(unittest.TestCase):
 
         env = {"XDG_CACHE_HOME": "/x/cache"}
         buf = io.StringIO()
-        with mock.patch.object(rs.os, "environ", env), redirect_stdout(buf):
-            code = rs.main(["cache-path", "--kind", "runtimes"])
+        with mock.patch.object(os, "environ", env), redirect_stdout(buf):
+            code = main(["cache-path", "--kind", "runtimes"])
         self.assertEqual(code, 0)
         self.assertEqual(buf.getvalue().strip(), "/x/cache/ai-kit/spec/runtimes.json")
 
@@ -3732,15 +3671,15 @@ class TestMainCli(unittest.TestCase):
 
         env = {"HOME": "/home/u"}
         buf = io.StringIO()
-        with mock.patch.object(rs.os, "environ", env), redirect_stdout(buf):
-            code = rs.main(["cache-path", "--kind", "quota"])
+        with mock.patch.object(os, "environ", env), redirect_stdout(buf):
+            code = main(["cache-path", "--kind", "quota"])
         self.assertEqual(code, 0)
         self.assertEqual(buf.getvalue().strip(), "/home/u/.cache/ai-kit/spec/quota.json")
 
     def test_detect_runtimes_if_stale_skips_detection_when_fresh(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "runtimes.json")
-            rs.cache_write_json(
+            cache_write_json(
                 path, {"schema_version": detection.RUNTIMES_SCHEMA_VERSION, "clis": {}}
             )  # just written -> fresh
             import io
@@ -3749,7 +3688,7 @@ class TestMainCli(unittest.TestCase):
             buf = io.StringIO()
             probe_calls = []
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["detect-runtimes", "--if-stale", path],
                     which_fn=lambda n: probe_calls.append(n) or None,
                     run_fn=lambda *a, **k: None,
@@ -3761,13 +3700,13 @@ class TestMainCli(unittest.TestCase):
     def test_detect_runtimes_if_stale_redetects_when_missing(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "runtimes.json")  # never written -> stale
-            code = rs.main(
+            code = main(
                 ["detect-runtimes", "--if-stale", path],
                 which_fn=lambda n: None,
                 run_fn=lambda *a, **k: None,
             )
             self.assertEqual(code, 0)
-            self.assertIn("clis", rs.cache_read_json(path))
+            self.assertIn("clis", cache_read_json(path))
 
     def test_resolve_reviewers_uses_cfg_resolve_local_global_merge(self):
         # regression test for the CRITICAL bug: resolve-reviewers must go
@@ -3779,7 +3718,7 @@ class TestMainCli(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
             os.makedirs(os.path.join(home, ".config", "ai-kit"))
-            rs.cfg_write_toml(
+            cfg_write_toml(
                 os.path.join(home, ".config", "ai-kit", "review-spec.toml"),
                 {
                     "policy": {"mode": "single", "ladder": ["codex-gpt"]},
@@ -3795,11 +3734,11 @@ class TestMainCli(unittest.TestCase):
                 config_io.cfg_trust_store_dir({"HOME": home}), os.path.realpath(local_path), raw
             )
             quota_path = os.path.join(cwd, "quota.json")
-            rs.cache_write_json(quota_path, {})
+            cache_write_json(quota_path, {})
             buf = io.StringIO()
             env = {"HOME": home}
-            with mock.patch.object(rs.os, "environ", env), redirect_stdout(buf):
-                code = rs.main(
+            with mock.patch.object(os, "environ", env), redirect_stdout(buf):
+                code = main(
                     [
                         "resolve-reviewers",
                         "--cwd",
@@ -3818,7 +3757,7 @@ class TestMainCli(unittest.TestCase):
     def test_probe_quota_refreshes_stale_entries_and_writes_cache(self):
         with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
             os.makedirs(os.path.join(home, ".config", "ai-kit"))
-            rs.cfg_write_toml(
+            cfg_write_toml(
                 os.path.join(home, ".config", "ai-kit", "review-spec.toml"),
                 {
                     "policy": {"mode": "single", "ladder": ["codex-gpt"]},
@@ -3840,12 +3779,12 @@ class TestMainCli(unittest.TestCase):
                     args=[], returncode=0, stdout="ok", stderr=""
                 )
             )
-            with mock.patch.object(rs.os, "environ", env):
-                code = rs.main(
+            with mock.patch.object(os, "environ", env):
+                code = main(
                     ["probe-quota", "--cwd", cwd, "--quota-path", quota_path], run_fn=fake_run
                 )
             self.assertEqual(code, 0)
-            written = rs.cache_read_json(quota_path)
+            written = cache_read_json(quota_path)
             self.assertTrue(written["codex-gpt"]["available"])
             fake_run.assert_called()  # never shells out to a real "echo ok"
 
@@ -3862,7 +3801,7 @@ class TestMainCli(unittest.TestCase):
                 f.write(_REPORT_B)
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "merge-reports",
                         "--doc-paths",
@@ -3890,7 +3829,7 @@ class TestMainCli(unittest.TestCase):
                 f.write("codex: error: usage limit exceeded\n")  # no ### Status: line
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "merge-reports",
                         "--doc-paths",
@@ -3928,7 +3867,7 @@ class TestMainCli(unittest.TestCase):
                 f.write("hello")
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "render-command",
                         "--reviewers-json",
@@ -3964,7 +3903,7 @@ class TestMainCli(unittest.TestCase):
             prompt_path = os.path.join(d, "prompt.txt")
             with open(prompt_path, "w", encoding="utf-8") as f:
                 f.write("hello")
-            code = rs.main(
+            code = main(
                 [
                     "render-command",
                     "--reviewers-json",
@@ -3987,7 +3926,7 @@ class TestMainCli(unittest.TestCase):
                 json.dump({"policy": {"mode": "single"}, "reviewers": []}, f)
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(["render-toml", "--json-config", json_path])
+                code = main(["render-toml", "--json-config", json_path])
             self.assertEqual(code, 0)
             self.assertIn("mode", buf.getvalue())
             self.assertFalse(os.path.exists(os.path.join(d, "review-spec.toml")))
@@ -3998,9 +3937,9 @@ class TestMainCli(unittest.TestCase):
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump({"policy": {"mode": "double", "ladder": ["a"]}, "reviewers": []}, f)
             out_path = os.path.join(d, "nested", "review-spec.toml")
-            code = rs.main(["render-toml", "--json-config", json_path, "--out", out_path])
+            code = main(["render-toml", "--json-config", json_path, "--out", out_path])
             self.assertEqual(code, 0)
-            written = rs.cfg_load_toml(out_path)
+            written = cfg_load_toml(out_path)
             self.assertEqual(written["policy"]["mode"], "double")
 
     def test_infer_vendor_prints_matched_vendor(self):
@@ -4009,7 +3948,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(["infer-vendor", "--model", "kimi-k3-high"])
+            code = main(["infer-vendor", "--model", "kimi-k3-high"])
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(buf.getvalue()), {"vendor": "moonshot"})
 
@@ -4019,7 +3958,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(["infer-vendor", "--model", "auto"])
+            code = main(["infer-vendor", "--model", "auto"])
         self.assertEqual(code, 0)
         self.assertIsNone(json.loads(buf.getvalue())["vendor"])
 
@@ -4029,7 +3968,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(["build-command", "--cli", "codex", "--effort", "high"])
+            code = main(["build-command", "--cli", "codex", "--effort", "high"])
         self.assertEqual(code, 0)
         self.assertIn("model_reasoning_effort='\"high\"'", buf.getvalue())
 
@@ -4039,7 +3978,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stderr(buf):
-            code = rs.main(["build-command", "--cli", "nonexistent-cli"])
+            code = main(["build-command", "--cli", "nonexistent-cli"])
         self.assertEqual(code, 1)
         self.assertIn("no command builder", buf.getvalue())
 
@@ -4049,7 +3988,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(["build-command", "--cli", "cursor-agent", "--mode", "ask"])
+            code = main(["build-command", "--cli", "cursor-agent", "--mode", "ask"])
         self.assertEqual(code, 0)
         self.assertIn("--mode ask", buf.getvalue())
 
@@ -4059,7 +3998,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(
+            code = main(
                 [
                     "build-model-id",
                     "--cli",
@@ -4079,7 +4018,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(
+            code = main(
                 ["build-model-id", "--cli", "codex", "--base-model", "gpt-5.2", "--effort", "high"]
             )
         self.assertEqual(code, 0)
@@ -4091,7 +4030,7 @@ class TestMainCli(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             runtimes_path = os.path.join(d, "runtimes.json")
-            rs.cache_write_json(
+            cache_write_json(
                 runtimes_path,
                 {
                     "clis": {
@@ -4104,7 +4043,7 @@ class TestMainCli(unittest.TestCase):
             )
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["group-models", "--runtimes-json", runtimes_path, "--cli", "cursor-agent"]
                 )
             self.assertEqual(code, 0)
@@ -4120,7 +4059,7 @@ class TestMainCli(unittest.TestCase):
             runtimes_path = os.path.join(d, "does-not-exist.json")
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["group-models", "--runtimes-json", runtimes_path, "--cli", "cursor-agent"]
                 )
             self.assertEqual(code, 0)
@@ -4132,7 +4071,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(
+            code = main(
                 ["check-reviewer", "--key", "session-default"],
                 run_fn=lambda *a, **k: (_ for _ in ()).throw(
                     AssertionError("should never shell out for a native entry")
@@ -4152,7 +4091,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(
+            code = main(
                 [
                     "check-reviewer",
                     "--key",
@@ -4184,7 +4123,7 @@ class TestMainCli(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = rs.main(
+            code = main(
                 [
                     "check-reviewer",
                     "--key",
@@ -4983,7 +4922,7 @@ class TestExecuteCliRejection(unittest.TestCase):
                 f.write("task")
             buf = io.StringIO()
             with redirect_stderr(buf):
-                code = rs.main(
+                code = main(
                     [
                         "dispatch-execute",
                         "--cli",
@@ -5486,7 +5425,7 @@ class TestDispatchReviewer(unittest.TestCase):
                 }
 
             with redirect_stdout(io.StringIO()) as out:
-                code = rs.main(
+                code = main(
                     [
                         "dispatch-reviewer",
                         "--reviewers-json",
@@ -5529,7 +5468,7 @@ class TestDispatchReviewer(unittest.TestCase):
                     f,
                 )
             with redirect_stderr(io.StringIO()) as err:
-                code = rs.main(
+                code = main(
                     [
                         "dispatch-reviewer",
                         "--reviewers-json",
@@ -5558,7 +5497,7 @@ class TestDispatchReviewer(unittest.TestCase):
             with open(reviewers_path, "w", encoding="utf-8") as f:
                 json.dump([], f)
             with redirect_stderr(io.StringIO()) as err:
-                code = rs.main(
+                code = main(
                     [
                         "dispatch-reviewer",
                         "--reviewers-json",
@@ -5621,7 +5560,7 @@ class TestTimeoutTiers(unittest.TestCase):
                     f,
                 )
             with redirect_stdout(io.StringIO()) as out:
-                code = rs.main(
+                code = main(
                     [
                         "resolve-timeout-tiers",
                         "--cwd",
@@ -5657,7 +5596,7 @@ class TestTimeoutTiers(unittest.TestCase):
                     f,
                 )
             with redirect_stdout(io.StringIO()) as out:
-                code = rs.main(
+                code = main(
                     [
                         "resolve-timeout-tiers",
                         "--cwd",
@@ -8000,7 +7939,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8042,7 +7981,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8075,7 +8014,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8106,7 +8045,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8139,7 +8078,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8189,7 +8128,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8224,7 +8163,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "confirm-catalog-entry",
                         "--catalog-path",
@@ -8255,7 +8194,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "confirm-catalog-entry",
                         "--catalog-path",
@@ -8292,7 +8231,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "apply-heuristic-correction",
                         "--catalog-path",
@@ -8330,7 +8269,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "apply-heuristic-correction",
                         "--catalog-path",
@@ -8459,7 +8398,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8496,7 +8435,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8526,7 +8465,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8556,7 +8495,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8579,7 +8518,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             fetches = []
             buf2 = io.StringIO()
             with redirect_stdout(buf2):
-                code2 = rs.main(
+                code2 = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8613,7 +8552,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "confirm-catalog-entry",
                         "--catalog-path",
@@ -8643,7 +8582,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "confirm-catalog-entry",
                         "--catalog-path",
@@ -8682,7 +8621,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "apply-heuristic-correction",
                         "--catalog-path",
@@ -8713,7 +8652,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -8807,7 +8746,7 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
 
                 buf = io.StringIO()
                 with redirect_stdout(buf):
-                    code = rs.main(
+                    code = main(
                         ["detect-runtimes", "--if-stale", r],
                         which_fn=self._claude_which,
                         run_fn=recording_run_fn,
@@ -8822,7 +8761,7 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
 
                 buf = io.StringIO()
                 with redirect_stdout(buf):
-                    code = rs.main(
+                    code = main(
                         [
                             "fetch-model-catalog",
                             "--if-stale",
@@ -9008,7 +8947,7 @@ class TestClaudeFallback(unittest.TestCase):
             r = os.path.join(d, "runtimes.json")
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["detect-runtimes", "--if-stale", r],
                     which_fn=self._claude_which,
                     run_fn=lambda *a, **k: None,
@@ -9038,7 +8977,7 @@ class TestClaudeFallback(unittest.TestCase):
             cache_write_json(runtimes_path, {"clis": {}})
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -9134,7 +9073,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
             )
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda api_key: ([], True),
                     fetch_models_dev_fn=lambda: (models_dev_data, True),
@@ -9199,7 +9138,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--if-stale",
@@ -9260,7 +9199,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
             }
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda api_key: ([], True),
                     fetch_models_dev_fn=lambda: (models_dev_data, True),
@@ -9364,7 +9303,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 json.dump({"model_id": model_id, "entry": orphan_entry}, f)
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(["confirm-catalog-entry", "--catalog-path", c, "--entry-json", e])
+                code = main(["confirm-catalog-entry", "--catalog-path", c, "--entry-json", e])
             self.assertEqual(code, 1)
             # Nothing written
             self.assertFalse(os.path.exists(c))
@@ -9381,7 +9320,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 json.dump({"model_id": model_id, "entry": legacy_entry}, f)
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(["confirm-catalog-entry", "--catalog-path", c, "--entry-json", e])
+                code = main(["confirm-catalog-entry", "--catalog-path", c, "--entry-json", e])
             self.assertEqual(code, 0)
             # Entry is persisted
             catalog = cache_read_json(c)
@@ -9563,7 +9502,7 @@ openai/gpt-5.6-sol
             )
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -9626,7 +9565,7 @@ openai/gpt-5.6-sol
             )
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda api_key: ([], True),
                     fetch_models_dev_fn=lambda: (
@@ -9659,7 +9598,7 @@ openai/gpt-5.6-sol
             )
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--if-stale",
@@ -9704,7 +9643,7 @@ openai/gpt-5.6-sol
             )
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda api_key: ([], True),
                     fetch_models_dev_fn=lambda: (
@@ -9742,7 +9681,7 @@ openai/gpt-5.6-sol
             )
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--if-stale",
@@ -9788,7 +9727,7 @@ openai/gpt-5.6-sol
             )
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda api_key: ([], True),
                     fetch_models_dev_fn=lambda: (
@@ -9810,7 +9749,7 @@ openai/gpt-5.6-sol
             )
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--if-stale",
@@ -9872,7 +9811,7 @@ openai/gpt-5.6-sol
             )
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--if-stale",
@@ -9945,7 +9884,7 @@ class TestClaudeRuntimeFreshness(unittest.TestCase):
                         cache_write_json(model_catalog.cache_catalog_path(env), seed)
                     buf = io.StringIO()
                     with redirect_stdout(buf):
-                        code = rs.main(
+                        code = main(
                             ["detect-runtimes", "--if-stale", r],
                             which_fn=self._claude_which,
                             run_fn=lambda *a, **k: None,
@@ -9955,7 +9894,7 @@ class TestClaudeRuntimeFreshness(unittest.TestCase):
                     self.assertNotEqual(json.loads(buf.getvalue()), {})  # first run detects
                     buf = io.StringIO()
                     with redirect_stdout(buf):
-                        code = rs.main(
+                        code = main(
                             ["detect-runtimes", "--if-stale", r],
                             which_fn=self._claude_which,
                             run_fn=lambda *a, **k: None,
@@ -9979,7 +9918,7 @@ class TestClaudeRuntimeFreshness(unittest.TestCase):
             def detect():
                 buf = io.StringIO()
                 with redirect_stdout(buf):
-                    code = rs.main(
+                    code = main(
                         ["detect-runtimes", "--if-stale", r],
                         which_fn=self._claude_which,
                         run_fn=lambda *a, **k: None,
@@ -9993,7 +9932,7 @@ class TestClaudeRuntimeFreshness(unittest.TestCase):
                     argv.append("--if-stale")
                 buf = io.StringIO()
                 with redirect_stdout(buf):
-                    code = rs.main(
+                    code = main(
                         argv,
                         which_fn=self._claude_which,
                         fetch_models_dev_fn=lambda: (md, True),
@@ -10110,7 +10049,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
 
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -10160,7 +10099,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
             }
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -10205,7 +10144,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
             }
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -10298,7 +10237,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
             }
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = rs.main(
+                code = main(
                     [
                         "fetch-model-catalog",
                         "--runtimes-json",
@@ -10332,7 +10271,7 @@ class TestArgvRendering(unittest.TestCase):
     """D-10: reviewer templates render to argv lists; shell syntax fails loudly."""
 
     def _resolved(self, command, extra=None):
-        return rs.ResolvedReviewer(
+        return ResolvedReviewer(
             key="k", model="m", vendor="v", cli="codex", command=command, extra=extra or {}
         )
 
@@ -10343,7 +10282,7 @@ class TestArgvRendering(unittest.TestCase):
         )
 
     def test_render_returns_argv_with_raw_prompt_and_formatted_extra(self):
-        argv = rs.render_reviewer_command(
+        argv = render_reviewer_command(
             self._resolved(
                 "codex exec -m {model} -c effort='\"{effort}\"' {prompt}", extra={"effort": "high"}
             ),
@@ -10361,7 +10300,7 @@ class TestArgvRendering(unittest.TestCase):
 
     def test_render_surfaces_shell_syntax_rejection(self):
         with self.assertRaises(ValueError):
-            rs.render_reviewer_command(self._resolved("x; rm -rf /"), "p")
+            render_reviewer_command(self._resolved("x; rm -rf /"), "p")
 
     def test_empty_and_whitespace_templates_raise_value_error_naming_key(self):
         for template in ("", "   "):
@@ -10372,9 +10311,9 @@ class TestArgvRendering(unittest.TestCase):
 
     def test_unknown_placeholder_and_literal_brace_still_raise_value_error(self):
         with self.assertRaises(ValueError):
-            rs.render_reviewer_command(self._resolved("codex -m {model} {nope}"), "p")
+            render_reviewer_command(self._resolved("codex -m {model} {nope}"), "p")
         with self.assertRaises(ValueError):
-            rs.render_reviewer_command(self._resolved("codex -m {model} {}"), "p")
+            render_reviewer_command(self._resolved("codex -m {model} {}"), "p")
 
 
 class TestChildEnv(unittest.TestCase):
@@ -10544,7 +10483,7 @@ class TestProbeArgv(unittest.TestCase):
     """D-10/D-14: the quota probe spawns an argv list, no shell, scrubbed env."""
 
     def test_probe_calls_run_fn_with_argv_no_shell_and_scrubbed_env(self):
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="k", model="m", vendor="v", cli="codex", command="codex exec -m {model}", extra={}
         )
         captured = {}
@@ -10559,7 +10498,7 @@ class TestProbeArgv(unittest.TestCase):
             captured.update(kw)
             return FakeResult()
 
-        rs.probe_reviewer_quota(resolved, run_fn=fake_run)
+        probe_reviewer_quota(resolved, run_fn=fake_run)
         self.assertEqual(captured["argv"], ["codex", "exec", "-m", "m"])
         self.assertNotIn("shell", captured)
         self.assertEqual(captured["input"], "Only say: Hello world!")
@@ -10567,7 +10506,7 @@ class TestProbeArgv(unittest.TestCase):
         self.assertNotIn("AI_AGENT", captured["env"])
 
     def test_probe_with_nonexistent_binary_reports_oserror_not_exception(self):
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="k",
             model="m",
             vendor="v",
@@ -10575,15 +10514,15 @@ class TestProbeArgv(unittest.TestCase):
             command="definitely-not-a-real-binary-xyz --flag",
             extra={},
         )
-        result = rs.probe_reviewer_quota(resolved)
+        result = probe_reviewer_quota(resolved)
         self.assertFalse(result["available"])
         self.assertIn("definitely-not-a-real-binary-xyz", result["detail"])
 
     def test_probe_on_shell_syntax_template_is_unavailable_naming_the_key(self):
-        resolved = rs.ResolvedReviewer(
+        resolved = ResolvedReviewer(
             key="k", model="m", vendor="v", cli="codex", command="codex exec $HOME", extra={}
         )
-        result = rs.probe_reviewer_quota(
+        result = probe_reviewer_quota(
             resolved,
             run_fn=lambda *a, **k: (_ for _ in ()).throw(
                 AssertionError("must fail before any spawn")
