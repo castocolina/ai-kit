@@ -269,15 +269,21 @@ _SUPPLEMENTARY_INDEX_ENTRIES: dict[str, str] = {
     "semgrep": "security",
 }
 
-for _entry, _category in _SUPPLEMENTARY_INDEX_ENTRIES.items():
-    _existing = TOOL_CATEGORY_INDEX.get(_entry)
-    if _existing is not None and _existing != _category:
-        raise ImportError(
-            f"tool_catalog: supplementary entry collision -- {_entry!r} is "
-            f"already {_existing!r}, cannot also be {_category!r}"
-        )
-    TOOL_CATEGORY_INDEX[_entry] = _category
-del _entry, _category, _existing
+
+def _merge_supplementary(
+    index: dict[str, str], supplementary: dict[str, str]
+) -> None:
+    for entry, category in supplementary.items():
+        existing = index.get(entry)
+        if existing is not None and existing != category:
+            raise ImportError(
+                f"tool_catalog: supplementary entry collision -- {entry!r} is "
+                f"already {existing!r}, cannot also be {category!r}"
+            )
+        index[entry] = category
+
+
+_merge_supplementary(TOOL_CATEGORY_INDEX, _SUPPLEMENTARY_INDEX_ENTRIES)
 
 _TOOL_CATEGORY_INDEX_CASEFOLD: dict[str, str] = {
     entry.casefold(): category for entry, category in TOOL_CATEGORY_INDEX.items()

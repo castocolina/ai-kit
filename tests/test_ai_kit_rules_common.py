@@ -1331,6 +1331,12 @@ class TestToolCategoryIndexDerivation(unittest.TestCase):
         with self.assertRaises(ImportError):
             _derive_from(colliding)
 
+    def test_supplementary_merge_collision_guard_is_non_vacuous(self):
+        index = {"shared-tool": "formatting"}
+        supplementary = {"shared-tool": "linting"}
+        with self.assertRaises(ImportError):
+            _tc._merge_supplementary(index, supplementary)
+
 
 def _derive_from(baseline):
     """Re-implements `_derive_tool_category_index`'s collision rule against
