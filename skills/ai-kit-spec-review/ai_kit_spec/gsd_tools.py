@@ -83,8 +83,10 @@ def _host_homes(env: Mapping[str, str]) -> list[str]:
 def local_gsd_core_roots(root: str) -> list[str]:
     """Project-local gsd-core install roots in GSD's launcher order (before any host home).
 
-    Shared by `gsd_core_roots` and the curated-config inventory resolver — never duplicate
-    this list elsewhere."""
+    Shared by `gsd_core_roots` and the curated-config inventory resolver. The only other
+    copy is the drift-tested one in `edge_floor.py` (see the module docstring). On pi hosts
+    the inventory resolver (`ai_kit_gsd_curated_config.host`) tries `<root>/.pi/gsd-core`
+    before this list (17 D-11); this shared, host-agnostic list does not include it."""
     return [os.path.join(root, "gsd-core"), os.path.join(root, ".claude", "gsd-core"),
             os.path.join(root, ".codex", "gsd-core")]
 
