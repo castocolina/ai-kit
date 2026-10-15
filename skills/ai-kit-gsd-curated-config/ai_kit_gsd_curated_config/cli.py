@@ -462,7 +462,7 @@ def _cmd_recommend(args, which_fn, run_fn, env_fn) -> int:
     del which_fn, run_fn, env_fn  # recommend performs no subprocess and no env read
     loaded, error = plan_io.load_inventory(args.inventory)
     if loaded is None:
-        print(error, file=sys.stderr)
+        print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
         return 2
     refusal = plan_io.out_path_problem(args.out, args.inventory, loaded)
     if refusal:

@@ -1866,6 +1866,8 @@ class TestInventoryValidation(unittest.TestCase):
         inv["schema_version"] = 2
         _, _, _, err = self._run(inv)
         self.assertIn("schema_version 2 unsupported (expected 1)", err)
+        # B-IN-08: the same prefix as every other CLI error path.
+        self.assertTrue(err.startswith("ai-kit-gsd-curated-config: inventory "), err)
 
     def test_missing_schema_version_fails_closed(self):
         inv = make_inventory()
