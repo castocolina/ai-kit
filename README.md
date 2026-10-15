@@ -373,29 +373,44 @@ single-line. A failing, slow (past `timeout`), or empty provider is simply omitt
 
 ```bash
 install.sh --dry-run            # show what would change, mutate nothing
-install.sh --uninstall          # remove every ai-kit symlink + statusLine (keeps the install dir)
+install.sh --uninstall          # remove ai-kit symlinks, statusLine and hook entries (keeps the install dir)
 install.sh --examples=all|none|<ids>   # which bundled example segments to install (default: all)
 install.sh --branch <name>      # fetch a specific branch  (or --branch=<name>; fork via AI_KIT_REPO)
 install.sh reconfigure          # re-open the wizard pre-loaded with your current selection + layout
 ```
 
+`--uninstall` exits 1, naming the file, when a Claude Code or Cursor settings file could not be
+read or rewritten, so ai-kit may still be wired there; fix the file and re-run it.
+
 **Try a branch without merging it.** `--branch <name>` (or `--branch=<name>`, or the
 `AI_KIT_BRANCH` env var) is consumed by the bootstrapper (not passed to the wizard) and overrides
-which branch is fetched. On an **existing clone** an explicit branch is honored too: when the tree
-is clean, install.sh runs `git remote set-branches --add origin B` → `git fetch --depth 1 origin B`
-→ `git switch -C B --track origin/B`; when the tree is dirty or a `.git/index.lock` is left over
-from an interrupted run it refuses (naming the `git -C <dir> status` command to run to inspect it)
-and never auto-recovers. The default `main` never triggers a switch — with no explicit branch an
-existing clone just gets `git pull --ff-only`. `set-branches` is skipped when the branch's refspec
-is already configured, so re-running is idempotent.
+which branch is fetched. It applies only when install.sh fetches (piped from curl/wget); run from a
+local checkout it is ignored with a note. On an **existing clone** at the install dir, an explicit
+branch runs this sequence:
 
-`--dry-run` prints the planned git commands (the switch sequence above, the `pull --ff-only`, or
-the clone/tarball command on a fresh bootstrap) and runs no fetch, pull, switch, set-branches or
-clone; on an existing clone it still hands `--dry-run` to the wizard, and on a not-yet-fetched
-bootstrap it stops before running setup.py.
+1. `git check-ref-format --branch B` rejects a malformed name.
+2. It refuses when the tree is dirty, `git status` fails, or a `.git/index.lock` is left over from
+   an interrupted run, naming `git -C <dir> status` to inspect it. It never auto-recovers.
+3. It refuses when local `B` has commits that no `origin` branch has (checked before fetching,
+   because a `--depth 1` fetch hides older history).
+4. `--dry-run` prints the remaining steps and stops here.
+5. `git ls-remote --exit-code --heads origin B` refuses a branch that is not on `origin`.
+6. `git remote set-branches --add origin B`, skipped when that refspec is already configured.
+7. `git fetch --depth 1 origin B`, then `git switch -C B --track origin/B`. If either fails, the
+   refspec added in step 6 is removed again.
 
-A fork is selected with the `AI_KIT_REPO` env
-var; the default is `castocolina/ai-kit`.
+The default `main` never triggers a switch: with no explicit branch an existing clone runs
+`git pull --ff-only origin <current branch>`, and refuses on a detached HEAD. Naming the branch
+means a refspec left over from a branch deleted upstream cannot break the update.
+
+`--dry-run` mutates nothing on any path: it prints the planned git commands (the sequence above,
+the `pull`, or the clone/tarball command) and runs no fetch, pull, switch, set-branches, clone or
+download, including over an earlier tarball (non-git) install. On an existing install it still
+hands `--dry-run` to the wizard; on a not-yet-fetched bootstrap it stops before running setup.py.
+
+A fork is selected with the `AI_KIT_REPO` env var (default `castocolina/ai-kit`) for a new clone or
+tarball download. An existing clone fetches from its own `origin`, and install.sh prints a note
+that `AI_KIT_REPO` is ignored.
 
 One catch: the `install.sh` you pipe must itself be a *flag-aware* version — `--branch` only exists
 in `install.sh` from a branch that has it (or from `main` once it's merged there). So to bootstrap a
