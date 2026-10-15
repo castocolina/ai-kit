@@ -4,9 +4,7 @@
 # All python tools come from the uv-locked dev env (`uv run`) — versions live in
 # uv.lock, NOT duplicated here. The ai-kit runtime stays stdlib-only; this is dev-only.
 #
-# Enforcement is intentionally LENIENT during the render refactor (relaxed pylint
-# design thresholds in pyproject.toml; a minimal test set below). After Phase 2 the
-# thresholds tighten (Task 2.6) and the test hook expands to the full suite.
+# Ruff and py-compile cover every shipped Python file under tools, skills and tests.
 default_install_hook_types: [pre-commit, pre-push]
 # BEGIN GENERATED test groups
 # arch: tests.test_arch
@@ -22,10 +20,7 @@ repos:
         name: ruff
         entry: uv run ruff check
         language: system
-        # Scoped to the refactor's modules + tests, plus review-spec.py.
-        # The rest of skills/ joins the gate later (the "enforce more
-        # after the refactor" expansion).
-        files: ^((tools|tests)/.*|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-project-rules-agents/.*|skills/ai-kit-project-rules-makefile/.*|skills/ai-kit-project-rules-precommit/.*|skills/ai-kit-project-rules-arch/.*|skills/ai-kit-project-rules-docker/.*|skills/ai-kit-project-rules-cicd/.*|skills/ai-kit-project-rules-all/.*|skills/ai-kit-gsd-curated-config/.*|skills/ai-kit-gsd-spec-discuss/.*|skills/_shared/.*)\.py$
+        files: ^(tools|skills|tests)/.*\.py$
         require_serial: true
       - id: pylint
         name: pylint
@@ -54,7 +49,7 @@ repos:
         name: py-compile
         entry: python3 -m py_compile
         language: system
-        files: ^(tools/(status-line|statusline-doctor|setup)|tools/hooks/[a-z_]+|tools/config_doctor_[a-z_]+|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-project-rules-agents/.*|skills/ai-kit-project-rules-makefile/.*|skills/ai-kit-project-rules-precommit/.*|skills/ai-kit-project-rules-arch/.*|skills/ai-kit-project-rules-docker/.*|skills/ai-kit-project-rules-cicd/.*|skills/ai-kit-project-rules-all/.*|skills/ai-kit-gsd-curated-config/.*|skills/ai-kit-gsd-spec-discuss/.*|skills/_shared/.*)\.py$
+        files: ^(tools|skills|tests)/.*\.py$
       # Tests run on the user's real runtime (system python3, stdlib-only), matching
       # how the status line actually runs. Modules are discovered and grouped by the runner.
       # One subprocess per module, in parallel (tools/run_unittest_parallel.py, stdlib-only).

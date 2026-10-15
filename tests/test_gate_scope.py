@@ -1,15 +1,28 @@
 """Every test module is gated exactly once, through the parallel runner."""
 import importlib.util
+import os
 import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 MAKEFILE = REPO_ROOT / "Makefile"
 HOOKS = REPO_ROOT / ".pre-commit-config.yaml"
 RUNNER = REPO_ROOT / "tools" / "run_unittest_parallel.py"
+SHIPPED_SUBDIRS = ("tools", "skills", "tests")
+PRE_WIDEN_RUFF_FILES = (
+    r"^((tools|tests)/.*|skills/ai-kit-spec-review/ai-kit-spec-review|"
+    r"skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|"
+    r"skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|"
+    r"skills/ai-kit-project-rules-agents/.*|skills/ai-kit-project-rules-makefile/.*|"
+    r"skills/ai-kit-project-rules-precommit/.*|skills/ai-kit-project-rules-arch/.*|"
+    r"skills/ai-kit-project-rules-docker/.*|skills/ai-kit-project-rules-cicd/.*|"
+    r"skills/ai-kit-project-rules-all/.*|skills/ai-kit-gsd-curated-config/.*|"
+    r"skills/ai-kit-gsd-spec-discuss/.*|skills/_shared/.*)\.py$"
+)
 
 TIER_TARGETS = ("test-unit", "test-integration", "e2e-test", "arch-test")
 UV_TARGETS = ("test-integration", "e2e-test")
@@ -83,6 +96,51 @@ def hook_ids(text: str) -> list[str]:
     return re.findall(r"^\s*- id: (\S+)", text, re.MULTILINE)
 
 
+def iter_py_files(root: pathlib.Path, subdirs: tuple[str, ...]) -> list[str]:
+    """Repo-relative paths to every ``.py`` under ``subdirs``."""
+    paths: list[str] = []
+    for sub in subdirs:
+        base = root / sub
+        if not base.is_dir():
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [
+                name for name in dirnames
+                if name != "__pycache__" and not name.startswith(".")
+            ]
+            for name in filenames:
+                if name.endswith(".py"):
+                    rel = pathlib.Path(dirpath, name).relative_to(root)
+                    paths.append(rel.as_posix())
+    return sorted(paths)
+
+
+def unselected_files(paths: list[str], regex: str) -> list[str]:
+    """Paths the hook ``files:`` regex does not match."""
+    pattern = re.compile(regex)
+    return sorted(path for path in paths if not pattern.match(path))
+
+
+def hook_files_regex(text: str, hook_id: str) -> str | None:
+    """Return a hook's ``files:`` regex, if present."""
+    current: str | None = None
+    for line in text.splitlines():
+        id_match = re.match(r"\s*- id: (\S+)", line)
+        if id_match:
+            current = id_match.group(1)
+            continue
+        if current == hook_id and (files_match := re.match(r"\s*files: (.*)", line)):
+            return files_match.group(1).strip()
+    return None
+
+
+def make_target_line(makefile: str, name: str) -> str | None:
+    for line in makefile.splitlines():
+        if line.startswith(f"{name}:"):
+            return line
+    return None
+
+
 class TestGateScope(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -154,6 +212,23 @@ class TestGateScope(unittest.TestCase):
         self.assertEqual(MAKEFILE.read_text(), self.makefile)
         self.assertEqual(HOOKS.read_text(), self.hooks)
 
+    def test_ruff_selects_every_shipped_py(self) -> None:
+        regex = hook_files_regex(self.hooks, "ruff")
+        self.assertIsNotNone(regex)
+        paths = iter_py_files(REPO_ROOT, SHIPPED_SUBDIRS)
+        self.assertGreater(len(paths), 0)
+        self.assertEqual(unselected_files(paths, regex or ""), [])
+
+    def test_py_compile_selects_every_shipped_py(self) -> None:
+        regex = hook_files_regex(self.hooks, "py-compile")
+        self.assertIsNotNone(regex)
+        paths = iter_py_files(REPO_ROOT, SHIPPED_SUBDIRS)
+        self.assertEqual(unselected_files(paths, regex or ""), [])
+
+    def test_make_lint_is_hook_aggregate(self) -> None:
+        self.assertEqual(make_target_line(self.makefile, "lint"), "lint: shellcheck py-compile")
+        self.assertEqual(recipe_lines(self.makefile, "lint"), [])
+
 
 class TestGateScopeNonVacuity(unittest.TestCase):
     def test_flags_a_module_in_two_groups(self) -> None:
@@ -171,6 +246,19 @@ class TestGateScopeNonVacuity(unittest.TestCase):
     def test_flags_wizard_hook_first(self) -> None:
         self.assertEqual(hook_order_errors(["unittest-wizard", "unittest"]),
                          ["unittest-wizard precedes unittest"])
+
+    def test_narrow_regex_misses_unlisted_skill_py(self) -> None:
+        path = "skills/ai-kit-spec-review/ai_kit_spec/cli.py"
+        self.assertEqual(unselected_files([path], PRE_WIDEN_RUFF_FILES), [path])
+
+    def test_skill_dir_without_py_is_fine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "skills" / "empty-skill").mkdir(parents=True)
+            paths = iter_py_files(root, SHIPPED_SUBDIRS)
+            self.assertEqual(paths, [])
+            wide = r"^(tools|skills|tests)/.*\.py$"
+            self.assertEqual(unselected_files(paths, wide), [])
 
 
 if __name__ == "__main__":
