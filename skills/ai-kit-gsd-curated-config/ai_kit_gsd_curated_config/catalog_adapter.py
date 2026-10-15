@@ -19,6 +19,7 @@ _DETECT_WARN = "detect-runtimes failed; using the cached runtimes snapshot"
 _STALE_WARN = "catalog refresh failed; using the stale cache"
 _AA_WARN = "Artificial Analysis refresh failed; scores from cache"
 _MODELS_DEV_WARN = "models.dev refresh failed; prices and capabilities from cache"
+_PROBE_WARN = "opencode 2.x image probe failed; image_input unverified for opencode models"
 _SIBLING_ERR = (
     "the ai-kit-spec-review sibling skill (ai_kit_spec) is not installed next to this skill"
 )
@@ -109,6 +110,8 @@ def _catalog_state_from_cache(read: _CacheRead, weights, warnings, fetch_result)
         read.cache, read.model_catalog, read.paths.runtimes_path, read.paths.catalog_path
     )
     state, state_warnings = _catalog_state(fetch_result, entries)
+    if _opencode_probe_failed(runtimes):
+        state_warnings.append(_PROBE_WARN)
     merged = sorted(set(warnings) | set(state_warnings))
     return CatalogState(
         state,
@@ -118,6 +121,12 @@ def _catalog_state_from_cache(read: _CacheRead, weights, warnings, fetch_result)
         entries,
         weights,
     )
+
+
+def _opencode_probe_failed(runtimes) -> bool:
+    clis = runtimes.get("clis") if isinstance(runtimes, dict) else None
+    opencode = clis.get("opencode") if isinstance(clis, dict) else None
+    return isinstance(opencode, dict) and opencode.get("image_input_probe") == "failed"
 
 
 def _load_spec_stack():

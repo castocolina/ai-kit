@@ -463,6 +463,21 @@ class TestCatalogStates(unittest.TestCase):
             with self.assertRaisesRegex(ImportError, "ai-kit-spec-review"):
                 catalog_adapter.build_candidates({"clis": {}}, {}, "codex", {})
 
+    def test_failed_opencode_probe_surfaces_warning(self):
+        """C-WR-02: a recorded probe failure reaches the inventory warnings."""
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        runtimes = {"clis": {"opencode": {"installed": True, "models": [],
+                                          "image_input_probe": "failed"}}}
+        env = _inventory_env(home, runtimes, {"_meta": {"schema_version": 1}})
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        code, parsed, _err = run_inventory(project, env, FakeRun(), "--host", "opencode")
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertIn(catalog_adapter._PROBE_WARN, parsed["warnings"])
+
     def test_models_dev_failure_warns_even_when_aa_succeeds(self):
         """B-WR-04: never a silent 'fresh' when prices/capabilities came from cache."""
         state, warns = catalog_adapter._catalog_state(
