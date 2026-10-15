@@ -260,24 +260,22 @@ def choice_candidates(
 
 
 def agent_tier(agent: str, gsd_core: dict, profile: str, shifts: dict) -> str | None:
+    """`model_profiles` is profile -> {agent: tier} (normalized by the inventory). A
+    missing profile cell reads the balanced one, like gsd-core's computeProfileTier."""
     phase = gsd_core["agent_to_phase_type"].get(agent)
     if phase is not None and phase in shifts:
         tier = shifts[phase]
     else:
-        tier = gsd_core["model_profiles"][profile].get(agent)
+        profiles = gsd_core["model_profiles"]
+        tier = profiles.get(profile, {}).get(agent) or profiles.get("balanced", {}).get(agent)
     if tier not in presets.TIERS:
         return None
     return tier
 
 
 def used_tiers(gsd_core: dict, profile: str, shifts: dict) -> tuple[str, ...]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for agent in gsd_core["model_profiles"][profile]:
-        tier = agent_tier(agent, gsd_core, profile, shifts)
-        if tier is not None and tier not in seen:
-            seen.add(tier)
-            ordered.append(tier)
+    agents = {a for column in gsd_core["model_profiles"].values() for a in column}
+    seen = {agent_tier(a, gsd_core, profile, shifts) for a in agents}
     return tuple(t for t in presets.TIERS if t in seen)
 
 

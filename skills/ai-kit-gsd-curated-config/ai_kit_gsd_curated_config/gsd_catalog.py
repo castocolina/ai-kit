@@ -149,44 +149,47 @@ _GSD_TABLES_QUERY_SCRIPT = (
 )
 
 
+def profile_first(agent_first) -> dict:
+    """gsd-core exports `MODEL_PROFILES` agent -> {profile: tier}; the inventory stores
+    it profile -> {agent: tier}, the shape `roles` reads. Non-dict rows and non-str
+    tiers are dropped."""
+    out: dict[str, dict[str, str]] = {}
+    for agent, per_profile in agent_first.items():
+        if not isinstance(per_profile, dict):
+            continue
+        for profile, tier in per_profile.items():
+            if isinstance(tier, str):
+                out.setdefault(profile, {})[agent] = tier
+    return out
+
+
 def _parse_tables_output(stdout: str) -> dict | None:
     try:
         parsed = json.loads(stdout)
     except json.JSONDecodeError:
-        parsed = None
-    out = None
-    if isinstance(parsed, dict):
-        rpm = parsed.get("runtime_profile_map")
-        profiles = parsed.get("model_profiles")
-        phase = parsed.get("agent_to_phase_type")
-        valid_keys = parsed.get("valid_keys")
-        accepted = valid_keys.get("accepted") if isinstance(valid_keys, dict) else None
-        rejected = valid_keys.get("rejected") if isinstance(valid_keys, dict) else None
-        key_lists_ok = (
-            isinstance(accepted, list)
-            and isinstance(rejected, list)
-            and all(isinstance(k, str) for k in accepted + rejected)
-        )
-        tables_ok = (
-            isinstance(rpm, dict)
-            and rpm
-            and isinstance(profiles, dict)
-            and profiles
-            and isinstance(phase, dict)
-            and phase
-            and key_lists_ok
-        )
-        if tables_ok and isinstance(accepted, list) and isinstance(rejected, list):
-            out = {
-                "runtime_profile_map": rpm,
-                "model_profiles": profiles,
-                "agent_to_phase_type": phase,
-                "valid_keys": {
-                    "accepted": sorted(accepted),
-                    "rejected": sorted(rejected),
-                },
-            }
-    return out
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    rpm = parsed.get("runtime_profile_map")
+    profiles = parsed.get("model_profiles")
+    phase = parsed.get("agent_to_phase_type")
+    valid_keys = parsed.get("valid_keys")
+    if not isinstance(valid_keys, dict):
+        valid_keys = {}
+    accepted = valid_keys.get("accepted")
+    rejected = valid_keys.get("rejected")
+    by_profile = profile_first(profiles) if isinstance(profiles, dict) else {}
+    tables_ok = isinstance(rpm, dict) and rpm and isinstance(phase, dict) and phase and by_profile
+    if not tables_ok or not isinstance(accepted, list) or not isinstance(rejected, list):
+        return None
+    if not all(isinstance(k, str) for k in accepted + rejected):
+        return None
+    return {
+        "runtime_profile_map": rpm,
+        "model_profiles": by_profile,
+        "agent_to_phase_type": phase,
+        "valid_keys": {"accepted": sorted(accepted), "rejected": sorted(rejected)},
+    }
 
 
 def query_gsd_tables(paths: GsdCorePaths, project_dir, keys, run_fn=subprocess.run):

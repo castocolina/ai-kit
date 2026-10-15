@@ -113,6 +113,9 @@ def _validate_gsd_core(gsd_core: dict) -> str | None:
     for key in ("accepted", "rejected"):
         if not isinstance(valid_keys.get(key), list):
             return f"key gsd_core.valid_keys.{key}: expected list"
+    problem = _model_profiles_problem(gsd_core["model_profiles"])
+    if problem:
+        return problem
     for key in ("path", "scope"):
         value = gsd_core.get(key)
         if value is not None and not isinstance(value, str):
@@ -120,6 +123,18 @@ def _validate_gsd_core(gsd_core: dict) -> str | None:
     version = gsd_core.get("version")
     if version is not None and not isinstance(version, str):
         return "key gsd_core.version: expected str or null"
+    return None
+
+
+def _model_profiles_problem(profiles: dict) -> str | None:
+    if not all(
+        isinstance(column, dict) and all(isinstance(t, str) for t in column.values())
+        for column in profiles.values()
+    ):
+        return "key gsd_core.model_profiles: expected profile -> {agent: tier}"
+    # The balanced column is gsd-core's fallback; its absence means an agent-first table.
+    if "balanced" not in profiles:
+        return "key gsd_core.model_profiles: no balanced profile column"
     return None
 
 

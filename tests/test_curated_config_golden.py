@@ -82,25 +82,12 @@ def _fixture_rejected_keys() -> set[str]:
     return set(vk.get("rejected", []))
 
 
-def _profile_first_model_profiles(agent_first: dict) -> dict:
-    """gsd-core exports agent -> {profile: tier}; recommend expects profile -> {agent: tier}."""
-    out: dict[str, dict[str, str]] = {}
-    for agent, profs in agent_first.items():
-        if not isinstance(profs, dict):
-            continue
-        for profile, tier in profs.items():
-            if isinstance(tier, str):
-                out.setdefault(profile, {})[agent] = tier
-    return out
-
-
 def tables_answer(keys: list[str]) -> dict:
     body = _tables_body()
     rejected_set = _fixture_rejected_keys()
     accepted = sorted(k for k in keys if k not in rejected_set)
     rejected = sorted(k for k in keys if k in rejected_set)
     out = dict(body)
-    out["model_profiles"] = _profile_first_model_profiles(body["model_profiles"])
     out["valid_keys"] = {"accepted": accepted, "rejected": rejected}
     return out
 
@@ -242,23 +229,33 @@ class TestGoldenTables(unittest.TestCase):
 
     def test_union_keys_match_fixture(self):
         keys = self._union_keys()
-        result = gsd_catalog.query_gsd_tables(
-            self.paths, self.project, keys, run_fn=self._gsd_runner[0]
-        )
+        raw_stdout: list[str] = []
+
+        def capture(cmd, **kw):
+            res = self._gsd_runner[0](cmd, **kw)
+            raw_stdout.append(res.stdout)
+            return res
+
+        result = gsd_catalog.query_gsd_tables(self.paths, self.project, keys, run_fn=capture)
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["valid_keys"]["rejected"], [])
+        raw_profiles = json.loads(raw_stdout[-1])["model_profiles"]
         if os.environ.get("UPDATE_GOLDEN"):
             meta = {
                 "gsd_core_version": self.gsd_version,
                 "keys": "union of presets.closed_key_set over host.HOSTS",
             }
-            payload = {**result, "_meta": meta}
+            # The fixture stores gsd-core's raw agent-first MODEL_PROFILES (the node output).
+            payload = {**result, "model_profiles": raw_profiles, "_meta": meta}
             (FIXTURES / "gsd_tables_1_16.json").write_text(
                 plan_io.canonical_json(payload) + "\n", encoding="utf-8"
             )
             return
-        self.assertEqual(result, _tables_body())
+        body = _tables_body()
+        self.assertEqual(raw_profiles, body["model_profiles"])
+        expected = {**body, "model_profiles": gsd_catalog.profile_first(body["model_profiles"])}
+        self.assertEqual(result, expected)
 
     def test_model_policy_unset_keys_accepted(self):
         flat = presets.flatten_config({"model_policy": POLICY})
@@ -273,6 +270,14 @@ class TestGoldenTables(unittest.TestCase):
             "model_policy.runtime_tiers.codex.opus",
             result["valid_keys"]["accepted"],
         )
+
+
+class TestFixtureShape(unittest.TestCase):
+    def test_fixture_model_profiles_are_agent_first(self):
+        """The fake node answers with gsd-core's raw shape, so goldens run the real parse."""
+        profiles = _tables_body()["model_profiles"]
+        self.assertIn("gsd-planner", profiles)
+        self.assertIn("adaptive", profiles["gsd-planner"])
 
 
 class TestGoldenPlans(unittest.TestCase):

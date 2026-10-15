@@ -1674,6 +1674,30 @@ class TestInventoryValidation(unittest.TestCase):
             self.assertIn("rerun inventory", err, name)
         del base
 
+    def test_agent_first_model_profiles_fail_closed(self):
+        """A pre-normalization (agent-first) table exits 2, never a KeyError traceback."""
+        inv = make_inventory()
+        inv["gsd_core"]["model_profiles"] = gsd_catalog.profile_first(
+            inv["gsd_core"]["model_profiles"]
+        )
+        code, plan, plan_bytes, err = self._run(inv)
+        self.assertEqual((code, plan, plan_bytes), (2, None, None))
+        self.assertIn("gsd_core.model_profiles", err)
+        self.assertIn("rerun inventory", err)
+
+    def test_missing_profile_column_falls_back_to_balanced(self):
+        """gsd-core's computeProfileTier reads balanced when a profile column is absent."""
+        inv = make_inventory()
+        profiles = dict(inv["gsd_core"]["model_profiles"])
+        del profiles["adaptive"]
+        inv["gsd_core"]["model_profiles"] = profiles
+        code, _plan, _, err = self._run(inv)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            roles.agent_tier("gsd-executor", inv["gsd_core"], "adaptive", {}),
+            profiles["balanced"]["gsd-executor"],
+        )
+
     def test_missing_path_and_invalid_json_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             bad_path = os.path.join(tmp, "broken.json")

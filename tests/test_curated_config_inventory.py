@@ -258,6 +258,22 @@ class TestInventoryTracer(unittest.TestCase):
 
 
 class TestRealGsdInventory(_RealGsdTestCase):
+    def _recommend_round_trip(self, inv, host_name):
+        """The real inventory feeds recommend with no test-side reshaping (CR-01)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path = os.path.join(tmp, "inventory.json")
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(inv))
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = cli.main(
+                    [
+                        "recommend", "--inventory", inv_path, "--profile", "adaptive",
+                        "--rigor", "standard", "--out", os.path.join(tmp, "plan.json"),
+                    ]
+                )
+            self.assertEqual(code, 0, f"{host_name}: {err.getvalue()}")
+
     def test_inventory_each_host_against_checkout_gsd_core(self):
         project = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, project, ignore_errors=True)
@@ -285,8 +301,9 @@ class TestRealGsdInventory(_RealGsdTestCase):
             parsed = json.loads(stdout.getvalue())
             self.assertEqual(parsed["gsd_core"]["version"], expected_version)
             self.assertEqual(parsed["gsd_core"]["scope"], "local")
-            self.assertIn("gsd-planner", parsed["gsd_core"]["model_profiles"])
+            self.assertIn("gsd-planner", parsed["gsd_core"]["model_profiles"]["adaptive"])
             self.assertEqual(parsed["gsd_core"]["valid_keys"]["rejected"], [])
+            self._recommend_round_trip(parsed, host_name)
             spec_calls = [
                 a
                 for a in spec_fake.argv_log
@@ -1113,12 +1130,17 @@ class TestProbeFailures(unittest.TestCase):
         good = json.dumps(
             {
                 "runtime_profile_map": {"x": {"y": {}}},
-                "model_profiles": {"p": {}},
+                "model_profiles": {"p": {"adaptive": "opus", "balanced": "sonnet"}},
                 "agent_to_phase_type": {"a": "b"},
                 "valid_keys": {"accepted": good_keys, "rejected": []},
             }
         )
-        self.assertIsNotNone(_parse_tables_output(good))
+        parsed = _parse_tables_output(good)
+        assert parsed is not None
+        # gsd-core's agent-first table is normalized to profile -> {agent: tier}.
+        self.assertEqual(
+            parsed["model_profiles"], {"adaptive": {"p": "opus"}, "balanced": {"p": "sonnet"}}
+        )
         for bad in ("x", "[]", "{}", json.dumps({"model_profiles": {"p": {}}})):
             self.assertIsNone(_parse_tables_output(bad))
         empty_profiles = json.dumps(
@@ -1270,18 +1292,17 @@ class TestCompleteInventory(unittest.TestCase):
                         "haiku": {"model": "openai/gpt-5.6-sol"},
                     }
                 },
+                # gsd-core 1.16's real agent-first MODEL_PROFILES shape.
                 "model_profiles": {
-                    "adaptive": {
-                        "gsd-planner": "opus",
-                        "gsd-executor": "sonnet",
-                        "gsd-verifier": "sonnet",
-                        "gsd-plan-checker": "haiku",
-                        "gsd-code-reviewer": "sonnet",
-                        "gsd-ui-auditor": "haiku",
-                        "gsd-dom-verifier": "haiku",
-                        "gsd-ui-researcher": "sonnet",
-                        "gsd-code-fixer": "sonnet",
-                    }
+                    "gsd-planner": {"adaptive": "opus", "balanced": "opus"},
+                    "gsd-executor": {"adaptive": "sonnet", "balanced": "sonnet"},
+                    "gsd-verifier": {"adaptive": "sonnet", "balanced": "sonnet"},
+                    "gsd-plan-checker": {"adaptive": "haiku", "balanced": "sonnet"},
+                    "gsd-code-reviewer": {"adaptive": "sonnet", "balanced": "sonnet"},
+                    "gsd-ui-auditor": {"adaptive": "haiku", "balanced": "sonnet"},
+                    "gsd-dom-verifier": {"adaptive": "haiku", "balanced": "sonnet"},
+                    "gsd-ui-researcher": {"adaptive": "sonnet", "balanced": "sonnet"},
+                    "gsd-code-fixer": {"adaptive": "sonnet", "balanced": "sonnet"},
                 },
                 "agent_to_phase_type": {
                     "gsd-planner": "planning",
@@ -1338,6 +1359,10 @@ class TestCompleteInventory(unittest.TestCase):
             with open(out_path, encoding="utf-8") as handle:
                 plan = json.load(handle)
             self.assertEqual(plan["schema_version"], 1)
+            keys = {e["key"]: e for e in plan["entries"]}
+            self.assertEqual(keys["model_profile"]["value"], "adaptive")
+            for tier in ("opus", "sonnet", "haiku"):
+                self.assertIn(f"model_profile_overrides.opencode.{tier}", keys)
 
 
 
