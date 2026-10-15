@@ -16,7 +16,10 @@ from . import (
     frontend_detect,
     gsd_catalog,
     model_detect,
+    plan_io,
     preference_match,
+    presets,
+    recommend,
     workflow_defaults,
 )
 
@@ -429,6 +432,42 @@ def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
     return 0
 
 
+def _cmd_recommend(args, which_fn, run_fn, env_fn) -> int:
+    """Pure recommend: load + validate the inventory, build the plan, write `--out`
+    atomically. Any load or write failure is a one-line stderr message and exit 2;
+    success prints the entry/needs_choice/note counts as JSON."""
+    del which_fn, run_fn, env_fn  # recommend performs no subprocess and no env read
+    inventory, error = plan_io.load_inventory(args.inventory)
+    if inventory is None:
+        print(error, file=sys.stderr)
+        return 2
+    opts = recommend.RecommendOpts(
+        profile=args.profile,
+        rigor=args.rigor,
+        cross_ai_review=args.cross_ai_review,
+        cross_ai_exec=args.cross_ai_exec,
+    )
+    plan = recommend.build_plan(inventory, opts)
+    try:
+        plan_io.write_plan(args.out, plan)
+    except OSError as exc:
+        print(f"ai-kit-gsd-curated-config: cannot write {args.out}: {exc}", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {
+                "out": args.out,
+                "entries": len(plan["entries"]),
+                "needs_choice": sum(
+                    1 for e in plan["entries"] if e.get("status") == "needs_choice"
+                ),
+                "notes": len(plan["notes"]),
+            }
+        )
+    )
+    return 0
+
+
 def _build_parser():
     parser = argparse.ArgumentParser(prog="ai-kit-gsd-curated-config")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -466,6 +505,20 @@ def _build_parser():
     p_apply_claude_md_path.add_argument("--project-dir", required=True)
     p_apply_claude_md_path.add_argument("--path", required=True)
 
+    p_recommend = sub.add_parser("recommend")
+    p_recommend.add_argument("--inventory", required=True)
+    p_recommend.add_argument(
+        "--profile", required=True, choices=VALID_MODEL_PROFILES, help="adaptive recommended"
+    )
+    p_recommend.add_argument("--rigor", required=True, choices=presets.RIGORS)
+    p_recommend.add_argument("--cross-ai-review", choices=("y", "n"), default=None)
+    p_recommend.add_argument("--cross-ai-exec", choices=("y", "n"), default=None)
+    p_recommend.add_argument(
+        "--out",
+        required=True,
+        help="written atomically; keep it outside the project's .planning/",
+    )
+
     p_apply_workflow_defaults = sub.add_parser("apply-workflow-defaults")
     p_apply_workflow_defaults.add_argument("--project-dir", required=True)
     p_apply_workflow_defaults.add_argument(
@@ -489,6 +542,7 @@ _COMMAND_HANDLERS = {
     "detect-frontend": _cmd_detect_frontend,
     "apply-claude-md-path": _cmd_apply_claude_md_path,
     "apply-workflow-defaults": _cmd_apply_workflow_defaults,
+    "recommend": _cmd_recommend,
 }
 
 

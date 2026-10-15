@@ -18,8 +18,8 @@ from . import model_detect
 _THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def load_gsd_tools():
-    """Returns the shared `ai_kit_spec.gsd_tools` module, or `None` when the
+def load_ai_kit_spec_module(name: str):
+    """Returns the shared `ai_kit_spec.<name>` module, or `None` when the
     ai-kit-spec-review sibling skill cannot be located/imported (importlib keeps pyright
     clean with no ignore comment; the caller reports the miss, never raising at import
     time)."""
@@ -30,9 +30,13 @@ def load_gsd_tools():
     if skill_dir not in sys.path:
         sys.path.insert(0, skill_dir)
     try:
-        return importlib.import_module("ai_kit_spec.gsd_tools")
+        return importlib.import_module(f"ai_kit_spec.{name}")
     except ImportError:
         return None
+
+
+def load_gsd_tools():
+    return load_ai_kit_spec_module("gsd_tools")
 
 
 def resolve_gsd_tools_path(env: dict | None = None, isfile_fn=os.path.isfile, start=None):
