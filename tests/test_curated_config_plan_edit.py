@@ -326,6 +326,14 @@ class TestPlanSetWarnings(unittest.TestCase):
             self.assertEqual(entry["value"], 3600)
             self.assertEqual(plan["artifacts"][0]["config"]["outer_timeout_s"], 3600)
 
+    def test_timeout_1800_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "workflow.cross_ai_timeout", "1800"
+            )
+            self.assertEqual(code, 0, err)
+
 
 class TestPlanValidator(unittest.TestCase):
     def _golden_plan(self):
