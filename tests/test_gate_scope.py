@@ -144,6 +144,43 @@ def iter_py_files(root: pathlib.Path, subdirs: tuple[str, ...]) -> list[str]:
     return sorted(paths)
 
 
+WALK_SKIP_DIRS = frozenset({"__pycache__", "node_modules", "tmp"})
+
+
+def _has_python_shebang(path: pathlib.Path) -> bool:
+    with path.open("rb") as handle:
+        first = handle.readline(128)
+    return first.startswith(b"#!") and b"python" in first
+
+
+def ungated_python_assets(root: pathlib.Path) -> list[pathlib.Path]:
+    """Python the `.py` hook regexes cannot select: `*.py.txt` copy-me templates and
+    extensionless files with a python shebang (B-WR-12)."""
+    found: list[pathlib.Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            name for name in dirnames
+            if name not in WALK_SKIP_DIRS and not name.startswith(".")
+        ]
+        for name in filenames:
+            path = pathlib.Path(dirpath, name)
+            if name.endswith(".py.txt") or (
+                "." not in name and path.is_file() and _has_python_shebang(path)
+            ):
+                found.append(path)
+    return sorted(found)
+
+
+def uncompilable(paths: list[pathlib.Path]) -> list[str]:
+    errors: list[str] = []
+    for path in paths:
+        try:
+            compile(path.read_text(encoding="utf-8"), str(path), "exec")
+        except (SyntaxError, ValueError, UnicodeDecodeError) as exc:
+            errors.append(f"{path}: {exc}")
+    return errors
+
+
 def unselected_files(paths: list[str], regex: str) -> list[str]:
     """Paths the hook ``files:`` regex does not match."""
     pattern = re.compile(regex)
@@ -339,6 +376,14 @@ class TestGateScope(unittest.TestCase):
         paths = iter_py_files(REPO_ROOT, SHIPPED_SUBDIRS)
         self.assertEqual(unselected_files(paths, regex or ""), [])
 
+    def test_ungated_python_assets_compile(self) -> None:
+        # No hook selects these, so this is their only compile gate.
+        assets = ungated_python_assets(REPO_ROOT)
+        rel = {path.relative_to(REPO_ROOT).as_posix() for path in assets}
+        self.assertIn("examples/segments/system_memory", rel)
+        self.assertIn("skills/cst-refactor/codemod_template.py.txt", rel)
+        self.assertEqual(uncompilable(assets), [])
+
     def test_make_lint_is_hook_aggregate(self) -> None:
         self.assertEqual(make_target_line(self.makefile, "lint"), "lint: shellcheck py-compile")
         self.assertEqual(recipe_lines(self.makefile, "lint"), [])
@@ -443,6 +488,17 @@ class TestGateScopeNonVacuity(unittest.TestCase):
             self.assertEqual(paths, [])
             wide = r"^(tools|skills|tests)/.*\.py$"
             self.assertEqual(unselected_files(paths, wide), [])
+
+    def test_broken_ungated_python_asset_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "examples").mkdir()
+            (root / "examples" / "seg").write_text("#!/usr/bin/env python3\ndef (:\n")
+            (root / "examples" / "notes").write_text("#!/bin/sh\necho hi\n")
+            (root / "tpl.py.txt").write_text("x = (\n")
+            assets = ungated_python_assets(root)
+            self.assertEqual([path.name for path in assets], ["seg", "tpl.py.txt"])
+            self.assertEqual(len(uncompilable(assets)), 2)
 
     def test_extra_pylint_disable_reported(self) -> None:
         drift = pylint_disable_drift([*PYLINT_DISABLE_NAMES, "broad-except"])
