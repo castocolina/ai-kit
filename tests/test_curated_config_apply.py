@@ -19,6 +19,7 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
+from ai_kit_gsd_curated_config import apply as apply_mod
 from ai_kit_gsd_curated_config import cli, config_backup, cross_ai, plan_io, plan_schema
 
 from tests.test_curated_config_golden import load_fixture, tables_answer
@@ -568,7 +569,7 @@ def _tables_fake(config_path: str, home: str) -> FakeRun:
     )
 
 
-def _decided_plan(tmp: str) -> tuple[str, str, dict, dict, str, dict, FakeRun]:
+def _decided_plan(tmp: str) -> tuple[str, dict, str, str, str, dict, FakeRun]:
     project, env, config_path = _setup_scratch_project(tmp)
     fake = _tables_fake(config_path, env["HOME"])
     inv_path = os.path.join(tmp, "inventory.json")
@@ -863,6 +864,181 @@ class TestApplyRefusals(unittest.TestCase):
             self.assertTrue(
                 any("full permissions" in w for w in report.get("warnings", []))
             )
+
+
+class TestDiffKinds(unittest.TestCase):
+    def test_diff_entries_all_kinds(self) -> None:
+        plan = {
+            "entries": [
+                {"key": "a.add", "op": "set", "value": 1},
+                {"key": "b.change", "op": "set", "value": 2},
+                {"key": "c.keep", "op": "set", "value": 3},
+                {"key": "d.remove", "op": "unset"},
+                {"key": "e.absent_unset", "op": "unset"},
+                {"key": "f.keep_op", "op": "keep", "existing": 9},
+            ]
+        }
+        live = {"a": {}, "b": {"change": 0}, "c": {"keep": 3}, "d": {"remove": 1}}
+        rows = apply_mod.diff_entries(plan, live, {})
+        kinds = {r["key"]: r["kind"] for r in rows}
+        self.assertEqual(
+            kinds,
+            {
+                "a.add": "add",
+                "b.change": "change",
+                "c.keep": "keep",
+                "d.remove": "remove",
+                "e.absent_unset": "keep",
+                "f.keep_op": "keep",
+            },
+        )
+        self.assertEqual([r["key"] for r in rows], sorted(kinds))
+
+    def test_nested_live_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(
+                tmp
+            )
+            with open(config_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "model_profile": "balanced",
+                        "model_policy": {"provider": "openai"},
+                    },
+                    handle,
+                )
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan["entries"] = [
+                {
+                    "key": "model_policy.provider",
+                    "op": "set",
+                    "value": "generic",
+                    "source": "user",
+                }
+            ]
+            plan["artifacts"] = []
+            for entry in list(plan["entries"]):
+                if entry["key"].startswith("workflow.cross_ai"):
+                    plan["entries"].remove(entry)
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            code, report, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual((code, err), (0, ""))
+            assert report is not None
+            row = next(r for r in report["diff"] if r["key"] == "model_policy.provider")
+            self.assertEqual(row["kind"], "change")
+            self.assertEqual(row["from"], "openai")
+
+    def test_unreadable_live_config_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(
+                tmp
+            )
+            with open(config_path, "w", encoding="utf-8") as handle:
+                handle.write("{not json")
+            code, _, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertIn(config_path, err)
+
+    def test_agent_skills_translated_in_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, inv, fake = _decided_plan(
+                tmp
+            )
+            refs = apply_mod.skill_value(inv, ["react-dev"])
+            with open(config_path, "w", encoding="utf-8") as handle:
+                json.dump({"agent_skills": {"gsd-executor": refs}}, handle)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan["entries"] = [
+                {
+                    "key": "agent_skills.gsd-executor",
+                    "op": "set",
+                    "value": ["react-dev"],
+                    "source": "user",
+                }
+            ]
+            plan["artifacts"] = []
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            code, report, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual((code, err), (0, ""))
+            assert report is not None
+            row = next(
+                r for r in report["diff"] if r["key"] == "agent_skills.gsd-executor"
+            )
+            self.assertEqual(row["kind"], "keep")
+            self.assertEqual(row["to"], refs)
+            self.assertNotEqual(row["to"], ["react-dev"])
+
+
+class TestDryRunDeterminism(unittest.TestCase):
+    def test_empty_plan_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            plan = {
+                "schema_version": plan_schema.PLAN_SCHEMA_VERSION,
+                "host": inv["host"],
+                "profile": "adaptive",
+                "rigor": "standard",
+                "inventory_digest": plan_schema.inventory_digest(inv),
+                "entries": [],
+                "artifacts": [],
+                "notes": [],
+            }
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            code, report, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual((code, err), (0, ""))
+            assert report is not None
+            self.assertEqual(report["diff"], [])
+
+    def test_two_dry_runs_identical_stdout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, _inv, fake = _decided_plan(tmp)
+            fake.argv_log.clear()
+            code_a, _, out_a, err_a = _run_apply(
+                plan_path, inv_path, project, env, fake, dry_run=True
+            )
+            fake.argv_log.clear()
+            code_b, _, out_b, err_b = _run_apply(
+                plan_path, inv_path, project, env, fake, dry_run=True
+            )
+            self.assertEqual((code_a, err_a), (0, ""))
+            self.assertEqual((code_b, err_b), (0, ""))
+            self.assertEqual(out_a, out_b)
+
+
+class TestApplyDispatch(unittest.TestCase):
+    def test_exact_name_handlers(self) -> None:
+        self.assertIs(cli._COMMAND_HANDLERS["apply"], cli._cmd_apply)
+        pairs = (
+            ("apply-profile", cli._cmd_apply_profile),
+            ("apply-critical-agents", cli._cmd_apply_critical_agents),
+            ("apply-execution", cli._cmd_apply_execution),
+            ("apply-review", cli._cmd_apply_review),
+            ("apply-claude-md-path", cli._cmd_apply_claude_md_path),
+            ("apply-workflow-defaults", cli._cmd_apply_workflow_defaults),
+        )
+        for name, handler in pairs:
+            self.assertIs(cli._COMMAND_HANDLERS[name], handler)
+
+    def test_apply_review_does_not_use_v2_apply(self) -> None:
+        args = cli._build_parser().parse_args(
+            [
+                "apply-review",
+                "--project-dir",
+                ".",
+                "--cli",
+                "codex",
+                "--model",
+                "gpt-5",
+            ]
+        )
+        handler = cli._COMMAND_HANDLERS.get(args.command)
+        self.assertIs(handler, cli._cmd_apply_review)
+        self.assertIsNot(handler, cli._cmd_apply)
 
 
 class TestDryRunTracer(unittest.TestCase):
