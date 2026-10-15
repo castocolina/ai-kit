@@ -52,20 +52,14 @@ def detect_host(env: dict, override: str | None) -> tuple[str | None, str]:
     return label, "detected"
 
 
-def _local_roots(root: str, host: str) -> list[str]:
-    gsd_tools = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
-    if gsd_tools is None:
-        return []
+def _local_roots(gsd_tools, root: str, host: str) -> list[str]:
     locals_ = list(gsd_tools.local_gsd_core_roots(root))
     if host == "pi":
         locals_.insert(0, os.path.join(root, ".pi", "gsd-core"))
     return locals_
 
 
-def _gsd_tools_candidates(env: dict, root: str, host: str) -> list[str]:
-    gsd_tools = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
-    if gsd_tools is None:
-        return []
+def _gsd_tools_candidates(gsd_tools, env: dict, root: str, host: str) -> list[str]:
     paths: list[str] = []
     if host == "pi":
         pi_tools = os.path.join(root, ".pi", "gsd-core", gsd_tools.GSD_TOOLS_REL)
@@ -94,11 +88,8 @@ def _main_checkout(project_dir: str, run_fn: Callable[..., subprocess.CompletedP
     return os.path.dirname(common)
 
 
-def _worktree_warning(main: str, host: str, install_root: str) -> str | None:
-    gsd_tools = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
-    if gsd_tools is None:
-        return None
-    for local_root in _local_roots(main, host):
+def _worktree_warning(gsd_tools, main: str, host: str, install_root: str) -> str | None:
+    for local_root in _local_roots(gsd_tools, main, host):
         tools = os.path.join(local_root, gsd_tools.GSD_TOOLS_REL)
         if os.path.isfile(tools):
             # One f-string, never str.format: a "{" in a path must not become a field.
@@ -109,12 +100,12 @@ def _worktree_warning(main: str, host: str, install_root: str) -> str | None:
     return None
 
 
-def _global_worktree_warnings(install_root: str, project_dir: str, host: str, root: str, run_fn):
+def _linked_main_checkout(project_dir: str, root: str, run_fn) -> str | None:
+    """The main checkout when `project_dir` sits in a linked worktree of another dir."""
     main = _main_checkout(project_dir, run_fn)
     if not main or os.path.normpath(main) == os.path.normpath(root):
-        return ()
-    warning = _worktree_warning(main, host, install_root)
-    return (warning,) if warning else ()
+        return None
+    return main
 
 
 def resolve_gsd_core(
@@ -126,18 +117,15 @@ def resolve_gsd_core(
         return None, gsd_catalog.SIBLING_MISSING
     env = deps.env_fn()
     root = gsd_tools.project_root(env, project_dir, deps.run_fn)
-    candidates = _gsd_tools_candidates(env, root, host)
+    candidates = _gsd_tools_candidates(gsd_tools, env, root, host)
     tools_path = next((p for p in candidates if os.path.isfile(p)), None)
     if tools_path is None:
         lines = "\n".join(f"  {p}" for p in candidates)
         return None, f"no gsd-core found for {project_dir}; searched:\n{lines}"
     install_root = os.path.normpath(os.path.dirname(os.path.dirname(tools_path)))
-    local_set = {os.path.normpath(r) for r in _local_roots(root, host)}
+    local_set = {os.path.normpath(r) for r in _local_roots(gsd_tools, root, host)}
     scope = "local" if install_root in local_set else "global"
     version = gsd_tools.gsd_core_version(tools_path)
-    extra = (
-        _global_worktree_warnings(install_root, project_dir, host, root, deps.run_fn)
-        if scope == "global"
-        else ()
-    )
-    return GsdCore(tools_path, install_root, scope, version, tuple(sorted(extra))), None
+    main = _linked_main_checkout(project_dir, root, deps.run_fn) if scope == "global" else None
+    warning = _worktree_warning(gsd_tools, main, host, install_root) if main else None
+    return GsdCore(tools_path, install_root, scope, version, (warning,) if warning else ()), None
