@@ -71,8 +71,7 @@ from ai_kit_spec.quota import (
 from ai_kit_spec.review_reports import (
     merge_findings,
     render_merged_report,
-    report_declares_issues,
-    report_has_status,
+    report_status,
 )
 from ai_kit_spec.reviewer_dispatch import dispatch_reviewer
 from ai_kit_spec.vendor import infer_vendor_from_model
@@ -1157,30 +1156,28 @@ def _main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
 
     if args.command == "merge-reports":
         reports = []
-        unreadable = []
+        failing = []
         for item in args.reports:
             key, _, path = item.partition("=")
             try:
                 with open(path, encoding="utf-8") as f:
                     text = f.read()
             except OSError:
-                unreadable.append(key)
+                failing.append(key)
                 continue
-            if not report_has_status(text):
-                unreadable.append(key)
+            status = report_status(text)
+            if status is None or status == "failure":
+                failing.append(key)
                 continue
             reports.append((key, text))
-        if unreadable:
-            # Deliberately prints NO "### Status:" line — review-spec/SKILL.md's
-            # existing Step 2 already treats "No Status line" as a failure to
-            # surface (its own long-standing rule), so a failed/unreadable
-            # external reviewer can never silently merge into a false
-            # "### Status: Approved". No new orchestrator special-case needed.
-            print(f"merge-reports: reviewer(s) {', '.join(unreadable)} produced "
-                  f"no readable report with a Status line — cannot merge.")
-            return 0
+        if failing:
+            # D-12/R7: any failing or missing lane fails the merge — the Status line is
+            # printed so SKILL.md Step 2's fail-closed rule sees a Failure verdict, and
+            # the non-zero exit keeps the merge out of any `&&`-chained pipeline.
+            print(f"### Status: Failure — {', '.join(failing)}")
+            return 1
         merged = merge_findings(reports)
-        any_source_issues = any(report_declares_issues(text) for _, text in reports)
+        any_source_issues = any(report_status(text) == "issues" for _, text in reports)
         print(render_merged_report(merged, args.doc_paths, any_source_issues))
         return 0
 

@@ -93,8 +93,7 @@ from ai_kit_spec.review_reports import (  # noqa: F401
     merge_findings,
     parse_findings,
     render_merged_report,
-    report_declares_issues,
-    report_has_status,
+    report_status,
 )
 from ai_kit_spec.vendor import infer_vendor_from_model  # noqa: F401
 
@@ -147,7 +146,7 @@ for _name in (
     "NO_CONFIG_FALLBACK", "build_reviewer_command", "build_cursor_agent_model_id",
     "build_reviewer_model_id", "render_reviewer_command", "cfg_local_path", "cfg_global_path",
     "cfg_load_toml", "cfg_merge_reviewers", "cfg_resolve", "cfg_render_toml", "cfg_write_toml",
-    "report_has_status", "report_declares_issues", "parse_findings", "merge_findings",
+    "report_status", "parse_findings", "merge_findings",
     "render_merged_report", "classify_error", "REASONS", "entry_reason", "main",
     "tomllib", "os",
 ):
@@ -2542,27 +2541,102 @@ class TestParseFindings(unittest.TestCase):
         self.assertEqual(findings[0]["severity"], "LOW")
 
 
-class TestReportHasStatus(unittest.TestCase):
-    def test_true_when_status_line_present(self):
-        self.assertTrue(rs.report_has_status(_REPORT_A))
+class TestReportStatus(unittest.TestCase):
+    """D-12: closed status vocabulary read from the last ### Status: line."""
 
-    def test_false_for_garbage_text(self):
-        self.assertFalse(rs.report_has_status("some random CLI error output, no status here"))
+    def test_approved(self):
+        self.assertEqual(rs.report_status("x\n### Status: Approved\n"), "approved")
 
-    def test_false_for_empty_text(self):
-        self.assertFalse(rs.report_has_status(""))
+    def test_issues_found(self):
+        self.assertEqual(rs.report_status("### Status: Issues Found — fix and re-invoke"),
+                         "issues")
+
+    def test_failure(self):
+        self.assertEqual(rs.report_status("### Status: Failure — input not on disk"),
+                         "failure")
+
+    def test_unknown_status_text_reads_issues(self):
+        self.assertEqual(rs.report_status("### Status: Something odd"), "issues")
+
+    def test_no_status_line_reads_none(self):
+        self.assertIsNone(rs.report_status("no status line at all"))
+        self.assertIsNone(rs.report_status(""))
+
+    def test_last_status_line_wins(self):
+        text = "### Status: Approved\nmid\n### Status: Issues Found — fix\n"
+        self.assertEqual(rs.report_status(text), "issues")
 
 
-class TestReportDeclaresIssues(unittest.TestCase):
-    def test_true_for_issues_found_status(self):
-        self.assertTrue(rs.report_declares_issues(_REPORT_A))
+class TestMergeReportsFailure(unittest.TestCase):
+    """D-12/R7: a failed or missing lane can never merge into Approved, in any order."""
 
-    def test_false_for_approved_status(self):
-        approved = "## Review: spec.md\n### Status: Approved\n"
-        self.assertFalse(rs.report_declares_issues(approved))
+    def _merge(self, tmp, files, order=("a", "b")):
+        import io
+        from contextlib import redirect_stdout
+        args = ["merge-reports", "--doc-paths", "spec.md"]
+        for key in order:
+            args.append(f"{key}={files[key]}")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = rs.main(args)
+        return code, buf.getvalue()
 
-    def test_false_for_garbage_text(self):
-        self.assertFalse(rs.report_declares_issues("no status line at all"))
+    def _write(self, tmp, name, text):
+        path = os.path.join(tmp, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def test_failure_plus_approved_fails_naming_the_failed_lane(self):
+        with tempfile.TemporaryDirectory() as d:
+            files = {"a": self._write(d, "a.md", "### Status: Failure — input missing\n"),
+                     "b": self._write(d, "b.md", "### Status: Approved\n")}
+            code, out = self._merge(d, files)
+            self.assertEqual(code, 1)
+            self.assertIn("### Status: Failure — a", out)
+            self.assertNotIn("### Status: Approved", out)
+
+    def test_missing_lane_fails_naming_it_regardless_of_order(self):
+        for order in (("a", "b"), ("b", "a")):
+            with self.subTest(order=order), tempfile.TemporaryDirectory() as d:
+                files = {"a": self._write(d, "a.md", "### Status: Approved\n"),
+                         "b": os.path.join(d, "does-not-exist.md")}
+                code, out = self._merge(d, files, order=order)
+                self.assertEqual(code, 1)
+                self.assertIn("### Status: Failure — b", out)
+
+    def test_lane_without_status_line_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            files = {"a": self._write(d, "a.md", "### Status: Approved\n"),
+                     "b": self._write(d, "b.md", "codex: error: exploded\n")}
+            code, out = self._merge(d, files)
+            self.assertEqual(code, 1)
+            self.assertIn("### Status: Failure — b", out)
+
+    def test_failure_plus_failure_fails_naming_both(self):
+        with tempfile.TemporaryDirectory() as d:
+            files = {"a": self._write(d, "a.md", "### Status: Failure — x\n"),
+                     "b": self._write(d, "b.md", "### Status: Failure — y\n")}
+            code, out = self._merge(d, files)
+            self.assertEqual(code, 1)
+            self.assertIn("### Status: Failure — a, b", out)
+
+    def test_approved_plus_approved_merges_clean(self):
+        with tempfile.TemporaryDirectory() as d:
+            files = {"a": self._write(d, "a.md", "### Status: Approved\n"),
+                     "b": self._write(d, "b.md", "### Status: Approved\n")}
+            code, out = self._merge(d, files)
+            self.assertEqual(code, 0)
+            self.assertIn("### Status: Approved", out)
+
+    def test_approved_plus_issues_merges_to_issues(self):
+        with tempfile.TemporaryDirectory() as d:
+            files = {"a": self._write(d, "a.md", "### Status: Approved\n"),
+                     "b": self._write(d, "b.md",
+                                       "### Status: Issues Found — fix and re-invoke\n")}
+            code, out = self._merge(d, files)
+            self.assertEqual(code, 0)
+            self.assertIn("### Status: Issues Found", out)
 
 
 class TestMergeFindings(unittest.TestCase):
@@ -2968,8 +3042,9 @@ class TestMainCli(unittest.TestCase):
             self.assertIn("### CRITICAL", buf.getvalue())
 
     def test_merge_reports_fails_closed_on_a_non_conforming_report(self):
-        # regression: a garbage/failed external CLI report (no Status
-        # line) must never silently merge into a false Approved
+        # D-12/R7: a garbage/failed external CLI report (no Status
+        # line) must never silently merge into a false Approved — it
+        # fails the merge with a Failure Status line and a non-zero exit
         import io
         from contextlib import redirect_stdout
         with tempfile.TemporaryDirectory() as d:
@@ -2983,9 +3058,9 @@ class TestMainCli(unittest.TestCase):
             with redirect_stdout(buf):
                 code = rs.main(["merge-reports", "--doc-paths", "spec.md",
                                  "claude-opus=" + path_a, "codex-gpt=" + path_b])
-            self.assertEqual(code, 0)
-            self.assertNotIn("### Status:", buf.getvalue())
-            self.assertIn("codex-gpt", buf.getvalue())
+            self.assertEqual(code, 1)
+            self.assertIn("### Status: Failure — codex-gpt", buf.getvalue())
+            self.assertNotIn("### Status: Approved", buf.getvalue())
 
     def test_render_command_fills_the_indexed_reviewer(self):
         import io
