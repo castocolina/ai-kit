@@ -7,7 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from . import (
     claude_md_detect,
@@ -29,10 +29,10 @@ _THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class _GsdCtx(NamedTuple):
-    gsd: object
-    tools: object
+    gsd: Any
+    tools: Any
     project_dir: str
-    run_fn: object
+    run_fn: Any
 
 
 def _resolve_node_and_gsd_tools(which_fn, env_fn, project_dir=None):
