@@ -714,6 +714,54 @@ class TestFollowupsApprovalGate(unittest.TestCase):
             self.assertEqual(parsed2["results"][0]["returncode"], 0)
             self.assertIn("changes", parsed2["results"][0]["stdout_tail"])
 
+    def test_opencode_one_approve_runs_installer_and_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, config_path, fake = _setup_opencode_global(tmp)
+            inv_path, plan_path, _inv = _opencode_plan_inv(
+                tmp, project, env, fake, config_path
+            )
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan["entries"].append(
+                {
+                    "key": "effort.agent_overrides.gsd-executor",
+                    "op": "set",
+                    "value": "high",
+                    "existing": "medium",
+                    "source": "preset",
+                }
+            )
+            plan_io.write_plan(plan_path, plan)
+            argv = [
+                "followups",
+                "--plan",
+                plan_path,
+                "--inventory",
+                inv_path,
+                "--project-dir",
+                project,
+                "--approve",
+                "--require",
+                "installer,effort_sync",
+            ]
+
+            class NpxInstallRun(FollowupsRun):
+                def __call__(self, cmd, **kw):
+                    if cmd and cmd[0] == "npx":
+                        make_gsd_install(os.path.join(project, ".opencode", "gsd-core"))
+                        return subprocess.CompletedProcess(cmd, 0, "", "")
+                    return super().__call__(cmd, **kw)
+
+            base = _tables_followups(config_path, env["HOME"])
+            runner = NpxInstallRun(
+                node_stdout=base.node_stdout,
+                config_path_stdout=config_path,
+            )
+            code, parsed, _ = _run_followups_cli(argv, env, runner)
+            self.assertEqual(code, 0)
+            assert parsed is not None
+            self.assertEqual(len(parsed["results"]), 2)
+
     def test_results_follow_required_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, config_path, fake = _setup_opencode_global(tmp)
