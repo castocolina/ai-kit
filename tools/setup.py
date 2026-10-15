@@ -1728,7 +1728,7 @@ def detect_statusline(paths):
     statusLine may be a bare string or an object with a string "command" (both
     shapes are supported by Claude Code).  Writes nothing."""
     state, data = _read_json_checked(paths.settings)
-    if state != JSON_STATE_OK:
+    if state != JSON_STATE_OK or data is None:
         data = {}
     # _statusline_command returns "" for unset and None for an unsupported
     # shape; both are falsy, so both fall through to "unset" below.
@@ -1765,7 +1765,7 @@ def unwire_statusline(settings, install_dir, dry):
     the rewrite is a same-directory os.replace — the old bytes survive intact
     until the new content is complete."""
     state, data = _read_json_checked(settings)
-    if state != JSON_STATE_OK:
+    if state != JSON_STATE_OK or data is None:
         return
     cur = data.get("statusLine")
     cur_cmd = cur.get("command", "") if isinstance(cur, dict) else ""
