@@ -109,7 +109,7 @@ class TestHostSignalScrubAllDispatchers(unittest.TestCase):
                 self.assertIn("PATH", child_names)
                 self.assertIn("HOME", child_names)
 
-    def _not_yet_without_host_signals_child_names_match_parent(self):
+    def test_without_host_signals_child_names_match_parent(self):
         parent_names = {n for n in os.environ if n not in HOST_SIGNALS}
         with tempfile.TemporaryDirectory() as tmp:
             script = _write_env_dump_script(tmp)
