@@ -35,8 +35,8 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
     async def test_arrange_has_three_separate_lane_panels(self):
         app = wa.WizardApp(make_ctx())
         async with app.run_test() as pilot:
-            app.step = wa.STEP_ARRANGE
-            app.gate_done = True
+            app.flow.step = wa.STEP_ARRANGE
+            app.flow.gate_done = True
             app._render()
             await pilot.pause()
             for wid in ("#lane0", "#lane1", "#lane2", "#focchip", "#tray", "#preview"):
@@ -45,8 +45,8 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
     async def test_off_segment_never_appears_in_a_lane(self):
         app = wa.WizardApp(make_ctx())
         async with app.run_test() as pilot:
-            app.step = wa.STEP_ARRANGE
-            app.gate_done = True
+            app.flow.step = wa.STEP_ARRANGE
+            app.flow.gate_done = True
             app._render()
             await pilot.pause()
             lane_text = " ".join(
@@ -59,8 +59,8 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
         ctx = make_ctx()
         app = wa.WizardApp(ctx)
         async with app.run_test() as pilot:
-            app.step = wa.STEP_ARRANGE
-            app.gate_done = True
+            app.flow.step = wa.STEP_ARRANGE
+            app.flow.gate_done = True
             app._render()
             await pilot.pause()
             lane_text = " ".join(
@@ -225,7 +225,7 @@ class TestArrangeMoves(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange (gate done)
-            app.focus_zp = (0, 0)
+            app.board.focus_zp = (0, 0)
             await pilot.press("space")
             self.assertIn(seg, app.tray)
             self.assertNotIn(seg, app.lines[0])
@@ -238,7 +238,7 @@ class TestArrangeMoves(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             seg = app.tray[0]
             home = app.home_line.get(seg, 2)
-            app.focus_zp = (3, 0)
+            app.board.focus_zp = (3, 0)
             await pilot.press("space")
             self.assertIn(seg, app.lines[home])
             self.assertNotIn(seg, app.tray)
@@ -249,7 +249,7 @@ class TestArrangeMoves(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")
             first, second = app.lines[0][0], app.lines[0][1]
-            app.focus_zp = (0, 0)
+            app.board.focus_zp = (0, 0)
             await pilot.press("right")
             self.assertEqual(app.lines[0][0], second)
             self.assertEqual(app.lines[0][1], first)
@@ -263,7 +263,7 @@ class TestArrangeMoves(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")
             seg = app.lines[0][0]
-            app.focus_zp = (0, 0)
+            app.board.focus_zp = (0, 0)
             await pilot.press("up")             # Line 1 → tray
             self.assertIn(seg, app.tray)
 
@@ -281,7 +281,7 @@ class TestExternal(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange
-            app.focus_zp = (3, app.tray.index("system_memory"))
+            app.board.focus_zp = (3, app.tray.index("system_memory"))
             await pilot.press("space")
             self.assertNotIn("system_memory", app.tray)
             placed = any("system_memory" in ln for ln in app.lines)
@@ -298,12 +298,12 @@ class TestExternal(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange
-            app.focus_zp = (3, app.tray.index("system_memory"))
+            app.board.focus_zp = (3, app.tray.index("system_memory"))
             await pilot.press("space")          # tray -> its home line
             home = next(i for i in range(3) if "system_memory" in app.lines[i])
             app.lines[home].remove("system_memory")
             app.lines[0].append("system_memory")
-            app.focus_zp = (0, len(app.lines[0]) - 1)
+            app.board.focus_zp = (0, len(app.lines[0]) - 1)
             st = app._serialize_state()
             self.assertIn("system_memory", st["layout"][0]["segments"])
             for i in range(1, 3):
@@ -330,7 +330,7 @@ class TestWriteback(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")
             seg = app.lines[0][0]               # a built-in on Line 1 (home 0)
-            app.focus_zp = (0, 0)
+            app.board.focus_zp = (0, 0)
             await pilot.press("space")          # → tray (off)
             st = app._serialize_state()
             self.assertIs(st["segments"][seg], False)
@@ -521,7 +521,7 @@ class TestChrome(unittest.IsolatedAsyncioTestCase):
     async def test_done_header_all_green(self):
         app = wa.WizardApp(make_ctx())
         async with app.run_test() as pilot:
-            app.step = wa.STEP_DONE
+            app.flow.step = wa.STEP_DONE
             app._render()
             await pilot.pause()
             right = str(app.query_one("#header-right", Static).content)
