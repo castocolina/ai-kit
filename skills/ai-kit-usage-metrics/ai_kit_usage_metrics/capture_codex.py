@@ -7,6 +7,7 @@ import json
 import os
 import re
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from ai_kit_usage_metrics import paths
 from ai_kit_usage_metrics.raw_store import CaptureResult
@@ -15,6 +16,14 @@ _SESSION_UUID_RE = re.compile(
     r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$",
     re.IGNORECASE,
 )
+
+
+class _CodexFileBatch(NamedTuple):
+    path: str
+    lines: list[str]
+    session_id: str | None
+    start: int
+    captured_at: str
 
 
 def _empty_stats() -> dict:
@@ -66,6 +75,38 @@ def _envelope(
     }
 
 
+def _read_rollout_lines(path: str) -> list[str] | None:
+    try:
+        with open(path, encoding="utf-8", errors="strict") as handle:
+            return handle.readlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _records_from_batch(
+    batch: _CodexFileBatch,
+    stats: dict,
+) -> tuple[list[dict], int]:
+    records: list[dict] = []
+    for index, line in enumerate(batch.lines, start=1):
+        if index <= batch.start:
+            continue
+        rec = _envelope(
+            batch.path,
+            index,
+            line.rstrip("\r\n"),
+            batch.captured_at,
+            batch.session_id,
+        )
+        records.append(rec)
+        stats["captured"] += 1
+        if rec["parse_status"] == "malformed":
+            stats["malformed"] += 1
+        elif rec["parse_status"] == "recognized_no_data":
+            stats["recognized_no_data"] += 1
+    return records, len(batch.lines)
+
+
 def capture(env: dict, cursor: dict) -> CaptureResult:
     """Glob `sessions/**/rollout-*.jsonl` and emit one envelope per new line.
 
@@ -86,25 +127,18 @@ def capture(env: dict, cursor: dict) -> CaptureResult:
     for path in sorted(glob.glob(pattern, recursive=True)):
         if not os.path.isfile(path):
             continue
-        try:
-            with open(path, encoding="utf-8", errors="strict") as handle:
-                lines = handle.readlines()
-        except (OSError, UnicodeDecodeError):
+        lines = _read_rollout_lines(path)
+        if lines is None:
             stats["unreadable_files"].append(path)
             continue
-        session_id = _session_id_from_filename(path)
-        start = int(new_cursor.get(path, 0) or 0)
-        for index, line in enumerate(lines, start=1):
-            if index <= start:
-                continue
-            rec = _envelope(
-                path, index, line.rstrip("\r\n"), captured_at, session_id
-            )
-            records.append(rec)
-            stats["captured"] += 1
-            if rec["parse_status"] == "malformed":
-                stats["malformed"] += 1
-            elif rec["parse_status"] == "recognized_no_data":
-                stats["recognized_no_data"] += 1
-        new_cursor[path] = len(lines)
+        batch = _CodexFileBatch(
+            path,
+            lines,
+            _session_id_from_filename(path),
+            int(new_cursor.get(path, 0) or 0),
+            captured_at,
+        )
+        file_records, end_line = _records_from_batch(batch, stats)
+        records.extend(file_records)
+        new_cursor[path] = end_line
     return CaptureResult(records=records, cursor=new_cursor, stats=stats)

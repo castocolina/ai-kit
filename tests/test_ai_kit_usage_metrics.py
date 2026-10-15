@@ -37,7 +37,7 @@ from ai_kit_usage_metrics.classify_loop import (
     normalize_skeleton,
     run_classification,
 )
-from ai_kit_usage_metrics.cli import CAPTURE_SOURCES, main
+from ai_kit_usage_metrics.cli import CAPTURE_SOURCES, cmd_capture, main
 from ai_kit_usage_metrics.cwd_state import CwdState
 from ai_kit_usage_metrics.dashboard import generate
 from ai_kit_usage_metrics.decomposer import classify_segment, decompose, scan_command
@@ -4597,6 +4597,98 @@ class TestDashboardFull(unittest.TestCase):
         self.assertEqual(len(grouped_keys), len(grouped_header_keys))
         self.assertIn("date", flat_keys)
         self.assertIn("session_id", grouped_keys)
+
+
+
+class TestCmdCaptureIsolation(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="ai-kit-um-capture-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.env = _scratch_env(self.root)
+
+    @staticmethod
+    def _empty_stats() -> dict:
+        return {
+            "captured": 0,
+            "malformed": 0,
+            "recognized_no_data": 0,
+            "unreadable_files": [],
+        }
+
+    def test_capture_value_error_continues(self):
+        ok_calls: list[str] = []
+
+        def fail_capture(_env, _cursor):
+            raise ValueError("bad parse")
+
+        def ok_capture(_env, _cursor):
+            ok_calls.append("ok")
+            return CaptureResult(records=[], cursor={}, stats=self._empty_stats())
+
+        sources = {"fail": fail_capture, "ok": ok_capture}
+        from io import StringIO
+
+        stderr = StringIO()
+        with patch("ai_kit_usage_metrics.cli.CAPTURE_SOURCES", sources), patch(
+            "ai_kit_usage_metrics.cli.raw_store.read_cursor", return_value={}
+        ), patch("ai_kit_usage_metrics.cli.raw_store.append_records"), patch(
+            "ai_kit_usage_metrics.cli.raw_store.write_cursor"
+        ), patch("sys.stderr", stderr):
+            cmd_capture(self.env)
+        self.assertIn("capture[fail] failed:", stderr.getvalue())
+        self.assertEqual(ok_calls, ["ok"])
+
+    def test_capture_attribute_error_continues(self):
+        ok_calls: list[str] = []
+
+        def fail_capture(_env, _cursor):
+            raise AttributeError("malformed record")
+
+        def ok_capture(_env, _cursor):
+            ok_calls.append("ok")
+            return CaptureResult(records=[], cursor={}, stats=self._empty_stats())
+
+        sources = {"bad": fail_capture, "ok": ok_capture}
+        from io import StringIO
+
+        stderr = StringIO()
+        with patch("ai_kit_usage_metrics.cli.CAPTURE_SOURCES", sources), patch(
+            "ai_kit_usage_metrics.cli.raw_store.read_cursor", return_value={}
+        ), patch("ai_kit_usage_metrics.cli.raw_store.append_records"), patch(
+            "ai_kit_usage_metrics.cli.raw_store.write_cursor"
+        ), patch("sys.stderr", stderr):
+            cmd_capture(self.env)
+        self.assertIn("capture[bad] failed:", stderr.getvalue())
+        self.assertEqual(ok_calls, ["ok"])
+
+    def test_capture_persist_oserror_continues(self):
+        record = {"raw_ref": "test:1", "payload": {}}
+        stats = self._empty_stats()
+
+        def ok_capture(_env, _cursor):
+            return CaptureResult(records=[record], cursor={"n": 1}, stats=stats)
+
+        sources = {"first": ok_capture, "second": ok_capture}
+        persisted: list[str] = []
+
+        def append_records(path, _records):
+            if path.endswith("first.jsonl"):
+                raise OSError("disk full")
+            persisted.append(path)
+
+        from io import StringIO
+
+        stderr = StringIO()
+        with patch("ai_kit_usage_metrics.cli.CAPTURE_SOURCES", sources), patch(
+            "ai_kit_usage_metrics.cli.raw_store.read_cursor", return_value={}
+        ), patch(
+            "ai_kit_usage_metrics.cli.raw_store.append_records", side_effect=append_records
+        ), patch("ai_kit_usage_metrics.cli.raw_store.write_cursor"), patch(
+            "sys.stderr", stderr
+        ):
+            cmd_capture(self.env)
+        self.assertIn("capture[first] persist failed:", stderr.getvalue())
+        self.assertTrue(any(path.endswith("second.jsonl") for path in persisted))
 
 
 class TestPermissions(unittest.TestCase):

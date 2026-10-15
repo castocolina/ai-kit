@@ -13,27 +13,21 @@ def canonical_key(provider: str, bare_model_id: str) -> str:
     return f"{provider}/{bare_model_id}"
 
 
-def estimate_price(provider, model, tokens_in, tokens_out, env):
-    """Return `(cost, "high")` or `(None, "unknown")`.
-
-    Catalog entry shape: `pricing.input_per_1m` / `pricing.output_per_1m`
-    (`model_catalog.py`'s `_NUMERIC_SUBFIELD_TABLES`).
-    """
-    if tokens_in is None or tokens_out is None:
-        return None, "unknown"
+def _load_catalog(env: dict) -> dict | None:
     path = catalog_path(env)
     if not os.path.isfile(path):
-        return None, "unknown"
+        return None
     try:
         with open(path, encoding="utf-8") as handle:
             catalog = json.load(handle)
     except (OSError, json.JSONDecodeError):
-        return None, "unknown"
+        return None
     if not isinstance(catalog, dict):
-        return None, "unknown"
-    entry = catalog.get(canonical_key(provider, model))
-    if not isinstance(entry, dict):
-        return None, "unknown"
+        return None
+    return catalog
+
+
+def _price_from_entry(entry: dict, tokens_in: int, tokens_out: int) -> tuple[float | None, str]:
     table = entry.get("pricing") or {}
     try:
         input_per_1m = float(table["input_per_1m"])
@@ -42,3 +36,20 @@ def estimate_price(provider, model, tokens_in, tokens_out, env):
         return None, "unknown"
     cost = tokens_in / 1e6 * input_per_1m + tokens_out / 1e6 * output_per_1m
     return cost, "high"
+
+
+def estimate_price(provider, model, tokens_in, tokens_out, env):
+    """Return `(cost, "high")` or `(None, "unknown")`.
+
+    Catalog entry shape: `pricing.input_per_1m` / `pricing.output_per_1m`
+    (`model_catalog.py`'s `_NUMERIC_SUBFIELD_TABLES`).
+    """
+    if tokens_in is None or tokens_out is None:
+        return None, "unknown"
+    catalog = _load_catalog(env)
+    if catalog is None:
+        return None, "unknown"
+    entry = catalog.get(canonical_key(provider, model))
+    if not isinstance(entry, dict):
+        return None, "unknown"
+    return _price_from_entry(entry, tokens_in, tokens_out)

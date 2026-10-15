@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 _OPENERS = {
     "if": "fi",
@@ -23,6 +23,27 @@ class ScanResult:
     segments: list[tuple[str, str | None]]
     unterminated_quote: bool
     has_unsupported_shape: bool
+
+
+@dataclass
+class _QuoteState:
+    in_single: bool = False
+    in_double: bool = False
+    escaped: bool = False
+
+
+@dataclass
+class _Buffers:
+    buf: list[str] = field(default_factory=list)
+    word: list[str] = field(default_factory=list)
+    segments: list[tuple[str, str | None]] = field(default_factory=list)
+
+
+@dataclass
+class _ScanMeta:
+    preceding: str | None = None
+    has_unsupported: bool = False
+    seen_non_ws: bool = False
 
 
 def classify_segment(segment_text: str) -> str:
@@ -77,16 +98,10 @@ class _Scanner:
         self.text = text
         self.n = len(text)
         self.i = 0
-        self.in_single = False
-        self.in_double = False
-        self.escaped = False
+        self.quote = _QuoteState()
+        self.buffers = _Buffers()
         self.closers: list[str] = []
-        self.segments: list[tuple[str, str | None]] = []
-        self.buf: list[str] = []
-        self.preceding: str | None = None
-        self.has_unsupported = False
-        self.word: list[str] = []
-        self.seen_non_ws = False
+        self.meta = _ScanMeta()
 
     def run(self) -> ScanResult:
         while self.i < self.n:
@@ -94,23 +109,23 @@ class _Scanner:
         self._flush_word()
         self._emit_remaining()
         return ScanResult(
-            segments=self.segments,
-            unterminated_quote=self.in_single or self.in_double,
-            has_unsupported_shape=self.has_unsupported,
+            segments=self.buffers.segments,
+            unterminated_quote=self.quote.in_single or self.quote.in_double,
+            has_unsupported_shape=self.meta.has_unsupported,
         )
 
     def _step(self) -> None:
         char = self.text[self.i]
-        if self.escaped:
+        if self.quote.escaped:
             # Only set inside double quotes; single quotes never honor `\`.
-            self.buf.append(char)
-            self.escaped = False
+            self.buffers.buf.append(char)
+            self.quote.escaped = False
             self.i += 1
             return
-        if self.in_single:
+        if self.quote.in_single:
             self._step_single(char)
             return
-        if self.in_double:
+        if self.quote.in_double:
             self._step_double(char)
             return
         self._step_unquoted(char)
@@ -118,17 +133,17 @@ class _Scanner:
     def _step_single(self, char: str) -> None:
         # Inside single quotes, `\` is a LITERAL backslash, never an escape —
         # the one concrete divergence from JSON-string escaping rules.
-        self.buf.append(char)
+        self.buffers.buf.append(char)
         if char == "'":
-            self.in_single = False
+            self.quote.in_single = False
         self.i += 1
 
     def _step_double(self, char: str) -> None:
-        self.buf.append(char)
+        self.buffers.buf.append(char)
         if char == "\\":
-            self.escaped = True
+            self.quote.escaped = True
         elif char == '"':
-            self.in_double = False
+            self.quote.in_double = False
         self.i += 1
 
     def _step_unquoted(self, char: str) -> None:
@@ -145,34 +160,34 @@ class _Scanner:
         elif char == "$":
             self._consume_dollar()
         elif char == "`":
-            self.has_unsupported = True
+            self.meta.has_unsupported = True
             self._append_raw("`")
-        elif char == "(" and not self.seen_non_ws:
-            self.has_unsupported = True
+        elif char == "(" and not self.meta.seen_non_ws:
+            self.meta.has_unsupported = True
             self._append_raw("(")
         elif char.isspace():
             self._flush_word()
-            self.buf.append(char)
+            self.buffers.buf.append(char)
             self.i += 1
         elif char.isalnum() or char == "_":
-            self.word.append(char)
-            self.buf.append(char)
-            self.seen_non_ws = True
+            self.buffers.word.append(char)
+            self.buffers.buf.append(char)
+            self.meta.seen_non_ws = True
             self.i += 1
         else:
             self._flush_word()
-            self.buf.append(char)
-            self.seen_non_ws = True
+            self.buffers.buf.append(char)
+            self.meta.seen_non_ws = True
             self.i += 1
 
     def _begin_quote(self, *, single: bool) -> None:
-        self.word.clear()
-        self.buf.append("'" if single else '"')
-        self.seen_non_ws = True
+        self.buffers.word.clear()
+        self.buffers.buf.append("'" if single else '"')
+        self.meta.seen_non_ws = True
         if single:
-            self.in_single = True
+            self.quote.in_single = True
         else:
-            self.in_double = True
+            self.quote.in_double = True
         self.i += 1
 
     def _consume_ampersand(self) -> None:
@@ -180,8 +195,8 @@ class _Scanner:
         nxt = self.text[self.i + 1] if self.i + 1 < self.n else ""
         if nxt == "&":
             if self.closers:
-                self.buf.append("&&")
-                self.seen_non_ws = True
+                self.buffers.buf.append("&&")
+                self.meta.seen_non_ws = True
             else:
                 self._split_on("&&")
             self.i += 2
@@ -192,9 +207,9 @@ class _Scanner:
         self._flush_word()
         nxt = self.text[self.i + 1] if self.i + 1 < self.n else ""
         if nxt == "|":
-            self.has_unsupported = True
-            self.buf.append("||")
-            self.seen_non_ws = True
+            self.meta.has_unsupported = True
+            self.buffers.buf.append("||")
+            self.meta.seen_non_ws = True
             self.i += 2
             return
         if self.closers:
@@ -217,43 +232,43 @@ class _Scanner:
             self._flush_word()
             self._append_raw("<")
             return
-        self.has_unsupported = True
+        self.meta.has_unsupported = True
         self._flush_word()
-        self.buf.append("<<")
+        self.buffers.buf.append("<<")
         self.i += 2
         if self.i < self.n and self.text[self.i] in "-~":
-            self.buf.append(self.text[self.i])
+            self.buffers.buf.append(self.text[self.i])
             self.i += 1
-        self.seen_non_ws = True
+        self.meta.seen_non_ws = True
 
     def _consume_dollar(self) -> None:
         nxt = self.text[self.i + 1] if self.i + 1 < self.n else ""
         if nxt == "(":
-            self.has_unsupported = True
+            self.meta.has_unsupported = True
             self._flush_word()
-            self.buf.append("$(")
+            self.buffers.buf.append("$(")
             self.i += 2
-            self.seen_non_ws = True
+            self.meta.seen_non_ws = True
             return
         self._flush_word()
         self._append_raw("$")
 
     def _append_raw(self, token: str) -> None:
-        self.buf.append(token)
-        self.seen_non_ws = True
+        self.buffers.buf.append(token)
+        self.meta.seen_non_ws = True
         self.i += len(token)
 
     def _split_on(self, operator: str) -> None:
-        text = "".join(self.buf).strip()
-        self.buf.clear()
+        text = "".join(self.buffers.buf).strip()
+        self.buffers.buf.clear()
         if text:
-            self.segments.append((text, self.preceding))
-        self.preceding = operator
-        self.seen_non_ws = False
+            self.buffers.segments.append((text, self.meta.preceding))
+        self.meta.preceding = operator
+        self.meta.seen_non_ws = False
 
     def _flush_word(self) -> None:
-        word = "".join(self.word)
-        self.word.clear()
+        word = "".join(self.buffers.word)
+        self.buffers.word.clear()
         if not word:
             return
         closer = _OPENERS.get(word)
@@ -264,7 +279,7 @@ class _Scanner:
             self.closers.pop()
 
     def _emit_remaining(self) -> None:
-        text = "".join(self.buf).strip()
-        self.buf.clear()
+        text = "".join(self.buffers.buf).strip()
+        self.buffers.buf.clear()
         if text:
-            self.segments.append((text, self.preceding))
+            self.buffers.segments.append((text, self.meta.preceding))
