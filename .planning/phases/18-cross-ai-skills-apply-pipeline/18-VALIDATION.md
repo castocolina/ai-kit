@@ -38,21 +38,27 @@ created: "2026-10-15"
 
 ## Per-Task Verification Map
 
-Requirement-level map from 18-RESEARCH.md §Validation Architecture. The planner binds task ids.
+Task ids bound by the planner (2026-10-15); one row per plan or task group.
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 18-xx | tbd | tbd | XAI-01 | — | lane ≠ host, vendor rule, empty → convergence off + note | unit + goldens | `python3 -m unittest tests.test_curated_config_cross_ai tests.test_curated_config_golden` | ❌ W0 | ⬜ pending |
-| 18-xx | tbd | tbd | XAI-02 | runner | byte-deterministic render; header sha256; `.new` on edit; self-test exit classes 0/1/2/69/75/124/127; one `AIKIT-XAI` line; process-group kill; git rules | unit + e2e (node) | `python3 -m unittest tests.test_curated_config_script`; e2e module for `--self-test` | ❌ W0 | ⬜ pending |
-| 18-xx | tbd | tbd | SKL-01 | path escape | plain, symlink escape, project, plugin (claude vs other host) | unit | `python3 -m unittest tests.test_curated_config_skills` | ❌ W0 | ⬜ pending |
-| 18-xx | tbd | tbd | SKL-02 | — | caps 2/3/5, facts gating, reference translation, `agent-skills` verification (`warnings == []`, skipped on pi) | unit + e2e | `tests.test_curated_config_skills` + apply e2e | ❌ W0 | ⬜ pending |
-| 18-xx | tbd | tbd | SKL-03 | — | missing recommended skill never named; unknown → proposal; empty description skipped | unit | `tests.test_curated_config_skills` | ❌ W0 | ⬜ pending |
-| 18-xx | tbd | tbd | SKL-04 | secrets | jev only with skill + backend; key value never in output | unit | `tests.test_curated_config_skills` | ❌ W0 | ⬜ pending |
-| 18-xx | tbd | tbd | APP-01 | cross_ai_command | plan-set/unset refusals, `--force`, `source: user`, sorted, atomic, cross_ai_command guard (D-44) | unit | `python3 -m unittest tests.test_curated_config_plan_edit` | ❌ W0 | ⬜ pending |
-| 18-xx | tbd | tbd | APP-02 | — | dry run writes nothing; `needs_choice` → exit 2; 4-kind diff; `--inventory` digest check (D-42) | unit | `python3 -m unittest tests.test_curated_config_apply` | ❌ W0 | ⬜ pending |
-| 18-xx | tbd | tbd | APP-03 | data loss | backup, keep 3, verbatim restore naming failing key, apply marker (D-40) | unit + e2e (real gsd-tools) | `tests.test_curated_config_apply` + apply e2e | ❌ W0 | ⬜ pending |
-| 18-xx | tbd | tbd | APP-04 | installer | nothing runs without approval; pinned version + `--local`; effort sync only claude/codex/opencode | unit | `python3 -m unittest tests.test_curated_config_followups` | ❌ W0 | ⬜ pending |
-| 18-xx | tbd | tbd | EVAL-06 | — | v1 suite unmodified; gates cover new modules; SKILL.md skill-judge | gate | `python3 -m unittest tests.test_ai_kit_gsd_curated_config tests.test_gate_scope`; `make test`; `make validate` | ✅ | ⬜ pending |
+| 18-01-T1/T2 | 01 | 1 | XAI-02, SPEC-05 | T-18-01 | pi RPC parser never raises; no `baseUrl` in fixture; D-45 router merge | unit | `python3 -m unittest tests.test_ai_kit_spec tests.test_curated_config_inventory` | ❌ W0 | ⬜ pending |
+| 18-01-T3 | 01 | 1 | APP-03, SKL-04 | T-18-02, T-18-03 | strict encoder refuses re-typable strings; secret presence returns bool only | unit | `python3 -m unittest tests.test_ai_kit_spec_gsd_tools tests.test_ai_kit_spec` | ✅ | ⬜ pending |
+| 18-02-T1..T3 | 02 | 2 | XAI-01, SKL-01 | T-18-04 | lanes are data only; registry failure degrades with a warning | e2e + unit | `python3 -m unittest tests.test_curated_config_e2e -k TestRealGsdLanes`; `tests.test_curated_config_inventory` | ✅ | ⬜ pending |
+| 18-03-T1/T2 | 03 | 3 | SKL-01, SKL-03 | T-18-06 | plain, symlink escape, project, plugin (claude vs other host) | unit | `python3 -m unittest tests.test_curated_config_skills` | ❌ W0 | ⬜ pending |
+| 18-03-T3 | 03 | 3 | SKL-04 | T-18-07, T-18-08 | key value and URL never in output (sentinel) | unit | `python3 -m unittest tests.test_curated_config_skills -k TestSystemOneBackend` | ❌ W0 | ⬜ pending |
+| 18-04-T1..T3 | 04 | 4 | XAI-02 | T-18-10, T-18-11 | host/claude/grok never targets; timeout >= 1800; goldens | unit + goldens | `python3 -m unittest tests.test_curated_config_cross_ai tests.test_curated_config_golden` | ❌ W0 | ⬜ pending |
+| 18-05-T1/T2 | 05 | 5 | XAI-01 | T-18-13 | lane != host/pi, vendor rule, empty -> convergence off + note | unit + goldens | `python3 -m unittest tests.test_curated_config_cross_ai tests.test_curated_config_golden` | ❌ W0 | ⬜ pending |
+| 18-06-T1..T3 | 06 | 6 | SKL-02, SKL-03, SKL-04 | T-18-14 | caps 2/3/5; missing skill never named; trusted root needs_choice | unit + goldens | `python3 -m unittest tests.test_curated_config_skills tests.test_curated_config_golden` | ❌ W0 | ⬜ pending |
+| 18-07-T1..T3 | 07 | 7 | XAI-02 | T-18-16..T-18-18 | stderr-only classification; tree id; group kill; one AIKIT-XAI line | e2e (node) + unit | `node skills/ai-kit-spec-review/references/cross-ai.mjs --self-test`; `python3 -m unittest tests.test_cross_ai_runner_e2e` | ❌ W0 | ⬜ pending |
+| 18-08-T1..T3 | 08 | 8 | XAI-02 | T-18-20, T-18-21 | preflight bad_model; review contract; deadline < outer | e2e (node) | `node skills/ai-kit-spec-review/references/cross-ai.mjs --self-test` | ❌ W0 | ⬜ pending |
+| 18-09-T1..T3 | 09 | 9 | XAI-02 | T-18-22 | edited/unstamped/foreign -> `.new`; byte-stable render | unit + e2e | `python3 -m unittest tests.test_curated_config_script tests.test_cross_ai_runner_e2e` | ❌ W0 | ⬜ pending |
+| 18-10-T1..T3 | 10 | 10 | APP-01 | T-18-24..T-18-26 | refusals, `--force`, D-44 command guard, digest check | unit | `python3 -m unittest tests.test_curated_config_plan_edit` | ❌ W0 | ⬜ pending |
+| 18-11-T1..T3 | 11 | 11 | APP-03 | T-18-27..T-18-30 | backup claim, keep 3, verbatim restore, apply marker | unit | `python3 -m unittest tests.test_curated_config_apply` | ❌ W0 | ⬜ pending |
+| 18-12-T1..T3 | 12 | 12 | APP-02 | T-18-31..T-18-33 | dry run writes nothing; needs_choice -> exit 2; `--inventory` digest | unit | `python3 -m unittest tests.test_curated_config_apply` | ❌ W0 | ⬜ pending |
+| 18-13-T1..T3 | 13 | 13 | APP-03, SKL-02 | T-18-34..T-18-36 | writes only via gsd-tools; Nth-key restore; `warnings == []` (skipped on pi) | unit + e2e (real gsd-tools) | `python3 -m unittest tests.test_curated_config_apply tests.test_curated_config_apply_e2e` | ❌ W0 | ⬜ pending |
+| 18-14-T1..T3 | 14 | 14 | APP-04 | T-18-37..T-18-39 | nothing runs without `--approve`; pinned version + `--local` | unit | `python3 -m unittest tests.test_curated_config_followups` | ❌ W0 | ⬜ pending |
+| 18-15-T1..T3 | 15 | 15 | EVAL-06 | T-18-40 | v1 suite unmodified; docs-command drift; skill-judge evidence | gate | `make test`; `make validate`; `make e2e-test`; `make e2e-docker` | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
