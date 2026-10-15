@@ -31,6 +31,9 @@ from . import (
     recommend,
     workflow_defaults,
 )
+from . import (
+    followups as followups_mod,
+)
 
 VALID_MODEL_PROFILES = ("quality", "balanced", "budget", "adaptive")
 
@@ -637,6 +640,50 @@ def _apply_dry_run_report(args, deps: apply_mod.ApplyDeps) -> tuple[dict | None,
     return apply_mod.dry_run_report(inputs, target, live, template), None
 
 
+def _followup_force_ids(raw: str) -> tuple[tuple[str, ...] | None, list[str] | None]:
+    if not raw:
+        return (), None
+    raw_ids = [part.strip() for part in raw.split(",") if part.strip()]
+    allowed = set(followups_mod.REQUIRE_IDS)
+    bad = [i for i in raw_ids if i not in allowed]
+    if bad:
+        return None, bad
+    return tuple(raw_ids), None
+
+
+def _cmd_followups(args, which_fn, run_fn, env_fn) -> int:
+    deps = apply_mod.ApplyDeps(which_fn, run_fn, env_fn)
+    inputs, error = apply_mod.load_inputs(args.plan, args.inventory, args.project_dir)
+    if inputs is None:
+        print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
+        return 2
+    target, error = apply_mod.resolve_target(inputs, deps)
+    if target is None:
+        print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
+        return 2
+    force_ids, bad = _followup_force_ids(args.require)
+    if bad is not None:
+        print(
+            "ai-kit-gsd-curated-config: unknown --require id(s) "
+            f"{bad!r}; allowed: {list(followups_mod.REQUIRE_IDS)}",
+            file=sys.stderr,
+        )
+        return 2
+    inv_deps = host.InventoryDeps(which_fn, run_fn, env_fn)
+    ctx = followups_mod.FollowupCtx(
+        inputs.plan_path, inputs.inv_path, inputs.project_dir, inv_deps
+    )
+    block = followups_mod.build_followups(
+        inputs.plan, inputs.inv, ctx, force_ids=force_ids or ()
+    )
+    if not args.approve:
+        print(json.dumps(block))
+        return 0
+    code, results = followups_mod.run_followups(block, inputs.plan["host"], ctx)
+    print(json.dumps({"results": results}))
+    return code
+
+
 def _cmd_apply(args, which_fn, run_fn, env_fn) -> int:
     deps = apply_mod.ApplyDeps(which_fn, run_fn, env_fn)
     if args.dry_run:
@@ -686,6 +733,15 @@ def _cmd_plan_unset(args, which_fn, run_fn, env_fn) -> int:
         return 2
     _print_plan_unset_ok(args, edited, warnings)
     return 0
+
+
+def _register_followups_parser(sub) -> None:
+    p_followups = sub.add_parser("followups")
+    p_followups.add_argument("--plan", required=True)
+    p_followups.add_argument("--inventory", required=True)
+    p_followups.add_argument("--project-dir", required=True)
+    p_followups.add_argument("--approve", action="store_true")
+    p_followups.add_argument("--require", default="")
 
 
 def _register_plan_edit_parsers(sub) -> None:
@@ -775,6 +831,8 @@ def _build_parser():
     p_apply.add_argument("--project-dir", required=True)
     p_apply.add_argument("--dry-run", action="store_true")
 
+    _register_followups_parser(sub)
+
     p_apply_workflow_defaults = sub.add_parser("apply-workflow-defaults")
     p_apply_workflow_defaults.add_argument("--project-dir", required=True)
     p_apply_workflow_defaults.add_argument(
@@ -803,6 +861,7 @@ _COMMAND_HANDLERS = {
     "plan-set": _cmd_plan_set,
     "plan-unset": _cmd_plan_unset,
     "apply": _cmd_apply,
+    "followups": _cmd_followups,
 }
 
 

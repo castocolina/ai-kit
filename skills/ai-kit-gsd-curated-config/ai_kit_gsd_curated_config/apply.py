@@ -12,6 +12,7 @@ from typing import Any, NamedTuple
 from . import (
     config_backup,
     cross_ai_script,
+    followups,
     gsd_catalog,
     host,
     plan_io,
@@ -914,7 +915,23 @@ def _execute_apply(ctx: ExecuteCtx) -> tuple[int, dict]:
     _cleanup_committed(
         CleanupCtx(progress, config_path, project_dir, ctx.target, ctx.inputs, ctx.deps, ctx.report)
     )
+    _attach_followups(ctx.report, ctx.inputs, ctx.deps)
     return 0, ctx.report
+
+
+def _attach_followups(report: dict, inputs: Inputs, deps: ApplyDeps) -> None:
+    host_name = inputs.plan["host"]
+    written = [row["key"] for row in report["writes"]] + list(report["reconciled"])
+    fctx = followups.FollowupCtx(
+        inputs.plan_path,
+        inputs.inv_path,
+        inputs.project_dir,
+        _inventory_deps(deps),
+    )
+    force = sorted(followups.followup_ids(written, host_name))
+    report["followups"] = followups.build_followups(
+        inputs.plan, inputs.inv, fctx, force_ids=force
+    )
 
 
 def run_apply(
