@@ -23,9 +23,6 @@ _STALE_WARN = "catalog refresh failed; using the stale cache"
 _AA_WARN = "Artificial Analysis refresh failed; scores from cache"
 _MODELS_DEV_WARN = "models.dev refresh failed; prices and capabilities from cache"
 _PROBE_WARN = "opencode 2.x image probe failed; image_input unverified for opencode models"
-_SIBLING_ERR = (
-    "the ai-kit-spec-review sibling skill (ai_kit_spec) is not installed next to this skill"
-)
 
 # Inferred from model ids or the catalog provider — never reported by a CLI or the catalog.
 CANDIDATE_HEURISTIC_FIELDS = ("family", "fast_twin_of", "vendor")
@@ -87,10 +84,10 @@ def refresh_catalog(project_dir, env, refresh, run_fn):
     """Returns `(CatalogState, None)` or `(None, error_message)`."""
     spec_path = model_detect.resolve_ai_kit_spec_path(_THIS_SKILL_DIR, env)
     if spec_path is None:
-        return None, _SIBLING_ERR
+        return None, gsd_catalog.SIBLING_MISSING
     stack = _load_spec_stack()
     if stack is None:
-        return None, _SIBLING_ERR
+        return None, gsd_catalog.SIBLING_MISSING
     job = _RefreshJob(stack, spec_path, project_dir, env, refresh, run_fn)
     return _refresh_with_stack(job), None
 
@@ -282,7 +279,7 @@ def build_candidates(runtimes, entries, host_cli, weights) -> list[dict]:
     detection = gsd_catalog.load_ai_kit_spec_module("detection")
     vendor_mod = gsd_catalog.load_ai_kit_spec_module("vendor")
     if ranker is None or detection is None or vendor_mod is None:
-        raise ImportError(_SIBLING_ERR)
+        raise ImportError(gsd_catalog.SIBLING_MISSING)
     join_index = _build_join_index(entries)
     join = _JoinCtx(
         join_index,

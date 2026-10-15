@@ -15,9 +15,6 @@ from . import gsd_catalog
 
 HOSTS = ("claude", "codex", "opencode", "cursor", "pi")
 
-_SIBLING_MSG = (
-    "the ai-kit-spec-review sibling skill (ai_kit_spec) is not installed next to this skill"
-)
 _UNKNOWN_HOST_MSG = (
     "could not detect the host CLI; pass --host claude|codex|opencode|cursor|pi"
 )
@@ -48,7 +45,7 @@ def detect_host(env: dict, override: str | None) -> tuple[str | None, str]:
         return override, "flag"
     detection = gsd_catalog.load_ai_kit_spec_module("detection")
     if detection is None:
-        return None, _SIBLING_MSG
+        return None, gsd_catalog.SIBLING_MISSING
     label = detection.detect_current_runtime(env)
     if label == "unknown":
         return None, _UNKNOWN_HOST_MSG
@@ -126,7 +123,7 @@ def resolve_gsd_core(
     """First existing gsd-tools.cjs in launcher order; labels project-local vs global scope."""
     gsd_tools = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
     if gsd_tools is None:
-        return None, _SIBLING_MSG
+        return None, gsd_catalog.SIBLING_MISSING
     env = deps.env_fn()
     root = gsd_tools.project_root(env, project_dir, deps.run_fn)
     candidates = _gsd_tools_candidates(env, root, host)

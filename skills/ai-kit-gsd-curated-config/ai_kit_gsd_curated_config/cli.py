@@ -52,8 +52,7 @@ def _resolve_node_and_gsd_tools(which_fn, env_fn, project_dir=None):
         return (
             None,
             None,
-            "ai-kit-gsd-curated-config: the ai-kit-spec-review sibling skill (ai_kit_spec) "
-            "is not installed next to this skill",
+            f"ai-kit-gsd-curated-config: {gsd_catalog.SIBLING_MISSING}",
         )
     node_bin = gsd_catalog.resolve_node_binary(which_fn)
     if node_bin is None:

@@ -233,6 +233,6 @@ def write_plan(path: str, plan: dict) -> None:
     sibling is not installed."""
     cache = gsd_catalog.load_ai_kit_spec_module("cache")
     if cache is None:
-        raise OSError("ai-kit-spec-review sibling (ai_kit_spec) not installed")
+        raise OSError(gsd_catalog.SIBLING_MISSING)
     # abspath: a bare `plan.json` has dirname "" and the shared writer's makedirs("") fails.
     cache.cache_write_text(os.path.abspath(path), canonical_json(plan))

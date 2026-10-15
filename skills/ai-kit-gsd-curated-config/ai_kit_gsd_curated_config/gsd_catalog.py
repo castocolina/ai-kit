@@ -18,6 +18,10 @@ from . import model_detect
 
 _THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+SIBLING_MISSING = (
+    "the ai-kit-spec-review sibling skill (ai_kit_spec) is not installed next to this skill"
+)
+
 
 def load_ai_kit_spec_module(name: str):
     """Returns the shared `ai_kit_spec.<name>` module, or `None` when the
