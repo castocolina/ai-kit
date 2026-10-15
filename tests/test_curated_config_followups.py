@@ -449,6 +449,31 @@ class TestDisclosures(unittest.TestCase):
             joined = " ".join(block["required"][0]["argv"])
             self.assertNotIn("--no-legacy-cleanup", joined)
 
+    def test_codex_installer_only_on_model_overrides(self) -> None:
+        inv = make_inventory(host="codex")
+        plan = _minimal_plan(
+            "codex",
+            inv,
+            [
+                {
+                    "key": "model_overrides.gsd-executor",
+                    "op": "set",
+                    "value": "opus",
+                    "existing": "gpt",
+                    "source": "preset",
+                },
+            ],
+        )
+        block = _build_block(
+            plan, inv, "/p", "/i", "/proj", {"HOME": "/h"}, FollowupsRun()
+        )
+        self.assertEqual(block["required"][0]["id"], "installer")
+        plan2 = _minimal_plan("codex", inv, [])
+        block2 = _build_block(
+            plan2, inv, "/p", "/i", "/proj", {"HOME": "/h"}, FollowupsRun()
+        )
+        self.assertEqual(block2["required"], [])
+
     def test_unknown_version_no_installer(self) -> None:
         inv = make_inventory(host="opencode")
         inv["gsd_core"]["version"] = None
