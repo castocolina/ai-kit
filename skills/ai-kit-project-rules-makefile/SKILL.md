@@ -30,18 +30,18 @@ Resolve once per invocation, in one Bash call, and record the printed path as a 
 absolute path:
 
 ```bash
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-project-rules-makefile}" \
+for d in "$(dirname "<absolute path to THIS SKILL.md>")" \
+         "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-project-rules-makefile}" \
          "$HOME/.claude/skills/ai-kit-project-rules-makefile" \
          "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-project-rules-makefile" \
-         "$HOME/.agents/skills/ai-kit-project-rules-makefile" \
-         "$(dirname "<absolute path to THIS SKILL.md>")"; do
+         "$HOME/.agents/skills/ai-kit-project-rules-makefile"; do
   [ -f "$d/ai-kit-project-rules-makefile.py" ] && { printf '%s\n' "$d/ai-kit-project-rules-makefile.py"; break; }
 done
 ```
 
-If no candidate exists, stop and report that the skill is not installed. The fifth candidate
-covers a from-checkout invocation -- substitute the directory actually containing this
-`SKILL.md`.
+If no candidate exists, stop and report that the skill is not installed. Substitute the directory actually containing this `SKILL.md` into the first
+candidate; it comes first so a checkout runs its own copy rather than an installed one that may
+be on another branch.
 
 Only the `$HOME/.claude/skills/...` symlink install (`tools/setup.py`) and a direct git
 checkout can actually import this skill: those layouts keep `skills/_shared/` beside the skill

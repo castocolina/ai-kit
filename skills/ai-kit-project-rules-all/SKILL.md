@@ -120,9 +120,9 @@ bogus` on stderr and exits `2` for an unrecognized one -- confirmed against the 
 ## What it checks
 
 All 6 domains at once, merged into one **cross-domain** criticality-ordered report (SC2). A real
-`check` run against this repo itself returns 12 `remediate` entries, 3 `blocked`, 0 `failed`,
-spanning the `makefile`, `precommit`, and `arch` domains that had findings that day -- sorted as
-one list by `criticality`, not grouped by domain. The `hand_off: agent-md-refactor` tag (SC3) is
+`check` run against this repo itself returns `remediate` and `blocked` entries from several
+domains (the counts drift as the repo changes) -- sorted as one list by `criticality`, not grouped
+by domain. The `hand_off: agent-md-refactor` tag (SC3) is
 set on every `remediate` entry whose `kind == "workflow"` (the AGENTS.md domain) and on no other
 entry -- see the Hand-off mechanism section below for what a caller does with it.
 
