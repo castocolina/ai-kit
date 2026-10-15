@@ -542,7 +542,11 @@ def _build_parser():
     p_apply_claude_md_path.add_argument("--project-dir", required=True)
     p_apply_claude_md_path.add_argument("--path", required=True)
 
-    p_inventory = sub.add_parser("inventory")
+    p_inventory = sub.add_parser(
+        "inventory",
+        help="read-only snapshot; runs the project's own gsd-core (node), so only use it "
+        "on trusted checkouts",
+    )
     p_inventory.add_argument("--project-dir", required=True)
     p_inventory.add_argument("--host", choices=host.HOSTS, default=None)
     p_inventory.add_argument(

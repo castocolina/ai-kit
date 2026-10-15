@@ -1,6 +1,9 @@
 """Read-only inventory assembly: host, gsd-core tables, and probed valid keys (INV-01, REC-06).
 
 All inventory I/O lives here; nothing in this module writes project or gsd-core config.
+Read-only is not sandboxed: with project-local-first resolution (D-11) the inventory runs
+the project's own gsd-core (`node .../gsd-tools.cjs config-path` and `require()` of its lib
+modules), so only run it on trusted checkouts.
 """
 from __future__ import annotations
 
