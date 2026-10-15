@@ -9,12 +9,14 @@ import json
 import os
 import re
 import sys
+import urllib.parse
 
 from .remediation import build_remediation
 from .rule_checker import check_workflow_rules
 from .tool_presence import check_tool_presence
 
 _LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 _MAX_LINKS = 20
 _BINARY_SNIFF = 8192
@@ -24,8 +26,8 @@ def _parse_link_target(raw: str) -> str | None:
     """Return the path to check, or None when the link is not a file link.
 
     Strips a CommonMark `<...>` wrapper or a trailing title, then cuts at
-    the first `#` and the first `?`. Empty (anchor-only), absolute and
-    any URL-scheme targets are skipped.
+    the first `#` and the first `?` and percent-decodes the rest. Empty
+    (anchor-only), absolute and any URL-scheme targets are skipped.
     """
     target = raw.strip()
     if target.startswith("<") and ">" in target:
@@ -38,7 +40,23 @@ def _parse_link_target(raw: str) -> str | None:
     target = target.split("#", 1)[0].split("?", 1)[0]
     if not target or target.startswith("/") or _SCHEME_RE.match(target):
         return None
-    return target
+    return urllib.parse.unquote(target)
+
+
+def _without_fenced_code(text: str) -> str:
+    """Drop fenced code blocks: a link-shaped example inside one is not a link."""
+    kept: list[str] = []
+    fence: str | None = None
+    for line in text.splitlines():
+        found = _FENCE_RE.match(line)
+        if fence is None:
+            if found:
+                fence = found.group(1)
+            else:
+                kept.append(line)
+        elif found and found.group(1)[0] == fence[0] and len(found.group(1)) >= len(fence):
+            fence = None
+    return "\n".join(kept)
 
 
 def _read_text_target(path: str) -> str | None:
@@ -65,12 +83,12 @@ def _follow_links(
     Containment is `os.path.realpath` on both sides, never lexical: a link
     that looks inside the repo but resolves outside it through a symlink
     is skipped and never read. Missing contained targets become broken-link
-    findings; existing binary targets are skipped.
+    findings; existing directories and binary targets are skipped.
     """
     seen: set[str] = set()
     appended: list[str] = []
     broken: list[dict] = []
-    for match in _LINK_RE.finditer(text):
+    for match in _LINK_RE.finditer(_without_fenced_code(text)):
         if len(seen) >= _MAX_LINKS:
             break
         target = _parse_link_target(match.group(1))
@@ -86,7 +104,7 @@ def _follow_links(
             or real_link.startswith(real_repo_root + os.sep)
         ):
             continue
-        if not os.path.isfile(candidate_path):
+        if not os.path.exists(candidate_path):
             broken.append(
                 {
                     "kind": "link",
@@ -95,6 +113,8 @@ def _follow_links(
                     "source": source,
                 }
             )
+            continue
+        if not os.path.isfile(candidate_path):
             continue
         linked = _read_text_target(candidate_path)
         if linked is not None:
@@ -132,23 +152,6 @@ def _resolve(
     if not appended:
         return text, broken
     return text + "\n\n" + "\n\n".join(appended), broken
-
-
-def resolve_instruction_text(repo_root: str, agents_md_path: str | None = None) -> str:
-    """Resolve AGENTS.md (falling back to CLAUDE.md) and follow one hop
-    of same-repo relative Markdown links out of the root file.
-
-    Containment of a linked file under `repo_root` is checked via
-    `os.path.realpath` on both sides, never lexical path comparison -- a
-    link that looks like it resolves inside the repo but, via a symlink
-    anywhere in its path, actually resolves outside `repo_root`'s real
-    path is rejected and never read. Image links are followed as file
-    links; `#anchor` and `?query` are stripped first; binary targets are
-    never decoded. Broken-link findings are dropped here -- `check`
-    reports them under its `links` key.
-    """
-    text, _broken = _resolve(repo_root, agents_md_path)
-    return text
 
 
 def check(repo_root: str, agents_md_path: str | None = None) -> dict:

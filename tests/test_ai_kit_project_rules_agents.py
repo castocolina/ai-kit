@@ -406,6 +406,22 @@ class TestLinkHandling(unittest.TestCase):
             self.assertEqual(result["links"][0]["kind"], "link")
             self.assertEqual(result["links"][0]["status"], "broken")
 
+    def test_directory_encoded_and_fenced_links_are_not_broken(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "[docs](docs/) [root](./) [sub](sub) [enc](sub/My%20File.md)\n"
+                "```\n[example](path/to/file.md)\n```\n"
+                "~~~~\n[tilde](also/missing.md)\n```\n~~~~\n"
+                "[gone](after/fence.md)\n",
+            )
+            _write(os.path.join(repo, "docs", "a.md"), "x")
+            _write(os.path.join(repo, "sub", "My File.md"), "x")
+            result = cli.check(repo)
+            self.assertEqual(
+                [finding["target"] for finding in result["links"]], ["after/fence.md"]
+            )
+
     def test_url_scheme_and_absolute_links_are_skipped(self):
         with tempfile.TemporaryDirectory() as repo:
             _write(
