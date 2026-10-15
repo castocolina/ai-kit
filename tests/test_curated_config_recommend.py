@@ -1793,6 +1793,39 @@ class TestWritePlan(unittest.TestCase):
                 self.assertEqual(handle.read(), plan_io.canonical_json(plan))
 
 
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits")
+    def test_write_plan_mode_follows_umask(self):
+        """B-IN-08: plan.json gets the umask-derived mode, not mkstemp's 0600."""
+        plan = {"schema_version": 1, "entries": [], "notes": []}
+        for umask, expected in ((0o022, 0o644), (0o077, 0o600)):
+            old = os.umask(umask)
+            try:
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = os.path.join(tmp, "plan.json")
+                    plan_io.write_plan(path, plan)
+                    self.assertEqual(os.stat(path).st_mode & 0o777, expected, oct(umask))
+            finally:
+                os.umask(old)
+
+    def test_out_into_missing_dir_exits_2(self):
+        """B-IN-08: `--out` never creates a missing parent directory."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path = os.path.join(tmp, "inventory.json")
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                json.dump(make_inventory(), handle)
+            missing = os.path.join(tmp, "missing")
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = cli.main([
+                    "recommend", "--inventory", inv_path, "--profile", "adaptive",
+                    "--rigor", "standard", "--out", os.path.join(missing, "plan.json"),
+                ])
+            self.assertEqual(code, 2)
+            self.assertTrue(err.getvalue().startswith("ai-kit-gsd-curated-config: "))
+            self.assertIn("does not exist", err.getvalue())
+            self.assertFalse(os.path.exists(missing))
+
+
 class TestRelativeOut(unittest.TestCase):
     def test_bare_relative_out_is_written(self):
         """B-CR-02: SPEC R7's literal `--out plan.json` works from any cwd."""

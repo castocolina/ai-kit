@@ -230,10 +230,18 @@ def out_path_problem(out: str, inventory_path: str, inventory: dict) -> str | No
 
 def write_plan(path: str, plan: dict) -> None:
     """Writes `canonical_json(plan)` atomically (mkstemp + os.replace) through the
-    shared `ai_kit_spec.cache` writer. Raises `OSError` when the ai-kit-spec-review
-    sibling is not installed."""
+    shared `ai_kit_spec.cache` writer, with the umask-derived mode a plain `open()` would
+    give. Raises `OSError` when the parent directory is missing (never created) or the
+    ai-kit-spec-review sibling is not installed."""
     cache = gsd_catalog.load_ai_kit_spec_module("cache")
     if cache is None:
         raise OSError(gsd_catalog.SIBLING_MISSING)
     # abspath: a bare `plan.json` has dirname "" and the shared writer's makedirs("") fails.
-    cache.cache_write_text(os.path.abspath(path), canonical_json(plan))
+    target = os.path.abspath(path)
+    parent = os.path.dirname(target)
+    if not os.path.isdir(parent):
+        raise FileNotFoundError(f"directory {parent} does not exist")
+    # Reading the umask means setting it; safe here because the CLI is single-threaded.
+    umask = os.umask(0)
+    os.umask(umask)
+    cache.cache_write_text(target, canonical_json(plan), mode=0o666 & ~umask)

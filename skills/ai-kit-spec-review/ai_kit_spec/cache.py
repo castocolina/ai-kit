@@ -24,15 +24,18 @@ def cache_write_json(path: str, data: dict) -> None:
     cache_write_text(path, json.dumps(data, indent=2))
 
 
-def cache_write_text(path: str, text: str) -> None:
+def cache_write_text(path: str, text: str, mode: int | None = None) -> None:
     """Crash-safe atomic write: each writer gets its own mkstemp temp file (unique name,
-    mode 0600) in the target directory, then os.replace moves it over the target, so two
-    concurrent sessions writing the same cache or trust record never collide on a shared
-    temp name and a crash mid-write never leaves a half-written cache file behind."""
+    mode 0600 unless `mode` is given) in the target directory, then os.replace moves it
+    over the target, so two concurrent sessions writing the same cache or trust record
+    never collide on a shared temp name and a crash mid-write never leaves a half-written
+    cache file behind."""
     parent = os.path.dirname(path)
     os.makedirs(parent, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=parent, suffix=".tmp")
     try:
+        if mode is not None:
+            os.chmod(tmp, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
         os.replace(tmp, path)

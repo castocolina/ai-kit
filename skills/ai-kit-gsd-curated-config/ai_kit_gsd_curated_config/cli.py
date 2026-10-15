@@ -565,7 +565,8 @@ def _build_parser():
     p_recommend.add_argument(
         "--out",
         required=True,
-        help="written atomically; refused inside .planning/ or onto an input/config file",
+        help="written atomically into an existing directory; refused inside .planning/ "
+        "or onto an input/config file",
     )
 
     p_apply_workflow_defaults = sub.add_parser("apply-workflow-defaults")
