@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-spec-execute"))
 
 import detect_framework
-from ai_kit_spec import execute_selection, gsd_tools
+from ai_kit_spec import detection, execute_selection, gsd_tools
 from ai_kit_spec_gsd import adapter, cli, cross_ai_guidance, gsd_config, gsd_cross_ai
 
 
@@ -1028,38 +1028,52 @@ class _FakeCompletedProcess:
 
 
 class TestCliPrepareTooling(unittest.TestCase):
-    def test_prepare_tooling_subcommand_builds_the_index_for_real_and_prints_guidance_text(self):
+    def test_prepare_tooling_runs_index_after_healthy_probe(self):
         import io
-        run_calls = []
-        def fake_run(cmd, **kw):
-            run_calls.append((cmd, kw))
-            return _FakeCompletedProcess(returncode=0)
+        index_dirs = []
         stdout = io.StringIO()
         exit_code = cli.main(
             ["prepare-tooling", "--cli", "codex", "--target-dir", "/repo"],
             detect_tool_availability_fn=lambda **k: {"codegraph": True, "rg": True},
             resolve_agents_tooling_path_fn=lambda **k: "/home/u/.agents/AGENTS-TOOLING.md",
-            ensure_codegraph_registered_fn=lambda cli, **k: True,
-            build_codegraph_index_command_fn=lambda target_dir: "cd /repo && codegraph sync",
-            run_fn=fake_run, stdout=stdout)
+            probe_codegraph_fn=lambda cli: detection.CodegraphProbe(True, True, None, "ok"),
+            run_codegraph_index_fn=lambda target_dir: index_dirs.append(target_dir) or True,
+            stdout=stdout)
         self.assertEqual(exit_code, 0)
-        self.assertEqual(len(run_calls), 1)
+        self.assertEqual(index_dirs, ["/repo"])
         self.assertIn("AGENTS-TOOLING.md", stdout.getvalue())
         self.assertIn("codegraph_explore", stdout.getvalue())
 
-    def test_prepare_tooling_degrades_to_generic_guidance_when_index_build_times_out(self):
+    def test_prepare_tooling_prints_install_hint_on_stderr_when_probe_reports_missing(self):
+        import contextlib
         import io
-        import subprocess
-        def timing_out_run(cmd, **kw):
-            raise subprocess.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout", 15))
+        hint = detection.codegraph_install_command("claude")
+        index_dirs = []
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cli.main(
+                ["prepare-tooling", "--cli", "claude", "--target-dir", "/repo"],
+                detect_tool_availability_fn=lambda **k: {"codegraph": True, "rg": True},
+                resolve_agents_tooling_path_fn=lambda **k: None,
+                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
+                    False, False, hint, "codegraph not listed"),
+                run_codegraph_index_fn=lambda target_dir: index_dirs.append(target_dir) or True,
+                stdout=stdout)
+        self.assertEqual(index_dirs, [])
+        self.assertIn(hint, stderr.getvalue())
+        self.assertNotIn(hint, stdout.getvalue())
+
+    def test_prepare_tooling_degrades_when_index_build_fails(self):
+        import io
         stdout = io.StringIO()
         exit_code = cli.main(
             ["prepare-tooling", "--cli", "codex", "--target-dir", "/repo"],
             detect_tool_availability_fn=lambda **k: {"codegraph": True, "rg": True},
             resolve_agents_tooling_path_fn=lambda **k: "/home/u/.agents/AGENTS-TOOLING.md",
-            ensure_codegraph_registered_fn=lambda cli, **k: True,
-            build_codegraph_index_command_fn=lambda target_dir: "cd /repo && codegraph sync",
-            run_fn=timing_out_run, stdout=stdout)
+            probe_codegraph_fn=lambda cli: detection.CodegraphProbe(True, True, None, "ok"),
+            run_codegraph_index_fn=lambda target_dir: False,
+            stdout=stdout)
         self.assertEqual(exit_code, 0)
         self.assertNotIn("codegraph_explore", stdout.getvalue())
         self.assertIn("AGENTS-TOOLING.md", stdout.getvalue())

@@ -1,8 +1,8 @@
 import json
 import os
-import shlex
 import shutil
 import subprocess
+from typing import NamedTuple
 
 from ai_kit_spec.cache import cache_base
 from ai_kit_spec.model_catalog import split_catalog_meta
@@ -519,10 +519,15 @@ def resolve_agents_tooling_path(env=None) -> str | None:
 # healthy, never assume health from presence alone.
 _SUPPORTED_CODEGRAPH_CLIENTS = frozenset({"claude", "codex", "cursor-agent", "opencode"})
 
-_MCP_GET_COMMANDS = {"claude": "claude mcp get codegraph", "codex": "codex mcp get codegraph"}
+_MCP_GET_COMMANDS = {
+    "claude": ("claude", "mcp", "get", "codegraph"),
+    "codex": ("codex", "mcp", "get", "codegraph"),
+}
 _MCP_LIST_COMMANDS = {
-    "claude": "claude mcp list", "codex": "codex mcp list",
-    "cursor-agent": "cursor-agent mcp list", "opencode": "opencode mcp list",
+    "claude": ("claude", "mcp", "list"),
+    "codex": ("codex", "mcp", "list"),
+    "cursor-agent": ("cursor-agent", "mcp", "list"),
+    "opencode": ("opencode", "mcp", "list"),
 }
 
 # Confirmed live in claude's own output ("✔ Connected" / "✘ Failed to connect — ..."); codex/
@@ -549,34 +554,57 @@ def _codegraph_entry_healthy_in_list_output(stdout: str) -> bool:
     return False
 
 
-def check_codegraph_mcp_healthy(cli: str, run_fn=subprocess.run) -> bool:
-    """Cheap, run every session, scoped to the one client about to be dispatched (never a
-    one-time-ever check -- a client installed after codegraph's own setup would otherwise
-    never get detected). Uses each client's own real MCP-inspection command, confirmed live
-    against the actual installed CLI -- never reads a config file directly (a prior revision of
-    this function did that and produced weak substring-match false positives). Verifies HEALTH,
-    not just presence -- a registered-but-currently-disconnected server returns False here,
-    same as if it were never registered at all (see the module-level note above for why).
+CODEGRAPH_PROBE_TIMEOUT_SECONDS = 15
 
-    Where `mcp get <name>` exists (claude, codex), it is the primary, cheapest check -- one
-    subprocess call, deterministic exit code, then a health-signal check on its own stdout.
-    Only on a NONZERO `get` exit does this fall back to `mcp list` for that same client: a
-    nonzero `get` exit usually means "not registered," but could also mean the `get` invocation
-    itself hit an unrelated problem (a CLI bug, an auth hiccup) -- cross-checking via `list`
-    before concluding "not registered" is one extra call in the uncommon case, in exchange for
-    not trusting a single command's exit code as the only signal. cursor-agent/opencode have no
-    `get` at all, so `list` is their only (not a fallback) check."""
+
+class CodegraphProbe(NamedTuple):
+    registered: bool | None
+    healthy: bool | None
+    install_command: str | None
+    detail: str
+
+
+def codegraph_install_command(cli: str) -> str:
+    return f"codegraph install --target={cli} --location=global --yes --init"
+
+
+def probe_codegraph(cli: str, run_fn=subprocess.run,
+                    timeout: int = CODEGRAPH_PROBE_TIMEOUT_SECONDS) -> CodegraphProbe:
+    """Report-only codegraph MCP probe for one CLI. Never installs or registers anything --
+    when the server is missing or unhealthy, ``install_command`` carries the suggested command
+    for the user (or tools-installer) to run. Timeout/OSError yields unknown registered/healthy."""
     if cli not in _SUPPORTED_CODEGRAPH_CLIENTS:
-        return False
-    get_command = _MCP_GET_COMMANDS.get(cli)
-    if get_command is not None:
-        result = run_fn(get_command, shell=True, capture_output=True, text=True, check=False)
-        if result.returncode == 0:
-            return _text_is_healthy(result.stdout)
-        # nonzero exit -- cross-check via `mcp list` before concluding "not registered"
-    list_result = run_fn(_MCP_LIST_COMMANDS[cli], shell=True, capture_output=True, text=True,
-                          check=False)
-    return _codegraph_entry_healthy_in_list_output(list_result.stdout)
+        return CodegraphProbe(
+            False, False, None, f"codegraph MCP is not supported for client {cli!r}")
+    hint = codegraph_install_command(cli)
+    run_kw = {"capture_output": True, "text": True, "check": False, "timeout": timeout}
+    try:
+        get_argv = _MCP_GET_COMMANDS.get(cli)
+        if get_argv is not None:
+            result = run_fn(get_argv, **run_kw)
+            if result.returncode == 0:
+                if cli == "codex":
+                    return CodegraphProbe(True, True, None, "health not observable")
+                if _text_is_healthy(result.stdout):
+                    return CodegraphProbe(True, True, None, result.stdout.strip() or "healthy")
+                return CodegraphProbe(True, False, hint, result.stdout.strip() or "unhealthy")
+        list_result = run_fn(_MCP_LIST_COMMANDS[cli], **run_kw)
+        for line in list_result.stdout.splitlines():
+            name = line.split(":", 1)[0].strip()
+            if name == "codegraph":
+                if _text_is_healthy(line):
+                    return CodegraphProbe(True, True, None, line.strip())
+                return CodegraphProbe(True, False, hint, line.strip())
+        return CodegraphProbe(False, False, hint, "codegraph not listed")
+    except subprocess.TimeoutExpired:
+        return CodegraphProbe(None, None, None, "probe timed out")
+    except OSError as exc:
+        return CodegraphProbe(None, None, None, str(exc))
+
+
+def check_codegraph_mcp_healthy(cli: str, run_fn=subprocess.run) -> bool:
+    """True only when ``probe_codegraph`` reports a registered, healthy MCP server."""
+    return probe_codegraph(cli, run_fn).healthy is True
 
 
 # The two multi-provider CLIs with their own per-model catalog (a single-vendor CLI's
@@ -609,25 +637,21 @@ def find_codegraph_alternative(cli: str, model: str, runtimes_snapshot: dict) ->
 CODEGRAPH_INDEX_TIMEOUT_SECONDS = 15  # agreed minimum, safety margin over the typical <5s runtime
 
 
-def ensure_codegraph_registered(cli: str, run_fn=subprocess.run,
-                                 check_fn=check_codegraph_mcp_healthy) -> bool:
-    """Runs every session, scoped to `cli` -- never a one-time-ever check (design spec §9,
-    corrected during brainstorming: a client installed after codegraph's own setup would
-    otherwise never get detected). Only `install` itself is conditional on check_fn's result."""
-    if check_fn(cli):
-        return True
-    if cli not in _SUPPORTED_CODEGRAPH_CLIENTS:
-        return False  # grok and any other unsupported client -- never attempt install
-    run_fn(f"codegraph install --target={cli} --location=global --yes --init",
-           shell=True, capture_output=True, text=True, check=False)
-    return check_fn(cli)
-
-
-def build_codegraph_index_command(target_dir: str) -> str:
-    """sync first (fast, incremental), init as fallback (first-ever index for this repo) --
-    confirmed real usage from the design discussion. Caller (the orchestrator, never the
-    sandboxed reviewer/executor subagent) runs this with a minimum
-    CODEGRAPH_INDEX_TIMEOUT_SECONDS timeout, before dispatch. target_dir is shell-quoted --
-    this string is built for shell=True execution, same as every other command builder in this
-    package; an unquoted path with a space or shell metacharacter would break or inject."""
-    return f"cd {shlex.quote(target_dir)} && (codegraph sync || codegraph init)"
+def run_codegraph_index(target_dir: str, run_fn=subprocess.run) -> bool:
+    """Run ``codegraph sync`` then ``codegraph init`` on failure, scoped to ``target_dir``.
+    Only invoked after a healthy probe; returns True only when sync or init exits 0."""
+    run_kw = {
+        "cwd": target_dir,
+        "capture_output": True,
+        "text": True,
+        "check": False,
+        "timeout": CODEGRAPH_INDEX_TIMEOUT_SECONDS,
+    }
+    try:
+        sync = run_fn(["codegraph", "sync"], **run_kw)
+        if sync.returncode == 0:
+            return True
+        init = run_fn(["codegraph", "init"], **run_kw)
+        return init.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False

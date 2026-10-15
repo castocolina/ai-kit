@@ -16,11 +16,10 @@ from ai_kit_spec import gsd_tools
 from ai_kit_spec.cache import cache_read_json, cache_write_json
 from ai_kit_spec.config_io import ConfigError
 from ai_kit_spec.detection import (
-    CODEGRAPH_INDEX_TIMEOUT_SECONDS,
-    build_codegraph_index_command,
     detect_tool_availability,
-    ensure_codegraph_registered,
+    probe_codegraph,
     resolve_agents_tooling_path,
+    run_codegraph_index,
 )
 from ai_kit_spec.dispatch import write_resumable_state as _write_resumable_state_default
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
@@ -103,8 +102,8 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
          which_fn=shutil.which, resolve_gsd_tools_fn=_default_resolve_gsd_tools,
          detect_tool_availability_fn=detect_tool_availability,
          resolve_agents_tooling_path_fn=resolve_agents_tooling_path,
-         ensure_codegraph_registered_fn=ensure_codegraph_registered,
-         build_codegraph_index_command_fn=build_codegraph_index_command,
+         probe_codegraph_fn=probe_codegraph,
+         run_codegraph_index_fn=run_codegraph_index,
          build_gsd_cross_ai_guidance_fn=build_gsd_cross_ai_guidance,
          run_fn=subprocess.run, write_resumable_state_fn=_write_resumable_state_default,
          stdout=sys.stdout) -> int:
@@ -264,16 +263,13 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
         agents_tooling_path = resolve_agents_tooling_path_fn()
         codegraph_registered = False
         if args.cli is not None:
-            codegraph_registered = ensure_codegraph_registered_fn(args.cli)
-            if codegraph_registered:
-                index_cmd = build_codegraph_index_command_fn(args.target_dir)
-                try:
-                    result = run_fn(index_cmd, shell=True, capture_output=True, text=True,
-                                     check=False, timeout=CODEGRAPH_INDEX_TIMEOUT_SECONDS)
-                    if result.returncode != 0:
-                        codegraph_registered = False
-                except (subprocess.TimeoutExpired, OSError):
-                    codegraph_registered = False
+            probe = probe_codegraph_fn(args.cli)
+            if probe.install_command:
+                print(f"ai-kit-spec-execute-gsd: codegraph MCP is not registered or not healthy "
+                      f"for {args.cli}; install it with: {probe.install_command}",
+                      file=sys.stderr)
+            if probe.healthy is True:
+                codegraph_registered = run_codegraph_index_fn(args.target_dir)
         guidance = build_tooling_guidance(
             args.cli, tool_availability, agents_tooling_path, codegraph_registered,
             shared_reference_path=resolve_shared_tooling_reference_path())

@@ -1287,115 +1287,191 @@ class TestFindCodegraphAlternative(unittest.TestCase):
         self.assertIsNone(result)
 
 
-class TestCheckCodegraphMcpHealthy(unittest.TestCase):
-    def test_grok_is_always_false_no_command_attempted(self):
-        # grok is confirmed unsupported by codegraph -- never even run a command for it
-        result = detection.check_codegraph_mcp_healthy(
+class TestProbeCodegraph(unittest.TestCase):
+    def _is_get(self, argv):
+        return len(argv) >= 3 and argv[2] == "get"
+
+    def test_grok_is_unsupported_without_running_any_command(self):
+        probe = detection.probe_codegraph(
             "grok", run_fn=lambda *a, **k: (_ for _ in ()).throw(
                 AssertionError("must not run any command for grok")))
-        self.assertFalse(result)
+        self.assertEqual(probe.registered, False)
+        self.assertEqual(probe.healthy, False)
+        self.assertIsNone(probe.install_command)
+        self.assertIn("grok", probe.detail)
 
-    def test_unknown_cli_is_false(self):
+    def test_unknown_cli_is_unsupported(self):
         self.assertFalse(detection.check_codegraph_mcp_healthy("some-future-cli"))
 
-    def test_claude_true_when_mcp_get_exits_zero_and_status_is_connected(self):
-        # confirmed live (2026-08-30): `claude mcp get <name>` exits 0 and prints a
-        # "Status: ✔ Connected" line when the server is registered AND healthy
-        result = detection.check_codegraph_mcp_healthy(
+    def test_claude_healthy_when_mcp_get_exits_zero_and_connected(self):
+        probe = detection.probe_codegraph(
             "claude", run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="codegraph:\n  Scope: user config\n  Status: ✔ Connected\n"))
-        self.assertTrue(result)
+                returncode=0, stdout="codegraph:\n  Status: ✔ Connected\n"))
+        self.assertTrue(probe.registered)
+        self.assertTrue(probe.healthy)
+        self.assertIsNone(probe.install_command)
+        self.assertTrue(detection.check_codegraph_mcp_healthy("claude", run_fn=lambda *a, **k:
+            unittest.mock.MagicMock(returncode=0, stdout="Status: ✔ Connected\n")))
 
-    def test_claude_false_when_get_exits_zero_but_status_shows_failed_to_connect(self):
-        # confirmed live: a REGISTERED server can still be currently disconnected -- `claude
-        # mcp get` returned exit 0 with "Status: ✘ Failed to connect" observed live for a real
-        # server in this session. Registered-but-unhealthy must be treated as unusable, same as
-        # not-registered -- exit code 0 alone is NOT sufficient to declare it usable.
-        result = detection.check_codegraph_mcp_healthy(
+    def test_claude_unhealthy_when_get_shows_failed_to_connect(self):
+        probe = detection.probe_codegraph(
             "claude", run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0,
-                stdout="codegraph:\n  Scope: user config\n  Status: ✘ Failed to connect — "
-                        "CONNECTION_CLOSED\n"))
-        self.assertFalse(result)
+                returncode=0, stdout="Status: ✘ Failed to connect — CONNECTION_CLOSED\n"))
+        self.assertTrue(probe.registered)
+        self.assertFalse(probe.healthy)
+        self.assertEqual(probe.install_command, detection.codegraph_install_command("claude"))
 
-    def test_claude_false_when_get_and_list_fallback_both_say_not_registered(self):
-        # confirmed live: `claude mcp get nonexistent` exits 1 with "No MCP server named...";
-        # this must also cross-check `mcp list` (fallback) before concluding "not registered"
-        def fake_run(cmd, **k):
-            if "get" in cmd:
+    def test_claude_missing_when_get_and_list_both_fail(self):
+        def fake_run(argv, **k):
+            if self._is_get(argv):
                 return unittest.mock.MagicMock(returncode=1)
             return unittest.mock.MagicMock(returncode=0, stdout="other-tool: x - Connected\n")
-        result = detection.check_codegraph_mcp_healthy("claude", run_fn=fake_run)
-        self.assertFalse(result)
+        probe = detection.probe_codegraph("claude", run_fn=fake_run)
+        self.assertFalse(probe.registered)
+        self.assertFalse(probe.healthy)
+        self.assertEqual(probe.install_command, detection.codegraph_install_command("claude"))
 
-    def test_claude_get_succeeds_never_calls_list_fallback(self):
-        # the fallback must be nonzero-exit-triggered only -- a successful get is the cheapest
-        # path and must not incur a second subprocess call
+    def test_claude_get_success_skips_list_fallback(self):
         seen = []
-        detection.check_codegraph_mcp_healthy(
-            "claude",
-            run_fn=lambda cmd, **k: seen.append(cmd) or unittest.mock.MagicMock(
-                returncode=0, stdout="Status: ✔ Connected\n"))
-        self.assertEqual(seen, ["claude mcp get codegraph"])
+        def fake_run(argv, **k):
+            seen.append(argv)
+            return unittest.mock.MagicMock(returncode=0, stdout="Status: ✔ Connected\n")
+        detection.probe_codegraph("claude", run_fn=fake_run)
+        self.assertEqual(seen, [detection._MCP_GET_COMMANDS["claude"]])
 
-    def test_claude_get_fails_but_list_fallback_finds_it_registered_and_healthy(self):
-        # the exact resilience case this fallback exists for: `get` returns nonzero for some
-        # unrelated reason (CLI bug, auth hiccup) even though the server genuinely IS registered
-        def fake_run(cmd, **k):
-            if "get" in cmd:
+    def test_claude_get_fails_but_list_finds_healthy_entry(self):
+        def fake_run(argv, **k):
+            if self._is_get(argv):
                 return unittest.mock.MagicMock(returncode=1)
             return unittest.mock.MagicMock(returncode=0, stdout="codegraph: x - ✔ Connected\n")
-        result = detection.check_codegraph_mcp_healthy("claude", run_fn=fake_run)
-        self.assertTrue(result)
+        probe = detection.probe_codegraph("claude", run_fn=fake_run)
+        self.assertTrue(probe.registered and probe.healthy)
 
-    def test_codex_true_when_mcp_get_exits_zero_and_healthy(self):
-        # confirmed live: codex mcp get <name> mirrors claude's exit-code contract exactly
-        result = detection.check_codegraph_mcp_healthy(
+    def test_codex_healthy_with_health_not_observable_detail(self):
+        probe = detection.probe_codegraph(
             "codex", run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="Status: ✔ Connected\n"))
-        self.assertTrue(result)
+                returncode=0, stdout="anything\n"))
+        self.assertTrue(probe.healthy)
+        self.assertEqual(probe.detail, "health not observable")
 
-    def test_cursor_agent_parses_mcp_list_for_an_actual_server_name_token(self):
-        # confirmed live: cursor-agent has no `mcp get`, only `mcp list` -- must parse output.
-        # "codegraph" must be the actual name token (text before the first ':'), never a
-        # substring match anywhere in the line
-        fake_list = "codegraph: some-command - ✔ Connected\nother-tool: x - ✔ Connected\n"
-        result = detection.check_codegraph_mcp_healthy(
+    def test_cursor_agent_parses_list_name_token(self):
+        fake_list = "codegraph: some-command - ✔ Connected\nother-tool: x\n"
+        probe = detection.probe_codegraph(
             "cursor-agent",
             run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
-        self.assertTrue(result)
+        self.assertTrue(probe.registered and probe.healthy)
 
-    def test_cursor_agent_false_when_codegraph_only_appears_outside_the_name_token(self):
+    def test_cursor_agent_false_when_codegraph_only_in_description(self):
         fake_list = "other-tool: some codegraph-related command - ✔ Connected\n"
-        result = detection.check_codegraph_mcp_healthy(
+        probe = detection.probe_codegraph(
             "cursor-agent",
             run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
-        self.assertFalse(result)
+        self.assertFalse(probe.registered)
 
-    def test_cursor_agent_false_when_codegraph_present_but_disconnected(self):
-        # present (name token matches) but its own line shows a failure signal -- must be
-        # treated the same as absent, not as usable
-        fake_list = "codegraph: some-command - ✘ Failed to connect\n"
-        result = detection.check_codegraph_mcp_healthy(
+    def test_cursor_agent_unhealthy_line_gets_install_hint(self):
+        fake_list = "codegraph: cmd - ✘ Failed to connect\n"
+        probe = detection.probe_codegraph(
             "cursor-agent",
             run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
-        self.assertFalse(result)
+        self.assertTrue(probe.registered)
+        self.assertFalse(probe.healthy)
+        self.assertEqual(probe.install_command,
+                         detection.codegraph_install_command("cursor-agent"))
 
-    def test_opencode_parses_mcp_list_the_same_way_as_cursor_agent(self):
-        fake_list = "codegraph: ✔ connected\n"
-        result = detection.check_codegraph_mcp_healthy(
+    def test_opencode_list_parsing_matches_cursor_agent(self):
+        probe = detection.probe_codegraph(
             "opencode",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list))
-        self.assertTrue(result)
+            run_fn=lambda *a, **k: unittest.mock.MagicMock(
+                returncode=0, stdout="codegraph: ✔ connected\n"))
+        self.assertTrue(probe.registered and probe.healthy)
 
-    def test_list_based_client_false_when_no_servers_configured(self):
-        result = detection.check_codegraph_mcp_healthy(
+    def test_list_client_false_when_no_codegraph_entry(self):
+        probe = detection.probe_codegraph(
             "cursor-agent",
             run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0,
-                stdout="No MCP servers configured (expected in .cursor/mcp.json or "
-                       "~/.cursor/mcp.json)\n"))
-        self.assertFalse(result)
+                returncode=0, stdout="No MCP servers configured\n"))
+        self.assertFalse(probe.registered)
+
+    def test_timeout_yields_unknown_registered_and_healthy(self):
+        def fake_run(argv, **k):
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=k["timeout"])
+        probe = detection.probe_codegraph("claude", run_fn=fake_run)
+        self.assertIsNone(probe.registered)
+        self.assertIsNone(probe.healthy)
+        self.assertIsNone(probe.install_command)
+
+    def test_oserror_yields_unknown_with_detail(self):
+        def fake_run(argv, **k):
+            raise OSError("no such binary")
+        probe = detection.probe_codegraph("claude", run_fn=fake_run)
+        self.assertIsNone(probe.registered)
+        self.assertIn("no such binary", probe.detail)
+
+    def test_every_subprocess_uses_argv_list_and_probe_timeout(self):
+        recorded = []
+        def fake_run(argv, **k):
+            recorded.append((argv, k))
+            return unittest.mock.MagicMock(returncode=1, stdout="")
+        detection.probe_codegraph("claude", run_fn=fake_run)
+        self.assertGreaterEqual(len(recorded), 2)
+        for argv, kw in recorded:
+            self.assertIsInstance(argv, (list, tuple))
+            self.assertEqual(kw.get("timeout"), detection.CODEGRAPH_PROBE_TIMEOUT_SECONDS)
+            joined = " ".join(argv)
+            self.assertNotIn("install", joined)
+
+    def test_hanging_cli_binary_respects_probe_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_claude = os.path.join(tmp, "claude")
+            with open(fake_claude, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\nsleep 30\n")
+            os.chmod(fake_claude, stat.S_IRWXU)
+            env = os.environ.copy()
+            env["PATH"] = tmp + os.pathsep + env.get("PATH", "")
+
+            def patched_run(argv, **kw):
+                kw["env"] = env
+                return subprocess.run(argv, **kw)
+
+            start = time.monotonic()
+            probe = detection.probe_codegraph("claude", run_fn=patched_run, timeout=1)
+            elapsed = time.monotonic() - start
+            self.assertLess(elapsed, 5.0)
+            self.assertIsNone(probe.registered)
+
+
+class TestRunCodegraphIndex(unittest.TestCase):
+    def test_sync_success_returns_true_without_init(self):
+        calls = []
+        def fake_run(argv, **kw):
+            calls.append((argv, kw))
+            return unittest.mock.MagicMock(returncode=0)
+        self.assertTrue(detection.run_codegraph_index("/repo/root", run_fn=fake_run))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], ["codegraph", "sync"])
+        self.assertEqual(calls[0][1]["cwd"], "/repo/root")
+
+    def test_sync_failure_runs_init_in_target_dir(self):
+        attempt = {"n": 0}
+        def fake_run(argv, **kw):
+            attempt["n"] += 1
+            return unittest.mock.MagicMock(returncode=0 if attempt["n"] == 2 else 1)
+        self.assertTrue(detection.run_codegraph_index("/tmp/a b", run_fn=fake_run))
+        self.assertEqual(attempt["n"], 2)
+
+    def test_both_fail_returns_false(self):
+        def fake_run(argv, **kw):
+            return unittest.mock.MagicMock(returncode=1)
+        self.assertFalse(detection.run_codegraph_index("/repo", run_fn=fake_run))
+
+    def test_timeout_returns_false(self):
+        def fake_run(argv, **kw):
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=15)
+        self.assertFalse(detection.run_codegraph_index("/repo", run_fn=fake_run))
+
+    def test_minimum_index_timeout_constant(self):
+        self.assertEqual(detection.CODEGRAPH_INDEX_TIMEOUT_SECONDS, 15)
+
 
 
 class TestBuildRuntimesSnapshot(unittest.TestCase):
@@ -3482,47 +3558,6 @@ class TestDispatchExecute(unittest.TestCase):
         self.assertIn('service_tier="priority"', captured["command"])
 
 
-class TestEnsureCodegraphRegistered(unittest.TestCase):
-    def test_skips_install_when_already_registered(self):
-        calls = []
-        detection.ensure_codegraph_registered(
-            "claude",
-            run_fn=lambda *a, **k: calls.append(a) or unittest.mock.MagicMock(returncode=0),
-            check_fn=lambda cli: True)
-        self.assertEqual(calls, [])
-
-    def test_installs_when_not_registered(self):
-        calls = []
-        def fake_run(cmd, **k):
-            calls.append(cmd)
-            return unittest.mock.MagicMock(returncode=0)
-        detection.ensure_codegraph_registered("claude", run_fn=fake_run, check_fn=lambda cli: False)
-        self.assertEqual(len(calls), 1)
-        self.assertIn("--location=global", calls[0])
-        self.assertIn("--target=claude", calls[0])
-        self.assertIn("--yes", calls[0])
-
-    def test_grok_never_attempts_install(self):
-        calls = []
-        result = detection.ensure_codegraph_registered(
-            "grok", run_fn=lambda *a, **k: calls.append(a),
-            check_fn=lambda cli: False)
-        self.assertEqual(calls, [])
-        self.assertFalse(result)
-
-
-class TestBuildCodegraphIndexCommand(unittest.TestCase):
-    def test_tries_sync_then_init(self):
-        cmd = detection.build_codegraph_index_command("/repo/root")
-        self.assertIn("cd /repo/root", cmd)
-        self.assertIn("codegraph sync || codegraph init", cmd)
-
-    def test_target_dir_with_shell_metacharacters_is_quoted(self):
-        cmd = detection.build_codegraph_index_command("/tmp/a b$(x)")
-        self.assertIn(shlex.quote("/tmp/a b$(x)"), cmd)
-
-    def test_minimum_timeout_constant(self):
-        self.assertEqual(detection.CODEGRAPH_INDEX_TIMEOUT_SECONDS, 15)
 
 
 class TestDispatchWithHeartbeat(unittest.TestCase):
