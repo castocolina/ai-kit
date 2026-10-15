@@ -40,6 +40,7 @@ from ai_kit_spec import (
     quota,
     reviewer_dispatch,
     tooling_guidance,
+    trust,
 )
 
 # Every name imported below is used only reflectively (see the `globals()[_name]` loop building
@@ -225,6 +226,17 @@ class TestResolveConfig(unittest.TestCase):
             f.write('[policy]\nmode = "single"\nladder = ["a"]\n'
                     '[[reviewers]]\nkey = "a"\nmodel = "m1"\nvendor = "openai"\n')
 
+    def _trust_local_file(self, local_path: str) -> None:
+        with open(local_path, "rb") as f:
+            self._trust_local(f.read())
+
+    def _trust_local(self, raw: bytes) -> None:
+        """Record trust for this test's own local .aikit/review-spec.toml -- a local file is
+        only applied once its exact content is trusted (Plan 16.1-08, HARD-03)."""
+        trust.record_trust(
+            config_io.cfg_trust_store_dir(self.env),
+            os.path.realpath(config_io.cfg_local_path(self.tmp)), raw)
+
     def test_no_local_file_uses_global_only(self):
         resolved = rs.cfg_resolve(self.tmp, self.env)
         self.assertEqual(resolved["policy"]["mode"], "single")
@@ -232,9 +244,10 @@ class TestResolveConfig(unittest.TestCase):
 
     def test_local_only_strategy_ignores_global(self):
         os.makedirs(os.path.join(self.tmp, ".aikit"), exist_ok=True)
-        with open(os.path.join(self.tmp, ".aikit", "review-spec.toml"),
-                   "w", encoding="utf-8") as f:
+        local_path = os.path.join(self.tmp, ".aikit", "review-spec.toml")
+        with open(local_path, "w", encoding="utf-8") as f:
             f.write('strategy = "local-only"\n[policy]\nmode = "double"\n')
+        self._trust_local_file(local_path)
         resolved = rs.cfg_resolve(self.tmp, self.env)
         self.assertEqual(resolved["policy"]["mode"], "double")
         # local declared no reviewers, global not consulted
@@ -242,9 +255,10 @@ class TestResolveConfig(unittest.TestCase):
 
     def test_global_merge_is_the_default_strategy(self):
         os.makedirs(os.path.join(self.tmp, ".aikit"), exist_ok=True)
-        with open(os.path.join(self.tmp, ".aikit", "review-spec.toml"),
-                   "w", encoding="utf-8") as f:
+        local_path = os.path.join(self.tmp, ".aikit", "review-spec.toml")
+        with open(local_path, "w", encoding="utf-8") as f:
             f.write('[[reviewers]]\nkey = "a"\nmodel = "m1"\nvendor = "openai"\neffort = "low"\n')
+        self._trust_local_file(local_path)
         resolved = rs.cfg_resolve(self.tmp, self.env)
         self.assertEqual(resolved["policy"]["mode"], "single")  # inherited from global
         self.assertEqual(resolved["reviewers"][0]["effort"], "low")  # local override applied
@@ -440,6 +454,10 @@ class TestRenderAndWriteToml(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = config_io.cfg_local_path(d)  # ./.aikit/review-spec.toml under d
             config_io.cfg_write_toml(path, config)
+            with open(path, "rb") as f:
+                raw = f.read()
+            trust.record_trust(config_io.cfg_trust_store_dir({"HOME": d}),
+                               os.path.realpath(path), raw)
             resolved = config_io.cfg_resolve(d, {"HOME": d})
             self.assertNotIn("bad", resolved["policy"]["ladder"])
             self.assertIn("good", resolved["policy"]["ladder"])
@@ -2806,8 +2824,12 @@ class TestMainCli(unittest.TestCase):
                 "reviewers": [{"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai"}],
             })
             os.makedirs(os.path.join(cwd, ".aikit"))
-            with open(os.path.join(cwd, ".aikit", "review-spec.toml"), "w", encoding="utf-8") as f:
-                f.write('[[reviewers]]\nkey = "codex-gpt"\nmodel = "gpt-5.2-mini"\n')
+            local_path = os.path.join(cwd, ".aikit", "review-spec.toml")
+            raw = b'[[reviewers]]\nkey = "codex-gpt"\nmodel = "gpt-5.2-mini"\n'
+            with open(local_path, "wb") as f:
+                f.write(raw)
+            trust.record_trust(
+                config_io.cfg_trust_store_dir({"HOME": home}), os.path.realpath(local_path), raw)
             quota_path = os.path.join(cwd, "quota.json")
             rs.cache_write_json(quota_path, {})
             buf = io.StringIO()
@@ -6098,12 +6120,14 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                 d, {"codex": {"installed": True}})  # no "models" key -- single-provider
             local_cfg = os.path.join(d, ".aikit", "review-spec.toml")
             os.makedirs(os.path.dirname(local_cfg))
-            with open(local_cfg, "w", encoding="utf-8") as f:
-                f.write(
-                    '[[reviewers]]\nkey = "codex-primary"\n'
-                    'model = "vendor/already-registered"\n'
-                    'vendor = "vendor"\ncli = "codex"\n'
-                )
+            raw = (
+                    b'[[reviewers]]\nkey = "codex-primary"\n'
+                    b'model = "vendor/already-registered"\n'
+                    b'vendor = "vendor"\ncli = "codex"\n')
+            with open(local_cfg, "wb") as f:
+                f.write(raw)
+            trust.record_trust(
+                config_io.cfg_trust_store_dir({"HOME": d}), os.path.realpath(local_cfg), raw)
             import io
             from contextlib import redirect_stdout
             buf = io.StringIO()

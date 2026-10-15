@@ -1,4 +1,7 @@
 import os
+import sys
+
+from ai_kit_spec.trust import is_trusted
 
 try:
     import tomllib as _tomllib_impl
@@ -18,10 +21,22 @@ def cfg_local_path(cwd: str) -> str:
     return os.path.join(cwd, ".aikit", "review-spec.toml")
 
 
+def cfg_config_base(env: dict) -> str:
+    """${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit -- the base for ai-kit's own config files
+    (the global review-spec.toml and the trust store)."""
+    base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
+    return os.path.join(base, "ai-kit")
+
+
+def cfg_trust_store_dir(env: dict) -> str:
+    """Directory holding per-content trust records for project-local review-spec.toml
+    files (trust.py). Under ai-kit's own config base, never in the project."""
+    return os.path.join(cfg_config_base(env), "review-spec-trust")
+
+
 def cfg_global_path(env: dict) -> str:
     """${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/review-spec.toml."""
-    base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
-    return os.path.join(base, "ai-kit", "review-spec.toml")
+    return os.path.join(cfg_config_base(env), "review-spec.toml")
 
 
 def cfg_load_toml(path: str) -> dict:
@@ -32,10 +47,22 @@ def cfg_load_toml(path: str) -> dict:
         return {}
     try:
         with open(path, "rb") as f:
-            return tomllib.load(f)
+            return cfg_parse_toml_bytes(f.read(), path)
     except FileNotFoundError:
         return {}
     except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def cfg_parse_toml_bytes(raw: bytes, path: str) -> dict:
+    """Parse already-read TOML bytes (same no-raise-on-bad-input contract as cfg_load_toml:
+    malformed bytes -> {}). Kept separate so cfg_resolve can hash and parse the SAME bytes
+    it read once -- no check-then-read gap between the trust decision and the parse."""
+    if tomllib is None:
+        return {}
+    try:
+        return tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
         return {}
 
 
@@ -62,10 +89,31 @@ def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
     return [by_key[k] for k in order]
 
 
-def cfg_resolve(cwd: str, env: dict) -> dict:
+def cfg_resolve(cwd: str, env: dict, warn_fn=None) -> dict:
     """Resolve the effective config: local (with its own `strategy`) vs
-    global, per the design's local/global precedence rules."""
-    local = cfg_load_toml(cfg_local_path(cwd))
+    global, per the design's local/global precedence rules.
+
+    Trust gate (D-08, Plan 16.1-08): the local file's bytes are read ONCE, parsed, and the
+    parsed dict is kept only when that exact content is trusted (trust.py). An untrusted
+    local file is ignored entirely -- this resolves to global config only -- and warn_fn
+    (default: stderr) explains how to review and trust it. Parsing executes nothing, so a
+    malformed local file still parses the same whether trusted or not."""
+    if warn_fn is None:
+        def warn_fn(msg):
+            print(msg, file=sys.stderr)
+    local_path = cfg_local_path(cwd)
+    local = {}
+    if os.path.exists(local_path):
+        with open(local_path, "rb") as f:
+            raw = f.read()
+        if is_trusted(cfg_trust_store_dir(env), os.path.realpath(local_path), raw):
+            local = cfg_parse_toml_bytes(raw, local_path)
+        else:
+            warn_fn(
+                f"ai-kit-spec: ignoring untrusted project-local config {local_path}; "
+                f"review its commands with `ai-kit-spec.py trust-local --cwd {cwd} --show`, "
+                f"then trust it with `ai-kit-spec.py trust-local --cwd {cwd}` "
+                f"(any edit needs a new trust)")
     if not local:
         global_cfg = cfg_load_toml(cfg_global_path(env))
         return {"policy": {**DEFAULT_POLICY, **global_cfg.get("policy", {})},

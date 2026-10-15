@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 
+from ai_kit_spec import trust
 from ai_kit_spec.cache import cache_is_stale, cache_read_json, cache_write_json
 from ai_kit_spec.commands import (
     ResolvedReviewer,
@@ -13,10 +14,14 @@ from ai_kit_spec.commands import (
     build_reviewer_model_id,
     execute_cli_error,
     render_reviewer_command,
+    split_command_template,
 )
 from ai_kit_spec.config_io import (
+    cfg_local_path,
+    cfg_parse_toml_bytes,
     cfg_render_toml,
     cfg_resolve,
+    cfg_trust_store_dir,
     cfg_write_toml,
     resolve_timeout_tiers,
 )
@@ -765,6 +770,15 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
                           help="path to resolve-reviewers' saved JSON array output")
     p_tiers.add_argument("--index", type=int, required=True)
 
+    p_trust = sub.add_parser("trust-local")
+    p_trust.add_argument("--cwd", required=True)
+    trust_mode = p_trust.add_mutually_exclusive_group()
+    trust_mode.add_argument("--show", action="store_true",
+                             help="print each reviewer's exact argv (or its refusal) plus "
+                                  "trust status; writes nothing")
+    trust_mode.add_argument("--revoke", action="store_true",
+                             help="delete this file's trust records (all content hashes)")
+
     p_vendor = sub.add_parser("infer-vendor")
     p_vendor.add_argument("--model", required=True)
 
@@ -1194,6 +1208,41 @@ def main(argv: list, which_fn=shutil.which, run_fn=subprocess.run,
         config = cfg_resolve(args.cwd, dict(os.environ))
         tiers = resolve_timeout_tiers(r, config.get("policy", {}))
         print(",".join(str(t) for t in tiers))
+        return 0
+
+    if args.command == "trust-local":
+        local_path = cfg_local_path(args.cwd)
+        if not os.path.exists(local_path):
+            print(f"no project-local config at {local_path}", file=sys.stderr)
+            return 1
+        real = os.path.realpath(local_path)
+        env = dict(os.environ)
+        store = cfg_trust_store_dir(env)
+        with open(local_path, "rb") as f:
+            raw = f.read()
+        config = cfg_parse_toml_bytes(raw, local_path)
+        for r in config.get("reviewers", []):
+            if "command" not in r:
+                continue
+            key = r.get("key")
+            line = {"key": key}
+            try:
+                line["argv"] = split_command_template(key, r["command"])
+                if args.show:
+                    line["trusted"] = trust.is_trusted(store, real, raw)
+                    line["path"] = real
+            except ValueError as exc:
+                line = {"key": key, "error": str(exc)}
+            print(json.dumps(line))
+        if args.show:
+            return 0
+        if args.revoke:
+            n = trust.revoke_trust(store, real)
+            print(f"revoked {n} trust record(s) for {real}")
+            return 0
+        sha = trust.content_sha256(raw)
+        trust.record_trust(store, real, raw)
+        print(f"trusted {real} sha256={sha}")
         return 0
 
     if args.command == "infer-vendor":

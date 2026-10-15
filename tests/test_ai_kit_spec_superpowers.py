@@ -1061,3 +1061,32 @@ class TestDetectFrameworkSuperpowers(unittest.TestCase):
             isfile_fn=lambda p: p == os.path.join("/repo", ".planning", "PROJECT.md"),
             isdir_fn=lambda p: False)
         self.assertEqual(result, "superpowers")
+
+
+class TestUntrustedLocalExecuteEntry(unittest.TestCase):
+    """Plan 16.1-08 (R5): the DEFAULT cfg_resolve binding must be trust-gated, so a later
+    seam refactor cannot silently bind a non-gated loader into execute dispatch."""
+
+    def test_untrusted_local_execute_entry_absent_until_trusted(self):
+        import tempfile
+
+        from ai_kit_spec import config_io, trust
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as xdg:
+            env = {"HOME": home, "XDG_CONFIG_HOME": xdg}
+            cwd = tempfile.mkdtemp()
+            local_dir = os.path.join(cwd, ".aikit")
+            os.makedirs(local_dir)
+            local_path = os.path.join(local_dir, "review-spec.toml")
+            raw = (b'strategy = "local-only"\n[[reviewers]]\nkey = "x1"\nmodel = "m"\n'
+                   b'vendor = "v"\ncli = "codex"\ncommand = "codex exec -m {model}"\n'
+                   b'purpose = "execute"\n')
+            with open(local_path, "wb") as f:
+                f.write(raw)
+            with contextlib.redirect_stderr(io.StringIO()):
+                candidates, _ = dispatch_injection.assemble_candidates(cwd, env)
+            self.assertNotIn("x1", [c["key"] for c in candidates])
+            trust.record_trust(config_io.cfg_trust_store_dir(env),
+                               os.path.realpath(local_path), raw)
+            with contextlib.redirect_stderr(io.StringIO()):
+                candidates, _ = dispatch_injection.assemble_candidates(cwd, env)
+            self.assertIn("x1", [c["key"] for c in candidates])
