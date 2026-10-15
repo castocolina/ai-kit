@@ -86,8 +86,17 @@ const RESUME_MSG = 'You were interrupted by a transient provider error. Continue
   'first inspect git status, git diff and git log, do not redo finished steps, finish the remaining steps ' +
   '(verify commands and commits included), then reply with the final report as originally asked.';
 
-const TRANSIENT = /temporarily unavailable|cooling down|is locked|rate.?limit|overloaded|too many requests|\b429\b|\b50[234]\b|service unavailable|ECONNRESET|ETIMEDOUT|socket hang up|stream (?:closed|disconnected)/i;
-const FATAL = /\b40[123]\b|spending limit|billing|quota exceeded|insufficient_quota|token_expired|invalid_refresh_token|could not be refreshed|not logged in|log ?in required|please (?:log|sign) ?in|unauthori[sz]ed|invalid api key|requires an opencode API key|pre-dispatch filters|credential gate|model not found|unknown model|invalid model/i;
+// <patterns>
+const PATTERNS = {
+  "permission_blocked": "permission denied|requires approval|approval required|workspace trust required|pre-dispatch filters",
+  "auth": "\\b40[13]\\b|unauthori[sz]ed|token_expired|invalid_refresh_token|could not be refreshed|not logged in|log ?in required|please (?:log|sign) ?in|invalid api key|requires an opencode API key|credential gate",
+  "billing": "spending limit|billing|payment required|\\b402\\b",
+  "bad_model": "model not found|unknown model|invalid model",
+  "quota": "quota exceeded|insufficient_quota|usage limit",
+  "capacity": "overloaded|at capacity|service unavailable|\\b503\\b",
+  "transient": "temporarily unavailable|cooling down|is locked|rate.?limit|too many requests|\\b429\\b|\\b50[24]\\b|ECONNRESET|ETIMEDOUT|socket hang up|stream (?:closed|disconnected)"
+};
+// </patterns>
 
 const STATUS_TABLE = {
   ok: { exit: 0, action: 'stop' },
@@ -107,6 +116,7 @@ const STATUS_TABLE = {
   timeout: { exit: 124, action: 'stop' },
   not_installed: { exit: 127, action: 'fallback' },
   signal: { exit: 128, action: 'stop' },
+  unverified: { exit: 1, action: 'stop' },
 };
 
 let runStartedMs = Date.now();
@@ -117,8 +127,11 @@ function finish(status, fields) {
   let action = fields.action ?? row.action;
   const tree = fields.tree ?? 'unknown';
   if (action === 'fallback' && (tree === 'dirty' || tree === 'unknown')) action = 'stop';
-  if (status === 'billing' && fields.cli && CONFIG.routerBacked[fields.cli]) action = 'retry-later';
-  const exit = fields.exit ?? row.exit;
+  let exit = fields.exit ?? row.exit;
+  if (status === 'billing' && fields.cli && CONFIG.routerBacked[fields.cli]) {
+    action = 'retry-later';
+    exit = 75;
+  }
   const elapsed = fields.elapsed ?? Math.max(0, Math.round((Date.now() - runStartedMs) / 1000));
   const line = `AIKIT-XAI status=${status} cli=${fields.cli ?? '-'} model=${fields.model ?? '-'} ` +
     `exit=${exit} cli_rc=${fields.cli_rc ?? '-'} elapsed=${elapsed}s out=${fields.out ?? 0} ` +
@@ -204,10 +217,21 @@ function normalize(text) {
   return text.replace(/\x1B\[[0-9;?]*[A-Za-z]/g, '').replace(/([.!?:])(#{1,6} \S)/g, '$1\n\n$2').trim() + '\n';
 }
 
-function classify(blob) {
-  if (FATAL.test(blob)) return 'fatal';
-  if (TRANSIENT.test(blob)) return 'transient';
-  return 'other';
+function classify(stderrText, structuredError) {
+  const inputs = [stderrText || '', structuredError || ''];
+  for (const [key, src] of Object.entries(PATTERNS)) {
+    const re = new RegExp(src, 'i');
+    for (const text of inputs) {
+      if (re.test(text)) return key;
+    }
+  }
+  return null;
+}
+
+function tryNextCli(status, tree) {
+  const row = STATUS_TABLE[status] || STATUS_TABLE.crash;
+  if (row.action !== 'fallback' || tree !== 'clean') return false;
+  return true;
 }
 
 function which(bin, envPath = process.env.PATH || '') {
@@ -234,10 +258,8 @@ function gitState(cwd) {
   return head.status === 0 && st.status === 0 ? head.stdout + st.stdout : null;
 }
 
-function treeAfter(before, cwd) {
-  if (before === null) return 'unknown';
-  const after = gitState(cwd);
-  if (after === null) return 'unknown';
+function treeAfter(before, after) {
+  if (before === null || after === null) return 'unknown';
   return before === after ? 'clean' : 'dirty';
 }
 
@@ -320,15 +342,20 @@ async function runCli(name, rt, binPath, model, mode, prompt, deadline, opts = {
       if (r.timedOut) return { ok: false, code: 124, timedOut: true, outBytes: r.outBytes, cli_rc: r.code };
       if (r.spawnErr) return { ok: false, code: r.spawnErr.code === 'ENOENT' ? 127 : 126, error: String(r.spawnErr), outBytes: 0, cli_rc: null };
       const p = rt.parse(r.stdout, ctx);
-      if (r.code === 0 && !p.error && p.text.trim()) {
-        return { ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'), cli_rc: r.code ?? 0 };
+      const hit = classify(r.stderr, p.error);
+      if (hit && hit !== 'transient') {
+        return { ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
       }
-      const blob = `${r.stderr}\n${p.error || ''}\n${r.stdout.slice(-4000)}`;
-      const kind = classify(blob);
+      if (r.code === 0 && !p.error) {
+        if (!p.text.trim()) {
+          return { ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0 };
+        }
+        return { ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'), cli_rc: 0 };
+      }
       const wait = (backoff[attempt] ?? backoff[backoff.length - 1]) * 1000;
-      process.stderr.write(`cross-ai: ${name} failed (exit ${r.code}${r.signal ? ' ' + r.signal : ''}, ${kind}${p.error ? ': ' + p.error.slice(0, 200) : ''})\n`);
-      if (kind !== 'transient' || attempt >= (opts.retries ?? CONFIG.retries) || deadline - Date.now() < wait + 60000) {
-        return { ok: false, code: r.code || 1, kind, outBytes: r.outBytes, cli_rc: r.code };
+      process.stderr.write(`cross-ai: ${name} failed (exit ${r.code}${r.signal ? ' ' + r.signal : ''}, ${hit || 'crash'}${p.error ? ': ' + p.error.slice(0, 200) : ''})\n`);
+      if (hit !== 'transient' || attempt >= (opts.retries ?? CONFIG.retries) || deadline - Date.now() < wait + 60000) {
+        return { ok: false, status: 'crash', outBytes: r.outBytes, cli_rc: r.code ?? '-' };
       }
       await sleep(wait);
       const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
@@ -408,6 +435,17 @@ const log = (line) => { if (calls) fs.appendFileSync(calls, line + '\n'); };
 const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
   ansi: () => { fs.appendFileSync('a.txt', 'x\n'); process.stdout.write('\x1B[0mDone.## Summary\nC# is fine. Use ## inline'); },
+  nochange: () => { process.stdout.write('# Summary\nno edits'); },
+  empty: () => {},
+  crash: () => { process.stderr.write('boom\n'); process.exit(7); },
+  quote: () => {
+    fs.appendFileSync('a.txt', 'q\n');
+    process.stdout.write('429 rate limit and billing noted.\n# Summary\nok');
+  },
+  billing: () => { process.stderr.write('402 payment required\n'); process.exit(1); },
+  auth: () => { process.stderr.write('401 unauthorized\n'); process.exit(1); },
+  perm: () => { process.stderr.write('permission denied\n'); process.exit(1); },
+  quota: () => { process.stderr.write('quota exceeded\n'); process.exit(1); },
 };
 const modeIdx = args.indexOf('--mode');
 if (modeIdx >= 0 && args[modeIdx + 1] === 'rpc') {
@@ -443,6 +481,10 @@ const calls = process.env.FAKE_CALLS;
 if (calls) fs.appendFileSync(calls, 'cursor-agent ' + model + '\n');
 let s = '';
 process.stdin.on('data', (d) => { s += d; }).on('end', () => {
+  if (model === 'fake-err-cursor') {
+    console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized', session_id: 'c2' }));
+    process.exit(0);
+  }
   fs.appendFileSync('a.txt', 'cursor\n');
   console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '## Summary\nok', session_id: 'c1' }));
 });
@@ -645,6 +687,67 @@ function blackBoxSelfTest() {
         status: /^AIKIT-XAI status=ok .* tree=dirty action=stop$/,
         check: (r) => (r.stdout === 'Done.\n\n## Summary\nC# is fine. Use ## inline\n' ? null : `stdout=${JSON.stringify(r.stdout)}`),
       },
+      {
+        name: 'quote',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quote'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/quote exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+      },
+      {
+        name: 'billing',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
+        exit: 69,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+      },
+      {
+        name: 'billing-router',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=retry-later$/,
+      },
+      {
+        name: 'auth',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/auth'],
+        exit: 69,
+        status: /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+      },
+      {
+        name: 'perm',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/perm'],
+        exit: 69,
+        status: /^AIKIT-XAI status=permission_blocked cli=pi model=fake\/perm exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+      },
+      {
+        name: 'quota',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/quota exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=retry-later$/,
+      },
+      {
+        name: 'crash',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/crash'],
+        exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/crash exit=1 cli_rc=7 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+      },
+      {
+        name: 'nochange',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/nochange'],
+        exit: 1,
+        status: /^AIKIT-XAI status=no_change cli=pi model=fake\/nochange exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+      },
+      {
+        name: 'empty',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/empty'],
+        exit: 1,
+        status: /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+      },
+      {
+        name: 'cursor-error',
+        args: ['--prefer', 'cursor', '--model-cursor', 'fake-err-cursor'],
+        exit: 69,
+        status: /^AIKIT-XAI status=auth cli=cursor model=fake-err-cursor exit=69 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+      },
     ];
 
     let failed = false;
@@ -709,23 +812,39 @@ async function main(argv) {
     liveFields.cli = c.name;
     liveFields.model = c.model;
     const before = gitState(process.cwd());
+    if (before === null) {
+      return finish('unverified', { ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1 });
+    }
     const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, deadline);
     liveFields.out = r.outBytes || 0;
-    liveFields.cli_rc = r.cli_rc ?? r.code ?? '-';
-    const tree = treeAfter(before, process.cwd());
+    liveFields.cli_rc = r.cli_rc ?? '-';
+    const after = gitState(process.cwd());
+    const tree = treeAfter(before, after);
     liveFields.tree = tree;
+    if (r.timedOut || aborting) {
+      return finish('timeout', { ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? 124 });
+    }
     if (r.ok) {
+      if (after === null) {
+        return finish('unverified', { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
+      }
+      if (tree === 'clean') {
+        last = { status: 'no_change', cli: c.name, model: c.model, tree, cli_rc: 0 };
+        process.stderr.write(`cross-ai: ${c.name} answered without repo change, trying the next CLI\n`);
+        continue;
+      }
       process.stdout.write(r.text);
       return finish('ok', { ...liveFields, tree, exit: 0, cli_rc: 0, out: r.outBytes || 0 });
     }
-    if (r.timedOut || aborting) {
-      return finish('timeout', { ...liveFields, tree, exit: r.code, cli_rc: r.cli_rc ?? r.code });
+    const status = r.status || 'crash';
+    const treeField = after === null ? 'unknown' : tree;
+    liveFields.tree = treeField;
+    last = { status, cli: c.name, model: c.model, tree: treeField, cli_rc: r.cli_rc };
+    if (tryNextCli(status, treeField)) {
+      process.stderr.write(`cross-ai: ${c.name} ${status}, trying the next CLI\n`);
+      continue;
     }
-    last = { ...r, tree, cli: c.name, model: c.model };
-    if (tree !== 'clean') {
-      return finish('crash', { ...liveFields, tree, exit: r.code || 1, cli_rc: r.cli_rc ?? r.code });
-    }
-    process.stderr.write(`cross-ai: ${c.name} failed without touching the repo, trying the next CLI\n`);
+    return finish(status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc, cli: c.name, model: c.model });
   }
   if (!sawModel && last && last.kind === 'no_model') {
     return finish('no_model', { ...liveFields, tree: 'clean', exit: 2 });
@@ -734,7 +853,13 @@ async function main(argv) {
     process.stderr.write(`cross-ai: none of [${order.join(', ')}] is installed\n`);
     return finish('not_installed', { ...liveFields, tree: 'clean', exit: 127 });
   }
-  return finish('crash', { ...liveFields, cli: last.cli || '-', model: last.model || '-', tree: last.tree || 'unknown', exit: last.code || 1, cli_rc: last.cli_rc ?? last.code });
+  if (last.status === 'no_change') {
+    return finish('no_change', { ...liveFields, cli: last.cli, model: last.model, tree: last.tree, cli_rc: 0 });
+  }
+  return finish(last.status || 'crash', {
+    ...liveFields, cli: last.cli || '-', model: last.model || '-', tree: last.tree || 'unknown',
+    cli_rc: last.cli_rc ?? '-',
+  });
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -11751,6 +11751,27 @@ class TestCrossAiTemplateText(unittest.TestCase):
             self.assertNotIn(frag, text)
         self.assertNotIn("headerState", text)
 
+    def test_patterns_block(self):
+        path = self._template_path()
+        text = _read_bytes(path).decode("utf-8")
+        start = text.index("// <patterns>\n") + len("// <patterns>\n")
+        end = text.index("\n// </patterns>", start)
+        block = text[start:end]
+        self.assertTrue(block.startswith("const PATTERNS = "))
+        pat_text = block[len("const PATTERNS = ") : -1]
+        patterns = json.loads(pat_text)
+        expected_keys = [
+            "permission_blocked",
+            "auth",
+            "billing",
+            "bad_model",
+            "quota",
+            "capacity",
+            "transient",
+        ]
+        self.assertEqual(list(patterns.keys()), expected_keys)
+        for value in patterns.values():
+            re.compile(value, re.I)
 
 
 if __name__ == "__main__":
