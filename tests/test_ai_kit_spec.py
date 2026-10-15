@@ -143,6 +143,22 @@ def _read_bytes(path: str) -> bytes:
         return handle.read()
 
 
+
+_MODULE_CACHE = {}
+
+
+def setUpModule():
+    """opencode subprocess helpers create private dirs under the ai-kit cache base; keep
+    every test off the real ~/.cache (AGENTS.md: never the user's real config)."""
+    _MODULE_CACHE["dir"] = tempfile.mkdtemp(prefix="aikit-spec-cache-")
+    _MODULE_CACHE["patch"] = mock.patch.dict(os.environ, {"XDG_CACHE_HOME": _MODULE_CACHE["dir"]})
+    _MODULE_CACHE["patch"].start()
+
+
+def tearDownModule():
+    _MODULE_CACHE["patch"].stop()
+    shutil.rmtree(_MODULE_CACHE["dir"], ignore_errors=True)
+
 class TestConfigPaths(unittest.TestCase):
     def test_local_path_under_cwd_aikit(self):
         self.assertEqual(cfg_local_path("/repo"), "/repo/.aikit/review-spec.toml")
