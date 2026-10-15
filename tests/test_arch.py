@@ -361,6 +361,21 @@ def check_no_doctor_symbols(tree):
     ]
 
 
+def check_no_shell_true(tree):
+    """Rule 8: no ``shell=`` keyword on a Call unless the value is the constant False."""
+    violations = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg != "shell":
+                continue
+            allowed = isinstance(kw.value, ast.Constant) and kw.value.value is False
+            if not allowed:
+                violations.append(f"line {kw.lineno}: shell= must be constant False")
+    return violations
+
+
 # --------------------------------------------------------------------------- #
 # Live-tree tests — every rule must pass against the real render module.
 # --------------------------------------------------------------------------- #
@@ -399,6 +414,24 @@ class TestArchitecture(unittest.TestCase):
 
     def test_rule7_no_doctor_symbols_in_render(self):
         self.assertEqual([], check_no_doctor_symbols(self.render_tree))
+
+    def test_rule8_no_shell_true_in_spec_family(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        skills_root = os.path.join(repo_root, "skills")
+        violations = []
+        for skill_dir in sorted(os.listdir(skills_root)):
+            if not skill_dir.startswith("ai-kit-spec-"):
+                continue
+            for dirpath, _dirnames, filenames in os.walk(os.path.join(skills_root, skill_dir)):
+                for filename in filenames:
+                    if not filename.endswith(".py"):
+                        continue
+                    path = os.path.join(dirpath, filename)
+                    with open(path, encoding="utf-8") as handle:
+                        tree = ast.parse(handle.read(), filename=path)
+                    for msg in check_no_shell_true(tree):
+                        violations.append(f"{os.path.relpath(path, repo_root)}: {msg}")
+        self.assertEqual([], violations)
 
     def test_rule7b_doctor_symbols_present_in_doctor(self):
         """Companion to rule 7: the doctor symbols were EXTRACTED, not deleted.
@@ -585,6 +618,14 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertNotEqual([], check_no_doctor_symbols(bad))
         self.assertNotEqual([], check_no_doctor_symbols(bad_assign))
         self.assertEqual([], check_no_doctor_symbols(good))
+
+    def test_rule8_flags_shell_true(self):
+        bad_true = ast.parse("subprocess.run(x, shell=True)\n")
+        bad_var = ast.parse("run(x, shell=flag)\n")
+        good = ast.parse("run(x, shell=False)\n")
+        self.assertEqual(1, len(check_no_shell_true(bad_true)))
+        self.assertEqual(1, len(check_no_shell_true(bad_var)))
+        self.assertEqual([], check_no_shell_true(good))
 
 
 class TestSegmentInventory(unittest.TestCase):

@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute"))
 
 import detect_framework as router_detect_framework
+from ai_kit_spec import detection
 from ai_kit_spec_superpowers import cli as superpowers_cli
 from ai_kit_spec_superpowers import dispatch_injection, task_classification
 
@@ -869,7 +870,8 @@ class TestCliDispatchTask(unittest.TestCase):
                      "--format-block-file", format_block_file, "--report-file", report_file],
                     detect_tool_availability_fn=lambda: {},
                     resolve_agents_tooling_path_fn=lambda: None,
-                    ensure_codegraph_registered_fn=lambda cli: False,
+                    probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
+                        False, False, None, 'skip'),
                     stdout=io.StringIO())
         self.assertIn("external_cli", str(ctx.exception))
         self.assertIn("native_claude", str(ctx.exception))
@@ -915,7 +917,8 @@ class TestCliDispatchTask(unittest.TestCase):
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
-                ensure_codegraph_registered_fn=lambda cli: False,
+                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
+                        False, False, None, 'skip'),
                 stdout=out)
             self.assertEqual(rc, 0)
             with open(report_file) as f:
@@ -959,7 +962,8 @@ class TestCliDispatchTask(unittest.TestCase):
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
-                ensure_codegraph_registered_fn=lambda cli: False,
+                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
+                        False, False, None, 'skip'),
                 stdout=out)
             self.assertEqual(rc, 0)
             with open(report_file) as f:
@@ -1003,13 +1007,94 @@ class TestCliDispatchTask(unittest.TestCase):
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
-                ensure_codegraph_registered_fn=lambda cli: False,
+                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
+                        False, False, None, 'skip'),
                 stdout=io.StringIO())
             self.assertEqual(rc, 0)
             with open(report_file) as f:
                 content = f.read()
         self.assertIn("original implementer report", content)
         self.assertIn("fix round 1 report", content)
+
+
+    def test_dispatch_task_prints_install_hint_on_stderr_when_probe_unhealthy(self):
+        hint = detection.codegraph_install_command("codex")
+        index_dirs = []
+        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
+                      "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
+        captured = {}
+
+        def fake_dispatch(injection_arg, prompt, target_dir, heartbeat_interval, timeout,
+                           format_block=None, tool_availability=None, agents_tooling_path=None,
+                           codegraph_registered=False):
+            captured["codegraph_registered"] = codegraph_registered
+            return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
+                     "returncode": 0, "stdout": "DONE", "stderr": "", "timed_out": False}
+
+        out = io.StringIO()
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = os.path.join(tmp, "prompt.txt")
+            with open(prompt_file, "w") as f:
+                f.write("do the task")
+            format_block_file = os.path.join(tmp, "format.md")
+            with open(format_block_file, "w") as f:
+                f.write("status: DONE")
+            report_file = os.path.join(tmp, "task-1-report.md")
+            with contextlib.redirect_stderr(stderr):
+                rc = superpowers_cli.main(
+                    ["dispatch-task", "--injection-json", json.dumps(injection),
+                     "--prompt-file", prompt_file, "--target-dir", tmp,
+                     "--heartbeat-interval", "60", "--timeout", "900",
+                     "--format-block-file", format_block_file, "--report-file", report_file],
+                    dispatch_superpowers_task_fn=fake_dispatch,
+                    detect_tool_availability_fn=lambda: {},
+                    resolve_agents_tooling_path_fn=lambda: None,
+                    probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
+                        True, False, hint, "unhealthy"),
+                    run_codegraph_index_fn=lambda d: index_dirs.append(d) or True,
+                    stdout=out)
+            self.assertEqual(rc, 0)
+            self.assertIn(hint, stderr.getvalue())
+            self.assertNotIn(hint, out.getvalue())
+            self.assertEqual(index_dirs, [])
+            self.assertFalse(captured["codegraph_registered"])
+
+    def test_dispatch_task_runs_index_after_healthy_probe(self):
+        index_dirs = []
+        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
+                      "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
+        captured = {}
+
+        def fake_dispatch(injection_arg, prompt, target_dir, heartbeat_interval, timeout,
+                           format_block=None, tool_availability=None, agents_tooling_path=None,
+                           codegraph_registered=False):
+            captured["codegraph_registered"] = codegraph_registered
+            return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
+                     "returncode": 0, "stdout": "DONE", "stderr": "", "timed_out": False}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = os.path.join(tmp, "prompt.txt")
+            with open(prompt_file, "w") as f:
+                f.write("do the task")
+            format_block_file = os.path.join(tmp, "format.md")
+            with open(format_block_file, "w") as f:
+                f.write("status: DONE")
+            report_file = os.path.join(tmp, "task-1-report.md")
+            superpowers_cli.main(
+                ["dispatch-task", "--injection-json", json.dumps(injection),
+                 "--prompt-file", prompt_file, "--target-dir", tmp,
+                 "--heartbeat-interval", "60", "--timeout", "900",
+                 "--format-block-file", format_block_file, "--report-file", report_file],
+                dispatch_superpowers_task_fn=fake_dispatch,
+                detect_tool_availability_fn=lambda: {},
+                resolve_agents_tooling_path_fn=lambda: None,
+                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(True, True, None, "ok"),
+                run_codegraph_index_fn=lambda d: index_dirs.append(d) or True,
+                stdout=io.StringIO())
+            self.assertEqual(index_dirs, [tmp])
+            self.assertTrue(captured["codegraph_registered"])
+
 
 
 class TestCliClassifyDispatchFailure(unittest.TestCase):

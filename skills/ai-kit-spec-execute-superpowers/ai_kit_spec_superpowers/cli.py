@@ -21,11 +21,10 @@ import sys
 from ai_kit_spec.cache import cache_read_json, cache_write_json
 from ai_kit_spec.config_io import ConfigError
 from ai_kit_spec.detection import (
-    CODEGRAPH_INDEX_TIMEOUT_SECONDS,
-    build_codegraph_index_command,
     detect_tool_availability,
-    ensure_codegraph_registered,
+    probe_codegraph,
     resolve_agents_tooling_path,
+    run_codegraph_index,
 )
 from ai_kit_spec.dispatch import write_resumable_state as _write_resumable_state_default
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
@@ -74,8 +73,8 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
          refresh_quota_cache_fn=refresh_quota_cache,
          detect_tool_availability_fn=detect_tool_availability,
          resolve_agents_tooling_path_fn=resolve_agents_tooling_path,
-         ensure_codegraph_registered_fn=ensure_codegraph_registered,
-         build_codegraph_index_command_fn=build_codegraph_index_command,
+         probe_codegraph_fn=probe_codegraph,
+         run_codegraph_index_fn=run_codegraph_index,
          run_fn=subprocess.run, write_resumable_state_fn=_write_resumable_state_default,
          stdout=sys.stdout) -> int:
     parser = argparse.ArgumentParser(prog="ai-kit-spec-execute-superpowers")
@@ -302,16 +301,14 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
             format_block = f.read()
         tool_availability = detect_tool_availability_fn()
         agents_tooling_path = resolve_agents_tooling_path_fn()
-        codegraph_registered = ensure_codegraph_registered_fn(injection["cli"])
-        if codegraph_registered:
-            index_cmd = build_codegraph_index_command_fn(args.target_dir)
-            try:
-                probe = run_fn(index_cmd, shell=True, capture_output=True, text=True,
-                                check=False, timeout=CODEGRAPH_INDEX_TIMEOUT_SECONDS)
-                if probe.returncode != 0:
-                    codegraph_registered = False
-            except (subprocess.TimeoutExpired, OSError):
-                codegraph_registered = False
+        probe = probe_codegraph_fn(injection["cli"])
+        if probe.install_command:
+            print(f"ai-kit-spec-execute-superpowers: codegraph MCP is not registered or not "
+                  f"healthy for {injection['cli']}; install it with: {probe.install_command}",
+                  file=sys.stderr)
+        codegraph_registered = False
+        if probe.healthy is True:
+            codegraph_registered = run_codegraph_index_fn(args.target_dir)
         # CRITICAL finding (recurrence guard): never blindly overwrite --report-file with
         # captured subprocess stdout. The real superpowers implementer contract has the
         # dispatched CLI write its OWN detailed report directly to this path (it has write
