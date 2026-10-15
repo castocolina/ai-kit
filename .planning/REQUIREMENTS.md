@@ -25,11 +25,11 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 
 - [ ] **INV-01**: `inventory --project-dir` emits one JSON with host, the host's own gsd-core (path/version/valid keys), model candidates as (runtime, model) pairs (scores, price, `image_input`, reasoning levels; amended 2026-10-14 from separate host/other-CLI lists, per Phase 18.1), skills, project facts (frontend, db, instruction files `AGENTS.md`/`CLAUDE.md`, intel index), existing config and conflicts
 - [x] **INV-02**: Catalog is read from `~/.cache/ai-kit/spec` and refreshed `--if-stale`; a stale cache is used with a warning when refresh fails; with no cache, Claude/Codex use native tier maps and Cursor/opencode/pi ask the user per slot; a catalog with prices but no scores takes the same path (amended 2026-10-14)
-- [ ] **INV-03**: Conflicts are detected only when they change resolution: `model_policy` in the project config, `model_policy` in `~/.gsd/defaults.json` when no project config exists, a project `resolve_model_ids: "omit"` on a claude host, and a project `runtime` set to another host. A global value gsd-tools ignores (a global `model_policy` beside a project config, any global `runtime`) is info only (amended 2026-10-14)
+- [x] **INV-03**: Conflicts are detected only when they change resolution: `model_policy` in the project config, `model_policy` in `~/.gsd/defaults.json` when no project config exists, a project `resolve_model_ids: "omit"` on a claude host, and a project `runtime` set to another host. A global value gsd-tools ignores (a global `model_policy` beside a project config, any global `runtime`) is info only (amended 2026-10-14)
 
 ### Recommendation
 
-- [ ] **REC-01**: `recommend` is a pure function of inventory + profile + rigor + cross-AI answers; every `plan.json` entry has `key`, `value`, `why`, `source`
+- [x] **REC-01**: `recommend` is a pure function of inventory + profile + rigor + cross-AI answers; every `plan.json` entry has `key`, `value`, `why`, `source`
 - [ ] **REC-02**: Tier layer — `model_profile` (quality/balanced/budget/adaptive, adaptive recommended) plus `models.<phase_type>` only where the rigor preset shifts a whole phase
 - [ ] **REC-03**: Tier→model layer — `model_profile_overrides.<host>.{opus,sonnet,haiku}` chosen by role score under the rigor price ceiling (Claude skips unless pinned; Codex ids with `reasoning_effort`; Cursor effort-suffixed ids; `-fast` twins never auto-chosen when the non-fast model exists, amended 2026-10-14)
 - [ ] **REC-04**: ≤7 specialist `model_overrides` — plan-checker counterpart provider to the planning slot; code-reviewer ≠ execution provider; ui-auditor/dom-verifier with `image_input`; ui-researcher frontend-capable when a frontend exists; executor + code-fixer on the execution role with effort `medium`. A single-provider host gets an explicit "no in-runtime counterpart → use cross-AI review" note
@@ -142,8 +142,8 @@ None deferred beyond v1.3 at definition time.
 | SPEC-04 | Phase 16 | Complete |
 | INV-01 | Phase 17 | Pending |
 | INV-02 | Phase 17 | Complete |
-| INV-03 | Phase 17 | Pending |
-| REC-01 | Phase 17 | Pending |
+| INV-03 | Phase 17 | Complete |
+| REC-01 | Phase 17 | Complete |
 | REC-02 | Phase 17 | Pending |
 | REC-03 | Phase 17 | Pending |
 | REC-04 | Phase 17 | Pending |
