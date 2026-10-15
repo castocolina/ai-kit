@@ -834,23 +834,23 @@ Fixture rule (22 D-04): trim to a handful of models including one `router-env` e
 | A8 | `cursor-agent models` offline/unauthenticated either fails fast or times out within 15 s | Runner preflight | Preflight stalls; bound it and continue with a note |
 | A9 | Skill `description` is truncated at about 300 chars for unknown-skill proposals | Skills | Cosmetic only |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **O1 Execution default conflict.** SPEC R3/XAI-02 says `workflow.cross_ai_execution` defaults yes on claude/codex hosts and no on opencode/cursor/pi; shipped `recommend.cross_ai_answers` (`recommend.py:96-123`) defaults exec `y` only for MVP + claude/codex + a cheap other-CLI candidate. Recommendation: follow SPEC when the flag is omitted; with zero eligible targets fall to `n` plus a note (not `needs_choice`). Needs uz confirmation.
-2. **O2 No persisted undo log.** 16.1 keeps undo in memory and the ownership sidecar lives in `ai_kit_spec_gsd` (not importable by the curated-config skill). Apply needs its own persisted marker beside the backup. Recommend not using the sidecar; amend SPEC R13/D-21 wording.
-3. **O3 Trusted-root approval item.** Recommend a plan entry with `status: needs_choice` and candidates; approve = `plan-set <key> '<list>'`, decline = `plan-unset`.
-4. **O4 `apply --inventory`.** Apply needs skill locations/lanes and a digest check, so it takes `--inventory`; D-17/D-22 text does not say so.
-5. **O5 Idle watchdog and `128+n` exit.** Not in SPEC R5/D-27. Recommend: defer the watchdog, keep the status vocabulary and `128+n`.
-6. **O6 Installer launcher.** See A2/Pitfall 12; installer was not run.
-7. **O7 Claude lane model/effort format.** Raw string vs alias; `xhigh` honored per model only when the candidate's `reasoning_modes` lists it, else lane default `high`.
-8. **O8 opencode 2.x has no `--variant`** vs gsd-core review-lane effort argv (Phase 20).
-9. **O9 opencode "bare" profile is partial.** `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` is documented for `.claude/skills` only; opencode loads `~/.agents/skills` and `~/.config/opencode/skills` regardless.
-10. **O10 `RUNTIMES_SCHEMA_VERSION`.** Renumber 3 -> 4 in Phase 18; 18.1 must restate.
-11. **O11 Live timeout.** The runner can honor only the `GSD_WORKSTREAM` env for the live `workflow.cross_ai_timeout` read, not the stored session pointer; D-29 `min(baked, live)`; document the limit.
-12. **O12 `cursor-agent models` preflight offline.** Unverified (not run; it rewrites `~/.cursor/cli-config.json`); existing code uses 15 s; runner continues with a note on listing failure.
-13. **O13 `enabledPlugins` merge semantics** across settings files (A4).
-14. **O14 `plan-set workflow.cross_ai_command` guard.** Whether to refuse arbitrary commands without `--force` (command-injection surface; not locked).
-15. **O15 `catalog_build` and `runtimes.pi`** (A5): needs a fixture test before goldens depend on it.
+1. **O1 Execution default conflict.** SPEC R3/XAI-02 says `workflow.cross_ai_execution` defaults yes on claude/codex hosts and no on opencode/cursor/pi; shipped `recommend.cross_ai_answers` (`recommend.py:96-123`) defaults exec `y` only for MVP + claude/codex + a cheap other-CLI candidate. Recommendation: follow SPEC when the flag is omitted; with zero eligible targets fall to `n` plus a note (not `needs_choice`). Needs uz confirmation. **RESOLVED: D-39.**
+2. **O2 No persisted undo log.** 16.1 keeps undo in memory and the ownership sidecar lives in `ai_kit_spec_gsd` (not importable by the curated-config skill). Apply needs its own persisted marker beside the backup. Recommend not using the sidecar; amend SPEC R13/D-21 wording. **RESOLVED: D-40.**
+3. **O3 Trusted-root approval item.** Recommend a plan entry with `status: needs_choice` and candidates; approve = `plan-set <key> '<list>'`, decline = `plan-unset`. **RESOLVED: D-41.**
+4. **O4 `apply --inventory`.** Apply needs skill locations/lanes and a digest check, so it takes `--inventory`; D-17/D-22 text does not say so. **RESOLVED: D-42.**
+5. **O5 Idle watchdog and `128+n` exit.** Not in SPEC R5/D-27. Recommend: defer the watchdog, keep the status vocabulary and `128+n`. **RESOLVED: D-43 (backlog 999.5).**
+6. **O6 Installer launcher.** See A2/Pitfall 12; installer was not run. **RESOLVED: carried fact in 18-CONTEXT (print the exact argv on installer failure); manual check in 18-VALIDATION.**
+7. **O7 Claude lane model/effort format.** Raw string vs alias; `xhigh` honored per model only when the candidate's `reasoning_modes` lists it, else lane default `high`. **RESOLVED (RUN-48, orchestrator): `review.models.claude` gets the Claude Code alias the plan already writes on a claude host (D-01; `claude --model` accepts aliases and full ids), and `review.effort.claude` is `xhigh` only when the picked candidate's `reasoning_modes` lists it, else the lane default `high`.**
+8. **O8 opencode 2.x has no `--variant`** vs gsd-core review-lane effort argv (Phase 20). **RESOLVED: carried fact (Phase 20 risk note in the plan).**
+9. **O9 opencode "bare" profile is partial.** `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` is documented for `.claude/skills` only; opencode loads `~/.agents/skills` and `~/.config/opencode/skills` regardless. **RESOLVED: carried fact (template comment and SKILL.md say the opencode bare profile is partial).**
+10. **O10 `RUNTIMES_SCHEMA_VERSION`.** Renumber 3 -> 4 in Phase 18; 18.1 must restate. **RESOLVED: carried fact (3 -> 4 here; 18.1 restates as current + 1).**
+11. **O11 Live timeout.** The runner can honor only the `GSD_WORKSTREAM` env for the live `workflow.cross_ai_timeout` read, not the stored session pointer; D-29 `min(baked, live)`; document the limit. **RESOLVED: carried fact (documented limit).**
+12. **O12 `cursor-agent models` preflight offline.** Unverified (not run; it rewrites `~/.cursor/cli-config.json`); existing code uses 15 s; runner continues with a note on listing failure. **RESOLVED: carried fact (15 s bound, continue with a note).**
+13. **O13 `enabledPlugins` merge semantics** across settings files (A4). **RESOLVED (RUN-48, orchestrator): plugin enabled state is read from the user-level settings only and reported with an `unverified` label (A4); no per-key merge across settings files is claimed.**
+14. **O14 `plan-set workflow.cross_ai_command` guard.** Whether to refuse arbitrary commands without `--force` (command-injection surface; not locked). **RESOLVED: D-44.**
+15. **O15 `catalog_build` and `runtimes.pi`** (A5): needs a fixture test before goldens depend on it. **RESOLVED: D-45.**
 
 Also: `skill_affinity.json` is loaded by the CLI, validated, and passed via `RecommendOpts`; the plan records `as_of` and its digest (keeps `recommend` pure).
 
