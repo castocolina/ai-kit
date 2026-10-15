@@ -166,7 +166,7 @@ can be verified and closed on trustworthy evidence. Source:
      Artificial Analysis key, so the ranking is scored).
   7. The phase is executed through `.planning/scripts/cross-ai.mjs` (pi first), as the dogfood run
      for Phase 18's runner. The usage-metrics store compaction (audit A10) stays out of scope.
-**Plans**: 13/31 plans executed
+**Plans**: 14/31 plans executed
 
 Plans:
 - Wave 1
@@ -188,7 +188,7 @@ Plans:
   - [x] 16.1-10-PLAN.md — GSD config writes through gsd-tools config-set with an undo log
 - Wave 6
   - [x] 16.1-11-PLAN.md — codegraph probe with timeout and no install; no `shell=True` rule
-  - [ ] 16.1-12-PLAN.md — spec-review/spec-config SKILL.md failure, trust and argv wording
+  - [x] 16.1-12-PLAN.md — spec-review/spec-config SKILL.md failure, trust and argv wording
 - Wave 7
   - [ ] 16.1-13-PLAN.md — lint sweep: ai-kit-spec CLI dispatch table and dispatch modules
   - [ ] 16.1-15-PLAN.md — lint sweep: tools/ SessionStart hooks and config doctor
