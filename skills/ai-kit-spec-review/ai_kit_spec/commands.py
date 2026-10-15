@@ -102,8 +102,8 @@ def _build_grok_command(**_params):
     single dash is too little to act on"). The `-p -` design here was an earlier unverified
     assumption inherited from this builder before it was ever run against a real grok CLI.
     Correct form uses the {prompt} placeholder like every other builder in this module --
-    render_reviewer_command shlex.quotes it before substitution, delivered as a real
-    positional argument value, never via stdin."""
+    render_reviewer_command substitutes it raw into one argv element (no shell, no quoting),
+    delivered as a real positional argument value, never via stdin."""
     return "grok -p {prompt} -m {model} --output-format plain"
 
 
@@ -384,7 +384,7 @@ def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> list[s
         tokens = split_command_template(resolved.key, resolved.command)
         return [token.format(model=resolved.model, prompt=prompt, **resolved.extra)
                 for token in tokens]
-    except (KeyError, IndexError, ValueError, TypeError) as exc:
+    except (KeyError, IndexError, ValueError, TypeError, AttributeError) as exc:
         raise ValueError(
             f"reviewer {resolved.key!r} has a malformed command template: {exc}"
         ) from exc

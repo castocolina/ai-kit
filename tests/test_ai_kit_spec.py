@@ -2788,6 +2788,13 @@ class TestRenderReviewerCommand(unittest.TestCase):
         with self.assertRaises(ValueError):
             render_reviewer_command(resolved, "hello")
 
+    def test_attribute_placeholder_raises_value_error_not_attribute_error(self):
+        # A-IN-02: "{model.foo}" makes str.format raise AttributeError.
+        resolved = ResolvedReviewer(key="k", model="m", vendor="v", cli="codex",
+                                    command="x {model.foo}", extra={})
+        with self.assertRaises(ValueError):
+            render_reviewer_command(resolved, "hello")
+
     def test_extra_field_colliding_with_reserved_placeholder_raises_value_error(self):
         # a hand-written config entry that defines extra={"prompt": ...} or
         # extra={"model": ...} collides with the reserved keyword args
