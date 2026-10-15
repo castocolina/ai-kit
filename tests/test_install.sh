@@ -94,7 +94,7 @@ check "atomic swap keeps new content"    bash -c '[ -f "'"$STALE"'/tools/setup.p
 
 # --- 4b. --branch is consumed by install.sh (NOT forwarded to setup.py) ------
 # Both `--branch value` and `--branch=value` forms, in LOCAL mode (the flag only
-# affects the BOOTSTRAP fetch target, so here it must simply be stripped).
+# affects the BOOTSTRAP fetch target, so here it is stripped with a note).
 out="$(env -i HOME="$WORK" PATH="$PATH" AI_KIT_DIR="$FIXTURE" AI_KIT_SKIP_FETCH=1 \
        bash "$INSTALL_SH" install --branch featbr --dry-run 2>/dev/null)"
 check "--branch (space form) consumed, not forwarded to setup.py" \
@@ -103,6 +103,10 @@ out="$(env -i HOME="$WORK" PATH="$PATH" AI_KIT_DIR="$FIXTURE" AI_KIT_SKIP_FETCH=
        bash "$INSTALL_SH" --branch=featbr install 2>/dev/null)"
 check "--branch= (equals form) consumed, not forwarded to setup.py" \
   bash -c '[ "'"$out"'" = "SETUP_RAN install" ]'
+err="$(env -i HOME="$WORK" PATH="$PATH" AI_KIT_DIR="$FIXTURE" AI_KIT_SKIP_FETCH=1 \
+       bash "$INSTALL_SH" --branch=featbr install 2>&1 >/dev/null)"
+check "LOCAL mode says --branch is ignored" \
+  bash -c 'case "'"$err"'" in *"ignored in a local checkout"*) exit 0;; (*) exit 1;; esac'
 
 # --- 4c/4e. --branch drives the BOOTSTRAP clone; an existing clone switches --
 # A fake `git` RECORDS EVERY INVOCATION (one line per call, into $AIKIT_GIT_LOG)
@@ -110,6 +114,7 @@ check "--branch= (equals form) consumed, not forwarded to setup.py" \
 # Behavior knobs:
 #   AIKIT_FAKE_DIRTY      printed by `status --porcelain` (dirty-tree simulation)
 #   AIKIT_FAKE_FETCH_REFS printed by `config --get-all remote.origin.fetch`
+#   AIKIT_FAKE_FETCH_FAIL =1 makes `fetch` exit 1 (refspec rollback)
 #   AIKIT_REAL_GIT        exec'd for `check-ref-format` (real validation)
 FAKEGIT="$WORK/fakegitbin"; mkdir -p "$FAKEGIT"
 cat > "$FAKEGIT/git" <<'SH'
@@ -134,6 +139,7 @@ if [ "${1:-}" = clone ]; then
 fi
 if [ "${1:-}" = "-C" ]; then
   shift 2  # the -C flag and the clone dir
+  [ "${1:-}" = --no-optional-locks ] && shift
   case "${1:-}" in
     status)
       if [ "${2:-}" = --porcelain ] && [ -n "${AIKIT_FAKE_DIRTY:-}" ]; then
@@ -141,6 +147,8 @@ if [ "${1:-}" = "-C" ]; then
       fi ;;
     config)
       if [ -n "${AIKIT_FAKE_FETCH_REFS:-}" ]; then printf '%s\n' "$AIKIT_FAKE_FETCH_REFS"; fi ;;
+    symbolic-ref) printf 'main\n' ;;
+    fetch) [ -n "${AIKIT_FAKE_FETCH_FAIL:-}" ] && exit 1 ;;
   esac
   exit 0
 fi
@@ -234,8 +242,9 @@ cp "$INSTALL_SH" "$BOOT/install.sh"
 CLONE="$WORK/clone"; new_clone_fixture "$CLONE"
 LOG="$WORK/clone.log"
 boot_run "$CLONE" "$LOG" -- install --branch gsd/v1.3-x
-check "existing clone + --branch: status precedes set-branches/fetch/switch" \
+check "existing clone + --branch: status precedes ls-remote/set-branches/fetch/switch" \
   log_order "$LOG" "status --porcelain" \
+    "ls-remote --exit-code --heads origin gsd/v1.3-x" \
     "remote set-branches --add origin gsd/v1.3-x" \
     "fetch --depth 1 origin gsd/v1.3-x" \
     "switch -C gsd/v1.3-x --track origin/gsd/v1.3-x"
@@ -317,8 +326,19 @@ check "--dry-run without a branch: no pull runs" log_lacks "$LOG" "pull"
 # no explicit branch: today's behavior — exactly one pull --ff-only, no switch
 CLONE="$WORK/clone_plain"; new_clone_fixture "$CLONE"; LOG="$WORK/plain.log"
 boot_run "$CLONE" "$LOG" -- install
-plain_default() { log_count_is "$LOG" "pull --ff-only" 1 && log_lacks "$LOG" switch; }
-check "no explicit branch: exactly one pull --ff-only, no switch" plain_default
+plain_default() { log_count_is "$LOG" "pull --ff-only origin main" 1 && log_lacks "$LOG" switch; }
+check "no explicit branch: exactly one explicit pull --ff-only origin <branch>, no switch" \
+  plain_default
+
+# a failed fetch removes the refspec this run added, and exits non-zero
+CLONE="$WORK/clone_fetchfail"; new_clone_fixture "$CLONE"; LOG="$WORK/fetchfail.log"
+boot_run "$CLONE" "$LOG" AIKIT_FAKE_FETCH_FAIL=1 -- install --branch b
+fetchfail_rolls_back() {
+  rc_nonzero && log_lacks "$LOG" switch && log_order "$LOG" \
+    "remote set-branches --add origin b" "fetch --depth 1 origin b" \
+    "config --fixed-value --unset remote.origin.fetch +refs/heads/b:refs/remotes/origin/b"
+}
+check "failed fetch rolls back the added refspec, no switch" fetchfail_rolls_back
 
 # AI_KIT_BRANCH env counts as explicit even without the flag
 CLONE="$WORK/clone_envbr"; new_clone_fixture "$CLONE"; LOG="$WORK/envbr.log"
@@ -344,6 +364,84 @@ badbr_rejected() {
   rc_nonzero && log_lacks "$LOG" status && log_lacks "$LOG" fetch && log_lacks "$LOG" switch
 }
 check "invalid branch name rejected before any status/fetch/switch" badbr_rejected
+
+# --dry-run on a non-git INSTALL_DIR (a previous tarball install) downloads nothing
+# and leaves the tree byte-identical (B-CR-02). curl records any call it gets.
+TARDIR="$WORK/tarball_install"; mkdir -p "$TARDIR/tools"
+printf 'import sys\nprint("TAR_SETUP " + " ".join(sys.argv[1:]))\n' > "$TARDIR/tools/setup.py"
+echo local-edit > "$TARDIR/keep.txt"
+DRYBIN="$WORK/dry_nogit_bin"; mkdir -p "$DRYBIN"
+for b in bash dirname mkdir mktemp tar rm mv python3; do
+  ln -sf "$(command -v "$b")" "$DRYBIN/$b"
+done
+CURL_LOG="$WORK/dry_curl.log"; : > "$CURL_LOG"
+printf '#!/usr/bin/env bash
+echo "$*" >> "%s"
+exit 1
+' "$CURL_LOG" > "$DRYBIN/curl"
+chmod +x "$DRYBIN/curl"
+tree_sum() { (cd "$TARDIR" && find . -type f -exec cksum {} + | sort); }
+before="$(tree_sum)"
+out="$(env -i HOME="$WORK" PATH="$DRYBIN" AI_KIT_DIR="$TARDIR" \
+       bash "$BOOT/install.sh" install --dry-run 2>/dev/null)"
+tar_dry_untouched() {
+  [ "$(tree_sum)" = "$before" ] && [ ! -s "$CURL_LOG" ] \
+    && [ "$out" = "TAR_SETUP install --dry-run" ]
+}
+check "--dry-run on a non-git install: no download, tree unchanged, setup.py --dry-run" \
+  tar_dry_untouched
+
+# --- 4g. real git: refspec hygiene and unpushed-commit refusal ---------------
+# A real origin (bare repo over file://) and a --depth 1 --single-branch clone,
+# the shape the bootstrap itself creates. Skipped when git is unavailable.
+if [ -n "$AIKIT_REAL_GIT" ]; then
+  RG="$WORK/realgit"; mkdir -p "$RG"
+  g() { "$AIKIT_REAL_GIT" -c user.name=t -c user.email=t@t -c init.defaultBranch=main "$@"; }
+  g init -q "$RG/src"
+  mkdir -p "$RG/src/tools"
+  printf 'import sys\nprint("REAL_SETUP " + " ".join(sys.argv[1:]))\n' > "$RG/src/tools/setup.py"
+  g -C "$RG/src" add -A && g -C "$RG/src" commit -q -m init
+  g -C "$RG/src" branch feat/x
+  g clone -q --bare "$RG/src" "$RG/origin.git"
+  g clone -q --single-branch --branch main --depth 1 "file://$RG/origin.git" "$RG/clone"
+  real_run() { # args... ; sets OUT and RC
+    OUT="$(env -i HOME="$WORK" PATH="$PATH" AI_KIT_DIR="$RG/clone" \
+      bash "$BOOT/install.sh" "$@" 2>&1)"; RC=$?
+  }
+  fetch_refs() { g -C "$RG/clone" config --get-all remote.origin.fetch; }
+
+  real_run install --branch feat/typo
+  typo_refused() {
+    rc_nonzero && out_has "branch not found on origin" \
+      && ! fetch_refs | grep -Fq feat/typo
+  }
+  check "real git: unknown branch refused, no refspec persisted" typo_refused
+  real_run install
+  check "real git: plain update still works after an unknown-branch attempt" rc_zero
+
+  real_run install --branch feat/x
+  check "real git: --branch feat/x switches" rc_zero
+  g -C "$RG/origin.git" branch -q -D feat/x
+  real_run install --branch main
+  check "real git: --branch main after feat/x was deleted upstream" rc_zero
+  real_run install
+  check "real git: plain update survives a stale refspec for a deleted branch" rc_zero
+
+  g -C "$RG/src" commit -q --allow-empty -m upstream2
+  g -C "$RG/src" push -q "$RG/origin.git" main
+  real_run install --branch main
+  check "real git: a clean branch behind origin is not refused as unpushed" rc_zero
+
+  g -C "$RG/clone" commit -q --allow-empty -m "local work"
+  real_run install --branch main
+  unpushed_refused() {
+    rc_nonzero && out_has "not on origin" \
+      && [ "$(g -C "$RG/clone" log -1 --format=%s main)" = "local work" ]
+  }
+  check "real git: --branch refuses when the local branch has unpushed commits" unpushed_refused
+else
+  printf 'skip - real git not installed\n'
+fi
 
 # --- 5. shellcheck stays clean ----------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then
