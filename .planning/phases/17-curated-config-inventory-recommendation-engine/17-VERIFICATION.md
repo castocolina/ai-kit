@@ -40,7 +40,7 @@ covered_files:
   - tests/test_curated_config_golden.py
   - tests/test_curated_config_inventory.py
   - tests/test_curated_config_recommend.py
-covered_digest: "v3:sha256:99d05594aaf1f0a4332f1672c5db46924e87638c158dd388588ba7ea9e79535c"
+covered_digest: "v3:sha256:09da35e7bb8ce1a8548a4589e9688e9f583fde59d250b5a6928e2f539086e5d5"
 behavior_unverified: 0
 overrides_applied: 0
 warnings:
