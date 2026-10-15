@@ -176,7 +176,7 @@ def _parse_tables_output(stdout: str) -> dict | None:
             and phase
             and key_lists_ok
         )
-        if tables_ok:
+        if tables_ok and isinstance(accepted, list) and isinstance(rejected, list):
             out = {
                 "runtime_profile_map": rpm,
                 "model_profiles": profiles,
