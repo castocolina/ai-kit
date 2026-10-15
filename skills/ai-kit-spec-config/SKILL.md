@@ -76,8 +76,7 @@ already be installed."
 - **Never skip announcing the target path before asking reviewer questions** — user must know where config is headed from the start.
 - **Never re-derive the write target at Step 3** — use what Step 2 already resolved and announced (consistency guarantee).
 - **Never translate literal identifiers** — `purpose` values (REVIEW/EXECUTE), model ids, catalog keys, CLI/runtime names, and field labels stay in their literal, invariant form regardless of what language the rest of this conversation is in. Narrate and explain in the user's own language, but never garble an identifier a user or this skill needs to match against config values by translating it.
-- **Never run `trust-local` without the user's explicit yes** — show `trust-local --cwd <dir> --show` first; the user must consent after seeing each reviewer's argv.
-- **Never trust the local config file this wizard just wrote** — a freshly written `./.aikit/review-spec.toml` stays inactive until the user completes the `--show` / ask / trust sequence in Step 4; do not call `trust-local` on their behalf.
+- **Never run `trust-local` (the trusting form) without the user's explicit yes** — not even for the `./.aikit/review-spec.toml` this wizard just wrote. Show `trust-local --cwd <project root> --show` first so the user consents after seeing each reviewer's argv; until then the file stays inactive.
 
 ### Step 1 — Detect
 
@@ -111,13 +110,18 @@ global configs. Report each `key`'s `available` boolean only for keys
 that also appeared in the raw-read listing above — drop any extra the
 merge surfaced — so both parts describe the same set of reviewers.
 
-Two edge cases: (1) if `--global` was passed but a local config with
+Three edge cases: (1) if `--global` was passed but a local config with
 `strategy = "local-only"` exists, the merge returns only local entries,
 shadowing the global keys the raw read listed; (2) `probe-quota` only
-probes keys reachable from `policy.ladder`. For any raw-read key with no
-match in probe output, report `available: unknown (not probed — either
-absent from policy.ladder or shadowed by local-only strategy)` rather
-than silently dropping it or guessing.
+probes keys reachable from `policy.ladder`; (3) an untrusted local file is
+ignored entirely (stderr prints `ignoring untrusted project-local config`),
+so none of its keys are probed. For any raw-read key with no match in probe
+output, report `available: unknown (not probed — absent from policy.ladder,
+shadowed by local-only strategy, or the local config is untrusted)` rather
+than silently dropping it or guessing. When the untrusted line appears, relay
+it and print the `trust-local --cwd <project root> --show` command for the
+user to run later — `--check-only` never runs the trusting `trust-local`
+form, because that writes a trust record.
 
 This makes live probe calls to each configured CLI (same mechanism as
 dispatch time), but "no writes" means nothing is persisted to real
@@ -339,13 +343,19 @@ not folded into a single vague sentence about "reviewers configured in
 some order" — the point of this report is that the user can see the
 exact fallback sequence without having to open the file.
 
-**When the write target was local** (`./.aikit/review-spec.toml` or another project-local
-path), tell the user the file stays inactive for cross-AI review until trusted. Run
-`python3 "$TOOLS_PY" trust-local --cwd <project root> --show` (use the directory containing
-the written file as `--cwd`), show each reviewer's argv, ask whether to trust it, and run
-`python3 "$TOOLS_PY" trust-local --cwd <project root>` only after an explicit yes — never
-trust on the user's behalf (including for the config this wizard just wrote).
+**When the write target was local** (`./.aikit/review-spec.toml`), tell the user the file
+stays inactive for cross-AI review until trusted. Run
+`python3 "$TOOLS_PY" trust-local --cwd <project root> --show`, where `<project root>` is the
+parent of `.aikit/` — never `.aikit/` itself, which looks for `.aikit/.aikit/review-spec.toml`
+and exits 1. `--show` writes nothing; it prints one JSON line per local reviewer that has a
+`command`: `{"key", "argv", "trusted", "path"}`, where `argv` is the exact argument list
+dispatch would run (already merged with the global config per `strategy`) with the prompt
+shown as the literal `<prompt>` placeholder, or `{"key", "error"}` for a template that would be
+refused. Show those lines, ask whether to trust the file, and run
+`python3 "$TOOLS_PY" trust-local --cwd <project root>` only after an explicit yes. Trust is tied
+to the file's exact content: any edit needs a new trust. `trust-local --cwd <project root>
+--revoke` withdraws it, and still works after the file was deleted or moved.
 
-When `probe-quota` (Step 1 `--check-only` or any later call) prints `ignoring untrusted
-project-local config`, apply the same `--show` / ask / trust sequence before treating probe
+Outside `--check-only`, when `probe-quota` prints `ignoring untrusted project-local config`,
+apply the same `--show` / ask / trust sequence, then re-run `probe-quota` before treating its
 output as authoritative for that project's local entries.
