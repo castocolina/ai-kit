@@ -123,8 +123,7 @@ def _missing_lib_error(core, filename: str) -> str:
     return f"gsd-core at {core.root} (version {ver}): missing lib/{filename}"
 
 
-def _probe_gsd_tables(core, host_name, project_dir, probe_keys, deps):
-    node_bin = gsd_catalog.resolve_node_binary(deps.which_fn)
+def _probe_gsd_tables(core, node_bin, project_dir, probe_keys, run_fn):
     if node_bin is None:
         return None, "could not resolve 'node' on PATH"
     model_catalog = gsd_catalog.resolve_model_catalog_cjs_path(core.tools_path)
@@ -133,7 +132,7 @@ def _probe_gsd_tables(core, host_name, project_dir, probe_keys, deps):
         missing = "model-catalog.cjs" if model_catalog is None else "config-schema.cjs"
         return None, _missing_lib_error(core, missing)
     paths = gsd_catalog.GsdCorePaths(node_bin, model_catalog, config_schema)
-    tables = gsd_catalog.query_gsd_tables(paths, project_dir, probe_keys, deps.run_fn)
+    tables = gsd_catalog.query_gsd_tables(paths, project_dir, probe_keys, run_fn)
     if tables is None:
         ver = core.version or "unknown"
         return None, _PROBE_UNAVAILABLE.format(root=core.root, version=ver)
@@ -363,9 +362,7 @@ def _load_configs(project_dir, deps, resolved: _ResolvedHost):
     probe = _probe_keys(
         resolved.host_name, existing["values"], global_defaults["values"]
     )
-    tables, table_err = _probe_gsd_tables(
-        resolved.core, resolved.host_name, project_dir, probe, deps
-    )
+    tables, table_err = _probe_gsd_tables(resolved.core, node_bin, project_dir, probe, deps.run_fn)
     return existing, global_defaults, tables, table_err, ex_warn, gl_warn
 
 
