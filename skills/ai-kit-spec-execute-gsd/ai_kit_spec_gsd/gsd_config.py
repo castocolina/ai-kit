@@ -10,7 +10,9 @@ workflow.cross_ai_* carries the cross-AI hook config."""
 import json
 import os
 import shutil
+import subprocess
 import time
+from collections.abc import Callable
 from typing import NamedTuple
 
 from ai_kit_spec import gsd_tools
@@ -56,7 +58,7 @@ class GsdWriteContext(NamedTuple):
     project_dir: str
     config_path: str
     run_id: str
-    run_fn: object
+    run_fn: Callable[..., subprocess.CompletedProcess]
 
 
 class ApplyResult(NamedTuple):
