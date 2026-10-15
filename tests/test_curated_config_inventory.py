@@ -451,6 +451,18 @@ class TestCatalogStates(unittest.TestCase):
         assert parsed is not None
         return parsed
 
+    def test_missing_vendor_module_is_sibling_error(self):
+        """B-WR-08: an old sibling without ai_kit_spec.vendor fails, never zero candidates."""
+        real = gsd_catalog.load_ai_kit_spec_module
+
+        def no_vendor(name):
+            return None if name == "vendor" else real(name)
+
+        with mock.patch.object(gsd_catalog, "load_ai_kit_spec_module", side_effect=no_vendor):
+            self.assertIsNone(catalog_adapter._load_spec_stack())
+            with self.assertRaisesRegex(ImportError, "ai-kit-spec-review"):
+                catalog_adapter.build_candidates({"clis": {}}, {}, "codex", {})
+
     def test_models_dev_failure_warns_even_when_aa_succeeds(self):
         """B-WR-04: never a silent 'fresh' when prices/capabilities came from cache."""
         state, warns = catalog_adapter._catalog_state(

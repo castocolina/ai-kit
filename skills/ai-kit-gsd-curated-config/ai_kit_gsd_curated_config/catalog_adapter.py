@@ -125,7 +125,10 @@ def _load_spec_stack():
     model_catalog = gsd_catalog.load_ai_kit_spec_module("model_catalog")
     cache = gsd_catalog.load_ai_kit_spec_module("cache")
     ranker = gsd_catalog.load_ai_kit_spec_module("model_ranker")
-    if detection is None or model_catalog is None or cache is None or ranker is None:
+    # vendor is only used by build_candidates, but an older sibling without it must fail
+    # here, not yield a "fresh" catalog with zero candidates (B-WR-08).
+    vendor = gsd_catalog.load_ai_kit_spec_module("vendor")
+    if None in (detection, model_catalog, cache, ranker, vendor):
         return None
     return detection, model_catalog, cache, ranker
 
@@ -236,12 +239,13 @@ def _catalog_is_scored(entries: dict) -> bool:
 
 
 def build_candidates(runtimes, entries, host_cli, weights) -> list[dict]:
-    """One candidate per installed runtime model id, joined to catalog entries when present."""
+    """One candidate per installed runtime model id, joined to catalog entries when present.
+    Raises ImportError when the ai-kit-spec-review sibling modules are missing."""
     ranker = gsd_catalog.load_ai_kit_spec_module("model_ranker")
     detection = gsd_catalog.load_ai_kit_spec_module("detection")
     vendor_mod = gsd_catalog.load_ai_kit_spec_module("vendor")
     if ranker is None or detection is None or vendor_mod is None:
-        return []
+        raise ImportError(_SIBLING_ERR)
     join_index = _build_join_index(entries)
     join = _JoinCtx(
         join_index,

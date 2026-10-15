@@ -141,9 +141,12 @@ def _catalog_fields(project_dir, opts, host_name, env, run_fn):
     cat, cat_err = catalog_adapter.refresh_catalog(project_dir, env, opts.refresh, run_fn)
     if cat is None:
         return None, cat_err
-    candidates = catalog_adapter.build_candidates(
-        cat.runtimes, cat.entries, host.host_cli(host_name), cat.weights
-    )
+    try:
+        candidates = catalog_adapter.build_candidates(
+            cat.runtimes, cat.entries, host.host_cli(host_name), cat.weights
+        )
+    except ImportError as exc:
+        return None, str(exc)
     return {
         "catalog": {"state": cat.state, "scored": cat.scored},
         "candidates": candidates,
