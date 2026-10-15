@@ -35,6 +35,7 @@ _TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
 _SETUP_SPEC = importlib.util.spec_from_file_location(
     "setup", os.path.join(_TOOLS, "setup.py")
 )
+assert _SETUP_SPEC is not None and _SETUP_SPEC.loader is not None
 _SETUP_MOD = importlib.util.module_from_spec(_SETUP_SPEC)
 _SETUP_SPEC.loader.exec_module(_SETUP_MOD)
 setup = _SETUP_MOD
@@ -646,6 +647,7 @@ class TestSegmentInventory(unittest.TestCase):
     def _sl(self):
         sl_path = os.path.join(_TOOLS, "status-line.py")
         spec = importlib.util.spec_from_file_location("status_line_inv", sl_path)
+        assert spec is not None and spec.loader is not None
         mod = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = mod
         spec.loader.exec_module(mod)

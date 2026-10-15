@@ -38,6 +38,7 @@ rtk Configuration:
 
 def _load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -232,6 +233,8 @@ class TestClaudeWrapper(unittest.TestCase):
             env=env,
         )
         try:
+            assert proc.stdin is not None
+            assert proc.stdout is not None
             proc.stdin.write(b'{"hook_event_name": "SessionStart"')
             proc.stdin.flush()
             rc = proc.wait(timeout=10)

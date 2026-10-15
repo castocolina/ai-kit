@@ -24,6 +24,7 @@ def load_readers():
         sys.path.insert(0, _TOOLS_DIR)
     path = os.path.join(_TOOLS_DIR, "config_doctor_readers.py")
     spec = importlib.util.spec_from_file_location("config_doctor_readers", path)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules["config_doctor_readers"] = mod
     spec.loader.exec_module(mod)
@@ -35,6 +36,7 @@ def load_checks():
     load_readers()
     path = os.path.join(_TOOLS_DIR, "config_doctor_checks.py")
     spec = importlib.util.spec_from_file_location("config_doctor_checks", path)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules["config_doctor_checks"] = mod
     spec.loader.exec_module(mod)
@@ -47,6 +49,7 @@ def load_appliers():
         sys.path.insert(0, _TOOLS_DIR)
     path = os.path.join(_TOOLS_DIR, "config_doctor_appliers.py")
     spec = importlib.util.spec_from_file_location("config_doctor_appliers", path)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules["config_doctor_appliers"] = mod
     spec.loader.exec_module(mod)
@@ -320,6 +323,7 @@ class TestGateRegistration(unittest.TestCase):
         block = precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         entry = match.group(1)
         self.assertIn("tests.test_config_doctor", entry)
         self.assertIn("tests.test_config_doctor_pty", entry)
@@ -1507,6 +1511,7 @@ def load_app():
         sys.path.insert(0, _TOOLS_DIR)
     path = os.path.join(_TOOLS_DIR, "config_doctor_app.py")
     spec = importlib.util.spec_from_file_location("config_doctor_app", path)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules["config_doctor_app"] = mod
     spec.loader.exec_module(mod)

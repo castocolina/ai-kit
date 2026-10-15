@@ -15,6 +15,7 @@ _DOCTOR_PATH = os.path.join(_HERE, "..", "tools", "statusline-doctor.py")
 
 def load_module():
     spec = importlib.util.spec_from_file_location("status_line", _MODULE_PATH)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod          # register so @dataclass can resolve cls.__module__
     spec.loader.exec_module(mod)
@@ -23,6 +24,7 @@ def load_module():
 
 def load_doctor():
     spec = importlib.util.spec_from_file_location("statusline_doctor", _DOCTOR_PATH)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
