@@ -1779,6 +1779,45 @@ class TestPurity(unittest.TestCase):
         self.assertEqual(forbidden_imports("from typing import Any\n"), [])
 
 
+class TestCliRecommendIo(unittest.TestCase):
+    """MUST NOT (R7): the CLI recommend path reads only its inventory and writes only --out."""
+
+    def test_cli_recommend_touches_only_inventory_and_out(self):
+        inv = make_inventory(host="codex", rejected=("dynamic_routing.enabled",))
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path = os.path.join(tmp, "inventory.json")
+            out_path = os.path.join(tmp, "plan.json")
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(inv))
+            opened = []
+            active = [True]
+
+            def hook(event, args):
+                if active[0] and event == "open" and isinstance(args[0], (str, bytes)):
+                    opened.append(os.path.realpath(os.fsdecode(args[0])))
+
+            sys.addaudithook(hook)  # hooks cannot be removed; `active` disarms it
+            raiser = mock.MagicMock(side_effect=AssertionError("I/O violation"))
+            try:
+                with mock.patch.object(subprocess, "run", raiser), \
+                     mock.patch.object(subprocess, "Popen", raiser), \
+                     mock.patch.object(socket, "socket", raiser), \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    code = cli.main([
+                        "recommend", "--inventory", inv_path, "--profile", "adaptive",
+                        "--rigor", "rigorous", "--out", out_path,
+                    ])
+            finally:
+                active[0] = False
+            self.assertEqual(code, 0)
+            real_tmp = os.path.realpath(tmp)
+            touched = {p for p in opened if not p.endswith((".py", ".pyc"))}
+            self.assertIn(os.path.realpath(inv_path), touched)
+            for path in touched:
+                self.assertEqual(os.path.dirname(path), real_tmp, path)
+            self.assertEqual(sorted(os.listdir(tmp)), ["inventory.json", "plan.json"])
+
+
 class TestWritePlan(unittest.TestCase):
     """T-17-06: the atomic plan write leaves exactly one file with exact content."""
 
