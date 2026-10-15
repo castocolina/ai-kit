@@ -8,6 +8,7 @@ import contextlib
 import io
 import json
 import os
+import random
 import socket
 import subprocess
 import sys
@@ -22,7 +23,7 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-gsd-curated-config"),
 )
 
-from ai_kit_gsd_curated_config import cli, plan_io, presets, recommend
+from ai_kit_gsd_curated_config import cli, plan_io, presets, recommend, roles
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -49,6 +50,7 @@ TABLES = {
             "sonnet": {"model": "claude-sonnet-5"},
             "haiku": {"model": "claude-haiku-4-5"},
         },
+        "cursor": {},
     },
     "model_profiles": {
         "quality": {"gsd-planner": "opus", "gsd-executor": "opus", "gsd-verifier": "sonnet"},
@@ -74,7 +76,6 @@ TABLES = {
 ENTRY_BASE_KEYS = {"key", "op", "value", "source", "why", "existing"}
 ENTRY_OPTIONAL_KEYS = {"status", "candidates", "effect"}
 
-
 def cand(model, runtime="codex", **fields):
     """A full inventory candidate dict with contract defaults."""
     out = {
@@ -99,6 +100,55 @@ def cand(model, runtime="codex", **fields):
     }
     out.update(fields)
     return out
+
+
+_SCORES = {"planning": 8.0, "general": 7.0, "mechanical": 6.0}
+_CODEX_MODES = ["low", "medium", "high", "xhigh", "max", "ultra"]
+
+CODEX = [
+    cand(
+        "gpt-6-astra", price=10, score_axes=3, family="gpt-6-astra",
+        purpose_scores={**_SCORES, "planning": 6.0},
+        reasoning_modes=_CODEX_MODES,
+    ),
+    cand(
+        "gpt-5.6-sol", price=4, score_axes=3, family="gpt-5.6-sol",
+        purpose_scores={**_SCORES, "planning": 9.0},
+        reasoning_modes=["low", "medium", "high", "xhigh", "max"],
+    ),
+    cand(
+        "gpt-5.6-terra", price=2, score_axes=3, family="gpt-5.6-sol-terra",
+        purpose_scores={**_SCORES, "general": 9.0, "planning": 7.0},
+        reasoning_modes=["low", "medium", "high", "xhigh"],
+    ),
+    cand(
+        "gpt-6.1-sol", price=2, score_axes=3, family="gpt-6.1-sol",
+        purpose_scores={"planning": 8.0, "general": 6.0},
+        reasoning_modes=["high", "xhigh"],
+    ),
+    cand(
+        "gpt-5.6-luna", price=0.2, score_axes=3, family="gpt-5.6-luna",
+        purpose_scores={**_SCORES, "mechanical": 9.0, "planning": 4.0},
+        reasoning_modes=["low", "medium", "high"],
+    ),
+]
+
+OPENCODE = [
+    cand(
+        "openai/gpt-5.6-sol", runtime="opencode", price=4, score_axes=3,
+        family="gpt-5.6-sol",
+        purpose_scores={**_SCORES, "planning": 9.0},
+    ),
+    cand(
+        "xai/grok-4.6", runtime="opencode", price=2, score_axes=3, family="grok-4.6",
+        purpose_scores={**_SCORES, "planning": 8.0},
+    ),
+    cand(
+        "zai-coding-plan/glm-5.3", runtime="opencode", price=0, score_axes=3,
+        family="glm-5.3",
+        purpose_scores={**_SCORES, "general": 9.0, "mechanical": 8.0},
+    ),
+]
 
 
 def make_inventory(
@@ -389,6 +439,437 @@ class TestPhaseShifts(unittest.TestCase):
         )
 
 
+class TestRolesHelpers(unittest.TestCase):
+    """Unit tests for roles.py pure helpers."""
+
+    def test_price_ceiling(self):
+        prices = [0.2, 2, 2, 4, 10]
+        self.assertEqual(roles.price_ceiling(prices, 0.75), 4)
+        self.assertEqual(roles.price_ceiling(prices, 0.40), 2)
+        self.assertIsNone(roles.price_ceiling(prices, None))
+        self.assertIsNone(roles.price_ceiling([], 0.4))
+
+    def test_effort_token(self):
+        self.assertEqual(roles.effort_token("gpt-5.6-sol-high-fast"), "high")
+        self.assertIsNone(roles.effort_token("composer-2.5"))
+        self.assertIsNone(roles.effort_token("gpt-5.6-sol-none"))
+
+    def test_clamp_effort(self):
+        modes = ["low", "medium", "high", "xhigh", "max"]
+        self.assertEqual(roles.clamp_effort("ultra", modes), "max")
+        self.assertEqual(roles.clamp_effort("high", modes), "high")
+
+    def test_tie_key_price_zero_and_none(self):
+        c0 = {"purpose_scores": {"p": 1.0}, "price": 0, "model": "b"}
+        c1 = dict(c0, price=1, model="a")
+        self.assertLess(roles.tie_key(c0, "p"), roles.tie_key(c1, "p"))
+
+    def test_pick_variant_rules(self):
+        purpose = "general"
+        members = [
+            cand("claude-opus-5-5-low", family="claude-opus-5-5", purpose_scores={purpose: 1}),
+            cand("claude-opus-5-5-high", family="claude-opus-5-5", purpose_scores={purpose: 2}),
+            cand("claude-opus-5-5-xhigh", family="claude-opus-5-5", purpose_scores={purpose: 3}),
+            cand("claude-opus-5-5-max", family="claude-opus-5-5", purpose_scores={purpose: 4}),
+        ]
+        chosen, rule = roles.pick_variant(members, purpose, "high")
+        self.assertEqual(chosen["model"], "claude-opus-5-5-high")
+        self.assertEqual(rule, "exact")
+        chosen, rule = roles.pick_variant(members, purpose, "medium")
+        self.assertEqual(chosen["model"], "claude-opus-5-5-low")
+        self.assertEqual(rule, "nearest lower")
+        hi_only = [m for m in members if m["model"].endswith(("-xhigh", "-max"))]
+        chosen, rule = roles.pick_variant(hi_only, purpose, "high")
+        self.assertEqual(chosen["model"], "claude-opus-5-5-xhigh")
+        self.assertEqual(rule, "nearest higher")
+        bare = [cand("composer-2.5", family="composer-2.5", purpose_scores={purpose: 1})]
+        chosen, rule = roles.pick_variant(bare, purpose, "medium")
+        self.assertEqual(chosen["model"], "composer-2.5")
+        self.assertEqual(rule, "bare")
+
+
+class TestSlotTracer(unittest.TestCase):
+    """Task 1: codex keep/override and opencode catalog-score overrides."""
+
+    def test_codex_standard_keeps_native_slots(self):
+        inv = make_inventory(host="codex", candidates=CODEX)
+        code, plan, _, err = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
+        self.assertEqual((code, err), (0, ""))
+        assert plan is not None
+        em = entry_map(plan)
+        for tier in ("opus", "sonnet"):
+            key = f"model_profile_overrides.codex.{tier}"
+            entry = em[key]
+            self.assertEqual(entry["op"], "keep")
+            self.assertEqual(entry["source"], "native")
+            self.assertEqual(entry["effect"], presets.CODEX_EFFECT)
+
+    def test_codex_mvp_overrides_opus_above_ceiling(self):
+        inv = make_inventory(host="codex", candidates=CODEX)
+        plan = build(inv, rigor="mvp")
+        em = entry_map(plan)
+        opus = em["model_profile_overrides.codex.opus"]
+        self.assertEqual(opus["op"], "set")
+        self.assertEqual(opus["source"], "catalog-score")
+        self.assertIsInstance(opus["value"], dict)
+        self.assertLessEqual(
+            next(c["price"] for c in CODEX if c["model"] == opus["value"]["model"]), 2
+        )
+        self.assertEqual(opus["value"]["reasoning_effort"], "high")
+        self.assertTrue(opus["why"].startswith("gsd default gpt-5.6-sol above ceiling"))
+        self.assertEqual(em["model_profile_overrides.codex.sonnet"]["op"], "keep")
+
+    def test_opencode_standard_overrides_all_used_tiers(self):
+        inv = make_inventory(host="opencode", candidates=OPENCODE)
+        plan = build(inv, rigor="standard")
+        em = entry_map(plan)
+        for tier in ("opus", "sonnet"):
+            key = f"model_profile_overrides.opencode.{tier}"
+            entry = em[key]
+            self.assertEqual(entry["op"], "set")
+            self.assertEqual(entry["source"], "catalog-score")
+            val = entry["value"]
+            self.assertIsInstance(val, str)
+            self.assertFalse(val.startswith("anthropic/"))
+            self.assertTrue(entry["why"].startswith("gsd default anthropic/"))
+
+    def test_claude_host_skips_slot_layer(self):
+        inv = make_inventory(
+            host="claude",
+            candidates=[
+                cand(
+                    "claude-sonnet-5",
+                    runtime="claude",
+                    purpose_scores=_SCORES,
+                    score_axes=3,
+                )
+            ],
+        )
+        plan = build(inv, rigor="standard")
+        self.assertFalse(
+            any(e["key"].startswith("model_profile_overrides.") for e in plan["entries"])
+        )
+
+
+class TestSlotEdges(unittest.TestCase):
+    """Task 2: needs_choice, unscored, pi, codex empty, cap fallback, -fast twins."""
+
+    def test_opencode_zero_candidates_needs_choice(self):
+        inv = make_inventory(host="opencode", candidates=[])
+        code, plan, _, _ = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
+        self.assertEqual(code, 0)
+        assert plan is not None
+        for tier in ("opus", "sonnet"):
+            entry = entry_map(plan)[f"model_profile_overrides.opencode.{tier}"]
+            self.assertEqual(entry["status"], "needs_choice")
+            self.assertIsNone(entry["value"])
+            self.assertEqual(entry["candidates"], [])
+            self.assertIn("no scores", entry["why"])
+
+    def test_opencode_unscored_price_order(self):
+        cands = [
+            cand("m/a", runtime="opencode", price=3, score_axes=0, purpose_scores={}),
+            cand("m/b", runtime="opencode", price=1, score_axes=0, purpose_scores={}),
+            cand("m/c", runtime="opencode", price=None, score_axes=0, purpose_scores={}),
+            cand("m/d", runtime="opencode", price=0.5, score_axes=0, purpose_scores={}),
+            cand("m/e", runtime="opencode", price=2, score_axes=0, purpose_scores={}),
+        ]
+        inv = make_inventory(host="opencode", candidates=cands)
+        plan = build(inv, rigor="standard")
+        em = entry_map(plan)
+        self.assertFalse(any(e["source"] == "catalog-score" for e in plan["entries"]))
+        for tier in ("opus", "sonnet"):
+            entry = em[f"model_profile_overrides.opencode.{tier}"]
+            models = [c["model"] for c in entry["candidates"]]
+            self.assertEqual(models, ["m/d", "m/b", "m/e"])
+            for cand_row in entry["candidates"]:
+                self.assertIsNone(cand_row["score"])
+                self.assertEqual(cand_row["why"], "no scores; ordered by price, not quality")
+
+    def test_codex_unscored_keeps_native(self):
+        unscored = [dict(c, score_axes=0, purpose_scores={}) for c in CODEX]
+        inv = make_inventory(host="codex", candidates=unscored)
+        plan = build(inv, rigor="standard")
+        em = entry_map(plan)
+        for tier in ("opus", "sonnet"):
+            entry = em[f"model_profile_overrides.codex.{tier}"]
+            self.assertEqual(entry["op"], "keep")
+            self.assertEqual(entry["source"], "native")
+        slot_sets = [
+            e for e in plan["entries"]
+            if e["op"] == "set" and e["key"].startswith("model_profile_overrides.")
+        ]
+        self.assertFalse(slot_sets)
+
+    def test_cursor_no_catalog_needs_choice(self):
+        cands = [
+            cand("claude-opus-5-5-high", runtime="cursor", score_axes=0, purpose_scores={}),
+            cand("composer-2.5", runtime="cursor", score_axes=0, purpose_scores={}),
+            cand("gemini-3.8-flash-low", runtime="cursor", score_axes=0, purpose_scores={}),
+            cand("gpt-5.6-luna-low", runtime="cursor", score_axes=0, purpose_scores={}),
+            cand("gpt-5.6-sol-medium", runtime="cursor", score_axes=0, purpose_scores={}),
+        ]
+        inv = make_inventory(host="cursor", candidates=cands)
+        plan = build(inv, rigor="standard")
+        em = entry_map(plan)
+        self.assertFalse(any(e["source"] == "catalog-score" for e in plan["entries"]))
+        for tier in ("opus", "sonnet"):
+            entry = em[f"model_profile_overrides.cursor.{tier}"]
+            self.assertEqual(entry["status"], "needs_choice")
+            self.assertIn("no gsd default for cursor", entry["why"])
+            self.assertIn("no scores", entry["why"])
+            models = [c["model"] for c in entry["candidates"]]
+            self.assertEqual(
+                models,
+                ["claude-opus-5-5-high", "composer-2.5", "gemini-3.8-flash-low"],
+            )
+
+    def test_fast_twin_never_chosen(self):
+        base = dict(OPENCODE[0])
+        fast = dict(
+            base,
+            model="openai/gpt-5.6-sol-fast",
+            fast_twin_of="openai/gpt-5.6-sol",
+            purpose_scores={k: v + 5 for k, v in base["purpose_scores"].items()},
+        )
+        inv = make_inventory(host="opencode", candidates=[*OPENCODE, fast])
+        plan = build(inv, rigor="standard")
+        for entry in plan["entries"]:
+            if entry["key"].startswith("model_profile_overrides.") and entry.get("value"):
+                val = entry["value"]
+                model = val["model"] if isinstance(val, dict) else val
+                self.assertNotEqual(model, "openai/gpt-5.6-sol-fast")
+
+    def test_cap_fallback_haiku(self):
+        cands = [
+            cand("a", price=1, score_axes=3, purpose_scores={"planning": 9}),
+            cand("b", price=1, score_axes=3, purpose_scores={"planning": 8}),
+            cand("c", price=10, score_axes=3, purpose_scores={"mechanical": 9}),
+        ]
+        inv = make_inventory(host="codex", candidates=cands)
+        plan = build(inv, profile="budget", rigor="mvp")
+        entry = entry_map(plan)["model_profile_overrides.codex.haiku"]
+        self.assertEqual(entry["value"]["model"], "c")
+        self.assertIn("no family within ceiling", entry["why"])
+        self.assertIn("cheapest eligible used", entry["why"])
+
+    def test_mechanical_floor_needs_choice(self):
+        cands = [
+            cand("a", price=1, score_axes=3, purpose_scores={"planning": 9, "general": 8}),
+        ]
+        inv = make_inventory(host="codex", candidates=cands)
+        plan = build(inv, profile="budget", rigor="standard")
+        entry = entry_map(plan)["model_profile_overrides.codex.haiku"]
+        self.assertEqual(entry["status"], "needs_choice")
+        self.assertIn("no eligible mechanical candidate", entry["why"])
+
+    def test_unpriced_scored_why(self):
+        cands = [
+            cand(
+                "priced",
+                runtime="opencode",
+                price=5,
+                score_axes=3,
+                purpose_scores={"planning": 5},
+            ),
+            cand(
+                "free",
+                runtime="opencode",
+                price=None,
+                score_axes=3,
+                purpose_scores={"planning": 9},
+            ),
+        ]
+        inv = make_inventory(host="opencode", candidates=cands)
+        plan = build(inv, rigor="rigorous")
+        entry = entry_map(plan)["model_profile_overrides.opencode.opus"]
+        self.assertTrue(entry["why"].endswith("; price unknown"))
+
+    def test_keep_with_existing_override_unset(self):
+        inv = make_inventory(
+            host="codex",
+            candidates=CODEX,
+            existing={
+                "exists": True,
+                "values": {"model_profile_overrides": {"codex": {"sonnet": "x"}}},
+            },
+        )
+        plan = build(inv, rigor="standard")
+        entry = entry_map(plan)["model_profile_overrides.codex.sonnet"]
+        self.assertEqual(entry["op"], "unset")
+        self.assertEqual(entry["source"], "native")
+        self.assertEqual(entry["existing"], "x")
+
+    def test_pi_sonnet_needs_choice(self):
+        inv = make_inventory(
+            host="pi",
+            candidates=[cand("x/y", runtime="pi", score_axes=3, purpose_scores=_SCORES)],
+        )
+        plan = build(inv, rigor="standard")
+        slot_keys = [
+            e["key"] for e in plan["entries"] if e["key"].startswith("model_profile_overrides.")
+        ]
+        self.assertEqual(slot_keys, ["model_profile_overrides.pi.sonnet"])
+        entry = entry_map(plan)["model_profile_overrides.pi.sonnet"]
+        self.assertEqual(entry["status"], "needs_choice")
+        self.assertEqual(entry["candidates"], [])
+        self.assertEqual(entry["effect"], presets.PI_EFFECT)
+        self.assertEqual(len([n for n in plan["notes"] if n["kind"] == "pi"]), 1)
+
+    def test_codex_zero_candidates_keeps_native(self):
+        inv = make_inventory(host="codex", candidates=[])
+        plan = build(inv, rigor="standard")
+        for tier in ("opus", "sonnet"):
+            entry = entry_map(plan)[f"model_profile_overrides.codex.{tier}"]
+            self.assertEqual(entry["op"], "keep")
+            self.assertIn("codex enumerated no models", entry["why"])
+            self.assertIn("effect unverified: enumeration failed", entry["effect"])
+        bad = [
+            e for e in plan["entries"]
+            if e.get("status") == "needs_choice" and "model_profile_overrides." in e["key"]
+        ]
+        self.assertFalse(bad)
+
+    def test_needs_choice_candidate_limit(self):
+        many = [
+            cand(f"m{i}", runtime="opencode", price=i, score_axes=0, purpose_scores={})
+            for i in range(5)
+        ]
+        inv = make_inventory(host="opencode", candidates=many)
+        plan = build(inv, rigor="standard")
+        entry = entry_map(plan)["model_profile_overrides.opencode.opus"]
+        self.assertEqual(len(entry["candidates"]), 3)
+        inv2 = make_inventory(host="opencode", candidates=many[:2])
+        plan2 = build(inv2, rigor="standard")
+        entry2 = entry_map(plan2)["model_profile_overrides.opencode.opus"]
+        self.assertEqual(len(entry2["candidates"]), 2)
+
+    def test_cursor_haiku_effort_variant_low(self):
+        cands = [
+            cand(
+                "gpt-5.6-luna-low",
+                runtime="cursor",
+                family="gpt-5.6-luna",
+                price=1,
+                score_axes=3,
+                purpose_scores={"mechanical": 5},
+            ),
+            cand(
+                "gpt-5.6-luna-high",
+                runtime="cursor",
+                family="gpt-5.6-luna",
+                price=1,
+                score_axes=3,
+                purpose_scores={"mechanical": 6},
+            ),
+            cand(
+                "gpt-5.6-luna-max",
+                runtime="cursor",
+                family="gpt-5.6-luna",
+                price=1,
+                score_axes=3,
+                purpose_scores={"mechanical": 7},
+            ),
+            cand(
+                "opus-plan",
+                runtime="cursor",
+                price=2,
+                score_axes=3,
+                purpose_scores={"planning": 9, "general": 8, "mechanical": 4},
+            ),
+        ]
+        inv = make_inventory(host="cursor", candidates=cands)
+        plan = build(inv, profile="budget", rigor="standard")
+        entry = entry_map(plan)["model_profile_overrides.cursor.haiku"]
+        self.assertTrue(str(entry["value"]).endswith("-low"))
+
+
+class TestDeterminism(unittest.TestCase):
+    """Task 3: tie order, shuffle stability, used tiers, ladder drift."""
+
+    def test_tie_breakers(self):
+        purpose = "general"
+        eq = [
+            cand("b", price=2, score_axes=3, purpose_scores={purpose: 5.0}),
+            cand("a", price=2, score_axes=3, purpose_scores={purpose: 5.0}),
+        ]
+        pick = roles.best_pick(eq, purpose, "medium", None)
+        assert pick is not None
+        self.assertEqual(pick.candidate["model"], "a")
+        price_cases = [
+            (
+                cand("a", price=2, score_axes=3, purpose_scores={purpose: 5.0}),
+                cand("b", price=1, score_axes=3, purpose_scores={purpose: 5.0}),
+                "b",
+            ),
+            (
+                cand("a", price=1, score_axes=3, purpose_scores={purpose: 5.0}),
+                cand("b", price=0, score_axes=3, purpose_scores={purpose: 5.0}),
+                "b",
+            ),
+            (
+                cand("a", price=None, score_axes=3, purpose_scores={purpose: 5.0}),
+                cand("b", price=0, score_axes=3, purpose_scores={purpose: 5.0}),
+                "b",
+            ),
+            (
+                cand("a", price=None, score_axes=3, purpose_scores={purpose: 5.0}),
+                cand("b", price=1, score_axes=3, purpose_scores={purpose: 5.0}),
+                "b",
+            ),
+        ]
+        for c0, c1, want in price_cases:
+            pick = roles.best_pick([c0, c1], purpose, "medium", None)
+            assert pick is not None
+            self.assertEqual(pick.candidate["model"], want)
+        tiny = [
+            cand("a", price=1, score_axes=3, purpose_scores={purpose: 5.0}),
+            cand("b", price=1, score_axes=3, purpose_scores={purpose: 5.0 + 1e-9}),
+        ]
+        pick = roles.best_pick(tiny, purpose, "medium", None)
+        assert pick is not None
+        self.assertEqual(pick.candidate["model"], "b")
+
+    def test_shuffle_stable_plan(self):
+        for rigor in ("mvp", "standard"):
+            for host, base in (("opencode", OPENCODE), ("codex", CODEX)):
+                inv0 = make_inventory(host=host, candidates=list(base))
+                ref = plan_io.canonical_json(build(inv0, rigor=rigor))
+                for seed in (7, 8, 9):
+                    shuffled = list(base)
+                    random.Random(seed).shuffle(shuffled)
+                    inv = make_inventory(host=host, candidates=shuffled)
+                    self.assertEqual(plan_io.canonical_json(build(inv, rigor=rigor)), ref)
+
+    def test_used_tiers_profile_and_shifts(self):
+        gsd = {
+            "model_profiles": TABLES["model_profiles"],
+            "agent_to_phase_type": TABLES["agent_to_phase_type"],
+        }
+        self.assertEqual(roles.used_tiers(gsd, "budget", {}), ("sonnet", "haiku"))
+        self.assertEqual(roles.used_tiers(gsd, "quality", {}), ("opus", "sonnet"))
+        self.assertIn(
+            "opus",
+            roles.used_tiers(gsd, "budget", presets.PHASE_SHIFTS["rigorous"]),
+        )
+
+    @unittest.skipUnless(
+        os.path.exists(
+            os.path.join(REPO_ROOT, ".claude", "gsd-core", "bin", "lib", "model-catalog.cjs")
+        ),
+        "gsd-core not installed locally",
+    )
+    def test_effort_ladder_matches_gsd_core(self):
+        path = os.path.join(
+            REPO_ROOT, ".claude", "gsd-core", "bin", "lib", "model-catalog.cjs"
+        )
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        rendered = ", ".join(f"'{step}'" for step in roles.EFFORT_LADDER)
+        needle = f"const EFFORT_LADDER = [{rendered}];"
+        self.assertIn(needle, text)
+
+
 class TestCrossAi(unittest.TestCase):
     """D-19: booleans mirror the answers; a yes reserves a needs_choice slot."""
 
@@ -423,12 +904,36 @@ class TestCrossAi(unittest.TestCase):
 
     def test_defaults(self):
         other = [cand("some/other-model", runtime="codex", is_host=False)]
+        claude_mvp_cheap = [
+            cand("host-a", runtime="claude", price=1, score_axes=3, purpose_scores=_SCORES),
+            cand("host-b", runtime="claude", price=10, score_axes=3, purpose_scores=_SCORES),
+            cand(
+                "cheap/other",
+                runtime="codex",
+                is_host=False,
+                price=0.2,
+                score_axes=3,
+                purpose_scores=_SCORES,
+            ),
+        ]
+        claude_mvp_dear = [
+            cand("host-a", runtime="claude", price=1, score_axes=3, purpose_scores=_SCORES),
+            cand(
+                "dear/other",
+                runtime="codex",
+                is_host=False,
+                price=20,
+                score_axes=3,
+                purpose_scores=_SCORES,
+            ),
+        ]
         cases = [
             # (host, candidates, rigor, review, exec)
             ("codex", (), "rigorous", "y", "n"),
             ("codex", other, "standard", "y", "n"),
             ("opencode", other, "standard", "n", "n"),
-            ("claude", other, "mvp", "n", "y"),
+            ("claude", claude_mvp_cheap, "mvp", "n", "y"),
+            ("claude", claude_mvp_dear, "mvp", "n", "n"),
             ("claude", (), "mvp", "n", "n"),
         ]
         for host, candidates, rigor, want_review, want_exec in cases:
@@ -567,7 +1072,7 @@ class TestPurity(unittest.TestCase):
         self.assertEqual(plan_io.canonical_json(first), plan_io.canonical_json(second))
 
     def test_recommend_and_presets_import_nothing_forbidden(self):
-        for module in ("recommend", "presets"):
+        for module in ("recommend", "presets", "roles"):
             with open(
                 os.path.join(
                     REPO_ROOT, "skills", "ai-kit-gsd-curated-config", "ai_kit_gsd_curated_config",
@@ -689,3 +1194,4 @@ class TestInventoryValidation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

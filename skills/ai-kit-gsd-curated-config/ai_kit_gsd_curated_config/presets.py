@@ -124,6 +124,10 @@ DYNAMIC_ROUTING_EFFECT = (
 )
 PI_EFFECT = "effect unverified on pi (gsd-core registry: namedDispatch false)"
 
+PRICE_PERCENTILE = {"mvp": 0.40, "standard": 0.75, "rigorous": None}
+
+CODEX_EFFECT = "resolve-model only (codex bakes only explicit model_overrides)"
+
 
 def preset_values(rigor: str, project: dict) -> dict:
     """The §5 preset dict for `rigor` plus its conditional keys, resolved from the

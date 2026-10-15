@@ -1,12 +1,12 @@
 """The pure recommendation engine (REC-01): inventory + profile + rigor + the two
 cross-AI answers -> one canonical, sorted, explainable plan dict. No subprocess, no
 network, no clock, no environment, no filesystem: everything arrives through the
-inventory. Imports only `typing` names, `.presets` and `.plan_io` (guarded by the
-tests' AST import check).
+inventory. Imports only `typing` names, `.presets`, `.roles` and `.plan_io` (guarded
+by the tests' AST import check).
 """
 from typing import Any, NamedTuple
 
-from . import plan_io, presets
+from . import plan_io, presets, roles
 
 
 class RecommendOpts(NamedTuple):
@@ -22,6 +22,23 @@ class PlanCtx(NamedTuple):
     host: str
     existing: dict
     preset: dict
+
+
+class _SlotMeta(NamedTuple):
+    key: str
+    purpose: str
+    target: str
+    extra: dict
+
+
+class _PickRequest(NamedTuple):
+    ctx: PlanCtx
+    key: str
+    reason: str
+    purpose: str
+    target: str
+    ceiling: roles.Ceiling
+    extra: dict
 
 
 def make_entry(ctx: PlanCtx, key: str, value: Any, source: str, why: str, **extra) -> dict:
@@ -41,11 +58,19 @@ def make_entry(ctx: PlanCtx, key: str, value: Any, source: str, why: str, **extr
     return entry
 
 
+def _cheap_exec_default(ctx: PlanCtx) -> str:
+    if ctx.opts.rigor != "mvp" or ctx.host not in ("claude", "codex"):
+        return "n"
+    q = presets.PRICE_PERCENTILE["mvp"]
+    cheap = roles.cheap_other_cli(ctx.inv["candidates"], q)
+    return "y" if cheap is not None else "n"
+
+
 def cross_ai_answers(ctx: PlanCtx) -> dict:
     """Resolves the two cross-AI answers (17 D-19). An explicit flag wins with
     `defaulted: False`; an omitted flag defaults from rigor and host and is recorded
-    as `defaulted: True`. 17-04 narrows the MVP exec default to a cheap other-CLI
-    candidate once `roles.cheap_other_cli` exists (spec §5)."""
+    as `defaulted: True`. MVP exec defaults to yes only when a cheap other-CLI
+    candidate exists (spec §5)."""
     other_cli = any(not c.get("is_host", False) for c in ctx.inv["candidates"])
     claude_or_codex = ctx.host in ("claude", "codex")
 
@@ -56,7 +81,7 @@ def cross_ai_answers(ctx: PlanCtx) -> dict:
     standard_qualified = ctx.opts.rigor == "standard" and claude_or_codex and other_cli
     if ctx.opts.rigor == "rigorous" or standard_qualified:
         review_default = "y"
-    exec_default = "y" if (ctx.opts.rigor == "mvp" and claude_or_codex and other_cli) else "n"
+    exec_default = _cheap_exec_default(ctx)
     return {
         "review": _resolve(ctx.opts.cross_ai_review, review_default),
         "exec": _resolve(ctx.opts.cross_ai_exec, exec_default),
@@ -85,8 +110,7 @@ def _preset_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
 
 def _tier_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     """Layer 2 (tier level): `model_profile` plus one `models.<phase>` entry per
-    rigor phase shift. Later plans (17-04/17-06) append the slot and specialist
-    layers after this one."""
+    rigor phase shift. Later plans append the slot layer after this one."""
     del prior_entries
     entries = [
         make_entry(
@@ -115,6 +139,206 @@ def _tier_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     return entries, []
 
 
+def _native_model(ctx: PlanCtx, tier: str) -> str | None:
+    host_map = ctx.inv["gsd_core"]["runtime_profile_map"].get(ctx.host)
+    if not isinstance(host_map, dict):
+        return None
+    slot = host_map.get(tier)
+    if not isinstance(slot, dict):
+        return None
+    model = slot.get("model")
+    return model if isinstance(model, str) else None
+
+
+def _slot_value(host: str, candidate: dict, target: str) -> Any:
+    if host == "codex":
+        modes = candidate.get("reasoning_modes") or []
+        return {
+            "model": candidate["model"],
+            "reasoning_effort": roles.clamp_effort(target, modes),
+        }
+    return candidate["model"]
+
+
+def _keep_why(existing: Any) -> tuple[str, str]:
+    why = "kept gsd default: present on host, within ceiling"
+    op = "keep"
+    if existing is not None:
+        op = "unset"
+        why += "; removes the existing override"
+    return op, why
+
+
+def _slot_meta(ctx: PlanCtx, tier: str) -> _SlotMeta:
+    band = roles.TIER_EFFORT_BAND[tier]
+    extra: dict = {}
+    if ctx.host == "codex":
+        extra["effect"] = presets.CODEX_EFFECT
+    key = f"model_profile_overrides.{ctx.host}.{tier}"
+    target = ctx.preset[f"effort.routing_tier_defaults.{band}"]
+    return _SlotMeta(key, roles.TIER_PURPOSE[tier], target, extra)
+
+
+def _catalog_pick_entry(req: _PickRequest, cands: list):
+    pick = roles.best_pick(cands, req.purpose, req.target, req.ceiling.value)
+    if pick is None:
+        return None
+    why = f"{req.reason}; {roles.pick_why(pick, req.purpose, req.target, req.ceiling)}"
+    return make_entry(
+        req.ctx,
+        req.key,
+        _slot_value(req.ctx.host, pick.candidate, req.target),
+        "catalog-score",
+        why,
+        **req.extra,
+    )
+
+
+def _override_reason(ctx: PlanCtx, native_id: str | None, native_c: dict | None, ceiling) -> str:
+    if native_id is None:
+        return f"no gsd default for {ctx.host}"
+    if native_c is None:
+        return f"gsd default {native_id} not on host"
+    return f"gsd default {native_id} above ceiling ({roles.ceiling_text(ceiling)})"
+
+
+def _tier_slot(ctx: PlanCtx, tier: str, cands: list, ceiling: roles.Ceiling) -> dict:
+    meta = _slot_meta(ctx, tier)
+    native_id = _native_model(ctx, tier)
+    native_c = next((c for c in cands if c["model"] == native_id), None) if native_id else None
+    if native_c is not None and roles.within_ceiling(native_c, ceiling.value):
+        op, why = _keep_why(presets.get_dotted(ctx.existing, meta.key))
+        return make_entry(
+            ctx,
+            meta.key,
+            _slot_value(ctx.host, native_c, meta.target),
+            "native",
+            why,
+            op=op,
+            **meta.extra,
+        )
+    reason = _override_reason(ctx, native_id, native_c, ceiling)
+    req = _PickRequest(ctx, meta.key, reason, meta.purpose, meta.target, ceiling, meta.extra)
+    if (picked := _catalog_pick_entry(req, cands)) is not None:
+        return picked
+    no_scores = not any(c["score_axes"] > 0 for c in cands)
+    tail = (
+        f"no scores: no {ctx.host} candidate has a catalog score; choose with plan-set"
+        if no_scores
+        else f"no eligible {meta.purpose} candidate on {ctx.host}; choose with plan-set"
+    )
+    return make_entry(
+        ctx,
+        meta.key,
+        None,
+        "preset",
+        f"{reason}; {tail}",
+        status="needs_choice",
+        candidates=roles.choice_candidates(cands, meta.purpose, ceiling.value),
+        **meta.extra,
+    )
+
+
+def _codex_empty_slots(ctx: PlanCtx, tiers: tuple[str, ...]) -> tuple[list, list]:
+    entries = []
+    effect = presets.CODEX_EFFECT + "; effect unverified: enumeration failed"
+    for tier in tiers:
+        key = f"model_profile_overrides.codex.{tier}"
+        native_id = _native_model(ctx, tier)
+        band = roles.TIER_EFFORT_BAND[tier]
+        target = ctx.preset[f"effort.routing_tier_defaults.{band}"]
+        existing = presets.get_dotted(ctx.existing, key)
+        op, _ = _keep_why(existing)
+        why = (
+            "kept gsd default: codex enumerated no models; presence and ceiling unchecked"
+            + ("; removes the existing override" if existing is not None else "")
+        )
+        value = None
+        if native_id is not None:
+            slot = ctx.inv["gsd_core"]["runtime_profile_map"]["codex"][tier]
+            modes = slot.get("reasoning_modes") or []
+            value = _slot_value(
+                "codex",
+                {"model": native_id, "reasoning_modes": modes},
+                target,
+            )
+        entries.append(
+            make_entry(ctx, key, value, "native", why, op=op, effect=effect),
+        )
+    return entries, []
+
+
+def _pi_slot(ctx: PlanCtx, tiers: tuple[str, ...]) -> tuple[list, list]:
+    if "sonnet" not in tiers:
+        note = {
+            "kind": "pi",
+            "key": None,
+            "text": (
+                "pi: only an opt-in model_profile_overrides.pi.sonnet is offered; "
+                "no per-agent model_overrides (effect unverified on pi, gsd-core registry: "
+                "namedDispatch false)"
+            ),
+        }
+        return [], [note]
+    key = "model_profile_overrides.pi.sonnet"
+    why = (
+        "opt-in session steer (D-22): choose a bare model id of the session provider "
+        "with plan-set (the session provider is unknown before Phase 22), or drop this "
+        "entry with plan-unset"
+    )
+    entry = make_entry(
+        ctx,
+        key,
+        None,
+        "preset",
+        why,
+        status="needs_choice",
+        candidates=[],
+        effect=presets.PI_EFFECT,
+    )
+    note = {
+        "kind": "pi",
+        "key": None,
+        "text": (
+            "pi: only an opt-in model_profile_overrides.pi.sonnet is offered; "
+            "no per-agent model_overrides (effect unverified on pi, gsd-core registry: "
+            "namedDispatch false)"
+        ),
+    }
+    return [entry], [note]
+
+
+def _slot_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
+    """Layer 2b: per-tier model_profile_overrides for the host (D-01..D-06)."""
+    del prior_entries
+    if ctx.host == "claude":
+        return [], []
+    shifts = presets.PHASE_SHIFTS[ctx.opts.rigor]
+    tiers = roles.used_tiers(ctx.inv["gsd_core"], ctx.opts.profile, shifts)
+    if ctx.host == "pi":
+        return _pi_slot(ctx, tiers)
+    cands = [c for c in ctx.inv["candidates"] if c.get("is_host", False)]
+    if ctx.host == "codex" and not cands:
+        return _codex_empty_slots(ctx, tiers)
+    ceiling = roles.host_ceiling(cands, presets.PRICE_PERCENTILE[ctx.opts.rigor])
+    entries = [_tier_slot(ctx, tier, cands, ceiling) for tier in tiers]
+    return entries, []
+
+
+def _cross_ai_why(ctx: PlanCtx, answers_key: str, answer: dict) -> str:
+    defaulted = " (defaulted)" if answer["defaulted"] else ""
+    base = f"cross-AI {answers_key} answer: {answer['answer']}{defaulted}"
+    if answers_key != "exec" or answer["answer"] != "y" or not answer["defaulted"]:
+        return base
+    cheap = roles.cheap_other_cli(ctx.inv["candidates"], presets.PRICE_PERCENTILE["mvp"])
+    if cheap is None:
+        return base + "; no cheap other-CLI candidate within the MVP ceiling"
+    return (
+        f"{base}; cheap candidate {cheap['runtime']} {cheap['model']} at "
+        f"{cheap['price']:g}/1M within the MVP ceiling"
+    )
+
+
 def _cross_ai_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     """Layer 3: the cross-AI boolean keys mirror the answers; each yes reserves a
     needs_choice slot for the Phase 18 selection key (17 D-19)."""
@@ -127,14 +351,13 @@ def _cross_ai_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     ):
         answer = answers[answers_key]
         yes = answer["answer"] == "y"
-        defaulted = " (defaulted)" if answer["defaulted"] else ""
         entries.append(
             make_entry(
                 ctx,
                 flag_key,
                 yes,
                 "preset",
-                f"cross-AI {answers_key} answer: {answer['answer']}{defaulted}",
+                _cross_ai_why(ctx, answers_key, answer),
             )
         )
         if yes:
@@ -152,7 +375,7 @@ def _cross_ai_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     return entries, []
 
 
-_LAYERS = (_preset_layer, _tier_layer, _cross_ai_layer)
+_LAYERS = (_preset_layer, _tier_layer, _slot_layer, _cross_ai_layer)
 
 
 def _drop_rejected(ctx: PlanCtx, entries: list) -> tuple[list, list]:
@@ -190,6 +413,16 @@ def _merge_layers(ctx: PlanCtx) -> tuple[list, list]:
     return all_entries, all_notes
 
 
+def _digest_inventory(inventory: dict) -> dict:
+    """Candidate order is not significant for the plan fingerprint (R7)."""
+    stable = dict(inventory)
+    stable["candidates"] = sorted(
+        inventory["candidates"],
+        key=lambda c: (c.get("runtime") or "", c.get("model") or ""),
+    )
+    return stable
+
+
 def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
     """The pure entrypoint: returns the canonical plan dict for `inventory` under
     `opts` (same inputs, same dict, byte-identical `plan_io.canonical_json`)."""
@@ -205,7 +438,7 @@ def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
     notes.extend(drop_notes)
     return {
         "schema_version": plan_io.PLAN_SCHEMA_VERSION,
-        "inventory_digest": plan_io.inventory_digest(inventory),
+        "inventory_digest": plan_io.inventory_digest(_digest_inventory(inventory)),
         "host": ctx.host,
         "profile": opts.profile,
         "rigor": opts.rigor,
