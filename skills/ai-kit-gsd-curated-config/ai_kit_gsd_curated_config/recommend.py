@@ -41,6 +41,41 @@ class _PickRequest(NamedTuple):
     extra: dict
 
 
+class _SpecialistRun(NamedTuple):
+    ctx: PlanCtx
+    prior: list
+    cands: list
+    ceiling: roles.Ceiling
+
+
+class _SpecialistOut(NamedTuple):
+    entries: list
+    notes: list
+
+
+class _CounterpartReq(NamedTuple):
+    run: _SpecialistRun
+    agent: str
+    ref_model: str | None
+    ref_label: str
+
+
+class _CounterpartPick(NamedTuple):
+    req: _CounterpartReq
+    pick: roles.Pick
+    ref_vendor: str
+    target: str
+    slot_model: str | None
+
+
+class _VisionPick(NamedTuple):
+    run: _SpecialistRun
+    agent: str
+    pick: roles.Pick
+    target: str
+    slot_model: str | None
+
+
 def make_entry(ctx: PlanCtx, key: str, value: Any, source: str, why: str, **extra) -> dict:
     """One plan entry with the mandatory base fields (REC-01, D-08); `op` defaults
     to `set` and further fields (`status`, `candidates`, `effect`) ride in via
@@ -325,6 +360,346 @@ def _slot_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     return entries, []
 
 
+def _slot_models(ctx: PlanCtx, prior: list) -> dict[str, str | None]:
+    shifts = presets.PHASE_SHIFTS[ctx.opts.rigor]
+    tiers = roles.used_tiers(ctx.inv["gsd_core"], ctx.opts.profile, shifts)
+    prefix = f"model_profile_overrides.{ctx.host}."
+    by_key = {e["key"]: e for e in prior if e["key"].startswith(prefix)}
+    out: dict[str, str | None] = {}
+    for tier in tiers:
+        if ctx.host == "claude":
+            out[tier] = tier
+            continue
+        entry = by_key.get(prefix + tier)
+        if entry is None or entry["op"] in ("keep", "unset"):
+            out[tier] = _native_model(ctx, tier)
+        elif entry.get("status") == "needs_choice":
+            out[tier] = None
+        else:
+            val = entry["value"]
+            out[tier] = val["model"] if isinstance(val, dict) else val
+    return out
+
+
+def _facts(ctx: PlanCtx, cands: list, model: str | None) -> tuple[str | None, bool | None]:
+    if model is None:
+        return None, None
+    if ctx.host == "claude" and model in presets.TIERS:
+        matched = [c for c in cands if roles.claude_alias_for(c["model"]) == model]
+        if not matched:
+            return None, None
+        vendors = {c["vendor"] for c in matched if c.get("vendor")}
+        vendor = next(iter(vendors)) if len(vendors) == 1 else None
+        flags = [c.get("image_input") for c in matched]
+        if all(f is True for f in flags):
+            image = True
+        elif all(f is False for f in flags):
+            image = False
+        else:
+            image = None
+        return vendor, image
+    for cand in cands:
+        if cand["model"] == model:
+            return cand.get("vendor"), cand.get("image_input")
+    return None, None
+
+
+def _agent_target(ctx: PlanCtx, agent: str, tier: str) -> str:
+    key = f"effort.agent_overrides.{agent}"
+    if key in ctx.preset:
+        return ctx.preset[key]
+    band = roles.TIER_EFFORT_BAND[tier]
+    return ctx.preset[f"effort.routing_tier_defaults.{band}"]
+
+
+def _value_for(ctx: PlanCtx, candidate: dict) -> str:
+    if ctx.host == "claude":
+        alias = roles.claude_alias_for(candidate["model"])
+        if alias is not None:
+            return alias
+    return candidate["model"]
+
+
+def _agent_slot_model(ctx: PlanCtx, prior: list, agent: str) -> str | None:
+    shifts = presets.PHASE_SHIFTS[ctx.opts.rigor]
+    tier = roles.agent_tier(agent, ctx.inv["gsd_core"], ctx.opts.profile, shifts)
+    if tier is None:
+        return None
+    return _slot_models(ctx, prior).get(tier)
+
+
+def _host_cands(ctx: PlanCtx) -> list:
+    return [c for c in ctx.inv["candidates"] if c.get("is_host", False)]
+
+
+def _claude_keep(c: dict) -> bool:
+    return roles.claude_alias_for(c["model"]) is not None
+
+
+def _router_unconfirmed_notes(ctx: PlanCtx, cands: list) -> list:
+    notes = []
+    for cand in sorted(cands, key=lambda c: c["model"]):
+        if not cand.get("is_router"):
+            continue
+        purpose = cand.get("name_declared_purpose")
+        if purpose and not cand.get("router_confirmed"):
+            notes.append({
+                "kind": "router_unconfirmed",
+                "key": cand["model"],
+                "text": (
+                    f"router {cand['model']} declares purpose {purpose} but is not "
+                    "user-confirmed; confirm it via ai-kit-spec-config to let it win its slot"
+                ),
+            })
+    return notes
+
+
+def _single_provider(ctx: PlanCtx, cands: list) -> bool:
+    if ctx.host in ("claude", "codex"):
+        return True
+    vendors = {c["vendor"] for c in cands if c.get("vendor")}
+    return len(vendors) == 1
+
+
+def _counterpart_note(ctx: PlanCtx) -> dict:
+    return {
+        "kind": "counterpart",
+        "key": None,
+        "text": (
+            f"no in-runtime counterpart for gsd-plan-checker and gsd-code-reviewer on "
+            f"{ctx.host} (single provider): use cross-AI review"
+        ),
+    }
+
+
+def _write_exec_overrides(
+    run: _SpecialistRun, out: _SpecialistOut, pick_val: str, source: str, why: str,
+) -> None:
+    ctx, prior = run.ctx, run.prior
+    for agent in ("gsd-executor", "gsd-code-fixer"):
+        slot = _agent_slot_model(ctx, prior, agent)
+        key = f"model_overrides.{agent}"
+        if pick_val != slot:
+            out.entries.append(make_entry(ctx, key, pick_val, source, why))
+
+
+def _exec_no_model_note(ctx: PlanCtx, out: _SpecialistOut) -> None:
+    out.notes.append({
+        "kind": "specialist",
+        "key": "model_overrides.gsd-executor",
+        "text": (
+            f"no eligible execution model on {ctx.host}; gsd-executor and "
+            "gsd-code-fixer keep their tier"
+        ),
+    })
+
+
+def _exec_from_router(run: _SpecialistRun, out: _SpecialistOut, router: dict) -> str:
+    pick_val = _value_for(run.ctx, router)
+    router_why = "user-curated router (declared purpose: execute)"
+    _write_exec_overrides(run, out, pick_val, "router-declared", router_why)
+    return pick_val
+
+
+def _exec_from_catalog(
+    run: _SpecialistRun, out: _SpecialistOut, exec_slot: str | None,
+) -> str | None:
+    ctx, cands, ceiling = run.ctx, run.cands, run.ceiling
+    shifts = presets.PHASE_SHIFTS[ctx.opts.rigor]
+    tier = roles.agent_tier("gsd-executor", ctx.inv["gsd_core"], ctx.opts.profile, shifts)
+    if tier is None:
+        return exec_slot
+    target = _agent_target(ctx, "gsd-executor", tier)
+    keep = _claude_keep if ctx.host == "claude" else None
+    pick = roles.best_pick(cands, "execution", target, ceiling.value, keep=keep)
+    if pick is None:
+        _exec_no_model_note(ctx, out)
+        return exec_slot
+    pick_val = _value_for(ctx, pick.candidate)
+    exec_why = roles.pick_why(pick, "execution", target, ceiling)
+    _write_exec_overrides(run, out, pick_val, "catalog-score", exec_why)
+    return pick_val
+
+
+def _execution_specialists(run: _SpecialistRun, out: _SpecialistOut) -> str | None:
+    ctx, cands = run.ctx, run.cands
+    out.notes.extend(_router_unconfirmed_notes(ctx, cands))
+    exec_slot = _agent_slot_model(run.ctx, run.prior, "gsd-executor")
+    routers = sorted(
+        [
+            c
+            for c in cands
+            if c.get("is_router")
+            and c.get("router_confirmed")
+            and c.get("name_declared_purpose") == "execute"
+        ],
+        key=lambda c: c["model"],
+    )
+    if routers:
+        return _exec_from_router(run, out, routers[0])
+    return _exec_from_catalog(run, out, exec_slot)
+
+
+def _counterpart_keep(ctx: PlanCtx, ref_vendor: str):
+    def keep(c: dict) -> bool:
+        vendor = c.get("vendor")
+        if vendor is None or vendor == ref_vendor:
+            return False
+        return _claude_keep(c) if ctx.host == "claude" else True
+
+    return keep
+
+
+def _specialist_note(out: _SpecialistOut, key: str, text: str) -> None:
+    out.notes.append({"kind": "specialist", "key": key, "text": text})
+
+
+def _append_counterpart_override(bundle: _CounterpartPick, out: _SpecialistOut) -> None:
+    req, pick, ref_vendor, target, slot_model = bundle
+    ctx = req.run.ctx
+    pick_val = _value_for(ctx, pick.candidate)
+    slot_vendor, _ = _facts(ctx, req.run.cands, slot_model)
+    if slot_vendor is not None and slot_vendor != ref_vendor:
+        return
+    if pick_val == slot_model:
+        return
+    key = f"model_overrides.{req.agent}"
+    tail = roles.pick_why(pick, "review", target, req.run.ceiling)
+    why = (
+        f"counterpart: inferred vendor {pick.candidate.get('vendor')} differs from the inferred "
+        f"{req.ref_label} vendor {ref_vendor} (D-14); {tail}"
+    )
+    out.entries.append(make_entry(ctx, key, pick_val, "catalog-score", why))
+
+
+def _counterpart_one(req: _CounterpartReq, out: _SpecialistOut) -> None:
+    ctx, prior, cands, ceiling = req.run
+    key = f"model_overrides.{req.agent}"
+    slot_model = _agent_slot_model(ctx, prior, req.agent)
+    ref_vendor, _ = _facts(ctx, cands, req.ref_model)
+    if req.ref_model is None or ref_vendor is None:
+        _specialist_note(
+            out,
+            key,
+            f"no inferred vendor for {req.ref_label} reference model; {req.agent} keeps its tier",
+        )
+        return
+    shifts = presets.PHASE_SHIFTS[ctx.opts.rigor]
+    tier = roles.agent_tier(req.agent, ctx.inv["gsd_core"], ctx.opts.profile, shifts)
+    if tier is None:
+        return
+    target = _agent_target(ctx, req.agent, tier)
+    pick = roles.best_pick(
+        cands, "review", target, ceiling.value, keep=_counterpart_keep(ctx, ref_vendor)
+    )
+    if pick is None:
+        _specialist_note(
+            out,
+            key,
+            f"no eligible review model with vendor other than {ref_vendor} on "
+            f"{ctx.host}; {req.agent} keeps its tier",
+        )
+        return
+    bundle = _CounterpartPick(req, pick, ref_vendor, target, slot_model)
+    _append_counterpart_override(bundle, out)
+
+
+def _counterpart_specialists(
+    run: _SpecialistRun, exec_model: str | None, out: _SpecialistOut,
+) -> None:
+    ctx, prior, cands, _ = run
+    if _single_provider(ctx, cands):
+        out.notes.append(_counterpart_note(ctx))
+        return
+    shifts = presets.PHASE_SHIFTS[ctx.opts.rigor]
+    planner_tier = roles.agent_tier("gsd-planner", ctx.inv["gsd_core"], ctx.opts.profile, shifts)
+    slots = _slot_models(ctx, prior)
+    planner_model = slots.get(planner_tier) if planner_tier else None
+    _counterpart_one(
+        _CounterpartReq(run, "gsd-plan-checker", planner_model, "gsd-planner"), out
+    )
+    _counterpart_one(
+        _CounterpartReq(run, "gsd-code-reviewer", exec_model, "execution"), out
+    )
+
+
+def _vision_fallback_note(ctx: PlanCtx, out: _SpecialistOut, key: str, agent: str) -> None:
+    out.notes.append({
+        "kind": "vision",
+        "key": key,
+        "text": f"no image_input model on {ctx.host}; {agent} falls back to its tier",
+    })
+
+
+def _vision_keep(ctx: PlanCtx):
+    def keep(c: dict) -> bool:
+        if c.get("image_input") is not True:
+            return False
+        return _claude_keep(c) if ctx.host == "claude" else True
+
+    return keep
+
+
+def _append_vision_override(bundle: _VisionPick, out: _SpecialistOut) -> None:
+    run, agent, pick, target, slot_model = bundle
+    ctx, ceiling = run.ctx, run.ceiling
+    pick_val = _value_for(ctx, pick.candidate)
+    if pick_val == slot_model:
+        return
+    head = (
+        "frontend-capable = image_input (D-28)"
+        if agent == "gsd-ui-researcher"
+        else "needs image_input"
+    )
+    key = f"model_overrides.{agent}"
+    tail = roles.pick_why(pick, "general", target, ceiling)
+    out.entries.append(make_entry(ctx, key, pick_val, "catalog-score", f"{head}; {tail}"))
+
+
+def _vision_one(run: _SpecialistRun, agent: str, out: _SpecialistOut) -> None:
+    ctx, prior, cands, ceiling = run
+    key = f"model_overrides.{agent}"
+    slot_model = _agent_slot_model(ctx, prior, agent)
+    _, slot_image = _facts(ctx, cands, slot_model)
+    if slot_image is True:
+        return
+    if not any(c.get("image_input") is True for c in cands):
+        _vision_fallback_note(ctx, out, key, agent)
+        return
+    tier = roles.agent_tier(
+        agent, ctx.inv["gsd_core"], ctx.opts.profile, presets.PHASE_SHIFTS[ctx.opts.rigor]
+    )
+    if tier is None:
+        return
+    target = _agent_target(ctx, agent, tier)
+    pick = roles.best_pick(cands, "general", target, ceiling.value, keep=_vision_keep(ctx))
+    if pick is None:
+        _vision_fallback_note(ctx, out, key, agent)
+        return
+    _append_vision_override(_VisionPick(run, agent, pick, target, slot_model), out)
+
+
+def _vision_specialists(run: _SpecialistRun, out: _SpecialistOut) -> None:
+    for agent in ("gsd-ui-auditor", "gsd-dom-verifier"):
+        _vision_one(run, agent, out)
+    if run.ctx.inv["project"].get("frontend", False):
+        _vision_one(run, "gsd-ui-researcher", out)
+
+
+def _specialist_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
+    """Layer 2c: at most seven `model_overrides.*` entries when slots fail specialist rules."""
+    if ctx.host == "pi":
+        return [], []
+    cands = _host_cands(ctx)
+    ceiling = roles.host_ceiling(cands, presets.PRICE_PERCENTILE[ctx.opts.rigor])
+    run = _SpecialistRun(ctx, prior_entries, cands, ceiling)
+    out = _SpecialistOut([], [])
+    exec_model = _execution_specialists(run, out)
+    _counterpart_specialists(run, exec_model, out)
+    _vision_specialists(run, out)
+    return out.entries, out.notes
+
+
 def _cross_ai_why(ctx: PlanCtx, answers_key: str, answer: dict) -> str:
     defaulted = " (defaulted)" if answer["defaulted"] else ""
     base = f"cross-AI {answers_key} answer: {answer['answer']}{defaulted}"
@@ -375,7 +750,7 @@ def _cross_ai_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     return entries, []
 
 
-_LAYERS = (_preset_layer, _tier_layer, _slot_layer, _cross_ai_layer)
+_LAYERS = (_preset_layer, _tier_layer, _slot_layer, _specialist_layer, _cross_ai_layer)
 
 
 def _drop_rejected(ctx: PlanCtx, entries: list) -> tuple[list, list]:

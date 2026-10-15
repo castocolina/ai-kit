@@ -13,6 +13,14 @@ from . import presets
 TIER_PURPOSE = {"opus": "planning", "sonnet": "general", "haiku": "mechanical"}
 TIER_EFFORT_BAND = {"opus": "heavy", "sonnet": "standard", "haiku": "light"}
 EFFORT_LADDER = ("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+CLAUDE_ALIASES = ("fable", "opus", "sonnet", "haiku")
+
+
+def claude_alias_for(model: str) -> str | None:
+    for alias in CLAUDE_ALIASES:
+        if model.startswith(f"claude-{alias}-"):
+            return alias
+    return None
 
 
 def _ladder_index(token: str) -> int:
