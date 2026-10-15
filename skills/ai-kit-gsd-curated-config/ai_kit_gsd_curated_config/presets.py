@@ -187,12 +187,7 @@ def closed_key_set(host: str) -> list:
     of the preset tables over all rigors, the conditional and cross-AI keys, the
     tier-layer keys and one `model_overrides.<agent>` per specialist. `inventory`
     probes these against the host gsd-core's `isValidConfigKey`."""
-    keys: set = set()
-    for table in PRESETS.values():
-        keys.update(table)
-    keys.update(CONDITIONAL_KEYS)
-    keys.update(CROSS_AI_KEYS)
-    keys.update(("model_profile", "runtime", "resolve_model_ids"))
+    keys = set(MANAGED_KEYS) | {"runtime", "resolve_model_ids"}
     for phases in PHASE_SHIFTS.values():
         keys.update(f"models.{phase}" for phase in phases)
     for tier in TIERS:
