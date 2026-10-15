@@ -1562,6 +1562,18 @@ class TestKeyDrop(unittest.TestCase):
         )
 
 
+class TestUnprobedKeys(unittest.TestCase):
+    def test_unprobed_key_fails_closed_not_dropped(self):
+        """A-WR-07: a key in neither valid_keys list exits 2 instead of a false drop note."""
+        inv = make_inventory(host="codex", candidates=CODEX)
+        inv["gsd_core"]["valid_keys"]["accepted"].remove("workflow.ui_phase")
+        with self.assertRaisesRegex(ValueError, "not probed.*workflow.ui_phase"):
+            build(inv)
+        code, plan, _, err = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
+        self.assertEqual((code, plan), (2, None))
+        self.assertIn("rerun inventory", err)
+
+
 class TestEffectLabels(unittest.TestCase):
     """D-22/D-29 effect labels and the live_dom_uat note."""
 
@@ -2011,6 +2023,7 @@ class TestReconcileConflicts(unittest.TestCase):
         for conflicts in ([project, glob], [glob, project]):
             inv = make_inventory(
                 host="claude", conflicts=conflicts,
+                existing={"exists": True, "values": {"model_policy": project["value"]}},
                 global_values={"model_policy": glob["value"]},
             )
             plan = build(inv)

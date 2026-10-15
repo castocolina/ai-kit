@@ -896,9 +896,16 @@ _LAYERS = (
 
 
 def _drop_rejected(ctx: PlanCtx, entries: list) -> tuple[list, list]:
-    """D-26/R12: an entry whose key is not in `valid_keys.accepted` is dropped and
-    gets its own `dropped_key` note naming the key and the host gsd-core version."""
-    accepted = set(ctx.inv["gsd_core"]["valid_keys"]["accepted"])
+    """D-26/R12: an entry whose key is in `valid_keys.rejected` is dropped and gets its
+    own `dropped_key` note naming the key and the host gsd-core version; a key in
+    neither list was never probed and raises (the CLI maps it to exit 2)."""
+    valid_keys = ctx.inv["gsd_core"]["valid_keys"]
+    accepted = set(valid_keys["accepted"])
+    probed = accepted | set(valid_keys["rejected"])
+    unprobed = sorted(e["key"] for e in entries if e["key"] not in probed)
+    if unprobed:
+        # Never claim gsd-core rejected a key it was never asked about (fail closed).
+        raise ValueError(f"keys not probed by this inventory: {', '.join(unprobed)}")
     version = ctx.inv["gsd_core"].get("version") or "unknown"
     kept, notes = [], []
     for entry in entries:
