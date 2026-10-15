@@ -241,7 +241,7 @@ plan — without writing anything.
      counterpart" note on single-provider hosts.
   4. Keys unknown to the host's installed gsd-core version are dropped from the plan with a
      visible note rather than silently written.
-**Plans**: 4/9 plans executed
+**Plans**: 5/9 plans executed
 
 Plans (sequential, one wave each: plans land one at a time in a shared checkout, and each
 plan's checks also run the modules the previous plan touched):
@@ -254,7 +254,7 @@ plan's checks also run the modules the previous plan touched):
 - Wave 4
   - [x] 17-04-PLAN.md — tier→model layer: price ceilings, native keep, needs_choice and tie order
 - Wave 5
-  - [ ] 17-05-PLAN.md — catalog adapter: fresh/stale/none states and scored (runtime, model) candidates
+  - [x] 17-05-PLAN.md — catalog adapter: fresh/stale/none states and scored (runtime, model) candidates
 - Wave 6
   - [ ] 17-06-PLAN.md — specialist overrides: execution, counterpart and vision rules, cap of 7
 - Wave 7
