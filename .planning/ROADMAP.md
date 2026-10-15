@@ -66,7 +66,7 @@ runtime hosting the session. Source spec:
 
 - [x] **Phase 16: ai_kit_spec Extensions** - Host detection, model enumeration, and catalog/ranker extensions for pi and codex, plus richer catalog fields (completed 2026-10-15)
 - [x] **Phase 16.1: Hardening** (INSERTED) - Gate scope, sibling-first imports, security and correctness fixes from the 2026-10-13 audit; closes Phase 16 (completed 2026-10-15)
-- [ ] **Phase 17: Curated-Config Inventory & Recommendation Engine** - Read-only project/host inventory and a pure `recommend` function that produces an explainable `plan.json`
+- [x] **Phase 17: Curated-Config Inventory & Recommendation Engine** - Read-only project/host inventory and a pure `recommend` function that produces an explainable `plan.json` (completed 2026-10-15)
 - [ ] **Phase 18: Cross-AI, Skills & Apply Pipeline** - Plan adjustment, cross-AI review/execution wiring, skill-affinity mapping, and a safe backup/restore apply flow
 - [ ] **Phase 18.1: One runtime model** (INSERTED) - Model candidates become (runtime, model) pairs; `native_runtime` and the `native_claude`/cursor-agent naming go away
 - [ ] **Phase 19: Evaluation on Claude** - Skill pressure-testing, `/skill-judge` gate, and a live smoke run + `resolve-model` proof from the claude host
@@ -241,7 +241,7 @@ plan — without writing anything.
      counterpart" note on single-provider hosts.
   4. Keys unknown to the host's installed gsd-core version are dropped from the plan with a
      visible note rather than silently written.
-**Plans**: 9/9 plans executed
+**Plans**: 9/9 plans complete
 
 Plans (sequential, one wave each: plans land one at a time in a shared checkout, and each
 plan's checks also run the modules the previous plan touched):

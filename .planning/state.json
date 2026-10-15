@@ -16,12 +16,12 @@
     {
       "number": "17",
       "name": "Curated-Config Inventory & Recommendation Engine",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "18",
       "name": "Cross-AI, Skills & Apply Pipeline",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "number": "18.1",
@@ -76,8 +76,8 @@
   ],
   "next": {
     "command": "/gsd:progress --next",
-    "label": "Advance to the next step",
-    "reason": "Phase 17 of 14 · 7% · executing"
+    "label": "Advance to the next step (plan phase 18)",
+    "reason": "Phase 18 of 14 — needs a plan"
   },
-  "updated_at": "2026-10-15T08:25:13.986Z"
+  "updated_at": "2026-10-15T12:56:25.661Z"
 }
