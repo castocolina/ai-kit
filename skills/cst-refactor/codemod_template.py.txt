@@ -93,6 +93,16 @@ class RenameParameter(cst.CSTTransformer):
             return updated_node.with_changes(value=self._new_name)
         return updated_node
 
+    # leave_Name also hits `obj.<name>` and `other(<name>=...)`; those belong to other APIs.
+    def leave_Attribute(
+        self, original_node: cst.Attribute, updated_node: cst.Attribute
+    ) -> cst.Attribute:
+        return updated_node.with_changes(attr=original_node.attr)
+
+    # Runs before leave_Call, which re-applies the rename on calls to the target function.
+    def leave_Arg(self, original_node: cst.Arg, updated_node: cst.Arg) -> cst.Arg:
+        return updated_node.with_changes(keyword=original_node.keyword)
+
 
 class AddParameter(cst.CSTTransformer):
     def __init__(
