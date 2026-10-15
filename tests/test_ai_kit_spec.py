@@ -5194,6 +5194,16 @@ class TestResolveExecuteCandidates(unittest.TestCase):
         )
         self.assertEqual([c["key"] for c in result], ["b", "a", "c"])
 
+    def test_untyped_task_prefers_untagged_candidates(self):
+        # A-WR-09: task_type None still runs the affinity filter (pre-16.1 behavior).
+        candidates = [
+            {"key": "a", "task_affinity": "frontend", "context_limit": None},
+            {"key": "b", "task_affinity": None, "context_limit": None},
+        ]
+        result = execute_selection.resolve_execute_candidates(
+            candidates, execute_selection.ExecuteResolveOptions(None, 0, {}, ["a", "b"]))
+        self.assertEqual([c["key"] for c in result], ["b"])
+
     def test_unknown_context_ranks_after_confirmed_sufficient(self):
         candidates = [
             {"key": "unknown", "task_affinity": "backend", "context_limit": None},

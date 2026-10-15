@@ -34,7 +34,7 @@ def filter_by_purpose(candidates: list, purpose: str) -> list:
     return matching if matching else list(candidates)
 
 
-def filter_by_affinity(candidates: list, task_type: str, affinity_table: dict) -> list:
+def filter_by_affinity(candidates: list, task_type: str | None, affinity_table: dict) -> list:
     """Affinity is a preference, never a hard requirement. Precise rule (a mixed candidate set
     of tagged + untagged behaves differently from an all-mismatched set, by design -- read
     carefully): an untagged candidate (`task_affinity is None`) always passes, since it declares
@@ -122,11 +122,12 @@ def resolve_execute_candidates(candidates: list, options: ExecuteResolveOptions)
     dispatch time, never at Plan A's generic wizard-time ranking (see that plan's Global
     Constraints)."""
     candidates = screen_execute_clis(candidates, options.warn_fn, options.screen_exempt_fn)
-    purpose_filtered = filter_by_purpose(candidates, "execute")
-    if options.task_type is not None:
-        purpose_filtered = filter_by_affinity(
-            purpose_filtered, options.task_type, options.affinity_table)
-    narrowed = filter_by_context(purpose_filtered, options.required_context)
+    # Affinity always runs, task_type None included: an untyped task then prefers untagged
+    # candidates over ones tagged for a specific task type (pre-16.1 behavior, A-WR-09).
+    narrowed = filter_by_context(
+        filter_by_affinity(filter_by_purpose(candidates, "execute"), options.task_type,
+                           options.affinity_table),
+        options.required_context)
     rank = {key: i for i, key in enumerate(options.top_n_keys)}
     return sorted(
         narrowed,
