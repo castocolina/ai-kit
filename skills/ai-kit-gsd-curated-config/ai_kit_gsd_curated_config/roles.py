@@ -284,23 +284,3 @@ def used_tiers(gsd_core: dict, profile: str, shifts: dict) -> tuple[str, ...]:
     agents = {a for column in gsd_core["model_profiles"].values() for a in column}
     seen = {agent_tier(a, gsd_core, profile, shifts) for a in agents}
     return tuple(t for t in presets.TIERS if t in seen)
-
-
-def cheap_other_cli(cands: list, q: float | None) -> dict | None:
-    host = [c for c in cands if c["is_host"]]
-    ceiling = host_ceiling(host, q).value
-    if ceiling is None:
-        return None
-    pool = [
-        c
-        for c in cands
-        if not c["is_host"]
-        and c["score_axes"] > 0
-        and c["fast_twin_of"] is None
-        and not c["is_router"]
-        and c["price"] is not None
-        and c["price"] <= ceiling
-    ]
-    if not pool:
-        return None
-    return min(pool, key=lambda c: (c["price"], c["model"], c["runtime"]))

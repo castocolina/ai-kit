@@ -1787,6 +1787,8 @@ class TestPurity(unittest.TestCase):
         self.assertIn("ai_kit_spec", forbidden_imports("from ai_kit_spec import cache\n"))
         self.assertIn(".cli", forbidden_imports("from . import cli\n"))
         self.assertIn(".plan_io", forbidden_imports("from . import plan_io\n"))
+        self.assertIn(".inventory", forbidden_imports("from . import inventory\n"))
+        self.assertIn("socket", forbidden_imports("import socket\n# cross_ai-like\n"))
         self.assertEqual(forbidden_imports("from . import plan_schema, presets\n"), [])
         self.assertEqual(forbidden_imports("from typing import Any\n"), [])
 
