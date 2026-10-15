@@ -88,7 +88,8 @@ def skill_facts(inv: dict, prior: list, existing: dict) -> dict[str, bool]:
         if isinstance(entry, dict) and entry.get("key") == "workflow.tdd_mode":
             tdd = entry.get("value")
             break
-    project = inv.get("project") if isinstance(inv.get("project"), dict) else {}
+    raw_project = inv.get("project")
+    project = raw_project if isinstance(raw_project, dict) else {}
     backend = inv.get("system_one_backend")
     detected = (
         isinstance(backend, dict)
@@ -154,8 +155,8 @@ def locate(name: str, inv: dict) -> dict | None:
     def _rank(row: dict) -> tuple[int, str]:
         kind = row.get("root_kind")
         order = _KIND_ORDER.index(kind) if isinstance(kind, str) and kind in _KIND_ORDER else 99
-        root = row.get("root") if isinstance(row.get("root"), str) else ""
-        return order, root
+        root = row.get("root")
+        return order, root if isinstance(root, str) else ""
 
     return min(matches, key=_rank)
 
