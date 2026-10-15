@@ -1548,6 +1548,12 @@ class TestConflictMatrix(unittest.TestCase):
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(conflicts[0]["effect"], inventory._LATENT)
         self.assertEqual(info, [])
+        # B-IN-03: with .planning/ absent gsd-core already reads the global omit.
+        self.assertIn("read at resolution while .planning/ is absent", conflicts[0]["why"])
+        with_planning, _ = inventory.classify_conflicts(
+            "claude", existing, global_defaults, self._facts(planning_dir_present=True), "/p"
+        )
+        self.assertNotIn("read at resolution", with_planning[0]["why"])
 
     def test_claude_global_omit_inert(self):
         existing = {"path": "p", "exists": True, "values": {}}

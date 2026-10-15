@@ -42,6 +42,14 @@ PROJECT_CONFIG_KEYS = (
 GLOBAL_CONFIG_KEYS = ("model_policy", "runtime", "resolve_model_ids")
 
 _LATENT = "latent (copied into the project config by config-new-project)"
+_COPIED_WHY = "copied into the project config by config-new-project"
+
+
+def _copied_why(facts: dict) -> str:
+    # gsd-core reads ~/.gsd/defaults.json at resolution while .planning/ is absent.
+    if facts.get("planning_dir_present"):
+        return _COPIED_WHY
+    return _COPIED_WHY + "; read at resolution while .planning/ is absent"
 
 
 class InventoryOpts(NamedTuple):
@@ -172,11 +180,9 @@ def _global_model_policy(existing: dict, global_values: dict, facts: dict) -> tu
     policy = global_values.get("model_policy")
     if policy is None:
         return [], []
-    why = "copied into the project config by config-new-project"
-    if not facts.get("planning_dir_present"):
-        why += "; read at resolution while .planning/ is absent"
     return [
-        _item("model_policy", "global", "model_policy", policy, why, effect=_LATENT)
+        _item("model_policy", "global", "model_policy", policy, _copied_why(facts),
+              effect=_LATENT)
     ], []
 
 
@@ -208,7 +214,9 @@ def _project_model_policy(existing: dict, global_values: dict) -> tuple[list, li
     return conflicts, info
 
 
-def _resolve_model_ids(host_name: str, existing: dict, global_values: dict) -> tuple[list, list]:
+def _resolve_model_ids(
+    host_name: str, existing: dict, global_values: dict, facts: dict
+) -> tuple[list, list]:
     if host_name != "claude":
         return [], []
     conflicts, info = [], []
@@ -245,7 +253,7 @@ def _resolve_model_ids(host_name: str, existing: dict, global_values: dict) -> t
             "global",
             "resolve_model_ids",
             global_val,
-            "copied into the project config by config-new-project",
+            _copied_why(facts),
             effect=_LATENT,
         )
     )
@@ -306,7 +314,7 @@ def classify_conflicts(
     for part in (
         _project_model_policy(existing, global_values),
         _global_model_policy(existing, global_values, facts),
-        _resolve_model_ids(host_name, existing, global_values),
+        _resolve_model_ids(host_name, existing, global_values, facts),
         _runtime_entries(host_name, existing, global_values),
     ):
         conflicts.extend(part[0])
