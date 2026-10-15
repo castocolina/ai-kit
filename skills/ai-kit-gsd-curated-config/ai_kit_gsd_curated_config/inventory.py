@@ -75,12 +75,12 @@ def _read_json_object(path: str) -> tuple[dict | None, str | None]:
     return data, None
 
 
-def _existing_config(project_dir, tools_path, node_bin, run_fn):
+def _existing_config(project_dir, tools_path, node_bin, deps):
     gsd = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
     path = os.path.join(project_dir, ".planning", "config.json")
     if gsd is not None and node_bin is not None:
         tools = gsd.GsdTools(node_bin, tools_path)
-        resolved = gsd.config_path(tools, project_dir, run_fn)
+        resolved = gsd.config_path(tools, project_dir, deps.run_fn, deps.env_fn())
         if resolved:
             path = resolved
     raw, warn = _read_json_object(path)
@@ -113,7 +113,7 @@ def _missing_lib_error(core, filename: str) -> str:
     return f"gsd-core at {core.root} (version {ver}): missing lib/{filename}"
 
 
-def _probe_gsd_tables(core, node_bin, project_dir, probe_keys, run_fn):
+def _probe_gsd_tables(core, node_bin, project_dir, probe_keys, deps):
     if node_bin is None:
         return None, "could not resolve 'node' on PATH"
     model_catalog = gsd_catalog.resolve_model_catalog_cjs_path(core.tools_path)
@@ -124,7 +124,9 @@ def _probe_gsd_tables(core, node_bin, project_dir, probe_keys, run_fn):
     paths = gsd_catalog.GsdCorePaths(node_bin, model_catalog, config_schema)
     ver = core.version or "unknown"
     try:
-        tables = gsd_catalog.query_gsd_tables(paths, project_dir, probe_keys, run_fn)
+        tables = gsd_catalog.query_gsd_tables(
+            paths, project_dir, probe_keys, deps.run_fn, deps.env_fn()
+        )
     except gsd_catalog.NodeQueryError as exc:
         return None, f"gsd-core at {core.root} (version {ver}): {exc}"
     if tables is None:
@@ -337,10 +339,10 @@ def _load_configs(project_dir, deps, host_name, core: host.GsdCore):
     """Project and global config plus the probed gsd-core tables, as inventory parts:
     `(parts, None)` or `(None, error_message)`."""
     node_bin = gsd_catalog.resolve_node_binary(deps.which_fn)
-    existing, ex_warn = _existing_config(project_dir, core.tools_path, node_bin, deps.run_fn)
+    existing, ex_warn = _existing_config(project_dir, core.tools_path, node_bin, deps)
     global_defaults, gl_warn = _global_defaults(deps.env_fn())
     probe = _probe_keys(host_name, existing["values"], global_defaults["values"])
-    tables, table_err = _probe_gsd_tables(core, node_bin, project_dir, probe, deps.run_fn)
+    tables, table_err = _probe_gsd_tables(core, node_bin, project_dir, probe, deps)
     if tables is None:
         return None, table_err
     return {

@@ -59,12 +59,12 @@ def _local_roots(gsd_tools, root: str, host: str) -> list[str]:
     return locals_
 
 
-def _gsd_tools_candidates(gsd_tools, env: dict, root: str, host: str) -> list[str]:
+def _gsd_tools_candidates(gsd_tools, env: dict, root: str, host: str, which_fn) -> list[str]:
     paths: list[str] = []
     if host == "pi":
         pi_tools = os.path.join(root, ".pi", "gsd-core", gsd_tools.GSD_TOOLS_REL)
         paths.append(os.path.expanduser(pi_tools))
-    paths.extend(gsd_tools.gsd_tools_candidates(env, root))
+    paths.extend(gsd_tools.gsd_tools_candidates(env, root, which_fn))
     return paths
 
 
@@ -117,7 +117,7 @@ def resolve_gsd_core(
         return None, gsd_catalog.SIBLING_MISSING
     env = deps.env_fn()
     root = gsd_tools.project_root(env, project_dir, deps.run_fn)
-    candidates = _gsd_tools_candidates(gsd_tools, env, root, host)
+    candidates = _gsd_tools_candidates(gsd_tools, env, root, host, deps.which_fn)
     tools_path = next((p for p in candidates if os.path.isfile(p)), None)
     if tools_path is None:
         lines = "\n".join(f"  {p}" for p in candidates)

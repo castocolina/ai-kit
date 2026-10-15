@@ -235,9 +235,11 @@ def config_path(
     tools: GsdTools,
     project_dir: str,
     run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    env: Mapping[str, str] | None = None,
 ) -> str | None:
-    """Runs `config-path --cwd <dir>` (which honors workstreams); returns the resolved
-    config path, or `None` on failure, spawn error, a 10 s timeout or empty output."""
+    """Runs `config-path --cwd <dir>` (which honors workstreams) with `env` (default: this
+    process's); returns the resolved config path, or `None` on failure, spawn error, a 10 s
+    timeout or empty output."""
     try:
         result = run_fn(
             [tools.node_bin, tools.gsd_tools_path, "config-path", "--cwd", project_dir],
@@ -245,6 +247,7 @@ def config_path(
             text=True,
             check=False,
             timeout=10,
+            env=None if env is None else dict(env),
         )
     except (OSError, subprocess.SubprocessError):
         return None

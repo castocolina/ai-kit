@@ -206,10 +206,11 @@ class NodeQueryError(RuntimeError):
 _TABLES_TIMEOUT_S = 30
 
 
-def query_gsd_tables(paths: GsdCorePaths, project_dir, keys, run_fn=subprocess.run):
+def query_gsd_tables(paths: GsdCorePaths, project_dir, keys, run_fn=subprocess.run, env=None):
     """One node call: gsd-core tables plus `isValidConfigKey` probes for `keys`. Returns
     `None` when the script reports `null` (require failed or exports missing) or prints
-    malformed output; raises `NodeQueryError` when node itself fails."""
+    malformed output; raises `NodeQueryError` when node itself fails. `env` (default:
+    this process's) reaches node, so gsd-core sees the same GSD_HOME as the inventory."""
     try:
         result = run_fn(
             [
@@ -225,6 +226,7 @@ def query_gsd_tables(paths: GsdCorePaths, project_dir, keys, run_fn=subprocess.r
             text=True,
             check=False,
             timeout=_TABLES_TIMEOUT_S,
+            env=env,
         )
     except OSError as exc:
         raise NodeQueryError(f"node failed to start ({exc.strerror or exc})") from exc

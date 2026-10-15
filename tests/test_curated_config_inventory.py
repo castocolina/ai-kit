@@ -161,7 +161,7 @@ def run_inventory(project, env, fake, *extra):
     with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
         code = cli.main(
             argv,
-            which_fn=lambda name: "node" if name == "node" else None,
+            which_fn=lambda name, **_kw: "node" if name == "node" else None,
             env_fn=lambda: dict(env),
             run_fn=fake,
         )
@@ -231,7 +231,7 @@ class TestInventoryTracer(unittest.TestCase):
         with contextlib.redirect_stdout(out_buf):
             cli.main(
                 ["inventory", "--project-dir", project, "--host", "opencode"],
-                which_fn=lambda name: "node" if name == "node" else None,
+                which_fn=lambda name, **_kw: "node" if name == "node" else None,
                 env_fn=lambda: dict(env),
                 run_fn=fake,
             )
@@ -301,7 +301,7 @@ class TestRealGsdInventory(_RealGsdTestCase):
             with contextlib.redirect_stdout(stdout):
                 code = cli.main(
                     ["inventory", "--project-dir", project, "--host", host_name],
-                    which_fn=lambda name: self.node_bin if name == "node" else None,
+                    which_fn=lambda name, **_kw: self.node_bin if name == "node" else None,
                     env_fn=lambda: dict(self.resolve_env),
                     run_fn=real_gsd_run(
                         self.child_env, self.node_bin, fallback=spec_fake
@@ -1177,6 +1177,38 @@ class TestGsdCoreResolution(unittest.TestCase):
         self.assertEqual(node_calls, [])
 
 
+class TestInjectedSeams(unittest.TestCase):
+    """B-IN-05: node calls see the injected env and gsd_run lookup uses the injected which."""
+
+    def test_node_calls_get_injected_env_and_which(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        env = {**_inventory_env(home), "GSD_HOME": home, "PATH": "injected-path"}
+        fake = FakeRun()
+        seen_which = []
+
+        def which(name, **kw):
+            seen_which.append((name, kw.get("path")))
+            return "node" if name == "node" else None
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = cli.main(
+                ["inventory", "--project-dir", project, "--host", "claude"],
+                which_fn=which, env_fn=lambda: dict(env), run_fn=fake,
+            )
+        self.assertEqual(code, 0, stderr.getvalue())
+        node_kws = [kw for a, kw in zip(fake.argv_log, fake.kw_log, strict=True)
+                    if a and a[0] == "node"]
+        self.assertTrue(node_kws)
+        for kw in node_kws:
+            self.assertEqual(kw.get("env"), env)
+        self.assertIn(("gsd_run", "injected-path"), seen_which)
+
+
 class TestProbeFailures(unittest.TestCase):
     def _project_with_install(self, *, include_config_schema=True):
         home = tempfile.mkdtemp()
@@ -1892,7 +1924,7 @@ class TestReadOnlyRealGsd(_RealGsdTestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 code = cli.main(
                     ["inventory", "--project-dir", project, "--host", "codex"],
-                    which_fn=lambda name: self.node_bin if name == "node" else None,
+                    which_fn=lambda name, **_kw: self.node_bin if name == "node" else None,
                     env_fn=lambda: dict(self.resolve_env),
                     run_fn=real_gsd_run(self.child_env, self.node_bin, fallback=spec_fake),
                 )
