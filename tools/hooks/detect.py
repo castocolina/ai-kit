@@ -71,7 +71,10 @@ def detect_substitutions(search_path=None, runner=None):
 # mode, and a future rtk release can silently reword it — which is exactly why
 # a parse miss degrades to RTK_SIGNAL_UNREADABLE rather than raising.
 def _probe_rtk_hook(rtk_path, runner):
-    """Classify rtk's hook from `rtk init --show` stdout. Never raises."""
+    """Classify rtk's hook from `rtk init --show` stdout.
+
+    Catches ``OSError``, ``ValueError``, and ``subprocess.SubprocessError`` only.
+    """
     try:
         proc = runner(
             [rtk_path, "init", "--show"],
@@ -81,7 +84,7 @@ def _probe_rtk_hook(rtk_path, runner):
             check=False,
             stdin=subprocess.DEVNULL,
         )
-    except Exception:
+    except (OSError, ValueError, subprocess.SubprocessError):
         return RTK_SIGNAL_UNREADABLE
     stdout = proc.stdout or ""
     for line in stdout.splitlines():
@@ -149,5 +152,5 @@ def compose_message(detection):
             else:
                 lines.append(f"- {modern} ({legacy}-class)")
         return "\n".join(lines)
-    except Exception:
+    except (TypeError, AttributeError, ValueError):
         return ""

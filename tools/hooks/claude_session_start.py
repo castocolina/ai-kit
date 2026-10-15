@@ -4,7 +4,8 @@
 Reads (and discards) the host's stdin payload, runs detect + compose, and
 emits a Claude Code SessionStart envelope on stdout. Every failure path
 exits 0 with parseable JSON — a hung or missing rtk must never block
-session start.
+session start. Uncaught errors reach module-level ``_fail_open`` via
+``sys.excepthook``.
 
 Empty-output evidence, per host, rather than a uniform claim:
 
@@ -19,17 +20,31 @@ Labelling the Claude Code reading as an inference is the PROJECT.md
 certainty rule applied to ai-kit's own claim about itself.
 """
 
+import importlib
 import json
 import os
 import select
 import sys
 
 
+def _fail_open(*_exc_info):
+    """Process-level SC-3 backstop: emit ``{}`` and exit 0 on any uncaught error.
+
+    If stdout is broken, the excepthook itself fails and Python prints its
+    default traceback and exits 1 (same exposure as an in-main handler).
+    ``sys.excepthook`` never sees ``SystemExit``; these hooks must not gain
+    argparse or any other ``SystemExit`` beyond ``raise SystemExit(main())``.
+    """
+    sys.stdout.write("{}")
+    sys.stdout.flush()
+    os._exit(0)
+
+
 def _drain_stdin():
     """Discard stdin in bounded chunks so a partial payload cannot wedge us."""
     try:
         fd = sys.stdin.fileno()
-    except Exception:
+    except (OSError, ValueError, AttributeError, TypeError):
         return
     total = 0
     for _ in range(16):
@@ -37,13 +52,13 @@ def _drain_stdin():
             return
         try:
             readable, _, _ = select.select([sys.stdin], [], [], 0.5)
-        except Exception:
+        except (OSError, ValueError, AttributeError, TypeError):
             return
         if not readable:
             return
         try:
             chunk = os.read(fd, 65536)
-        except Exception:
+        except (OSError, ValueError, AttributeError, TypeError):
             return
         if not chunk:
             return
@@ -66,23 +81,16 @@ def emit(message):
 
 
 def main():
-    """Detect, compose, emit. Never raise, never exit non-zero."""
+    """Detect, compose, emit. Failures reach ``_fail_open``."""
     sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-    try:
-        import detect
-        _drain_stdin()
-        detection = detect.detect_substitutions()
-        message = detect.compose_message(detection)
-        emit(message)
-    except Exception:
-        # Covers a missing/corrupted sibling `detect.py` (partial install,
-        # interrupted copy, disk error) as well as any detect/compose
-        # failure — the import must degrade the same way every other
-        # failure path does, never raise past this function.
-        sys.stdout.write("{}")
-        sys.stdout.flush()
+    detect = importlib.import_module("detect")
+    _drain_stdin()
+    detection = detect.detect_substitutions()
+    message = detect.compose_message(detection)
+    emit(message)
     return 0
 
 
 if __name__ == "__main__":
+    sys.excepthook = _fail_open
     raise SystemExit(main())

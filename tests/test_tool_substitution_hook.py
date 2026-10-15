@@ -135,6 +135,46 @@ class TestClaudeWrapper(unittest.TestCase):
         self.home = os.path.join(self.tmp, "home")
         os.makedirs(self.home)
 
+    def _run_claude_hook(self, env):
+        return subprocess.run(
+            [sys.executable, "-S", self.wrapper],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            stdin=subprocess.DEVNULL,
+        )
+
+    def _write_detect(self, content):
+        path = os.path.join(self.hooks_dir, "detect.py")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+
+    def test_claude_missing_detect_degrades_to_empty_object(self):
+        os.remove(os.path.join(self.hooks_dir, "detect.py"))
+        env = scoped_env(self.bin_dir, self.home)
+        proc = self._run_claude_hook(env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "{}")
+        self.assertEqual(proc.stderr, "")
+
+    def test_claude_syntax_error_detect_degrades_to_empty_object(self):
+        self._write_detect("def broken(:\n")
+        env = scoped_env(self.bin_dir, self.home)
+        proc = self._run_claude_hook(env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "{}")
+        self.assertEqual(proc.stderr, "")
+
+    def test_claude_raising_detect_degrades_to_empty_object(self):
+        self._write_detect('raise RuntimeError("x")\n')
+        env = scoped_env(self.bin_dir, self.home)
+        proc = self._run_claude_hook(env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "{}")
+        self.assertEqual(proc.stderr, "")
+
+
     def test_tracer_wired_entry_runs_and_emits_context(self):
         self.assertEqual(len(detect.CURATED_SUBSTITUTIONS), 5)
         foreign = {
@@ -633,6 +673,36 @@ class TestCursorWrapper(unittest.TestCase):
             env=env,
             stdin=subprocess.DEVNULL,
         )
+
+    def _write_detect(self, content):
+        path = os.path.join(self.hooks_dir, "detect.py")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+
+    def test_cursor_missing_detect_degrades_to_empty_object(self):
+        os.remove(os.path.join(self.hooks_dir, "detect.py"))
+        env = scoped_env(self.bin_dir, self.home)
+        proc = self._run(self.cursor_wrapper, env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "{}")
+        self.assertEqual(proc.stderr, "")
+
+    def test_cursor_syntax_error_detect_degrades_to_empty_object(self):
+        self._write_detect("def broken(:\n")
+        env = scoped_env(self.bin_dir, self.home)
+        proc = self._run(self.cursor_wrapper, env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "{}")
+        self.assertEqual(proc.stderr, "")
+
+    def test_cursor_raising_detect_degrades_to_empty_object(self):
+        self._write_detect('raise RuntimeError("x")\n')
+        env = scoped_env(self.bin_dir, self.home)
+        proc = self._run(self.cursor_wrapper, env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "{}")
+        self.assertEqual(proc.stderr, "")
+
 
     def test_wired_command_emits_additional_context(self):
         with open(self.hooks_json, "w", encoding="utf-8") as handle:
