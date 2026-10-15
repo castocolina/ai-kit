@@ -1695,6 +1695,26 @@ class TestProbeCodegraph(unittest.TestCase):
             joined = " ".join(argv)
             self.assertNotIn("install", joined)
 
+    def test_no_supported_client_ever_runs_install_even_when_codegraph_missing(self):
+        # R12: for every client, a "codegraph not registered" answer yields only a hint.
+        for client in sorted(detection._SUPPORTED_CODEGRAPH_CLIENTS):
+            with self.subTest(cli=client):
+                recorded = []
+
+                def fake_run(argv, recorded=recorded, **k):
+                    recorded.append(list(argv))
+                    # "mcp get" misses (rc 1); "mcp list" succeeds with no codegraph entry
+                    return unittest.mock.MagicMock(
+                        returncode=1 if "get" in argv else 0, stdout="")
+
+                probe = detection.probe_codegraph(client, run_fn=fake_run)
+                self.assertTrue(recorded)
+                for argv in recorded:
+                    self.assertNotIn("install", argv)
+                    self.assertNotIn("add", argv)
+                self.assertIs(probe.registered, False)
+                self.assertTrue(probe.install_command)
+
     def test_hanging_cli_binary_respects_probe_timeout(self):
         with tempfile.TemporaryDirectory() as tmp:
             fake_claude = os.path.join(tmp, "claude")
