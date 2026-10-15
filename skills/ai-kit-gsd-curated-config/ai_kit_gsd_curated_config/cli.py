@@ -11,9 +11,13 @@ import sys
 from typing import Any, NamedTuple
 
 from . import (
+    apply as apply_mod,
+)
+from . import (
     claude_md_detect,
     critical_agents,
     cross_ai_build,
+    cross_ai_script,
     frontend_detect,
     gsd_catalog,
     host,
@@ -602,6 +606,52 @@ def _print_plan_unset_ok(args, edited: dict, warnings: list[str]) -> None:
     )
 
 
+def _apply_dry_run_report(args, deps: apply_mod.ApplyDeps) -> tuple[dict | None, str | None]:
+    error: str | None = None
+    inputs, error = apply_mod.load_inputs(args.plan, args.inventory, args.project_dir)
+    if inputs is None:
+        return None, error
+    open_choices = apply_mod.needs_choice_keys(inputs.plan)
+    if open_choices:
+        error = "apply refused while needs_choice remains: " + ", ".join(open_choices)
+        return None, error
+    target, error = apply_mod.resolve_target(inputs, deps)
+    if target is None:
+        return None, error
+    try:
+        live = apply_mod.read_live_config(target.config_path)
+    except ValueError as exc:
+        return None, str(exc)
+    encode = _gsd_tools_encode()
+    template = None
+    if encode is not None:
+        problems = apply_mod.preflight(inputs, target, deps, encode)
+        if problems:
+            error = problems[0]
+        else:
+            template, error = cross_ai_script.load_template()
+    else:
+        error = gsd_catalog.SIBLING_MISSING
+    if error or template is None:
+        return None, error
+    return apply_mod.dry_run_report(inputs, target, live, template), None
+
+
+def _cmd_apply(args, which_fn, run_fn, env_fn) -> int:
+    if not args.dry_run:
+        print(
+            "ai-kit-gsd-curated-config: apply without --dry-run is not available in this build",
+            file=sys.stderr,
+        )
+        return 2
+    report, error = _apply_dry_run_report(args, apply_mod.ApplyDeps(which_fn, run_fn, env_fn))
+    if report is None:
+        print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
+        return 2
+    print(json.dumps(report))
+    return 0
+
+
 def _cmd_plan_unset(args, which_fn, run_fn, env_fn) -> int:
     del which_fn, run_fn, env_fn
     loaded = _load_plan_inputs(args)
@@ -711,6 +761,12 @@ def _build_parser():
 
     _register_plan_edit_parsers(sub)
 
+    p_apply = sub.add_parser("apply")
+    p_apply.add_argument("--plan", required=True)
+    p_apply.add_argument("--inventory", required=True)
+    p_apply.add_argument("--project-dir", required=True)
+    p_apply.add_argument("--dry-run", action="store_true")
+
     p_apply_workflow_defaults = sub.add_parser("apply-workflow-defaults")
     p_apply_workflow_defaults.add_argument("--project-dir", required=True)
     p_apply_workflow_defaults.add_argument(
@@ -738,6 +794,7 @@ _COMMAND_HANDLERS = {
     "recommend": _cmd_recommend,
     "plan-set": _cmd_plan_set,
     "plan-unset": _cmd_plan_unset,
+    "apply": _cmd_apply,
 }
 
 

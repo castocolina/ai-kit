@@ -1,4 +1,7 @@
-"""Apply pipeline backup, marker and restore unit tests (plan 18-16)."""
+"""Apply dry-run, backup/marker unit tests (plans 18-16, 18-17)."""
+import contextlib
+import io
+import json
 import os
 import stat
 import sys
@@ -14,7 +17,19 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_gsd_curated_config import config_backup
+from ai_kit_gsd_curated_config import cli, config_backup, plan_io
+
+from tests.test_curated_config_golden import load_fixture, tables_answer
+from tests.test_curated_config_inventory import (
+    FakeRun,
+    _tree_snapshot,
+    make_gsd_install,
+    run_inventory,
+    seed_cache,
+)
+from tests.test_curated_config_plan_edit import _run_plan_set
+from tests.test_curated_config_recommend import run_recommend
+from tests.test_curated_config_skills import add_plugin, add_skill
 
 _FIXED_NOW = datetime(2026, 10, 15, 12, 0, 0, tzinfo=UTC)
 
@@ -399,6 +414,198 @@ class TestRecoveryText(unittest.TestCase):
             self.assertNotIn("put ", text)
             self.assertNotIn("delete ", config_path)
             self.assertNotIn("--dry-run", text)
+
+
+def _scratch_env(home: str, gsd_home: str, xdg: str) -> dict[str, str]:
+    return {
+        "HOME": home,
+        "GSD_HOME": gsd_home,
+        "XDG_CACHE_HOME": xdg,
+        "PATH": "",
+    }
+
+
+def scratch_inventory(
+    project: str,
+    env: dict,
+    fake: FakeRun,
+    inv_path: str,
+    *,
+    host_name: str = "codex",
+) -> dict:
+    code, parsed, err = run_inventory(project, env, fake, "--host", host_name)
+    if code != 0 or parsed is None:
+        raise AssertionError(f"inventory failed: {err}")
+    with open(inv_path, "w", encoding="utf-8") as handle:
+        handle.write(plan_io.canonical_json(parsed))
+    return parsed
+
+
+def _decide_all_choices(plan_path: str, inv_path: str) -> None:
+    while True:
+        plan, _err = plan_io.load_plan(plan_path)
+        assert plan is not None
+        pending = [
+            e
+            for e in plan.get("entries") or []
+            if e.get("status") == "needs_choice"
+        ]
+        if pending:
+            entry = pending[0]
+            key = entry["key"]
+            cands = entry.get("candidates") or []
+            if not cands:
+                raise AssertionError(f"no candidates for {key}")
+            first = cands[0]
+            if isinstance(first, dict) and "model" in first:
+                raw = first["model"]
+            elif isinstance(first, bool):
+                raw = "true" if first else "false"
+            elif isinstance(first, (list, dict)):
+                raw = json.dumps(first)
+            else:
+                raw = str(first)
+            code, _, err = _run_plan_set(plan_path, inv_path, key, raw)
+            if code != 0:
+                raise AssertionError(err)
+            continue
+        artifacts = plan.get("artifacts") or []
+        if artifacts and artifacts[0].get("status") == "needs_choice":
+            art = artifacts[0]
+            for runner, detail in (art.get("choices") or {}).items():
+                cands = detail.get("candidates") or []
+                if not cands:
+                    continue
+                model = cands[0]["model"] if isinstance(cands[0], dict) else cands[0]
+                code, _, err = _run_plan_set(
+                    plan_path, inv_path, f"script:cross-ai.model.{runner}", model
+                )
+                if code != 0:
+                    raise AssertionError(err)
+                break
+            else:
+                break
+            continue
+        break
+
+
+def _run_apply(
+    plan_path: str,
+    inv_path: str,
+    project: str,
+    env: dict,
+    fake: FakeRun,
+    *,
+    dry_run: bool = True,
+) -> tuple[int, dict | None, str, str]:
+    argv = [
+        "apply",
+        "--plan",
+        plan_path,
+        "--inventory",
+        inv_path,
+        "--project-dir",
+        project,
+    ]
+    if dry_run:
+        argv.append("--dry-run")
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = cli.main(
+            argv,
+            which_fn=lambda name, **_kw: "node" if name == "node" else None,
+            env_fn=lambda: dict(env),
+            run_fn=fake,
+        )
+    parsed = json.loads(out.getvalue()) if out.getvalue().strip() else None
+    return code, parsed, out.getvalue(), err.getvalue()
+
+
+def _setup_scratch_project(tmp: str) -> tuple[str, dict, str]:
+    project = os.path.join(tmp, "project")
+    home = os.path.join(tmp, "home")
+    gsd_home = os.path.join(tmp, "gsd_home")
+    xdg = os.path.join(tmp, "xdg")
+    os.makedirs(project)
+    os.makedirs(home, exist_ok=True)
+    add_plugin(
+        home,
+        "ponytail",
+        "ponytail",
+        ["ponytail", "ponytail-audit", "ponytail-debt", "ponytail-review"],
+    )
+    agents_skills = os.path.join(home, ".agents", "skills")
+    os.makedirs(agents_skills, exist_ok=True)
+    add_skill(agents_skills, "react-dev", "React patterns")
+    claude_skills = os.path.join(home, ".claude", "skills")
+    os.makedirs(claude_skills, exist_ok=True)
+    os.symlink(
+        os.path.join(agents_skills, "react-dev"),
+        os.path.join(claude_skills, "react-dev"),
+    )
+    os.makedirs(os.path.join(project, ".planning"), exist_ok=True)
+    with open(os.path.join(project, "AGENTS.md"), "w", encoding="utf-8") as handle:
+        handle.write("# agents\n")
+    with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as handle:
+        json.dump({"dependencies": {"react": "19.0.0"}}, handle)
+    make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+    config_path = os.path.join(project, ".planning", "config.json")
+    with open(config_path, "w", encoding="utf-8") as handle:
+        json.dump({"model_profile": "balanced"}, handle)
+    seed_cache(xdg, load_fixture("runtimes.json"), load_fixture("model-catalog.json"))
+    env = _scratch_env(home, gsd_home, xdg)
+    return project, env, config_path
+
+
+def _tables_fake(config_path: str, home: str) -> FakeRun:
+    return FakeRun(
+        node_stdout=lambda argv, h=home: json.dumps(
+            tables_answer(json.loads(argv[6]), h)
+        ),
+        config_path_stdout=config_path,
+    )
+
+
+class TestDryRunTracer(unittest.TestCase):
+    def test_dry_run_shows_diff_and_touches_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, config_path = _setup_scratch_project(tmp)
+            fake = _tables_fake(config_path, env["HOME"])
+            inv_path = os.path.join(tmp, "inventory.json")
+            inv = scratch_inventory(project, env, fake, inv_path, host_name="codex")
+            plan_path = os.path.join(tmp, "plan.json")
+            code, _plan, raw, err = run_recommend(
+                inv, "--profile", "adaptive", "--rigor", "standard"
+            )
+            self.assertEqual((code, err), (0, ""))
+            assert raw is not None
+            with open(plan_path, "wb") as handle:
+                handle.write(raw)
+            _decide_all_choices(plan_path, inv_path)
+            before = _tree_snapshot(project)
+            fake.argv_log.clear()
+            code, report, _out, err = _run_apply(
+                plan_path, inv_path, project, env, fake, dry_run=True
+            )
+            self.assertEqual((code, err), (0, ""))
+            assert report is not None
+            self.assertTrue(report["dry_run"])
+            self.assertEqual(report["config_path"], config_path)
+            kinds = {row["key"]: row["kind"] for row in report["diff"]}
+            self.assertEqual(kinds.get("model_profile"), "change")
+            self.assertIn("add", kinds.values())
+            art_rows = [a for a in report["artifacts"] if a["path"].endswith("cross-ai.mjs")]
+            self.assertTrue(art_rows)
+            self.assertEqual(art_rows[0]["kind"], "add")
+            self.assertEqual(_tree_snapshot(project), before)
+            node_calls = [a for a in fake.argv_log if a and a[0] == "node"]
+            self.assertEqual(len(node_calls), 2)
+            self.assertEqual(node_calls[0][2], "config-path")
+            self.assertEqual(node_calls[1][1], "-e")
+            for cmd in fake.argv_log:
+                joined = " ".join(str(part) for part in cmd)
+                self.assertNotIn("config-set", joined)
+                self.assertNotIn("config-new-project", joined)
 
 
 if __name__ == "__main__":
