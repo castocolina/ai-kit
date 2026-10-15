@@ -166,7 +166,7 @@ can be verified and closed on trustworthy evidence. Source:
      Artificial Analysis key, so the ranking is scored).
   7. The phase is executed through `.planning/scripts/cross-ai.mjs` (pi first), as the dogfood run
      for Phase 18's runner. The usage-metrics store compaction (audit A10) stays out of scope.
-**Plans**: 25/31 plans executed
+**Plans**: 26/31 plans executed
 
 Plans:
 - Wave 1
@@ -204,7 +204,7 @@ Plans:
 - Wave 9
   - [x] 16.1-14-PLAN.md — lint sweep: execute-gsd adapter
   - [ ] 16.1-28-PLAN.md — lint sweep: execute-superpowers adapter and detect_framework
-  - [ ] 16.1-21-PLAN.md — tools-side tests clean under pyright and vulture
+  - [x] 16.1-21-PLAN.md — tools-side tests clean under pyright and vulture
   - [ ] 16.1-22-PLAN.md — skills-side tests clean under pyright and vulture
 - Wave 10
   - [ ] 16.1-20-PLAN.md — spec-family tests clean under pyright and vulture
