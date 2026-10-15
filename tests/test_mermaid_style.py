@@ -220,19 +220,19 @@ class TestGeometry(unittest.TestCase):
 
     def test_R1_too_horizontal(self):
         # 1280x360 -> ratio 0.28 < 0.4
-        self.assertIn("R1", {f.rule for f in ms.geometry_findings(1280, 360, 8)})
+        self.assertIn("R1", {f.rule for f in ms.geometry_findings(1280, 360)})
 
     def test_R2_text_shrinks_below_legible_when_fit_to_column(self):
         # width 1600 -> scale 900/1600=0.56 -> font 16*0.56=9px < 11px
-        self.assertIn("R2", {f.rule for f in ms.geometry_findings(1600, 1200, 8)})
+        self.assertIn("R2", {f.rule for f in ms.geometry_findings(1600, 1200)})
 
     def test_R3_too_tall(self):
         # height 3400 > 3000 (≈3 pages)
-        self.assertIn("R3", {f.rule for f in ms.geometry_findings(700, 3400, 30)})
+        self.assertIn("R3", {f.rule for f in ms.geometry_findings(700, 3400)})
 
     def test_vertical_in_band_is_clean(self):
         # 760x1100 -> ratio 1.45, width under column, height under 3 pages
-        self.assertEqual([], ms.geometry_findings(760, 1100, 10))
+        self.assertEqual([], ms.geometry_findings(760, 1100))
 
 
 class TestPalettes(unittest.TestCase):

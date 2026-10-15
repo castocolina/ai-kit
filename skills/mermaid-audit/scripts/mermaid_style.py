@@ -345,7 +345,7 @@ def png_size(path):
     return (width, height)
 
 
-def geometry_findings(width, height, _node_count):
+def geometry_findings(width, height):
     """R-rules over rendered pixel dimensions. Pure + deterministic."""
     findings = []
     if width <= 0 or height <= 0:

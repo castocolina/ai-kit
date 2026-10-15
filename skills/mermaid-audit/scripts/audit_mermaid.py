@@ -25,7 +25,6 @@ from dataclasses import dataclass
 
 from mermaid_style import (
     extract,
-    extract_style_facts,
     geometry_findings,
     iter_md,
     png_size,
@@ -77,14 +76,13 @@ def _syntax_message(err):
     return (lines[0] if lines else "")[:300]
 
 
-def _print_geometry(md, start, body, png):
+def _print_geometry(md, start, png):
     if not os.path.exists(png):
         return
     dims = png_size(png)
     if not dims:
         return
-    n_nodes = len(extract_style_facts(body).nodes)
-    for g in geometry_findings(dims[0], dims[1], n_nodes):
+    for g in geometry_findings(dims[0], dims[1]):
         print(f"{md}:{start}\tGEOMETRY\t{g.rule}\t{g.message}\t→ {g.fix}")
 
 
@@ -109,7 +107,7 @@ def _audit_one_block(job):
     rc, err = render(mmd, png, cfg.pptr)
     if rc == 0:
         print(f"{job.md}:{job.start}\tOK\t")
-        _print_geometry(job.md, job.start, job.body, png)
+        _print_geometry(job.md, job.start, png)
         _maybe_remove_png(png, cfg.keep_png)
         return True
 
