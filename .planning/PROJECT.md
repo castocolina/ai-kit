@@ -133,6 +133,13 @@ verified live rather than assumed from a catalog.
 
 ## Context
 
+**Host facts (live-verified 2026-10-15):**
+- gsd-core: 1.16.0
+- GSD installs missing on: ~/.codex/gsd-core, ~/.config/opencode/gsd-core, ~/.cursor/gsd-core, ~/.pi/gsd-core
+- ~/.gsd/defaults.json runtime: codex
+- Artificial Analysis key: set
+- Live catalog fetch scored: 150 of 195 entries
+
 ai-kit is a solo-maintainer (uz) toolkit that started as a Claude-Code-only
 installer + status line and grew a family of spec-review/execute skills.
 

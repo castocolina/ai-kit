@@ -12,6 +12,8 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 
 ### ai_kit_spec Extensions
 
+Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on: ~/.codex/gsd-core, ~/.config/opencode/gsd-core, ~/.cursor/gsd-core, ~/.pi/gsd-core; ~/.gsd/defaults.json runtime: codex; Artificial Analysis key: set; Live catalog fetch scored: 150 of 195 entries
+
 - [ ] **SPEC-01**: `detect-current-runtime` identifies pi (`PI_CODING_AGENT`) and codex (`CODEX_THREAD_ID`/`CODEX_VERSION`) in addition to opencode/cursor/claude, with precedence pi > opencode > cursor > codex > claude when several signals are set *(2026-10-14: `CODEX_VERSION` is absent from the codex 0.153.4 binary and is expected to be dropped by Phase 20 D-05)*
 - [ ] **SPEC-02**: `detect-runtimes` enumerates codex (`codex debug models`) and claude (hardcoded aliases + full ids from the catalog + dated fallback), invoking real binaries (never shell functions/aliases); parsers covered by fixtures captured from real CLI output (pi moved to SPEC-05 per Phase 16 D-06)
 - [ ] **SPEC-03**: Model catalog entries carry optional `image_input` and populated `reasoning_modes` (existing field, per 16 D-08); cache files without them still load
