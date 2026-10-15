@@ -892,7 +892,7 @@ class TestClassifyDispatchFailure(unittest.TestCase):
     def test_quota_on_stderr_quota_signal_and_nonzero_returncode(self):
         self.assertEqual(
             dispatch_injection.classify_dispatch_failure(
-                {"returncode": 1, "stdout": "", "stderr": "rate limit", "timed_out": False}
+                {"returncode": 1, "stdout": "", "stderr": "Rate limit exceeded", "timed_out": False}
             ),
             "quota",
         )

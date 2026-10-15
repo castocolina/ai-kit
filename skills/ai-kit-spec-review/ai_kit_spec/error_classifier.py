@@ -10,7 +10,7 @@ The 18.1/25 runner adds `billing_or_access` and `capacity` by mapping its OWN st
 here — this module's vocabulary stays the six subprocess-shaped reasons below."""
 
 # Closed reason vocabulary (D-13). Order here is documentation only; classify_error's
-# check order is: timeout, exit 0, dispatch_unavailable, auth, quota, configuration.
+# check order is: timeout, exit 0, auth, quota, dispatch_unavailable, configuration.
 REASONS = (
     "quota",               # time-bound rate/usage limit — worth an hourly retry
     "auth",                # authentication/entitlement/setup — never fixed by waiting
@@ -28,9 +28,16 @@ _AUTH_SIGNALS = (
     "actionrequirederror", "not authenticated", "not logged in", "unauthorized",
     "api key is invalid", "invalid api key",
 )
-_QUOTA_SIGNALS = ("usage limit", "quota", "rate limit", "rate_limit")
+# Anchored phrases, never a bare "quota"/"rate limit": execute-dispatch stderr is a whole
+# child transcript, so a task ABOUT rate limiting must not read as a quota event (A-WR-02).
+_QUOTA_SIGNALS = (
+    "usage limit", "quota exceeded", "exceeded your current quota", "rate limit exceeded",
+    "rate limit reached", "rate_limit_error", "rate_limit_exceeded", "resource_exhausted",
+)
 _CONFIGURATION_SIGNALS = ("cannot use this model", "unknown model", "model not found")
-_DISPATCH_UNAVAILABLE_SIGNALS = ("command not found", "no such file or directory")
+# Only the tail is scanned: the failure that ended the run is printed last, while an earlier
+# benign tool error in the transcript ("No such file or directory") must not outrank it.
+_STDERR_TAIL_CHARS = 2048
 
 
 def _stderr_text(stderr: str | bytes) -> str:
@@ -53,18 +60,18 @@ def classify_error(returncode: int | None, stderr: str | bytes, timed_out: bool 
     Returns None when the call succeeded (exit code 0 is never classified — and a zero
     exit never produces a reason even with hostile stderr text, R8). Never inspects the
     model's answer (stdout). Byte input is decoded with errors="replace", so non-UTF-8
-    stderr cannot raise. A render ValueError from the command template maps to
-    "configuration" at the call site (quota.py's probe_reviewer_quota), not here."""
+    stderr cannot raise. Only the last _STDERR_TAIL_CHARS of stderr are scanned, and
+    dispatch_unavailable comes from the exit status alone (126/127: the dispatcher maps a
+    spawn OSError to 127), never from transcript text. A render ValueError from the command
+    template maps to "configuration" at the call site (quota.py:probe_reviewer_quota)."""
     if timed_out:
         return "timeout"
     if returncode == 0:
         return None
-    text = _stderr_text(stderr).lower()
-    if returncode == 127 or any(s in text for s in _DISPATCH_UNAVAILABLE_SIGNALS):
+    text = _stderr_text(stderr)[-_STDERR_TAIL_CHARS:].lower()
+    reason = _signal_reason(text, ((_AUTH_SIGNALS, "auth"), (_QUOTA_SIGNALS, "quota")))
+    if reason:
+        return reason
+    if returncode in (126, 127):
         return "dispatch_unavailable"
-    grouped = (
-        (_AUTH_SIGNALS, "auth"),
-        (_QUOTA_SIGNALS, "quota"),
-        (_CONFIGURATION_SIGNALS, "configuration"),
-    )
-    return _signal_reason(text, grouped) or "real_error"
+    return _signal_reason(text, ((_CONFIGURATION_SIGNALS, "configuration"),)) or "real_error"

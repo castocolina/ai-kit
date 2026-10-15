@@ -2958,11 +2958,27 @@ class TestErrorClassifier(unittest.TestCase):
 
     def test_dispatch_unavailable(self):
         self.assertEqual(classify_error(127, "", False), "dispatch_unavailable")
+        self.assertEqual(classify_error(126, "permission denied", False), "dispatch_unavailable")
         self.assertEqual(
-            classify_error(1, "sh: x: command not found", False), "dispatch_unavailable"
+            classify_error(127, "No such file or directory: 'codex'", False),
+            "dispatch_unavailable",
         )
+
+    def test_transcript_text_cannot_outrank_or_fake_a_limit(self):
+        # A-WR-02: execute stderr is a whole transcript. An earlier benign tool error must
+        # not outrank the real limit, and a task about rate limiting is not a quota event.
+        transcript = "tool: cat missing.txt -> No such file or directory\n" + "x\n" * 50
         self.assertEqual(
-            classify_error(1, "No such file or directory: 'codex'", False), "dispatch_unavailable"
+            classify_error(1, transcript + "ERROR: You've hit your usage limit.", False), "quota"
+        )
+        self.assertEqual(classify_error(1, "No such file or directory", False), "real_error")
+        self.assertEqual(
+            classify_error(1, "exec: implementing rate limit middleware ... test failed", False),
+            "real_error",
+        )
+        # only the tail is scanned
+        self.assertEqual(
+            classify_error(1, "usage limit\n" + "y" * 4096 + "\nboom", False), "real_error"
         )
 
     def test_timeout_wins_over_everything(self):
@@ -2973,7 +2989,7 @@ class TestErrorClassifier(unittest.TestCase):
         self.assertEqual(classify_error(1, "boom", False), "real_error")
 
     def test_non_utf8_stderr_bytes_do_not_crash(self):
-        self.assertEqual(classify_error(1, b"\xff\xfe quota", False), "quota")
+        self.assertEqual(classify_error(1, b"\xff\xfe quota exceeded", False), "quota")
 
     def test_reason_vocabulary_is_closed(self):
         self.assertEqual(
