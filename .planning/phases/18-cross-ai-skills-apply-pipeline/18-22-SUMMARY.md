@@ -3,6 +3,7 @@ phase: 18-cross-ai-skills-apply-pipeline
 plan: 22
 executor: cross-ai
 requirements-completed: [EVAL-06]
+orchestrator_verify: "VERIFY 18-22: 2/2 passed"
 ---
 
 # Plan 18-22: Phase 18 close — gates and source-of-truth amendments

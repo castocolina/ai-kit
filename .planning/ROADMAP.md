@@ -310,7 +310,7 @@ with the v2 flow living alongside the unchanged v1 CLI.
   7. When a System One backend is detected (local Laya or a TypeSafe key), `jev-fast-decision` is
      recommended in `agent_skills` for `gsd-advisor-researcher` and `gsd-assumptions-analyzer`
      (the discuss-phase decision agents), and is never recommended when no backend is present.
-**Plans**: 21/22 plans executed (strictly serial waves 1-22, cross-AI executed)
+**Plans**: 22/22 plans executed (strictly serial waves 1-22, cross-AI executed)
 
 Plans:
 **Wave 1**
@@ -377,7 +377,7 @@ Plans:
 - [x] 18-21-PLAN.md — SKILL.md v2 flow, README row, command drift test, skill-judge self-check
 
 **Wave 22** *(blocked on Wave 21 completion)*
-- [ ] 18-22-PLAN.md — full gate run and source-of-truth amendments
+- [x] 18-22-PLAN.md — full gate run and source-of-truth amendments
 
 ### Phase 18.1: One runtime model (INSERTED)
 

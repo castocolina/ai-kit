@@ -63,7 +63,7 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 - [ ] **EVAL-03**: Live smoke on the claude host — `inventory` + `recommend` + `apply` (dry-run, then real on a scratch project)
 - [ ] **EVAL-04**: Live smoke on the codex host, including confirmation of the codex session env signal
 - [ ] **EVAL-05**: Live smoke on the opencode host, including whether the opencode review lane is usable from an opencode host
-- [ ] **EVAL-06**: v2 subcommands coexist with the unchanged v1 CLI (no module removal — Phase 18 D-08); v2 registered in all gates; `make test` (v1 tests still passing) and `make validate` green; README row updated; SKILL.md labels cursor and pi "not live-validated" until EVAL-07/EVAL-08 pass
+- [x] **EVAL-06**: v2 subcommands coexist with the unchanged v1 CLI (no module removal — Phase 18 D-08); v2 registered in all gates; `make test` (v1 tests still passing) and `make validate` green; README row updated; SKILL.md labels cursor and pi "not live-validated" until EVAL-07/EVAL-08 pass
 - [ ] **EVAL-07**: Live smoke on the cursor host (own phase, scheduled after codex/opencode; may run later without blocking earlier phases)
 - [ ] **EVAL-08**: Live smoke on the pi host (own phase, scheduled last; may run later without blocking earlier phases)
 
@@ -159,7 +159,7 @@ None deferred beyond v1.3 at definition time.
 | APP-02 | Phase 18 | Complete |
 | APP-03 | Phase 18 | Complete |
 | APP-04 | Phase 18 | Complete |
-| EVAL-06 | Phase 18 | Pending |
+| EVAL-06 | Phase 18 | Complete |
 | EVAL-01 | Phase 19 | Pending |
 | EVAL-02 | Phase 19 | Pending |
 | EVAL-03 | Phase 19 | Pending |
