@@ -55,7 +55,7 @@ POLICY = {
 
 GOLDEN_GRID = [(h, r, "adaptive") for h in host.HOSTS for r in presets.RIGORS]
 GOLDEN_SPOTS = (("opencode", "standard", "quality"), ("codex", "mvp", "budget"))
-ALL_GOLDEN_CASES = [("codex", "standard", "adaptive")]  # task 1; expanded in 17-09 task 2
+ALL_GOLDEN_CASES = [*GOLDEN_GRID, *GOLDEN_SPOTS]
 
 
 def golden_basename(host_name: str, rigor: str, profile: str) -> str:
@@ -321,4 +321,195 @@ class TestGoldenPlans(unittest.TestCase):
                 name = golden_basename(host_name, rigor, profile)
                 check_golden(self, name, mask_digest(plan_bytes))
 
+class TestGoldenProperties(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not GOLDEN_DIR.is_dir():
+            raise unittest.SkipTest("no golden dir")
+        cls._inventory_by_host = {
+            h: _strip_fake(build_golden_inventory(h)) for h in host.HOSTS
+        }
 
+    def _load_golden(self, basename: str) -> dict:
+        with open(GOLDEN_DIR / f"{basename}.json", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def test_golden_files_count(self):
+        self.assertEqual(len(list(GOLDEN_DIR.glob("*.json"))), 17)
+
+    def test_properties_per_golden(self):
+        for host_name, rigor, profile in ALL_GOLDEN_CASES:
+            with self.subTest(host=host_name, rigor=rigor, profile=profile):
+                basename = golden_basename(host_name, rigor, profile)
+                plan = self._load_golden(basename)
+                inv = self._inventory_by_host[host_name]
+                entries = plan["entries"]
+                model_keys = {e["key"] for e in entries if e["key"].startswith("models.")}
+                self.assertEqual(model_keys, MODELS_KEYS_BY_RIGOR[rigor])
+                set_overrides = [
+                    e
+                    for e in entries
+                    if e["key"].startswith("model_overrides.") and e.get("op") == "set"
+                ]
+                self.assertLessEqual(len(set_overrides), 7)
+                self.assertFalse(any(e.get("op") == "unset" for e in entries))
+                for entry in entries:
+                    if entry.get("source") != "catalog-score":
+                        continue
+                    matches = resolve_host_candidates(inv, entry.get("value"))
+                    self.assertTrue(matches)
+                    self.assertTrue(any(m.get("score_axes", 0) > 0 for m in matches))
+                for entry in entries:
+                    if entry.get("op") != "set":
+                        continue
+                    if not (
+                        entry["key"].startswith("model_overrides.")
+                        or entry["key"].startswith("model_profile_overrides.")
+                    ):
+                        continue
+                    matches = resolve_host_candidates(inv, entry.get("value"))
+                    if not matches:
+                        continue
+                    self.assertFalse(any(m.get("fast_twin_of") for m in matches))
+                if host_name == "codex" and rigor == "standard" and profile == "adaptive":
+                    keeps = [
+                        e
+                        for e in entries
+                        if e["key"].startswith("model_profile_overrides.codex.")
+                    ]
+                    self.assertTrue(keeps)
+                    self.assertTrue(all(e.get("op") == "keep" for e in keeps))
+                if host_name == "opencode":
+                    for entry in entries:
+                        if entry.get("op") != "set":
+                            continue
+                        val = entry.get("value")
+                        if isinstance(val, str) and val.startswith("anthropic/"):
+                            self.fail(f"anthropic set on opencode: {entry['key']}")
+                    routers = [
+                        e
+                        for e in entries
+                        if e.get("source") == "router-declared"
+                        and e.get("value") == "router-env/my-coding"
+                    ]
+                    self.assertTrue(routers)
+                    self.assertFalse(
+                        any(e.get("value") == "router-env/my-plan-review" for e in entries)
+                    )
+                if host_name == "cursor":
+                    self.assertFalse(any(e.get("op") == "keep" for e in entries))
+                    haiku = next(
+                        (
+                            e
+                            for e in entries
+                            if e["key"] == "model_profile_overrides.cursor.haiku"
+                            and e.get("op") == "set"
+                        ),
+                        None,
+                    )
+                    if haiku is not None:
+                        val = haiku.get("value")
+                        model = val if isinstance(val, str) else val.get("model", "")
+                        self.assertFalse(str(model).endswith("-max"))
+                        self.assertFalse(str(model).endswith("-xhigh"))
+                if host_name in ("claude", "codex"):
+                    self.assertTrue(
+                        any(n.get("kind") == "counterpart" for n in plan.get("notes", []))
+                    )
+                if host_name == "claude":
+                    self.assertFalse(
+                        any(
+                            e["key"].startswith("model_profile_overrides.")
+                            and e.get("op") == "set"
+                            for e in entries
+                        )
+                    )
+                if host_name == "pi":
+                    self.assertFalse(
+                        any(e["key"].startswith("model_overrides.") for e in entries)
+                    )
+                    sonnet = next(
+                        e for e in entries if e["key"] == "model_profile_overrides.pi.sonnet"
+                    )
+                    self.assertEqual(sonnet.get("status"), "needs_choice")
+                    self.assertEqual(sonnet.get("candidates"), [])
+
+
+class TestConflictsEndToEnd(unittest.TestCase):
+    def _entry(self, plan: dict, key: str) -> dict:
+        for entry in plan["entries"]:
+            if entry["key"] == key:
+                return entry
+        raise AssertionError(key)
+
+    def test_project_config_unsets(self):
+        inv = _strip_fake(
+            build_golden_inventory(
+                "claude",
+                project_config={
+                    "model_policy": {"provider": "generic", "high": "x"},
+                    "resolve_model_ids": "omit",
+                },
+            )
+        )
+        kinds = {(c["kind"], c["scope"]) for c in inv["conflicts"]}
+        self.assertIn(("model_policy", "project"), kinds)
+        self.assertIn(("resolve_model_ids", "project"), kinds)
+        code, plan, _bytes, _err = run_recommend(
+            inv, "--profile", "adaptive", "--rigor", "standard"
+        )
+        self.assertEqual(code, 0)
+        assert plan is not None
+        high = self._entry(plan, "model_policy.high")
+        self.assertEqual(high["op"], "unset")
+        self.assertIn("unset per leaf", high.get("why", ""))
+        provider = self._entry(plan, "model_policy.provider")
+        self.assertEqual(provider["op"], "unset")
+        resolve = self._entry(plan, "resolve_model_ids")
+        self.assertEqual(resolve["op"], "unset")
+        self.assertEqual(resolve.get("existing"), "omit")
+
+    def test_global_defaults_latent_unsets(self):
+        inv = _strip_fake(
+            build_golden_inventory(
+                "claude",
+                global_defaults={
+                    "resolve_model_ids": "omit",
+                    "model_policy": {"provider": "generic"},
+                },
+            )
+        )
+        code, plan, _bytes, _err = run_recommend(
+            inv, "--profile", "adaptive", "--rigor", "standard"
+        )
+        self.assertEqual(code, 0)
+        assert plan is not None
+        latent = "latent (copied into the project config by config-new-project)"
+        resolve = self._entry(plan, "resolve_model_ids")
+        self.assertEqual(resolve["op"], "unset")
+        self.assertEqual(resolve.get("effect"), latent)
+        provider = self._entry(plan, "model_policy.provider")
+        self.assertEqual(provider["op"], "unset")
+        self.assertEqual(provider.get("effect"), latent)
+        dropped = [n for n in plan.get("notes", []) if n.get("kind") == "dropped_key"]
+        dropped_keys = {n.get("key") for n in dropped}
+        for key in ("resolve_model_ids", "model_policy.provider", "model_policy.high"):
+            self.assertNotIn(key, dropped_keys)
+
+
+class TestFixtureHygiene(unittest.TestCase):
+    BAD_FRAGMENTS = ("/home/", "/Users/", "/tmp/", "/var/")
+
+    def test_no_absolute_paths_in_fixtures(self):
+        tmpdir = tempfile.gettempdir()
+        for path in FIXTURES.rglob("*"):
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8")
+            for frag in self.BAD_FRAGMENTS:
+                self.assertNotIn(frag, text, f"{path} contains {frag}")
+            self.assertNotIn(tmpdir, text, f"{path} contains tempfile.gettempdir()")
+
+
+if __name__ == "__main__":
+    unittest.main()

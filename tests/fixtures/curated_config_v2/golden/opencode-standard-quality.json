@@ -1,0 +1,271 @@
+{
+  "cross_ai": {
+    "exec": {
+      "answer": "n",
+      "defaulted": true
+    },
+    "review": {
+      "answer": "n",
+      "defaulted": true
+    }
+  },
+  "entries": [
+    {
+      "existing": null,
+      "key": "effort.agent_overrides.gsd-code-fixer",
+      "op": "set",
+      "source": "preset",
+      "value": "medium",
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "effort.agent_overrides.gsd-executor",
+      "op": "set",
+      "source": "preset",
+      "value": "medium",
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "effort.routing_tier_defaults.heavy",
+      "op": "set",
+      "source": "preset",
+      "value": "xhigh",
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "effort.routing_tier_defaults.light",
+      "op": "set",
+      "source": "preset",
+      "value": "low",
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "effort.routing_tier_defaults.standard",
+      "op": "set",
+      "source": "preset",
+      "value": "high",
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "granularity",
+      "op": "set",
+      "source": "preset",
+      "value": "standard",
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "intel.enabled",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-code-fixer",
+      "op": "set",
+      "source": "router-declared",
+      "value": "router-env/my-coding",
+      "why": "user-curated router (declared purpose: execute)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-dom-verifier",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "openai/gpt-5.6-terra",
+      "why": "needs image_input; best general score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family openai/gpt-5.6-terra for target high (bare)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-executor",
+      "op": "set",
+      "source": "router-declared",
+      "value": "router-env/my-coding",
+      "why": "user-curated router (declared purpose: execute)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-plan-checker",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "openai/gpt-5.6-terra",
+      "why": "counterpart: inferred vendor openai differs from the inferred gsd-planner vendor zhipu (D-14); best review score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family openai/gpt-5.6-terra for target high (bare)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-ui-auditor",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "openai/gpt-5.6-terra",
+      "why": "needs image_input; best general score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family openai/gpt-5.6-terra for target high (bare)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-ui-researcher",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "openai/gpt-5.6-terra",
+      "why": "frontend-capable = image_input (D-28); best general score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family openai/gpt-5.6-terra for target xhigh (bare)"
+    },
+    {
+      "existing": null,
+      "key": "model_profile",
+      "op": "set",
+      "source": "preset",
+      "value": "quality",
+      "why": "profile quality"
+    },
+    {
+      "existing": null,
+      "key": "model_profile_overrides.opencode.opus",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "zai-coding-plan/glm-5.3",
+      "why": "gsd default anthropic/claude-opus-4-8 not on host; best planning score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target xhigh (bare)"
+    },
+    {
+      "existing": null,
+      "key": "model_profile_overrides.opencode.sonnet",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "zai-coding-plan/glm-5.3",
+      "why": "gsd default anthropic/claude-sonnet-5 not on host; best general score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target high (bare)"
+    },
+    {
+      "existing": null,
+      "key": "runtime",
+      "op": "set",
+      "source": "preset",
+      "value": "opencode",
+      "why": "the gsd-core installer bakes agent models from the project runtime, else ~/.gsd/defaults.json's, and ignores GSD_RUNTIME (D-23)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.code_review_depth",
+      "op": "set",
+      "source": "preset",
+      "value": "standard",
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.cross_ai_execution",
+      "op": "set",
+      "source": "preset",
+      "value": false,
+      "why": "cross-AI exec answer: n (defaulted)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.nyquist_validation",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.pattern_mapper",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.plan_check",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.plan_review_convergence",
+      "op": "set",
+      "source": "preset",
+      "value": false,
+      "why": "cross-AI review answer: n (defaulted)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.research",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.security_asvs_level",
+      "op": "set",
+      "source": "preset",
+      "value": 1,
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.security_block_on",
+      "op": "set",
+      "source": "preset",
+      "value": "high",
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.tdd_mode",
+      "op": "set",
+      "source": "preset",
+      "value": false,
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.ui_phase",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.ui_review",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor standard preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.verifier",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor standard preset (spec §5)"
+    }
+  ],
+  "host": "opencode",
+  "inventory_digest": "<digest>",
+  "notes": [
+    {
+      "key": "router-env/my-plan-review",
+      "kind": "router_unconfirmed",
+      "text": "router router-env/my-plan-review declares purpose review but is not user-confirmed; confirm it via ai-kit-spec-config to let it win its slot"
+    },
+    {
+      "key": "model_overrides.gsd-code-reviewer",
+      "kind": "specialist",
+      "text": "no inferred vendor for execution reference model; gsd-code-reviewer keeps its tier"
+    }
+  ],
+  "profile": "quality",
+  "rigor": "standard",
+  "schema_version": 1
+}

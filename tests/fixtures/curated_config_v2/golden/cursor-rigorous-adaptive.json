@@ -1,0 +1,335 @@
+{
+  "cross_ai": {
+    "exec": {
+      "answer": "n",
+      "defaulted": true
+    },
+    "review": {
+      "answer": "y",
+      "defaulted": true
+    }
+  },
+  "entries": [
+    {
+      "existing": null,
+      "key": "code_quality.fallow.enabled",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "code_quality.fallow.profile",
+      "op": "set",
+      "source": "preset",
+      "value": "standard",
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "effect": "unverified: no tier_models; resolve-model --attempt unchanged in gsd-core 1.16",
+      "existing": null,
+      "key": "dynamic_routing.enabled",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "effect": "unverified: no tier_models; resolve-model --attempt unchanged in gsd-core 1.16",
+      "existing": null,
+      "key": "dynamic_routing.escalate_on_failure",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "effect": "unverified: no tier_models; resolve-model --attempt unchanged in gsd-core 1.16",
+      "existing": null,
+      "key": "dynamic_routing.max_escalations",
+      "op": "set",
+      "source": "preset",
+      "value": 1,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "effort.agent_overrides.gsd-code-fixer",
+      "op": "set",
+      "source": "preset",
+      "value": "medium",
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "effort.agent_overrides.gsd-code-reviewer",
+      "op": "set",
+      "source": "preset",
+      "value": "xhigh",
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "effort.agent_overrides.gsd-executor",
+      "op": "set",
+      "source": "preset",
+      "value": "medium",
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "effort.routing_tier_defaults.heavy",
+      "op": "set",
+      "source": "preset",
+      "value": "xhigh",
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "effort.routing_tier_defaults.light",
+      "op": "set",
+      "source": "preset",
+      "value": "low",
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "effort.routing_tier_defaults.standard",
+      "op": "set",
+      "source": "preset",
+      "value": "high",
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "granularity",
+      "op": "set",
+      "source": "preset",
+      "value": "fine",
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "intel.enabled",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-code-fixer",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "gemini-3.8-flash-low",
+      "why": "best execution score within ceiling (no ceiling); effort variant low of inferred family gemini-3.8-flash for target medium (nearest lower)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-code-reviewer",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "claude-opus-5-5-xhigh",
+      "why": "counterpart: inferred vendor anthropic differs from the inferred execution vendor google (D-14); best review score within ceiling (no ceiling); effort variant xhigh of inferred family claude-opus-5-5 for target xhigh (exact)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-executor",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "gemini-3.8-flash-low",
+      "why": "best execution score within ceiling (no ceiling); effort variant low of inferred family gemini-3.8-flash for target medium (nearest lower)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-plan-checker",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "claude-opus-5-5-high",
+      "why": "counterpart: inferred vendor anthropic differs from the inferred gsd-planner vendor google (D-14); best review score within ceiling (no ceiling); effort variant high of inferred family claude-opus-5-5 for target high (exact)"
+    },
+    {
+      "existing": null,
+      "key": "model_profile",
+      "op": "set",
+      "source": "preset",
+      "value": "adaptive",
+      "why": "profile adaptive (adaptive recommended)"
+    },
+    {
+      "existing": null,
+      "key": "model_profile_overrides.cursor.haiku",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "gemini-3.8-flash-low",
+      "why": "no gsd default for cursor; best mechanical score within ceiling (no ceiling); effort variant low of inferred family gemini-3.8-flash for target low (exact)"
+    },
+    {
+      "existing": null,
+      "key": "model_profile_overrides.cursor.opus",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "gemini-3.8-flash-high",
+      "why": "no gsd default for cursor; best planning score within ceiling (no ceiling); effort variant high of inferred family gemini-3.8-flash for target xhigh (nearest lower)"
+    },
+    {
+      "existing": null,
+      "key": "model_profile_overrides.cursor.sonnet",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "gemini-3.8-flash-high",
+      "why": "no gsd default for cursor; best general score within ceiling (no ceiling); effort variant high of inferred family gemini-3.8-flash for target high (exact)"
+    },
+    {
+      "existing": null,
+      "key": "models.planning",
+      "op": "set",
+      "source": "preset",
+      "value": "opus",
+      "why": "rigor rigorous shifts the whole planning phase to opus"
+    },
+    {
+      "existing": null,
+      "key": "models.verification",
+      "op": "set",
+      "source": "preset",
+      "value": "sonnet",
+      "why": "rigor rigorous shifts the whole verification phase to sonnet"
+    },
+    {
+      "existing": null,
+      "key": "refactor.trigger_enabled",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "candidates": [],
+      "existing": null,
+      "key": "review.default_reviewers",
+      "op": "set",
+      "source": "preset",
+      "status": "needs_choice",
+      "value": null,
+      "why": "reserved for Phase 18 cross-AI selection (D-19)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.code_review_depth",
+      "op": "set",
+      "source": "preset",
+      "value": "deep",
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.cross_ai_execution",
+      "op": "set",
+      "source": "preset",
+      "value": false,
+      "why": "cross-AI exec answer: n (defaulted)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.nyquist_validation",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.pattern_mapper",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.plan_check",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.plan_review_convergence",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "cross-AI review answer: y (defaulted)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.research",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.security_asvs_level",
+      "op": "set",
+      "source": "preset",
+      "value": 2,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.security_block_on",
+      "op": "set",
+      "source": "preset",
+      "value": "medium",
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.tdd_mode",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.ui_phase",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.ui_review",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    },
+    {
+      "existing": null,
+      "key": "workflow.verifier",
+      "op": "set",
+      "source": "preset",
+      "value": true,
+      "why": "rigor rigorous preset (spec §5)"
+    }
+  ],
+  "host": "cursor",
+  "inventory_digest": "<digest>",
+  "notes": [
+    {
+      "key": "workflow.live_dom_uat",
+      "kind": "live_dom_uat",
+      "text": "enable workflow.live_dom_uat via plan-set if a browser MCP is available"
+    }
+  ],
+  "profile": "adaptive",
+  "rigor": "rigorous",
+  "schema_version": 1
+}
