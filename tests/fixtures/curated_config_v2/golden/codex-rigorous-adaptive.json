@@ -240,14 +240,49 @@
       "why": "rigor rigorous preset (spec §5)"
     },
     {
-      "candidates": [],
       "existing": null,
       "key": "review.default_reviewers",
       "op": "set",
       "source": "preset",
-      "status": "needs_choice",
-      "value": null,
-      "why": "reserved for Phase 18 cross-AI selection (D-19)"
+      "value": [
+        "claude",
+        "opencode"
+      ],
+      "why": "cross-AI review lanes (claude, opencode) from gsd-core registry (D-24)"
+    },
+    {
+      "existing": null,
+      "key": "review.effort.claude",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "high",
+      "why": "review lane claude: inferred vendor anthropic differs from excluded ['openai'] (SPEC R2); best review score within ceiling (no ceiling); effort variant bare of inferred family claude-opus-5-5 for target high (bare)"
+    },
+    {
+      "effect": "unverified: opencode 2.x run has no --variant flag (Phase 20 risk)",
+      "existing": null,
+      "key": "review.effort.opencode",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "high",
+      "why": "review lane opencode: inferred vendor zhipu differs from excluded ['anthropic', 'openai'] (SPEC R2); best review score within ceiling (no ceiling); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target high (bare)"
+    },
+    {
+      "effect": "alias mapping inferred: Claude Code runs the alias's current model",
+      "existing": null,
+      "key": "review.models.claude",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "opus",
+      "why": "review lane claude: inferred vendor anthropic differs from excluded ['openai'] (SPEC R2); best review score within ceiling (no ceiling); effort variant bare of inferred family claude-opus-5-5 for target high (bare)"
+    },
+    {
+      "existing": null,
+      "key": "review.models.opencode",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "zai-coding-plan/glm-5.3",
+      "why": "review lane opencode: inferred vendor zhipu differs from excluded ['anthropic', 'openai'] (SPEC R2); best review score within ceiling (no ceiling); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target high (bare)"
     },
     {
       "existing": null,

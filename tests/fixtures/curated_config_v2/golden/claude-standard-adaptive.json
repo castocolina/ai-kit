@@ -131,14 +131,31 @@
       "why": "profile adaptive (adaptive recommended)"
     },
     {
-      "candidates": [],
       "existing": null,
       "key": "review.default_reviewers",
       "op": "set",
       "source": "preset",
-      "status": "needs_choice",
-      "value": null,
-      "why": "reserved for Phase 18 cross-AI selection (D-19)"
+      "value": [
+        "opencode"
+      ],
+      "why": "cross-AI review lanes (opencode) from gsd-core registry (D-24)"
+    },
+    {
+      "effect": "unverified: opencode 2.x run has no --variant flag (Phase 20 risk)",
+      "existing": null,
+      "key": "review.effort.opencode",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "high",
+      "why": "review lane opencode: inferred vendor zhipu differs from excluded ['anthropic'] (SPEC R2); best review score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target high (bare)"
+    },
+    {
+      "existing": null,
+      "key": "review.models.opencode",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "zai-coding-plan/glm-5.3",
+      "why": "review lane opencode: inferred vendor zhipu differs from excluded ['anthropic'] (SPEC R2); best review score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target high (bare)"
     },
     {
       "existing": null,

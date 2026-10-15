@@ -206,14 +206,48 @@
       "why": "rigor rigorous preset (spec §5)"
     },
     {
-      "candidates": [],
       "existing": null,
       "key": "review.default_reviewers",
       "op": "set",
       "source": "preset",
-      "status": "needs_choice",
-      "value": null,
-      "why": "reserved for Phase 18 cross-AI selection (D-19)"
+      "value": [
+        "opencode",
+        "codex"
+      ],
+      "why": "cross-AI review lanes (opencode, codex) from gsd-core registry (D-24)"
+    },
+    {
+      "existing": null,
+      "key": "review.effort.codex",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "xhigh",
+      "why": "review lane codex: inferred vendor openai differs from excluded ['anthropic', 'zhipu'] (SPEC R2); best review score within ceiling (no ceiling); effort variant bare of inferred family gpt-5.6-sol for target high (bare)"
+    },
+    {
+      "effect": "unverified: opencode 2.x run has no --variant flag (Phase 20 risk)",
+      "existing": null,
+      "key": "review.effort.opencode",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "high",
+      "why": "review lane opencode: inferred vendor zhipu differs from excluded ['anthropic'] (SPEC R2); best review score within ceiling (no ceiling); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target high (bare)"
+    },
+    {
+      "existing": null,
+      "key": "review.models.codex",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "gpt-5.6-sol",
+      "why": "review lane codex: inferred vendor openai differs from excluded ['anthropic', 'zhipu'] (SPEC R2); best review score within ceiling (no ceiling); effort variant bare of inferred family gpt-5.6-sol for target high (bare)"
+    },
+    {
+      "existing": null,
+      "key": "review.models.opencode",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "zai-coding-plan/glm-5.3",
+      "why": "review lane opencode: inferred vendor zhipu differs from excluded ['anthropic'] (SPEC R2); best review score within ceiling (no ceiling); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target high (bare)"
     },
     {
       "existing": null,

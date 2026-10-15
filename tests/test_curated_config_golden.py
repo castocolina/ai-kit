@@ -315,6 +315,8 @@ class TestGoldenProperties(unittest.TestCase):
                 for entry in entries:
                     if entry.get("source") != "catalog-score":
                         continue
+                    if entry["key"].startswith("review."):
+                        continue
                     matches = resolve_host_candidates(inv, entry.get("value"))
                     self.assertTrue(matches)
                     self.assertTrue(any(m.get("score_axes", 0) > 0 for m in matches))
@@ -392,6 +394,33 @@ class TestGoldenProperties(unittest.TestCase):
                     )
                     self.assertEqual(sonnet.get("status"), "needs_choice")
                     self.assertEqual(sonnet.get("candidates"), [])
+
+    def test_lanes_never_host(self):
+        lanes = _tables_body().get("review_lanes") or []
+        model_keys = {
+            lane["model_key"]
+            for lane in lanes
+            if isinstance(lane, dict) and lane.get("model_key")
+        }
+        effort_keys = {
+            lane["effort_key"]
+            for lane in lanes
+            if isinstance(lane, dict) and lane.get("effort_key")
+        }
+        for host_name, rigor, profile in ALL_GOLDEN_CASES:
+            with self.subTest(host=host_name, rigor=rigor, profile=profile):
+                plan = self._load_golden(golden_basename(host_name, rigor, profile))
+                em = {e["key"]: e for e in plan["entries"]}
+                reviewers = em.get("review.default_reviewers", {}).get("value")
+                if not reviewers:
+                    continue
+                for slug in reviewers:
+                    self.assertNotIn(slug, (host_name, "pi"), host_name)
+                for key, entry in em.items():
+                    if key.startswith("review.models.") and entry.get("op") == "set":
+                        self.assertIn(key, model_keys, key)
+                    if key.startswith("review.effort.") and entry.get("op") == "set":
+                        self.assertIn(key, effort_keys, key)
 
     def test_exec_targets_never_host(self):
         forbidden = {"grok", "claude"}

@@ -739,93 +739,197 @@ def _exec_command_why(targets: list[cross_ai.Target]) -> str:
     return f"cross-AI execution runner (18 D-09); targets: {names}"
 
 
-def _cross_ai_layer(ctx: PlanCtx, _prior_entries: list) -> tuple[list, list]:
+def _review_lane_note(key: str, text: str) -> dict:
+    return {"kind": "review_lane", "key": key, "text": text}
+
+
+def _review_off_entry(ctx: PlanCtx, why: str) -> dict:
+    return make_entry(ctx, "workflow.plan_review_convergence", False, "preset", why)
+
+
+def _no_lane_reason(inv: dict, planner_vendor: str | None) -> str:
+    eligible = cross_ai.eligible_lanes(inv)
+    if not inv.get("installed_runtimes"):
+        missing = "no installed non-host lane CLI"
+    elif not eligible:
+        missing = "no enumerated models on an installed non-host lane"
+    elif planner_vendor is None:
+        missing = "planner vendor is unknown"
+    else:
+        missing = f"no lane whose vendor differs from {planner_vendor}"
+    return f"no eligible review lane: {missing}; re-enable with plan-set"
+
+
+def _append_lane_entries(ctx: PlanCtx, entries: list, lane: cross_ai.Lane) -> None:
+    accepted = set(ctx.inv["gsd_core"]["valid_keys"]["accepted"])
+    extra: dict = {}
+    if lane.slug == "claude":
+        extra["effect"] = cross_ai.CLAUDE_ALIAS_EFFECT
+    entries.append(
+        make_entry(
+            ctx,
+            lane.model_key,
+            lane.model,
+            lane.source,
+            lane.why,
+            **extra,
+        )
+    )
+    effort = lane.effort
+    effort_key = lane.effort_key
+    if effort is None or effort_key is None or effort_key not in accepted:
+        return
+    eff_extra: dict = {}
+    if lane.slug == "opencode":
+        eff_extra["effect"] = cross_ai.OPENCODE_EFFORT_EFFECT
+    entries.append(
+        make_entry(ctx, effort_key, effort, lane.source, lane.why, **eff_extra)
+    )
+
+
+def _cross_ai_review_entries(
+    ctx: PlanCtx, prior_entries: list, answer: dict,
+) -> tuple[list, list]:
+    entries: list = []
+    notes: list = []
+    if answer["answer"] != "y":
+        return entries, notes
+    planner_model = _agent_slot_model(ctx, prior_entries, "gsd-planner")
+    planner_vendor, _ = _facts(ctx, _host_cands(ctx), planner_model)
+    if planner_vendor is None:
+        why = _no_lane_reason(ctx.inv, None)
+        entries.append(_review_off_entry(ctx, why))
+        notes.append(_review_lane_note("workflow.plan_review_convergence", why))
+        return entries, notes
+    lanes, lane_notes = cross_ai.select_lanes(ctx.inv, ctx.opts.rigor, planner_vendor)
+    notes.extend(lane_notes)
+    if not lanes:
+        why = _no_lane_reason(ctx.inv, planner_vendor)
+        entries.append(_review_off_entry(ctx, why))
+        notes.append(_review_lane_note("workflow.plan_review_convergence", why))
+        return entries, notes
+    entries.append(
+        make_entry(
+            ctx,
+            "workflow.plan_review_convergence",
+            True,
+            "preset" if answer["defaulted"] else "user",
+            _cross_ai_why(ctx, "review", answer),
+        )
+    )
+    slugs = [lane.slug for lane in lanes]
+    entries.append(
+        make_entry(
+            ctx,
+            "review.default_reviewers",
+            slugs,
+            "preset",
+            f"cross-AI review lanes ({', '.join(slugs)}) from gsd-core registry (D-24)",
+        )
+    )
+    for lane in lanes:
+        _append_lane_entries(ctx, entries, lane)
+    return entries, notes
+
+
+def _cross_ai_exec_entries(ctx: PlanCtx, answer: dict, targets: list) -> tuple[list, list]:
+    entries: list = []
+    notes: list = []
+    flag_key = "workflow.cross_ai_execution"
+    command_key = "workflow.cross_ai_command"
+    yes = answer["answer"] == "y"
+    entries.append(
+        make_entry(
+            ctx,
+            flag_key,
+            yes,
+            "preset" if answer["defaulted"] else "user",
+            _cross_ai_why(ctx, "exec", answer),
+        )
+    )
+    if not yes:
+        return entries, notes
+    if not targets:
+        entries.append(
+            make_entry(
+                ctx,
+                command_key,
+                None,
+                "preset",
+                cross_ai.NO_TARGET_TEXT,
+                status="needs_choice",
+                candidates=[],
+            )
+        )
+        return entries, notes
+    cmd_extra: dict = {}
+    if any(t.model is None for t in targets):
+        cmd_extra = {"status": "needs_choice", "candidates": []}
+    entries.append(
+        make_entry(
+            ctx,
+            command_key,
+            cross_ai.CROSS_AI_COMMAND,
+            "preset",
+            _exec_command_why(targets),
+            **cmd_extra,
+        )
+    )
+    timeout_key = "workflow.cross_ai_timeout"
+    entries.append(
+        make_entry(
+            ctx,
+            timeout_key,
+            cross_ai.timeout_value(presets.get_dotted(ctx.existing, timeout_key)),
+            "preset",
+            f"cross-AI outer timeout (18 D-12); minimum {cross_ai.MIN_TIMEOUT_S}s",
+        )
+    )
+    mgr_key = "manager.flags.execute"
+    entries.append(
+        make_entry(
+            ctx,
+            mgr_key,
+            cross_ai.manager_flags_value(presets.get_dotted(ctx.existing, mgr_key)),
+            "preset",
+            "append --cross-ai for cross-AI execution (18 D-09)",
+        )
+    )
+    notes.append({
+        "kind": "cross_ai_run",
+        "key": mgr_key,
+        "text": "cross-AI execution is on: run phases with --cross-ai",
+    })
+    return entries, notes
+
+
+def _cross_ai_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     """Layer 3: cross-AI booleans mirror the answers; exec yes wires runner keys (18 D-09)."""
     answers = cross_ai_answers(ctx)
     entries = []
     notes = []
     targets = cross_ai.exec_targets(ctx.inv, ctx.opts.rigor)
-    for answers_key, flag_key, command_key in (
-        ("review", "workflow.plan_review_convergence", "review.default_reviewers"),
-        ("exec", "workflow.cross_ai_execution", "workflow.cross_ai_command"),
-    ):
-        answer = answers[answers_key]
-        yes = answer["answer"] == "y"
+    review_answer = answers["review"]
+    if review_answer["answer"] == "n":
         entries.append(
             make_entry(
                 ctx,
-                flag_key,
-                yes,
-                "preset" if answer["defaulted"] else "user",
-                _cross_ai_why(ctx, answers_key, answer),
+                "workflow.plan_review_convergence",
+                False,
+                "preset" if review_answer["defaulted"] else "user",
+                _cross_ai_why(ctx, "review", review_answer),
             )
         )
-        if not yes:
-            continue
-        if answers_key == "review":
-            entries.append(
-                make_entry(
-                    ctx,
-                    command_key,
-                    None,
-                    "preset",
-                    "reserved for Phase 18 cross-AI selection (D-19)",
-                    status="needs_choice",
-                    candidates=[],
-                )
-            )
-            continue
-        if not targets:
-            entries.append(
-                make_entry(
-                    ctx,
-                    command_key,
-                    None,
-                    "preset",
-                    cross_ai.NO_TARGET_TEXT,
-                    status="needs_choice",
-                    candidates=[],
-                )
-            )
-            continue
-        cmd_extra: dict = {}
-        if any(t.model is None for t in targets):
-            cmd_extra = {"status": "needs_choice", "candidates": []}
-        entries.append(
-            make_entry(
-                ctx,
-                command_key,
-                cross_ai.CROSS_AI_COMMAND,
-                "preset",
-                _exec_command_why(targets),
-                **cmd_extra,
-            )
+    else:
+        review_entries, review_notes = _cross_ai_review_entries(
+            ctx, prior_entries, review_answer,
         )
-        timeout_key = "workflow.cross_ai_timeout"
-        entries.append(
-            make_entry(
-                ctx,
-                timeout_key,
-                cross_ai.timeout_value(presets.get_dotted(ctx.existing, timeout_key)),
-                "preset",
-                f"cross-AI outer timeout (18 D-12); minimum {cross_ai.MIN_TIMEOUT_S}s",
-            )
-        )
-        mgr_key = "manager.flags.execute"
-        entries.append(
-            make_entry(
-                ctx,
-                mgr_key,
-                cross_ai.manager_flags_value(presets.get_dotted(ctx.existing, mgr_key)),
-                "preset",
-                "append --cross-ai for cross-AI execution (18 D-09)",
-            )
-        )
-        notes.append({
-            "kind": "cross_ai_run",
-            "key": mgr_key,
-            "text": "cross-AI execution is on: run phases with --cross-ai",
-        })
+        entries.extend(review_entries)
+        notes.extend(review_notes)
+
+    exec_entries, exec_notes = _cross_ai_exec_entries(ctx, answers["exec"], targets)
+    entries.extend(exec_entries)
+    notes.extend(exec_notes)
     exec_ans = answers["exec"]
     if exec_ans["answer"] == "n" and exec_ans["defaulted"]:
         _, def_why = cross_ai.exec_default(ctx.host, targets)

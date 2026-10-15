@@ -255,7 +255,7 @@ SPECIALIST_OPENCODE = [
 
 def make_inventory(
     host="codex", candidates=(), project=None, existing=None, conflicts=(), rejected=(),
-    global_values=None, global_path=None, extra_accepted=(),
+    global_values=None, global_path=None, extra_accepted=(), review_lanes=(),
 ):
     """A full schema-version-2 inventory (18-02) with token paths."""
     from ai_kit_gsd_curated_config import host as host_mod
@@ -281,7 +281,7 @@ def make_inventory(
             "model_profiles": TABLES["model_profiles"],
             "agent_to_phase_type": TABLES["agent_to_phase_type"],
             "valid_keys": {"accepted": accepted, "rejected": list(rejected)},
-            "review_lanes": [],
+            "review_lanes": list(review_lanes),
             "skills_roots": {},
             "path": "<project>/.claude/gsd-core",
             "scope": "local",
@@ -1536,19 +1536,64 @@ class TestDeterminism(unittest.TestCase):
         self.assertIn(needle, text)
 
 
+
+
+def _fixture_review_lanes():
+    path = os.path.join(
+        REPO_ROOT, "tests", "fixtures", "curated_config_v2", "gsd_tables_1_16.json"
+    )
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)["review_lanes"]
+
+
+
+def _review_lane_accepted_keys():
+    keys = ["review.default_reviewers"]
+    for lane in _fixture_review_lanes():
+        for field in ("model_key", "effort_key"):
+            val = lane.get(field)
+            if isinstance(val, str) and val:
+                keys.append(val)
+    return keys
+
 class TestCrossAi(unittest.TestCase):
-    """D-19: booleans mirror the answers; a yes reserves a needs_choice slot."""
+    """D-19/XAI-01: review yes wires registry lanes; without lanes convergence stays off."""
 
     def test_review_yes(self):
-        plan = build(make_inventory(), rigor="standard", cross_ai_review="y")
-        self.assertTrue(entry_map(plan)["workflow.plan_review_convergence"]["value"])
-        reserved = entry_map(plan)["review.default_reviewers"]
-        self.assertEqual(
-            {k: reserved[k] for k in ("op", "value", "status", "candidates", "source")},
-            {"op": "set", "value": None, "status": "needs_choice", "candidates": [],
-             "source": "preset"},
+        inv = make_inventory(
+            host="claude",
+            candidates=[
+                cand(
+                    "claude-opus-5-5",
+                    runtime="claude",
+                    vendor="anthropic",
+                    score_axes=3,
+                    purpose_scores={"planning": 90.0, "review": 1.0},
+                ),
+                cand(
+                    "gpt-5.6-sol",
+                    runtime="codex",
+                    is_host=False,
+                    vendor="openai",
+                    price=2,
+                    score_axes=3,
+                    purpose_scores={"review": 90.0, "planning": 1.0},
+                ),
+            ],
+            review_lanes=_fixture_review_lanes(),
+            extra_accepted=_review_lane_accepted_keys(),
         )
-        self.assertEqual(reserved["why"], "reserved for Phase 18 cross-AI selection (D-19)")
+        inv["installed_runtimes"] = ["claude", "codex"]
+        plan = build(inv, rigor="standard", cross_ai_review="y")
+        em = entry_map(plan)
+        self.assertTrue(em["workflow.plan_review_convergence"]["value"])
+        self.assertEqual(em["review.default_reviewers"]["value"], ["codex"])
+        self.assertEqual(em["review.models.codex"]["value"], "gpt-5.6-sol")
+
+    def test_review_yes_no_lanes_turns_convergence_off(self):
+        plan = build(make_inventory(), rigor="standard", cross_ai_review="y")
+        self.assertFalse(entry_map(plan)["workflow.plan_review_convergence"]["value"])
+        self.assertNotIn("review.default_reviewers", entry_map(plan))
 
     def test_explicit_answer_source_user_default_preset(self):
         """A-WR-09: R7 `source: user` marks an explicit answer, `preset` a rigor default."""
@@ -1615,11 +1660,12 @@ class TestCrossAi(unittest.TestCase):
             self.assertEqual(
                 plan["cross_ai"]["exec"], {"answer": want_exec, "defaulted": True}, host
             )
-            self.assertEqual(
-                entry_map(plan)["workflow.plan_review_convergence"]["value"],
-                want_review == "y",
-                host,
-            )
+            convergence = entry_map(plan)["workflow.plan_review_convergence"]["value"]
+            if want_review == "y":
+                has_lanes = bool(cross_ai.eligible_lanes(inv)) and host != "pi"
+                self.assertEqual(convergence, has_lanes, host)
+            else:
+                self.assertFalse(convergence, host)
         inv = make_inventory(host="claude", candidates=())
         inv["installed_runtimes"] = []
         plan = build(inv, rigor="standard")
@@ -2392,13 +2438,12 @@ class TestReconcileConflicts(unittest.TestCase):
             },
         )
         plan = build(inv, cross_ai_review="y")
-        em = entry_map(plan)
-        self.assertEqual(em["review.default_reviewers"]["status"], "needs_choice")
         unsets = [
             e for e in plan["entries"]
             if e["key"] == "review.default_reviewers" and e["op"] == "unset"
         ]
-        self.assertFalse(unsets)
+        self.assertEqual(len(unsets), 1)
+        self.assertFalse(entry_map(plan)["workflow.plan_review_convergence"]["value"])
 
     def test_cross_ai_review_n_unsets_reviewers(self):
         inv = make_inventory(

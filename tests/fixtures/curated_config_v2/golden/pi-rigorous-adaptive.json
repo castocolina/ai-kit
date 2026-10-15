@@ -165,16 +165,6 @@
       "why": "rigor rigorous preset (spec §5)"
     },
     {
-      "candidates": [],
-      "existing": null,
-      "key": "review.default_reviewers",
-      "op": "set",
-      "source": "preset",
-      "status": "needs_choice",
-      "value": null,
-      "why": "reserved for Phase 18 cross-AI selection (D-19)"
-    },
-    {
       "existing": null,
       "key": "workflow.code_review_depth",
       "op": "set",
@@ -219,8 +209,8 @@
       "key": "workflow.plan_review_convergence",
       "op": "set",
       "source": "preset",
-      "value": true,
-      "why": "cross-AI review answer: y (defaulted)"
+      "value": false,
+      "why": "no eligible review lane: planner vendor is unknown; re-enable with plan-set"
     },
     {
       "existing": null,
@@ -291,6 +281,11 @@
       "key": null,
       "kind": "pi",
       "text": "pi: only an opt-in model_profile_overrides.pi.sonnet is offered; no per-agent model_overrides (effect unverified on pi, gsd-core registry: namedDispatch false)"
+    },
+    {
+      "key": "workflow.plan_review_convergence",
+      "kind": "review_lane",
+      "text": "no eligible review lane: planner vendor is unknown; re-enable with plan-set"
     }
   ],
   "profile": "adaptive",
