@@ -139,10 +139,9 @@ def detect_cursor_agent_models(binary: str, run_fn=subprocess.run) -> list:
     line with no ` - ` separator (defensive — a format change should
     degrade to an empty/partial list here, never crash detection).
 
-    ai-kit only reads here, but cursor-agent itself may refresh its own
-    caches in ~/.cursor/cli-config.json when invoked (the 16.1-24 live checks
-    saw that file change while ai-kit only ran `cursor-agent models`), so a
-    before/after config fingerprint can change."""
+    ai-kit only reads here, but `cursor-agent models` itself rewrites the
+    `privacyCache` key of ~/.cursor/cli-config.json (reproduced under a scratch
+    HOME in 16.1), so a before/after config fingerprint changes."""
     try:
         result = run_fn([binary, "models"], capture_output=True, text=True,
                          check=False, timeout=15)
