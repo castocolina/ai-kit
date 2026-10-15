@@ -241,6 +241,20 @@ class TestWrappers(unittest.TestCase):
             gsd_tools.config_path(self.TOOLS, "/p", run_fn=recording_run([(1, "", "err")]))
         )
 
+    def test_config_path_timeout_or_spawn_error_is_none(self):
+        """B-WR-03: a hung or unspawnable gsd-tools never blocks or crashes the caller."""
+        seen = []
+
+        def raiser(exc):
+            def run(cmd, **kw):
+                seen.append(kw.get("timeout"))
+                raise exc
+            return run
+
+        for exc in (subprocess.TimeoutExpired("node", 10), OSError("no node")):
+            self.assertIsNone(gsd_tools.config_path(self.TOOLS, "/p", run_fn=raiser(exc)))
+        self.assertEqual(seen, [10, 10])
+
     def test_ensure_config_exists(self):
         run = recording_run([(0, "ok", "")])
         self.assertTrue(gsd_tools.ensure_config_exists(self.TOOLS, "/p", run_fn=run))

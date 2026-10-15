@@ -235,13 +235,17 @@ def config_path(
     run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> str | None:
     """Runs `config-path --cwd <dir>` (which honors workstreams); returns the resolved
-    config path, or `None` on failure or empty output."""
-    result = run_fn(
-        [tools.node_bin, tools.gsd_tools_path, "config-path", "--cwd", project_dir],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    config path, or `None` on failure, spawn error, a 10 s timeout or empty output."""
+    try:
+        result = run_fn(
+            [tools.node_bin, tools.gsd_tools_path, "config-path", "--cwd", project_dir],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
