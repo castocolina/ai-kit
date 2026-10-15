@@ -1060,6 +1060,17 @@ class TestSpecialistRules(unittest.TestCase):
         unconfirmed = [n for n in plan["notes"] if n["kind"] == "router_unconfirmed"]
         self.assertEqual(len(unconfirmed), 1)
         self.assertEqual(unconfirmed[0]["key"], "router-env/my-coding")
+        self.assertIn("to let it win its slot", unconfirmed[0]["text"])
+
+    def test_unconfirmed_review_router_promises_no_slot(self):
+        """A-WR-05: no Phase 17 path lets a review router win a slot."""
+        review = cand("router-env/my-plan-review", runtime="opencode", is_router=True,
+                      name_declared_purpose="review")
+        inv = make_inventory(host="opencode", candidates=[*SPECIALIST_OPENCODE[:-1], review])
+        notes = [n for n in build(inv)["notes"] if n["kind"] == "router_unconfirmed"]
+        self.assertEqual(len(notes), 1)
+        self.assertNotIn("win its slot", notes[0]["text"])
+        self.assertIn("Phase 18 cross-AI review selection", notes[0]["text"])
 
     def test_claude_executor_same_sonnet_slot_no_override(self):
         cands = [

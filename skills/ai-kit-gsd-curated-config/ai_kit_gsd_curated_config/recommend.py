@@ -454,12 +454,18 @@ def _router_unconfirmed_notes(ctx: PlanCtx, cands: list) -> list:
             continue
         purpose = cand.get("name_declared_purpose")
         if purpose and not cand.get("router_confirmed"):
+            # Only execute routers can win a Phase 17 slot; review routers wait for Phase 18.
+            effect = (
+                "to let it win its slot"
+                if purpose == "execute"
+                else "for Phase 18 cross-AI review selection"
+            )
             notes.append({
                 "kind": "router_unconfirmed",
                 "key": cand["model"],
                 "text": (
                     f"router {cand['model']} declares purpose {purpose} but is not "
-                    "user-confirmed; confirm it via ai-kit-spec-config to let it win its slot"
+                    f"user-confirmed; confirm it via ai-kit-spec-config {effect}"
                 ),
             })
     return notes

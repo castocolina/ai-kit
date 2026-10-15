@@ -347,7 +347,7 @@
     {
       "key": "router-env/my-plan-review",
       "kind": "router_unconfirmed",
-      "text": "router router-env/my-plan-review declares purpose review but is not user-confirmed; confirm it via ai-kit-spec-config to let it win its slot"
+      "text": "router router-env/my-plan-review declares purpose review but is not user-confirmed; confirm it via ai-kit-spec-config for Phase 18 cross-AI review selection"
     },
     {
       "key": "model_overrides.gsd-code-reviewer",
