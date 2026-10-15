@@ -667,7 +667,7 @@ def tie_key(c: dict, purpose: str):
 ```
 In a `needs_choice` whose candidates are unscored, do **not** use `source: catalog-score`. Use `source: preset` or a dedicated `"no-catalog"` reason (the MUST NOT in the SPEC). Planner: pin the exact `source` for `needs_choice` within the enum `preset | catalog-score | curated-affinity | router-declared | user | native`. The recommendation is `preset`, with `why` carrying `no scores`.
 
-## Open Questions Resolution (the six SPEC edges)
+## Open Questions Resolution (the six SPEC edges) (RESOLVED — see 17-CONTEXT D-25..D-31)
 
 1. **R10 edge row "unclassified"**
    - Evidence: this is an edge-floor engine artifact ("No shape cue"). The R10 rules are concrete, so classify the edges from locked decisions:
@@ -704,7 +704,7 @@ In a `needs_choice` whose candidates are unscored, do **not** use `source: catal
    - Without the probe, R12's guarantee ("never proposes a key the host gsd-core rejects") cannot hold. An empty accepted set would drop everything, and skipping the check would let rejected keys through. Phase 18 D-18 relies on the same probe.
    - **Recommend: exit 2**, like a missing gsd-core. Name the gsd-core path and version and say "isValidConfigKey unavailable (require failed or export missing)". The node script's `null` output (Pattern 1) is the single signal for both causes. Not a product decision.
 
-### Additional open questions found during research
+### Additional open questions found during research (RESOLVED — frontend-capable: D-28; live_dom_uat: D-29; runtime mismatch: D-30, an info note only, not an unset; probe side effects: D-32; OQ5 note granularity: D-26, one note per key)
 
 1. **"Frontend-capable" for `gsd-ui-researcher` (R10/REC-04) is undefined.** No catalog field exists, and spec §4 says only "best frontend-capable model".
    - Recommend `image_input is True` (reads mockups and screenshots) ranked by `general`, overriding only when the ui-researcher's slot model lacks `image_input`. [ASSUMED: needs user confirmation]
@@ -748,7 +748,7 @@ In a `needs_choice` whose candidates are unscored, do **not** use `source: catal
 | A9 | One normalization pool (all candidates) for purpose scores | Pattern 3 | Relative order can shift vs per-host normalization |
 | A10 | `needs_choice` without scores uses `source: preset` | Code Examples | Conflicts with how Phase 18 interprets `source` |
 
-## Open Questions
+## Open Questions (RESOLVED — answers are locked in 17-CONTEXT D-25..D-32; where a recommendation here differs, the D-XX wins)
 
 1. **Product: R4 no-scores ordering**: recommend price ascending then id (OQ2).
 2. **Product: R12 note granularity**: recommend one note per family naming each key (OQ5), then amend the SPEC.

@@ -130,6 +130,10 @@ Phase 18 owns the selection rules.
   (`git rev-parse --show-toplevel`, then `.claude/gsd-core`, then global installs). The
   inventory records `scope: local|global`, and warns when it resolved global inside a worktree
   whose main checkout has a local install (they can differ in version).
+  - *(amended 2026-10-15, RUN-40a; TypeSafe A 0.92, Laya A 0.63; follows 22 D-08)* On a pi host
+    the resolver tries `<project>/.pi/gsd-core` first, then GSD's shared order, which already
+    includes `$PI_CODING_AGENT_DIR` or `~/.pi/agent`. Without this, pi silently resolves Claude's
+    tree.
 - **D-12: Unscored is decided per pool and per pick (R4).** A candidate with zero score axes is
   never auto-picked; it appears only in `needs_choice` with a `no scores` tag. A partly scored
   candidate keeps the ranker's 49/100 missing-axis default. The only exception is a
