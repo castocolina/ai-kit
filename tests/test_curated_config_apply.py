@@ -1,4 +1,5 @@
 """Apply dry-run, backup/marker unit tests (plans 18-16, 18-17)."""
+import ast
 import contextlib
 import copy
 import errno
@@ -1829,6 +1830,98 @@ class TestCommitPointEdges(unittest.TestCase):
             joined = [" ".join(row) for row in rec.argv_log]
             self.assertFalse(any("config-new-project" in row for row in joined))
             self.assertFalse(any("config-set" in row for row in joined))
+
+
+
+def _apply_write_path_findings(tree: ast.AST) -> list[str]:
+    findings: list[str] = []
+
+    def mode_has_write(node: ast.Call) -> bool:
+        if len(node.args) < 2:
+            return False
+        mode = node.args[1]
+        if isinstance(mode, ast.Constant) and isinstance(mode.value, str):
+            return any(ch in mode.value for ch in "wax")
+        return False
+
+    class Visitor(ast.NodeVisitor):
+        def __init__(self):
+            self.func_stack: list[str] = []
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self.func_stack.append(node.name)
+            self.generic_visit(node)
+            self.func_stack.pop()
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self.func_stack.append(node.name)
+            self.generic_visit(node)
+            self.func_stack.pop()
+
+        def visit_Call(self, node: ast.Call) -> None:
+            func = node.func
+            if isinstance(func, ast.Name) and func.id == "open" and mode_has_write(node):
+                findings.append(f"open write at line {node.lineno}")
+            if (
+                isinstance(func, ast.Name)
+                and func.id == "restore_backup"
+                and (not self.func_stack or self.func_stack[-1] != "_rollback")
+            ):
+                findings.append(
+                    f"restore_backup outside _rollback at line {node.lineno}"
+                )
+            if isinstance(func, ast.Attribute):
+                base = func.value
+                if isinstance(base, ast.Name):
+                    if base.id == "os" and func.attr in ("replace", "rename"):
+                        findings.append(f"os.{func.attr} at line {node.lineno}")
+                    if base.id == "shutil" and func.attr.startswith("copy"):
+                        findings.append(f"shutil.{func.attr} at line {node.lineno}")
+                if func.attr in ("cache_write_text", "cache_write_bytes"):
+                    findings.append(f"{func.attr} at line {node.lineno}")
+                if func.attr == "restore_backup" and (
+                    not self.func_stack or self.func_stack[-1] != "_rollback"
+                ):
+                    findings.append(
+                        f"restore_backup outside _rollback at line {node.lineno}"
+                    )
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
+    return findings
+
+
+class TestWritePathDiscipline(unittest.TestCase):
+    def test_apply_has_no_direct_write(self) -> None:
+        repo = os.path.join(os.path.dirname(__file__), "..")
+        path = os.path.join(
+            repo,
+            "skills",
+            "ai-kit-gsd-curated-config",
+            "ai_kit_gsd_curated_config",
+            "apply.py",
+        )
+        with open(path, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read(), filename=path)
+        self.assertEqual(_apply_write_path_findings(tree), [])
+
+    def test_scan_flags_a_direct_write(self) -> None:
+        cases = {
+            "open": 'def o():\n    open(p, "w")\n',
+            "os.replace": "def o():\n    os.replace(a, b)\n",
+            "os.rename": "def o():\n    os.rename(a, b)\n",
+            "shutil.copyfile": "def o():\n    shutil.copyfile(a, b)\n",
+            "cache_write_bytes": "def o():\n    x.cache_write_bytes(p, b)\n",
+            "cache_write_text": "def o():\n    x.cache_write_text(p, s)\n",
+            "restore_backup_outside": "def other():\n    restore_backup(c, b)\n",
+        }
+        for name, src in cases.items():
+            with self.subTest(rule=name):
+                tree = ast.parse(src)
+                hits = _apply_write_path_findings(tree)
+                self.assertEqual(len(hits), 1, hits)
+        allowed = ast.parse("def _rollback():\n    restore_backup(c, b)\n")
+        self.assertEqual(_apply_write_path_findings(allowed), [])
 
 
 if __name__ == "__main__":
