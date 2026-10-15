@@ -1,6 +1,7 @@
 """Apply dry-run, backup/marker unit tests (plans 18-16, 18-17)."""
 import contextlib
 import copy
+import errno
 import io
 import json
 import os
@@ -1118,13 +1119,75 @@ def _write_apply(plan_path, inv_path, project, env, run_fn):
     return apply_mod.run_apply(inputs, deps, _strict_encode())
 
 
+def _decode_config_set_value(encoded: str):
+    if encoded == "null":
+        return None
+    if encoded == "true":
+        return True
+    if encoded == "false":
+        return False
+    if encoded and encoded[0] in "[{":
+        return json.loads(encoded)
+    try:
+        return int(encoded)
+    except ValueError:
+        pass
+    try:
+        return float(encoded)
+    except ValueError:
+        return encoded
+
+
+def _mutate_config_file(config_path: str, key: str, value) -> None:
+    with open(config_path, encoding="utf-8") as handle:
+        live = json.load(handle)
+    parts = key.split(".")
+    if value is None:
+        node = live
+        for part in parts[:-1]:
+            if not isinstance(node, dict) or part not in node:
+                return
+            node = node[part]
+        if isinstance(node, dict):
+            node.pop(parts[-1], None)
+        for index in range(len(parts) - 1, 0, -1):
+            parent_key = parts[:index]
+            cursor = live
+            for part in parent_key:
+                cursor = cursor.get(part) if isinstance(cursor, dict) else None
+            if isinstance(cursor, dict) and not cursor:
+                parent = live
+                for part in parent_key[:-1]:
+                    parent = parent[part]
+                parent.pop(parent_key[-1], None)
+    else:
+        node = live
+        for part in parts[:-1]:
+            next_node = node.get(part)
+            if not isinstance(next_node, dict):
+                next_node = {}
+                node[part] = next_node
+            node = next_node
+        node[parts[-1]] = value
+    with open(config_path, "w", encoding="utf-8") as handle:
+        json.dump(live, handle)
+        handle.write("\n")
+
+
 class _RecordingRun:
-    def __init__(self, base: FakeRun, *, fail_config_set: int | None = None):
+    def __init__(
+        self,
+        base: FakeRun,
+        *,
+        fail_config_set: int | None = None,
+        config_path: str | None = None,
+    ):
         self._base = base
         self.argv_log: list[list[str]] = []
         self.env_log: list[dict] = []
         self._fail_config_set = fail_config_set
         self._set_calls = 0
+        self._config_path = config_path
 
     def __call__(self, cmd, **kw):
         row = [str(part) for part in cmd]
@@ -1135,12 +1198,17 @@ class _RecordingRun:
             self._set_calls += 1
             if self._fail_config_set is not None and self._set_calls == self._fail_config_set:
                 return subprocess.CompletedProcess(cmd, 1, "", "injected")
+            if self._config_path and len(row) >= 6:
+                key = row[4]
+                value = _decode_config_set_value(row[5])
+                _mutate_config_file(self._config_path, key, value)
             return subprocess.CompletedProcess(cmd, 0, '{"updated": true}', "")
         if len(row) >= 3 and row[0] == "node" and row[2] == "config-new-project":
             return subprocess.CompletedProcess(cmd, 0, "created", "")
         if len(row) >= 4 and row[0] == "node" and row[2] == "query" and row[3] == "agent-skills":
             return subprocess.CompletedProcess(cmd, 0, '{"warnings": []}', "")
         return self._base(cmd, **kw)
+
 
 
 def _minimal_plan(host: str, inv: dict, entries: list, artifacts: list | None = None) -> dict:
@@ -1618,6 +1686,149 @@ class TestApplyWritePath(unittest.TestCase):
             with open(runner, "rb") as handle:
                 self.assertNotEqual(handle.read(), before_bytes)
             self.assertIsNone(config_backup.read_marker(config_path))
+
+
+
+class _AgentSkillsFailRun(_RecordingRun):
+    def __call__(self, cmd, **kw):
+        row = [str(part) for part in cmd]
+        if len(row) >= 4 and row[0] == "node" and row[3] == "agent-skills":
+            return subprocess.CompletedProcess(cmd, 1, "", "skills probe failed")
+        return super().__call__(cmd, **kw)
+
+
+class TestCommitPointEdges(unittest.TestCase):
+    def test_agent_skills_failure_still_commits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            rec = _AgentSkillsFailRun(fake)
+            real_restore = config_backup.restore_backup
+            with mock.patch.object(
+                config_backup, "restore_backup", wraps=real_restore
+            ) as restore:
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            self.assertTrue(report["applied"])
+            for key, row in report["skill_check"].items():
+                if key == "skipped":
+                    continue
+                self.assertIn("error", row)
+            restore.assert_not_called()
+            self.assertIsNone(config_backup.read_marker(config_path))
+
+    def test_commit_record_failure_clears_marker_and_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (
+                project,
+                env,
+                inv_path,
+                plan_path,
+                config_path,
+                _inv,
+                fake,
+                runner,
+                _before_bytes,
+                _before_mode,
+            ) = _setup_reapply_change(tmp)
+            rec = _RecordingRun(fake, config_path=config_path)
+            real_update = config_backup.update_marker
+
+            def fail_committed(path, **fields):
+                if fields.get("committed") is True:
+                    raise OSError("marker busy")
+                return real_update(path, **fields)
+
+            with mock.patch.object(
+                config_backup, "update_marker", side_effect=fail_committed
+            ), mock.patch.object(config_backup, "restore_backup") as restore:
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            self.assertTrue(any("committed" in w for w in report["warnings"]))
+            restore.assert_not_called()
+            self.assertIsNone(config_backup.read_marker(config_path))
+            snap = runner + config_backup.SNAPSHOT_SUFFIX
+            self.assertFalse(os.path.isfile(snap))
+
+    def test_commit_and_clear_failure_leaves_marker_and_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (
+                project,
+                env,
+                inv_path,
+                plan_path,
+                config_path,
+                _inv,
+                fake,
+                runner,
+                _before_bytes,
+                _before_mode,
+            ) = _setup_reapply_change(tmp)
+            rec = _RecordingRun(fake, config_path=config_path)
+            real_update = config_backup.update_marker
+
+            def fail_committed(path, **fields):
+                if fields.get("committed") is True:
+                    raise OSError("marker busy")
+                return real_update(path, **fields)
+
+            with mock.patch.object(
+                config_backup, "update_marker", side_effect=fail_committed
+            ), mock.patch.object(
+                config_backup, "clear_marker", side_effect=OSError("clear busy")
+            ), mock.patch.object(
+                config_backup, "discard_snapshot"
+            ) as discard, mock.patch.object(
+                config_backup, "prune_backups"
+            ) as prune:
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            self.assertTrue(any("do not restore the backup" in w for w in report["warnings"]))
+            discard.assert_not_called()
+            prune.assert_not_called()
+            self.assertIsNotNone(config_backup.read_marker(config_path))
+            snap = runner + config_backup.SNAPSHOT_SUFFIX
+            self.assertTrue(os.path.isfile(snap))
+            code2, report2 = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code2, 2)
+            err = report2["error"]
+            self.assertIn("apply --dry-run", err)
+            self.assertIn(snap, err)
+            self.assertIn("restore nothing", err)
+            code3, report3, _, _ = _run_apply(
+                plan_path, inv_path, project, env, fake, dry_run=True
+            )
+            self.assertEqual(code3, 0)
+            assert report3 is not None
+            self.assertTrue(all(row["kind"] == "keep" for row in report3["diff"]))
+            marker_path = config_backup.marker_path(config_path)
+            with open(marker_path, "rb") as handle:
+                before_marker = handle.read()
+            code4, _report4, _, _ = _run_apply(
+                plan_path, inv_path, project, env, fake, dry_run=True
+            )
+            self.assertEqual(code4, 0)
+            with open(marker_path, "rb") as handle:
+                after_marker = handle.read()
+            self.assertEqual(before_marker, after_marker)
+
+    def test_marker_acquire_oserror_leaves_no_planning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _config_path, _inv, fake = _decided_plan(tmp)
+            planning = os.path.join(project, ".planning")
+            shutil.rmtree(planning)
+            rec = _RecordingRun(fake)
+
+            def link_fail(_src, _dst):
+                raise OSError(errno.EPERM, "link denied")
+
+            with mock.patch.object(os, "link", side_effect=link_fail):
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            self.assertIn("link denied", report["error"])
+            self.assertFalse(os.path.exists(planning))
+            joined = [" ".join(row) for row in rec.argv_log]
+            self.assertFalse(any("config-new-project" in row for row in joined))
+            self.assertFalse(any("config-set" in row for row in joined))
 
 
 if __name__ == "__main__":

@@ -10,10 +10,12 @@ import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime
 
 sys.path.insert(
     0,
@@ -21,7 +23,8 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_gsd_curated_config import cli, config_backup, cross_ai_script, plan_io
+from ai_kit_gsd_curated_config import apply as apply_mod
+from ai_kit_gsd_curated_config import cli, config_backup, cross_ai_script, gsd_catalog, plan_io
 from ai_kit_spec import gsd_tools
 
 from tests.test_curated_config_apply import (
@@ -33,6 +36,7 @@ from tests.test_curated_config_apply import (
 from tests.test_curated_config_e2e import REPO_ROOT, _real_node_executable, _RealGsdTestCase
 from tests.test_curated_config_golden import load_fixture, tables_answer
 from tests.test_curated_config_inventory import seed_cache
+from tests.test_curated_config_plan_edit import _run_plan_set
 from tests.test_curated_config_recommend import run_recommend
 from tests.test_curated_config_skills import add_plugin, add_skill
 
@@ -85,6 +89,124 @@ def _real_run(child_env: dict):
         return subprocess.run(cmd, env={**child_env, **call_env}, **kw)
 
     return run
+
+
+def _strict_encode():
+    mod = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
+    assert mod is not None
+    return mod.encode_value_strict
+
+
+def _config_set_keys(log: list[list[str]]) -> list[str]:
+    keys: list[str] = []
+    for row in log:
+        if len(row) >= 5 and row[2] == "query" and row[3] == "config-set":
+            keys.append(row[4])
+    return keys
+
+
+class _ConfigSetWrapper:
+    def __init__(self, inner, *, fail_nth: int | None = None):
+        self.argv_log: list[list[str]] = []
+        self._inner = inner
+        self._fail_nth = fail_nth
+        self._set_calls = 0
+
+    def __call__(self, cmd, **kw):
+        row = [str(part) for part in cmd]
+        self.argv_log.append(row)
+        if (
+            self._fail_nth is not None
+            and len(row) >= 5
+            and row[2] == "query"
+            and row[3] == "config-set"
+        ):
+            self._set_calls += 1
+            if self._set_calls == self._fail_nth:
+                return subprocess.CompletedProcess(cmd, 1, "", "injected fail")
+        return self._inner(cmd, **kw)
+
+
+def _direct_apply(
+    plan_path: str,
+    inv_path: str,
+    project: str,
+    resolve_env: dict,
+    node_bin: str,
+    run_fn,
+    *,
+    now_fn=None,
+) -> tuple[int, dict]:
+    plan, _err = plan_io.load_plan(plan_path)
+    inv, _inv_err = plan_io.load_inventory(inv_path)
+    assert plan is not None and inv is not None
+    inputs = apply_mod.Inputs(plan, plan_path, inv, inv_path, project)
+    deps = apply_mod.ApplyDeps(
+        lambda name: node_bin if name == "node" else None,
+        run_fn,
+        lambda: dict(resolve_env),
+        now_fn=now_fn or (lambda: datetime.now(UTC)),
+    )
+    return apply_mod.run_apply(inputs, deps, _strict_encode())
+
+
+def _gsd16_or_skip(test_case: unittest.TestCase) -> str:
+    node_bin = _real_node_executable()
+    tools = REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs"
+    if node_bin is None or not tools.is_file():
+        test_case.skipTest("no node or checkout-local gsd-tools.cjs")
+    version = gsd_tools.gsd_core_version(str(tools))
+    if not version or not version.startswith("1.16."):
+        test_case.skipTest(f"checkout-local gsd-core is {version}; need 1.16.x")
+    return node_bin
+
+
+def _golden_bundle(
+    scratch: str,
+    *,
+    with_planning: bool = True,
+    host_name: str = "claude",
+) -> dict:
+    project = os.path.join(scratch, "project")
+    home = os.path.join(scratch, "home")
+    gsd_home = os.path.join(scratch, "gsd_home")
+    xdg = os.path.join(scratch, "xdg")
+    os.makedirs(project)
+    _seed_home(home)
+    config_path = os.path.join(project, ".planning", "config.json")
+    if with_planning:
+        os.makedirs(os.path.join(project, ".planning"), exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as handle:
+            handle.write('{\n    "model_profile": "balanced"\n}\n')
+    with open(os.path.join(project, "AGENTS.md"), "w", encoding="utf-8") as handle:
+        handle.write("# agents\n")
+    with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as handle:
+        json.dump({"dependencies": {"react": "19.0.0"}}, handle)
+    seed_cache(xdg, load_fixture("runtimes.json"), load_fixture("model-catalog.json"))
+    env = _scratch_env(home, gsd_home, xdg)
+    resolve_env = {**env, "RUNTIME_DIR": str(REPO_ROOT)}
+    child_env = dict(env)
+    fake = _tables_fake(config_path, home)
+    inv_path = os.path.join(scratch, "inv.json")
+    inv = scratch_inventory(project, resolve_env, fake, inv_path, host_name=host_name)
+    inv["existing_config"]["path"] = config_path
+    with open(inv_path, "w", encoding="utf-8") as handle:
+        handle.write(plan_io.canonical_json(inv))
+    plan_path = os.path.join(scratch, "plan.json")
+    code, _plan, raw, err = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
+    if code != 0 or raw is None:
+        raise AssertionError(err)
+    with open(plan_path, "wb") as handle:
+        handle.write(raw)
+    _decide_all_choices(plan_path, inv_path)
+    return {
+        "project": project,
+        "resolve_env": resolve_env,
+        "child_env": child_env,
+        "config_path": config_path,
+        "inv_path": inv_path,
+        "plan_path": plan_path,
+    }
 
 
 def _real_apply(plan_path, inv_path, project, resolve_env, child_env, node_bin):
@@ -208,6 +330,103 @@ class TestRealApply(_RealGsdTestCase):
 
         self.assertEqual(_sha256(_REPO_CONFIG), before_cfg)
         self.assertEqual(_sha256(_REPO_RUNNER), before_runner)
+
+    def test_nth_key_failure_restores_bytes(self) -> None:
+        node_bin = _gsd16_or_skip(self)
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        bundle = _golden_bundle(scratch)
+        config_path = bundle["config_path"]
+        with open(config_path, "rb") as handle:
+            before_bytes = handle.read()
+        real = _real_run(bundle["child_env"])
+        wrapper = _ConfigSetWrapper(real, fail_nth=3)
+        code, report = _direct_apply(
+            bundle["plan_path"],
+            bundle["inv_path"],
+            bundle["project"],
+            bundle["resolve_env"],
+            node_bin,
+            wrapper,
+        )
+        self.assertEqual(code, 1)
+        keys = _config_set_keys(wrapper.argv_log)
+        self.assertGreaterEqual(len(keys), 3)
+        self.assertEqual(report["failed_key"], keys[2])
+        with open(config_path, "rb") as handle:
+            self.assertEqual(handle.read(), before_bytes)
+        self.assertIsNone(config_backup.read_marker(config_path))
+        self.assertGreaterEqual(len(config_backup.list_backups(config_path)), 1)
+
+    def test_nth_key_failure_absent_config(self) -> None:
+        node_bin = _gsd16_or_skip(self)
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        bundle = _golden_bundle(scratch, with_planning=False)
+        planning = os.path.join(bundle["project"], ".planning")
+        self.assertFalse(os.path.exists(planning))
+        real = _real_run(bundle["child_env"])
+        wrapper = _ConfigSetWrapper(real, fail_nth=2)
+        code, _report = _direct_apply(
+            bundle["plan_path"],
+            bundle["inv_path"],
+            bundle["project"],
+            bundle["resolve_env"],
+            node_bin,
+            wrapper,
+        )
+        self.assertEqual(code, 1)
+        self.assertFalse(os.path.exists(planning))
+
+    def test_failed_reapply_restores_runner(self) -> None:
+        node_bin = _gsd16_or_skip(self)
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        bundle = _golden_bundle(scratch)
+        config_path = bundle["config_path"]
+        project = bundle["project"]
+        real = _real_run(bundle["child_env"])
+        code, report = _direct_apply(
+            bundle["plan_path"],
+            bundle["inv_path"],
+            project,
+            bundle["resolve_env"],
+            node_bin,
+            real,
+        )
+        self.assertEqual((code, report["applied"]), (0, True))
+        runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
+        with open(runner, "rb") as handle:
+            runner_bytes = handle.read()
+        runner_mode = stat.S_IMODE(os.stat(runner).st_mode)
+        with open(config_path, "rb") as handle:
+            config_bytes = handle.read()
+        code_set, _, err_set = _run_plan_set(
+            bundle["plan_path"], bundle["inv_path"], "workflow.cross_ai_timeout", "2400"
+        )
+        self.assertEqual((code_set, err_set), (0, ""))
+        wrapper = _ConfigSetWrapper(real, fail_nth=1)
+        code2, report2 = _direct_apply(
+            bundle["plan_path"],
+            bundle["inv_path"],
+            project,
+            bundle["resolve_env"],
+            node_bin,
+            wrapper,
+        )
+        self.assertEqual(code2, 1)
+        self.assertEqual(report2["failed_key"], "workflow.cross_ai_timeout")
+        with open(runner, "rb") as handle:
+            self.assertEqual(handle.read(), runner_bytes)
+        self.assertEqual(stat.S_IMODE(os.stat(runner).st_mode), runner_mode)
+        with open(config_path, "rb") as handle:
+            self.assertEqual(handle.read(), config_bytes)
+        self.assertIsNone(config_backup.read_marker(config_path))
+        snap = runner + config_backup.SNAPSHOT_SUFFIX
+        self.assertFalse(os.path.isfile(snap))
+
+
+
 
 
 if __name__ == "__main__":
