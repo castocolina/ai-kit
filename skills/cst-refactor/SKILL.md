@@ -1,6 +1,6 @@
 ---
 name: cst-refactor
-description: Use when refactoring Python with LibCST codemods — multi-file renames of classes, methods, constants, or function parameters where comments and formatting must survive and naive sed/search-replace risks false-positive matches across unrelated contexts. Includes a bundled codemod_template.py.txt (copy into the project as tools/codemod_template.py) with subcommands rename-symbol, rename-parameter, add-parameter, remove-parameter, rewrite-docstring.
+description: Use when refactoring Python with LibCST codemods — multi-file renames of classes, methods, constants, or function parameters where comments and formatting must survive and naive sed/search-replace would also hit strings and comments (codemods match by name, not by scope or type). Includes a bundled codemod_template.py.txt (copy into the project as tools/codemod_template.py) with subcommands rename-symbol, rename-parameter, add-parameter, remove-parameter, rewrite-docstring.
 ---
 
 ## Overview
@@ -32,7 +32,7 @@ LibCST parses source into a Concrete Syntax Tree, matches syntax nodes (not raw 
 - Skip preview when targeting >20 files or an unfamiliar codebase. The "small subset first" rule is non-negotiable.
 - Use codemod for a single-line, single-file change — overhead beats benefit. Use the `Edit` tool.
 - Trust codemod for dynamic references: `getattr(obj, "old_name")`, runtime-evaluated strings, JSON/YAML configs, Jinja/string templates, dotted paths inside strings. Audit these manually.
-- Point a subcommand at a name another library also defines unless every match is yours. Matching is by name only, with no scope or type resolution: `rename-symbol` renames every `Name` node with that value, attribute access included (renaming a `connect` method also turns `sqlite3.connect(...)` into `sqlite3.open(...)`), and the parameter subcommands edit every function def named `--function` and every call ending in `.<function>(...)` (`--function run` also hits `subprocess.run(...)`). `rename-parameter` renames the name only inside the target def's body and in keywords of calls to `--function`; attribute names (`self.timeout`) and keywords of other calls (`requests.get(url, timeout=...)`) keep their spelling. Restrict `--paths`, then read the whole diff.
+- Point a subcommand at a name another library also defines unless every match is yours. Matching is by name only, with no scope or type resolution: `rename-symbol` renames every `Name` node with that value, attribute access included (renaming a `connect` method also turns `sqlite3.connect(...)` into `sqlite3.open(...)`), and the parameter subcommands edit every function def named `--function` and every call ending in `.<function>(...)` (`--function run` also hits `subprocess.run(...)`). `rename-parameter` renames the name only inside the target def's body (nested defs included, unless one declares its own parameter of that name) and in keywords of calls to `--function`; attribute names (`self.timeout`) and keywords of other calls (`requests.get(url, timeout=...)`) keep their spelling. Restrict `--paths`, then read the whole diff.
 - Touch string literals or comments in the codemod unless the task explicitly requires it.
 
 ## Bootstrapping the Template

@@ -59,7 +59,12 @@ class RenameParameter(cst.CSTTransformer):
         self._function_stack: list[bool] = []
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
-        self._function_stack.append(node.name.value == self._function_name)
+        # A def nested in the target still sees its parameter unless it declares one of its own.
+        inherited = bool(self._function_stack and self._function_stack[-1])
+        self._function_stack.append(
+            node.name.value == self._function_name
+            or (inherited and self._old_name not in _param_names(node.params))
+        )
         return True
 
     def leave_FunctionDef(
@@ -282,6 +287,14 @@ def _rewrite_docstring_in_body(body: cst.BaseSuite, match: str, replace: str) ->
     new_statement = first_statement.with_changes(body=[new_expr])
     statements[0] = new_statement
     return body.with_changes(body=tuple(statements))
+
+
+def _param_names(params: cst.Parameters) -> set[str]:
+    names = {p.name.value for p in (*params.posonly_params, *params.params, *params.kwonly_params)}
+    for star in (params.star_arg, params.star_kwarg):
+        if isinstance(star, cst.Param):
+            names.add(star.name.value)
+    return names
 
 
 def _rename_param_in_params(params: cst.Parameters, old: str, new: str) -> cst.Parameters:
