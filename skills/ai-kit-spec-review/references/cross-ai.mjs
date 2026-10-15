@@ -20,10 +20,17 @@
  *   --prefer pi,cursor,opencode,codex   order to try (default CONFIG.prefer)
  *   --model-<cli> <id>                       model per CLI, e.g. --model-cursor auto
  *   --mode exec|review                       exec = full permissions (default); review = read-only
- *   --timeout <s>                            inner deadline (default: workflow.cross_ai_timeout - margin)
+ *   --timeout <s>                            inner deadline (lowers default; never above derived inner)
  *   --print-argv                             print the resolved command per CLI and exit (no model call)
  *   --no-preamble                            send the prompt unchanged
+ *   --codex-effort minimal|low|medium|high|xhigh
+ *   --codex-service-tier <id>                codex -c service_tier=
+ *   --cursor-mode ask|plan                   review mode only (replaces cursor --mode)
  *   --self-test                              hermetic black-box checks (no real CLIs)
+ *
+ * Live outer timeout reads workflow.cross_ai_timeout from .planning/config.json, or from
+ * .planning/workstreams/$GSD_WORKSTREAM/config.json when GSD_WORKSTREAM matches [A-Za-z0-9_-]+.
+ * No idle watchdog in this version (D-43); only the overall deadline bounds each child.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -182,7 +189,7 @@ const RUNTIMES = {
   cursor: {
     bins: ['cursor-agent', 'agent'],
     exec: (m, c) => ['-p', '--output-format', 'json', '--model', m, '--trust', '--force', '--sandbox', 'disabled', '--approve-mcps', '--workspace', c.cwd],
-    review: (m, c) => ['-p', '--output-format', 'json', '--model', m, '--mode', 'ask', '--trust', '--workspace', c.cwd],
+    review: (m, c) => ['-p', '--output-format', 'json', '--model', m, '--mode', c.cursorMode || 'ask', '--trust', '--workspace', c.cwd],
     resume: (m, c, sid, mode) => [...RUNTIMES.cursor[mode](m, c), '--resume', sid],
     parse: (out) => {
       const ev = lastJson(out, (j) => j.type === 'result');
@@ -213,9 +220,9 @@ const RUNTIMES = {
   // unverified (outside the default prefer)
   codex: {
     bins: ['codex'],
-    exec: (m, c) => ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-C', c.cwd, '-m', m,
-      '--json', '-o', c.outFile, '-'],
-    review: (m, c) => ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '-C', c.cwd, '-m', m, '--json', '-o', c.outFile, '-'],
+    exec: (m, c) => withCodexKnobs(['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-C', c.cwd, '-m', m,
+      '--json', '-o', c.outFile, '-'], c),
+    review: (m, c) => withCodexKnobs(['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '-C', c.cwd, '-m', m, '--json', '-o', c.outFile, '-'], c),
     resume: (m, c, sid, mode) => ['exec', 'resume', ...(mode === 'exec' ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
       '--skip-git-repo-check', '-m', m, '--json', '-o', c.outFile, sid, '-'],
     parse: (out, c) => {
@@ -230,7 +237,30 @@ const RUNTIMES = {
     },
     env: {},
   },
+  // read-only enforcement not live-verified
+  claude: {
+    bins: ['claude'],
+    exec: null,
+    review: (m) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'plan'],
+    resume: null,
+    parse: (out) => {
+      const j = parseJson((out || '').trim());
+      if (!j || typeof j !== 'object') return { text: '', sessionId: null, error: 'no claude json' };
+      return {
+        text: j.result || '', sessionId: j.session_id || null,
+        error: j.is_error ? (j.result || 'is_error') : null,
+      };
+    },
+    env: {},
+  },
 };
+
+function withCodexKnobs(argv, ctx) {
+  const out = [...argv];
+  if (ctx.codexEffort) out.push('-c', `model_reasoning_effort=${ctx.codexEffort}`);
+  if (ctx.codexServiceTier) out.push('-c', `service_tier=${ctx.codexServiceTier}`);
+  return out;
+}
 
 function parseJson(s) { try { return JSON.parse(s); } catch { return null; } }
 function* jsonLines(s) { for (const l of s.split('\n')) { const j = l.trim().startsWith('{') ? parseJson(l) : null; if (j) yield j; } }
@@ -282,12 +312,41 @@ function which(bin, envPath = process.env.PATH || '') {
 }
 function isExec(p) { try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch { return false; } }
 
-function outerTimeoutS(cwd) {
-  const cfg = parseJson(readOr(path.join(cwd, '.planning', 'config.json'), ''));
+function liveOuterTimeoutS(cwd, env) {
+  const ws = env.GSD_WORKSTREAM;
+  let cfgPath = path.join(cwd, '.planning', 'config.json');
+  if (typeof ws === 'string' && ws.length > 0 && /^[A-Za-z0-9_-]+$/.test(ws)) {
+    cfgPath = path.join(cwd, '.planning', 'workstreams', ws, 'config.json');
+  }
+  const cfg = parseJson(readOr(cfgPath, ''));
   const t = Number(cfg && cfg.workflow && cfg.workflow.cross_ai_timeout);
   return Number.isFinite(t) && t > 0 ? t : GSD_DEFAULT_TIMEOUT_S;
 }
-function innerTimeoutS(outer) { return outer - Math.min(TIMEOUT_MARGIN_S, Math.floor(outer / 5)); }
+function innerTimeoutS(outer) {
+  return outer - Math.max(1, Math.min(TIMEOUT_MARGIN_S, Math.floor(outer / 5)));
+}
+function resolveDeadline(cwd, env, o) {
+  const outer = Math.min(CONFIG.outerTimeoutS, liveOuterTimeoutS(cwd, env));
+  if (outer < 2) return { error: 'cross-ai: outer timeout must be at least 2s' };
+  const innerDefault = innerTimeoutS(outer);
+  const inner = o.timeout != null ? Math.min(innerDefault, o.timeout) : innerDefault;
+  return { outer, inner, innerDefault };
+}
+function logDeadline(cwd, env, o) {
+  const d = resolveDeadline(cwd, env, o);
+  if (d.error) return d;
+  log(`cross-ai: deadline ${d.inner}s (outer ${d.outer}s)`);
+  return d;
+}
+function retryArgv(name, rt, model, ctx, sid, mode, prompt) {
+  if (mode === 'review') {
+    return { argv: withExtra(name, rt.review(model, ctx)), input: prompt };
+  }
+  if (sid && rt.resume) {
+    return { argv: withExtra(name, rt.resume(model, ctx, sid, mode)), input: RESUME_MSG };
+  }
+  return { argv: withExtra(name, rt[mode](model, ctx)), input: `${RESUME_MSG}\n\n${prompt}` };
+}
 function readOr(p, dflt) { try { return fs.readFileSync(p, 'utf8'); } catch { return dflt; } }
 
 function stateSig(st) {
@@ -567,8 +626,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const backoff = opts.backoffS || CONFIG.backoffS;
+  const beforeSig = opts.beforeSig ?? null;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cross-ai-'));
-  const ctx = { cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md') };
+  const ctx = {
+    cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md'),
+    codexEffort: opts.codexEffort, codexServiceTier: opts.codexServiceTier, cursorMode: opts.cursorMode,
+  };
   const env = childEnv(rt.env, process.env);
   let argv = withExtra(name, rt[mode](model, ctx)); let input = prompt;
   try {
@@ -599,20 +662,34 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         const st = exhausted ? 'capacity' : 'crash';
         return { ok: false, status: st, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
       }
+      if (mode === 'review') {
+        const mid = await treeState(ctx.cwd, runDeadline);
+        if (mid === null) {
+          return { ok: false, status: 'unverified', outBytes: r.outBytes, cli_rc: r.code ?? '-' };
+        }
+        if (beforeSig !== null && stateSig(mid) !== beforeSig) {
+          return { ok: false, status: 'contract_violation', outBytes: r.outBytes, cli_rc: r.code ?? '-' };
+        }
+      }
       await sleep(wait);
       const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
-      if (sid && rt.resume) {
-        argv = withExtra(name, rt.resume(model, ctx, sid, mode));
-        input = RESUME_MSG;
-      } else { input = `${RESUME_MSG}\n\n${prompt}`; }
+      const retry = retryArgv(name, rt, model, ctx, sid, mode, prompt);
+      argv = retry.argv;
+      input = retry.input;
     }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
 
+const CODEX_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
+const CURSOR_MODES = new Set(['ask', 'plan']);
+
 function parseArgs(argv) {
-  const o = { prefer: null, models: {}, mode: 'exec', timeout: null, printArgv: false, preamble: true, selfTest: false };
+  const o = {
+    prefer: null, models: {}, mode: 'exec', timeout: null, printArgv: false, preamble: true,
+    selfTest: false, codexEffort: null, codexServiceTier: null, cursorMode: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]; const v = () => { if (i + 1 >= argv.length) throw new Error(`${a} needs a value`); return argv[++i]; };
     if (a === '--prefer') o.prefer = v().split(',').filter(Boolean);
@@ -621,9 +698,19 @@ function parseArgs(argv) {
     else if (a === '--timeout') { o.timeout = Number(v()); if (!(o.timeout > 0)) throw new Error('--timeout must be > 0'); }
     else if (a === '--print-argv') o.printArgv = true;
     else if (a === '--no-preamble') o.preamble = false;
-    else if (a === '--self-test') o.selfTest = true;
+    else if (a === '--codex-effort') {
+      o.codexEffort = v();
+      if (!CODEX_EFFORTS.has(o.codexEffort)) throw new Error('--codex-effort must be minimal|low|medium|high|xhigh');
+    } else if (a === '--codex-service-tier') {
+      o.codexServiceTier = v();
+      if (!/^[A-Za-z0-9_-]+$/.test(o.codexServiceTier)) throw new Error('--codex-service-tier must match [A-Za-z0-9_-]+');
+    } else if (a === '--cursor-mode') {
+      o.cursorMode = v();
+      if (!CURSOR_MODES.has(o.cursorMode)) throw new Error('--cursor-mode must be ask or plan');
+    } else if (a === '--self-test') o.selfTest = true;
     else throw new Error(`unknown argument: ${a}`);
   }
+  if (o.mode === 'exec' && o.cursorMode) throw new Error('--cursor-mode is review-only');
   for (const n of [...(o.prefer || []), ...Object.keys(o.models)]) if (!RUNTIMES[n]) throw new Error(`unknown cli: ${n} (known: ${Object.keys(RUNTIMES).join(', ')})`);
   return o;
 }
@@ -695,7 +782,8 @@ for (let i = 0; i < args.length; i++) if (args[i] === '--model') model = args[++
 const fakeMode = model.startsWith('fake/') ? model.slice(5) : '';
 const calls = process.env.FAKE_CALLS;
 const log = (line) => { if (calls) fs.appendFileSync(calls, line + '\n'); };
-const STICKY_FAKE = new Set(['hang', 'gcescape']);
+const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race']);
+let stdinBuf = '';
 const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
   ansi: () => { fs.appendFileSync('a.txt', 'x\n'); process.stdout.write('\x1B[0mDone.## Summary\nC# is fine. Use ## inline'); },
@@ -757,6 +845,48 @@ const FAKE_MODES = {
     process.stderr.write('429 Too Many Requests\n');
     process.exit(1);
   },
+  'review-ok': () => { process.stdout.write('# Review\nok'); },
+  'review-commit': () => {
+    fs.appendFileSync('a.txt', 'commit-line\n');
+    const r = spawnSync('git', ['add', 'a.txt'], { stdio: 'inherit' });
+    if (r.status !== 0) process.exit(r.status || 1);
+    const c = spawnSync('git', ['commit', '-m', 'fake'], { stdio: 'inherit' });
+    if (c.status !== 0) process.exit(c.status || 1);
+    process.stdout.write('# Review\ncommitted');
+  },
+  'review-edit': () => {
+    fs.appendFileSync('a.txt', 'edit-line\n');
+    process.stdout.write('# Review\nedited');
+  },
+  'echo-len': () => { process.stdout.write(String(Buffer.byteLength(stdinBuf, 'utf8'))); },
+  'review-gitfail': () => {
+    fs.writeFileSync((process.env.HOME || '') + '/.fake-git-fail', '1');
+    process.stdout.write('# Review\nok');
+  },
+  'review-flaky-edit': () => {
+    const home = process.env.HOME || '';
+    const ctr = home + '/.fake-review-flaky-count';
+    let n = 0;
+    try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first */ }
+    if (n < 1) {
+      fs.writeFileSync(ctr, '1');
+      fs.appendFileSync('a.txt', 'flaky-edit\n');
+      process.stderr.write('429 Too Many Requests\n');
+      process.exit(1);
+    }
+    process.stdout.write('# Review\nok');
+  },
+  'outer-race': () => {
+    fs.writeFileSync((process.env.HOME || '') + '/.fake-git-hang', '1');
+    const gc = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{setInterval(()=>process.stderr.write("gc-late"+String.fromCharCode(10)),100);});while(true){}'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    gc.stderr.on('data', (d) => process.stderr.write(d));
+    fs.writeFileSync('gc.pid', String(gc.pid));
+    process.on('SIGTERM', () => {
+      process.stderr.write('gc-late\n');
+      try { process.kill(gc.pid, 'SIGTERM'); } catch { /* esrch */ }
+    });
+    setInterval(() => {}, 1 << 30);
+  },
 };
 const modeIdx = args.indexOf('--mode');
 if (modeIdx >= 0 && args[modeIdx + 1] === 'rpc') {
@@ -772,9 +902,9 @@ if (modeIdx >= 0 && args[modeIdx + 1] === 'rpc') {
   }
 } else {
 log('pi ' + (fakeMode || model));
-let stdin = '';
+stdinBuf = '';
 process.stdin.setEncoding('utf8');
-process.stdin.on('data', (d) => { stdin += d; });
+process.stdin.on('data', (d) => { stdinBuf += d; });
 process.stdin.on('end', () => {
   const fn = FAKE_MODES[fakeMode];
   if (!fn) process.exit(1);
@@ -843,6 +973,23 @@ process.stdin.on('data', () => {}).on('end', () => {
 });
 `;
   const p = path.join(binDir, 'opencode');
+  fs.writeFileSync(p, body);
+  fs.chmodSync(p, 0o755);
+}
+
+function writeFakeClaude(binDir) {
+  const body = String.raw`#!/usr/bin/env node
+import fs from 'node:fs';
+const calls = process.env.FAKE_CALLS;
+let model = '';
+for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === '--model') model = process.argv[++i] || '';
+if (calls) fs.appendFileSync(calls, 'claude ' + model + '\n');
+process.stdin.on('data', () => {}).on('end', () => {
+  console.log(JSON.stringify({ type: 'result', result: 'ok', session_id: 'x', is_error: false }));
+  process.exit(0);
+});
+`;
+  const p = path.join(binDir, 'claude');
   fs.writeFileSync(p, body);
   fs.chmodSync(p, 0o755);
 }
@@ -945,6 +1092,15 @@ async function runSelfTestCase(tmp, spec) {
   fs.writeFileSync(path.join(repo, 'a.txt'), 'base\n');
   spawnSync('git', ['add', 'a.txt'], { cwd: repo, env: hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') }) });
   spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo, env: hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') }) });
+  if (spec.planningConfig != null) {
+    fs.mkdirSync(path.join(repo, '.planning'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.planning', 'config.json'), JSON.stringify(spec.planningConfig));
+  }
+  if (spec.workstream) {
+    const wdir = path.join(repo, '.planning', 'workstreams', spec.workstream.ws);
+    fs.mkdirSync(wdir, { recursive: true });
+    fs.writeFileSync(path.join(wdir, 'config.json'), JSON.stringify(spec.workstream.config));
+  }
   const home = path.join(tmp, `home-${spec.name}`);
   fs.mkdirSync(home, { recursive: true });
   const calls = path.join(tmp, `calls-${spec.name}.log`);
@@ -976,6 +1132,7 @@ async function blackBoxSelfTest() {
     writeFakeCursor(binDir);
     writeFakeOpencode(binDir);
     writeFakeCodex(binDir);
+    writeFakeClaude(binDir);
     for (const name of fs.readdirSync(binDir)) {
       if (name === 'codex') continue;
       const src = path.join(binDir, name);
@@ -1372,6 +1529,285 @@ async function blackBoxSelfTest() {
           return n === 3 ? null : `overloaded calls=${n}`;
         },
       },
+      {
+        name: 'review-ok',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/review-ok exit=0 .* tree=clean action=stop$/,
+      },
+      {
+        name: 'review-commit',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-commit'],
+        exit: 1,
+        status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/review-commit exit=1 .* action=stop$/,
+      },
+      {
+        name: 'review-edit',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-edit'],
+        exit: 1,
+        status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/review-edit exit=1 .* action=stop$/,
+      },
+      {
+        name: 'review-edit-no-fallback',
+        args: ['--mode', 'review', '--prefer', 'pi,cursor', '--model-pi', 'fake/review-edit', '--model-cursor', 'fake-ok-cursor'],
+        exit: 1,
+        status: /^AIKIT-XAI status=contract_violation .* action=stop$/,
+        check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null),
+      },
+      {
+        name: 'review-gitfail',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-gitfail'],
+        exit: 1,
+        status: /^AIKIT-XAI status=unverified cli=pi model=fake\/review-gitfail exit=1 .* tree=unknown action=stop$/,
+      },
+      {
+        name: 'review-git-before-fail',
+        setup: (ctx) => { fs.writeFileSync(path.join(ctx.home, '.fake-git-fail'), '1'); return null; },
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
+        exit: 1,
+        status: /^AIKIT-XAI status=unverified .* tree=unknown action=stop$/,
+        check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('pi ')) ? `calls=${ctx.calls.join(',')}` : null),
+      },
+      {
+        name: 'review-flaky-edit',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-flaky-edit'],
+        exit: 1,
+        status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/review-flaky-edit exit=1 .* action=stop$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi review-flaky-edit').length;
+          return n === 1 ? null : `calls=${n}`;
+        },
+      },
+      {
+        name: 'claude-exec-usage',
+        args: ['--prefer', 'claude', '--mode', 'exec', '--model-claude', 'fake-ok'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('claude is review-only') ? null : 'missing review-only line'),
+      },
+      {
+        name: 'claude-review-ok',
+        args: ['--prefer', 'claude', '--mode', 'review', '--model-claude', 'fake-ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=clean action=stop$/,
+      },
+      {
+        name: 'no-preamble-len',
+        args: ['--mode', 'review', '--no-preamble', '--prefer', 'pi', '--model-pi', 'fake/echo-len'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const want = Buffer.byteLength('prompt\n', 'utf8');
+          return r.stdout.trim() === String(want) ? null : `stdout=${JSON.stringify(r.stdout.trim())} want=${want}`;
+        },
+      },
+      {
+        name: 'preamble-len',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/echo-len'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const base = Buffer.byteLength('prompt\n', 'utf8');
+          const got = Number(r.stdout.trim());
+          return got > base ? null : `stdout len ${got} not > ${base}`;
+        },
+      },
+      {
+        name: 'argv-retry-codex-review',
+        args: ['--print-argv', '--mode', 'review', '--prefer', 'codex', '--model-codex', 'x'],
+        config: { prefer: ['codex'] },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const stdoutLine = (r.stdout || '').split('\n').find((l) => l.startsWith('codex\t'));
+          if (!stdoutLine) return 'missing codex stdout';
+          const reviewArgv = stdoutLine.split('\t')[2];
+          const m = (r.stderr || '').match(/cross-ai: retry codex argv=(\S+)/);
+          if (!m) return 'missing retry line';
+          const retryArgv = m[1];
+          if (retryArgv !== reviewArgv) return 'retry argv mismatch';
+          const parsed = JSON.parse(retryArgv);
+          if (!parsed.includes('--sandbox') || !parsed.includes('read-only')) return 'missing sandbox';
+          if (parsed.some((t) => String(t).includes('resume'))) return 'has resume';
+          return null;
+        },
+      },
+      {
+        name: 'argv-retry-codex-exec',
+        args: ['--print-argv', '--mode', 'exec', '--prefer', 'codex', '--model-codex', 'x'],
+        config: { prefer: ['codex'] },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const m = (r.stderr || '').match(/cross-ai: retry codex argv=(\S+)/);
+          if (!m) return 'missing retry line';
+          const parsed = JSON.parse(m[1]);
+          if (!parsed.includes('resume')) return 'missing resume';
+          if (!parsed.includes('--dangerously-bypass-approvals-and-sandbox')) return 'missing bypass';
+          return null;
+        },
+      },
+      {
+        name: 'argv-retry-cursor-review',
+        args: ['--print-argv', '--mode', 'review', '--prefer', 'cursor', '--model-cursor', 'x'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const stdoutLine = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
+          if (!stdoutLine) return 'missing cursor stdout';
+          const reviewArgv = stdoutLine.split('\t')[2];
+          const m = (r.stderr || '').match(/cross-ai: retry cursor argv=(\S+)/);
+          if (!m || m[1] !== reviewArgv) return 'retry mismatch';
+          if (JSON.parse(m[1]).includes('--resume')) return 'has resume';
+          return null;
+        },
+      },
+      {
+        name: 'deadline-default',
+        args: ['--print-argv', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => ((r.stderr || '').includes('cross-ai: deadline 270s (outer 300s)') ? null : 'deadline line'),
+      },
+      {
+        name: 'deadline-1800',
+        args: ['--print-argv', '--model-pi', 'fake/ok'],
+        planningConfig: { workflow: { cross_ai_timeout: 1800 } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => ((r.stderr || '').includes('cross-ai: deadline 1770s (outer 1800s)') ? null : 'deadline line'),
+      },
+      {
+        name: 'deadline-config-cap',
+        args: ['--print-argv', '--model-pi', 'fake/ok'],
+        planningConfig: { workflow: { cross_ai_timeout: 3600 } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => ((r.stderr || '').includes('cross-ai: deadline 1770s (outer 1800s)') ? null : 'deadline line'),
+      },
+      {
+        name: 'deadline-20',
+        args: ['--print-argv', '--model-pi', 'fake/ok'],
+        planningConfig: { workflow: { cross_ai_timeout: 20 } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => ((r.stderr || '').includes('cross-ai: deadline 16s (outer 20s)') ? null : 'deadline line'),
+      },
+      {
+        name: 'deadline-workstream',
+        args: ['--print-argv', '--model-pi', 'fake/ok'],
+        env: { GSD_WORKSTREAM: 'ws' },
+        workstream: { ws: 'ws', config: { workflow: { cross_ai_timeout: 600 } } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => ((r.stderr || '').includes('cross-ai: deadline 570s (outer 600s)') ? null : 'deadline line'),
+      },
+      {
+        name: 'deadline-workstream-bad',
+        args: ['--print-argv', '--model-pi', 'fake/ok'],
+        env: { GSD_WORKSTREAM: '../x' },
+        planningConfig: { workflow: { cross_ai_timeout: 600 } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => ((r.stderr || '').includes('cross-ai: deadline 570s (outer 600s)') ? null : 'deadline line'),
+      },
+      {
+        name: 'deadline-outer-min',
+        args: ['--print-argv', '--model-pi', 'fake/ok'],
+        planningConfig: { workflow: { cross_ai_timeout: 1 } },
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'deadline-timeout-cap',
+        args: ['--print-argv', '--timeout', '5', '--model-pi', 'fake/ok'],
+        planningConfig: { workflow: { cross_ai_timeout: 1800 } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => ((r.stderr || '').includes('cross-ai: deadline 5s (outer 1800s)') ? null : 'deadline line'),
+      },
+      {
+        name: 'deadline-timeout-above-inner',
+        args: ['--print-argv', '--timeout', '5000', '--model-pi', 'fake/ok'],
+        planningConfig: { workflow: { cross_ai_timeout: 1800 } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => ((r.stderr || '').includes('cross-ai: deadline 1770s (outer 1800s)') ? null : 'deadline line'),
+      },
+      {
+        name: 'codex-knobs',
+        args: ['--print-argv', '--prefer', 'codex', '--model-codex', 'x', '--codex-effort', 'high', '--codex-service-tier', 'flex'],
+        config: { prefer: ['codex'] },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('codex\t'));
+          if (!line) return 'missing codex line';
+          const argv = JSON.parse(line.split('\t')[2]);
+          const i = argv.indexOf('-c');
+          const blob = argv.join('\0');
+          if (!blob.includes('model_reasoning_effort=high') || !blob.includes('service_tier=flex')) return `argv=${JSON.stringify(argv)}`;
+          return null;
+        },
+      },
+      {
+        name: 'codex-effort-bogus',
+        args: ['--codex-effort', 'bogus', '--prefer', 'codex', '--model-codex', 'x'],
+        config: { prefer: ['codex'] },
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'cursor-mode-plan',
+        args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'x', '--mode', 'review', '--cursor-mode', 'plan'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
+          const argv = JSON.parse(line.split('\t')[2]);
+          const mi = argv.indexOf('--mode');
+          return mi >= 0 && argv[mi + 1] === 'plan' ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'cursor-mode-exec-usage',
+        args: ['--mode', 'exec', '--cursor-mode', 'plan', '--prefer', 'pi', '--model-pi', 'fake/ok'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'extra-args-pi',
+        args: ['--print-argv', '--prefer', 'pi', '--model-pi', 'fake/ok'],
+        config: { extraArgs: { pi: ['--skill', 'skills/x/SKILL.md'] } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
+          const argv = JSON.parse(line.split('\t')[2]);
+          const tail = argv.slice(-2);
+          return tail[0] === '--skill' && tail[1] === 'skills/x/SKILL.md' ? null : `tail=${JSON.stringify(tail)}`;
+        },
+      },
+      {
+        name: 'outer-race',
+        config: { outerTimeoutS: 10 },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/outer-race', '--timeout', '8'],
+        exit: 124,
+        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/outer-race exit=124 .* tree=unknown action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.elapsedMs >= 10000) return `elapsed ${ctx.elapsedMs}`;
+          const lines = (r.stderr || '').split('\n');
+          const statusIdx = lines.findIndex((l) => l.startsWith('AIKIT-XAI '));
+          if (statusIdx < 0) return 'no status';
+          if (lines.slice(statusIdx + 1).some((l) => l.trim())) return 'output after status';
+          const late = lines.filter((l) => l.includes('gc-late'));
+          if (!late.length) return 'no gc-late';
+          if (late.some((l) => lines.indexOf(l) >= statusIdx)) return 'gc-late after status';
+          const pidFile = path.join(ctx.repo, 'gc.pid');
+          if (fs.existsSync(pidFile) && pidAlive(Number(fs.readFileSync(pidFile, 'utf8')))) return 'gc alive';
+          return null;
+        },
+      },
 
     ];
 
@@ -1408,11 +1844,27 @@ async function main(argv) {
     bin: RUNTIMES[name].bins.map((b) => which(b, process.env.PATH || '')).find(Boolean) || null,
   }));
 
+  const dl = logDeadline(process.cwd(), process.env, o);
+  if (dl.error) {
+    log(dl.error);
+    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
   if (o.printArgv) {
-    const ctx = { cwd: process.cwd(), sid: '<uuid>', outFile: '<tmp>/last-message.md' };
+    const ctx = {
+      cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
+      codexEffort: o.codexEffort, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
+    };
     for (const c of cands) {
+      if (o.mode === 'exec' && !c.rt.exec) {
+        log(`cross-ai: ${c.name} is review-only (no exec formula)`);
+        return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+      }
       const argvOut = c.model ? withExtra(c.name, c.rt[o.mode](c.model, ctx)) : null;
       process.stdout.write(`${c.name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
+      if (c.model && argvOut) {
+        const retry = retryArgv(c.name, c.rt, c.model, ctx, '<sid>', o.mode, '<prompt>');
+        log(`cross-ai: retry ${c.name} argv=${JSON.stringify(retry.argv)}`);
+      }
     }
     return finish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
   }
@@ -1422,9 +1874,7 @@ async function main(argv) {
     return finish('empty_stdin', { ...liveFields, tree: 'clean', exit: 2 });
   }
   const prompt = raw + (o.preamble ? (o.mode === 'exec' ? EXEC_PREAMBLE : REVIEW_PREAMBLE) : '');
-  const outer = outerTimeoutS(process.cwd());
-  const innerDefault = innerTimeoutS(outer);
-  const innerS = o.timeout ?? innerDefault;
+  const { outer, inner: innerS, innerDefault } = dl;
   runDeadline = Date.now() + innerS * 1000;
   const marginMs = (outer - innerDefault) * 1000;
   finalizeBy = runDeadline + Math.min(FINALIZE_CAP_MS, Math.floor(marginMs / 2));
@@ -1437,6 +1887,10 @@ async function main(argv) {
       log(`cross-ai: no model configured for ${c.name} (--model-${c.name}), skipping`);
       last = last || { kind: 'no_model' };
       continue;
+    }
+    if (o.mode === 'exec' && !c.rt.exec) {
+      log(`cross-ai: ${c.name} is review-only (no exec formula)`);
+      return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
     sawModel = true;
     liveFields.cli = c.name;
@@ -1460,20 +1914,30 @@ async function main(argv) {
     } else if (listing.reason !== 'no listing') {
       log(`cross-ai: ${c.name} model list unavailable (${listing.reason}); not preflighted`);
     }
-    const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt);
+    const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
+      beforeSig: stateSig(before), codexEffort: o.codexEffort, codexServiceTier: o.codexServiceTier,
+      cursorMode: o.cursorMode,
+    });
     liveFields.out = r.outBytes || 0;
     liveFields.cli_rc = r.cli_rc ?? '-';
     const after = await treeState(process.cwd(), finalizeBy);
     const tree = treeLabel(before, after);
     liveFields.tree = tree;
+    if (r.status === 'contract_violation' || r.status === 'unverified') {
+      const treeField = r.status === 'unverified' ? 'unknown' : tree;
+      return finish(r.status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc ?? '-', exit: 1 });
+    }
     if (r.timedOut || aborting) {
       return finish('timeout', { ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? 124 });
     }
+    if (o.mode === 'review' && before && after && tree === 'dirty') {
+      return finish('contract_violation', { ...liveFields, tree, cli_rc: r.cli_rc ?? '-', exit: 1 });
+    }
     if (r.ok) {
-      if (after === null) {
+      if (after === null || before === null) {
         return finish('unverified', { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
       }
-      if (tree === 'clean') {
+      if (o.mode === 'exec' && tree === 'clean') {
         last = { status: 'no_change', cli: c.name, model: c.model, tree, cli_rc: 0 };
         log(`cross-ai: ${c.name} answered without repo change, trying the next CLI`);
         continue;
@@ -1482,6 +1946,9 @@ async function main(argv) {
       return finish('ok', { ...liveFields, tree, exit: 0, cli_rc: 0, out: r.outBytes || 0 });
     }
     const status = r.status || 'crash';
+    if (o.mode === 'review' && before && after && tree === 'dirty') {
+      return finish('contract_violation', { ...liveFields, tree, cli_rc: r.cli_rc ?? '-', exit: 1 });
+    }
     const treeField = after === null ? 'unknown' : tree;
     liveFields.tree = treeField;
     last = { status, cli: c.name, model: c.model, tree: treeField, cli_rc: r.cli_rc };
