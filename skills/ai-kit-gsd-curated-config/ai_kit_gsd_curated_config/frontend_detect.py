@@ -36,23 +36,29 @@ def _hint_matches(hint, lowered_text):
     return re.search(rf"\b{re.escape(hint)}\b", lowered_text) is not None
 
 
-def _package_json_signals_frontend(project_dir, isfile_fn, read_fn):
+def package_json_deps(project_dir, isfile_fn=os.path.isfile, read_fn=_read_text):
+    """Merged `dependencies` + `devDependencies`, or `{}` when absent or unreadable."""
     package_json_path = os.path.join(project_dir, "package.json")
     if not isfile_fn(package_json_path):
-        return False
+        return {}
     try:
         manifest = json.loads(read_fn(package_json_path))
     except (json.JSONDecodeError, OSError):
-        return False
+        return {}
     if not isinstance(manifest, dict):
-        return False
-    deps = {}
+        return {}
+    deps: dict = {}
     deps_raw = manifest.get("dependencies")
     if isinstance(deps_raw, dict):
         deps.update(deps_raw)
     dev_deps_raw = manifest.get("devDependencies")
     if isinstance(dev_deps_raw, dict):
         deps.update(dev_deps_raw)
+    return deps
+
+
+def _package_json_signals_frontend(project_dir, isfile_fn, read_fn):
+    deps = package_json_deps(project_dir, isfile_fn, read_fn)
     return any(hint in deps for hint in _PACKAGE_JSON_DEPENDENCY_HINTS)
 
 

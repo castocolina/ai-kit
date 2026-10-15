@@ -1,9 +1,11 @@
 """Inventory tracer, gsd-core resolution, probe fail-closed paths, and real-gsd smoke (17-03)."""
 import contextlib
+import hashlib
 import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -16,7 +18,16 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_gsd_curated_config import catalog_adapter, cli, gsd_catalog, host, plan_io, presets
+from ai_kit_gsd_curated_config import (
+    catalog_adapter,
+    cli,
+    gsd_catalog,
+    host,
+    inventory,
+    plan_io,
+    presets,
+    project_facts,
+)
 from ai_kit_spec import gsd_tools
 
 from tests.test_ai_kit_gsd_curated_config import _RealGsdTestCase
@@ -86,12 +97,15 @@ def _default_tables_from_argv(argv):
 class FakeRun:
     """Records subprocess argv; answers git, node `-e`, and ai-kit-spec.py calls."""
 
-    def __init__(self, git_answers=None, node_stdout=None, spec_answers=None):
+    def __init__(
+        self, git_answers=None, node_stdout=None, spec_answers=None, config_path_stdout=None
+    ):
         self.argv_log: list[list] = []
         self.kw_log: list[dict] = []
         self.git_answers = git_answers or {}
         self.node_stdout = node_stdout
         self.spec_answers = spec_answers or {}
+        self.config_path_stdout = config_path_stdout
 
     def _default_spec_answer(self, cmd):
         sub = cmd[2]
@@ -123,6 +137,13 @@ class FakeRun:
         if spec is not None:
             rc, out = spec
             return subprocess.CompletedProcess(cmd, rc, out, "")
+        if len(cmd) >= 4 and cmd[0] == "node" and cmd[2] == "config-path":
+            out = self.config_path_stdout
+            if callable(out):
+                out = out(cmd)
+            if out is None:
+                return subprocess.CompletedProcess(cmd, 1, "", "")
+            return subprocess.CompletedProcess(cmd, 0, out, "")
         if len(cmd) >= 3 and cmd[0] == "node" and cmd[1] == "-e":
             out = self.node_stdout
             if callable(out):
@@ -183,7 +204,7 @@ class TestInventoryTracer(unittest.TestCase):
         self.assertEqual(parsed["gsd_core"]["path"], install)
         self.assertEqual(parsed["gsd_core"]["scope"], "local")
         self.assertEqual(parsed["gsd_core"]["version"], "1.16.0")
-        node_calls = [a for a in fake.argv_log if a and a[0] == "node"]
+        node_calls = [a for a in fake.argv_log if a and a[0] == "node" and a[1] == "-e"]
         self.assertEqual(len(node_calls), 1)
         argv = node_calls[0]
         self.assertEqual(argv[1], "-e")
@@ -1045,7 +1066,7 @@ class TestProbeFailures(unittest.TestCase):
         project, env, root = self._project_with_install()
 
         def bad_node(cmd, **kw):
-            if cmd[0] == "node":
+            if cmd[0] == "node" and len(cmd) >= 2 and cmd[1] == "-e":
                 return subprocess.CompletedProcess(cmd, 1, "null", "")
             return FakeRun()(cmd, **kw)
 
@@ -1058,7 +1079,7 @@ class TestProbeFailures(unittest.TestCase):
         project, env, root = self._project_with_install()
 
         def timeout_node(cmd, **kw):
-            if cmd[0] == "node":
+            if cmd[0] == "node" and len(cmd) >= 2 and cmd[1] == "-e":
                 raise subprocess.TimeoutExpired(cmd, 30)
             return FakeRun()(cmd, **kw)
 
@@ -1146,6 +1167,551 @@ class TestProbeFailures(unittest.TestCase):
                 with open(path, "rb") as fh:
                     after[path] = fh.read()
         self.assertEqual(before, after)
+
+
+def _tree_snapshot(root: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for dirpath, _dirnames, filenames in os.walk(root):
+        rel_dir = os.path.relpath(dirpath, root)
+        key = rel_dir if rel_dir != "." else "."
+        out[key] = "dir"
+        for name in filenames:
+            rel = os.path.relpath(os.path.join(dirpath, name), root)
+            with open(os.path.join(dirpath, name), "rb") as handle:
+                out[rel] = hashlib.sha256(handle.read()).hexdigest()
+    return out
+
+
+def _lock_tree(root: str) -> list[tuple[str, int]]:
+    saved: list[tuple[str, int]] = []
+    for dirpath, dirnames, filenames in os.walk(root, topdown=False):
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            saved.append((path, os.stat(path).st_mode))
+            os.chmod(path, stat.S_IRUSR)
+        for name in dirnames:
+            path = os.path.join(dirpath, name)
+            saved.append((path, os.stat(path).st_mode))
+            os.chmod(path, stat.S_IRUSR | stat.S_IXUSR)
+    return saved
+
+
+def _unlock_tree(saved: list[tuple[str, int]]) -> None:
+    for path, mode in saved:
+        with contextlib.suppress(OSError):
+            os.chmod(path, mode)
+
+
+class TestCompleteInventory(unittest.TestCase):
+    def _tracer_fixture(self):
+        runtimes = {
+            "clis": {
+                "codex": {"installed": True, "models": ["gpt-5.6-sol", "gpt-5.6-luna"]},
+                "opencode": {"installed": True, "models": ["openai/gpt-5.6-sol"]},
+            }
+        }
+        catalog = {
+            "_meta": {"schema_version": 1},
+            "openai/gpt-5.6-sol": {
+                "provider": "openai",
+                "runtimes": {
+                    "codex": {"model_id": "gpt-5.6-sol"},
+                    "opencode": {"model_id": "openai/gpt-5.6-sol"},
+                },
+                "scores": {
+                    "intelligence_index": 40,
+                    "coding_index": 35,
+                    "agentic_index": 30,
+                },
+            },
+        }
+        return runtimes, catalog
+
+    def test_complete_inventory_feeds_recommend(self):
+        home = tempfile.mkdtemp()
+        gsd_home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, gsd_home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        planning = os.path.join(project, ".planning")
+        os.makedirs(planning, exist_ok=True)
+        config_path = os.path.join(planning, "config.json")
+        with open(config_path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "model_policy": {"provider": "generic"},
+                    "runtime": "codex",
+                    "model_overrides": {"gsd-planner": "opus"},
+                    "secret_token": "x",
+                },
+                handle,
+            )
+        with open(os.path.join(project, "AGENTS.md"), "w", encoding="utf-8") as handle:
+            handle.write("# agents\n")
+        with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as handle:
+            json.dump({"dependencies": {"react": "18"}}, handle)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        os.makedirs(os.path.join(gsd_home, ".gsd"), exist_ok=True)
+        defaults_path = os.path.join(gsd_home, ".gsd", "defaults.json")
+        with open(defaults_path, "w", encoding="utf-8") as handle:
+            json.dump({"runtime": "codex", "brave_api_key": "k"}, handle)
+        runtimes, catalog = self._tracer_fixture()
+        env = _inventory_env(home, runtimes, catalog)
+        env["GSD_HOME"] = gsd_home
+
+        def _tables_stdout(cmd):
+            keys = json.loads(cmd[6])
+            payload = {
+                "runtime_profile_map": {
+                    "opencode": {
+                        "opus": {"model": "openai/gpt-5.6-sol"},
+                        "sonnet": {"model": "openai/gpt-5.6-sol"},
+                        "haiku": {"model": "openai/gpt-5.6-sol"},
+                    }
+                },
+                "model_profiles": {
+                    "adaptive": {
+                        "gsd-planner": "opus",
+                        "gsd-executor": "sonnet",
+                        "gsd-verifier": "sonnet",
+                        "gsd-plan-checker": "haiku",
+                        "gsd-code-reviewer": "sonnet",
+                        "gsd-ui-auditor": "haiku",
+                        "gsd-dom-verifier": "haiku",
+                        "gsd-ui-researcher": "sonnet",
+                        "gsd-code-fixer": "sonnet",
+                    }
+                },
+                "agent_to_phase_type": {
+                    "gsd-planner": "planning",
+                    "gsd-executor": "execution",
+                },
+                "valid_keys": {"accepted": keys, "rejected": []},
+            }
+            return json.dumps(payload)
+
+        fake = FakeRun(config_path_stdout=config_path, node_stdout=_tables_stdout)
+        code, parsed, _err = run_inventory(project, env, fake, "--host", "opencode")
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertTrue(parsed["project"]["frontend"])
+        self.assertEqual(
+            parsed["project"]["instruction_files"],
+            {"AGENTS.md": True, "CLAUDE.md": False},
+        )
+        self.assertTrue(parsed["existing_config"]["exists"])
+        self.assertNotIn("secret_token", parsed["existing_config"]["values"])
+        self.assertEqual(parsed["global_defaults"]["path"], defaults_path)
+        self.assertEqual(parsed["global_defaults"]["values"], {"runtime": "codex"})
+        kinds = {(c["kind"], c["scope"]) for c in parsed["conflicts"]}
+        self.assertIn(("model_policy", "project"), kinds)
+        self.assertIn(("runtime", "project"), kinds)
+        info_kinds = {(i["kind"], i["scope"]) for i in parsed["info"]}
+        self.assertIn(("runtime", "global"), info_kinds)
+        node_calls = [a for a in fake.argv_log if a and a[0] == "node" and a[1] == "-e"]
+        keys = json.loads(node_calls[0][6])
+        self.assertIn("model_policy.provider", keys)
+        self.assertIn("model_overrides.gsd-planner", keys)
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path = os.path.join(tmp, "inventory.json")
+            out_path = os.path.join(tmp, "plan.json")
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(parsed))
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+                io.StringIO()
+            ):
+                rec_code = cli.main(
+                    [
+                        "recommend",
+                        "--inventory",
+                        inv_path,
+                        "--profile",
+                        "adaptive",
+                        "--rigor",
+                        "standard",
+                        "--out",
+                        out_path,
+                    ]
+                )
+            self.assertEqual(rec_code, 0)
+            with open(out_path, encoding="utf-8") as handle:
+                plan = json.load(handle)
+            self.assertEqual(plan["schema_version"], 1)
+
+
+
+class TestConflictMatrix(unittest.TestCase):
+    def _facts(self, **kw):
+        base = {"planning_dir_present": False, "instruction_file": None}
+        base.update(kw)
+        return base
+
+    def test_project_model_policy_conflict(self):
+        existing = {
+            "path": "p",
+            "exists": True,
+            "values": {"model_policy": {"provider": "generic"}},
+        }
+        conflicts, info = inventory.classify_conflicts(
+            "codex", existing, {"values": {}}, self._facts(), "/p"
+        )
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]["scope"], "project")
+        self.assertEqual(info, [])
+
+    def test_global_model_policy_latent_no_planning(self):
+        existing = {"path": "p", "exists": False, "values": {}}
+        global_defaults = {"values": {"model_policy": {"provider": "g"}}}
+        conflicts, info = inventory.classify_conflicts(
+            "codex", existing, global_defaults, self._facts(), "/p"
+        )
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]["effect"], inventory._LATENT)
+        self.assertIn("read at resolution while .planning/ is absent", conflicts[0]["why"])
+        self.assertEqual(info, [])
+
+    def test_global_model_policy_latent_with_planning_dir(self):
+        existing = {"path": "p", "exists": False, "values": {}}
+        global_defaults = {"values": {"model_policy": {"provider": "g"}}}
+        conflicts, _info = inventory.classify_conflicts(
+            "codex",
+            existing,
+            global_defaults,
+            self._facts(planning_dir_present=True),
+            "/p",
+        )
+        self.assertEqual(len(conflicts), 1)
+        self.assertNotIn("read at resolution while .planning/ is absent", conflicts[0]["why"])
+
+    def test_global_model_policy_inert_with_project_config(self):
+        existing = {"path": "p", "exists": True, "values": {"runtime": "codex"}}
+        global_defaults = {"values": {"model_policy": {"provider": "g"}}}
+        conflicts, info = inventory.classify_conflicts(
+            "codex", existing, global_defaults, self._facts(), "/p"
+        )
+        self.assertEqual(conflicts, [])
+        self.assertEqual(len(info), 1)
+        self.assertIn("#3532", info[0]["why"])
+
+    def test_both_policies_project_conflict_and_global_info(self):
+        existing = {
+            "path": "p",
+            "exists": True,
+            "values": {"model_policy": {"provider": "p"}},
+        }
+        global_defaults = {"values": {"model_policy": {"provider": "g"}}}
+        conflicts, info = inventory.classify_conflicts(
+            "codex", existing, global_defaults, self._facts(), "/p"
+        )
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]["scope"], "project")
+        self.assertEqual(len(info), 1)
+        self.assertEqual(info[0]["scope"], "global")
+
+    def test_claude_project_resolve_omit(self):
+        existing = {"path": "p", "exists": True, "values": {"resolve_model_ids": "omit"}}
+        conflicts, info = inventory.classify_conflicts(
+            "claude", existing, {"values": {}}, self._facts(), "/p"
+        )
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]["kind"], "resolve_model_ids")
+        self.assertEqual(info, [])
+
+    def test_claude_global_omit_latent(self):
+        existing = {"path": "p", "exists": False, "values": {}}
+        global_defaults = {"values": {"resolve_model_ids": "omit"}}
+        conflicts, info = inventory.classify_conflicts(
+            "claude", existing, global_defaults, self._facts(), "/p"
+        )
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]["effect"], inventory._LATENT)
+        self.assertEqual(info, [])
+
+    def test_claude_global_omit_inert(self):
+        existing = {"path": "p", "exists": True, "values": {}}
+        global_defaults = {"values": {"resolve_model_ids": "omit"}}
+        conflicts, info = inventory.classify_conflicts(
+            "claude", existing, global_defaults, self._facts(), "/p"
+        )
+        self.assertEqual(conflicts, [])
+        self.assertEqual(len(info), 1)
+
+    def test_codex_no_resolve_model_ids_entries(self):
+        existing = {"path": "p", "exists": True, "values": {"resolve_model_ids": "omit"}}
+        global_defaults = {"values": {"resolve_model_ids": "omit"}}
+        conflicts, info = inventory.classify_conflicts(
+            "codex", existing, global_defaults, self._facts(), "/p"
+        )
+        self.assertEqual(conflicts, [])
+        self.assertEqual(info, [])
+
+    def test_project_runtime_mismatch(self):
+        existing = {"path": "p", "exists": True, "values": {"runtime": "codex"}}
+        conflicts, info = inventory.classify_conflicts(
+            "opencode", existing, {"values": {}}, self._facts(), "/p"
+        )
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]["kind"], "runtime")
+        self.assertEqual(info, [])
+
+    def test_project_runtime_matches_host(self):
+        existing = {"path": "p", "exists": True, "values": {"runtime": "opencode"}}
+        conflicts, _info = inventory.classify_conflicts(
+            "opencode", existing, {"values": {}}, self._facts(), "/p"
+        )
+        self.assertFalse(any(c["kind"] == "runtime" for c in conflicts))
+
+    def test_global_runtime_info_only(self):
+        existing = {"path": "p", "exists": True, "values": {"runtime": "opencode"}}
+        global_defaults = {"values": {"runtime": "codex"}}
+        conflicts, info = inventory.classify_conflicts(
+            "opencode", existing, global_defaults, self._facts(), "/p"
+        )
+        self.assertFalse(any(c["kind"] == "runtime" for c in conflicts))
+        self.assertEqual(len([i for i in info if i["kind"] == "runtime"]), 1)
+
+    def test_gsd_home_global_defaults_path(self):
+        home = tempfile.mkdtemp()
+        gsd_home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, gsd_home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        os.makedirs(os.path.join(gsd_home, ".gsd"), exist_ok=True)
+        defaults_path = os.path.join(gsd_home, ".gsd", "defaults.json")
+        with open(defaults_path, "w", encoding="utf-8") as handle:
+            json.dump({"runtime": "codex"}, handle)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        env = _inventory_env(home)
+        env["GSD_HOME"] = gsd_home
+        code, parsed, _err = run_inventory(project, env, FakeRun(), "--host", "codex")
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertEqual(parsed["global_defaults"]["path"], defaults_path)
+
+    def test_claude_md_path_missing_info(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        with open(os.path.join(project, "AGENTS.md"), "w", encoding="utf-8") as handle:
+            handle.write("x")
+        os.makedirs(os.path.join(project, ".planning"), exist_ok=True)
+        with open(os.path.join(project, ".planning", "config.json"), "w", encoding="utf-8") as fh:
+            json.dump({"claude_md_path": "./CLAUDE.md"}, fh)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        code, parsed, _err = run_inventory(
+            project, _inventory_env(home), FakeRun(), "--host", "codex"
+        )
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        claude_info = [i for i in parsed["info"] if i["kind"] == "claude_md_path"]
+        self.assertEqual(len(claude_info), 1)
+        self.assertIn("./CLAUDE.md", claude_info[0]["why"])
+        self.assertIn("./AGENTS.md", claude_info[0]["why"])
+
+    def test_unreadable_project_config_warning(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        os.makedirs(os.path.join(project, ".planning"), exist_ok=True)
+        bad = os.path.join(project, ".planning", "config.json")
+        with open(bad, "w", encoding="utf-8") as handle:
+            handle.write("{not json")
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        code, parsed, _err = run_inventory(
+            project, _inventory_env(home), FakeRun(), "--host", "codex"
+        )
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertTrue(parsed["existing_config"]["exists"])
+        self.assertEqual(parsed["existing_config"]["values"], {})
+        self.assertTrue(any("unreadable" in w for w in parsed["warnings"]))
+
+
+class TestProjectFacts(unittest.TestCase):
+    def _facts(self, project):
+        return project_facts.project_facts(project, None)
+
+    def test_instruction_files_neither(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        facts = self._facts(project)
+        self.assertEqual(facts["instruction_files"], {"AGENTS.md": False, "CLAUDE.md": False})
+        self.assertIsNone(facts["instruction_file"])
+
+    def test_instruction_files_agents_only(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        with open(os.path.join(project, "AGENTS.md"), "w", encoding="utf-8") as handle:
+            handle.write("a")
+        facts = self._facts(project)
+        self.assertTrue(facts["instruction_files"]["AGENTS.md"])
+        self.assertEqual(facts["instruction_file"], "./AGENTS.md")
+
+    def test_instruction_files_claude_only(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        with open(os.path.join(project, "CLAUDE.md"), "w", encoding="utf-8") as handle:
+            handle.write("c")
+        facts = self._facts(project)
+        self.assertEqual(facts["instruction_file"], "./CLAUDE.md")
+
+    def test_instruction_files_both_prefers_agents(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            with open(os.path.join(project, name), "w", encoding="utf-8") as handle:
+                handle.write(name)
+        facts = self._facts(project)
+        self.assertEqual(facts["instruction_file"], "./AGENTS.md")
+
+    def test_frontend_vue_package_json(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as handle:
+            json.dump({"dependencies": {"vue": "3"}}, handle)
+        self.assertTrue(self._facts(project)["frontend"])
+
+    def test_frontend_readme_without_hints(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        with open(os.path.join(project, "README.md"), "w", encoding="utf-8") as handle:
+            handle.write("plain readme\n")
+        self.assertFalse(self._facts(project)["frontend"])
+
+    def test_db_prisma_schema(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        os.makedirs(os.path.join(project, "prisma"), exist_ok=True)
+        with open(os.path.join(project, "prisma", "schema.prisma"), "w", encoding="utf-8") as fh:
+            fh.write("model X {}\n")
+        self.assertTrue(self._facts(project)["db"])
+
+    def test_db_migrations_directory(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        os.makedirs(os.path.join(project, "migrations"), exist_ok=True)
+        self.assertTrue(self._facts(project)["db"])
+
+    def test_db_package_json_pg(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as handle:
+            json.dump({"dependencies": {"pg": "8"}}, handle)
+        self.assertTrue(self._facts(project)["db"])
+
+    def test_db_malformed_package_json_false(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as handle:
+            handle.write("{")
+        self.assertFalse(self._facts(project)["db"])
+
+    def test_intel_index_with_json(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        intel = os.path.join(project, ".planning", "intel")
+        os.makedirs(intel, exist_ok=True)
+        with open(os.path.join(intel, "file-roles.json"), "w", encoding="utf-8") as handle:
+            json.dump({}, handle)
+        self.assertTrue(self._facts(project)["intel_index_present"])
+
+    def test_intel_empty_dir_false(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        os.makedirs(os.path.join(project, ".planning", "intel"), exist_ok=True)
+        self.assertFalse(self._facts(project)["intel_index_present"])
+
+    def test_list_skills_sorted(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        for root, name in ((".claude/skills", "a"), (".agents/skills", "b")):
+            skill_dir = os.path.join(project, root, name)
+            os.makedirs(skill_dir, exist_ok=True)
+            with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as handle:
+                handle.write("skill")
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        code, parsed, _err = run_inventory(
+            project, _inventory_env(home), FakeRun(), "--host", "codex"
+        )
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertEqual(
+            parsed["skills"],
+            [
+                {"name": "a", "root": ".claude/skills"},
+                {"name": "b", "root": ".agents/skills"},
+            ],
+        )
+
+
+class TestReadOnly(unittest.TestCase):
+    def _readonly_project(self):
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        os.makedirs(os.path.join(project, ".planning"), exist_ok=True)
+        with open(os.path.join(project, ".planning", "config.json"), "w", encoding="utf-8") as fh:
+            json.dump({"runtime": "codex"}, fh)
+        with open(os.path.join(project, "AGENTS.md"), "w", encoding="utf-8") as handle:
+            handle.write("a")
+        with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as handle:
+            json.dump({"dependencies": {"react": "1"}}, handle)
+        skill_dir = os.path.join(project, ".claude", "skills", "demo")
+        os.makedirs(skill_dir, exist_ok=True)
+        with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as handle:
+            handle.write("s")
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        return home, project
+
+    def test_hermetic_inventory_byte_identical(self):
+        home, project = self._readonly_project()
+        before = _tree_snapshot(project)
+        saved = _lock_tree(project)
+        self.addCleanup(_unlock_tree, saved)
+        try:
+            code, _parsed, _err = run_inventory(
+                project, _inventory_env(home), FakeRun(), "--host", "codex"
+            )
+            self.assertEqual(code, 0)
+        finally:
+            _unlock_tree(saved)
+        self.assertEqual(before, _tree_snapshot(project))
+
+
+class TestReadOnlyRealGsd(_RealGsdTestCase):
+    def test_real_gsd_inventory_read_only(self):
+        ro = TestReadOnly()
+        ro.setUp()
+        self.addCleanup(ro.doCleanups)
+        _home, project = ro._readonly_project()
+        self.require_real_gsd(project)
+        xdg = os.path.join(self.child_env["HOME"], "xdg-cache")
+        seed_cache(xdg, {"clis": {}}, {"_meta": {"schema_version": 1}})
+        self.child_env["XDG_CACHE_HOME"] = xdg
+        self.resolve_env["XDG_CACHE_HOME"] = xdg
+        before = _tree_snapshot(project)
+        saved = _lock_tree(project)
+        self.addCleanup(_unlock_tree, saved)
+        spec_fake = FakeRun()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = cli.main(
+                    ["inventory", "--project-dir", project, "--host", "codex"],
+                    which_fn=lambda name: self.node_bin if name == "node" else None,
+                    env_fn=lambda: dict(self.resolve_env),
+                    run_fn=real_gsd_run(self.child_env, self.node_bin, fallback=spec_fake),
+                )
+            self.assertEqual(code, 0)
+        finally:
+            _unlock_tree(saved)
+        self.assertEqual(before, _tree_snapshot(project))
 
 
 if __name__ == "__main__":
