@@ -1247,6 +1247,31 @@ class TestApplyRows(_ScratchRuntimes):
         follow = checks.apply_row("claude-sandbox-enabled", self._ctx(), dry=True)
         self.assertTrue(follow["ok"])
 
+    def test_apply_row_contains_an_unlisted_exception_type(self):
+        # The catch is a TUI backstop: any applier exception, not a fixed list.
+        def _assert(_ctx, _target, _dry):
+            raise AssertionError("injected assertion")
+
+        fake = checks.CheckRow(
+            id="fake-assert",
+            runtime="claude",
+            scope="runtime",
+            check="assert",
+            read=lambda _ctx: None,
+            recommended=None,
+            confidence="HIGH",
+            why="test",
+            source="test",
+            apply=_assert,
+        )
+        checks.CONFIG_DOCTOR_ROWS.append(fake)
+        try:
+            result = checks.apply_row("fake-assert", self._ctx(), dry=False)
+        finally:
+            checks.CONFIG_DOCTOR_ROWS.pop()
+        self.assertFalse(result["ok"])
+        self.assertIn("injected assertion", result["reason"])
+
     def test_apply_claude_sandbox_preserves_sibling_and_carries_literal(self):
         path = os.path.join(self.claude, "settings.json")
         _write(

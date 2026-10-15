@@ -124,18 +124,17 @@ def _row_by_id(row_id):
 
 
 def apply_row(row_id, ctx, dry):
-    """Dispatch one apply by row identity.
+    """Dispatch one apply by row identity. Never raises.
 
     Looks up ``row_id`` in CONFIG_DOCTOR_ROWS and invokes that row's own
     ``apply(ctx, row.apply_target, dry)``. Dispatches by row identity via
     ``row.apply``, never by inspecting ``row.runtime``. An unknown id or a
     row with ``apply is None`` returns ``{"ok": False, "reason": "not
-    apply-eligible"}`` — never a silent no-op write. Catches ``OSError``,
-    ``ValueError``, ``LookupError``, ``TypeError``, ``AttributeError``, and
-    ``RuntimeError`` from appliers and returns ``{"ok": False, "reason":
-    "applier error: ..."}`` so those failures cannot reach ConfigDoctorApp's
-    event loop (Textual 8.x swallows unhandled exceptions into a graceful
-    shutdown; tools/wizard_app.py:129-137).
+    apply-eligible"}`` — never a silent no-op write. Any exception an
+    applier raises is converted to ``{"ok": False, "reason": "applier
+    error: ..."}`` so it cannot reach ConfigDoctorApp's event loop (Textual
+    8.x swallows unhandled exceptions into a graceful shutdown;
+    tools/wizard_app.py:129-137).
     """
     row = _row_by_id(row_id)
     if row is None or row.apply is None:
@@ -143,7 +142,7 @@ def apply_row(row_id, ctx, dry):
     try:
         apply_fn = cast(Callable[[object, object, bool], dict], row.apply)
         result = apply_fn(ctx, row.apply_target, dry)
-    except (OSError, ValueError, LookupError, TypeError, AttributeError, RuntimeError) as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # TUI backstop, see docstring
         return {"ok": False, "reason": f"applier error: {exc}"}
     if not isinstance(result, dict):
         return {"ok": False, "reason": f"applier error: non-dict result {result!r}"}
