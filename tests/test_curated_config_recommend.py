@@ -334,6 +334,12 @@ class TestRecommendTracer(unittest.TestCase):
         self.assertEqual(plan["schema_version"], 1)
         self.assertTrue(plan["inventory_digest"].startswith("sha256:"))
         self.assertEqual(plan["inventory_digest"], plan_schema.inventory_digest(inv))
+        # A-IN-08: the public digest itself ignores candidate order.
+        shuffled = make_inventory(host="codex", candidates=CODEX)
+        reordered = dict(shuffled, candidates=shuffled["candidates"][::-1])
+        self.assertEqual(
+            plan_schema.inventory_digest(shuffled), plan_schema.inventory_digest(reordered)
+        )
         self.assertEqual(plan["host"], "codex")
         self.assertEqual(plan["profile"], "adaptive")
         self.assertEqual(plan["rigor"], "standard")

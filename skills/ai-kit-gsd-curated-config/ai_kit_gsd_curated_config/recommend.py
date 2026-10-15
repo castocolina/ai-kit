@@ -943,16 +943,6 @@ def _merge_layers(ctx: PlanCtx) -> tuple[list, list]:
     return all_entries, all_notes
 
 
-def _digest_inventory(inventory: dict) -> dict:
-    """Candidate order is not significant for the plan fingerprint (R7)."""
-    stable = dict(inventory)
-    stable["candidates"] = sorted(
-        inventory["candidates"],
-        key=lambda c: (c.get("runtime") or "", c.get("model") or ""),
-    )
-    return stable
-
-
 def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
     """The pure entrypoint: returns the canonical plan dict for `inventory` under
     `opts` (same inputs, same dict, byte-identical `plan_schema.canonical_json`)."""
@@ -966,7 +956,7 @@ def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
     entries, notes = _merge_layers(ctx)
     return {
         "schema_version": plan_schema.PLAN_SCHEMA_VERSION,
-        "inventory_digest": plan_schema.inventory_digest(_digest_inventory(inventory)),
+        "inventory_digest": plan_schema.inventory_digest(inventory),
         "host": ctx.host,
         "profile": opts.profile,
         "rigor": opts.rigor,
