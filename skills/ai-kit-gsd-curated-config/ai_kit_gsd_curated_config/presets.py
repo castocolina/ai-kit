@@ -128,12 +128,16 @@ PRICE_PERCENTILE = {"mvp": 0.40, "standard": 0.75, "rigorous": None}
 
 CODEX_EFFECT = "resolve-model only (codex bakes only explicit model_overrides)"
 
+# review.* and effort.* are narrowed to what the plan can write (17-REVIEW A-IN-09), so user
+# tuning knobs such as review.max_prompt_tokens or effort.default are never unset.
 MANAGED_PREFIXES = (
     "models.",
     "model_overrides.",
-    "effort.",
+    "effort.routing_tier_defaults.",
+    "effort.agent_overrides.",
     "dynamic_routing.",
-    "review.",
+    "review.models.",
+    "review.effort.",
     "agent_skills.",
 )
 

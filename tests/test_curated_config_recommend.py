@@ -1947,7 +1947,11 @@ class TestReconcileTracer(unittest.TestCase):
         yes = (
             ("model_overrides.gsd-planner", "claude"),
             ("models.planning", "claude"),
-            ("effort.default", "claude"),
+            ("effort.routing_tier_defaults.heavy", "claude"),
+            ("effort.agent_overrides.gsd-planner", "claude"),
+            ("review.default_reviewers", "claude"),
+            ("review.models.codex", "claude"),
+            ("review.effort.codex", "claude"),
             ("workflow.tdd_mode", "claude"),
             ("model_profile_overrides.claude.opus", "claude"),
         )
@@ -1957,6 +1961,11 @@ class TestReconcileTracer(unittest.TestCase):
             ("runtime", "claude"),
             ("model_policy.provider", "claude"),
             ("claude_md_path", "claude"),
+            # A-IN-09: user tuning knobs the plan never writes survive.
+            ("effort.default", "claude"),
+            ("review.max_prompt_tokens", "claude"),
+            ("review.parallel_lanes", "claude"),
+            ("review.reviewer_instances.x.model", "claude"),
         )
         for key, host in yes:
             self.assertTrue(presets.is_managed(key, host), key)

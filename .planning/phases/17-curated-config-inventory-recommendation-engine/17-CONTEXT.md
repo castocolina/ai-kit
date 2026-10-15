@@ -96,6 +96,11 @@ Phase 18 owns the selection rules.
   - The families are: `model_profile`, `models.*`, `model_overrides.*`,
     `model_profile_overrides.<host>.*`, `effort.*`, `dynamic_routing.*`, the rigor-preset
     workflow/gate keys, `review.*` and `agent_skills.*` (the last two are filled in Phase 18).
+  - *(amended 2026-10-15, 17-REVIEW A-IN-09; TypeSafe A 0.95)* `review.*` and `effort.*` are
+    narrowed to the keys the plan can write: `review.default_reviewers`, `review.models.*`,
+    `review.effort.*`, `effort.routing_tier_defaults.*` and `effort.agent_overrides.*`. Other
+    user knobs (`review.max_prompt_tokens`, `review.parallel_lanes`,
+    `review.reviewer_instances.*`, `effort.default`, ...) are kept, never unset.
   - Existing entries inside those families that the plan does not set are proposed as
     `op: "unset"` entries with a `why` (e.g. a leftover v1 `model_overrides.gsd-planner` that
     would shadow the new tiers).
