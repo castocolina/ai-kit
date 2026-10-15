@@ -26,6 +26,7 @@ def _load_edge_floor():
         "edge_floor_under_test",
         os.path.join(_REPO_ROOT, "skills", "ai-kit-gsd-spec-discuss", "scripts", "edge_floor.py"),
     )
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
