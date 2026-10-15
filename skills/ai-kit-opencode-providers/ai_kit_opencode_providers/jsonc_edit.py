@@ -27,64 +27,99 @@ class ProviderEntry(NamedTuple):
     value_end: int
 
 
+class _ClassifyState:
+    __slots__ = ("escaped", "in_block", "in_line", "in_string")
+
+    def __init__(self) -> None:
+        self.in_string = False
+        self.escaped = False
+        self.in_line = False
+        self.in_block = False
+
+
+def _cls_after_escape(text: str, kinds: list[str], i: int, state: _ClassifyState) -> int:
+    kinds[i] = KIND_STRING
+    state.escaped = False
+    return i + 1
+
+
+def _cls_in_string(text: str, kinds: list[str], i: int, state: _ClassifyState) -> int:
+    c = text[i]
+    kinds[i] = KIND_STRING
+    if c == "\\":
+        state.escaped = True
+    elif c == '"':
+        state.in_string = False
+    return i + 1
+
+
+def _cls_in_line_comment(text: str, kinds: list[str], i: int, state: _ClassifyState) -> int:
+    kinds[i] = KIND_COMMENT
+    if text[i] == "\n":
+        state.in_line = False
+    return i + 1
+
+
+def _cls_in_block_comment(text: str, kinds: list[str], i: int, state: _ClassifyState) -> int:
+    kinds[i] = KIND_COMMENT
+    if text[i] == "*" and i + 1 < len(text) and text[i + 1] == "/":
+        kinds[i + 1] = KIND_COMMENT
+        state.in_block = False
+        return i + 2
+    return i + 1
+
+
+def _cls_in_code(text: str, kinds: list[str], i: int, state: _ClassifyState) -> int:
+    c = text[i]
+    n = len(text)
+    if c == "/" and i + 1 < n and text[i + 1] == "/":
+        kinds[i] = KIND_COMMENT
+        kinds[i + 1] = KIND_COMMENT
+        state.in_line = True
+        return i + 2
+    if c == "/" and i + 1 < n and text[i + 1] == "*":
+        kinds[i] = KIND_COMMENT
+        kinds[i + 1] = KIND_COMMENT
+        state.in_block = True
+        return i + 2
+    if c == '"':
+        kinds[i] = KIND_STRING
+        state.in_string = True
+        return i + 1
+    kinds[i] = KIND_CODE
+    return i + 1
+
+
+def _classify_mode(state: _ClassifyState) -> str:
+    if state.escaped:
+        return "escape"
+    if state.in_string:
+        return "string"
+    if state.in_line:
+        return "line"
+    if state.in_block:
+        return "block"
+    return "code"
+
+
+_CLASSIFY_HANDLERS = {
+    "escape": _cls_after_escape,
+    "string": _cls_in_string,
+    "line": _cls_in_line_comment,
+    "block": _cls_in_block_comment,
+    "code": _cls_in_code,
+}
+
+
 def _classify(text: str) -> list[str]:
     """Classify every character from offset 0 (neutral seed)."""
     n = len(text)
     kinds = [KIND_CODE] * n
+    state = _ClassifyState()
     i = 0
-    in_string = False
-    escaped = False
-    in_line = False
-    in_block = False
     while i < n:
-        c = text[i]
-        if escaped:
-            kinds[i] = KIND_STRING
-            escaped = False
-            i += 1
-            continue
-        if in_string:
-            kinds[i] = KIND_STRING
-            if c == "\\":
-                escaped = True
-            elif c == '"':
-                in_string = False
-            i += 1
-            continue
-        if in_line:
-            kinds[i] = KIND_COMMENT
-            if c == "\n":
-                in_line = False
-            i += 1
-            continue
-        if in_block:
-            kinds[i] = KIND_COMMENT
-            if c == "*" and i + 1 < n and text[i + 1] == "/":
-                kinds[i + 1] = KIND_COMMENT
-                in_block = False
-                i += 2
-                continue
-            i += 1
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "/":
-            kinds[i] = KIND_COMMENT
-            kinds[i + 1] = KIND_COMMENT
-            in_line = True
-            i += 2
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "*":
-            kinds[i] = KIND_COMMENT
-            kinds[i + 1] = KIND_COMMENT
-            in_block = True
-            i += 2
-            continue
-        if c == '"':
-            kinds[i] = KIND_STRING
-            in_string = True
-            i += 1
-            continue
-        kinds[i] = KIND_CODE
-        i += 1
+        mode = _classify_mode(state)
+        i = _CLASSIFY_HANDLERS[mode](text, kinds, i, state)
     return kinds
 
 
@@ -186,6 +221,38 @@ def find_provider_object(text: str) -> tuple[int, int] | None:
     return None
 
 
+def _walk_advance_brace(text: str, i: int, depth: int) -> tuple[int, int]:
+    if text[i] == "{":
+        return i + 1, depth + 1
+    if text[i] == "}":
+        return i + 1, depth - 1
+    return i + 1, depth
+
+
+class _WalkKeyCtx(NamedTuple):
+    text: str
+    kinds: list[str]
+    close_i: int
+    entries: list[ProviderEntry]
+    non_objects: list[str]
+
+
+def _walk_consume_depth1_key(ctx: _WalkKeyCtx, i: int, str_end: int) -> int | None:
+    key = ctx.text[i + 1 : str_end - 1]
+    colon = _skip_insignificant(ctx.text, ctx.kinds, str_end, ctx.close_i)
+    if colon >= ctx.close_i or ctx.text[colon] != ":":
+        return None
+    value = _skip_insignificant(ctx.text, ctx.kinds, colon + 1, ctx.close_i)
+    if value >= ctx.close_i:
+        return None
+    if ctx.text[value] == "{":
+        _vs, value_end = find_object_span(ctx.text, value)
+        ctx.entries.append(ProviderEntry(key, i, value, value_end))
+        return value_end
+    ctx.non_objects.append(key)
+    return _skip_value(ctx.text, ctx.kinds, value, ctx.close_i)
+
+
 def _walk_provider_children(
     text: str,
 ) -> tuple[list[ProviderEntry], list[str]]:
@@ -196,35 +263,21 @@ def _walk_provider_children(
     kinds = _classify(text)
     entries: list[ProviderEntry] = []
     non_objects: list[str] = []
+    key_ctx = _WalkKeyCtx(text, kinds, close_i, entries, non_objects)
     depth = 0
     i = open_i
     while i < close_i:
         kind = kinds[i]
         if kind == KIND_CODE:
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-            i += 1
+            i, depth = _walk_advance_brace(text, i, depth)
             continue
         if kind == KIND_STRING and (i == 0 or kinds[i - 1] != KIND_STRING):
             str_end = _string_end(kinds, i, close_i)
             if depth == 1:
-                key = text[i + 1 : str_end - 1]
-                colon = _skip_insignificant(text, kinds, str_end, close_i)
-                if colon < close_i and text[colon] == ":":
-                    value = _skip_insignificant(text, kinds, colon + 1, close_i)
-                    if value < close_i and text[value] == "{":
-                        _vs, value_end = find_object_span(text, value)
-                        entries.append(
-                            ProviderEntry(key, i, value, value_end),
-                        )
-                        i = value_end
-                        continue
-                    if value < close_i:
-                        non_objects.append(key)
-                        i = _skip_value(text, kinds, value, close_i)
-                        continue
+                next_i = _walk_consume_depth1_key(key_ctx, i, str_end)
+                if next_i is not None:
+                    i = next_i
+                    continue
             i = str_end
             continue
         i += 1

@@ -25,18 +25,21 @@ EXIT_ERROR = 1
 EXIT_NO_CONFIG = 2
 
 
-def cmd_remove(args, env, cwd, out, err) -> int:
-    path = resolve_config_path(args.config, env)
+def _read_config_at(path, err):
+    """Return `(text, exit_code)`; exit_code is `None` on success."""
     if not os.path.exists(path):
         print(f"error: no opencode config at {path}", file=err)
-        return EXIT_NO_CONFIG
+        return None, EXIT_NO_CONFIG
     try:
         with open(path, encoding="utf-8") as handle:
-            text = handle.read()
+            return handle.read(), None
     except (OSError, UnicodeDecodeError) as exc:
         print(f"error: could not read {path}: {exc}", file=err)
-        return EXIT_ERROR
-    refs, audit = collect_references(args.provider_id, cwd, env)
+        return None, EXIT_ERROR
+
+
+def _print_remove_cross_refs(provider_id, cwd, env, out):
+    refs, audit = collect_references(provider_id, cwd, env)
     # WR-03: the qualifier text comes from each SourceStatus's own `.reason`
     # (set where the inactivity condition is actually computed, in
     # collect_references) rather than a string hardcoded here to the
@@ -49,29 +52,32 @@ def cmd_remove(args, env, cwd, out, err) -> int:
         print(f"cross-reference: {audit_path} {status}", file=out)
     for ref in refs:
         line = (
-            f'warning: "{args.provider_id}" is referenced in '
+            f'warning: "{provider_id}" is referenced in '
             f"{format_reference(ref)}"
         )
         reason = inactive_reasons.get(ref.source_path)
         if reason is not None:
             line += f" (not active: {reason})"
         print(line, file=out)
-    result = remove_provider(text, args.provider_id)
+
+
+def _finish_remove(path, text, provider_id, out, err):
+    result = remove_provider(text, provider_id)
     if result is None:
-        if args.provider_id in non_object_provider_keys(text):
+        if provider_id in non_object_provider_keys(text):
             print(
-                f'provider "{args.provider_id}" in {path} is not a '
+                f'provider "{provider_id}" in {path} is not a '
                 "config-based provider (its value is not an object) "
                 "— nothing removed",
                 file=out,
             )
         else:
             print(
-                f'no provider "{args.provider_id}" in {path} — nothing to remove',
+                f'no provider "{provider_id}" in {path} — nothing to remove',
                 file=out,
             )
         return EXIT_OK
-    if not validate_removal(text, result, args.provider_id):
+    if not validate_removal(text, result, provider_id):
         print(
             f"error: refusing to write {path} — the edit could not be "
             "verified as structurally safe (the config may already be "
@@ -84,43 +90,48 @@ def cmd_remove(args, env, cwd, out, err) -> int:
     except OSError as exc:
         print(f"error: could not write {path}: {exc.strerror}", file=err)
         return EXIT_ERROR
-    print(f'removed provider "{args.provider_id}" from {path}', file=out)
+    print(f'removed provider "{provider_id}" from {path}', file=out)
     return EXIT_OK
+
+
+def cmd_remove(args, env, cwd, out, err) -> int:
+    path = resolve_config_path(args.config, env)
+    text, read_code = _read_config_at(path, err)
+    if read_code is not None or text is None:
+        return read_code if read_code is not None else EXIT_ERROR
+    _print_remove_cross_refs(args.provider_id, cwd, env, out)
+    return _finish_remove(path, text, args.provider_id, out, err)
+
+
+def _print_provider_table(text, path, out):
+    entries = iter_provider_entries(text)
+    if not entries:
+        print(f"no config-based providers found in {path}", file=out)
+        return
+    rows = [provider_summary(text, entry) for entry in entries]
+    cells = [("ID", "NPM", "BASE URL")]
+    for row in rows:
+        cells.append(
+            (
+                row["id"],
+                row["npm"] if row["npm"] is not None else "-",
+                row["baseURL"] if row["baseURL"] is not None else "-",
+            )
+        )
+    widths = [max(len(cell[col]) for cell in cells) for col in range(3)]
+    for cell in cells:
+        print(
+            f"{cell[0]:<{widths[0]}}  {cell[1]:<{widths[1]}}  {cell[2]:<{widths[2]}}",
+            file=out,
+        )
 
 
 def cmd_list(args, env, cwd, out, err) -> int:
     path = resolve_config_path(args.config, env)
-    if not os.path.exists(path):
-        print(f"error: no opencode config at {path}", file=err)
-        return EXIT_NO_CONFIG
-    try:
-        with open(path, encoding="utf-8") as handle:
-            text = handle.read()
-    except (OSError, UnicodeDecodeError) as exc:
-        print(f"error: could not read {path}: {exc}", file=err)
-        return EXIT_ERROR
-    entries = iter_provider_entries(text)
-    if not entries:
-        print(f"no config-based providers found in {path}", file=out)
-    else:
-        rows = [provider_summary(text, entry) for entry in entries]
-        cells = [("ID", "NPM", "BASE URL")]
-        for row in rows:
-            cells.append(
-                (
-                    row["id"],
-                    row["npm"] if row["npm"] is not None else "-",
-                    row["baseURL"] if row["baseURL"] is not None else "-",
-                )
-            )
-        widths = [
-            max(len(cell[col]) for cell in cells) for col in range(3)
-        ]
-        for cell in cells:
-            print(
-                f"{cell[0]:<{widths[0]}}  {cell[1]:<{widths[1]}}  {cell[2]:<{widths[2]}}",
-                file=out,
-            )
+    text, read_code = _read_config_at(path, err)
+    if read_code is not None or text is None:
+        return read_code if read_code is not None else EXIT_ERROR
+    _print_provider_table(text, path, out)
     for key in non_object_provider_keys(text):
         print(
             f'note: "{key}" is a provider entry whose value is not an '

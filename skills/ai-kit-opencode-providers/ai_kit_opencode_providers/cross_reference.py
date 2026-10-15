@@ -131,6 +131,8 @@ class SourceStatus(str):
     explanation if a maintainer forgot.
     """
 
+    reason: str | None
+
     def __new__(cls, value: str, reason: str | None = None) -> SourceStatus:
         obj = str.__new__(cls, value)
         obj.reason = reason
@@ -147,7 +149,7 @@ def _source_status(path: str, reason: str | None) -> SourceStatus:
 
 def collect_references(
     provider_id: str, cwd: str, env: dict
-) -> tuple[list[Reference], list[tuple[str, str]]]:
+) -> tuple[list[Reference], list[tuple[str, SourceStatus]]]:
     """Scan local review-spec, global review-spec, then the cached catalog."""
     local_path = local_review_spec_path(cwd)
     global_path = global_review_spec_path(env)
@@ -164,7 +166,7 @@ def collect_references(
         (cat_path, scan_catalog, None),
     )
     refs: list[Reference] = []
-    audit: list[tuple[str, str]] = []
+    audit: list[tuple[str, SourceStatus]] = []
     for path, scanner, reason in sources:
         audit.append((path, _source_status(path, reason)))
         refs.extend(scanner(path, provider_id))
