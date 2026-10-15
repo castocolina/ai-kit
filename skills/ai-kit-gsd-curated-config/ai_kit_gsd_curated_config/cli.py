@@ -638,18 +638,26 @@ def _apply_dry_run_report(args, deps: apply_mod.ApplyDeps) -> tuple[dict | None,
 
 
 def _cmd_apply(args, which_fn, run_fn, env_fn) -> int:
-    if not args.dry_run:
-        print(
-            "ai-kit-gsd-curated-config: apply without --dry-run is not available in this build",
-            file=sys.stderr,
-        )
-        return 2
-    report, error = _apply_dry_run_report(args, apply_mod.ApplyDeps(which_fn, run_fn, env_fn))
-    if report is None:
+    deps = apply_mod.ApplyDeps(which_fn, run_fn, env_fn)
+    if args.dry_run:
+        report, error = _apply_dry_run_report(args, deps)
+        if report is None:
+            print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
+            return 2
+        print(json.dumps(report))
+        return 0
+    inputs, error = apply_mod.load_inputs(args.plan, args.inventory, args.project_dir)
+    if inputs is None:
         print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
         return 2
+    encode = _gsd_tools_encode()
+    if encode is None:
+        return 2
+    code, report = apply_mod.run_apply(inputs, deps, encode)
     print(json.dumps(report))
-    return 0
+    if report.get("error") and code != 0:
+        print(f"ai-kit-gsd-curated-config: {report['error']}", file=sys.stderr)
+    return code
 
 
 def _cmd_plan_unset(args, which_fn, run_fn, env_fn) -> int:

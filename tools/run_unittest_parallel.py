@@ -54,6 +54,7 @@ E2E_MODULES = frozenset({
     "tests.test_worktree_e2e",
     "tests.test_system_memory_e2e",
     "tests.test_curated_config_e2e",
+    "tests.test_curated_config_apply_e2e",
     "tests.test_ai_kit_spec_e2e",
     "tests.test_ai_kit_gsd_spec_discuss_e2e",
     "tests.test_cross_ai_runner_e2e",
