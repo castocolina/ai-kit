@@ -467,6 +467,17 @@ class TestCatalogStates(unittest.TestCase):
         self.assertEqual(state, "fresh")
         self.assertIn(catalog_adapter._MODELS_DEV_WARN, warns)
 
+    def test_failed_fetch_with_router_only_rows_is_none(self):
+        """17-VERIFICATION WR: a first run with both sources down writes router-only rows
+        (no source flags); that is no cache, not a stale one."""
+        failed = {"models_dev_ok": False, "artificial_analysis_ok": False, "fetch_skipped": False}
+        router_only = {"router-env/my-coding": {"source": {"models_dev": False,
+                                                           "artificial_analysis": False,
+                                                           "manual": False}}}
+        self.assertEqual(catalog_adapter._catalog_state(failed, router_only), ("none", []))
+        cached = {"openai/x": {"source": {"models_dev": True}}}
+        self.assertEqual(catalog_adapter._catalog_state(failed, cached)[0], "stale")
+
     def test_fetch_skipped_is_fresh_without_warning(self):
         home = tempfile.mkdtemp()
         project = tempfile.mkdtemp()

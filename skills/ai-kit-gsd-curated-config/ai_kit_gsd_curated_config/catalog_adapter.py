@@ -248,7 +248,18 @@ def _catalog_state(fetch_result: dict | None, entries: dict) -> tuple[str, list[
         if not skipped and not models_ok:
             warns.append(_MODELS_DEV_WARN)
         return "fresh", warns
+    if _only_sourceless_rows(entries):
+        # A first run with both fetches failed still writes router-only rows: no cache exists.
+        return "none", []
     return "stale", [_STALE_WARN]
+
+
+def _only_sourceless_rows(entries: dict) -> bool:
+    """Every row says (via its `source` flags) that no source ever supplied it."""
+    rows = [entry for entry in entries.values() if isinstance(entry, dict)]
+    return bool(rows) and all(
+        isinstance(entry.get("source"), dict) and not any(entry["source"].values())
+        for entry in rows)
 
 
 def _catalog_is_scored(entries: dict) -> bool:
