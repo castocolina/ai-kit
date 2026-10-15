@@ -8,6 +8,7 @@ import os
 import sqlite3
 import urllib.parse
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from ai_kit_usage_metrics import paths
 from ai_kit_usage_metrics.raw_store import CaptureResult
@@ -53,6 +54,26 @@ _NULL_SQL = {
     "message": "SELECT * FROM message WHERE time_created IS NULL ORDER BY id",
     "part": "SELECT * FROM part WHERE time_created IS NULL ORDER BY id",
 }
+
+
+class _OpencodeEnvelopeArgs(NamedTuple):
+    source_file: str
+    source_kind: str
+    record_id: str
+    raw_text: str
+    captured_at: str
+    session_id: str | None
+    message_id: str | None
+    time_created: int | None
+
+
+class _OpencodeSource(NamedTuple):
+    conn: sqlite3.Connection
+    db_path: str
+    cursor: dict
+    records: list[dict]
+    stats: dict
+    captured_at: str
 
 
 def _empty_stats() -> dict:
@@ -106,32 +127,45 @@ def _parse_data(raw_text: str) -> tuple[str, object | None]:
         return "malformed", None
 
 
-def _base_envelope(
-    source_file: str,
-    source_kind: str,
-    record_id: str,
-    raw_text: str,
-    captured_at: str,
-    session_id: str | None,
-    message_id: str | None,
-    time_created: int | None,
-) -> dict:
-    status, payload = _parse_data(raw_text)
+def _base_envelope_from_args(args: _OpencodeEnvelopeArgs) -> dict:
+    status, payload = _parse_data(args.raw_text)
     return {
-        "raw_ref": f"opencode:{source_file}:{source_kind}:{record_id}",
-        "captured_at": captured_at,
+        "raw_ref": f"opencode:{args.source_file}:{args.source_kind}:{args.record_id}",
+        "captured_at": args.captured_at,
         "runtime": "opencode",
-        "source_file": source_file,
+        "source_file": args.source_file,
         "source_line": None,
         "parse_status": status,
-        "raw_text": raw_text,
+        "raw_text": args.raw_text,
         "payload": payload,
-        "source_kind": source_kind,
-        "record_id": record_id,
-        "session_id": session_id,
-        "message_id": message_id,
-        "time_created": time_created,
+        "source_kind": args.source_kind,
+        "record_id": args.record_id,
+        "session_id": args.session_id,
+        "message_id": args.message_id,
+        "time_created": args.time_created,
     }
+
+
+def _base_envelope(*args: object) -> dict:
+    if len(args) == 1 and isinstance(args[0], _OpencodeEnvelopeArgs):
+        return _base_envelope_from_args(args[0])
+    if len(args) == 8:
+        time_created = args[7]
+        tc: int | None
+        tc = time_created if isinstance(time_created, int) or time_created is None else None
+        return _base_envelope_from_args(
+            _OpencodeEnvelopeArgs(
+                str(args[0]),
+                str(args[1]),
+                str(args[2]),
+                str(args[3]),
+                str(args[4]),
+                args[5] if isinstance(args[5], str) or args[5] is None else None,
+                args[6] if isinstance(args[6], str) or args[6] is None else None,
+                tc,
+            )
+        )
+    raise TypeError("_base_envelope expects _OpencodeEnvelopeArgs or eight positional fields")
 
 
 def _session_raw_text(row: dict) -> str:
@@ -144,82 +178,91 @@ def _envelope_from_row(db_path: str, table: str, row: dict, captured_at: str) ->
     record_id = str(row["id"])
     time_created = row.get("time_created")
     if table == "session":
-        return _base_envelope(
-            db_path,
-            "session",
-            record_id,
-            _session_raw_text(row),
-            captured_at,
-            record_id,
-            None,
-            time_created,
+        return _base_envelope_from_args(
+            _OpencodeEnvelopeArgs(
+                db_path,
+                "session",
+                record_id,
+                _session_raw_text(row),
+                captured_at,
+                record_id,
+                None,
+                time_created,
+            )
         )
     data_value = row.get("data")
     raw_text = data_value if isinstance(data_value, str) else ""
     if table == "message":
-        return _base_envelope(
+        return _base_envelope_from_args(
+            _OpencodeEnvelopeArgs(
+                db_path,
+                "message",
+                record_id,
+                raw_text,
+                captured_at,
+                row.get("session_id"),
+                None,
+                time_created,
+            )
+        )
+    return _base_envelope_from_args(
+        _OpencodeEnvelopeArgs(
             db_path,
-            "message",
+            "part",
             record_id,
             raw_text,
             captured_at,
             row.get("session_id"),
-            None,
+            row.get("message_id"),
             time_created,
         )
-    return _base_envelope(
-        db_path,
-        "part",
-        record_id,
-        raw_text,
-        captured_at,
-        row.get("session_id"),
-        row.get("message_id"),
-        time_created,
     )
 
 
-def _capture_table(
-    conn: sqlite3.Connection,
-    db_path: str,
+def _append_table_row(
+    source: _OpencodeSource,
     table: str,
-    cursor: dict,
-    records: list[dict],
-    stats: dict,
-    captured_at: str,
-) -> None:
-    last_time, last_id, null_seen_ids = _table_cursor(cursor, table)
+    row: dict,
+    null_seen_ids: set[str],
+    *,
+    null_time: bool,
+) -> tuple[int, str]:
+    rec = _envelope_from_row(source.db_path, table, row, source.captured_at)
+    source.records.append(rec)
+    source.stats["captured"] += 1
+    if null_time:
+        source.stats["null_time_created"] += 1
+    if rec["parse_status"] == "malformed":
+        source.stats["malformed"] += 1
+    row_id = str(row["id"])
+    if null_time:
+        null_seen_ids.add(row_id)
+        return int(row.get("time_created") or 0), row_id
+    return row["time_created"], row_id
 
-    db_cursor = conn.execute(_CURSOR_SQL[table], (last_time, last_time, last_id))
+
+def _capture_table(source: _OpencodeSource, table: str) -> None:
+    last_time, last_id, null_seen_ids = _table_cursor(source.cursor, table)
+
+    db_cursor = source.conn.execute(_CURSOR_SQL[table], (last_time, last_time, last_id))
     for row_tuple in db_cursor:
         row = _row_dict(db_cursor, row_tuple)
-        rec = _envelope_from_row(db_path, table, row, captured_at)
-        records.append(rec)
-        stats["captured"] += 1
-        if rec["parse_status"] == "malformed":
-            stats["malformed"] += 1
-        last_time, last_id = row["time_created"], str(row["id"])
+        last_time, last_id = _append_table_row(source, table, row, null_seen_ids, null_time=False)
 
     # NULL-time_created rows are paginated independently of the time-ordered
     # cursor above (see _NULL_SQL comment): every such row is re-scanned
     # each run and deduped against null_seen_ids, so a row that arrives
     # after last_time has already advanced past 0 is still captured exactly
     # once, instead of being permanently excluded by the WHERE clause.
-    null_cursor = conn.execute(_NULL_SQL[table])
+    null_cursor = source.conn.execute(_NULL_SQL[table])
     for row_tuple in null_cursor:
         row = _row_dict(null_cursor, row_tuple)
         row_id = str(row["id"])
         if row_id in null_seen_ids:
             continue
-        rec = _envelope_from_row(db_path, table, row, captured_at)
-        records.append(rec)
-        stats["captured"] += 1
-        stats["null_time_created"] += 1
-        if rec["parse_status"] == "malformed":
-            stats["malformed"] += 1
-        null_seen_ids.add(row_id)
+        _append_table_row(source, table, row, null_seen_ids, null_time=True)
 
-    _set_table_cursor(cursor, table, last_time, last_id, null_seen_ids)
+    _set_table_cursor(source.cursor, table, last_time, last_id, null_seen_ids)
 
 
 def _capture_storage(
@@ -248,15 +291,17 @@ def _capture_storage(
         except (OSError, UnicodeDecodeError):
             stats["unreadable_files"].append(path)
             continue
-        rec = _base_envelope(
-            storage,
-            "legacy_storage_file",
-            rel,
-            raw_text,
-            captured_at,
-            None,
-            None,
-            None,
+        rec = _base_envelope_from_args(
+            _OpencodeEnvelopeArgs(
+                storage,
+                "legacy_storage_file",
+                rel,
+                raw_text,
+                captured_at,
+                None,
+                None,
+                None,
+            )
         )
         records.append(rec)
         stats["captured"] += 1
@@ -290,10 +335,9 @@ def capture(env: dict, cursor: dict) -> CaptureResult:
     if os.path.isfile(db_path):
         conn = _connect_readonly(db_path)
         try:
+            source = _OpencodeSource(conn, db_path, new_cursor, records, stats, captured_at)
             for table in _TABLES:
-                _capture_table(
-                    conn, db_path, table, new_cursor, records, stats, captured_at
-                )
+                _capture_table(source, table)
         finally:
             conn.close()
 
