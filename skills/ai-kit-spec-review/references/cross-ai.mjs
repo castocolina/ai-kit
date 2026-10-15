@@ -124,6 +124,12 @@ const KILL_GRACE_MS = 2000;
 const PIPE_DRAIN_MS = 2000;
 const SIGNAL_GRACE_MS = 1000;
 const GIT_CAP_MS = 10000;
+const LIST_CAP_MS = 15000;
+const PI_RPC_ARGS = [
+  '--mode', 'rpc', '--offline', '--no-session', '--no-extensions',
+  '--no-skills', '--no-context-files', '--no-mcp',
+];
+const PI_RPC_REQUEST = '{"id":"1","type":"get_available_models"}\n';
 
 let runStartedMs = Date.now();
 let liveFields = { cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean' };
@@ -400,6 +406,102 @@ function runChild(bin, argv, opts = {}) {
   });
 }
 
+
+function parsePiListingIds(stdout) {
+  if (typeof stdout !== 'string') return null;
+  let envelope = null;
+  for (const line of stdout.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    const parsed = parseJson(t);
+    if (parsed && parsed.command === 'get_available_models') { envelope = parsed; break; }
+  }
+  if (!envelope || envelope.success !== true) return null;
+  const modelsRaw = envelope.data && envelope.data.models;
+  if (!Array.isArray(modelsRaw)) return null;
+  const ids = [];
+  const seen = new Set();
+  for (const item of modelsRaw) {
+    if (!item || typeof item !== 'object') continue;
+    const bareId = item.id;
+    const provider = item.provider;
+    if (typeof bareId !== 'string' || !bareId.trim()) continue;
+    if (typeof provider !== 'string' || !provider.trim()) continue;
+    const full = `${provider}/${bareId}`;
+    if (seen.has(full)) continue;
+    seen.add(full);
+    ids.push(full);
+  }
+  return ids;
+}
+
+function parseOpencodeListingIds(stdout) {
+  if (typeof stdout !== 'string') return null;
+  return stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+}
+
+function parseCursorListingIds(stdout) {
+  if (typeof stdout !== 'string') return null;
+  const ids = [];
+  for (const line of stdout.split('\n')) {
+    const ln = line.trim();
+    if (!ln.includes(' - ')) continue;
+    ids.push(ln.split(' - ', 1)[0].trim());
+  }
+  return ids;
+}
+
+function parseCodexListingIds(stdout) {
+  if (typeof stdout !== 'string') return null;
+  const data = parseJson(stdout);
+  if (!data || !Array.isArray(data.models)) return null;
+  const ids = [];
+  const seen = new Set();
+  for (const item of data.models) {
+    if (!item || typeof item !== 'object') continue;
+    const slug = item.slug;
+    if (typeof slug !== 'string' || !slug.trim() || item.visibility !== 'list') continue;
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    ids.push(slug);
+  }
+  return ids;
+}
+
+function parseListingIds(cli, stdout) {
+  if (cli === 'pi') return parsePiListingIds(stdout);
+  if (cli === 'opencode') return parseOpencodeListingIds(stdout);
+  if (cli === 'cursor') return parseCursorListingIds(stdout);
+  if (cli === 'codex') return parseCodexListingIds(stdout);
+  return null;
+}
+
+async function listModels(cli, binPath, env, limit) {
+  if (cli === 'claude') return { ok: false, ids: [], reason: 'no listing' };
+  let argv;
+  let input;
+  if (cli === 'pi') {
+    argv = PI_RPC_ARGS;
+    input = PI_RPC_REQUEST;
+  } else if (cli === 'opencode') {
+    argv = ['models'];
+  } else if (cli === 'cursor') {
+    argv = ['models'];
+  } else if (cli === 'codex') {
+    argv = ['debug', 'models'];
+  } else {
+    return { ok: false, ids: [], reason: 'no listing' };
+  }
+  const r = await runChild(binPath, argv, { cwd: process.cwd(), env, input, capMs: LIST_CAP_MS, limit });
+  if (r.timedOut) return { ok: false, ids: [], reason: 'timeout' };
+  if (r.spawnErr) return { ok: false, ids: [], reason: 'spawn error' };
+  if (r.code !== 0) return { ok: false, ids: [], reason: `exit ${r.code}` };
+  const ids = parseListingIds(cli, r.stdout);
+  if (ids === null) return { ok: false, ids: [], reason: 'unparseable' };
+  if (ids.length === 0) return { ok: false, ids: [], reason: 'no ids' };
+  return { ok: true, ids, reason: '' };
+}
+
 async function treeState(cwd, limit) {
   const git = which('git', process.env.PATH || '');
   if (!git) return null;
@@ -638,12 +740,16 @@ const FAKE_MODES = {
 const modeIdx = args.indexOf('--mode');
 if (modeIdx >= 0 && args[modeIdx + 1] === 'rpc') {
   log('pi rpc');
-  if (process.env.FAKE_PI_LIST === 'broken') { console.log('not json'); process.exit(0); }
-  if (process.env.FAKE_PI_LIST === 'fail') process.exit(1);
-  const models = Object.keys(FAKE_MODES).map((k) => ({ provider: 'fake', id: k }));
-  console.log(JSON.stringify({ id: '1', type: 'response', command: 'get_available_models', success: true, data: { models } }));
-  process.exit(0);
-}
+  if (process.env.FAKE_PI_LIST === 'hang') {
+    setInterval(() => {}, 1 << 30);
+  } else {
+    if (process.env.FAKE_PI_LIST === 'broken') { console.log('not json'); process.exit(0); }
+    if (process.env.FAKE_PI_LIST === 'fail') process.exit(1);
+    const models = Object.keys(FAKE_MODES).map((k) => ({ provider: 'fake', id: k }));
+    console.log(JSON.stringify({ id: '1', type: 'response', command: 'get_available_models', success: true, data: { models } }));
+    process.exit(0);
+  }
+} else {
 log('pi ' + (fakeMode || model));
 let stdin = '';
 process.stdin.setEncoding('utf8');
@@ -654,6 +760,7 @@ process.stdin.on('end', () => {
   fn();
   if (!STICKY_FAKE.has(fakeMode)) process.exit(0);
 });
+}
 `;
   const p = path.join(binDir, 'pi');
   fs.writeFileSync(p, body);
@@ -663,12 +770,21 @@ process.stdin.on('end', () => {
 function writeFakeCursor(binDir) {
   const body = String.raw`#!/usr/bin/env node
 import fs from 'node:fs';
+const calls = process.env.FAKE_CALLS;
+const sub = process.argv.slice(2);
+if (sub[0] === 'models') {
+  if (calls) fs.appendFileSync(calls, 'cursor-agent models\n');
+  console.log('Available models');
+  console.log('');
+  if (process.env.FAKE_CURSOR_LIST !== 'empty') {
+    for (const id of ['fake-ok-cursor', 'fake-err-cursor']) console.log(id + ' - label');
+  }
+  process.exit(0);
+}
 let model = '';
 for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === '--model') model = process.argv[++i] || '';
-const calls = process.env.FAKE_CALLS;
 if (calls) fs.appendFileSync(calls, 'cursor-agent ' + model + '\n');
-let s = '';
-process.stdin.on('data', (d) => { s += d; }).on('end', () => {
+process.stdin.on('data', () => {}).on('end', () => {
   if (model === 'fake-err-cursor') {
     console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized', session_id: 'c2' }));
     process.exit(0);
@@ -685,9 +801,15 @@ process.stdin.on('data', (d) => { s += d; }).on('end', () => {
 function writeFakeOpencode(binDir) {
   const body = String.raw`#!/usr/bin/env node
 import fs from 'node:fs';
+const calls = process.env.FAKE_CALLS;
+const sub = process.argv.slice(2);
+if (sub[0] === 'models') {
+  if (calls) fs.appendFileSync(calls, 'opencode models\n');
+  console.log('fake/ok');
+  process.exit(0);
+}
 let model = '';
 for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === '--model') model = process.argv[++i] || '';
-const calls = process.env.FAKE_CALLS;
 if (calls) fs.appendFileSync(calls, 'opencode ' + model + '\n');
 process.stdin.on('data', () => {}).on('end', () => {
   fs.appendFileSync('a.txt', 'oc\n');
@@ -707,13 +829,19 @@ process.stdin.on('data', () => {}).on('end', () => {
 function writeFakeCodex(binDir) {
   const body = String.raw`#!/usr/bin/env node
 import fs from 'node:fs';
+const calls = process.env.FAKE_CALLS;
+const sub = process.argv.slice(2);
+if (sub[0] === 'debug' && sub[1] === 'models') {
+  if (calls) fs.appendFileSync(calls, 'codex models\n');
+  console.log(JSON.stringify({ models: [{ slug: 'fake-ok-codex', visibility: 'list' }] }));
+  process.exit(0);
+}
 let model = '';
 let outFile = '';
 for (let i = 0; i < process.argv.length; i++) {
   if (process.argv[i] === '-m') model = process.argv[++i] || '';
   if (process.argv[i] === '-o') outFile = process.argv[++i] || '';
 }
-const calls = process.env.FAKE_CALLS;
 if (calls) fs.appendFileSync(calls, 'codex ' + model + '\n');
 process.stdin.on('data', () => {}).on('end', () => {
   fs.appendFileSync('a.txt', 'cx\n');
@@ -913,7 +1041,13 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=dirty action=stop$/,
-        check: (r) => (r.stdout === '## Summary\ndone\n' ? null : `stdout=${JSON.stringify(r.stdout)}`),
+        check: (r, ctx) => {
+          if (r.stdout !== '## Summary\ndone\n') return `stdout=${JSON.stringify(r.stdout)}`;
+          const mi = ctx.calls.indexOf('opencode models');
+          const ri = ctx.calls.findIndex((l) => l.startsWith('opencode fake/'));
+          if (mi < 0 || ri < 0 || mi > ri) return `calls=${ctx.calls.join('|')}`;
+          return null;
+        },
       },
       {
         name: 'parser-codex',
@@ -921,7 +1055,13 @@ async function blackBoxSelfTest() {
         config: { prefer: ['codex'] },
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=dirty action=stop$/,
-        check: (r) => (r.stdout === '## Summary\nok\n' ? null : `stdout=${JSON.stringify(r.stdout)}`),
+        check: (r, ctx) => {
+          if (r.stdout !== '## Summary\nok\n') return `stdout=${JSON.stringify(r.stdout)}`;
+          const mi = ctx.calls.indexOf('codex models');
+          const ri = ctx.calls.findIndex((l) => l.startsWith('codex fake-'));
+          if (mi < 0 || ri < 0 || mi > ri) return `calls=${ctx.calls.join('|')}`;
+          return null;
+        },
       },
       {
         name: 'parser-pi-ansi',
@@ -990,6 +1130,12 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'cursor', '--model-cursor', 'fake-err-cursor'],
         exit: 69,
         status: /^AIKIT-XAI status=auth cli=cursor model=fake-err-cursor exit=69 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        check: (_r, ctx) => {
+          const mi = ctx.calls.indexOf('cursor-agent models');
+          const ri = ctx.calls.indexOf('cursor-agent fake-err-cursor');
+          if (mi < 0 || ri < 0 || mi > ri) return `calls=${ctx.calls.join('|')}`;
+          return null;
+        },
       },
       {
         name: 'dirtycrash',
@@ -1112,6 +1258,75 @@ async function blackBoxSelfTest() {
         status: /^AIKIT-XAI status=unverified cli=pi model=fake\/ok exit=1 cli_rc=- elapsed=\d+s out=0 tree=unknown action=stop$/,
         check: (_r, ctx) => (ctx.elapsedMs >= 10000 ? `elapsed ${ctx.elapsedMs}` : null),
       },
+
+      {
+        name: 'bad-model',
+        args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/missing', '--model-cursor', 'fake-ok-cursor'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=cursor model=fake-ok-cursor exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('bad_model')) return 'stderr missing bad_model';
+          if (!ctx.calls.includes('pi rpc')) return 'missing pi rpc';
+          if (ctx.calls.some((l) => l === 'pi missing')) return 'pi run should not happen';
+          return null;
+        },
+      },
+      {
+        name: 'bad-model-only',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/missing'],
+        exit: 69,
+        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing exit=69 .* action=fallback$/,
+      },
+      {
+        name: 'list-broken',
+        env: { FAKE_PI_LIST: 'broken' },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('model list unavailable (unparseable)') ? null : 'missing unparseable note'),
+      },
+      {
+        name: 'list-fail',
+        env: { FAKE_PI_LIST: 'fail' },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('model list unavailable (exit 1)') ? null : 'missing exit 1 note'),
+      },
+      {
+        name: 'list-zero',
+        env: { FAKE_CURSOR_LIST: 'empty' },
+        args: ['--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=cursor model=fake-ok-cursor exit=0 .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('model list unavailable (no ids)') ? null : 'missing no ids note'),
+      },
+      {
+        name: 'print-argv-no-preflight',
+        env: { FAKE_PI_LIST: 'fail' },
+        args: ['--print-argv', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r, ctx) => {
+          if ((r.stderr || '').includes('model list unavailable')) return 'preflight ran under print-argv';
+          if (ctx.calls.length) return `calls=${ctx.calls.join(',')}`;
+          return null;
+        },
+      },
+      {
+        name: 'list-hang',
+        env: { FAKE_PI_LIST: 'hang' },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--timeout', '4'],
+        exit: 124,
+        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/ok exit=124 .* action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('model list unavailable (timeout)')) return 'missing timeout note';
+          if (ctx.elapsedMs >= 10000) return `elapsed ${ctx.elapsedMs}`;
+          if (!ctx.calls.includes('pi rpc')) return 'missing pi rpc';
+          if (ctx.calls.some((l) => l === 'pi ok')) return 'pi ok should not run';
+          return null;
+        },
+      },
     ];
 
     let failed = false;
@@ -1183,6 +1398,21 @@ async function main(argv) {
     const before = await treeState(process.cwd(), runDeadline);
     if (before === null) {
       return finish('unverified', { ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1 });
+    }
+    const listEnv = childEnv(c.rt.env, process.env);
+    const listing = await listModels(c.name, c.bin, listEnv, runDeadline);
+    if (listing.ok) {
+      if (!listing.ids.includes(c.model)) {
+        log(`cross-ai: ${c.name} bad_model (${c.model} not in model list)`);
+        last = { status: 'bad_model', cli: c.name, model: c.model, tree: 'clean', cli_rc: '-' };
+        if (tryNextCli('bad_model', 'clean')) {
+          log(`cross-ai: ${c.name} bad_model, trying the next CLI`);
+          continue;
+        }
+        return finish('bad_model', { ...liveFields, tree: 'clean', cli_rc: '-' });
+      }
+    } else if (listing.reason !== 'no listing') {
+      log(`cross-ai: ${c.name} model list unavailable (${listing.reason}); not preflighted`);
     }
     const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt);
     liveFields.out = r.outBytes || 0;
