@@ -452,7 +452,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                     assemble_candidates_fn=fake_assemble,
                     cache_read_json_fn=lambda path: {},
                     cache_write_json_fn=lambda path, data: None,
-                    refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                    refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                     stdout=out,
                 )
         self.assertEqual(rc, 2)
@@ -941,6 +941,7 @@ class TestCliSubcommandHandlers(unittest.TestCase):
     def test_every_subcommand_has_a_handler(self):
         parser = superpowers_cli._build_parser()
         subparsers = next(a for a in parser._actions if a.dest == "command")
+        assert subparsers.choices is not None
         self.assertEqual(set(superpowers_cli._COMMANDS), set(subparsers.choices))
 
 
@@ -979,7 +980,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 assemble_candidates_fn=fake_assemble,
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
-                refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1028,7 +1029,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 assemble_candidates_fn=fake_assemble,
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
-                refresh_quota_cache_fn=lambda config, keys, existing, ttl: (
+                refresh_quota_cache_fn=lambda config, keys, existing, _ttl: (
                     {
                         "claude/opus-5": {
                             "available": False,
@@ -1069,7 +1070,7 @@ class TestCliResolveInjection(unittest.TestCase):
         ]
         captured = {}
 
-        def fake_build_dispatch_injection(request, options=None):
+        def fake_build_dispatch_injection(request, _options=None):
             captured["sizes"] = request.files_touched_sizes
             return {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"}
 
@@ -1094,7 +1095,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 build_dispatch_injection_fn=fake_build_dispatch_injection,
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
-                refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                 stdout=io.StringIO(),
             )
         self.assertEqual(captured["sizes"], {"big.py": 4000})
@@ -1143,7 +1144,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 assemble_candidates_fn=lambda cwd, env: (candidates, ["claude/opus-5"]),
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
-                refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1193,7 +1194,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 assemble_candidates_fn=lambda cwd, env: (candidates, ["small-context/model"]),
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
-                refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1258,7 +1259,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 ),
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
-                refresh_quota_cache_fn=lambda config, keys, existing, ttl: (
+                refresh_quota_cache_fn=lambda config, keys, existing, _ttl: (
                     {
                         "claude/opus-5": {
                             "available": False,
@@ -1332,7 +1333,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 ),
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
-                refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
+                refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                 stdout=out,
             )
         self.assertEqual(rc, 0)

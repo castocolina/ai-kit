@@ -745,7 +745,7 @@ class TestBestReviewCandidate(unittest.TestCase):
 
 class TestBuildExecutionCommand(unittest.TestCase):
     def test_fake_builder_fills_model_placeholder(self):
-        def fake_execute_command_fn(cli_name, **params):
+        def fake_execute_command_fn(cli, **params):
             return "opencode run -m {model} --dir " + params["target_dir"] + " --auto"
 
         result = cross_ai_build.build_execution_command(
@@ -754,12 +754,13 @@ class TestBuildExecutionCommand(unittest.TestCase):
             "/fake/project",
             execute_command_fn=fake_execute_command_fn,
         )
+        assert result is not None
         self.assertNotIn("{model}", result)
         self.assertIn("router-env/my-coding", result)
 
     def test_unknown_cli_returns_none_never_raises(self):
-        def fake_execute_command_fn(cli_name, **params):
-            raise ValueError(f"no builder for {cli_name}")
+        def fake_execute_command_fn(cli, **params):
+            raise ValueError(f"no builder for {cli}")
 
         result = cross_ai_build.build_execution_command(
             "unknown-cli",

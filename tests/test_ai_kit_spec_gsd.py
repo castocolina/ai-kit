@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import subprocess
 import sys
 import unittest
 from unittest import mock
@@ -20,6 +21,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
 import detect_framework
 from ai_kit_spec import detection, execute_selection, gsd_tools
 from ai_kit_spec_gsd import adapter, cli, cross_ai_guidance, gsd_config, gsd_cross_ai
+
+
+def _stub_run_fn(*args, **kwargs):
+    return subprocess.CompletedProcess(args=args[0] if args else [], returncode=0)
+
+
+def _stub_tools():
+    return gsd_tools.GsdTools("node", "/nonexistent/test-gsd-tools.cjs")
 
 
 def _resolve_gsd_dispatch(candidates, top_n_keys, gsd_config, ctx, target_dir="/repo", **kwargs):
@@ -78,8 +87,11 @@ class TestResolveActiveRuntime(unittest.TestCase):
 
 def _ctx(config_path="/repo/.planning/config.json", run_fn=None, project_dir="/repo",
          tools=None):
-    """A GsdWriteContext for tests: tools/run_fn are filled in by FakeGsdTools-based tests, and
-    the default fake paths are never written to (ownership reads just miss their sidecar)."""
+    """A GsdWriteContext for tests: inert stubs when tools/run_fn are omitted."""
+    if tools is None:
+        tools = _stub_tools()
+    if run_fn is None:
+        run_fn = _stub_run_fn
     return gsd_config.GsdWriteContext(tools=tools, project_dir=project_dir,
                                        config_path=config_path, run_id="r1", run_fn=run_fn)
 
@@ -192,6 +204,7 @@ class TestUndoLog(unittest.TestCase):
             result = gsd_config.apply_changes(self._ctx(fake, t), [("a", 1), ("b", 2)])
             self.assertEqual(result.applied, ["a"])
             self.assertEqual(result.failed, "b")
+            assert result.error is not None
             self.assertIn("prior value is unknown", result.error)
             self.assertIn("keeps the new value", result.error)
             self.assertEqual(result.reverted, ["a"])
@@ -271,6 +284,7 @@ class TestBuildCrossAiCommand(unittest.TestCase):
                      "key": "future-cli/gpt-5.6-terra"}
         result = gsd_cross_ai.build_cross_ai_command(
             candidate, "/repo/worktree", execute_command_fn=fake_execute_command)
+        assert result is not None
         self.assertEqual(result, "future-cli exec --write -C /repo/worktree -m gpt-5.6-terra")
         # This IS the literal string, no wrapper/shim indirection whatsoever (Task 1 finding 1 --
         # GSD itself pipes the phase prompt into this command's own stdin and captures its own
@@ -445,7 +459,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
                        "tier": "sonnet"}]
         result = _resolve_gsd_dispatch(
             candidates, ["codex/gpt-5.6-sol"], cfg, _ctx(), "/repo", current_runtime="codex",
-            is_adapter_owned_fn=lambda gsd_cfg, path, key: True,
+            is_adapter_owned_fn=lambda _gsd_cfg, path, key: True,
             apply_changes_fn=_ok_apply)
         self.assertEqual(result["model"], "gpt-5.6-sol")
         self.assertTrue(result["written"])
@@ -590,18 +604,33 @@ class TestCliResolveDispatch(unittest.TestCase):
                     "--quota-path", os.path.join(t, "quota.json")]
             if run_id:
                 argv += ["--run-id", run_id]
-            kwargs = dict(
-                assemble_candidates_fn=assemble_fn,
-                refresh_quota_cache_fn=lambda *a, **k: {},
-                cache_read_json_fn=lambda p: {},
-                cache_write_json_fn=lambda p, d: None,
-                run_fn=fake.run_fn, which_fn=_node_which,
-                resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path,
-                stdout=io.StringIO())
+            stdout = io.StringIO()
             if read_gsd_config_fn is not None:
-                kwargs["read_gsd_config_fn"] = read_gsd_config_fn
-            code = cli.main(argv, **kwargs)
-        return code, kwargs["stdout"].getvalue()
+                code = cli.main(
+                    argv,
+                    assemble_candidates_fn=assemble_fn,
+                    refresh_quota_cache_fn=lambda *a, **k: {},
+                    cache_read_json_fn=lambda p: {},
+                    cache_write_json_fn=lambda p, d: None,
+                    run_fn=fake.run_fn,
+                    which_fn=_node_which,
+                    resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path,
+                    read_gsd_config_fn=read_gsd_config_fn,
+                    stdout=stdout,
+                )
+            else:
+                code = cli.main(
+                    argv,
+                    assemble_candidates_fn=assemble_fn,
+                    refresh_quota_cache_fn=lambda *a, **k: {},
+                    cache_read_json_fn=lambda p: {},
+                    cache_write_json_fn=lambda p, d: None,
+                    run_fn=fake.run_fn,
+                    which_fn=_node_which,
+                    resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path,
+                    stdout=stdout,
+                )
+        return code, stdout.getvalue()
 
     @staticmethod
     def _codex_assemble():
@@ -842,11 +871,10 @@ class FakeGsdTools:
         self.fail_keys = set(fail_keys)
         self.raw_keys = set(raw_keys)
 
-    class _Result:
-        def __init__(self, returncode, stdout="", stderr=""):
-            self.returncode = returncode
-            self.stdout = stdout
-            self.stderr = stderr
+    def _completed(self, returncode, stdout="", stderr=""):
+        return subprocess.CompletedProcess(
+            args=["node", self.gsd_tools_path], returncode=returncode,
+            stdout=stdout, stderr=stderr)
 
     def run_fn(self, argv, **kw):
         self.calls.append(list(argv))
@@ -856,21 +884,21 @@ class FakeGsdTools:
             return self._config_set(rest[0], rest[1])
         if sub == "config-path":
             cwd = rest[rest.index("--cwd") + 1]
-            return self._Result(0, stdout=os.path.join(cwd, ".planning", "config.json") + "\n")
+            return self._completed(0, stdout=os.path.join(cwd, ".planning", "config.json") + "\n")
         raise AssertionError(f"FakeGsdTools saw an unexpected subcommand: {sub}")
 
     def _config_set(self, key, value):
         if key in self.fail_keys:
-            return self._Result(1, stderr=f"Error: config-set failed for {key}")
+            return self._completed(1, stderr=f"Error: config-set failed for {key}")
         if key in self.raw_keys:
-            return self._Result(0, stdout=f"{key}={value}\n")
+            return self._completed(0, stdout=f"{key}={value}\n")
         if value == "null":
             was_present = key in self.config
             old = self.config.pop(key, None)
             out = {"updated": True, "unset": True, "key": key, "value": None}
             if was_present:
                 out["previousValue"] = old
-            return self._Result(0, stdout=json.dumps(out) + "\n")
+            return self._completed(0, stdout=json.dumps(out) + "\n")
         try:
             decoded = json.loads(value)
         except json.JSONDecodeError:
@@ -879,7 +907,7 @@ class FakeGsdTools:
         if key in self.config:
             out["previousValue"] = self.config[key]
         self.config[key] = decoded
-        return self._Result(0, stdout=json.dumps(out) + "\n")
+        return self._completed(0, stdout=json.dumps(out) + "\n")
 
     def config_set_calls(self):
         return [argv for argv in self.calls if argv[2] == "config-set"]
@@ -994,7 +1022,7 @@ class TestWorkflowKeysViaConfigSet(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             fake = FakeGsdTools(t)
             ctx = gsd_config.GsdWriteContext(
-                tools=None, project_dir=t,
+                tools=gsd_tools.GsdTools("node", fake.gsd_tools_path), project_dir=t,
                 config_path=os.path.join(t, ".planning", "config.json"),
                 run_id="r1", run_fn=fake.run_fn)
             result = gsd_config.apply_changes(ctx, [])
@@ -1146,6 +1174,7 @@ class TestMainCli(unittest.TestCase):
     def test_every_subcommand_has_a_handler(self):
         parser = cli._build_parser()
         subparsers = next(a for a in parser._actions if a.dest == "command")
+        assert subparsers.choices is not None
         self.assertEqual(set(cli._COMMANDS), set(subparsers.choices))
 
 
@@ -1317,6 +1346,7 @@ class TestRealGsdConfigSet(unittest.TestCase):
 
         from ai_kit_spec import gsd_tools as gt
         node = shutil.which("node")
+        assert node is not None
         tools = gt.GsdTools(node_bin=node, gsd_tools_path=os.path.abspath(self._TOOLS))
         with (tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as scratch,
               mock.patch.dict(os.environ, {"HOME": home})):

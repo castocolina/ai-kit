@@ -2331,7 +2331,6 @@ class TestResolveLadderPick(unittest.TestCase):
         pick = resolve_ladder_pick(
             [self.reviewers[0]], ["codex-gpt"], skip_vendor="anthropic", quota=quota
         )
-        assert pick is not None
         self.assertIsNone(pick)
 
     def test_unknown_ladder_key_is_skipped(self):
