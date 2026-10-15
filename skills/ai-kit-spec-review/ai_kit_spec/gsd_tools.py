@@ -18,6 +18,7 @@ write passes through gsd-tools' own CLI so GSD's schema validator runs on every 
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -145,6 +146,91 @@ class ConfigGetResult(NamedTuple):
     found: bool
     value: object
     error: str | None
+
+
+_RETYPED = frozenset(("true", "false", "null"))
+
+
+def _is_finite_number(text: str) -> bool:
+    try:
+        return math.isfinite(float(text))
+    except ValueError:
+        return False
+
+
+def _encode_refusal(key: str, detail: str) -> ValueError:
+    return ValueError(f"{key}: {detail} would be re-typed by config-set")
+
+
+def encode_value_strict(key: str, value: object) -> str:
+    """Strict encoder for the v2 write path (18 D-14/D-16): values config-set would
+    re-type or cannot represent are refused before any subprocess."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise _encode_refusal(key, f"float {value!r}")
+        return str(value)
+    if isinstance(value, (list, dict)):
+        try:
+            return json.dumps(
+                value, separators=(",", ":"), sort_keys=True, allow_nan=False,
+            )
+        except (TypeError, ValueError) as exc:
+            raise _encode_refusal(key, "value is not JSON-serializable") from exc
+    if isinstance(value, str):
+        stripped = value.strip()
+        if (
+            stripped in _RETYPED
+            or stripped.startswith(("[", "{"))
+            or _is_finite_number(stripped)
+        ):
+            raise _encode_refusal(key, f"string {value!r}")
+        return value
+    raise _encode_refusal(key, f"unsupported type {type(value).__name__}")
+
+
+class ConfigCall(NamedTuple):
+    """Threaded inputs for `config_set_strict` (v2 write path)."""
+
+    tools: GsdTools
+    project_dir: str
+    run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run
+    env: Mapping[str, str] | None = None
+
+
+def config_set_strict(
+    call: ConfigCall, key: str, value: object,
+) -> tuple[bool, str]:
+    """Runs `query config-set <key> <encoded> --project-dir <dir>` with the call's env
+    (same workstream resolution contract as `config_path`). Never spawns on an encoder
+    refusal; returns `(ok, output)` without raising."""
+    try:
+        encoded = encode_value_strict(key, value)
+    except ValueError as exc:
+        return False, str(exc)
+    try:
+        result = call.run_fn(
+            [
+                call.tools.node_bin, call.tools.gsd_tools_path,
+                "query", "config-set", key, encoded,
+                "--project-dir", call.project_dir,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+            env=None if call.env is None else dict(call.env),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    if result.returncode == 0:
+        return True, result.stdout.strip()
+    return False, result.stderr.strip()
 
 
 def _coerce_value(value: object) -> str:

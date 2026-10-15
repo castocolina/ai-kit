@@ -277,5 +277,110 @@ class TestWrappers(unittest.TestCase):
         )
 
 
+
+class TestStrictEncoder(unittest.TestCase):
+    def test_encodes_allowed_values(self):
+        enc = gsd_tools.encode_value_strict
+        self.assertEqual(enc("k", None), "null")
+        self.assertEqual(enc("k", True), "true")
+        self.assertEqual(enc("k", ["b", "a"]), '["b","a"]')
+        self.assertEqual(enc("k", {"b": 1, "a": 2}), '{"a":2,"b":1}')
+        self.assertEqual(enc("k", 12), "12")
+        self.assertEqual(enc("k", 1.5), "1.5")
+        self.assertEqual(enc("k", "gpt-5.6-sol"), "gpt-5.6-sol")
+        self.assertEqual(enc("k", "router-env/my-coding"), "router-env/my-coding")
+        self.assertEqual(
+            enc("k", "node .planning/scripts/cross-ai.mjs"),
+            "node .planning/scripts/cross-ai.mjs",
+        )
+
+    def test_refuses_retyped_strings_and_bad_types(self):
+        enc = gsd_tools.encode_value_strict
+        for bad in ("true", "false", "null", "12", " 12", "1e3", "-0.5", "[1", "{x"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError) as ctx:
+                    enc("my.key", bad)
+                msg = str(ctx.exception)
+                self.assertTrue(msg.startswith("my.key"))
+                self.assertIn("re-typed", msg)
+        for bad in (float("nan"), (1,), object()):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError) as ctx:
+                    enc("my.key", bad)
+                self.assertIn("my.key", str(ctx.exception))
+
+    def test_refuses_non_serializable_containers(self):
+        enc = gsd_tools.encode_value_strict
+        for bad in ({"a": float("nan")}, [float("inf")], {"a": object()}):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError) as ctx:
+                    enc("my.key", bad)
+                msg = str(ctx.exception)
+                self.assertTrue(msg.startswith("my.key"))
+                self.assertIsInstance(ctx.exception, ValueError)
+
+
+class TestConfigSetStrict(unittest.TestCase):
+    TOOLS = gsd_tools.GsdTools("node", "/g/gsd-tools.cjs")
+
+    def test_success_argv_env_and_timeout(self):
+        recorded = {}
+        base_run = recording_run([(0, " ok \n", "")])
+
+        def run(argv, **kw):
+            recorded["kwargs"] = kw
+            return base_run(argv, **kw)
+
+        call = gsd_tools.ConfigCall(self.TOOLS, "/p", run, {"GSD_WORKSTREAM": "ws"})
+        ok, output = gsd_tools.config_set_strict(
+            call, "workflow.cross_ai_timeout", 1800,
+        )
+        self.assertTrue(ok)
+        self.assertEqual(output, "ok")
+        self.assertEqual(
+            base_run.calls[0],
+            [
+                "node", "/g/gsd-tools.cjs", "query", "config-set",
+                "workflow.cross_ai_timeout", "1800", "--project-dir", "/p",
+            ],
+        )
+        self.assertEqual(recorded["kwargs"]["env"], {"GSD_WORKSTREAM": "ws"})
+        self.assertEqual(recorded["kwargs"]["timeout"], 60)
+
+    def test_encoder_refusal_spawns_nothing(self):
+        run = recording_run([(0, "ok", "")])
+        call = gsd_tools.ConfigCall(self.TOOLS, "/p", run)
+        ok, output = gsd_tools.config_set_strict(call, "k", float("nan"))
+        self.assertFalse(ok)
+        self.assertIn("re-typed", output)
+        self.assertEqual(run.calls, [])
+
+    def test_failure_and_oserror_paths(self):
+        run = recording_run([(1, "", "bad stderr")])
+        call = gsd_tools.ConfigCall(self.TOOLS, "/p", run)
+        ok, output = gsd_tools.config_set_strict(call, "k", 1)
+        self.assertFalse(ok)
+        self.assertEqual(output, "bad stderr")
+
+        def boom(*a, **k):
+            raise OSError("spawn failed")
+
+        call2 = gsd_tools.ConfigCall(self.TOOLS, "/p", boom)
+        ok2, output2 = gsd_tools.config_set_strict(call2, "k", 1)
+        self.assertFalse(ok2)
+        self.assertEqual(output2, "spawn failed")
+
+    def test_env_none_passes_through(self):
+        seen = {}
+
+        def capture(argv, **kw):
+            seen["env"] = kw.get("env")
+            return subprocess.CompletedProcess(argv, 0, stdout="x", stderr="")
+
+        call = gsd_tools.ConfigCall(self.TOOLS, "/p", capture, None)
+        gsd_tools.config_set_strict(call, "k", 1)
+        self.assertIsNone(seen["env"])
+
+
 if __name__ == "__main__":
     unittest.main()

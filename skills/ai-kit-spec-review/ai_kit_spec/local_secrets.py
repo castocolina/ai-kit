@@ -1,6 +1,7 @@
 """Reads local, never-committed secrets (design spec 2026-09-02, Section 3/8) -- currently
 just the Artificial Analysis API key. Not a general dotenv parser: flat KEY=VALUE lines only,
-no quoting/escaping, matching the one real use case (an opaque API key string)."""
+no quoting/escaping, matching the one real use case (an opaque API key string). Presence-only
+reads for detection that must never hold a key value live here too (18 D-36)."""
 import os
 
 
@@ -26,3 +27,8 @@ def load_secret(env: dict, key: str) -> str | None:
     except OSError:
         return None
     return None
+
+
+def secret_is_set(env: dict, key: str) -> bool:
+    """True when `load_secret` would return a non-empty value; never returns the value."""
+    return bool(load_secret(env, key))

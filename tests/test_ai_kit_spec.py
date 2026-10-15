@@ -6750,6 +6750,36 @@ class TestLoadSecret(unittest.TestCase):
             self.assertIsNone(local_secrets.load_secret(env, "ARTIFICIAL_ANALYSIS_API_KEY"))
 
 
+
+class TestSecretIsSet(unittest.TestCase):
+    def test_env_non_empty_is_true(self):
+        self.assertTrue(local_secrets.secret_is_set({"JEV_API_KEY": "x"}, "JEV_API_KEY"))
+
+    def test_file_value_without_returning_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg_dir = os.path.join(d, ".config", "ai-kit")
+            os.makedirs(cfg_dir)
+            with open(os.path.join(cfg_dir, "secrets.env"), "w", encoding="utf-8") as f:
+                f.write("JEV_API_KEY=sk-SENTINEL-18-01\n")
+            env = {"HOME": d, "JEV_API_KEY": ""}
+            result = local_secrets.secret_is_set(env, "JEV_API_KEY")
+            self.assertIs(result, True)
+            self.assertNotEqual(result, "sk-SENTINEL-18-01")
+
+    def test_empty_file_value_is_false(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg_dir = os.path.join(d, ".config", "ai-kit")
+            os.makedirs(cfg_dir)
+            with open(os.path.join(cfg_dir, "secrets.env"), "w", encoding="utf-8") as f:
+                f.write("JEV_API_KEY=\n")
+            self.assertFalse(local_secrets.secret_is_set({"HOME": d}, "JEV_API_KEY"))
+
+    def test_missing_file_is_false(self):
+        self.assertFalse(
+            local_secrets.secret_is_set({"HOME": "/nonexistent-home-dir-18-01"}, "JEV_API_KEY")
+        )
+
+
 class TestHttpGetJson(unittest.TestCase):
     # CRITICAL finding: models.dev returns HTTP 403 to urllib's default "Python-urllib/3.x"
     # User-Agent (confirmed live), so _http_get_json must send a real one -- assert against a
