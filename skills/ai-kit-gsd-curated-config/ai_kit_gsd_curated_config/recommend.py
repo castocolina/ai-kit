@@ -775,9 +775,19 @@ def _model_policy_unsets(ctx: PlanCtx, item: dict) -> list:
     ]
 
 
+def _conflicts_by_kind(ctx: PlanCtx) -> list:
+    """One conflict per kind; a project-scope conflict wins over a global one."""
+    by_kind: dict = {}
+    for item in ctx.inv["conflicts"]:
+        held = by_kind.get(item["kind"])
+        if held is None or (item["scope"] == "project" and held["scope"] != "project"):
+            by_kind[item["kind"]] = item
+    return [by_kind[kind] for kind in sorted(by_kind)]
+
+
 def _conflict_unsets(ctx: PlanCtx) -> list:
     entries: list = []
-    for item in ctx.inv["conflicts"]:
+    for item in _conflicts_by_kind(ctx):
         kind = item["kind"]
         if kind == "model_policy":
             entries.extend(_model_policy_unsets(ctx, item))
@@ -879,16 +889,18 @@ def _drop_rejected(ctx: PlanCtx, entries: list) -> tuple[list, list]:
 
 
 def _merge_layers(ctx: PlanCtx) -> tuple[list, list]:
-    """Runs the layers in fixed order; a duplicate key across layers raises instead
+    """Runs the layers in fixed order; a duplicate key (within or across layers) raises instead
     of overwriting (R11 ordering backstop: preset keys can never be silently
     replaced by catalog-driven keys)."""
     all_entries: list = []
     all_notes: list = []
+    seen: set[str] = set()
     for layer in _LAYERS:
         entries, notes = layer(ctx, all_entries)
         for entry in entries:
-            if any(existing["key"] == entry["key"] for existing in all_entries):
+            if entry["key"] in seen:
                 raise ValueError(f"duplicate plan key {entry['key']}")
+            seen.add(entry["key"])
         all_entries.extend(entries)
         all_notes.extend(notes)
     return all_entries, all_notes

@@ -1944,6 +1944,42 @@ class TestReconcileConflicts(unittest.TestCase):
             entry["effect"], "latent (copied into the project config by config-new-project)"
         )
 
+    def test_same_kind_conflicts_project_wins_no_duplicate_keys(self):
+        """A-WR-02: project + global model_policy yield one unset per leaf, order-free."""
+        def item(scope, policy):
+            return {
+                "kind": "model_policy", "scope": scope, "key": "model_policy",
+                "value": policy, "why": f"{scope} policy",
+            }
+
+        project = item("project", {"provider": "generic", "high": "h"})
+        glob = item("global", {"provider": "generic", "budget": "b"})
+        plans = []
+        for conflicts in ([project, glob], [glob, project]):
+            inv = make_inventory(
+                host="claude", conflicts=conflicts,
+                global_values={"model_policy": glob["value"]},
+            )
+            plan = build(inv)
+            keys = [e["key"] for e in plan["entries"]]
+            self.assertEqual(len(keys), len(set(keys)))
+            self.assertIn("project policy", entry_map(plan)["model_policy.provider"]["why"])
+            plans.append(plan["entries"])
+        self.assertEqual(plans[0], plans[1])
+
+    def test_duplicate_key_within_one_layer_raises(self):
+        dup = recommend.make_entry
+        inv = make_inventory(host="claude")
+
+        def layer(ctx, _prior):
+            return [dup(ctx, "k", 1, "preset", "w"), dup(ctx, "k", 2, "preset", "w")], []
+
+        ctx = recommend.PlanCtx(inv, recommend.RecommendOpts("adaptive", "standard"),
+                                "claude", {}, {})
+        with mock.patch.object(recommend, "_LAYERS", (layer,)), \
+                self.assertRaisesRegex(ValueError, "duplicate plan key k"):
+            recommend._merge_layers(ctx)
+
     def test_latent_global_model_policy_leaves(self):
         policy = {"provider": "generic", "budget": "b"}
         inv = make_inventory(
