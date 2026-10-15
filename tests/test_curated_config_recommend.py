@@ -15,7 +15,6 @@ import sys
 import tempfile
 import time
 import unittest
-import unittest.mock
 from unittest import mock
 
 sys.path.insert(
@@ -1877,7 +1876,6 @@ class TestInventoryValidation(unittest.TestCase):
         self.assertIn("rerun inventory", err)
 
     def test_each_removed_required_key_named(self):
-        base = make_inventory()
         removed = {
             "host": lambda inv: inv.pop("host"),
             "gsd_core": lambda inv: inv.pop("gsd_core"),
@@ -1895,7 +1893,6 @@ class TestInventoryValidation(unittest.TestCase):
             self.assertEqual((code, plan, plan_bytes), (2, None, None), name)
             self.assertIn(name, err, name)
             self.assertIn("rerun inventory", err, name)
-        del base
 
     def _assert_fail_closed(self, inv, needle):
         code, plan, plan_bytes, err = self._run(inv)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -36,6 +37,9 @@ from tests.test_curated_config_recommend import run_recommend
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "curated_config_v2"
+# Any absolute POSIX path (a "/" + letter right after a quote, space or bracket) or a
+# Windows drive path: replaces a fixed /home//tmp/... fragment list (C-IN-08).
+ABSOLUTE_PATH = re.compile(r"""(?:^|[\s"'(=,\[])/[A-Za-z]|\b[A-Za-z]:(?:\\\\|/)""", re.M)
 GOLDEN_DIR = FIXTURES / "golden"
 
 MODELS_KEYS_BY_RIGOR = {
@@ -303,8 +307,7 @@ class TestGoldenPlans(unittest.TestCase):
         self.assertEqual(inv["host"], "codex")
         self.assertEqual(inv["gsd_core"]["version"], "1.16.0")
         self.assertIn("<scratch>", text)
-        for frag in ("/home/", "/Users/", "/tmp/", "/var/"):
-            self.assertNotIn(frag, text)
+        self.assertIsNone(ABSOLUTE_PATH.search(text))
         node_calls = [
             a for a in inv["_fake_argv_log"] if a and a[0] == "node" and len(a) > 6 and a[1] == "-e"
         ]
@@ -510,17 +513,20 @@ class TestConflictsEndToEnd(unittest.TestCase):
 
 
 class TestFixtureHygiene(unittest.TestCase):
-    BAD_FRAGMENTS = ("/home/", "/Users/", "/tmp/", "/var/")
-
     def test_no_absolute_paths_in_fixtures(self):
         tmpdir = tempfile.gettempdir()
         for path in FIXTURES.rglob("*"):
             if not path.is_file():
                 continue
             text = path.read_text(encoding="utf-8")
-            for frag in self.BAD_FRAGMENTS:
-                self.assertNotIn(frag, text, f"{path} contains {frag}")
+            self.assertIsNone(ABSOLUTE_PATH.search(text), f"{path} has an absolute path")
             self.assertNotIn(tmpdir, text, f"{path} contains tempfile.gettempdir()")
+
+    def test_absolute_path_pattern_catches_posix_and_windows(self):
+        for bad in ('"/opt/x"', '"at /usr/lib"', '"C:\\\\Users"', '"[/mnt/d]"', '"D:/x"'):
+            self.assertIsNotNone(ABSOLUTE_PATH.search(bad), bad)
+        for ok in ('"openai/gpt-5.6-sol"', '"<scratch>/.planning"', '"<= 4/1M"'):
+            self.assertIsNone(ABSOLUTE_PATH.search(ok), ok)
 
 
 if __name__ == "__main__":

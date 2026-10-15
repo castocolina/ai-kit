@@ -238,16 +238,16 @@ class TestInventoryTracer(unittest.TestCase):
         self.assertEqual(out_buf.getvalue(), plan_io.canonical_json(parsed))
 
     def test_local_gsd_core_roots_matches_gsd_core_roots_prefix(self):
-        root = "/tmp/proj"
-        env = {"HOME": "/tmp/h"}
+        root = os.path.join(os.sep, "proj")
+        env = {"HOME": os.path.join(os.sep, "h")}
         self.assertEqual(
             gsd_tools.local_gsd_core_roots(root),
             gsd_tools.gsd_core_roots(env, root)[:3],
         )
 
     def test_real_gsd_run_allows_node_and_git_only(self):
-        child_env = {"HOME": "/tmp/x", "PATH": ""}
-        node = "/usr/bin/node"
+        child_env = {"HOME": os.path.join(os.sep, "x"), "PATH": ""}
+        node = os.path.join(os.sep, "bin", "node")
         run = real_gsd_run(child_env, node)
         with mock.patch("subprocess.run") as mocked:
             mocked.return_value = subprocess.CompletedProcess(["git"], 0, "", "")
@@ -1500,6 +1500,10 @@ class TestCompleteInventory(unittest.TestCase):
 
 
 
+# A synthetic root, never touched on disk (classify_conflicts only joins paths onto it).
+_PROJ = os.path.join(os.sep, "p")
+
+
 class TestConflictMatrix(unittest.TestCase):
     def _facts(self, **kw):
         base = {"planning_dir_present": False, "instruction_file": None}
@@ -1513,7 +1517,7 @@ class TestConflictMatrix(unittest.TestCase):
             "values": {"model_policy": {"provider": "generic"}},
         }
         conflicts, info = inventory.classify_conflicts(
-            "codex", existing, {"values": {}}, self._facts(), "/p"
+            "codex", existing, {"values": {}}, self._facts(), _PROJ
         )
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(conflicts[0]["scope"], "project")
@@ -1523,7 +1527,7 @@ class TestConflictMatrix(unittest.TestCase):
         existing = {"path": "p", "exists": False, "values": {}}
         global_defaults = {"values": {"model_policy": {"provider": "g"}}}
         conflicts, info = inventory.classify_conflicts(
-            "codex", existing, global_defaults, self._facts(), "/p"
+            "codex", existing, global_defaults, self._facts(), _PROJ
         )
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(conflicts[0]["effect"], inventory._LATENT)
@@ -1538,7 +1542,7 @@ class TestConflictMatrix(unittest.TestCase):
             existing,
             global_defaults,
             self._facts(planning_dir_present=True),
-            "/p",
+            _PROJ,
         )
         self.assertEqual(len(conflicts), 1)
         self.assertNotIn("read at resolution while .planning/ is absent", conflicts[0]["why"])
@@ -1547,7 +1551,7 @@ class TestConflictMatrix(unittest.TestCase):
         existing = {"path": "p", "exists": True, "values": {"runtime": "codex"}}
         global_defaults = {"values": {"model_policy": {"provider": "g"}}}
         conflicts, info = inventory.classify_conflicts(
-            "codex", existing, global_defaults, self._facts(), "/p"
+            "codex", existing, global_defaults, self._facts(), _PROJ
         )
         self.assertEqual(conflicts, [])
         self.assertEqual(len(info), 1)
@@ -1561,7 +1565,7 @@ class TestConflictMatrix(unittest.TestCase):
         }
         global_defaults = {"values": {"model_policy": {"provider": "g"}}}
         conflicts, info = inventory.classify_conflicts(
-            "codex", existing, global_defaults, self._facts(), "/p"
+            "codex", existing, global_defaults, self._facts(), _PROJ
         )
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(conflicts[0]["scope"], "project")
@@ -1571,7 +1575,7 @@ class TestConflictMatrix(unittest.TestCase):
     def test_claude_project_resolve_omit(self):
         existing = {"path": "p", "exists": True, "values": {"resolve_model_ids": "omit"}}
         conflicts, info = inventory.classify_conflicts(
-            "claude", existing, {"values": {}}, self._facts(), "/p"
+            "claude", existing, {"values": {}}, self._facts(), _PROJ
         )
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(conflicts[0]["kind"], "resolve_model_ids")
@@ -1581,7 +1585,7 @@ class TestConflictMatrix(unittest.TestCase):
         existing = {"path": "p", "exists": False, "values": {}}
         global_defaults = {"values": {"resolve_model_ids": "omit"}}
         conflicts, info = inventory.classify_conflicts(
-            "claude", existing, global_defaults, self._facts(), "/p"
+            "claude", existing, global_defaults, self._facts(), _PROJ
         )
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(conflicts[0]["effect"], inventory._LATENT)
@@ -1589,7 +1593,7 @@ class TestConflictMatrix(unittest.TestCase):
         # B-IN-03: with .planning/ absent gsd-core already reads the global omit.
         self.assertIn("read at resolution while .planning/ is absent", conflicts[0]["why"])
         with_planning, _ = inventory.classify_conflicts(
-            "claude", existing, global_defaults, self._facts(planning_dir_present=True), "/p"
+            "claude", existing, global_defaults, self._facts(planning_dir_present=True), _PROJ
         )
         self.assertNotIn("read at resolution", with_planning[0]["why"])
 
@@ -1597,7 +1601,7 @@ class TestConflictMatrix(unittest.TestCase):
         existing = {"path": "p", "exists": True, "values": {}}
         global_defaults = {"values": {"resolve_model_ids": "omit"}}
         conflicts, info = inventory.classify_conflicts(
-            "claude", existing, global_defaults, self._facts(), "/p"
+            "claude", existing, global_defaults, self._facts(), _PROJ
         )
         self.assertEqual(conflicts, [])
         self.assertEqual(len(info), 1)
@@ -1606,7 +1610,7 @@ class TestConflictMatrix(unittest.TestCase):
         existing = {"path": "p", "exists": True, "values": {"resolve_model_ids": "omit"}}
         global_defaults = {"values": {"resolve_model_ids": "omit"}}
         conflicts, info = inventory.classify_conflicts(
-            "codex", existing, global_defaults, self._facts(), "/p"
+            "codex", existing, global_defaults, self._facts(), _PROJ
         )
         self.assertEqual(conflicts, [])
         self.assertEqual(info, [])
@@ -1614,7 +1618,7 @@ class TestConflictMatrix(unittest.TestCase):
     def test_project_runtime_mismatch(self):
         existing = {"path": "p", "exists": True, "values": {"runtime": "codex"}}
         conflicts, info = inventory.classify_conflicts(
-            "opencode", existing, {"values": {}}, self._facts(), "/p"
+            "opencode", existing, {"values": {}}, self._facts(), _PROJ
         )
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(conflicts[0]["kind"], "runtime")
@@ -1623,7 +1627,7 @@ class TestConflictMatrix(unittest.TestCase):
     def test_project_runtime_matches_host(self):
         existing = {"path": "p", "exists": True, "values": {"runtime": "opencode"}}
         conflicts, _info = inventory.classify_conflicts(
-            "opencode", existing, {"values": {}}, self._facts(), "/p"
+            "opencode", existing, {"values": {}}, self._facts(), _PROJ
         )
         self.assertFalse(any(c["kind"] == "runtime" for c in conflicts))
 
@@ -1631,7 +1635,7 @@ class TestConflictMatrix(unittest.TestCase):
         existing = {"path": "p", "exists": True, "values": {"runtime": "opencode"}}
         global_defaults = {"values": {"runtime": "codex"}}
         conflicts, info = inventory.classify_conflicts(
-            "opencode", existing, global_defaults, self._facts(), "/p"
+            "opencode", existing, global_defaults, self._facts(), _PROJ
         )
         self.assertFalse(any(c["kind"] == "runtime" for c in conflicts))
         self.assertEqual(len([i for i in info if i["kind"] == "runtime"]), 1)
