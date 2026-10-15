@@ -45,6 +45,20 @@ def _import_wizard_app():
     return wizard_app
 
 FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+
+# The preview renders run the status line's git probe, which caches under
+# ${XDG_CACHE_HOME:-~/.cache}/ai-kit; keep that out of the caller's real HOME.
+_CACHE_HOME = tempfile.TemporaryDirectory()
+_CACHE_ENV = mock.patch.dict(os.environ, {"XDG_CACHE_HOME": _CACHE_HOME.name})
+
+
+def setUpModule():
+    _CACHE_ENV.start()
+
+
+def tearDownModule():
+    _CACHE_ENV.stop()
+    _CACHE_HOME.cleanup()
 SAMPLE_INPUT = os.path.join(FIXTURE_DIR, "sample-input.json")
 SAMPLE_RECIPE = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "tools", "statusline.toml.sample")
