@@ -323,6 +323,7 @@ function liveOuterTimeoutS(cwd, env) {
   return Number.isFinite(t) && t > 0 ? t : GSD_DEFAULT_TIMEOUT_S;
 }
 function innerTimeoutS(outer) {
+  // D-29: inner deadline sits strictly below outer (margin floor at least 1s).
   return outer - Math.max(1, Math.min(TIMEOUT_MARGIN_S, Math.floor(outer / 5)));
 }
 function resolveDeadline(cwd, env, o) {
