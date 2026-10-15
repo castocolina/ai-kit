@@ -99,7 +99,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
 12. **Unknown keys dropped**: the plan never proposes a key the host's gsd-core rejects.
     - Current: none.
     - Target: `inventory` calls the host gsd-core's `isValidConfigKey` once per key in the closed set `recommend` can propose (central keys, dynamic patterns and capability keys all apply) and stores accepted and rejected keys. `recommend` drops a rejected key and adds a `notes` entry naming it.
-    - Acceptance: a fixture `valid_keys` without `dynamic_routing.*` gives a Rigorous plan with no such keys and one note.
+    - Acceptance: a fixture `valid_keys` without `dynamic_routing.*` gives a Rigorous plan with no such keys and one note per dropped key (3 notes; amended 2026-10-15, RUN-39b).
 
 13. **Undecidable slots and existing keys**: explicit, never silent.
     - Current: none.
@@ -169,15 +169,15 @@ explainable, minimal `plan.json`, with nothing written to the project.
 | ordering | R3 | ✅ covered | The refresh order is fixed: `detect-runtimes` before `fetch-model-catalog` (R3 target) |
 | concurrency | R3 | ✅ covered | A failed refresh keeps the stale cache plus a warning (R3), and concurrent cache writes stay valid (16.1 R15) |
 | boundary | R4 | ✅ covered | Zero score axes is never auto-picked except as a declared-purpose router, and one axis or more ranks with the 49/100 missing-axis default (R4, D-12) |
-| precision | R4 | ⚠ UNRESOLVED | Are `no scores` candidates chosen for the top 3 by price then model id, or by the ranker's 49-default score? |
+| precision | R4 | ✅ covered | With no scores anywhere, candidates are ordered by price ascending (unpriced last), then model id, within the rigor ceiling first, with `score: null` and `why: "no scores; ordered by price, not quality"` (17 D-25) |
 | adjacency | R5 | ✅ covered | A project runtime equal to the host is no conflict, and a project and a global value never merge into one entry (R5) |
-| empty | R5 | ⚠ UNRESOLVED | With no project config, is a global `resolve_model_ids: "omit"` a claude conflict like a global `model_policy` (18 R13 reconciles the copy)? |
+| empty | R5 | ✅ covered | With no project config on a claude host, a global `resolve_model_ids: "omit"` is a conflict with `effect: latent (copied into the project config by config-new-project)`, and `recommend` emits `op: unset` (17 D-31; verified live) |
 | ordering | R5 | ✅ covered | Project config takes precedence: beside it, a global `model_policy` or `runtime` is inert `info` (R5) |
 | concurrency | R5 | ✅ covered | Conflict detection only reads configs, and `inventory` writes nothing outside ai-kit's cache (R1) |
 | empty | R6 | ✅ covered | The neither, `AGENTS.md`-only and `CLAUDE.md`-only fixtures pin the empty and single cases (R6 acceptance) |
 | encoding | R6 | 🧪 backstop | Exact file names are checked with `isfile`, as `claude_md_detect` does today, so the filesystem decides case |
 | concurrency | R6 | 🧪 backstop | Detection is read-only; concurrent inventories do not interfere |
-| boundary | R7 | ⚠ UNRESOLVED | Does `recommend` refuse an inventory whose `schema_version` is older or newer than it supports? |
+| boundary | R7 | ✅ covered | `recommend` exits 2 on any inventory `schema_version` other than the supported one, older or newer, and tells the user to rerun `inventory` (17 D-31) |
 | adjacency | R7 | ✅ covered | Reordered input candidates give an identical plan (tie test) |
 | empty | R7 | ✅ covered | An inventory with zero candidates yields `needs_choice` entries, never a crash |
 | ordering | R7 | ✅ covered | Plan entries are sorted by key for byte-stable output |
@@ -191,12 +191,12 @@ explainable, minimal `plan.json`, with nothing written to the project.
 | empty | R9 | ✅ covered | A cap that passes nothing uses the cheapest eligible model, and no eligible model gives `needs_choice` (R9, R13) |
 | ordering | R9 | ✅ covered | Equal candidates for a slot follow R13's tie order: `score_exact`, then price, then model id |
 | precision | R9 | 🧪 backstop | The percentile ceiling is computed over eligible prices only (unpriced excluded) |
-| unclassified | R10 | ⚠ UNRESOLVED | No shape cue; the specialist rules are specified in Acceptance |
+| unclassified | R10 | ✅ covered | Classified from locked decisions: the cap of 7 is structural, no eligible model gives a note and never blocks (D-07), equal or unknown vendor is ineligible (D-14), picks follow the R13 tie key, and frontend-capable is defined in 17 D-28 |
 | adjacency | R11 | ✅ covered | MVP ↔ Standard ↔ Rigorous tables differ only where §5 says |
 | empty | R11 | 🧪 backstop | Unknown rigor rejected with exit 2 |
 | ordering | R11 | 🧪 backstop | Preset keys merge before catalog-driven keys |
-| adjacency | R12 | ⚠ UNRESOLVED | Do several rejected `dynamic_routing.*` keys get one note each (R12 target) or one note in total (R12 acceptance)? |
-| empty | R12 | ⚠ UNRESOLVED | Is a failed `isValidConfigKey` probe an exit-2 error like a missing gsd-core, or an inventory warning? |
+| adjacency | R12 | ✅ covered | One note per rejected key; the R12 acceptance was amended to 3 notes for Rigorous (17 D-26) |
+| empty | R12 | ✅ covered | A failed `isValidConfigKey` probe (export missing or require failed) exits 2 like a missing gsd-core, naming the gsd-core path and version (17 D-31); the export exists in 1.12, 1.13, 1.16 and 1.17 |
 | ordering | R12 | 🧪 backstop | The two-run byte-identical test (R7) pins the order of the drop notes |
 | idempotency | R12 | ✅ covered | A rerun on the same inventory drops the same keys with the same notes (R7 byte-identical) |
 | concurrency | R12 | ✅ covered | The key probe only reads the host gsd-core, and `inventory` writes nothing outside ai-kit's cache (R1) |

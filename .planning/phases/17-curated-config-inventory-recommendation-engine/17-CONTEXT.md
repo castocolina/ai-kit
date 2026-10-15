@@ -154,6 +154,9 @@ Phase 18 owns the selection rules.
   some agent resolves to it under the chosen profile, the rigor phase shifts and dynamic
   routing (Rigorous can escalate to the heavy tier). Budget never asks about opus; quality
   never asks about haiku.
+  - *(note 2026-10-15, research)* Live, Rigorous `dynamic_routing` as spec §5 writes it showed no
+    model escalation with `resolve-model --attempt 1`, with or without `tier_models`. So dynamic
+    routing adds no extra tier slots in practice. It counts only if a later gsd-core proves an effect.
 - **D-18: Plan schema gains `op: keep` and `source: router-declared` (R7).**
   - `keep` writes nothing and carries the explanation of a kept gsd default (D-02), so Phase
     18's review diff can show it.
@@ -213,6 +216,43 @@ Phase 18 owns the selection rules.
   - *(spike done 2026-10-15, `17-SPIKE-opencode-image-input.md`)* First branch: `GET /api/model` on
     the v2 API (`opencode serve`, basic auth `opencode:<printed token>`) returns
     `capabilities.input`; `"image" in input` means vision-capable.
+
+### Added 2026-10-15 (research open questions, jev-screened, RUN-39)
+- **D-25: With no scores anywhere, order by price, not quality (R4; TypeSafe A 0.98).** Order by
+  price ascending (unpriced last), then model id, within the rigor ceiling first and falling back
+  to all candidates. Each entry shows `score: null` and `why: "no scores; ordered by price, not
+  quality"`. The mechanical floor still keeps unscored models out of automatic picks.
+- **D-26: Per-key drop notes (R12; TypeSafe A 0.89, Laya A 0.61).** Each key the host gsd-core
+  rejects gets its own note. The SPEC R12 acceptance is amended to 3 notes for Rigorous.
+- **D-27: Effort variants are picked by family and tier effort (REC-03; TypeSafe A 0.99).** Rank
+  model families. For each family, use the variant whose effort token matches the tier's rigor
+  effort (`effort.routing_tier_defaults`; executor `medium`). If none matches, fall back to the
+  nearest lower level on gsd-core's `EFFORT_LADDER`, then the nearest higher, then the bare id.
+  The family is scored by the chosen variant, and the `why` names the rule. Picking by raw score
+  would always choose `-max`, even for haiku.
+- **D-28: Frontend-capable means `image_input` true, ranked by `general` (REC-04; TypeSafe A 0.84,
+  Laya A 0.66).** `gsd-ui-researcher` gets an override only when its slot model lacks
+  `image_input`.
+- **D-29: `workflow.live_dom_uat` is not managed in Phase 17 (TypeSafe A 1.0).** It is never set or
+  unset. Rigorous plus frontend adds the note "enable workflow.live_dom_uat via plan-set if a browser
+  MCP is available". Detecting an MCP would mean parsing real host configs.
+- **D-30: A runtime mismatch on claude, cursor or pi hosts is an info note only (RUN-39f; jev low
+  confidence, TypeSafe B 0.63 / Laya C 0.44, own reasoning B).** D-23 manages `runtime` only on
+  opencode and codex, and D-22 forbids claiming an unverified effect, so no plan entry is
+  written. The note names the mismatch and the `plan-set runtime` route.
+- **D-31: Fail-closed inputs (Claude's discretion, from research).**
+  - An inventory whose `schema_version` is not the supported one, older or newer, exits 2 with
+    "rerun inventory".
+  - A failed `isValidConfigKey` probe exits 2, like a missing gsd-core.
+  - With no project config on a claude host, a global `resolve_model_ids: "omit"` is a conflict
+    with `effect: latent (copied into the project config by config-new-project)` and gets
+    `op: unset`.
+- **D-32: The opencode 2.x probe may start a private server (D-24; TypeSafe A 0.95, Laya A 0.63).**
+  `opencode serve --port 0` runs with a timeout. The probe reads the printed port and token, never
+  prints the token, and kills only its own PID: uz's long-running `opencode serve --service` is
+  never touched. The probe documents that opencode writes its own state (db/log) in its XDG data
+  dir, never config. Runtimes cache `schema_version` goes from 2 to 3, so the new source is
+  detected.
 
 ### Claude's Discretion
 - The exact percentile per rigor level.
