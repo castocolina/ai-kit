@@ -156,7 +156,9 @@ JSON
 
    When the `unmatched` entry carries `reasoning_modes` and/or `image_input` (data
    `detect-runtimes` read from the CLI itself: effort levels from `codex debug models`,
-   image capability from `opencode models --verbose`), copy each one verbatim into the
+   image capability from opencode's v2 API (`GET /api/model`, read through a private
+   `opencode serve` on opencode 2.x, `image_input_source: opencode-api`; `opencode models
+   --verbose` on 1.x, `image_input_source: opencode`)), copy each one verbatim into the
    confirmation `entry`, together with `image_input_source` whenever `image_input` is
    copied. It is CLI-reported data, not a guess, so it is not one of the fields the user is
    asked to confirm. Omit a key the unmatched entry does not carry — never write

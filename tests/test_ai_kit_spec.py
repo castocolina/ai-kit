@@ -2229,7 +2229,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
     def test_snapshot_carries_current_schema_version(self):
         snapshot = build_runtimes_snapshot(which_fn=lambda n: None, run_fn=lambda *a, **k: None)
         self.assertEqual(snapshot["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
-        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 2)
+        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 3)
 
     def test_fresh_but_unversioned_cache_redetects_and_stamps(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2274,12 +2274,38 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             self.assertEqual(recorded, list(detection.KNOWN_CLIS))
             cached = cache_read_json(path)
             assert cached is not None
-            self.assertEqual(cached["schema_version"], 2)
+            self.assertEqual(
+                cached["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
+
+    def test_fresh_version_2_cache_redetects_and_restamps(self):
+        # 17 D-32: version 2 predates the opencode 2.x /api/model source, so even a
+        # fresh version-2 cache re-detects and re-stamps the current version.
+        import io
+        from contextlib import redirect_stdout
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "runtimes.json")
+            cache_write_json(path, {"schema_version": 2, "clis": {}})
+            buf = io.StringIO()
+            recorded = []
+            with redirect_stdout(buf):
+                code = main(
+                    ["detect-runtimes", "--if-stale", path],
+                    which_fn=lambda n: recorded.append(n) or None,
+                    run_fn=lambda *a, **k: None,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(recorded, list(detection.KNOWN_CLIS))
+            cached = cache_read_json(path)
+            assert cached is not None
+            self.assertEqual(
+                cached["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
 
     def test_fresh_current_cache_is_skipped(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "runtimes.json")
-            cache_write_json(path, {"schema_version": 2, "clis": {}})
+            cache_write_json(
+                path, {"schema_version": detection.RUNTIMES_SCHEMA_VERSION, "clis": {}})
             import io
             from contextlib import redirect_stdout
 
@@ -2299,7 +2325,8 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
         # TTL still honored: a current-version file past RUNTIMES_TTL_SECONDS re-detects.
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "runtimes.json")
-            cache_write_json(path, {"schema_version": 2, "clis": {}})
+            cache_write_json(
+                path, {"schema_version": detection.RUNTIMES_SCHEMA_VERSION, "clis": {}})
             old = time.time() - detection.RUNTIMES_TTL_SECONDS - 60
             os.utime(path, (old, old))
             import io
@@ -2343,11 +2370,12 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             [],
             {},
             {"schema_version": True},
-            {"schema_version": "2"},
+            {"schema_version": "3"},
             {"schema_version": 1},
+            {"schema_version": 2},
         ):
             self.assertFalse(f(bad))
-        for good in ({"schema_version": 2}, {"schema_version": 3}):
+        for good in ({"schema_version": 3}, {"schema_version": 4}):
             self.assertTrue(f(good))
 
     def test_cache_is_stale_stays_schema_agnostic(self):
@@ -10088,8 +10116,8 @@ class TestOpencodeApiImageInput(unittest.TestCase):
 
         def __init__(self, banner="server listening on http://127.0.0.1:41234\n"
                                    "server password s3cr3t\n"):
-            self.argv = None
-            self.kwargs = None
+            self.argv: list | None = None
+            self.kwargs: dict = {}
             self.stdout = io.StringIO(banner)
             self.calls = []
 
@@ -10126,10 +10154,14 @@ class TestOpencodeApiImageInput(unittest.TestCase):
         fake_urlopen.recorded = recorded
         return fake_urlopen
 
+    def _raise_urlopen_error(self, request, timeout=None):
+        raise urllib.error.URLError("refused")
+
     def _fake_version_run(self, version="opencode v2.0.29\n", returncode=0):
         def fake_run(argv, **kwargs):
-            assert argv[1:] == ["--version"], argv
-            return unittest.mock.MagicMock(returncode=returncode, stdout=version)
+            if argv[1:] == ["--version"]:
+                return unittest.mock.MagicMock(returncode=returncode, stdout=version)
+            return unittest.mock.MagicMock(returncode=1, stdout="")
         return fake_run
 
     def test_detect_2x_returns_fixture_image_map_via_probe(self):
@@ -10214,6 +10246,202 @@ class TestOpencodeApiImageInput(unittest.TestCase):
         for payload in (None, 42, "x", {}, {"data": "nope"}, {"data": {}}):
             with self.subTest(payload=payload):
                 self.assertEqual(detection.parse_opencode_api_models(payload), {})
+
+    # ── 17 D-32: every failure stops the server and returns {} ──
+
+    def _run_failure_case(self, popen, urlopen):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf_out), redirect_stderr(buf_err):
+            result = detection.probe_opencode_api_image_input(
+                "/fake/bin/opencode", popen_fn=popen, urlopen_fn=urlopen)
+        return result, buf_out.getvalue() + buf_err.getvalue()
+
+    def test_popen_oserror_returns_empty_without_urlopen(self):
+        urlopen = self._fake_urlopen()
+
+        def raise_oserror(*_args, **_kwargs):
+            raise OSError("no binary")
+
+        result, _output = self._run_failure_case(raise_oserror, urlopen)
+        self.assertEqual(result, {})
+        self.assertNotIn("/api/model", urlopen.recorded.get("url", ""))
+
+    def test_silent_stdout_returns_empty_and_stops_server(self):
+        popen = self.FakePopen(banner="")
+        urlopen = self._fake_urlopen()
+        result, _ = self._run_failure_case(popen, urlopen)
+        self.assertEqual(result, {})
+        self.assertEqual(popen.calls[0], "terminate")
+        self.assertNotIn("/api/model", urlopen.recorded.get("url", ""))
+
+    def test_missing_password_line_returns_empty_and_stops_server(self):
+        popen = self.FakePopen(banner="server listening on http://127.0.0.1:41234\n")
+        urlopen = self._fake_urlopen()
+        result, _ = self._run_failure_case(popen, urlopen)
+        self.assertEqual(result, {})
+        self.assertEqual(popen.calls[0], "terminate")
+
+    def test_urlerror_returns_empty_and_stops_server(self):
+        def fake_urlopen(request, timeout=None):
+            raise urllib.error.URLError("refused")
+
+        popen = self.FakePopen()
+        result, _ = self._run_failure_case(popen, fake_urlopen)
+        self.assertEqual(result, {})
+        self.assertEqual(popen.calls[0], "terminate")
+
+    def test_non_json_body_returns_empty_and_stops_server(self):
+        popen = self.FakePopen()
+        result, _ = self._run_failure_case(popen, self._fake_urlopen(body=b"not json"))
+        self.assertEqual(result, {})
+        self.assertEqual(popen.calls[0], "terminate")
+
+    def test_wait_timeout_escalates_to_kill(self):
+        popen = self.FakePopen()
+        original_wait = popen.wait
+        calls = {"n": 0}
+
+        def flaky_wait(timeout=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise subprocess.TimeoutExpired("cmd", timeout if timeout is not None else 5)
+            return original_wait(timeout)
+
+        popen.wait = flaky_wait
+        result, _ = self._run_failure_case(popen, self._fake_urlopen())
+        self.assertEqual(result, self.EXPECTED_MAP)
+        self.assertLess(popen.calls.index("terminate"), popen.calls.index("kill"))
+
+    def test_password_never_reaches_stdout_or_stderr(self):
+        for popen, urlopen in (
+            (self.FakePopen(banner=""), self._fake_urlopen()),
+            (self.FakePopen(
+                banner="server listening on http://127.0.0.1:41234\n"), self._fake_urlopen()),
+            (self.FakePopen(), self._raise_urlopen_error),
+            (self.FakePopen(), self._fake_urlopen(body=b"not json")),
+        ):
+            with self.subTest(calls=len(popen.calls)):
+                _, output = self._run_failure_case(popen, urlopen)
+                self.assertNotIn("s3cr3t", output)
+
+    # ── 17 D-24 provenance ──
+
+    def test_1x_still_uses_verbose_path(self):
+        with open(OPENCODE_VERBOSE_FIXTURE_PATH, encoding="utf-8") as f:
+            verbose_text = f.read()
+        calls = {"version": 0, "verbose": 0}
+
+        def fake_run(argv, **kwargs):
+            calls["version" if argv[1:] == ["--version"] else "verbose"] += 1
+            return unittest.mock.MagicMock(
+                returncode=0,
+                stdout="opencode v1.18.32\n" if argv[1:] == ["--version"] else verbose_text)
+
+        popen = self.FakePopen()
+        result = detection.detect_opencode_image_input(
+            "/fake/bin/opencode", run_fn=fake_run, popen_fn=popen,
+            urlopen_fn=self._fake_urlopen())
+        self.assertEqual(result, {"openai/gpt-5.6-sol": True, "router-env/my-coding": False})
+        self.assertEqual(popen.argv, None)  # the probe never ran
+
+    def test_with_source_2x_and_1x(self):
+        popen = self.FakePopen()
+        result = detection.opencode_image_input_with_source(
+            "/fake/bin/opencode", run_fn=self._fake_version_run(),
+            popen_fn=popen, urlopen_fn=self._fake_urlopen())
+        self.assertEqual(result, (self.EXPECTED_MAP, "opencode-api"))
+
+        with open(OPENCODE_VERBOSE_FIXTURE_PATH, encoding="utf-8") as f:
+            verbose_text = f.read()
+
+        def fake_run(argv, **kwargs):
+            return unittest.mock.MagicMock(
+                returncode=0,
+                stdout="1.18.32\n" if argv[1:] == ["--version"] else verbose_text)
+
+        result = detection.opencode_image_input_with_source(
+            "/fake/bin/opencode", run_fn=fake_run, popen_fn=self.FakePopen(),
+            urlopen_fn=self._fake_urlopen())
+        self.assertEqual(
+            result, ({"openai/gpt-5.6-sol": True, "router-env/my-coding": False}, "opencode"))
+
+    def test_snapshot_records_image_input_source(self):
+        def fake_which(name):
+            return "/fake/bin/opencode" if name == "opencode" else None
+
+        # 2.x: the snapshot passes only run_fn, so the probe is patched at the seam.
+        with mock.patch.object(
+                detection, "probe_opencode_api_image_input",
+                return_value={"opencode/exo-free": True}) as probe_mock:
+            snapshot = build_runtimes_snapshot(
+                which_fn=fake_which, run_fn=self._fake_version_run())
+        probe_mock.assert_called_once()
+        entry = snapshot["clis"]["opencode"]
+        self.assertEqual(entry["image_input"], {"opencode/exo-free": True})
+        self.assertEqual(entry["image_input_source"], "opencode-api")
+
+        # 1.x: no probe runs.
+        with open(OPENCODE_VERBOSE_FIXTURE_PATH, encoding="utf-8") as f:
+            verbose_text = f.read()
+
+        def fake_run(argv, **kwargs):
+            return unittest.mock.MagicMock(
+                returncode=0,
+                stdout="1.18.32\n" if argv[1:] == ["--version"] else verbose_text)
+
+        with mock.patch.object(detection, "probe_opencode_api_image_input") as probe_mock:
+            snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run)
+        probe_mock.assert_not_called()
+        self.assertEqual(snapshot["clis"]["opencode"]["image_input_source"], "opencode")
+
+        # No image map: neither key is stored.
+        snapshot = build_runtimes_snapshot(
+            which_fn=fake_which, run_fn=lambda *a, **k: unittest.mock.MagicMock(
+                returncode=0, stdout="opencode-go/kimi-k3\n"))
+        self.assertNotIn("image_input", snapshot["clis"]["opencode"])
+        self.assertNotIn("image_input_source", snapshot["clis"]["opencode"])
+
+    def test_catalog_meta_carries_provenance_label(self):
+        from ai_kit_spec.catalog_build import _apply_runtime_meta, _runtime_meta_from_snapshot
+
+        snapshot = {"clis": {"opencode": {
+            "installed": True,
+            "image_input": {"opencode/exo-free": True},
+            "image_input_source": "opencode-api",
+        }}}
+        meta = _runtime_meta_from_snapshot(snapshot)
+        entry = {}
+        _apply_runtime_meta(entry, meta, "opencode", "opencode/exo-free")
+        self.assertEqual(entry["image_input"], True)
+        self.assertEqual(entry["image_input_source"], "opencode-api")
+
+        # No source field, or any other value -> the default "opencode".
+        for source in (None, "weird"):
+            cli_data = {"installed": True, "image_input": {"opencode/exo-free": True}}
+            if source is not None:
+                cli_data["image_input_source"] = source
+            meta = _runtime_meta_from_snapshot({"clis": {"opencode": cli_data}})
+            entry = {}
+            _apply_runtime_meta(entry, meta, "opencode", "opencode/exo-free")
+            self.assertEqual(entry["image_input_source"], "opencode")
+
+    def test_validate_catalog_entry_accepts_opencode_api_source(self):
+        base = {
+            "provider": "opencode",
+            "runtimes": {"opencode": {"model_id": "opencode/exo-free"}},
+            "source": {"models_dev": True},
+            "confidence": "high",
+            "last_verified": "2026-10-15",
+        }
+        entry = {**base, "image_input": True, "image_input_source": "opencode-api"}
+        self.assertIsNone(
+            model_catalog.validate_catalog_entry("opencode/exo-free", entry))
+        bad = {**base, "image_input": True, "image_input_source": "telepathy"}
+        self.assertIsNotNone(
+            model_catalog.validate_catalog_entry("opencode/exo-free", bad))
 
 
 class TestClaudeRuntimeFreshness(unittest.TestCase):

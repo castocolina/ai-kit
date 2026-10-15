@@ -217,8 +217,10 @@ def _runtime_meta_from_snapshot(runtimes: dict) -> dict:
     keyed by `(cli_name, model_id)` tuples. Today it carries each entry's
     `reasoning_modes` value (a dict mapping model id -> effort list, which
     `build_runtimes_snapshot` populates for codex when `codex debug models`
-    enumerates) and `image_input` (for opencode, from `opencode models
-    --verbose`) into a flat `{"reasoning_modes": [...], "image_input": bool}`
+    enumerates), `image_input`, and `image_input_source` (for opencode: the
+    v2 API (`GET /api/model`, labelled `opencode-api`) on opencode 2.x,
+    `opencode models --verbose` (labelled `opencode`) on 1.x) into a flat
+    `"reasoning_modes": [...], "image_input": bool, "image_input_source": str`
     record per model. Anything malformed is skipped, never raised: a non-dict
     `clis` entry, a non-dict `reasoning_modes` or `image_input`, a blank/
     `str`-keyed lookup, an effort list that is not a non-empty list of
@@ -239,13 +241,17 @@ def _runtime_meta_from_snapshot(runtimes: dict) -> dict:
         # D-09 source 2: image_input is only read from opencode runtime metadata
         if cli_name == "opencode":
             image_map = cli_data.get("image_input")
+            source = cli_data.get("image_input_source")
             if isinstance(image_map, dict):
                 for model_id, image in image_map.items():
                     if not isinstance(model_id, str) or not model_id.strip():
                         continue
                     if not isinstance(image, bool):
                         continue
-                    meta.setdefault((cli_name, model_id), {})["image_input"] = image
+                    record = meta.setdefault((cli_name, model_id), {})
+                    record["image_input"] = image
+                    record["image_input_source"] = \
+                        source if source in ("opencode", "opencode-api") else "opencode"
     return meta
 
 
@@ -255,10 +261,12 @@ def _apply_runtime_meta(entry: dict, runtime_meta: dict | None, cli_name: str,
     onto `entry` IN PLACE. Only a non-empty CLI-reported `reasoning_modes`
     list is applied. For `image_input` (when `runtime_wins_image_input` is
     True or when the entry's existing value is not a bool), both
-    `image_input` and `image_input_source` are set — the value from metadata
-    and "opencode" as the source. When the (cli_name, model_id) lookup
-    misses, `entry` is left untouched — an absent key lets `merge_catalog_entry`
-    preserve whatever the cache already had."""
+    `image_input` and `image_input_source` are set — the value from metadata;
+    the source is the snapshot's provenance label (the v2 API `GET /api/model`,
+    labelled `opencode-api`, on opencode 2.x; `opencode models --verbose`,
+    labelled `opencode`, on 1.x), defaulting to `opencode`. When the
+    (cli_name, model_id) lookup misses, `entry` is left untouched — an absent
+    key lets `merge_catalog_entry` preserve whatever the cache already had."""
     meta = (runtime_meta or {}).get((cli_name, model_id)) or {}
     modes = meta.get("reasoning_modes") or []
     if modes:
@@ -266,7 +274,7 @@ def _apply_runtime_meta(entry: dict, runtime_meta: dict | None, cli_name: str,
     if isinstance(meta.get("image_input"), bool) and (
             runtime_wins_image_input or not isinstance(entry.get("image_input"), bool)):
         entry["image_input"] = meta["image_input"]
-        entry["image_input_source"] = "opencode"
+        entry["image_input_source"] = meta.get("image_input_source", "opencode")
 
 
 # 16 D-04 (review cycle 2): claude only ever runs anthropic models, so its bare ids are

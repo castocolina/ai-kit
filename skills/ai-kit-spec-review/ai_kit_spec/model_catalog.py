@@ -46,7 +46,7 @@ _NUMERIC_SUBFIELD_TABLES = {
 }
 _RUNTIME_FIELD_TYPES = {"model_id": str, "ctx_window": (int, float)}
 _VALID_NAME_DECLARED_PURPOSE = {"review", "execute"}
-_VALID_IMAGE_INPUT_SOURCE = {"models_dev", "opencode"}
+_VALID_IMAGE_INPUT_SOURCE = {"models_dev", "opencode", "opencode-api"}
 # Deliberately duplicated with config_io._VALID_NATIVE_RUNTIME -- the two sets must change
 # together (AGENTS.md Architecture). "pi" is here because detect_current_runtime can return it
 # since Phase 16.

@@ -10,8 +10,8 @@ import tempfile
 import threading
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
-from typing import NamedTuple
+from collections.abc import Callable, Mapping
+from typing import Any, NamedTuple
 
 from ai_kit_spec.cache import cache_base
 from ai_kit_spec.model_catalog import split_catalog_meta
@@ -415,8 +415,10 @@ def _read_opencode_banner(stream) -> tuple:
     return port, token
 
 
-def probe_opencode_api_image_input(binary: str, popen_fn=subprocess.Popen,
-                                   urlopen_fn=urllib.request.urlopen) -> dict:
+def probe_opencode_api_image_input(binary: str,
+                                   popen_fn: Callable[..., Any] = subprocess.Popen,
+                                   urlopen_fn: Callable[..., Any] = urllib.request.urlopen,
+                                   ) -> dict:
     """Starts a private `opencode serve --hostname 127.0.0.1 --port 0`, reads the
     printed loopback port and one-time password from its stdout, and calls
     `GET http://127.0.0.1:<port>/api/model` with HTTP basic auth `opencode:<password>`
@@ -467,8 +469,9 @@ def probe_opencode_api_image_input(binary: str, popen_fn=subprocess.Popen,
 
 
 def opencode_image_input_with_source(binary: str, run_fn=subprocess.run,
-                                     popen_fn=subprocess.Popen,
-                                     urlopen_fn=urllib.request.urlopen) -> tuple:
+                                     popen_fn: Callable[..., Any] = subprocess.Popen,
+                                     urlopen_fn: Callable[..., Any] = urllib.request.urlopen,
+                                     ) -> tuple:
     """Version-gated image-capability detection for opencode. Returns
     `(map, source)` where source is OPENCODE_API_IMAGE_SOURCE ("opencode-api", the
     v2 `GET /api/model` probe) on opencode >= 2, or "opencode" (the
@@ -504,8 +507,9 @@ def detect_opencode_verbose_image_input(binary: str, run_fn=subprocess.run) -> d
 
 
 def detect_opencode_image_input(binary: str, run_fn=subprocess.run,
-                                popen_fn=subprocess.Popen,
-                                urlopen_fn=urllib.request.urlopen) -> dict:
+                                popen_fn: Callable[..., Any] = subprocess.Popen,
+                                urlopen_fn: Callable[..., Any] = urllib.request.urlopen,
+                                ) -> dict:
     """Returns the image-capability map for opencode: on 2.x, the v2 HTTP API probe
     (`GET /api/model` through a private `opencode serve`, 17 D-24); on 1.x (or an
     unrecognized `--version` output), the legacy `models --verbose` path, unchanged.
@@ -611,9 +615,11 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
         entry = {"installed": True, "path": binpath}
         if cli == "opencode":
             entry["models"] = detect_opencode_models(binpath, run_fn=run_fn)
-            image_input_map = detect_opencode_image_input(binpath, run_fn=run_fn)
+            image_input_map, image_input_source = opencode_image_input_with_source(
+                binpath, run_fn=run_fn)
             if image_input_map:
                 entry["image_input"] = image_input_map
+                entry["image_input_source"] = image_input_source
         elif cli == "cursor-agent":
             entry["models"] = detect_cursor_agent_models(binpath, run_fn=run_fn)
         elif cli == "codex":
