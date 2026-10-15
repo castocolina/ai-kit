@@ -123,9 +123,8 @@ def cross_ai_answers(ctx: PlanCtx) -> dict:
     }
 
 
-def _preset_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
+def _preset_layer(ctx: PlanCtx, _prior_entries: list) -> tuple[list, list]:
     """Layer 1: every §5 preset key for the chosen rigor plus its conditional keys."""
-    del prior_entries
     entries = []
     notes = []
     for key in sorted(ctx.preset):
@@ -143,10 +142,9 @@ def _preset_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     return entries, notes
 
 
-def _tier_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
+def _tier_layer(ctx: PlanCtx, _prior_entries: list) -> tuple[list, list]:
     """Layer 2 (tier level): `model_profile` plus one `models.<phase>` entry per
     rigor phase shift. Later plans append the slot layer after this one."""
-    del prior_entries
     entries = [
         make_entry(
             ctx,
@@ -202,13 +200,14 @@ def _slot_value(host: str, candidate: dict, target: str) -> Any:
     return candidate["model"]
 
 
-def _keep_why(existing: Any) -> tuple[str, str]:
-    why = "kept gsd default: present on host, within ceiling"
-    op = "keep"
-    if existing is not None:
-        op = "unset"
-        why += "; removes the existing override"
-    return op, why
+_KEEP_WHY = "kept gsd default: present on host, within ceiling"
+_CODEX_EMPTY_WHY = "kept gsd default: codex enumerated no models; presence and ceiling unchecked"
+
+
+def _keep_why(existing: Any, why: str = _KEEP_WHY) -> tuple[str, str]:
+    if existing is None:
+        return "keep", why
+    return "unset", why + "; removes the existing override"
 
 
 def _slot_meta(ctx: PlanCtx, tier: str) -> _SlotMeta:
@@ -285,32 +284,27 @@ def _codex_empty_slots(ctx: PlanCtx, tiers: tuple[str, ...]) -> tuple[list, list
     entries = []
     effect = presets.CODEX_EFFECT + "; effect unverified: enumeration failed"
     for tier in tiers:
-        key = f"model_profile_overrides.codex.{tier}"
-        existing = presets.get_dotted(ctx.existing, key)
-        op, _ = _keep_why(existing)
-        why = (
-            "kept gsd default: codex enumerated no models; presence and ceiling unchecked"
-            + ("; removes the existing override" if existing is not None else "")
-        )
+        key = _slot_meta(ctx, tier).key
+        op, why = _keep_why(presets.get_dotted(ctx.existing, key), _CODEX_EMPTY_WHY)
         value = _native_value(ctx, tier) if _native_model(ctx, tier) is not None else None
-        entries.append(
-            make_entry(ctx, key, value, "native", why, op=op, effect=effect),
-        )
+        entries.append(make_entry(ctx, key, value, "native", why, op=op, effect=effect))
     return entries, []
+
+
+_PI_NOTE = {
+    "kind": "pi",
+    "key": None,
+    "text": (
+        "pi: only an opt-in model_profile_overrides.pi.sonnet is offered; "
+        "no per-agent model_overrides (effect unverified on pi, gsd-core registry: "
+        "namedDispatch false)"
+    ),
+}
 
 
 def _pi_slot(ctx: PlanCtx, tiers: tuple[str, ...]) -> tuple[list, list]:
     if "sonnet" not in tiers:
-        note = {
-            "kind": "pi",
-            "key": None,
-            "text": (
-                "pi: only an opt-in model_profile_overrides.pi.sonnet is offered; "
-                "no per-agent model_overrides (effect unverified on pi, gsd-core registry: "
-                "namedDispatch false)"
-            ),
-        }
-        return [], [note]
+        return [], [dict(_PI_NOTE)]
     key = "model_profile_overrides.pi.sonnet"
     why = (
         "opt-in session steer (D-22): choose a bare model id of the session provider "
@@ -327,28 +321,18 @@ def _pi_slot(ctx: PlanCtx, tiers: tuple[str, ...]) -> tuple[list, list]:
         candidates=[],
         effect=presets.PI_EFFECT,
     )
-    note = {
-        "kind": "pi",
-        "key": None,
-        "text": (
-            "pi: only an opt-in model_profile_overrides.pi.sonnet is offered; "
-            "no per-agent model_overrides (effect unverified on pi, gsd-core registry: "
-            "namedDispatch false)"
-        ),
-    }
-    return [entry], [note]
+    return [entry], [dict(_PI_NOTE)]
 
 
-def _slot_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
+def _slot_layer(ctx: PlanCtx, _prior_entries: list) -> tuple[list, list]:
     """Layer 2b: per-tier model_profile_overrides for the host (D-01..D-06)."""
-    del prior_entries
     if ctx.host == "claude":
         return [], []
     shifts = presets.PHASE_SHIFTS[ctx.opts.rigor]
     tiers = roles.used_tiers(ctx.inv["gsd_core"], ctx.opts.profile, shifts)
     if ctx.host == "pi":
         return _pi_slot(ctx, tiers)
-    cands = [c for c in ctx.inv["candidates"] if c.get("is_host", False)]
+    cands = _host_cands(ctx)
     if ctx.host == "codex" and not cands:
         return _codex_empty_slots(ctx, tiers)
     ceiling = roles.host_ceiling(cands, presets.PRICE_PERCENTILE[ctx.opts.rigor])
@@ -740,10 +724,9 @@ def _cross_ai_why(ctx: PlanCtx, answers_key: str, answer: dict) -> str:
     )
 
 
-def _cross_ai_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
+def _cross_ai_layer(ctx: PlanCtx, _prior_entries: list) -> tuple[list, list]:
     """Layer 3: the cross-AI boolean keys mirror the answers; each yes reserves a
     needs_choice slot for the Phase 18 selection key (17 D-19)."""
-    del prior_entries
     answers = cross_ai_answers(ctx)
     entries = []
     for answers_key, flag_key, command_key in (
