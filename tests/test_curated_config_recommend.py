@@ -601,6 +601,8 @@ class TestSlotTracer(unittest.TestCase):
             self.assertEqual(entry["op"], "keep")
             self.assertEqual(entry["source"], "native")
             self.assertEqual(entry["effect"], presets.CODEX_EFFECT)
+            # A-WR-03: a keep shows the gsd default verbatim, not the rigor's effort target.
+            self.assertEqual(entry["value"], TABLES["runtime_profile_map"]["codex"][tier])
 
     def test_codex_mvp_overrides_opus_above_ceiling(self):
         inv = make_inventory(host="codex", candidates=CODEX)
@@ -820,6 +822,7 @@ class TestSlotEdges(unittest.TestCase):
         for tier in ("opus", "sonnet"):
             entry = entry_map(plan)[f"model_profile_overrides.codex.{tier}"]
             self.assertEqual(entry["op"], "keep")
+            self.assertEqual(entry["value"], TABLES["runtime_profile_map"]["codex"][tier])
             self.assertIn("codex enumerated no models", entry["why"])
             self.assertIn("effect unverified: enumeration failed", entry["effect"])
         bad = [

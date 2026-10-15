@@ -185,6 +185,13 @@ def _native_model(ctx: PlanCtx, tier: str) -> str | None:
     return model if isinstance(model, str) else None
 
 
+def _native_value(ctx: PlanCtx, tier: str) -> Any:
+    """The gsd default slot verbatim (codex keeps its own reasoning_effort): a `keep`
+    writes nothing, so the displayed value must be the one that takes effect."""
+    slot = ctx.inv["gsd_core"]["runtime_profile_map"][ctx.host][tier]
+    return dict(slot) if ctx.host == "codex" else slot["model"]
+
+
 def _slot_value(host: str, candidate: dict, target: str) -> Any:
     if host == "codex":
         modes = candidate.get("reasoning_modes") or []
@@ -246,7 +253,7 @@ def _tier_slot(ctx: PlanCtx, tier: str, cands: list, ceiling: roles.Ceiling) -> 
         return make_entry(
             ctx,
             meta.key,
-            _slot_value(ctx.host, native_c, meta.target),
+            _native_value(ctx, tier),
             "native",
             why,
             op=op,
@@ -279,24 +286,13 @@ def _codex_empty_slots(ctx: PlanCtx, tiers: tuple[str, ...]) -> tuple[list, list
     effect = presets.CODEX_EFFECT + "; effect unverified: enumeration failed"
     for tier in tiers:
         key = f"model_profile_overrides.codex.{tier}"
-        native_id = _native_model(ctx, tier)
-        band = roles.TIER_EFFORT_BAND[tier]
-        target = ctx.preset[f"effort.routing_tier_defaults.{band}"]
         existing = presets.get_dotted(ctx.existing, key)
         op, _ = _keep_why(existing)
         why = (
             "kept gsd default: codex enumerated no models; presence and ceiling unchecked"
             + ("; removes the existing override" if existing is not None else "")
         )
-        value = None
-        if native_id is not None:
-            slot = ctx.inv["gsd_core"]["runtime_profile_map"]["codex"][tier]
-            modes = slot.get("reasoning_modes") or []
-            value = _slot_value(
-                "codex",
-                {"model": native_id, "reasoning_modes": modes},
-                target,
-            )
+        value = _native_value(ctx, tier) if _native_model(ctx, tier) is not None else None
         entries.append(
             make_entry(ctx, key, value, "native", why, op=op, effect=effect),
         )

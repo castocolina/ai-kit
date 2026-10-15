@@ -82,7 +82,7 @@
       "source": "native",
       "value": {
         "model": "gpt-5.6-luna",
-        "reasoning_effort": "low"
+        "reasoning_effort": "medium"
       },
       "why": "kept gsd default: present on host, within ceiling"
     },
