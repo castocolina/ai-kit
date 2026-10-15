@@ -132,9 +132,12 @@ def _probe_gsd_tables(core, node_bin, project_dir, probe_keys, run_fn):
         missing = "model-catalog.cjs" if model_catalog is None else "config-schema.cjs"
         return None, _missing_lib_error(core, missing)
     paths = gsd_catalog.GsdCorePaths(node_bin, model_catalog, config_schema)
-    tables = gsd_catalog.query_gsd_tables(paths, project_dir, probe_keys, run_fn)
+    ver = core.version or "unknown"
+    try:
+        tables = gsd_catalog.query_gsd_tables(paths, project_dir, probe_keys, run_fn)
+    except gsd_catalog.NodeQueryError as exc:
+        return None, f"gsd-core at {core.root} (version {ver}): {exc}"
     if tables is None:
-        ver = core.version or "unknown"
         return None, _PROBE_UNAVAILABLE.format(root=core.root, version=ver)
     return tables, None
 

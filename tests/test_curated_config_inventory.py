@@ -1164,12 +1164,28 @@ class TestProbeFailures(unittest.TestCase):
 
         def bad_node(cmd, **kw):
             if cmd[0] == "node" and len(cmd) >= 2 and cmd[1] == "-e":
-                return subprocess.CompletedProcess(cmd, 1, "null", "")
+                return subprocess.CompletedProcess(cmd, 1, "", "volta: shim error\n")
             return FakeRun()(cmd, **kw)
 
         code, _parsed, err = run_inventory(project, env, bad_node, "--host", "claude")
         self.assertEqual(code, 2)
-        self.assertIn("isValidConfigKey unavailable", err)
+        # node itself failed: never blamed on isValidConfigKey.
+        self.assertNotIn("isValidConfigKey", err)
+        self.assertIn("node exited 1: volta: shim error", err)
+        self.assertIn(root, err)
+
+    def test_node_spawn_error_fails_closed(self):
+        project, env, root = self._project_with_install()
+
+        def missing_node(cmd, **kw):
+            if cmd[0] == "node" and len(cmd) >= 2 and cmd[1] == "-e":
+                raise FileNotFoundError(2, "No such file or directory")
+            return FakeRun()(cmd, **kw)
+
+        code, _parsed, err = run_inventory(project, env, missing_node, "--host", "claude")
+        self.assertEqual(code, 2)
+        self.assertNotIn("isValidConfigKey", err)
+        self.assertIn("node failed to start (No such file or directory)", err)
         self.assertIn(root, err)
 
     def test_node_timeout_fails_closed(self):
@@ -1182,7 +1198,7 @@ class TestProbeFailures(unittest.TestCase):
 
         code, _parsed, err = run_inventory(project, env, timeout_node, "--host", "claude")
         self.assertEqual(code, 2)
-        self.assertIn("isValidConfigKey unavailable", err)
+        self.assertIn("node timed out after 30s", err)
         self.assertIn(root, err)
 
     def test_missing_node_skips_probe(self):

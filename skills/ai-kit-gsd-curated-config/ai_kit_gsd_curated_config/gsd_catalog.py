@@ -192,8 +192,18 @@ def _parse_tables_output(stdout: str) -> dict | None:
     }
 
 
+class NodeQueryError(RuntimeError):
+    """`node` itself failed (spawn error, timeout or non-zero exit). The query script
+    catches its own errors and prints `null`, so this never means missing exports."""
+
+
+_TABLES_TIMEOUT_S = 30
+
+
 def query_gsd_tables(paths: GsdCorePaths, project_dir, keys, run_fn=subprocess.run):
-    """One node call: gsd-core tables plus `isValidConfigKey` probes for `keys`."""
+    """One node call: gsd-core tables plus `isValidConfigKey` probes for `keys`. Returns
+    `None` when the script reports `null` (require failed or exports missing) or prints
+    malformed output; raises `NodeQueryError` when node itself fails."""
     try:
         result = run_fn(
             [
@@ -208,10 +218,14 @@ def query_gsd_tables(paths: GsdCorePaths, project_dir, keys, run_fn=subprocess.r
             capture_output=True,
             text=True,
             check=False,
-            timeout=30,
+            timeout=_TABLES_TIMEOUT_S,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    except OSError as exc:
+        raise NodeQueryError(f"node failed to start ({exc.strerror or exc})") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise NodeQueryError(f"node timed out after {_TABLES_TIMEOUT_S}s") from exc
     if result.returncode != 0:
-        return None
+        lines = (result.stderr or "").strip().splitlines()
+        detail = f": {lines[-1]}" if lines else ""
+        raise NodeQueryError(f"node exited {result.returncode}{detail}")
     return _parse_tables_output(result.stdout)
