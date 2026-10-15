@@ -1,9 +1,11 @@
 """Apply dry-run, backup/marker unit tests (plans 18-16, 18-17)."""
 import contextlib
+import copy
 import io
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -17,7 +19,7 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_gsd_curated_config import cli, config_backup, plan_io
+from ai_kit_gsd_curated_config import cli, config_backup, cross_ai, plan_io, plan_schema
 
 from tests.test_curated_config_golden import load_fixture, tables_answer
 from tests.test_curated_config_inventory import (
@@ -27,7 +29,7 @@ from tests.test_curated_config_inventory import (
     run_inventory,
     seed_cache,
 )
-from tests.test_curated_config_plan_edit import _run_plan_set
+from tests.test_curated_config_plan_edit import _partial_runner_plan, _run_plan_set
 from tests.test_curated_config_recommend import run_recommend
 from tests.test_curated_config_skills import add_plugin, add_skill
 
@@ -564,6 +566,303 @@ def _tables_fake(config_path: str, home: str) -> FakeRun:
         ),
         config_path_stdout=config_path,
     )
+
+
+def _decided_plan(tmp: str) -> tuple[str, str, dict, dict, str, dict, FakeRun]:
+    project, env, config_path = _setup_scratch_project(tmp)
+    fake = _tables_fake(config_path, env["HOME"])
+    inv_path = os.path.join(tmp, "inventory.json")
+    inv = scratch_inventory(project, env, fake, inv_path, host_name="codex")
+    plan_path = os.path.join(tmp, "plan.json")
+    code, _plan, raw, err = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
+    if code != 0 or raw is None:
+        raise AssertionError(err)
+    with open(plan_path, "wb") as handle:
+        handle.write(raw)
+    _decide_all_choices(plan_path, inv_path)
+    return project, env, inv_path, plan_path, config_path, inv, fake
+
+
+def _assert_no_writes(project: str, fake: FakeRun) -> None:
+    planning = os.path.join(project, ".planning")
+    for name in os.listdir(planning):
+        self_msg = name
+        if "bak-" in name or name.endswith(".ai-kit-apply-marker"):
+            raise AssertionError(f"unexpected artifact {self_msg}")
+    runner = os.path.join(planning, "scripts", "cross-ai.mjs")
+    if os.path.isfile(runner):
+        raise AssertionError("cross-ai.mjs was written")
+    for cmd in fake.argv_log:
+        joined = " ".join(str(part) for part in cmd)
+        if "config-set" in joined:
+            raise AssertionError("config-set was invoked")
+
+
+class TestApplyRefusals(unittest.TestCase):
+    def test_missing_inventory_argparse(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            cli._build_parser().parse_args(
+                ["apply", "--plan", "p.json", "--project-dir", "d"]
+            )
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_needs_choice_entry_named(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, _inv, fake = _decided_plan(tmp)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan["entries"].append(
+                {
+                    "key": "models.research",
+                    "op": "set",
+                    "status": "needs_choice",
+                    "value": None,
+                    "candidates": [],
+                }
+            )
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            fake.argv_log.clear()
+            before = _tree_snapshot(project)
+            code, _report, _out, err = _run_apply(
+                plan_path, inv_path, project, env, fake, dry_run=True
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("models.research", err)
+            self.assertEqual(_tree_snapshot(project), before)
+            _assert_no_writes(project, fake)
+
+    def test_needs_choice_artifact_named(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan = _partial_runner_plan(inv, plan)
+            cmd = next(
+                e for e in plan["entries"] if e["key"] == "workflow.cross_ai_command"
+            )
+            cmd.pop("status", None)
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            fake.argv_log.clear()
+            code, _, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertIn(f"artifact:{cross_ai.SCRIPT_PATH}", err)
+
+    def test_needs_choice_sorted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan = _partial_runner_plan(inv, plan)
+            plan["entries"].append(
+                {
+                    "key": "models.verification",
+                    "op": "set",
+                    "status": "needs_choice",
+                    "value": None,
+                    "candidates": [],
+                }
+            )
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            code, _, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertLess(
+                err.index("artifact:"),
+                err.index("models.verification"),
+            )
+
+    def test_inventory_digest_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            inv = copy.deepcopy(inv)
+            inv["host"] = "claude"
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(inv))
+            code, _, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertIn("inventory digest", err)
+
+    def test_rejected_key_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, _fake = _decided_plan(
+                tmp
+            )
+
+            def reject_profile(argv, h=env["HOME"]):
+                body = tables_answer(json.loads(argv[6]), h)
+                body["valid_keys"]["rejected"] = sorted(
+                    set(body["valid_keys"]["rejected"]) | {"model_profile"}
+                )
+                body["valid_keys"]["accepted"] = [
+                    k for k in body["valid_keys"]["accepted"] if k != "model_profile"
+                ]
+                return json.dumps(body)
+
+            fake = FakeRun(
+                node_stdout=reject_profile, config_path_stdout=config_path
+            )
+            fake.argv_log.clear()
+            code, _, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertIn("model_profile", err)
+            self.assertIn("1.16.0", err)
+
+    def test_node_null_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, _fake = _decided_plan(
+                tmp
+            )
+            fake = FakeRun(
+                node_stdout=lambda _argv: "null",
+                config_path_stdout=config_path,
+            )
+            code, _, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertIn("isValidConfigKey unavailable", err)
+
+    def test_node_failure_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, base = _decided_plan(
+                tmp
+            )
+
+            class FailTablesRun(FakeRun):
+                def __call__(self, cmd, **kw):
+                    if len(cmd) >= 3 and cmd[0] == "node" and cmd[1] == "-e":
+                        return subprocess.CompletedProcess(cmd, 1, "", "boom")
+                    return super().__call__(cmd, **kw)
+
+            fake = FailTablesRun(
+                node_stdout=base.node_stdout,
+                config_path_stdout=config_path,
+            )
+            code, _, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertIn("node exited 1", err)
+
+    def test_encoder_refusal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, _inv, fake = _decided_plan(tmp)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan["entries"].append(
+                {
+                    "key": "claude_md_path",
+                    "op": "set",
+                    "value": "true",
+                    "source": "user",
+                }
+            )
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            fake.argv_log.clear()
+            code, _, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertIn("claude_md_path", err)
+
+    def test_destination_project_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _project_a, env, inv_path, plan_path, config_a, _inv, fake = _decided_plan(tmp)
+            project_b = os.path.join(tmp, "project_b")
+            os.makedirs(os.path.join(project_b, ".planning"), exist_ok=True)
+            config_b = os.path.join(project_b, ".planning", "config.json")
+            with open(config_b, "w", encoding="utf-8") as handle:
+                json.dump({}, handle)
+            make_gsd_install(os.path.join(project_b, ".claude", "gsd-core"))
+            fake_b = FakeRun(
+                node_stdout=fake.node_stdout,
+                config_path_stdout=config_b,
+            )
+            before = _tree_snapshot(project_b)
+            code, _, _, err = _run_apply(plan_path, inv_path, project_b, env, fake_b)
+            self.assertEqual(code, 2)
+            self.assertIn(config_b, err)
+            self.assertIn(config_a, err)
+            self.assertEqual(_tree_snapshot(project_b), before)
+
+    def test_destination_workstream_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(
+                tmp
+            )
+            ws_config = os.path.join(
+                project, ".planning", "workstreams", "ws", "config.json"
+            )
+            os.makedirs(os.path.dirname(ws_config), exist_ok=True)
+            fake_ws = FakeRun(
+                node_stdout=fake.node_stdout,
+                config_path_stdout=ws_config,
+            )
+            code, _, _, err = _run_apply(plan_path, inv_path, project, env, fake_ws)
+            self.assertEqual(code, 2)
+            self.assertIn(ws_config, err)
+            self.assertIn(config_path, err)
+
+    def test_relative_inventory_config_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            inv = copy.deepcopy(inv)
+            inv["existing_config"]["path"] = ".planning/config.json"
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(inv))
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan["inventory_digest"] = plan_schema.inventory_digest(inv)
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            code, _, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertIn("not an absolute config path", err)
+
+    def test_hand_edited_plan_refused_at_load(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, _inv, fake = _decided_plan(tmp)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            dup = copy.deepcopy(plan["entries"][0])
+            plan["entries"].insert(0, dup)
+            cmd = next(
+                e for e in plan["entries"] if e["key"] == "workflow.cross_ai_command"
+            )
+            cmd["value"] = "node other.mjs"
+            cmd.pop("forced", None)
+            plan["entries"].append(
+                {
+                    "key": "agent_skills_security.trusted_global_roots",
+                    "op": "set",
+                    "value": ["/abs/evil"],
+                    "existing": ["/abs/evil"],
+                    "source": "user",
+                }
+            )
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            fake.argv_log.clear()
+            code, _, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertIn("duplicate entry key", err)
+            node_calls = [a for a in fake.argv_log if a and a[0] == "node"]
+            self.assertEqual(node_calls, [])
+
+    def test_forced_command_warning_on_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, _inv, fake = _decided_plan(tmp)
+            code_set, _, err_set = _run_plan_set(
+                plan_path,
+                inv_path,
+                "workflow.cross_ai_command",
+                "node other.mjs",
+                force=True,
+            )
+            self.assertEqual(code_set, 0, err_set)
+            code, report, _, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual((code, err), (0, ""))
+            assert report is not None
+            self.assertTrue(
+                any("full permissions" in w for w in report.get("warnings", []))
+            )
 
 
 class TestDryRunTracer(unittest.TestCase):
