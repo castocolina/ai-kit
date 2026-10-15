@@ -106,6 +106,12 @@ def _precommit_hook_files_regex(hook_id):
     return match.group(1).strip().strip("'\"")
 
 
+def _tool_roots_cover(rel_dir: str, roots: list[str]) -> bool:
+    sample = f"{rel_dir.rstrip('/')}/module.py"
+    return any(sample == root or sample.startswith(f"{root}/") for root in roots)
+
+
+
 # --------------------------------------------------------------------------- #
 # Plan 12-02, Task 1 fixture helpers.
 # --------------------------------------------------------------------------- #
@@ -921,7 +927,7 @@ class TestGateRegistration(unittest.TestCase):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             text = handle.read()
         self.assertIn("tests.test_ai_kit_project_rules_arch", text)
-        self.assertIn("skills/ai-kit-project-rules-arch/", text)
+        self.assertIsNotNone(re.search(r"^lint: shellcheck py-compile$", text, re.MULTILINE))
 
     def test_ruff_and_py_compile_match_package_path(self):
         for hook_id in ("ruff", "py-compile"):
@@ -940,13 +946,13 @@ class TestGateRegistration(unittest.TestCase):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
-        self.assertIn("skills/ai-kit-project-rules-arch", include)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-project-rules-arch", include), include)
 
     def test_vulture_paths_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
-        self.assertIn("skills/ai-kit-project-rules-arch", paths)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-project-rules-arch", paths), paths)
 
 
 if __name__ == "__main__":

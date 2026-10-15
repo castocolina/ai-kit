@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import unittest
 from unittest import mock
 
@@ -1051,27 +1052,22 @@ class TestGateRegistration(unittest.TestCase):
         self.assertIsNotNone(
             re.search(regex, "tools/hooks/cursor_session_start.py"))
 
-    def test_makefile_lint_compiles_hook_scripts(self):
+    def test_makefile_lint_delegates_py_compile_hook(self):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             text = handle.read()
-        compile_lines = [
-            line for line in text.splitlines()
-            if "py_compile" in line and not line.lstrip().startswith("#")
-        ]
-        self.assertTrue(
-            any("tools/hooks" in line for line in compile_lines),
-            compile_lines,
-        )
+        self.assertIsNotNone(re.search(r"^lint: shellcheck py-compile$", text, re.MULTILINE))
+        regex = precommit_hook_files_regex("py-compile")
+        self.assertIsNotNone(re.search(regex, "tools/hooks/detect.py"))
 
     def test_pyright_includes_hook_dir(self):
-        with open(_PYPROJECT_PATH, encoding="utf-8") as handle:
-            text = handle.read()
-        start = text.find("[tool.pyright]")
-        self.assertGreaterEqual(start, 0)
-        rest = text[start:]
-        nxt = re.search(r"\n\[", rest[len("[tool.pyright]"):])
-        block = rest if nxt is None else rest[: len("[tool.pyright]") + nxt.start() + 1]
-        self.assertIn("tools/hooks", block)
+        with open(_PYPROJECT_PATH, "rb") as handle:
+            data = tomllib.load(handle)
+        include = data["tool"]["pyright"]["include"]
+        sample = "tools/hooks/detect.py"
+        self.assertTrue(
+            any(sample == root or sample.startswith(f"{root}/") for root in include),
+            include,
+        )
 
     def test_hook_scripts_need_no_lint_suppression(self):
         with open(_PYPROJECT_PATH, encoding="utf-8") as handle:

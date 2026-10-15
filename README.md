@@ -529,16 +529,17 @@ user's own `python3` with no dependencies. The lint/type toolchain below is
 ```bash
 make dev        # uv sync + install pre-commit hooks (sets up the dev env)
 make test       # full suite in parallel, one subprocess per module, through tools/run_unittest_parallel.py (system python3 for the unit group)
-make lint       # shellcheck + py_compile (quick static checks)
+make lint       # shellcheck + py-compile hooks (pre-commit, all files)
 make validate   # the full quality gate (see below)
 ```
 
 **The quality gate is pre-commit.** `.pre-commit-config.yaml` is the single
-source of truth: `make validate` runs `uv run pre-commit run --all-files`, the
-*same* hooks (ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest)
-that gate every commit — so the gate and your local checks can never drift. Tool
-versions are pinned in `uv.lock`; `make dev` installs the hooks so commits are
-gated even if you skip `make validate`. Run it once after cloning:
+source of truth: `make validate` runs each hook via the Makefile's per-tool
+targets (same hooks as commit-time: ruff, pylint, pyright, vulture, shellcheck,
+py-compile, unittest). Ruff, py-compile, pyright and vulture cover every shipped
+Python file under `tools/`, `skills/` and `tests/`; pylint covers `tools/` and
+`skills/`. Tool versions are pinned in `uv.lock`; `make dev` installs the hooks
+so commits are gated even if you skip `make validate`. Run it once after cloning:
 
 ```bash
 make dev        # then commits are automatically gated

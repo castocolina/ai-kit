@@ -1100,9 +1100,7 @@ class TestCliResolveInjection(unittest.TestCase):
             )
         self.assertEqual(captured["sizes"], {"big.py": 4000})
 
-    def test_resolve_injection_emits_controlled_quota_exhausted_when_every_candidate_already_excluded(  # noqa: E501
-        self,
-    ):
+    def test_resolve_injection_quota_exhausted_when_all_candidates_excluded(self):
         # CRITICAL finding: a single-candidate ladder, already excluded by --exclude-keys-json
         # (e.g. a mid-dispatch "quota" failure caught in Step 3, re-running resolve-injection with
         # that SAME candidate excluded) previously reached build_dispatch_injection_fn with an

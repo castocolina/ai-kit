@@ -145,10 +145,12 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   then the affinity mask, then `os.cpu_count()`), capped at 40%.
   `AI_KIT_TEST_CPU_SHARE` may lower the share, never raise it. Never
   hardcode a worker or core count.
-- `make lint` — shellcheck + `py_compile`. `make validate` — the same
-  pre-commit hooks that gate commits, run across all files via the
-  per-hook single-tool targets (`ruff`, `pylint`, `pyright`, `vulture`,
-  `shellcheck`, `py-compile`, `unittest`, `unittest-wizard`).
+- `make lint` — the shellcheck and py-compile hooks (pre-commit, all files),
+  aggregated like `validate`. `make validate` — the same pre-commit hooks that
+  gate commits, run across all files via the per-hook single-tool targets
+  (`ruff`, `pylint`, `pyright`, `vulture`, `shellcheck`, `py-compile`,
+  `unittest`, `unittest-wizard`). Ruff, py-compile, pyright and vulture cover
+  `tools/`, `skills/` and `tests/`; pylint covers `tools/` and `skills/`.
   `security-scanner` and `duplicate-code` are informational-only Makefile
   targets, not wired into `validate`.
 - `tests/*` gets a lighter ruff bar than runtime code (idiomatic test
@@ -239,7 +241,7 @@ unavailable or insufficient.
 - `make dev` — `setup-env` plus install the pre-commit hooks
 - `make test` — aggregate of `test-unit`, `test-integration`, `e2e-test`, `arch-test`
 - `make test-unit` / `test-integration` / `e2e-test` / `arch-test` — individual pyramid tiers
-- `make lint` — shellcheck + `py_compile`
+- `make lint` — shellcheck + py-compile hooks (pre-commit, all files)
 - `make validate` — the same pre-commit hooks that gate commits, all files (via per-hook targets)
 - `make format` — `ruff format .` (dev-only, mutates files, not wired into validate)
 - `make security-scanner` / `make duplicate-code` — informational/non-gating checks, not wired into `validate`

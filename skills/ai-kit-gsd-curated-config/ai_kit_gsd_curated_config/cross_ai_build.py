@@ -15,6 +15,7 @@ documented `None` return, never crash the whole CLI at import time.
 """
 import os
 import sys
+from collections.abc import Callable
 
 from . import model_detect
 
@@ -25,8 +26,11 @@ if _ai_kit_spec_shim is not None:
     if _ai_kit_spec_skill_dir not in sys.path:
         sys.path.insert(0, _ai_kit_spec_skill_dir)
 
+build_execute_command: Callable[..., str] | None
+execute_cli_error: Callable[[str], str | None] | None
+
 try:
-    from ai_kit_spec.commands import build_execute_command, execute_cli_error  # pyright: ignore
+    from ai_kit_spec.commands import build_execute_command, execute_cli_error
 except ImportError:
     # `ai_kit_spec` is a best-effort sibling, never a hard dependency (module docstring above):
     # if its skill directory can't be resolved, or the sibling install is missing/broken, this
@@ -35,8 +39,8 @@ except ImportError:
     # documented "no match" contract) instead of calling it. Without the sibling there is no
     # supported-CLI list to validate `--cli` against either, so execute_cli_error is None and
     # the documented `no_builder` degrade path applies.
-    build_execute_command = None  # pyright: ignore[reportAssignmentType]
-    execute_cli_error = None  # pyright: ignore[reportAssignmentType]
+    build_execute_command = None
+    execute_cli_error = None
 
 # The only three CLI names this plan's two ladders can ever resolve to. Looking up any other
 # key raises KeyError -- never silently substitutes the raw CLI name as a fallback slug, which

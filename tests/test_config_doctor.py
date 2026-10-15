@@ -310,6 +310,13 @@ class TestUnknownDegrade(_ScratchRuntimes):
         self.assertEqual(row["current_display"], "30")
 
 
+def _tool_roots_cover(rel_path: str, roots: list[str]) -> bool:
+    return any(
+        rel_path == root or rel_path.startswith(f"{root}/")
+        for root in roots
+    )
+
+
 class TestGateRegistration(unittest.TestCase):
     def test_py_compile_regex_matches_config_doctor_modules(self):
         regex = precommit_hook_files_regex("py-compile")
@@ -333,19 +340,22 @@ class TestGateRegistration(unittest.TestCase):
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
         for path in _CONFIG_DOCTOR_PY:
-            self.assertIn(path, include)
-        self.assertIn("tools/config_doctor_appliers.py", include)
+            self.assertTrue(_tool_roots_cover(path, include), include)
+        self.assertTrue(
+            _tool_roots_cover("tools/config_doctor_appliers.py", include),
+            include,
+        )
 
-    def test_pylint_files_does_not_match_config_doctor(self):
+    def test_pylint_files_matches_config_doctor(self):
         regex = precommit_hook_files_regex("pylint")
-        self.assertIsNone(re.match(regex, "tools/config_doctor_checks.py"))
+        self.assertIsNotNone(re.match(regex, "tools/config_doctor_checks.py"))
 
-    def test_vulture_paths_does_not_contain_config_doctor(self):
+    def test_vulture_paths_cover_config_doctor(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
-        joined = " ".join(paths)
-        self.assertNotIn("config_doctor", joined)
+        sample = "tools/config_doctor_checks.py"
+        self.assertTrue(_tool_roots_cover(sample, paths), paths)
 
 
 _CLAUDE_EXPANDED_IDS = (
