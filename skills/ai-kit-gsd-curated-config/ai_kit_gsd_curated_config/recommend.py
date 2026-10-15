@@ -512,6 +512,7 @@ def _exec_from_catalog(
     shifts = presets.PHASE_SHIFTS[ctx.opts.rigor]
     tier = roles.agent_tier("gsd-executor", ctx.inv["gsd_core"], ctx.opts.profile, shifts)
     if tier is None:
+        _unknown_agent_note(ctx, out, "gsd-executor")
         return exec_slot
     target = _agent_target(ctx, "gsd-executor", tier)
     keep = _claude_keep if ctx.host == "claude" else None
@@ -558,6 +559,15 @@ def _specialist_note(out: _SpecialistOut, key: str, text: str) -> None:
     out.notes.append({"kind": "specialist", "key": key, "text": text})
 
 
+def _unknown_agent_note(ctx: PlanCtx, out: _SpecialistOut, agent: str) -> None:
+    version = ctx.inv["gsd_core"].get("version") or "unknown"
+    _specialist_note(
+        out,
+        f"model_overrides.{agent}",
+        f"{agent} unknown to gsd-core {version} (no tier); no override proposed",
+    )
+
+
 def _append_counterpart_override(bundle: _CounterpartPick, out: _SpecialistOut) -> None:
     req, pick, ref_vendor, target, slot_model = bundle
     ctx = req.run.ctx
@@ -580,6 +590,11 @@ def _append_counterpart_override(bundle: _CounterpartPick, out: _SpecialistOut) 
 def _counterpart_one(req: _CounterpartReq, out: _SpecialistOut) -> None:
     ctx, prior, cands, ceiling = req.run
     key = f"model_overrides.{req.agent}"
+    shifts = presets.PHASE_SHIFTS[ctx.opts.rigor]
+    tier = roles.agent_tier(req.agent, ctx.inv["gsd_core"], ctx.opts.profile, shifts)
+    if tier is None:
+        _unknown_agent_note(ctx, out, req.agent)
+        return
     slot_model = _agent_slot_model(ctx, prior, req.agent)
     ref_vendor, _ = _facts(ctx, cands, req.ref_model)
     if req.ref_model is None or ref_vendor is None:
@@ -588,10 +603,6 @@ def _counterpart_one(req: _CounterpartReq, out: _SpecialistOut) -> None:
             key,
             f"no inferred vendor for {req.ref_label} reference model; {req.agent} keeps its tier",
         )
-        return
-    shifts = presets.PHASE_SHIFTS[ctx.opts.rigor]
-    tier = roles.agent_tier(req.agent, ctx.inv["gsd_core"], ctx.opts.profile, shifts)
-    if tier is None:
         return
     target = _agent_target(ctx, req.agent, tier)
     pick = roles.best_pick(
@@ -669,17 +680,18 @@ def _append_vision_override(bundle: _VisionPick, out: _SpecialistOut) -> None:
 def _vision_one(run: _SpecialistRun, agent: str, out: _SpecialistOut) -> None:
     ctx, prior, cands, ceiling = run
     key = f"model_overrides.{agent}"
+    tier = roles.agent_tier(
+        agent, ctx.inv["gsd_core"], ctx.opts.profile, presets.PHASE_SHIFTS[ctx.opts.rigor]
+    )
+    if tier is None:
+        _unknown_agent_note(ctx, out, agent)
+        return
     slot_model = _agent_slot_model(ctx, prior, agent)
     _, slot_image = _facts(ctx, cands, slot_model)
     if slot_image is True:
         return
     if not any(c.get("image_input") is True for c in cands):
         _vision_fallback_note(run, out, key, agent)
-        return
-    tier = roles.agent_tier(
-        agent, ctx.inv["gsd_core"], ctx.opts.profile, presets.PHASE_SHIFTS[ctx.opts.rigor]
-    )
-    if tier is None:
         return
     target = _agent_target(ctx, agent, tier)
     pick = roles.best_pick(cands, "general", target, ceiling.value, keep=_vision_keep(ctx))

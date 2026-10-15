@@ -621,6 +621,30 @@ class TestRolesHelpers(unittest.TestCase):
         self.assertEqual((chosen["model"], rule), ("gpt-5.1-codex-max", "exact"))
 
 
+class TestUnknownSpecialist(unittest.TestCase):
+    """A-IN-03: a specialist missing from gsd-core's tables gets a note, not silence."""
+
+    def test_each_specialist_path_notes_an_unknown_agent(self):
+        for agent in ("gsd-executor", "gsd-plan-checker", "gsd-ui-auditor"):
+            inv = make_inventory(host="opencode", candidates=OPENCODE)
+            core = inv["gsd_core"]
+            core["model_profiles"] = {
+                profile: {a: t for a, t in column.items() if a != agent}
+                for profile, column in core["model_profiles"].items()
+            }
+            core["agent_to_phase_type"] = {
+                a: p for a, p in core["agent_to_phase_type"].items() if a != agent
+            }
+            notes = [
+                n for n in build(inv)["notes"]
+                if n["kind"] == "specialist" and n["key"] == f"model_overrides.{agent}"
+            ]
+            self.assertTrue(
+                any(f"{agent} unknown to gsd-core 1.16.0" in n["text"] for n in notes),
+                (agent, notes),
+            )
+
+
 class TestSlotTracer(unittest.TestCase):
     """Task 1: codex keep/override and opencode catalog-score overrides."""
 
