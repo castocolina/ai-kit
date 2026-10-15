@@ -32,27 +32,27 @@ that sibling's business, never this skill's.
 ## Resolve the entrypoint
 
 Resolve once per invocation, in one Bash call, and record the printed path as a literal absolute
-path -- the same 5-candidate pattern every sibling's own `SKILL.md` documents:
+path. The directory containing this `SKILL.md` comes first, so a checkout runs its own copy rather
+than an installed one that may be on another branch:
 
 ```bash
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-project-rules-all}" \
+for d in "$(dirname "<absolute path to THIS SKILL.md>")" \
+         "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-project-rules-all}" \
          "$HOME/.claude/skills/ai-kit-project-rules-all" \
          "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-project-rules-all" \
-         "$HOME/.agents/skills/ai-kit-project-rules-all" \
-         "$(dirname "<absolute path to THIS SKILL.md>")"; do
+         "$HOME/.agents/skills/ai-kit-project-rules-all"; do
   [ -f "$d/ai-kit-project-rules-all.py" ] && { printf '%s\n' "$d/ai-kit-project-rules-all.py"; break; }
 done
 ```
 
-If no candidate exists, stop and report that the skill is not installed. The fifth candidate
-covers a from-checkout invocation -- substitute the directory actually containing this `SKILL.md`.
+If no candidate exists, stop and report that the skill is not installed. Substitute the directory
+actually containing this `SKILL.md` into the first candidate.
 
-That resolves THIS skill's own entrypoint. Internally, once invoked, this skill's `dispatch.py`
-performs the identical **entrypoint-resolution** mechanism a SECOND time -- six times over, once
-per domain, parameterized by each domain's real skill name
-(`ai-kit-project-rules-agents`/`-makefile`/`-precommit`/`-arch`/`-docker`/`-cicd`) -- to locate each
-sibling's own `<name>/<name>.py` entry script before subprocess-invoking it. Both resolutions walk
-the SAME 5 host-neutral candidates and trust only those; neither ever searches `$PATH`. A sibling
+That resolves THIS skill's own entrypoint. Internally, once invoked, `dispatch.py` resolves each
+of the six siblings (`ai-kit-project-rules-agents`/`-makefile`/`-precommit`/`-arch`/`-docker`/
+`-cicd`) the same way, checkout first: the sibling next to the running copy of this skill (from
+`dispatch.py`'s own real path), then the plugin root, `~/.claude/skills`, the opencode skills
+directory and `~/.agents/skills`. It looks for `<name>/<name>.py` and never searches `$PATH`. A sibling
 installed somewhere this walk does not know about produces a D-05 failure entry (see Limits below),
 never a silent skip.
 
@@ -165,8 +165,8 @@ force the count to exactly 8.
 2. **There is no cross-run caching.** Every invocation re-runs all 6 siblings' full `check` from
    scratch; this skill never calls a sibling's own caching-refresh subcommand where one exists, so
    two consecutive runs against an unchanged repo pay the same cost twice.
-3. **Entrypoint resolution trusts only the same 5 known install-location candidates every sibling's
-   own `SKILL.md` documents -- it never searches `$PATH`.** A sibling installed somewhere outside
+3. **Entrypoint resolution trusts only the 5 known install-location candidates (checkout sibling
+   first) -- it never searches `$PATH`.** A sibling installed somewhere outside
    those 5 candidates reports a D-05 `failed` entry, not a silent skip -- see "Resolve the
    entrypoint" above for the **entrypoint-resolution** mechanism itself.
 4. **`(kind, id, issue)` together, never `id` alone, distinguish two entries anywhere in the
