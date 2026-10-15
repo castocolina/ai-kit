@@ -326,10 +326,11 @@ class TestGateRegistration(unittest.TestCase):
                 f"{path} did not match py-compile files: {regex}",
             )
 
-    def test_unittest_core_entry_includes_config_doctor_modules(self):
-        block = precommit_hook_block("unittest")
+    def test_unittest_wizard_entry_includes_config_doctor_modules(self):
+        # Their Textual tests skip under system python3, so they run in the uv hook.
+        block = precommit_hook_block("unittest-wizard")
         match = re.search(r"^\s*entry:\s*(.+)$", block, re.MULTILINE)
-        self.assertIsNotNone(match, "no entry: value for hook unittest")
+        self.assertIsNotNone(match, "no entry: value for hook unittest-wizard")
         assert match is not None
         entry = match.group(1)
         self.assertIn("tests.test_config_doctor", entry)

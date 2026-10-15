@@ -3,12 +3,16 @@
 
 The runner discovers tests/test_*.py, so the listings are a projection of that
 discovery, not a second list to maintain. Run this after adding or moving a
-module; tests/test_gate_scope.py fails while a listing is stale.
+module; tests/test_gate_scope.py fails while a listing is stale (it compares
+render() in memory and never writes).
 """
+import contextlib
+import os
 import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "tools" / "run_unittest_parallel.py"
@@ -65,12 +69,38 @@ def refresh_hook_entries(text: str, hook_listings: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def main() -> int:
-    parsed, hook_listings = groups()
+def render(
+    makefile_text: str, hooks_text: str, listing: tuple[dict[str, str], dict[str, str]]
+) -> tuple[str, str]:
+    """The Makefile and hook-config text with refreshed listings; pure, writes nothing."""
+    parsed, hook_listings = listing
     lines = group_lines(parsed)
-    MAKEFILE.write_text(replace_block(MAKEFILE.read_text(), lines))
-    refreshed = replace_block(HOOKS.read_text(), lines)
-    HOOKS.write_text(refresh_hook_entries(refreshed, hook_listings))
+    hooks = refresh_hook_entries(replace_block(hooks_text, lines), hook_listings)
+    return replace_block(makefile_text, lines), hooks
+
+
+def _atomic_write(path: pathlib.Path, text: str) -> None:
+    """Replace path in one rename, so a concurrent reader never sees a partial file."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+        os.chmod(tmp, path.stat().st_mode & 0o777)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
+
+
+def main() -> int:
+    for path, text in zip(
+        (MAKEFILE, HOOKS),
+        render(MAKEFILE.read_text(), HOOKS.read_text(), groups()),
+        strict=True,
+    ):
+        if path.read_text() != text:
+            _atomic_write(path, text)
     return 0
 
 

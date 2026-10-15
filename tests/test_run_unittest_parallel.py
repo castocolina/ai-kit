@@ -119,9 +119,23 @@ class GroupModeTest(unittest.TestCase):
             tests_dir.mkdir()
             (tests_dir / "__init__.py").write_text("")
             (tests_dir / "test_empty.py").write_text("# no TestCase in here\n")
-            proc = run("tests.test_empty", cwd=tmp)
-        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
-        self.assertIn("failed: tests.test_empty", proc.stdout)
+            _, rc, output, _ = load_runner().run_module("tests.test_empty", cwd=pathlib.Path(tmp))
+        self.assertNotEqual(rc, 0, output)
+        self.assertIn("NO TESTS RAN", output)
+
+    def test_runs_from_a_foreign_cwd(self) -> None:
+        # Modules resolve against the repo root, not the caller's cwd (C-WR-07).
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = run("--group", "arch", cwd=tmp)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("1/1 modules passed", proc.stdout)
+
+    def test_a_hung_module_fails_with_a_timeout_line(self) -> None:
+        runner = load_runner()
+        with unittest.mock.patch.object(runner, "MODULE_TIMEOUT_SECS", 0.01):
+            _, rc, output, _ = runner.run_module("tests.test_arch")
+        self.assertEqual(rc, 124)
+        self.assertIn("timed out", output)
 
     def test_stale_exception_name_exits_2(self) -> None:
         runner = load_runner()

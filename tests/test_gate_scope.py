@@ -3,8 +3,6 @@ import importlib.util
 import os
 import pathlib
 import re
-import subprocess
-import sys
 import tempfile
 import tomllib
 import unittest
@@ -14,6 +12,7 @@ MAKEFILE = REPO_ROOT / "Makefile"
 HOOKS = REPO_ROOT / ".pre-commit-config.yaml"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 RUNNER = REPO_ROOT / "tools" / "run_unittest_parallel.py"
+GENERATOR = REPO_ROOT / "tools" / "gen_test_groups.py"
 PYLINT_DISABLE_NAMES = frozenset({
     "too-many-lines",
     "unused-argument",
@@ -47,16 +46,25 @@ PRE_WIDEN_RUFF_FILES = (
 
 TIER_TARGETS = ("test-unit", "test-integration", "e2e-test", "arch-test")
 UV_TARGETS = ("test-integration", "e2e-test")
-WORKER_RE = re.compile(r"-j \d|--jobs\b|--workers \d|max_workers=\d")
+WORKER_RE = re.compile(r"-j\s*\d|--jobs\b|--workers \d|max_workers\s*=\s*\d")
 
 
-def load_runner():
-    spec = importlib.util.spec_from_file_location("run_unittest_parallel", RUNNER)
+def load_tool(path: pathlib.Path):
+    spec = importlib.util.spec_from_file_location(path.stem, path)
     if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {RUNNER}")
+        raise ImportError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_runner():
+    return load_tool(RUNNER)
+
+
+def hook_group_names(text: str) -> set[str]:
+    """Runner group names passed as `--group NAME`, matched as whole tokens."""
+    return set(re.findall(r"--group (\S+)", text))
 
 
 def modules_in_multiple_groups(groups: dict[str, list[str]]) -> list[str]:
@@ -283,13 +291,14 @@ class TestGateScope(unittest.TestCase):
             self.assertIn(module, entries["unittest"], module)
         for module in hooks["unittest-wizard"]:
             self.assertIn(module, entries["unittest-wizard"], module)
+        # Their Textual tests skip under system python3 (B-WR-03).
+        for module in ("tests.test_config_doctor", "tests.test_config_doctor_pty"):
+            self.assertIn(module, hooks["unittest-wizard"], module)
+            self.assertNotIn(module, hooks["unittest"], module)
 
     def test_hooks_cover_every_group_except_e2e(self) -> None:
         named = " ".join(hook_entries(self.hooks).values())
-        self.assertEqual(
-            {name for name in self.groups if f"--group {name}" in named},
-            set(self.groups) - {"e2e"},
-        )
+        self.assertEqual(hook_group_names(named), set(self.groups) - {"e2e"})
         e2e = "\n".join(recipe_lines(self.makefile, "e2e-test"))
         self.assertIn("--group e2e", e2e)
 
@@ -310,13 +319,12 @@ class TestGateScope(unittest.TestCase):
             block = block.split("# END GENERATED test groups", 1)[0]
             for module in self.runner.discover_modules():
                 self.assertIn(module, block, module)
-        proc = subprocess.run(
-            [sys.executable, str(REPO_ROOT / "tools" / "gen_test_groups.py")],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(MAKEFILE.read_text(), self.makefile)
-        self.assertEqual(HOOKS.read_text(), self.hooks)
+        # Compared in memory: a check must never rewrite the tree it checks.
+        generator = load_tool(GENERATOR)
+        makefile, hooks = generator.render(self.makefile, self.hooks, generator.groups())
+        hint = "stale listing; run: python3 tools/gen_test_groups.py"
+        self.assertEqual(makefile, self.makefile, hint)
+        self.assertEqual(hooks, self.hooks, hint)
 
     def test_ruff_selects_every_shipped_py(self) -> None:
         regex = hook_files_regex(self.hooks, "ruff")
@@ -399,6 +407,25 @@ class TestGateScopeNonVacuity(unittest.TestCase):
     def test_flags_a_hardcoded_worker_count(self) -> None:
         self.assertEqual(hardcoded_worker_counts("entry: uv run python t.py --workers 8"),
                          ["entry: uv run python t.py --workers 8"])
+
+    def test_flags_spaced_and_short_worker_counts(self) -> None:
+        for line in ("max_workers = 12", "make -j8"):
+            self.assertEqual(hardcoded_worker_counts(line), [line])
+
+    def test_group_names_are_whole_tokens(self) -> None:
+        self.assertEqual(hook_group_names("run.py --group unit-uv"), {"unit-uv"})
+
+    def test_path_under_roots_rejects_a_sibling_prefix(self) -> None:
+        self.assertFalse(path_under_roots("toolsx/a.py", ["tools"]))
+        self.assertTrue(path_under_roots("tools/a.py", ["tools"]))
+
+    def test_stale_generated_listing_is_detected(self) -> None:
+        generator = load_tool(GENERATOR)
+        makefile = MAKEFILE.read_text()
+        stale = makefile.replace("# arch: tests.test_arch", "# arch:", 1)
+        self.assertNotEqual(stale, makefile)
+        rendered, _ = generator.render(stale, HOOKS.read_text(), generator.groups())
+        self.assertNotEqual(rendered, stale)
 
     def test_flags_wizard_hook_first(self) -> None:
         self.assertEqual(hook_order_errors(["unittest-wizard", "unittest"]),

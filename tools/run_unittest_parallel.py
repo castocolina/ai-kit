@@ -3,11 +3,17 @@
 
 Usage:
     run_unittest_parallel.py MODULE [MODULE ...]
-    run_unittest_parallel.py --group NAME [--group NAME ...]
+    run_unittest_parallel.py --group NAME [--group NAME ...] [-- MODULE ...]
+    run_unittest_parallel.py --list-groups
 
 Each module runs under the same interpreter as this script, so the caller picks
-the runtime (system python3 or `uv run python`). Output is buffered per module and
-printed whole, so failures never interleave. Exits 1 if any module fails.
+the runtime (system python3 or `uv run python`), with the repo root as its cwd.
+Output is buffered per module and printed whole, so failures never interleave.
+Exits 1 if any module fails or exceeds MODULE_TIMEOUT_SECS.
+
+Names after `--` are ignored: they are the generated listing that keeps a hook
+entry searchable by module (tools/gen_test_groups.py). `--list-groups` prints
+that listing.
 
 Groups (each discovered tests/test_*.py lands in exactly one):
     unit        everything not named in an explicit set below (system python3)
@@ -35,16 +41,12 @@ TESTS_DIR = REPO_ROOT / "tests"
 ARCH_MODULES = frozenset({"tests.test_arch"})
 # Needs PyYAML, which only the uv env provides.
 UNIT_UV_MODULES = frozenset({"tests.test_framework_profiles"})
-# Textual app and PTY-driven suites; they run under uv.
+# Textual app and PTY-driven suites; they run under uv (the wizard hook).
 INTEGRATION_MODULES = frozenset({
+    "tests.test_config_doctor",
+    "tests.test_config_doctor_pty",
     "tests.test_wizard_app",
     "tests.test_wizard_pty",
-})
-# Needs uv wherever it is grouped: the config-doctor pair stays in `unit`
-# because its gate-registration tests search the `unittest` hook entry.
-UV_MODULES = UNIT_UV_MODULES | frozenset({
-    "tests.test_config_doctor_pty",
-    "tests.test_config_doctor",
 })
 # Real git worktrees and memory checks; make e2e-test only, out of validate.
 E2E_MODULES = frozenset({
@@ -59,6 +61,8 @@ EXPLICIT_GROUPS = {
 }
 
 MAX_CPU_SHARE = 0.40
+# A hung module fails the gate instead of hanging it; generous for slow machines.
+MODULE_TIMEOUT_SECS = 900
 CPU_SHARE_ENV = "AI_KIT_TEST_CPU_SHARE"
 
 
@@ -78,7 +82,7 @@ def group_modules(discovered: list[str]) -> dict[str, list[str]]:
 
 
 def hook_groups() -> dict[str, list[str]]:
-    """What each validate hook runs. The uv-only unit modules stay on `unittest`."""
+    """What each validate hook runs."""
     groups = group_modules(discover_modules())
     return {
         "unittest": groups["unit"] + groups["arch"],
@@ -122,12 +126,17 @@ def worker_count(n_modules: int, cpus: int | None, share_env: str | None = None)
     return min(n_modules, max(1, math.floor(share * cpus)))
 
 
-def run_module(module: str) -> tuple[str, int, str, float]:
+def run_module(module: str, cwd: Path = REPO_ROOT) -> tuple[str, int, str, float]:
     start = time.monotonic()
-    proc = subprocess.run(
-        [sys.executable, "-m", "unittest", module],
-        capture_output=True, text=True, check=False,
-    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "unittest", module],
+            capture_output=True, text=True, check=False, cwd=cwd,
+            timeout=MODULE_TIMEOUT_SECS,
+        )
+    except subprocess.TimeoutExpired:
+        output = f"timed out after {MODULE_TIMEOUT_SECS}s"
+        return module, 124, output, time.monotonic() - start
     return module, proc.returncode, proc.stdout + proc.stderr, time.monotonic() - start
 
 
@@ -149,13 +158,6 @@ def _parse_groups(argv: list[str]) -> tuple[list[str] | None, str | None]:
 
 
 def _modules_for_groups(argv: list[str]) -> tuple[list[str] | None, str | None]:
-    runtime = None
-    if "--runtime" in argv:
-        where = argv.index("--runtime")
-        if where + 1 >= len(argv) or argv[where + 1] not in ("system", "uv"):
-            return None, "error: --runtime needs system or uv"
-        runtime = argv[where + 1]
-        argv = argv[:where] + argv[where + 2:]
     groups, error = _parse_groups(argv)
     if error or groups is None:
         return None, error
@@ -164,12 +166,7 @@ def _modules_for_groups(argv: list[str]) -> tuple[list[str] | None, str | None]:
     if stale:
         return None, "error: stale exception names: " + " ".join(stale)
     grouped = group_modules(discovered)
-    modules = [module for name in groups for module in grouped[name]]
-    if runtime == "system":
-        modules = [module for module in modules if module not in UV_MODULES]
-    elif runtime == "uv":
-        modules = [module for module in modules if module in UV_MODULES]
-    return modules, None
+    return [module for name in groups for module in grouped[name]], None
 
 
 def _emit_group_listing() -> int:
