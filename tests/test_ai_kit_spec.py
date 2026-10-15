@@ -131,9 +131,14 @@ OPENCODE_VERBOSE_FIXTURE_PATH = os.path.join(
 # Kept verbatim: the spike sample's first 4 Model.Info objects (id, modelID, providerID,
 #   capabilities, status, enabled), in spike order.
 # `location` is replaced by a placeholder string; the parser never reads it.
-OPENDCODE_API_FIXTURE_PATH = os.path.join(
+OPENCODE_API_FIXTURE_PATH = os.path.join(
     os.path.dirname(__file__), "fixtures", "opencode_api_model.json"
 )
+
+
+def _read_bytes(path: str) -> bytes:
+    with open(path, "rb") as handle:
+        return handle.read()
 
 
 class TestConfigPaths(unittest.TestCase):
@@ -9702,7 +9707,8 @@ openai/gpt-5.6-sol
                 fixture = f.read()
             return unittest.mock.MagicMock(returncode=1, stdout=fixture)
 
-        result = detection.detect_opencode_image_input("/fake/bin/opencode", run_fn=fake_run)
+        result = detection.detect_opencode_verbose_image_input(
+            "/fake/bin/opencode", run_fn=fake_run)
         self.assertEqual(result, {})
 
     def test_detect_timeout_returns_empty(self):
@@ -9711,7 +9717,8 @@ openai/gpt-5.6-sol
         def fake_run(argv, **kwargs):
             raise subprocess.TimeoutExpired("cmd", 15)
 
-        result = detection.detect_opencode_image_input("/fake/bin/opencode", run_fn=fake_run)
+        result = detection.detect_opencode_verbose_image_input(
+            "/fake/bin/opencode", run_fn=fake_run)
         self.assertEqual(result, {})
 
     def test_detect_oserror_returns_empty(self):
@@ -9720,7 +9727,8 @@ openai/gpt-5.6-sol
         def fake_run(argv, **kwargs):
             raise OSError("not found")
 
-        result = detection.detect_opencode_image_input("/fake/bin/opencode", run_fn=fake_run)
+        result = detection.detect_opencode_verbose_image_input(
+            "/fake/bin/opencode", run_fn=fake_run)
         self.assertEqual(result, {})
 
     def test_detect_missing_returncode_returns_empty(self):
@@ -9729,7 +9737,8 @@ openai/gpt-5.6-sol
         def fake_run(argv, **kwargs):
             return None
 
-        result = detection.detect_opencode_image_input("/fake/bin/opencode", run_fn=fake_run)
+        result = detection.detect_opencode_verbose_image_input(
+            "/fake/bin/opencode", run_fn=fake_run)
         self.assertEqual(result, {})
 
     def test_full_size_listing_parses_quickly(self):
@@ -10185,7 +10194,7 @@ class TestOpencodeApiImageInput(unittest.TestCase):
             recorded["authorization"] = request.headers.get("Authorization")
             recorded["timeout"] = timeout
             return self.FakeResponse(
-                body if body is not None else open(OPENDCODE_API_FIXTURE_PATH, "rb").read()
+                body if body is not None else _read_bytes(OPENCODE_API_FIXTURE_PATH)
             )
 
         fake_urlopen.recorded = recorded
@@ -10204,9 +10213,9 @@ class TestOpencodeApiImageInput(unittest.TestCase):
     def test_detect_2x_returns_fixture_image_map_via_probe(self):
         popen = self.FakePopen()
         urlopen = self._fake_urlopen()
-        result = detection.detect_opencode_image_input(
+        result = detection.opencode_image_input_with_source(
             "/fake/bin/opencode", run_fn=self._fake_version_run(),
-            popen_fn=popen, urlopen_fn=urlopen)
+            popen_fn=popen, urlopen_fn=urlopen)[0]
         self.assertEqual(result, self.EXPECTED_MAP)
 
     def test_probe_argv_and_cwd(self):
@@ -10470,9 +10479,9 @@ class TestOpencodeApiImageInput(unittest.TestCase):
                 stdout="opencode v1.18.32\n" if argv[1:] == ["--version"] else verbose_text)
 
         popen = self.FakePopen()
-        result = detection.detect_opencode_image_input(
+        result = detection.opencode_image_input_with_source(
             "/fake/bin/opencode", run_fn=fake_run, popen_fn=popen,
-            urlopen_fn=self._fake_urlopen())
+            urlopen_fn=self._fake_urlopen())[0]
         self.assertEqual(result, {"openai/gpt-5.6-sol": True, "router-env/my-coding": False})
         self.assertEqual(popen.argv, None)  # the probe never ran
 

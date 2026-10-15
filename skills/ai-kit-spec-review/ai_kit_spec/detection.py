@@ -572,20 +572,6 @@ def detect_opencode_verbose_image_input(binary: str, run_fn=subprocess.run) -> d
     return parse_opencode_verbose_image_input(getattr(result, "stdout", None))
 
 
-def detect_opencode_image_input(binary: str, run_fn=subprocess.run,
-                                popen_fn: Callable[..., Any] = subprocess.Popen,
-                                urlopen_fn: Callable[..., Any] = _LOOPBACK_OPENER.open,
-                                ) -> dict:
-    """Returns the image-capability map for opencode: on 2.x, the v2 HTTP API probe
-    (`GET /api/model` through a private `opencode serve`, 17 D-24); on 1.x (or an
-    unrecognized `--version` output), the legacy `models --verbose` path, unchanged.
-    See `opencode_image_input_with_source` for the version gate and
-    `probe_opencode_api_image_input` for the server's lifetime guarantees."""
-    result_map, _source = opencode_image_input_with_source(
-        binary, run_fn=run_fn, popen_fn=popen_fn, urlopen_fn=urlopen_fn)
-    return result_map
-
-
 def group_models_by_family(models: list) -> dict:
     """Collapses tier/effort/mode variants of the same base model into one
     group, e.g. ["claude-opus-5-high", "claude-opus-5-high-fast",
