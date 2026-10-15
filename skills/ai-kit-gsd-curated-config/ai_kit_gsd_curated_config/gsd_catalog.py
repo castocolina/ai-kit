@@ -78,6 +78,22 @@ _AGENT_CATALOG_QUERY_SCRIPT = (
 )
 
 
+def _parse_catalog_output(stdout: str) -> dict | None:
+    try:
+        parsed = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    tiers = parsed.get("tiers")
+    phase_types = parsed.get("phaseTypes")
+    if not isinstance(tiers, dict) or not tiers:
+        return None
+    if not isinstance(phase_types, dict) or not phase_types:
+        return None
+    return {"tiers": tiers, "phaseTypes": phase_types}
+
+
 def query_agent_catalog(node_bin, model_catalog_path, run_fn=subprocess.run):
     """Returns the parsed `{"tiers": {...}, "phaseTypes": {...}}` dict on a clean `node -e`
     run (exit 0, valid JSON, both keys present and non-empty dicts); returns `None` on ANY
@@ -96,16 +112,4 @@ def query_agent_catalog(node_bin, model_catalog_path, run_fn=subprocess.run):
         return None
     if result.returncode != 0:
         return None
-    try:
-        parsed = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    tiers = parsed.get("tiers")
-    phase_types = parsed.get("phaseTypes")
-    if not isinstance(tiers, dict) or not tiers:
-        return None
-    if not isinstance(phase_types, dict) or not phase_types:
-        return None
-    return {"tiers": tiers, "phaseTypes": phase_types}
+    return _parse_catalog_output(result.stdout)

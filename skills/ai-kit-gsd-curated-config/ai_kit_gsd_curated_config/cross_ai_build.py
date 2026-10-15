@@ -46,6 +46,13 @@ except ImportError:
 CLI_TO_REVIEWER_SLUG = {"opencode": "opencode", "cursor-agent": "cursor", "claude": "claude"}
 
 
+def reject_execute_cli(cli):
+    """Return a rejection message when `cli` is unsupported, else `None`."""
+    if execute_cli_error is None:
+        return None
+    return execute_cli_error(cli)
+
+
 def build_execution_command(cli, model, project_dir, execute_command_fn=build_execute_command):
     """Returns the fully-rendered command string (no unfilled `{model}` placeholder remaining)
     when `execute_command_fn` successfully returns a template for `cli`; returns `None` (never

@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+from typing import NamedTuple
 
 from . import (
     claude_md_detect,
@@ -25,6 +26,13 @@ VALID_MODEL_PROFILES = ("quality", "balanced", "budget", "adaptive")
 # resolve_ai_kit_spec_path's sibling-of-this-skill fallback candidate. cli.py lives one level
 # below the skill root (ai_kit_gsd_curated_config/cli.py), so dirname is applied twice.
 _THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+class _GsdCtx(NamedTuple):
+    gsd: object
+    tools: object
+    project_dir: str
+    run_fn: object
 
 
 def _resolve_node_and_gsd_tools(which_fn, env_fn, project_dir=None):
@@ -81,6 +89,50 @@ def _cmd_apply_profile(args, which_fn, run_fn, env_fn):
     return 0 if applied else 1
 
 
+def _write_config_pairs(ctx: _GsdCtx, pairs, failure_label):
+    """Return `None` on success, else an exit code."""
+    for key, value in pairs.items():
+        ok, output = ctx.gsd.config_set(
+            ctx.tools, ctx.project_dir, key, value, run_fn=ctx.run_fn
+        )
+        if not ok:
+            print(
+                f"ai-kit-gsd-curated-config: failed to write {failure_label} key "
+                f"'{key}': {output}",
+                file=sys.stderr,
+            )
+            return 1
+    return None
+
+
+def _heavy_sweep_result(ctx: _GsdCtx, unconditional_pairs):
+    """Apply tier-dependent overrides when the live catalog query succeeds."""
+    model_catalog_path = gsd_catalog.resolve_model_catalog_cjs_path(ctx.tools.gsd_tools_path)
+    if model_catalog_path is None:
+        return False, 0, "model_catalog_not_found"
+    catalog = gsd_catalog.query_agent_catalog(
+        ctx.tools.node_bin, model_catalog_path, ctx.run_fn
+    )
+    if catalog is None:
+        return False, 0, "live_query_failed"
+    full_overrides = critical_agents.compute_overrides(catalog["tiers"])
+    remaining_keys = set(full_overrides) - set(unconditional_pairs)
+    heavy_agents_written = 0
+    for key in remaining_keys:
+        ok, output = ctx.gsd.config_set(
+            ctx.tools, ctx.project_dir, key, full_overrides[key], run_fn=ctx.run_fn
+        )
+        if ok:
+            heavy_agents_written += 1
+        else:
+            print(
+                f"ai-kit-gsd-curated-config: failed to write heavy-sweep key "
+                f"'{key}': {output}",
+                file=sys.stderr,
+            )
+    return True, heavy_agents_written, None
+
+
 def _cmd_apply_critical_agents(args, which_fn, run_fn, env_fn):
     gsd, tools, error = _resolve_node_and_gsd_tools(
         which_fn, env_fn, project_dir=args.project_dir
@@ -89,52 +141,20 @@ def _cmd_apply_critical_agents(args, which_fn, run_fn, env_fn):
         print(error, file=sys.stderr)
         return 2
 
+    ctx = _GsdCtx(gsd, tools, args.project_dir, run_fn)
     unconditional_pairs = critical_agents.compute_overrides(None)
-    unconditional_written = 0
-    for key, value in unconditional_pairs.items():
-        ok, output = gsd.config_set(
-            tools, args.project_dir, key, value, run_fn=run_fn
-        )
-        if not ok:
-            print(
-                f"ai-kit-gsd-curated-config: failed to write unconditional key '{key}': {output}",
-                file=sys.stderr,
-            )
-            return 1
-        unconditional_written += 1
+    fail = _write_config_pairs(ctx, unconditional_pairs, "unconditional")
+    if fail is not None:
+        return fail
 
-    heavy_sweep_applied = False
-    heavy_agents_written = 0
-    degraded_reason = None
-
-    model_catalog_path = gsd_catalog.resolve_model_catalog_cjs_path(tools.gsd_tools_path)
-    if model_catalog_path is None:
-        degraded_reason = "model_catalog_not_found"
-    else:
-        catalog = gsd_catalog.query_agent_catalog(tools.node_bin, model_catalog_path, run_fn)
-        if catalog is None:
-            degraded_reason = "live_query_failed"
-        else:
-            full_overrides = critical_agents.compute_overrides(catalog["tiers"])
-            remaining_keys = set(full_overrides) - set(unconditional_pairs)
-            for key in remaining_keys:
-                ok, output = gsd.config_set(
-                    tools, args.project_dir, key, full_overrides[key], run_fn=run_fn
-                )
-                if ok:
-                    heavy_agents_written += 1
-                else:
-                    print(
-                        f"ai-kit-gsd-curated-config: failed to write heavy-sweep key "
-                        f"'{key}': {output}",
-                        file=sys.stderr,
-                    )
-            heavy_sweep_applied = True
+    heavy_sweep_applied, heavy_agents_written, degraded_reason = _heavy_sweep_result(
+        ctx, unconditional_pairs
+    )
 
     print(
         json.dumps(
             {
-                "unconditional_written": unconditional_written,
+                "unconditional_written": len(unconditional_pairs),
                 "heavy_sweep_applied": heavy_sweep_applied,
                 "heavy_agents_written": heavy_agents_written,
                 "degraded_reason": degraded_reason,
@@ -180,8 +200,8 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
     # D-15 (Phase 16.1): validate `--cli` BEFORE the first config-set, workflow.cross_ai_execution
     # included -- a rejected executor (claude/grok, or any unsupported name) must leave the GSD
     # config completely untouched, on every run.
-    if args.cli and cross_ai_build.execute_cli_error is not None:
-        rejection = cross_ai_build.execute_cli_error(args.cli)
+    if args.cli:
+        rejection = cross_ai_build.reject_execute_cli(args.cli)
         if rejection:
             print(f"ai-kit-gsd-curated-config: {rejection}", file=sys.stderr)
             return 2
@@ -235,33 +255,22 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
     return 0
 
 
-def _cmd_apply_review(args, which_fn, run_fn, env_fn):
-    gsd, tools, error = _resolve_node_and_gsd_tools(
-        which_fn, env_fn, project_dir=args.project_dir
-    )
-    if error or gsd is None or tools is None:
-        print(error, file=sys.stderr)
-        return 2
-
-    ok, output = gsd.config_set(
-        tools, args.project_dir, "workflow.plan_review_convergence", True, run_fn=run_fn
+def _config_set_exit(ctx: _GsdCtx, key, value, label):
+    """Return an exit code on failure, else `None`."""
+    ok, output = ctx.gsd.config_set(
+        ctx.tools, ctx.project_dir, key, value, run_fn=ctx.run_fn
     )
     if not ok:
         print(
-            f"ai-kit-gsd-curated-config: failed to write "
-            f"workflow.plan_review_convergence: {output}",
+            f"ai-kit-gsd-curated-config: failed to write {label}: {output}",
             file=sys.stderr,
         )
         return 1
+    return None
 
-    ok, output = gsd.config_set(
-        tools, args.project_dir, "review.effort.opencode", "high", run_fn=run_fn
-    )
-    if not ok:
-        print(f"ai-kit-gsd-curated-config: failed to write review.effort.opencode: {output}",
-              file=sys.stderr)
-        return 1
 
+def _apply_review_writes(ctx: _GsdCtx, args):
+    """Return reviewer list on success, else an exit code."""
     slug = cross_ai_build.CLI_TO_REVIEWER_SLUG.get(args.cli)
     if slug is None:
         print(
@@ -270,33 +279,52 @@ def _cmd_apply_review(args, which_fn, run_fn, env_fn):
             file=sys.stderr,
         )
         return 2
-    got = gsd.config_get(tools, args.project_dir, "review.default_reviewers", run_fn=run_fn)
+    steps = (
+        ("workflow.plan_review_convergence", True, "workflow.plan_review_convergence"),
+        ("review.effort.opencode", "high", "review.effort.opencode"),
+    )
+    for key, value, label in steps:
+        code = _config_set_exit(ctx, key, value, label)
+        if code is not None:
+            return code
+    got = ctx.gsd.config_get(
+        ctx.tools, ctx.project_dir, "review.default_reviewers", run_fn=ctx.run_fn
+    )
     existing = got.value if got.found else None
     reviewers = list(existing) if isinstance(existing, list) else []
     if slug not in reviewers:
         reviewers.append(slug)
+    for key, value, label in (
+        ("review.default_reviewers", reviewers, "review.default_reviewers"),
+        (f"review.models.{slug}", args.model, f"review.models.{slug}"),
+    ):
+        code = _config_set_exit(ctx, key, value, label)
+        if code is not None:
+            return code
+    return reviewers
 
-    ok, output = gsd.config_set(
-        tools, args.project_dir, "review.default_reviewers", reviewers, run_fn=run_fn
+
+def _cmd_apply_review(args, which_fn, run_fn, env_fn):
+    gsd, tools, error = _resolve_node_and_gsd_tools(
+        which_fn, env_fn, project_dir=args.project_dir
     )
-    if not ok:
-        print(f"ai-kit-gsd-curated-config: failed to write review.default_reviewers: {output}",
-              file=sys.stderr)
-        return 1
+    if error or gsd is None or tools is None:
+        print(error, file=sys.stderr)
+        return 2
 
-    ok, output = gsd.config_set(
-        tools, args.project_dir, f"review.models.{slug}", args.model, run_fn=run_fn
+    result = _apply_review_writes(_GsdCtx(gsd, tools, args.project_dir, run_fn), args)
+    if not isinstance(result, list):
+        return result
+
+    print(
+        json.dumps(
+            {
+                "plan_review_convergence_written": True,
+                "default_reviewers": result,
+                "review_effort_opencode_written": True,
+            }
+        )
     )
-    if not ok:
-        print(f"ai-kit-gsd-curated-config: failed to write review.models.{slug}: {output}",
-              file=sys.stderr)
-        return 1
-
-    print(json.dumps({
-        "plan_review_convergence_written": True,
-        "default_reviewers": reviewers,
-        "review_effort_opencode_written": True,
-    }))
     return 0
 
 
@@ -394,12 +422,7 @@ def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
     return 0
 
 
-def main(
-    argv: list,
-    which_fn=shutil.which,
-    run_fn=subprocess.run,
-    env_fn=lambda: dict(os.environ),
-) -> int:
+def _build_parser():
     parser = argparse.ArgumentParser(prog="ai-kit-gsd-curated-config")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -444,31 +467,32 @@ def main(
     p_apply_workflow_defaults.add_argument(
         "--ui-review", required=True, choices=("true", "false")
     )
+    return parser
 
-    args = parser.parse_args(argv)
 
-    if args.command == "ensure-project":
-        return _cmd_ensure_project(args, which_fn, run_fn, env_fn)
-    if args.command == "apply-profile":
-        return _cmd_apply_profile(args, which_fn, run_fn, env_fn)
-    if args.command == "apply-critical-agents":
-        return _cmd_apply_critical_agents(args, which_fn, run_fn, env_fn)
-    if args.command == "detect-execution-candidate":
-        return _cmd_detect_execution_candidate(args, which_fn, run_fn, env_fn)
-    if args.command == "detect-review-candidate":
-        return _cmd_detect_review_candidate(args, which_fn, run_fn, env_fn)
-    if args.command == "apply-execution":
-        return _cmd_apply_execution(args, which_fn, run_fn, env_fn)
-    if args.command == "apply-review":
-        return _cmd_apply_review(args, which_fn, run_fn, env_fn)
-    if args.command == "detect-claude-md-path":
-        return _cmd_detect_claude_md_path(args, which_fn, run_fn, env_fn)
-    if args.command == "detect-frontend":
-        return _cmd_detect_frontend(args, which_fn, run_fn, env_fn)
-    if args.command == "apply-claude-md-path":
-        return _cmd_apply_claude_md_path(args, which_fn, run_fn, env_fn)
-    if args.command == "apply-workflow-defaults":
-        return _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn)
+_COMMAND_HANDLERS = {
+    "ensure-project": _cmd_ensure_project,
+    "apply-profile": _cmd_apply_profile,
+    "apply-critical-agents": _cmd_apply_critical_agents,
+    "detect-execution-candidate": _cmd_detect_execution_candidate,
+    "detect-review-candidate": _cmd_detect_review_candidate,
+    "apply-execution": _cmd_apply_execution,
+    "apply-review": _cmd_apply_review,
+    "detect-claude-md-path": _cmd_detect_claude_md_path,
+    "detect-frontend": _cmd_detect_frontend,
+    "apply-claude-md-path": _cmd_apply_claude_md_path,
+    "apply-workflow-defaults": _cmd_apply_workflow_defaults,
+}
 
-    parser.error(f"unknown command: {args.command}")
-    return 2
+
+def main(
+    argv: list,
+    which_fn=shutil.which,
+    run_fn=subprocess.run,
+    env_fn=lambda: dict(os.environ),
+) -> int:
+    args = _build_parser().parse_args(argv)
+    handler = _COMMAND_HANDLERS.get(args.command)
+    if handler is None:
+        _build_parser().error(f"unknown command: {args.command}")
+    return handler(args, which_fn, run_fn, env_fn)
