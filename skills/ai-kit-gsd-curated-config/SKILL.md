@@ -125,7 +125,7 @@ loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
 `workflow.cross_ai_timeout` from config (baked outer timeout is the minimum with live).
 
 **Opt-in skills and MCP servers:** set by hand-editing the generated script's CONFIG
-`extraArgs` per target (D-11). The next apply then writes `cross-ai.mjs.new` instead of
+`extraArgs` per target. The next apply then writes `cross-ai.mjs.new` instead of
 overwriting the live runner.
 
 **`.new` is not active:** the runner at `.planning/scripts/cross-ai.mjs` keeps its old
@@ -153,7 +153,7 @@ node .planning/scripts/cross-ai.mjs --print-argv
   only through the Claude plugin cache, not other hosts' skill roots.
 - **Limit:** skills kept only in `.claude/skills` inside a project are **not** scanned.
 - **Plugin skills:** require install + layered `enabledPlugins` (user, project, local).
-  Per-key layering across those files is **unverified** (D-32) — inventory notes when it
+  Per-key layering across those files is **unverified** — inventory notes when it
   assumes last-wins per key.
 
 ## Limits
