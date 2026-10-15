@@ -8,10 +8,14 @@ import contextlib
 import io
 import json
 import os
+import socket
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock
+from unittest import mock
 
 sys.path.insert(
     0,
@@ -168,6 +172,7 @@ class TestRecommendTracer(unittest.TestCase):
             inv, "--profile", "adaptive", "--rigor", "standard"
         )
         self.assertEqual((code, err), (0, ""))
+        assert plan is not None
         data = json.loads(self._stdout_of(inv))
         for key in ("out", "entries", "needs_choice", "notes"):
             self.assertIn(key, data)
@@ -210,6 +215,7 @@ class TestRecommendTracer(unittest.TestCase):
         _, _, first, _ = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
         _, _, second, _ = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
         self.assertEqual(first, second)
+        assert first is not None
         self.assertTrue(first.endswith(b"\n"))
 
     def test_existing_value_recorded(self):
@@ -218,6 +224,7 @@ class TestRecommendTracer(unittest.TestCase):
         )
         code, plan, _, _ = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
         self.assertEqual(code, 0)
+        assert plan is not None
         self.assertEqual(entry_map(plan)["granularity"]["existing"], "coarse")
 
     def test_get_dotted(self):
@@ -537,9 +544,147 @@ def forbidden_imports(source):
                 for name in names:
                     if name.split(".")[0] not in ALLOWED_RELATIVE_IMPORTS:
                         flagged.append(f".{name}")
-            elif node.module.split(".")[0] in FORBIDDEN_IMPORT_ROOTS:
+            elif node.module is not None and node.module.split(".")[0] in FORBIDDEN_IMPORT_ROOTS:
                 flagged.append(node.module)
     return flagged
+
+
+class TestPurity(unittest.TestCase):
+    """REC-01/R7: build_plan is I/O-free and deterministic."""
+
+    def test_build_plan_pure_and_deterministic(self):
+        inv = make_inventory(host="codex", rejected=("dynamic_routing.enabled",))
+        opts = recommend.RecommendOpts("adaptive", "rigorous", "y", "y")
+        raiser = mock.MagicMock(side_effect=AssertionError("purity violation"))
+        with mock.patch.object(subprocess, "run", raiser), \
+             mock.patch.object(subprocess, "Popen", raiser), \
+             mock.patch.object(socket, "socket", raiser), \
+             mock.patch.object(time, "time", raiser), \
+             mock.patch.object(time, "monotonic", raiser), \
+             mock.patch("builtins.open", raiser):
+            first = recommend.build_plan(inv, opts)
+            second = recommend.build_plan(inv, opts)
+        self.assertEqual(plan_io.canonical_json(first), plan_io.canonical_json(second))
+
+    def test_recommend_and_presets_import_nothing_forbidden(self):
+        for module in ("recommend", "presets"):
+            with open(
+                os.path.join(
+                    REPO_ROOT, "skills", "ai-kit-gsd-curated-config", "ai_kit_gsd_curated_config",
+                    f"{module}.py",
+                ),
+                encoding="utf-8",
+            ) as handle:
+                self.assertEqual(forbidden_imports(handle.read()), [], module)
+
+    def test_forbidden_imports_is_not_vacuous(self):
+        self.assertIn("subprocess", forbidden_imports("import subprocess\n"))
+        self.assertIn("ai_kit_spec", forbidden_imports("from ai_kit_spec import cache\n"))
+        self.assertIn(".cli", forbidden_imports("from . import cli\n"))
+        self.assertEqual(forbidden_imports("from . import plan_io, presets\n"), [])
+        self.assertEqual(forbidden_imports("from typing import Any\n"), [])
+
+
+class TestWritePlan(unittest.TestCase):
+    """T-17-06: the atomic plan write leaves exactly one file with exact content."""
+
+    def test_write_plan_atomic_and_exact(self):
+        plan = {"schema_version": 1, "entries": [], "notes": []}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "plan.json")
+            plan_io.write_plan(path, plan)
+            plan_io.write_plan(path, plan)
+            self.assertEqual(os.listdir(tmp), ["plan.json"])
+            with open(path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), plan_io.canonical_json(plan))
+
+
+class TestInventoryValidation(unittest.TestCase):
+    """D-31/R7 boundary: bad inventories exit 2 with `rerun inventory`, write nothing."""
+
+    def _run(self, inv, **kw):
+        return run_recommend(inv, "--profile", kw.get("profile", "adaptive"),
+                             "--rigor", kw.get("rigor", "standard"))
+
+    def test_bad_schema_versions_fail_closed(self):
+        for bad in (0, 2, "1", True):
+            inv = make_inventory()
+            inv["schema_version"] = bad
+            code, plan, plan_bytes, err = self._run(inv)
+            self.assertEqual((code, plan, plan_bytes), (2, None, None), repr(bad))
+            self.assertIn("rerun inventory", err)
+
+    def test_schema_version_schema_message(self):
+        inv = make_inventory()
+        inv["schema_version"] = 2
+        _, _, _, err = self._run(inv)
+        self.assertIn("schema_version 2 unsupported (expected 1)", err)
+
+    def test_missing_schema_version_fails_closed(self):
+        inv = make_inventory()
+        del inv["schema_version"]
+        code, plan, plan_bytes, err = self._run(inv)
+        self.assertEqual((code, plan, plan_bytes), (2, None, None))
+        self.assertIn("rerun inventory", err)
+
+    def test_each_removed_required_key_named(self):
+        base = make_inventory()
+        removed = {
+            "host": lambda inv: inv.pop("host"),
+            "gsd_core": lambda inv: inv.pop("gsd_core"),
+            "gsd_core.valid_keys": lambda inv: inv["gsd_core"].pop("valid_keys"),
+            "candidates": lambda inv: inv.pop("candidates"),
+            "project": lambda inv: inv.pop("project"),
+            "existing_config": lambda inv: inv.pop("existing_config"),
+            "global_defaults": lambda inv: inv.pop("global_defaults"),
+            "conflicts": lambda inv: inv.pop("conflicts"),
+        }
+        for name, remove in removed.items():
+            inv = make_inventory()
+            remove(inv)
+            code, plan, plan_bytes, err = self._run(inv)
+            self.assertEqual((code, plan, plan_bytes), (2, None, None), name)
+            self.assertIn(name, err, name)
+            self.assertIn("rerun inventory", err, name)
+        del base
+
+    def test_missing_path_and_invalid_json_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad_path = os.path.join(tmp, "broken.json")
+            with open(bad_path, "w", encoding="utf-8") as handle:
+                handle.write("{not json")
+            buf_err = io.StringIO()
+            with contextlib.redirect_stderr(buf_err):
+                code = cli.main([
+                    "recommend", "--inventory", bad_path, "--profile", "adaptive",
+                    "--rigor", "standard", "--out", os.path.join(tmp, "plan.json"),
+                ])
+            self.assertEqual(code, 2)
+            self.assertIn("rerun inventory", buf_err.getvalue())
+            buf_err = io.StringIO()
+            with contextlib.redirect_stderr(buf_err):
+                code = cli.main([
+                    "recommend", "--inventory", os.path.join(tmp, "absent.json"),
+                    "--profile", "adaptive", "--rigor", "standard",
+                    "--out", os.path.join(tmp, "plan.json"),
+                ])
+            self.assertEqual(code, 2)
+            self.assertIn("rerun inventory", buf_err.getvalue())
+
+    def test_unknown_profile_and_rigor_rejected_before_files(self):
+        inv = make_inventory()
+        for flag, value in (("--profile", "turbo"), ("--rigor", "extreme")):
+            with tempfile.TemporaryDirectory() as tmp:
+                inv_path = os.path.join(tmp, "inventory.json")
+                with open(inv_path, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(inv))
+                with self.assertRaises(SystemExit) as caught:
+                    cli.main([
+                        "recommend", "--inventory", inv_path, flag, value,
+                        "--out", os.path.join(tmp, "plan.json"),
+                    ])
+                self.assertEqual(caught.exception.code, 2)
+                self.assertFalse(os.path.exists(os.path.join(tmp, "plan.json")))
 
 
 if __name__ == "__main__":

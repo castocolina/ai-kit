@@ -62,30 +62,41 @@ def _ill(inv: dict, key: str, expected: str) -> str | None:
     return None
 
 
-def _validate_inventory(inv) -> str | None:
-    """Returns the problem string, or `None` when the document matches the
-    schema-version-1 contract (17-02-PLAN `<interfaces>`)."""
-    if not isinstance(inv, dict):
-        return "top-level JSON is not an object"
+
+def _schema_version_problem(inv: dict) -> str | None:
     schema_version = inv.get("schema_version")
     if isinstance(schema_version, bool) or not isinstance(schema_version, int):
         return f"schema_version {schema_version!r} unsupported (expected 1)"
     if schema_version != INVENTORY_SCHEMA_VERSION:
         return f"schema_version {schema_version} unsupported (expected 1)"
+    return None
+
+
+def _validate_inventory(inv) -> str | None:
+    """Returns the problem string, or `None` when the document matches the
+    schema-version-1 contract (17-02-PLAN `<interfaces>`)."""
+    if not isinstance(inv, dict):
+        return "top-level JSON is not an object"
+    problem = _schema_version_problem(inv)
+    if problem:
+        return problem
+    for key, expected in (
+        ("host", "str"),
+        ("gsd_core", "dict"),
+        ("candidates", "list"),
+        ("project", "dict"),
+        ("existing_config", "dict"),
+        ("global_defaults", "dict"),
+        ("conflicts", "list"),
+    ):
+        problem = _missing(inv, key) or _ill(inv, key, expected)
+        if problem:
+            return problem
     for problem in (
-        _ill(inv, "host", "str") or _missing(inv, "host"),
-        _ill(inv, "candidates", "list") or _missing(inv, "candidates"),
-        _ill(inv, "project", "dict") or _missing(inv, "project"),
-        _ill(inv, "existing_config", "dict") or _missing(inv, "existing_config"),
-        _ill(inv, "global_defaults", "dict") or _missing(inv, "global_defaults"),
-        _ill(inv, "conflicts", "list") or _missing(inv, "conflicts"),
-        _validate_gsd_core(inv.get("gsd_core")) if isinstance(inv.get("gsd_core"), dict)
-        else (_missing(inv, "gsd_core") or _ill(inv, "gsd_core", "dict")),
-        _validate_project(inv.get("project")) if isinstance(inv.get("project"), dict) else None,
-        _validate_config_section(inv.get("existing_config"), "existing_config")
-        if isinstance(inv.get("existing_config"), dict) else None,
-        _validate_candidates(inv.get("candidates")) if isinstance(inv.get("candidates"), list)
-        else None,
+        _validate_gsd_core(inv["gsd_core"]),
+        _validate_project(inv["project"]),
+        _validate_config_section(inv["existing_config"], "existing_config"),
+        _validate_candidates(inv["candidates"]),
     ):
         if problem:
             return problem
