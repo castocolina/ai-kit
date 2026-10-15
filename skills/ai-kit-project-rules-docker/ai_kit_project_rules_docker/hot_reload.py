@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import NamedTuple
 
 from ai_kit_rules_common.criticality import CRITICALITY_ADVISORY, CRITICALITY_MEDIUM
 from ai_kit_rules_common.stack_detect import detect_stacks
@@ -213,6 +214,16 @@ def _script_prefixes_text() -> str:
     return ", ".join(SCRIPT_INDIRECTION_PREFIXES)
 
 
+class _UnrecognizedContext(NamedTuple):
+    service: str
+    compose_file: str
+    reason: str
+    override_present: bool
+    override_text: str | None
+    unreadable_shape: str | None
+    stacks: set[str]
+
+
 def _missing_finding(
     service: str, compose_file: str, *, bind_present: bool, override_present: bool
 ) -> dict:
@@ -250,68 +261,63 @@ def _missing_finding(
     }
 
 
-def _unrecognized_finding(
-    service: str,
-    compose_file: str,
-    reason: str,
-    *,
-    override_present: bool,
-    override_text: str | None,
-    unreadable_shape: str | None,
-    stacks: set[str],
-) -> dict:
+def _unrecognized_finding_text(ctx: _UnrecognizedContext) -> str:
+    service, compose_file, reason = ctx.service, ctx.compose_file, ctx.reason
     if reason == "volumes_unreadable":
-        if override_present:
+        if ctx.override_present:
             override_fact = (
-                f"declares a 'command:'/'entrypoint:' override ('{override_text}')"
+                f"declares a 'command:'/'entrypoint:' override ('{ctx.override_text}')"
             )
         else:
             override_fact = "declares no 'command:' or 'entrypoint:' override"
         shape_phrase = (
             "an interpolated volume source this skill does not resolve"
-            if unreadable_shape == _UNREADABLE_INTERPOLATED
+            if ctx.unreadable_shape == _UNREADABLE_INTERPOLATED
             else "a long-form (mapping-style) volume entry this skill does not read"
         )
-        text = (
+        return (
             f"Service '{service}' in {compose_file} {override_fact}. "
             f"Whether it has a bind mount is UNKNOWN: its only candidate "
             f"volume entry is {shape_phrase}, so this skill could not "
             f"confirm a bind mount is present. This is advisory, not a "
             f"defect claim -- confirm the volume entry by hand."
         )
-    elif reason == "script_indirection":
-        text = (
+    if reason == "script_indirection":
+        return (
             f"Service '{service}' in {compose_file} declares a bind mount "
-            f"and a command override ('{override_text}'), but the override "
+            f"and a command override ('{ctx.override_text}'), but the override "
             f"runs through a script indirection (one of the script-runner "
             f"prefixes this skill knows: {_script_prefixes_text()}) whose "
             f"real command this skill does not follow into a 'package.json' "
             f"scripts entry or a Makefile recipe. This is advisory, not a "
             f"defect claim -- check the script's real command by hand."
         )
-    elif reason == "no_stack_detected":
-        text = (
+    if reason == "no_stack_detected":
+        return (
             f"Service '{service}' in {compose_file} declares a bind mount "
-            f"and a command override ('{override_text}'), but no known "
+            f"and a command override ('{ctx.override_text}'), but no known "
             f"stack was detected anywhere in this repo, so no stack's "
             f"hot-reload convention applies. This is advisory, not a "
             f"defect claim."
         )
-    elif reason == "stack_without_baseline":
-        text = (
+    if reason == "stack_without_baseline":
+        return (
             f"Service '{service}' in {compose_file} declares a bind mount "
-            f"and a command override ('{override_text}'), but the "
+            f"and a command override ('{ctx.override_text}'), but the "
             f"detected stack(s) carry no hot-reload baseline in this "
             f"skill's catalog yet. This is advisory, not a defect claim."
         )
-    else:
-        text = (
-            f"Service '{service}' in {compose_file} declares a bind mount "
-            f"and a command override ('{override_text}'), but this skill "
-            f"could not confirm it reloads on change -- it matched none of "
-            f"{_markers_text(stacks)}. This is advisory, not a defect "
-            f"claim -- confirm by hand."
-        )
+    return (
+        f"Service '{service}' in {compose_file} declares a bind mount "
+        f"and a command override ('{ctx.override_text}'), but this skill "
+        f"could not confirm it reloads on change -- it matched none of "
+        f"{_markers_text(ctx.stacks)}. This is advisory, not a defect "
+        f"claim -- confirm by hand."
+    )
+
+
+def _unrecognized_finding(ctx: _UnrecognizedContext) -> dict:
+    text = _unrecognized_finding_text(ctx)
     return {
         "category": "docker-hot-reload",
         "issue": _ISSUE_UNRECOGNIZED,
@@ -320,9 +326,9 @@ def _unrecognized_finding(
         "recommendation": text,
         "needs_research": False,
         "advisory": True,
-        "reason": reason,
-        "service": service,
-        "compose_file": compose_file,
+        "reason": ctx.reason,
+        "service": ctx.service,
+        "compose_file": ctx.compose_file,
     }
 
 
@@ -345,13 +351,15 @@ def _evaluate_service(
 
     if bind_answer == _BIND_UNREADABLE:
         return _unrecognized_finding(
-            service,
-            compose_file,
-            "volumes_unreadable",
-            override_present=override_present,
-            override_text=override_text,
-            unreadable_shape=unreadable_shape,
-            stacks=stacks,
+            _UnrecognizedContext(
+                service,
+                compose_file,
+                "volumes_unreadable",
+                override_present,
+                override_text,
+                unreadable_shape,
+                stacks,
+            )
         )
 
     bind_present = bind_answer == _BIND_PRESENT
@@ -361,13 +369,15 @@ def _evaluate_service(
             return None
         reason = _classify_unrecognized_reason(override_text, stacks)
         return _unrecognized_finding(
-            service,
-            compose_file,
-            reason,
-            override_present=True,
-            override_text=override_text,
-            unreadable_shape=None,
-            stacks=stacks,
+            _UnrecognizedContext(
+                service,
+                compose_file,
+                reason,
+                True,
+                override_text,
+                None,
+                stacks,
+            )
         )
 
     return _missing_finding(

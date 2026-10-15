@@ -227,6 +227,22 @@ def _real_recipe_lines(recipe_text: str) -> list[str]:
     return lines
 
 
+def _identity_from_recipe_lines(real_lines: list[str]) -> tuple[str | None, bool]:
+    for line in real_lines:
+        match = _DELEGATE_RE.search(line)
+        if match is not None:
+            return match.group(1), True
+    if len(real_lines) == 1:
+        stripped = strip_leading_noise(real_lines[0])
+        key, _known = compute_command_key(stripped)
+        return key, True
+    key0, _ = compute_command_key(strip_leading_noise(real_lines[0]))
+    key1, _ = compute_command_key(strip_leading_noise(real_lines[1]))
+    if key0 == key1:
+        return key0, True
+    return None, False
+
+
 def makefile_target_identity(
     name: str, recipe_text: str, prerequisites
 ) -> tuple[str | None, bool]:
@@ -244,29 +260,13 @@ def makefile_target_identity(
     bare name declaration, identity is the target's own name, NOT derived
     from a command body)."""
     real_lines = _real_recipe_lines(recipe_text)
-
     if len(real_lines) > 2:
         return None, False
     if not real_lines:
         if prerequisites:
             return None, False
-        return name, False  # clause (c)
-
-    for line in real_lines:
-        match = _DELEGATE_RE.search(line)
-        if match is not None:
-            return match.group(1), True  # clause (a)
-
-    if len(real_lines) == 1:
-        stripped = strip_leading_noise(real_lines[0])
-        key, _known = compute_command_key(stripped)
-        return key, True  # clause (b)
-
-    key0, _ = compute_command_key(strip_leading_noise(real_lines[0]))
-    key1, _ = compute_command_key(strip_leading_noise(real_lines[1]))
-    if key0 == key1:
-        return key0, True  # clause (b2), same key
-    return None, False  # clause (b2), different keys -> no identity
+        return name, False
+    return _identity_from_recipe_lines(real_lines)
 
 
 def precommit_hook_identity(hook_id: str, entry: str | None) -> tuple[str | None, bool]:

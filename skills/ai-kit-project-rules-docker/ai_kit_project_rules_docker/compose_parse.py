@@ -215,17 +215,7 @@ def read_compose_text(path: str) -> str:
         return ""
 
 
-def iter_services(text: str):
-    """Yield `(service_name, service_block_text)` for every key directly
-    under a top-level `services:` mapping. `services:` is a top-level key
-    at indent 0; the SERVICE indentation level is the indent of the
-    first structural line inside the `services:` block, and only lines
-    at exactly that indent matching a `name:` header are service names.
-    Yields nothing for any input with no `services:` key. Never raises."""
-    if not text:
-        return
-    lines = _lines(text)
-    services_idx = None
+def _locate_services_block(lines: list[str]) -> tuple[int, int] | None:
     for i, line in enumerate(lines):
         if not _effective_structural(line):
             continue
@@ -238,16 +228,13 @@ def iter_services(text: str):
         if name.strip() != "services":
             continue
         if _strip_inline_comment(rest).strip():
-            # `services: {...}` or similar inline value -- not the block
-            # form this reader supports; keep scanning rather than
-            # treating this as the real `services:` key.
             continue
-        services_idx = i
-        break
-    if services_idx is None:
-        return
+        services_end = _find_block_end(lines, i + 1, 0)
+        return i, services_end
+    return None
 
-    services_end = _find_block_end(lines, services_idx + 1, 0)
+
+def _iter_service_blocks(lines: list[str], services_idx: int, services_end: int):
     headers = list(_own_level_lines(lines, services_idx + 1, services_end))
     for pos, (idx, content) in enumerate(headers):
         parsed = _match_key_header(content)
@@ -258,6 +245,23 @@ def iter_services(text: str):
         next_idx = headers[pos + 1][0] if pos + 1 < len(headers) else services_end
         block_text = "\n".join(lines[idx + 1 : next_idx])
         yield service_name, block_text
+
+
+def iter_services(text: str):
+    """Yield `(service_name, service_block_text)` for every key directly
+    under a top-level `services:` mapping. `services:` is a top-level key
+    at indent 0; the SERVICE indentation level is the indent of the
+    first structural line inside the `services:` block, and only lines
+    at exactly that indent matching a `name:` header are service names.
+    Yields nothing for any input with no `services:` key. Never raises."""
+    if not text:
+        return
+    lines = _lines(text)
+    located = _locate_services_block(lines)
+    if located is None:
+        return
+    services_idx, services_end = located
+    yield from _iter_service_blocks(lines, services_idx, services_end)
 
 
 def block_scalar(block_text: str | None, key: str) -> str | None:

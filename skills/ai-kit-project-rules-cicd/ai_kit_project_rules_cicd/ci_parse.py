@@ -471,6 +471,53 @@ def _run_key_command_lines(lines: list[str], key_header_idx: int, rest: str) -> 
     return [strip_yaml_quotes(value)]
 
 
+def _workflow_step_commands(
+    lines: list[str], header_idx: int, item_text: str, item_end: int
+) -> tuple[list[str], str | None]:
+    command_lines: list[str] = []
+    found_run = False
+    step_name: str | None = None
+    for key, rest, key_header_idx in _iter_step_own_keys(
+        lines, header_idx, item_text, item_end
+    ):
+        if key == "run" and not found_run:
+            found_run = True
+            command_lines = _run_key_command_lines(lines, key_header_idx, rest)
+        elif key == "name" and step_name is None:
+            value = strip_inline_comment(rest).strip()
+            if value:
+                step_name = strip_yaml_quotes(value)
+    return command_lines, step_name
+
+
+def _iter_job_run_steps(lines: list[str], job_header_idx: int, job_end: int, job_key: str):
+    steps_found = _find_own_key(lines, job_header_idx + 1, job_end, "steps")
+    if steps_found is None:
+        return
+    steps_idx, steps_indent, steps_rest = steps_found
+    if strip_inline_comment(steps_rest).strip():
+        return
+    steps_end = _sequence_block_end(lines, steps_idx, steps_indent)
+    for header_idx, item_text, item_end in _iter_step_items(
+        lines, steps_idx + 1, steps_end
+    ):
+        command_lines, step_name = _workflow_step_commands(
+            lines, header_idx, item_text, item_end
+        )
+        if command_lines:
+            yield job_key, command_lines, step_name
+
+
+def _iter_workflow_job_steps(lines: list[str], jobs_idx: int, jobs_end: int):
+    """Yield `(job_key, step_command_lines, step_name)` for every `run:` step."""
+    for job_key, job_header_idx, job_rest, job_end in _iter_mapping_keys(
+        lines, jobs_idx + 1, jobs_end
+    ):
+        if strip_inline_comment(job_rest).strip():
+            continue
+        yield from _iter_job_run_steps(lines, job_header_idx, job_end, job_key)
+
+
 def iter_workflow_command_sites(text: str):
     """Yield `(site_name, [command_line, ...])` for every step across
     every job in one GitHub Actions workflow `text`'s `steps:`
@@ -500,40 +547,11 @@ def iter_workflow_command_sites(text: str):
     if strip_inline_comment(jobs_rest).strip():
         return
     jobs_end = find_block_end(lines, jobs_idx + 1, jobs_indent)
-
-    for job_key, job_header_idx, job_rest, job_end in _iter_mapping_keys(
-        lines, jobs_idx + 1, jobs_end
+    for job_key, command_lines, step_name in _iter_workflow_job_steps(
+        lines, jobs_idx, jobs_end
     ):
-        if strip_inline_comment(job_rest).strip():
-            continue
-        steps_found = _find_own_key(lines, job_header_idx + 1, job_end, "steps")
-        if steps_found is None:
-            continue
-        steps_idx, steps_indent, steps_rest = steps_found
-        if strip_inline_comment(steps_rest).strip():
-            continue
-        steps_end = _sequence_block_end(lines, steps_idx, steps_indent)
-
-        for header_idx, item_text, item_end in _iter_step_items(
-            lines, steps_idx + 1, steps_end
-        ):
-            command_lines: list[str] = []
-            found_run = False
-            step_name: str | None = None
-            for key, rest, key_header_idx in _iter_step_own_keys(
-                lines, header_idx, item_text, item_end
-            ):
-                if key == "run" and not found_run:
-                    found_run = True
-                    command_lines = _run_key_command_lines(lines, key_header_idx, rest)
-                elif key == "name" and step_name is None:
-                    value = strip_inline_comment(rest).strip()
-                    if value:
-                        step_name = strip_yaml_quotes(value)
-            if not command_lines:
-                continue
-            site_name = job_key if step_name is None else f"{job_key} / {step_name}"
-            yield site_name, command_lines
+        site_name = job_key if step_name is None else f"{job_key} / {step_name}"
+        yield site_name, command_lines
 
 
 __all__ = [

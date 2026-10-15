@@ -65,6 +65,49 @@ def _build_finding(ci_file: str, job: str, command: str, tool_key: str, source: 
     }
 
 
+def _append_segment_finding(
+    findings: list[dict],
+    ci_file: str,
+    site_name: str,
+    raw_segment: str,
+    by_key: dict[str, dict],
+) -> None:
+    stripped = strip_leading_noise(
+        truncate_at_unquoted_pipe(raw_segment),
+        stop_check=lambda s: reuse_sources.classify_reuse_invocation(s) is not None,
+    )
+    if not stripped.strip():
+        return
+    if reuse_sources.classify_reuse_invocation(stripped) is not None:
+        return
+    key, _known = reuse_sources.compute_command_key(stripped)
+    if not key:
+        return
+    source = _find_matching_source(key, by_key)
+    if source is None:
+        return
+    findings.append(
+        _build_finding(ci_file, site_name, raw_segment.strip(), key, source)
+    )
+
+
+def _scan_ci_file(
+    ci_file: str, repo_root: str, by_key: dict[str, dict], findings: list[dict]
+) -> None:
+    abs_path = os.path.join(repo_root, ci_file)
+    text = ci_parse.read_ci_text(abs_path)
+    if ci_file in ci_parse.GITLAB_CI_FILENAMES:
+        command_sites = ci_parse.iter_command_sites(text)
+    else:
+        command_sites = ci_parse.iter_workflow_command_sites(text)
+    for site_name, command_lines in command_sites:
+        for command_line in command_lines:
+            if has_heredoc(command_line):
+                continue
+            for raw_segment in split_top_level_segments(command_line):
+                _append_segment_finding(findings, ci_file, site_name, raw_segment, by_key)
+
+
 def _find_matching_source(key: str, by_key: dict[str, dict]) -> dict | None:
     """Exact key lookup first (O(1), always preferred over a widened
     match); otherwise a linear scan applying D-C5's widening rule."""
@@ -91,46 +134,7 @@ def check_cicd_rules(repo_root: str) -> list[dict]:
 
     findings: list[dict] = []
     for ci_file in ci_parse.discover_ci_files(repo_root):
-        abs_path = os.path.join(repo_root, ci_file)
-        text = ci_parse.read_ci_text(abs_path)
-        # D-C29: `discover_ci_files` is the SINGLE source of this list
-        # (GitLab files then workflow files, deduplicated); this is the
-        # ONE loop over it, dispatching to the right reader per file by
-        # name. No second way to reach a workflow file is ever added.
-        if ci_file in ci_parse.GITLAB_CI_FILENAMES:
-            command_sites = ci_parse.iter_command_sites(text)
-        else:
-            command_sites = ci_parse.iter_workflow_command_sites(text)
-        for site_name, command_lines in command_sites:
-            for command_line in command_lines:
-                if has_heredoc(command_line):
-                    continue
-                for raw_segment in split_top_level_segments(command_line):
-                    segment = truncate_at_unquoted_pipe(raw_segment)
-                    # `stop_check` lets a reuse-invocation shape this
-                    # skill recognizes (e.g. `pre-commit run <id>`) halt
-                    # stripping the moment it appears -- otherwise the
-                    # generic `<runner> run <rest>` rule below would
-                    # consume "pre-commit run " as if it were a runner
-                    # wrapper before the table ever saw it intact.
-                    stripped = strip_leading_noise(
-                        segment,
-                        stop_check=lambda s: reuse_sources.classify_reuse_invocation(s)
-                        is not None,
-                    )
-                    if not stripped.strip():
-                        continue
-                    if reuse_sources.classify_reuse_invocation(stripped) is not None:
-                        continue
-                    key, _known = reuse_sources.compute_command_key(stripped)
-                    if not key:
-                        continue
-                    source = _find_matching_source(key, by_key)
-                    if source is None:
-                        continue
-                    findings.append(
-                        _build_finding(ci_file, site_name, raw_segment.strip(), key, source)
-                    )
+        _scan_ci_file(ci_file, repo_root, by_key, findings)
     return findings
 
 
