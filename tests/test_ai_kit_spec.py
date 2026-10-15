@@ -3136,7 +3136,7 @@ class TestParseFindings(unittest.TestCase):
 
 
 class TestReportStatus(unittest.TestCase):
-    """D-12: closed status vocabulary read from the last ### Status: line."""
+    """D-12: closed status vocabulary; the most severe ### Status: line wins (A-WR-06)."""
 
     def test_approved(self):
         self.assertEqual(report_status("x\n### Status: Approved\n"), "approved")
@@ -3154,9 +3154,13 @@ class TestReportStatus(unittest.TestCase):
         self.assertIsNone(report_status("no status line at all"))
         self.assertIsNone(report_status(""))
 
-    def test_last_status_line_wins(self):
+    def test_most_severe_status_line_wins_in_any_order(self):
         text = "### Status: Approved\nmid\n### Status: Issues Found — fix\n"
         self.assertEqual(report_status(text), "issues")
+        text = "### Status: Issues Found — fix\n```\n### Status: Approved\n```\n"
+        self.assertEqual(report_status(text), "issues")
+        text = "### Status: Failure — x\n### Status: Approved\n### Status: Issues Found\n"
+        self.assertEqual(report_status(text), "failure")
 
 
 class TestMergeReportsFailure(unittest.TestCase):
@@ -3208,6 +3212,17 @@ class TestMergeReportsFailure(unittest.TestCase):
                 "a": self._write(d, "a.md", "### Status: Approved\n"),
                 "b": self._write(d, "b.md", "codex: error: exploded\n"),
             }
+            code, out = self._merge(d, files)
+            self.assertEqual(code, 1)
+            self.assertIn("### Status: Failure — b", out)
+
+    def test_non_utf8_lane_fails_naming_it(self):
+        # A-WR-05: invalid bytes in a report are a named Failure lane, never a traceback.
+        with tempfile.TemporaryDirectory() as d:
+            bad = os.path.join(d, "b.md")
+            with open(bad, "wb") as f:
+                f.write(b"\xff\xfe### Status: Approved\n")
+            files = {"a": self._write(d, "a.md", "### Status: Approved\n"), "b": bad}
             code, out = self._merge(d, files)
             self.assertEqual(code, 1)
             self.assertIn("### Status: Failure — b", out)

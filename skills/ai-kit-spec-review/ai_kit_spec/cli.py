@@ -637,7 +637,7 @@ def _cmd_merge_reports(args: argparse.Namespace, deps: CliDeps) -> int:
         try:
             with open(path, encoding="utf-8") as f:
                 text = f.read()
-        except OSError:
+        except (OSError, UnicodeDecodeError):  # A-WR-05: a non-UTF-8 lane is a named Failure
             failing.append(key)
             continue
         status = report_status(text)

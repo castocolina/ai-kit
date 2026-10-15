@@ -16,22 +16,30 @@ _BULLET_RE = re.compile(
 _STATUS_LINE_RE = re.compile(r"^### Status:\s*(.*)$", re.MULTILINE)
 
 
-def report_status(report_text: str) -> str | None:
-    """The report's declared status, from its LAST `### Status:` line (a report with
-    two is malformed; the last one wins). Closed vocabulary (D-12): "approved" for a
-    lowercase value starting `approved`; "failure" for one starting `failure`; anything
-    else on a Status line ("issues found", unknown text) reads "issues"; no Status line
-    at all returns None. Used by the merge-reports CLI subcommand (D-12/R7) so a failed
-    or missing review lane can never merge into a false Approved."""
-    matches = _STATUS_LINE_RE.findall(report_text)
-    if not matches:
-        return None
-    value = matches[-1].strip().lower()
+_STATUS_SEVERITY = ("approved", "issues", "failure")
+
+
+def _status_value(line: str) -> str:
+    value = line.strip().lower()
     if value.startswith("approved"):
         return "approved"
     if value.startswith("failure"):
         return "failure"
     return "issues"
+
+
+def report_status(report_text: str) -> str | None:
+    """The report's declared status, the MOST SEVERE of all its `### Status:` lines
+    (failure > issues > approved), so a later duplicated or echoed `Approved` line can
+    never downgrade an earlier Issues/Failure (A-WR-06, fail-closed). Closed vocabulary
+    (D-12): "approved" for a lowercase value starting `approved`; "failure" for one starting
+    `failure`; anything else on a Status line ("issues found", unknown text) reads "issues";
+    no Status line at all returns None. Used by the merge-reports CLI subcommand (D-12/R7)
+    so a failed or missing review lane can never merge into a false Approved."""
+    values = [_status_value(m) for m in _STATUS_LINE_RE.findall(report_text)]
+    if not values:
+        return None
+    return max(values, key=_STATUS_SEVERITY.index)
 
 def parse_findings(report_text: str) -> list:
     """[{severity, title, location, required, why}] in document order, per
