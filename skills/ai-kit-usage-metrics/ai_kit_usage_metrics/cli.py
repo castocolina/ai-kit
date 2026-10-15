@@ -30,18 +30,19 @@ CAPTURE_SOURCES = {
     "cursor": capture_cursor.capture,
 }
 
-# Per-source isolation: parse/IO/SQLite/attribute failures on one source must not
-# abort the rest. LookupError covers KeyError/IndexError; ValueError covers
-# JSON and Unicode decode errors from capture modules.
+# Per-source isolation: one source's failure must not abort the rest.
+# LookupError covers KeyError/IndexError; ValueError covers JSON and Unicode
+# decode errors; RuntimeError covers RecursionError from a deeply nested line.
 _CAPTURE_ERRORS = (
     OSError,
     ValueError,
     LookupError,
     TypeError,
     AttributeError,
+    RuntimeError,
     sqlite3.Error,
 )
-_PERSIST_ERRORS = (OSError, ValueError, LookupError, TypeError, AttributeError)
+_PERSIST_ERRORS = (OSError, ValueError, LookupError, TypeError, AttributeError, RuntimeError)
 
 
 def _read_raw_jsonl(path: str) -> list[dict]:

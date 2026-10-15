@@ -4694,6 +4694,30 @@ class TestCmdCaptureIsolation(unittest.TestCase):
         self.assertIn("capture[bad] failed:", stderr.getvalue())
         self.assertEqual(ok_calls, ["ok"])
 
+    def test_capture_recursion_error_continues(self):
+        # A deeply nested transcript line raises RecursionError, a RuntimeError.
+        ok_calls: list[str] = []
+
+        def deep_capture(_env, _cursor):
+            return json.loads("[" * 200000)
+
+        def ok_capture(_env, _cursor):
+            ok_calls.append("ok")
+            return CaptureResult(records=[], cursor={}, stats=self._empty_stats())
+
+        sources = {"deep": deep_capture, "ok": ok_capture}
+        from io import StringIO
+
+        stderr = StringIO()
+        with patch("ai_kit_usage_metrics.cli.CAPTURE_SOURCES", sources), patch(
+            "ai_kit_usage_metrics.cli.raw_store.read_cursor", return_value={}
+        ), patch("ai_kit_usage_metrics.cli.raw_store.append_records"), patch(
+            "ai_kit_usage_metrics.cli.raw_store.write_cursor"
+        ), patch("sys.stderr", stderr):
+            cmd_capture(self.env)
+        self.assertIn("capture[deep] failed:", stderr.getvalue())
+        self.assertEqual(ok_calls, ["ok"])
+
     def test_capture_persist_oserror_continues(self):
         record = {"raw_ref": "test:1", "payload": {}}
         stats = self._empty_stats()
