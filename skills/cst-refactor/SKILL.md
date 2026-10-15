@@ -1,6 +1,6 @@
 ---
 name: cst-refactor
-description: Use when refactoring Python with LibCST codemods — multi-file renames of classes, methods, constants, or function parameters where comments and formatting must survive and naive sed/search-replace risks false-positive matches across unrelated contexts. Includes a bundled codemod_template.py with subcommands rename-symbol, rename-parameter, add-parameter, remove-parameter, rewrite-docstring.
+description: Use when refactoring Python with LibCST codemods — multi-file renames of classes, methods, constants, or function parameters where comments and formatting must survive and naive sed/search-replace risks false-positive matches across unrelated contexts. Includes a bundled codemod_template.py.txt (copy into the project as tools/codemod_template.py) with subcommands rename-symbol, rename-parameter, add-parameter, remove-parameter, rewrite-docstring.
 ---
 
 ## Overview
@@ -36,11 +36,16 @@ LibCST parses source into a Concrete Syntax Tree, matches syntax nodes (not raw 
 
 ## Bootstrapping the Template
 
-The codemod script lives at `tools/codemod_template.py` in any project that has it. If the file does not exist in the current project, copy it from this skill's directory (resolved via the plugin root):
+The codemod script lives at `tools/codemod_template.py` in any project that has it. If the
+file does not exist in the current project, copy `codemod_template.py.txt` from this skill's
+directory (the folder that contains this `SKILL.md`) into the project:
 
 ```bash
-cp "${CLAUDE_PLUGIN_ROOT}/skills/cst-refactor/codemod_template.py" tools/codemod_template.py
+cp "<this skill's directory>/codemod_template.py.txt" tools/codemod_template.py
 ```
+
+On a Claude Code plugin install, that directory is
+`${CLAUDE_PLUGIN_ROOT}/skills/cst-refactor`.
 
 Then install LibCST if needed:
 ```bash

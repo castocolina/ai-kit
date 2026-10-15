@@ -547,7 +547,9 @@ make dev        # then commits are automatically gated
 ## Compatibility notes
 
 - All `SKILL.md` files use the base [Agent Skills](https://agentskills.io/specification) frontmatter (`name`, `description`). No Claude-only fields, so the skills run unmodified on every conformant tool.
-- The `cst-refactor` skill resolves its bundled `codemod_template.py` via `${CLAUDE_PLUGIN_ROOT}`. On non-Claude tools, substitute the path to wherever this repo is cloned.
+- The `cst-refactor` skill ships its template as `codemod_template.py.txt`; `SKILL.md`
+  copies it into the project as `tools/codemod_template.py` from the skill's own directory
+  on any host (Claude Code: `${CLAUDE_PLUGIN_ROOT}/skills/cst-refactor`).
 
 ## License
 
