@@ -23,7 +23,15 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-gsd-curated-config"),
 )
 
-from ai_kit_gsd_curated_config import cli, gsd_catalog, plan_io, presets, recommend, roles
+from ai_kit_gsd_curated_config import (
+    cli,
+    gsd_catalog,
+    plan_io,
+    plan_schema,
+    presets,
+    recommend,
+    roles,
+)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -325,7 +333,7 @@ class TestRecommendTracer(unittest.TestCase):
             self.assertIn(key, data)
         self.assertEqual(plan["schema_version"], 1)
         self.assertTrue(plan["inventory_digest"].startswith("sha256:"))
-        self.assertEqual(plan["inventory_digest"], plan_io.inventory_digest(inv))
+        self.assertEqual(plan["inventory_digest"], plan_schema.inventory_digest(inv))
         self.assertEqual(plan["host"], "codex")
         self.assertEqual(plan["profile"], "adaptive")
         self.assertEqual(plan["rigor"], "standard")
@@ -1633,7 +1641,7 @@ FORBIDDEN_IMPORT_ROOTS = frozenset((
     "subprocess", "socket", "time", "datetime", "os", "urllib", "http", "shutil",
     "tempfile", "random", "pathlib", "glob", "io", "ai_kit_spec",
 ))
-ALLOWED_RELATIVE_IMPORTS = frozenset(("presets", "roles", "plan_io"))
+ALLOWED_RELATIVE_IMPORTS = frozenset(("presets", "roles", "plan_schema"))
 
 
 def forbidden_imports(source):
@@ -1677,7 +1685,7 @@ class TestPurity(unittest.TestCase):
         self.assertEqual(plan_io.canonical_json(first), plan_io.canonical_json(second))
 
     def test_recommend_and_presets_import_nothing_forbidden(self):
-        for module in ("recommend", "presets", "roles"):
+        for module in ("recommend", "presets", "roles", "plan_schema"):
             with open(
                 os.path.join(
                     REPO_ROOT, "skills", "ai-kit-gsd-curated-config", "ai_kit_gsd_curated_config",
@@ -1691,7 +1699,8 @@ class TestPurity(unittest.TestCase):
         self.assertIn("subprocess", forbidden_imports("import subprocess\n"))
         self.assertIn("ai_kit_spec", forbidden_imports("from ai_kit_spec import cache\n"))
         self.assertIn(".cli", forbidden_imports("from . import cli\n"))
-        self.assertEqual(forbidden_imports("from . import plan_io, presets\n"), [])
+        self.assertIn(".plan_io", forbidden_imports("from . import plan_io\n"))
+        self.assertEqual(forbidden_imports("from . import plan_schema, presets\n"), [])
         self.assertEqual(forbidden_imports("from typing import Any\n"), [])
 
 

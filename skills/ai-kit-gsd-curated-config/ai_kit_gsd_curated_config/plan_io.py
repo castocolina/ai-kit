@@ -5,26 +5,14 @@ only file it writes (mkstemp + os.replace through the shared `ai_kit_spec.cache`
 writer, so a reader never sees a partial plan.json). The pure `recommend.build_plan`
 performs no I/O itself (REC-01).
 """
-import hashlib
 import json
 
 from . import gsd_catalog
+from .plan_schema import canonical_json
 
 INVENTORY_SCHEMA_VERSION = 1
-PLAN_SCHEMA_VERSION = 1
 
 _ERROR_SUFFIX = "; rerun inventory"
-
-
-def canonical_json(obj) -> str:
-    """The byte-stable serialization every plan.json is written with."""
-    return json.dumps(obj, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
-
-
-def inventory_digest(inventory: dict) -> str:
-    """`sha256:` over the compact, sorted inventory JSON (REC-01's input fingerprint)."""
-    compact = json.dumps(inventory, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return "sha256:" + hashlib.sha256(compact.encode("utf-8")).hexdigest()
 
 
 def _missing(inv: dict, key: str) -> str | None:

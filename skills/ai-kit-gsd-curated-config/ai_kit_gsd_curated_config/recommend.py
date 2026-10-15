@@ -1,12 +1,12 @@
 """The pure recommendation engine (REC-01): inventory + profile + rigor + the two
 cross-AI answers -> one canonical, sorted, explainable plan dict. No subprocess, no
 network, no clock, no environment, no filesystem: everything arrives through the
-inventory. Imports only `typing` names, `.presets`, `.roles` and `.plan_io` (guarded
-by the tests' AST import check).
+inventory. Imports only `typing` names, `.presets`, `.roles` and `.plan_schema`
+(guarded by the tests' AST import check).
 """
 from typing import Any, NamedTuple
 
-from . import plan_io, presets, roles
+from . import plan_schema, presets, roles
 
 
 class RecommendOpts(NamedTuple):
@@ -955,7 +955,7 @@ def _digest_inventory(inventory: dict) -> dict:
 
 def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
     """The pure entrypoint: returns the canonical plan dict for `inventory` under
-    `opts` (same inputs, same dict, byte-identical `plan_io.canonical_json`)."""
+    `opts` (same inputs, same dict, byte-identical `plan_schema.canonical_json`)."""
     ctx = PlanCtx(
         inv=inventory,
         opts=opts,
@@ -965,8 +965,8 @@ def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
     )
     entries, notes = _merge_layers(ctx)
     return {
-        "schema_version": plan_io.PLAN_SCHEMA_VERSION,
-        "inventory_digest": plan_io.inventory_digest(_digest_inventory(inventory)),
+        "schema_version": plan_schema.PLAN_SCHEMA_VERSION,
+        "inventory_digest": plan_schema.inventory_digest(_digest_inventory(inventory)),
         "host": ctx.host,
         "profile": opts.profile,
         "rigor": opts.rigor,
