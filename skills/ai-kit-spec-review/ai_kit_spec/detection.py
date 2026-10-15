@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Mapping
 from typing import NamedTuple
 
 from ai_kit_spec.cache import cache_base
@@ -67,7 +68,7 @@ HOST_SIGNAL_ENV_VARS = frozenset({var for _, var in _RUNTIME_ENV_SIGNALS} | {
 })
 
 
-def detect_current_runtime(env: dict | None = None) -> str:
+def detect_current_runtime(env: Mapping[str, object] | None = None) -> str:
     """Which CLI is hosting THIS process right now.
 
     Walks `_RUNTIME_ENV_SIGNALS` in the documented fixed order and returns the
@@ -108,9 +109,9 @@ def detect_current_runtime(env: dict | None = None) -> str:
     - claude (`CLAUDECODE`): live-verified (01.2) via the process's own
       env dump.
     """
-    env = env if env is not None else os.environ
+    effective: Mapping[str, object] = os.environ if env is None else env
     for label, var in _RUNTIME_ENV_SIGNALS:
-        if env.get(var):
+        if effective.get(var):
             return label
     return "unknown"
 
@@ -151,6 +152,33 @@ def detect_cursor_agent_models(binary: str, run_fn=subprocess.run) -> list:
     return models
 
 
+def _codex_reasoning_modes(item: dict) -> list[str]:
+    levels = item.get("supported_reasoning_levels")
+    modes: list[str] = []
+    if not isinstance(levels, list):
+        return modes
+    for level in levels:
+        if not isinstance(level, dict):
+            continue
+        effort = level.get("effort")
+        if not isinstance(effort, str) or not effort.strip() or effort in modes:
+            continue
+        modes.append(effort)
+    return modes
+
+
+def _parse_one_codex_debug_model(item, seen: set) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    slug = item.get("slug")
+    if not isinstance(slug, str) or not slug.strip() or item.get("visibility") != "list":
+        return None
+    if slug in seen:
+        return None
+    seen.add(slug)
+    return {"id": slug, "reasoning_modes": _codex_reasoning_modes(item)}
+
+
 def parse_codex_debug_models(stdout) -> list:
     """Parses the JSON stdout of `codex debug models` into
     `[{"id": <slug>, "reasoning_modes": [<effort>, ...]}, ...]`, one entry
@@ -180,31 +208,11 @@ def parse_codex_debug_models(stdout) -> list:
     if not isinstance(data, dict) or not isinstance(data.get("models"), list):
         return []
     parsed = []
-    seen = set()
+    seen: set[str] = set()
     for item in data["models"]:
-        if not isinstance(item, dict):
-            continue
-        slug = item.get("slug")
-        if not isinstance(slug, str) or not slug.strip():
-            continue
-        if item.get("visibility") != "list":
-            continue
-        if slug in seen:
-            continue
-        seen.add(slug)
-        levels = item.get("supported_reasoning_levels")
-        modes = []
-        if isinstance(levels, list):
-            for level in levels:
-                if not isinstance(level, dict):
-                    continue
-                effort = level.get("effort")
-                if not isinstance(effort, str) or not effort.strip():
-                    continue
-                if effort in modes:
-                    continue
-                modes.append(effort)
-        parsed.append({"id": slug, "reasoning_modes": modes})
+        record = _parse_one_codex_debug_model(item, seen)
+        if record is not None:
+            parsed.append(record)
     return parsed
 
 
@@ -230,6 +238,25 @@ def detect_codex_models(binary: str, run_fn=subprocess.run) -> list:
     if getattr(result, "returncode", 1) != 0:
         return []
     return parse_codex_debug_models(getattr(result, "stdout", None))
+
+
+def _opencode_verbose_record(obj: dict, header: str) -> bool | None:
+    provider_id = obj.get("providerID")
+    model_id = obj.get("id")
+    if not isinstance(provider_id, str) or not provider_id.strip():
+        return None
+    if not isinstance(model_id, str) or not model_id.strip():
+        return None
+    if f"{provider_id}/{model_id}" != header:
+        return None
+    capabilities = obj.get("capabilities")
+    if not isinstance(capabilities, dict):
+        return None
+    input_cap = capabilities.get("input")
+    if not isinstance(input_cap, dict):
+        return None
+    image = input_cap.get("image")
+    return image if isinstance(image, bool) else None
 
 
 def parse_opencode_verbose_image_input(stdout) -> dict:
@@ -283,27 +310,11 @@ def parse_opencode_verbose_image_input(stdout) -> dict:
         except ValueError:
             # Malformed JSON; stop parsing
             break
-        # Verify structure
         if not isinstance(obj, dict):
             continue
-        provider_id = obj.get("providerID")
-        model_id = obj.get("id")
-        if not isinstance(provider_id, str) or not provider_id.strip():
-            continue
-        if not isinstance(model_id, str) or not model_id.strip():
-            continue
-        if f"{provider_id}/{model_id}" != header:
-            continue
-        capabilities = obj.get("capabilities")
-        if not isinstance(capabilities, dict):
-            continue
-        input_cap = capabilities.get("input")
-        if not isinstance(input_cap, dict):
-            continue
-        image = input_cap.get("image")
-        if not isinstance(image, bool):
-            continue
-        result[header] = image
+        image = _opencode_verbose_record(obj, header)
+        if image is not None:
+            result[header] = image
     return result
 
 
@@ -568,6 +579,26 @@ def codegraph_install_command(cli: str) -> str:
     return f"codegraph install --target={cli} --location=global --yes --init"
 
 
+def _probe_codegraph_from_get(cli: str, result, hint: str) -> CodegraphProbe | None:
+    if result.returncode != 0:
+        return None
+    if cli == "codex":
+        return CodegraphProbe(True, True, None, "health not observable")
+    healthy = _text_is_healthy(result.stdout)
+    detail = result.stdout.strip() or ("healthy" if healthy else "unhealthy")
+    return CodegraphProbe(True, healthy, None if healthy else hint, detail)
+
+
+def _probe_codegraph_from_list(stdout: str, hint: str) -> CodegraphProbe:
+    for line in stdout.splitlines():
+        name = line.split(":", 1)[0].strip()
+        if name != "codegraph":
+            continue
+        healthy = _text_is_healthy(line)
+        return CodegraphProbe(True, healthy, None if healthy else hint, line.strip())
+    return CodegraphProbe(False, False, hint, "codegraph not listed")
+
+
 def probe_codegraph(cli: str, run_fn=subprocess.run,
                     timeout: int = CODEGRAPH_PROBE_TIMEOUT_SECONDS) -> CodegraphProbe:
     """Report-only codegraph MCP probe for one CLI. Never installs or registers anything --
@@ -577,25 +608,17 @@ def probe_codegraph(cli: str, run_fn=subprocess.run,
         return CodegraphProbe(
             False, False, None, f"codegraph MCP is not supported for client {cli!r}")
     hint = codegraph_install_command(cli)
-    run_kw = {"capture_output": True, "text": True, "check": False, "timeout": timeout}
     try:
         get_argv = _MCP_GET_COMMANDS.get(cli)
         if get_argv is not None:
-            result = run_fn(get_argv, **run_kw)
-            if result.returncode == 0:
-                if cli == "codex":
-                    return CodegraphProbe(True, True, None, "health not observable")
-                if _text_is_healthy(result.stdout):
-                    return CodegraphProbe(True, True, None, result.stdout.strip() or "healthy")
-                return CodegraphProbe(True, False, hint, result.stdout.strip() or "unhealthy")
-        list_result = run_fn(_MCP_LIST_COMMANDS[cli], **run_kw)
-        for line in list_result.stdout.splitlines():
-            name = line.split(":", 1)[0].strip()
-            if name == "codegraph":
-                if _text_is_healthy(line):
-                    return CodegraphProbe(True, True, None, line.strip())
-                return CodegraphProbe(True, False, hint, line.strip())
-        return CodegraphProbe(False, False, hint, "codegraph not listed")
+            result = run_fn(
+                get_argv, capture_output=True, text=True, check=False, timeout=timeout)
+            from_get = _probe_codegraph_from_get(cli, result, hint)
+            if from_get is not None:
+                return from_get
+        list_result = run_fn(
+            _MCP_LIST_COMMANDS[cli], capture_output=True, text=True, check=False, timeout=timeout)
+        return _probe_codegraph_from_list(list_result.stdout, hint)
     except subprocess.TimeoutExpired:
         return CodegraphProbe(None, None, None, "probe timed out")
     except OSError as exc:
@@ -644,14 +667,13 @@ def run_codegraph_index(target_dir: str, run_fn=subprocess.run) -> bool:
         "cwd": target_dir,
         "capture_output": True,
         "text": True,
-        "check": False,
         "timeout": CODEGRAPH_INDEX_TIMEOUT_SECONDS,
     }
     try:
-        sync = run_fn(["codegraph", "sync"], **run_kw)
+        sync = run_fn(["codegraph", "sync"], check=False, **run_kw)
         if sync.returncode == 0:
             return True
-        init = run_fn(["codegraph", "init"], **run_kw)
+        init = run_fn(["codegraph", "init"], check=False, **run_kw)
         return init.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         return False

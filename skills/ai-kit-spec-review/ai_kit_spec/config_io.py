@@ -70,8 +70,6 @@ def cfg_load_toml(path: str) -> dict:
             return cfg_parse_toml_bytes(f.read(), path)
     except FileNotFoundError:
         return {}
-    except ConfigError:
-        raise
     except OSError as exc:
         raise ConfigError(path, str(exc)) from exc
 
@@ -115,6 +113,10 @@ def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
     return [by_key[k] for k in order]
 
 
+def _cfg_default_warn(msg: str) -> None:
+    print(msg, file=sys.stderr)
+
+
 def cfg_resolve(cwd: str, env: dict, warn_fn=None) -> dict:
     """Resolve the effective config: local (with its own `strategy`) vs
     global, per the design's local/global precedence rules.
@@ -124,9 +126,7 @@ def cfg_resolve(cwd: str, env: dict, warn_fn=None) -> dict:
     local file is ignored entirely -- this resolves to global config only -- and warn_fn
     (default: stderr) explains how to review and trust it. Parsing executes nothing, so a
     malformed local file still parses the same whether trusted or not."""
-    if warn_fn is None:
-        def warn_fn(msg):
-            print(msg, file=sys.stderr)
+    emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
     local_path = cfg_local_path(cwd)
     local = {}
     if os.path.exists(local_path):
@@ -138,7 +138,7 @@ def cfg_resolve(cwd: str, env: dict, warn_fn=None) -> dict:
         if is_trusted(cfg_trust_store_dir(env), os.path.realpath(local_path), raw):
             local = parsed
         else:
-            warn_fn(
+            emit_warn(
                 f"ai-kit-spec: ignoring untrusted project-local config {local_path}; "
                 f"review its commands with `ai-kit-spec.py trust-local --cwd {cwd} --show`, "
                 f"then trust it with `ai-kit-spec.py trust-local --cwd {cwd}` "
@@ -216,6 +216,56 @@ def validate_reviewer_fields(entry: dict) -> str | None:
     return None
 
 
+def _cfg_partition_reviewers(reviewers: list) -> tuple[list, list, set]:
+    rejections = []
+    valid_reviewers = []
+    dropped_keys = set()
+    for r in reviewers:
+        reason = validate_reviewer_fields(r)
+        if reason:
+            rejections.append(reason)
+            if "key" in r:
+                dropped_keys.add(r["key"])
+            continue
+        valid_reviewers.append(r)
+    return valid_reviewers, rejections, dropped_keys
+
+
+def _cfg_render_policy_lines(policy: dict, dropped_keys: set, rejections: list) -> list[str]:
+    lines: list[str] = []
+    raw_ladder = policy.get("ladder") or []
+    ladder = [key for key in raw_ladder if key not in dropped_keys]
+    dangling = dropped_keys & set(raw_ladder)
+    if dangling:
+        rejections.append(
+            f"policy.ladder: dropped dangling reference(s) to rejected reviewer key(s) "
+            f"{sorted(dangling)}")
+    if ladder:
+        lines.append("# Priority fallback order (first available reviewer wins the")
+        if policy.get("mode") == "double":
+            lines.append("# primary slot; double mode also seats an independent secondary):")
+        else:
+            lines.append("# primary slot):")
+        for i, key in enumerate(ladder, 1):
+            lines.append(f"#   {i}. {key}")
+    lines.append("[policy]")
+    for k, v in policy.items():
+        v = ladder if k == "ladder" else v
+        lines.append(f"{k} = {_toml_value(v)}")
+    lines.append("")
+    return lines
+
+
+def _cfg_render_reviewer_lines(valid_reviewers: list) -> list[str]:
+    lines: list[str] = []
+    for r in valid_reviewers:
+        lines.append("[[reviewers]]")
+        for k, v in r.items():
+            lines.append(f"{k} = {_toml_value(v)}")
+        lines.append("")
+    return lines
+
+
 def cfg_render_toml(config: dict) -> str:
     """Hand-rolled TOML serializer for this schema only (an optional
     top-level `strategy` string, a flat [policy] table, and an
@@ -227,57 +277,18 @@ def cfg_render_toml(config: dict) -> str:
     aborts the rest of the write) AND removed from policy.ladder -- a valid-looking ladder
     that references a key with no corresponding [[reviewers]] entry is unusable
     (resolve_ladder_pick can never satisfy it), so the two must never diverge."""
-    lines = []
-    rejections = []
-    reviewers = config.get("reviewers", [])
-    valid_reviewers = []
-    dropped_keys = set()
-    for r in reviewers:
-        reason = validate_reviewer_fields(r)
-        if reason:
-            rejections.append(reason)
-            if "key" in r:
-                dropped_keys.add(r["key"])
-            continue
-        valid_reviewers.append(r)
+    lines: list[str] = []
+    valid_reviewers, rejections, dropped_keys = _cfg_partition_reviewers(
+        config.get("reviewers", []))
 
     if "strategy" in config:
         lines.append(f"strategy = {_toml_value(config['strategy'])}")
         lines.append("")
     policy = config.get("policy", {})
     if policy:
-        raw_ladder = policy.get("ladder") or []
-        ladder = [key for key in raw_ladder if key not in dropped_keys]
-        # MEDIUM finding: a rejected reviewer's key that was never actually referenced in
-        # policy.ladder must never trigger this warning -- `dropped_keys` alone doesn't mean
-        # the ladder had a dangling reference, only their INTERSECTION does. Computing it once
-        # avoids both the false-positive-on-empty-intersection bug and a redundant second
-        # `dropped_keys & set(raw_ladder)` computation on the line below.
-        dangling = dropped_keys & set(raw_ladder)
-        if dangling:
-            rejections.append(
-                f"policy.ladder: dropped dangling reference(s) to rejected reviewer key(s) "
-                f"{sorted(dangling)}")
-        if ladder:
-            lines.append("# Priority fallback order (first available reviewer wins the")
-            if policy.get("mode") == "double":
-                lines.append("# primary slot; double mode also seats an independent secondary):")
-            else:
-                lines.append("# primary slot):")
-            for i, key in enumerate(ladder, 1):
-                lines.append(f"#   {i}. {key}")
-        lines.append("[policy]")
-        for k, v in policy.items():
-            v = ladder if k == "ladder" else v
-            lines.append(f"{k} = {_toml_value(v)}")
-        lines.append("")
-    for r in valid_reviewers:
-        lines.append("[[reviewers]]")
-        for k, v in r.items():
-            lines.append(f"{k} = {_toml_value(v)}")
-        lines.append("")
+        lines.extend(_cfg_render_policy_lines(policy, dropped_keys, rejections))
+    lines.extend(_cfg_render_reviewer_lines(valid_reviewers))
     if rejections:
-        import sys
         print(f"WARNING: {len(rejections)} issue(s) found and NOT written: "
               f"{'; '.join(rejections)}", file=sys.stderr)
     return "\n".join(lines).rstrip("\n") + "\n"
