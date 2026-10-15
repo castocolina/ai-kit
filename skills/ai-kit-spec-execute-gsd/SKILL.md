@@ -5,6 +5,31 @@ description: Resolves the best available model/CLI for a GSD (Get Sh*t Done) pha
 
 # ai-kit-spec-execute-gsd
 
+## NEVER
+
+- **Never subprocess-dispatch GSD itself** — this skill only prepares `.planning/config.json` and
+  then hands the phase to GSD's own `/gsd-execute-phase`.
+- **Never hand-edit `.planning/config.json`** — every write goes through the shim, which calls
+  gsd-tools' own `config-set` (validation, locking, workstream-aware path) and records ownership.
+- **Never write `workflow.cross_ai_command` without checking the plan's `cross_ai: true`
+  frontmatter**, and never put the raw vendor CLI string there — it names our `dispatch-execute`
+  wrapper (Step 2).
+- **Never run `trust-local` without an explicit yes**, and never ask twice in one wave.
+- **Never parse an empty result** — exit 2 from any shim call means STOP and relay stderr.
+
+**Trust model.** Project-local `.aikit/review-spec.toml` entries count only after `trust-local`.
+The gsd-core tooling does not have that gate: like GSD's own launcher, the shim runs the first
+`gsd-tools.cjs` it finds, project-local first (`<root>/gsd-core`, `<root>/.claude/gsd-core`,
+`<root>/.codex/gsd-core`, where root is `RUNTIME_DIR` or the git top level), with `node` and no
+trust step. So running this skill in a cloned repo executes that repo's JavaScript, the same as
+running its GSD commands; the host's own folder trust is the only gate. `resolve-dispatch` and
+the `*-workflow-keys` calls print `ai-kit: gsd-core <version> at <path>` on stderr; if that path
+is inside a repo you have not reviewed, stop and check it.
+
+**Host-specific steps.** `CronCreate` (Step 1's quota wake) and the `Skill` tool (Step 3) are
+Claude Code tools. On another host, use its own scheduler and skill-invocation mechanism, or tell
+the user to resume or run `/gsd-execute-phase` by hand.
+
 ## Step 0: Resolve the shim path
 
 This skill is not guaranteed a `CLAUDE_PLUGIN_ROOT` — take the FIRST existing of, in order (same
@@ -49,11 +74,12 @@ WITH, never values it invents or infers.** If this skill is ever invoked without
 CWD="<this skill's own entry-precondition project root -- supplied by the caller>"
 PHASE_ID="<this skill's own entry-precondition phase id -- supplied by the caller>"
 PHASE_PROMPT_FILE="<this phase's own prompt/context file path -- located via CWD/PHASE_ID>"
-GSD_CONFIG_PATH="$(python3 "$GSD_SHIM" config-path --cwd "$CWD")"  # gsd-tools config-path; honors workstreams
+GSD_CONFIG_PATH="$(python3 "$GSD_SHIM" config-path --cwd "$CWD")" || exit 2  # honors workstreams
 RESULT_JSON="$(python3 "$GSD_SHIM" resolve-dispatch --cwd "$CWD" \
   --target-dir "$CWD" \
   --quota-path "$(python3 "$TOOLS_PY" cache-path --kind quota)" \
   --phase-prompt-file "$PHASE_PROMPT_FILE")"
+[ $? -eq 2 ] && exit 2  # exit 1 is write_failed, which still prints JSON
 RUN_ID="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<< "$RESULT_JSON")"
 RESULT_MODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])' <<< "$RESULT_JSON")"
 RESULT_KEY="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("key") or "")' <<< "$RESULT_JSON")"
@@ -68,15 +94,25 @@ printf 'CWD=%s\nPHASE_ID=%s\nPHASE_PROMPT_FILE=%s\nGSD_CONFIG_PATH=%s\nRUN_ID=%s
   "$RESULT_CROSS_AI_COMMAND"
 ```
 
-**Record every line of that trailing `printf`'s output as this wave's own literal values.** If
-either `resolve-dispatch` or `write-workflow-keys` stderr prints `ignoring untrusted project-local config`, relay that line to the user verbatim, offer
-`python3 "$TOOLS_PY" trust-local --cwd <dir> --show` (the review the message names), and run
-`trust-local` only after an explicit yes — never trust on the user's behalf (without trust, the
-local execute ladder is silently absent).
+**Record every line of that trailing `printf`'s output as this wave's own literal values.**
 
-If `mode == "write_failed"`: a `gsd-tools config-set` failed mid-write during dispatch resolution;
-keys applied earlier in that attempt were reverted (see `applied`, `failed`, `reverted`, and
-`error` in the JSON). Print the full `$RESULT_JSON` to the user and STOP — do not proceed to
+**If the call exits 2, STOP and relay its stderr verbatim** — nothing was written and there is no
+JSON to parse. The causes: `node` is not on PATH, no `gsd-tools.cjs` was found (project-local
+gsd-core first, then the host homes), gsd-tools could not resolve a config path for `$CWD`, or a
+malformed `review-spec.toml`.
+
+**If `resolve-dispatch` stderr prints `ignoring untrusted project-local config`**, this decision
+was made from the global config only, and a `native_tier` result may already have written it.
+Relay the line verbatim, show `python3 "$TOOLS_PY" trust-local --cwd "$CWD" --show` (each local
+reviewer's argv, the prompt as `<prompt>`; writes nothing), and ask once. On yes, run
+`python3 "$TOOLS_PY" trust-local --cwd "$CWD"` and **re-run this whole Step 1 (new `run_id`)**
+before Step 2 — the re-run overwrites only adapter-owned values. On no, continue with this
+result and do not ask again this wave. Never trust on the user's behalf.
+
+If `mode == "write_failed"` (exit 1): a `gsd-tools config-set` failed mid-write. Keys applied
+earlier in that attempt were reverted in reverse order; `reverted` lists them, and
+`revert_failed` lists any whose revert itself failed — those keys still hold the new value and
+need a hand fix. Print the full `$RESULT_JSON` to the user and STOP — do not proceed to
 Step 2/3.
 
 If `mode == "fallback_notice"` and `reason == "malformed_config"`, print the message and STOP — do
@@ -105,7 +141,9 @@ session-scoped (design spec §10) — they vanish if the session exits, only fir
 is idle, and recurring jobs auto-expire after 7 days; tell the user this explicitly.
 
 Every other `fallback_notice` reason (`no_configured_candidate`, `all_candidates_context_rejected`,
-`no_usable_dispatch`) is permanent, non-time-bound — print the message, run the mode-transition
+`no_usable_dispatch` — no candidate has a native GSD tier or a CLI with an execute builder, so
+the execute-CLI screen skipped them all with a stderr warning each; `key` names the top one) is
+permanent, non-time-bound — print the message, run the mode-transition
 cleanup below, and proceed to Step 3 with no candidate resolved (GSD's own currently-active
 default runs unmodified). Never schedule a wake for these.
 
@@ -129,12 +167,14 @@ default runs unmodified). Never schedule a wake for these.
   `written=False`/`provenance="existing_gsd_config"`: GSD's own config already carries a genuine
   (non-adapter-owned) value at `model_profile_overrides[runtime][tier]` — a real user pin, honored
   as-is, nothing further to write.
-  `written=True`/`provenance="resolved_candidate"`: the CLI call already wrote `runtime` (if
-  needed) and `model_profile_overrides[runtime][tier]`, taking a per-run backup first.
+  `written=True`/`provenance="resolved_candidate"`: the CLI call already wrote the pin, taking a
+  per-run backup first — `model_profile` for a claude tier, else `runtime` (if needed) and
+  `model_profile_overrides[runtime][tier]`.
 - `cross_ai_hook`: **write GSD's own real, confirmed `workflow.*` keys** (Task 1 finding 1) in
   one `write-workflow-keys` call (`--cwd "$CWD"`, `--run-id "$RUN_ID"` — the same `run_id` from
-  Step 1), without threading a config snapshot between calls. A non-zero exit means a key failed and earlier keys
-  from that call were reverted; show the printed JSON to the user and STOP.
+  Step 1), without threading a config snapshot between calls. Exit 1 means a key failed and
+  earlier keys from that call were reverted (any in `revert_failed` still hold the new value);
+  exit 2 means gsd-tools could not be resolved, as in Step 1. Show the output to the user and STOP.
 
   **`workflow.cross_ai_command` is NOT the raw external CLI command
   (`$RESULT_CROSS_AI_COMMAND`) — it is OUR OWN `dispatch-execute` subcommand, wrapping it.**
@@ -206,13 +246,13 @@ Resolve the CLI identity to prepare tooling guidance for:
 
 ```bash
 if [ "$RESULT_MODE" = "fallback_notice" ]; then
-  PREPARE_CLI=""
+  CLI_ARGS=()
 elif [ -z "$RESULT_CLI" ]; then
-  PREPARE_CLI="claude"
+  CLI_ARGS=(--cli claude)
 else
-  PREPARE_CLI="$RESULT_CLI"
+  CLI_ARGS=(--cli "$RESULT_CLI")
 fi
-GUIDANCE="$(python3 "$GSD_SHIM" prepare-tooling --cli "$PREPARE_CLI" --target-dir "$CWD")"
+GUIDANCE="$(python3 "$GSD_SHIM" prepare-tooling "${CLI_ARGS[@]}" --target-dir "$CWD")"
 MARKER="<!-- ai-kit-spec-execute-gsd:tooling-guidance -->"
 if ! grep -qF "$MARKER" "$PHASE_PROMPT_FILE"; then
   printf '\n%s\n%s\n' "$MARKER" "$GUIDANCE" >> "$PHASE_PROMPT_FILE"
