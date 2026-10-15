@@ -37,6 +37,8 @@ PROJECT_CONFIG_KEYS = (
     "resolve_model_ids",
     "model_policy",
     "claude_md_path",
+    "manager",
+    "agent_skills_security",
 )
 
 GLOBAL_CONFIG_KEYS = ("model_policy", "runtime", "resolve_model_ids")
@@ -161,11 +163,18 @@ def _catalog_fields(project_dir, opts, host_name, env, run_fn):
         )
     except ImportError as exc:
         return None, str(exc)
+    clis = cat.runtimes.get("clis", {}) if isinstance(cat.runtimes, dict) else {}
+    installed = sorted(
+        name
+        for name, row in clis.items()
+        if isinstance(name, str) and isinstance(row, dict) and row.get("installed") is True
+    )
     return {
         "catalog": {"state": cat.state, "scored": cat.scored},
         "candidates": candidates,
         "candidate_heuristic_fields": list(catalog_adapter.CANDIDATE_HEURISTIC_FIELDS),
         "catalog_warnings": cat.warnings,
+        "installed_runtimes": installed,
     }, None
 
 
@@ -337,6 +346,31 @@ def classify_conflicts(
     )
 
 
+_LANE_REGISTRY_WARN = (
+    "gsd-core review-lane registry unavailable; review lanes need plan-set"
+)
+_SKILLS_ROOTS_WARN = (
+    "gsd-core skills roots unavailable; global and plugin skills are not inventoried"
+)
+
+
+def _normalize_lane_tables(tables: dict) -> tuple[dict, list[str]]:
+    """Ensure lane/root fields exist for schema 2; warn when gsd-core reported null."""
+    out = dict(tables)
+    warnings: list[str] = []
+    if "review_lanes" not in out:
+        out["review_lanes"] = []
+    elif out["review_lanes"] is None:
+        out["review_lanes"] = []
+        warnings.append(_LANE_REGISTRY_WARN)
+    if "skills_roots" not in out:
+        out["skills_roots"] = {}
+    elif out["skills_roots"] is None:
+        out["skills_roots"] = {}
+        warnings.append(_SKILLS_ROOTS_WARN)
+    return out, warnings
+
+
 def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore, parts: dict):
     existing = parts["existing_config"]
     configured = existing["values"].get("claude_md_path")
@@ -364,6 +398,7 @@ def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore,
         "candidate_heuristic_fields": parts["candidate_heuristic_fields"],
         "project": facts,
         "skills": project_facts.list_skills(project_dir),
+        "installed_runtimes": parts["installed_runtimes"],
         "conflicts": conflicts,
         "info": info,
         "warnings": sorted(warnings),
@@ -380,11 +415,12 @@ def _load_configs(project_dir, deps, host_name, core: host.GsdCore):
     tables, table_err = _probe_gsd_tables(core, node_bin, project_dir, probe, deps)
     if tables is None:
         return None, table_err
+    lane_tables, lane_warns = _normalize_lane_tables(tables)
     return {
         "existing_config": existing,
         "global_defaults": global_defaults,
-        "tables": tables,
-        "config_warnings": [w for w in (ex_warn, gl_warn) if w],
+        "tables": lane_tables,
+        "config_warnings": [w for w in (ex_warn, gl_warn, *lane_warns) if w],
     }, None
 
 

@@ -206,7 +206,7 @@ class TestInventoryTracer(unittest.TestCase):
         code, parsed, _err = run_inventory(project, env, fake, "--host", "opencode")
         self.assertEqual(code, 0)
         assert parsed is not None
-        self.assertEqual(parsed["schema_version"], 1)
+        self.assertEqual(parsed["schema_version"], plan_io.INVENTORY_SCHEMA_VERSION)
         self.assertEqual(parsed["host"], "opencode")
         self.assertEqual(parsed["host_source"], "flag")
         self.assertEqual(parsed["gsd_core"]["path"], install)

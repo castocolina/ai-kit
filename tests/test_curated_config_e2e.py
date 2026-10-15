@@ -265,7 +265,9 @@ class TestRealGsdInventory(_RealGsdTestCase):
             self.assertEqual(parsed["gsd_core"]["version"], expected_version)
             self.assertEqual(parsed["gsd_core"]["scope"], "local")
             self.assertIn("gsd-planner", parsed["gsd_core"]["model_profiles"]["adaptive"])
-            self.assertEqual(parsed["gsd_core"]["valid_keys"]["rejected"], [])
+            rejected = set(parsed["gsd_core"]["valid_keys"]["rejected"])
+            closed = set(presets.closed_key_set(host_name))
+            self.assertFalse(closed & rejected, host_name)
             self._recommend_round_trip(parsed, host_name)
             spec_calls = [
                 a
@@ -306,6 +308,76 @@ class TestReadOnlyRealGsd(_RealGsdTestCase):
         finally:
             _unlock_tree(saved)
         self.assertEqual(before, _tree_snapshot(project))
+
+class TestRealGsdLanes(_RealGsdTestCase):
+    def test_query_returns_lanes_roots_and_extra_keys(self):
+        paths_or_skip = real_gsd_paths()
+        if isinstance(paths_or_skip, str):
+            self.skipTest(paths_or_skip)
+        paths, _version = paths_or_skip
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        self.child_env["GSD_HOME"] = self.child_env["HOME"]
+        self.resolve_env["GSD_HOME"] = self.child_env["HOME"]
+        run = real_gsd_run(self.child_env, paths.node_bin)
+        result = gsd_catalog.query_gsd_tables(
+            paths, project, ["model_profile"], run_fn=run
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        lanes = result["review_lanes"]
+        self.assertIsInstance(lanes, list)
+        codex = next(row for row in lanes if row.get("slug") == "codex")
+        self.assertEqual(codex["binary"], "codex")
+        self.assertEqual(codex["model_key"], "review.models.codex")
+        self.assertEqual(codex["effort_key"], "review.effort.codex")
+        self.assertEqual(codex["default_effort"], "high")
+        cursor = next(row for row in lanes if row.get("slug") == "cursor")
+        self.assertEqual(cursor["binary"], "cursor-agent")
+        self.assertIsNone(cursor["effort_key"])
+        roots = result["skills_roots"]
+        self.assertIsInstance(roots, dict)
+        home = self.child_env["HOME"]
+        self.assertEqual(roots["claude"], os.path.join(home, ".claude", "skills"))
+        self.assertEqual(roots["codex"], os.path.join(home, ".agents", "skills"))
+        accepted = result["valid_keys"]["accepted"]
+        self.assertIn("agent_skills.gsd-executor", accepted)
+        self.assertIn("review.models.codex", accepted)
+
+    def test_inventory_carries_lanes(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        self.require_real_gsd(project)
+        self.child_env["GSD_HOME"] = self.child_env["HOME"]
+        self.resolve_env["GSD_HOME"] = self.child_env["HOME"]
+        xdg = os.path.join(self.child_env["HOME"], "xdg-cache")
+        seed_cache(xdg, {"clis": {}}, {"_meta": {"schema_version": 1}})
+        self.child_env["XDG_CACHE_HOME"] = xdg
+        self.resolve_env["XDG_CACHE_HOME"] = xdg
+        spec_fake = FakeRun()
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = cli.main(
+                ["inventory", "--project-dir", project, "--host", "claude"],
+                which_fn=lambda name, **_kw: self.node_bin if name == "node" else None,
+                env_fn=lambda: dict(self.resolve_env),
+                run_fn=real_gsd_run(
+                    self.child_env, self.node_bin, fallback=spec_fake
+                ),
+            )
+        self.assertEqual(code, 0)
+        parsed = json.loads(stdout.getvalue())
+        self.assertEqual(parsed["schema_version"], plan_io.INVENTORY_SCHEMA_VERSION)
+        self.assertTrue(parsed["gsd_core"]["review_lanes"])
+        self.assertIsInstance(parsed["gsd_core"]["skills_roots"], dict)
+        self.assertIsInstance(parsed["installed_runtimes"], list)
+        inv_path = os.path.join(project, "inventory.json")
+        with open(inv_path, "w", encoding="utf-8") as handle:
+            handle.write(plan_io.canonical_json(parsed))
+        loaded, err = plan_io.load_inventory(inv_path)
+        self.assertIsNone(err)
+        self.assertIsNotNone(loaded)
+
 
 class TestGoldenTables(unittest.TestCase):
     @classmethod
@@ -349,15 +421,22 @@ class TestGoldenTables(unittest.TestCase):
         result = gsd_catalog.query_gsd_tables(self.paths, self.project, keys, run_fn=capture)
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result["valid_keys"]["rejected"], [])
-        raw_profiles = json.loads(raw_stdout[-1])["model_profiles"]
+        rejected = set(result["valid_keys"]["rejected"])
+        closed = set(keys)
+        self.assertFalse(closed & rejected)
+        raw_node = json.loads(raw_stdout[-1])
+        raw_profiles = raw_node["model_profiles"]
         if os.environ.get("UPDATE_GOLDEN"):
             meta = {
                 "gsd_core_version": self.gsd_version,
                 "keys": "union of presets.closed_key_set over host.HOSTS",
             }
-            # The fixture stores gsd-core's raw agent-first MODEL_PROFILES (the node output).
-            payload = {**result, "model_profiles": raw_profiles, "_meta": meta}
+            # Fixture stores raw agent-first MODEL_PROFILES; skills_roots vary with HOME.
+            payload = {
+                k: v
+                for k, v in {**result, "model_profiles": raw_profiles, "_meta": meta}.items()
+                if k != "skills_roots"
+            }
             (FIXTURES / "gsd_tables_1_16.json").write_text(
                 plan_io.canonical_json(payload) + "\n", encoding="utf-8"
             )
@@ -365,7 +444,13 @@ class TestGoldenTables(unittest.TestCase):
         body = _tables_body()
         self.assertEqual(raw_profiles, body["model_profiles"])
         expected = {**body, "model_profiles": gsd_catalog.profile_first(body["model_profiles"])}
-        self.assertEqual(result, expected)
+        compare = {k: v for k, v in result.items() if k != "skills_roots"}
+        self.assertEqual(compare, expected)
+        roots = result["skills_roots"]
+        assert isinstance(roots, dict)
+        home = self.scratch
+        self.assertEqual(roots["claude"], os.path.join(home, ".claude", "skills"))
+        self.assertEqual(roots["codex"], os.path.join(home, ".agents", "skills"))
 
     def test_model_policy_unset_keys_accepted(self):
         flat = presets.flatten_config({"model_policy": POLICY})

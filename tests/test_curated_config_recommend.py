@@ -254,9 +254,9 @@ SPECIALIST_OPENCODE = [
 
 def make_inventory(
     host="codex", candidates=(), project=None, existing=None, conflicts=(), rejected=(),
-    global_values=None, global_path=None,
+    global_values=None, global_path=None, extra_accepted=(),
 ):
-    """A full schema-version-1 inventory (17-02-PLAN <interfaces>) with token paths."""
+    """A full schema-version-2 inventory (18-02) with token paths."""
     if project is None:
         project = {"frontend": False, "intel_index_present": False}
     if existing is None:
@@ -269,16 +269,18 @@ def make_inventory(
     policy = global_values.get("model_policy")
     if isinstance(policy, dict):
         accepted |= set(presets.flatten_config({"model_policy": policy}))
-    accepted = sorted(accepted - set(rejected))
+    accepted = sorted((set(accepted) | set(extra_accepted)) - set(rejected))
     gpath = global_path if global_path is not None else "<global>/.gsd/defaults.json"
     return {
-        "schema_version": 1,
+        "schema_version": plan_io.INVENTORY_SCHEMA_VERSION,
         "host": host,
         "gsd_core": {
             "runtime_profile_map": TABLES["runtime_profile_map"],
             "model_profiles": TABLES["model_profiles"],
             "agent_to_phase_type": TABLES["agent_to_phase_type"],
             "valid_keys": {"accepted": accepted, "rejected": list(rejected)},
+            "review_lanes": [],
+            "skills_roots": {},
             "path": "<project>/.claude/gsd-core",
             "scope": "local",
             "version": "1.16.0",
@@ -288,6 +290,7 @@ def make_inventory(
         "existing_config": existing,
         "global_defaults": {"path": gpath, "values": dict(global_values)},
         "conflicts": list(conflicts),
+        "installed_runtimes": [],
     }
 
 
@@ -1942,7 +1945,8 @@ class TestInventoryValidation(unittest.TestCase):
                              "--rigor", kw.get("rigor", "standard"))
 
     def test_bad_schema_versions_fail_closed(self):
-        for bad in (0, 2, "1", True, 1.0):
+        ver = plan_io.INVENTORY_SCHEMA_VERSION
+        for bad in (0, ver - 1, ver + 1, str(ver), True, float(ver)):
             inv = make_inventory()
             inv["schema_version"] = bad
             code, plan, plan_bytes, err = self._run(inv)
@@ -1950,10 +1954,11 @@ class TestInventoryValidation(unittest.TestCase):
             self.assertIn("rerun inventory", err)
 
     def test_schema_version_schema_message(self):
+        ver = plan_io.INVENTORY_SCHEMA_VERSION
         inv = make_inventory()
-        inv["schema_version"] = 2
+        inv["schema_version"] = ver + 1
         _, _, _, err = self._run(inv)
-        self.assertIn("schema_version 2 unsupported (expected 1)", err)
+        self.assertIn(f"schema_version {ver + 1} unsupported (expected {ver})", err)
         # B-IN-08: the same prefix as every other CLI error path.
         self.assertTrue(err.startswith("ai-kit-gsd-curated-config: inventory "), err)
 

@@ -12,7 +12,7 @@ import os
 from . import gsd_catalog
 from .plan_schema import canonical_json
 
-INVENTORY_SCHEMA_VERSION = 1
+INVENTORY_SCHEMA_VERSION = 2
 
 _ERROR_SUFFIX = "; rerun inventory"
 
@@ -44,7 +44,7 @@ def _schema_version_problem(inv: dict) -> str | None:
 
 def _validate_inventory(inv) -> str | None:
     """Returns the problem string, or `None` when the document matches the
-    schema-version-1 contract (17-02-PLAN `<interfaces>`)."""
+    schema-version-2 contract (18-02)."""
     if not isinstance(inv, dict):
         return "top-level JSON is not an object"
     problem = _schema_version_problem(inv)
@@ -58,6 +58,7 @@ def _validate_inventory(inv) -> str | None:
         ("existing_config", dict),
         ("global_defaults", dict),
         ("conflicts", list),
+        ("installed_runtimes", list),
     ):
         problem = _missing(inv, key) or _ill(inv, key, expected)
         if problem:
@@ -71,12 +72,57 @@ def _validate_inventory(inv) -> str | None:
     ):
         if problem:
             return problem
+    tail = _validate_inventory_tail(inv)
+    return tail
+
+
+def _validate_inventory_tail(inv: dict) -> str | None:
     if not isinstance(inv["global_defaults"].get("values"), dict):
         return "key global_defaults.values: expected dict"
+    runtimes = inv["installed_runtimes"]
+    if not all(isinstance(name, str) for name in runtimes):
+        return "key installed_runtimes: expected list of str"
     return None
 
 
-def _validate_gsd_core(gsd_core: dict) -> str | None:
+def _lane_field_problem(lane: dict, index: int) -> str | None:
+    if not isinstance(lane, dict):
+        return f"key gsd_core.review_lanes[{index}]: expected dict"
+    for key in ("slug", "transport", "binary", "model_key", "effort_key", "default_effort"):
+        if key not in lane:
+            return f"key gsd_core.review_lanes[{index}]: missing {key}"
+    slug = lane["slug"]
+    if not isinstance(slug, str):
+        return f"key gsd_core.review_lanes[{index}].slug: expected str"
+    for key in ("transport", "binary", "model_key", "effort_key", "default_effort"):
+        val = lane[key]
+        if val is not None and not isinstance(val, str):
+            return f"key gsd_core.review_lanes[{index}].{key}: expected str or null"
+    return None
+
+
+def _validate_review_lanes(lanes) -> str | None:
+    if not isinstance(lanes, list):
+        return "key gsd_core.review_lanes: expected list"
+    for index, lane in enumerate(lanes):
+        problem = _lane_field_problem(lane, index)
+        if problem:
+            return problem
+    return None
+
+
+def _validate_skills_roots(roots) -> str | None:
+    if not isinstance(roots, dict):
+        return "key gsd_core.skills_roots: expected dict"
+    for key, val in roots.items():
+        if not isinstance(key, str):
+            return "key gsd_core.skills_roots: expected str keys"
+        if val is not None and not isinstance(val, str):
+            return f"key gsd_core.skills_roots.{key}: expected str or null"
+    return None
+
+
+def _validate_gsd_core_tables(gsd_core: dict) -> str | None:
     for key in ("runtime_profile_map", "model_profiles", "agent_to_phase_type", "valid_keys"):
         if not isinstance(gsd_core.get(key), dict):
             return f"key gsd_core.{key}: expected dict"
@@ -84,9 +130,22 @@ def _validate_gsd_core(gsd_core: dict) -> str | None:
     for key in ("accepted", "rejected"):
         if not isinstance(valid_keys.get(key), list):
             return f"key gsd_core.valid_keys.{key}: expected list"
-    problem = _model_profiles_problem(gsd_core["model_profiles"])
-    if problem:
-        return problem
+    return _model_profiles_problem(gsd_core["model_profiles"])
+
+
+def _validate_gsd_core(gsd_core: dict) -> str | None:
+    for problem in (
+        _validate_gsd_core_tables(gsd_core),
+        _validate_review_lanes(gsd_core.get("review_lanes")),
+        _validate_skills_roots(gsd_core.get("skills_roots")),
+        _gsd_core_meta_problem(gsd_core),
+    ):
+        if problem:
+            return problem
+    return None
+
+
+def _gsd_core_meta_problem(gsd_core: dict) -> str | None:
     for key in ("path", "scope", "version"):
         value = gsd_core.get(key)
         if value is not None and not isinstance(value, str):

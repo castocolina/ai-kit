@@ -252,6 +252,96 @@
       "quality": "sonnet"
     }
   },
+  "review_lanes": [
+    {
+      "binary": "claude",
+      "default_effort": "high",
+      "effort_key": "review.effort.claude",
+      "model_key": "review.models.claude",
+      "slug": "claude",
+      "transport": "spawn"
+    },
+    {
+      "binary": "codex",
+      "default_effort": "high",
+      "effort_key": "review.effort.codex",
+      "model_key": "review.models.codex",
+      "slug": "codex",
+      "transport": "spawn"
+    },
+    {
+      "binary": "coderabbit",
+      "default_effort": null,
+      "effort_key": null,
+      "model_key": null,
+      "slug": "coderabbit",
+      "transport": "spawn"
+    },
+    {
+      "binary": "opencode",
+      "default_effort": "high",
+      "effort_key": "review.effort.opencode",
+      "model_key": "review.models.opencode",
+      "slug": "opencode",
+      "transport": "spawn"
+    },
+    {
+      "binary": "qwen",
+      "default_effort": null,
+      "effort_key": null,
+      "model_key": null,
+      "slug": "qwen",
+      "transport": "spawn"
+    },
+    {
+      "binary": "cursor-agent",
+      "default_effort": null,
+      "effort_key": null,
+      "model_key": "review.models.cursor",
+      "slug": "cursor",
+      "transport": "spawn"
+    },
+    {
+      "binary": "agy",
+      "default_effort": null,
+      "effort_key": null,
+      "model_key": "review.models.agy",
+      "slug": "antigravity",
+      "transport": "spawn"
+    },
+    {
+      "binary": null,
+      "default_effort": null,
+      "effort_key": null,
+      "model_key": "review.models.ollama",
+      "slug": "ollama",
+      "transport": "openai-http"
+    },
+    {
+      "binary": null,
+      "default_effort": null,
+      "effort_key": null,
+      "model_key": "review.models.lm_studio",
+      "slug": "lm_studio",
+      "transport": "openai-http"
+    },
+    {
+      "binary": null,
+      "default_effort": null,
+      "effort_key": null,
+      "model_key": "review.models.llama_cpp",
+      "slug": "llama_cpp",
+      "transport": "openai-http"
+    },
+    {
+      "binary": "kimi",
+      "default_effort": null,
+      "effort_key": null,
+      "model_key": "review.models.kimi-code",
+      "slug": "kimi-code",
+      "transport": "spawn"
+    }
+  ],
   "runtime_profile_map": {
     "claude": {
       "haiku": {
@@ -347,6 +437,41 @@
   },
   "valid_keys": {
     "accepted": [
+      "agent_skills.gsd-advisor-researcher",
+      "agent_skills.gsd-ai-researcher",
+      "agent_skills.gsd-assumptions-analyzer",
+      "agent_skills.gsd-code-fixer",
+      "agent_skills.gsd-code-reviewer",
+      "agent_skills.gsd-codebase-mapper",
+      "agent_skills.gsd-debug-session-manager",
+      "agent_skills.gsd-debugger",
+      "agent_skills.gsd-doc-classifier",
+      "agent_skills.gsd-doc-synthesizer",
+      "agent_skills.gsd-doc-verifier",
+      "agent_skills.gsd-doc-writer",
+      "agent_skills.gsd-dom-verifier",
+      "agent_skills.gsd-domain-researcher",
+      "agent_skills.gsd-eval-auditor",
+      "agent_skills.gsd-eval-planner",
+      "agent_skills.gsd-executor",
+      "agent_skills.gsd-framework-selector",
+      "agent_skills.gsd-integration-checker",
+      "agent_skills.gsd-intel-updater",
+      "agent_skills.gsd-mempalace-curator",
+      "agent_skills.gsd-nyquist-auditor",
+      "agent_skills.gsd-pattern-mapper",
+      "agent_skills.gsd-phase-researcher",
+      "agent_skills.gsd-plan-checker",
+      "agent_skills.gsd-planner",
+      "agent_skills.gsd-project-researcher",
+      "agent_skills.gsd-research-synthesizer",
+      "agent_skills.gsd-roadmapper",
+      "agent_skills.gsd-security-auditor",
+      "agent_skills.gsd-ui-auditor",
+      "agent_skills.gsd-ui-checker",
+      "agent_skills.gsd-ui-researcher",
+      "agent_skills.gsd-user-profiler",
+      "agent_skills.gsd-verifier",
       "code_quality.fallow.enabled",
       "code_quality.fallow.profile",
       "dynamic_routing.enabled",
@@ -390,6 +515,18 @@
       "refactor.trigger_enabled",
       "resolve_model_ids",
       "review.default_reviewers",
+      "review.effort.claude",
+      "review.effort.codex",
+      "review.effort.opencode",
+      "review.models.agy",
+      "review.models.claude",
+      "review.models.codex",
+      "review.models.cursor",
+      "review.models.kimi-code",
+      "review.models.llama_cpp",
+      "review.models.lm_studio",
+      "review.models.ollama",
+      "review.models.opencode",
       "runtime",
       "workflow.code_review_depth",
       "workflow.cross_ai_command",

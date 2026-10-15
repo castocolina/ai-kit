@@ -144,15 +144,67 @@ def query_agent_catalog(node_bin, model_catalog_path, run_fn=subprocess.run):
 
 
 _GSD_TABLES_QUERY_SCRIPT = (
-    "try { const m = require(process.argv[1]); const cs = require(process.argv[2]); "
+    "try { const path = require('path'); const m = require(process.argv[1]); "
+    "const cs = require(process.argv[2]); "
     "if (typeof cs.isValidConfigKey !== 'function') throw new Error('missing'); "
     "const cwd = process.argv[3]; const keys = JSON.parse(process.argv[4]); "
-    "const accepted = keys.filter((k) => cs.isValidConfigKey(k, cwd) === true); "
-    "const rejected = keys.filter((k) => !accepted.includes(k)); "
+    "const lib = path.dirname(process.argv[1]); let review_lanes = null; "
+    "try { const ld = require(lib + '/review-lane-descriptor.cjs'); "
+    "const cl = require(lib + '/capability-loader.cjs'); "
+    "const reg = cl.loadRegistry({includeInstalled: true, cwd}); "
+    "const merged = ld.mergeReviewerLanes(ld.REVIEWER_LANES, reg); "
+    "review_lanes = merged.map((x) => ({slug: x.slug, transport: x.transport || null, "
+    "binary: (x.probe && x.probe.binary) || null, model_key: x.modelConfigKey || null, "
+    "effort_key: x.effortConfigKey || null, default_effort: x.defaultEffort || null})); "
+    "} catch (e) { review_lanes = null; } let skills_roots = null; "
+    "try { const rh = require(lib + '/runtime-homes.cjs'); "
+    "const rts = ['claude', 'codex', 'opencode', 'cursor', 'pi']; skills_roots = {}; "
+    "for (const rt of rts) { try { skills_roots[rt] = rh.getGlobalSkillsBase(rt); "
+    "} catch (e) { skills_roots[rt] = null; } } } catch (e) { skills_roots = null; } "
+    "const extra = []; const agents = m.AGENT_TO_PHASE_TYPE || {}; "
+    "for (const agent of Object.keys(agents)) { extra.push('agent_skills.' + agent); } "
+    "if (Array.isArray(review_lanes)) { for (const lane of review_lanes) { "
+    "if (lane.model_key) extra.push(lane.model_key); "
+    "if (lane.effort_key) extra.push(lane.effort_key); } } "
+    "const allKeys = Array.from(new Set(keys.concat(extra))); "
+    "const accepted = allKeys.filter((k) => cs.isValidConfigKey(k, cwd) === true); "
+    "const rejected = allKeys.filter((k) => !accepted.includes(k)); "
     "process.stdout.write(JSON.stringify({runtime_profile_map: m.RUNTIME_PROFILE_MAP, "
     "model_profiles: m.MODEL_PROFILES, agent_to_phase_type: m.AGENT_TO_PHASE_TYPE, "
-    "valid_keys: {accepted, rejected}})); } catch (e) { process.stdout.write('null'); }"
+    "valid_keys: {accepted, rejected}, review_lanes, skills_roots})); "
+    "} catch (e) { process.stdout.write('null'); }"
 )
+
+_LANE_ROW_KEYS = ("slug", "transport", "binary", "model_key", "effort_key", "default_effort")
+
+
+def _parse_review_lanes(raw) -> list | None:
+    if raw is None or not isinstance(raw, list):
+        return None
+    rows: list[dict] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        slug = row.get("slug")
+        if not isinstance(slug, str):
+            continue
+        cleaned: dict[str, str | None] = {"slug": slug}
+        for key in _LANE_ROW_KEYS[1:]:
+            val = row.get(key)
+            cleaned[key] = val if isinstance(val, str) else None
+        rows.append(cleaned)
+    return rows
+
+
+def _parse_skills_roots(raw) -> dict[str, str | None] | None:
+    if raw is None or not isinstance(raw, dict):
+        return None
+    out: dict[str, str | None] = {}
+    for key, val in raw.items():
+        if not isinstance(key, str):
+            continue
+        out[key] = val if isinstance(val, str) else None
+    return out
 
 
 def profile_first(agent_first) -> dict:
@@ -190,12 +242,17 @@ def _parse_tables_output(stdout: str) -> dict | None:
         return None
     if not all(isinstance(k, str) for k in accepted + rejected):
         return None
-    return {
+    out = {
         "runtime_profile_map": rpm,
         "model_profiles": by_profile,
         "agent_to_phase_type": phase,
         "valid_keys": {"accepted": sorted(accepted), "rejected": sorted(rejected)},
     }
+    if "review_lanes" in parsed:
+        out["review_lanes"] = _parse_review_lanes(parsed.get("review_lanes"))
+    if "skills_roots" in parsed:
+        out["skills_roots"] = _parse_skills_roots(parsed.get("skills_roots"))
+    return out
 
 
 class NodeQueryError(RuntimeError):
