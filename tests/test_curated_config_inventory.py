@@ -855,6 +855,54 @@ class TestBuildCandidates(unittest.TestCase):
         self.assertFalse(by_model["router-env/b"]["router_confirmed"])
         self.assertFalse(by_model["router-env/c"]["router_confirmed"])
 
+    def test_pi_router_candidate_from_merged_catalog(self):
+        spec_cli = gsd_catalog.load_ai_kit_spec_module("cli")
+        assert spec_cli is not None
+        existing = {
+            "router-env/my-coding": {
+                "batch_mode": False,
+                "confidence": "low",
+                "fallback_quota": True,
+                "heuristic_confirmed": ["is_router"],
+                "is_router": True,
+                "last_verified": "2026-10-15",
+                "name_declared_purpose": "execute",
+                "provider": "router-env",
+                "runtimes": {
+                    "opencode": {"ctx_window": None, "model_id": "router-env/my-coding"},
+                },
+                "source": {
+                    "artificial_analysis": False,
+                    "manual": False,
+                    "models_dev": False,
+                },
+            }
+        }
+        discovered = [{"cli": "pi", "model_id": "router-env/my-coding"}]
+        catalog, rejections, unmatched = spec_cli.build_model_catalog(
+            discovered,
+            spec_cli.CatalogSources({}, False, [], False),
+            existing,
+        )
+        self.assertEqual(rejections, [])
+        self.assertEqual(unmatched, [])
+        runtimes = {
+            "clis": {
+                "pi": {"installed": True, "models": ["router-env/my-coding"]},
+            }
+        }
+        out = catalog_adapter.build_candidates(
+            runtimes, catalog, "claude", self._weights()
+        )
+        self.assertEqual(len(out), 1)
+        cand = out[0]
+        self.assertEqual(cand["runtime"], "pi")
+        self.assertTrue(cand["is_router"])
+        self.assertTrue(cand["router_confirmed"])
+        self.assertEqual(cand["name_declared_purpose"], "execute")
+        self.assertFalse(cand["is_host"])
+
+
     def test_score_axes_count(self):
         entries = {
             "a/m": {

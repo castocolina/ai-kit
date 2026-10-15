@@ -138,6 +138,16 @@ OPENCODE_API_FIXTURE_PATH = os.path.join(
 )
 
 
+# Fixture provenance (JSON cannot hold comments, so the record lives here):
+# - Source command shape: `printf '{"id":"1","type":"get_available_models"}\n' | pi --mode rpc
+#   --offline --no-session --no-extensions --no-skills --no-context-files --no-mcp`
+# - pi 1.2.0, 2026-10-15, recorded in 18-RESEARCH L8.
+# - Values synthetic; `baseUrl` never present (stripped from live captures).
+# - Phase 22 replaces this with a trimmed real capture (22 D-04).
+PI_RPC_FIXTURE_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "pi_rpc_get_available_models.json"
+)
+
 def _read_bytes(path: str) -> bytes:
     with open(path, "rb") as handle:
         return handle.read()
@@ -1336,12 +1346,13 @@ class TestRuntimePrecedenceMatrix(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {"PI_CODING_AGENT": "1"}, clear=True):
             self.assertEqual(detection.detect_current_runtime(env=None), "pi")
 
-    def test_known_clis_still_excludes_pi(self):
-        # 16 D-06: pi enumeration (and "pi" in KNOWN_CLIS) is Phase 22's concern.
+    def test_known_clis_include_pi_last(self):
+        # 18 D-25 moved pi enumeration here from Phase 22.
         self.assertEqual(
-            detection.KNOWN_CLIS, ("claude", "codex", "opencode", "grok", "cursor-agent")
+            detection.KNOWN_CLIS,
+            ("claude", "codex", "opencode", "grok", "cursor-agent", "pi"),
         )
-        self.assertNotIn("pi", detection.KNOWN_CLIS)
+        self.assertEqual(detection.KNOWN_CLIS[-1], "pi")
 
     def test_docstring_confidence_labels_for_pi_and_codex_thread_id(self):
         # P1: pi and codex stay visibly flagged as not (yet) live-verified -- they must never
@@ -2247,6 +2258,110 @@ class TestDetectCodexModels(unittest.TestCase):
         )
 
 
+class TestPiRpcModels(unittest.TestCase):
+    """18 D-25: pi RPC get_available_models parser and snapshot branch."""
+
+    @staticmethod
+    def _fixture_text():
+        with open(PI_RPC_FIXTURE_PATH, encoding="utf-8") as f:
+            return f.read()
+
+    def test_parse_fixture_models_in_order(self):
+        parsed = detection.parse_pi_models(self._fixture_text())
+        assert parsed is not None
+        self.assertEqual(
+            [m["id"] for m in parsed],
+            ["anthropic/claude-sonnet-5", "openai/gpt-5.6-terra", "router-env/my-coding"],
+        )
+        sonnet, terra, router = parsed
+        self.assertEqual(sonnet["reasoning_modes"], ["low", "medium", "high"])
+        self.assertTrue(sonnet["image_input"])
+        self.assertEqual(sonnet["context_window"], 200000)
+        self.assertEqual(terra["reasoning_modes"], ["minimal", "low", "medium", "high"])
+        self.assertFalse(terra["image_input"])
+        self.assertEqual(terra["context_window"], 400000)
+        self.assertEqual(router["reasoning_modes"], [])
+        self.assertFalse(router["image_input"])
+
+    def test_snapshot_pi_installed_with_fixture_listing(self):
+        fixture = self._fixture_text()
+        pi_path = "/tmp/pi-token-for-test"
+        recorded = {}
+
+        def fake_which(name):
+            return pi_path if name == "pi" else None
+
+        def fake_run(argv, **kwargs):
+            recorded["argv"] = argv
+            recorded["kwargs"] = kwargs
+            return subprocess.CompletedProcess(argv, 0, stdout=fixture, stderr="")
+
+        snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run)
+        self.assertEqual(
+            snapshot["clis"]["pi"],
+            {
+                "installed": True,
+                "path": pi_path,
+                "models": [
+                    "anthropic/claude-sonnet-5",
+                    "openai/gpt-5.6-terra",
+                    "router-env/my-coding",
+                ],
+                "reasoning_modes": {
+                    "anthropic/claude-sonnet-5": ["low", "medium", "high"],
+                    "openai/gpt-5.6-terra": ["minimal", "low", "medium", "high"],
+                },
+                "image_input": {
+                    "anthropic/claude-sonnet-5": True,
+                    "openai/gpt-5.6-terra": False,
+                    "router-env/my-coding": False,
+                },
+            },
+        )
+        self.assertEqual(recorded["argv"], [pi_path, *detection.PI_RPC_ARGS])
+        self.assertEqual(recorded["kwargs"]["input"], detection.PI_RPC_REQUEST)
+        self.assertEqual(recorded["kwargs"]["timeout"], 15)
+
+
+class TestPiRouterMerge(unittest.TestCase):
+    """18 D-45: pi-discovered router merges into an existing catalog entry."""
+
+    def test_pi_router_merges_runtimes_into_existing_opencode_entry(self):
+        existing = {
+            "router-env/my-coding": {
+                "batch_mode": False,
+                "confidence": "low",
+                "fallback_quota": True,
+                "heuristic_confirmed": ["is_router"],
+                "is_router": True,
+                "last_verified": "2026-10-15",
+                "name_declared_purpose": "execute",
+                "provider": "router-env",
+                "runtimes": {
+                    "opencode": {"ctx_window": None, "model_id": "router-env/my-coding"},
+                },
+                "source": {
+                    "artificial_analysis": False,
+                    "manual": False,
+                    "models_dev": False,
+                },
+            }
+        }
+        discovered = [{"cli": "pi", "model_id": "router-env/my-coding"}]
+        catalog, rejections, unmatched = cli.build_model_catalog(
+            discovered, cli.CatalogSources({}, False, [], False), existing
+        )
+        self.assertEqual(rejections, [])
+        self.assertEqual(unmatched, [])
+        entry = catalog["router-env/my-coding"]
+        self.assertIn("opencode", entry["runtimes"])
+        self.assertIn("pi", entry["runtimes"])
+        self.assertEqual(entry["heuristic_confirmed"], ["is_router"])
+        self.assertEqual(entry["name_declared_purpose"], "execute")
+
+
+
+
 class TestRuntimesSchemaVersion(unittest.TestCase):
     """16 D-12 tracer: runtimes.json schema_version -- snapshot stamping ->
     detect-runtimes --if-stale -> an unversioned/older cache forces one re-detect
@@ -2255,7 +2370,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
     def test_snapshot_carries_current_schema_version(self):
         snapshot = build_runtimes_snapshot(which_fn=lambda n: None, run_fn=lambda *a, **k: None)
         self.assertEqual(snapshot["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
-        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 3)
+        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 4)
 
     def test_fresh_but_unversioned_cache_redetects_and_stamps(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2399,9 +2514,10 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             {"schema_version": "3"},
             {"schema_version": 1},
             {"schema_version": 2},
+            {"schema_version": 3},
         ):
             self.assertFalse(f(bad))
-        for good in ({"schema_version": 3}, {"schema_version": 4}):
+        for good in ({"schema_version": 4}, {"schema_version": 5}):
             self.assertTrue(f(good))
 
     def test_cache_is_stale_stays_schema_agnostic(self):

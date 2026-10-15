@@ -23,12 +23,19 @@ RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-s
 # 16 D-12: pre-Phase-16 snapshots carry no key and are treated as version 1; bump this
 # whenever the snapshot shape gains data a consumer relies on. Version 3 (17 D-32) adds the
 # opencode 2.x `/api/model` image source (clis.opencode.image_input_source), so snapshots
-# written before it re-detect even while their TTL is still fresh.
-RUNTIMES_SCHEMA_VERSION = 3
+# written before it re-detect even while their TTL is still fresh. Version 4 (18 D-25) adds
+# clis.pi from pi's RPC get_available_models.
+RUNTIMES_SCHEMA_VERSION = 4
 
 # ── Runtime/CLI detection ───────────────────────────────────────────────
 
-KNOWN_CLIS = ("claude", "codex", "opencode", "grok", "cursor-agent")
+KNOWN_CLIS = ("claude", "codex", "opencode", "grok", "cursor-agent", "pi")
+
+PI_RPC_ARGS = (
+    "--mode", "rpc", "--offline", "--no-session", "--no-extensions",
+    "--no-skills", "--no-context-files", "--no-mcp",
+)
+PI_RPC_REQUEST = '{"id":"1","type":"get_available_models"}\n'
 
 # 16 D-04: what Claude Code's own `--model` flag resolves (real `claude --help`, version
 # 2.1.281, lists fable/opus/sonnet; haiku is the fourth Agent-tool alias documented in
@@ -252,6 +259,107 @@ def detect_codex_models(binary: str, run_fn=subprocess.run) -> list:
     if getattr(result, "returncode", 1) != 0:
         return []
     return parse_codex_debug_models(getattr(result, "stdout", None))
+
+
+def _pi_reasoning_modes(item: dict) -> list[str]:
+    level_map = item.get("thinkingLevelMap")
+    modes: list[str] = []
+    if not isinstance(level_map, dict):
+        return modes
+    for level, mapped in level_map.items():
+        if not isinstance(level, str) or not level.strip() or not mapped:
+            continue
+        if level in modes:
+            continue
+        modes.append(level)
+    return modes
+
+
+def _parse_one_pi_model(item, seen: set) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    bare_id = item.get("id")
+    provider = item.get("provider")
+    if not isinstance(bare_id, str) or not bare_id.strip():
+        return None
+    if not isinstance(provider, str) or not provider.strip():
+        return None
+    full_id = f"{provider}/{bare_id}"
+    if full_id in seen:
+        return None
+    seen.add(full_id)
+    input_cap = item.get("input")
+    image_input = isinstance(input_cap, list) and "image" in input_cap
+    ctx = item.get("contextWindow")
+    context_window = ctx if isinstance(ctx, int) and not isinstance(ctx, bool) else None
+    return {
+        "id": full_id,
+        "reasoning_modes": _pi_reasoning_modes(item),
+        "image_input": image_input,
+        "context_window": context_window,
+    }
+
+
+def parse_pi_models(stdout) -> list | None:
+    """Parses pi RPC stdout for `get_available_models` into model records with
+    `provider/id` ids. Shape verified live 2026-10-15 (pi 1.2.0); not live-validated
+    from a pi host (Phase 22). Scans line-by-line for the first JSON object whose
+    `command` is `get_available_models`; returns None when no usable envelope exists
+    (non-str input, invalid JSON on every candidate line, `success` not true, missing
+    or non-list `data.models`). Inside a valid envelope, skips non-dict models and
+    blank id/provider pairs, keeps the first duplicate `provider/id`, and returns []
+    when every model is skipped. Never raises."""
+    if not isinstance(stdout, str):
+        return None
+    envelope = None
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and parsed.get("command") == "get_available_models":
+            envelope = parsed
+            break
+    if envelope is None:
+        return None
+    if envelope.get("success") is not True:
+        return None
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        return None
+    models_raw = data.get("models")
+    if not isinstance(models_raw, list):
+        return None
+    parsed_models = []
+    seen: set[str] = set()
+    for item in models_raw:
+        record = _parse_one_pi_model(item, seen)
+        if record is not None:
+            parsed_models.append(record)
+    return parsed_models
+
+
+def detect_pi_models(binary: str, run_fn=subprocess.run) -> list | None:
+    """Runs pi RPC `get_available_models` (shape verified live 2026-10-15, pi 1.2.0;
+    not live-validated from a pi host, Phase 22). A non-zero exit, OSError,
+    TimeoutExpired, or parser None -> None; a parsed listing (even empty) -> the list."""
+    try:
+        result = run_fn(
+            [binary, *PI_RPC_ARGS],
+            input=PI_RPC_REQUEST,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    return parse_pi_models(getattr(result, "stdout", None))
 
 
 def _opencode_verbose_record(obj: dict, header: str) -> bool | None:
@@ -691,11 +799,11 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
     "path"?: str, "models"?: [str], "reasoning_modes"?: {model_id: [effort, ...]},
     "aliases"?: [str], "models_source"?: str, "models_as_of"?: str, "image_input"?: {id: bool},
     "image_input_source"?: str, "image_input_probe"?: "failed"}}}.
-    `models` is populated
-    for opencode/cursor-agent always, for codex when `codex debug models` enumeration
-    succeeds, and for claude from the 16 D-04 hybrid (aliases + full ids); `reasoning_modes`
-    (codex only) maps each enumerated model id to its CLI-reported effort levels, only for
-    ids that actually have a non-empty effort list. `catalog_fn` (claude only) is an optional
+    `models` is populated for opencode/cursor-agent always, for codex when `codex debug models`
+    enumeration succeeds, for pi when RPC `get_available_models` succeeds, and for claude from
+    the 16 D-04 hybrid (aliases + full ids); `reasoning_modes` maps each enumerated model id
+    to CLI-reported effort/thinking levels (codex/pi), only for ids with a non-empty list;
+    `image_input` (pi/opencode) maps model id to bool. `catalog_fn` (claude only) is optional
     zero-argument callable returning the parsed model-catalog.json or None -- injected rather
     than imported so the function stays pure and tests stay hermetic; it is called ONLY when
     claude is installed (claude is never executed, 16 D-07). Pure function -- the caller
@@ -729,6 +837,15 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
                     m["id"]: m["reasoning_modes"]
                     for m in codex_models if m["reasoning_modes"]
                 }
+        elif cli == "pi":
+            pi_models = detect_pi_models(binpath, run_fn=run_fn)
+            if pi_models is not None:
+                entry["models"] = [m["id"] for m in pi_models]
+                entry["reasoning_modes"] = {
+                    m["id"]: m["reasoning_modes"]
+                    for m in pi_models if m["reasoning_modes"]
+                }
+                entry["image_input"] = {m["id"]: m["image_input"] for m in pi_models}
         elif cli == "claude":
             # 16 D-04: hybrid alias + catalog-id sourcing; never calls run_fn (claude is
             # never executed) and never calls catalog_fn unless claude is installed (the
