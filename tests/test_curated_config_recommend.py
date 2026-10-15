@@ -23,7 +23,7 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-gsd-curated-config"),
 )
 
-from ai_kit_gsd_curated_config import cli, plan_io, presets, recommend, roles
+from ai_kit_gsd_curated_config import cli, gsd_catalog, plan_io, presets, recommend, roles
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -53,10 +53,50 @@ TABLES = {
         "cursor": {},
     },
     "model_profiles": {
-        "quality": {"gsd-planner": "opus", "gsd-executor": "opus", "gsd-verifier": "sonnet"},
-        "balanced": {"gsd-planner": "opus", "gsd-executor": "sonnet", "gsd-verifier": "sonnet"},
-        "budget": {"gsd-planner": "sonnet", "gsd-executor": "sonnet", "gsd-verifier": "haiku"},
-        "adaptive": {"gsd-planner": "opus", "gsd-executor": "sonnet", "gsd-verifier": "sonnet"},
+        "quality": {
+            "gsd-planner": "opus",
+            "gsd-executor": "opus",
+            "gsd-verifier": "sonnet",
+            "gsd-plan-checker": "sonnet",
+            "gsd-code-reviewer": "opus",
+            "gsd-ui-auditor": "sonnet",
+            "gsd-dom-verifier": "sonnet",
+            "gsd-ui-researcher": "opus",
+            "gsd-code-fixer": "opus",
+        },
+        "balanced": {
+            "gsd-planner": "opus",
+            "gsd-executor": "sonnet",
+            "gsd-verifier": "sonnet",
+            "gsd-plan-checker": "sonnet",
+            "gsd-code-reviewer": "sonnet",
+            "gsd-ui-auditor": "sonnet",
+            "gsd-dom-verifier": "sonnet",
+            "gsd-ui-researcher": "sonnet",
+            "gsd-code-fixer": "sonnet",
+        },
+        "budget": {
+            "gsd-planner": "sonnet",
+            "gsd-executor": "sonnet",
+            "gsd-verifier": "haiku",
+            "gsd-plan-checker": "haiku",
+            "gsd-code-reviewer": "sonnet",
+            "gsd-ui-auditor": "haiku",
+            "gsd-dom-verifier": "haiku",
+            "gsd-ui-researcher": "haiku",
+            "gsd-code-fixer": "sonnet",
+        },
+        "adaptive": {
+            "gsd-planner": "opus",
+            "gsd-executor": "sonnet",
+            "gsd-verifier": "sonnet",
+            "gsd-plan-checker": "haiku",
+            "gsd-code-reviewer": "sonnet",
+            "gsd-ui-auditor": "haiku",
+            "gsd-dom-verifier": "haiku",
+            "gsd-ui-researcher": "sonnet",
+            "gsd-code-fixer": "sonnet",
+        },
     },
     "agent_to_phase_type": {
         "gsd-planner": "planning",
@@ -133,20 +173,73 @@ CODEX = [
     ),
 ]
 
+_SCORES5 = {**_SCORES, "execution": 6.0, "review": 6.0}
+
 OPENCODE = [
     cand(
         "openai/gpt-5.6-sol", runtime="opencode", price=4, score_axes=3,
         family="gpt-5.6-sol",
-        purpose_scores={**_SCORES, "planning": 9.0},
+        purpose_scores={**_SCORES5, "planning": 9.0},
     ),
     cand(
         "xai/grok-4.6", runtime="opencode", price=2, score_axes=3, family="grok-4.6",
-        purpose_scores={**_SCORES, "planning": 8.0},
+        purpose_scores={**_SCORES5, "planning": 8.0},
     ),
     cand(
         "zai-coding-plan/glm-5.3", runtime="opencode", price=0, score_axes=3,
         family="glm-5.3",
-        purpose_scores={**_SCORES, "general": 9.0, "mechanical": 8.0},
+        purpose_scores={**_SCORES5, "general": 9.0, "mechanical": 8.0},
+    ),
+]
+
+_ALL90 = {
+    "planning": 90.0,
+    "general": 90.0,
+    "mechanical": 90.0,
+    "execution": 90.0,
+    "review": 90.0,
+}
+
+SPECIALIST_OPENCODE = [
+    cand(
+        "zai-coding-plan/glm-5.3",
+        runtime="opencode",
+        vendor="zhipu",
+        image_input=False,
+        price=0,
+        score_axes=3,
+        family="glm-5.3",
+        purpose_scores=dict(_ALL90),
+    ),
+    cand(
+        "openai/gpt-5.6-sol",
+        runtime="opencode",
+        vendor="openai",
+        image_input=True,
+        price=4,
+        score_axes=3,
+        family="gpt-5.6-sol",
+        purpose_scores={**_ALL90, "review": 85.0, "execution": 50.0},
+    ),
+    cand(
+        "xai/grok-4.6",
+        runtime="opencode",
+        vendor="xai",
+        image_input=True,
+        price=2,
+        score_axes=3,
+        family="grok-4.6",
+        purpose_scores={**_ALL90, "review": 80.0, "general": 85.0},
+    ),
+    cand(
+        "router-env/my-coding",
+        runtime="opencode",
+        is_router=True,
+        router_confirmed=True,
+        name_declared_purpose="execute",
+        vendor=None,
+        score_axes=0,
+        purpose_scores={},
     ),
 ]
 
@@ -523,7 +616,7 @@ class TestSlotTracer(unittest.TestCase):
         inv = make_inventory(host="opencode", candidates=OPENCODE)
         plan = build(inv, rigor="standard")
         em = entry_map(plan)
-        for tier in ("opus", "sonnet"):
+        for tier in ("opus", "sonnet", "haiku"):
             key = f"model_profile_overrides.opencode.{tier}"
             entry = em[key]
             self.assertEqual(entry["op"], "set")
@@ -782,6 +875,429 @@ class TestSlotEdges(unittest.TestCase):
         plan = build(inv, profile="budget", rigor="standard")
         entry = entry_map(plan)["model_profile_overrides.cursor.haiku"]
         self.assertTrue(str(entry["value"]).endswith("-low"))
+
+
+class TestSpecialistTracer(unittest.TestCase):
+    """Task 1: execution, counterpart and vision overrides only where slots fail."""
+
+    def test_specialist_opencode_end_to_end(self):
+        inv = make_inventory(
+            host="opencode",
+            candidates=SPECIALIST_OPENCODE,
+            project={"frontend": True, "intel_index_present": False},
+        )
+        code, plan, _, err = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
+        self.assertEqual((code, err), (0, ""))
+        assert plan is not None
+        em = entry_map(plan)
+        self.assertEqual(
+            em["model_overrides.gsd-executor"]["value"],
+            "router-env/my-coding",
+        )
+        self.assertEqual(em["model_overrides.gsd-executor"]["source"], "router-declared")
+        self.assertEqual(
+            em["model_overrides.gsd-code-fixer"]["value"],
+            "router-env/my-coding",
+        )
+        pc = em.get("model_overrides.gsd-plan-checker")
+        self.assertIsNotNone(pc)
+        assert pc is not None
+        self.assertEqual(pc["value"], "openai/gpt-5.6-sol")
+        self.assertTrue(pc["why"].startswith("counterpart: inferred vendor"))
+        self.assertNotIn("model_overrides.gsd-code-reviewer", em)
+        reviewer_notes = [
+            n for n in plan["notes"]
+            if n["kind"] == "specialist" and n["key"] == "model_overrides.gsd-code-reviewer"
+        ]
+        self.assertEqual(len(reviewer_notes), 1)
+        for agent in ("gsd-ui-auditor", "gsd-dom-verifier", "gsd-ui-researcher"):
+            entry = em[f"model_overrides.{agent}"]
+            self.assertTrue(entry["value"] in ("openai/gpt-5.6-sol", "xai/grok-4.6"))
+            self.assertEqual(entry["source"], "catalog-score")
+        override_keys = [
+            e["key"] for e in plan["entries"]
+            if e["key"].startswith("model_overrides.") and e["op"] == "set"
+        ]
+        self.assertLessEqual(len(override_keys), 7)
+        self.assertTrue(all(k.split(".", 1)[1] in presets.SPECIALISTS for k in override_keys))
+
+    def test_claude_alias_for(self):
+        self.assertEqual(roles.claude_alias_for("claude-haiku-4-5-20251001"), "haiku")
+        self.assertEqual(roles.claude_alias_for("claude-opus-5-5-high"), "opus")
+        self.assertIsNone(roles.claude_alias_for("gpt-5.6-sol"))
+
+    def test_claude_aliases_drift_guard(self):
+        detection = gsd_catalog.load_ai_kit_spec_module("detection")
+        assert detection is not None
+        self.assertEqual(set(roles.CLAUDE_ALIASES), set(detection.CLAUDE_MODEL_ALIASES))
+
+
+class TestSpecialistRules(unittest.TestCase):
+    """Task 2: single-provider, vision, frontend, router, claude alias rules."""
+
+    _COUNTERPART_TEXT = (
+        "no in-runtime counterpart for gsd-plan-checker and gsd-code-reviewer on "
+        "{host} (single provider): use cross-AI review"
+    )
+
+    def _counterpart_notes(self, plan):
+        return [n for n in plan["notes"] if n["kind"] == "counterpart"]
+
+    def test_codex_single_provider_counterpart_note(self):
+        inv = make_inventory(host="codex", candidates=CODEX)
+        plan = build(inv, rigor="standard")
+        notes = self._counterpart_notes(plan)
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0]["text"], self._COUNTERPART_TEXT.format(host="codex"))
+        em = entry_map(plan)
+        self.assertNotIn("model_overrides.gsd-plan-checker", em)
+        self.assertNotIn("model_overrides.gsd-code-reviewer", em)
+
+    def test_claude_single_provider_and_alias_values(self):
+        cands = [
+            cand("claude-opus-5-5", runtime="claude", vendor="anthropic", score_axes=3,
+                 purpose_scores=_SCORES5),
+            cand("claude-sonnet-5", runtime="claude", vendor="anthropic", score_axes=3,
+                 purpose_scores=_SCORES5),
+            cand("claude-haiku-4-5", runtime="claude", vendor="anthropic", score_axes=3,
+                 purpose_scores=_SCORES5),
+        ]
+        inv = make_inventory(host="claude", candidates=cands)
+        plan = build(inv, profile="adaptive", rigor="standard")
+        notes = self._counterpart_notes(plan)
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0]["text"], self._COUNTERPART_TEXT.format(host="claude"))
+        for entry in plan["entries"]:
+            if entry["key"].startswith("model_overrides.") and entry["op"] == "set":
+                self.assertIn(entry["value"], roles.CLAUDE_ALIASES)
+
+    def test_opencode_all_openai_single_provider(self):
+        cands = [
+            cand("openai/a", runtime="opencode", vendor="openai", score_axes=3,
+                 purpose_scores=_SCORES5),
+            cand("openai/b", runtime="opencode", vendor="openai", score_axes=3,
+                 purpose_scores=_SCORES5),
+        ]
+        inv = make_inventory(host="opencode", candidates=cands)
+        plan = build(inv, rigor="standard")
+        self.assertEqual(len(self._counterpart_notes(plan)), 1)
+
+    def test_vision_notes_when_no_image_input(self):
+        cands = [
+            cand("m/a", runtime="opencode", vendor="openai", image_input=False, score_axes=3,
+                 purpose_scores=_SCORES5),
+        ]
+        inv = make_inventory(
+            host="opencode",
+            candidates=cands,
+            project={"frontend": True, "intel_index_present": False},
+        )
+        plan = build(inv, rigor="standard")
+        em = entry_map(plan)
+        vision = [n for n in plan["notes"] if n["kind"] == "vision"]
+        agents = {n["key"].split(".", 1)[1] for n in vision}
+        self.assertIn("gsd-ui-auditor", agents)
+        self.assertIn("gsd-dom-verifier", agents)
+        self.assertIn("gsd-ui-researcher", agents)
+        self.assertFalse(any(k.startswith("model_overrides.gsd-ui") for k in em))
+
+    def test_frontend_false_skips_ui_researcher(self):
+        inv = make_inventory(host="opencode", candidates=OPENCODE, project={"frontend": False})
+        plan = build(inv, rigor="standard")
+        em = entry_map(plan)
+        self.assertNotIn("model_overrides.gsd-ui-researcher", em)
+        self.assertFalse(
+            any("gsd-ui-researcher" in n.get("text", "") for n in plan["notes"])
+        )
+
+    def test_router_unconfirmed_no_router_declared_override(self):
+        cands = list(SPECIALIST_OPENCODE)
+        cands[-1] = dict(
+            cands[-1],
+            router_confirmed=False,
+        )
+        inv = make_inventory(
+            host="opencode",
+            candidates=cands,
+            project={"frontend": True, "intel_index_present": False},
+        )
+        plan = build(inv, profile="adaptive", rigor="standard")
+        em = entry_map(plan)
+        self.assertNotIn("model_overrides.gsd-executor", em)
+        unconfirmed = [n for n in plan["notes"] if n["kind"] == "router_unconfirmed"]
+        self.assertEqual(len(unconfirmed), 1)
+        self.assertEqual(unconfirmed[0]["key"], "router-env/my-coding")
+
+    def test_claude_executor_same_sonnet_slot_no_override(self):
+        cands = [
+            cand("claude-sonnet-5", runtime="claude", vendor="anthropic", score_axes=3,
+                 purpose_scores={**_SCORES5, "execution": 9.0}),
+        ]
+        inv = make_inventory(host="claude", candidates=cands)
+        plan = build(inv, profile="adaptive", rigor="standard")
+        em = entry_map(plan)
+        self.assertNotIn("model_overrides.gsd-executor", em)
+
+    def test_pi_no_model_overrides(self):
+        inv = make_inventory(
+            host="pi",
+            candidates=[cand("x/y", runtime="pi", score_axes=3, purpose_scores=_SCORES5)],
+        )
+        plan = build(inv, rigor="standard")
+        self.assertFalse(any(e["key"].startswith("model_overrides.") for e in plan["entries"]))
+
+    def test_purpose_pin_review_vs_general(self):
+        cands = [
+            cand(
+                "zai-coding-plan/glm-5.3",
+                runtime="opencode",
+                vendor="zhipu",
+                image_input=False,
+                price=0,
+                score_axes=3,
+                family="glm-5.3",
+                purpose_scores={
+                    "planning": 90,
+                    "general": 90,
+                    "mechanical": 90,
+                    "execution": 90,
+                    "review": 10,
+                },
+            ),
+            cand(
+                "openai/gpt-5.6-sol",
+                runtime="opencode",
+                vendor="openai",
+                image_input=True,
+                price=4,
+                score_axes=3,
+                family="gpt-5.6-sol",
+                purpose_scores={
+                    "planning": 50,
+                    "general": 40,
+                    "mechanical": 50,
+                    "execution": 50,
+                    "review": 90,
+                },
+            ),
+            cand(
+                "xai/grok-4.6",
+                runtime="opencode",
+                vendor="xai",
+                image_input=True,
+                price=2,
+                score_axes=3,
+                family="grok-4.6",
+                purpose_scores={
+                    "planning": 50,
+                    "general": 80,
+                    "mechanical": 50,
+                    "execution": 50,
+                    "review": 30,
+                },
+            ),
+        ]
+        inv = make_inventory(
+            host="opencode",
+            candidates=cands,
+            project={"frontend": True, "intel_index_present": False},
+        )
+        plan = build(inv, profile="adaptive", rigor="standard")
+        em = entry_map(plan)
+        self.assertNotIn("model_overrides.gsd-executor", em)
+        self.assertNotIn("model_overrides.gsd-code-fixer", em)
+        self.assertEqual(em["model_overrides.gsd-plan-checker"]["value"], "openai/gpt-5.6-sol")
+        self.assertEqual(em["model_overrides.gsd-code-reviewer"]["value"], "openai/gpt-5.6-sol")
+        for agent in ("gsd-ui-auditor", "gsd-dom-verifier", "gsd-ui-researcher"):
+            self.assertEqual(em[f"model_overrides.{agent}"]["value"], "xai/grok-4.6")
+
+    def test_budget_planner_sonnet_counterpart_reference(self):
+        cands = [
+            cand(
+                "openai/gpt-5.6-terra",
+                runtime="opencode",
+                vendor="openai",
+                price=2,
+                score_axes=3,
+                family="gpt-5.6-terra",
+                purpose_scores={
+                    "planning": 50,
+                    "general": 90,
+                    "mechanical": 50,
+                    "execution": 50,
+                    "review": 40,
+                },
+            ),
+            cand(
+                "openai/gpt-5.6-luna",
+                runtime="opencode",
+                vendor="openai",
+                price=0.2,
+                score_axes=3,
+                family="gpt-5.6-luna",
+                purpose_scores={
+                    "planning": 50,
+                    "general": 50,
+                    "mechanical": 90,
+                    "execution": 50,
+                    "review": 30,
+                },
+            ),
+            cand(
+                "xai/grok-4.6",
+                runtime="opencode",
+                vendor="xai",
+                price=2,
+                score_axes=3,
+                family="grok-4.6",
+                purpose_scores={"review": 50},
+            ),
+        ]
+        inv = make_inventory(host="opencode", candidates=cands)
+        plan = build(inv, profile="budget", rigor="standard")
+        em = entry_map(plan)
+        self.assertNotIn("model_profile_overrides.opencode.opus", em)
+        self.assertEqual(em["model_overrides.gsd-plan-checker"]["value"], "xai/grok-4.6")
+        self.assertIn("openai", em["model_overrides.gsd-plan-checker"]["why"])
+
+
+class TestSpecialistProperties(unittest.TestCase):
+    """Task 3: cap, order independence, strict vendor eligibility."""
+
+    def _rich_mix(self, host="opencode", runtime="opencode"):
+        return [
+            cand(
+                f"{runtime}/glm",
+                runtime=runtime,
+                vendor="zhipu",
+                image_input=False,
+                price=0,
+                score_axes=3,
+                purpose_scores=_ALL90,
+            ),
+            cand(
+                f"{runtime}/sol",
+                runtime=runtime,
+                vendor="openai",
+                image_input=True,
+                price=4,
+                score_axes=3,
+                purpose_scores={**_ALL90, "review": 85},
+            ),
+            cand(
+                f"{runtime}/grok",
+                runtime=runtime,
+                vendor="xai",
+                image_input=True,
+                price=2,
+                score_axes=3,
+                purpose_scores={**_ALL90, "general": 85},
+            ),
+            cand(
+                f"{runtime}/router",
+                runtime=runtime,
+                is_router=True,
+                router_confirmed=False,
+                name_declared_purpose="execute",
+                vendor=None,
+                score_axes=0,
+                purpose_scores={},
+            ),
+            cand(
+                f"{runtime}/fast",
+                runtime=runtime,
+                vendor="openai",
+                fast_twin_of=f"{runtime}/sol",
+                score_axes=3,
+                purpose_scores={**_ALL90, "execution": 99},
+            ),
+            cand(
+                f"{runtime}/null-v",
+                runtime=runtime,
+                vendor=None,
+                score_axes=3,
+                purpose_scores={**_ALL90, "review": 99},
+            ),
+        ]
+
+    def test_at_most_seven_overrides_matrix(self):
+        hosts = (
+            ("codex", "codex"),
+            ("opencode", "opencode"),
+            ("cursor", "cursor"),
+            ("claude", "claude"),
+            ("pi", "pi"),
+        )
+        for host, runtime in hosts:
+            for rigor in presets.RIGORS:
+                for profile in ("quality", "balanced", "budget", "adaptive"):
+                    inv = make_inventory(
+                        host=host,
+                        candidates=self._rich_mix(host, runtime),
+                        project={"frontend": True, "intel_index_present": False},
+                    )
+                    plan = build(inv, profile=profile, rigor=rigor)
+                    sets = [
+                        e for e in plan["entries"]
+                        if e["key"].startswith("model_overrides.") and e["op"] == "set"
+                    ]
+                    self.assertLessEqual(len(sets), 7, f"{host} {rigor} {profile}")
+                    for entry in sets:
+                        agent = entry["key"].split(".", 1)[1]
+                        self.assertIn(agent, presets.SPECIALISTS)
+
+    def test_shuffle_stable_with_specialists(self):
+        inv0 = make_inventory(
+            host="opencode",
+            candidates=list(SPECIALIST_OPENCODE),
+            project={"frontend": True, "intel_index_present": False},
+        )
+        ref = plan_io.canonical_json(
+            build(inv0, profile="adaptive", rigor="standard")
+        )
+        for seed in (7, 8, 9):
+            shuffled = list(SPECIALIST_OPENCODE)
+            random.Random(seed).shuffle(shuffled)
+            inv = make_inventory(
+                host="opencode",
+                candidates=shuffled,
+                project={"frontend": True, "intel_index_present": False},
+            )
+            self.assertEqual(
+                plan_io.canonical_json(build(inv, profile="adaptive", rigor="standard")),
+                ref,
+            )
+
+
+
+    def test_null_vendor_never_counterpart_override(self):
+        inv = make_inventory(host="opencode", candidates=self._rich_mix())
+        plan = build(inv, profile="adaptive", rigor="standard")
+        em = entry_map(plan)
+        for key in ("model_overrides.gsd-plan-checker", "model_overrides.gsd-code-reviewer"):
+            if key in em:
+                self.assertNotEqual(em[key]["value"], "opencode/null-v")
+
+    def test_planner_needs_choice_blocks_plan_checker_override(self):
+        cands = [
+            cand("m/a", runtime="opencode", score_axes=3, purpose_scores={"general": 9}),
+        ]
+        inv = make_inventory(host="opencode", candidates=cands)
+        plan = build(inv, profile="adaptive", rigor="standard")
+        em = entry_map(plan)
+        self.assertNotIn("model_overrides.gsd-plan-checker", em)
+        notes = [
+            n for n in plan["notes"]
+            if n["kind"] == "specialist" and n["key"] == "model_overrides.gsd-plan-checker"
+        ]
+        self.assertEqual(len(notes), 1)
+
+    def test_fast_twin_never_executor(self):
+        inv = make_inventory(host="opencode", candidates=self._rich_mix())
+        plan = build(inv, profile="adaptive", rigor="standard")
+        em = entry_map(plan)
+        if "model_overrides.gsd-executor" in em:
+            self.assertNotEqual(em["model_overrides.gsd-executor"]["value"], "opencode/fast")
 
 
 class TestDeterminism(unittest.TestCase):
