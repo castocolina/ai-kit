@@ -216,6 +216,7 @@ so the fail-closed rules apply unchanged.
 **If `dispatch-reviewer` exits nonzero** (a malformed or missing `command` template on this
 reviewer entry, or an empty `timeout_tiers` — config errors, not runtime failures), this
 reviewer's slot failed to dispatch. Do not write or keep `$RUN_TMP_DIR/iter<N>-<key>.md` for it —
-leaving it absent is what makes Step 1.5's `merge-reports` (double mode) or the missing-file case
-(single mode) fail closed through the existing `### Status:`-line-based rules, with no new
-special-casing needed here.
+leaving it absent is what makes Step 1.5's `merge-reports` (double mode) exit non-zero and
+print `### Status: Failure — <lanes>` naming the failed lane(s), or the missing-file case
+(single mode) fail closed through Step 2's "No Status line" rule — never treat either outcome
+as Approved.

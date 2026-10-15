@@ -382,6 +382,13 @@ python3 "$TOOLS_PY" merge-reports --doc-paths "<DOC_PATHS>" \
   > "$RUN_TMP_DIR/iter<N>-merged.md"
 ```
 
+`merge-reports` exits non-zero and prints `### Status: Failure — <lanes>` when any lane
+failed or produced no readable report (missing file, no `### Status:` line, or a lane whose
+status is `### Status: Failure — …`). The redirect above still captures that line in
+`$RUN_TMP_DIR/iter<N>-merged.md`. Do not treat the nonzero exit as a separate failure mode —
+bind `EFFECTIVE_REPORT_PATH` to that merged file and go straight to Step 2 with the Failure
+line it contains.
+
 Record `EFFECTIVE_REPORT_PATH`: `$RUN_TMP_DIR/iter<N>-merged.md` when
 `REVIEWER_LIST` had 2 entries, else `$RUN_TMP_DIR/iter<N>-<key>.md` (the
 single reviewer's own raw report) when it had 1. **Every later step reads
@@ -391,7 +398,8 @@ different invented filenames for the same underlying thing. The merged
 report becomes the input to Step 2 (parse `### Status:`) exactly as a
 single reviewer's report would — the merge already reproduces that line
 (`Approved` when no findings survived the merge, `Issues Found — fix and
-re-invoke` otherwise). When `REVIEWER_LIST` has only 1 entry, skip the
+re-invoke` when they did, or `Failure — <lanes>` when a lane could not be
+merged). When `REVIEWER_LIST` has only 1 entry, skip the
 merge call — that entry's raw report (or the native `Agent` tool's output,
 written to the same `iter<N>-<key>.md` path per Step 1) is
 `EFFECTIVE_REPORT_PATH` directly, unchanged from today's behavior. If
@@ -410,6 +418,7 @@ Read `EFFECTIVE_REPORT_PATH` (Step 1.5) from disk; locate the line beginning `##
 |---|---|
 | `### Status: Approved` | Loop ends. Go to Surface (success). |
 | `### Status: Issues Found — fix and re-invoke` | Continue to Step 3 if iter < cap, else go to Surface (cap reached). |
+| `### Status: Failure — <reason>` | Loop ends. Surface failure with the reason verbatim (in double mode it names the failed lanes). Never treat as Approved. |
 | Any other text on the Status line | Treat as Issues Found (be conservative); log the anomaly. |
 | No Status line | Loop ends. Surface failure: "Reviewer did not emit a Status line." |
 
