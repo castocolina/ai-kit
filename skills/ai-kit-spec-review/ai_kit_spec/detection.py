@@ -137,7 +137,12 @@ def detect_cursor_agent_models(binary: str, run_fn=subprocess.run) -> list:
     against a real authenticated install (2026.08.25-3e8eec8). Returns
     just the ids (before ` - `), skipping the header/blank lines and any
     line with no ` - ` separator (defensive — a format change should
-    degrade to an empty/partial list here, never crash detection)."""
+    degrade to an empty/partial list here, never crash detection).
+
+    ai-kit only reads here, but cursor-agent itself may refresh its own
+    caches in ~/.cursor/cli-config.json when invoked (the 16.1-24 live checks
+    saw that file change while ai-kit only ran `cursor-agent models`), so a
+    before/after config fingerprint can change."""
     try:
         result = run_fn([binary, "models"], capture_output=True, text=True,
                          check=False, timeout=15)
