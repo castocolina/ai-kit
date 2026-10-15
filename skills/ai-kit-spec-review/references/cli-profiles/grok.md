@@ -37,7 +37,7 @@ classification already catches, so a wrong value here silently reads as
 "reviewer unavailable" rather than surfacing the real cause). **Never use
 `--output-format json`/`streaming-json`/`streaming-messages-json` or
 `--json-schema` here either** — `ai-kit-spec.py`'s report parsing
-(`report_has_status`/`parse_findings`) expects the reviewer output
+(`report_status`/`parse_findings`) expects the reviewer output
 template's raw markdown (`### Status:`, `### <SEVERITY>` headings,
 `- **title** — Location: ...` bullets) as plain text on stdout, not JSON;
 a JSON-wrapped response parses as zero findings and can bury the
