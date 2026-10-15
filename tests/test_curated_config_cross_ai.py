@@ -13,9 +13,18 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-gsd-curated-config"),
 )
 
-from ai_kit_gsd_curated_config import cross_ai, gsd_catalog, host, plan_io, plan_schema, recommend
+from ai_kit_gsd_curated_config import (
+    cross_ai,
+    gsd_catalog,
+    host,
+    plan_io,
+    plan_schema,
+    recommend,
+    roles,
+)
 
 from tests.test_curated_config_recommend import (
+    _fixture_review_lanes,
     build,
     cand,
     entry_map,
@@ -303,6 +312,389 @@ class TestExecDefault(unittest.TestCase):
             with open(path, "rb") as handle:
                 self.assertEqual(handle.read(), old_bytes)
             self.assertEqual(os.listdir(tmp), ["plan.json"])
+
+
+
+def review_cand(model: str, runtime: str, review: float = 80.0, **fields):
+    scores = {"execution": 1.0, "planning": 1.0, "general": 1.0, "review": review}
+    return cand(
+        model,
+        runtime=runtime,
+        is_host=False,
+        score_axes=3,
+        purpose_scores=scores,
+        price=fields.pop("price", 2.0),
+        **fields,
+    )
+
+
+def _lane_row(slug: str, binary: str | None, model_key: str, effort_key: str | None = None):
+    return {
+        "slug": slug,
+        "binary": binary,
+        "transport": "spawn",
+        "model_key": model_key,
+        "effort_key": effort_key,
+        "default_effort": "high" if effort_key else None,
+    }
+
+
+def _review_inv(host_name: str, candidates, installed, lanes, extra_accepted=()):
+    from tests.test_curated_config_recommend import _review_lane_accepted_keys
+
+    keys = list(extra_accepted) + _review_lane_accepted_keys()
+    inv = make_inventory(
+        host=host_name,
+        candidates=candidates,
+        review_lanes=lanes,
+        extra_accepted=keys,
+    )
+    inv["installed_runtimes"] = list(installed)
+    return inv
+
+
+class TestReviewLanes(unittest.TestCase):
+    def test_r2_boundary_one_eligible_rigorous(self):
+        lanes = [_lane_row("codex", "codex", "review.models.codex", "review.effort.codex")]
+        inv = _review_inv(
+            "claude",
+            [
+                cand("claude-opus-5-5", vendor="anthropic", score_axes=3,
+                     purpose_scores={"planning": 9.0, "review": 1.0}),
+                review_cand("gpt-5.6-sol", "codex", vendor="openai"),
+            ],
+            ["claude", "codex"],
+            lanes,
+        )
+        picked, notes = cross_ai.select_lanes(inv, "rigorous", "anthropic")
+        self.assertEqual(len(picked), 1)
+        self.assertTrue(any("only one eligible" in n["text"] for n in notes))
+
+    def test_r2_adjacency_skips_planner_vendor(self):
+        lanes = [_lane_row("codex", "codex", "review.models.codex", "review.effort.codex")]
+        inv = _review_inv(
+            "claude",
+            [
+                cand("claude-opus-5-5", vendor="anthropic", score_axes=3,
+                     purpose_scores={"planning": 9.0}),
+                review_cand("openai-high", "codex", review=99.0, vendor="openai"),
+                review_cand("anthropic-high", "codex", review=50.0, vendor="anthropic"),
+            ],
+            ["claude", "codex"],
+            lanes,
+        )
+        lane = cross_ai.select_lanes(inv, "standard", "anthropic")[0][0]
+        self.assertEqual(lane.model, "openai-high")
+
+    def test_r2_adjacency_rigorous_second_vendor(self):
+        lanes = [
+            _lane_row("codex", "codex", "review.models.codex", "review.effort.codex"),
+            _lane_row("opencode", "opencode", "review.models.opencode", "review.effort.opencode"),
+        ]
+        inv = _review_inv(
+            "claude",
+            [
+                cand("claude-opus-5-5", vendor="anthropic", score_axes=3,
+                     purpose_scores={"planning": 9.0}),
+                review_cand("openai-a", "codex", review=90.0, vendor="openai", price=1.0),
+                review_cand("google-codex", "codex", review=88.0, vendor="google", price=1.0),
+                review_cand("openai-b", "opencode", review=99.0, vendor="openai", price=1.0),
+            ],
+            ["claude", "codex", "opencode"],
+            lanes,
+        )
+        picked, _ = cross_ai.select_lanes(inv, "rigorous", "anthropic")
+        self.assertEqual(len(picked), 2)
+        self.assertNotEqual(picked[0].vendor, picked[1].vendor)
+
+    def test_r2_empty_no_installed_cli(self):
+        inv = _review_inv("claude", [], [], _fixture_review_lanes())
+        plan = build(inv, rigor="standard", cross_ai_review="y")
+        self.assertFalse(entry_map(plan)["workflow.plan_review_convergence"]["value"])
+        notes = [n for n in plan["notes"] if n.get("kind") == "review_lane"]
+        self.assertTrue(notes)
+
+    def test_r2_encoding_antigravity_and_cursor_effort(self):
+        lanes = [
+            _lane_row("antigravity", "agy", "review.models.agy", None),
+            _lane_row("cursor", "cursor-agent", "review.models.cursor", None),
+        ]
+        inv = _review_inv(
+            "codex",
+            [
+                cand("gpt-5.6-sol", vendor="openai", score_axes=3,
+                     purpose_scores={"planning": 9.0}),
+                review_cand("agy-model", "agy", vendor="google"),
+                review_cand("composer-2.5", "cursor-agent", vendor="cursor"),
+            ],
+            ["codex", "agy", "cursor-agent"],
+            lanes,
+        )
+        picked, _ = cross_ai.select_lanes(inv, "standard", "openai")
+        keys = {lane.model_key for lane in picked}
+        self.assertIn("review.models.agy", keys)
+        plan = build(inv, rigor="standard", cross_ai_review="y")
+        em = entry_map(plan)
+        self.assertNotIn("review.effort.cursor", em)
+
+    def test_r2_ordering_scored_lanes(self):
+        lanes = [
+            _lane_row("codex", "codex", "review.models.codex", "review.effort.codex"),
+            _lane_row("opencode", "opencode", "review.models.opencode", "review.effort.opencode"),
+        ]
+        inv = _review_inv(
+            "claude",
+            [
+                cand("claude-opus-5-5", vendor="anthropic", score_axes=3,
+                     purpose_scores={"planning": 9.0}),
+                review_cand("z-model", "codex", review=50.0, vendor="openai", price=3.0),
+                review_cand("a-model", "opencode", review=50.0, vendor="google", price=1.0),
+            ],
+            ["claude", "codex", "opencode"],
+            lanes,
+        )
+        first = cross_ai.select_lanes(inv, "standard", "anthropic")[0][0]
+        self.assertEqual(first.slug, "opencode")
+        self.assertEqual(first.model, "a-model")
+
+    def test_r2_ordering_equal_price_model_id(self):
+        lanes = [
+            _lane_row("codex", "codex", "review.models.codex", "review.effort.codex"),
+            _lane_row("opencode", "opencode", "review.models.opencode", "review.effort.opencode"),
+        ]
+        inv = _review_inv(
+            "claude",
+            [
+                cand("claude-opus-5-5", vendor="anthropic", score_axes=3,
+                     purpose_scores={"planning": 9.0}),
+                review_cand("b-model", "codex", review=50.0, vendor="openai", price=2.0),
+                review_cand("a-model", "opencode", review=50.0, vendor="google", price=2.0),
+            ],
+            ["claude", "codex", "opencode"],
+            lanes,
+        )
+        first = cross_ai.select_lanes(inv, "standard", "anthropic")[0][0]
+        self.assertEqual(first.slug, "opencode")
+
+    def test_r2_ordering_router_before_scored(self):
+        lanes = [
+            _lane_row("opencode", "opencode", "review.models.opencode", "review.effort.opencode"),
+            _lane_row("codex", "codex", "review.models.codex", "review.effort.codex"),
+        ]
+        inv = _review_inv(
+            "claude",
+            [
+                cand("claude-opus-5-5", vendor="anthropic", score_axes=3,
+                     purpose_scores={"planning": 9.0}),
+                review_cand("openai-best", "codex", review=99.0, vendor="openai"),
+                cand(
+                    "router-env/review",
+                    runtime="opencode",
+                    is_host=False,
+                    is_router=True,
+                    router_confirmed=True,
+                    name_declared_purpose="review",
+                    score_axes=0,
+                    purpose_scores={},
+                ),
+            ],
+            ["claude", "codex", "opencode"],
+            lanes,
+        )
+        picked, _ = cross_ai.select_lanes(inv, "standard", "anthropic")
+        self.assertEqual(picked[0].source, "router-declared")
+        self.assertEqual(picked[0].slug, "opencode")
+
+    def test_r2_precision_not_tied(self):
+        lanes = [_lane_row("codex", "codex", "review.models.codex", "review.effort.codex")]
+        inv = _review_inv(
+            "claude",
+            [
+                cand("claude-opus-5-5", vendor="anthropic", score_axes=3,
+                     purpose_scores={"planning": 9.0}),
+                review_cand("exact-a", "codex", review=0.8, vendor="openai", price=1.0),
+                review_cand("exact-b", "codex", review=0.8000001, vendor="google", price=1.0),
+            ],
+            ["claude", "codex"],
+            lanes,
+        )
+        # Two different vendors but only one lane slug — pick the higher score within lane.
+        lane = cross_ai.select_lanes(inv, "standard", "anthropic")[0][0]
+        self.assertEqual(lane.model, "exact-b")
+
+    def test_rejected_model_key_not_eligible(self):
+        lanes = [_lane_row("codex", "codex", "review.models.codex", "review.effort.codex")]
+        inv = _review_inv(
+            "claude",
+            [review_cand("gpt-5.6-sol", "codex", vendor="openai")],
+            ["codex"],
+            lanes,
+            extra_accepted=(),
+        )
+        inv["gsd_core"]["valid_keys"]["rejected"] = ["review.models.codex"]
+        self.assertEqual(cross_ai.eligible_lanes(inv), [])
+
+    def test_http_lane_binary_none_not_eligible(self):
+        lanes = [_lane_row("ollama", None, "review.models.ollama", None)]
+        inv = _review_inv("claude", [], ["claude"], lanes)
+        self.assertEqual(cross_ai.eligible_lanes(inv), [])
+
+    def test_planner_vendor_unknown_note(self):
+        inv = _review_inv(
+            "codex",
+            [review_cand("m1", "opencode", vendor="openai")],
+            ["codex", "opencode"],
+            [_lane_row("opencode", "opencode", "review.models.opencode",
+                         "review.effort.opencode")],
+        )
+        plan = build(inv, rigor="standard", cross_ai_review="y")
+        self.assertFalse(entry_map(plan)["workflow.plan_review_convergence"]["value"])
+        notes = [n for n in plan["notes"] if n.get("kind") == "review_lane"]
+        self.assertTrue(any("planner vendor is unknown" in n["text"] for n in notes))
+
+    def test_confirmed_review_router_opencode(self):
+        lanes = [_lane_row("opencode", "opencode", "review.models.opencode",
+                         "review.effort.opencode")]
+        inv = _review_inv(
+            "claude",
+            [
+                cand("claude-opus-5-5", vendor="anthropic", score_axes=3,
+                     purpose_scores={"planning": 9.0}),
+                review_cand("openai-best", "opencode", review=99.0, vendor="openai"),
+                cand(
+                    "router-env/plan-review",
+                    runtime="opencode",
+                    is_host=False,
+                    is_router=True,
+                    router_confirmed=True,
+                    name_declared_purpose="review",
+                    score_axes=0,
+                    purpose_scores={},
+                ),
+            ],
+            ["claude", "opencode"],
+            lanes,
+        )
+        lane = cross_ai.select_lanes(inv, "standard", "anthropic")[0][0]
+        self.assertEqual(lane.source, "router-declared")
+        self.assertEqual(lane.model, "router-env/plan-review")
+
+    def test_unconfirmed_review_router_not_used(self):
+        lanes = [_lane_row("opencode", "opencode", "review.models.opencode",
+                         "review.effort.opencode")]
+        inv = _review_inv(
+            "claude",
+            [
+                cand("claude-opus-5-5", vendor="anthropic", score_axes=3,
+                     purpose_scores={"planning": 9.0}),
+                review_cand("picked", "opencode", review=80.0, vendor="openai"),
+                cand(
+                    "router-env/plan-review",
+                    runtime="opencode",
+                    is_host=False,
+                    is_router=True,
+                    router_confirmed=False,
+                    name_declared_purpose="review",
+                    score_axes=0,
+                    purpose_scores={},
+                ),
+            ],
+            ["claude", "opencode"],
+            lanes,
+        )
+        lane = cross_ai.select_lanes(inv, "standard", "anthropic")[0][0]
+        self.assertEqual(lane.source, "catalog-score")
+        self.assertEqual(lane.model, "picked")
+
+    def test_effort_xhigh_and_opencode_effect(self):
+        lanes = [_lane_row("opencode", "opencode", "review.models.opencode",
+                         "review.effort.opencode")]
+        modes = ["low", "high", "xhigh"]
+        inv = _review_inv(
+            "claude",
+            [
+                cand("claude-opus-5-5", vendor="anthropic", score_axes=3,
+                     purpose_scores={"planning": 9.0}),
+                review_cand("m1", "opencode", vendor="openai", reasoning_modes=modes),
+            ],
+            ["claude", "opencode"],
+            lanes,
+        )
+        rigorous = cross_ai.select_lanes(inv, "rigorous", "anthropic")[0][0]
+        self.assertEqual(cross_ai.lane_effort(lanes[0], "rigorous", rigorous.candidate), "xhigh")
+        standard = cross_ai.select_lanes(inv, "standard", "anthropic")[0][0]
+        self.assertEqual(cross_ai.lane_effort(lanes[0], "standard", standard.candidate), "high")
+        inv["candidates"][1]["reasoning_modes"] = ["low", "high"]
+        plain = cross_ai.select_lanes(inv, "rigorous", "anthropic")[0][0]
+        self.assertEqual(cross_ai.lane_effort(lanes[0], "rigorous", plain.candidate), "high")
+        plan = build(inv, rigor="rigorous", cross_ai_review="y")
+        self.assertEqual(
+            entry_map(plan)["review.effort.opencode"].get("effect"),
+            cross_ai.OPENCODE_EFFORT_EFFECT,
+        )
+
+    def test_claude_lane_alias_on_codex_host(self):
+        lanes = [_lane_row("claude", "claude", "review.models.claude", "review.effort.claude")]
+        inv = _review_inv(
+            "codex",
+            [
+                cand("gpt-5.6-sol", vendor="openai", score_axes=3,
+                     purpose_scores={"planning": 9.0, "review": 1.0}),
+                cand(
+                    "claude-opus-5-5",
+                    runtime="claude",
+                    is_host=False,
+                    vendor="anthropic",
+                    score_axes=3,
+                    purpose_scores={"review": 90.0},
+                    reasoning_modes=["high", "xhigh"],
+                ),
+                cand(
+                    "claude-sonnet-5-1",
+                    runtime="claude",
+                    is_host=False,
+                    vendor="anthropic",
+                    score_axes=3,
+                    purpose_scores={"review": 85.0},
+                    reasoning_modes=["high"],
+                ),
+            ],
+            ["codex", "claude"],
+            lanes,
+        )
+        plan = build(inv, rigor="rigorous", cross_ai_review="y")
+        em = entry_map(plan)
+        val = em["review.models.claude"]["value"]
+        self.assertIn(val, roles.CLAUDE_ALIASES)
+        self.assertEqual(em["review.models.claude"].get("effect"), cross_ai.CLAUDE_ALIAS_EFFECT)
+        self.assertEqual(em["review.effort.claude"]["value"], "xhigh")
+
+    def test_mvp_default_review_off(self):
+        inv = _review_inv(
+            "claude",
+            [review_cand("gpt-5.6-sol", "codex", vendor="openai")],
+            ["claude", "codex"],
+            [_lane_row("codex", "codex", "review.models.codex", "review.effort.codex")],
+        )
+        plan = build(inv, rigor="mvp")
+        self.assertFalse(entry_map(plan)["workflow.plan_review_convergence"]["value"])
+        self.assertNotIn("review.default_reviewers", entry_map(plan))
+
+    def test_host_and_pi_never_lanes(self):
+        base_lanes = _fixture_review_lanes()
+        for host_name in host.HOSTS:
+            with self.subTest(host=host_name):
+                inv = _review_inv(
+                    host_name,
+                    [review_cand("lane-model", "codex", vendor="openai")],
+                    ["codex", host_name] if host_name != "codex" else ["codex"],
+                    base_lanes,
+                )
+                if host_name == "pi":
+                    inv["installed_runtimes"] = ["codex"]
+                picked, _ = cross_ai.select_lanes(inv, "rigorous", "anthropic")
+                for lane in picked:
+                    self.assertNotIn(lane.slug, (host_name, "pi"))
 
 
 class TestValues(unittest.TestCase):
