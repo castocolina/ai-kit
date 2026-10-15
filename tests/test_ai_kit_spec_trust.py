@@ -242,6 +242,23 @@ class TestTrustLifecycle(TrustEnvTestCase):
         self.assertEqual(code, 2)
         self.assertIn("config error", err.getvalue())
 
+    def test_render_toml_out_never_trusts_the_file_it_writes(self):
+        # C-WR-05/D-09: the wizard's write path must leave the local file untrusted.
+        json_path = os.path.join(self.cwd, "cfg.json")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump({"policy": {"mode": "single", "ladder": ["local"]},
+                       "reviewers": [{"key": "local", "model": "m", "vendor": "v",
+                                      "cli": "codex", "command": self.PROBE_CMD}]}, f)
+        local = config_io.cfg_local_path(self.cwd)
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.main(["render-toml", "--json-config", json_path,
+                                       "--out", local]), 0)
+        self.assertTrue(os.path.exists(local))
+        self.assertFalse(os.path.isdir(self.store) and os.listdir(self.store))
+        _, calls, _, err = self.probe_quota()
+        self.assertEqual(calls, [])
+        self.assertIn("trust-local", err)
+
     def test_global_only_reviewer_needs_no_trust(self):
         calls = []
 
