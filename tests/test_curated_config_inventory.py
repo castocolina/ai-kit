@@ -405,6 +405,14 @@ class TestGracefulRefreshTimeout(unittest.TestCase):
                 self.assertRaises(subprocess.TimeoutExpired):
             catalog_adapter._run_graceful(self._child(body), timeout=0.5, env=dict(os.environ))
 
+    def test_grace_outlasts_probe_server_stop(self):
+        """The child's SIGTERM cleanup (_stop_server: SIGTERM wait, then SIGKILL wait) must
+        finish inside the grace with headroom, or our SIGKILL orphans its opencode server."""
+        from ai_kit_spec import detection
+
+        worst = detection._STOP_TERM_WAIT_S + detection._STOP_KILL_WAIT_S
+        self.assertGreaterEqual(catalog_adapter._TERM_GRACE_S, worst + 5)
+
     def test_production_run_uses_graceful_runner(self):
         with mock.patch.object(catalog_adapter, "_run_graceful",
                                side_effect=subprocess.TimeoutExpired("x", 1)) as graceful:

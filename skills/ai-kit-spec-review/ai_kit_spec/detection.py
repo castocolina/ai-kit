@@ -506,13 +506,18 @@ def _sigterm_unwinds():
         signal.signal(signal.SIGTERM, previous)
 
 
+# _stop_server's worst case; catalog_adapter's SIGTERM grace must outlast it (B-WR-05).
+_STOP_TERM_WAIT_S = 5
+_STOP_KILL_WAIT_S = 2  # SIGKILL cannot be ignored: only reaping is left
+
+
 def _stop_server(proc) -> None:
     _signal_server(proc, signal.SIGTERM)
     with contextlib.suppress(subprocess.TimeoutExpired):
-        proc.wait(timeout=5)
+        proc.wait(timeout=_STOP_TERM_WAIT_S)
     _signal_server(proc, _SIGKILL)  # stragglers in the group; ESRCH when none is left
     with contextlib.suppress(subprocess.TimeoutExpired):
-        proc.wait(timeout=5)
+        proc.wait(timeout=_STOP_KILL_WAIT_S)
     with contextlib.suppress(OSError, AttributeError):
         proc.stdout.close()
 

@@ -17,7 +17,8 @@ from . import gsd_catalog, model_detect
 
 _THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SUBPROCESS_TIMEOUT = 120
-_TERM_GRACE_S = 10
+# Outlasts detection._stop_server (5 s + 2 s) with headroom, so SIGKILL never orphans it.
+_TERM_GRACE_S = 15
 _DETECT_WARN = "detect-runtimes failed; using the cached runtimes snapshot"
 _DETECT_NO_CACHE_WARN = "detect-runtimes failed; no cached runtimes snapshot"
 _STALE_WARN = "catalog refresh failed; using the stale cache"
