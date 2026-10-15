@@ -166,7 +166,7 @@ can be verified and closed on trustworthy evidence. Source:
      Artificial Analysis key, so the ranking is scored).
   7. The phase is executed through `.planning/scripts/cross-ai.mjs` (pi first), as the dogfood run
      for Phase 18's runner. The usage-metrics store compaction (audit A10) stays out of scope.
-**Plans**: 30/31 plans executed
+**Plans**: 31/31 plans executed
 
 Plans:
 - Wave 1
@@ -211,7 +211,7 @@ Plans:
 - Wave 11
   - [x] 16.1-23-PLAN.md — widen the gate over every shipped Python file; full gate green
 - Wave 12
-  - [ ] 16.1-24-PLAN.md — Phase 16 live checks, verifier re-run and completion
+  - [x] 16.1-24-PLAN.md — Phase 16 live checks, verifier re-run and completion
 
 ### Phase 17: Curated-Config Inventory & Recommendation Engine
 

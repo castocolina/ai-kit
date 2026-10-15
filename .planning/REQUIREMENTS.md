@@ -73,7 +73,7 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 - [x] **HARD-02**: Skill-embedded Python resolves sibling packages before `~/.claude/skills`, with a test proving a branch checkout imports branch code
 - [x] **HARD-03**: A project-local reviewer command runs only after the user trusts its file (per content hash), and no reviewer command runs with `shell=True`; the dashboard escapes `<` against case-variant `</script` breakouts
 - [x] **HARD-04**: A failed review lane never merges into Approved; error classifiers read only stderr and structured error fields; inherited host env signals are scrubbed from child processes; the unrunnable claude and grok execute builders are deleted; `gsd_config.py` writes via `config-set`
-- [ ] **HARD-05**: The audit's smaller safety items are fixed (codegraph probe timeout and no silent global install, reported `review-spec.toml` parse errors, `install.sh --branch`/`--dry-run` on an existing clone, unique cache temp names, atomic uninstall write, AGENTS.md checker image links); GSD-adjacent code resolves the project-local gsd-core before any global one
+- [x] **HARD-05**: The audit's smaller safety items are fixed (codegraph probe timeout and no silent global install, reported `review-spec.toml` parse errors, `install.sh --branch`/`--dry-run` on an existing clone, unique cache temp names, atomic uninstall write, AGENTS.md checker image links); GSD-adjacent code resolves the project-local gsd-core before any global one
 
 ### One Runtime Model
 
@@ -173,7 +173,7 @@ None deferred beyond v1.3 at definition time.
 | HARD-02 | Phase 16.1 | Complete |
 | HARD-03 | Phase 16.1 | Complete |
 | HARD-04 | Phase 16.1 | Complete |
-| HARD-05 | Phase 16.1 | Pending |
+| HARD-05 | Phase 16.1 | Complete |
 | RTM-01 | Phase 18.1 | Pending |
 | RTM-02 | Phase 18.1 | Pending |
 | RTM-03 | Phase 18.1 | Pending |
