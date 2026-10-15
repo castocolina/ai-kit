@@ -2322,6 +2322,105 @@ class TestPiRpcModels(unittest.TestCase):
         self.assertEqual(recorded["kwargs"]["input"], detection.PI_RPC_REQUEST)
         self.assertEqual(recorded["kwargs"]["timeout"], 15)
 
+    def test_parse_returns_none_without_usable_envelope(self):
+        for bad in (None, "", "not json", '{"command":"other"}'):
+            self.assertIsNone(detection.parse_pi_models(bad))
+        false_resp = (
+            '{"command":"get_available_models","success":false,"data":{"models":[]}}'
+        )
+        self.assertIsNone(detection.parse_pi_models(false_resp))
+        missing_data = '{"command":"get_available_models","success":true}'
+        self.assertIsNone(detection.parse_pi_models(missing_data))
+        bad_models = (
+            '{"command":"get_available_models","success":true,"data":{"models":{}}}'
+        )
+        self.assertIsNone(detection.parse_pi_models(bad_models))
+
+    def test_parse_empty_list_when_all_models_skipped(self):
+        line = (
+            '{"command":"get_available_models","success":true,'
+            '"data":{"models":[{"id":"","provider":"x"}]}}'
+        )
+        self.assertEqual(detection.parse_pi_models(line), [])
+
+    def test_parse_skips_blank_provider_and_field_defaults(self):
+        line = (
+            '{"command":"get_available_models","success":true,"data":{"models":['
+            '{"id":"m","provider":"","input":"text","contextWindow":"n"},'
+            '{"id":"m2","provider":"p","input":null,"contextWindow":1.5}'
+            ']}}'
+        )
+        parsed = detection.parse_pi_models(line)
+        assert parsed is not None
+        self.assertEqual(len(parsed), 1)
+        rec = parsed[0]
+        self.assertEqual(rec["id"], "p/m2")
+        self.assertEqual(rec["reasoning_modes"], [])
+        self.assertFalse(rec["image_input"])
+        self.assertIsNone(rec["context_window"])
+
+    def test_detect_pi_models_failure_paths_return_none(self):
+        fixture = self._fixture_text()
+
+        def oserror(*a, **k):
+            raise OSError("gone")
+
+        def timeout(*a, **k):
+            raise subprocess.TimeoutExpired(cmd="pi", timeout=15)
+
+        def bad_rc(*_a, **_k):
+            return subprocess.CompletedProcess(["pi"], 1, stdout=fixture, stderr="")
+
+        def bad_parse(*_a, **_k):
+            return subprocess.CompletedProcess(["pi"], 0, stdout="not json", stderr="")
+        self.assertIsNone(detection.detect_pi_models("/pi", run_fn=oserror))
+        self.assertIsNone(detection.detect_pi_models("/pi", run_fn=timeout))
+        self.assertIsNone(detection.detect_pi_models("/pi", run_fn=bad_rc))
+        self.assertIsNone(detection.detect_pi_models("/pi", run_fn=bad_parse))
+
+    def test_snapshot_omits_models_on_failed_pi_listing(self):
+        pi_path = "/tmp/pi-fail-test"
+
+        def fake_which(name):
+            return pi_path if name == "pi" else None
+
+        def bad_run(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 0, stdout="not json", stderr="")
+
+        snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=bad_run)
+        entry = snapshot["clis"]["pi"]
+        self.assertEqual(entry, {"installed": True, "path": pi_path})
+        self.assertNotIn("models", entry)
+
+    def test_snapshot_empty_valid_listing(self):
+        empty = (
+            '{"command":"get_available_models","success":true,"data":{"models":[]}}'
+        )
+        pi_path = "/tmp/pi-empty-test"
+
+        def fake_which(name):
+            return pi_path if name == "pi" else None
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 0, stdout=empty, stderr="")
+
+        snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run)
+        self.assertEqual(
+            snapshot["clis"]["pi"],
+            {
+                "installed": True,
+                "path": pi_path,
+                "models": [],
+                "reasoning_modes": {},
+                "image_input": {},
+            },
+        )
+
+    def test_snapshot_pi_not_installed(self):
+        snapshot = build_runtimes_snapshot(which_fn=lambda n: None, run_fn=lambda *a, **k: None)
+        self.assertEqual(snapshot["clis"]["pi"], {"installed": False})
+
+
 
 class TestPiRouterMerge(unittest.TestCase):
     """18 D-45: pi-discovered router merges into an existing catalog entry."""
