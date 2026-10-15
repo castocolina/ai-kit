@@ -166,7 +166,7 @@ can be verified and closed on trustworthy evidence. Source:
      Artificial Analysis key, so the ranking is scored).
   7. The phase is executed through `.planning/scripts/cross-ai.mjs` (pi first), as the dogfood run
      for Phase 18's runner. The usage-metrics store compaction (audit A10) stays out of scope.
-**Plans**: 15/31 plans executed
+**Plans**: 16/31 plans executed
 
 Plans:
 - Wave 1
@@ -191,7 +191,7 @@ Plans:
   - [x] 16.1-12-PLAN.md — spec-review/spec-config SKILL.md failure, trust and argv wording
 - Wave 7
   - [x] 16.1-13-PLAN.md — lint sweep: ai-kit-spec CLI dispatch table and dispatch modules
-  - [ ] 16.1-15-PLAN.md — lint sweep: tools/ SessionStart hooks and config doctor
+  - [x] 16.1-15-PLAN.md — lint sweep: tools/ SessionStart hooks and config doctor
   - [ ] 16.1-16-PLAN.md — lint sweep: markdown-to-pdf, mermaid-audit, cst-refactor template as data
   - [ ] 16.1-18-PLAN.md — lint sweep: opencode-providers, curated-config, spec-discuss
   - [ ] 16.1-19-PLAN.md — lint sweep: agents, all, arch, cicd and docker project-rules skills
