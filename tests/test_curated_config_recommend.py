@@ -1718,6 +1718,27 @@ class TestWritePlan(unittest.TestCase):
                 self.assertEqual(handle.read(), plan_io.canonical_json(plan))
 
 
+class TestRelativeOut(unittest.TestCase):
+    def test_bare_relative_out_is_written(self):
+        """B-CR-02: SPEC R7's literal `--out plan.json` works from any cwd."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path = os.path.join(tmp, "inventory.json")
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                json.dump(make_inventory(), handle)
+            cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = cli.main([
+                        "recommend", "--inventory", inv_path, "--profile", "adaptive",
+                        "--rigor", "standard", "--out", "plan.json",
+                    ])
+            finally:
+                os.chdir(cwd)
+            self.assertEqual(code, 0)
+            self.assertTrue(os.path.isfile(os.path.join(tmp, "plan.json")))
+
+
 class TestInventoryValidation(unittest.TestCase):
     """D-31/R7 boundary: bad inventories exit 2 with `rerun inventory`, write nothing."""
 

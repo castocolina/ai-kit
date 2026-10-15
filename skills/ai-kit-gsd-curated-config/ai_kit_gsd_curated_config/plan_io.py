@@ -6,6 +6,7 @@ writer, so a reader never sees a partial plan.json). The pure `recommend.build_p
 performs no I/O itself (REC-01).
 """
 import json
+import os
 
 from . import gsd_catalog
 from .plan_schema import canonical_json
@@ -239,4 +240,5 @@ def write_plan(path: str, plan: dict) -> None:
     cache = gsd_catalog.load_ai_kit_spec_module("cache")
     if cache is None:
         raise OSError("ai-kit-spec-review sibling (ai_kit_spec) not installed")
-    cache.cache_write_text(path, canonical_json(plan))
+    # abspath: a bare `plan.json` has dirname "" and the shared writer's makedirs("") fails.
+    cache.cache_write_text(os.path.abspath(path), canonical_json(plan))
