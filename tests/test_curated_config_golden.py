@@ -134,7 +134,7 @@ def build_golden_inventory(
         xdg = os.path.join(root, "xdg")
         os.makedirs(project)
         os.makedirs(home, exist_ok=True)
-        from tests.test_curated_config_skills import add_plugin
+        from tests.test_curated_config_skills import add_plugin, add_skill
 
         add_plugin(
             home,
@@ -148,6 +148,15 @@ def build_golden_inventory(
                 "ponytail-gain",
                 "ponytail-help",
             ],
+        )
+        agents_skills = os.path.join(home, ".agents", "skills")
+        os.makedirs(agents_skills, exist_ok=True)
+        add_skill(agents_skills, "react-dev", "React patterns")
+        claude_skills = os.path.join(home, ".claude", "skills")
+        os.makedirs(claude_skills, exist_ok=True)
+        os.symlink(
+            os.path.join(agents_skills, "react-dev"),
+            os.path.join(claude_skills, "react-dev"),
         )
         os.makedirs(os.path.join(project, ".planning"), exist_ok=True)
         with open(os.path.join(project, "AGENTS.md"), "w", encoding="utf-8") as handle:

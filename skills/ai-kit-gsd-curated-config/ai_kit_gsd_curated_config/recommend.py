@@ -1066,6 +1066,13 @@ def _skills_agent_why(
     return "; ".join(why_parts) if why_parts else "skill affinity"
 
 
+_PI_AGENT_SKILLS_EFFECT = "no effect on pi (no GSD agent files installed)"
+_JEV_SESSION_NOTE = (
+    "jev-fast-decision is inert unless the agent session sets GSD_PATH_JEV=1 and "
+    "GSD_PATH_JEV_TIMEOUT_SECONDS"
+)
+
+
 def _skills_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     """Wire installed skills to agents from curated affinity (18 D-02, D-04, D-33)."""
     affinity = ctx.opts.affinity
@@ -1075,6 +1082,7 @@ def _skills_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     resolved, notes = skills.resolve(affinity, ctx.inv, facts, ctx.opts.rigor)
     families = affinity.get("families")
     fam_list = families if isinstance(families, list) else []
+    pi_extra = {"effect": _PI_AGENT_SKILLS_EFFECT} if ctx.host == "pi" else {}
     entries = [
         make_entry(
             ctx,
@@ -1082,9 +1090,31 @@ def _skills_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
             names,
             "affinity",
             _skills_agent_why(agent, names, fam_list, facts),
+            **pi_extra,
         )
         for agent, names in sorted(resolved.items())
     ]
+    wired = skills.wired_skills(resolved, ctx.inv)
+    candidates, _root_notes = skills.trusted_roots(wired, ctx.inv)
+    if candidates:
+        entries.append(
+            make_entry(
+                ctx,
+                "agent_skills_security.trusted_global_roots",
+                None,
+                "affinity",
+                skills.merged_trusted_roots_why(candidates, ctx.inv),
+                status="needs_choice",
+                candidates=candidates,
+            )
+        )
+    notes.extend(skills.proposals(affinity, ctx.inv))
+    if skills.jev_is_wired(resolved):
+        notes.append({
+            "kind": "jev_session_gate",
+            "key": "jev-fast-decision",
+            "text": _JEV_SESSION_NOTE,
+        })
     return entries, notes
 
 

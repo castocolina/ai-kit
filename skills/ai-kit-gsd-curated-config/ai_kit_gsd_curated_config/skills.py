@@ -6,11 +6,18 @@ silently and never named in output (D-03).
 """
 from __future__ import annotations
 
+import json
 from typing import Any, NamedTuple
 
 from . import presets
 
 _KIND_ORDER = ("project", "global", "plugin")
+PROPOSAL_CAP = 10
+
+_TRUSTED_ROOTS_WHY_TAIL = (
+    "or keep the current value with plan-unset; a declined root leaves the skill wired "
+    "and gsd-core skips it (apply reports the warning)"
+)
 
 
 class _ResolveCtx(NamedTuple):
@@ -21,6 +28,7 @@ class _ResolveCtx(NamedTuple):
     agent_skills: dict[str, list[str]]
     seen_per_agent: dict[str, set[str]]
     notes: list[dict]
+    unwired_noted: set[str]
 
 
 def _family_shape_problem(family: Any, index: int, seen_ids: set[str]) -> str | None:
@@ -95,17 +103,50 @@ def skill_facts(inv: dict, prior: list, existing: dict) -> dict[str, bool]:
     }
 
 
-def locate(name: str, inv: dict) -> dict | None:
-    """Best installed, addressable inventory row for ``name`` (project, global, plugin)."""
+def _addressable_rows(name: str, inv: dict) -> list[dict]:
     rows = inv.get("skills")
     if not isinstance(rows, list):
-        return None
-    matches = [
+        return []
+    return [
         row
         for row in rows
         if isinstance(row, dict)
         and row.get("name") == name
         and row.get("addressable") is True
+    ]
+
+
+def _has_usable_project_copy(name: str, inv: dict) -> bool:
+    return any(
+        row.get("root_kind") == "project" and not row.get("escapes_root")
+        for row in _addressable_rows(name, inv)
+    )
+
+
+def _escaping_project_only(name: str, inv: dict) -> bool:
+    rows = _addressable_rows(name, inv)
+    if not rows:
+        return False
+    has_escaping = any(
+        row.get("root_kind") == "project" and row.get("escapes_root") for row in rows
+    )
+    if not has_escaping:
+        return False
+    has_other = any(
+        row.get("root_kind") in ("global", "plugin")
+        or (row.get("root_kind") == "project" and not row.get("escapes_root"))
+        for row in rows
+    )
+    return not has_other
+
+
+def locate(name: str, inv: dict) -> dict | None:
+    """Best installed, addressable inventory row for ``name`` (project, global, plugin)."""
+    matches = _addressable_rows(name, inv)
+    matches = [
+        row
+        for row in matches
+        if not (row.get("root_kind") == "project" and row.get("escapes_root"))
     ]
     if not matches:
         return None
@@ -133,6 +174,65 @@ def reference_for(entry: dict) -> str:
     return f"global:{name}"
 
 
+def existing_roots(inv: dict) -> list[str]:
+    """Recorded ``agent_skills_security.trusted_global_roots`` from the inventory."""
+    existing = inv.get("existing_config")
+    if not isinstance(existing, dict):
+        return []
+    values = existing.get("values")
+    if not isinstance(values, dict):
+        return []
+    sec = values.get("agent_skills_security")
+    if not isinstance(sec, dict):
+        return []
+    roots = sec.get("trusted_global_roots")
+    if not isinstance(roots, list):
+        return []
+    return [item for item in roots if isinstance(item, str)]
+
+
+def covered(value: str, real_dir: str, roots: list[str]) -> bool:
+    """True when an existing trusted root already covers ``value`` (lexical shortcut)."""
+    # shortcut: lexical comparison; a root reached only through a symlink is proposed again
+    # (harmless duplicate approval); gsd-core canonicalizes roots at use
+    for root in roots:
+        trimmed = root.rstrip("/")
+        if trimmed.startswith("~/"):
+            if value == trimmed or value.startswith(trimmed + "/"):
+                return True
+        elif real_dir == trimmed or real_dir.startswith(trimmed + "/"):
+            return True
+    return False
+
+
+def _record_unwired(ctx: _ResolveCtx, skill: str, text: str) -> None:
+    if skill in ctx.unwired_noted:
+        return
+    ctx.unwired_noted.add(skill)
+    ctx.notes.append({"kind": "skill_unwired", "key": skill, "text": text})
+
+
+def _can_wire(name: str, ctx: _ResolveCtx) -> bool:
+    row = locate(name, ctx.inv)
+    if row is None:
+        if _escaping_project_only(name, ctx.inv):
+            _record_unwired(
+                ctx,
+                name,
+                f"not wired: {name} (its project copy resolves outside the project)",
+            )
+        return False
+    if (
+        row.get("root_kind") == "global"
+        and row.get("escapes_root")
+        and not _has_usable_project_copy(name, ctx.inv)
+        and not row.get("real_dir_home")
+    ):
+        _record_unwired(ctx, name, f"not wired: {name} resolves outside the home directory")
+        return False
+    return True
+
+
 def _wire_agent(ctx: _ResolveCtx, fam_id: str, agent: str, skill_names: list) -> None:
     if agent not in ctx.agents_known:
         ctx.notes.append({
@@ -146,7 +246,7 @@ def _wire_agent(ctx: _ResolveCtx, fam_id: str, agent: str, skill_names: list) ->
     for skill_name in skill_names:
         if not isinstance(skill_name, str) or skill_name in bucket:
             continue
-        if locate(skill_name, ctx.inv) is None or len(names) >= ctx.cap:
+        if len(names) >= ctx.cap or not _can_wire(skill_name, ctx):
             continue
         bucket.add(skill_name)
         names.append(skill_name)
@@ -184,6 +284,7 @@ def resolve(
         agent_skills={},
         seen_per_agent={},
         notes=[],
+        unwired_noted=set(),
     )
     families = affinity.get("families")
     if not isinstance(families, list):
@@ -192,3 +293,119 @@ def resolve(
         if isinstance(family, dict):
             _resolve_family(family, ctx)
     return {agent: names for agent, names in ctx.agent_skills.items() if names}, ctx.notes
+
+
+def wired_skills(resolved: dict[str, list[str]], inv: dict) -> dict[str, dict]:
+    """Installed inventory row per wired bare skill name."""
+    wired: dict[str, dict] = {}
+    for names in resolved.values():
+        for name in names:
+            if name in wired:
+                continue
+            row = locate(name, inv)
+            if row is not None:
+                wired[name] = row
+    return wired
+
+
+def trusted_roots(wired: dict, inv: dict) -> tuple[list[dict], list[dict]]:
+    """``needs_choice`` candidates for escaping global skills (18 D-34, D-41)."""
+    roots = existing_roots(inv)
+    raw: list[dict] = []
+    notes: list[dict] = []
+    for skill, row in sorted(wired.items()):
+        if row.get("root_kind") != "global" or not row.get("escapes_root"):
+            continue
+        if _has_usable_project_copy(skill, inv):
+            continue
+        home_rel = row.get("real_dir_home")
+        if not isinstance(home_rel, str) or not home_rel:
+            continue
+        real_dir = row.get("real_dir") if isinstance(row.get("real_dir"), str) else ""
+        if covered(home_rel, real_dir, roots):
+            continue
+        raw.append({
+            "value": home_rel,
+            "skill": skill,
+            "why": f"global skill {skill} resolves outside the configured root",
+        })
+    seen: set[str] = set()
+    candidates: list[dict] = []
+    for item in sorted(raw, key=lambda entry: entry["value"]):
+        if item["value"] in seen:
+            continue
+        seen.add(item["value"])
+        candidates.append(item)
+    return candidates, notes
+
+
+def merged_trusted_roots_why(candidates: list[dict], inv: dict) -> str:
+    merged = existing_roots(inv) + [item["value"] for item in candidates]
+    payload = json.dumps(merged, separators=(",", ":"))
+    return (
+        f"approve with plan-set agent_skills_security.trusted_global_roots '{payload}' "
+        f"{_TRUSTED_ROOTS_WHY_TAIL}"
+    )
+
+
+def _family_skill_names(affinity: dict) -> set[str]:
+    names: set[str] = set()
+    families = affinity.get("families")
+    if not isinstance(families, list):
+        return names
+    for family in families:
+        if not isinstance(family, dict):
+            continue
+        skills_list = family.get("skills")
+        if isinstance(skills_list, list):
+            for skill in skills_list:
+                if isinstance(skill, str):
+                    names.add(skill)
+    return names
+
+
+def proposals(affinity: dict, inv: dict) -> list[dict]:
+    """Capped notes for unknown installed skills (18 D-03)."""
+    family = _family_skill_names(affinity)
+    rows = inv.get("skills")
+    if not isinstance(rows, list):
+        return []
+    eligible: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("addressable") is not True:
+            continue
+        name = row.get("name")
+        if not isinstance(name, str) or name in family or name.startswith("gsd-"):
+            continue
+        desc = row.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            continue
+        eligible.append(row)
+    eligible.sort(key=lambda item: item["name"])
+    notes: list[dict] = []
+    for row in eligible[:PROPOSAL_CAP]:
+        name = row["name"]
+        kind = row.get("root_kind", "")
+        desc = row["description"]
+        notes.append({
+            "kind": "skill_proposal",
+            "key": name,
+            "text": (
+                f"unknown skill {name} ({kind}): {desc}; "
+                "wire with plan-set agent_skills.<agent>"
+            ),
+        })
+    extra = len(eligible) - PROPOSAL_CAP
+    if extra > 0:
+        notes.append({
+            "kind": "skill_proposal_more",
+            "key": "skills",
+            "text": (
+                f"{extra} more unknown skills not listed; see the inventory's skills list"
+            ),
+        })
+    return notes
+
+
+def jev_is_wired(resolved: dict[str, list[str]]) -> bool:
+    return any("jev-fast-decision" in names for names in resolved.values())

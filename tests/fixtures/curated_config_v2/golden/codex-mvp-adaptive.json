@@ -42,6 +42,36 @@
   "entries": [
     {
       "existing": null,
+      "key": "agent_skills.gsd-executor",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "react-dev"
+      ],
+      "why": "family frontend: react-dev"
+    },
+    {
+      "existing": null,
+      "key": "agent_skills.gsd-ui-auditor",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "react-dev"
+      ],
+      "why": "family frontend: react-dev"
+    },
+    {
+      "existing": null,
+      "key": "agent_skills.gsd-ui-researcher",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "react-dev"
+      ],
+      "why": "family frontend: react-dev"
+    },
+    {
+      "existing": null,
       "key": "effort.agent_overrides.gsd-code-fixer",
       "op": "set",
       "source": "preset",

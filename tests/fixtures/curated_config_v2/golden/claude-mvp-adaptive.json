@@ -78,9 +78,10 @@
       "op": "set",
       "source": "affinity",
       "value": [
-        "ponytail"
+        "ponytail",
+        "react-dev"
       ],
-      "why": "family ponytail-core: ponytail"
+      "why": "family ponytail-core: ponytail; family frontend: react-dev"
     },
     {
       "existing": null,
@@ -127,6 +128,16 @@
     },
     {
       "existing": null,
+      "key": "agent_skills.gsd-ui-researcher",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "react-dev"
+      ],
+      "why": "family frontend: react-dev"
+    },
+    {
+      "existing": null,
       "key": "agent_skills.gsd-verifier",
       "op": "set",
       "source": "affinity",
@@ -134,6 +145,22 @@
         "ponytail-debt"
       ],
       "why": "family ponytail-debt: ponytail-debt"
+    },
+    {
+      "candidates": [
+        {
+          "skill": "react-dev",
+          "value": "~/.agents/skills/react-dev",
+          "why": "global skill react-dev resolves outside the configured root"
+        }
+      ],
+      "existing": null,
+      "key": "agent_skills_security.trusted_global_roots",
+      "op": "set",
+      "source": "affinity",
+      "status": "needs_choice",
+      "value": null,
+      "why": "approve with plan-set agent_skills_security.trusted_global_roots '[\"~/.agents/skills/react-dev\"]' or keep the current value with plan-unset; a declined root leaves the skill wired and gsd-core skips it (apply reports the warning)"
     },
     {
       "existing": null,
