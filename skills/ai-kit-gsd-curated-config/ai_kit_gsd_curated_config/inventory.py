@@ -57,25 +57,6 @@ class InventoryOpts(NamedTuple):
     refresh: bool = False
 
 
-class _ResolvedHost(NamedTuple):
-    host_name: str
-    host_source: str
-    core: host.GsdCore
-
-
-class _InventorySnapshot(NamedTuple):
-    host_name: str
-    host_source: str
-    core: host.GsdCore
-    existing: dict
-    global_defaults: dict
-    tables: dict
-    fields: dict
-    project_dir: str
-    ex_warn: str | None
-    gl_warn: str | None
-
-
 def _filter_allowlist(values: dict, allowed: tuple[str, ...]) -> dict:
     return {key: values[key] for key in allowed if key in values}
 
@@ -326,83 +307,55 @@ def classify_conflicts(
     )
 
 
-def _assemble_inventory(snapshot: _InventorySnapshot):
-    configured = snapshot.existing["values"].get("claude_md_path")
-    claude_path = configured if isinstance(configured, str) else None
-    facts = project_facts.project_facts(snapshot.project_dir, claude_path)
-    conflicts, info = classify_conflicts(
-        snapshot.host_name,
-        snapshot.existing,
-        snapshot.global_defaults,
-        facts,
-        snapshot.project_dir,
+def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore, parts: dict):
+    existing = parts["existing_config"]
+    configured = existing["values"].get("claude_md_path")
+    facts = project_facts.project_facts(
+        project_dir, configured if isinstance(configured, str) else None
     )
-    fields = dict(snapshot.fields)
-    cat_warnings = fields.pop("catalog_warnings")
-    extra_warns = [w for w in (snapshot.ex_warn, snapshot.gl_warn) if w]
-    core = snapshot.core
+    conflicts, info = classify_conflicts(
+        host_name, existing, parts["global_defaults"], facts, project_dir
+    )
+    warnings = set(core.warnings) | set(parts["catalog_warnings"]) | set(parts["config_warnings"])
     return {
         "schema_version": plan_io.INVENTORY_SCHEMA_VERSION,
-        "host": snapshot.host_name,
-        "host_source": snapshot.host_source,
+        "host": host_name,
+        "host_source": host_source,
         "gsd_core": {
             "path": core.root,
             "scope": core.scope,
             "version": core.version,
-            **snapshot.tables,
+            **parts["tables"],
         },
-        "existing_config": snapshot.existing,
-        "global_defaults": snapshot.global_defaults,
-        "catalog": fields["catalog"],
-        "candidates": fields["candidates"],
-        "candidate_heuristic_fields": fields["candidate_heuristic_fields"],
+        "existing_config": existing,
+        "global_defaults": parts["global_defaults"],
+        "catalog": parts["catalog"],
+        "candidates": parts["candidates"],
+        "candidate_heuristic_fields": parts["candidate_heuristic_fields"],
         "project": facts,
-        "skills": project_facts.list_skills(snapshot.project_dir),
+        "skills": project_facts.list_skills(project_dir),
         "conflicts": conflicts,
         "info": info,
-        "warnings": sorted(set(core.warnings) | set(cat_warnings) | set(extra_warns)),
+        "warnings": sorted(warnings),
     }
 
 
-def _load_configs(project_dir, deps, resolved: _ResolvedHost):
+def _load_configs(project_dir, deps, host_name, core: host.GsdCore):
+    """Project and global config plus the probed gsd-core tables, as inventory parts:
+    `(parts, None)` or `(None, error_message)`."""
     node_bin = gsd_catalog.resolve_node_binary(deps.which_fn)
-    existing, ex_warn = _existing_config(
-        project_dir, resolved.core.tools_path, node_bin, deps.run_fn
-    )
+    existing, ex_warn = _existing_config(project_dir, core.tools_path, node_bin, deps.run_fn)
     global_defaults, gl_warn = _global_defaults(deps.env_fn())
-    probe = _probe_keys(
-        resolved.host_name, existing["values"], global_defaults["values"]
-    )
-    tables, table_err = _probe_gsd_tables(resolved.core, node_bin, project_dir, probe, deps.run_fn)
-    return existing, global_defaults, tables, table_err, ex_warn, gl_warn
-
-
-def _inventory_snapshot(project_dir, opts, deps, resolved: _ResolvedHost):
-    existing, global_defaults, tables, table_err, ex_warn, gl_warn = _load_configs(
-        project_dir, deps, resolved
-    )
+    probe = _probe_keys(host_name, existing["values"], global_defaults["values"])
+    tables, table_err = _probe_gsd_tables(core, node_bin, project_dir, probe, deps.run_fn)
     if tables is None:
         return None, table_err
-    fields, cat_err = _catalog_fields(
-        project_dir, opts, resolved.host_name, deps.env_fn(), deps.run_fn
-    )
-    if fields is None:
-        return None, cat_err
-    return (
-        _InventorySnapshot(
-            resolved.host_name,
-            resolved.host_source,
-            resolved.core,
-            existing,
-            global_defaults,
-            tables,
-            fields,
-            project_dir,
-            ex_warn,
-            gl_warn,
-        ),
-        None,
-    )
+    return {
+        "existing_config": existing,
+        "global_defaults": global_defaults,
+        "tables": tables,
+        "config_warnings": [w for w in (ex_warn, gl_warn) if w],
+    }, None
 
 
 def build_inventory(project_dir, opts: InventoryOpts, deps: host.InventoryDeps):
@@ -413,9 +366,11 @@ def build_inventory(project_dir, opts: InventoryOpts, deps: host.InventoryDeps):
     core, error = host.resolve_gsd_core(project_dir, host_name, deps)
     if core is None:
         return None, error
-    snap, err = _inventory_snapshot(
-        project_dir, opts, deps, _ResolvedHost(host_name, host_source, core)
-    )
-    if snap is None:
-        return None, err
-    return _assemble_inventory(snap), None
+    configs, error = _load_configs(project_dir, deps, host_name, core)
+    if configs is None:
+        return None, error
+    fields, error = _catalog_fields(project_dir, opts, host_name, deps.env_fn(), deps.run_fn)
+    if fields is None:
+        return None, error
+    parts = {**configs, **fields}
+    return _assemble_inventory(project_dir, host_name, host_source, core, parts), None
