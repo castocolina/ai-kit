@@ -31,6 +31,7 @@ from ai_kit_gsd_curated_config import (
 from ai_kit_spec import gsd_tools
 
 from tests.test_ai_kit_gsd_curated_config import _RealGsdTestCase
+from tests.test_curated_config_recommend import build, entry_map, make_inventory
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -1711,6 +1712,48 @@ class TestConflictMatrix(unittest.TestCase):
         self.assertEqual(len(claude_info), 1)
         self.assertIn("./CLAUDE.md", claude_info[0]["why"])
         self.assertIn("./AGENTS.md", claude_info[0]["why"])
+
+    def _inventory_with_config(self, config):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        os.makedirs(os.path.join(project, ".planning"), exist_ok=True)
+        with open(os.path.join(project, ".planning", "config.json"), "w", encoding="utf-8") as fh:
+            json.dump(config, fh)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        code, parsed, err = run_inventory(
+            project, _inventory_env(home), FakeRun(), "--host", "codex"
+        )
+        self.assertEqual(code, 0, err)
+        assert parsed is not None
+        return parsed
+
+    def test_legacy_depth_reads_as_granularity(self):
+        """B-IN-06: gsd-core hoists a top-level depth into an absent granularity
+        (configuration.cjs normalization 4), so the plan shows a change, not an add."""
+        parsed = self._inventory_with_config({"depth": "quick"})
+        existing = parsed["existing_config"]
+        self.assertEqual(existing["values"]["granularity"], "coarse")
+        self.assertNotIn("depth", existing["values"])
+        self.assertEqual(existing["legacy_depth"], "quick")
+        depth_info = [i for i in parsed["info"] if i["kind"] == "depth"]
+        self.assertEqual(len(depth_info), 1)
+        self.assertEqual(depth_info[0]["key"], "depth")
+        self.assertIn("legacy top-level depth", depth_info[0]["why"])
+        plan = build(make_inventory(existing=existing))
+        self.assertEqual(entry_map(plan)["granularity"]["existing"], "coarse")
+
+    def test_legacy_depth_unmapped_value_passes_through(self):
+        parsed = self._inventory_with_config({"depth": "custom"})
+        self.assertEqual(parsed["existing_config"]["values"]["granularity"], "custom")
+
+    def test_granularity_wins_over_legacy_depth(self):
+        parsed = self._inventory_with_config({"depth": "quick", "granularity": "fine"})
+        existing = parsed["existing_config"]
+        self.assertEqual(existing["values"]["granularity"], "fine")
+        self.assertNotIn("legacy_depth", existing)
+        self.assertFalse(any(i["kind"] == "depth" for i in parsed["info"]))
 
     def test_unreadable_project_config_warning(self):
         project = tempfile.mkdtemp()

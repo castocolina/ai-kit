@@ -41,6 +41,9 @@ PROJECT_CONFIG_KEYS = (
 
 GLOBAL_CONFIG_KEYS = ("model_policy", "runtime", "resolve_model_ids")
 
+# gsd-core configuration.cjs DEPTH_TO_GRANULARITY; an unmapped depth passes through as-is.
+_DEPTH_TO_GRANULARITY = {"quick": "coarse", "standard": "standard", "comprehensive": "fine"}
+
 _LATENT = "latent (copied into the project config by config-new-project)"
 _COPIED_WHY = "copied into the project config by config-new-project"
 _INERT_WHY = "inert: gsd-tools ignores ~/.gsd/defaults.json when a project config exists (#3532)"
@@ -75,6 +78,16 @@ def _read_json_object(path: str) -> tuple[dict | None, str | None]:
     return data, None
 
 
+def _hoist_legacy_depth(raw: dict) -> tuple[dict, bool]:
+    """Mirrors gsd-core's normalization 4 (configuration.cjs): a top-level `depth` with no
+    `granularity` is read as granularity. Returns `(config, hoisted)`."""
+    if "depth" not in raw or "granularity" in raw:
+        return raw, False
+    depth = raw["depth"]
+    mapped = _DEPTH_TO_GRANULARITY.get(depth, depth) if isinstance(depth, str) else depth
+    return {**raw, "granularity": mapped}, True
+
+
 def _existing_config(project_dir, tools_path, node_bin, deps):
     gsd = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
     path = os.path.join(project_dir, ".planning", "config.json")
@@ -85,8 +98,12 @@ def _existing_config(project_dir, tools_path, node_bin, deps):
             path = resolved
     raw, warn = _read_json_object(path)
     exists = os.path.isfile(path)
-    values = _filter_allowlist(raw, PROJECT_CONFIG_KEYS) if raw else {}
-    return {"path": path, "exists": exists, "values": values}, warn
+    raw, hoisted = _hoist_legacy_depth(raw or {})
+    values = _filter_allowlist(raw, PROJECT_CONFIG_KEYS)
+    section = {"path": path, "exists": exists, "values": values}
+    if hoisted:
+        section["legacy_depth"] = raw["depth"]
+    return section, warn
 
 
 def _global_defaults(env: dict):
@@ -280,6 +297,23 @@ def _claude_md_info(project_dir: str, existing: dict, facts: dict) -> list:
     return [_item("claude_md_path", "project", configured, text)]
 
 
+def _legacy_depth_info(existing: dict) -> list:
+    if "legacy_depth" not in existing:
+        return []
+    depth = existing["legacy_depth"]
+    granularity = existing["values"].get("granularity")
+    return [
+        _item(
+            "depth",
+            "project",
+            depth,
+            f"legacy top-level depth {json.dumps(depth)} is read as granularity "
+            f"{json.dumps(granularity)} by gsd-core (configuration.cjs normalization 4); "
+            "a written granularity takes precedence and leaves depth unused",
+        )
+    ]
+
+
 def classify_conflicts(
     host_name: str, existing: dict, global_defaults: dict, facts: dict, project_dir: str
 ) -> tuple[list, list]:
@@ -296,6 +330,7 @@ def classify_conflicts(
         conflicts.extend(part[0])
         info.extend(part[1])
     info.extend(_claude_md_info(project_dir, existing, facts))
+    info.extend(_legacy_depth_info(existing))
     return (
         sorted(conflicts, key=lambda row: (row["kind"], row["scope"])),
         sorted(info, key=lambda row: (row["kind"], row["scope"])),
