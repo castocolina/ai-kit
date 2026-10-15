@@ -80,11 +80,19 @@ def _host_homes(env: Mapping[str, str]) -> list[str]:
             pick(("GROK_AGENTS_HOME",), os.path.join(home, ".agents"))]
 
 
+def local_gsd_core_roots(root: str) -> list[str]:
+    """Project-local gsd-core install roots in GSD's launcher order (before any host home).
+
+    Shared by `gsd_core_roots` and the curated-config inventory resolver — never duplicate
+    this list elsewhere."""
+    return [os.path.join(root, "gsd-core"), os.path.join(root, ".claude", "gsd-core"),
+            os.path.join(root, ".codex", "gsd-core")]
+
+
 def gsd_core_roots(env: Mapping[str, str], root: str) -> list[str]:
     """gsd-core install-root candidates in GSD's launcher order: project-local first, then
     the host homes."""
-    roots = [os.path.join(root, "gsd-core"), os.path.join(root, ".claude", "gsd-core"),
-             os.path.join(root, ".codex", "gsd-core")]
+    roots = list(local_gsd_core_roots(root))
     roots += [os.path.join(h, "gsd-core") for h in _host_homes(env)]
     return roots
 

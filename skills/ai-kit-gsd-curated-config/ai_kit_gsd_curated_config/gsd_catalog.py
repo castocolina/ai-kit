@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+from typing import NamedTuple
 
 from . import model_detect
 
@@ -58,6 +59,23 @@ def resolve_model_catalog_cjs_path(gsd_tools_path, isfile_fn=os.path.isfile):
         return None
     candidate = os.path.join(os.path.dirname(gsd_tools_path), "lib", "model-catalog.cjs")
     return candidate if isfile_fn(candidate) else None
+
+
+def resolve_config_schema_cjs_path(gsd_tools_path, isfile_fn=os.path.isfile):
+    """Returns `<dirname(gsd_tools_path)>/lib/config-schema.cjs` when that sibling exists,
+    else `None`."""
+    if not gsd_tools_path:
+        return None
+    candidate = os.path.join(os.path.dirname(gsd_tools_path), "lib", "config-schema.cjs")
+    return candidate if isfile_fn(candidate) else None
+
+
+class GsdCorePaths(NamedTuple):
+    """Resolved node binary and the two gsd-core lib modules for one inventory query."""
+
+    node_bin: str
+    model_catalog: str
+    config_schema: str
 
 
 def resolve_node_binary(which_fn=shutil.which):
@@ -117,3 +135,80 @@ def query_agent_catalog(node_bin, model_catalog_path, run_fn=subprocess.run):
     if result.returncode != 0:
         return None
     return _parse_catalog_output(result.stdout)
+
+
+_GSD_TABLES_QUERY_SCRIPT = (
+    "try { const m = require(process.argv[1]); const cs = require(process.argv[2]); "
+    "if (typeof cs.isValidConfigKey !== 'function') throw new Error('missing'); "
+    "const cwd = process.argv[3]; const keys = JSON.parse(process.argv[4]); "
+    "const accepted = keys.filter((k) => cs.isValidConfigKey(k, cwd) === true); "
+    "const rejected = keys.filter((k) => !accepted.includes(k)); "
+    "process.stdout.write(JSON.stringify({runtime_profile_map: m.RUNTIME_PROFILE_MAP, "
+    "model_profiles: m.MODEL_PROFILES, agent_to_phase_type: m.AGENT_TO_PHASE_TYPE, "
+    "valid_keys: {accepted, rejected}})); } catch (e) { process.stdout.write('null'); }"
+)
+
+
+def _parse_tables_output(stdout: str) -> dict | None:
+    try:
+        parsed = json.loads(stdout)
+    except json.JSONDecodeError:
+        parsed = None
+    out = None
+    if isinstance(parsed, dict):
+        rpm = parsed.get("runtime_profile_map")
+        profiles = parsed.get("model_profiles")
+        phase = parsed.get("agent_to_phase_type")
+        valid_keys = parsed.get("valid_keys")
+        accepted = valid_keys.get("accepted") if isinstance(valid_keys, dict) else None
+        rejected = valid_keys.get("rejected") if isinstance(valid_keys, dict) else None
+        key_lists_ok = (
+            isinstance(accepted, list)
+            and isinstance(rejected, list)
+            and all(isinstance(k, str) for k in accepted + rejected)
+        )
+        tables_ok = (
+            isinstance(rpm, dict)
+            and rpm
+            and isinstance(profiles, dict)
+            and profiles
+            and isinstance(phase, dict)
+            and phase
+            and key_lists_ok
+        )
+        if tables_ok:
+            out = {
+                "runtime_profile_map": rpm,
+                "model_profiles": profiles,
+                "agent_to_phase_type": phase,
+                "valid_keys": {
+                    "accepted": sorted(accepted),
+                    "rejected": sorted(rejected),
+                },
+            }
+    return out
+
+
+def query_gsd_tables(paths: GsdCorePaths, project_dir, keys, run_fn=subprocess.run):
+    """One node call: gsd-core tables plus `isValidConfigKey` probes for `keys`."""
+    try:
+        result = run_fn(
+            [
+                paths.node_bin,
+                "-e",
+                _GSD_TABLES_QUERY_SCRIPT,
+                paths.model_catalog,
+                paths.config_schema,
+                project_dir,
+                json.dumps(keys),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return _parse_tables_output(result.stdout)
