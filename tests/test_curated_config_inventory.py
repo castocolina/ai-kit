@@ -2041,7 +2041,6 @@ class TestProjectFacts(unittest.TestCase):
         self.addCleanup(shutil.rmtree, project, ignore_errors=True)
         with mock.patch.object(project_facts.os, "listdir", side_effect=PermissionError):
             self.assertFalse(project_facts.detect_intel_index(project))
-            self.assertEqual(project_facts.list_skills(project), [])
 
     def test_instruction_files_neither(self):
         project = tempfile.mkdtemp()
@@ -2133,14 +2132,13 @@ class TestProjectFacts(unittest.TestCase):
         os.makedirs(os.path.join(project, ".planning", "intel"), exist_ok=True)
         self.assertFalse(self._facts(project)["intel_index_present"])
 
-    def test_list_skills_sorted(self):
+    def test_inventory_skills_field_shape(self):
         project = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, project, ignore_errors=True)
-        for root, name in ((".claude/skills", "a"), (".agents/skills", "b")):
-            skill_dir = os.path.join(project, root, name)
-            os.makedirs(skill_dir, exist_ok=True)
-            with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as handle:
-                handle.write("skill")
+        add_dir = os.path.join(project, "skills", "demo")
+        os.makedirs(add_dir, exist_ok=True)
+        with open(os.path.join(add_dir, "SKILL.md"), "w", encoding="utf-8") as handle:
+            handle.write("---\ndescription: d\n---\n")
         make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
         home = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)
@@ -2149,13 +2147,12 @@ class TestProjectFacts(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         assert parsed is not None
-        self.assertEqual(
-            parsed["skills"],
-            [
-                {"name": "a", "root": ".claude/skills"},
-                {"name": "b", "root": ".agents/skills"},
-            ],
-        )
+        self.assertIn("ponytail_visibility", parsed)
+        row = parsed["skills"][0]
+        for key in ("name", "root_kind", "root", "escapes_root", "addressable", "real_dir"):
+            self.assertIn(key, row)
+        self.assertEqual(row["name"], "demo")
+        self.assertEqual(row["root_kind"], "project")
 
 
 class TestReadOnly(unittest.TestCase):

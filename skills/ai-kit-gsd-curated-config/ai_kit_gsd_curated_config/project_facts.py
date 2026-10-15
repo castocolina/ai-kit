@@ -7,7 +7,6 @@ import os
 from . import claude_md_detect, frontend_detect
 
 INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
-SKILL_ROOTS = (".claude/skills", ".agents/skills")
 
 _DB_PACKAGE_KEYS = frozenset(
     {
@@ -52,21 +51,6 @@ def detect_intel_index(project_dir: str) -> bool:
         if name.endswith(".json") and os.path.isfile(os.path.join(intel_dir, name)):
             return True
     return False
-
-
-def list_skills(project_dir: str) -> list[dict]:
-    out: list[dict] = []
-    for root in SKILL_ROOTS:
-        root_path = os.path.join(project_dir, root)
-        try:
-            names = sorted(os.listdir(root_path))
-        except OSError:
-            continue
-        for name in names:
-            skill_md = os.path.join(root_path, name, "SKILL.md")
-            if os.path.isfile(skill_md):
-                out.append({"name": name, "root": root})
-    return out
 
 
 def _instruction_files(project_dir: str) -> dict[str, bool]:

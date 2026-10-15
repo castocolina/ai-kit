@@ -11,7 +11,7 @@ import json
 import os
 from typing import NamedTuple
 
-from . import catalog_adapter, gsd_catalog, host, plan_io, presets, project_facts
+from . import catalog_adapter, gsd_catalog, host, plan_io, presets, project_facts, skill_scan
 
 _PROBE_UNAVAILABLE = (
     "gsd-core at {root} (version {version}): isValidConfigKey unavailable "
@@ -380,6 +380,20 @@ def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore,
     conflicts, info = classify_conflicts(
         host_name, existing, parts["global_defaults"], facts, project_dir
     )
+    home = parts["home"]
+    skills_roots = parts["tables"].get("skills_roots") or {}
+    skills = skill_scan.scan_skills(project_dir, host_name, skills_roots, home)
+    ponytail = skill_scan.ponytail_visibility(skills_roots)
+    if any(row.get("root_kind") == "plugin" for row in skills):
+        info.append(
+            _item(
+                "plugin_skills",
+                "project",
+                None,
+                "enabledPlugins layering assumed per key (unverified)",
+            )
+        )
+        info = sorted(info, key=lambda row: (row["kind"], row["scope"]))
     warnings = set(core.warnings) | set(parts["catalog_warnings"]) | set(parts["config_warnings"])
     return {
         "schema_version": plan_io.INVENTORY_SCHEMA_VERSION,
@@ -397,7 +411,8 @@ def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore,
         "candidates": parts["candidates"],
         "candidate_heuristic_fields": parts["candidate_heuristic_fields"],
         "project": facts,
-        "skills": project_facts.list_skills(project_dir),
+        "skills": skills,
+        "ponytail_visibility": ponytail,
         "installed_runtimes": parts["installed_runtimes"],
         "conflicts": conflicts,
         "info": info,
@@ -409,8 +424,9 @@ def _load_configs(project_dir, deps, host_name, core: host.GsdCore):
     """Project and global config plus the probed gsd-core tables, as inventory parts:
     `(parts, None)` or `(None, error_message)`."""
     node_bin = gsd_catalog.resolve_node_binary(deps.which_fn)
+    env = deps.env_fn()
     existing, ex_warn = _existing_config(project_dir, core.tools_path, node_bin, deps)
-    global_defaults, gl_warn = _global_defaults(deps.env_fn())
+    global_defaults, gl_warn = _global_defaults(env)
     probe = _probe_keys(host_name, existing["values"], global_defaults["values"])
     tables, table_err = _probe_gsd_tables(core, node_bin, project_dir, probe, deps)
     if tables is None:
@@ -421,6 +437,7 @@ def _load_configs(project_dir, deps, host_name, core: host.GsdCore):
         "global_defaults": global_defaults,
         "tables": lane_tables,
         "config_warnings": [w for w in (ex_warn, gl_warn, *lane_warns) if w],
+        "home": env.get("HOME") or os.path.expanduser("~"),
     }, None
 
 

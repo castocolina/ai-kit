@@ -257,6 +257,7 @@ def make_inventory(
     global_values=None, global_path=None, extra_accepted=(),
 ):
     """A full schema-version-2 inventory (18-02) with token paths."""
+    from ai_kit_gsd_curated_config import host as host_mod
     if project is None:
         project = {"frontend": False, "intel_index_present": False}
     if existing is None:
@@ -291,6 +292,8 @@ def make_inventory(
         "global_defaults": {"path": gpath, "values": dict(global_values)},
         "conflicts": list(conflicts),
         "installed_runtimes": [],
+        "skills": [],
+        "ponytail_visibility": {h: [] for h in host_mod.HOSTS},
     }
 
 

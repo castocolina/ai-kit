@@ -9,7 +9,7 @@ performs no I/O itself (REC-01).
 import json
 import os
 
-from . import gsd_catalog
+from . import gsd_catalog, host
 from .plan_schema import canonical_json
 
 INVENTORY_SCHEMA_VERSION = 2
@@ -76,12 +76,55 @@ def _validate_inventory(inv) -> str | None:
     return tail
 
 
+def _skill_entry_problem(entry, index: int) -> str | None:
+    if not isinstance(entry, dict):
+        return f"key skills[{index}]: expected dict"
+    for key, expected in (
+        ("name", str),
+        ("root_kind", str),
+        ("escapes_root", bool),
+        ("addressable", bool),
+    ):
+        val = entry.get(key)
+        if not isinstance(val, expected):
+            return f"key skills[{index}].{key}: expected {expected.__name__}"
+    return None
+
+
+def _validate_skills(skills) -> str | None:
+    if not isinstance(skills, list):
+        return "key skills: expected list"
+    for index, entry in enumerate(skills):
+        problem = _skill_entry_problem(entry, index)
+        if problem:
+            return problem
+    return None
+
+
+def _validate_ponytail_visibility(pvisibility) -> str | None:
+    if not isinstance(pvisibility, dict):
+        return "key ponytail_visibility: expected dict"
+    for host_name in host.HOSTS:
+        names = pvisibility.get(host_name)
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            return f"key ponytail_visibility.{host_name}: expected list of str"
+    return None
+
+
 def _validate_inventory_tail(inv: dict) -> str | None:
     if not isinstance(inv["global_defaults"].get("values"), dict):
         return "key global_defaults.values: expected dict"
     runtimes = inv["installed_runtimes"]
     if not all(isinstance(name, str) for name in runtimes):
         return "key installed_runtimes: expected list of str"
+    for problem in (
+        _missing(inv, "skills") or _validate_skills(inv.get("skills")),
+        _missing(inv, "ponytail_visibility") or _validate_ponytail_visibility(
+            inv.get("ponytail_visibility")
+        ),
+    ):
+        if problem:
+            return problem
     return None
 
 
