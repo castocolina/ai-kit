@@ -167,9 +167,12 @@ Once resolved, `REVIEWER_LIST`, `RUN_TMP_DIR`, `TOOLS_PY`, `CHECKLIST_SKILL_MD`,
 
 When `probe-quota` or `resolve-reviewers` prints `ignoring untrusted project-local config`
 (on stderr), a project-local `.aikit/review-spec.toml` is present but not trusted yet — show
-the user `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT> --show` (each reviewer's exact
-argv), ask whether to trust it, and run `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT>`
-only after an explicit yes. Never trust on the user's behalf.
+the user `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT> --show` (writes nothing; one JSON
+line per local reviewer with the argv dispatch would run, merged with the global config, the
+prompt shown as `<prompt>`), ask whether to trust it, and run
+`python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT>` only after an explicit yes, then re-run
+the reference's points 4–5. Never trust on the user's behalf. `--revoke` withdraws trust, even
+after the file was deleted.
 
 ## Constants
 
@@ -308,9 +311,9 @@ For each entry in `REVIEWER_LIST`:
      in — hand `dispatch-reviewer` the reviewer entry and let it render internally; and (2) run
      this backgrounded or with an explicit near-cap `Bash` timeout, never the tool default (the
      tiers are cumulative and can reach 60 minutes of wall time). A dispatch that exits nonzero,
-     or never produces the report file, leaves this reviewer's slot undispatched — do not write
-     or keep `$RUN_TMP_DIR/iter<N>-<key>.md` for it, so Step 1.5's fail-closed `### Status:`
-     handling applies unchanged. **MANDATORY before deviating from either rule**: read
+     or never produces the report file, leaves this reviewer's slot undispatched — delete
+     `$RUN_TMP_DIR/iter<N>-<key>.md` (the `>` redirect already created it) so Step 1.5's
+     fail-closed `### Status:` handling applies unchanged. **MANDATORY before deviating from either rule**: read
      [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md)'s "Step 1 external-CLI
      dispatch" section for the full rationale — it explains the injection/escaping hazard rule
      (1) prevents and the tier-math behind rule (2).
