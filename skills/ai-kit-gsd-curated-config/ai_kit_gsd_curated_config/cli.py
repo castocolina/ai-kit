@@ -14,7 +14,6 @@ from . import (
     cross_ai_build,
     frontend_detect,
     gsd_catalog,
-    gsd_write,
     model_detect,
     preference_match,
     workflow_defaults,
@@ -29,10 +28,20 @@ _THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _resolve_node_and_gsd_tools(which_fn, env_fn, project_dir=None):
-    """Resolves `node_bin`/`gsd_tools_path`; returns `(node_bin, gsd_tools_path, error)` --
-    `error` is `None` on success, otherwise a one-line message naming which is missing. Never
-    lets a `None` path reach `subprocess.run` as a positional argument. `project_dir` seeds
-    the shared resolver's project-local candidates (D-18: a project-local gsd-core wins)."""
+    """Returns `(gsd, tools, error)`: the shared `ai_kit_spec.gsd_tools` module, a populated
+    `GsdTools(node_bin, gsd_tools_path)`, and `error` -- `None` on success, otherwise a
+    one-line message naming what is missing (the ai-kit-spec-review sibling, `node`, or an
+    installed gsd-core). Never lets a `None` path reach `subprocess.run`. `project_dir`
+    seeds the shared resolver's project-local candidates (D-18: a project-local gsd-core
+    wins over any global one)."""
+    gsd = gsd_catalog.load_gsd_tools()
+    if gsd is None:
+        return (
+            None,
+            None,
+            "ai-kit-gsd-curated-config: the ai-kit-spec-review sibling skill (ai_kit_spec) "
+            "is not installed next to this skill",
+        )
     node_bin = gsd_catalog.resolve_node_binary(which_fn)
     if node_bin is None:
         return None, None, "ai-kit-gsd-curated-config: could not resolve 'node' on PATH"
@@ -43,48 +52,48 @@ def _resolve_node_and_gsd_tools(which_fn, env_fn, project_dir=None):
             None,
             "ai-kit-gsd-curated-config: could not locate an installed gsd-core's gsd-tools.cjs",
         )
-    return node_bin, gsd_tools_path, None
+    return gsd, gsd.GsdTools(node_bin, gsd_tools_path), None
 
 
 def _cmd_ensure_project(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+    gsd, tools, error = _resolve_node_and_gsd_tools(
         which_fn, env_fn, project_dir=args.project_dir
     )
-    if error:
+    if error or gsd is None or tools is None:
         print(error, file=sys.stderr)
         return 2
-    ensured = gsd_write.ensure_config_exists(node_bin, gsd_tools_path, args.project_dir, run_fn)
+    ensured = gsd.ensure_config_exists(tools, args.project_dir, run_fn=run_fn)
     print(json.dumps({"ensured": ensured}))
     return 0 if ensured else 1
 
 
 def _cmd_apply_profile(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+    gsd, tools, error = _resolve_node_and_gsd_tools(
         which_fn, env_fn, project_dir=args.project_dir
     )
-    if error:
+    if error or gsd is None or tools is None:
         print(error, file=sys.stderr)
         return 2
-    applied, _output = gsd_write.config_set(
-        node_bin, gsd_tools_path, args.project_dir, "model_profile", args.profile, run_fn
+    applied, _output = gsd.config_set(
+        tools, args.project_dir, "model_profile", args.profile, run_fn=run_fn
     )
     print(json.dumps({"applied": applied, "key": "model_profile", "value": args.profile}))
     return 0 if applied else 1
 
 
 def _cmd_apply_critical_agents(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+    gsd, tools, error = _resolve_node_and_gsd_tools(
         which_fn, env_fn, project_dir=args.project_dir
     )
-    if error:
+    if error or gsd is None or tools is None:
         print(error, file=sys.stderr)
         return 2
 
     unconditional_pairs = critical_agents.compute_overrides(None)
     unconditional_written = 0
     for key, value in unconditional_pairs.items():
-        ok, output = gsd_write.config_set(
-            node_bin, gsd_tools_path, args.project_dir, key, value, run_fn
+        ok, output = gsd.config_set(
+            tools, args.project_dir, key, value, run_fn=run_fn
         )
         if not ok:
             print(
@@ -98,19 +107,19 @@ def _cmd_apply_critical_agents(args, which_fn, run_fn, env_fn):
     heavy_agents_written = 0
     degraded_reason = None
 
-    model_catalog_path = gsd_catalog.resolve_model_catalog_cjs_path(gsd_tools_path)
+    model_catalog_path = gsd_catalog.resolve_model_catalog_cjs_path(tools.gsd_tools_path)
     if model_catalog_path is None:
         degraded_reason = "model_catalog_not_found"
     else:
-        catalog = gsd_catalog.query_agent_catalog(node_bin, model_catalog_path, run_fn)
+        catalog = gsd_catalog.query_agent_catalog(tools.node_bin, model_catalog_path, run_fn)
         if catalog is None:
             degraded_reason = "live_query_failed"
         else:
             full_overrides = critical_agents.compute_overrides(catalog["tiers"])
             remaining_keys = set(full_overrides) - set(unconditional_pairs)
             for key in remaining_keys:
-                ok, output = gsd_write.config_set(
-                    node_bin, gsd_tools_path, args.project_dir, key, full_overrides[key], run_fn
+                ok, output = gsd.config_set(
+                    tools, args.project_dir, key, full_overrides[key], run_fn=run_fn
                 )
                 if ok:
                     heavy_agents_written += 1
@@ -177,15 +186,15 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
             print(f"ai-kit-gsd-curated-config: {rejection}", file=sys.stderr)
             return 2
 
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+    gsd, tools, error = _resolve_node_and_gsd_tools(
         which_fn, env_fn, project_dir=args.project_dir
     )
-    if error:
+    if error or gsd is None or tools is None:
         print(error, file=sys.stderr)
         return 2
 
-    ok, output = gsd_write.config_set(
-        node_bin, gsd_tools_path, args.project_dir, "workflow.cross_ai_execution", True, run_fn
+    ok, output = gsd.config_set(
+        tools, args.project_dir, "workflow.cross_ai_execution", True, run_fn=run_fn
     )
     if not ok:
         print(f"ai-kit-gsd-curated-config: failed to write workflow.cross_ai_execution: {output}",
@@ -206,9 +215,8 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
         if command is None:
             degraded_reason = "no_builder"
         else:
-            ok, output = gsd_write.config_set(
-                node_bin, gsd_tools_path, args.project_dir, "workflow.cross_ai_command",
-                command, run_fn
+            ok, output = gsd.config_set(
+                tools, args.project_dir, "workflow.cross_ai_command", command, run_fn=run_fn
             )
             if not ok:
                 print(
@@ -228,16 +236,15 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
 
 
 def _cmd_apply_review(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+    gsd, tools, error = _resolve_node_and_gsd_tools(
         which_fn, env_fn, project_dir=args.project_dir
     )
-    if error:
+    if error or gsd is None or tools is None:
         print(error, file=sys.stderr)
         return 2
 
-    ok, output = gsd_write.config_set(
-        node_bin, gsd_tools_path, args.project_dir, "workflow.plan_review_convergence",
-        True, run_fn
+    ok, output = gsd.config_set(
+        tools, args.project_dir, "workflow.plan_review_convergence", True, run_fn=run_fn
     )
     if not ok:
         print(
@@ -247,8 +254,8 @@ def _cmd_apply_review(args, which_fn, run_fn, env_fn):
         )
         return 1
 
-    ok, output = gsd_write.config_set(
-        node_bin, gsd_tools_path, args.project_dir, "review.effort.opencode", "high", run_fn
+    ok, output = gsd.config_set(
+        tools, args.project_dir, "review.effort.opencode", "high", run_fn=run_fn
     )
     if not ok:
         print(f"ai-kit-gsd-curated-config: failed to write review.effort.opencode: {output}",
@@ -263,24 +270,22 @@ def _cmd_apply_review(args, which_fn, run_fn, env_fn):
             file=sys.stderr,
         )
         return 2
-    existing = gsd_write.config_get(
-        node_bin, gsd_tools_path, args.project_dir, "review.default_reviewers", run_fn
-    )
+    got = gsd.config_get(tools, args.project_dir, "review.default_reviewers", run_fn=run_fn)
+    existing = got.value if got.found else None
     reviewers = list(existing) if isinstance(existing, list) else []
     if slug not in reviewers:
         reviewers.append(slug)
 
-    ok, output = gsd_write.config_set(
-        node_bin, gsd_tools_path, args.project_dir, "review.default_reviewers",
-        json.dumps(reviewers), run_fn
+    ok, output = gsd.config_set(
+        tools, args.project_dir, "review.default_reviewers", reviewers, run_fn=run_fn
     )
     if not ok:
         print(f"ai-kit-gsd-curated-config: failed to write review.default_reviewers: {output}",
               file=sys.stderr)
         return 1
 
-    ok, output = gsd_write.config_set(
-        node_bin, gsd_tools_path, args.project_dir, f"review.models.{slug}", args.model, run_fn
+    ok, output = gsd.config_set(
+        tools, args.project_dir, f"review.models.{slug}", args.model, run_fn=run_fn
     )
     if not ok:
         print(f"ai-kit-gsd-curated-config: failed to write review.models.{slug}: {output}",
@@ -308,10 +313,10 @@ def _cmd_detect_frontend(args, which_fn, run_fn, env_fn):
 
 
 def _cmd_apply_claude_md_path(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+    gsd, tools, error = _resolve_node_and_gsd_tools(
         which_fn, env_fn, project_dir=args.project_dir
     )
-    if error:
+    if error or gsd is None or tools is None:
         print(error, file=sys.stderr)
         return 2
 
@@ -319,8 +324,8 @@ def _cmd_apply_claude_md_path(args, which_fn, run_fn, env_fn):
         print(json.dumps({"applied": False, "key": "claude_md_path", "reason": "empty_path"}))
         return 0
 
-    ok, output = gsd_write.config_set(
-        node_bin, gsd_tools_path, args.project_dir, "claude_md_path", args.path, run_fn
+    ok, output = gsd.config_set(
+        tools, args.project_dir, "claude_md_path", args.path, run_fn=run_fn
     )
     if not ok:
         print(
@@ -333,25 +338,18 @@ def _cmd_apply_claude_md_path(args, which_fn, run_fn, env_fn):
 
 
 def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+    gsd, tools, error = _resolve_node_and_gsd_tools(
         which_fn, env_fn, project_dir=args.project_dir
     )
-    if error:
+    if error or gsd is None or tools is None:
         print(error, file=sys.stderr)
         return 2
 
     bundle_written = 0
     for key, value in workflow_defaults.WORKFLOW_DEFAULTS.items():
-        # gsd-tools' own config-set recognizes the literal string "null" as its
-        # unset/clear sentinel (config.cjs) -- gsd_write._coerce_value has no special case
-        # for Python None (it falls through to `str(None)` == "None", a bare string gsd-tools
-        # would persist verbatim rather than clearing the key). Two WORKFLOW_DEFAULTS entries
-        # (code_review_command, plan_bounce_script) are None, so this substitution happens
-        # here, scoped to this plan's own cli.py, rather than widening gsd_write.py's shared
-        # coercion helper (out of this plan's declared files_modified).
-        coerced_value = "null" if value is None else value
-        ok, output = gsd_write.config_set(
-            node_bin, gsd_tools_path, args.project_dir, f"workflow.{key}", coerced_value, run_fn
+        # the shared _coerce_value maps Python None to gsd-tools' "null" unset sentinel
+        ok, output = gsd.config_set(
+            tools, args.project_dir, f"workflow.{key}", value, run_fn=run_fn
         )
         if not ok:
             print(
@@ -364,8 +362,8 @@ def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
     ui_phase = args.ui_phase == "true"
     ui_review = args.ui_review == "true"
 
-    ok, output = gsd_write.config_set(
-        node_bin, gsd_tools_path, args.project_dir, "workflow.ui_phase", ui_phase, run_fn
+    ok, output = gsd.config_set(
+        tools, args.project_dir, "workflow.ui_phase", ui_phase, run_fn=run_fn
     )
     if not ok:
         print(
@@ -374,8 +372,8 @@ def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
         )
         return 1
 
-    ok, output = gsd_write.config_set(
-        node_bin, gsd_tools_path, args.project_dir, "workflow.ui_review", ui_review, run_fn
+    ok, output = gsd.config_set(
+        tools, args.project_dir, "workflow.ui_review", ui_review, run_fn=run_fn
     )
     if not ok:
         print(

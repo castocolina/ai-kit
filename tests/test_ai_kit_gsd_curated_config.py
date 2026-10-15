@@ -22,7 +22,6 @@ from ai_kit_gsd_curated_config import (
     cross_ai_build,
     frontend_detect,
     gsd_catalog,
-    gsd_write,
     model_detect,
     preference_match,
     workflow_defaults,
@@ -131,7 +130,6 @@ class TestTracerEnsureProjectAndApplyProfile(unittest.TestCase):
                 "budget",
                 "--project-dir",
                 self.scratch,
-                "--raw",
             ],
         )
 
@@ -176,6 +174,24 @@ class TestResolveMissing(unittest.TestCase):
             env_fn=lambda: {"HOME": "/definitely/nonexistent/home"},
         )
         self.assertEqual(exit_code, 2)
+        self.assertEqual(run.calls, [])
+
+    def test_missing_ai_kit_spec_sibling_exits_2_before_any_subprocess_call(self):
+        """D-18: when the ai-kit-spec-review sibling (ai_kit_spec) cannot be imported, every
+        subcommand that writes reports the miss on stderr and exits 2 -- never raising at
+        import time, never shelling out."""
+        run = make_fake_run([])
+        buf = io.StringIO()
+        with unittest.mock.patch.object(gsd_catalog, "load_gsd_tools", return_value=None), \
+                contextlib.redirect_stderr(buf):
+            exit_code = cli.main(
+                ["apply-profile", "--project-dir", "/fake/project", "--profile", "budget"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=lambda: {},
+            )
+        self.assertEqual(exit_code, 2)
+        self.assertIn("ai-kit-spec-review", buf.getvalue())
         self.assertEqual(run.calls, [])
 
 
@@ -316,51 +332,6 @@ class TestQueryAgentCatalog(unittest.TestCase):
         self.assertIsNone(
             gsd_catalog.query_agent_catalog(FAKE_NODE_BIN, FAKE_CATALOG_PATH, timeout_run)
         )
-
-
-class TestGsdWrite(unittest.TestCase):
-    def test_ensure_config_exists_true_on_exit_zero(self):
-        run = fake_run(0)
-        self.assertTrue(
-            gsd_write.ensure_config_exists(FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", run)
-        )
-
-    def test_ensure_config_exists_false_on_nonzero_exit(self):
-        run = fake_run(1, stderr="boom")
-        self.assertFalse(
-            gsd_write.ensure_config_exists(FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", run)
-        )
-
-    def test_config_set_success_returns_stdout(self):
-        run = fake_run(0, stdout="model_profile=budget")
-        ok, output = gsd_write.config_set(
-            FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", "model_profile", "budget", run
-        )
-        self.assertTrue(ok)
-        self.assertEqual(output, "model_profile=budget")
-
-    def test_config_set_failure_returns_stderr(self):
-        run = fake_run(1, stderr="Error: bad key")
-        ok, output = gsd_write.config_set(
-            FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", "bogus.key", "x", run
-        )
-        self.assertFalse(ok)
-        self.assertEqual(output, "Error: bad key")
-
-    def test_config_set_coerces_python_bool_to_lowercase_string(self):
-        run_true = make_fake_run([(0, "ok", "")])
-        gsd_write.config_set(
-            FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", "some.flag", True, run_true
-        )
-        self.assertIn("true", run_true.calls[0])
-        self.assertNotIn("True", run_true.calls[0])
-
-        run_false = make_fake_run([(0, "ok", "")])
-        gsd_write.config_set(
-            FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", "some.flag", False, run_false
-        )
-        self.assertIn("false", run_false.calls[0])
-        self.assertNotIn("False", run_false.calls[0])
 
 
 class TestComputeOverrides(unittest.TestCase):

@@ -134,9 +134,9 @@ installed where this skill can find it, not a bug in this skill.
   skips (07-CONTEXT.md D-10). This skill is a faster ALTERNATIVE, invoked
   instead of them, never routed through them and never routing to them.
 - **Never hand-write `.planning/config.json`.** Every write in this skill's
-  own CLI goes through `gsd-tools config-set`/`config-new-project`
-  (`ai_kit_gsd_curated_config/gsd_write.py` is the only module in the package
-  permitted to shell out for a write) — this is what keeps every key this
+  own CLI goes through `gsd-tools config-set`/`config-new-project` via the shared
+  `ai_kit_spec.gsd_tools` wrappers (D-18) -- the only module in ai-kit that shells out to
+  gsd-tools for a write -- this is what keeps every key this
   skill touches schema-validated the same way `gsd-settings` output is,
   never a parallel, unvalidated write path.
 - **Never bake a resolved absolute path into `workflow.cross_ai_command`.**

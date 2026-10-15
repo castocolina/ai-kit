@@ -29,7 +29,9 @@ GSD_TOOLS_REL = os.path.join("bin", "gsd-tools.cjs")
 
 
 def project_root(
-    env: Mapping[str, str], start: str, run_fn: Callable[..., object] = subprocess.run
+    env: Mapping[str, str],
+    start: str,
+    run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> str:
     """`RUNTIME_DIR`, else the git toplevel of `start`, else `start` (gsd_run resolver rule)."""
     if env.get("RUNTIME_DIR", "").strip():
@@ -39,9 +41,8 @@ def project_root(
                      capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return start
-    stdout = getattr(out, "stdout", "") or ""
-    returncode = getattr(out, "returncode", 1)
-    return stdout.strip() if returncode == 0 and stdout.strip() else start
+    stdout = out.stdout or ""
+    return stdout.strip() if out.returncode == 0 and stdout.strip() else start
 
 
 def _host_homes(env: Mapping[str, str]) -> list[str]:
@@ -105,7 +106,7 @@ def resolve_gsd_tools(
     env: Mapping[str, str] | None = None,
     start: str | None = None,
     isfile_fn: Callable[[str], bool] = os.path.isfile,
-    run_fn: Callable[..., object] = subprocess.run,
+    run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     which_fn: Callable[..., str | None] = shutil.which,
 ) -> str | None:
     """First existing gsd-tools.cjs candidate in launcher order, or `None`. `start` defaults
@@ -154,7 +155,7 @@ def config_set(
     project_dir: str,
     key: str,
     value: object,
-    run_fn: Callable[..., object] = subprocess.run,
+    run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> tuple[bool, str]:
     """Runs `config-set <key> <value> --project-dir <dir>` WITHOUT `--raw` (per RUN-11 the
     undo log reads the prior value from the JSON result's `previousValue`, which `--raw`
@@ -188,7 +189,10 @@ def prior_value(output: str) -> tuple[bool, object] | None:
 
 
 def config_get(
-    tools: GsdTools, project_dir: str, key: str, run_fn: Callable[..., object] = subprocess.run
+    tools: GsdTools,
+    project_dir: str,
+    key: str,
+    run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> ConfigGetResult:
     """Runs `config-get <key> --project-dir <dir>` (deliberately no `--raw`: confirmed live
     that `config-get --raw` on an array value comma-joins it into a bare string, which is
@@ -214,7 +218,9 @@ def config_get(
 
 
 def config_path(
-    tools: GsdTools, project_dir: str, run_fn: Callable[..., object] = subprocess.run
+    tools: GsdTools,
+    project_dir: str,
+    run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> str | None:
     """Runs `config-path --cwd <dir>` (which honors workstreams); returns the resolved
     config path, or `None` on failure or empty output."""
@@ -230,7 +236,9 @@ def config_path(
 
 
 def ensure_config_exists(
-    tools: GsdTools, project_dir: str, run_fn: Callable[..., object] = subprocess.run
+    tools: GsdTools,
+    project_dir: str,
+    run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> bool:
     """Runs `config-new-project --cwd <dir>`. `True` covers both the freshly-created case
     and gsd-tools' own idempotent `already_exists` no-op; `False` otherwise."""
