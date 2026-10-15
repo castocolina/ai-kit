@@ -735,7 +735,9 @@ class TestSlotEdges(unittest.TestCase):
             self.assertEqual(entry["status"], "needs_choice")
             self.assertIsNone(entry["value"])
             self.assertEqual(entry["candidates"], [])
-            self.assertIn("no scores", entry["why"])
+            # A-IN-07: empty enumeration, not missing scores, is the reason.
+            self.assertIn("no opencode models enumerated; choose with plan-set", entry["why"])
+            self.assertNotIn("no scores", entry["why"])
 
     def test_opencode_unscored_price_order(self):
         cands = [

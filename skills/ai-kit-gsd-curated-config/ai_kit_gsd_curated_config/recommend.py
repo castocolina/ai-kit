@@ -266,12 +266,12 @@ def _tier_slot(ctx: PlanCtx, tier: str, cands: list, ceiling: roles.Ceiling) -> 
     req = _PickRequest(ctx, meta.key, reason, meta.purpose, meta.target, ceiling, meta.extra)
     if (picked := _catalog_pick_entry(req, cands)) is not None:
         return picked
-    no_scores = not any(c["score_axes"] > 0 for c in cands)
-    tail = (
-        f"no scores: no {ctx.host} candidate has a catalog score; choose with plan-set"
-        if no_scores
-        else f"no eligible {meta.purpose} candidate on {ctx.host}; choose with plan-set"
-    )
+    if not cands:
+        tail = f"no {ctx.host} models enumerated; choose with plan-set"
+    elif not any(c["score_axes"] > 0 for c in cands):
+        tail = f"no scores: no {ctx.host} candidate has a catalog score; choose with plan-set"
+    else:
+        tail = f"no eligible {meta.purpose} candidate on {ctx.host}; choose with plan-set"
     return make_entry(
         ctx,
         meta.key,
