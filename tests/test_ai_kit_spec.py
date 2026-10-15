@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import copy
 import glob
 import io
@@ -10506,11 +10507,30 @@ class TestOpencodeApiImageInput(unittest.TestCase):
         self.assertEqual(
             result, ({"openai/gpt-5.6-sol": True, "router-env/my-coding": False}, "opencode"))
 
+    def test_snapshot_threads_probe_seams(self):
+        """C-IN-01: a 2.x snapshot built with fakes never reaches the real Popen/urlopen."""
+        popen = self.FakePopen()
+        snapshot = build_runtimes_snapshot(
+            which_fn=lambda name: "/fake/bin/opencode" if name == "opencode" else None,
+            run_fn=self._fake_version_run(), popen_fn=popen, urlopen_fn=self._fake_urlopen())
+        self.assertIsNotNone(popen.argv)
+        self.assertEqual(snapshot["clis"]["opencode"]["image_input"], self.EXPECTED_MAP)
+
+    def test_cli_detect_runtimes_threads_probe_seams(self):
+        popen = self.FakePopen()
+        deps = cli.CliDeps(
+            which_fn=lambda name: "/fake/bin/opencode" if name == "opencode" else None,
+            run_fn=self._fake_version_run(), popen_fn=popen, urlopen_fn=self._fake_urlopen())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(main(["detect-runtimes"], deps=deps), 0)
+        self.assertIsNotNone(popen.argv)
+
     def test_snapshot_records_image_input_source(self):
         def fake_which(name):
             return "/fake/bin/opencode" if name == "opencode" else None
 
-        # 2.x: the snapshot passes only run_fn, so the probe is patched at the seam.
+        # 2.x: the probe itself is patched here (popen_fn/urlopen_fn fakes: see above).
         with mock.patch.object(
                 detection, "probe_opencode_api_image_input",
                 return_value={"opencode/exo-free": True}) as probe_mock:

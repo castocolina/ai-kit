@@ -342,6 +342,8 @@ _OPENCODE_BANNER_MAX_LINES = 50
 # The probe talks to its own loopback server only: never through an http_proxy, which would
 # receive the Basic-auth password (17-REVIEW C-WR-01).
 _LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+# The default `urlopen_fn` for the loopback probe: never routed through http_proxy.
+LOOPBACK_URLOPEN = _LOOPBACK_OPENER.open
 # fullmatch on the stripped stdout, so a model listing (e.g. "openai/gpt-5.6-sol") can
 # never read as a version string.
 _OPENCODE_VERSION_RE = re.compile(r"(?:opencode\s+)?v?(\d+)\.\d+\.\d+\S*")
@@ -477,7 +479,7 @@ def _stop_server(proc) -> None:
 
 def probe_opencode_api_image_input(binary: str,
                                    popen_fn: Callable[..., Any] = subprocess.Popen,
-                                   urlopen_fn: Callable[..., Any] = _LOOPBACK_OPENER.open,
+                                   urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN,
                                    ) -> dict:
     """Starts a private `opencode serve --hostname 127.0.0.1 --port 0`, reads the
     printed loopback port and one-time password from its stdout, and calls
@@ -536,7 +538,7 @@ def _probe_from(binary, probe_dir, popen_fn, urlopen_fn) -> dict:
 
 def opencode_image_input_with_source(binary: str, run_fn=subprocess.run,
                                      popen_fn: Callable[..., Any] = subprocess.Popen,
-                                     urlopen_fn: Callable[..., Any] = _LOOPBACK_OPENER.open,
+                                     urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN,
                                      ) -> tuple:
     """Version-gated image-capability detection for opencode. Returns
     `(map, source)` where source is OPENCODE_API_IMAGE_SOURCE ("opencode-api", the
@@ -644,7 +646,8 @@ def claude_runtime_fields(catalog_raw) -> dict:
 
 
 def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
-                            catalog_fn=None) -> dict:
+                            catalog_fn=None, popen_fn: Callable[..., Any] = subprocess.Popen,
+                            urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN) -> dict:
     """{"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {name: {"installed": bool,
     "path"?: str, "models"?: [str], "reasoning_modes"?: {model_id: [effort, ...]},
     "aliases"?: [str], "models_source"?: str, "models_as_of"?: str, "image_input"?: {id: bool},
@@ -658,7 +661,8 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
     than imported so the function stays pure and tests stay hermetic; it is called ONLY when
     claude is installed (claude is never executed, 16 D-07). Pure function -- the caller
     (this module's CLI entrypoint) decides whether/where to persist this via
-    cache_write_json."""
+    cache_write_json. `popen_fn`/`urlopen_fn` reach the opencode 2.x probe, so a caller
+    that fakes `run_fn` can fake the private server too."""
     installed = detect_installed_clis(which_fn=which_fn)
     snapshot = {"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {}}
     for cli, binpath in installed.items():
@@ -669,7 +673,7 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
         if cli == "opencode":
             entry["models"] = detect_opencode_models(binpath, run_fn=run_fn)
             image_input_map, image_input_source = opencode_image_input_with_source(
-                binpath, run_fn=run_fn)
+                binpath, run_fn=run_fn, popen_fn=popen_fn, urlopen_fn=urlopen_fn)
             if image_input_map:
                 entry["image_input"] = image_input_map
                 entry["image_input_source"] = image_input_source

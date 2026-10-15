@@ -36,6 +36,7 @@ from ai_kit_spec.config_io import (
     resolve_timeout_tiers,
 )
 from ai_kit_spec.detection import (
+    LOOPBACK_URLOPEN,
     RUNTIMES_TTL_SECONDS,
     build_runtimes_snapshot,
     cache_runtimes_path,
@@ -107,6 +108,8 @@ class CliDeps(NamedTuple):
     load_secret_fn: Callable[..., Any] = load_secret
     fetch_models_dev_fn: Callable[..., Any] = fetch_models_dev
     fetch_artificial_analysis_fn: Callable[..., Any] = fetch_artificial_analysis
+    popen_fn: Callable[..., Any] = subprocess.Popen  # the opencode 2.x image probe server
+    urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN  # its loopback API call
 
 
 def _register_cache_detect_parsers(sub: argparse._SubParsersAction) -> None:
@@ -389,7 +392,8 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
         print(json.dumps({}))  # fresh — caller should treat this as "nothing to do"
         return 0
     snapshot = build_runtimes_snapshot(which_fn=deps.which_fn, run_fn=deps.run_fn,
-                                        catalog_fn=_read_default_catalog)
+                                        catalog_fn=_read_default_catalog,
+                                        popen_fn=deps.popen_fn, urlopen_fn=deps.urlopen_fn)
     save_path = args.if_stale or args.save
     if save_path:
         cache_write_json(save_path, snapshot)
