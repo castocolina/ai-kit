@@ -187,6 +187,7 @@ keeps working unchanged.
       - v1 and its modules work unchanged next to `inventory`, `recommend`, `plan-set`, `plan-unset` and `apply`.
       - The new modules are in every gate (test discovery, pyright, vulture, pylint).
       - The README row is updated, and SKILL.md documents v2 as the primary flow and labels cursor and pi "not live-validated".
+      - SKILL.md states that `inventory` runs the target project's own gsd-core under `node` (trusted checkouts only), and that opencode runtimes are enumerated with project config disabled, so providers defined only in a project's `opencode.json` are not candidates (amended 2026-10-15, carried from 17-SECURITY AR-02 and Phase 17 fix pass 4).
     - Acceptance: the v1 test suite passes unmodified at the end of this phase (18.1 D-14 later updates v1 tests only where behavior survives through the runner, per uz's add-never-remove constraint; amended 2026-10-15). `make test` and `make validate` are green. SKILL.md passes `/skill-judge` (≥ 96/120 or no Critical/Important finding).
 
 ## Boundaries
