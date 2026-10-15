@@ -1033,7 +1033,19 @@ function statusLineOk(stderr, pattern) {
 }
 
 function pidAlive(pid) {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { process.kill(pid, 0); } catch { return false; }
+  try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, 'utf8')); } catch { return true; }
+}
+
+// A SIGKILLed descendant can outlive the runner by a few ms under load (or sit as an unreaped
+// zombie), so "still alive" means alive after a bounded wait, not at the first probe.
+function pidLingers(pid, ms = 3000) {
+  const deadline = Date.now() + ms;
+  while (pidAlive(pid)) {
+    if (Date.now() >= deadline) return true;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+  return false;
 }
 
 function runSelfTestCaseSync(tmp, spec, repo, home, calls, copy, env) {
@@ -1351,7 +1363,7 @@ async function blackBoxSelfTest() {
           const pidFile = path.join(ctx.repo, 'gc.pid');
           if (!fs.existsSync(pidFile)) return null;
           const pid = Number(fs.readFileSync(pidFile, 'utf8'));
-          return pidAlive(pid) ? 'grandchild still alive' : null;
+          return pidLingers(pid) ? 'grandchild still alive' : null;
         },
       },
       {
@@ -1396,7 +1408,7 @@ async function blackBoxSelfTest() {
           if (ctx.elapsedMs >= 15000) return `elapsed ${ctx.elapsedMs}`;
           const pidFile = path.join(ctx.repo, 'gc.pid');
           if (!fs.existsSync(pidFile)) return null;
-          return pidAlive(Number(fs.readFileSync(pidFile, 'utf8'))) ? 'gc alive' : null;
+          return pidLingers(Number(fs.readFileSync(pidFile, 'utf8'))) ? 'gc alive' : null;
         },
       },
       {
@@ -1408,7 +1420,7 @@ async function blackBoxSelfTest() {
           if (ctx.elapsedMs >= 15000) return `elapsed ${ctx.elapsedMs}`;
           const pidFile = path.join(ctx.repo, 'gc.pid');
           if (!fs.existsSync(pidFile)) return null;
-          return pidAlive(Number(fs.readFileSync(pidFile, 'utf8'))) ? 'gc alive' : null;
+          return pidLingers(Number(fs.readFileSync(pidFile, 'utf8'))) ? 'gc alive' : null;
         },
       },
       {
@@ -1805,7 +1817,7 @@ async function blackBoxSelfTest() {
           if (!late.length) return 'no gc-late';
           if (late.some((l) => lines.indexOf(l) >= statusIdx)) return 'gc-late after status';
           const pidFile = path.join(ctx.repo, 'gc.pid');
-          if (fs.existsSync(pidFile) && pidAlive(Number(fs.readFileSync(pidFile, 'utf8')))) return 'gc alive';
+          if (fs.existsSync(pidFile) && pidLingers(Number(fs.readFileSync(pidFile, 'utf8')))) return 'gc alive';
           return null;
         },
       },
