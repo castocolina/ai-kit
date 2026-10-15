@@ -49,9 +49,9 @@ WITH, never values it invents or infers.** If this skill is ever invoked without
 CWD="<this skill's own entry-precondition project root -- supplied by the caller>"
 PHASE_ID="<this skill's own entry-precondition phase id -- supplied by the caller>"
 PHASE_PROMPT_FILE="<this phase's own prompt/context file path -- located via CWD/PHASE_ID>"
-GSD_CONFIG_PATH="$(python3 "$GSD_SHIM" config-path --cwd "$CWD")"
+GSD_CONFIG_PATH="$(python3 "$GSD_SHIM" config-path --cwd "$CWD")"  # gsd-tools config-path; honors workstreams
 RESULT_JSON="$(python3 "$GSD_SHIM" resolve-dispatch --cwd "$CWD" \
-  --config-path "$GSD_CONFIG_PATH" --target-dir "$CWD" \
+  --target-dir "$CWD" \
   --quota-path "$(python3 "$TOOLS_PY" cache-path --kind quota)" \
   --phase-prompt-file "$PHASE_PROMPT_FILE")"
 RUN_ID="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<< "$RESULT_JSON")"
@@ -69,7 +69,17 @@ printf 'CWD=%s\nPHASE_ID=%s\nPHASE_PROMPT_FILE=%s\nGSD_CONFIG_PATH=%s\nRUN_ID=%s
 ```
 
 **Record every line of that trailing `printf`'s output as this wave's own literal values.** If
-`mode == "fallback_notice"` and `reason == "malformed_config"`, print the message and STOP — do
+either `resolve-dispatch` or `write-workflow-keys` stderr prints `ignoring untrusted project-local config`, relay that line to the user verbatim, offer
+`python3 "$TOOLS_PY" trust-local --cwd <dir> --show` (the review the message names), and run
+`trust-local` only after an explicit yes — never trust on the user's behalf (without trust, the
+local execute ladder is silently absent).
+
+If `mode == "write_failed"`: a `gsd-tools config-set` failed mid-write during dispatch resolution;
+keys applied earlier in that attempt were reverted (see `applied`, `failed`, `reverted`, and
+`error` in the JSON). Print the full `$RESULT_JSON` to the user and STOP — do not proceed to
+Step 2/3.
+
+If `mode == "fallback_notice"` and `reason == "malformed_config"`, print the message and STOP — do
 not proceed to Step 2/3 at all.
 
 If `mode == "fallback_notice"` and `reason == "quota_exhausted"`: this is a genuine, time-bound
@@ -121,10 +131,10 @@ default runs unmodified). Never schedule a wake for these.
   as-is, nothing further to write.
   `written=True`/`provenance="resolved_candidate"`: the CLI call already wrote `runtime` (if
   needed) and `model_profile_overrides[runtime][tier]`, taking a per-run backup first.
-- `cross_ai_hook`: **write GSD's own real, confirmed `workflow.*` keys** (Task 1 finding 1) via
-  `write-workflow-key`, threading each call's own JSON output into the next call's `--config-json`
-  (a second write against a stale snapshot would discard the first's key), `--run-id "$RUN_ID"`
-  throughout.
+- `cross_ai_hook`: **write GSD's own real, confirmed `workflow.*` keys** (Task 1 finding 1) in
+  one `write-workflow-keys` call (`--cwd "$CWD"`, `--run-id "$RUN_ID"` — the same `run_id` from
+  Step 1), without threading a config snapshot between calls. A non-zero exit means a key failed and earlier keys
+  from that call were reverted; show the printed JSON to the user and STOP.
 
   **`workflow.cross_ai_command` is NOT the raw external CLI command
   (`$RESULT_CROSS_AI_COMMAND`) — it is OUR OWN `dispatch-execute` subcommand, wrapping it.**
@@ -150,16 +160,11 @@ default runs unmodified). Never schedule a wake for these.
   # this is deliberate, required by how GSD expands this value. Read only if you need to know why:
   # references/dispatch-notes.md#why-no-manual-quoting-around-workflowcross_ai_commands-values
   WRAPPER_COMMAND="python3 $TOOLS_PY dispatch-execute --cli $RESULT_CLI --model $RESULT_MODEL --target-dir $CWD --prompt-file - --stdout-only --timeout $DISPATCH_TIMEOUT_SECONDS --format-block-file $FORMAT_BLOCK_PATH"
-  UPDATED="$(python3 "$GSD_SHIM" write-workflow-key --config-path "$GSD_CONFIG_PATH" \
-    --config-json "$(cat "$GSD_CONFIG_PATH" 2>/dev/null || echo '{}')" \
-    --key cross_ai_command --run-id "$RUN_ID" \
-    --value-json "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$WRAPPER_COMMAND")")"
-  UPDATED="$(python3 "$GSD_SHIM" write-workflow-key --config-path "$GSD_CONFIG_PATH" \
-    --config-json "$UPDATED" --key cross_ai_execution --run-id "$RUN_ID" --value-json true)"
-  UPDATED="$(python3 "$GSD_SHIM" write-workflow-key --config-path "$GSD_CONFIG_PATH" \
-    --config-json "$UPDATED" --key cross_ai_timeout --run-id "$RUN_ID" \
-    --value-json "$CROSS_AI_TIMEOUT_SECONDS")"
-  printf 'UPDATED_CONFIG_JSON=%s\nFORMAT_BLOCK_PATH=%s\n' "$UPDATED" "$FORMAT_BLOCK_PATH"
+  python3 "$GSD_SHIM" write-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
+    --set "cross_ai_command=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$WRAPPER_COMMAND")" \
+    --set cross_ai_execution=true \
+    --set "cross_ai_timeout=$CROSS_AI_TIMEOUT_SECONDS"
+  printf 'FORMAT_BLOCK_PATH=%s\n' "$FORMAT_BLOCK_PATH"
   ```
   `dispatch-execute`'s own `--stdout-only` mode prints ONLY the dispatched CLI's raw stdout (no
   JSON envelope) and exits with its real returncode — exactly the contract GSD's own recipe
@@ -182,15 +187,12 @@ default runs unmodified). Never schedule a wake for these.
 **Mode-transition cleanup** — run this whenever the resolved `mode` is `native_tier` or
 `fallback_notice` (i.e. NOT `cross_ai_hook`), BEFORE proceeding to Step 3, so a stale adapter-owned
 cross-AI hook from a PRIOR run never stays silently active once a LATER run resolves a different
-dispatch mode. Never touches a value the user set by hand (`clear-workflow-key` is a no-op unless
+dispatch mode. Never touches a value the user set by hand (`clear-workflow-keys` is a no-op unless
 the key is adapter-owned):
 
 ```bash
-CURRENT_CONFIG_JSON="$(cat "$GSD_CONFIG_PATH" 2>/dev/null || echo '{}')"
-for KEY in cross_ai_command cross_ai_execution cross_ai_timeout; do
-  CURRENT_CONFIG_JSON="$(python3 "$GSD_SHIM" clear-workflow-key --config-path "$GSD_CONFIG_PATH" \
-    --config-json "$CURRENT_CONFIG_JSON" --key "$KEY" --run-id "$RUN_ID")"
-done
+python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
+  --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout
 ```
 
 ## Step 3: Prepare confirmed-only tooling guidance, then invoke GSD's own `/gsd-execute-phase` skill
@@ -218,12 +220,15 @@ fi
 ```
 
 This `prepare-tooling` subcommand (Task 4) runs `detect_tool_availability()`,
-`resolve_agents_tooling_path()`, `ensure_codegraph_registered(cli)` (skipped when `--cli` is
-omitted), and — only if that confirms registration — `build_codegraph_index_command(target_dir)`
-before dispatch, per design spec §9's ordering guarantee. Writing the guidance into the phase file
-itself (idempotently, marker-guarded) means it reaches GSD's own execution regardless of which
-dispatch mode Step 2 chose — GSD's own `/gsd-execute-phase` skill reads this same phase content
-whether it's running a native subagent or delegating through `cross_ai_command`.
+`resolve_agents_tooling_path()`, then `probe_codegraph(cli)` (report-only, 15 s timeout; skipped
+when `--cli` is omitted). When codegraph is missing or unhealthy, the shim prints the exact install
+command on stderr — relay that line to the user verbatim and never run it on their behalf
+(installing is the user's call through their own tooling). Only after a healthy probe does it run
+`run_codegraph_index(target_dir)` (`codegraph sync`, then `codegraph init` on failure), per design
+spec §9's ordering guarantee. Writing the guidance into the phase file itself (idempotently,
+marker-guarded) means it reaches GSD's own execution regardless of which dispatch mode Step 2
+chose — GSD's own `/gsd-execute-phase` skill reads this same phase content whether it's running a
+native subagent or delegating through `cross_ai_command`.
 
 **`RESULT_MODE = "cross_ai_hook"` needs no separate guidance-append step here anymore** (superseded
 2026-08-30 by Step 2's direct-dispatch wrapper). Read only if you need the history of why this
@@ -234,14 +239,17 @@ step used to append guidance here and why that changed:
 — this is the entire remaining job of this skill.** There is no subprocess to run, no stdout to
 capture, no heartbeat to route (Task 1 finding 3) — GSD's own workflow performs the actual
 dispatch, heartbeating, and completion end-to-end in-session, using whichever mechanism Step 2 just
-configured. Concretely, the executing agent calls the `Skill` tool with the skill name confirmed by
-`$HOME/.claude/skills/gsd-execute-phase/SKILL.md`'s own frontmatter
-(`gsd-execute-phase`), passing `$PHASE_ID` as its argument — this is a tool call the agent makes
-directly, not a shell command this document can show as a `bash` fence. After that call returns,
-this skill's own job is complete; any dispatch failure GSD's own skill surfaces (including its own
-cross-AI retry/skip/abort UI) is GSD's problem to handle and report, not this adapter's.
+configured. Concretely, the executing agent calls the `Skill` tool with the skill name confirmed
+by checking, in order: `<project>/.claude/commands/gsd-execute-phase.md` (GSD is installed per
+project), then `$HOME/.claude/skills/gsd-execute-phase/SKILL.md` — use whichever exists first and
+read its frontmatter for the skill name (typically `gsd-execute-phase`), passing `$PHASE_ID` as its
+argument. This is a tool call the agent makes directly, not a shell command this document can show
+as a `bash` fence. After that call returns, this skill's own job is complete; any dispatch failure
+GSD's own skill surfaces (including its own cross-AI retry/skip/abort UI) is GSD's problem to
+handle and report, not this adapter's.
 
 If the `Skill` tool call itself fails to resolve — e.g. `gsd-execute-phase` isn't installed or its
-`SKILL.md` is missing/unreadable — that is a genuine environment problem, not a dispatch failure:
-STOP, do not retry, and report the exact resolution error to the user along with the path checked
-(`$HOME/.claude/skills/gsd-execute-phase/SKILL.md`) so they can reinstall or repair GSD.
+definition is missing/unreadable — that is a genuine environment problem, not a dispatch failure:
+STOP, do not retry, and report the exact resolution error to the user along with both paths
+checked: `<project>/.claude/commands/gsd-execute-phase.md` and
+`$HOME/.claude/skills/gsd-execute-phase/SKILL.md` so they can reinstall or repair GSD.
