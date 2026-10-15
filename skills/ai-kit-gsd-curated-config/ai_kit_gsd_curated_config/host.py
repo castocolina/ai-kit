@@ -97,16 +97,17 @@ def _main_checkout(project_dir: str, run_fn: Callable[..., subprocess.CompletedP
     return os.path.dirname(common)
 
 
-def _worktree_warning(main: str, host: str) -> str | None:
+def _worktree_warning(main: str, host: str, install_root: str) -> str | None:
     gsd_tools = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
     if gsd_tools is None:
         return None
     for local_root in _local_roots(main, host):
         tools = os.path.join(local_root, gsd_tools.GSD_TOOLS_REL)
         if os.path.isfile(tools):
+            # One f-string, never str.format: a "{" in a path must not become a field.
             return (
-                f"gsd-core resolved globally at {{root}}, but the main checkout {main} has a "
-                "project-local install; versions can differ (D-11)"
+                f"gsd-core resolved globally at {install_root}, but the main checkout {main} "
+                "has a project-local install; versions can differ (D-11)"
             )
     return None
 
@@ -115,10 +116,8 @@ def _global_worktree_warnings(install_root: str, project_dir: str, host: str, ro
     main = _main_checkout(project_dir, run_fn)
     if not main or os.path.normpath(main) == os.path.normpath(root):
         return ()
-    template = _worktree_warning(main, host)
-    if not template:
-        return ()
-    return (template.format(root=install_root),)
+    warning = _worktree_warning(main, host, install_root)
+    return (warning,) if warning else ()
 
 
 def resolve_gsd_core(

@@ -1045,7 +1045,7 @@ class TestGsdCoreResolution(unittest.TestCase):
     def test_worktree_global_warns_when_main_has_local(self):
         home, env = self._home_env()
         project = tempfile.mkdtemp()
-        main = tempfile.mkdtemp()
+        main = tempfile.mkdtemp(suffix="{x}")  # B-WR-06: braces in a path stay literal
         self.addCleanup(shutil.rmtree, project, ignore_errors=True)
         self.addCleanup(shutil.rmtree, main, ignore_errors=True)
         make_gsd_install(os.path.join(home, ".claude", "gsd-core"))
