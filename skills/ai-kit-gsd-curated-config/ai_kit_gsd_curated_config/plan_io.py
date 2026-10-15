@@ -8,10 +8,11 @@ performs no I/O itself (REC-01).
 """
 import json
 import os
+import re
 
-from . import gsd_catalog, host
+from . import cross_ai, gsd_catalog, host, presets
 from . import skills as skills_mod
-from .plan_schema import canonical_json
+from .plan_schema import PLAN_SCHEMA_VERSION, canonical_json
 
 _AFFINITY_SUFFIX = "; fix skill_affinity.json"
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -395,3 +396,282 @@ def write_plan(path: str, plan: dict) -> None:
     umask = os.umask(0)
     os.umask(umask)
     cache.cache_write_text(target, canonical_json(plan), mode=0o666 & ~umask)
+
+
+_PLAN_ERROR_SUFFIX = "; rerun recommend"
+_SKILL_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def sibling_inventory_path(plan_path: str) -> str:
+    """``inventory.json`` beside ``plan.json``."""
+    return os.path.join(os.path.dirname(os.path.abspath(plan_path)), "inventory.json")
+
+
+def load_plan(path: str) -> tuple[dict | None, str | None]:
+    """Read and validate a schema-2 plan. Returns ``(plan, None)`` or ``(None, error)``."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            plan = json.load(handle)
+    except OSError as exc:
+        reason = exc.strerror or "unreadable"
+        return None, f"plan {path}: cannot read ({reason}){_PLAN_ERROR_SUFFIX}"
+    except ValueError:
+        return None, f"plan {path}: invalid JSON{_PLAN_ERROR_SUFFIX}"
+    if not isinstance(plan, dict):
+        return None, f"plan {path}: top-level JSON is not an object{_PLAN_ERROR_SUFFIX}"
+    problem = _plan_envelope_problem(plan)
+    if problem:
+        return None, f"plan {path}: {problem}{_PLAN_ERROR_SUFFIX}"
+    problem = validate_plan(plan)
+    if problem:
+        return None, f"plan {path}: {problem}{_PLAN_ERROR_SUFFIX}"
+    return plan, None
+
+
+def check_plan_inventory(plan: dict, inv: dict) -> str | None:
+    """Trusted-roots ``existing`` must match the inventory (review cycle 3)."""
+    key = "agent_skills_security.trusted_global_roots"
+    for entry in plan.get("entries") or []:
+        if entry.get("key") != key:
+            continue
+        inv_val = presets.get_dotted(inv["existing_config"]["values"], key)
+        if entry.get("existing") != inv_val:
+            return f"{key}: the plan's existing value is not the inventory's; rerun recommend"
+    return None
+
+
+def validate_plan(plan: dict) -> str | None:
+    """Shared executable-schema and policy validator; first problem or ``None``."""
+    plan_host = plan.get("host")
+    if plan_host not in host.HOSTS:
+        return f"host {plan_host!r} is not supported"
+    problem = _validate_entries(plan.get("entries"))
+    if problem:
+        return problem
+    return _validate_artifacts(plan.get("artifacts"), plan_host)
+
+
+def _plan_envelope_problem(plan: dict) -> str | None:
+    schema_version = plan.get("schema_version")
+    exact = isinstance(schema_version, int) and not isinstance(schema_version, bool)
+    if not exact or schema_version != PLAN_SCHEMA_VERSION:
+        return (
+            f"schema_version {schema_version!r} unsupported (expected {PLAN_SCHEMA_VERSION})"
+        )
+    for key in ("host", "profile", "rigor", "inventory_digest"):
+        if not isinstance(plan.get(key), str):
+            return f"key {key}: expected str"
+    for key in ("entries", "notes", "artifacts"):
+        if not isinstance(plan.get(key), list):
+            return f"key {key}: expected list"
+    return None
+
+
+def _validate_entries(entries) -> str | None:
+    if not isinstance(entries, list):
+        return "key entries: expected list"
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return "entries: expected list of objects"
+        key = entry.get("key")
+        if not isinstance(key, str) or not key:
+            return "entry key: expected non-empty str"
+        if key in seen:
+            return f"duplicate entry key: {key}"
+        seen.add(key)
+        problem = _validate_one_entry(entry)
+        if problem:
+            return problem
+    return None
+
+
+def _validate_one_entry(entry: dict) -> str | None:
+    key = entry["key"]
+    op = entry.get("op")
+    status = entry.get("status")
+    problem = _entry_shape_problem(key, op, status, entry)
+    if problem:
+        return problem
+    if op == "keep":
+        existing = entry.get("existing")
+        if existing is not None and entry.get("value") != existing:
+            return f"{key}: keep value must equal existing"
+    value = entry.get("value")
+    if op == "set" and value is not None and status != "needs_choice":
+        return _validate_entry_value(key, value, entry)
+    return None
+
+
+def _entry_shape_problem(key: str, op, status, entry: dict) -> str | None:
+    if op not in ("set", "unset", "keep"):
+        return f"{key}: op must be set, unset or keep"
+    if status is not None and status != "needs_choice":
+        return f"{key}: status must be absent or needs_choice"
+    if "candidates" in entry and not isinstance(entry["candidates"], list):
+        return f"{key}: candidates must be a list"
+    if op == "set" and "value" not in entry:
+        return f"{key}: set entry missing value"
+    if op == "set" and entry.get("value") is None and status != "needs_choice":
+        return f"{key}: set entry value may be None only with needs_choice"
+    return None
+
+
+def _validate_entry_value(key: str, value, entry: dict) -> str | None:
+    if key == "workflow.cross_ai_timeout":
+        if not isinstance(value, int) or isinstance(value, bool):
+            return f"{key}: must be an integer >= {cross_ai.MIN_TIMEOUT_S}"
+        if value < cross_ai.MIN_TIMEOUT_S:
+            return f"{key}: must be an integer >= {cross_ai.MIN_TIMEOUT_S} (got {value})"
+    if (
+        key == "workflow.cross_ai_command"
+        and value != cross_ai.CROSS_AI_COMMAND
+        and not entry.get("forced")
+    ):
+        return f"{key}: must be {cross_ai.CROSS_AI_COMMAND!r} unless forced"
+    if key == "agent_skills_security.trusted_global_roots":
+        return _validate_trusted_roots(key, value, entry)
+    if key.startswith("agent_skills."):
+        return _validate_agent_skills(key, value)
+    return None
+
+
+def _validate_trusted_roots(key: str, value, entry: dict) -> str | None:
+    if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+        return f"{key}: expected list of str"
+    existing = entry.get("existing")
+    existing_list = existing if isinstance(existing, list) else []
+    for element in value:
+        if element in existing_list:
+            continue
+        if element.startswith("~/"):
+            continue
+        return f"{key}: trusted root {element!r} must be ~/-relative unless already configured"
+    return None
+
+
+def _validate_agent_skills(key: str, value) -> str | None:
+    if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+        return f"{key}: expected list of str"
+    for name in value:
+        if not _SKILL_NAME.fullmatch(name):
+            return f"{key}: skill name {name!r} is invalid"
+    return None
+
+
+def _validate_artifacts(artifacts, plan_host: str) -> str | None:
+    if not isinstance(artifacts, list):
+        return "key artifacts: expected list"
+    if len(artifacts) > 1:
+        return "artifacts: at most one cross-ai-script artifact"
+    if not artifacts:
+        return None
+    return _validate_artifact_doc(artifacts[0], plan_host)
+
+
+def _validate_artifact_doc(art, plan_host: str) -> str | None:
+    if not isinstance(art, dict):
+        return "artifacts[0]: expected object"
+    shell = (
+        (art.get("kind") != "cross-ai-script", "artifacts[0].kind: must be cross-ai-script"),
+        (
+            art.get("path") != cross_ai.SCRIPT_PATH,
+            f"artifacts[0].path: must be {cross_ai.SCRIPT_PATH!r} (got {art.get('path')!r})",
+        ),
+        (
+            art.get("template") != cross_ai.TEMPLATE_NAME,
+            f"artifacts[0].template: must be {cross_ai.TEMPLATE_NAME!r}",
+        ),
+    )
+    for bad, message in shell:
+        if bad:
+            return message
+    version = art.get("version")
+    if not isinstance(version, int) or isinstance(version, bool):
+        return "artifacts[0].version: expected int"
+    return _validate_artifact_config(
+        art.get("config"), art.get("choices"), art.get("status"), plan_host
+    )
+
+
+def _validate_artifact_config(config, choices, status, plan_host: str) -> str | None:
+    if not isinstance(config, dict):
+        return "artifacts[0].config: expected object"
+    prefer = config.get("prefer")
+    problem = _validate_prefer(prefer, plan_host)
+    if problem or not isinstance(prefer, list):
+        return problem
+    problem = _validate_outer_timeout(config.get("outer_timeout_s"))
+    if problem:
+        return problem
+    models = config.get("models")
+    router = config.get("router_backed")
+    if not isinstance(models, dict):
+        return "artifacts[0].config.models: expected object"
+    if not isinstance(router, dict):
+        return "artifacts[0].config.router_backed: expected object"
+    choice_map = choices if isinstance(choices, dict) else {}
+    return _validate_artifact_targets(prefer, models, router, choice_map, status)
+
+
+def _validate_prefer(prefer, plan_host: str) -> str | None:
+    if not isinstance(prefer, list) or not prefer or not all(isinstance(x, str) for x in prefer):
+        return "artifacts[0].config.prefer: expected non-empty list of str"
+    if len(set(prefer)) != len(prefer):
+        return "artifacts[0].config.prefer: ids must be unique"
+    for runner_id in prefer:
+        if runner_id not in cross_ai.RUNNER_CLI:
+            return f"artifacts[0].config.prefer: unknown id {runner_id!r}"
+        if runner_id == plan_host:
+            return f"artifacts[0].config.prefer: must not include plan host {plan_host!r}"
+    return None
+
+
+def _validate_outer_timeout(timeout) -> str | None:
+    if not isinstance(timeout, int) or isinstance(timeout, bool):
+        return "artifacts[0].config.outer_timeout_s: expected int"
+    if timeout < cross_ai.MIN_TIMEOUT_S:
+        return f"artifacts[0].config.outer_timeout_s: must be >= {cross_ai.MIN_TIMEOUT_S}"
+    return None
+
+
+def _validate_artifact_targets(prefer, models, router, choices, status) -> str | None:
+    for runner_id, model in models.items():
+        problem = _model_row_problem(prefer, runner_id, model)
+        if problem:
+            return problem
+    for runner_id in choices:
+        problem = _choice_row_problem(prefer, runner_id, models, choices[runner_id])
+        if problem:
+            return problem
+    for runner_id in router:
+        if runner_id not in models:
+            return f"artifacts[0].config.router_backed: id {runner_id!r} has no model"
+    for runner_id in prefer:
+        if (runner_id in models) == (runner_id in choices):
+            return (
+                f"artifacts[0]: prefer id {runner_id!r} must be in exactly one of "
+                "models and choices"
+            )
+    want_status = "needs_choice" if choices else "ok"
+    if status != want_status:
+        return f"artifacts[0].status: expected {want_status!r} (got {status!r})"
+    return None
+
+
+def _model_row_problem(prefer, runner_id: str, model) -> str | None:
+    if runner_id not in prefer:
+        return f"artifacts[0].config.models: id {runner_id!r} not in prefer"
+    if not isinstance(model, str) or not model:
+        return f"artifacts[0].config.models.{runner_id}: expected non-empty str"
+    return None
+
+
+def _choice_row_problem(prefer, runner_id: str, models, row) -> str | None:
+    if runner_id not in prefer:
+        return f"artifacts[0].choices: id {runner_id!r} not in prefer"
+    if runner_id in models:
+        return f"artifacts[0]: id {runner_id!r} present in both models and choices"
+    if not isinstance(row, dict) or not isinstance(row.get("candidates"), list):
+        return f"artifacts[0].choices.{runner_id}: expected object with candidates list"
+    return None

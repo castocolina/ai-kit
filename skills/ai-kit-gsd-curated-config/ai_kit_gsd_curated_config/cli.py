@@ -19,7 +19,9 @@ from . import (
     host,
     inventory,
     model_detect,
+    plan_edit,
     plan_io,
+    plan_schema,
     preference_match,
     presets,
     recommend,
@@ -510,6 +512,115 @@ def _cmd_recommend(args, which_fn, run_fn, env_fn) -> int:
     return 0
 
 
+def _load_plan_inputs(args) -> tuple[dict, dict, str, str] | None:
+    """Load plan and inventory; print refusal and return None on failure."""
+    plan, error = plan_io.load_plan(args.plan)
+    if plan is None:
+        print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
+        return None
+    inv_path = args.inventory or plan_io.sibling_inventory_path(args.plan)
+    inv, inv_err = plan_io.load_inventory(inv_path)
+    if inv is None:
+        print(f"ai-kit-gsd-curated-config: {inv_err}", file=sys.stderr)
+        return None
+    digest = plan_schema.inventory_digest(inv)
+    if plan.get("inventory_digest") != digest:
+        print(
+            "ai-kit-gsd-curated-config: inventory digest does not match the plan's "
+            f"inventory_digest (plan {plan['inventory_digest']!r}, inventory {digest!r})",
+            file=sys.stderr,
+        )
+        return None
+    inv_problem = plan_io.check_plan_inventory(plan, inv)
+    if inv_problem:
+        print(f"ai-kit-gsd-curated-config: {inv_problem}", file=sys.stderr)
+        return None
+    refusal = plan_io.out_path_problem(args.plan, inv_path, inv)
+    if refusal:
+        print(f"ai-kit-gsd-curated-config: {refusal}", file=sys.stderr)
+        return None
+    return plan, inv, inv_path, digest
+
+
+def _gsd_tools_encode():
+    gsd_tools = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
+    if gsd_tools is None:
+        print(f"ai-kit-gsd-curated-config: {gsd_catalog.SIBLING_MISSING}", file=sys.stderr)
+        return None
+    return gsd_tools.encode_value_strict
+
+
+def _print_plan_set_ok(args, edited: dict, warnings: list[str]) -> None:
+    for warning in warnings:
+        print(f"ai-kit-gsd-curated-config: warning: {warning}", file=sys.stderr)
+    entry = next(e for e in edited["entries"] if e["key"] == args.key)
+    print(
+        json.dumps(
+            {"key": args.key, "op": entry["op"], "plan": args.plan, "warnings": warnings}
+        )
+    )
+
+
+def _cmd_plan_set(args, which_fn, run_fn, env_fn) -> int:
+    del which_fn, run_fn, env_fn
+    loaded = _load_plan_inputs(args)
+    if loaded is None:
+        return 2
+    encode = _gsd_tools_encode()
+    if encode is None:
+        return 2
+    plan, inv, _inv_path, _digest = loaded
+    call = plan_edit.EditCall(plan, inv, force=args.force, encode=encode)
+    try:
+        edited, warnings = plan_edit.plan_set(call, args.key, args.value)
+    except plan_edit.PlanEditError as exc:
+        print(f"ai-kit-gsd-curated-config: {exc}", file=sys.stderr)
+        return 2
+    problem = plan_io.validate_plan(edited)
+    if problem:
+        print(f"ai-kit-gsd-curated-config: {problem}", file=sys.stderr)
+        return 2
+    try:
+        plan_io.write_plan(args.plan, edited)
+    except OSError as exc:
+        print(f"ai-kit-gsd-curated-config: cannot write {args.plan}: {exc}", file=sys.stderr)
+        return 2
+    _print_plan_set_ok(args, edited, warnings)
+    return 0
+
+
+def _cmd_plan_unset(args, which_fn, run_fn, env_fn) -> int:
+    del which_fn, run_fn, env_fn
+    loaded = _load_plan_inputs(args)
+    if loaded is None:
+        return 2
+    plan, inv, _inv_path, _digest = loaded
+    encode = _gsd_tools_encode()
+    if encode is None:
+        return 2
+    call = plan_edit.EditCall(plan, inv, force=False, encode=encode)
+    try:
+        plan_edit.plan_unset(call, args.key)
+    except plan_edit.PlanEditError as exc:
+        print(f"ai-kit-gsd-curated-config: {exc}", file=sys.stderr)
+        return 2
+    return 2
+
+
+def _register_plan_edit_parsers(sub) -> None:
+    p_plan_set = sub.add_parser("plan-set")
+    p_plan_set.add_argument("key")
+    p_plan_set.add_argument("value")
+    p_plan_set.add_argument("--plan", required=True)
+    p_plan_set.add_argument("--inventory", default=None)
+    p_plan_set.add_argument("--force", action="store_true")
+
+    p_plan_unset = sub.add_parser("plan-unset")
+    p_plan_unset.add_argument("key")
+    p_plan_unset.add_argument("--plan", required=True)
+    p_plan_unset.add_argument("--inventory", default=None)
+
+
 def _build_parser():
     parser = argparse.ArgumentParser(prog="ai-kit-gsd-curated-config")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -575,6 +686,8 @@ def _build_parser():
         ".planning/ (the resolved config's dir when outside one) or onto an input/config file",
     )
 
+    _register_plan_edit_parsers(sub)
+
     p_apply_workflow_defaults = sub.add_parser("apply-workflow-defaults")
     p_apply_workflow_defaults.add_argument("--project-dir", required=True)
     p_apply_workflow_defaults.add_argument(
@@ -600,6 +713,8 @@ _COMMAND_HANDLERS = {
     "apply-workflow-defaults": _cmd_apply_workflow_defaults,
     "inventory": _cmd_inventory,
     "recommend": _cmd_recommend,
+    "plan-set": _cmd_plan_set,
+    "plan-unset": _cmd_plan_unset,
 }
 
 
