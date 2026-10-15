@@ -42,6 +42,101 @@
   "entries": [
     {
       "existing": null,
+      "key": "agent_skills.gsd-code-fixer",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "ponytail"
+      ],
+      "why": "family ponytail-core: ponytail"
+    },
+    {
+      "existing": null,
+      "key": "agent_skills.gsd-code-reviewer",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "ponytail-review",
+        "ponytail-audit"
+      ],
+      "why": "family ponytail-review: ponytail-review, ponytail-audit"
+    },
+    {
+      "existing": null,
+      "key": "agent_skills.gsd-eval-auditor",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "ponytail-review",
+        "ponytail-audit"
+      ],
+      "why": "family ponytail-review: ponytail-review, ponytail-audit"
+    },
+    {
+      "existing": null,
+      "key": "agent_skills.gsd-executor",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "ponytail"
+      ],
+      "why": "family ponytail-core: ponytail"
+    },
+    {
+      "existing": null,
+      "key": "agent_skills.gsd-nyquist-auditor",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "ponytail-review",
+        "ponytail-audit"
+      ],
+      "why": "family ponytail-review: ponytail-review, ponytail-audit"
+    },
+    {
+      "existing": null,
+      "key": "agent_skills.gsd-planner",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "ponytail"
+      ],
+      "why": "family ponytail-core: ponytail"
+    },
+    {
+      "existing": null,
+      "key": "agent_skills.gsd-security-auditor",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "ponytail-review",
+        "ponytail-audit"
+      ],
+      "why": "family ponytail-review: ponytail-review, ponytail-audit"
+    },
+    {
+      "existing": null,
+      "key": "agent_skills.gsd-ui-auditor",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "ponytail-review",
+        "ponytail-audit"
+      ],
+      "why": "family ponytail-review: ponytail-review, ponytail-audit"
+    },
+    {
+      "existing": null,
+      "key": "agent_skills.gsd-verifier",
+      "op": "set",
+      "source": "affinity",
+      "value": [
+        "ponytail-debt"
+      ],
+      "why": "family ponytail-debt: ponytail-debt"
+    },
+    {
+      "existing": null,
       "key": "effort.agent_overrides.gsd-code-fixer",
       "op": "set",
       "source": "preset",
@@ -291,5 +386,9 @@
   ],
   "profile": "adaptive",
   "rigor": "mvp",
-  "schema_version": 2
+  "schema_version": 2,
+  "skill_affinity": {
+    "as_of": "2026-10-15",
+    "schema_version": 1
+  }
 }

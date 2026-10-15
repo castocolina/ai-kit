@@ -6,7 +6,7 @@ inventory. Imports only `typing` names, `.cross_ai`, `.presets`, `.roles` and
 """
 from typing import Any, NamedTuple
 
-from . import cross_ai, plan_schema, presets, roles
+from . import cross_ai, plan_schema, presets, roles, skills
 
 
 class RecommendOpts(NamedTuple):
@@ -14,6 +14,7 @@ class RecommendOpts(NamedTuple):
     rigor: str
     cross_ai_review: str | None = None
     cross_ai_exec: str | None = None
+    affinity: dict | None = None
 
 
 class PlanCtx(NamedTuple):
@@ -1039,6 +1040,54 @@ def _runtime_entries(ctx: PlanCtx) -> tuple[list, list]:
     return [], [_runtime_mismatch_note(ctx, runtime, source)]
 
 
+def _skills_agent_why(
+    agent: str,
+    names: list[str],
+    families: list,
+    facts: dict[str, bool],
+) -> str:
+    why_parts: list[str] = []
+    for family in families:
+        if not isinstance(family, dict):
+            continue
+        when = family.get("when")
+        if when is not None and not facts.get(when, False):
+            continue
+        fam_skills = family.get("skills")
+        fam_agents = family.get("agents")
+        if not isinstance(fam_skills, list) or not isinstance(fam_agents, list):
+            continue
+        if agent not in fam_agents:
+            continue
+        picked = [n for n in names if n in fam_skills]
+        if picked:
+            fam_id = family.get("id", "")
+            why_parts.append(f"family {fam_id}: {', '.join(picked)}")
+    return "; ".join(why_parts) if why_parts else "skill affinity"
+
+
+def _skills_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
+    """Wire installed skills to agents from curated affinity (18 D-02, D-04, D-33)."""
+    affinity = ctx.opts.affinity
+    if affinity is None:
+        return [], []
+    facts = skills.skill_facts(ctx.inv, prior_entries, ctx.existing)
+    resolved, notes = skills.resolve(affinity, ctx.inv, facts, ctx.opts.rigor)
+    families = affinity.get("families")
+    fam_list = families if isinstance(families, list) else []
+    entries = [
+        make_entry(
+            ctx,
+            f"agent_skills.{agent}",
+            names,
+            "affinity",
+            _skills_agent_why(agent, names, fam_list, facts),
+        )
+        for agent, names in sorted(resolved.items())
+    ]
+    return entries, notes
+
+
 def _reconcile_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     """Last layer: runtime, conflict-driven unsets, then managed leftovers (D-08)."""
     planned = {entry["key"] for entry in prior_entries}
@@ -1059,6 +1108,7 @@ _LAYERS = (
     _slot_layer,
     _specialist_layer,
     _cross_ai_layer,
+    _skills_layer,
     _reconcile_layer,
 )
 
@@ -1128,6 +1178,12 @@ def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
         timeout_key = "workflow.cross_ai_timeout"
         timeout = cross_ai.timeout_value(presets.get_dotted(ctx.existing, timeout_key))
         artifacts = [cross_ai.script_artifact(targets, timeout)]
+    skill_affinity = None
+    if opts.affinity is not None:
+        skill_affinity = {
+            "schema_version": opts.affinity.get("schema_version"),
+            "as_of": opts.affinity.get("as_of"),
+        }
     return {
         "schema_version": plan_schema.PLAN_SCHEMA_VERSION,
         "inventory_digest": plan_schema.inventory_digest(inventory),
@@ -1135,6 +1191,7 @@ def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
         "profile": opts.profile,
         "rigor": opts.rigor,
         "cross_ai": answers,
+        "skill_affinity": skill_affinity,
         "artifacts": artifacts,
         "entries": sorted(entries, key=lambda entry: entry["key"]),
         "notes": sorted(

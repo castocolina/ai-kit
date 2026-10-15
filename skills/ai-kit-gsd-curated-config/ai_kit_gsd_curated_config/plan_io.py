@@ -10,7 +10,12 @@ import json
 import os
 
 from . import gsd_catalog, host
+from . import skills as skills_mod
 from .plan_schema import canonical_json
+
+_AFFINITY_SUFFIX = "; fix skill_affinity.json"
+_PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+AFFINITY_PATH = os.path.join(_PKG_ROOT, "skill_affinity.json")
 
 INVENTORY_SCHEMA_VERSION = 2
 
@@ -91,10 +96,10 @@ def _skill_entry_problem(entry, index: int) -> str | None:
     return None
 
 
-def _validate_skills(skills) -> str | None:
-    if not isinstance(skills, list):
+def _validate_skills(rows) -> str | None:
+    if not isinstance(rows, list):
         return "key skills: expected list"
-    for index, entry in enumerate(skills):
+    for index, entry in enumerate(rows):
         problem = _skill_entry_problem(entry, index)
         if problem:
             return problem
@@ -305,6 +310,22 @@ def _validate_candidates(candidates: list) -> str | None:
         if problem:
             return problem
     return None
+
+
+def load_affinity(path: str) -> tuple[dict | None, str | None]:
+    """Reads and validates ``skill_affinity.json``. Returns ``(doc, None)`` or an error."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            doc = json.load(handle)
+    except OSError as exc:
+        reason = exc.strerror or "unreadable"
+        return None, f"skill_affinity {path}: cannot read ({reason}){_AFFINITY_SUFFIX}"
+    except ValueError:
+        return None, f"skill_affinity {path}: invalid JSON{_AFFINITY_SUFFIX}"
+    problem = skills_mod.validate_affinity(doc)
+    if problem:
+        return None, f"skill_affinity {path}: {problem}{_AFFINITY_SUFFIX}"
+    return doc, None
 
 
 def load_inventory(path: str) -> tuple[dict | None, str | None]:

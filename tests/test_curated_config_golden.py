@@ -133,6 +133,22 @@ def build_golden_inventory(
         gsd_home = os.path.join(root, "gsd_home")
         xdg = os.path.join(root, "xdg")
         os.makedirs(project)
+        os.makedirs(home, exist_ok=True)
+        from tests.test_curated_config_skills import add_plugin
+
+        add_plugin(
+            home,
+            "ponytail",
+            "ponytail",
+            [
+                "ponytail",
+                "ponytail-audit",
+                "ponytail-debt",
+                "ponytail-review",
+                "ponytail-gain",
+                "ponytail-help",
+            ],
+        )
         os.makedirs(os.path.join(project, ".planning"), exist_ok=True)
         with open(os.path.join(project, "AGENTS.md"), "w", encoding="utf-8") as handle:
             handle.write("# agents\n")
@@ -394,6 +410,19 @@ class TestGoldenProperties(unittest.TestCase):
                     )
                     self.assertEqual(sonnet.get("status"), "needs_choice")
                     self.assertEqual(sonnet.get("candidates"), [])
+
+
+    def test_skill_cap(self):
+        for host_name, rigor, profile in ALL_GOLDEN_CASES:
+            with self.subTest(host=host_name, rigor=rigor, profile=profile):
+                plan = self._load_golden(golden_basename(host_name, rigor, profile))
+                cap = presets.SKILL_CAPS[rigor]
+                for entry in plan["entries"]:
+                    if not entry["key"].startswith("agent_skills."):
+                        continue
+                    value = entry.get("value")
+                    if isinstance(value, list):
+                        self.assertLessEqual(len(value), cap, entry["key"])
 
     def test_lanes_never_host(self):
         lanes = _tables_body().get("review_lanes") or []

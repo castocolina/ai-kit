@@ -14,6 +14,9 @@ from typing import Any
 RIGORS = ("mvp", "standard", "rigorous")
 TIERS = ("opus", "sonnet", "haiku")
 
+SKILL_CAPS = {"mvp": 2, "standard": 3, "rigorous": 5}
+GATES = ("tdd_mode", "frontend", "db", "system_one_backend")
+
 # The at-most-7 specialist agents that may receive a `model_overrides.<agent>` key
 # (spec §4; Pattern 10).
 SPECIALISTS = (

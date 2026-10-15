@@ -271,7 +271,12 @@ def make_inventory(
     policy = global_values.get("model_policy")
     if isinstance(policy, dict):
         accepted |= set(presets.flatten_config({"model_policy": policy}))
-    accepted = sorted((set(accepted) | set(extra_accepted)) - set(rejected))
+    agent_skill_keys = [
+        f"agent_skills.{agent}" for agent in TABLES["agent_to_phase_type"]
+    ]
+    accepted = sorted(
+        (set(accepted) | set(extra_accepted) | set(agent_skill_keys)) - set(rejected)
+    )
     gpath = global_path if global_path is not None else "<global>/.gsd/defaults.json"
     return {
         "schema_version": plan_io.INVENTORY_SCHEMA_VERSION,
@@ -1774,7 +1779,7 @@ FORBIDDEN_IMPORT_ROOTS = frozenset((
     "subprocess", "socket", "time", "datetime", "os", "urllib", "http", "shutil",
     "tempfile", "random", "pathlib", "glob", "io", "ai_kit_spec",
 ))
-ALLOWED_RELATIVE_IMPORTS = frozenset(("cross_ai", "presets", "roles", "plan_schema"))
+ALLOWED_RELATIVE_IMPORTS = frozenset(("cross_ai", "presets", "roles", "plan_schema", "skills"))
 
 
 def forbidden_imports(source):
@@ -1818,7 +1823,7 @@ class TestPurity(unittest.TestCase):
         self.assertEqual(plan_io.canonical_json(first), plan_io.canonical_json(second))
 
     def test_recommend_and_presets_import_nothing_forbidden(self):
-        for module in ("recommend", "presets", "roles", "plan_schema", "cross_ai"):
+        for module in ("recommend", "presets", "roles", "plan_schema", "cross_ai", "skills"):
             with open(
                 os.path.join(
                     REPO_ROOT, "skills", "ai-kit-gsd-curated-config", "ai_kit_gsd_curated_config",
@@ -1840,7 +1845,7 @@ class TestPurity(unittest.TestCase):
 
 
 class TestCliRecommendIo(unittest.TestCase):
-    """MUST NOT (R7): the CLI recommend path reads only its inventory and writes only --out."""
+    """MUST NOT (R7): recommend reads inventory, shipped skill_affinity.json, and --out only."""
 
     def test_cli_recommend_touches_only_inventory_and_out(self):
         inv = make_inventory(host="codex", rejected=("dynamic_routing.enabled",))
@@ -1871,9 +1876,13 @@ class TestCliRecommendIo(unittest.TestCase):
                 active[0] = False
             self.assertEqual(code, 0)
             real_tmp = os.path.realpath(tmp)
+            affinity_real = os.path.realpath(plan_io.AFFINITY_PATH)
             touched = {p for p in opened if not p.endswith((".py", ".pyc"))}
             self.assertIn(os.path.realpath(inv_path), touched)
+            self.assertIn(affinity_real, touched)
             for path in touched:
+                if path == affinity_real:
+                    continue
                 self.assertEqual(os.path.dirname(path), real_tmp, path)
             self.assertEqual(sorted(os.listdir(tmp)), ["inventory.json", "plan.json"])
 

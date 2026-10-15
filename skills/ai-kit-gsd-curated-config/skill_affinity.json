@@ -1,0 +1,121 @@
+{
+  "as_of": "2026-10-15",
+  "families": [
+    {
+      "agents": [
+        "gsd-planner",
+        "gsd-executor",
+        "gsd-code-fixer"
+      ],
+      "id": "ponytail-core",
+      "skills": [
+        "ponytail"
+      ],
+      "when": null
+    },
+    {
+      "agents": [
+        "gsd-code-reviewer",
+        "gsd-security-auditor",
+        "gsd-nyquist-auditor",
+        "gsd-eval-auditor",
+        "gsd-ui-auditor"
+      ],
+      "id": "ponytail-review",
+      "skills": [
+        "ponytail-review",
+        "ponytail-audit"
+      ],
+      "when": null
+    },
+    {
+      "agents": [
+        "gsd-verifier"
+      ],
+      "id": "ponytail-debt",
+      "skills": [
+        "ponytail-debt"
+      ],
+      "when": null
+    },
+    {
+      "agents": [
+        "gsd-advisor-researcher",
+        "gsd-assumptions-analyzer"
+      ],
+      "id": "system-one",
+      "skills": [
+        "jev-fast-decision"
+      ],
+      "when": "system_one_backend"
+    },
+    {
+      "agents": [
+        "gsd-executor",
+        "gsd-planner"
+      ],
+      "id": "tdd",
+      "skills": [
+        "test-driven-development"
+      ],
+      "when": "tdd_mode"
+    },
+    {
+      "agents": [
+        "gsd-ui-researcher",
+        "gsd-executor",
+        "gsd-ui-auditor"
+      ],
+      "id": "frontend",
+      "skills": [
+        "frontend-design",
+        "react-dev"
+      ],
+      "when": "frontend"
+    },
+    {
+      "agents": [
+        "gsd-planner",
+        "gsd-executor"
+      ],
+      "id": "db",
+      "skills": [
+        "database-schema-designer"
+      ],
+      "when": "db"
+    },
+    {
+      "agents": [
+        "gsd-debugger",
+        "gsd-debug-session-manager"
+      ],
+      "id": "debugging",
+      "skills": [
+        "systematic-debugging"
+      ],
+      "when": null
+    },
+    {
+      "agents": [
+        "gsd-code-reviewer",
+        "gsd-code-fixer"
+      ],
+      "id": "simplicity",
+      "skills": [
+        "reducing-entropy"
+      ],
+      "when": null
+    },
+    {
+      "agents": [
+        "gsd-doc-writer"
+      ],
+      "id": "diagrams",
+      "skills": [
+        "mermaid-diagrams"
+      ],
+      "when": null
+    }
+  ],
+  "schema_version": 1
+}

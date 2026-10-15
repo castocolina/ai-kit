@@ -465,6 +465,10 @@ def _cmd_recommend(args, which_fn, run_fn, env_fn) -> int:
     if loaded is None:
         print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
         return 2
+    affinity_doc, aff_err = plan_io.load_affinity(plan_io.AFFINITY_PATH)
+    if affinity_doc is None:
+        print(f"ai-kit-gsd-curated-config: {aff_err}", file=sys.stderr)
+        return 2
     refusal = plan_io.out_path_problem(args.out, args.inventory, loaded)
     if refusal:
         print(f"ai-kit-gsd-curated-config: {refusal}", file=sys.stderr)
@@ -474,6 +478,7 @@ def _cmd_recommend(args, which_fn, run_fn, env_fn) -> int:
         rigor=args.rigor,
         cross_ai_review=args.cross_ai_review,
         cross_ai_exec=args.cross_ai_exec,
+        affinity=affinity_doc,
     )
     try:
         plan = recommend.build_plan(loaded, opts)
