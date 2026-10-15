@@ -1985,7 +1985,7 @@ class TestReconcileConflicts(unittest.TestCase):
 
 
 class TestReconcileComposition(unittest.TestCase):
-    """Task 17-08-3: reconcile composes with earlier layers."""
+    """Task 17-08-3: reconcile composes with slot, specialist and cross-AI layers."""
 
     def test_codex_slot_not_leftover(self):
         inv = make_inventory(
