@@ -79,9 +79,11 @@ from ai_kit_spec.detection import (  # noqa: F401
     detect_opencode_models,
     group_models_by_family,
 )
+from ai_kit_spec.error_classifier import REASONS, classify_error
 from ai_kit_spec.quota import (  # noqa: F401
     NO_CONFIG_FALLBACK,
     cache_quota_path,
+    entry_reason,
     probe_reviewer_quota,
     refresh_quota_cache,
     resolve_ladder_pick,
@@ -146,7 +148,7 @@ for _name in (
     "build_reviewer_model_id", "render_reviewer_command", "cfg_local_path", "cfg_global_path",
     "cfg_load_toml", "cfg_merge_reviewers", "cfg_resolve", "cfg_render_toml", "cfg_write_toml",
     "report_has_status", "report_declares_issues", "parse_findings", "merge_findings",
-    "render_merged_report", "main",
+    "render_merged_report", "classify_error", "REASONS", "entry_reason", "main",
     "tomllib", "os",
 ):
     setattr(rs, _name, globals()[_name])
@@ -2301,6 +2303,7 @@ class TestProbeReviewerQuota(unittest.TestCase):
             stderr = ""
         result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
         self.assertTrue(result["available"])
+        self.assertIsNone(result["reason"])
 
     def test_nonzero_exit_is_unavailable(self):
         resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
@@ -2312,17 +2315,30 @@ class TestProbeReviewerQuota(unittest.TestCase):
         result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
         self.assertFalse(result["available"])
 
-    def test_usage_limit_text_is_unavailable_even_on_exit_zero(self):
-        # confirmed live: codex can print a usage-limit message and still
-        # be worth treating as unavailable regardless of exit code
-        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.6-luna", vendor="openai",
-                                        cli="codex", command="echo 'usage limit reached'", extra={})
+    def test_answer_containing_quota_text_on_exit_zero_is_a_success(self):
+        # R8/D-13: the model's answer (stdout) is never classified — an answer
+        # saying "quota exceeded" with exit 0 and empty stderr is a success.
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex", command="echo hi", extra={})
         class FakeResult:
             returncode = 0
-            stdout = "You have hit your usage limit.\n"
+            stdout = "The reviewer reports: quota exceeded"
             stderr = ""
         result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
+        self.assertTrue(result["available"])
+        self.assertIsNone(result["reason"])
+
+    def test_stderr_quota_error_on_nonzero_exit_records_reason_quota(self):
+        resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
+                                        cli="codex", command="codex exec", extra={})
+        class FakeResult:
+            returncode = 1
+            stdout = ""
+            stderr = "Error: usage limit reached"
+        result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
         self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "quota")
+        self.assertIn("usage limit", result["detail"])
 
     def test_timeout_is_unavailable(self):
         resolved = rs.ResolvedReviewer(key="codex-gpt", model="gpt-5.2", vendor="openai",
@@ -2331,6 +2347,7 @@ class TestProbeReviewerQuota(unittest.TestCase):
             raise subprocess.TimeoutExpired(cmd="sleep 999", timeout=30)
         result = rs.probe_reviewer_quota(resolved, run_fn=fake_run)
         self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "timeout")
 
     def test_probe_pipes_prompt_via_stdin(self):
         # the probe prompt must reach the child process via stdin
@@ -2360,6 +2377,70 @@ class TestProbeReviewerQuota(unittest.TestCase):
         result = rs.probe_reviewer_quota(resolved, run_fn=lambda *a, **k: (_ for _ in ()).throw(
             AssertionError("should never shell out for a malformed command")))
         self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "configuration")
+
+
+class TestErrorClassifier(unittest.TestCase):
+    """D-13/R8: one shared classifier; inputs are exit status and stderr only."""
+
+    def test_exit_zero_is_never_classified_even_with_hostile_stderr(self):
+        self.assertIsNone(classify_error(0, "", False))
+        self.assertIsNone(classify_error(0, "quota exceeded", False))
+
+    def test_quota_signals(self):
+        self.assertEqual(classify_error(1, "Error: quota exceeded", False), "quota")
+        self.assertEqual(classify_error(1, "Rate limit reached", False), "quota")
+        self.assertEqual(classify_error(1, "usage limit", False), "quota")
+
+    def test_auth_checked_before_quota(self):
+        self.assertEqual(classify_error(1, "ActionRequiredError: Named models unavailable",
+                                         False), "auth")
+        self.assertEqual(classify_error(1, "Warning: The provided API key is invalid",
+                                         False), "auth")
+        self.assertEqual(classify_error(1, "not logged in ... quota", False), "auth")
+        self.assertEqual(classify_error(1, "unauthorized", False), "auth")
+
+    def test_configuration_signals(self):
+        self.assertEqual(classify_error(1, "Cannot use this model: x", False),
+                         "configuration")
+        self.assertEqual(classify_error(1, "unknown model", False), "configuration")
+        self.assertEqual(classify_error(1, "model not found", False), "configuration")
+
+    def test_dispatch_unavailable(self):
+        self.assertEqual(classify_error(127, "", False), "dispatch_unavailable")
+        self.assertEqual(classify_error(1, "sh: x: command not found", False),
+                         "dispatch_unavailable")
+        self.assertEqual(classify_error(1, "No such file or directory: 'codex'", False),
+                         "dispatch_unavailable")
+
+    def test_timeout_wins_over_everything(self):
+        self.assertEqual(classify_error(None, "", True), "timeout")
+        self.assertEqual(classify_error(1, "quota", True), "timeout")
+
+    def test_other_nonzero_exit_is_real_error(self):
+        self.assertEqual(classify_error(1, "boom", False), "real_error")
+
+    def test_non_utf8_stderr_bytes_do_not_crash(self):
+        self.assertEqual(classify_error(1, b"\xff\xfe quota", False), "quota")
+
+    def test_reason_vocabulary_is_closed(self):
+        self.assertEqual(set(REASONS),
+                          {"quota", "auth", "timeout", "configuration",
+                           "dispatch_unavailable", "real_error"})
+
+
+class TestProbeReason(unittest.TestCase):
+    """D-13: quota.json entries carry a typed `reason`; legacy entries read real_error."""
+
+    def test_legacy_unavailable_entry_without_reason_reads_real_error(self):
+        self.assertEqual(entry_reason({"available": False, "detail": "x"}), "real_error")
+
+    def test_available_entry_without_reason_reads_none(self):
+        self.assertIsNone(entry_reason({"available": True}))
+
+    def test_stored_reason_wins(self):
+        self.assertEqual(entry_reason({"available": False, "reason": "auth",
+                                        "detail": "quota"}), "auth")
 
 
 class TestRefreshQuotaCache(unittest.TestCase):

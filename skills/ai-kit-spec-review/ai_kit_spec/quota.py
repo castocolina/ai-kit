@@ -7,6 +7,7 @@ from ai_kit_spec.cache import cache_base
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
 from ai_kit_spec.config_io import _KNOWN_REVIEWER_FIELDS
 from ai_kit_spec.dispatch import child_env
+from ai_kit_spec.error_classifier import classify_error
 from ai_kit_spec.execute_selection import purpose_matches
 
 QUOTA_TTL_SECONDS = 3600                 # 1 hour: quota/context headroom is highly dynamic
@@ -14,15 +15,6 @@ QUOTA_TTL_SECONDS = 3600                 # 1 hour: quota/context headroom is hig
 NO_CONFIG_FALLBACK = ResolvedReviewer(key="session-default", model="", vendor="",
                                        cli=None, command=None, extra={})
 
-_UNAVAILABLE_SIGNALS = (
-    "usage limit", "quota", "rate limit", "rate_limit",
-    # confirmed live against cursor-agent on a free plan: exit code is
-    # already nonzero for this case, so these are belt-and-suspenders,
-    # not load-bearing — kept in case a future CLI reports the same
-    # class of failure (plan/entitlement gate, not a temporary limit) on
-    # a zero exit code.
-    "actionrequirederror", "not authenticated", "not logged in",
-)
 _DETAIL_MAX_CHARS = 300
 
 
@@ -190,34 +182,44 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
     return [pick] if pick else [NO_CONFIG_FALLBACK]
 
 
+def entry_reason(entry: dict) -> str | None:
+    """The typed reason stored on a quota.json entry (D-13): the entry's own
+    `reason` field when present; for legacy entries written before reasons
+    existed, `real_error` when unavailable, None when available."""
+    reason = entry.get("reason")
+    if reason is not None:
+        return reason
+    if entry.get("available", True):
+        return None
+    return "real_error"
+
+
 def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) -> dict:
     """Native (cli-less) entries are never probed — there is nothing to
     shell out to, and dispatch mechanics there are the current session's
     own concern, not a quota this module can observe. For CLI entries: run
     a trivial prompt through the reviewer's own command (an ARGV list from
-    render_reviewer_command, spawned with no shell and a scrubbed child environment via
-    child_env -- D-10/D-14) and classify
-    availability generically — a nonzero exit code, or stdout/stderr
-    containing a case-insensitive usage/quota/rate-limit phrase, means
-    unavailable; anything else (including plain success) means available.
-    This generic heuristic is what makes the confirmed codex usage-limit
-    error (see skills/review-spec/references/cli-profiles/codex.md) detectable
-    without a CLI-specific parser. A `cli`-set entry with a missing or
-    malformed `command` template is deliberately classified `available:
-    False` here rather than skipped/True — it can never actually be
-    dispatched, so reporting it as available would let a broken config
-    entry win the ladder walk and fail later, in real dispatch, instead
-    of here where the failure is cheap and diagnosable.
+    render_reviewer_command, spawned with no shell and a scrubbed child
+    environment via child_env -- D-10/D-14) and classify the outcome via
+    error_classifier.classify_error from the exit status and stderr only
+    (D-13/R8): the probe is available exactly when the returncode is 0 —
+    the model's answer (stdout) is never classified, so an answer that
+    happens to contain "quota exceeded" on exit 0 is a success.
+    A `cli`-set entry with a missing or malformed `command` template is
+    deliberately classified `available: False`, reason `configuration`,
+    here rather than skipped/True — it can never actually be dispatched,
+    so reporting it as available would let a broken config entry win the
+    ladder walk and fail later, in real dispatch, instead of here where
+    the failure is cheap and diagnosable.
 
     `detail` (always present) carries the reviewer's own combined
     stdout+stderr, truncated to `_DETAIL_MAX_CHARS`, when unavailable —
     e.g. "ActionRequiredError: Named models unavailable. Free plans can
     only use Auto." (confirmed live against cursor-agent). Empty string
-    when available or native (nothing to report). This is diagnostic
-    only — `available` is still the sole signal callers act on; `detail`
-    exists so a human (review-spec-config's setup wizard, or anyone
-    reading quota.json) can see *why* without re-running the probe by
-    hand.
+    when available or native (nothing to report). `reason` (always
+    present, D-13) carries the classify_error-typed why: callers act on
+    `available`, dispatch on `reason` (e.g. superpowers' hourly-wake
+    gate), and `detail` stays purely human-readable diagnostics.
 
     The probe prompt is always piped via stdin (`input=`), never inlined
     as a shell argument — confirmed live against every known-CLI builder
@@ -230,25 +232,28 @@ def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) ->
     path serves both without the caller needing to introspect the
     template first."""
     if not resolved.cli:
-        return {"available": True, "checked_at": time.time(), "detail": ""}
+        return {"available": True, "checked_at": time.time(), "reason": None, "detail": ""}
     probe_prompt = "Only say: Hello world!"
     try:
         filled = render_reviewer_command(resolved, probe_prompt)
     except ValueError as exc:
-        return {"available": False, "checked_at": time.time(), "detail": str(exc)}
+        return {"available": False, "checked_at": time.time(), "reason": "configuration",
+                "detail": str(exc)}
     try:
         result = run_fn(filled, input=probe_prompt, capture_output=True, encoding="utf-8",
                          errors="replace", check=False, timeout=30, env=child_env())
     except subprocess.TimeoutExpired:
-        return {"available": False, "checked_at": time.time(),
+        return {"available": False, "checked_at": time.time(), "reason": "timeout",
                 "detail": "timed out after 30s"}
     except OSError as exc:
-        return {"available": False, "checked_at": time.time(), "detail": str(exc)}
-    combined = (result.stdout + result.stderr).strip()
-    if result.returncode != 0 or any(s in combined.lower() for s in _UNAVAILABLE_SIGNALS):
         return {"available": False, "checked_at": time.time(),
+                "reason": "dispatch_unavailable", "detail": str(exc)}
+    combined = (result.stdout + result.stderr).strip()
+    if result.returncode != 0:
+        return {"available": False, "checked_at": time.time(),
+                "reason": classify_error(result.returncode, result.stderr, False),
                 "detail": combined[:_DETAIL_MAX_CHARS]}
-    return {"available": True, "checked_at": time.time(), "detail": ""}
+    return {"available": True, "checked_at": time.time(), "reason": None, "detail": ""}
 
 
 def refresh_quota_cache(config: dict, ladder_keys: list, existing: dict, ttl_seconds: int,
