@@ -9,11 +9,13 @@ never a target_dir placeholder baked in ahead of the real dispatch call (HIGH fi
 import os
 import re
 import sys
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 from ai_kit_spec.commands import build_execute_command
 from ai_kit_spec.config_io import cfg_resolve
 from ai_kit_spec.error_classifier import classify_error
-from ai_kit_spec.execute_dispatch import dispatch_execute
+from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
 from ai_kit_spec.execute_selection import (
     ExecuteResolveOptions,
     candidates_to_ladder,
@@ -26,6 +28,43 @@ from ai_kit_spec_superpowers.task_classification import (
     estimate_required_context,
     extract_touched_paths,
 )
+
+
+class BuildInjectionSeams(NamedTuple):
+    resolve_ladder_pick_fn: Callable[..., Any] = resolve_ladder_pick
+    build_execute_command_fn: Callable[..., str] = build_execute_command
+
+
+class BuildInjectionRequest(NamedTuple):
+    task_markdown: str
+    candidates: list
+    files_touched_sizes: dict
+    affinity_table: dict
+    top_n_keys: list
+
+
+class BuildInjectionOptions(NamedTuple):
+    quota: dict | None = None
+    seams: BuildInjectionSeams = BuildInjectionSeams()
+
+
+class DispatchTaskRequest(NamedTuple):
+    injection: dict
+    prompt: str
+    target_dir: str
+    heartbeat_interval: int
+    timeout: int
+
+
+class SuperpowersDispatchGuidance(NamedTuple):
+    format_block: str | None = None
+    tool_availability: dict | None = None
+    agents_tooling_path: str | None = None
+    codegraph_registered: bool = False
+
+
+class SuperpowersDispatchSeams(NamedTuple):
+    dispatch_execute_fn: Callable[..., dict] = dispatch_execute
 
 
 def reasons_summary(reasons: dict) -> dict:
@@ -186,15 +225,6 @@ def _unavailability_reason(quota: dict, key: str) -> str:
     return entry_reason(quota.get(key) or {}) or "real_error"
 
 
-# A non-empty sentinel ONLY for _is_dispatchable's own probe call below -- build_execute_command's
-# real builders raise ValueError on an EMPTY target_dir (their own _require_target_dir guard, a
-# separate, correct check that a write-capable dispatch never silently lands in the orchestrator's
-# own cwd) unrelated to whether the cli has a registered builder at all. This sentinel exists only
-# to get past that guard during registration-probing; the resulting command string is discarded
-# immediately and NEVER reaches an actual dispatch -- the real target_dir is supplied later, at
-# the moment of real dispatch, by dispatch_superpowers_task -> dispatch_execute (Global
-# Constraints' "never a literal placeholder baked in ahead of time" rule governs THAT call, not
-# this internal capability probe).
 _PROBE_TARGET_DIR = "/__ai_kit_spec_execute_superpowers_dispatch_probe__"
 
 
@@ -225,9 +255,6 @@ def _narrow_and_rank(task_markdown: str, candidates: list, files_touched_sizes: 
     resolve_execute_candidates. Returns (task_type, required_context, ranked)."""
     task_type = classify_task(task_markdown)
     required_context = estimate_required_context(task_markdown, files_touched_sizes)
-    # D-15 (Phase 16.1): purpose-unset/"both" claude/grok ladder entries are dropped with a
-    # stderr warning; an explicit purpose = "execute" entry raises ValueError, which the CLI
-    # turns into an exit-2 error. Never silently routed to another CLI.
     ranked = resolve_execute_candidates(
         candidates,
         ExecuteResolveOptions(
@@ -251,90 +278,94 @@ def compute_ladder_keys(task_markdown: str, candidates: list, files_touched_size
     return candidates_to_ladder(ranked)
 
 
-def build_dispatch_injection(task_markdown: str, candidates: list, files_touched_sizes: dict,
-                              affinity_table: dict, top_n_keys: list, quota: dict | None = None,
-                              resolve_ladder_pick_fn=resolve_ladder_pick,
-                              build_execute_command_fn=build_execute_command) -> dict:
+def _injection_for_candidate(candidate: dict) -> dict:
+    cli = candidate["cli"]
+    if cli is None:
+        return {"mode": "native_claude", "model": candidate["model"], "key": candidate["key"]}
+    return {
+        "mode": "external_cli", "key": candidate["key"], "cli": cli,
+        "model": candidate["model"], "effort": candidate.get("effort"),
+        "service_tier": candidate.get("service_tier"),
+    }
+
+
+def _record_remaining_unavailable(
+    remaining_ladder: list, quota: dict, tried: list, reasons: dict,
+) -> None:
+    for key in remaining_ladder:
+        tried.append(key)
+        reasons[key] = _unavailability_reason(quota, key)
+
+
+def _walk_ladder_for_injection(
+    task_type, ranked: list, quota: dict, seams: BuildInjectionSeams,
+) -> dict:
+    by_key = {c["key"]: c for c in ranked}
+    remaining_ladder = candidates_to_ladder(ranked)
+    tried: list = []
+    reasons: dict = {}
+    while remaining_ladder:
+        pick = seams.resolve_ladder_pick_fn(ranked, remaining_ladder, skip_vendor="", quota=quota)
+        if pick is None:
+            break
+        candidate = by_key[pick.key]
+        if not _is_dispatchable(candidate, seams.build_execute_command_fn):
+            tried.append(pick.key)
+            reasons[pick.key] = "no_usable_dispatch"
+            remaining_ladder = [k for k in remaining_ladder if k != pick.key]
+            continue
+        return _injection_for_candidate(candidate)
+    _record_remaining_unavailable(remaining_ladder, quota, tried, reasons)
+    raise QuotaExhaustedError(task_type, tried, reasons)
+
+
+def build_dispatch_injection(request: BuildInjectionRequest,
+                              options: BuildInjectionOptions | None = None) -> dict:
+    opts = options or BuildInjectionOptions()
     task_type, required_context, ranked = _narrow_and_rank(
-        task_markdown, candidates, files_touched_sizes, affinity_table, top_n_keys)
+        request.task_markdown, request.candidates, request.files_touched_sizes,
+        request.affinity_table, request.top_n_keys)
     if not ranked:
         raise ValueError(
             f"no execute candidate survived affinity/context narrowing for "
             f"task_type={task_type!r}, required_context={required_context} -- cannot build a "
             f"dispatch injection"
         )
-    by_key = {c["key"]: c for c in ranked}
-    remaining_ladder = candidates_to_ladder(ranked)
-    quota = dict(quota or {})
-    tried = []
-    reasons = {}
-    while remaining_ladder:
-        pick = resolve_ladder_pick_fn(ranked, remaining_ladder, skip_vendor="", quota=quota)
-        if pick is None:
-            break  # nothing left in remaining_ladder currently has quota
-        candidate = by_key[pick.key]
-        if not _is_dispatchable(candidate, build_execute_command_fn):
-            # Has quota, but no usable dispatch mechanism -- drop it and keep walking (CRITICAL
-            # finding), same drop-and-continue shape ai_kit_spec_gsd.adapter.resolve_gsd_dispatch
-            # already uses for its own equivalent case.
-            tried.append(pick.key)
-            reasons[pick.key] = "no_usable_dispatch"
-            remaining_ladder = [k for k in remaining_ladder if k != pick.key]
-            continue
-        cli = candidate["cli"]
-        # CRITICAL finding: only cli is None is a native Agent-tool alias. Every other surviving
-        # candidate here is a real, subprocess-invoked entry whose cli is in
-        # ai_kit_spec.commands.SUPPORTED_EXECUTE_CLIS (claude/grok were removed per D-15) -- it
-        # falls through to the external_cli branch below, never silently treated as native.
-        if cli is None:
-            return {"mode": "native_claude", "model": candidate["model"], "key": candidate["key"]}
-        return {
-            "mode": "external_cli", "key": candidate["key"], "cli": cli,
-            "model": candidate["model"], "effort": candidate.get("effort"),
-            "service_tier": candidate.get("service_tier"),
-        }
-    # Nothing left in remaining_ladder currently has quota -- classify each one's own reason
-    # (HIGH finding: distinguishes a real, time-bound quota wait from a futile auth retry) and
-    # fold it into `tried` so the complete excluded set is what QuotaExhaustedError carries.
-    for key in remaining_ladder:
-        tried.append(key)
-        reasons[key] = _unavailability_reason(quota, key)
-    raise QuotaExhaustedError(task_type, tried, reasons)
+    quota = dict(opts.quota or {})
+    return _walk_ladder_for_injection(task_type, ranked, quota, opts.seams)
 
 
-def dispatch_superpowers_task(injection: dict, prompt: str, target_dir: str,
-                               heartbeat_interval: int, timeout: int,
-                               format_block: str | None = None,
-                               tool_availability: dict | None = None, agents_tooling_path=None,
-                               codegraph_registered: bool = False,
-                               dispatch_execute_fn=dispatch_execute) -> dict:
+def dispatch_superpowers_task(request: DispatchTaskRequest,
+                               guidance: SuperpowersDispatchGuidance | None = None,
+                               seams: SuperpowersDispatchSeams | None = None) -> dict:
     """The ONLY place a mode="external_cli" injection actually runs a subprocess. `target_dir` is
     a real, caller-supplied path at the moment of dispatch -- never resolved ahead of time and
     never a placeholder string (HIGH finding). Always routes through
     ai_kit_spec.execute_dispatch.dispatch_execute, which builds the real execute-mode command,
     composes the reinforcement/tooling/soft-confinement prose, and performs the real dispatch via
     dispatch_with_heartbeat -- this function adds no dispatch mechanics of its own."""
-    if injection.get("mode") != "external_cli":
+    if request.injection.get("mode") != "external_cli":
         raise ValueError(
             f"dispatch_superpowers_task is for mode='external_cli' injections only -- got "
-            f"mode={injection.get('mode')!r}; a native_claude injection dispatches via the "
+            f"mode={request.injection.get('mode')!r}; a native_claude injection dispatches via the "
             f"Agent tool directly, in-process, and never reaches this function"
         )
+    guide = guidance or SuperpowersDispatchGuidance()
+    seam = seams or SuperpowersDispatchSeams()
+    injection = request.injection
     candidate = {"cli": injection["cli"], "model": injection["model"],
                  "effort": injection.get("effort"), "service_tier": injection.get("service_tier")}
-    from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec
-
-    return dispatch_execute_fn(
+    return seam.dispatch_execute_fn(
         ExecuteDispatchSpec(
             candidate,
-            prompt,
-            target_dir,
-            heartbeat_interval,
-            timeout,
-            format_block=format_block,
-            tool_availability=tool_availability,
-            agents_tooling_path=agents_tooling_path,
-            codegraph_registered=codegraph_registered,
+            request.prompt,
+            request.target_dir,
+            request.heartbeat_interval,
+            request.timeout,
+            format_block=guide.format_block,
+            tool_availability=guide.tool_availability,
+            agents_tooling_path=guide.agents_tooling_path,
+            codegraph_registered=guide.codegraph_registered,
         )
     )
 

@@ -10,7 +10,6 @@ silently make every infra-flavored task behave as an untagged (None) one anyway,
 extra, unused label."""
 import re
 
-
 OVERHEAD_TOKENS = 2000  # fixed prompt/scaffolding overhead, on top of the touched files' content
 
 _FRONTEND_EXTENSIONS = (".tsx", ".jsx", ".css", ".vue", ".scss")

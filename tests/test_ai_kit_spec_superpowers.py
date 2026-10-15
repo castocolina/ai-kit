@@ -13,8 +13,9 @@ import unittest
 # skills/ai-kit-spec-execute-superpowers) because Task 5's detect_framework module lives there --
 # this is the ONE bootstrap block for the whole file, at the top; it is never repeated.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
-                                 "ai-kit-spec-execute-superpowers"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute-superpowers")
+)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute"))
 
 import detect_framework as router_detect_framework
@@ -33,8 +34,10 @@ class TestClassifyTask(unittest.TestCase):
         self.assertEqual(task_classification.classify_task(task), "backend")
 
     def test_classifies_mixed_when_both_signal_types_present(self):
-        task = ("### Task 5: Full-stack widget\n**Files:**\n"
-                "- Create: `src/components/Widget.tsx`\n- Create: `server/api/widget.py`\n")
+        task = (
+            "### Task 5: Full-stack widget\n**Files:**\n"
+            "- Create: `src/components/Widget.tsx`\n- Create: `server/api/widget.py`\n"
+        )
         self.assertEqual(task_classification.classify_task(task), "mixed")
 
     def test_returns_none_with_no_confident_signal(self):
@@ -56,8 +59,7 @@ class TestExtractTouchedPaths(unittest.TestCase):
         # that ever touches the filesystem) is where the line-range suffix gets stripped for
         # stat'ing, not here. Normalizing it in two places would let the two drift.
         task = "### Task 1\n**Files:**\n- Modify: `existing.py:123-145`\n"
-        self.assertEqual(task_classification.extract_touched_paths(task),
-                          ["existing.py:123-145"])
+        self.assertEqual(task_classification.extract_touched_paths(task), ["existing.py:123-145"])
 
 
 class TestEstimateRequiredContext(unittest.TestCase):
@@ -79,12 +81,19 @@ class TestAssembleCandidates(unittest.TestCase):
             "policy": {"ladder": ["claude/opus-5", "codex/terra"]},
             "reviewers": [
                 {"key": "claude/opus-5", "model": "opus", "cli": None, "vendor": "anthropic"},
-                {"key": "codex/terra", "model": "gpt-5.6-terra", "cli": "codex", "vendor": "openai",
-                 "task_affinity": "backend", "context_limit": 1_000_000},
+                {
+                    "key": "codex/terra",
+                    "model": "gpt-5.6-terra",
+                    "cli": "codex",
+                    "vendor": "openai",
+                    "task_affinity": "backend",
+                    "context_limit": 1_000_000,
+                },
             ],
         }
         candidates, top_n_keys = dispatch_injection.assemble_candidates(
-            "/repo", {}, cfg_resolve_fn=lambda cwd, env: fake_resolved)
+            "/repo", {}, cfg_resolve_fn=lambda cwd, env: fake_resolved
+        )
         self.assertEqual(top_n_keys, ["claude/opus-5", "codex/terra"])
         self.assertEqual(candidates[1]["task_affinity"], "backend")
         self.assertEqual(candidates[1]["cli"], "codex")
@@ -103,22 +112,37 @@ class TestAssembleCandidates(unittest.TestCase):
         fake_resolved = {
             "policy": {"ladder": ["claude/opus-5", "codex/terra"]},
             "reviewers": [
-                {"key": "claude/opus-5", "model": "opus", "cli": None, "vendor": "anthropic",
-                 "strength": "planning"},
-                {"key": "codex/terra", "model": "gpt-5.6-terra", "cli": "codex", "vendor": "openai",
-                 "strength": "coding", "effort": "high", "service_tier": "priority",
-                 "timeout_tiers": [900, 1800]},
+                {
+                    "key": "claude/opus-5",
+                    "model": "opus",
+                    "cli": None,
+                    "vendor": "anthropic",
+                    "strength": "planning",
+                },
+                {
+                    "key": "codex/terra",
+                    "model": "gpt-5.6-terra",
+                    "cli": "codex",
+                    "vendor": "openai",
+                    "strength": "coding",
+                    "effort": "high",
+                    "service_tier": "priority",
+                    "timeout_tiers": [900, 1800],
+                },
             ],
         }
         candidates, top_n_keys = dispatch_injection.assemble_candidates(
-            "/repo", {}, cfg_resolve_fn=lambda cwd, env: fake_resolved)
+            "/repo", {}, cfg_resolve_fn=lambda cwd, env: fake_resolved
+        )
         self.assertIsNone(candidates[0]["task_affinity"])
         self.assertIsNone(candidates[0]["context_limit"])
         self.assertEqual(candidates[1]["effort"], "high")
         self.assertEqual(candidates[1]["service_tier"], "priority")
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         result = dispatch_injection.build_dispatch_injection(
-            task, candidates, {}, {}, top_n_keys, quota={})
+            dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, top_n_keys),
+            options=dispatch_injection.BuildInjectionOptions(quota={}),
+        )
         self.assertEqual(result, {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"})
 
     def test_purpose_field_is_threaded_through_from_config(self):
@@ -126,12 +150,20 @@ class TestAssembleCandidates(unittest.TestCase):
             return {
                 "policy": {"ladder": ["a"]},
                 "reviewers": [
-                    {"key": "a", "model": "m", "cli": "codex", "vendor": "openai",
-                     "command": "codex exec -m {model}", "purpose": "execute"},
+                    {
+                        "key": "a",
+                        "model": "m",
+                        "cli": "codex",
+                        "vendor": "openai",
+                        "command": "codex exec -m {model}",
+                        "purpose": "execute",
+                    },
                 ],
             }
+
         candidates, _top_n_keys = dispatch_injection.assemble_candidates(
-            "/fake/cwd", {}, cfg_resolve_fn=fake_cfg_resolve)
+            "/fake/cwd", {}, cfg_resolve_fn=fake_cfg_resolve
+        )
         self.assertEqual(candidates[0]["purpose"], "execute")
 
     def test_missing_purpose_field_comes_back_none(self):
@@ -140,8 +172,10 @@ class TestAssembleCandidates(unittest.TestCase):
                 "policy": {"ladder": ["a"]},
                 "reviewers": [{"key": "a", "model": "m", "cli": "codex", "vendor": "openai"}],
             }
+
         candidates, _ = dispatch_injection.assemble_candidates(
-            "/fake/cwd", {}, cfg_resolve_fn=fake_cfg_resolve)
+            "/fake/cwd", {}, cfg_resolve_fn=fake_cfg_resolve
+        )
         self.assertIsNone(candidates[0]["purpose"])
 
 
@@ -181,47 +215,102 @@ class TestComputeLadderKeys(unittest.TestCase):
         # rejection) but is absent from top_n_keys entirely; it must still appear here, ranked
         # last, or a stuck top_n_keys candidate could never be proven "escalated past" it.
         candidates = [
-            {"key": "claude/opus-5", "model": "opus", "cli": None, "vendor": "anthropic",
-             "task_affinity": None, "context_limit": None},
-            {"key": "codex/terra", "model": "gpt-5.6-terra", "cli": "codex", "vendor": "openai",
-             "task_affinity": None, "context_limit": None},
+            {
+                "key": "claude/opus-5",
+                "model": "opus",
+                "cli": None,
+                "vendor": "anthropic",
+                "task_affinity": None,
+                "context_limit": None,
+            },
+            {
+                "key": "codex/terra",
+                "model": "gpt-5.6-terra",
+                "cli": "codex",
+                "vendor": "openai",
+                "task_affinity": None,
+                "context_limit": None,
+            },
         ]
         task = "### Task 1\n**Files:**\n- Create: `a.py`\n"
-        result = dispatch_injection.compute_ladder_keys(task, candidates, {}, {},
-                                                          ["claude/opus-5"])
+        result = dispatch_injection.compute_ladder_keys(task, candidates, {}, {}, ["claude/opus-5"])
         self.assertEqual(result, ["claude/opus-5", "codex/terra"])
 
 
 class TestBuildDispatchInjection(unittest.TestCase):
     def test_native_claude_mode_when_top_candidate_has_quota(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
-        candidates = [{"key": "claude/opus-5", "cli": None, "model": "opus",
-                        "task_affinity": "backend", "context_limit": 1_000_000}]
+        candidates = [
+            {
+                "key": "claude/opus-5",
+                "cli": None,
+                "model": "opus",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            }
+        ]
         result = dispatch_injection.build_dispatch_injection(
-            task, candidates, {"server/api.py": 1000}, {}, ["claude/opus-5"], quota={})
-        self.assertEqual(result, {"mode": "native_claude", "model": "opus",
-                                   "key": "claude/opus-5"})
+            dispatch_injection.BuildInjectionRequest(
+                task, candidates, {"server/api.py": 1000}, {}, ["claude/opus-5"]
+            ),
+            options=dispatch_injection.BuildInjectionOptions(quota={}),
+        )
+        self.assertEqual(result, {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"})
 
     def test_external_cli_mode_when_top_candidate_is_another_cli(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
-        candidates = [{"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
-                        "task_affinity": "backend", "context_limit": 1_000_000}]
+        candidates = [
+            {
+                "key": "codex/terra",
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            }
+        ]
         result = dispatch_injection.build_dispatch_injection(
-            task, candidates, {"server/api.py": 1000}, {}, ["codex/terra"], quota={})
-        self.assertEqual(result, {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
-                                   "model": "gpt-5.6-terra", "effort": None, "service_tier": None})
+            dispatch_injection.BuildInjectionRequest(
+                task, candidates, {"server/api.py": 1000}, {}, ["codex/terra"]
+            ),
+            options=dispatch_injection.BuildInjectionOptions(quota={}),
+        )
+        self.assertEqual(
+            result,
+            {
+                "mode": "external_cli",
+                "key": "codex/terra",
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "effort": None,
+                "service_tier": None,
+            },
+        )
 
     def test_escalates_past_a_quota_exhausted_top_candidate(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
-            {"key": "claude/opus-5", "cli": None, "model": "opus",
-             "task_affinity": "backend", "context_limit": 1_000_000},
-            {"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
-             "task_affinity": "backend", "context_limit": 1_000_000},
+            {
+                "key": "claude/opus-5",
+                "cli": None,
+                "model": "opus",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            },
+            {
+                "key": "codex/terra",
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            },
         ]
         quota = {"claude/opus-5": {"available": False}, "codex/terra": {"available": True}}
         result = dispatch_injection.build_dispatch_injection(
-            task, candidates, {}, {}, ["claude/opus-5", "codex/terra"], quota=quota)
+            dispatch_injection.BuildInjectionRequest(
+                task, candidates, {}, {}, ["claude/opus-5", "codex/terra"]
+            ),
+            options=dispatch_injection.BuildInjectionOptions(quota=quota),
+        )
         self.assertEqual(result["mode"], "external_cli")
         self.assertEqual(result["key"], "codex/terra")
 
@@ -235,10 +324,20 @@ class TestBuildDispatchInjection(unittest.TestCase):
         # than simulating one that doesn't exist.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
-            {"key": "gemini/main", "cli": "gemini", "model": "gemini-3-pro",
-             "task_affinity": "backend", "context_limit": 1_000_000},
-            {"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
-             "task_affinity": "backend", "context_limit": 1_000_000},
+            {
+                "key": "gemini/main",
+                "cli": "gemini",
+                "model": "gemini-3-pro",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            },
+            {
+                "key": "codex/terra",
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            },
         ]
         quota = {"gemini/main": {"available": True}, "codex/terra": {"available": True}}
 
@@ -248,8 +347,16 @@ class TestBuildDispatchInjection(unittest.TestCase):
             return "codex exec --sandbox workspace-write -m {model}"
 
         result = dispatch_injection.build_dispatch_injection(
-            task, candidates, {}, {}, ["gemini/main", "codex/terra"], quota=quota,
-            build_execute_command_fn=fake_build_execute_command)
+            dispatch_injection.BuildInjectionRequest(
+                task, candidates, {}, {}, ["gemini/main", "codex/terra"]
+            ),
+            dispatch_injection.BuildInjectionOptions(
+                quota=quota,
+                seams=dispatch_injection.BuildInjectionSeams(
+                    build_execute_command_fn=fake_build_execute_command,
+                ),
+            ),
+        )
         self.assertEqual(result["key"], "codex/terra")
 
     def test_cli_claude_ladder_entry_is_skipped_with_warning(self):
@@ -258,14 +365,30 @@ class TestBuildDispatchInjection(unittest.TestCase):
         # stderr warning (never silently, never routed to external_cli or folded into
         # native_claude); an explicit purpose = "execute" choice is a hard ValueError.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
-        candidates = [{"key": "claude-cli/opus-5", "cli": "claude", "model": "opus",
-                        "task_affinity": "backend", "context_limit": 1_000_000},
-                      {"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
-                        "task_affinity": "backend", "context_limit": 1_000_000}]
+        candidates = [
+            {
+                "key": "claude-cli/opus-5",
+                "cli": "claude",
+                "model": "opus",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            },
+            {
+                "key": "codex/terra",
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            },
+        ]
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             result = dispatch_injection.build_dispatch_injection(
-                task, candidates, {}, {}, ["claude-cli/opus-5", "codex/terra"], quota={})
+                dispatch_injection.BuildInjectionRequest(
+                    task, candidates, {}, {}, ["claude-cli/opus-5", "codex/terra"]
+                ),
+                options=dispatch_injection.BuildInjectionOptions(quota={}),
+            )
         self.assertEqual(result["mode"], "external_cli")
         self.assertEqual(result["cli"], "codex")
         self.assertIn("claude-cli/opus-5", stderr.getvalue())
@@ -274,18 +397,37 @@ class TestBuildDispatchInjection(unittest.TestCase):
     def test_cli_claude_purpose_execute_raises_value_error_naming_the_supported_clis(self):
         # D-15: an explicit purpose = "execute" claude entry is a hard error, never a fallback.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
-        candidates = [{"key": "claude-cli/opus-5", "cli": "claude", "model": "opus",
-                        "purpose": "execute", "task_affinity": "backend",
-                        "context_limit": 1_000_000}]
+        candidates = [
+            {
+                "key": "claude-cli/opus-5",
+                "cli": "claude",
+                "model": "opus",
+                "purpose": "execute",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            }
+        ]
         with self.assertRaises(ValueError) as ctx:
             dispatch_injection.build_dispatch_injection(
-                task, candidates, {}, {}, ["claude-cli/opus-5"], quota={})
+                dispatch_injection.BuildInjectionRequest(
+                    task, candidates, {}, {}, ["claude-cli/opus-5"]
+                ),
+                options=dispatch_injection.BuildInjectionOptions(quota={}),
+            )
         self.assertIn("codex, cursor-agent, opencode", str(ctx.exception))
 
     def test_cli_purpose_execute_exits_2_with_the_supported_list_on_stderr(self):
-        candidates = [{"key": "claude-cli/opus-5", "cli": "claude", "model": "opus",
-                        "vendor": "anthropic", "purpose": "execute", "task_affinity": None,
-                        "context_limit": None}]
+        candidates = [
+            {
+                "key": "claude-cli/opus-5",
+                "cli": "claude",
+                "model": "opus",
+                "vendor": "anthropic",
+                "purpose": "execute",
+                "task_affinity": None,
+                "context_limit": None,
+            }
+        ]
 
         def fake_assemble(cwd, env):
             return candidates, ["claude-cli/opus-5"]
@@ -298,13 +440,21 @@ class TestBuildDispatchInjection(unittest.TestCase):
             quota_path = os.path.join(tmp, "quota.json")
             with contextlib.redirect_stderr(stderr):
                 rc = superpowers_cli.main(
-                    ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
-                     "--quota-path", quota_path],
+                    [
+                        "resolve-injection",
+                        "--cwd",
+                        tmp,
+                        "--task-file",
+                        task_file,
+                        "--quota-path",
+                        quota_path,
+                    ],
                     assemble_candidates_fn=fake_assemble,
                     cache_read_json_fn=lambda path: {},
                     cache_write_json_fn=lambda path, data: None,
                     refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
-                    stdout=out)
+                    stdout=out,
+                )
         self.assertEqual(rc, 2)
         self.assertEqual(out.getvalue(), "")
         self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
@@ -313,17 +463,36 @@ class TestBuildDispatchInjection(unittest.TestCase):
     def test_no_surviving_candidates_raises_value_error(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         with self.assertRaises(ValueError):
-            dispatch_injection.build_dispatch_injection(task, [], {}, {}, [], quota={})
+            dispatch_injection.build_dispatch_injection(
+                dispatch_injection.BuildInjectionRequest(task, [], {}, {}, []),
+                options=dispatch_injection.BuildInjectionOptions(quota={}),
+            )
 
     def test_every_candidate_quota_exhausted_raises_quota_exhausted_error_with_reasons(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
-        candidates = [{"key": "claude/opus-5", "cli": None, "model": "opus",
-                        "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota = {"claude/opus-5": {"available": False, "reason": "quota",
-                                    "detail": "usage limit reached"}}
+        candidates = [
+            {
+                "key": "claude/opus-5",
+                "cli": None,
+                "model": "opus",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            }
+        ]
+        quota = {
+            "claude/opus-5": {
+                "available": False,
+                "reason": "quota",
+                "detail": "usage limit reached",
+            }
+        }
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
-                task, candidates, {}, {}, ["claude/opus-5"], quota=quota)
+                dispatch_injection.BuildInjectionRequest(
+                    task, candidates, {}, {}, ["claude/opus-5"]
+                ),
+                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+            )
         self.assertEqual(ctx.exception.tried, ["claude/opus-5"])
         self.assertEqual(ctx.exception.reasons, {"claude/opus-5": "quota"})
         self.assertFalse(ctx.exception.all_auth_failures)
@@ -334,13 +503,27 @@ class TestBuildDispatchInjection(unittest.TestCase):
         # time-bound quota exhaustion -- .all_auth_failures is what tells a caller to skip the
         # futile hourly CronCreate wake and surface an actionable setup error instead.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
-        candidates = [{"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
-                        "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota = {"codex/terra": {"available": False, "reason": "auth",
-                                  "detail": "Error: not authenticated"}}
+        candidates = [
+            {
+                "key": "codex/terra",
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            }
+        ]
+        quota = {
+            "codex/terra": {
+                "available": False,
+                "reason": "auth",
+                "detail": "Error: not authenticated",
+            }
+        }
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
-                task, candidates, {}, {}, ["codex/terra"], quota=quota)
+                dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, ["codex/terra"]),
+                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+            )
         self.assertEqual(ctx.exception.reasons, {"codex/terra": "auth"})
         self.assertTrue(ctx.exception.all_auth_failures)
         self.assertFalse(ctx.exception.any_quota_recoverable)
@@ -349,13 +532,27 @@ class TestBuildDispatchInjection(unittest.TestCase):
         # HIGH finding: a probe timeout is a real, non-time-bound problem (a hung/broken CLI
         # invocation) -- it must never be classified "quota" and trigger a futile hourly wake.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
-        candidates = [{"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
-                        "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota = {"codex/terra": {"available": False, "reason": "timeout",
-                                  "detail": "timed out after 30s"}}
+        candidates = [
+            {
+                "key": "codex/terra",
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            }
+        ]
+        quota = {
+            "codex/terra": {
+                "available": False,
+                "reason": "timeout",
+                "detail": "timed out after 30s",
+            }
+        }
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
-                task, candidates, {}, {}, ["codex/terra"], quota=quota)
+                dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, ["codex/terra"]),
+                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+            )
         self.assertEqual(ctx.exception.reasons, {"codex/terra": "timeout"})
         self.assertFalse(ctx.exception.any_quota_recoverable)
 
@@ -363,29 +560,54 @@ class TestBuildDispatchInjection(unittest.TestCase):
         # HIGH finding: a bad/missing command template is a config problem -- never fixed by
         # waiting for quota to refill.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
-        candidates = [{"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
-                        "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota = {"codex/terra": {"available": False,
-                                   "reason": "configuration",
-                                  "detail": "reviewer 'codex/terra' has a malformed command "
-                                             "template: KeyError"}}
+        candidates = [
+            {
+                "key": "codex/terra",
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            }
+        ]
+        quota = {
+            "codex/terra": {
+                "available": False,
+                "reason": "configuration",
+                "detail": "reviewer 'codex/terra' has a malformed command template: KeyError",
+            }
+        }
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
-                task, candidates, {}, {}, ["codex/terra"], quota=quota)
+                dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, ["codex/terra"]),
+                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+            )
         self.assertEqual(ctx.exception.reasons, {"codex/terra": "configuration"})
         self.assertFalse(ctx.exception.any_quota_recoverable)
 
     def test_os_error_style_failure_classified_as_dispatch_unavailable(self):
         # HIGH finding: the CLI binary itself failing to launch is not a quota problem either.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
-        candidates = [{"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
-                        "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota = {"codex/terra": {"available": False,
-                                   "reason": "dispatch_unavailable",
-                                  "detail": "[Errno 2] No such file or directory: 'codex'"}}
+        candidates = [
+            {
+                "key": "codex/terra",
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            }
+        ]
+        quota = {
+            "codex/terra": {
+                "available": False,
+                "reason": "dispatch_unavailable",
+                "detail": "[Errno 2] No such file or directory: 'codex'",
+            }
+        }
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
-                task, candidates, {}, {}, ["codex/terra"], quota=quota)
+                dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, ["codex/terra"]),
+                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+            )
         self.assertEqual(ctx.exception.reasons, {"codex/terra": "dispatch_unavailable"})
         self.assertFalse(ctx.exception.any_quota_recoverable)
 
@@ -394,13 +616,27 @@ class TestBuildDispatchInjection(unittest.TestCase):
         # "quota" -- a bad model id or any other unrelated failure text is a real error, not a
         # time-bound rate limit, and must never trigger a futile hourly CronCreate wake.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
-        candidates = [{"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
-                        "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota = {"codex/terra": {"available": False, "reason": "real_error",
-                                  "detail": "Error: unrecognized model id"}}
+        candidates = [
+            {
+                "key": "codex/terra",
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            }
+        ]
+        quota = {
+            "codex/terra": {
+                "available": False,
+                "reason": "real_error",
+                "detail": "Error: unrecognized model id",
+            }
+        }
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
-                task, candidates, {}, {}, ["codex/terra"], quota=quota)
+                dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, ["codex/terra"]),
+                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+            )
         self.assertEqual(ctx.exception.reasons, {"codex/terra": "real_error"})
         self.assertFalse(ctx.exception.any_quota_recoverable)
 
@@ -410,18 +646,36 @@ class TestBuildDispatchInjection(unittest.TestCase):
         # candidate's reason is "quota", even when others in the same batch are permanent.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
-            {"key": "claude/opus-5", "cli": None, "model": "opus",
-             "task_affinity": "backend", "context_limit": 1_000_000},
-            {"key": "codex/terra", "cli": "codex", "model": "gpt-5.6-terra",
-             "task_affinity": "backend", "context_limit": 1_000_000},
+            {
+                "key": "claude/opus-5",
+                "cli": None,
+                "model": "opus",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            },
+            {
+                "key": "codex/terra",
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            },
         ]
-        quota = {"claude/opus-5": {"available": False, "reason": "quota",
-                                    "detail": "usage limit reached"},
-                  "codex/terra": {"available": False, "reason": "auth",
-                                  "detail": "not authenticated"}}
+        quota = {
+            "claude/opus-5": {
+                "available": False,
+                "reason": "quota",
+                "detail": "usage limit reached",
+            },
+            "codex/terra": {"available": False, "reason": "auth", "detail": "not authenticated"},
+        }
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
-                task, candidates, {}, {}, ["claude/opus-5", "codex/terra"], quota=quota)
+                dispatch_injection.BuildInjectionRequest(
+                    task, candidates, {}, {}, ["claude/opus-5", "codex/terra"]
+                ),
+                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+            )
         self.assertTrue(ctx.exception.any_quota_recoverable)
         self.assertFalse(ctx.exception.all_auth_failures)
 
@@ -452,13 +706,16 @@ class TestComputeResumeExclusions(unittest.TestCase):
         result = dispatch_injection.compute_resume_exclusions(
             tried=["claude/opus-5", "codex/terra"],
             reasons={"claude/opus-5": "quota", "codex/terra": "auth"},
-            prior_excluded_keys=[])
+            prior_excluded_keys=[],
+        )
         self.assertEqual(result, ["codex/terra"])
 
     def test_prior_permanent_exclusions_are_preserved(self):
         result = dispatch_injection.compute_resume_exclusions(
-            tried=["grok/main"], reasons={"grok/main": "no_usable_dispatch"},
-            prior_excluded_keys=["codex/terra"])
+            tried=["grok/main"],
+            reasons={"grok/main": "no_usable_dispatch"},
+            prior_excluded_keys=["codex/terra"],
+        )
         self.assertEqual(result, ["codex/terra", "grok/main"])
 
     def test_round_trip_quota_recovery_makes_candidate_eligible_again(self):
@@ -466,42 +723,75 @@ class TestComputeResumeExclusions(unittest.TestCase):
         # resume-state exclusion set, THEN (once quota recovers) a fresh build_dispatch_injection
         # call using THAT exclusion set must be able to pick the previously-exhausted candidate
         # again -- never permanently locked out by its own earlier exhaustion event.
-        candidates = [{"key": "claude/opus-5", "cli": None, "model": "opus",
-                        "task_affinity": "backend", "context_limit": 1_000_000}]
-        quota_when_exhausted = {"claude/opus-5": {"available": False, "reason": "quota",
-                                                  "detail": "usage limit"}}
+        candidates = [
+            {
+                "key": "claude/opus-5",
+                "cli": None,
+                "model": "opus",
+                "task_affinity": "backend",
+                "context_limit": 1_000_000,
+            }
+        ]
+        quota_when_exhausted = {
+            "claude/opus-5": {"available": False, "reason": "quota", "detail": "usage limit"}
+        }
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
-                task, candidates, {}, {}, ["claude/opus-5"], quota=quota_when_exhausted)
+                dispatch_injection.BuildInjectionRequest(
+                    task, candidates, {}, {}, ["claude/opus-5"]
+                ),
+                options=dispatch_injection.BuildInjectionOptions(quota=quota_when_exhausted),
+            )
         excluded_keys = dispatch_injection.compute_resume_exclusions(
-            ctx.exception.tried, ctx.exception.reasons, [])
+            ctx.exception.tried, ctx.exception.reasons, []
+        )
         self.assertEqual(excluded_keys, [])  # a quota-only reason -- nothing permanently excluded
 
         # Resume: candidates filtered by excluded_keys (none removed here), quota now recovered.
         surviving = [c for c in candidates if c["key"] not in excluded_keys]
         quota_recovered = {"claude/opus-5": {"available": True}}
         result = dispatch_injection.build_dispatch_injection(
-            task, surviving, {}, {}, ["claude/opus-5"], quota=quota_recovered)
+            dispatch_injection.BuildInjectionRequest(task, surviving, {}, {}, ["claude/opus-5"]),
+            options=dispatch_injection.BuildInjectionOptions(quota=quota_recovered),
+        )
         self.assertEqual(result["key"], "claude/opus-5")
 
 
 class TestDispatchSuperpowersTask(unittest.TestCase):
     def test_delegates_to_dispatch_execute_with_a_real_candidate_dict(self):
-        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
-                      "model": "gpt-5.6-terra", "effort": "high", "service_tier": None}
+        injection = {
+            "mode": "external_cli",
+            "key": "codex/terra",
+            "cli": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": "high",
+            "service_tier": None,
+        }
         captured = {}
 
         def fake_dispatch_execute(spec):
             captured.update(
                 candidate=spec.candidate, prompt=spec.prompt, target_dir=spec.target_dir
             )
-            return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
-                    "returncode": 0, "stdout": "ok", "stderr": "", "timed_out": False}
+            return {
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "command": "codex exec ...",
+                "returncode": 0,
+                "stdout": "ok",
+                "stderr": "",
+                "timed_out": False,
+            }
 
         result = dispatch_injection.dispatch_superpowers_task(
-            injection, "do the task", "/real/scratch/dir", 60, 900,
-            dispatch_execute_fn=fake_dispatch_execute)
+            dispatch_injection.DispatchTaskRequest(
+                injection, "do the task", "/real/scratch/dir", 60, 900
+            ),
+            seams=dispatch_injection.SuperpowersDispatchSeams(
+                dispatch_execute_fn=fake_dispatch_execute,
+            ),
+        )
         self.assertEqual(captured["target_dir"], "/real/scratch/dir")
         self.assertEqual(captured["candidate"]["cli"], "codex")
         self.assertEqual(captured["candidate"]["effort"], "high")
@@ -510,7 +800,9 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
     def test_native_claude_injection_raises_value_error(self):
         injection = {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"}
         with self.assertRaises(ValueError):
-            dispatch_injection.dispatch_superpowers_task(injection, "prompt", "/dir", 60, 900)
+            dispatch_injection.dispatch_superpowers_task(
+                dispatch_injection.DispatchTaskRequest(injection, "prompt", "/dir", 60, 900)
+            )
 
     def test_real_dispatch_execute_path_produces_a_real_workspace_write_command(self):
         # Confirms this wrapper genuinely reaches ai_kit_spec.execute_dispatch.dispatch_execute's
@@ -520,8 +812,14 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
         # tests.test_ai_kit_spec's own execute_dispatch.dispatch_execute tests already use.
         from ai_kit_spec.execute_dispatch import dispatch_execute as real_dispatch_execute
 
-        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
-                      "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
+        injection = {
+            "mode": "external_cli",
+            "key": "codex/terra",
+            "cli": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": None,
+            "service_tier": None,
+        }
         captured_command = {}
 
         def fake_dispatch_fn(argv, prompt, heartbeat_interval, timeout):
@@ -531,13 +829,16 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
         def dispatch_execute_with_fake_subprocess(spec):
             from ai_kit_spec.execute_dispatch import ExecuteSeams
 
-            return real_dispatch_execute(
-                spec, seams=ExecuteSeams(dispatch_fn=fake_dispatch_fn)
-            )
+            return real_dispatch_execute(spec, seams=ExecuteSeams(dispatch_fn=fake_dispatch_fn))
 
         result = dispatch_injection.dispatch_superpowers_task(
-            injection, "do the task", "/real/scratch/dir", 60, 900,
-            dispatch_execute_fn=dispatch_execute_with_fake_subprocess)
+            dispatch_injection.DispatchTaskRequest(
+                injection, "do the task", "/real/scratch/dir", 60, 900
+            ),
+            seams=dispatch_injection.SuperpowersDispatchSeams(
+                dispatch_execute_fn=dispatch_execute_with_fake_subprocess,
+            ),
+        )
         # argv dispatch: the reported "command" is the shlex.join of the dispatched argv
         self.assertIn("workspace-write", captured_command["value"])
         self.assertIn("/real/scratch/dir", captured_command["value"])
@@ -558,53 +859,103 @@ class TestUnavailabilityReason(unittest.TestCase):
 
 class TestClassifyDispatchFailure(unittest.TestCase):
     def test_ok_on_zero_returncode(self):
-        self.assertEqual(dispatch_injection.classify_dispatch_failure(
-            {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}), "ok")
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure(
+                {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+            ),
+            "ok",
+        )
 
     def test_quota_on_quota_signal_and_nonzero_returncode(self):
-        self.assertEqual(dispatch_injection.classify_dispatch_failure(
-            {"returncode": 1, "stdout": "", "stderr": "Error: usage limit reached",
-             "timed_out": False}), "quota")
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure(
+                {
+                    "returncode": 1,
+                    "stdout": "",
+                    "stderr": "Error: usage limit reached",
+                    "timed_out": False,
+                }
+            ),
+            "quota",
+        )
 
     def test_answer_text_on_success_is_never_classified(self):
         # R8/D-13: the model's answer (stdout) is never classified -- an answer saying
         # "quota exceeded" with exit 0 and empty stderr is a success.
-        self.assertEqual(dispatch_injection.classify_dispatch_failure(
-            {"returncode": 0, "stdout": "quota exceeded", "stderr": "",
-             "timed_out": False}), "ok")
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure(
+                {"returncode": 0, "stdout": "quota exceeded", "stderr": "", "timed_out": False}
+            ),
+            "ok",
+        )
 
     def test_quota_on_stderr_quota_signal_and_nonzero_returncode(self):
-        self.assertEqual(dispatch_injection.classify_dispatch_failure(
-            {"returncode": 1, "stdout": "", "stderr": "rate limit",
-             "timed_out": False}), "quota")
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure(
+                {"returncode": 1, "stdout": "", "stderr": "rate limit", "timed_out": False}
+            ),
+            "quota",
+        )
 
     def test_real_error_on_auth_signal_even_with_nonzero_returncode(self):
         # HIGH finding: an auth/entitlement/setup failure must classify as real_error, never
         # quota -- it will never be fixed by an hourly quota-wake retry.
-        self.assertEqual(dispatch_injection.classify_dispatch_failure(
-            {"returncode": 1, "stdout": "", "stderr": "Error: not authenticated",
-             "timed_out": False}), "real_error")
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure(
+                {
+                    "returncode": 1,
+                    "stdout": "",
+                    "stderr": "Error: not authenticated",
+                    "timed_out": False,
+                }
+            ),
+            "real_error",
+        )
 
     def test_real_error_on_unrelated_nonzero_returncode(self):
-        self.assertEqual(dispatch_injection.classify_dispatch_failure(
-            {"returncode": 1, "stdout": "SyntaxError", "stderr": "", "timed_out": False}),
-            "real_error")
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure(
+                {"returncode": 1, "stdout": "SyntaxError", "stderr": "", "timed_out": False}
+            ),
+            "real_error",
+        )
 
     def test_real_error_on_stderr_auth_signal(self):
-        self.assertEqual(dispatch_injection.classify_dispatch_failure(
-            {"returncode": 1, "stderr": "not logged in", "timed_out": False}),
-            "real_error")
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure(
+                {"returncode": 1, "stderr": "not logged in", "timed_out": False}
+            ),
+            "real_error",
+        )
 
     def test_real_error_on_timeout_even_with_quota_looking_text(self):
-        self.assertEqual(dispatch_injection.classify_dispatch_failure(
-            {"returncode": -9, "stdout": "rate limit", "stderr": "", "timed_out": True}),
-            "real_error")
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure(
+                {"returncode": -9, "stdout": "rate limit", "stderr": "", "timed_out": True}
+            ),
+            "real_error",
+        )
+
+
+class TestCliSubcommandHandlers(unittest.TestCase):
+    def test_every_subcommand_has_a_handler(self):
+        parser = superpowers_cli._build_parser()
+        subparsers = next(a for a in parser._actions if a.dest == "command")
+        self.assertEqual(set(superpowers_cli._COMMANDS), set(subparsers.choices))
 
 
 class TestCliResolveInjection(unittest.TestCase):
     def test_resolve_injection_prints_native_claude_json(self):
-        candidates = [{"key": "claude/opus-5", "model": "opus", "cli": None,
-                        "vendor": "anthropic", "task_affinity": None, "context_limit": None}]
+        candidates = [
+            {
+                "key": "claude/opus-5",
+                "model": "opus",
+                "cli": None,
+                "vendor": "anthropic",
+                "task_affinity": None,
+                "context_limit": None,
+            }
+        ]
 
         def fake_assemble(cwd, env):
             return candidates, ["claude/opus-5"]
@@ -616,22 +967,44 @@ class TestCliResolveInjection(unittest.TestCase):
                 f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
             quota_path = os.path.join(tmp, "quota.json")
             rc = superpowers_cli.main(
-                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
-                 "--quota-path", quota_path],
+                [
+                    "resolve-injection",
+                    "--cwd",
+                    tmp,
+                    "--task-file",
+                    task_file,
+                    "--quota-path",
+                    quota_path,
+                ],
                 assemble_candidates_fn=fake_assemble,
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
-                stdout=out)
+                stdout=out,
+            )
         self.assertEqual(rc, 0)
         result = json.loads(out.getvalue())
-        self.assertEqual(result, {"mode": "native_claude", "model": "opus",
-                                   "key": "claude/opus-5",
-                                   "ladder_keys": ["claude/opus-5"]})
+        self.assertEqual(
+            result,
+            {
+                "mode": "native_claude",
+                "model": "opus",
+                "key": "claude/opus-5",
+                "ladder_keys": ["claude/opus-5"],
+            },
+        )
 
     def test_resolve_injection_prints_quota_exhausted_json_with_reasons(self):
-        candidates = [{"key": "claude/opus-5", "model": "opus", "cli": None,
-                        "vendor": "anthropic", "task_affinity": None, "context_limit": None}]
+        candidates = [
+            {
+                "key": "claude/opus-5",
+                "model": "opus",
+                "cli": None,
+                "vendor": "anthropic",
+                "task_affinity": None,
+                "context_limit": None,
+            }
+        ]
 
         def fake_assemble(cwd, env):
             return candidates, ["claude/opus-5"]
@@ -643,15 +1016,29 @@ class TestCliResolveInjection(unittest.TestCase):
                 f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
             quota_path = os.path.join(tmp, "quota.json")
             rc = superpowers_cli.main(
-                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
-                 "--quota-path", quota_path],
+                [
+                    "resolve-injection",
+                    "--cwd",
+                    tmp,
+                    "--task-file",
+                    task_file,
+                    "--quota-path",
+                    quota_path,
+                ],
                 assemble_candidates_fn=fake_assemble,
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, ttl: (
-                    {"claude/opus-5": {"available": False, "reason": "quota",
-                                     "detail": "usage limit reached"}}),
-                stdout=out)
+                    {
+                        "claude/opus-5": {
+                            "available": False,
+                            "reason": "quota",
+                            "detail": "usage limit reached",
+                        }
+                    }
+                ),
+                stdout=out,
+            )
         self.assertEqual(rc, 0)
         result = json.loads(out.getvalue())
         self.assertEqual(result["mode"], "quota_exhausted")
@@ -670,12 +1057,20 @@ class TestCliResolveInjection(unittest.TestCase):
     def test_resolve_injection_derives_real_file_sizes_from_cwd(self):
         # CRITICAL finding: resolve-injection must derive files_touched_sizes itself (never rely
         # on a caller-supplied, always-empty default) so context-size filtering is actually live.
-        candidates = [{"key": "claude/opus-5", "model": "opus", "cli": None,
-                        "vendor": "anthropic", "task_affinity": None, "context_limit": None}]
+        candidates = [
+            {
+                "key": "claude/opus-5",
+                "model": "opus",
+                "cli": None,
+                "vendor": "anthropic",
+                "task_affinity": None,
+                "context_limit": None,
+            }
+        ]
         captured = {}
 
-        def fake_build_dispatch_injection(task_markdown, cands, sizes, affinity, top_n, **kwargs):
-            captured["sizes"] = sizes
+        def fake_build_dispatch_injection(request, options=None):
+            captured["sizes"] = request.files_touched_sizes
             return {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"}
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -686,17 +1081,27 @@ class TestCliResolveInjection(unittest.TestCase):
                 f.write("### Task 1\n**Files:**\n- Modify: `big.py`\n")
             quota_path = os.path.join(tmp, "quota.json")
             superpowers_cli.main(
-                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
-                 "--quota-path", quota_path],
+                [
+                    "resolve-injection",
+                    "--cwd",
+                    tmp,
+                    "--task-file",
+                    task_file,
+                    "--quota-path",
+                    quota_path,
+                ],
                 assemble_candidates_fn=lambda cwd, env: (candidates, ["claude/opus-5"]),
                 build_dispatch_injection_fn=fake_build_dispatch_injection,
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
-                stdout=io.StringIO())
+                stdout=io.StringIO(),
+            )
         self.assertEqual(captured["sizes"], {"big.py": 4000})
 
-    def test_resolve_injection_emits_controlled_quota_exhausted_when_every_candidate_already_excluded(self):  # noqa: E501
+    def test_resolve_injection_emits_controlled_quota_exhausted_when_every_candidate_already_excluded(  # noqa: E501
+        self,
+    ):
         # CRITICAL finding: a single-candidate ladder, already excluded by --exclude-keys-json
         # (e.g. a mid-dispatch "quota" failure caught in Step 3, re-running resolve-injection with
         # that SAME candidate excluded) previously reached build_dispatch_injection_fn with an
@@ -705,8 +1110,16 @@ class TestCliResolveInjection(unittest.TestCase):
         # -- UNCAUGHT here, crashing the whole resolve-injection call instead of reporting a
         # controlled quota_exhausted result the SKILL.md's own branch-on-mode logic already
         # handles. --excluded-reasons-json carries this wave's own already-known reason forward.
-        candidates = [{"key": "claude/opus-5", "model": "opus", "cli": None,
-                        "vendor": "anthropic", "task_affinity": None, "context_limit": None}]
+        candidates = [
+            {
+                "key": "claude/opus-5",
+                "model": "opus",
+                "cli": None,
+                "vendor": "anthropic",
+                "task_affinity": None,
+                "context_limit": None,
+            }
+        ]
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp:
             task_file = os.path.join(tmp, "task-1-brief.md")
@@ -714,15 +1127,25 @@ class TestCliResolveInjection(unittest.TestCase):
                 f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
             quota_path = os.path.join(tmp, "quota.json")
             rc = superpowers_cli.main(
-                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
-                 "--quota-path", quota_path, "--exclude-keys-json",
-                 json.dumps(["claude/opus-5"]), "--excluded-reasons-json",
-                 json.dumps({"claude/opus-5": "quota"})],
+                [
+                    "resolve-injection",
+                    "--cwd",
+                    tmp,
+                    "--task-file",
+                    task_file,
+                    "--quota-path",
+                    quota_path,
+                    "--exclude-keys-json",
+                    json.dumps(["claude/opus-5"]),
+                    "--excluded-reasons-json",
+                    json.dumps({"claude/opus-5": "quota"}),
+                ],
                 assemble_candidates_fn=lambda cwd, env: (candidates, ["claude/opus-5"]),
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
-                stdout=out)
+                stdout=out,
+            )
         self.assertEqual(rc, 0)
         result = json.loads(out.getvalue())
         self.assertEqual(result["mode"], "quota_exhausted")
@@ -739,8 +1162,16 @@ class TestCliResolveInjection(unittest.TestCase):
         # ValueError, previously uncaught, must never crash this command. It is a genuine curation
         # gap, never a quota-availability problem, so it gets its own "no_candidate" mode -- never
         # folded into "quota_exhausted", which would wrongly imply a CronCreate wake could help.
-        candidates = [{"key": "small-context/model", "model": "opus", "cli": None,
-                        "vendor": "anthropic", "task_affinity": None, "context_limit": 10}]
+        candidates = [
+            {
+                "key": "small-context/model",
+                "model": "opus",
+                "cli": None,
+                "vendor": "anthropic",
+                "task_affinity": None,
+                "context_limit": 10,
+            }
+        ]
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "big.py"), "w") as f:
@@ -750,13 +1181,21 @@ class TestCliResolveInjection(unittest.TestCase):
                 f.write("### Task 1\n**Files:**\n- Modify: `big.py`\n")
             quota_path = os.path.join(tmp, "quota.json")
             rc = superpowers_cli.main(
-                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
-                 "--quota-path", quota_path],
+                [
+                    "resolve-injection",
+                    "--cwd",
+                    tmp,
+                    "--task-file",
+                    task_file,
+                    "--quota-path",
+                    quota_path,
+                ],
                 assemble_candidates_fn=lambda cwd, env: (candidates, ["small-context/model"]),
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
-                stdout=out)
+                stdout=out,
+            )
         self.assertEqual(rc, 0)
         result = json.loads(out.getvalue())
         self.assertEqual(result["mode"], "no_candidate")
@@ -768,16 +1207,30 @@ class TestCliResolveInjection(unittest.TestCase):
         # narrowing already rejected is somehow still ranked.
         self.assertEqual(result["ladder_keys"], [])
 
-    def test_resolve_injection_merges_wave_excluded_reasons_with_this_calls_own_quota_exhaustion(self):  # noqa: E501
+    def test_resolve_injection_merges_wave_excluded_reasons_with_this_calls_own_quota_exhaustion(
+        self,
+    ):
         # CRITICAL finding: mixed quota/auth case -- a caller re-resolving mid-wave (one candidate
         # already excluded for a KNOWN reason from an earlier call, another going quota-exhausted
         # fresh THIS call) must see BOTH reasons in the final output, never just this call's own
         # narrower remaining-ladder walk (which never even visits an already-excluded candidate).
         candidates = [
-            {"key": "claude/opus-5", "model": "opus", "cli": None, "vendor": "anthropic",
-             "task_affinity": None, "context_limit": None},
-            {"key": "codex/terra", "model": "gpt-5.6-terra", "cli": "codex", "vendor": "openai",
-             "task_affinity": None, "context_limit": None},
+            {
+                "key": "claude/opus-5",
+                "model": "opus",
+                "cli": None,
+                "vendor": "anthropic",
+                "task_affinity": None,
+                "context_limit": None,
+            },
+            {
+                "key": "codex/terra",
+                "model": "gpt-5.6-terra",
+                "cli": "codex",
+                "vendor": "openai",
+                "task_affinity": None,
+                "context_limit": None,
+            },
         ]
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp:
@@ -786,18 +1239,36 @@ class TestCliResolveInjection(unittest.TestCase):
                 f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
             quota_path = os.path.join(tmp, "quota.json")
             rc = superpowers_cli.main(
-                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
-                 "--quota-path", quota_path, "--exclude-keys-json",
-                 json.dumps(["codex/terra"]), "--excluded-reasons-json",
-                 json.dumps({"codex/terra": "auth"})],
+                [
+                    "resolve-injection",
+                    "--cwd",
+                    tmp,
+                    "--task-file",
+                    task_file,
+                    "--quota-path",
+                    quota_path,
+                    "--exclude-keys-json",
+                    json.dumps(["codex/terra"]),
+                    "--excluded-reasons-json",
+                    json.dumps({"codex/terra": "auth"}),
+                ],
                 assemble_candidates_fn=lambda cwd, env: (
-                    candidates, ["claude/opus-5", "codex/terra"]),
+                    candidates,
+                    ["claude/opus-5", "codex/terra"],
+                ),
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, ttl: (
-                    {"claude/opus-5": {"available": False, "reason": "quota",
-                                     "detail": "usage limit reached"}}),
-                stdout=out)
+                    {
+                        "claude/opus-5": {
+                            "available": False,
+                            "reason": "quota",
+                            "detail": "usage limit reached",
+                        }
+                    }
+                ),
+                stdout=out,
+            )
         self.assertEqual(rc, 0)
         result = json.loads(out.getvalue())
         self.assertEqual(result["mode"], "quota_exhausted")
@@ -816,10 +1287,22 @@ class TestCliResolveInjection(unittest.TestCase):
         # candidate is quota-exhausted (a real, recoverable reason) while one candidate is excluded
         # ONLY via --escalation-excluded-keys-json.
         candidates = [
-            {"key": "claude/opus-5", "model": "opus", "cli": None, "vendor": "anthropic",
-             "task_affinity": None, "context_limit": None},
-            {"key": "codex/terra", "model": "gpt-5.6-terra", "cli": "codex", "vendor": "openai",
-             "task_affinity": None, "context_limit": None},
+            {
+                "key": "claude/opus-5",
+                "model": "opus",
+                "cli": None,
+                "vendor": "anthropic",
+                "task_affinity": None,
+                "context_limit": None,
+            },
+            {
+                "key": "codex/terra",
+                "model": "gpt-5.6-terra",
+                "cli": "codex",
+                "vendor": "openai",
+                "task_affinity": None,
+                "context_limit": None,
+            },
         ]
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp:
@@ -828,16 +1311,30 @@ class TestCliResolveInjection(unittest.TestCase):
                 f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
             quota_path = os.path.join(tmp, "quota.json")
             rc = superpowers_cli.main(
-                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
-                 "--quota-path", quota_path, "--exclude-keys-json", json.dumps(["codex/terra"]),
-                 "--excluded-reasons-json", json.dumps({"codex/terra": "quota"}),
-                 "--escalation-excluded-keys-json", json.dumps(["claude/opus-5"])],
+                [
+                    "resolve-injection",
+                    "--cwd",
+                    tmp,
+                    "--task-file",
+                    task_file,
+                    "--quota-path",
+                    quota_path,
+                    "--exclude-keys-json",
+                    json.dumps(["codex/terra"]),
+                    "--excluded-reasons-json",
+                    json.dumps({"codex/terra": "quota"}),
+                    "--escalation-excluded-keys-json",
+                    json.dumps(["claude/opus-5"]),
+                ],
                 assemble_candidates_fn=lambda cwd, env: (
-                    candidates, ["claude/opus-5", "codex/terra"]),
+                    candidates,
+                    ["claude/opus-5", "codex/terra"],
+                ),
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, ttl: {},
-                stdout=out)
+                stdout=out,
+            )
         self.assertEqual(rc, 0)
         result = json.loads(out.getvalue())
         self.assertEqual(result["mode"], "quota_exhausted")
@@ -866,15 +1363,30 @@ class TestCliDispatchTask(unittest.TestCase):
             report_file = os.path.join(tmp, "task-1-report.md")
             with self.assertRaises(ValueError) as ctx:
                 superpowers_cli.main(
-                    ["dispatch-task", "--injection-json", json.dumps(injection),
-                     "--prompt-file", prompt_file, "--target-dir", tmp,
-                     "--heartbeat-interval", "60", "--timeout", "900",
-                     "--format-block-file", format_block_file, "--report-file", report_file],
+                    [
+                        "dispatch-task",
+                        "--injection-json",
+                        json.dumps(injection),
+                        "--prompt-file",
+                        prompt_file,
+                        "--target-dir",
+                        tmp,
+                        "--heartbeat-interval",
+                        "60",
+                        "--timeout",
+                        "900",
+                        "--format-block-file",
+                        format_block_file,
+                        "--report-file",
+                        report_file,
+                    ],
                     detect_tool_availability_fn=lambda: {},
                     resolve_agents_tooling_path_fn=lambda: None,
                     probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
-                        False, False, None, 'skip'),
-                    stdout=io.StringIO())
+                        False, False, None, "skip"
+                    ),
+                    stdout=io.StringIO(),
+                )
         self.assertIn("external_cli", str(ctx.exception))
         self.assertIn("native_claude", str(ctx.exception))
         self.assertIn("Agent tool", str(ctx.exception))
@@ -887,20 +1399,31 @@ class TestCliDispatchTask(unittest.TestCase):
         # "writes detailed evidence to the report file and returns a short status separately").
         # dispatch-task must never overwrite that real, on-disk report with captured subprocess
         # stdout -- this is the normal case, and it must be left completely untouched.
-        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
-                      "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
+        injection = {
+            "mode": "external_cli",
+            "key": "codex/terra",
+            "cli": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": None,
+            "service_tier": None,
+        }
 
-        def fake_dispatch(injection_arg, prompt, target_dir, heartbeat_interval, timeout,
-                           format_block=None, tool_availability=None, agents_tooling_path=None,
-                           codegraph_registered=False):
+        def fake_dispatch(request, guidance=None, seams=None):
             # Simulates the real dispatched CLI: per the prompt's report-file-path instruction, it
             # writes its OWN detailed report directly to disk and returns only a short status in
             # stdout -- exactly the contract this test guards.
-            report_path = os.path.join(target_dir, "task-1-report.md")
+            report_path = os.path.join(request.target_dir, "task-1-report.md")
             with open(report_path, "w") as f:
                 f.write("## TDD Evidence\n\nfull detailed report with real test output...\n")
-            return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
-                     "returncode": 0, "stdout": "DONE", "stderr": "", "timed_out": False}
+            return {
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "command": "codex exec ...",
+                "returncode": 0,
+                "stdout": "DONE",
+                "stderr": "",
+                "timed_out": False,
+            }
 
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp:
@@ -912,23 +1435,37 @@ class TestCliDispatchTask(unittest.TestCase):
                 f.write("status: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED")
             report_file = os.path.join(tmp, "task-1-report.md")
             rc = superpowers_cli.main(
-                ["dispatch-task", "--injection-json", json.dumps(injection),
-                 "--prompt-file", prompt_file, "--target-dir", tmp,
-                 "--heartbeat-interval", "60", "--timeout", "900",
-                 "--format-block-file", format_block_file, "--report-file", report_file],
+                [
+                    "dispatch-task",
+                    "--injection-json",
+                    json.dumps(injection),
+                    "--prompt-file",
+                    prompt_file,
+                    "--target-dir",
+                    tmp,
+                    "--heartbeat-interval",
+                    "60",
+                    "--timeout",
+                    "900",
+                    "--format-block-file",
+                    format_block_file,
+                    "--report-file",
+                    report_file,
+                ],
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
-                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
-                        False, False, None, 'skip'),
-                stdout=out)
+                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(False, False, None, "skip"),
+                stdout=out,
+            )
             self.assertEqual(rc, 0)
             with open(report_file) as f:
                 content = f.read()
         # The implementer's own detailed, on-disk report survives verbatim -- the short "DONE"
         # status returned separately in stdout must NEVER have replaced it.
-        self.assertEqual(content, "## TDD Evidence\n\nfull detailed report with real test "
-                                   "output...\n")
+        self.assertEqual(
+            content, "## TDD Evidence\n\nfull detailed report with real test output...\n"
+        )
         self.assertNotIn("DONE", content)
         result = json.loads(out.getvalue())
         self.assertEqual(result["returncode"], 0)
@@ -937,15 +1474,25 @@ class TestCliDispatchTask(unittest.TestCase):
         # Degraded case: the dispatched CLI did not follow the report-file-path instruction and
         # wrote nothing to disk -- something evidentiary must still survive, but clearly labeled
         # as a fallback, never silently indistinguishable from a genuine implementer report.
-        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
-                      "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
+        injection = {
+            "mode": "external_cli",
+            "key": "codex/terra",
+            "cli": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": None,
+            "service_tier": None,
+        }
 
-        def fake_dispatch(injection_arg, prompt, target_dir, heartbeat_interval, timeout,
-                           format_block=None, tool_availability=None, agents_tooling_path=None,
-                           codegraph_registered=False):
-            return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
-                     "returncode": 0, "stdout": "DONE\nonly stdout, no report file written",
-                     "stderr": "", "timed_out": False}
+        def fake_dispatch(request, guidance=None, seams=None):
+            return {
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "command": "codex exec ...",
+                "returncode": 0,
+                "stdout": "DONE\nonly stdout, no report file written",
+                "stderr": "",
+                "timed_out": False,
+            }
 
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp:
@@ -957,16 +1504,29 @@ class TestCliDispatchTask(unittest.TestCase):
                 f.write("status: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED")
             report_file = os.path.join(tmp, "task-1-report.md")
             rc = superpowers_cli.main(
-                ["dispatch-task", "--injection-json", json.dumps(injection),
-                 "--prompt-file", prompt_file, "--target-dir", tmp,
-                 "--heartbeat-interval", "60", "--timeout", "900",
-                 "--format-block-file", format_block_file, "--report-file", report_file],
+                [
+                    "dispatch-task",
+                    "--injection-json",
+                    json.dumps(injection),
+                    "--prompt-file",
+                    prompt_file,
+                    "--target-dir",
+                    tmp,
+                    "--heartbeat-interval",
+                    "60",
+                    "--timeout",
+                    "900",
+                    "--format-block-file",
+                    format_block_file,
+                    "--report-file",
+                    report_file,
+                ],
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
-                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
-                        False, False, None, 'skip'),
-                stdout=out)
+                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(False, False, None, "skip"),
+                stdout=out,
+            )
             self.assertEqual(rc, 0)
             with open(report_file) as f:
                 content = f.read()
@@ -980,15 +1540,25 @@ class TestCliDispatchTask(unittest.TestCase):
         # external_cli task (there's no live subagent to hold context between rounds). Exercises
         # the STDOUT-fallback branch specifically (the dispatched CLI here does not write its own
         # report directly) -- even the degraded fallback must never destroy earlier rounds.
-        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
-                      "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
+        injection = {
+            "mode": "external_cli",
+            "key": "codex/terra",
+            "cli": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": None,
+            "service_tier": None,
+        }
 
-        def fake_dispatch(injection_arg, prompt, target_dir, heartbeat_interval, timeout,
-                           format_block=None, tool_availability=None, agents_tooling_path=None,
-                           codegraph_registered=False):
-            return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
-                     "returncode": 0, "stdout": "fix round 1 report", "stderr": "",
-                     "timed_out": False}
+        def fake_dispatch(request, guidance=None, seams=None):
+            return {
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "command": "codex exec ...",
+                "returncode": 0,
+                "stdout": "fix round 1 report",
+                "stderr": "",
+                "timed_out": False,
+            }
 
         with tempfile.TemporaryDirectory() as tmp:
             prompt_file = os.path.join(tmp, "prompt.txt")
@@ -1001,37 +1571,63 @@ class TestCliDispatchTask(unittest.TestCase):
             with open(report_file, "w") as f:
                 f.write("original implementer report")
             rc = superpowers_cli.main(
-                ["dispatch-task", "--injection-json", json.dumps(injection),
-                 "--prompt-file", prompt_file, "--target-dir", tmp,
-                 "--heartbeat-interval", "60", "--timeout", "900",
-                 "--format-block-file", format_block_file, "--report-file", report_file,
-                 "--report-mode", "append"],
+                [
+                    "dispatch-task",
+                    "--injection-json",
+                    json.dumps(injection),
+                    "--prompt-file",
+                    prompt_file,
+                    "--target-dir",
+                    tmp,
+                    "--heartbeat-interval",
+                    "60",
+                    "--timeout",
+                    "900",
+                    "--format-block-file",
+                    format_block_file,
+                    "--report-file",
+                    report_file,
+                    "--report-mode",
+                    "append",
+                ],
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
-                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
-                        False, False, None, 'skip'),
-                stdout=io.StringIO())
+                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(False, False, None, "skip"),
+                stdout=io.StringIO(),
+            )
             self.assertEqual(rc, 0)
             with open(report_file) as f:
                 content = f.read()
         self.assertIn("original implementer report", content)
         self.assertIn("fix round 1 report", content)
 
-
     def test_dispatch_task_prints_install_hint_on_stderr_when_probe_unhealthy(self):
         hint = detection.codegraph_install_command("codex")
         index_dirs = []
-        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
-                      "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
+        injection = {
+            "mode": "external_cli",
+            "key": "codex/terra",
+            "cli": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": None,
+            "service_tier": None,
+        }
         captured = {}
 
-        def fake_dispatch(injection_arg, prompt, target_dir, heartbeat_interval, timeout,
-                           format_block=None, tool_availability=None, agents_tooling_path=None,
-                           codegraph_registered=False):
-            captured["codegraph_registered"] = codegraph_registered
-            return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
-                     "returncode": 0, "stdout": "DONE", "stderr": "", "timed_out": False}
+        def fake_dispatch(request, guidance=None, seams=None):
+            captured["codegraph_registered"] = (
+                guidance.codegraph_registered if guidance is not None else False
+            )
+            return {
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "command": "codex exec ...",
+                "returncode": 0,
+                "stdout": "DONE",
+                "stderr": "",
+                "timed_out": False,
+            }
 
         out = io.StringIO()
         stderr = io.StringIO()
@@ -1045,17 +1641,32 @@ class TestCliDispatchTask(unittest.TestCase):
             report_file = os.path.join(tmp, "task-1-report.md")
             with contextlib.redirect_stderr(stderr):
                 rc = superpowers_cli.main(
-                    ["dispatch-task", "--injection-json", json.dumps(injection),
-                     "--prompt-file", prompt_file, "--target-dir", tmp,
-                     "--heartbeat-interval", "60", "--timeout", "900",
-                     "--format-block-file", format_block_file, "--report-file", report_file],
+                    [
+                        "dispatch-task",
+                        "--injection-json",
+                        json.dumps(injection),
+                        "--prompt-file",
+                        prompt_file,
+                        "--target-dir",
+                        tmp,
+                        "--heartbeat-interval",
+                        "60",
+                        "--timeout",
+                        "900",
+                        "--format-block-file",
+                        format_block_file,
+                        "--report-file",
+                        report_file,
+                    ],
                     dispatch_superpowers_task_fn=fake_dispatch,
                     detect_tool_availability_fn=lambda: {},
                     resolve_agents_tooling_path_fn=lambda: None,
                     probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
-                        True, False, hint, "unhealthy"),
+                        True, False, hint, "unhealthy"
+                    ),
                     run_codegraph_index_fn=lambda d: index_dirs.append(d) or True,
-                    stdout=out)
+                    stdout=out,
+                )
             self.assertEqual(rc, 0)
             self.assertIn(hint, stderr.getvalue())
             self.assertNotIn(hint, out.getvalue())
@@ -1064,16 +1675,29 @@ class TestCliDispatchTask(unittest.TestCase):
 
     def test_dispatch_task_runs_index_after_healthy_probe(self):
         index_dirs = []
-        injection = {"mode": "external_cli", "key": "codex/terra", "cli": "codex",
-                      "model": "gpt-5.6-terra", "effort": None, "service_tier": None}
+        injection = {
+            "mode": "external_cli",
+            "key": "codex/terra",
+            "cli": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": None,
+            "service_tier": None,
+        }
         captured = {}
 
-        def fake_dispatch(injection_arg, prompt, target_dir, heartbeat_interval, timeout,
-                           format_block=None, tool_availability=None, agents_tooling_path=None,
-                           codegraph_registered=False):
-            captured["codegraph_registered"] = codegraph_registered
-            return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
-                     "returncode": 0, "stdout": "DONE", "stderr": "", "timed_out": False}
+        def fake_dispatch(request, guidance=None, seams=None):
+            captured["codegraph_registered"] = (
+                guidance.codegraph_registered if guidance is not None else False
+            )
+            return {
+                "cli": "codex",
+                "model": "gpt-5.6-terra",
+                "command": "codex exec ...",
+                "returncode": 0,
+                "stdout": "DONE",
+                "stderr": "",
+                "timed_out": False,
+            }
 
         with tempfile.TemporaryDirectory() as tmp:
             prompt_file = os.path.join(tmp, "prompt.txt")
@@ -1084,29 +1708,46 @@ class TestCliDispatchTask(unittest.TestCase):
                 f.write("status: DONE")
             report_file = os.path.join(tmp, "task-1-report.md")
             superpowers_cli.main(
-                ["dispatch-task", "--injection-json", json.dumps(injection),
-                 "--prompt-file", prompt_file, "--target-dir", tmp,
-                 "--heartbeat-interval", "60", "--timeout", "900",
-                 "--format-block-file", format_block_file, "--report-file", report_file],
+                [
+                    "dispatch-task",
+                    "--injection-json",
+                    json.dumps(injection),
+                    "--prompt-file",
+                    prompt_file,
+                    "--target-dir",
+                    tmp,
+                    "--heartbeat-interval",
+                    "60",
+                    "--timeout",
+                    "900",
+                    "--format-block-file",
+                    format_block_file,
+                    "--report-file",
+                    report_file,
+                ],
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
                 probe_codegraph_fn=lambda cli: detection.CodegraphProbe(True, True, None, "ok"),
                 run_codegraph_index_fn=lambda d: index_dirs.append(d) or True,
-                stdout=io.StringIO())
+                stdout=io.StringIO(),
+            )
             self.assertEqual(index_dirs, [tmp])
             self.assertTrue(captured["codegraph_registered"])
-
 
 
 class TestCliClassifyDispatchFailure(unittest.TestCase):
     def test_prints_the_classification_string(self):
         out = io.StringIO()
-        result = {"returncode": 1, "stdout": "", "stderr": "usage limit reached",
-                  "timed_out": False}
+        result = {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "usage limit reached",
+            "timed_out": False,
+        }
         rc = superpowers_cli.main(
-            ["classify-dispatch-failure", "--dispatch-result-json", json.dumps(result)],
-            stdout=out)
+            ["classify-dispatch-failure", "--dispatch-result-json", json.dumps(result)], stdout=out
+        )
         self.assertEqual(rc, 0)
         self.assertEqual(out.getvalue(), "quota")
 
@@ -1118,11 +1759,17 @@ class TestCliResumeExclusions(unittest.TestCase):
         # just inline, untested bash arithmetic.
         out = io.StringIO()
         rc = superpowers_cli.main(
-            ["resume-exclusions",
-             "--tried-json", json.dumps(["claude/opus-5", "codex/terra"]),
-             "--reasons-json", json.dumps({"claude/opus-5": "quota", "codex/terra": "auth"}),
-             "--prior-excluded-keys-json", json.dumps([])],
-            stdout=out)
+            [
+                "resume-exclusions",
+                "--tried-json",
+                json.dumps(["claude/opus-5", "codex/terra"]),
+                "--reasons-json",
+                json.dumps({"claude/opus-5": "quota", "codex/terra": "auth"}),
+                "--prior-excluded-keys-json",
+                json.dumps([]),
+            ],
+            stdout=out,
+        )
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(out.getvalue()), ["codex/terra"])
 
@@ -1132,10 +1779,16 @@ class TestCliWriteResumableState(unittest.TestCase):
         out = io.StringIO()
         captured = {}
         rc = superpowers_cli.main(
-            ["write-resumable-state", "--path", "/x/state.json",
-             "--state-json", json.dumps({"framework": "superpowers", "tried": []})],
+            [
+                "write-resumable-state",
+                "--path",
+                "/x/state.json",
+                "--state-json",
+                json.dumps({"framework": "superpowers", "tried": []}),
+            ],
             write_resumable_state_fn=lambda path, state: captured.update(path=path, state=state),
-            stdout=out)
+            stdout=out,
+        )
         self.assertEqual(rc, 0)
         self.assertEqual(captured["path"], "/x/state.json")
         self.assertEqual(json.loads(out.getvalue())["written"], True)
@@ -1147,19 +1800,22 @@ class TestDetectFrameworkSuperpowers(unittest.TestCase):
             return path == os.path.join("/repo", "docs", "superpowers", "plans")
 
         result = router_detect_framework.detect_framework(
-            "/repo", isfile_fn=lambda p: False, isdir_fn=isdir_fn)
+            "/repo", isfile_fn=lambda p: False, isdir_fn=isdir_fn
+        )
         self.assertEqual(result, "superpowers")
 
     def test_gsd_marker_wins_over_superpowers_marker_when_both_present_and_no_stronger_signal(self):
         result = router_detect_framework.detect_framework(
             "/repo",
             isfile_fn=lambda p: p == os.path.join("/repo", ".planning", "PROJECT.md"),
-            isdir_fn=lambda p: p == os.path.join("/repo", "docs", "superpowers", "plans"))
+            isdir_fn=lambda p: p == os.path.join("/repo", "docs", "superpowers", "plans"),
+        )
         self.assertEqual(result, "gsd")
 
     def test_returns_unknown_when_neither_marker_present(self):
         result = router_detect_framework.detect_framework(
-            "/repo", isfile_fn=lambda p: False, isdir_fn=lambda p: False)
+            "/repo", isfile_fn=lambda p: False, isdir_fn=lambda p: False
+        )
         self.assertEqual(result, "unknown")
 
     def test_document_path_overrides_gsd_marker_when_both_markers_present(self):
@@ -1167,15 +1823,20 @@ class TestDetectFrameworkSuperpowers(unittest.TestCase):
         # user-supplied superpowers plan path to superpowers -- markers are supporting evidence
         # only, never the primary signal once an explicit document path is available.
         result = router_detect_framework.detect_framework(
-            "/repo", document_path="/repo/docs/superpowers/plans/2026-08-29-widget.md",
+            "/repo",
+            document_path="/repo/docs/superpowers/plans/2026-08-29-widget.md",
             isfile_fn=lambda p: p == os.path.join("/repo", ".planning", "PROJECT.md"),
-            isdir_fn=lambda p: p == os.path.join("/repo", "docs", "superpowers", "plans"))
+            isdir_fn=lambda p: p == os.path.join("/repo", "docs", "superpowers", "plans"),
+        )
         self.assertEqual(result, "superpowers")
 
     def test_document_path_under_planning_resolves_gsd_even_without_markers(self):
         result = router_detect_framework.detect_framework(
-            "/repo", document_path="/repo/.planning/phases/02-widget/02-01-PLAN.md",
-            isfile_fn=lambda p: False, isdir_fn=lambda p: False)
+            "/repo",
+            document_path="/repo/.planning/phases/02-widget/02-01-PLAN.md",
+            isfile_fn=lambda p: False,
+            isdir_fn=lambda p: False,
+        )
         self.assertEqual(result, "gsd")
 
     def test_conversation_signal_wins_over_a_contradicting_document_path_and_markers(self):
@@ -1183,10 +1844,12 @@ class TestDetectFrameworkSuperpowers(unittest.TestCase):
         # writing-plans in this very conversation, which outranks even an explicit document path
         # that happens to look GSD-shaped (e.g. copied under a .planning/ scratch directory).
         result = router_detect_framework.detect_framework(
-            "/repo", document_path="/repo/.planning/scratch/notes.md",
+            "/repo",
+            document_path="/repo/.planning/scratch/notes.md",
             conversation_signal="superpowers",
             isfile_fn=lambda p: p == os.path.join("/repo", ".planning", "PROJECT.md"),
-            isdir_fn=lambda p: False)
+            isdir_fn=lambda p: False,
+        )
         self.assertEqual(result, "superpowers")
 
 
@@ -1198,22 +1861,26 @@ class TestUntrustedLocalExecuteEntry(unittest.TestCase):
         import tempfile
 
         from ai_kit_spec import config_io, trust
+
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as xdg:
             env = {"HOME": home, "XDG_CONFIG_HOME": xdg}
             cwd = tempfile.mkdtemp()
             local_dir = os.path.join(cwd, ".aikit")
             os.makedirs(local_dir)
             local_path = os.path.join(local_dir, "review-spec.toml")
-            raw = (b'strategy = "local-only"\n[[reviewers]]\nkey = "x1"\nmodel = "m"\n'
-                   b'vendor = "v"\ncli = "codex"\ncommand = "codex exec -m {model}"\n'
-                   b'purpose = "execute"\n')
+            raw = (
+                b'strategy = "local-only"\n[[reviewers]]\nkey = "x1"\nmodel = "m"\n'
+                b'vendor = "v"\ncli = "codex"\ncommand = "codex exec -m {model}"\n'
+                b'purpose = "execute"\n'
+            )
             with open(local_path, "wb") as f:
                 f.write(raw)
             with contextlib.redirect_stderr(io.StringIO()):
                 candidates, _ = dispatch_injection.assemble_candidates(cwd, env)
             self.assertNotIn("x1", [c["key"] for c in candidates])
-            trust.record_trust(config_io.cfg_trust_store_dir(env),
-                               os.path.realpath(local_path), raw)
+            trust.record_trust(
+                config_io.cfg_trust_store_dir(env), os.path.realpath(local_path), raw
+            )
             with contextlib.redirect_stderr(io.StringIO()):
                 candidates, _ = dispatch_injection.assemble_candidates(cwd, env)
             self.assertIn("x1", [c["key"] for c in candidates])
