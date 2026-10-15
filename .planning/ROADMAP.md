@@ -310,7 +310,7 @@ with the v2 flow living alongside the unchanged v1 CLI.
   7. When a System One backend is detected (local Laya or a TypeSafe key), `jev-fast-decision` is
      recommended in `agent_skills` for `gsd-advisor-researcher` and `gsd-assumptions-analyzer`
      (the discuss-phase decision agents), and is never recommended when no backend is present.
-**Plans**: 9/22 plans executed (strictly serial waves 1-22, cross-AI executed)
+**Plans**: 10/22 plans executed (strictly serial waves 1-22, cross-AI executed)
 
 Plans:
 **Wave 1**
@@ -341,7 +341,7 @@ Plans:
 - [x] 18-09-PLAN.md — runner template: hermetic black-box self-test, runtime blocks, status line
 
 **Wave 10** *(blocked on Wave 9 completion)*
-- [ ] 18-10-PLAN.md — runner: stderr classification, exit classes, tree id, fallback, group kill
+- [x] 18-10-PLAN.md — runner: stderr classification, exit classes, tree id, fallback, group kill
 
 **Wave 11** *(blocked on Wave 10 completion)*
 - [ ] 18-11-PLAN.md — runner: model preflight and transient retries
