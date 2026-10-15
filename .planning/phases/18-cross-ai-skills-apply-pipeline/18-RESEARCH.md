@@ -848,7 +848,7 @@ Fixture rule (22 D-04): trim to a handful of models including one `router-env` e
 10. **O10 `RUNTIMES_SCHEMA_VERSION`.** Renumber 3 -> 4 in Phase 18; 18.1 must restate. **RESOLVED: carried fact (3 -> 4 here; 18.1 restates as current + 1).**
 11. **O11 Live timeout.** The runner can honor only the `GSD_WORKSTREAM` env for the live `workflow.cross_ai_timeout` read, not the stored session pointer; D-29 `min(baked, live)`; document the limit. **RESOLVED: carried fact (documented limit).**
 12. **O12 `cursor-agent models` preflight offline.** Unverified (not run; it rewrites `~/.cursor/cli-config.json`); existing code uses 15 s; runner continues with a note on listing failure. **RESOLVED: carried fact (15 s bound, continue with a note).**
-13. **O13 `enabledPlugins` merge semantics** across settings files (A4). **RESOLVED (RUN-48, orchestrator): plugin enabled state is read from the user-level settings only and reported with an `unverified` label (A4); no per-key merge across settings files is claimed.**
+13. **O13 `enabledPlugins` merge semantics** across settings files (A4). **RESOLVED (RUN-48, corrected by RUN-50): locked D-32 stands. Plugin enabled state uses the layered `enabledPlugins` (user, project, local; last wins), reported as `enabledPlugins layering assumed per key (unverified)` (A4). The earlier user-level-only wording contradicted D-32 and is withdrawn.**
 14. **O14 `plan-set workflow.cross_ai_command` guard.** Whether to refuse arbitrary commands without `--force` (command-injection surface; not locked). **RESOLVED: D-44.**
 15. **O15 `catalog_build` and `runtimes.pi`** (A5): needs a fixture test before goldens depend on it. **RESOLVED: D-45.**
 
