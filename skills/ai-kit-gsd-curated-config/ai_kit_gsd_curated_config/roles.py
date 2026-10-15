@@ -23,6 +23,25 @@ def claude_alias_for(model: str) -> str | None:
     return None
 
 
+def _version_key(model: str) -> tuple:
+    return tuple(int(p) for p in model.split("-") if p.isdigit()), model
+
+
+def claude_alias_rows(cands: list) -> list:
+    """Claude Code lists several ids per alias but runs the alias's current model, so
+    rank one row per alias: its highest-version non-fast id (inferred representative,
+    not a verified alias -> id map). Ids without an alias are dropped."""
+    best: dict[str, dict] = {}
+    for c in cands:
+        alias = claude_alias_for(c["model"])
+        if alias is None or c["fast_twin_of"] is not None:
+            continue
+        held = best.get(alias)
+        if held is None or _version_key(c["model"]) > _version_key(held["model"]):
+            best[alias] = c
+    return [best[alias] for alias in sorted(best)]
+
+
 def _ladder_index(token: str) -> int:
     for idx, step in enumerate(EFFORT_LADDER):
         if step == token:

@@ -67,20 +67,22 @@
       "why": "rigor standard preset (spec §5)"
     },
     {
+      "effect": "alias mapping inferred: Claude Code runs the alias's current model",
       "existing": null,
       "key": "model_overrides.gsd-code-fixer",
       "op": "set",
       "source": "catalog-score",
       "value": "haiku",
-      "why": "best execution score within ceiling (<= 5/1M, 75th pct of 5 families); effort variant bare of inferred family claude-haiku-5-5 for target medium (bare)"
+      "why": "best execution score within ceiling (<= 4/1M, 75th pct of 4 families); effort variant bare of inferred family claude-haiku-5-5 for target medium (bare); alias haiku scored as claude-haiku-5-5 (highest-version id for the alias)"
     },
     {
+      "effect": "alias mapping inferred: Claude Code runs the alias's current model",
       "existing": null,
       "key": "model_overrides.gsd-executor",
       "op": "set",
       "source": "catalog-score",
       "value": "haiku",
-      "why": "best execution score within ceiling (<= 5/1M, 75th pct of 5 families); effort variant bare of inferred family claude-haiku-5-5 for target medium (bare)"
+      "why": "best execution score within ceiling (<= 4/1M, 75th pct of 4 families); effort variant bare of inferred family claude-haiku-5-5 for target medium (bare); alias haiku scored as claude-haiku-5-5 (highest-version id for the alias)"
     },
     {
       "existing": null,

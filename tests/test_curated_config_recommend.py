@@ -979,6 +979,31 @@ class TestSpecialistRules(unittest.TestCase):
             if entry["key"].startswith("model_overrides.") and entry["op"] == "set":
                 self.assertIn(entry["value"], roles.CLAUDE_ALIASES)
 
+    def test_claude_alias_scored_by_highest_version_id(self):
+        """A-WR-04: a stale id's score never justifies the alias Claude Code maps elsewhere."""
+        def scored(model, execution):
+            return cand(model, runtime="claude", vendor="anthropic", score_axes=3, price=1,
+                        purpose_scores={**_SCORES5, "execution": execution})
+
+        cands = [
+            scored("claude-opus-4-8", 9.5),
+            scored("claude-opus-5-5", 4.0),
+            scored("claude-sonnet-5", 6.0),
+            scored("claude-haiku-4-5", 3.0),
+            scored("claude-haiku-5-5", 8.0),
+        ]
+        plan = build(make_inventory(host="claude", candidates=cands), rigor="standard")
+        executor = entry_map(plan)["model_overrides.gsd-executor"]
+        self.assertEqual(executor["value"], "haiku")
+        self.assertIn("alias haiku scored as claude-haiku-5-5", executor["why"])
+        self.assertNotIn("claude-opus-4-8", executor["why"])
+        self.assertIn("alias mapping inferred", executor["effect"])
+        rows = roles.claude_alias_rows([*cands, cand("gpt-x", runtime="claude")])
+        self.assertEqual(
+            [c["model"] for c in rows],
+            ["claude-haiku-5-5", "claude-opus-5-5", "claude-sonnet-5"],
+        )
+
     def test_opencode_all_openai_single_provider(self):
         cands = [
             cand("openai/a", runtime="opencode", vendor="openai", score_axes=3,

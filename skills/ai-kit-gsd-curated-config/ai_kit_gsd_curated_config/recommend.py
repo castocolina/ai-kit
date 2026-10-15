@@ -428,6 +428,21 @@ def _host_cands(ctx: PlanCtx) -> list:
     return [c for c in ctx.inv["candidates"] if c.get("is_host", False)]
 
 
+_ALIAS_EFFECT = "alias mapping inferred: Claude Code runs the alias's current model"
+
+
+def _alias_why(ctx: PlanCtx, candidate: dict) -> str:
+    alias = roles.claude_alias_for(candidate["model"]) if ctx.host == "claude" else None
+    if alias is None:
+        return ""
+    return f"; alias {alias} scored as {candidate['model']} (highest-version id for the alias)"
+
+
+def _alias_extra(ctx: PlanCtx, value: str) -> dict:
+    alias = ctx.host == "claude" and value in roles.CLAUDE_ALIASES
+    return {"effect": _ALIAS_EFFECT} if alias else {}
+
+
 def _claude_keep(c: dict) -> bool:
     return roles.claude_alias_for(c["model"]) is not None
 
@@ -476,7 +491,8 @@ def _write_exec_overrides(
         slot = _agent_slot_model(ctx, prior, agent)
         key = f"model_overrides.{agent}"
         if pick_val != slot:
-            out.entries.append(make_entry(ctx, key, pick_val, source, why))
+            extra = _alias_extra(ctx, pick_val)
+            out.entries.append(make_entry(ctx, key, pick_val, source, why, **extra))
 
 
 def _exec_no_model_note(ctx: PlanCtx, out: _SpecialistOut) -> None:
@@ -512,7 +528,7 @@ def _exec_from_catalog(
         _exec_no_model_note(ctx, out)
         return exec_slot
     pick_val = _value_for(ctx, pick.candidate)
-    exec_why = roles.pick_why(pick, "execution", target, ceiling)
+    exec_why = roles.pick_why(pick, "execution", target, ceiling) + _alias_why(ctx, pick.candidate)
     _write_exec_overrides(run, out, pick_val, "catalog-score", exec_why)
     return pick_val
 
@@ -563,9 +579,10 @@ def _append_counterpart_override(bundle: _CounterpartPick, out: _SpecialistOut) 
     tail = roles.pick_why(pick, "review", target, req.run.ceiling)
     why = (
         f"counterpart: inferred vendor {pick.candidate.get('vendor')} differs from the inferred "
-        f"{req.ref_label} vendor {ref_vendor} (D-14); {tail}"
+        f"{req.ref_label} vendor {ref_vendor} (D-14); {tail}{_alias_why(ctx, pick.candidate)}"
     )
-    out.entries.append(make_entry(ctx, key, pick_val, "catalog-score", why))
+    extra = _alias_extra(ctx, pick_val)
+    out.entries.append(make_entry(ctx, key, pick_val, "catalog-score", why, **extra))
 
 
 def _counterpart_one(req: _CounterpartReq, out: _SpecialistOut) -> None:
@@ -648,8 +665,9 @@ def _append_vision_override(bundle: _VisionPick, out: _SpecialistOut) -> None:
         else "needs image_input"
     )
     key = f"model_overrides.{agent}"
-    tail = roles.pick_why(pick, "general", target, ceiling)
-    out.entries.append(make_entry(ctx, key, pick_val, "catalog-score", f"{head}; {tail}"))
+    tail = roles.pick_why(pick, "general", target, ceiling) + _alias_why(ctx, pick.candidate)
+    extra = _alias_extra(ctx, pick_val)
+    out.entries.append(make_entry(ctx, key, pick_val, "catalog-score", f"{head}; {tail}", **extra))
 
 
 def _vision_one(run: _SpecialistRun, agent: str, out: _SpecialistOut) -> None:
@@ -687,6 +705,8 @@ def _specialist_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     if ctx.host == "pi":
         return [], []
     cands = _host_cands(ctx)
+    if ctx.host == "claude":
+        cands = roles.claude_alias_rows(cands)
     ceiling = roles.host_ceiling(cands, presets.PRICE_PERCENTILE[ctx.opts.rigor])
     run = _SpecialistRun(ctx, prior_entries, cands, ceiling)
     out = _SpecialistOut([], [])
