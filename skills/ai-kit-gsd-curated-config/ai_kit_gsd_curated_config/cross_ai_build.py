@@ -9,9 +9,10 @@ install-root resolution, not a dependency of this skill.
 The `sys.path`-injection-via-`model_detect.resolve_ai_kit_spec_path` pattern this module uses to
 import `build_execute_command` is the SAME one `preference_match.py` already established -- no
 second, divergent resolution strategy for the same sibling skill. The import is wrapped in
-`try/except ImportError` (same pattern as `preference_match.py`): `ai_kit_spec` is not a
-declared dependency, so its absence must degrade `build_execution_command` to its own
-documented `None` return, never crash the whole CLI at import time.
+`try/except ImportError` (same pattern as `preference_match.py`): its absence must degrade
+`build_execution_command` to its own documented `None` return, never crash the whole CLI at
+import time. (Every gsd-tools write in `cli.py` does require the sibling, through the shared
+`ai_kit_spec.gsd_tools` wrappers (D-18), and exits 2 without it.)
 """
 import os
 import sys
@@ -32,9 +33,9 @@ execute_cli_error: Callable[[str], str | None] | None
 try:
     from ai_kit_spec.commands import build_execute_command, execute_cli_error
 except ImportError:
-    # `ai_kit_spec` is a best-effort sibling, never a hard dependency (module docstring above):
-    # if its skill directory can't be resolved, or the sibling install is missing/broken, this
-    # skill must keep working rather than take the whole CLI down at import time.
+    # `ai_kit_spec` is optional at import time (module docstring above): if its skill
+    # directory can't be resolved, or the sibling install is missing/broken, this module must
+    # not take the whole CLI down at import time.
     # `build_execution_command` below checks for this sentinel and returns `None` (its own
     # documented "no match" contract) instead of calling it. Without the sibling there is no
     # supported-CLI list to validate `--cli` against either, so execute_cli_error is None and
