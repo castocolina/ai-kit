@@ -444,6 +444,8 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
 - Scratch-project probe used for D-07:
   `config-set model_overrides.gsd-planner opus` followed by `… null` → `model_overrides` is `{}`.
 
+- **Carried from Phase 17 (2026-10-15, 17-SECURITY AR-02):** R15's SKILL.md v2 flow must state that `inventory` runs the project's own gsd-core (`gsd-tools.cjs`, `lib/*.cjs`) under `node`, so it should be run only on trusted checkouts. The same warning is already in the CLI help and the `inventory.py` docstring.
+- **Carried from Phase 17 (fix pass 4):** opencode subprocesses run from a private dir with project config disabled, so providers defined only in a project's `opencode.json` no longer appear in the global runtimes cache. R2/R3 lane and target selection must not expect them.
 </specifics>
 
 <deferred>
