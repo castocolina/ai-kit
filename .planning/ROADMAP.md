@@ -241,7 +241,23 @@ plan — without writing anything.
      counterpart" note on single-provider hosts.
   4. Keys unknown to the host's installed gsd-core version are dropped from the plan with a
      visible note rather than silently written.
-**Plans**: TBD
+**Plans**: 9 plans
+
+Plans:
+- Wave 1
+  - [ ] 17-01-PLAN.md — opencode 2.x `/api/model` image_input probe, runtimes schema 3, ranker `score_exact`
+  - [ ] 17-02-PLAN.md — `recommend` tracer: presets, canonical plan.json, cross-AI reservations, key drop
+- Wave 2
+  - [ ] 17-03-PLAN.md — `inventory` tracer: project-local gsd-core, tables and probed valid keys
+  - [ ] 17-04-PLAN.md — tier→model layer: price ceilings, native keep, needs_choice and tie order
+- Wave 3
+  - [ ] 17-05-PLAN.md — catalog adapter: fresh/stale/none states and scored (runtime, model) candidates
+  - [ ] 17-06-PLAN.md — specialist overrides: execution, counterpart and vision rules, cap of 7
+- Wave 4
+  - [ ] 17-07-PLAN.md — project facts, existing config, conflicts/info, read-only guarantee
+  - [ ] 17-08-PLAN.md — reconcile layer: managed-family unsets, policy leaves, runtime per host
+- Wave 5
+  - [ ] 17-09-PLAN.md — shared-fixture goldens for 5 hosts x 3 rigors, properties, phase gate
 
 ### Phase 18: Cross-AI, Skills & Apply Pipeline
 
