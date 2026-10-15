@@ -1015,6 +1015,20 @@ class TestSpecialistRules(unittest.TestCase):
         plan = build(inv, rigor="standard")
         self.assertEqual(len(self._counterpart_notes(plan)), 1)
 
+    def test_vision_note_when_image_models_are_unscored(self):
+        """A-WR-06: an unscored image_input model is not reported as absent."""
+        cands = [
+            cand("m/a", runtime="opencode", vendor="openai", image_input=False, score_axes=3,
+                 purpose_scores=_SCORES5),
+            cand("b/y", runtime="opencode", vendor="xai", image_input=True),
+        ]
+        plan = build(make_inventory(host="opencode", candidates=cands))
+        texts = [n["text"] for n in plan["notes"] if n["kind"] == "vision"]
+        self.assertTrue(texts)
+        for text in texts:
+            self.assertNotIn("no image_input model", text)
+            self.assertIn("have no general score", text)
+
     def test_vision_notes_when_no_image_input(self):
         cands = [
             cand("m/a", runtime="opencode", vendor="openai", image_input=False, score_axes=3,

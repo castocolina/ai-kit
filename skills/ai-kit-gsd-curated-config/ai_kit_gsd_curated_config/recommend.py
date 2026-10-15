@@ -642,12 +642,16 @@ def _counterpart_specialists(
     )
 
 
-def _vision_fallback_note(ctx: PlanCtx, out: _SpecialistOut, key: str, agent: str) -> None:
-    out.notes.append({
-        "kind": "vision",
-        "key": key,
-        "text": f"no image_input model on {ctx.host}; {agent} falls back to its tier",
-    })
+def _vision_fallback_note(run: _SpecialistRun, out: _SpecialistOut, key: str, agent: str) -> None:
+    host = run.ctx.host
+    if any(c.get("image_input") is True for c in run.cands):
+        text = (
+            f"image_input models on {host} have no general score (unscored, router or -fast "
+            f"twin); {agent} falls back to its tier; choose with plan-set"
+        )
+    else:
+        text = f"no image_input model on {host}; {agent} falls back to its tier"
+    out.notes.append({"kind": "vision", "key": key, "text": text})
 
 
 def _vision_keep(ctx: PlanCtx):
@@ -684,7 +688,7 @@ def _vision_one(run: _SpecialistRun, agent: str, out: _SpecialistOut) -> None:
     if slot_image is True:
         return
     if not any(c.get("image_input") is True for c in cands):
-        _vision_fallback_note(ctx, out, key, agent)
+        _vision_fallback_note(run, out, key, agent)
         return
     tier = roles.agent_tier(
         agent, ctx.inv["gsd_core"], ctx.opts.profile, presets.PHASE_SHIFTS[ctx.opts.rigor]
@@ -694,7 +698,7 @@ def _vision_one(run: _SpecialistRun, agent: str, out: _SpecialistOut) -> None:
     target = _agent_target(ctx, agent, tier)
     pick = roles.best_pick(cands, "general", target, ceiling.value, keep=_vision_keep(ctx))
     if pick is None:
-        _vision_fallback_note(ctx, out, key, agent)
+        _vision_fallback_note(run, out, key, agent)
         return
     _append_vision_override(_VisionPick(run, agent, pick, target, slot_model), out)
 
