@@ -440,6 +440,40 @@ class TestCatalogTracer(unittest.TestCase):
                 self.assertEqual(kw.get("env"), env)
 
 
+class TestGracefulRefreshTimeout(unittest.TestCase):
+    """B-WR-05: a timed-out refresh child gets SIGTERM (so the probe can clean up) before
+    SIGKILL."""
+
+    def _child(self, body):
+        return [sys.executable, "-c", "import os, signal, sys, time\n" + body]
+
+    def test_timeout_sends_sigterm_first(self):
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        marker = os.path.join(scratch, "got-sigterm")
+        body = (
+            "def h(*_):\n"
+            f"    open({marker!r}, 'w').close(); sys.exit(0)\n"
+            "signal.signal(signal.SIGTERM, h)\n"
+            "time.sleep(30)\n"
+        )
+        with self.assertRaises(subprocess.TimeoutExpired):
+            catalog_adapter._run_graceful(self._child(body), timeout=2, env=dict(os.environ))
+        self.assertTrue(os.path.exists(marker))
+
+    def test_sigterm_ignoring_child_is_killed_after_grace(self):
+        body = "signal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(30)\n"
+        with mock.patch.object(catalog_adapter, "_TERM_GRACE_S", 0.5), \
+                self.assertRaises(subprocess.TimeoutExpired):
+            catalog_adapter._run_graceful(self._child(body), timeout=0.5, env=dict(os.environ))
+
+    def test_production_run_uses_graceful_runner(self):
+        with mock.patch.object(catalog_adapter, "_run_graceful",
+                               side_effect=subprocess.TimeoutExpired("x", 1)) as graceful:
+            self.assertIsNone(catalog_adapter._run(subprocess.run, ["x"], {}))
+        graceful.assert_called_once()
+
+
 class TestCatalogStates(unittest.TestCase):
     def _run_with_fetch(self, home, project, catalog, spec_answers):
         runtimes = {"clis": {"codex": {"installed": True, "models": ["gpt-5.6-sol"]}}}

@@ -5,8 +5,10 @@ Candidate field rules (D-04, D-12..D-15) are centralized in ``build_candidates``
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import signal
 import subprocess
 import sys
 from typing import Any, NamedTuple
@@ -15,6 +17,7 @@ from . import gsd_catalog, model_detect
 
 _THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SUBPROCESS_TIMEOUT = 120
+_TERM_GRACE_S = 10
 _DETECT_WARN = "detect-runtimes failed; using the cached runtimes snapshot"
 _STALE_WARN = "catalog refresh failed; using the stale cache"
 _AA_WARN = "Artificial Analysis refresh failed; scores from cache"
@@ -189,24 +192,40 @@ def _fetch_argv(spec_path, runtimes_path, catalog_path, project_dir, refresh):
     return argv
 
 
-def _run_subprocess(run_fn, argv, env) -> bool:
-    try:
-        result = run_fn(
-            argv,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=_SUBPROCESS_TIMEOUT,
-            env=env,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
+def _signal_group(proc, sig) -> None:
+    with contextlib.suppress(OSError):
+        killpg = getattr(os, "killpg", None)
+        if killpg is not None:
+            killpg(proc.pid, sig)
+        else:
+            proc.kill()
 
 
-def _run_fetch_json(run_fn, argv, env) -> dict | None:
+def _run_graceful(argv, *, timeout, env, **_kw) -> subprocess.CompletedProcess:
+    """`subprocess.run` for the refresh calls, except a timeout SIGTERMs the child's own
+    process group first: detect-runtimes' opencode probe unwinds on SIGTERM and stops its
+    private server, which a bare SIGKILL of the child would orphan (B-WR-05)."""
+    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          env=env, start_new_session=True) as proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _signal_group(proc, signal.SIGTERM)
+            try:
+                proc.communicate(timeout=_TERM_GRACE_S)
+            except subprocess.TimeoutExpired:
+                _signal_group(proc, getattr(signal, "SIGKILL", signal.SIGTERM))
+                proc.communicate()
+            raise
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
+def _run(run_fn, argv, env):
+    """One refresh subprocess; `None` on spawn error or timeout. Production's
+    `subprocess.run` is swapped for the SIGTERM-first runner; tests inject fakes."""
+    runner = _run_graceful if run_fn is subprocess.run else run_fn
     try:
-        result = run_fn(
+        return runner(
             argv,
             capture_output=True,
             text=True,
@@ -216,7 +235,16 @@ def _run_fetch_json(run_fn, argv, env) -> dict | None:
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if result.returncode != 0:
+
+
+def _run_subprocess(run_fn, argv, env) -> bool:
+    result = _run(run_fn, argv, env)
+    return result is not None and result.returncode == 0
+
+
+def _run_fetch_json(run_fn, argv, env) -> dict | None:
+    result = _run(run_fn, argv, env)
+    if result is None or result.returncode != 0:
         return None
     try:
         parsed = json.loads(result.stdout)
