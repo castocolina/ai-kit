@@ -592,8 +592,12 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       }
       const wait = (backoff[attempt] ?? backoff[backoff.length - 1]) * 1000;
       log(`cross-ai: ${name} failed (exit ${r.code}${r.signal ? ' ' + r.signal : ''}, ${hit || 'crash'}${p.error ? ': ' + p.error.slice(0, 200) : ''})`);
-      if (hit !== 'transient' || attempt >= (opts.retries ?? CONFIG.retries) || budgetMs(wait + 60000, runDeadline) <= 0) {
-        return { ok: false, status: 'crash', outBytes: r.outBytes, cli_rc: r.code ?? '-' };
+      const exhausted = hit === 'transient' && (
+        attempt >= (opts.retries ?? CONFIG.retries) || budgetMs(wait + 60000, runDeadline) <= 0
+      );
+      if (hit !== 'transient' || exhausted) {
+        const st = exhausted ? 'capacity' : 'crash';
+        return { ok: false, status: st, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
       }
       await sleep(wait);
       const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
@@ -735,6 +739,23 @@ const FAKE_MODES = {
     fs.appendFileSync('a.txt', 'gf\n');
     fs.writeFileSync((process.env.HOME || '') + '/.fake-git-fail', '1');
     process.stdout.write('# Summary\nok');
+  },
+  flaky: () => {
+    const home = process.env.HOME || '';
+    const ctr = home + '/.fake-flaky-count';
+    let n = 0;
+    try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first call */ }
+    if (n < 1) {
+      fs.writeFileSync(ctr, '1');
+      process.stderr.write('429 Too Many Requests\n');
+      process.exit(1);
+    }
+    fs.appendFileSync('a.txt', 'ok-line\n');
+    process.stdout.write('# Summary\nok');
+  },
+  overloaded: () => {
+    process.stderr.write('429 Too Many Requests\n');
+    process.exit(1);
   },
 };
 const modeIdx = args.indexOf('--mode');
@@ -1327,6 +1348,31 @@ async function blackBoxSelfTest() {
           return null;
         },
       },
+      {
+        name: 'flaky',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/flaky'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/flaky exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const flaky = ctx.calls.filter((l) => l === 'pi flaky');
+          if (flaky.length !== 2) return `flaky calls=${flaky.length}`;
+          const st = spawnSync('git', ['status', '--porcelain'], { cwd: ctx.repo, encoding: 'utf8' });
+          const lines = (st.stdout || '').trim().split('\n').filter(Boolean);
+          if (lines.length !== 1 || !lines[0].endsWith(' a.txt')) return `porcelain=${lines.join('|')}`;
+          return null;
+        },
+      },
+      {
+        name: 'overloaded',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded'],
+        exit: 75,
+        status: /^AIKIT-XAI status=capacity cli=pi model=fake\/overloaded exit=75 .* action=retry-later$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi overloaded').length;
+          return n === 3 ? null : `overloaded calls=${n}`;
+        },
+      },
+
     ];
 
     let failed = false;
