@@ -11,12 +11,12 @@
     {
       "number": "16.1",
       "name": "Hardening",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "17",
       "name": "Curated-Config Inventory & Recommendation Engine",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "number": "18",
@@ -76,8 +76,8 @@
   ],
   "next": {
     "command": "/gsd:progress --next",
-    "label": "Advance to the next step (plan phase 16.1)",
-    "reason": "Phase 16.1 of 14 — needs a plan"
+    "label": "Advance to the next step (plan phase 17)",
+    "reason": "Phase 17 of 14 — needs a plan"
   },
-  "updated_at": "2026-10-15T04:07:40.249Z"
+  "updated_at": "2026-10-15T06:01:35.882Z"
 }
