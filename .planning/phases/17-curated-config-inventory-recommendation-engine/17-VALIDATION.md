@@ -2,11 +2,12 @@
 phase: "17"
 slug: "curated-config-inventory-recommendation-engine"
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
-# audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: false) (#2117)
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+# audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: true) (#2117)
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: "2026-10-15"
+validated: "2026-10-15"
 ---
 
 # Phase 17 — Validation Strategy
@@ -38,25 +39,25 @@ created: "2026-10-15"
 
 ## Per-Task Verification Map
 
-### Requirement → Test Map (task IDs filled by the planner)
+### Requirement → Test Map
 
-| Req ID | Behavior | Test Type | Automated Command | File Exists? |
-|--------|----------|-----------|-------------------|-------------|
-| INV-01 | inventory shape validates; read-only project byte-identical (tree + bytes hash before/after, chmod read-only dir) | unit (+ real gsd when available) | `python3 -m unittest tests.test_curated_config_inventory -v` | ❌ Wave 0 |
-| INV-01 / R2 | local fake gsd-core beats global; scope label; exit 2 + searched paths; probe `null` → exit 2 | unit | same | ❌ |
-| INV-02 / R3 | fresh / stale+warning / none markers via fake `run_fn` outputs; `--refresh` argv | unit | same | ❌ |
-| INV-03 / R5 | conflict matrix incl. GSD_HOME, Branch C/D, latent global omit | unit | same | ❌ |
-| R6 | AGENTS-only / CLAUDE-only / both / neither; frontend; db | unit | same | ❌ |
-| REC-01 / R7 | two runs byte-identical; purity patch test; AST import guard; unsupported schema → exit 2 | unit | `python3 -m unittest tests.test_curated_config_recommend -v` | ❌ |
-| REC-02 / R8 | `models.*` only per rigor shifts (3 rigors × adaptive) | unit (golden) | `python3 -m unittest tests.test_curated_config_golden -v` | ❌ |
-| REC-03 / R9 | native kept (codex), `anthropic/*` replaced (opencode), cursor no native map, `-fast` never chosen, router-declared wins, cap never empties, at-ceiling within, family percentile, effort-variant rule | unit + golden | both | ❌ |
-| R4 | unscored catalog: claude/codex no `model_profile_overrides`; opencode/cursor `needs_choice` with `no scores`; no `catalog-score` source | unit | recommend | ❌ |
-| REC-04 / R10 | ≤7 overrides in all goldens; counterpart vendor; vision warning; single-provider note; pi no overrides | golden | golden | ❌ |
-| REC-05 / R11 | table-driven: every §5 key/value per rigor | unit | recommend | ❌ |
-| REC-06 / R12 | `valid_keys` without `dynamic_routing.*` → keys dropped + note(s) per the OQ5 decision | unit | recommend | ❌ |
-| R13 | tie order independent of input order (shuffled candidates); leftover `model_overrides.gsd-planner` → unset; `model_policy` per actual leaf incl. `runtime_tiers` | unit | recommend | ❌ |
-| D-15 | `score_exact` present, unrounded; `score` unchanged | unit | `python3 -m unittest tests.test_ai_kit_spec -k score_exact` | extend existing |
-| D-24 | 2.x parser on the spike sample; version gate; server killed on every path; token never in output; 1.x path unchanged; schema bump | unit | `python3 -m unittest tests.test_ai_kit_spec -k opencode` | extend existing |
+| Req ID | Behavior | Test Type | Automated Command | Status |
+|--------|----------|-----------|-------------------|--------|
+| INV-01 / R1 | read-only project byte-identical; inventory shape | unit + e2e (real node) | `python3 -m unittest tests.test_curated_config_inventory` (TestReadOnly, TestCompleteInventory); `python3 -m unittest tests.test_curated_config_e2e` (TestReadOnlyRealGsd, TestRealGsdInventory) | ✅ green |
+| R2 | local gsd-core beats global + scope; exit 2 with searched paths; probe null/fail exits 2 | unit | `python3 -m unittest tests.test_curated_config_inventory` (TestGsdCoreResolution, TestProbeFailures) | ✅ green |
+| INV-02 / R3 | fresh / stale+warning / none markers; refresh argv and order | unit | `python3 -m unittest tests.test_curated_config_inventory` (TestCatalogStates, TestGracefulRefreshTimeout) | ✅ green |
+| R4 | unscored catalog: no catalog-score source; claude/codex no overrides; opencode/cursor needs_choice | unit | `python3 -m unittest tests.test_curated_config_recommend` (TestSlotEdges: unscored_price_order, codex_unscored_keeps_native, cursor_no_catalog_needs_choice); `python3 -m unittest tests.test_curated_config_inventory` test_unscored_catalog_scored_false | ✅ green |
+| INV-03 / R5 | conflict matrix incl. GSD_HOME, latent global omit, runtime mismatch, global info | unit + e2e | `python3 -m unittest tests.test_curated_config_inventory` (TestConflictMatrix); `python3 -m unittest tests.test_curated_config_recommend` (TestReconcileConflicts); `python3 -m unittest tests.test_curated_config_golden` (TestConflictsEndToEnd) | ✅ green |
+| R6 | AGENTS-only / CLAUDE-only / both / neither; frontend; db | unit | `python3 -m unittest tests.test_curated_config_inventory` (TestProjectFacts) | ✅ green |
+| REC-01 / R7 | byte-identical reruns; build_plan purity patch; AST import guard; CLI recommend reads only its inventory and writes only --out; bad schema exit 2 | unit | `python3 -m unittest tests.test_curated_config_recommend` (TestRecommendTracer, TestPurity, TestCliRecommendIo, TestInventoryValidation) | ✅ green |
+| REC-02 / R8 | models.* only on whole-phase shifts | unit + golden | `python3 -m unittest tests.test_curated_config_recommend` (TestPhaseShifts); `python3 -m unittest tests.test_curated_config_golden` | ✅ green |
+| REC-03 / R9 | native kept, anthropic/* replaced, -fast never chosen, router wins, cap fallback, at-ceiling, family percentile, effort variants | unit + golden | `python3 -m unittest tests.test_curated_config_recommend` (TestSlotTracer, TestSlotEdges, TestRolesHelpers); `python3 -m unittest tests.test_curated_config_inventory` (TestBuildCandidates); `python3 -m unittest tests.test_curated_config_golden` | ✅ green |
+| REC-04 / R10 | <=7 overrides; counterpart vendor; vision note; single-provider note; pi no overrides | unit + golden | `python3 -m unittest tests.test_curated_config_recommend` (TestSpecialistRules, TestSpecialistProperties); `python3 -m unittest tests.test_curated_config_golden` (TestGoldenProperties) | ✅ green |
+| REC-05 / R11 | every spec section 5 key/value per rigor | unit | `python3 -m unittest tests.test_curated_config_recommend` (TestPresets, TestCrossAi, TestEffectLabels) | ✅ green |
+| REC-06 / R12 | unknown keys dropped with notes; unprobed key fails closed | unit + e2e | `python3 -m unittest tests.test_curated_config_recommend` (TestKeyDrop, TestPerLayerDrop, TestUnprobedKeys); `python3 -m unittest tests.test_curated_config_e2e` (TestGoldenTables) | ✅ green |
+| R13 | order-independent ties; leftover managed keys unset; model_policy unset per leaf incl. runtime_tiers | unit | `python3 -m unittest tests.test_curated_config_recommend` (TestDeterminism, TestReconcileTracer, TestReconcileConflicts, TestReconcileComposition) | ✅ green |
+| D-15 | score_exact present, unrounded; score unchanged | unit | `python3 -m unittest tests.test_ai_kit_spec` -k score_exact | ✅ green |
+| D-24 | opencode 2.x parser, version gate, server stopped on every path, password never output, 1.x unchanged | unit | `python3 -m unittest tests.test_ai_kit_spec` (TestOpencodeApiImageInput) | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -64,11 +65,11 @@ created: "2026-10-15"
 
 ## Wave 0 Requirements
 
-- [ ] `tests/fixtures/curated_config_v2/gsd_tables_1_16.json`: tables captured once from the installed 1.16 (D-20), placeholder paths only
-- [ ] `tests/fixtures/curated_config_v2/` trimmed model lists (cursor, opencode, codex, claude) plus a synthetic pi list (labelled)
-- [ ] `tests/fixtures/opencode_api_model.json`: the spike sample (4 entries)
-- [ ] the three new test modules, then `python3 tools/gen_test_groups.py`
-- [ ] golden regeneration flag (for example env `AI_KIT_REGEN_GOLDENS=1`), never on by default
+- [x] `tests/fixtures/curated_config_v2/gsd_tables_1_16.json`: tables captured once from the installed 1.16 (D-20), placeholder paths only
+- [x] `tests/fixtures/curated_config_v2/` trimmed model lists (cursor, opencode, codex, claude) plus a synthetic pi list (labelled)
+- [x] `tests/fixtures/opencode_api_model.json`: the spike sample (4 entries)
+- [x] the four test modules (`inventory`, `recommend`, `golden`, `e2e`), then `python3 tools/gen_test_groups.py`
+- [x] golden regeneration flag (env `UPDATE_GOLDEN=1`), never on by default
 
 ---
 
@@ -82,11 +83,11 @@ created: "2026-10-15"
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 120s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 120s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-10-15 (Nyquist audit: 1 gap filled, `TestCliRecommendIo`)
