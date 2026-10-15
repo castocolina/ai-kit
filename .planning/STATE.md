@@ -4,18 +4,18 @@ milestone: v1.3
 milestone_name: GSD Curated Config v2
 current_phase: "16.1"
 current_phase_name: Hardening
-status: executing
-stopped_at: Completed 16.1-23-PLAN.md
-last_updated: "2026-10-15T03:55:03.133Z"
-last_activity: 2026-10-14
-last_activity_desc: Phase 16.1 execution started
-state_head: 1bce734a8145570f8ecdb02188348707eba325ff
+status: planning
+stopped_at: Phase 16 complete, ready to plan Phase 16.1
+last_updated: "2026-10-15T04:07:40.243Z"
+last_activity: 2026-10-15
+last_activity_desc: Phase 16 complete, transitioned to Phase 16.1
+state_head: 3a0e94054ca3d45698b3b0d3b89cbf63fa5d7a9b
 progress:
   total_phases: 14
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 38
-  completed_plans: 37
-  percent: 0
+  completed_plans: 38
+  percent: 7
 ---
 
 # Project State
@@ -29,18 +29,18 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 
 ## Current Position
 
-Phase: 16.1 (Hardening) — EXECUTING
-Plan: 31 of 31
-Status: Ready to execute
-Last activity: 2026-10-14 — Phase 16.1 execution started
+Phase: 16.1 — Hardening
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-10-15 — Phase 16 complete, transitioned to Phase 16.1
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 7%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 54
+- Total plans completed: 60
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -76,6 +76,7 @@ Progress: [░░░░░░░░░░] 0%
 | 14 | 4 | - | - |
 | 15 | 2 | - | - |
 | 15.1 | 5 | - | - |
+| 16 | 6 | - | - |
 
 **Recent Trend:**
 
@@ -379,7 +380,6 @@ any order, or deferred, without blocking anything else in this milestone.
 
 | Phase | State | Resume |
 |-------|-------|--------|
-| 16 | verification_deferred_human | /gsd-verify-work 16 |
 
 Phase 16: 4/4 success criteria verified 2026-10-14; the one human item (real codex/pi host signal) is scheduled for Phases 20 and 22.
 
@@ -401,5 +401,5 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-10-15T03:55:03.102Z
-Stopped at: Completed 16.1-23-PLAN.md
+Stopped at: Phase 16 complete, ready to plan Phase 16.1
 Resume file: None

@@ -6,7 +6,7 @@
     {
       "number": "16",
       "name": "ai_kit_spec Extensions",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "16.1",
@@ -76,8 +76,8 @@
   ],
   "next": {
     "command": "/gsd:progress --next",
-    "label": "Advance to the next step",
-    "reason": "Phase 16.1 of 14 · 0% · executing"
+    "label": "Advance to the next step (plan phase 16.1)",
+    "reason": "Phase 16.1 of 14 — needs a plan"
   },
-  "updated_at": "2026-10-15T03:55:02.576Z"
+  "updated_at": "2026-10-15T04:07:40.249Z"
 }

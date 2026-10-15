@@ -64,7 +64,7 @@ review-and-adjust pass, so every GSD agent runs on the model that best fits its 
 runtime hosting the session. Source spec:
 `docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md`.
 
-- [ ] **Phase 16: ai_kit_spec Extensions** - Host detection, model enumeration, and catalog/ranker extensions for pi and codex, plus richer catalog fields
+- [x] **Phase 16: ai_kit_spec Extensions** - Host detection, model enumeration, and catalog/ranker extensions for pi and codex, plus richer catalog fields (completed 2026-10-15)
 - [ ] **Phase 16.1: Hardening** (INSERTED) - Gate scope, sibling-first imports, security and correctness fixes from the 2026-10-13 audit; closes Phase 16
 - [ ] **Phase 17: Curated-Config Inventory & Recommendation Engine** - Read-only project/host inventory and a pure `recommend` function that produces an explainable `plan.json`
 - [ ] **Phase 18: Cross-AI, Skills & Apply Pipeline** - Plan adjustment, cross-AI review/execution wiring, skill-affinity mapping, and a safe backup/restore apply flow
@@ -102,7 +102,7 @@ rewrite depends on.
   4. The ranker accepts `planning`, `general`, `mechanical`, `execution`, `review` purposes via the
      ranking-weights file, and existing `review`/`execute` callers keep working unchanged as
      aliases.
-**Plans**: 6/6 plans executed
+**Plans**: 6/6 plans complete
 
 Plans:
 **Wave 1**
