@@ -1,4 +1,5 @@
-"""Inventory validation, canonical plan JSON and the atomic plan write.
+"""Inventory validation, the `--out` guard and the atomic plan write (canonical JSON and
+the digest live in the pure `plan_schema`; `canonical_json` is re-exported here).
 
 `load_inventory` is the only file `recommend`'s CLI path reads; `write_plan` is the
 only file it writes (mkstemp + os.replace through the shared `ai_kit_spec.cache`

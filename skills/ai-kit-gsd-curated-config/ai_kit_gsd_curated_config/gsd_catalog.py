@@ -1,5 +1,7 @@
-"""Locates the installed gsd-core's gsd-tools.cjs and lib/model-catalog.cjs, and queries the
-live AGENT_DEFAULT_TIERS/AGENT_TO_PHASE_TYPE export via a `node -e` subprocess call.
+"""Locates the installed gsd-core's gsd-tools.cjs and its lib modules, and queries them via
+`node -e`: AGENT_DEFAULT_TIERS/AGENT_TO_PHASE_TYPE for the v1 flow, and for the v2 inventory
+RUNTIME_PROFILE_MAP, MODEL_PROFILES (stored profile-first), AGENT_TO_PHASE_TYPE and
+`isValidConfigKey` probes in one call.
 
 The gsd-tools path resolution itself is delegated to the one shared resolver in
 `ai_kit_spec.gsd_tools` (D-18, 16.1-CONTEXT.md), which searches the PROJECT-LOCAL gsd-core
