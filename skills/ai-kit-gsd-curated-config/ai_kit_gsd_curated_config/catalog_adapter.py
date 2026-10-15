@@ -11,7 +11,7 @@ import os
 import signal
 import subprocess
 import sys
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from . import gsd_catalog, model_detect
 
@@ -64,50 +64,31 @@ class _RefreshPaths(NamedTuple):
     project_dir: str
 
 
-class _RefreshJob(NamedTuple):
-    stack: tuple
-    spec_path: str
-    project_dir: str
-    env: dict
-    refresh: bool
-    run_fn: object
-
-
-class _CacheRead(NamedTuple):
-    cache: Any
-    model_catalog: Any
-    paths: _RefreshPaths
-
-
 def refresh_catalog(project_dir, env, refresh, run_fn):
-    """Returns `(CatalogState, None)` or `(None, error_message)`."""
+    """Runs the two refresh subprocesses, then reads and classifies the cache. Returns
+    `(CatalogState, None)` or `(None, error_message)`."""
     spec_path = model_detect.resolve_ai_kit_spec_path(_THIS_SKILL_DIR, env)
-    if spec_path is None:
-        return None, gsd_catalog.SIBLING_MISSING
     stack = _load_spec_stack()
-    if stack is None:
+    if spec_path is None or stack is None:
         return None, gsd_catalog.SIBLING_MISSING
-    job = _RefreshJob(stack, spec_path, project_dir, env, refresh, run_fn)
-    return _refresh_with_stack(job), None
-
-
-def _refresh_with_stack(job: _RefreshJob) -> CatalogState:
-    detection, model_catalog, cache, ranker = job.stack
+    detection, model_catalog, cache, ranker = stack
     paths = _RefreshPaths(
-        job.spec_path,
-        detection.cache_runtimes_path(job.env),
-        model_catalog.cache_catalog_path(job.env),
-        job.project_dir,
+        spec_path,
+        detection.cache_runtimes_path(env),
+        model_catalog.cache_catalog_path(env),
+        project_dir,
     )
-    warnings, fetch_result = _run_refresh(paths, job.refresh, job.env, job.run_fn)
-    read = _CacheRead(cache, model_catalog, paths)
-    return _catalog_state_from_cache(read, ranker.load_ranking_weights(), warnings, fetch_result)
+    warnings, fetch_result = _run_refresh(paths, refresh, env, run_fn)
+    runtimes, entries = _read_cache(cache, model_catalog, paths)
+    return (
+        _catalog_state_from_cache(
+            runtimes, entries, ranker.load_ranking_weights(), warnings, fetch_result
+        ),
+        None,
+    )
 
 
-def _catalog_state_from_cache(read: _CacheRead, weights, warnings, fetch_result) -> CatalogState:
-    runtimes, entries = _read_cache(
-        read.cache, read.model_catalog, read.paths.runtimes_path, read.paths.catalog_path
-    )
+def _catalog_state_from_cache(runtimes, entries, weights, warnings, fetch_result) -> CatalogState:
     state, state_warnings = _catalog_state(fetch_result, entries)
     if not runtimes:
         warnings = [_DETECT_NO_CACHE_WARN if w == _DETECT_WARN else w for w in warnings]
@@ -130,7 +111,7 @@ def _opencode_probe_failed(runtimes) -> bool:
     return isinstance(opencode, dict) and opencode.get("image_input_probe") == "failed"
 
 
-def _load_spec_stack():
+def _load_spec_stack() -> tuple | None:
     detection = gsd_catalog.load_ai_kit_spec_module("detection")
     model_catalog = gsd_catalog.load_ai_kit_spec_module("model_catalog")
     cache = gsd_catalog.load_ai_kit_spec_module("cache")
@@ -159,9 +140,9 @@ def _run_refresh(paths: _RefreshPaths, refresh, env, run_fn):
     return warnings, fetch_result
 
 
-def _read_cache(cache, model_catalog, runtimes_path, catalog_path):
-    runtimes = cache.cache_read_json(runtimes_path) or {}
-    raw_catalog = cache.cache_read_json(catalog_path) or {}
+def _read_cache(cache, model_catalog, paths: _RefreshPaths):
+    runtimes = cache.cache_read_json(paths.runtimes_path) or {}
+    raw_catalog = cache.cache_read_json(paths.catalog_path) or {}
     entries, _meta = model_catalog.split_catalog_meta(raw_catalog)
     return runtimes, entries
 
