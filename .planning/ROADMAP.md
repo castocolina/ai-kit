@@ -166,7 +166,7 @@ can be verified and closed on trustworthy evidence. Source:
      Artificial Analysis key, so the ranking is scored).
   7. The phase is executed through `.planning/scripts/cross-ai.mjs` (pi first), as the dogfood run
      for Phase 18's runner. The usage-metrics store compaction (audit A10) stays out of scope.
-**Plans**: 7/31 plans executed
+**Plans**: 8/31 plans executed
 
 Plans:
 - Wave 1
@@ -179,7 +179,7 @@ Plans:
   - [x] 16.1-05-PLAN.md — `install.sh --branch`/`--dry-run` on existing clones; atomic uninstall write
 - Wave 3
   - [x] 16.1-06-PLAN.md — argv-only reviewer dispatch and host-signal scrubbing
-  - [ ] 16.1-07-PLAN.md — shared project-local-first gsd-tools resolver and wrappers; curated-config imports them
+  - [x] 16.1-07-PLAN.md — shared project-local-first gsd-tools resolver and wrappers; curated-config imports them
 - Wave 4
   - [ ] 16.1-08-PLAN.md — trust gate for project-local reviewer commands; loud config errors
   - [ ] 16.1-30-PLAN.md — host-signal scrub pinned through every dispatcher with real children
