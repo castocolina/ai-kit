@@ -129,3 +129,25 @@ All 30 in-scope ids (including the duplicates listed above) are fixed. None were
 - `make test`: exit 0. 3382 Python tests passed (31/31 unit modules, 1/1 unit-uv, 4/4 integration, 2/2 e2e, 1/1 arch), plus 45/45 install.sh checks.
 - `make validate`: exit 0 (ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest core and wizard).
 - No live CLI probes and no network calls were made.
+
+## Pass 3
+
+**Scope:** the four items left open in pass 2, settled by the jev ladder (RUN-43). Commits f9311ba..77ffe63.
+
+- B-IN-06: f9311ba. Inventory now mirrors gsd-core's normalization 4 (checked by reading `.claude/gsd-core/bin/lib/configuration.cjs` 1.16.0, not by running it). When a project config has a top-level `depth` and no `granularity`, the depth is mapped through `DEPTH_TO_GRANULARITY` (an unmapped value passes through) and reported as the existing `granularity`, so the plan shows change/keep instead of add. `existing_config.legacy_depth` records the raw value, and a `depth` info note names the legacy key. An explicit `granularity` still wins. 3 tests.
+- B-IN-08: de89530. `recommend --out` into a missing directory exits 2 with the `ai-kit-gsd-curated-config:` prefix and creates nothing. The plan is still written atomically, but its mode now comes from the umask (0644 under umask 022). The mode is passed through a new optional `mode` argument on `cache_write_text`, so its other callers keep mkstemp's 0600 (already pinned by `test_created_file_mode_is_0600`). 2 tests.
+- C-IN-06: 77ffe63. All ten tests that spawn real `node` against the checkout-local gsd-core moved, unchanged, out of `unit` and into three e2e modules registered in `E2E_MODULES`:
+  - `tests/test_curated_config_e2e.py`: TestRealIntegration, TestMergeModeEndToEnd, TestRealGsdInventory, TestReadOnlyRealGsd and TestGoldenTables.
+  - `tests/test_ai_kit_spec_e2e.py`: TestRealGsdTools and TestRealGsdConfigSet.
+  - `tests/test_ai_kit_gsd_spec_discuss_e2e.py`: the real edge-floor engine run.
+
+  The generated listings are refreshed, and the Makefile comment, the runner comment and the tier text in AGENTS.md now mention the real-node runs. The tests no longer run in the validate gate, only under `make e2e-test`/`make test`.
+- PT-17: kept `claude_md_path_configured` (Laya 0.81). No code change.
+
+### Verification (pass 3)
+
+- Ran in the checkout `.claude/worktrees/v13-curated-config-v2` (no extra worktree) with `PATH="$HOME/.local/bin:$PATH" UV_NO_SYNC=1 UV_OFFLINE=1`.
+- `make test`: exit 0. 3387 Python tests passed: unit 3199 (31/31 modules), unit-uv 6, integration 139, e2e 17 (5/5 modules), arch 26. The 45/45 install.sh checks also passed. Compared with pass 2: unit lost 10 and gained 5 new tests, e2e gained 10, and the total rose by the 5 new tests.
+- `make validate`: exit 0 (ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest core and wizard).
+- `make e2e-test`: exit 0. 17 tests in 5/5 modules, none skipped on this machine, plus 45/45 install.sh checks.
+- No live CLI probes and no network calls were made.
