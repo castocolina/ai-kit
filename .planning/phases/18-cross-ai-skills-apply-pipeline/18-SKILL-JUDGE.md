@@ -4,7 +4,7 @@ Executor self-check only; the orchestrator's independent `/skill-judge` in phase
 
 Judged file: `skills/ai-kit-gsd-curated-config/SKILL.md`
 
-Judged blob: 35ef2d2d455e25f29851eed82adda44b25436779
+Judged blob: bb81efde58e70c36fb0bdc8356ad8a67c8a3ddf3
 
 | | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | Total |
 |---|---|---|---|---|---|---|---|---|---|
