@@ -211,7 +211,8 @@ def load_inventory(path: str) -> tuple[dict | None, str | None]:
 
 def out_path_problem(out: str, inventory_path: str, inventory: dict) -> str | None:
     """SPEC must-not: `--out` never replaces the inventory, a GSD config file or anything
-    under the project's config dir (normally `.planning/`). Returns the refusal reason."""
+    under the project's `.planning/` (the config's own dir when it is not inside one).
+    Returns the refusal reason."""
     target = os.path.realpath(out)
     protected = [os.path.realpath(inventory_path)]
     for section in ("existing_config", "global_defaults"):
@@ -222,10 +223,22 @@ def out_path_problem(out: str, inventory_path: str, inventory: dict) -> str | No
         return f"--out {out} would overwrite an input or GSD config file"
     config_path = inventory["existing_config"].get("path")
     if isinstance(config_path, str):
-        config_dir = os.path.realpath(os.path.dirname(config_path))
-        if target.startswith(config_dir + os.sep):
-            return f"--out {out} is inside the project's config dir {config_dir}"
+        guarded = _planning_root(os.path.realpath(os.path.dirname(config_path)))
+        if target.startswith(guarded + os.sep):
+            return f"--out {out} is inside the project's GSD dir {guarded}"
     return None
+
+
+def _planning_root(config_dir: str) -> str:
+    """The nearest `.planning` ancestor of the config dir (a workstream config sits at
+    `.planning/workstreams/<ws>/`), else the config dir itself."""
+    probe = config_dir
+    while os.path.basename(probe) != ".planning":
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return config_dir
+        probe = parent
+    return probe
 
 
 def write_plan(path: str, plan: dict) -> None:

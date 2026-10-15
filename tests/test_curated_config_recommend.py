@@ -9,6 +9,7 @@ import io
 import json
 import os
 import random
+import shutil
 import socket
 import subprocess
 import sys
@@ -1915,6 +1916,22 @@ class TestOutGuard(unittest.TestCase):
             with open(config, encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), '{"model_profile": "balanced"}')
             self.assertFalse(os.path.exists(os.path.join(planning, "plan.json")))
+
+    def test_workstream_config_still_guards_the_whole_planning_dir(self):
+        """SPEC must-not: a workstream config (.planning/workstreams/<ws>/config.json)
+        still protects all of .planning/, not only the workstream dir; a sibling of
+        .planning/ in the project stays writable."""
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        project = os.path.join(tmp, "project")
+        planning = os.path.join(project, ".planning")
+        config = os.path.join(planning, "workstreams", "ws1", "config.json")
+        os.makedirs(os.path.dirname(config))
+        inv = make_inventory(existing={"exists": True, "path": config, "values": {}})
+        self.assertIsNotNone(plan_io.out_path_problem(
+            os.path.join(planning, "STATE.md"), os.path.join(tmp, "inv.json"), inv))
+        self.assertIsNone(plan_io.out_path_problem(
+            os.path.join(project, "plan.json"), os.path.join(tmp, "inv.json"), inv))
 
 
 class TestInventoryValidation(unittest.TestCase):
