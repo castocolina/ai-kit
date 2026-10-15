@@ -353,6 +353,23 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
   - The approval block shows a `--dry-run` change count first.
   - TypeSafe 0.98.
 
+- **D-39 (2026-10-15, RUN-46, research O1): the execution default follows SPEC R3/XAI-02.** With no `--cross-ai-execution` answer, `workflow.cross_ai_execution` defaults to yes on claude and codex hosts, for every rigor, and to no on opencode, cursor and pi. With zero eligible targets it falls to no, with a note (not `needs_choice`). `recommend.cross_ai_answers` (Phase 17) changes to match. TypeSafe 0.95.
+- **D-40 (RUN-46, O2): apply's interruption guard is a persisted marker, not the 16.1 sidecar.** An apply marker beside the config is written atomically before the first write and names the backup. It is removed on success or after a restore. The next `apply` refuses while it exists. The execute-gsd ownership sidecar is not used (no cross-skill import). This amends the D-21/SPEC R13 "undo log" wording: 16.1's undo list is in memory only. TypeSafe 0.99.
+- **D-41 (RUN-46, O3): a proposed trusted root is one `needs_choice` entry.** The key is `agent_skills_security.trusted_global_roots`, the proposed `~`-relative roots are its candidates, approval is `plan-set` with the list, and decline is `plan-unset`. `apply` blocks until it is decided. TypeSafe 0.99.
+- **D-42 (RUN-46, O4): `apply` requires `--inventory`** and exits 2 when its digest differs from the plan's recorded inventory digest. Laya 0.75.
+- **D-43 (RUN-46, O5): no idle watchdog in Phase 18.** The runner keeps the overall deadline, the status vocabulary and the `128+n` signal exit. The idle watchdog goes to the backlog. TypeSafe 1.0.
+- **D-44 (RUN-46, O14): `plan-set workflow.cross_ai_command`** refuses any value other than `node .planning/scripts/cross-ai.mjs` unless `--force` is given. The warning names the risk: gsd-core executes the command with full permissions. Laya 0.79.
+- **D-45 (RUN-46, O15): pi's router merge is proven before the goldens depend on it.** The first plan touching pi enumeration adds a fixture test proving that `catalog_build` merges `runtimes.pi` ids into existing router entries (`router_confirmed`), and fixes `catalog_build` if it does not. TypeSafe 0.98.
+- **Research facts carried (RUN-46, no decision needed):**
+  - `RUNTIMES_SCHEMA_VERSION` 3 -> 4 here; 18.1 restates as current + 1.
+  - Real-node gsd-tools tests go to the e2e tier.
+  - Skill verification uses `warnings == []`, never `skills_count`, and is skipped on pi with a reason (`GSD_RUNTIME=pi` does not canonicalize in 1.16.0).
+  - opencode 2.0.29 has no `--variant`: the review-lane effort is a Phase 20 risk, and a note goes into the plan.
+  - The opencode "bare" profile is partial: `~/.agents/skills` and `~/.config/opencode/skills` still load. The template comment and SKILL.md say so.
+  - The live `cross_ai_timeout` read honors only the `GSD_WORKSTREAM` env; this is documented.
+  - The `cursor-agent models` preflight is bounded at 15 s and continues with a note.
+  - The installer under the `pnpm dlx` shim is unverified; on failure, print the exact argv for the user.
+
 ### Claude's Discretion
 - The exact skill caps per rigor (around 2/3/5).
 - The backup timestamp format.
