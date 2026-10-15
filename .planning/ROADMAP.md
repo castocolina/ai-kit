@@ -310,24 +310,31 @@ with the v2 flow living alongside the unchanged v1 CLI.
   7. When a System One backend is detected (local Laya or a TypeSafe key), `jev-fast-decision` is
      recommended in `agent_skills` for `gsd-advisor-researcher` and `gsd-assumptions-analyzer`
      (the discuss-phase decision agents), and is never recommended when no backend is present.
-**Plans**: 15 plans (strictly serial waves 1-15, cross-AI executed)
+**Plans**: 22 plans (strictly serial waves 1-22, cross-AI executed)
 
 Plans:
 - [ ] 18-01-PLAN.md — pi RPC model enumeration + router merge proof, strict config-set encoder, presence-only secret check
 - [ ] 18-02-PLAN.md — inventory: gsd-core review lanes, skills roots, extra key probes (schema 2)
 - [ ] 18-03-PLAN.md — skill scan (real paths, root escape, Claude plugins), ponytail visibility, System One backend
-- [ ] 18-04-PLAN.md — cross-AI execution targets, D-39 default, script artifact (plan schema 2)
-- [ ] 18-05-PLAN.md — review lanes from the gsd-core registry (vendor and count rules)
-- [ ] 18-06-PLAN.md — skill_affinity.json + skills layer (caps, trusted-root choice, proposals, jev gate)
-- [ ] 18-07-PLAN.md — runner template: status line, exit classes, tree id, group kill, black-box self-test
-- [ ] 18-08-PLAN.md — runner: model preflight, retries, review contract, claude review block, live deadline, knobs
-- [ ] 18-09-PLAN.md — runner renderer with sha256 header and .new edit protection
-- [ ] 18-10-PLAN.md — plan-set / plan-unset (refusals, D-44 guard, script pseudo-keys)
-- [ ] 18-11-PLAN.md — config backups, verbatim restore, apply marker
-- [ ] 18-12-PLAN.md — apply --dry-run with gsd-core key pre-flight and diff
-- [ ] 18-13-PLAN.md — apply write path, skill verification, real gsd-tools E2E
-- [ ] 18-14-PLAN.md — grouped follow-ups (pinned local installer, effort sync) behind one approval
-- [ ] 18-15-PLAN.md — SKILL.md v2 flow, skill-judge, doc amendments, all gates
+- [ ] 18-04-PLAN.md — cross-AI execution tracer: pi target, script artifact (plan schema 2), purity guard
+- [ ] 18-05-PLAN.md — execution target selection edges and the D-39 default matrix
+- [ ] 18-06-PLAN.md — review lanes from the gsd-core registry (vendor, ranking, claude alias, effort)
+- [ ] 18-07-PLAN.md — skill_affinity.json + skills layer (caps, reference forms, missing-skill rule)
+- [ ] 18-08-PLAN.md — trusted-root choice, capped unknown-skill proposals, jev gate, pi effect
+- [ ] 18-09-PLAN.md — runner template: hermetic black-box self-test, runtime blocks, status line
+- [ ] 18-10-PLAN.md — runner: stderr classification, exit classes, tree id, fallback, group kill
+- [ ] 18-11-PLAN.md — runner: model preflight and transient retries
+- [ ] 18-12-PLAN.md — runner: review contract, claude review block, live deadline, knobs
+- [ ] 18-13-PLAN.md — runner renderer with sha256 header and .new edit protection
+- [ ] 18-14-PLAN.md — plan-set (refusals, force, D-44 guard, trusted-root approval)
+- [ ] 18-15-PLAN.md — script pseudo-keys, plan-unset, execution toggles
+- [ ] 18-16-PLAN.md — config backups, verbatim restore, apply marker
+- [ ] 18-17-PLAN.md — apply --dry-run (diff, refusals, inventory digest)
+- [ ] 18-18-PLAN.md — apply write path through gsd-tools + agent-skills check (real gsd-tools E2E)
+- [ ] 18-19-PLAN.md — apply proofs: Nth-key restore, prune, re-apply per D-20, reconcile, write discipline
+- [ ] 18-20-PLAN.md — follow-ups behind one approval (pinned installer, effort sync, opencode local root)
+- [ ] 18-21-PLAN.md — SKILL.md v2 flow, README row, command drift test, skill-judge self-check
+- [ ] 18-22-PLAN.md — full gate run and source-of-truth amendments
 
 ### Phase 18.1: One runtime model (INSERTED)
 
