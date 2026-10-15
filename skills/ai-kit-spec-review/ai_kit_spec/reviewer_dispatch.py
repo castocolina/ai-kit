@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
-from ai_kit_spec.detection import check_codegraph_mcp_healthy
+from ai_kit_spec.detection import check_codegraph_mcp_usable
 from ai_kit_spec.dispatch import dispatch_with_polling
 from ai_kit_spec.tooling_guidance import (
     build_tooling_guidance,
@@ -23,7 +23,7 @@ class ReviewerSeams(NamedTuple):
     build_tooling_guidance_fn: Callable[..., str] = build_tooling_guidance
     resolve_shared_reference_fn: Callable[[], Any] = resolve_shared_tooling_reference_path
     render_command_fn: Callable[..., list[str]] = render_reviewer_command
-    codegraph_health_fn: Callable[[Any], bool] = check_codegraph_mcp_healthy
+    codegraph_health_fn: Callable[[Any], bool] = check_codegraph_mcp_usable
 
 
 class ReviewerDispatchSpec(NamedTuple):

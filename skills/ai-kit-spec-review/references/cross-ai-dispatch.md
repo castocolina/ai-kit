@@ -204,7 +204,7 @@ would never reach them; and pre-rendering the argv yourself bypasses the single
 `{prompt}` is one argument with no extra quoting; shell operators, `$`, and backticks in a
 template are rejected with an error naming the reviewer). There is likewise **no**
 `--codegraph-registered` flag to compute: `dispatch-reviewer` runs the same live
-`check_codegraph_mcp_healthy` check itself whenever the entry has a `cli` (the same
+`check_codegraph_mcp_usable` check itself whenever the entry has a `cli` (the same
 internal-resolution pattern the execute family's `prepare-tooling` already uses), so the
 orchestrator never has to evaluate it. `$SHARED_TOOLING_PATH` and `$TOOL_AVAILABILITY_JSON` are
 surfaced to the reviewer as named `SHARED_TOOLING_PATH = …` / `TOOL_AVAILABILITY = …` lines at

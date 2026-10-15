@@ -487,7 +487,7 @@ def detect_tool_availability(which_fn=shutil.which) -> dict:
     """Deterministic presence check for the token-efficient tooling AGENTS-TOOLING.md
     recommends. codegraph is included here (binary presence only, Tier 1 of the two-tier
     check design §9 established) -- MCP registration per-client is a separate concern,
-    see check_codegraph_mcp_healthy below."""
+    see check_codegraph_mcp_usable below."""
     return {name: which_fn(name) is not None
             for name in ("rg", "sd", "bat", "eza", "fd", "codegraph")}
 
@@ -559,17 +559,6 @@ def _text_is_healthy(text: str) -> bool:
     return not any(signal.lower() in lowered for signal in _UNHEALTHY_SIGNALS)
 
 
-def _codegraph_entry_healthy_in_list_output(stdout: str) -> bool:
-    """False if no 'codegraph' entry is found at all (not registered). False if found but its
-    own line shows a failure signal (registered but unhealthy -- treated the same as absent for
-    this check's purpose). True only if found AND healthy."""
-    for line in stdout.splitlines():
-        name = line.split(":", 1)[0].strip()
-        if name == "codegraph":
-            return _text_is_healthy(line)
-    return False
-
-
 CODEGRAPH_PROBE_TIMEOUT_SECONDS = 15
 
 
@@ -587,9 +576,10 @@ def codegraph_install_command(cli: str) -> str:
 def _probe_codegraph_from_get(cli: str, result, hint: str) -> CodegraphProbe | None:
     if result.returncode != 0:
         return None
-    if cli == "codex":
-        return CodegraphProbe(True, True, None, "health not observable")
     healthy = _text_is_healthy(result.stdout)
+    if cli == "codex" and healthy:
+        # A-WR-10/RUN-11: registered, but codex exposes no health -- unknown, never True.
+        return CodegraphProbe(True, None, None, "registered; codex does not expose health")
     detail = result.stdout.strip() or ("healthy" if healthy else "unhealthy")
     return CodegraphProbe(True, healthy, None if healthy else hint, detail)
 
@@ -623,6 +613,10 @@ def probe_codegraph(cli: str, run_fn=subprocess.run,
                 return from_get
         list_result = run_fn(
             _MCP_LIST_COMMANDS[cli], capture_output=True, text=True, check=False, timeout=timeout)
+        if list_result.returncode != 0:
+            # A failed list proves nothing about registration (A-IN-05): unknown, no hint.
+            return CodegraphProbe(None, None, None,
+                                  f"mcp list failed (exit {list_result.returncode})")
         return _probe_codegraph_from_list(list_result.stdout, hint)
     except subprocess.TimeoutExpired:
         return CodegraphProbe(None, None, None, "probe timed out")
@@ -630,9 +624,12 @@ def probe_codegraph(cli: str, run_fn=subprocess.run,
         return CodegraphProbe(None, None, None, str(exc))
 
 
-def check_codegraph_mcp_healthy(cli: str, run_fn=subprocess.run) -> bool:
-    """True only when ``probe_codegraph`` reports a registered, healthy MCP server."""
-    return probe_codegraph(cli, run_fn).healthy is True
+def check_codegraph_mcp_usable(cli: str, run_fn=subprocess.run) -> bool:
+    """True when ``probe_codegraph`` reports codegraph registered and not known unhealthy --
+    health may be unknown (codex exposes none), so this never claims "healthy". The execute
+    adapters' index step still requires ``healthy is True`` (D-20)."""
+    probe = probe_codegraph(cli, run_fn)
+    return probe.registered is True and probe.healthy is not False
 
 
 # The two multi-provider CLIs with their own per-model catalog (a single-vendor CLI's

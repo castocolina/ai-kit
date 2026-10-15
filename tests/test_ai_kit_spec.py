@@ -1525,7 +1525,7 @@ class TestProbeCodegraph(unittest.TestCase):
         self.assertIn("grok", probe.detail)
 
     def test_unknown_cli_is_unsupported(self):
-        self.assertFalse(detection.check_codegraph_mcp_healthy("some-future-cli"))
+        self.assertFalse(detection.check_codegraph_mcp_usable("some-future-cli"))
 
     def test_claude_healthy_when_mcp_get_exits_zero_and_connected(self):
         probe = detection.probe_codegraph(
@@ -1538,7 +1538,7 @@ class TestProbeCodegraph(unittest.TestCase):
         self.assertTrue(probe.healthy)
         self.assertIsNone(probe.install_command)
         self.assertTrue(
-            detection.check_codegraph_mcp_healthy(
+            detection.check_codegraph_mcp_usable(
                 "claude",
                 run_fn=lambda *a, **k: unittest.mock.MagicMock(
                     returncode=0, stdout="Status: ✔ Connected\n"
@@ -1587,13 +1587,37 @@ class TestProbeCodegraph(unittest.TestCase):
         probe = detection.probe_codegraph("claude", run_fn=fake_run)
         self.assertTrue(probe.registered and probe.healthy)
 
-    def test_codex_healthy_with_health_not_observable_detail(self):
+    def test_codex_registered_with_health_unknown_never_healthy(self):
+        # A-WR-10/RUN-11: codex exposes no health, so it is never reported healthy.
+        def run(*_a, **_k):
+            return unittest.mock.MagicMock(returncode=0, stdout="anything\n")
+
+        probe = detection.probe_codegraph("codex", run_fn=run)
+        self.assertTrue(probe.registered)
+        self.assertIsNone(probe.healthy)
+        self.assertIsNone(probe.install_command)
+        self.assertEqual(probe.detail, "registered; codex does not expose health")
+        self.assertTrue(detection.check_codegraph_mcp_usable("codex", run_fn=run))
+
+    def test_codex_get_output_with_a_failure_signal_is_unhealthy(self):
         probe = detection.probe_codegraph(
             "codex",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout="anything\n"),
+            run_fn=lambda *a, **k: unittest.mock.MagicMock(
+                returncode=0, stdout="codegraph ✘ not connected\n"),
         )
-        self.assertTrue(probe.healthy)
-        self.assertEqual(probe.detail, "health not observable")
+        self.assertTrue(probe.registered)
+        self.assertFalse(probe.healthy)
+        self.assertEqual(probe.install_command, detection.codegraph_install_command("codex"))
+
+    def test_failed_mcp_list_is_unknown_with_no_install_hint(self):
+        # A-IN-05: a failing `mcp list` proves nothing about registration.
+        probe = detection.probe_codegraph(
+            "cursor-agent",
+            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=1, stdout=""),
+        )
+        self.assertIsNone(probe.registered)
+        self.assertIsNone(probe.healthy)
+        self.assertIsNone(probe.install_command)
 
     def test_cursor_agent_parses_list_name_token(self):
         fake_list = "codegraph: some-command - ✔ Connected\nother-tool: x\n"
