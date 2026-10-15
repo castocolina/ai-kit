@@ -1,6 +1,7 @@
 """Catalog cache refresh (R3 fresh/stale/none) and scored inventory candidates (D-12..D-15).
 
 Writes only through ai-kit-spec.py into ai-kit's own cache; scoring lives here for REC-01 purity.
+Candidate field rules (D-04, D-12..D-15) are centralized in ``build_candidates``.
 """
 from __future__ import annotations
 
