@@ -68,6 +68,22 @@
     },
     {
       "existing": null,
+      "key": "model_overrides.gsd-code-fixer",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "gpt-5.6-sol",
+      "why": "best execution score within ceiling (<= 4/1M, 75th pct of 7 families); effort variant bare of inferred family gpt-5.6-sol for target medium (bare)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-executor",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "gpt-5.6-sol",
+      "why": "best execution score within ceiling (<= 4/1M, 75th pct of 7 families); effort variant bare of inferred family gpt-5.6-sol for target medium (bare)"
+    },
+    {
+      "existing": null,
       "key": "model_profile",
       "op": "set",
       "source": "preset",

@@ -93,10 +93,10 @@
       "op": "set",
       "source": "catalog-score",
       "value": {
-        "model": "gpt-6.1-sol",
+        "model": "gpt-6-sol",
         "reasoning_effort": "high"
       },
-      "why": "gsd default gpt-5.6-sol above ceiling (<= 2/1M, 40th pct of 7 families); best planning score within ceiling (<= 2/1M, 40th pct of 7 families); effort variant bare of inferred family gpt-6.1-sol for target high (bare)"
+      "why": "gsd default gpt-5.6-sol above ceiling (<= 2/1M, 40th pct of 7 families); best planning score within ceiling (<= 2/1M, 40th pct of 7 families); effort variant bare of inferred family gpt-6-sol for target high (bare)"
     },
     {
       "effect": "resolve-model only (codex bakes only explicit model_overrides)",

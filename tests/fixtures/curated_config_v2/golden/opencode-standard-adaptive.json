@@ -76,11 +76,35 @@
     },
     {
       "existing": null,
+      "key": "model_overrides.gsd-dom-verifier",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "openai/gpt-5.6-terra",
+      "why": "needs image_input; best general score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family openai/gpt-5.6-terra for target low (bare)"
+    },
+    {
+      "existing": null,
       "key": "model_overrides.gsd-executor",
       "op": "set",
       "source": "router-declared",
       "value": "router-env/my-coding",
       "why": "user-curated router (declared purpose: execute)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-plan-checker",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "openai/gpt-5.6-terra",
+      "why": "counterpart: inferred vendor openai differs from the inferred gsd-planner vendor zhipu (D-14); best review score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family openai/gpt-5.6-terra for target low (bare)"
+    },
+    {
+      "existing": null,
+      "key": "model_overrides.gsd-ui-auditor",
+      "op": "set",
+      "source": "catalog-score",
+      "value": "openai/gpt-5.6-terra",
+      "why": "needs image_input; best general score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family openai/gpt-5.6-terra for target low (bare)"
     },
     {
       "existing": null,
@@ -103,8 +127,8 @@
       "key": "model_profile_overrides.opencode.haiku",
       "op": "set",
       "source": "catalog-score",
-      "value": "openai/gpt-5.6-luna",
-      "why": "gsd default anthropic/claude-haiku-4-5 not on host; best mechanical score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family openai/gpt-5.6-luna for target low (bare)"
+      "value": "zai-coding-plan/glm-5.3",
+      "why": "gsd default anthropic/claude-haiku-4-5 not on host; best mechanical score within ceiling (<= 2/1M, 75th pct of 5 families); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target low (bare)"
     },
     {
       "existing": null,

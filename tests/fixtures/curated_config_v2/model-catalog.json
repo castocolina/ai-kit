@@ -20,6 +20,7 @@
       "claude-sonnet-5-5"
     ],
     "anthropic_model_ids_as_of": "2026-10-15",
+    "fixture_note": "synthetic: scores and tokens_per_sec are rank-preserving synthetic values, not Artificial Analysis data; pricing and capabilities are trimmed from models.dev",
     "schema_version": 2
   },
   "anthropic/claude-fable-5-1": {
@@ -43,9 +44,9 @@
       }
     },
     "scores": {
-      "agentic_index": 57.9,
-      "coding_index": 81.6,
-      "intelligence_index": 53.4
+      "agentic_index": 90.0,
+      "coding_index": 90.0,
+      "intelligence_index": 79.6
     },
     "source": {
       "artificial_analysis": true,
@@ -53,7 +54,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 71.08,
+    "tokens_per_sec": 26.7,
     "tool_calling": true
   },
   "anthropic/claude-haiku-4-5": {
@@ -107,7 +108,7 @@
     "scores": {
       "agentic_index": null,
       "coding_index": null,
-      "intelligence_index": 43.4
+      "intelligence_index": 51.7
     },
     "source": {
       "artificial_analysis": true,
@@ -115,7 +116,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 236.14,
+    "tokens_per_sec": 90.0,
     "tool_calling": true
   },
   "anthropic/claude-opus-4-8": {
@@ -139,9 +140,9 @@
       }
     },
     "scores": {
-      "agentic_index": 41.9,
-      "coding_index": 74.3,
-      "intelligence_index": 41.8
+      "agentic_index": 42.9,
+      "coding_index": 45.0,
+      "intelligence_index": 41.3
     },
     "source": {
       "artificial_analysis": true,
@@ -149,7 +150,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 58.27,
+    "tokens_per_sec": 20.0,
     "tool_calling": true
   },
   "anthropic/claude-opus-5-5": {
@@ -175,7 +176,7 @@
     "scores": {
       "agentic_index": null,
       "coding_index": null,
-      "intelligence_index": 57.6
+      "intelligence_index": 90.0
     },
     "source": {
       "artificial_analysis": true,
@@ -183,7 +184,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 95.15,
+    "tokens_per_sec": 63.3,
     "tool_calling": true
   },
   "anthropic/claude-opus-5-5-high": {
@@ -209,7 +210,7 @@
     "scores": {
       "agentic_index": null,
       "coding_index": null,
-      "intelligence_index": 53.6
+      "intelligence_index": 83.0
     },
     "source": {
       "artificial_analysis": true,
@@ -217,7 +218,7 @@
       "models_dev": false
     },
     "structured_output": true,
-    "tokens_per_sec": 75.29,
+    "tokens_per_sec": 36.7,
     "tool_calling": true
   },
   "anthropic/claude-opus-5-5-low": {
@@ -243,7 +244,7 @@
     "scores": {
       "agentic_index": null,
       "coding_index": null,
-      "intelligence_index": 42.3
+      "intelligence_index": 48.3
     },
     "source": {
       "artificial_analysis": true,
@@ -251,7 +252,7 @@
       "models_dev": false
     },
     "structured_output": true,
-    "tokens_per_sec": 77.16,
+    "tokens_per_sec": 46.7,
     "tool_calling": true
   },
   "anthropic/claude-opus-5-5-xhigh": {
@@ -277,7 +278,7 @@
     "scores": {
       "agentic_index": null,
       "coding_index": null,
-      "intelligence_index": 56
+      "intelligence_index": 86.5
     },
     "source": {
       "artificial_analysis": true,
@@ -285,7 +286,7 @@
       "models_dev": false
     },
     "structured_output": true,
-    "tokens_per_sec": 75.71,
+    "tokens_per_sec": 43.3,
     "tool_calling": true
   },
   "anthropic/claude-sonnet-5": {
@@ -309,9 +310,9 @@
       }
     },
     "scores": {
-      "agentic_index": 43.6,
-      "coding_index": 71.5,
-      "intelligence_index": 38.2
+      "agentic_index": 57.1,
+      "coding_index": 35.0,
+      "intelligence_index": 30.9
     },
     "source": {
       "artificial_analysis": true,
@@ -319,7 +320,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 74.9,
+    "tokens_per_sec": 33.3,
     "tool_calling": true
   },
   "google/gemini-3.8-flash-high": {
@@ -343,9 +344,9 @@
       }
     },
     "scores": {
-      "agentic_index": 40.2,
-      "coding_index": 76.3,
-      "intelligence_index": 40.9
+      "agentic_index": 38.2,
+      "coding_index": 55.0,
+      "intelligence_index": 37.8
     },
     "source": {
       "artificial_analysis": true,
@@ -353,7 +354,7 @@
       "models_dev": false
     },
     "structured_output": true,
-    "tokens_per_sec": 140.01,
+    "tokens_per_sec": 86.7,
     "tool_calling": true
   },
   "google/gemini-3.8-flash-low": {
@@ -377,9 +378,9 @@
       }
     },
     "scores": {
-      "agentic_index": 32.6,
-      "coding_index": 73.5,
-      "intelligence_index": 33.5
+      "agentic_index": 24.1,
+      "coding_index": 40.0,
+      "intelligence_index": 17.0
     },
     "source": {
       "artificial_analysis": true,
@@ -421,9 +422,9 @@
       }
     },
     "scores": {
-      "agentic_index": 42.1,
-      "coding_index": 71.4,
-      "intelligence_index": 37.3
+      "agentic_index": 47.6,
+      "coding_index": 30.0,
+      "intelligence_index": 23.9
     },
     "source": {
       "artificial_analysis": true,
@@ -431,7 +432,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 114.91,
+    "tokens_per_sec": 70.0,
     "tool_calling": true
   },
   "openai/gpt-5.6-luna-low": {
@@ -455,9 +456,9 @@
       }
     },
     "scores": {
-      "agentic_index": 16.1,
-      "coding_index": 44.2,
-      "intelligence_index": 21
+      "agentic_index": 10.0,
+      "coding_index": 10.0,
+      "intelligence_index": 10.0
     },
     "source": {
       "artificial_analysis": true,
@@ -465,7 +466,7 @@
       "models_dev": false
     },
     "structured_output": true,
-    "tokens_per_sec": 115.97,
+    "tokens_per_sec": 73.3,
     "tool_calling": true
   },
   "openai/gpt-5.6-luna-xhigh": {
@@ -489,9 +490,9 @@
       }
     },
     "scores": {
-      "agentic_index": 38.7,
-      "coding_index": 68.6,
-      "intelligence_index": 34.6
+      "agentic_index": 28.8,
+      "coding_index": 20.0,
+      "intelligence_index": 20.4
     },
     "source": {
       "artificial_analysis": true,
@@ -499,7 +500,7 @@
       "models_dev": false
     },
     "structured_output": true,
-    "tokens_per_sec": 118.92,
+    "tokens_per_sec": 80.0,
     "tool_calling": true
   },
   "openai/gpt-5.6-sol": {
@@ -535,9 +536,9 @@
       }
     },
     "scores": {
-      "agentic_index": 50.2,
-      "coding_index": 77.4,
-      "intelligence_index": 47
+      "agentic_index": 71.2,
+      "coding_index": 80.0,
+      "intelligence_index": 65.7
     },
     "source": {
       "artificial_analysis": true,
@@ -545,7 +546,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 85.83,
+    "tokens_per_sec": 56.7,
     "tool_calling": true
   },
   "openai/gpt-5.6-sol-high": {
@@ -569,9 +570,9 @@
       }
     },
     "scores": {
-      "agentic_index": 44.2,
-      "coding_index": 77.2,
-      "intelligence_index": 42.3
+      "agentic_index": 61.8,
+      "coding_index": 75.0,
+      "intelligence_index": 48.3
     },
     "source": {
       "artificial_analysis": true,
@@ -579,7 +580,7 @@
       "models_dev": false
     },
     "structured_output": true,
-    "tokens_per_sec": 81.04,
+    "tokens_per_sec": 50.0,
     "tool_calling": true
   },
   "openai/gpt-5.6-sol-low": {
@@ -603,9 +604,9 @@
       }
     },
     "scores": {
-      "agentic_index": 31.6,
-      "coding_index": 69.7,
-      "intelligence_index": 33.5
+      "agentic_index": 19.4,
+      "coding_index": 25.0,
+      "intelligence_index": 17.0
     },
     "source": {
       "artificial_analysis": true,
@@ -613,7 +614,7 @@
       "models_dev": false
     },
     "structured_output": true,
-    "tokens_per_sec": 72.13,
+    "tokens_per_sec": 30.0,
     "tool_calling": true
   },
   "openai/gpt-5.6-sol-max": {
@@ -634,16 +635,16 @@
       }
     },
     "scores": {
-      "agentic_index": 50.2,
-      "coding_index": 77.4,
-      "intelligence_index": 47
+      "agentic_index": 71.2,
+      "coding_index": 80.0,
+      "intelligence_index": 65.7
     },
     "source": {
       "artificial_analysis": true,
       "manual": false,
       "models_dev": false
     },
-    "tokens_per_sec": 85.83
+    "tokens_per_sec": 56.7
   },
   "openai/gpt-5.6-sol-xhigh": {
     "batch_mode": false,
@@ -666,9 +667,9 @@
       }
     },
     "scores": {
-      "agentic_index": 47.4,
-      "coding_index": 78.3,
-      "intelligence_index": 44
+      "agentic_index": 66.5,
+      "coding_index": 85.0,
+      "intelligence_index": 55.2
     },
     "source": {
       "artificial_analysis": true,
@@ -676,7 +677,7 @@
       "models_dev": false
     },
     "structured_output": true,
-    "tokens_per_sec": 82.4,
+    "tokens_per_sec": 53.3,
     "tool_calling": true
   },
   "openai/gpt-5.6-terra": {
@@ -712,9 +713,9 @@
       }
     },
     "scores": {
-      "agentic_index": 43.2,
-      "coding_index": 76.7,
-      "intelligence_index": 42.1
+      "agentic_index": 52.4,
+      "coding_index": 60.0,
+      "intelligence_index": 44.8
     },
     "source": {
       "artificial_analysis": true,
@@ -722,7 +723,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 107.17,
+    "tokens_per_sec": 66.7,
     "tool_calling": true
   },
   "openai/gpt-6-astra": {
@@ -758,9 +759,9 @@
       }
     },
     "scores": {
-      "agentic_index": 51,
-      "coding_index": 76.9,
-      "intelligence_index": 52.7
+      "agentic_index": 75.9,
+      "coding_index": 70.0,
+      "intelligence_index": 76.1
     },
     "source": {
       "artificial_analysis": true,
@@ -768,7 +769,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 43.85,
+    "tokens_per_sec": 10.0,
     "tool_calling": true
   },
   "openai/gpt-6-luna": {
@@ -805,7 +806,7 @@
     "scores": {
       "agentic_index": null,
       "coding_index": null,
-      "intelligence_index": 38.1
+      "intelligence_index": 27.4
     },
     "source": {
       "artificial_analysis": true,
@@ -813,7 +814,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 116.32,
+    "tokens_per_sec": 76.7,
     "tool_calling": true
   },
   "openai/gpt-6-sol": {
@@ -851,7 +852,7 @@
     "scores": {
       "agentic_index": null,
       "coding_index": null,
-      "intelligence_index": 47.6
+      "intelligence_index": 69.1
     },
     "source": {
       "artificial_analysis": true,
@@ -859,7 +860,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 94.13,
+    "tokens_per_sec": 60.0,
     "tool_calling": true
   },
   "openai/gpt-6.1-sol": {
@@ -897,7 +898,7 @@
     "scores": {
       "agentic_index": null,
       "coding_index": null,
-      "intelligence_index": 51.8
+      "intelligence_index": 72.6
     },
     "source": {
       "artificial_analysis": true,
@@ -905,7 +906,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 47.92,
+    "tokens_per_sec": 13.3,
     "tool_calling": true
   },
   "opencode/big-pickle": {
@@ -957,9 +958,9 @@
       }
     },
     "scores": {
-      "agentic_index": 23.9,
-      "coding_index": 50.7,
-      "intelligence_index": 25
+      "agentic_index": 14.7,
+      "coding_index": 15.0,
+      "intelligence_index": 13.5
     },
     "source": {
       "artificial_analysis": true,
@@ -967,7 +968,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 121.51,
+    "tokens_per_sec": 83.3,
     "tool_calling": true
   },
   "requesty/gpt-5.6-sol-medium": {
@@ -991,9 +992,9 @@
       }
     },
     "scores": {
-      "agentic_index": 39.7,
-      "coding_index": 76.3,
-      "intelligence_index": 39.2
+      "agentic_index": 33.5,
+      "coding_index": 55.0,
+      "intelligence_index": 34.3
     },
     "source": {
       "artificial_analysis": true,
@@ -1001,7 +1002,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 75.68,
+    "tokens_per_sec": 40.0,
     "tool_calling": true
   },
   "router-env/my-coding": {
@@ -1068,9 +1069,9 @@
       }
     },
     "scores": {
-      "agentic_index": 53,
-      "coding_index": 76.8,
-      "intelligence_index": 44.3
+      "agentic_index": 80.6,
+      "coding_index": 65.0,
+      "intelligence_index": 58.7
     },
     "source": {
       "artificial_analysis": true,
@@ -1078,7 +1079,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 49.95,
+    "tokens_per_sec": 16.7,
     "tool_calling": true
   },
   "zai-coding-plan/glm-5.3": {
@@ -1102,9 +1103,9 @@
       }
     },
     "scores": {
-      "agentic_index": 53.1,
-      "coding_index": 74.8,
-      "intelligence_index": 44.8
+      "agentic_index": 85.3,
+      "coding_index": 50.0,
+      "intelligence_index": 62.2
     },
     "source": {
       "artificial_analysis": true,
@@ -1112,7 +1113,7 @@
       "models_dev": true
     },
     "structured_output": true,
-    "tokens_per_sec": 61.09,
+    "tokens_per_sec": 23.3,
     "tool_calling": true
   }
 }

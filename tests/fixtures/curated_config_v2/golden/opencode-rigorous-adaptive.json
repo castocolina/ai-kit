@@ -127,14 +127,6 @@
     },
     {
       "existing": null,
-      "key": "model_overrides.gsd-dom-verifier",
-      "op": "set",
-      "source": "catalog-score",
-      "value": "openai/gpt-5.6-sol",
-      "why": "needs image_input; best general score within ceiling (no ceiling); effort variant bare of inferred family openai/gpt-5.6-sol for target high (bare)"
-    },
-    {
-      "existing": null,
       "key": "model_overrides.gsd-executor",
       "op": "set",
       "source": "router-declared",
@@ -143,19 +135,11 @@
     },
     {
       "existing": null,
-      "key": "model_overrides.gsd-ui-auditor",
+      "key": "model_overrides.gsd-plan-checker",
       "op": "set",
       "source": "catalog-score",
-      "value": "openai/gpt-5.6-sol",
-      "why": "needs image_input; best general score within ceiling (no ceiling); effort variant bare of inferred family openai/gpt-5.6-sol for target high (bare)"
-    },
-    {
-      "existing": null,
-      "key": "model_overrides.gsd-ui-researcher",
-      "op": "set",
-      "source": "catalog-score",
-      "value": "openai/gpt-5.6-sol",
-      "why": "frontend-capable = image_input (D-28); best general score within ceiling (no ceiling); effort variant bare of inferred family openai/gpt-5.6-sol for target high (bare)"
+      "value": "zai-coding-plan/glm-5.3",
+      "why": "counterpart: inferred vendor zhipu differs from the inferred gsd-planner vendor openai (D-14); best review score within ceiling (no ceiling); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target high (bare)"
     },
     {
       "existing": null,
@@ -170,8 +154,8 @@
       "key": "model_profile_overrides.opencode.haiku",
       "op": "set",
       "source": "catalog-score",
-      "value": "openai/gpt-5.6-luna",
-      "why": "gsd default anthropic/claude-haiku-4-5 not on host; best mechanical score within ceiling (no ceiling); effort variant bare of inferred family openai/gpt-5.6-luna for target low (bare)"
+      "value": "zai-coding-plan/glm-5.3",
+      "why": "gsd default anthropic/claude-haiku-4-5 not on host; best mechanical score within ceiling (no ceiling); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target low (bare)"
     },
     {
       "existing": null,
@@ -186,8 +170,8 @@
       "key": "model_profile_overrides.opencode.sonnet",
       "op": "set",
       "source": "catalog-score",
-      "value": "zai-coding-plan/glm-5.3",
-      "why": "gsd default anthropic/claude-sonnet-5 not on host; best general score within ceiling (no ceiling); effort variant bare of inferred family zai-coding-plan/glm-5.3 for target high (bare)"
+      "value": "openai/gpt-5.6-sol",
+      "why": "gsd default anthropic/claude-sonnet-5 not on host; best general score within ceiling (no ceiling); effort variant bare of inferred family openai/gpt-5.6-sol for target high (bare)"
     },
     {
       "existing": null,

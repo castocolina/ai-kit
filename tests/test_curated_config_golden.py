@@ -1,7 +1,9 @@
 """Golden plans for curated config v2 (D-20): shared fixtures, hermetic inventory -> recommend.
 
-Fixtures under ``tests/fixtures/curated_config_v2/`` include trimmed live runtimes/catalog,
-gsd-core 1.16 tables from ``query_gsd_tables``, and synthetic pi models (labelled in runtimes).
+Fixtures under ``tests/fixtures/curated_config_v2/`` include trimmed live runtimes, a catalog
+trimmed from models.dev whose scores/tokens_per_sec are synthetic rank-preserving values (not
+Artificial Analysis data; labelled in ``_meta.fixture_note``), gsd-core 1.16 tables as the node
+query emits them, and synthetic pi models (labelled in runtimes).
 Regenerate goldens: ``UPDATE_GOLDEN=1 python3 -m unittest tests.test_curated_config_golden``.
 """
 from __future__ import annotations
@@ -273,6 +275,11 @@ class TestGoldenTables(unittest.TestCase):
 
 
 class TestFixtureShape(unittest.TestCase):
+    def test_catalog_scores_are_marked_synthetic(self):
+        """C-IN-08: no Artificial Analysis data is redistributed in the fixture."""
+        note = load_fixture("model-catalog.json")["_meta"]["fixture_note"]
+        self.assertTrue(note.startswith("synthetic:"))
+
     def test_fixture_model_profiles_are_agent_first(self):
         """The fake node answers with gsd-core's raw shape, so goldens run the real parse."""
         profiles = _tables_body()["model_profiles"]
