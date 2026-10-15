@@ -449,6 +449,34 @@ class TestDisclosures(unittest.TestCase):
             joined = " ".join(block["required"][0]["argv"])
             self.assertNotIn("--no-legacy-cleanup", joined)
 
+    def test_codex_workstream_still_offers_installer(self) -> None:
+        inv = make_inventory(host="codex")
+        ws = os.path.join("/proj", ".planning", "workstreams", "ws", "config.json")
+        inv["existing_config"] = {"path": ws, "exists": True, "values": {}}
+        plan = _minimal_plan(
+            "codex",
+            inv,
+            [
+                {
+                    "key": "model_overrides.gsd-executor",
+                    "op": "set",
+                    "value": "opus",
+                    "existing": "gpt",
+                    "source": "preset",
+                },
+            ],
+        )
+        block = _build_block(
+            plan,
+            inv,
+            "/p",
+            "/i",
+            "/proj",
+            {"HOME": "/h"},
+            FollowupsRun(),
+        )
+        self.assertEqual(block["required"][0]["id"], "installer")
+
     def test_codex_installer_only_on_model_overrides(self) -> None:
         inv = make_inventory(host="codex")
         plan = _minimal_plan(
