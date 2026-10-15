@@ -124,17 +124,18 @@ def _row_by_id(row_id):
 
 
 def apply_row(row_id, ctx, dry):
-    """Dispatch one apply by row identity. Never raises.
+    """Dispatch one apply by row identity.
 
     Looks up ``row_id`` in CONFIG_DOCTOR_ROWS and invokes that row's own
     ``apply(ctx, row.apply_target, dry)``. Dispatches by row identity via
     ``row.apply``, never by inspecting ``row.runtime``. An unknown id or a
     row with ``apply is None`` returns ``{"ok": False, "reason": "not
-    apply-eligible"}`` — never a silent no-op write. Any exception an
-    applier raises is converted to ``{"ok": False, "reason": "applier
-    error: ..."}`` so an unhandled exception cannot reach ConfigDoctorApp's
-    event loop (Textual 8.x swallows those into a graceful shutdown;
-    tools/wizard_app.py:129-137).
+    apply-eligible"}`` — never a silent no-op write. Catches ``OSError``,
+    ``ValueError``, ``LookupError``, ``TypeError``, ``AttributeError``, and
+    ``RuntimeError`` from appliers and returns ``{"ok": False, "reason":
+    "applier error: ..."}`` so those failures cannot reach ConfigDoctorApp's
+    event loop (Textual 8.x swallows unhandled exceptions into a graceful
+    shutdown; tools/wizard_app.py:129-137).
     """
     row = _row_by_id(row_id)
     if row is None or row.apply is None:
@@ -142,7 +143,7 @@ def apply_row(row_id, ctx, dry):
     try:
         apply_fn = cast(Callable[[object, object, bool], dict], row.apply)
         result = apply_fn(ctx, row.apply_target, dry)
-    except Exception as exc:
+    except (OSError, ValueError, LookupError, TypeError, AttributeError, RuntimeError) as exc:
         return {"ok": False, "reason": f"applier error: {exc}"}
     if not isinstance(result, dict):
         return {"ok": False, "reason": f"applier error: non-dict result {result!r}"}
@@ -241,7 +242,7 @@ def _apply_opencode_share_mode(ctx, target, dry):
             ),
         }
     if not dry:
-        config_doctor_appliers._atomic_write_text(path, spliced)
+        config_doctor_appliers.atomic_write_text(path, spliced)
     return {
         "ok": True,
         "before": before,
@@ -551,7 +552,7 @@ def read_rtk_cursor_integration(ctx):
     rtk_path = shutil.which("rtk", path=search_path)
     if rtk_path is None:
         return "rtk not installed on PATH"
-    signal = config_doctor_readers._probe_rtk_cursor_hook(rtk_path, ctx.runner)
+    signal = config_doctor_readers.probe_rtk_cursor_hook(rtk_path, ctx.runner)
     if signal == config_doctor_readers.RTK_SIGNAL_CONFIRMED:
         return "registered"
     if signal == config_doctor_readers.RTK_SIGNAL_NOT_REGISTERED:

@@ -899,7 +899,7 @@ class TestCrossRuntimeRow(_ScratchRuntimes):
         self.assertEqual(row["current_display"], "unreadable (see Why)")
 
     def test_probe_docstring_cites_research(self):
-        doc = readers._probe_rtk_cursor_hook.__doc__ or ""
+        doc = readers.probe_rtk_cursor_hook.__doc__ or ""
         self.assertIn("03-RESEARCH.md:527-540", doc)
         self.assertIn("not fixed by this research session", doc)
         self.assertIn("Cursor hook", doc)
@@ -1205,6 +1205,33 @@ class TestApplyRows(_ScratchRuntimes):
         self.assertIn("applier error", result["reason"])
         self.assertIn("injected", result["reason"])
 
+    def test_apply_row_contains_attribute_error(self):
+        def _bad(_ctx, _target, _dry):
+            raise AttributeError("injected attribute")
+
+        fake = checks.CheckRow(
+            id="fake-attr",
+            runtime="claude",
+            scope="runtime",
+            check="attr",
+            read=lambda _ctx: None,
+            recommended=None,
+            confidence="HIGH",
+            why="test",
+            source="test",
+            apply=_bad,
+        )
+        checks.CONFIG_DOCTOR_ROWS.append(fake)
+        try:
+            result = checks.apply_row("fake-attr", self._ctx(), dry=False)
+        finally:
+            checks.CONFIG_DOCTOR_ROWS.pop()
+        self.assertFalse(result["ok"])
+        self.assertIn("applier error", result["reason"])
+        self.assertIn("injected attribute", result["reason"])
+        follow = checks.apply_row("claude-sandbox-enabled", self._ctx(), dry=True)
+        self.assertTrue(follow["ok"])
+
     def test_apply_claude_sandbox_preserves_sibling_and_carries_literal(self):
         path = os.path.join(self.claude, "settings.json")
         _write(
@@ -1284,7 +1311,7 @@ class TestApplyRows(_ScratchRuntimes):
         with mock.patch.object(
             checks.config_doctor_appliers, "set_jsonc_value", return_value="{not-json"
         ), mock.patch.object(
-            checks.config_doctor_appliers, "_atomic_write_text"
+            checks.config_doctor_appliers, "atomic_write_text"
         ) as writer:
             result = checks.apply_row("opencode-share-mode", self._ctx(), dry=False)
         self.assertFalse(result["ok"])
