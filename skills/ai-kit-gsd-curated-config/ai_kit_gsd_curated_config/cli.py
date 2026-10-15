@@ -463,7 +463,16 @@ def _cmd_recommend(args, which_fn, run_fn, env_fn) -> int:
         cross_ai_review=args.cross_ai_review,
         cross_ai_exec=args.cross_ai_exec,
     )
-    plan = recommend.build_plan(loaded, opts)
+    try:
+        plan = recommend.build_plan(loaded, opts)
+    except (KeyError, TypeError, ValueError) as exc:
+        # Backstop for a shape the validator does not cover: one line, never a traceback.
+        print(
+            f"ai-kit-gsd-curated-config: inventory {args.inventory}: malformed ({exc}); "
+            "rerun inventory",
+            file=sys.stderr,
+        )
+        return 2
     try:
         plan_io.write_plan(args.out, plan)
     except OSError as exc:

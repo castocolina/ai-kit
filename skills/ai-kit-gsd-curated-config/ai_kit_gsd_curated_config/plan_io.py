@@ -154,15 +154,16 @@ def _validate_config_section(section: dict, name: str) -> str | None:
 
 
 def _conflict_item_problem(item, index: int) -> str | None:
-    if not isinstance(item, dict):
-        return f"conflicts[{index}] malformed"
-    if not isinstance(item.get("kind"), str):
-        return f"conflicts[{index}] malformed"
-    if not isinstance(item.get("key"), str):
-        return f"conflicts[{index}] malformed"
-    if item.get("scope") not in ("project", "global"):
-        return f"conflicts[{index}] malformed"
-    return None
+    well_formed = (
+        isinstance(item, dict)
+        and isinstance(item.get("kind"), str)
+        and isinstance(item.get("key"), str)
+        and isinstance(item.get("why"), str)
+        and item.get("scope") in ("project", "global")
+        and isinstance(item.get("effect", ""), str)
+        and (item["kind"] != "model_policy" or isinstance(item.get("value"), dict))
+    )
+    return None if well_formed else f"conflicts[{index}] malformed"
 
 
 def _validate_conflicts(conflicts: list) -> str | None:
@@ -173,15 +174,52 @@ def _validate_conflicts(conflicts: list) -> str | None:
     return None
 
 
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+# Every candidate field `recommend` reads: (name, check, required, expected-type label).
+_CANDIDATE_FIELDS = (
+    ("runtime", lambda v: isinstance(v, str), True, "str"),
+    ("model", lambda v: isinstance(v, str), True, "str"),
+    ("family", lambda v: isinstance(v, str), True, "str"),
+    ("is_host", lambda v: isinstance(v, bool), True, "bool"),
+    ("is_router", lambda v: isinstance(v, bool), True, "bool"),
+    ("score_axes", lambda v: isinstance(v, int) and not isinstance(v, bool), True, "int"),
+    (
+        "purpose_scores",
+        lambda v: isinstance(v, dict) and all(_is_number(x) for x in v.values()),
+        True,
+        "dict of number",
+    ),
+    ("price", lambda v: v is None or _is_number(v), True, "number or null"),
+    ("fast_twin_of", lambda v: v is None or isinstance(v, str), True, "str or null"),
+    ("vendor", lambda v: v is None or isinstance(v, str), False, "str or null"),
+    ("image_input", lambda v: v is None or isinstance(v, bool), False, "bool or null"),
+    ("reasoning_modes", lambda v: isinstance(v, list), False, "list"),
+    ("router_confirmed", lambda v: isinstance(v, bool), False, "bool"),
+    ("name_declared_purpose", lambda v: v is None or isinstance(v, str), False, "str or null"),
+)
+
+
+def _candidate_problem(cand, index: int) -> str | None:
+    if not isinstance(cand, dict):
+        return f"candidates[{index}]: expected an object"
+    for name, check, required, label in _CANDIDATE_FIELDS:
+        if name not in cand:
+            if required:
+                return f"candidates[{index}].{name}: missing"
+            continue
+        if not check(cand[name]):
+            return f"candidates[{index}].{name}: expected {label}"
+    return None
+
+
 def _validate_candidates(candidates: list) -> str | None:
     for index, cand in enumerate(candidates):
-        if not isinstance(cand, dict):
-            return f"candidates[{index}]: expected an object"
-        for key in ("runtime", "model"):
-            if not isinstance(cand.get(key), str):
-                return f"candidates[{index}].{key}: expected str"
-        if not isinstance(cand.get("is_host"), bool):
-            return f"candidates[{index}].is_host: expected bool"
+        problem = _candidate_problem(cand, index)
+        if problem:
+            return problem
     return None
 
 
@@ -195,7 +233,7 @@ def load_inventory(path: str) -> tuple[dict | None, str | None]:
     except OSError as exc:
         reason = exc.strerror or "unreadable"
         return None, f"inventory {path}: cannot read ({reason}){_ERROR_SUFFIX}"
-    except json.JSONDecodeError:
+    except ValueError:  # JSONDecodeError and UnicodeDecodeError
         return None, f"inventory {path}: invalid JSON{_ERROR_SUFFIX}"
     problem = _validate_inventory(inventory)
     if problem:

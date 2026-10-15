@@ -1674,6 +1674,55 @@ class TestInventoryValidation(unittest.TestCase):
             self.assertIn("rerun inventory", err, name)
         del base
 
+    def _assert_fail_closed(self, inv, needle):
+        code, plan, plan_bytes, err = self._run(inv)
+        self.assertEqual((code, plan, plan_bytes), (2, None, None), needle)
+        self.assertIn(needle, err)
+        self.assertIn("rerun inventory", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_malformed_candidate_fields_fail_closed(self):
+        """A-WR-01/B-WR-01: every field recommend reads is validated (exit 2, no traceback)."""
+        cases = (
+            ("score_axes", lambda c: c.pop("score_axes")),
+            ("price", lambda c: c.update(price="4")),
+            ("purpose_scores", lambda c: c.update(purpose_scores={"general": "high"})),
+            ("is_router", lambda c: c.update(is_router=None)),
+            ("score_axes", lambda c: c.update(score_axes=True)),
+            ("image_input", lambda c: c.update(image_input="yes")),
+        )
+        for field, mutate in cases:
+            candidate = cand("gpt-5.6-sol", price=1, score_axes=1)
+            mutate(candidate)
+            self._assert_fail_closed(make_inventory(candidates=[candidate]), field)
+
+    def test_malformed_conflicts_fail_closed(self):
+        no_why = {"kind": "resolve_model_ids", "key": "resolve_model_ids", "scope": "project"}
+        bad_policy = {
+            "kind": "model_policy", "key": "model_policy", "scope": "project",
+            "why": "w", "value": "generic",
+        }
+        for item in (no_why, bad_policy):
+            self._assert_fail_closed(make_inventory(conflicts=[item]), "conflicts[0] malformed")
+
+    def test_non_utf8_inventory_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path = os.path.join(tmp, "inventory.json")
+            with open(inv_path, "wb") as handle:
+                handle.write(b"\xff\xfe{")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code = cli.main([
+                    "recommend", "--inventory", inv_path, "--profile", "adaptive",
+                    "--rigor", "standard", "--out", os.path.join(tmp, "plan.json"),
+                ])
+        self.assertEqual(code, 2)
+        self.assertIn("rerun inventory", err.getvalue())
+
+    def test_engine_error_is_exit_2_backstop(self):
+        with mock.patch.object(recommend, "build_plan", side_effect=KeyError("x")):
+            self._assert_fail_closed(make_inventory(), "malformed")
+
     def test_agent_first_model_profiles_fail_closed(self):
         """A pre-normalization (agent-first) table exits 2, never a KeyError traceback."""
         inv = make_inventory()
