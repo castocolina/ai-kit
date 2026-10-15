@@ -1761,6 +1761,30 @@ class TestCliDispatchTask(unittest.TestCase):
             self.assertTrue(captured["codegraph_registered"])
 
 
+class TestCodegraphUnknownHealth(unittest.TestCase):
+    def test_registered_with_unknown_health_is_indexed(self):
+        index_dirs = []
+        deps = superpowers_cli.CliDeps()._replace(
+            probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
+                True, None, None, "health not observable"),
+            run_codegraph_index_fn=lambda d: index_dirs.append(d) or True,
+        )
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertTrue(superpowers_cli._codegraph_registered_for_cli("codex", "/repo", deps))
+        self.assertEqual(index_dirs, ["/repo"])
+        self.assertIn("is unknown", err.getvalue())
+
+    def test_known_unhealthy_is_not_indexed(self):
+        index_dirs = []
+        deps = superpowers_cli.CliDeps()._replace(
+            probe_codegraph_fn=lambda cli: detection.CodegraphProbe(True, False, None, "down"),
+            run_codegraph_index_fn=lambda d: index_dirs.append(d) or True,
+        )
+        self.assertFalse(superpowers_cli._codegraph_registered_for_cli("codex", "/repo", deps))
+        self.assertEqual(index_dirs, [])
+
+
 class TestCliClassifyDispatchFailure(unittest.TestCase):
     def test_prints_the_classification_string(self):
         out = io.StringIO()

@@ -1237,6 +1237,35 @@ class TestCliPrepareTooling(unittest.TestCase):
         self.assertIn(hint, stderr.getvalue())
         self.assertNotIn(hint, stdout.getvalue())
 
+    def test_prepare_tooling_indexes_when_health_is_unknown_but_registered(self):
+        import contextlib
+        import io
+        index_dirs = []
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cli.main(
+                ["prepare-tooling", "--cli", "codex", "--target-dir", "/repo"],
+                detect_tool_availability_fn=lambda **k: {"codegraph": True, "rg": True},
+                resolve_agents_tooling_path_fn=lambda **k: None,
+                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
+                    True, None, None, "health not observable"),
+                run_codegraph_index_fn=lambda target_dir: index_dirs.append(target_dir) or True,
+                stdout=io.StringIO())
+        self.assertEqual(index_dirs, ["/repo"])
+        self.assertIn("is unknown", stderr.getvalue())
+
+    def test_prepare_tooling_skips_index_when_registration_is_unknown(self):
+        import io
+        index_dirs = []
+        cli.main(
+            ["prepare-tooling", "--cli", "codex", "--target-dir", "/repo"],
+            detect_tool_availability_fn=lambda **k: {"codegraph": True, "rg": True},
+            resolve_agents_tooling_path_fn=lambda **k: None,
+            probe_codegraph_fn=lambda cli: detection.CodegraphProbe(None, None, None, "timeout"),
+            run_codegraph_index_fn=lambda target_dir: index_dirs.append(target_dir) or True,
+            stdout=io.StringIO())
+        self.assertEqual(index_dirs, [])
+
     def test_prepare_tooling_degrades_when_index_build_fails(self):
         import io
         stdout = io.StringIO()

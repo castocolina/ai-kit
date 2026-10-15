@@ -243,9 +243,14 @@ def _codegraph_registered_for_cli(cli_name: str | None, target_dir: str, deps: C
         print(f"ai-kit-spec-execute-gsd: codegraph MCP is not registered or not healthy "
               f"for {cli_name}; install it with: {probe.install_command}",
               file=sys.stderr)
-    if probe.healthy is True:
-        return deps.run_codegraph_index_fn(target_dir)
-    return False
+    # D-20 (amended RUN-34): index when codegraph is registered and not known unhealthy;
+    # codex exposes no health, so it is indexed with its health reported as unknown.
+    if probe.registered is not True or probe.healthy is False:
+        return False
+    if probe.healthy is None:
+        print(f"ai-kit-spec-execute-gsd: codegraph MCP health for {cli_name} is unknown "
+              f"({probe.detail}); indexing anyway", file=sys.stderr)
+    return deps.run_codegraph_index_fn(target_dir)
 
 
 def _cmd_prepare_tooling(args: argparse.Namespace, deps: CliDeps) -> int:
