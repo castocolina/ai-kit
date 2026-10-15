@@ -45,8 +45,8 @@ explainable, minimal `plan.json`, with nothing written to the project.
    - Current: undefined.
    - Target: a catalog with no score axes counts as no catalog for slot filling. Unscored is also decided per pick: a candidate with zero score axes is never auto-picked; it appears only in `needs_choice` tagged `no scores`. The one exception is a user-confirmed router winning a slot by its declared purpose.
      - Claude and Codex keep their native tier maps.
-     - Cursor, opencode and pi get `needs_choice` entries whose candidates show prices and a `no scores` note.
-   - Acceptance: with an unscored fixture catalog, the Claude and Codex plans contain no `model_profile_overrides`, and the opencode plan has a `needs_choice` per non-native slot with that note.
+     - Cursor and opencode get `needs_choice` entries whose candidates show prices and a `no scores` note; pi gets an opt-in `model_profile_overrides.pi.sonnet` `needs_choice` entry with `candidates: []` (amended 2026-10-15: D-22 as amended by 22 D-05).
+   - Acceptance: with an unscored fixture catalog, the Claude and Codex plans set no `model_profile_overrides` value (amended 2026-10-15, D-18: Codex `op: keep` entries write nothing), and the opencode plan has a `needs_choice` per non-native slot with that note.
 
 5. **Conflicts**: reported only when they change resolution.
    - Current: none.
@@ -74,9 +74,9 @@ explainable, minimal `plan.json`, with nothing written to the project.
 
 9. **Tier → model layer**: overrides only where the native slot fails.
    - Current: none.
-   - Target: `model_profile_overrides.<host>.<tier>` is written only when the native slot's model is missing from the host's candidates or is above the rigor price ceiling. Claude is skipped unless pinned. A router with a user-confirmed declared purpose wins its slot and is exempt from the ceiling. A `-fast` twin is excluded from automatic filling whenever its non-fast model exists. The twin link is computed once in the catalog adapter (`fast_twin_of` on each inventory candidate). The ceiling percentile is taken over distinct model families (effort variants collapsed), and only tier slots some agent resolves to under the profile, phase shifts and dynamic routing are filled or asked about.
+   - Target: `model_profile_overrides.<host>.<tier>` is written only when the native slot's model is missing from the host's candidates or is above the rigor price ceiling. Claude is skipped unless pinned. A router with a user-confirmed declared purpose wins its slot and is exempt from the ceiling. A `-fast` twin is excluded from automatic filling whenever its non-fast model exists. The twin link is computed once in the catalog adapter (`fast_twin_of` on each inventory candidate). The ceiling percentile is taken over distinct model families (effort variants collapsed), and only tier slots some agent resolves to under the profile, phase shifts and dynamic routing are filled or asked about. (Amended 2026-10-15, D-17 note: live gsd-core 1.16 showed no model escalation from Rigorous dynamic routing, so dynamic routing adds no tier slot unless a later gsd-core proves an effect.)
    - Acceptance:
-     - Golden plans for codex (native kept), opencode (`anthropic/*` replaced), and cursor (no native map, `-fast` never chosen, the user's router chosen for its role).
+     - Golden plans for codex (native kept), opencode (`anthropic/*` replaced, the user's confirmed router chosen for its role), and cursor (no native map, `-fast` never chosen). (Amended 2026-10-15: live `cursor-agent` enumerates no router ids, so the router case is asserted on the opencode golden.)
      - A cap test shows a slot is never emptied: when nothing passes, the cheapest eligible model is used with that `why`.
 
 10. **Specialists**: at most 7 `model_overrides`.
@@ -93,8 +93,8 @@ explainable, minimal `plan.json`, with nothing written to the project.
 
 11. **Rigor presets**: data-only tables per spec §5.
     - Current: v1 fixed bundle.
-    - Target: MVP, Standard and Rigorous set granularity, effort tiers, gates (nyquist, TDD, code-review depth, ASVS, UI review), `intel.enabled` (Standard, Rigorous), `dynamic_routing` (Rigorous) and `workflow.mvp_mode` (MVP), exactly as spec §5 lists.
-    - Acceptance: a table-driven test asserts every §5 key and value per rigor.
+    - Target: MVP, Standard and Rigorous set granularity, effort tiers, gates (nyquist, TDD, code-review depth, ASVS, UI review), `intel.enabled` (Standard, Rigorous), `dynamic_routing` (Rigorous) and `workflow.mvp_mode` (MVP), exactly as spec §5 lists. (Amended 2026-10-15, D-29: `workflow.live_dom_uat` is not managed in Phase 17; Rigorous with a frontend adds a note pointing to `plan-set` instead.)
+    - Acceptance: a table-driven test asserts every §5 key and value per rigor, except `workflow.live_dom_uat` (D-29).
 
 12. **Unknown keys dropped**: the plan never proposes a key the host's gsd-core rejects.
     - Current: none.
@@ -140,7 +140,7 @@ explainable, minimal `plan.json`, with nothing written to the project.
 - [ ] `inventory` on a read-only fixture project succeeds and leaves the project byte-identical
 - [ ] The inventory reports the project-local gsd-core over a global one, and exits 2 with the searched paths when none exists
 - [ ] The fresh, stale-with-warning and no-catalog states each appear in the inventory
-- [ ] With an unscored catalog, the Claude/Codex plans have no `model_profile_overrides`, and the opencode/cursor plans carry `needs_choice` with a `no scores` note
+- [ ] With an unscored catalog, the Claude/Codex plans set no `model_profile_overrides` value (Codex `op: keep` entries write nothing, D-18), and the opencode/cursor plans carry `needs_choice` with a `no scores` note
 - [ ] Policy-in-project, policy-in-global without a project config, and a project-runtime mismatch are conflicts; an inert global policy and any global runtime are info only
 - [ ] `AGENTS.md`-only, `CLAUDE.md`-only, both and neither are reported correctly
 - [ ] Two `recommend` runs on the same inputs are byte-identical, and `recommend` succeeds with subprocess, socket, clock and extra file reads patched to raise
