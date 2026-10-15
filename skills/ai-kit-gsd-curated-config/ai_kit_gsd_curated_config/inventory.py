@@ -43,6 +43,7 @@ GLOBAL_CONFIG_KEYS = ("model_policy", "runtime", "resolve_model_ids")
 
 _LATENT = "latent (copied into the project config by config-new-project)"
 _COPIED_WHY = "copied into the project config by config-new-project"
+_INERT_WHY = "inert: gsd-tools ignores ~/.gsd/defaults.json when a project config exists (#3532)"
 
 
 def _copied_why(facts: dict) -> str:
@@ -149,8 +150,9 @@ def _catalog_fields(project_dir, opts, host_name, env, run_fn):
     }, None
 
 
-def _item(kind: str, scope: str, key: str, value, why: str, **extra) -> dict:
-    row = {"kind": kind, "scope": scope, "key": key, "value": value, "why": why}
+def _item(kind: str, scope: str, value, why: str, **extra) -> dict:
+    """A conflict/info row; its `key` is always the top-level config key `kind`."""
+    row = {"kind": kind, "scope": scope, "key": kind, "value": value, "why": why}
     row.update(extra)
     return row
 
@@ -162,7 +164,7 @@ def _global_model_policy(existing: dict, global_values: dict, facts: dict) -> tu
     if policy is None:
         return [], []
     return [
-        _item("model_policy", "global", "model_policy", policy, _copied_why(facts),
+        _item("model_policy", "global", policy, _copied_why(facts),
               effect=_LATENT)
     ], []
 
@@ -175,7 +177,6 @@ def _project_model_policy(existing: dict, global_values: dict) -> tuple[list, li
             _item(
                 "model_policy",
                 "project",
-                "model_policy",
                 policy,
                 "project model_policy shadows model_profile_overrides (resolver step 2.5)",
             )
@@ -186,10 +187,8 @@ def _project_model_policy(existing: dict, global_values: dict) -> tuple[list, li
             _item(
                 "model_policy",
                 "global",
-                "model_policy",
                 g_policy,
-                "inert: gsd-tools ignores ~/.gsd/defaults.json when a project config "
-                "exists (#3532)",
+                _INERT_WHY,
             )
         )
     return conflicts, info
@@ -207,7 +206,6 @@ def _resolve_model_ids(
             _item(
                 "resolve_model_ids",
                 "project",
-                "resolve_model_ids",
                 project_val,
                 "resolve_model_ids omit makes resolve-model return an empty model for "
                 "every agent without a per-agent override on a claude host",
@@ -221,10 +219,8 @@ def _resolve_model_ids(
             _item(
                 "resolve_model_ids",
                 "global",
-                "resolve_model_ids",
                 global_val,
-                "inert: gsd-tools ignores ~/.gsd/defaults.json when a project config "
-                "exists (#3532)",
+                _INERT_WHY,
             )
         )
         return conflicts, info
@@ -232,7 +228,6 @@ def _resolve_model_ids(
         _item(
             "resolve_model_ids",
             "global",
-            "resolve_model_ids",
             global_val,
             _copied_why(facts),
             effect=_LATENT,
@@ -249,7 +244,6 @@ def _runtime_entries(host_name: str, existing: dict, global_values: dict) -> tup
             _item(
                 "runtime",
                 "project",
-                "runtime",
                 project_rt,
                 f"project runtime {project_rt} differs from host {host_name}; "
                 "resolve-model uses the project runtime",
@@ -261,7 +255,6 @@ def _runtime_entries(host_name: str, existing: dict, global_values: dict) -> tup
             _item(
                 "runtime",
                 "global",
-                "runtime",
                 global_rt,
                 "a global runtime never drives resolve-model (gsd-tools fills an absent "
                 "project runtime from env or an install marker); the installer bake reads "
@@ -282,7 +275,7 @@ def _claude_md_info(project_dir: str, existing: dict, facts: dict) -> list:
     text = f"configured claude_md_path {configured} is missing"
     if detected:
         text += f"; detected instruction file {detected}"
-    return [_item("claude_md_path", "project", "claude_md_path", configured, text)]
+    return [_item("claude_md_path", "project", configured, text)]
 
 
 def classify_conflicts(
