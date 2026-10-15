@@ -179,6 +179,34 @@ class TestResolveMissing(unittest.TestCase):
         self.assertEqual(run.calls, [])
 
 
+class TestApplyExecutionLocalFirst(unittest.TestCase):
+    """D-18/R17 tracer: with both a project-local and a global fake gsd-core present,
+    `apply-execution`'s every recorded argv names the PROJECT-LOCAL gsd-tools.cjs."""
+
+    def test_apply_execution_writes_through_project_local_gsd_tools(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        local = _make_fake_install(os.path.join(project, ".claude"))
+        # a global candidate under the host home (<home>/.claude/gsd-core) too
+        _make_fake_install(os.path.join(home, ".claude"))
+        run = make_fake_run([(0, "{}", ""), (0, "{}", ""), (0, "{}", "")])
+
+        exit_code = cli.main(
+            ["apply-execution", "--project-dir", project, "--cli", "opencode",
+             "--model", "m"],
+            which_fn=_which_stub(),
+            run_fn=run,
+            env_fn=lambda: {"HOME": home, "PATH": ""},
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(run.calls)
+        for call in run.calls:
+            self.assertEqual(call[1], local)
+
+
 class TestRealIntegration(unittest.TestCase):
     """Skips itself when no gsd-core is actually installed on the machine running the suite --
     the hermetic unit tests above never depend on this, but a dev box or CI box with gsd-core

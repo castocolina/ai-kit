@@ -28,14 +28,15 @@ VALID_MODEL_PROFILES = ("quality", "balanced", "budget", "adaptive")
 _THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _resolve_node_and_gsd_tools(which_fn, env_fn):
+def _resolve_node_and_gsd_tools(which_fn, env_fn, project_dir=None):
     """Resolves `node_bin`/`gsd_tools_path`; returns `(node_bin, gsd_tools_path, error)` --
     `error` is `None` on success, otherwise a one-line message naming which is missing. Never
-    lets a `None` path reach `subprocess.run` as a positional argument."""
+    lets a `None` path reach `subprocess.run` as a positional argument. `project_dir` seeds
+    the shared resolver's project-local candidates (D-18: a project-local gsd-core wins)."""
     node_bin = gsd_catalog.resolve_node_binary(which_fn)
     if node_bin is None:
         return None, None, "ai-kit-gsd-curated-config: could not resolve 'node' on PATH"
-    gsd_tools_path = gsd_catalog.resolve_gsd_tools_path(env_fn())
+    gsd_tools_path = gsd_catalog.resolve_gsd_tools_path(env_fn(), start=project_dir)
     if gsd_tools_path is None:
         return (
             None,
@@ -46,7 +47,9 @@ def _resolve_node_and_gsd_tools(which_fn, env_fn):
 
 
 def _cmd_ensure_project(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
+    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+        which_fn, env_fn, project_dir=args.project_dir
+    )
     if error:
         print(error, file=sys.stderr)
         return 2
@@ -56,7 +59,9 @@ def _cmd_ensure_project(args, which_fn, run_fn, env_fn):
 
 
 def _cmd_apply_profile(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
+    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+        which_fn, env_fn, project_dir=args.project_dir
+    )
     if error:
         print(error, file=sys.stderr)
         return 2
@@ -68,7 +73,9 @@ def _cmd_apply_profile(args, which_fn, run_fn, env_fn):
 
 
 def _cmd_apply_critical_agents(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
+    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+        which_fn, env_fn, project_dir=args.project_dir
+    )
     if error:
         print(error, file=sys.stderr)
         return 2
@@ -170,7 +177,9 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
             print(f"ai-kit-gsd-curated-config: {rejection}", file=sys.stderr)
             return 2
 
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
+    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+        which_fn, env_fn, project_dir=args.project_dir
+    )
     if error:
         print(error, file=sys.stderr)
         return 2
@@ -219,7 +228,9 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
 
 
 def _cmd_apply_review(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
+    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+        which_fn, env_fn, project_dir=args.project_dir
+    )
     if error:
         print(error, file=sys.stderr)
         return 2
@@ -297,7 +308,9 @@ def _cmd_detect_frontend(args, which_fn, run_fn, env_fn):
 
 
 def _cmd_apply_claude_md_path(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
+    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+        which_fn, env_fn, project_dir=args.project_dir
+    )
     if error:
         print(error, file=sys.stderr)
         return 2
@@ -320,7 +333,9 @@ def _cmd_apply_claude_md_path(args, which_fn, run_fn, env_fn):
 
 
 def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
-    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(which_fn, env_fn)
+    node_bin, gsd_tools_path, error = _resolve_node_and_gsd_tools(
+        which_fn, env_fn, project_dir=args.project_dir
+    )
     if error:
         print(error, file=sys.stderr)
         return 2
