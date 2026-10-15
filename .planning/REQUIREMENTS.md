@@ -67,7 +67,7 @@ Previous milestones' requirements are archived in `.planning/milestones/v1.2-REQ
 
 ### Hardening
 
-- [ ] **HARD-01**: The pre-commit gate covers every shipped Python file and `make validate` runs every test module; `make validate` is green
+- [x] **HARD-01**: The pre-commit gate covers every shipped Python file and `make validate` runs every test module; `make validate` is green
 - [x] **HARD-02**: Skill-embedded Python resolves sibling packages before `~/.claude/skills`, with a test proving a branch checkout imports branch code
 - [x] **HARD-03**: A project-local reviewer command runs only after the user trusts its file (per content hash), and no reviewer command runs with `shell=True`; the dashboard escapes `<` against case-variant `</script` breakouts
 - [x] **HARD-04**: A failed review lane never merges into Approved; error classifiers read only stderr and structured error fields; inherited host env signals are scrubbed from child processes; the unrunnable claude and grok execute builders are deleted; `gsd_config.py` writes via `config-set`
@@ -167,7 +167,7 @@ None deferred beyond v1.3 at definition time.
 | EVAL-07 | Phase 21 | Pending |
 | EVAL-08 | Phase 22 | Pending |
 | AGT-01 | Phase 21 | Pending |
-| HARD-01 | Phase 16.1 | Pending |
+| HARD-01 | Phase 16.1 | Complete |
 | HARD-02 | Phase 16.1 | Complete |
 | HARD-03 | Phase 16.1 | Complete |
 | HARD-04 | Phase 16.1 | Complete |
