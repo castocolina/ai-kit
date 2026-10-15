@@ -961,11 +961,12 @@ class TestApplyReviewCli(unittest.TestCase):
         _make_fake_install(self.fake_install_root)
         self.env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
 
-    def _run_apply_review(self, config_get_stdout, config_get_returncode=0):
+    def _run_apply_review(self, config_get_stdout, config_get_returncode=0, config_get_stderr=""):
         results = [
+            # config-get review.default_reviewers, read before any write
+            (config_get_returncode, config_get_stdout, config_get_stderr),
             (0, "ok", ""),  # workflow.plan_review_convergence
             (0, "ok", ""),  # review.effort.opencode
-            (config_get_returncode, config_get_stdout, ""),  # config-get review.default_reviewers
             (0, "ok", ""),  # review.default_reviewers write
             (0, "ok", ""),  # review.models.<slug> write
         ]
@@ -1000,9 +1001,27 @@ class TestApplyReviewCli(unittest.TestCase):
         self.assertEqual(json.loads(review_writes[0][4]), ["claude", "opencode"])
 
     def test_absent_key_writes_fresh_one_element_list(self):
-        exit_code, _run, summary = self._run_apply_review("", config_get_returncode=1)
+        exit_code, _run, summary = self._run_apply_review(
+            "", config_get_returncode=1,
+            config_get_stderr="Error: Key not found: review.default_reviewers",
+        )
         self.assertEqual(exit_code, 0)
         self.assertEqual(summary["default_reviewers"], ["opencode"])
+
+    def test_failed_read_writes_nothing_and_exits_1(self):
+        run = make_fake_run([(1, "", "Error: config.json is locked")])
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            exit_code = cli.main(
+                ["apply-review", "--project-dir", "/fake/project",
+                 "--cli", "opencode", "--model", "m"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 1)
+        self.assertIn("config.json is locked", err.getvalue())
+        self.assertEqual([call for call in run.calls if "config-set" in call], [])
 
     def test_already_contains_resolved_slug_dedupes(self):
         """07-REVIEWS.md Cycle 2 MEDIUM: the realistic fresh-project -> apply-review path, where

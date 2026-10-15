@@ -279,6 +279,16 @@ def _apply_review_writes(ctx: _GsdCtx, args):
             file=sys.stderr,
         )
         return 2
+    # Read before any write: a failed read must not overwrite the user's list (B-IN-10).
+    got = ctx.gsd.config_get(
+        ctx.tools, ctx.project_dir, "review.default_reviewers", run_fn=ctx.run_fn
+    )
+    if got.error is not None:
+        print(
+            f"ai-kit-gsd-curated-config: failed to read review.default_reviewers: {got.error}",
+            file=sys.stderr,
+        )
+        return 1
     steps = (
         ("workflow.plan_review_convergence", True, "workflow.plan_review_convergence"),
         ("review.effort.opencode", "high", "review.effort.opencode"),
@@ -287,9 +297,6 @@ def _apply_review_writes(ctx: _GsdCtx, args):
         code = _config_set_exit(ctx, key, value, label)
         if code is not None:
             return code
-    got = ctx.gsd.config_get(
-        ctx.tools, ctx.project_dir, "review.default_reviewers", run_fn=ctx.run_fn
-    )
     existing = got.value if got.found else None
     reviewers = list(existing) if isinstance(existing, list) else []
     if slug not in reviewers:
