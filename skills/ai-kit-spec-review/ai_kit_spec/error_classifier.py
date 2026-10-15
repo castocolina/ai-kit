@@ -33,6 +33,19 @@ _CONFIGURATION_SIGNALS = ("cannot use this model", "unknown model", "model not f
 _DISPATCH_UNAVAILABLE_SIGNALS = ("command not found", "no such file or directory")
 
 
+def _stderr_text(stderr: str | bytes) -> str:
+    if isinstance(stderr, bytes):
+        return stderr.decode("utf-8", errors="replace")
+    return stderr
+
+
+def _signal_reason(text: str, signal_groups: tuple[tuple[tuple[str, ...], str], ...]) -> str | None:
+    for signals, reason in signal_groups:
+        if any(s in text for s in signals):
+            return reason
+    return None
+
+
 def classify_error(returncode: int | None, stderr: str | bytes, timed_out: bool = False
                    ) -> str | None:
     """Classify a subprocess failure from (exit status, stderr, timed_out) only.
@@ -46,15 +59,12 @@ def classify_error(returncode: int | None, stderr: str | bytes, timed_out: bool 
         return "timeout"
     if returncode == 0:
         return None
-    if isinstance(stderr, bytes):
-        stderr = stderr.decode("utf-8", errors="replace")
-    text = stderr.lower()
+    text = _stderr_text(stderr).lower()
     if returncode == 127 or any(s in text for s in _DISPATCH_UNAVAILABLE_SIGNALS):
         return "dispatch_unavailable"
-    if any(s in text for s in _AUTH_SIGNALS):
-        return "auth"
-    if any(s in text for s in _QUOTA_SIGNALS):
-        return "quota"
-    if any(s in text for s in _CONFIGURATION_SIGNALS):
-        return "configuration"
-    return "real_error"
+    grouped = (
+        (_AUTH_SIGNALS, "auth"),
+        (_QUOTA_SIGNALS, "quota"),
+        (_CONFIGURATION_SIGNALS, "configuration"),
+    )
+    return _signal_reason(text, grouped) or "real_error"

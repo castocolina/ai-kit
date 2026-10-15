@@ -2,8 +2,17 @@
 fit. Never LLM judgment per-execution -- both signals come from data curated once at
 ai-kit-spec-config time (design spec Section 5)."""
 import sys
+from typing import NamedTuple
 
 from ai_kit_spec import commands
+
+
+class ExecuteResolveOptions(NamedTuple):
+    task_type: str | None
+    required_context: int
+    affinity_table: dict
+    top_n_keys: list
+    warn_fn: object | None = None
 
 
 def purpose_matches(purpose: str | None, wanted: str) -> bool:
@@ -56,6 +65,10 @@ def filter_by_context(candidates: list, required_context: int) -> list:
             if c.get("context_limit") is None or c["context_limit"] >= required_context]
 
 
+def _execute_default_warn(msg: str) -> None:
+    print(msg, file=sys.stderr)
+
+
 def screen_execute_clis(candidates: list, warn_fn=None) -> list:
     """D-15 hardening screen: a candidate naming a CLI without a real execute builder (claude,
     grok -- Phase 16.1 removed both) is never silently routed to another CLI. An entry whose
@@ -63,26 +76,23 @@ def screen_execute_clis(candidates: list, warn_fn=None) -> list:
     naming the supported CLIs; an entry that merely includes execution (purpose unset or
     "both") is dropped with a visible stderr warning instead of being silently executed.
     Native candidates (cli None) and purpose-"review" entries pass through untouched."""
-    if warn_fn is None:
-        def warn_fn(msg):
-            print(msg, file=sys.stderr)
+    emit_warn = warn_fn if warn_fn is not None else _execute_default_warn
     kept = []
     for c in candidates:
         cli = c.get("cli")
         if cli is not None and cli not in commands.SUPPORTED_EXECUTE_CLIS \
                 and purpose_matches(c.get("purpose"), "execute"):
+            cli_err = commands.execute_cli_error(cli) or ""
             if c.get("purpose") == "execute":
                 raise ValueError(f"reviewer {c['key']!r} sets purpose = \"execute\": "
-                                 + commands.execute_cli_error(cli))
-            warn_fn(f"ai-kit-spec: skipping {c['key']!r} for execution: "
-                    + commands.execute_cli_error(cli))
+                                 + cli_err)
+            emit_warn(f"ai-kit-spec: skipping {c['key']!r} for execution: " + cli_err)
             continue
         kept.append(c)
     return kept
 
 
-def resolve_execute_candidates(candidates: list, task_type: str, required_context: int,
-                                affinity_table: dict, top_n_keys: list, warn_fn=None) -> list:
+def resolve_execute_candidates(candidates: list, options: ExecuteResolveOptions) -> list:
     """Full candidate-narrowing pipeline. The result's ORDER is what a caller feeds to
     quota.py's resolve_ladder_pick (via candidates_to_ladder, below) for live-availability
     escalation -- this function only narrows and ranks, it never itself probes quota.
@@ -105,16 +115,18 @@ def resolve_execute_candidates(candidates: list, task_type: str, required_contex
     bonus actually applies -- it needs a real task_type, which only exists here, at real
     dispatch time, never at Plan A's generic wizard-time ranking (see that plan's Global
     Constraints)."""
-    candidates = screen_execute_clis(candidates, warn_fn)
-    narrowed = filter_by_context(
-        filter_by_affinity(filter_by_purpose(candidates, "execute"), task_type, affinity_table),
-        required_context)
-    rank = {key: i for i, key in enumerate(top_n_keys)}
+    candidates = screen_execute_clis(candidates, options.warn_fn)
+    purpose_filtered = filter_by_purpose(candidates, "execute")
+    if options.task_type is not None:
+        purpose_filtered = filter_by_affinity(
+            purpose_filtered, options.task_type, options.affinity_table)
+    narrowed = filter_by_context(purpose_filtered, options.required_context)
+    rank = {key: i for i, key in enumerate(options.top_n_keys)}
     return sorted(
         narrowed,
         key=lambda c: (c.get("context_limit") is None,
-                        rank.get(c["key"], len(top_n_keys)),
-                        c.get("task_affinity") != task_type),
+                        rank.get(c["key"], len(options.top_n_keys)),
+                        c.get("task_affinity") != options.task_type),
     )
 
 

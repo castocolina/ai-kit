@@ -310,207 +310,176 @@ def _anthropic_model_ids(models_dev_data) -> list:
     return sorted(ids)
 
 
-def _process_catalog_candidate(
+class _ProviderResolution(NamedTuple):
+    provider: str | None
+    key: str | None
+    vendor_unknown: bool
+    existing_entry: dict | None
+
+
+class _SourceMatches(NamedTuple):
+    md_match: dict | None
+    aa_match: dict | None
+    md_enrich_match: dict | None
+
+
+class _RouterEntryInputs(NamedTuple):
+    cli_name: str
+    model_id: str
+    provider: str
+    existing_entry: dict | None
+    name_purpose: str
+    today: str
+
+
+class _ProviderLookup(NamedTuple):
+    model_id: str
+    catalog: dict
+    existing_catalog: dict
+    matches: _SourceMatches
+    provider_hint: str | None
+    no_signal_this_run: bool
+    existing_key: str | None
+
+
+class _MatchedMergeInputs(NamedTuple):
+    candidate: dict
+    ctx: CatalogBuildCtx
+    resolution: _ProviderResolution
+    matches: _SourceMatches
+
+
+def _cached_source_flags(existing_entry: dict | None) -> dict:
+    cached = existing_entry or {}
+    source = cached.get("source", {})
+    return {
+        "models_dev": source.get("models_dev", False),
+        "artificial_analysis": source.get("artificial_analysis", False),
+        "manual": source.get("manual", False),
+    }
+
+
+def _build_router_catalog_entry(inputs: _RouterEntryInputs) -> dict:
+    cli_name = inputs.cli_name
+    model_id = inputs.model_id
+    provider = inputs.provider
+    existing_entry = inputs.existing_entry
+    name_purpose = inputs.name_purpose
+    today = inputs.today
+    heuristics = {field: (existing_entry or {}).get(field, inferred)
+                  for field, inferred in _infer_heuristics(provider, model_id).items()}
+    md_fields = _preserved_or_fresh_md_fields(None, False, existing_entry)
+    aa_fields = _preserved_or_fresh_aa_fields(None, False, existing_entry)
+    ctx_window = _preserved_or_fresh_ctx_window(None, False, existing_entry, cli_name)
+    entry = {
+        "provider": (existing_entry or {}).get("provider", provider),
+        "runtimes": {cli_name: {"model_id": model_id, "ctx_window": ctx_window}},
+        **heuristics,
+        "name_declared_purpose": name_purpose,
+        "source": _cached_source_flags(existing_entry),
+        "confidence": (existing_entry or {}).get("confidence", "low"),
+        "last_verified": (existing_entry or {}).get("last_verified", today),
+        **md_fields,
+    }
+    entry.update(aa_fields)
+    pricing = (existing_entry or {}).get("pricing")
+    if pricing:
+        entry["pricing"] = pricing
+    return entry
+
+
+def _router_vendor_unknown_record(
     candidate: dict,
-    catalog: dict,
     ctx: CatalogBuildCtx,
-) -> tuple[dict, str | None, dict | None]:
-    existing_catalog = ctx.existing_catalog
-    sources = ctx.sources
-    runtime_meta = ctx.runtime_meta
-    today = ctx.today
-    models_dev_data = sources.models_dev_data
-    models_dev_ok = sources.models_dev_ok
-    aa_models = sources.aa_models
-    aa_ok = sources.aa_ok
+    name_purpose: str,
+) -> dict:
     model_id = candidate["model_id"]
     cli_name = candidate["cli"]
-    provider_hint = model_id.split("/", 1)[0] if "/" in model_id else None
-    # Gate on infer_is_router(model_id) alone -- provider_hint is always a prefix of
-    # model_id and infer_is_router is a plain substring test (model_heuristics.py), so
-    # infer_is_router(provider_hint or "") can never be true when infer_is_router(model_id)
-    # is false. A two-argument OR here would be redundant, not defensive.
-    name_purpose = (infer_purpose_from_name(model_id)
-                    if infer_is_router(model_id)
-                    else None)
-    if name_purpose:
-        # Skip match_models_dev/match_artificial_analysis ENTIRELY for this candidate --
-        # its purpose is unambiguous from its own name, and neither external source
-        # models a router's operator-assigned routing label as a scorable capability
-        # anyway, so querying either would spend a network call (Artificial Analysis:
-        # quota-limited) for data this candidate will never use to decide its role.
-        existing_key = _find_existing_key_for_runtime(existing_catalog, cli_name, model_id)
-        provider = (existing_catalog[existing_key]["provider"] if existing_key
-                    else provider_hint)
-        if provider is None:
-            # HIGH-adjacent fix (review MEDIUM finding): a bare id with no existing catalog
-            # entry to recover a provider from still has a real, unambiguous
-            # name_declared_purpose -- carry it onto the unmatched payload rather than
-            # silently discarding it, since Task 4's wizard partition can only act on a
-            # field it can actually see. `_infer_heuristics("", model_id)` is unchanged from
-            # the existing unmatched-path convention (an empty provider is the existing
-            # convention for "no vendor to infer from," used identically by the ordinary
-            # unmatched path a few lines below in the function's existing body).
-            record = {"cli": cli_name, "model_id": model_id, "provider": None,
-                      "key": None, "vendor_unknown": True,
-                      "name_declared_purpose": name_purpose,
-                      **_infer_heuristics("", model_id)}
-            _apply_runtime_meta(record, runtime_meta, cli_name, model_id)
-            return catalog, None, record
-        key = existing_key or canonical_key(provider, bare_model_part(model_id))
-        existing_entry = catalog.get(key)
-        heuristics = {field: (existing_entry or {}).get(field, inferred)
-                      for field, inferred in _infer_heuristics(provider, model_id).items()}
-        # Reuses the EXISTING preserve-on-source-down contract by passing
-        # models_dev_ok=False / aa_ok=False for THIS candidate specifically -- exactly
-        # matches that contract's own semantics ("the source wasn't queried this run,
-        # keep whatever's cached"), which is literally true here: neither source was
-        # ever called. No new field-preservation helper needed.
-        md_fields = _preserved_or_fresh_md_fields(None, False, existing_entry)
-        # NOTE: no `aa_fields.pop("aa_pricing", None)` here (an earlier draft had one) --
-        # `_preserved_or_fresh_aa_fields(None, False, existing_entry)` always takes its
-        # `not aa_ok` branch, which returns only cached `scores`/`tokens_per_sec` and can
-        # never contain an `aa_pricing` key, so the pop would always be a no-op.
-        aa_fields = _preserved_or_fresh_aa_fields(None, False, existing_entry)
-        ctx_window = _preserved_or_fresh_ctx_window(None, False, existing_entry, cli_name)
-        entry = {
-            "provider": (existing_entry or {}).get("provider", provider),
-            "runtimes": {cli_name: {"model_id": model_id, "ctx_window": ctx_window}},
-            **heuristics,
-            "name_declared_purpose": name_purpose,
-            "source": {
-                "models_dev": (existing_entry or {}).get("source", {}).get(
-                    "models_dev", False),
-                "artificial_analysis": (existing_entry or {}).get("source", {}).get(
-                    "artificial_analysis", False),
-                "manual": (existing_entry or {}).get("source", {}).get("manual", False),
-            },
-            "confidence": (existing_entry or {}).get("confidence", "low"),
-            "last_verified": (existing_entry or {}).get("last_verified", today),
-            **md_fields,
-        }
-        entry.update(aa_fields)
-        pricing = (existing_entry or {}).get("pricing")
-        if pricing:
-            entry["pricing"] = pricing
-        _apply_runtime_meta(entry, runtime_meta, cli_name, model_id,
-                            runtime_wins_image_input=True)
-        catalog, reason = merge_catalog_entry(catalog, key, entry)
-        return catalog, reason, None
-    # 16 D-04 (review cycle 2): claude's bare ids get `anthropic` as the provider hint
-    # (see _FIRST_PARTY_PROVIDER_BY_CLI above); every other CLI's hint is None, exactly
-    # the pre-16-04 call. The router/name-purpose path above never consults models.dev.
-    md_match = (match_models_dev(
-        model_id, models_dev_data,
-        provider_hint=_FIRST_PARTY_PROVIDER_BY_CLI.get(cli_name)) if models_dev_ok
-        else None)
-    provider_hint = (md_match or {}).get("provider") or (
-        model_id.split("/", 1)[0] if "/" in model_id else None)
-    aa_match = (match_artificial_analysis(model_id, aa_models, provider_hint=provider_hint)
-                if aa_ok else None)
-    # NEW: an ENRICHMENT-ONLY retry (design spec 2026-09-05) -- deliberately kept in its
-    # own variable, never assigned into md_match itself, and using ONLY the ordinary,
-    # unmodified match_models_dev (no effort-awareness lives inside that function at
-    # all). Consumed exclusively by the two field-preservation helpers below; never read
-    # by provider/key/pricing derivation.
-    # When the retry's lookup resolves to a single models.dev row, that row's fields are
-    # used even if its provider disagrees with aa_provider_hint -- match_models_dev only
-    # consults provider_hint to disambiguate an actual multi-row collision. This is
-    # accepted: a lone row is still better signal than no signal (fields would otherwise
-    # stay null).
-    md_enrich_match = None
-    if models_dev_ok and md_match is None and aa_match:
-        # Deliberate: aa_provider_hint is derived from Artificial Analysis's own
-        # model_creator.name (the first-party/creator row), not from the CLI-reported id's
-        # own vendor prefix (e.g. for "github-copilot/claude-opus-5-high" the hint used is
-        # "anthropic", not "github-copilot"). The spec treats the creator row as more
-        # authoritative than a reseller's own prefix.
-        aa_provider_hint = _slugify(
-            (aa_match.get("model_creator") or {}).get("name", "")) or None
-        if aa_provider_hint:
-            md_enrich_match = match_models_dev(model_id, models_dev_data,
-                                                provider_hint=aa_provider_hint,
-                                                allow_fuzzy=False)
-            if md_enrich_match is None:
-                stripped = _strip_known_effort_suffix(bare_model_part(model_id))
-                if stripped:
-                    md_enrich_match = match_models_dev(stripped, models_dev_data,
-                                                        provider_hint=aa_provider_hint,
-                                                        allow_fuzzy=False)
-    existing_key = _find_existing_key_for_runtime(existing_catalog, cli_name, model_id)
-    # Important finding (coordinator review): `existing_key` recovery must ONLY apply when
-    # this run genuinely has no signal of its own (md_match is None AND aa_match is None) --
-    # the function's own docstring already says so ("neither source matched THIS run"), but
-    # the original code consulted `existing_key` unconditionally for the final `key`, so a
-    # stale/mis-keyed cached entry (e.g. minted while a source was down) could never
-    # self-heal once the source came back with a real, authoritative match: the stale key
-    # would keep winning forever. `no_signal_this_run` gates both the provider fallback AND
-    # the final key selection so a genuine fresh match always wins over a cached key.
-    no_signal_this_run = md_match is None and aa_match is None
+    record = {"cli": cli_name, "model_id": model_id, "provider": None,
+              "key": None, "vendor_unknown": True,
+              "name_declared_purpose": name_purpose,
+              **_infer_heuristics("", model_id)}
+    _apply_runtime_meta(record, ctx.runtime_meta, cli_name, model_id)
+    return record
+
+
+def _process_router_name_purpose(
+    catalog: dict,
+    candidate: dict,
+    ctx: CatalogBuildCtx,
+    name_purpose: str,
+    provider_hint: str | None,
+) -> tuple[dict, str | None, dict | None]:
+    model_id = candidate["model_id"]
+    cli_name = candidate["cli"]
+    existing_key = _find_existing_key_for_runtime(
+        ctx.existing_catalog, cli_name, model_id)
+    provider = (ctx.existing_catalog[existing_key]["provider"] if existing_key
+                else provider_hint)
+    if provider is None:
+        return catalog, None, _router_vendor_unknown_record(candidate, ctx, name_purpose)
+    key = existing_key or canonical_key(provider, bare_model_part(model_id))
+    entry = _build_router_catalog_entry(_RouterEntryInputs(
+        cli_name, model_id, provider, catalog.get(key), name_purpose, ctx.today))
+    _apply_runtime_meta(
+        entry, ctx.runtime_meta, cli_name, model_id, runtime_wins_image_input=True)
+    catalog, reason = merge_catalog_entry(catalog, key, entry)
+    return catalog, reason, None
+
+
+def _lookup_md_enrich_match(model_id, md_match, aa_match, models_dev_data, models_dev_ok):
+    if not (models_dev_ok and md_match is None and aa_match):
+        return None
+    aa_provider_hint = _slugify((aa_match.get("model_creator") or {}).get("name", "")) or None
+    if not aa_provider_hint:
+        return None
+    md_enrich_match = match_models_dev(
+        model_id, models_dev_data, provider_hint=aa_provider_hint, allow_fuzzy=False)
+    if md_enrich_match is not None:
+        return md_enrich_match
+    stripped = _strip_known_effort_suffix(bare_model_part(model_id))
+    if not stripped:
+        return None
+    return match_models_dev(
+        stripped, models_dev_data, provider_hint=aa_provider_hint, allow_fuzzy=False)
+
+
+def _resolve_catalog_provider(lookup: _ProviderLookup) -> _ProviderResolution:
+    model_id = lookup.model_id
+    catalog = lookup.catalog
+    existing_catalog = lookup.existing_catalog
+    matches = lookup.matches
+    provider_hint = lookup.provider_hint
+    no_signal_this_run = lookup.no_signal_this_run
+    existing_key = lookup.existing_key
+    md_match = matches.md_match
+    aa_match = matches.aa_match
     vendor_unknown = False
     if md_match:
         provider = md_match["provider"]
     elif provider_hint:
         provider = provider_hint
     elif aa_match and _slugify((aa_match.get("model_creator") or {}).get("name", "")):
-        # WR-01 fix: guard on the SLUGIFIED result, not the raw name -- mirrors the
-        # already-guarded aa_provider_hint call site a few lines above. A raw name that is
-        # non-empty but entirely non-alphanumeric (e.g. "—") slugifies to "", and without
-        # this guard `provider` became "" (a str, not None), which passed the `if provider
-        # is not None` gate below and minted a malformed "/<model>" catalog key instead of
-        # routing to the vendor_unknown=True safeguard a few lines below.
         provider = _slugify(aa_match["model_creator"]["name"])
     elif no_signal_this_run and existing_key:
-        # CRITICAL/HIGH fix: neither source matched this run (most commonly both were
-        # skipped by `--if-stale`) and the raw id carries no vendor prefix -- recover the
-        # real provider/key from the catalog entry that already claims this exact
-        # (cli, model_id) runtime, instead of minting an unstable "model_id/model_id" key
-        # that would orphan the real entry and misclassify it as unmatched every run.
         provider = existing_catalog[existing_key]["provider"]
     else:
-        # Important finding (coordinator review): genuinely zero *usable* vendor signal --
-        # this covers BOTH "no match at all this run, no '<vendor>/' prefix on the raw id,
-        # and no existing catalog entry to recover from" AND (round-2 re-review finding)
-        # "aa_match exists but its own model_creator.name is missing/empty," which reaches
-        # this same `else` since the `aa_match and (aa_match.get("model_creator") or {}).get(
-        # "name")` elif above requires BOTH truthy. Either way there is no real vendor to
-        # report. Falling back to `provider = model_id` used to mint a plausible-looking but
-        # entirely fabricated self-referential "model_id/model_id" key on the UNMATCHED
-        # candidate payload surfaced to the wizard (Task 8); since that key looks
-        # legitimate, a future wizard implementation could accidentally trust and persist it
-        # as-is. `provider=None` + `vendor_unknown=True` forces whatever confirms this
-        # candidate later to supply a real vendor rather than silently trusting a guess.
         provider = None
         vendor_unknown = True
     key = (existing_key if no_signal_this_run and existing_key else
-           (canonical_key(provider, bare_model_part(model_id)) if provider is not None
-            else None))
+           (canonical_key(provider, bare_model_part(model_id))
+            if provider is not None else None))
     existing_entry = catalog.get(key) if key else None
+    return _ProviderResolution(provider, key, vendor_unknown, existing_entry)
 
-    # Important finding (round-2 re-review): `provider is None` (vendor_unknown) MUST route
-    # here too, not just "both sources found literally nothing this run" -- an AA match with
-    # no usable model_creator.name lands in the `else` branch above (aa_match truthy, so the
-    # OLD `md_match is None and aa_match is None` check alone excluded it), leaving `provider`
-    # None while falling through into the matched/enrichment branch below, where an unguarded
-    # `_infer_heuristics(provider, model_id)` call raised `AttributeError: 'NoneType' object
-    # has no attribute 'lower'` and aborted the ENTIRE run -- every other candidate in the
-    # same batch lost with it. `provider is None` here always implies `key is None` (see
-    # above) which always implies `existing_entry is None`, so this is a pure widening of the
-    # routing condition, not a new state to reconcile with the second clause.
-    if provider is None or (md_match is None and aa_match is None and existing_entry is None):
-        record = {"cli": cli_name, "model_id": model_id, "provider": provider,
-                  "key": key, "vendor_unknown": vendor_unknown,
-                  **_infer_heuristics(provider or "", model_id)}
-        _apply_runtime_meta(record, runtime_meta, cli_name, model_id)
-        return catalog, None, record
 
-    md_fields = _preserved_or_fresh_md_fields(md_match, models_dev_ok, existing_entry,
-                                               md_enrich_match=md_enrich_match)
-    aa_fields = _preserved_or_fresh_aa_fields(aa_match, aa_ok, existing_entry)
-    aa_pricing = aa_fields.pop("aa_pricing", None)
-    # CRITICAL finding (fresh-source no-match / pricing can come from EITHER source): a
-    # models.dev match's own cost fields aren't returned via _preserved_or_fresh_md_fields
-    # (pricing is combined here, not per-source), so recompute them directly from md_match.
+def _resolve_catalog_pricing(
+    md_match,
+    aa_pricing,
+    models_dev_ok,
+    aa_ok,
+    existing_entry,
+):
     md_cost = (md_match or {}).get("cost", {}) if models_dev_ok and md_match else {}
     md_pricing = ({"input_per_1m": md_cost.get("input"), "output_per_1m": md_cost.get("output")}
                   if md_cost else None)
@@ -518,56 +487,180 @@ def _process_catalog_candidate(
     clear_pricing = False
     if pricing is None:
         if not models_dev_ok or not aa_ok:
-            # At least one source is down/unconfigured this run -- its silence says nothing
-            # about whether pricing is still correct, so preserve whatever's cached (leave
-            # the "pricing" key out of `entry` entirely below -- omission preserves).
             pricing = (existing_entry or {}).get("pricing")
         elif (existing_entry or {}).get("pricing") is not None:
-            # CRITICAL finding: BOTH sources were genuinely queried this run and NEITHER
-            # matched -- cached pricing is now stale under a provenance about to flip both
-            # source.* flags to False. clear_pricing signals an explicit None below, which
-            # merge_catalog_entry's clear-on-None contract then actually drops.
             clear_pricing = True
-    ctx_window = _preserved_or_fresh_ctx_window(md_match, models_dev_ok, existing_entry,
-                                                  cli_name, md_enrich_match=md_enrich_match)
-    # MEDIUM finding: this used to reimplement _infer_heuristics' own three-line body
-    # inline (a second, separately-maintained copy of the exact same heuristic calls),
-    # contradicting that function's own docstring claim that both paths call it. Calling
-    # it here instead removes the duplication -- an existing cached value still wins over
-    # a freshly-inferred one wherever present, unchanged from before.
+    return pricing, clear_pricing
+
+
+def _matched_source_flags(
+    md_match,
+    aa_match,
+    models_dev_ok: bool,
+    aa_ok: bool,
+    existing_entry: dict | None,
+) -> dict:
+    cached = _cached_source_flags(existing_entry)
+    return {
+        "models_dev": (md_match is not None) if models_dev_ok else cached["models_dev"],
+        "artificial_analysis": (aa_match is not None) if aa_ok else cached["artificial_analysis"],
+        "manual": cached["manual"],
+    }
+
+
+class _MatchedEnrichment(NamedTuple):
+    md_fields: dict
+    aa_fields: dict
+    pricing: dict | None
+    clear_pricing: bool
+    ctx_window: object
+
+
+def _matched_enrichment_fields(
+    candidate: dict,
+    ctx: CatalogBuildCtx,
+    resolution: _ProviderResolution,
+    matches: _SourceMatches,
+) -> _MatchedEnrichment:
+    existing_entry = resolution.existing_entry
+    md_ok = ctx.sources.models_dev_ok
+    aa_ok = ctx.sources.aa_ok
+    md_fields = _preserved_or_fresh_md_fields(
+        matches.md_match, md_ok, existing_entry, md_enrich_match=matches.md_enrich_match)
+    aa_fields = _preserved_or_fresh_aa_fields(matches.aa_match, aa_ok, existing_entry)
+    aa_pricing = aa_fields.pop("aa_pricing", None)
+    pricing, clear_pricing = _resolve_catalog_pricing(
+        matches.md_match, aa_pricing, md_ok, aa_ok, existing_entry)
+    ctx_window = _preserved_or_fresh_ctx_window(
+        matches.md_match, md_ok, existing_entry, candidate["cli"],
+        md_enrich_match=matches.md_enrich_match)
+    return _MatchedEnrichment(md_fields, aa_fields, pricing, clear_pricing, ctx_window)
+
+
+def _build_matched_catalog_entry(inputs: _MatchedMergeInputs) -> dict:
+    candidate = inputs.candidate
+    ctx = inputs.ctx
+    resolution = inputs.resolution
+    matches = inputs.matches
+    provider = resolution.provider
+    assert provider is not None
+    existing_entry = resolution.existing_entry
+    enrich = _matched_enrichment_fields(candidate, ctx, resolution, matches)
+    model_id = candidate["model_id"]
+    cli_name = candidate["cli"]
     heuristics = {
         field: (existing_entry or {}).get(field, inferred)
         for field, inferred in _infer_heuristics(provider, model_id).items()
     }
-
-    matched_this_run = md_match is not None or aa_match is not None
+    matched_this_run = matches.md_match is not None or matches.aa_match is not None
     entry = {
         "provider": (existing_entry or {}).get("provider", provider),
-        "runtimes": {cli_name: {"model_id": model_id, "ctx_window": ctx_window}},
+        "runtimes": {cli_name: {"model_id": model_id, "ctx_window": enrich.ctx_window}},
         **heuristics,
-        "source": {
-            "models_dev": (md_match is not None) if models_dev_ok
-                          else (existing_entry or {}).get("source", {}).get(
-                              "models_dev", False),
-            "artificial_analysis": (aa_match is not None) if aa_ok
-                          else (existing_entry or {}).get("source", {}).get(
-                              "artificial_analysis", False),
-            "manual": (existing_entry or {}).get("source", {}).get("manual", False),
-        },
+        "source": _matched_source_flags(
+            matches.md_match, matches.aa_match,
+            ctx.sources.models_dev_ok, ctx.sources.aa_ok, existing_entry),
         "confidence": "high" if matched_this_run else (existing_entry or {}).get(
             "confidence", "low"),
-        "last_verified": today if matched_this_run else (existing_entry or {}).get(
-            "last_verified", today),
-        **md_fields,
+        "last_verified": ctx.today if matched_this_run else (existing_entry or {}).get(
+            "last_verified", ctx.today),
+        **enrich.md_fields,
     }
-    if pricing:
-        entry["pricing"] = pricing
-    elif clear_pricing:
-        entry["pricing"] = None    # explicit clear signal -- see merge_catalog_entry
-    entry.update(aa_fields)
+    if enrich.pricing:
+        entry["pricing"] = enrich.pricing
+    elif enrich.clear_pricing:
+        entry["pricing"] = None
+    entry.update(enrich.aa_fields)
+    return entry
+
+
+def _merge_matched_catalog_entry(
+    catalog: dict,
+    inputs: _MatchedMergeInputs,
+) -> tuple[dict, str | None, dict | None]:
+    candidate = inputs.candidate
+    ctx = inputs.ctx
+    resolution = inputs.resolution
+    runtime_meta = ctx.runtime_meta
+    model_id = candidate["model_id"]
+    cli_name = candidate["cli"]
+    provider = resolution.provider
+    key = resolution.key
+    if key is None:
+        record = {"cli": cli_name, "model_id": model_id, "provider": provider,
+                  "key": key, "vendor_unknown": resolution.vendor_unknown,
+                  **_infer_heuristics(provider or "", model_id)}
+        _apply_runtime_meta(record, runtime_meta, cli_name, model_id)
+        return catalog, None, record
+    entry = _build_matched_catalog_entry(inputs)
     _apply_runtime_meta(entry, runtime_meta, cli_name, model_id)
+    assert key is not None
     catalog, reason = merge_catalog_entry(catalog, key, entry)
     return catalog, reason, None
+
+
+def _fetch_source_matches(
+    candidate: dict,
+    sources: CatalogSources,
+    provider_hint: str | None,
+) -> tuple[_SourceMatches, str | None]:
+    model_id = candidate["model_id"]
+    cli_name = candidate["cli"]
+    models_dev_data = sources.models_dev_data
+    models_dev_ok = sources.models_dev_ok
+    aa_models = sources.aa_models
+    aa_ok = sources.aa_ok
+    md_match = (match_models_dev(
+        model_id, models_dev_data,
+        provider_hint=_FIRST_PARTY_PROVIDER_BY_CLI.get(cli_name)) if models_dev_ok else None)
+    provider_hint = (md_match or {}).get("provider") or provider_hint
+    aa_match = (match_artificial_analysis(model_id, aa_models, provider_hint=provider_hint)
+                if aa_ok else None)
+    md_enrich_match = _lookup_md_enrich_match(
+        model_id, md_match, aa_match, models_dev_data, models_dev_ok)
+    return _SourceMatches(md_match, aa_match, md_enrich_match), provider_hint
+
+
+def _process_matched_catalog_candidate(
+    catalog: dict,
+    candidate: dict,
+    ctx: CatalogBuildCtx,
+    provider_hint: str | None,
+) -> tuple[dict, str | None, dict | None]:
+    existing_catalog = ctx.existing_catalog
+    runtime_meta = ctx.runtime_meta
+    model_id = candidate["model_id"]
+    cli_name = candidate["cli"]
+    matches, provider_hint = _fetch_source_matches(candidate, ctx.sources, provider_hint)
+    existing_key = _find_existing_key_for_runtime(existing_catalog, cli_name, model_id)
+    no_signal = matches.md_match is None and matches.aa_match is None
+    resolution = _resolve_catalog_provider(_ProviderLookup(
+        model_id, catalog, existing_catalog, matches, provider_hint, no_signal, existing_key))
+    if resolution.provider is None or (no_signal and resolution.existing_entry is None):
+        record = {"cli": cli_name, "model_id": model_id, "provider": resolution.provider,
+                  "key": resolution.key, "vendor_unknown": resolution.vendor_unknown,
+                  **_infer_heuristics(resolution.provider or "", model_id)}
+        _apply_runtime_meta(record, runtime_meta, cli_name, model_id)
+        return catalog, None, record
+    merge_inputs = _MatchedMergeInputs(candidate, ctx, resolution, matches)
+    return _merge_matched_catalog_entry(catalog, merge_inputs)
+
+
+def _process_catalog_candidate(
+    candidate: dict,
+    catalog: dict,
+    ctx: CatalogBuildCtx,
+) -> tuple[dict, str | None, dict | None]:
+    model_id = candidate["model_id"]
+    provider_hint = model_id.split("/", 1)[0] if "/" in model_id else None
+    name_purpose = (infer_purpose_from_name(model_id)
+                    if infer_is_router(model_id)
+                    else None)
+    if name_purpose:
+        return _process_router_name_purpose(
+            catalog, candidate, ctx, name_purpose, provider_hint)
+    return _process_matched_catalog_candidate(catalog, candidate, ctx, provider_hint)
+
 
 def build_model_catalog(
     discovered_models: list,
@@ -625,6 +718,3 @@ def build_model_catalog(
         if record:
             unmatched.append(record)
     return catalog, rejections, unmatched
-
-
-

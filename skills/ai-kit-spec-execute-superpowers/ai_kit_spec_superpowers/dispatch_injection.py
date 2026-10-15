@@ -14,7 +14,11 @@ from ai_kit_spec.commands import build_execute_command
 from ai_kit_spec.config_io import cfg_resolve
 from ai_kit_spec.error_classifier import classify_error
 from ai_kit_spec.execute_dispatch import dispatch_execute
-from ai_kit_spec.execute_selection import candidates_to_ladder, resolve_execute_candidates
+from ai_kit_spec.execute_selection import (
+    ExecuteResolveOptions,
+    candidates_to_ladder,
+    resolve_execute_candidates,
+)
 from ai_kit_spec.quota import entry_reason, resolve_ladder_pick
 
 from ai_kit_spec_superpowers.task_classification import (
@@ -225,8 +229,11 @@ def _narrow_and_rank(task_markdown: str, candidates: list, files_touched_sizes: 
     # stderr warning; an explicit purpose = "execute" entry raises ValueError, which the CLI
     # turns into an exit-2 error. Never silently routed to another CLI.
     ranked = resolve_execute_candidates(
-        candidates, task_type, required_context, affinity_table, top_n_keys,
-        warn_fn=lambda msg: print(msg, file=sys.stderr))
+        candidates,
+        ExecuteResolveOptions(
+            task_type, required_context, affinity_table, top_n_keys,
+            warn_fn=lambda msg: print(msg, file=sys.stderr)),
+    )
     return task_type, required_context, ranked
 
 

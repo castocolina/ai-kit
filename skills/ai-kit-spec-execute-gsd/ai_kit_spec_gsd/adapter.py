@@ -8,7 +8,11 @@ true frontmatter); otherwise an honest fallback notice that makes no unenforced 
 import sys
 
 from ai_kit_spec.config_io import cfg_resolve
-from ai_kit_spec.execute_selection import candidates_to_ladder, resolve_execute_candidates
+from ai_kit_spec.execute_selection import (
+    ExecuteResolveOptions,
+    candidates_to_ladder,
+    resolve_execute_candidates,
+)
 from ai_kit_spec.quota import resolve_ladder_pick
 
 from ai_kit_spec_gsd.gsd_config import (
@@ -98,8 +102,12 @@ def resolve_gsd_dispatch(candidates: list, top_n_keys: list, gsd_config: dict,
     # D-15 (Phase 16.1): the screen drops purpose-unset/"both" claude/grok ladder entries with a
     # stderr warning and raises ValueError on an explicit purpose = "execute" -- the ValueError
     # is deliberately NOT caught here; the CLI turns it into an exit-2 error.
-    ranked = resolve_execute_candidates(candidates, None, required_context, {}, top_n_keys,
-                                         warn_fn=lambda msg: print(msg, file=sys.stderr))
+    ranked = resolve_execute_candidates(
+        candidates,
+        ExecuteResolveOptions(
+            None, required_context, {}, top_n_keys,
+            warn_fn=lambda msg: print(msg, file=sys.stderr)),
+    )
     if not ranked:
         return _fallback_notice(
             None, "all_candidates_context_rejected",

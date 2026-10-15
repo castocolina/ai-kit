@@ -201,6 +201,55 @@ def _normalize_minmax(raw: dict, invert: bool = False) -> dict:
     return {k: scale(v) for k, v in raw.items()}
 
 
+def _axis_norm_maps(survivors: list) -> dict[str, dict]:
+    price_norm = _normalize_minmax(
+        {e["key"]: e.get("pricing", {}).get("input_per_1m") for e in survivors}, invert=True)
+    speed_norm = _normalize_minmax({e["key"]: e.get("tokens_per_sec") for e in survivors})
+    ctx_norm = _normalize_minmax({
+        e["key"]: (math.log10(w) if (w := _max_context_window(e)) else None) for e in survivors
+    })
+    intelligence_norm = _normalize_minmax(
+        {e["key"]: e.get("scores", {}).get("intelligence_index") for e in survivors})
+    coding_norm = _normalize_minmax(
+        {e["key"]: e.get("scores", {}).get("coding_index") for e in survivors})
+    agentic_norm = _normalize_minmax(
+        {e["key"]: e.get("scores", {}).get("agentic_index") for e in survivors})
+    return {
+        "intelligence_index": intelligence_norm,
+        "coding_index": coding_norm,
+        "agentic_index": agentic_norm,
+        "context_window": ctx_norm,
+        "price": price_norm,
+        "speed": speed_norm,
+    }
+
+
+def _score_one_entry(entry: dict, axis_weights: dict, norm_maps: dict, bonuses: dict) -> dict:
+    tool_call = entry.get("tool_calling")
+    key = entry["key"]
+    axis_values = {
+        "intelligence_index": norm_maps["intelligence_index"][key],
+        "coding_index": norm_maps["coding_index"][key],
+        "agentic_index": norm_maps["agentic_index"][key],
+        "tool_calling": 100.0 if tool_call is True else (0.0 if tool_call is False else None),
+        "context_window": norm_maps["context_window"][key],
+        "price": norm_maps["price"][key],
+        "speed": norm_maps["speed"][key],
+    }
+    present = {a: (v if v is not None else _MISSING_AXIS_DEFAULT) for a, v in axis_values.items()}
+    weight_sum = sum(axis_weights[a] for a in present)
+    base = (sum(axis_weights[a] * v for a, v in present.items()) / weight_sum
+            if weight_sum else 0.0)
+    bonus = 0.0
+    if entry.get("batch_mode"):
+        bonus += bonuses["batch_mode"]
+    if entry.get("fallback_quota"):
+        bonus += bonuses["fallback_quota"]
+    bonus = min(bonus, bonuses["bonus_cap"])
+    score = min(100.0, base + bonus)
+    return {**entry, "score": round(score, 1)}
+
+
 def score_candidates(entries: list, purpose: str, weights: dict) -> list:
     """purpose: "planning", "general", "mechanical", "execution", "review", or aliases
     "execute" (-> execution) / "review" (-> itself). Every axis always contributes; an axis
@@ -222,43 +271,7 @@ def score_candidates(entries: list, purpose: str, weights: dict) -> list:
     floor = axis_weights.get(_FLOOR_KEY) or {}
     survivors = [e for e in entries if _passes_floor(e, floor)]
 
-    # Normalize only on survivors to prevent excluded candidates from skewing the ranges
-    price_raw = {e["key"]: e.get("pricing", {}).get("input_per_1m") for e in survivors}
-    price_norm = _normalize_minmax(price_raw, invert=True)
-    speed_norm = _normalize_minmax({e["key"]: e.get("tokens_per_sec") for e in survivors})
-    ctx_raw = {e["key"]: (math.log10(w) if (w := _max_context_window(e)) else None)
-               for e in survivors}
-    ctx_norm = _normalize_minmax(ctx_raw)
-    intelligence_norm = _normalize_minmax(
-        {e["key"]: e.get("scores", {}).get("intelligence_index") for e in survivors})
-    coding_norm = _normalize_minmax(
-        {e["key"]: e.get("scores", {}).get("coding_index") for e in survivors})
-    agentic_norm = _normalize_minmax(
-        {e["key"]: e.get("scores", {}).get("agentic_index") for e in survivors})
-
-    scored = []
-    for e in survivors:
-        tool_call = e.get("tool_calling")
-        axis_values = {
-            "intelligence_index": intelligence_norm[e["key"]],
-            "coding_index": coding_norm[e["key"]],
-            "agentic_index": agentic_norm[e["key"]],
-            "tool_calling": 100.0 if tool_call is True else (0.0 if tool_call is False else None),
-            "context_window": ctx_norm[e["key"]],
-            "price": price_norm[e["key"]],
-            "speed": speed_norm[e["key"]],
-        }
-        present = {a: (v if v is not None else _MISSING_AXIS_DEFAULT)
-                   for a, v in axis_values.items()}
-        weight_sum = sum(axis_weights[a] for a in present)
-        base = (sum(axis_weights[a] * v for a, v in present.items()) / weight_sum
-                if weight_sum else 0.0)
-        bonus = 0.0
-        if e.get("batch_mode"):
-            bonus += weights["bonuses"]["batch_mode"]
-        if e.get("fallback_quota"):
-            bonus += weights["bonuses"]["fallback_quota"]
-        bonus = min(bonus, weights["bonuses"]["bonus_cap"])
-        score = min(100.0, base + bonus)
-        scored.append({**e, "score": round(score, 1)})
+    norm_maps = _axis_norm_maps(survivors)
+    bonuses = weights["bonuses"]
+    scored = [_score_one_entry(e, axis_weights, norm_maps, bonuses) for e in survivors]
     return sorted(scored, key=lambda e: e["score"], reverse=True)

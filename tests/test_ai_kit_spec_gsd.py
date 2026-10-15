@@ -1163,8 +1163,9 @@ class TestGsdPurposeFilterInertness(unittest.TestCase):
             {"key": "gsd-style-untagged", "context_limit": 1_000_000},
         ]
         result = execute_selection.resolve_execute_candidates(
-            candidates, task_type=None, required_context=1000,
-            affinity_table={}, top_n_keys=[])
+            candidates,
+            execute_selection.ExecuteResolveOptions(None, 1000, {}, []),
+        )
         # Only the untagged candidate survives -- resolve_execute_candidates wants
         # purpose="execute", and an entry explicitly tagged purpose="review" correctly
         # does NOT match that (this is filter_by_purpose working as intended, not a bug).

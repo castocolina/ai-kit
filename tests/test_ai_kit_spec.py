@@ -5034,7 +5034,8 @@ class TestExecuteLadderScreen(unittest.TestCase):
 
     def _screen(self, candidates, warn_fn=None):
         return execute_selection.resolve_execute_candidates(
-            candidates, None, 0, {}, [], warn_fn=warn_fn
+            candidates,
+            execute_selection.ExecuteResolveOptions(None, 0, {}, [], warn_fn),
         )
 
     def test_purpose_none_claude_entry_is_skipped_with_a_warning(self):
@@ -5155,10 +5156,7 @@ class TestResolveExecuteCandidates(unittest.TestCase):
         ]
         result = execute_selection.resolve_execute_candidates(
             candidates,
-            task_type="backend",
-            required_context=1000,
-            affinity_table={},
-            top_n_keys=["b", "a"],
+            execute_selection.ExecuteResolveOptions("backend", 1000, {}, ["b", "a"]),
         )
         self.assertEqual([c["key"] for c in result], ["b", "a", "c"])
 
@@ -5169,10 +5167,7 @@ class TestResolveExecuteCandidates(unittest.TestCase):
         ]
         result = execute_selection.resolve_execute_candidates(
             candidates,
-            task_type="backend",
-            required_context=1000,
-            affinity_table={},
-            top_n_keys=["unknown", "confirmed"],
+            execute_selection.ExecuteResolveOptions("backend", 1000, {}, ["unknown", "confirmed"]),
         )
         self.assertEqual([c["key"] for c in result], ["confirmed", "unknown"])
 
@@ -5192,7 +5187,7 @@ class TestResolveExecuteCandidates(unittest.TestCase):
             },
         ]
         result = execute_selection.resolve_execute_candidates(
-            candidates, task_type="backend", required_context=1000, affinity_table={}, top_n_keys=[]
+            candidates, execute_selection.ExecuteResolveOptions("backend", 1000, {}, []),
         )
         self.assertEqual([c["key"] for c in result], ["both-ok"])
 
@@ -5214,7 +5209,7 @@ class TestTaskAffinityMatchBonus(unittest.TestCase):
             {"key": "exact-match", "task_affinity": "backend", "context_limit": 1_000_000},
         ]
         result = execute_selection.resolve_execute_candidates(
-            candidates, task_type="backend", required_context=1000, affinity_table={}, top_n_keys=[]
+            candidates, execute_selection.ExecuteResolveOptions("backend", 1000, {}, []),
         )  # neither is in top_n_keys -- both share the
         # same fallback rank (len(top_n_keys)), so this IS a genuine rank tie.
         self.assertEqual([c["key"] for c in result], ["exact-match", "untagged"])
@@ -5228,10 +5223,7 @@ class TestTaskAffinityMatchBonus(unittest.TestCase):
         ]
         result = execute_selection.resolve_execute_candidates(
             candidates,
-            task_type="backend",
-            required_context=1000,
-            affinity_table={},
-            top_n_keys=["b", "a"],
+            execute_selection.ExecuteResolveOptions("backend", 1000, {}, ["b", "a"]),
         )
         self.assertEqual([c["key"] for c in result], ["b", "a"])
 
@@ -5246,10 +5238,8 @@ class TestTaskAffinityMatchBonus(unittest.TestCase):
         ]
         result = execute_selection.resolve_execute_candidates(
             candidates,
-            task_type="backend",
-            required_context=1000,
-            affinity_table={},
-            top_n_keys=["top-ranked-untagged", "low-ranked-match"],
+            execute_selection.ExecuteResolveOptions(
+                "backend", 1000, {}, ["top-ranked-untagged", "low-ranked-match"]),
         )
         self.assertEqual([c["key"] for c in result], ["top-ranked-untagged", "low-ranked-match"])
 
