@@ -3408,16 +3408,16 @@ class TestMainCli(unittest.TestCase):
 
         captured = {}
 
-        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
-            captured["candidate"] = candidate
-            captured["prompt"] = prompt
-            captured["target_dir"] = target_dir
-            captured["heartbeat_interval"] = heartbeat_interval
-            captured["timeout"] = timeout
-            captured["kw"] = kw
+        def fake_dispatch(spec, **kw):
+            captured["candidate"] = spec.candidate
+            captured["prompt"] = spec.prompt
+            captured["target_dir"] = spec.target_dir
+            captured["heartbeat_interval"] = spec.heartbeat_interval
+            captured["timeout"] = spec.timeout
+            captured["format_block"] = spec.format_block
             return {
-                "cli": candidate["cli"],
-                "model": candidate["model"],
+                "cli": spec.candidate["cli"],
+                "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
                 "stdout": "done",
@@ -3458,7 +3458,7 @@ class TestMainCli(unittest.TestCase):
         self.assertEqual(captured["target_dir"], "/scratch/run1")
         self.assertEqual(captured["heartbeat_interval"], 30)  # default
         self.assertEqual(captured["timeout"], 600)
-        self.assertIsNone(captured["kw"]["format_block"])
+        self.assertIsNone(captured["format_block"])
 
     def test_dispatch_execute_reads_optional_format_block_file(self):
         import io
@@ -3466,11 +3466,11 @@ class TestMainCli(unittest.TestCase):
 
         captured = {}
 
-        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
-            captured["kw"] = kw
+        def fake_dispatch(spec, **kw):
+            captured["format_block"] = spec.format_block
             return {
-                "cli": candidate["cli"],
-                "model": candidate["model"],
+                "cli": spec.candidate["cli"],
+                "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
                 "stdout": "",
@@ -3506,7 +3506,7 @@ class TestMainCli(unittest.TestCase):
                     dispatch_execute_fn=fake_dispatch,
                 )
         self.assertEqual(code, 0)
-        self.assertEqual(captured["kw"]["format_block"], "FORMAT-BLOCK-MARKER")
+        self.assertEqual(captured["format_block"], "FORMAT-BLOCK-MARKER")
 
     def test_dispatch_execute_passes_effort_and_service_tier_into_the_candidate(self):
         import io
@@ -3514,11 +3514,11 @@ class TestMainCli(unittest.TestCase):
 
         captured = {}
 
-        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
-            captured["candidate"] = candidate
+        def fake_dispatch(spec, **kw):
+            captured["candidate"] = spec.candidate
             return {
-                "cli": candidate["cli"],
-                "model": candidate["model"],
+                "cli": spec.candidate["cli"],
+                "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
                 "stdout": "",
@@ -3598,11 +3598,11 @@ class TestMainCli(unittest.TestCase):
 
         captured = {}
 
-        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
-            captured["prompt"] = prompt
+        def fake_dispatch(spec, **kw):
+            captured["prompt"] = spec.prompt
             return {
-                "cli": candidate["cli"],
-                "model": candidate["model"],
+                "cli": spec.candidate["cli"],
+                "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
                 "stdout": "",
@@ -3638,10 +3638,10 @@ class TestMainCli(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
 
-        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
+        def fake_dispatch(spec, **kw):
             return {
-                "cli": candidate["cli"],
-                "model": candidate["model"],
+                "cli": spec.candidate["cli"],
+                "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
                 "stdout": "# Phase Summary\n...",
@@ -3680,10 +3680,10 @@ class TestMainCli(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
 
-        def fake_dispatch(candidate, prompt, target_dir, heartbeat_interval, timeout, **kw):
+        def fake_dispatch(spec, **kw):
             return {
-                "cli": candidate["cli"],
-                "model": candidate["model"],
+                "cli": spec.candidate["cli"],
+                "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 3,
                 "stdout": "partial",
@@ -4358,7 +4358,15 @@ class TestDispatchExecute(unittest.TestCase):
     def test_native_candidate_raises_rather_than_dispatch(self):
         candidate = {"cli": None, "model": "opus", "key": "opus-native"}
         with self.assertRaises(ValueError) as ctx:
-            execute_dispatch.dispatch_execute(candidate, "do the task", "/scratch/run1", 30, 600)
+            execute_dispatch.dispatch_execute(
+                execute_dispatch.ExecuteDispatchSpec(
+                    candidate=candidate,
+                    prompt="do the task",
+                    target_dir="/scratch/run1",
+                    heartbeat_interval=30,
+                    timeout=600,
+                )
+            )
         self.assertIn("native", str(ctx.exception).lower())
 
     def test_builds_real_command_and_dispatches_with_composed_prompt(self):
@@ -4373,7 +4381,14 @@ class TestDispatchExecute(unittest.TestCase):
             return {"returncode": 0, "stdout": "done", "stderr": "", "timed_out": False}
 
         result = execute_dispatch.dispatch_execute(
-            candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch
+            execute_dispatch.ExecuteDispatchSpec(
+                candidate=candidate,
+                prompt="do the task",
+                target_dir="/scratch/run1",
+                heartbeat_interval=30,
+                timeout=600,
+            ),
+            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
         )
         self.assertEqual(
             captured["command"],
@@ -4408,7 +4423,14 @@ class TestDispatchExecute(unittest.TestCase):
             return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
 
         execute_dispatch.dispatch_execute(
-            candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch
+            execute_dispatch.ExecuteDispatchSpec(
+                candidate=candidate,
+                prompt="do the task",
+                target_dir="/scratch/run1",
+                heartbeat_interval=30,
+                timeout=600,
+            ),
+            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
         )
         self.assertIn("NO operating-system-level write confinement", captured["prompt"])
         self.assertIn("/scratch/run1", captured["prompt"])
@@ -4422,7 +4444,14 @@ class TestDispatchExecute(unittest.TestCase):
             return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
 
         execute_dispatch.dispatch_execute(
-            candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch
+            execute_dispatch.ExecuteDispatchSpec(
+                candidate=candidate,
+                prompt="do the task",
+                target_dir="/scratch/run1",
+                heartbeat_interval=30,
+                timeout=600,
+            ),
+            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
         )
         self.assertNotIn("NO operating-system-level write confinement", captured["prompt"])
 
@@ -4435,15 +4464,17 @@ class TestDispatchExecute(unittest.TestCase):
             return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
 
         execute_dispatch.dispatch_execute(
-            candidate,
-            "do the task",
-            "/scratch/run1",
-            30,
-            600,
-            tool_availability={"codegraph": True},
-            agents_tooling_path="/repo/AGENTS-TOOLING.md",
-            codegraph_registered=True,
-            dispatch_fn=fake_dispatch,
+            execute_dispatch.ExecuteDispatchSpec(
+                candidate=candidate,
+                prompt="do the task",
+                target_dir="/scratch/run1",
+                heartbeat_interval=30,
+                timeout=600,
+                tool_availability={"codegraph": True},
+                agents_tooling_path="/repo/AGENTS-TOOLING.md",
+                codegraph_registered=True,
+            ),
+            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
         )
         self.assertIn("/repo/AGENTS-TOOLING.md", captured["prompt"])
         self.assertIn("codegraph_explore", captured["prompt"])
@@ -4461,13 +4492,15 @@ class TestDispatchExecute(unittest.TestCase):
             return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
 
         execute_dispatch.dispatch_execute(
-            candidate,
-            "do the task",
-            "/scratch/run1",
-            30,
-            600,
-            format_block="FORMAT-BLOCK-MARKER",
-            dispatch_fn=fake_dispatch,
+            execute_dispatch.ExecuteDispatchSpec(
+                candidate=candidate,
+                prompt="do the task",
+                target_dir="/scratch/run1",
+                heartbeat_interval=30,
+                timeout=600,
+                format_block="FORMAT-BLOCK-MARKER",
+            ),
+            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
         )
         self.assertIn("FORMAT-BLOCK-MARKER", captured["prompt"])
 
@@ -4486,7 +4519,14 @@ class TestDispatchExecute(unittest.TestCase):
             return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
 
         execute_dispatch.dispatch_execute(
-            candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch
+            execute_dispatch.ExecuteDispatchSpec(
+                candidate=candidate,
+                prompt="do the task",
+                target_dir="/scratch/run1",
+                heartbeat_interval=30,
+                timeout=600,
+            ),
+            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
         )
         self.assertIn('model_reasoning_effort="high"', captured["command"])
         self.assertIn('service_tier="priority"', captured["command"])
@@ -4520,8 +4560,9 @@ class TestDispatchWithHeartbeat(unittest.TestCase):
                 "prompt text",
                 heartbeat_interval=1,
                 timeout=30,
-                popen_fn=lambda *a, **k: FakeProcess(),
-                time_fn=fake_time,
+                seams=dispatch.HeartbeatDispatchSeams(
+                    popen_fn=lambda *a, **k: FakeProcess(), time_fn=fake_time
+                ),
             )
         self.assertEqual(out.getvalue(), "")
         self.assertIn("still running", err.getvalue())
@@ -4546,9 +4587,9 @@ class TestDispatchWithHeartbeat(unittest.TestCase):
             "prompt text",
             heartbeat_interval=1,
             timeout=30,
-            popen_fn=lambda *a, **k: FakeProcess(),
-            time_fn=fake_time,
-            print_fn=printed.append,
+            seams=dispatch.HeartbeatDispatchSeams(
+                popen_fn=lambda *a, **k: FakeProcess(), time_fn=fake_time, print_fn=printed.append
+            ),
         )
         self.assertTrue(any("still running" in line for line in printed))
 
@@ -4569,8 +4610,9 @@ class TestDispatchWithHeartbeat(unittest.TestCase):
             "the prompt",
             heartbeat_interval=60,
             timeout=30,
-            popen_fn=lambda *a, **k: proc,
-            print_fn=lambda *a: None,
+            seams=dispatch.HeartbeatDispatchSeams(
+                popen_fn=lambda *a, **k: proc, print_fn=lambda *a: None
+            ),
         )
         proc.stdin.write.assert_not_called()
 
@@ -4587,8 +4629,9 @@ class TestDispatchWithHeartbeat(unittest.TestCase):
             "prompt",
             heartbeat_interval=60,
             timeout=30,
-            popen_fn=lambda *a, **k: FakeProcess(),
-            print_fn=lambda *a: None,
+            seams=dispatch.HeartbeatDispatchSeams(
+                popen_fn=lambda *a, **k: FakeProcess(), print_fn=lambda *a: None
+            ),
         )
         self.assertEqual(
             result, {"returncode": 0, "stdout": "all good", "stderr": "", "timed_out": False}
@@ -4621,10 +4664,12 @@ class TestDispatchWithHeartbeat(unittest.TestCase):
             "prompt",
             heartbeat_interval=1000,
             timeout=1,
-            popen_fn=lambda *a, **k: proc,
-            time_fn=iter([0, 2]).__next__,
-            kill_fn=fake_kill_fn,
-            print_fn=lambda *a: None,
+            seams=dispatch.HeartbeatDispatchSeams(
+                popen_fn=lambda *a, **k: proc,
+                time_fn=iter([0, 2]).__next__,
+                kill_fn=fake_kill_fn,
+                print_fn=lambda *a: None,
+            ),
         )
         self.assertTrue(result["timed_out"])
         self.assertEqual(killed_targets, [proc])
@@ -4673,12 +4718,14 @@ class TestDispatchWithPolling(unittest.TestCase):
             ["echo", "hi"],
             "the prompt",
             timeout_tiers=[600],
-            poll_interval=50,
-            popen_fn=fake_popen,
-            time_fn=lambda: next(times),
-            sleep_fn=lambda s: None,
-            kill_fn=self._fake_kill,
-            print_fn=lambda *a: None,
+            seams=dispatch.PollingDispatchSeams(
+                poll_interval=50,
+                popen_fn=fake_popen,
+                time_fn=lambda: next(times),
+                sleep_fn=lambda s: None,
+                kill_fn=self._fake_kill,
+                print_fn=lambda *a: None,
+            ),
         )
 
         self.assertEqual(written["command"], ["echo", "hi"])
@@ -4715,12 +4762,14 @@ class TestDispatchWithPolling(unittest.TestCase):
             ["slow-cmd"],
             "p",
             timeout_tiers=[10, 600],
-            poll_interval=50,
-            popen_fn=fake_popen,
-            time_fn=lambda: next(times),
-            sleep_fn=lambda s: None,
-            kill_fn=recording_kill,
-            print_fn=lambda *a: None,
+            seams=dispatch.PollingDispatchSeams(
+                poll_interval=50,
+                popen_fn=fake_popen,
+                time_fn=lambda: next(times),
+                sleep_fn=lambda s: None,
+                kill_fn=recording_kill,
+                print_fn=lambda *a: None,
+            ),
         )
 
         self.assertEqual(len(attempts), 2)
@@ -4744,12 +4793,14 @@ class TestDispatchWithPolling(unittest.TestCase):
             ["never-finishes"],
             "p",
             timeout_tiers=[10, 10],
-            poll_interval=50,
-            popen_fn=fake_popen,
-            time_fn=lambda: next(times),
-            sleep_fn=lambda s: None,
-            kill_fn=self._fake_kill,
-            print_fn=lambda *a: None,
+            seams=dispatch.PollingDispatchSeams(
+                poll_interval=50,
+                popen_fn=fake_popen,
+                time_fn=lambda: next(times),
+                sleep_fn=lambda s: None,
+                kill_fn=self._fake_kill,
+                print_fn=lambda *a: None,
+            ),
         )
 
         self.assertTrue(result["timed_out"])
@@ -4770,12 +4821,14 @@ class TestDispatchWithPolling(unittest.TestCase):
             ["cmd"],
             "p",
             timeout_tiers=[10],
-            poll_interval=3,
-            popen_fn=fake_popen,
-            time_fn=lambda: next(times),
-            sleep_fn=lambda s: None,
-            kill_fn=self._fake_kill,
-            print_fn=lambda *a: printed.append(" ".join(map(str, a))),
+            seams=dispatch.PollingDispatchSeams(
+                poll_interval=3,
+                popen_fn=fake_popen,
+                time_fn=lambda: next(times),
+                sleep_fn=lambda s: None,
+                kill_fn=self._fake_kill,
+                print_fn=lambda *a: printed.append(" ".join(map(str, a))),
+            ),
         )
 
         self.assertTrue(any("100 bytes" in line or "total 100" in line for line in printed))
@@ -4802,12 +4855,14 @@ class TestDispatchWithPolling(unittest.TestCase):
             ["fast-cmd"],
             "p",
             timeout_tiers=[600],
-            poll_interval=150,
-            popen_fn=fake_popen,
-            time_fn=fake_time,
-            sleep_fn=sleeps.append,
-            kill_fn=self._fake_kill,
-            print_fn=lambda *a: printed.append(" ".join(map(str, a))),
+            seams=dispatch.PollingDispatchSeams(
+                poll_interval=150,
+                popen_fn=fake_popen,
+                time_fn=fake_time,
+                sleep_fn=sleeps.append,
+                kill_fn=self._fake_kill,
+                print_fn=lambda *a: printed.append(" ".join(map(str, a))),
+            ),
         )
 
         self.assertFalse(result["timed_out"])
@@ -4825,7 +4880,12 @@ class TestDispatchWithPolling(unittest.TestCase):
         # Reachable from a config with `timeout_tiers = []`; returning None used to surface
         # downstream as an opaque TypeError where the CLI subscripts result["stdout"].
         with self.assertRaises(ValueError):
-            dispatch.dispatch_with_polling([], "p", timeout_tiers=[], popen_fn=lambda *a, **k: None)
+            dispatch.dispatch_with_polling(
+                [],
+                "p",
+                timeout_tiers=[],
+                seams=dispatch.PollingDispatchSeams(popen_fn=lambda *a, **k: None),
+            )
 
 
 class TestBuildExecuteCommand(unittest.TestCase):
@@ -5218,22 +5278,26 @@ class TestDispatchReviewer(unittest.TestCase):
             }
 
         result = reviewer_dispatch.dispatch_reviewer(
-            {
-                "key": "codex-sol",
-                "model": "gpt-5.6-sol",
-                "vendor": "openai",
-                "cli": "codex",
-                "command": "codex exec --sandbox read-only -m {model}",
-                "extra": {},
-            },
-            "Read the checklist and review...",
-            timeout_tiers=[600, 1200],
-            tool_availability={"rg": True},
-            agents_tooling_path=None,
-            dispatch_fn=fake_dispatch,
-            build_tooling_guidance_fn=lambda *a, **kw: "TOOLING GUIDANCE HERE",
-            resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
-            codegraph_health_fn=lambda cli: True,
+            reviewer_dispatch.ReviewerDispatchSpec(
+                reviewer_entry={
+                    "key": "codex-sol",
+                    "model": "gpt-5.6-sol",
+                    "vendor": "openai",
+                    "cli": "codex",
+                    "command": "codex exec --sandbox read-only -m {model}",
+                    "extra": {},
+                },
+                prompt="Read the checklist and review...",
+                timeout_tiers=[600, 1200],
+                tool_availability={"rg": True},
+                agents_tooling_path=None,
+            ),
+            seams=reviewer_dispatch.ReviewerSeams(
+                dispatch_fn=fake_dispatch,
+                build_tooling_guidance_fn=lambda *a, **kw: "TOOLING GUIDANCE HERE",
+                resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
+                codegraph_health_fn=lambda cli: True,
+            ),
         )
 
         self.assertEqual(captured["timeout_tiers"], [600, 1200])
@@ -5263,21 +5327,25 @@ class TestDispatchReviewer(unittest.TestCase):
             }
 
         reviewer_dispatch.dispatch_reviewer(
-            {
-                "key": "grok-flagship",
-                "model": "grok-4.6",
-                "vendor": "xai",
-                "cli": "grok",
-                "command": "grok -p {prompt} -m {model}",
-                "extra": {},
-            },
-            "Read the checklist and review...",
-            timeout_tiers=[600],
-            tool_availability={"rg": True},
-            agents_tooling_path=None,
-            dispatch_fn=fake_dispatch,
-            resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
-            codegraph_health_fn=lambda cli: False,
+            reviewer_dispatch.ReviewerDispatchSpec(
+                reviewer_entry={
+                    "key": "grok-flagship",
+                    "model": "grok-4.6",
+                    "vendor": "xai",
+                    "cli": "grok",
+                    "command": "grok -p {prompt} -m {model}",
+                    "extra": {},
+                },
+                prompt="Read the checklist and review...",
+                timeout_tiers=[600],
+                tool_availability={"rg": True},
+                agents_tooling_path=None,
+            ),
+            seams=reviewer_dispatch.ReviewerSeams(
+                dispatch_fn=fake_dispatch,
+                resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
+                codegraph_health_fn=lambda cli: False,
+            ),
         )
 
         # argv dispatch: the full prompt (guidance + caller prompt) is ONE argv element
@@ -5310,21 +5378,25 @@ class TestDispatchReviewer(unittest.TestCase):
             return ""
 
         reviewer_dispatch.dispatch_reviewer(
-            {
-                "key": "k",
-                "model": "m",
-                "vendor": "v",
-                "cli": "codex",
-                "command": "codex exec -m {model}",
-                "extra": {},
-            },
-            "p",
-            timeout_tiers=[600],
-            tool_availability={"codegraph": True},
-            dispatch_fn=fake_dispatch,
-            build_tooling_guidance_fn=fake_guidance,
-            resolve_shared_reference_fn=lambda: None,
-            codegraph_health_fn=fake_health,
+            reviewer_dispatch.ReviewerDispatchSpec(
+                reviewer_entry={
+                    "key": "k",
+                    "model": "m",
+                    "vendor": "v",
+                    "cli": "codex",
+                    "command": "codex exec -m {model}",
+                    "extra": {},
+                },
+                prompt="p",
+                timeout_tiers=[600],
+                tool_availability={"codegraph": True},
+            ),
+            seams=reviewer_dispatch.ReviewerSeams(
+                dispatch_fn=fake_dispatch,
+                build_tooling_guidance_fn=fake_guidance,
+                resolve_shared_reference_fn=lambda: None,
+                codegraph_health_fn=fake_health,
+            ),
         )
 
         self.assertEqual(asked, ["codex"])
@@ -5344,20 +5416,24 @@ class TestDispatchReviewer(unittest.TestCase):
             }
 
         reviewer_dispatch.dispatch_reviewer(
-            {
-                "key": "custom",
-                "model": "m",
-                "vendor": "v",
-                "cli": None,
-                "command": "my-script --model {model} --prompt {prompt}",
-                "extra": {},
-            },
-            "p",
-            timeout_tiers=[600],
-            tool_availability={},
-            dispatch_fn=fake_dispatch,
-            resolve_shared_reference_fn=lambda: None,
-            codegraph_health_fn=lambda cli: asked.append(cli) or True,
+            reviewer_dispatch.ReviewerDispatchSpec(
+                reviewer_entry={
+                    "key": "custom",
+                    "model": "m",
+                    "vendor": "v",
+                    "cli": None,
+                    "command": "my-script --model {model} --prompt {prompt}",
+                    "extra": {},
+                },
+                prompt="p",
+                timeout_tiers=[600],
+                tool_availability={},
+            ),
+            seams=reviewer_dispatch.ReviewerSeams(
+                dispatch_fn=fake_dispatch,
+                resolve_shared_reference_fn=lambda: None,
+                codegraph_health_fn=lambda cli: asked.append(cli) or True,
+            ),
         )
 
         self.assertEqual(asked, [])
@@ -5365,19 +5441,22 @@ class TestDispatchReviewer(unittest.TestCase):
     def test_malformed_entry_without_a_command_template_raises_value_error(self):
         with self.assertRaises(ValueError):
             reviewer_dispatch.dispatch_reviewer(
-                {
-                    "key": "broken",
-                    "model": "m",
-                    "vendor": "v",
-                    "cli": "codex",
-                    "command": None,
-                    "extra": {},
-                },
-                "p",
-                timeout_tiers=[600],
-                tool_availability={},
-                resolve_shared_reference_fn=lambda: None,
-                codegraph_health_fn=lambda cli: False,
+                reviewer_dispatch.ReviewerDispatchSpec(
+                    reviewer_entry={
+                        "key": "broken",
+                        "model": "m",
+                        "vendor": "v",
+                        "cli": "codex",
+                        "command": None,
+                        "extra": {},
+                    },
+                    prompt="p",
+                    timeout_tiers=[600],
+                    tool_availability={},
+                ),
+                seams=reviewer_dispatch.ReviewerSeams(
+                    resolve_shared_reference_fn=lambda: None, codegraph_health_fn=lambda cli: False
+                ),
             )
 
     def test_dispatch_reviewer_cli_subcommand_stdout_only_prints_raw_report(self):
@@ -5405,8 +5484,8 @@ class TestDispatchReviewer(unittest.TestCase):
                 )
             seen = {}
 
-            def fake_dispatch_reviewer(reviewer_entry, prompt, timeout_tiers, *a, **kw):
-                seen["entry"] = reviewer_entry
+            def fake_dispatch_reviewer(spec, *a, **kw):
+                seen["entry"] = spec.reviewer_entry
                 return {
                     "returncode": 0,
                     "stdout": "### Status: Approved\n",
@@ -10378,21 +10457,25 @@ class TestDispatchReviewerRealChild(unittest.TestCase):
             env.update({s: "1" for s in signals})
             with unittest.mock.patch.dict(os.environ, env, clear=True):
                 result = reviewer_dispatch.dispatch_reviewer(
-                    {
-                        "key": "k",
-                        "model": "m",
-                        "vendor": "v",
-                        "cli": None,
-                        "command": command,
-                        "extra": {},
-                    },
-                    "p",
-                    timeout_tiers=[60],
-                    tool_availability={},
-                    dispatch_fn=dispatch.dispatch_with_polling,
-                    build_tooling_guidance_fn=lambda *a, **kw: "",
-                    resolve_shared_reference_fn=lambda: None,
-                    codegraph_health_fn=lambda cli: False,
+                    reviewer_dispatch.ReviewerDispatchSpec(
+                        reviewer_entry={
+                            "key": "k",
+                            "model": "m",
+                            "vendor": "v",
+                            "cli": None,
+                            "command": command,
+                            "extra": {},
+                        },
+                        prompt="p",
+                        timeout_tiers=[60],
+                        tool_availability={},
+                    ),
+                    seams=reviewer_dispatch.ReviewerSeams(
+                        dispatch_fn=dispatch.dispatch_with_polling,
+                        build_tooling_guidance_fn=lambda *a, **kw: "",
+                        resolve_shared_reference_fn=lambda: None,
+                        codegraph_health_fn=lambda cli: False,
+                    ),
                 )
             self.assertEqual(result["returncode"], 0, result["stderr"])
             with open(outfile, encoding="utf-8") as f:
@@ -10425,8 +10508,7 @@ class TestFakePopenArgvContract(unittest.TestCase):
             "prompt",
             heartbeat_interval=60,
             timeout=30,
-            popen_fn=fake_popen,
-            print_fn=lambda *a: None,
+            seams=dispatch.HeartbeatDispatchSeams(popen_fn=fake_popen, print_fn=lambda *a: None),
         )
         self.assertEqual(recorded["argv"], ["echo", "hi"])
         self.assertFalse(recorded.get("shell", False))
@@ -10436,13 +10518,20 @@ class TestFakePopenArgvContract(unittest.TestCase):
     def test_heartbeat_empty_argv_raises_value_error(self):
         with self.assertRaises(ValueError):
             dispatch.dispatch_with_heartbeat(
-                [], "p", heartbeat_interval=60, timeout=30, print_fn=lambda *a: None
+                [],
+                "p",
+                heartbeat_interval=60,
+                timeout=30,
+                seams=dispatch.HeartbeatDispatchSeams(print_fn=lambda *a: None),
             )
 
     def test_polling_empty_argv_raises_value_error(self):
         with self.assertRaises(ValueError):
             dispatch.dispatch_with_polling(
-                [], "p", timeout_tiers=[60], popen_fn=lambda *a, **k: None
+                [],
+                "p",
+                timeout_tiers=[60],
+                seams=dispatch.PollingDispatchSeams(popen_fn=lambda *a, **k: None),
             )
 
     def test_heartbeat_spawn_oserror_maps_to_returncode_127(self):
@@ -10454,8 +10543,7 @@ class TestFakePopenArgvContract(unittest.TestCase):
             "p",
             heartbeat_interval=60,
             timeout=30,
-            popen_fn=failing_popen,
-            print_fn=lambda *a: None,
+            seams=dispatch.HeartbeatDispatchSeams(popen_fn=failing_popen, print_fn=lambda *a: None),
         )
         self.assertEqual(result["returncode"], 127)
         self.assertIn("No such file or directory", result["stderr"])
@@ -10530,13 +10618,16 @@ class TestDispatchExecuteArgv(unittest.TestCase):
             target = os.path.join(d, "dir with {x}")
             os.makedirs(target)
             result = execute_dispatch.dispatch_execute(
-                candidate,
-                "do the task",
-                target,
-                30,
-                600,
-                build_tooling_guidance_fn=lambda *a, **kw: "",
-                dispatch_fn=fake_dispatch,
+                execute_dispatch.ExecuteDispatchSpec(
+                    candidate=candidate,
+                    prompt="do the task",
+                    target_dir=target,
+                    heartbeat_interval=30,
+                    timeout=600,
+                ),
+                seams=execute_dispatch.ExecuteSeams(
+                    build_tooling_guidance_fn=lambda *a, **kw: "", dispatch_fn=fake_dispatch
+                ),
             )
         self.assertIn(target, captured["argv"])
         self.assertEqual(result["command"], shlex.join(captured["argv"]))
@@ -10550,7 +10641,14 @@ class TestDispatchExecuteArgv(unittest.TestCase):
             return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
 
         result = execute_dispatch.dispatch_execute(
-            candidate, "do the task", "/scratch/run1", 30, 600, dispatch_fn=fake_dispatch
+            execute_dispatch.ExecuteDispatchSpec(
+                candidate=candidate,
+                prompt="do the task",
+                target_dir="/scratch/run1",
+                heartbeat_interval=30,
+                timeout=600,
+            ),
+            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
         )
         self.assertEqual(result["command"], shlex.join(captured["argv"]))
         self.assertIn("-m", captured["argv"])

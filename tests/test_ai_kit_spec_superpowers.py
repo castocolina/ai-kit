@@ -492,10 +492,10 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
                       "model": "gpt-5.6-terra", "effort": "high", "service_tier": None}
         captured = {}
 
-        def fake_dispatch_execute(candidate, prompt, target_dir, heartbeat_interval, timeout,
-                                   format_block=None, tool_availability=None,
-                                   agents_tooling_path=None, codegraph_registered=False):
-            captured.update(candidate=candidate, prompt=prompt, target_dir=target_dir)
+        def fake_dispatch_execute(spec):
+            captured.update(
+                candidate=spec.candidate, prompt=spec.prompt, target_dir=spec.target_dir
+            )
             return {"cli": "codex", "model": "gpt-5.6-terra", "command": "codex exec ...",
                     "returncode": 0, "stdout": "ok", "stderr": "", "timed_out": False}
 
@@ -528,10 +528,12 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
             captured_command["value"] = argv
             return {"returncode": 0, "stdout": "DONE", "stderr": "", "timed_out": False}
 
-        def dispatch_execute_with_fake_subprocess(candidate, prompt, target_dir,
-                                                    heartbeat_interval, timeout, **kwargs):
-            return real_dispatch_execute(candidate, prompt, target_dir, heartbeat_interval,
-                                          timeout, dispatch_fn=fake_dispatch_fn, **kwargs)
+        def dispatch_execute_with_fake_subprocess(spec):
+            from ai_kit_spec.execute_dispatch import ExecuteSeams
+
+            return real_dispatch_execute(
+                spec, seams=ExecuteSeams(dispatch_fn=fake_dispatch_fn)
+            )
 
         result = dispatch_injection.dispatch_superpowers_task(
             injection, "do the task", "/real/scratch/dir", 60, 900,

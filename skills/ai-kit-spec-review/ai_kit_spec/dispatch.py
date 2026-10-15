@@ -3,6 +3,7 @@ ai-kit-spec-execute: deadlock-safe stdin prompt delivery, timestamped heartbeat 
 output, process-GROUP timeout enforcement. Never CLI-specific -- takes an already-built command
 ARGV LIST as an opaque unit and spawns it with NO shell (D-10); the child environment is
 scrubbed of the host's own identity variables (D-14, see child_env)."""
+import contextlib
 import datetime
 import os
 import shutil
@@ -11,6 +12,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 from ai_kit_spec.cache import cache_write_json
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
@@ -45,6 +48,24 @@ def _default_kill_process_group(proc) -> None:
         proc.kill()  # fallback: at least kill the direct child if group-kill isn't possible
 
 
+class HeartbeatDispatchSeams(NamedTuple):
+    popen_fn: Callable[..., Any] = subprocess.Popen
+    time_fn: Callable[[], float] = time.time
+    kill_fn: Callable[[Any], None] = _default_kill_process_group
+    print_fn: Callable[..., None] = _default_print_fn
+
+
+class PollingDispatchSeams(NamedTuple):
+    poll_interval: int = 150
+    popen_fn: Callable[..., Any] = subprocess.Popen
+    time_fn: Callable[[], float] = time.time
+    sleep_fn: Callable[[float], None] = time.sleep
+    kill_fn: Callable[[Any], None] = _default_kill_process_group
+    print_fn: Callable[..., None] = _default_print_fn
+    tmp_dir_fn: Callable[..., str] = tempfile.mkdtemp
+    rmtree_fn: Callable[..., None] = shutil.rmtree
+
+
 def child_env(extra: dict | None = None, env: dict | None = None) -> dict:
     """Builds the environment for a cross-AI child (D-14): copies `env` (or os.environ),
     removes every HOST_SIGNAL_ENV_VARS entry so the child never mistakes itself for the host,
@@ -58,70 +79,64 @@ def child_env(extra: dict | None = None, env: dict | None = None) -> dict:
     return base
 
 
-def dispatch_with_heartbeat(argv: list[str], prompt: str, heartbeat_interval: int, timeout: int,
-                             popen_fn=subprocess.Popen, time_fn=time.time,
-                             kill_fn=_default_kill_process_group,
-                             print_fn=_default_print_fn) -> dict:
-    """Runs `argv` (a command argv list, spawned with NO shell, in its own process group via
-    start_new_session=True) with a scrubbed child environment (child_env). Raises ValueError
-    for an empty argv -- an empty command is a config error, never something to let Popen
-    crash on with an opaque IndexError.
-
-    Deadlock-safe by construction: `prompt` is delivered via `communicate(input=prompt,
-    timeout=...)` -- NEVER via a manual `proc.stdin.write()` -- because CPython's own
-    communicate() writes stdin and drains stdout/stderr concurrently (a background thread on
-    POSIX). A direct `stdin.write()` call has no such concurrent draining and deadlocks for any
-    prompt larger than the OS pipe buffer once the child's own stdout fills (confirmed by live
-    reproduction with an ~8 MiB prompt against a real `cat` process, 2026-08-29 -- an earlier
-    revision of this function had exactly this bug).
-
-    On `TimeoutExpired` (raised WITHOUT killing the child), `input` is left as `None` on every
-    retry call -- CPython's communicate() already remembers and resumes any partially-sent input
-    internally across calls on the same Popen object; re-passing it would be wrong. Only the
-    FIRST call ever passes `input=prompt`.
-
-    On real timeout (elapsed >= `timeout`), `kill_fn` kills the whole process group (not just
-    the direct child), then a final `communicate()` drains and returns whatever output was actually
-    collected before the kill -- never force-discarded to empty strings, which would erase real
-    diagnostics from a dispatch that ran a while before timing out."""
-    start = time_fn()
+def dispatch_with_heartbeat(
+    argv: list[str],
+    prompt: str,
+    heartbeat_interval: int,
+    timeout: int,
+    seams: HeartbeatDispatchSeams | None = None,
+) -> dict:
+    """Runs `argv` with heartbeat progress and timeout enforcement (see module docstring)."""
+    active = seams or HeartbeatDispatchSeams()
+    start = active.time_fn()
     if not argv:
         raise ValueError("empty command argv")
     try:
-        proc = popen_fn(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                        errors="replace", start_new_session=True, env=child_env())
+        proc = active.popen_fn(
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            start_new_session=True,
+            env=child_env(),
+        )
     except OSError as exc:
-        # Binary missing / not executable: map to the shell's conventional 127 so callers
-        # see a normal failed-dispatch result instead of an unhandled spawn exception.
         return {"returncode": 127, "stdout": "", "stderr": str(exc), "timed_out": False}
     pending_input = prompt
     while True:
-        elapsed = time_fn() - start
+        elapsed = active.time_fn() - start
         remaining = timeout - elapsed
         if remaining <= 0:
-            kill_fn(proc)
-            # Bounded, not indefinite -- killing the process group doesn't guarantee every
-            # pipe-holding descendant exits immediately (a grandchild that outlived its own
-            # setsid parent can still hold stdout/stderr open); confirmed by live reproduction
-            # to hang the drain otherwise. 5s is generous for draining an already-terminated
-            # process's remaining buffered output.
+            active.kill_fn(proc)
             try:
                 stdout, stderr = proc.communicate(timeout=5)
             except subprocess.TimeoutExpired as exc:
                 stdout, stderr = exc.stdout or "", exc.stderr or ""
-            return {"returncode": proc.returncode, "stdout": stdout, "stderr": stderr,
-                    "timed_out": True}
+            return {
+                "returncode": proc.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "timed_out": True,
+            }
         try:
-            stdout, stderr = proc.communicate(input=pending_input,
-                                               timeout=min(heartbeat_interval, remaining))
+            stdout, stderr = proc.communicate(
+                input=pending_input,
+                timeout=min(heartbeat_interval, remaining),
+            )
         except subprocess.TimeoutExpired:
-            pending_input = None  # already delivered/buffered internally -- never re-send
+            pending_input = None
             ts = datetime.datetime.now().strftime("%H:%M:%S")
-            print_fn(f"[{ts}] still running, {int(elapsed)}s elapsed")
+            active.print_fn(f"[{ts}] still running, {int(elapsed)}s elapsed")
             continue
-        return {"returncode": proc.returncode, "stdout": stdout, "stderr": stderr,
-                "timed_out": False}
+        return {
+            "returncode": proc.returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "timed_out": False,
+        }
 
 
 def _read_output(path: str) -> str:
@@ -129,127 +144,157 @@ def _read_output(path: str) -> str:
         return f.read().decode("utf-8", errors="replace")
 
 
-def _report_tier_progress(print_fn, tier_index, tier_timeout, elapsed, path, last_size) -> int:
-    """Emits dispatch_with_polling's one-line size-delta progress report and returns the new
-    last_size. Extracted only to keep dispatch_with_polling itself within the repo's pylint
-    statement/branch thresholds -- the behavior is trivial by design (see its docstring)."""
-    # No out_f.flush() here: nothing is ever written through THIS file object
-    # (the child writes to the dup'd fd directly), so our own buffer is always
-    # empty and getsize() already sees everything the child has flushed.
+class _TierProgress(NamedTuple):
+    tier_index: int
+    tier_timeout: int
+    elapsed: float
+    stdout_path: str
+    last_size: int
+
+
+class _PollingTierWork(NamedTuple):
+    argv: list[str]
+    seams: PollingDispatchSeams
+    prompt_path: str
+    stdout_path: str
+    stderr_path: str
+    tier_index: int
+    tier_timeout: int
+
+
+def _report_tier_progress(print_fn, progress: _TierProgress) -> int:
+    path = progress.stdout_path
     size = os.path.getsize(path) if os.path.exists(path) else 0
-    delta = size - last_size
-    ts_elapsed = int(elapsed)
+    delta = size - progress.last_size
+    ts_elapsed = int(progress.elapsed)
+    idx, tmo = progress.tier_index, progress.tier_timeout
     if delta:
-        print_fn(f"tier {tier_index} ({tier_timeout}s): +{delta} bytes "
-                 f"since last check (total {size}, {ts_elapsed}s elapsed)")
+        print_fn(
+            f"tier {idx} ({tmo}s): +{delta} bytes "
+            f"since last check (total {size}, {ts_elapsed}s elapsed)"
+        )
     else:
-        print_fn(f"tier {tier_index} ({tier_timeout}s): no growth "
-                 f"({ts_elapsed}s elapsed)")
+        print_fn(f"tier {idx} ({tmo}s): no growth ({ts_elapsed}s elapsed)")
     return size
 
 
-def dispatch_with_polling(argv: list[str], prompt: str, timeout_tiers: list[int],
-                           poll_interval: int = 150, popen_fn=subprocess.Popen,
-                           time_fn=time.time, sleep_fn=time.sleep,
-                           kill_fn=_default_kill_process_group, print_fn=_default_print_fn,
-                           tmp_dir_fn=tempfile.mkdtemp, rmtree_fn=shutil.rmtree) -> dict:
-    """Escalates across `timeout_tiers` (seconds, in order), each tier a FRESH process -- a
-    killed CLI cannot resume its own reasoning state, so a tier restart is a real, accepted
-    cost (design spec §4/§14), not an oversight. `argv` is a command argv list spawned with
-    NO shell and a scrubbed child environment (child_env). Raises ValueError for an empty
-    argv (a config error, never a Popen IndexError) and for an empty `timeout_tiers`: with
-    no tier there is nothing to run and no result to return, and silently returning None
-    would surface downstream as an opaque TypeError in whichever caller subscripts the result.
-    `stdout`/`stderr` are redirected to real
-    files (never PIPE): this removes the deadlock condition `dispatch_with_heartbeat`'s own
-    docstring documents (stdin fill racing an undrained stdout pipe) because nothing routes
-    through our own process's pipes here, so `prompt` is delivered via a plain file handed to
-    the child as its own stdin (`stdin=<open file>`) -- no manual write, no blocking-write risk
-    on our side at all. The same file-backed stdout also makes real interim progress
-    inspectable while the subprocess is alive: `print_fn` gets a one-line size-delta report
-    every `poll_interval` seconds. Informational ONLY -- never aborts an attempt early, even at
-    zero growth (design decision: a false "stalled" verdict on a genuinely slow-but-working
-    model is worse than the wasted wait).
+class _PollLoopCtx(NamedTuple):
+    proc: Any
+    seams: PollingDispatchSeams
+    start: float
+    tier_index: int
+    tier_timeout: int
+    stdout_path: str
 
-    `poll_interval` governs ONLY how often that progress line is emitted (and how often the
-    size delta is measured) -- never how often the child is checked for completion. The wait
-    itself is sliced into `_POLL_SLICE_SECONDS` chunks with a `proc.poll()` between each, so a
-    process that exits in one second is noticed in about one second instead of up to
-    `poll_interval` (150s) later. Without that split, a fast-failing dispatch (bad model id,
-    auth error -- the CLI exits immediately) would cost the caller a full poll interval of dead
-    time for nothing, and every normal review would pay it once at the end."""
+
+def _poll_tier_process(ctx: _PollLoopCtx) -> bool:
+    next_report_at = ctx.seams.poll_interval
+    last_size = 0
+    while ctx.proc.poll() is None:
+        elapsed = ctx.seams.time_fn() - ctx.start
+        remaining = ctx.tier_timeout - elapsed
+        if remaining <= 0:
+            ctx.seams.kill_fn(ctx.proc)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                ctx.proc.wait(timeout=5)
+            return True
+        ctx.seams.sleep_fn(min(_POLL_SLICE_SECONDS, remaining))
+        if elapsed < next_report_at:
+            continue
+        next_report_at = elapsed + ctx.seams.poll_interval
+        progress = _TierProgress(
+            tier_index=ctx.tier_index,
+            tier_timeout=ctx.tier_timeout,
+            elapsed=elapsed,
+            stdout_path=ctx.stdout_path,
+            last_size=last_size,
+        )
+        last_size = _report_tier_progress(ctx.seams.print_fn, progress)
+    return False
+
+
+def _spawn_polling_tier(work: _PollingTierWork) -> dict:
+    start = work.seams.time_fn()
+    with open(work.prompt_path, "rb") as in_f, open(work.stdout_path, "wb") as out_f, open(
+        work.stderr_path, "wb"
+    ) as err_f:
+        try:
+            proc = work.seams.popen_fn(
+                work.argv,
+                stdin=in_f,
+                stdout=out_f,
+                stderr=err_f,
+                start_new_session=True,
+                env=child_env(),
+            )
+        except OSError as exc:
+            return {
+                "returncode": 127,
+                "stdout": "",
+                "stderr": str(exc),
+                "timed_out": False,
+                "tiers_tried": work.tier_index,
+                "final_timeout": work.tier_timeout,
+            }
+        timed_out = _poll_tier_process(
+            _PollLoopCtx(
+                proc, work.seams, start, work.tier_index, work.tier_timeout, work.stdout_path
+            )
+        )
+    return {
+        "returncode": proc.returncode,
+        "stdout": _read_output(work.stdout_path),
+        "stderr": _read_output(work.stderr_path),
+        "timed_out": timed_out,
+        "tiers_tried": work.tier_index,
+        "final_timeout": work.tier_timeout,
+    }
+
+
+def dispatch_with_polling(
+    argv: list[str],
+    prompt: str,
+    timeout_tiers: list[int],
+    seams: PollingDispatchSeams | None = None,
+) -> dict:
+    """Escalates across `timeout_tiers` with file-backed stdout/stderr (see module docstring)."""
+    active = seams or PollingDispatchSeams()
     if not timeout_tiers:
         raise ValueError("timeout_tiers must name at least one tier -- got an empty list")
     if not argv:
         raise ValueError("empty command argv")
-    tmp_dir = tmp_dir_fn(prefix="ai-kit-spec-dispatch-")
+    tmp_dir = active.tmp_dir_fn(prefix="ai-kit-spec-dispatch-")
     try:
         prompt_path = os.path.join(tmp_dir, "prompt")
         with open(prompt_path, "w", encoding="utf-8") as f:
             f.write(prompt)
         stdout_path = os.path.join(tmp_dir, "stdout")
         stderr_path = os.path.join(tmp_dir, "stderr")
-        # Never None at the final return: timeout_tiers is non-empty (checked above), so the
-        # loop body runs at least once and either returns or assigns last_result.
         last_result: dict = {}
         for tier_index, tier_timeout in enumerate(timeout_tiers, start=1):
-            start = time_fn()
-            last_size = 0
-            next_report_at = poll_interval
-            # "rb": the child never sees this Python file object at all -- Popen dups its
-            # fileno() -- so text decoding here would be pure overhead on a prompt we only
-            # ever hand over as a raw file descriptor.
-            with open(prompt_path, "rb") as in_f, \
-                 open(stdout_path, "wb") as out_f, \
-                 open(stderr_path, "wb") as err_f:
-                try:
-                    proc = popen_fn(argv, stdin=in_f, stdout=out_f, stderr=err_f,
-                                    start_new_session=True, env=child_env())
-                except OSError as exc:
-                    # Binary missing / not executable: conventional 127, same as heartbeat.
-                    last_result = {"returncode": 127, "stdout": "", "stderr": str(exc),
-                                    "timed_out": False, "tiers_tried": tier_index,
-                                    "final_timeout": tier_timeout}
-                    return last_result
-                timed_out = False
-                while proc.poll() is None:
-                    elapsed = time_fn() - start
-                    remaining = tier_timeout - elapsed
-                    if remaining <= 0:
-                        kill_fn(proc)
-                        try:
-                            proc.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            pass
-                        timed_out = True
-                        break
-                    # Short slice, NOT poll_interval -- see the docstring: this is the
-                    # completion-detection latency, and it must stay small regardless of how
-                    # rarely we report progress.
-                    sleep_fn(min(_POLL_SLICE_SECONDS, remaining))
-                    if elapsed < next_report_at:
-                        continue
-                    next_report_at = elapsed + poll_interval
-                    last_size = _report_tier_progress(print_fn, tier_index, tier_timeout,
-                                                       elapsed, stdout_path, last_size)
-            stdout = _read_output(stdout_path)
-            stderr = _read_output(stderr_path)
-            last_result = {"returncode": proc.returncode, "stdout": stdout, "stderr": stderr,
-                            "timed_out": timed_out, "tiers_tried": tier_index,
-                            "final_timeout": tier_timeout}
-            if not timed_out:
+            last_result = _spawn_polling_tier(
+                _PollingTierWork(
+                    argv,
+                    active,
+                    prompt_path,
+                    stdout_path,
+                    stderr_path,
+                    tier_index,
+                    tier_timeout,
+                )
+            )
+            if not last_result.get("timed_out"):
                 return last_result
             if tier_index < len(timeout_tiers):
-                print_fn(f"tier {tier_index} ({tier_timeout}s) timed out -- escalating to "
-                         f"tier {tier_index + 1} ({timeout_tiers[tier_index]}s)")
+                active.print_fn(
+                    f"tier {tier_index} ({tier_timeout}s) timed out -- escalating to "
+                    f"tier {tier_index + 1} ({timeout_tiers[tier_index]}s)"
+                )
         return last_result
     finally:
-        rmtree_fn(tmp_dir, ignore_errors=True)
+        active.rmtree_fn(tmp_dir, ignore_errors=True)
 
 
 def write_resumable_state(path: str, state: dict, write_fn=cache_write_json) -> None:
-    """Persists the minimal state needed to resume after a quota-exhaustion auto-wake
-    (design spec Section 10): framework, plan/phase reference, candidates already tried,
-    iteration. A thin, documented wrapper around cache_write_json -- the resumability
-    guarantee lives in what the caller puts in `state`, not in this function's own logic."""
+    """Persists the minimal state needed to resume after a quota-exhaustion auto-wake."""
     write_fn(path, state)

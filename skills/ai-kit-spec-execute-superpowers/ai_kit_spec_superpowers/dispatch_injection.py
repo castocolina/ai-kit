@@ -315,10 +315,20 @@ def dispatch_superpowers_task(injection: dict, prompt: str, target_dir: str,
         )
     candidate = {"cli": injection["cli"], "model": injection["model"],
                  "effort": injection.get("effort"), "service_tier": injection.get("service_tier")}
+    from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec
+
     return dispatch_execute_fn(
-        candidate, prompt, target_dir, heartbeat_interval, timeout, format_block=format_block,
-        tool_availability=tool_availability, agents_tooling_path=agents_tooling_path,
-        codegraph_registered=codegraph_registered,
+        ExecuteDispatchSpec(
+            candidate,
+            prompt,
+            target_dir,
+            heartbeat_interval,
+            timeout,
+            format_block=format_block,
+            tool_availability=tool_availability,
+            agents_tooling_path=agents_tooling_path,
+            codegraph_registered=codegraph_registered,
+        )
     )
 
 

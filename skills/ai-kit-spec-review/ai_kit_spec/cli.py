@@ -5,7 +5,8 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import NamedTuple
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 from ai_kit_spec import trust
 from ai_kit_spec.cache import cache_is_stale, cache_read_json, cache_write_json
@@ -44,7 +45,7 @@ from ai_kit_spec.detection import (
     group_models_by_family,
     runtimes_schema_is_current,
 )
-from ai_kit_spec.execute_dispatch import dispatch_execute
+from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
 from ai_kit_spec.local_secrets import load_secret
 from ai_kit_spec.model_catalog import (
     CATALOG_SCHEMA_VERSION,
@@ -70,7 +71,7 @@ from ai_kit_spec.review_reports import (
     render_merged_report,
     report_status,
 )
-from ai_kit_spec.reviewer_dispatch import dispatch_reviewer
+from ai_kit_spec.reviewer_dispatch import ReviewerDispatchSpec, dispatch_reviewer
 from ai_kit_spec.vendor import infer_vendor_from_model
 
 
@@ -96,14 +97,14 @@ class FetchCatalogOutput(NamedTuple):
 
 
 class CliDeps(NamedTuple):
-    which_fn: object = shutil.which
-    run_fn: object = subprocess.run
-    dispatch_execute_fn: object = dispatch_execute
-    dispatch_reviewer_fn: object = dispatch_reviewer
-    env_fn: object = _default_env_fn
-    load_secret_fn: object = load_secret
-    fetch_models_dev_fn: object = fetch_models_dev
-    fetch_artificial_analysis_fn: object = fetch_artificial_analysis
+    which_fn: Callable[[str], str | None] = shutil.which
+    run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run
+    dispatch_execute_fn: Callable[..., dict] = dispatch_execute
+    dispatch_reviewer_fn: Callable[..., dict] = dispatch_reviewer
+    env_fn: Callable[[], dict[str, str]] = _default_env_fn
+    load_secret_fn: Callable[..., Any] = load_secret
+    fetch_models_dev_fn: Callable[..., Any] = fetch_models_dev
+    fetch_artificial_analysis_fn: Callable[..., Any] = fetch_artificial_analysis
 
 
 def _register_cache_detect_parsers(sub: argparse._SubParsersAction) -> None:
@@ -786,10 +787,18 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
                  "service_tier": args.service_tier}
     try:
         result = deps.dispatch_execute_fn(
-            candidate, prompt, args.target_dir, args.heartbeat_interval, args.timeout,
-            format_block=format_block, tool_availability=tool_availability,
-            agents_tooling_path=args.agents_tooling_path,
-            codegraph_registered=args.codegraph_registered)
+            ExecuteDispatchSpec(
+                candidate,
+                prompt,
+                args.target_dir,
+                args.heartbeat_interval,
+                args.timeout,
+                format_block=format_block,
+                tool_availability=tool_availability,
+                agents_tooling_path=args.agents_tooling_path,
+                codegraph_registered=args.codegraph_registered,
+            )
+        )
     except ValueError as exc:
         print(f"dispatch-execute: {exc}", file=sys.stderr)
         return 1
@@ -821,8 +830,14 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
                           if args.tool_availability_json else {})
     try:
         result = deps.dispatch_reviewer_fn(
-            reviewers[args.index], prompt, timeout_tiers, tool_availability,
-            args.agents_tooling_path)
+            ReviewerDispatchSpec(
+                reviewers[args.index],
+                prompt,
+                timeout_tiers,
+                tool_availability,
+                args.agents_tooling_path,
+            )
+        )
     except ValueError as exc:
         # Deliberately no "### Status:" substring -- same fail-closed convention
         # render-command uses: a malformed reviewer entry (bad/missing command template,
