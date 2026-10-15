@@ -10527,7 +10527,9 @@ class TestChildEnv(unittest.TestCase):
         )
 
     def test_defaults_copy_os_environ(self):
-        self.assertEqual(dispatch.child_env(env={"PATH": "p"}), {"PATH": "p"})
+        # C-WR-08: exercise the os.environ default, with a signal set so the scrub must act.
+        with unittest.mock.patch.dict(os.environ, {"PATH": "p", "AI_AGENT": "1"}, clear=True):
+            self.assertEqual(dispatch.child_env(), {"PATH": "p"})
 
 
 class TestDispatchReviewerRealChild(unittest.TestCase):
@@ -10608,13 +10610,16 @@ class TestFakePopenArgvContract(unittest.TestCase):
             recorded.update(kw)
             return FakeProcess()
 
-        dispatch.dispatch_with_heartbeat(
-            ["echo", "hi"],
-            "prompt",
-            heartbeat_interval=60,
-            timeout=30,
-            seams=dispatch.HeartbeatDispatchSeams(popen_fn=fake_popen, print_fn=lambda *a: None),
-        )
+        # C-WR-08: set the signal in the parent so the assertion fails if the scrub is off.
+        with unittest.mock.patch.dict(os.environ, {"AI_AGENT": "1"}):
+            dispatch.dispatch_with_heartbeat(
+                ["echo", "hi"],
+                "prompt",
+                heartbeat_interval=60,
+                timeout=30,
+                seams=dispatch.HeartbeatDispatchSeams(
+                    popen_fn=fake_popen, print_fn=lambda *a: None),
+            )
         self.assertEqual(recorded["argv"], ["echo", "hi"])
         self.assertFalse(recorded.get("shell", False))
         self.assertNotIn("AI_AGENT", recorded["env"])
@@ -10674,7 +10679,8 @@ class TestProbeArgv(unittest.TestCase):
             captured.update(kw)
             return FakeResult()
 
-        probe_reviewer_quota(resolved, run_fn=fake_run)
+        with unittest.mock.patch.dict(os.environ, {"AI_AGENT": "1"}):  # C-WR-08
+            probe_reviewer_quota(resolved, run_fn=fake_run)
         self.assertEqual(captured["argv"], ["codex", "exec", "-m", "m"])
         self.assertNotIn("shell", captured)
         self.assertEqual(captured["input"], "Only say: Hello world!")
