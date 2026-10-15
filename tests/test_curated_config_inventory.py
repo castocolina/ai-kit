@@ -1062,6 +1062,33 @@ class TestGsdCoreResolution(unittest.TestCase):
         assert parsed
         self.assertEqual(parsed["gsd_core"]["path"], claude_root)
 
+    def test_opencode_prefers_dot_opencode_over_dot_claude(self):
+        _home, env = self._home_env()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        opencode_root = os.path.join(project, ".opencode", "gsd-core")
+        make_gsd_install(opencode_root, version="1.16.0")
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"), version="9.9.9")
+        fake = FakeRun()
+        code, parsed, _ = run_inventory(project, env, fake, "--host", "opencode")
+        self.assertEqual(code, 0)
+        assert parsed
+        self.assertEqual(parsed["gsd_core"]["path"], opencode_root)
+        self.assertEqual(parsed["gsd_core"]["scope"], "local")
+
+    def test_claude_host_ignores_dot_opencode(self):
+        _home, env = self._home_env()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        make_gsd_install(os.path.join(project, ".opencode", "gsd-core"), version="9.9.9")
+        claude_root = os.path.join(project, ".claude", "gsd-core")
+        make_gsd_install(claude_root, version="1.16.0")
+        fake = FakeRun()
+        code, parsed, _ = run_inventory(project, env, fake, "--host", "claude")
+        self.assertEqual(code, 0)
+        assert parsed
+        self.assertEqual(parsed["gsd_core"]["path"], claude_root)
+
     def test_pi_global_from_pi_agent_home(self):
         home, env = self._home_env()
         project = tempfile.mkdtemp()
@@ -1180,6 +1207,190 @@ class TestGsdCoreResolution(unittest.TestCase):
         self.assertIn("ai-kit-spec-review", err)
         node_calls = [a for a in fake.argv_log if a and a[0] == "node"]
         self.assertEqual(node_calls, [])
+
+
+def _minimal_tables_payload(**overrides) -> dict:
+    base = {
+        "runtime_profile_map": {"x": {"y": {}}},
+        "model_profiles": {"p": {"adaptive": "opus", "balanced": "sonnet"}},
+        "agent_to_phase_type": {"a": "b"},
+        "valid_keys": {"accepted": ["model_profile"], "rejected": []},
+    }
+    base.update(overrides)
+    return base
+
+
+class TestLaneParsing(unittest.TestCase):
+    def _parse(self, payload: dict):
+        from ai_kit_gsd_curated_config.gsd_catalog import _parse_tables_output
+
+        return _parse_tables_output(json.dumps(payload))
+
+    def test_review_lanes_null_and_non_list(self):
+        ok = self._parse(_minimal_tables_payload())
+        assert ok is not None
+        parsed = self._parse(_minimal_tables_payload(review_lanes=None))
+        assert parsed is not None
+        self.assertIsNone(parsed.get("review_lanes"))
+        bad = self._parse(_minimal_tables_payload(review_lanes={"slug": "x"}))
+        assert bad is not None
+        self.assertIsNone(bad.get("review_lanes"))
+
+    def test_review_lanes_row_cleanup(self):
+        lanes = [
+            {
+                "slug": "codex",
+                "transport": "codex",
+                "binary": 7,
+                "model_key": "review.models.codex",
+                "effort_key": None,
+                "default_effort": "high",
+                "extra": "drop-me",
+            },
+            {"slug": 1},
+        ]
+        parsed = self._parse(_minimal_tables_payload(review_lanes=lanes))
+        assert parsed is not None
+        rows = parsed.get("review_lanes")
+        assert isinstance(rows, list)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(set(row.keys()), {
+            "slug", "transport", "binary", "model_key", "effort_key", "default_effort",
+        })
+        self.assertIsNone(row["binary"])
+
+    def test_skills_roots_null_and_values(self):
+        parsed = self._parse(_minimal_tables_payload(skills_roots=None))
+        assert parsed is not None
+        self.assertIsNone(parsed.get("skills_roots"))
+        bad = self._parse(_minimal_tables_payload(skills_roots=[]))
+        assert bad is not None
+        self.assertIsNone(bad.get("skills_roots"))
+        roots = {"claude": "/ok", "codex": 3}
+        parsed2 = self._parse(_minimal_tables_payload(skills_roots=roots))
+        assert parsed2 is not None
+        got = parsed2.get("skills_roots")
+        assert isinstance(got, dict)
+        self.assertEqual(got["claude"], "/ok")
+        self.assertIsNone(got["codex"])
+
+
+class TestInventorySchema2(unittest.TestCase):
+    _LANE_WARN = inventory._LANE_REGISTRY_WARN
+    _ROOTS_WARN = inventory._SKILLS_ROOTS_WARN
+
+    def _project(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        return project, _inventory_env(home)
+
+    def _run_with_node(self, project, env, payload: dict):
+        fake = FakeRun(node_stdout=json.dumps(payload))
+        return run_inventory(project, env, fake, "--host", "claude")
+
+    def test_null_review_lanes_and_skills_roots_degrade(self):
+        project, env = self._project()
+        with_lanes = _minimal_tables_payload(review_lanes=None, skills_roots=None)
+        code, parsed, _ = self._run_with_node(project, env, with_lanes)
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertEqual(parsed["gsd_core"]["review_lanes"], [])
+        self.assertEqual(parsed["gsd_core"]["skills_roots"], {})
+        self.assertIn(self._LANE_WARN, parsed["warnings"])
+        self.assertIn(self._ROOTS_WARN, parsed["warnings"])
+
+    def test_absent_lane_keys_silent(self):
+        project, env = self._project()
+        code, parsed, _ = self._run_with_node(project, env, _minimal_tables_payload())
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertEqual(parsed["gsd_core"]["review_lanes"], [])
+        self.assertEqual(parsed["gsd_core"]["skills_roots"], {})
+        self.assertNotIn(self._LANE_WARN, parsed["warnings"])
+        self.assertNotIn(self._ROOTS_WARN, parsed["warnings"])
+
+    def test_installed_runtimes_sorted(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        runtimes = {
+            "clis": {
+                "codex": {"installed": True, "models": []},
+                "claude": {"installed": False, "models": []},
+                "pi": {"installed": True, "models": []},
+            }
+        }
+        env = _inventory_env(home, runtimes=runtimes)
+        code, parsed, _ = self._run_with_node(project, env, _minimal_tables_payload())
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertEqual(parsed["installed_runtimes"], ["codex", "pi"])
+
+    def _load_inv_file(self, inv: dict):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "inventory.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(inv))
+            return plan_io.load_inventory(path)
+
+    def test_load_inventory_schema2_refusals(self):
+        inv = make_inventory()
+        inv["schema_version"] = 1
+        loaded, err = self._load_inv_file(inv)
+        self.assertIsNone(loaded)
+        assert err is not None
+        self.assertTrue(err.endswith("; rerun inventory"))
+        inv2 = make_inventory()
+        inv2["gsd_core"]["review_lanes"] = {}
+        _, err2 = self._load_inv_file(inv2)
+        assert err2 is not None
+        self.assertIn("review_lanes", err2)
+        inv3 = make_inventory()
+        inv3["gsd_core"]["review_lanes"] = [{
+            "slug": "x",
+            "transport": None,
+            "model_key": None,
+            "effort_key": None,
+            "default_effort": None,
+        }]
+        _, err3 = self._load_inv_file(inv3)
+        assert err3 is not None
+        self.assertIn("missing binary", err3)
+        inv4 = make_inventory()
+        inv4["gsd_core"]["review_lanes"] = [{
+            "slug": "x",
+            "transport": None,
+            "binary": 7,
+            "model_key": None,
+            "effort_key": None,
+            "default_effort": None,
+        }]
+        _, err4 = self._load_inv_file(inv4)
+        assert err4 is not None
+        self.assertIn("binary", err4)
+        inv5 = make_inventory()
+        inv5["gsd_core"]["review_lanes"] = [{
+            "slug": "x",
+            "transport": None,
+            "binary": None,
+            "model_key": [],
+            "effort_key": None,
+            "default_effort": None,
+        }]
+        _, err5 = self._load_inv_file(inv5)
+        assert err5 is not None
+        self.assertIn("model_key", err5)
+        inv6 = make_inventory()
+        inv6["gsd_core"]["skills_roots"] = {"claude": 1}
+        _, err6 = self._load_inv_file(inv6)
+        assert err6 is not None
+        self.assertIn("skills_roots", err6)
 
 
 class TestInjectedSeams(unittest.TestCase):

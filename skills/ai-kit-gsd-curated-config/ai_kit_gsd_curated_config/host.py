@@ -1,8 +1,9 @@
 """Host detection and gsd-core resolution for the read-only inventory (D-11 scope labelling).
 
 Resolution delegates to the shared `ai_kit_spec.gsd_tools` candidate list — never a second
-hand-copied launcher order. On pi hosts `<root>/.pi/gsd-core` is tried before GSD's shared
-order (17 D-11 amended, 22 D-08); every other candidate comes from `gsd_tools_candidates`.
+hand-copied launcher order. On pi and opencode hosts the project-local gsd-core under
+`<root>/.pi/gsd-core` or `<root>/.opencode/gsd-core` is tried before GSD's shared order
+(17 D-11 amended, 18-02); every other candidate comes from `gsd_tools_candidates`.
 """
 from __future__ import annotations
 
@@ -14,6 +15,14 @@ from typing import NamedTuple
 from . import gsd_catalog
 
 HOSTS = ("claude", "codex", "opencode", "cursor", "pi")
+
+# Project-local gsd-core roots tried before GSD's shared launcher order (pi, opencode).
+_HOST_FIRST_ROOT = {
+    "pi": ".pi",
+    # shortcut: opencode's local root is inferred from gsd-core's capability registry,
+    # unverified until Phase 20 runs the installer
+    "opencode": ".opencode",
+}
 
 _UNKNOWN_HOST_MSG = (
     "could not detect the host CLI; pass --host claude|codex|opencode|cursor|pi"
@@ -54,16 +63,18 @@ def detect_host(env: dict, override: str | None) -> tuple[str | None, str]:
 
 def _local_roots(gsd_tools, root: str, host: str) -> list[str]:
     locals_ = list(gsd_tools.local_gsd_core_roots(root))
-    if host == "pi":
-        locals_.insert(0, os.path.join(root, ".pi", "gsd-core"))
+    sub = _HOST_FIRST_ROOT.get(host)
+    if sub is not None:
+        locals_.insert(0, os.path.join(root, sub, "gsd-core"))
     return locals_
 
 
 def _gsd_tools_candidates(gsd_tools, env: dict, root: str, host: str, which_fn) -> list[str]:
     paths: list[str] = []
-    if host == "pi":
-        pi_tools = os.path.join(root, ".pi", "gsd-core", gsd_tools.GSD_TOOLS_REL)
-        paths.append(os.path.expanduser(pi_tools))
+    sub = _HOST_FIRST_ROOT.get(host)
+    if sub is not None:
+        local_tools = os.path.join(root, sub, "gsd-core", gsd_tools.GSD_TOOLS_REL)
+        paths.append(os.path.expanduser(local_tools))
     paths.extend(gsd_tools.gsd_tools_candidates(env, root, which_fn))
     return paths
 
