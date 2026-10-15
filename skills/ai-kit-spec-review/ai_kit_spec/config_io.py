@@ -143,6 +143,13 @@ def cfg_resolve(cwd: str, env: dict, warn_fn=None) -> dict:
                 f"review its commands with `ai-kit-spec.py trust-local --cwd {cwd} --show`, "
                 f"then trust it with `ai-kit-spec.py trust-local --cwd {cwd}` "
                 f"(any edit needs a new trust)")
+    return cfg_combine(local, env)
+
+
+def cfg_combine(local: dict, env: dict) -> dict:
+    """Combine an already-parsed (and already-trusted, or empty) local config with the
+    global one, honoring the local `strategy`. Shared by cfg_resolve and `trust-local
+    --show`, so the consent display renders the same merged entries dispatch would run."""
     if not local:
         global_cfg = cfg_load_toml(cfg_global_path(env))
         return {"policy": {**DEFAULT_POLICY, **global_cfg.get("policy", {})},

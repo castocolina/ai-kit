@@ -22,10 +22,10 @@ from ai_kit_spec.commands import (
     build_reviewer_model_id,
     execute_cli_error,
     render_reviewer_command,
-    split_command_template,
 )
 from ai_kit_spec.config_io import (
     ConfigError,
+    cfg_combine,
     cfg_local_path,
     cfg_parse_toml_bytes,
     cfg_render_toml,
@@ -65,6 +65,7 @@ from ai_kit_spec.quota import (
     probe_reviewer_quota,
     refresh_quota_cache,
     resolve_reviewers,
+    to_resolved,
 )
 from ai_kit_spec.review_reports import (
     merge_findings,
@@ -693,6 +694,24 @@ def _cmd_resolve_timeout_tiers(args: argparse.Namespace, deps: CliDeps) -> int:
     print(",".join(str(t) for t in tiers))
     return 0
 
+def _trust_local_argv_lines(config: dict, env: dict) -> list[dict]:
+    """One {key, argv} (or {key, error}) per local reviewer with a command, rendered as
+    dispatch would see it once trusted: merged with the global config per `strategy`, same
+    to_resolved split, so every value the file substitutes is visible and only the prompt
+    stays symbolic (A-CR-01)."""
+    local_keys = {r.get("key") for r in config.get("reviewers", [])}
+    lines = []
+    for r in cfg_combine(config, env)["reviewers"]:
+        if "command" not in r or r.get("key") not in local_keys:
+            continue
+        try:
+            argv = render_reviewer_command(to_resolved(r), "<prompt>")
+        except ValueError as exc:
+            lines.append({"key": r["key"], "error": str(exc)})
+            continue
+        lines.append({"key": r["key"], "argv": argv})
+    return lines
+
 def _cmd_trust_local(args: argparse.Namespace, deps: CliDeps) -> int:
     local_path = cfg_local_path(args.cwd)
     if not os.path.exists(local_path):
@@ -703,19 +722,9 @@ def _cmd_trust_local(args: argparse.Namespace, deps: CliDeps) -> int:
     store = cfg_trust_store_dir(env)
     with open(local_path, "rb") as f:
         raw = f.read()
-    config = cfg_parse_toml_bytes(raw, local_path)
-    for r in config.get("reviewers", []):
-        if "command" not in r:
-            continue
-        key = r.get("key")
-        line = {"key": key}
-        try:
-            line["argv"] = split_command_template(key, r["command"])
-            if args.show:
-                line["trusted"] = trust.is_trusted(store, real, raw)
-                line["path"] = real
-        except ValueError as exc:
-            line = {"key": key, "error": str(exc)}
+    for line in _trust_local_argv_lines(cfg_parse_toml_bytes(raw, local_path), env):
+        if args.show and "argv" in line:
+            line.update(trusted=trust.is_trusted(store, real, raw), path=real)
         print(json.dumps(line))
     if args.show:
         return 0

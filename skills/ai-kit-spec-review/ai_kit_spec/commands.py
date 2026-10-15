@@ -139,9 +139,10 @@ def _build_cursor_agent_command(mode="plan", **_params):
 
 
 def split_command_template(key: str, template: str | None) -> list[str]:
-    """Tokenizes a reviewer `command` template into the exact argv list argv dispatch would
-    run -- the consent display (`trust-local --show`) prints THIS result, so what a user
-    approves is byte-for-byte what executes (D-10). Raises `ValueError` naming `key` when
+    """Tokenizes a reviewer `command` template into the argv tokens that
+    render_reviewer_command then fills -- the consent display (`trust-local --show`) prints
+    that RENDERED argv, so every substituted value a user approves is what executes (D-10).
+    Raises `ValueError` naming `key` when
     the template is missing/empty/whitespace (a config error, never a silent no-op or a
     Popen IndexError) or when it relies on shell syntax: a token made only of `();<>|&`
     punctuation, a `$` or a backtick anywhere in the template. Argv dispatch runs no shell,

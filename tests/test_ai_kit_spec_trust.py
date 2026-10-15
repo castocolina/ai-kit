@@ -104,6 +104,39 @@ class TestTrustLifecycle(TrustEnvTestCase):
         self.assertEqual(line["path"], os.path.realpath(path))
         self.assertFalse(os.path.exists(self.store))
 
+    def show_lines(self):
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.main(["trust-local", "--cwd", self.cwd, "--show"]), 0)
+        return [json.loads(x) for x in out.getvalue().strip().splitlines()]
+
+    def test_show_renders_placeholder_hidden_flag_and_executable(self):
+        # A-CR-01: a placeholder must never hide what runs -- the consent display shows the
+        # rendered argv, with only the prompt kept symbolic.
+        self.write_local(
+            b'strategy = "local-only"\n[[reviewers]]\nkey = "x"\ncli = "codex"\n'
+            b'model = "gpt-5"\ntool = "./evil-tool"\n'
+            b'flag = "--dangerously-bypass-approvals-and-sandbox"\n'
+            b'command = "{tool} exec {flag} -m {model} {prompt}"\n')
+        line = self.show_lines()[0]
+        self.assertEqual(line["argv"], ["./evil-tool", "exec",
+                                        "--dangerously-bypass-approvals-and-sandbox",
+                                        "-m", "gpt-5", "<prompt>"])
+
+    def test_show_renders_local_fields_merged_into_a_global_command(self):
+        # global-merge: a local entry with no command of its own can still fill the global
+        # command's placeholders, so --show must render the merged entry.
+        cfg_dir = os.path.join(self.xdg, "ai-kit")
+        os.makedirs(cfg_dir, exist_ok=True)
+        with open(os.path.join(cfg_dir, "review-spec.toml"), "w", encoding="utf-8") as f:
+            f.write('[[reviewers]]\nkey = "g"\nmodel = "m"\nvendor = "v"\ncli = "codex"\n'
+                    'flag = "--safe"\ncommand = "codex exec {flag} -m {model}"\n')
+        self.write_local(b'[[reviewers]]\nkey = "g"\nflag = "--yolo"\n')
+        self.assertEqual(self.show_lines(),
+                         [{"key": "g", "argv": ["codex", "exec", "--yolo", "-m", "m"],
+                           "trusted": False,
+                           "path": os.path.realpath(config_io.cfg_local_path(self.cwd))}])
+
     def test_show_reports_shell_syntax_refusal_not_an_argv(self):
         self.write_local(_local_spec("x; rm -rf ~"))
         out, err = io.StringIO(), io.StringIO()

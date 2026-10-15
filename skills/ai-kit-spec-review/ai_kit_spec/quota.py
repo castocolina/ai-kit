@@ -29,7 +29,7 @@ def _reviewer_by_key(reviewers: list, key: str) -> dict | None:
     return None
 
 
-def _to_resolved(entry: dict) -> ResolvedReviewer:
+def to_resolved(entry: dict) -> ResolvedReviewer:
     """entry["key"] is always present here — every caller reaches this via
     _reviewer_by_key, which already filters by key. entry.get("model", "")
     tolerates a config entry that forgot to set model (never raises); an
@@ -80,14 +80,14 @@ def resolve_ladder_pick(reviewers: list, ladder: list, skip_vendor: str, quota: 
             continue
         if skip_vendor and entry.get("vendor") == skip_vendor:
             continue
-        return _to_resolved(entry)
+        return to_resolved(entry)
     if not allow_same_vendor_fallback:
         return None
     for key in ladder:
         entry = _reviewer_by_key(reviewers, key)
         if entry is None or not _has_quota(quota, key):
             continue
-        return _to_resolved(entry)
+        return to_resolved(entry)
     return None
 
 
@@ -272,5 +272,5 @@ def refresh_quota_cache(config: dict, ladder_keys: list, existing: dict, ttl_sec
         entry = _reviewer_by_key(reviewers, key)
         if entry is None:
             continue
-        updated[key] = probe_reviewer_quota(_to_resolved(entry), run_fn=run_fn)
+        updated[key] = probe_reviewer_quota(to_resolved(entry), run_fn=run_fn)
     return updated
