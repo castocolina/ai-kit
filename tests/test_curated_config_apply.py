@@ -3,8 +3,10 @@ import os
 import stat
 import sys
 import tempfile
+import threading
 import unittest
 from datetime import UTC, datetime
+from unittest import mock
 
 sys.path.insert(
     0,
@@ -128,6 +130,7 @@ class TestBackupReuse(unittest.TestCase):
             os.chmod(config_path, 0o600)
             result = config_backup.create_backup(config_path, _fixed_now)
             self.assertFalse(result.reused)
+            assert result.path is not None
             self.assertEqual(stat.S_IMODE(os.stat(result.path).st_mode), 0o600)
 
 
@@ -173,6 +176,229 @@ class TestPrune(unittest.TestCase):
         self.assertIsNone(
             config_backup.BACKUP_RE.match("config.json.ai-kit-apply-marker")
         )
+
+
+class TestApplyMarker(unittest.TestCase):
+    def test_acquire_update_read_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, ".planning", "config.json")
+            _write_config(config_path, b"{}\n")
+            self.assertTrue(config_backup.acquire_marker(config_path, True, _fixed_now))
+            backup_name = "config.json.bak-20261015T120000Z"
+            runner = {
+                "path": ".planning/scripts/cross-ai.mjs",
+                "snapshot": ".planning/scripts/cross-ai.mjs.ai-kit-apply-backup",
+                "kind": "change",
+            }
+            config_backup.update_marker(
+                config_path,
+                backup=backup_name,
+                runner=runner,
+            )
+            marker = config_backup.read_marker(config_path)
+            assert marker is not None
+            self.assertEqual(marker["backup"], backup_name)
+            self.assertTrue(marker["config_existed"])
+            self.assertEqual(marker["started"], "2026-10-15T12:00:00Z")
+            self.assertEqual(marker["runner"], runner)
+            self.assertFalse(marker["committed"])
+
+    def test_second_acquire_is_exclusive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, ".planning", "config.json")
+            _write_config(config_path, b"{}\n")
+            self.assertTrue(config_backup.acquire_marker(config_path, True, _fixed_now))
+            marker_path = config_backup.marker_path(config_path)
+            with open(marker_path, "rb") as handle:
+                before = handle.read()
+            self.assertFalse(config_backup.acquire_marker(config_path, True, _fixed_now))
+            with open(marker_path, "rb") as handle:
+                self.assertEqual(handle.read(), before)
+
+    def test_acquire_race_yields_one_winner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, ".planning", "config.json")
+            _write_config(config_path, b"{}\n")
+            results: list[bool] = []
+            barrier = threading.Barrier(8)
+
+            def worker() -> None:
+                barrier.wait()
+                results.append(config_backup.acquire_marker(config_path, True, _fixed_now))
+
+            threads = [threading.Thread(target=worker) for _ in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(sum(results), 1)
+            planning = os.path.dirname(config_path)
+            temps = [name for name in os.listdir(planning) if name.startswith(".bak-tmp-")]
+            self.assertEqual(temps, [])
+
+    def test_fresh_project_creates_planning_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, ".planning", "config.json")
+            self.assertTrue(config_backup.acquire_marker(config_path, False, _fixed_now))
+            self.assertTrue(os.path.isdir(os.path.dirname(config_path)))
+            self.assertTrue(os.path.isfile(config_backup.marker_path(config_path)))
+            config_backup.update_marker(config_path, committed=True)
+            marker = config_backup.read_marker(config_path)
+            assert marker is not None
+            self.assertTrue(marker["committed"])
+
+    def test_read_marker_absent_and_corrupt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, ".planning", "config.json")
+            self.assertIsNone(config_backup.read_marker(config_path))
+            os.makedirs(os.path.dirname(config_path))
+            with open(config_backup.marker_path(config_path), "w", encoding="utf-8") as handle:
+                handle.write("not json")
+            self.assertEqual(config_backup.read_marker(config_path), {"corrupt": True})
+
+    def test_clear_marker_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, ".planning", "config.json")
+            config_backup.clear_marker(config_path)
+            _write_config(config_path, b"{}\n")
+            self.assertTrue(config_backup.acquire_marker(config_path, True, _fixed_now))
+            config_backup.clear_marker(config_path)
+            self.assertIsNone(config_backup.read_marker(config_path))
+
+    def test_update_marker_without_cache_sibling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, ".planning", "config.json")
+            _write_config(config_path, b"{}\n")
+            self.assertTrue(config_backup.acquire_marker(config_path, True, _fixed_now))
+            with mock.patch.object(
+                config_backup.gsd_catalog,
+                "load_ai_kit_spec_module",
+                return_value=None,
+            ):
+                with self.assertRaises(OSError) as ctx:
+                    config_backup.update_marker(config_path, committed=True)
+                self.assertIn(config_backup.gsd_catalog.SIBLING_MISSING, str(ctx.exception))
+
+
+class TestRunnerSnapshot(unittest.TestCase):
+    def test_snapshot_restore_runner_bytes_and_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            scripts = os.path.join(tmp, ".planning", "scripts")
+            os.makedirs(scripts)
+            runner = os.path.join(scripts, "cross-ai.mjs")
+            original = b"#!/usr/bin/env node\n"
+            with open(runner, "wb") as handle:
+                handle.write(original)
+            os.chmod(runner, 0o755)
+            snapshot = config_backup.snapshot_file(runner)
+            assert snapshot is not None
+            with open(runner, "wb") as handle:
+                handle.write(b"changed\n")
+            config_backup.restore_backup(runner, snapshot)
+            with open(runner, "rb") as handle:
+                self.assertEqual(handle.read(), original)
+            self.assertEqual(stat.S_IMODE(os.stat(runner).st_mode), 0o755)
+            config_backup.discard_snapshot(snapshot)
+            self.assertFalse(os.path.exists(snapshot))
+
+    def test_snapshot_absent_and_discard_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = os.path.join(tmp, "nope.mjs")
+            self.assertIsNone(config_backup.snapshot_file(missing))
+            config_backup.discard_snapshot(os.path.join(tmp, "ghost.ai-kit-apply-backup"))
+
+
+class TestRecoveryText(unittest.TestCase):
+    def _config(self, tmp: str) -> str:
+        return os.path.join(tmp, ".planning", "config.json")
+
+    def test_none_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config(tmp)
+            text = config_backup.recovery_text(None, config_path)
+            self.assertIn("run apply again", text)
+            self.assertNotIn("put ", text)
+
+    def test_corrupt_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config(tmp)
+            text = config_backup.recovery_text({"corrupt": True}, config_path)
+            self.assertIn("unreadable", text)
+            self.assertNotIn("put ", text)
+
+    def test_committed_no_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config(tmp)
+            marker = {"committed": True, "runner": None}
+            text = config_backup.recovery_text(marker, config_path)
+            self.assertIn("do not restore the backup", text)
+            self.assertNotIn("put ", text)
+            self.assertIn("delete the marker", text)
+
+    def test_committed_add_runner_no_snapshot_in_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config(tmp)
+            marker = {
+                "committed": True,
+                "runner": {"path": ".planning/scripts/cross-ai.mjs", "kind": "add"},
+            }
+            text = config_backup.recovery_text(marker, config_path)
+            self.assertIn("delete the marker", text)
+            self.assertNotIn("None", text)
+            self.assertNotIn("ai-kit-apply-backup", text)
+
+    def test_uncommitted_backup_and_change_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config(tmp)
+            marker = {
+                "committed": False,
+                "config_existed": True,
+                "backup": "config.json.bak-20261015T120000Z",
+                "runner": {
+                    "path": ".planning/scripts/cross-ai.mjs",
+                    "snapshot": ".planning/scripts/cross-ai.mjs.ai-kit-apply-backup",
+                    "kind": "change",
+                },
+            }
+            text = config_backup.recovery_text(marker, config_path)
+            self.assertIn("apply --dry-run", text)
+            self.assertIn("put config.json.bak-20261015T120000Z back over", text)
+            self.assertIn(
+                "put .planning/scripts/cross-ai.mjs.ai-kit-apply-backup back over",
+                text,
+            )
+
+    def test_uncommitted_new_config_and_add_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config(tmp)
+            marker = {
+                "committed": False,
+                "config_existed": False,
+                "backup": None,
+                "runner": {
+                    "path": ".planning/scripts/cross-ai.mjs",
+                    "kind": "add",
+                },
+            }
+            text = config_backup.recovery_text(marker, config_path)
+            self.assertIn("apply --dry-run", text)
+            self.assertIn("delete ", text)
+            self.assertIn("cross-ai.mjs if it exists", text)
+
+    def test_uncommitted_no_backup_no_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config(tmp)
+            marker = {
+                "committed": False,
+                "config_existed": True,
+                "backup": None,
+                "runner": None,
+            }
+            text = config_backup.recovery_text(marker, config_path)
+            self.assertEqual(text.count("needs no restore"), 2)
+            self.assertNotIn("put ", text)
+            self.assertNotIn("delete ", config_path)
+            self.assertNotIn("--dry-run", text)
 
 
 if __name__ == "__main__":

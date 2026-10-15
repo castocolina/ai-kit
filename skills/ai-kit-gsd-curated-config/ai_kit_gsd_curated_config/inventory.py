@@ -67,19 +67,6 @@ def _filter_allowlist(values: dict, allowed: tuple[str, ...]) -> dict:
     return {key: values[key] for key in allowed if key in values}
 
 
-def _read_json_object(path: str) -> tuple[dict | None, str | None]:
-    if not os.path.isfile(path):
-        return None, None
-    try:
-        with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError, RecursionError):  # ValueError covers JSON + UTF-8 decode
-        return None, f"{path} unreadable; ignored"
-    if not isinstance(data, dict):
-        return None, f"{path} unreadable; ignored"
-    return data, None
-
-
 def _hoist_legacy_depth(raw: dict) -> tuple[dict, bool]:
     """Mirrors gsd-core's normalization 4 (configuration.cjs): a top-level `depth` with no
     `granularity` is read as granularity. Returns `(config, hoisted)`."""
@@ -98,7 +85,7 @@ def _existing_config(project_dir, tools_path, node_bin, deps):
         resolved = gsd.config_path(tools, project_dir, deps.run_fn, deps.env_fn())
         if resolved:
             path = resolved
-    raw, warn = _read_json_object(path)
+    raw, warn = plan_io.read_json_object(path)
     exists = os.path.isfile(path)
     raw, hoisted = _hoist_legacy_depth(raw or {})
     values = _filter_allowlist(raw, PROJECT_CONFIG_KEYS)
@@ -112,7 +99,7 @@ def _global_defaults(env: dict):
     home = env.get("HOME") or os.path.expanduser("~")
     base = env["GSD_HOME"] if env.get("GSD_HOME") else home
     path = os.path.join(base, ".gsd", "defaults.json")
-    raw, warn = _read_json_object(path)
+    raw, warn = plan_io.read_json_object(path)
     exists = os.path.isfile(path)
     values = _filter_allowlist(raw, GLOBAL_CONFIG_KEYS) if raw else {}
     return {"path": path, "exists": exists, "values": values}, warn

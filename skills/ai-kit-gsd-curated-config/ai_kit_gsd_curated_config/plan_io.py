@@ -23,6 +23,19 @@ INVENTORY_SCHEMA_VERSION = 2
 _ERROR_SUFFIX = "; rerun inventory"
 
 
+def read_json_object(path: str) -> tuple[dict | None, str | None]:
+    if not os.path.isfile(path):
+        return None, None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, RecursionError):
+        return None, f"{path} unreadable; ignored"
+    if not isinstance(data, dict):
+        return None, f"{path} unreadable; ignored"
+    return data, None
+
+
 def _missing(inv: dict, key: str) -> str | None:
     if key not in inv:
         return f"missing key: {key}"

@@ -3,15 +3,16 @@
 The restore path is the one sanctioned config write outside gsd-tools (D-21). Backup files
 are untracked artifacts in the user's repo (Pitfall 14).
 """
+import json
 import os
 import re
 import stat
 import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
-from . import gsd_catalog
+from . import gsd_catalog, plan_io
 
 BACKUP_PREFIX = "config.json.bak-"
 BACKUP_RE = re.compile(r"^config\.json\.bak-(\d{8}T\d{6}Z)(?:-(\d+))?$")
@@ -36,6 +37,12 @@ def _config_dir(config_path: str) -> str:
 def _backup_basename(stamp: str, n: int) -> str:
     suffix = f"-{n}" if n else ""
     return f"{BACKUP_PREFIX}{stamp}{suffix}"
+
+
+def _umask_file_mode() -> int:
+    umask = os.umask(0)
+    os.umask(umask)
+    return 0o666 & ~umask
 
 
 def _claim_copy(data: bytes, mode: int, final: str) -> bool:
@@ -141,3 +148,146 @@ def restore_backup(config_path: str, backup_path: str | None) -> None:
     if cache is None:
         raise OSError(gsd_catalog.SIBLING_MISSING)
     cache.cache_write_bytes(os.path.abspath(config_path), data, mode=mode)
+
+
+def snapshot_file(path: str) -> str | None:
+    if not os.path.isfile(path):
+        return None
+    with open(path, "rb") as handle:
+        data = handle.read()
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    target = os.path.abspath(path) + SNAPSHOT_SUFFIX
+    cache = gsd_catalog.load_ai_kit_spec_module("cache")
+    if cache is None:
+        raise OSError(gsd_catalog.SIBLING_MISSING)
+    cache.cache_write_bytes(target, data, mode=mode)
+    return target
+
+
+def discard_snapshot(snapshot_path: str) -> None:
+    if snapshot_path and os.path.isfile(snapshot_path):
+        os.unlink(snapshot_path)
+
+
+def marker_path(config_path: str) -> str:
+    return os.path.abspath(config_path) + MARKER_SUFFIX
+
+
+def acquire_marker(config_path: str, config_existed: bool, now_fn: Callable[[], datetime]) -> bool:
+    target = os.path.abspath(config_path)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    started = now_fn().astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    payload = {
+        "backup": None,
+        "config_existed": config_existed,
+        "started": started,
+        "runner": None,
+        "committed": False,
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return _claim_copy(body, _umask_file_mode(), marker_path(target))
+
+
+def read_marker(config_path: str) -> dict[str, Any] | None:
+    path = marker_path(config_path)
+    if not os.path.isfile(path):
+        return None
+    data, warn = plan_io.read_json_object(path)
+    if warn is not None or data is None:
+        return {"corrupt": True}
+    return data
+
+
+def update_marker(config_path: str, **fields: Any) -> None:
+    current = read_marker(config_path)
+    if current is None or current.get("corrupt"):
+        raise OSError("apply marker missing or corrupt")
+    merged = {**current, **fields}
+    cache = gsd_catalog.load_ai_kit_spec_module("cache")
+    if cache is None:
+        raise OSError(gsd_catalog.SIBLING_MISSING)
+    text = json.dumps(merged, indent=2, sort_keys=True) + "\n"
+    cache.cache_write_text(marker_path(config_path), text)
+
+
+def clear_marker(config_path: str) -> None:
+    path = marker_path(config_path)
+    if os.path.isfile(path):
+        os.unlink(path)
+
+
+def _leftovers_phrase(marker: dict[str, Any]) -> str:
+    runner = marker.get("runner")
+    if isinstance(runner, dict) and runner.get("snapshot"):
+        snap = runner["snapshot"]
+        return f"{snap} if it exists, then the marker"
+    return "the marker"
+
+
+def _recovery_config_step(marker: dict[str, Any], config_path: str) -> str:
+    backup = marker.get("backup")
+    if backup:
+        return f"put {backup} back over {config_path}"
+    if not marker.get("config_existed", True):
+        return f"delete {config_path} if it exists (that apply created it)"
+    return (
+        f"{config_path} needs no restore (no backup was taken yet, "
+        "so that apply wrote nothing to it)"
+    )
+
+
+def _recovery_runner_step(marker: dict[str, Any]) -> str:
+    runner = marker.get("runner")
+    if not isinstance(runner, dict):
+        return "the runner needs no restore"
+    kind = runner.get("kind")
+    path = runner.get("path")
+    snapshot = runner.get("snapshot")
+    if kind == "change" and snapshot and path:
+        return f"put {snapshot} back over {path}"
+    if kind == "add" and path:
+        return (
+            f"delete {path} if it exists, unless you created it since (that apply added it)"
+        )
+    return "the runner needs no restore"
+
+
+def _recovery_dry_run_prefix(marker: dict[str, Any], config_path: str) -> str:
+    backup = marker.get("backup")
+    config_existed = marker.get("config_existed", True)
+    if not backup and config_existed:
+        return ""
+    phrase = _leftovers_phrase(marker)
+    return (
+        " first run apply --dry-run with that apply's plan and inventory "
+        "(a dry run takes no lock and ignores the marker, 18-17); "
+        "if its diff holds only keep rows, that apply finished its writes and "
+        f"only its commit record is missing: delete {phrase} and restore nothing; otherwise"
+    )
+
+
+def recovery_text(marker: dict[str, Any] | None, config_path: str) -> str:
+    config_path = os.path.abspath(config_path)
+    head = f"an apply is running or did not finish ({marker_path(config_path)})"
+    if marker is None:
+        return f"{head}; it has finished since; run apply again"
+    if marker.get("corrupt"):
+        return (
+            f"{head}; the marker is unreadable: if no apply is running, check "
+            f"{config_path} and the runner by hand, then delete the marker"
+        )
+    if marker.get("committed"):
+        phrase = _leftovers_phrase(marker)
+        return (
+            f"{head}; that apply committed: {config_path} and its runner hold the "
+            f"applied state; if no apply is running, delete {phrase}; "
+            "do not restore the backup"
+        )
+    dry = _recovery_dry_run_prefix(marker, config_path)
+    config_step = _recovery_config_step(marker, config_path)
+    runner_step = _recovery_runner_step(marker)
+    marker_file = marker_path(config_path)
+    return (
+        f"{head}; if no apply is running:{dry} {config_step}; {runner_step}, "
+        f"then delete {marker_file}"
+    )

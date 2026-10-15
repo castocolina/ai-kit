@@ -2016,7 +2016,7 @@ class TestConflictMatrix(unittest.TestCase):
         path = os.path.join(scratch, "config.json")
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("[" * 200000 + "]" * 200000)
-        data, warn = inventory._read_json_object(path)
+        data, warn = plan_io.read_json_object(path)
         self.assertIsNone(data)
         assert warn is not None
         self.assertIn("unreadable", warn)
