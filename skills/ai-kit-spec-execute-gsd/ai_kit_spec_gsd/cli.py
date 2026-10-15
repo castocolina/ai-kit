@@ -11,6 +11,8 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
+from typing import Any, NamedTuple, TextIO
 
 from ai_kit_spec import gsd_tools
 from ai_kit_spec.cache import cache_read_json, cache_write_json
@@ -29,6 +31,8 @@ from ai_kit_spec.tooling_guidance import (
 )
 
 from ai_kit_spec_gsd.adapter import (
+    DispatchContext,
+    DispatchInputs,
     assemble_candidates,
     estimate_required_context,
     resolve_gsd_dispatch,
@@ -44,15 +48,37 @@ from ai_kit_spec_gsd.gsd_config import (
 )
 
 
-def _resolve_gsd_tooling(cwd: str, which_fn, resolve_gsd_tools_fn) -> tuple:
+def _default_resolve_gsd_tools(start: str):
+    return gsd_tools.resolve_gsd_tools(start=start)
+
+
+class CliDeps(NamedTuple):
+    assemble_candidates_fn: Callable[..., tuple] = assemble_candidates
+    read_gsd_config_fn: Callable[..., tuple] = read_gsd_config
+    refresh_quota_cache_fn: Callable[..., dict] = refresh_quota_cache
+    cache_read_json_fn: Callable[[str], Any] = cache_read_json
+    cache_write_json_fn: Callable[[str, Any], None] = cache_write_json
+    which_fn: Callable[[str], str | None] = shutil.which
+    resolve_gsd_tools_fn: Callable[..., str | None] = _default_resolve_gsd_tools
+    detect_tool_availability_fn: Callable[[], dict] = detect_tool_availability
+    resolve_agents_tooling_path_fn: Callable[[], str | None] = resolve_agents_tooling_path
+    probe_codegraph_fn: Callable[..., Any] = probe_codegraph
+    run_codegraph_index_fn: Callable[[str], bool] = run_codegraph_index
+    build_gsd_cross_ai_guidance_fn: Callable[[str], str] = build_gsd_cross_ai_guidance
+    run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run
+    write_resumable_state_fn: Callable[..., None] = _write_resumable_state_default
+    stdout: TextIO = sys.stdout
+
+
+def _resolve_gsd_tooling(cwd: str, deps: CliDeps) -> tuple[str | None, str | None]:
     """Resolves (node, gsd-tools path), printing which piece is missing to stderr -- returns
     (None, None) so the caller can exit 2."""
-    node = which_fn("node")
+    node = deps.which_fn("node")
     if not node:
         print("ai-kit-spec-execute-gsd: node not found on PATH -- required to run gsd-tools",
               file=sys.stderr)
         return None, None
-    tools_path = resolve_gsd_tools_fn(start=cwd)
+    tools_path = deps.resolve_gsd_tools_fn(cwd)
     if not tools_path:
         print(f"ai-kit-spec-execute-gsd: no gsd-tools.cjs found for {cwd} -- GSD must be "
               f"installed (project-local gsd-core first)", file=sys.stderr)
@@ -60,53 +86,190 @@ def _resolve_gsd_tooling(cwd: str, which_fn, resolve_gsd_tools_fn) -> tuple:
     return node, tools_path
 
 
-def _default_resolve_gsd_tools(start: str):
-    return gsd_tools.resolve_gsd_tools(start=start)
-
-
-def _build_write_context(cwd: str, run_id: str, which_fn=shutil.which,
-                          resolve_gsd_tools_fn=_default_resolve_gsd_tools,
-                          run_fn=subprocess.run) -> GsdWriteContext | None:
+def _build_write_context(cwd: str, run_id: str, deps: CliDeps) -> GsdWriteContext | None:
     """The one helper that builds a GsdWriteContext: resolves node + gsd-tools, asks gsd-tools
     for the workstream-aware config path, and prints the `ai-kit: gsd-core <version> at <path>`
     banner to stderr so a previousValue contract drift on a non-1.16 gsd-core is diagnosable
     from every config-writing run. Returns None (after naming the miss) when node or gsd-tools
     cannot be resolved."""
-    node, tools_path = _resolve_gsd_tooling(cwd, which_fn, resolve_gsd_tools_fn)
-    if node is None:
+    node, tools_path = _resolve_gsd_tooling(cwd, deps)
+    if node is None or tools_path is None:
         return None
     tools = gsd_tools.GsdTools(node_bin=node, gsd_tools_path=tools_path)
-    config_path = gsd_tools.config_path(tools, cwd, run_fn=run_fn)
+    config_path = gsd_tools.config_path(tools, cwd, run_fn=deps.run_fn)
     if not config_path:
         config_path = os.path.join(cwd, ".planning", "config.json")
     version = gsd_tools.gsd_core_version(tools_path)
     print(f"ai-kit: gsd-core {version or 'unknown'} at {tools_path}", file=sys.stderr)
     return GsdWriteContext(tools=tools, project_dir=cwd, config_path=config_path,
-                            run_id=run_id, run_fn=run_fn)
+                            run_id=run_id, run_fn=deps.run_fn)
 
 
-def main(argv: list, **kwargs) -> int:
-    """Wrapper around _main that turns a ConfigError (D-11/R13) into a loud failure: print
-    the path + parser message to stderr and exit 2 -- a broken review-spec.toml must stop
-    the CLI, never silently disable cross-AI review."""
+def _malformed_resolve_result(config_path: str, run_id: str) -> dict:
+    return {
+        "mode": "fallback_notice",
+        "key": None,
+        "cli": None,
+        "provenance": "fallback",
+        "reason": "malformed_config",
+        "message": (
+            f"{config_path} is malformed/unreadable -- refusing to write over it. "
+            f"Fix or remove it by hand, then re-run."
+        ),
+        "run_id": run_id,
+    }
+
+
+def _refresh_quota_for_candidates(
+    deps: CliDeps, quota_path: str, candidates: list, existing_quota: dict,
+) -> dict:
+    quota = deps.refresh_quota_cache_fn(
+        {"reviewers": [
+            {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "cli": c["cli"],
+             "command": c.get("command")}
+            for c in candidates
+        ]},
+        [c["key"] for c in candidates], existing_quota, QUOTA_TTL_SECONDS)
+    deps.cache_write_json_fn(quota_path, quota)
+    return quota
+
+
+def _required_context_from_prompt_file(path: str | None) -> int:
+    if not path:
+        return 0
     try:
-        return _main(argv, **kwargs)
-    except ConfigError as exc:
-        print(f"ai-kit-spec-execute-gsd: config error: {exc}", file=sys.stderr)
+        with open(path, encoding="utf-8") as f:
+            return estimate_required_context(f.read())
+    except OSError as exc:
+        print(f"ai-kit-spec-execute-gsd: could not read --phase-prompt-file "
+              f"{path!r} ({exc}) -- falling back to required_context=0", file=sys.stderr)
+        return 0
+
+
+def _cmd_resolve_dispatch(args: argparse.Namespace, deps: CliDeps) -> int:
+    run_id = args.run_id if args.run_id else generate_run_id()
+    candidates, top_n_keys = deps.assemble_candidates_fn(args.cwd, dict(os.environ))
+    ctx = _build_write_context(args.cwd, run_id, deps)
+    if ctx is None:
         return 2
+    gsd_config, status = deps.read_gsd_config_fn(
+        ctx.config_path, warn_fn=lambda msg: print(msg, file=sys.stderr))
+    if status == "malformed":
+        deps.stdout.write(json.dumps(_malformed_resolve_result(ctx.config_path, run_id)))
+        return 0
+    existing_quota = deps.cache_read_json_fn(args.quota_path) or {}
+    quota = _refresh_quota_for_candidates(deps, args.quota_path, candidates, existing_quota)
+    required_context = _required_context_from_prompt_file(args.phase_prompt_file)
+    dispatch = DispatchContext(
+        target_dir=args.target_dir,
+        current_runtime=resolve_active_runtime(gsd_config),
+        required_context=required_context,
+        quota=quota,
+    )
+    try:
+        result = resolve_gsd_dispatch(
+            DispatchInputs(candidates, top_n_keys, gsd_config, ctx), dispatch)
+    except ValueError as exc:
+        print(f"ai-kit-spec-execute-gsd: {exc}", file=sys.stderr)
+        return 2
+    result["run_id"] = run_id
+    deps.stdout.write(json.dumps(result))
+    return 1 if result.get("mode") == "write_failed" else 0
 
 
-def _main(argv: list, assemble_candidates_fn=assemble_candidates,
-         read_gsd_config_fn=read_gsd_config, refresh_quota_cache_fn=refresh_quota_cache,
-         cache_read_json_fn=cache_read_json, cache_write_json_fn=cache_write_json,
-         which_fn=shutil.which, resolve_gsd_tools_fn=_default_resolve_gsd_tools,
-         detect_tool_availability_fn=detect_tool_availability,
-         resolve_agents_tooling_path_fn=resolve_agents_tooling_path,
-         probe_codegraph_fn=probe_codegraph,
-         run_codegraph_index_fn=run_codegraph_index,
-         build_gsd_cross_ai_guidance_fn=build_gsd_cross_ai_guidance,
-         run_fn=subprocess.run, write_resumable_state_fn=_write_resumable_state_default,
-         stdout=sys.stdout) -> int:
+def _cmd_config_path(args: argparse.Namespace, deps: CliDeps) -> int:
+    node, tools_path = _resolve_gsd_tooling(args.cwd, deps)
+    if node is None or tools_path is None:
+        return 2
+    tools = gsd_tools.GsdTools(node_bin=node, gsd_tools_path=tools_path)
+    resolved = gsd_tools.config_path(tools, args.cwd, run_fn=deps.run_fn)
+    if not resolved:
+        print(f"ai-kit-spec-execute-gsd: gsd-tools could not resolve a config path for "
+              f"{args.cwd}", file=sys.stderr)
+        return 2
+    deps.stdout.write(resolved + "\n")
+    return 0
+
+
+def _parse_workflow_set_specs(specs: list[str]) -> list:
+    changes = []
+    for spec in specs:
+        key, _, raw = spec.partition("=")
+        changes.append(("workflow." + key, json.loads(raw)))
+    return changes
+
+
+def _cmd_write_workflow_keys(args: argparse.Namespace, deps: CliDeps) -> int:
+    ctx = _build_write_context(args.cwd, args.run_id, deps)
+    if ctx is None:
+        return 2
+    result = apply_changes(ctx, _parse_workflow_set_specs(args.set))
+    deps.stdout.write(json.dumps(result._asdict()))
+    return 1 if result.failed else 0
+
+
+def _cmd_clear_workflow_keys(args: argparse.Namespace, deps: CliDeps) -> int:
+    ctx = _build_write_context(args.cwd, args.run_id, deps)
+    if ctx is None:
+        return 2
+    gsd_config, status = deps.read_gsd_config_fn(
+        ctx.config_path, warn_fn=lambda msg: print(msg, file=sys.stderr))
+    if status == "malformed":
+        print(f"ai-kit-spec-execute-gsd: {ctx.config_path} is malformed -- refusing to "
+              f"clear workflow keys over it", file=sys.stderr)
+        return 2
+    changes = [
+        ("workflow." + key, None) for key in args.key
+        if is_adapter_owned(gsd_config, ctx.config_path, "workflow." + key)
+    ]
+    result = apply_changes(ctx, changes)
+    deps.stdout.write(json.dumps(result._asdict()))
+    return 1 if result.failed else 0
+
+
+def _codegraph_registered_for_cli(cli_name: str | None, target_dir: str, deps: CliDeps) -> bool:
+    if cli_name is None:
+        return False
+    probe = deps.probe_codegraph_fn(cli_name)
+    if probe.install_command:
+        print(f"ai-kit-spec-execute-gsd: codegraph MCP is not registered or not healthy "
+              f"for {cli_name}; install it with: {probe.install_command}",
+              file=sys.stderr)
+    if probe.healthy is True:
+        return deps.run_codegraph_index_fn(target_dir)
+    return False
+
+
+def _cmd_prepare_tooling(args: argparse.Namespace, deps: CliDeps) -> int:
+    tool_availability = deps.detect_tool_availability_fn()
+    agents_tooling_path = deps.resolve_agents_tooling_path_fn()
+    codegraph_registered = _codegraph_registered_for_cli(args.cli, args.target_dir, deps)
+    guidance_cli = args.cli if args.cli is not None else "claude"
+    guidance = build_tooling_guidance(
+        guidance_cli, tool_availability, agents_tooling_path, codegraph_registered,
+        shared_reference_path=resolve_shared_tooling_reference_path())
+    deps.stdout.write(guidance)
+    return 0
+
+
+def _cmd_prepare_cross_ai_guidance(args: argparse.Namespace, deps: CliDeps) -> int:
+    deps.stdout.write(deps.build_gsd_cross_ai_guidance_fn(args.resolved_label))
+    return 0
+
+
+def _cmd_print_summary_format_block(args: argparse.Namespace, deps: CliDeps) -> int:
+    deps.stdout.write(GSD_SUMMARY_FORMAT_BLOCK)
+    return 0
+
+
+def _cmd_write_resumable_state(args: argparse.Namespace, deps: CliDeps) -> int:
+    state = json.loads(args.state_json)
+    deps.write_resumable_state_fn(args.path, state)
+    deps.stdout.write(json.dumps({"written": True, "path": args.path}))
+    return 0
+
+
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ai-kit-spec-execute-gsd")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -159,143 +322,38 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
     p_resume.add_argument("--path", required=True)
     p_resume.add_argument("--state-json", required=True)
 
+    return parser
+
+
+_COMMANDS = {
+    "resolve-dispatch": _cmd_resolve_dispatch,
+    "config-path": _cmd_config_path,
+    "write-workflow-keys": _cmd_write_workflow_keys,
+    "clear-workflow-keys": _cmd_clear_workflow_keys,
+    "prepare-tooling": _cmd_prepare_tooling,
+    "prepare-cross-ai-guidance": _cmd_prepare_cross_ai_guidance,
+    "print-summary-format-block": _cmd_print_summary_format_block,
+    "write-resumable-state": _cmd_write_resumable_state,
+}
+
+
+def _dispatch(argv: list, deps: CliDeps) -> int:
+    parser = _build_parser()
     args = parser.parse_args(argv)
+    handler = _COMMANDS.get(args.command)
+    if handler is None:
+        return 1
+    return handler(args, deps)
 
-    if args.command == "resolve-dispatch":
-        run_id = args.run_id if args.run_id else generate_run_id()
-        # cfg_resolve (inside assemble) runs FIRST: a malformed local review-spec.toml is a
-        # loud ConfigError/exit 2 (D-11/R13) before any gsd-tools run or config write (D-15).
-        candidates, top_n_keys = assemble_candidates_fn(args.cwd, dict(os.environ))
-        # D-17: the config path comes from gsd-tools config-path (workstream-aware); the
-        # gsd-core version banner prints here too, before any config-set this run may make.
-        ctx = _build_write_context(args.cwd, run_id, which_fn=which_fn,
-                                    resolve_gsd_tools_fn=resolve_gsd_tools_fn, run_fn=run_fn)
-        if ctx is None:
-            return 2
-        gsd_config, status = read_gsd_config_fn(
-            ctx.config_path, warn_fn=lambda msg: print(msg, file=sys.stderr))
-        if status == "malformed":
-            result = {"mode": "fallback_notice", "key": None, "cli": None,
-                      "provenance": "fallback", "reason": "malformed_config",
-                      "message": f"{ctx.config_path} is malformed/unreadable -- refusing to "
-                                 f"write over it. Fix or remove it by hand, then re-run.",
-                      "run_id": run_id}
-            stdout.write(json.dumps(result))
-            return 0
-        existing_quota = cache_read_json_fn(args.quota_path) or {}
-        quota = refresh_quota_cache_fn(
-            {"reviewers": [
-                {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "cli": c["cli"],
-                 "command": c.get("command")}
-                for c in candidates
-            ]},
-            [c["key"] for c in candidates], existing_quota, QUOTA_TTL_SECONDS)
-        cache_write_json_fn(args.quota_path, quota)
-        required_context = 0
-        if args.phase_prompt_file:
-            try:
-                with open(args.phase_prompt_file, encoding="utf-8") as f:
-                    required_context = estimate_required_context(f.read())
-            except OSError as exc:
-                print(f"ai-kit-spec-execute-gsd: could not read --phase-prompt-file "
-                      f"{args.phase_prompt_file!r} ({exc}) -- falling back to "
-                      f"required_context=0", file=sys.stderr)
-        try:
-            result = resolve_gsd_dispatch(
-                candidates, top_n_keys, gsd_config, ctx, args.target_dir,
-                current_runtime=resolve_active_runtime(gsd_config),
-                required_context=required_context, quota=quota)
-        except ValueError as exc:
-            # D-15 (Phase 16.1): an explicit purpose = "execute" entry naming an unsupported CLI
-            # (claude/grok) is a hard config error -- fail before any config write, never fall
-            # back to another CLI.
-            print(f"ai-kit-spec-execute-gsd: {exc}", file=sys.stderr)
-            return 2
-        result["run_id"] = run_id
-        stdout.write(json.dumps(result))
-        return 1 if result.get("mode") == "write_failed" else 0
 
-    if args.command == "config-path":
-        node, tools_path = _resolve_gsd_tooling(args.cwd, which_fn, resolve_gsd_tools_fn)
-        if node is None:
-            return 2
-        tools = gsd_tools.GsdTools(node_bin=node, gsd_tools_path=tools_path)
-        resolved = gsd_tools.config_path(tools, args.cwd, run_fn=run_fn)
-        if not resolved:
-            print(f"ai-kit-spec-execute-gsd: gsd-tools could not resolve a config path for "
-                  f"{args.cwd}", file=sys.stderr)
-            return 2
-        stdout.write(resolved + "\n")
-        return 0
-
-    if args.command == "write-workflow-keys":
-        ctx = _build_write_context(args.cwd, args.run_id, which_fn=which_fn,
-                                    resolve_gsd_tools_fn=resolve_gsd_tools_fn, run_fn=run_fn)
-        if ctx is None:
-            return 2
-        changes = []
-        for spec in args.set:
-            key, _, raw = spec.partition("=")
-            changes.append(("workflow." + key, json.loads(raw)))
-        result = apply_changes(ctx, changes)
-        stdout.write(json.dumps(result._asdict()))
-        return 1 if result.failed else 0
-
-    if args.command == "clear-workflow-keys":
-        ctx = _build_write_context(args.cwd, args.run_id, which_fn=which_fn,
-                                    resolve_gsd_tools_fn=resolve_gsd_tools_fn, run_fn=run_fn)
-        if ctx is None:
-            return 2
-        gsd_config, status = read_gsd_config(ctx.config_path,
-                                              warn_fn=lambda msg: print(msg, file=sys.stderr))
-        if status == "malformed":
-            print(f"ai-kit-spec-execute-gsd: {ctx.config_path} is malformed -- refusing to "
-                  f"clear workflow keys over it", file=sys.stderr)
-            return 2
-        changes = [("workflow." + key, None) for key in args.key
-                   if is_adapter_owned(gsd_config, ctx.config_path, "workflow." + key)]
-        result = apply_changes(ctx, changes)
-        stdout.write(json.dumps(result._asdict()))
-        return 1 if result.failed else 0
-
-    if args.command == "prepare-tooling":
-        tool_availability = detect_tool_availability_fn()
-        agents_tooling_path = resolve_agents_tooling_path_fn()
-        codegraph_registered = False
-        if args.cli is not None:
-            probe = probe_codegraph_fn(args.cli)
-            if probe.install_command:
-                print(f"ai-kit-spec-execute-gsd: codegraph MCP is not registered or not healthy "
-                      f"for {args.cli}; install it with: {probe.install_command}",
-                      file=sys.stderr)
-            if probe.healthy is True:
-                codegraph_registered = run_codegraph_index_fn(args.target_dir)
-        guidance = build_tooling_guidance(
-            args.cli, tool_availability, agents_tooling_path, codegraph_registered,
-            shared_reference_path=resolve_shared_tooling_reference_path())
-        stdout.write(guidance)
-        return 0
-
-    if args.command == "prepare-cross-ai-guidance":
-        stdout.write(build_gsd_cross_ai_guidance_fn(args.resolved_label))
-        return 0
-
-    if args.command == "print-summary-format-block":
-        # Just the raw SUMMARY.md shape (no resolved_label wrapper) -- for writing to a stable
-        # file passed as ai_kit_spec's own `dispatch-execute --format-block-file`, which builds
-        # the REST of the reinforcement prose (model-override/incremental-progress/failure-
-        # reporting) itself at dispatch time. prepare-cross-ai-guidance (above) is for the OLDER
-        # phase-prompt-file-append path; this is for the newer direct-dispatch-wrapper path.
-        stdout.write(GSD_SUMMARY_FORMAT_BLOCK)
-        return 0
-
-    if args.command == "write-resumable-state":
-        state = json.loads(args.state_json)
-        write_resumable_state_fn(args.path, state)
-        stdout.write(json.dumps({"written": True, "path": args.path}))
-        return 0
-
-    return 1
+def main(argv: list, deps: CliDeps | None = None, **overrides) -> int:
+    """Wrapper around dispatch that turns a ConfigError (D-11/R13) into exit 2."""
+    merged = (deps or CliDeps())._replace(**overrides)
+    try:
+        return _dispatch(argv, merged)
+    except ConfigError as exc:
+        print(f"ai-kit-spec-execute-gsd: config error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
