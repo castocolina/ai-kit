@@ -16,7 +16,7 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_gsd_curated_config import cli, gsd_catalog, host, plan_io, presets
+from ai_kit_gsd_curated_config import catalog_adapter, cli, gsd_catalog, host, plan_io, presets
 from ai_kit_spec import gsd_tools
 
 from tests.test_ai_kit_gsd_curated_config import _RealGsdTestCase
@@ -41,6 +41,36 @@ def make_gsd_install(install_root, version="1.16.0", *, include_config_schema=Tr
     return os.path.join(bin_dir, "gsd-tools.cjs")
 
 
+_FRESH_FETCH_JSON = json.dumps(
+    {
+        "models_dev_ok": True,
+        "artificial_analysis_ok": True,
+        "fetch_skipped": False,
+    }
+)
+
+
+def seed_cache(xdg_cache_home, runtimes, catalog):
+    """Seed ai-kit spec cache files under a scratch ``XDG_CACHE_HOME``."""
+    cache_dir = os.path.join(xdg_cache_home, "ai-kit", "spec")
+    os.makedirs(cache_dir, exist_ok=True)
+    with open(os.path.join(cache_dir, "runtimes.json"), "w", encoding="utf-8") as fh:
+        json.dump(runtimes, fh)
+    with open(os.path.join(cache_dir, "model-catalog.json"), "w", encoding="utf-8") as fh:
+        json.dump(catalog, fh)
+    return cache_dir
+
+
+def _inventory_env(home, runtimes=None, catalog=None):
+    xdg = os.path.join(home, "xdg-cache")
+    seed_cache(
+        xdg,
+        runtimes if runtimes is not None else {"clis": {}},
+        catalog if catalog is not None else {"_meta": {"schema_version": 1}},
+    )
+    return {"HOME": home, "PATH": "", "XDG_CACHE_HOME": xdg}
+
+
 def _default_tables_from_argv(argv):
     keys = json.loads(argv[6])
     return json.dumps(
@@ -54,13 +84,31 @@ def _default_tables_from_argv(argv):
 
 
 class FakeRun:
-    """Records subprocess argv; answers git and node `-e` calls from configurable maps."""
+    """Records subprocess argv; answers git, node `-e`, and ai-kit-spec.py calls."""
 
-    def __init__(self, git_answers=None, node_stdout=None):
+    def __init__(self, git_answers=None, node_stdout=None, spec_answers=None):
         self.argv_log: list[list] = []
         self.kw_log: list[dict] = []
         self.git_answers = git_answers or {}
         self.node_stdout = node_stdout
+        self.spec_answers = spec_answers or {}
+
+    def _default_spec_answer(self, cmd):
+        sub = cmd[2]
+        if sub == "detect-runtimes":
+            return 0, "{}"
+        if sub == "fetch-model-catalog":
+            return 0, _FRESH_FETCH_JSON
+        return 1, ""
+
+    def _answer_spec(self, cmd):
+        if len(cmd) < 3 or not str(cmd[1]).endswith("ai-kit-spec.py"):
+            return None
+        sub = cmd[2]
+        answer = self.spec_answers.get(sub, self._default_spec_answer(cmd))
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
 
     def __call__(self, cmd, **kw):
         self.argv_log.append(list(cmd))
@@ -71,6 +119,10 @@ class FakeRun:
                 rc, out = self.git_answers[key]
                 return subprocess.CompletedProcess(cmd, rc, out, "")
             return subprocess.CompletedProcess(cmd, 128, "", "")
+        spec = self._answer_spec(cmd)
+        if spec is not None:
+            rc, out = spec
+            return subprocess.CompletedProcess(cmd, rc, out, "")
         if len(cmd) >= 3 and cmd[0] == "node" and cmd[1] == "-e":
             out = self.node_stdout
             if callable(out):
@@ -120,7 +172,7 @@ class TestInventoryTracer(unittest.TestCase):
         self.addCleanup(shutil.rmtree, project, ignore_errors=True)
         install = os.path.join(project, ".claude", "gsd-core")
         make_gsd_install(install)
-        env = {"HOME": home, "PATH": ""}
+        env = _inventory_env(home)
         fake = FakeRun()
         code, parsed, _err = run_inventory(project, env, fake, "--host", "opencode")
         self.assertEqual(code, 0)
@@ -189,17 +241,24 @@ class TestRealGsdInventory(_RealGsdTestCase):
         project = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, project, ignore_errors=True)
         self.require_real_gsd(project)
+        xdg = os.path.join(self.child_env["HOME"], "xdg-cache")
+        seed_cache(xdg, {"clis": {}}, {"_meta": {"schema_version": 1}})
+        self.child_env["XDG_CACHE_HOME"] = xdg
+        self.resolve_env["XDG_CACHE_HOME"] = xdg
         version_path = os.path.join(_REPO_ROOT, ".claude", "gsd-core", "VERSION")
         with open(version_path, encoding="utf-8") as fh:
             expected_version = fh.read().strip()
         for host_name in host.HOSTS:
+            spec_fake = FakeRun()
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
                 code = cli.main(
                     ["inventory", "--project-dir", project, "--host", host_name],
                     which_fn=lambda name: self.node_bin if name == "node" else None,
                     env_fn=lambda: dict(self.resolve_env),
-                    run_fn=real_gsd_run(self.child_env, self.node_bin),
+                    run_fn=real_gsd_run(
+                        self.child_env, self.node_bin, fallback=spec_fake
+                    ),
                 )
             self.assertEqual(code, 0, host_name)
             parsed = json.loads(stdout.getvalue())
@@ -207,13 +266,586 @@ class TestRealGsdInventory(_RealGsdTestCase):
             self.assertEqual(parsed["gsd_core"]["scope"], "local")
             self.assertIn("gsd-planner", parsed["gsd_core"]["model_profiles"])
             self.assertEqual(parsed["gsd_core"]["valid_keys"]["rejected"], [])
+            spec_calls = [
+                a
+                for a in spec_fake.argv_log
+                if len(a) >= 3 and str(a[1]).endswith("ai-kit-spec.py")
+            ]
+            self.assertEqual(len(spec_calls), 2, host_name)
+            self.assertEqual(spec_calls[0][2], "detect-runtimes")
+            self.assertEqual(spec_calls[1][2], "fetch-model-catalog")
+            for argv, kw in zip(spec_fake.argv_log, spec_fake.kw_log, strict=True):
+                if len(argv) >= 3 and str(argv[1]).endswith("ai-kit-spec.py"):
+                    self.assertEqual(kw.get("env"), self.resolve_env)
+
+
+class TestCatalogTracer(unittest.TestCase):
+    def _tracer_fixture(self):
+        runtimes = {
+            "clis": {
+                "codex": {
+                    "installed": True,
+                    "models": ["gpt-5.6-sol", "gpt-5.6-luna"],
+                    "reasoning_modes": {
+                        "gpt-5.6-sol": ["low", "medium"],
+                        "gpt-5.6-luna": ["low"],
+                    },
+                },
+                "opencode": {
+                    "installed": True,
+                    "models": ["openai/gpt-5.6-sol", "router-env/my-coding"],
+                },
+            }
+        }
+        catalog = {
+            "_meta": {"schema_version": 1},
+            "openai/gpt-5.6-sol": {
+                "provider": "openai",
+                "runtimes": {
+                    "codex": {"model_id": "gpt-5.6-sol"},
+                    "opencode": {"model_id": "openai/gpt-5.6-sol"},
+                },
+                "pricing": {"input_per_1m": 4},
+                "scores": {
+                    "intelligence_index": 40,
+                    "coding_index": 35,
+                    "agentic_index": 30,
+                },
+                "image_input": True,
+                "image_input_source": "models_dev",
+            },
+            "openai/gpt-5.6-luna": {
+                "provider": "openai",
+                "runtimes": {"codex": {"model_id": "gpt-5.6-luna"}},
+                "pricing": {"input_per_1m": 0.2},
+                "scores": {
+                    "intelligence_index": 20,
+                    "coding_index": 20,
+                    "agentic_index": 20,
+                },
+            },
+            "router-env/my-coding": {
+                "provider": "router-env",
+                "is_router": True,
+                "heuristic_confirmed": ["is_router"],
+                "name_declared_purpose": "execute",
+                "runtimes": {"opencode": {"model_id": "router-env/my-coding"}},
+            },
+        }
+        return runtimes, catalog
+
+    def test_inventory_catalog_and_candidates(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        runtimes, catalog = self._tracer_fixture()
+        env = _inventory_env(home, runtimes, catalog)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        fake = FakeRun()
+        code, parsed, _err = run_inventory(project, env, fake, "--host", "codex")
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertEqual(parsed["catalog"], {"state": "fresh", "scored": True})
+        self.assertEqual(
+            parsed["candidate_heuristic_fields"],
+            ["family", "fast_twin_of", "vendor"],
+        )
+        self.assertEqual(len(parsed["candidates"]), 4)
+        models = [(c["runtime"], c["model"]) for c in parsed["candidates"]]
+        self.assertEqual(models, sorted(models))
+        sol = next(
+            c for c in parsed["candidates"]
+            if c["runtime"] == "codex" and c["model"] == "gpt-5.6-sol"
+        )
+        self.assertTrue(sol["is_host"])
+        self.assertEqual(sol["catalog_key"], "openai/gpt-5.6-sol")
+        self.assertEqual(sol["price"], 4)
+        self.assertEqual(sol["vendor"], "openai")
+        self.assertEqual(sol["score_axes"], 3)
+        self.assertEqual(set(sol["purpose_scores"].keys()), {
+            "planning", "general", "mechanical", "execution", "review",
+        })
+        for c in parsed["candidates"]:
+            if c["runtime"] == "opencode":
+                self.assertFalse(c["is_host"])
+        router = next(c for c in parsed["candidates"] if c["model"] == "router-env/my-coding")
+        self.assertIsNone(router["vendor"])
+        self.assertTrue(router["router_confirmed"])
+        self.assertEqual(router["purpose_scores"], {})
+        spec_calls = [
+            a for a in fake.argv_log if len(a) >= 3 and str(a[1]).endswith("ai-kit-spec.py")
+        ]
+        self.assertEqual(len(spec_calls), 2)
+        detect, fetch = spec_calls
+        self.assertEqual(detect[2], "detect-runtimes")
+        self.assertEqual(detect[3], "--if-stale")
+        self.assertTrue(detect[4].endswith("runtimes.json"))
+        self.assertEqual(fetch[2], "fetch-model-catalog")
+        self.assertIn("--runtimes-json", fetch)
+        self.assertIn("--catalog-path", fetch)
+        self.assertIn("--cwd", fetch)
+        self.assertIn(project, fetch)
+        self.assertIn("--if-stale", fetch)
+        for argv, kw in zip(fake.argv_log, fake.kw_log, strict=True):
+            if len(argv) >= 3 and str(argv[1]).endswith("ai-kit-spec.py"):
+                self.assertEqual(kw.get("env"), env)
+
+
+class TestCatalogStates(unittest.TestCase):
+    def _run_with_fetch(self, home, project, catalog, spec_answers):
+        runtimes = {"clis": {"codex": {"installed": True, "models": ["gpt-5.6-sol"]}}}
+        env = _inventory_env(home, runtimes, catalog)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        fake = FakeRun(spec_answers=spec_answers)
+        code, parsed, _err = run_inventory(project, env, fake, "--host", "codex")
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        return parsed
+
+    def test_fetch_skipped_is_fresh_without_warning(self):
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        catalog = {
+            "_meta": {},
+            "openai/gpt-5.6-sol": {
+                "provider": "openai",
+                "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
+                "scores": {"intelligence_index": 1, "coding_index": 1, "agentic_index": 1},
+            },
+        }
+        parsed = self._run_with_fetch(
+            home,
+            project,
+            catalog,
+            {
+                "fetch-model-catalog": (
+                    0,
+                    json.dumps(
+                        {
+                            "fetch_skipped": True,
+                            "models_dev_ok": False,
+                            "artificial_analysis_ok": False,
+                        }
+                    ),
+                )
+            },
+        )
+        self.assertEqual(parsed["catalog"]["state"], "fresh")
+        self.assertEqual(parsed["warnings"], [])
+
+    def test_models_dev_ok_aa_fail_warns(self):
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        catalog = {
+            "_meta": {},
+            "openai/gpt-5.6-sol": {
+                "provider": "openai",
+                "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
+                "scores": {"intelligence_index": 1, "coding_index": 1, "agentic_index": 1},
+            },
+        }
+        parsed = self._run_with_fetch(
+            home,
+            project,
+            catalog,
+            {
+                "fetch-model-catalog": (
+                    0,
+                    json.dumps(
+                        {
+                            "fetch_skipped": False,
+                            "models_dev_ok": True,
+                            "artificial_analysis_ok": False,
+                        }
+                    ),
+                )
+            },
+        )
+        self.assertEqual(parsed["catalog"]["state"], "fresh")
+        self.assertIn(
+            "Artificial Analysis refresh failed; scores from cache", parsed["warnings"]
+        )
+
+    def test_fetch_failure_is_stale_with_warning(self):
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        catalog = {
+            "_meta": {},
+            "openai/gpt-5.6-sol": {
+                "provider": "openai",
+                "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
+                "scores": {"intelligence_index": 1, "coding_index": 1, "agentic_index": 1},
+            },
+        }
+        parsed = self._run_with_fetch(
+            home, project, catalog, {"fetch-model-catalog": (1, "")}
+        )
+        self.assertEqual(parsed["catalog"]["state"], "stale")
+        self.assertIn("catalog refresh failed; using the stale cache", parsed["warnings"])
+
+    def test_fetch_timeout_is_stale(self):
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        catalog = {
+            "_meta": {},
+            "openai/gpt-5.6-sol": {
+                "provider": "openai",
+                "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
+            },
+        }
+        parsed = self._run_with_fetch(
+            home,
+            project,
+            catalog,
+            {"fetch-model-catalog": subprocess.TimeoutExpired("fetch", 120)},
+        )
+        self.assertEqual(parsed["catalog"]["state"], "stale")
+
+    def test_both_sources_failed_not_skipped_is_stale(self):
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        catalog = {
+            "_meta": {},
+            "openai/gpt-5.6-sol": {
+                "provider": "openai",
+                "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
+            },
+        }
+        parsed = self._run_with_fetch(
+            home,
+            project,
+            catalog,
+            {
+                "fetch-model-catalog": (
+                    0,
+                    json.dumps(
+                        {
+                            "fetch_skipped": False,
+                            "models_dev_ok": False,
+                            "artificial_analysis_ok": False,
+                        }
+                    ),
+                )
+            },
+        )
+        self.assertEqual(parsed["catalog"]["state"], "stale")
+
+    def test_empty_catalog_is_none(self):
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        parsed = self._run_with_fetch(home, project, {"_meta": {}}, {})
+        self.assertEqual(parsed["catalog"], {"state": "none", "scored": False})
+        for c in parsed["candidates"]:
+            self.assertEqual(c["score_axes"], 0)
+            self.assertEqual(c["purpose_scores"], {})
+
+    def test_unscored_catalog_scored_false(self):
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        catalog = {
+            "_meta": {},
+            "openai/gpt-5.6-sol": {
+                "provider": "openai",
+                "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
+                "pricing": {"input_per_1m": 4},
+                "scores": {
+                    "intelligence_index": None,
+                    "coding_index": None,
+                    "agentic_index": None,
+                },
+            },
+        }
+        parsed = self._run_with_fetch(home, project, catalog, {})
+        self.assertFalse(parsed["catalog"]["scored"])
+        for c in parsed["candidates"]:
+            self.assertEqual(c["purpose_scores"], {})
+
+    def test_detect_failure_still_fetches(self):
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        env = _inventory_env(home, {"clis": {}}, {"_meta": {}})
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        fake = FakeRun(spec_answers={"detect-runtimes": (1, "")})
+        code, parsed, _err = run_inventory(project, env, fake, "--host", "codex")
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertIn(
+            "detect-runtimes failed; using the cached runtimes snapshot",
+            parsed["warnings"],
+        )
+        fetch_calls = [
+            a for a in fake.argv_log if len(a) > 2 and a[2] == "fetch-model-catalog"
+        ]
+        self.assertEqual(len(fetch_calls), 1)
+
+    def test_refresh_argv(self):
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        env = _inventory_env(home)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        fake = FakeRun()
+        run_inventory(project, env, fake, "--host", "codex", "--refresh")
+        spec_calls = [
+            a for a in fake.argv_log if len(a) >= 3 and str(a[1]).endswith("ai-kit-spec.py")
+        ]
+        detect, fetch = spec_calls
+        self.assertEqual(detect[2:4], ["detect-runtimes", "--save"])
+        self.assertNotIn("--if-stale", detect)
+        self.assertNotIn("--if-stale", fetch)
+
+
+class TestBuildCandidates(unittest.TestCase):
+    """Direct ``build_candidates`` unit tests for D-04, D-12..D-15 field rules."""
+
+    def _weights(self):
+        ranker = gsd_catalog.load_ai_kit_spec_module("model_ranker")
+        assert ranker is not None
+        return ranker.load_ranking_weights()
+
+    def test_fast_twin_same_runtime_only(self):
+        runtimes = {
+            "clis": {
+                "cursor-agent": {
+                    "installed": True,
+                    "models": [
+                        "gpt-5.6-sol-high",
+                        "gpt-5.6-sol-high-fast",
+                        "composer-2.5",
+                        "composer-2.5-fast",
+                    ],
+                },
+                "opencode": {
+                    "installed": True,
+                    "models": ["openai/gpt-5.5-fast"],
+                },
+            }
+        }
+        out = catalog_adapter.build_candidates(runtimes, {}, "cursor-agent", self._weights())
+        by_model = {c["model"]: c for c in out}
+        self.assertEqual(by_model["gpt-5.6-sol-high-fast"]["fast_twin_of"], "gpt-5.6-sol-high")
+        self.assertEqual(by_model["composer-2.5-fast"]["fast_twin_of"], "composer-2.5")
+        self.assertIsNone(by_model["openai/gpt-5.5-fast"]["fast_twin_of"])
+
+    def test_family_groups_effort_variants(self):
+        runtimes = {
+            "clis": {
+                "codex": {
+                    "installed": True,
+                    "models": ["gpt-5.6-sol-high", "gpt-5.6-sol-low", "gpt-5.6-sol-high-fast"],
+                }
+            }
+        }
+        out = catalog_adapter.build_candidates(runtimes, {}, "codex", self._weights())
+        families = {c["model"]: c["family"] for c in out}
+        self.assertEqual(families["gpt-5.6-sol-high"], "gpt-5.6-sol")
+        self.assertEqual(families["gpt-5.6-sol-low"], "gpt-5.6-sol")
+        self.assertEqual(families["gpt-5.6-sol-high-fast"], "gpt-5.6-sol")
+
+    def test_vendor_inference(self):
+        entries = {
+            "requesty/gpt-5.6-sol-medium": {
+                "provider": "requesty",
+                "runtimes": {"cursor-agent": {"model_id": "gpt-5.6-sol-medium"}},
+            },
+            "zai-coding-plan/glm-5.3": {
+                "provider": "zai-coding-plan",
+                "runtimes": {"opencode": {"model_id": "zai-coding-plan/glm-5.3"}},
+            },
+            "xai/grok-4.6": {
+                "provider": "xai",
+                "runtimes": {"opencode": {"model_id": "xai/grok-4.6"}},
+            },
+            "mystery/model": {
+                "provider": "mystery",
+                "runtimes": {"opencode": {"model_id": "mystery/model"}},
+            },
+            "router-env/r": {
+                "provider": "router-env",
+                "is_router": True,
+                "runtimes": {"opencode": {"model_id": "router-env/r"}},
+            },
+        }
+        runtimes = {
+            "clis": {
+                "cursor-agent": {"installed": True, "models": ["gpt-5.6-sol-medium"]},
+                "opencode": {
+                    "installed": True,
+                    "models": [
+                        "zai-coding-plan/glm-5.3",
+                        "xai/grok-4.6",
+                        "mystery/model",
+                        "router-env/r",
+                    ],
+                },
+            }
+        }
+        out = catalog_adapter.build_candidates(runtimes, entries, "cursor-agent", self._weights())
+        by_model = {c["model"]: c for c in out}
+        self.assertEqual(by_model["gpt-5.6-sol-medium"]["vendor"], "openai")
+        self.assertEqual(by_model["zai-coding-plan/glm-5.3"]["vendor"], "zhipu")
+        self.assertEqual(by_model["xai/grok-4.6"]["vendor"], "xai")
+        self.assertIsNone(by_model["mystery/model"]["vendor"])
+        self.assertIsNone(by_model["router-env/r"]["vendor"])
+
+    def test_router_confirmed_rules(self):
+        entries = {
+            "router-env/a": {
+                "provider": "router-env",
+                "is_router": True,
+                "heuristic_confirmed": ["is_router"],
+                "name_declared_purpose": "execute",
+                "runtimes": {"opencode": {"model_id": "router-env/a"}},
+            },
+            "router-env/b": {
+                "provider": "router-env",
+                "is_router": True,
+                "name_declared_purpose": "execute",
+                "runtimes": {"opencode": {"model_id": "router-env/b"}},
+            },
+            "router-env/c": {
+                "provider": "router-env",
+                "is_router": True,
+                "heuristic_confirmed": ["is_router"],
+                "runtimes": {"opencode": {"model_id": "router-env/c"}},
+            },
+        }
+        runtimes = {
+            "clis": {
+                "opencode": {
+                    "installed": True,
+                    "models": ["router-env/a", "router-env/b", "router-env/c"],
+                }
+            }
+        }
+        out = catalog_adapter.build_candidates(runtimes, entries, "opencode", self._weights())
+        by_model = {c["model"]: c for c in out}
+        self.assertTrue(by_model["router-env/a"]["router_confirmed"])
+        self.assertFalse(by_model["router-env/b"]["router_confirmed"])
+        self.assertFalse(by_model["router-env/c"]["router_confirmed"])
+
+    def test_score_axes_count(self):
+        entries = {
+            "a/m": {
+                "provider": "a",
+                "runtimes": {"codex": {"model_id": "m1"}},
+                "scores": {"intelligence_index": 40, "coding_index": 30, "agentic_index": 20},
+            },
+            "b/m": {
+                "provider": "b",
+                "runtimes": {"codex": {"model_id": "m2"}},
+                "scores": {"intelligence_index": 40, "coding_index": None},
+            },
+        }
+        runtimes = {"clis": {"codex": {"installed": True, "models": ["m1", "m2", "m3"]}}}
+        out = catalog_adapter.build_candidates(runtimes, entries, "codex", self._weights())
+        by_model = {c["model"]: c for c in out}
+        self.assertEqual(by_model["m1"]["score_axes"], 3)
+        self.assertEqual(by_model["m2"]["score_axes"], 1)
+        self.assertEqual(by_model["m3"]["score_axes"], 0)
+
+    def test_mechanical_floor_and_score_exact(self):
+        entries = {
+            "openai/low-code": {
+                "provider": "openai",
+                "runtimes": {"codex": {"model_id": "low-code"}},
+                "scores": {"intelligence_index": 40, "coding_index": 20, "agentic_index": 30},
+            },
+            "openai/ok-code": {
+                "provider": "openai",
+                "runtimes": {"codex": {"model_id": "ok-code"}},
+                "scores": {"intelligence_index": 40, "coding_index": 40, "agentic_index": 30},
+            },
+        }
+        runtimes = {
+            "clis": {"codex": {"installed": True, "models": ["low-code", "ok-code"]}}
+        }
+        ranker = gsd_catalog.load_ai_kit_spec_module("model_ranker")
+        assert ranker is not None
+        weights = ranker.load_ranking_weights()
+        pool = [
+            {**entries["openai/low-code"], "key": "openai/low-code"},
+            {**entries["openai/ok-code"], "key": "openai/ok-code"},
+        ]
+        out = catalog_adapter.build_candidates(runtimes, entries, "codex", weights)
+        low = next(c for c in out if c["model"] == "low-code")
+        self.assertNotIn("mechanical", low["purpose_scores"])
+        for purpose in ranker.CANONICAL_PURPOSES:
+            if purpose not in low["purpose_scores"]:
+                continue
+            direct = ranker.score_candidates(pool, purpose, weights)
+            by_key = {row["key"]: row["score_exact"] for row in direct}
+            self.assertEqual(low["purpose_scores"][purpose], by_key["openai/low-code"])
+
+    def test_price_precision(self):
+        entries = {
+            "p/a": {
+                "provider": "p",
+                "runtimes": {"codex": {"model_id": "a"}},
+                "pricing": {"input_per_1m": 4.4},
+            },
+            "p/b": {
+                "provider": "p",
+                "runtimes": {"codex": {"model_id": "b"}},
+                "pricing": {"input_per_1m": 0.825},
+            },
+        }
+        runtimes = {"clis": {"codex": {"installed": True, "models": ["a", "b"]}}}
+        out = catalog_adapter.build_candidates(runtimes, entries, "codex", self._weights())
+        prices = {c["model"]: c["price"] for c in out}
+        self.assertEqual(prices["a"], 4.4)
+        self.assertEqual(prices["b"], 0.825)
+
+    def test_duplicate_catalog_key_picks_lexicographic_smaller(self):
+        entries = {
+            "z/z": {
+                "provider": "z",
+                "runtimes": {"cursor-agent": {"model_id": "m"}},
+            },
+            "a/a": {
+                "provider": "a",
+                "runtimes": {"cursor-agent": {"model_id": "m"}},
+            },
+        }
+        runtimes = {"clis": {"cursor-agent": {"installed": True, "models": ["m"]}}}
+        out = catalog_adapter.build_candidates(runtimes, entries, "cursor-agent", self._weights())
+        self.assertEqual(out[0]["catalog_key"], "a/a")
+
+    def test_skips_uninstalled_and_non_str_models(self):
+        runtimes = {
+            "clis": {
+                "codex": {"installed": False, "models": ["x"]},
+                "opencode": {"installed": True, "models": ["good", 12, "good"]},
+            }
+        }
+        out = catalog_adapter.build_candidates(runtimes, {}, "opencode", self._weights())
+        self.assertEqual([c["model"] for c in out], ["good"])
+        self.assertEqual(out[0]["runtime"], "opencode")
 
 
 class TestGsdCoreResolution(unittest.TestCase):
     def _home_env(self):
         home = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)
-        return home, {"HOME": home, "PATH": ""}
+        return home, _inventory_env(home)
 
     def test_local_claude_wins_over_global(self):
         home, env = self._home_env()
@@ -397,7 +1029,7 @@ class TestProbeFailures(unittest.TestCase):
         self.addCleanup(shutil.rmtree, project, ignore_errors=True)
         root = os.path.join(project, ".claude", "gsd-core")
         make_gsd_install(root, include_config_schema=include_config_schema)
-        env = {"HOME": home, "PATH": ""}
+        env = _inventory_env(home)
         return project, env, root
 
     def test_node_null_stdout_fails_closed(self):
