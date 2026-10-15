@@ -408,7 +408,7 @@ downstream depends on it)
      subagent extension").
   2. SKILL.md's "not live-validated" label for pi is removed once the smoke run passes.
   3. `detect-runtimes`' pi parser (added in Phase 18 for SPEC-05) is re-verified against the live
-     `pi --list-models` output.
+     RPC `get_available_models` output (amended 2026-10-15 per 22 D-04).
 **Plans**: TBD
 
 ### Phase 23: Host-split status line for Claude Code and Cursor CLI

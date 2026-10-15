@@ -77,7 +77,7 @@ keeps working unchanged.
      - `workflow.cross_ai_execution` defaults to yes on claude and codex hosts, no on opencode, cursor and pi.
      - The targets are the preference order (default pi > cursor > opencode) filtered to installed CLIs that are not the host. grok is never a target.
      - Each target's model is a declared `execute` router first, otherwise the best `execution` score within the rigor ceiling (17 D-03).
-     - pi's models come from a `pi --list-models` parser added to `ai_kit_spec` in this phase (SPEC-05 moved here from Phase 22; amended 2026-10-14, 18 D-25).
+     - pi's models come from pi's RPC `get_available_models`, read by a parser added to `ai_kit_spec` in this phase (SPEC-05 moved here from Phase 22; amended 2026-10-14, 18 D-25; source amended 2026-10-15 per 22 D-04, not the `--list-models` table).
      - An empty target list leaves a `needs_choice`.
      - The report tells the user to run `--cross-ai`, and the plan sets `manager.flags.execute` to `--cross-ai`.
    - Acceptance: golden plans on a claude host pick pi with `router-env/my-coding`. A fixture without pi falls to cursor. A fixture with no other CLI keeps `needs_choice`.
@@ -187,7 +187,7 @@ keeps working unchanged.
       - v1 and its modules work unchanged next to `inventory`, `recommend`, `plan-set`, `plan-unset` and `apply`.
       - The new modules are in every gate (test discovery, pyright, vulture, pylint).
       - The README row is updated, and SKILL.md documents v2 as the primary flow and labels cursor and pi "not live-validated".
-    - Acceptance: the v1 test suite passes unmodified. `make test` and `make validate` are green. SKILL.md passes `/skill-judge` (≥ 96/120 or no Critical/Important finding).
+    - Acceptance: the v1 test suite passes unmodified at the end of this phase (18.1 D-14 later updates v1 tests only where behavior survives through the runner, per uz's add-never-remove constraint; amended 2026-10-15). `make test` and `make validate` are green. SKILL.md passes `/skill-judge` (≥ 96/120 or no Critical/Important finding).
 
 ## Boundaries
 
@@ -237,7 +237,7 @@ keeps working unchanged.
 
 ## Edge Coverage
 
-**Coverage:** 73/77 applicable edges resolved · 4 unresolved (74 engine floor rows plus 3 marked additions; regenerated from the floor 2026-10-14)
+**Coverage:** 77/77 applicable edges resolved · 0 unresolved (4 resolved 2026-10-15, RUN-41) (74 engine floor rows plus 3 marked additions; regenerated from the floor 2026-10-14)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -246,7 +246,7 @@ keeps working unchanged.
 | ordering | R1 | ✅ covered | Entries stay sorted by key after every edit |
 | boundary | R2 | ✅ covered | Exactly one eligible lane under Rigorous gives 1 lane plus the note |
 | adjacency | R2 | ✅ covered | A candidate whose inferred vendor matches the planner's, or under Rigorous the first reviewer's, is never picked |
-| empty | R2 | ⚠ UNRESOLVED | With no eligible lane, does the reviewer placeholder stay `needs_choice` (as R3 does for targets) or does convergence turn off with a note? |
+| empty | R2 | ✅ covered | No eligible lane turns `workflow.plan_review_convergence` off for that plan, with a note naming the missing lane; the user can re-enable it via `plan-set`. A single-CLI machine is never blocked (resolved 2026-10-15, RUN-41, jev TypeSafe 0.74) |
 | encoding | R2 | ✅ covered | Keys come verbatim from the registry, so antigravity writes `review.models.agy` and cursor gets no effort key (18 D-24) |
 | ordering | R2 | ✅ covered | Equal `review` scores fall to 17 D-06's lower price, then model id, so the pick is stable |
 | precision | R2 | 🧪 backstop | Review scores compare at full precision (`score_exact`) |
@@ -263,7 +263,7 @@ keeps working unchanged.
 | adjacency | R4 | ✅ covered | A body differing only in a trailing newline counts as edited (added 2026-10-14: 18 D-26 hashes raw bytes, so a one-byte edit must still count) |
 | empty | R4 | ✅ covered | An absent `.planning/scripts/` is created (added 2026-10-14: a project's first render has no `.planning/scripts/` yet) |
 | ordering | R4 | 🧪 backstop | The header is always the second line after the shebang (added 2026-10-14: 18 D-26 hashes the bytes after line 2, so the header position is load-bearing) |
-| adjacency | R5 | ⚠ UNRESOLVED | In `review` mode, does a HEAD move with an unchanged tree id count as success, as the literal rule allows? |
+| adjacency | R5 | ✅ covered | In `review` mode success needs HEAD and the tree id both unchanged; a HEAD move is a contract violation (`status=… action=stop`, no fallback) (resolved 2026-10-15, RUN-41, jev TypeSafe 0.98) |
 | empty | R5 | ✅ covered | Empty stdin exits 2 |
 | encoding | R5 | ✅ covered | An answer that quotes an error phrase is never classified, since errors are matched on stderr and structured fields only |
 | ordering | R5 | ✅ covered | The status line is the last stderr line |
@@ -271,7 +271,7 @@ keeps working unchanged.
 | concurrency | R5 | ✅ covered | The deadline kills the whole process group (the self-test checks a grandchild), and gsd-core runs cross-AI plans one at a time |
 | boundary | R6 | ✅ covered | 1800 is accepted, 1799 is refused even with `--force` (18 D-17), and 1800 gives an inner deadline of 1770 (18 D-29) |
 | adjacency | R6 | ✅ covered | An inner deadline equal to the outer timeout is invalid, since it must be strictly below |
-| empty | R6 | ⚠ UNRESOLVED | An absent key makes gsd-core's outer limit 300 s (checked live): is `plan-unset` of it refused, and does the script read an absent value as 300? |
+| empty | R6 | ✅ covered | `plan-unset workflow.cross_ai_timeout` exits 2 while cross-AI execution is on; the script reads an absent value as gsd-core's 300 s and derives its inner deadline from it (270 s) (resolved 2026-10-15, RUN-41, jev TypeSafe 0.94) |
 | ordering | R6 | ✅ covered | The inner deadline fires before the outer timeout, so exit 124 and the status line come from the script, not from an outer kill |
 | precision | R6 | ✅ covered | 18 D-29 fixes the inner deadline at outer − min(30, floor(outer/5)), with an explicit floor |
 | adjacency | R7 | ✅ covered | A skill visible in two roots is listed once per root with its real path |
@@ -284,7 +284,7 @@ keeps working unchanged.
 | precision | R8 | ✅ covered | No scores are involved: the cap counts deduped skills per agent, and file order breaks every tie (18 D-33) |
 | idempotency | R8 | ✅ covered | Applying the same plan twice writes the same values |
 | concurrency | R8 | 🧪 backstop | Writes are sequential through gsd-tools |
-| empty | R9 | ⚠ UNRESOLVED | Is an unknown skill with an empty description skipped, or proposed with no mapping? |
+| empty | R9 | ✅ covered | An unknown skill with an empty description is skipped: there is no evidence to propose a mapping from (resolved 2026-10-15, RUN-41, jev TypeSafe 0.89) |
 | encoding | R9 | ✅ covered | A proposed trusted root is the skill's real directory written `~/`-relative, never an absolute machine path (18 D-34) |
 | boundary | R10 | ✅ covered | The set is cut at the rigor cap in file order |
 | adjacency | R10 | ✅ covered | An agent that already holds a ponytail skill from another family gets no duplicate |
