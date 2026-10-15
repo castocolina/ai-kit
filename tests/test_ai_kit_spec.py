@@ -1,5 +1,7 @@
+import base64
 import copy
 import glob
+import io
 import json
 import os
 import shlex
@@ -118,6 +120,16 @@ CODEX_FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "codex_
 #   maintainer's machine, including private router endpoints, so it is not public-shareable
 OPENCODE_VERBOSE_FIXTURE_PATH = os.path.join(
     os.path.dirname(__file__), "fixtures", "opencode_models_verbose.txt"
+)
+
+# Source: `GET /api/model` on a scratch-HOME `opencode serve`, opencode v2.0.29,
+# 2026-10-15 (.planning/phases/17-curated-config-inventory-recommendation-engine/
+# 17-SPIKE-opencode-image-input.md).
+# Kept verbatim: the spike sample's first 4 Model.Info objects (id, modelID, providerID,
+#   capabilities, status, enabled), in spike order.
+# `location` is replaced by a placeholder string; the parser never reads it.
+OPENDCODE_API_FIXTURE_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "opencode_api_model.json"
 )
 
 
@@ -10057,6 +10069,151 @@ openai/gpt-5.6-sol
         self.assertEqual(result[("opencode", "vendor/x")]["image_input"], False)
         # codex's image_input is NOT extracted
         self.assertNotIn(("codex", "gpt-x"), result)
+
+
+class TestOpencodeApiImageInput(unittest.TestCase):
+    """17 D-24/D-32: opencode 2.x image_input read from `GET /api/model` through a
+    private `opencode serve` probe -- all via injected fakes, never a real opencode."""
+
+    EXPECTED_MAP = {
+        "opencode/exo-free": True,
+        "opencode/ling-3.1-flash-free": False,
+        "opencode/longcat-2.5-preview-free": True,
+        "opencode/space-bunny-free": True,
+    }
+
+    class FakePopen:
+        """Records argv/kwargs and the terminate/wait/kill sequence; its stdout is a
+        StringIO carrying the banner lines."""
+
+        def __init__(self, banner="server listening on http://127.0.0.1:41234\n"
+                                   "server password s3cr3t\n"):
+            self.argv = None
+            self.kwargs = None
+            self.stdout = io.StringIO(banner)
+            self.calls = []
+
+        def __call__(self, argv, **kwargs):
+            self.argv = argv
+            self.kwargs = kwargs
+            return self
+
+        def terminate(self):
+            self.calls.append("terminate")
+
+        def wait(self, timeout=None):
+            self.calls.append(f"wait({timeout})")
+
+        def kill(self):
+            self.calls.append("kill")
+
+    class FakeResponse:
+        def __init__(self, body):
+            self.body = body
+            self.read = lambda: self.body
+
+    def _fake_urlopen(self, body=None):
+        recorded = {}
+
+        def fake_urlopen(request, timeout=None):
+            recorded["url"] = request.full_url
+            recorded["authorization"] = request.headers.get("Authorization")
+            recorded["timeout"] = timeout
+            return self.FakeResponse(
+                body if body is not None else open(OPENDCODE_API_FIXTURE_PATH, "rb").read()
+            )
+
+        fake_urlopen.recorded = recorded
+        return fake_urlopen
+
+    def _fake_version_run(self, version="opencode v2.0.29\n", returncode=0):
+        def fake_run(argv, **kwargs):
+            assert argv[1:] == ["--version"], argv
+            return unittest.mock.MagicMock(returncode=returncode, stdout=version)
+        return fake_run
+
+    def test_detect_2x_returns_fixture_image_map_via_probe(self):
+        popen = self.FakePopen()
+        urlopen = self._fake_urlopen()
+        result = detection.detect_opencode_image_input(
+            "/fake/bin/opencode", run_fn=self._fake_version_run(),
+            popen_fn=popen, urlopen_fn=urlopen)
+        self.assertEqual(result, self.EXPECTED_MAP)
+
+    def test_probe_argv_and_cwd(self):
+        popen = self.FakePopen()
+        detection.probe_opencode_api_image_input(
+            "/fake/bin/opencode", popen_fn=popen, urlopen_fn=self._fake_urlopen())
+        self.assertEqual(
+            popen.argv,
+            ["/fake/bin/opencode", "serve", "--hostname", "127.0.0.1", "--port", "0"],
+        )
+        self.assertEqual(popen.kwargs.get("cwd"), tempfile.gettempdir())
+
+    def test_probe_request_url_and_basic_auth(self):
+        popen = self.FakePopen()
+        urlopen = self._fake_urlopen()
+        detection.probe_opencode_api_image_input(
+            "/fake/bin/opencode", popen_fn=popen, urlopen_fn=urlopen)
+        recorded = urlopen.recorded
+        self.assertEqual(recorded["url"], "http://127.0.0.1:41234/api/model")
+        expected = "Basic " + base64.b64encode(b"opencode:s3cr3t").decode()
+        self.assertEqual(recorded["authorization"], expected)
+
+    def test_probe_stops_server_after_success(self):
+        popen = self.FakePopen()
+        detection.probe_opencode_api_image_input(
+            "/fake/bin/opencode", popen_fn=popen, urlopen_fn=self._fake_urlopen())
+        self.assertEqual(popen.calls[0], "terminate")
+        self.assertIn("wait(5)", popen.calls)
+
+    def test_major_version(self):
+        self.assertEqual(
+            detection.opencode_major_version("x", run_fn=self._fake_version_run()), 2)
+        self.assertEqual(
+            detection.opencode_major_version(
+                "x", run_fn=self._fake_version_run(version="1.18.32\n")), 1)
+        self.assertIsNone(
+            detection.opencode_major_version(
+                "x", run_fn=self._fake_version_run(version="opencode-go/kimi-k3\n")))
+        with open(OPENCODE_VERBOSE_FIXTURE_PATH, encoding="utf-8") as f:
+            verbose_text = f.read()
+        self.assertIsNone(
+            detection.opencode_major_version(
+                "x", run_fn=self._fake_version_run(version=verbose_text)))
+
+    def test_major_version_failures_return_none(self):
+        self.assertIsNone(
+            detection.opencode_major_version(
+                "x", run_fn=self._fake_version_run(returncode=1)))
+
+        def raise_oserror(argv, **kwargs):
+            raise OSError("not found")
+
+        self.assertIsNone(detection.opencode_major_version("x", run_fn=raise_oserror))
+        self.assertIsNone(
+            detection.opencode_major_version(
+                "x", run_fn=lambda *a, **k: type(
+                    "R", (), {"returncode": 0, "stdout": "openai/gpt-5.6-sol"})()))
+
+    def test_parse_api_models_skips_malformed_items(self):
+        payload = {
+            "location": "x",
+            "data": [
+                {"providerID": "p", "id": "m", "capabilities": {"input": ["text", "image"]}},
+                {"providerID": "", "id": "m", "capabilities": {"input": ["image"]}},
+                {"providerID": "p2", "id": "  ", "capabilities": {"input": ["image"]}},
+                {"providerID": "p3", "id": "m3", "capabilities": "nope"},
+                {"providerID": "p4", "id": "m4", "capabilities": {"input": "nope"}},
+                "not-a-dict",
+            ],
+        }
+        self.assertEqual(detection.parse_opencode_api_models(payload), {"p/m": True})
+
+    def test_parse_api_models_degrades_to_empty(self):
+        for payload in (None, 42, "x", {}, {"data": "nope"}, {"data": {}}):
+            with self.subTest(payload=payload):
+                self.assertEqual(detection.parse_opencode_api_models(payload), {})
 
 
 class TestClaudeRuntimeFreshness(unittest.TestCase):

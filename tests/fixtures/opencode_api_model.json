@@ -1,0 +1,73 @@
+{
+  "location": "spike",
+  "data": [
+    {
+      "id": "exo-free",
+      "modelID": "exo-free",
+      "providerID": "opencode",
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text",
+          "image"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "ling-3.1-flash-free",
+      "modelID": "ling-3.1-flash-free",
+      "providerID": "opencode",
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "longcat-2.5-preview-free",
+      "modelID": "longcat-2.5-preview-free",
+      "providerID": "opencode",
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text",
+          "image"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "space-bunny-free",
+      "modelID": "space-bunny-free",
+      "providerID": "opencode",
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "status": "active",
+      "enabled": true
+    }
+  ]
+}

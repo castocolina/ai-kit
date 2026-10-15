@@ -1,7 +1,15 @@
+import base64
+import contextlib
+import http.client
 import json
 import os
+import re
 import shutil
 import subprocess
+import tempfile
+import threading
+import urllib.error
+import urllib.request
 from collections.abc import Mapping
 from typing import NamedTuple
 
@@ -12,8 +20,10 @@ from ai_kit_spec.vendor import _MODEL_TIER_SUFFIXES
 RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-static
 
 # 16 D-12: pre-Phase-16 snapshots carry no key and are treated as version 1; bump this
-# whenever the snapshot shape gains data a consumer relies on.
-RUNTIMES_SCHEMA_VERSION = 2
+# whenever the snapshot shape gains data a consumer relies on. Version 3 (17 D-32) adds the
+# opencode 2.x `/api/model` image source (clis.opencode.image_input_source), so snapshots
+# written before it re-detect even while their TTL is still fresh.
+RUNTIMES_SCHEMA_VERSION = 3
 
 # ── Runtime/CLI detection ───────────────────────────────────────────────
 
@@ -322,7 +332,159 @@ def parse_opencode_verbose_image_input(stdout) -> dict:
     return result
 
 
-def detect_opencode_image_input(binary: str, run_fn=subprocess.run) -> dict:
+# 17 D-24: opencode 2.x replaced `models --verbose` with a v2 HTTP API; the image source
+# is version-gated so 1.x installs keep the verbose path.
+OPENCODE_API_MIN_MAJOR = 2
+OPENCODE_API_IMAGE_SOURCE = "opencode-api"
+_OPENCODE_PROBE_DEADLINE_S = 15
+_OPENCODE_BANNER_MAX_LINES = 50
+# fullmatch on the stripped stdout, so a model listing (e.g. "openai/gpt-5.6-sol") can
+# never read as a version string.
+_OPENCODE_VERSION_RE = re.compile(r"(?:opencode\s+)?v?(\d+)\.\d+\.\d+\S*")
+
+
+def opencode_major_version(binary: str, run_fn=subprocess.run) -> int | None:
+    """Returns the opencode major version parsed from `<binary> --version`
+    (e.g. "opencode v2.0.29" -> 2), or None on any failure: an OSError or
+    subprocess.TimeoutExpired, a non-zero `returncode` (via `getattr(..., 1)`), a
+    non-str stdout, or stdout that does not fully match the version pattern. Like
+    every detector here, it never raises."""
+    try:
+        result = run_fn([binary, "--version"], capture_output=True, text=True,
+                        check=False, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    stdout = getattr(result, "stdout", None)
+    if not isinstance(stdout, str):
+        return None
+    match = _OPENCODE_VERSION_RE.fullmatch(stdout.strip())
+    return int(match.group(1)) if match else None
+
+
+def parse_opencode_api_models(payload) -> dict:
+    """Parses a decoded `GET /api/model` body (`{"location": ..., "data":
+    [Model.Info, ...]}`) into `{"providerID/id": "image" in input}`. Strict shape
+    checks (17 T-17-04): items with a blank providerID/id, a non-dict `capabilities`
+    or a non-list `capabilities.input` are skipped, never guessed. Returns {} for a
+    non-dict payload or a payload whose `data` is not a list. Never raises."""
+    if not isinstance(payload, dict):
+        return {}
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return {}
+    result = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        provider_id = item.get("providerID")
+        model_id = item.get("id")
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            continue
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        capabilities = item.get("capabilities")
+        if not isinstance(capabilities, dict):
+            continue
+        input_caps = capabilities.get("input")
+        if not isinstance(input_caps, list):
+            continue
+        result[f"{provider_id}/{model_id}"] = "image" in input_caps
+    return result
+
+
+def _read_opencode_banner(stream) -> tuple:
+    """Reads at most _OPENCODE_BANNER_MAX_LINES lines from `stream` (the probe
+    server's stdout) and returns (port, token), either None when not found. Stops on
+    EOF ("") or once both are found."""
+    port = None
+    token = None
+    for _ in range(_OPENCODE_BANNER_MAX_LINES):
+        line = stream.readline()
+        if line == "":
+            break
+        if port is None:
+            port_match = re.search(r"server listening on http://127\.0\.0\.1:(\d+)", line)
+            if port_match:
+                port = port_match.group(1)
+        if token is None and line.startswith("server password "):
+            token = line[len("server password "):].strip()
+        if port is not None and token is not None:
+            break
+    return port, token
+
+
+def probe_opencode_api_image_input(binary: str, popen_fn=subprocess.Popen,
+                                   urlopen_fn=urllib.request.urlopen) -> dict:
+    """Starts a private `opencode serve --hostname 127.0.0.1 --port 0`, reads the
+    printed loopback port and one-time password from its stdout, and calls
+    `GET http://127.0.0.1:<port>/api/model` with HTTP basic auth `opencode:<password>`
+    (17 D-24/D-32). Returns `{"providerID/id": bool}` via
+    `parse_opencode_api_models`; any failure returns {}.
+
+    Only the server PID this function started is ever signalled -- a user's
+    long-running `opencode serve --service` is never touched. The password stays in a
+    local variable and never enters a return value, an exception message or any output
+    (17 T-17-01). A daemon threading.Timer kills a silent server so `readline` cannot
+    block forever; the `finally` block always stops the server (terminate -> wait ->
+    kill). opencode writes its own state (db, log) in its XDG data dir, never config;
+    `cwd=tempfile.gettempdir()` is a precaution (serve's cwd effect is unverified).
+    opencode 1.x must not reach this (see opencode_image_input_with_source)."""
+    proc = None
+    timer = None
+    try:
+        # precaution: serve's cwd effect is unverified; never the caller's project dir
+        proc = popen_fn([binary, "serve", "--hostname", "127.0.0.1", "--port", "0"],
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                        cwd=tempfile.gettempdir())
+    except OSError:
+        return {}
+    try:
+        timer = threading.Timer(_OPENCODE_PROBE_DEADLINE_S, proc.kill)
+        timer.daemon = True
+        timer.start()
+        port, token = _read_opencode_banner(proc.stdout)
+        if port is None or token is None:
+            return {}
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/model",
+            headers={"Authorization": "Basic "
+                     + base64.b64encode(f"opencode:{token}".encode()).decode()},
+        )
+        body = urlopen_fn(request, timeout=10).read()
+        return parse_opencode_api_models(json.loads(body))
+    except (OSError, subprocess.TimeoutExpired, urllib.error.URLError,
+            http.client.HTTPException, ValueError):
+        return {}
+    finally:
+        if timer is not None:
+            timer.cancel()
+        for signal_fn in (proc.terminate, proc.kill):
+            with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                signal_fn()
+                proc.wait(timeout=5)
+
+
+def opencode_image_input_with_source(binary: str, run_fn=subprocess.run,
+                                     popen_fn=subprocess.Popen,
+                                     urlopen_fn=urllib.request.urlopen) -> tuple:
+    """Version-gated image-capability detection for opencode. Returns
+    `(map, source)` where source is OPENCODE_API_IMAGE_SOURCE ("opencode-api", the
+    v2 `GET /api/model` probe) on opencode >= 2, or "opencode" (the
+    `opencode models --verbose` parser) on 1.x. A `--version` output that does not
+    fully match the version pattern counts as unknown and takes the 1.x verbose
+    path, unchanged. The probe is called by its module-level name so tests can patch
+    it."""
+    major = opencode_major_version(binary, run_fn=run_fn)
+    if major is not None and major >= OPENCODE_API_MIN_MAJOR:
+        return probe_opencode_api_image_input(binary, popen_fn=popen_fn,
+                                              urlopen_fn=urlopen_fn), \
+            OPENCODE_API_IMAGE_SOURCE
+    return detect_opencode_verbose_image_input(binary, run_fn=run_fn), "opencode"
+
+
+def detect_opencode_verbose_image_input(binary: str, run_fn=subprocess.run) -> dict:
     """Runs `<binary> models --verbose` and parses the output via
     `parse_opencode_verbose_image_input`, returning a dict mapping model
     id/header to a bool. A non-zero exit is a FAILURE, not a success with
@@ -339,6 +501,19 @@ def detect_opencode_image_input(binary: str, run_fn=subprocess.run) -> dict:
     if getattr(result, "returncode", 1) != 0:
         return {}
     return parse_opencode_verbose_image_input(getattr(result, "stdout", None))
+
+
+def detect_opencode_image_input(binary: str, run_fn=subprocess.run,
+                                popen_fn=subprocess.Popen,
+                                urlopen_fn=urllib.request.urlopen) -> dict:
+    """Returns the image-capability map for opencode: on 2.x, the v2 HTTP API probe
+    (`GET /api/model` through a private `opencode serve`, 17 D-24); on 1.x (or an
+    unrecognized `--version` output), the legacy `models --verbose` path, unchanged.
+    See `opencode_image_input_with_source` for the version gate and
+    `probe_opencode_api_image_input` for the server's lifetime guarantees."""
+    result_map, _source = opencode_image_input_with_source(
+        binary, run_fn=run_fn, popen_fn=popen_fn, urlopen_fn=urlopen_fn)
+    return result_map
 
 
 def group_models_by_family(models: list) -> dict:
