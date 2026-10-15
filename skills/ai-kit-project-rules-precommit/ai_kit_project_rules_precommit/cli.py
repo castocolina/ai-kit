@@ -95,6 +95,31 @@ def cache_update(stack: str, json_path: str, cache_root: str | None = None) -> i
     return 0
 
 
+def _run_json_subcommand(handler, argv: list[str]) -> int:
+    repo_root = argv[1] if len(argv) > 1 else "."
+    print(json.dumps(handler(repo_root), indent=2))
+    return 0
+
+
+def _run_cache_update_subcommand(argv: list[str]) -> int:
+    positional, cache_root = _split_cache_root(argv)
+    if len(positional) < 2:
+        print(
+            "usage: cache-update <stack> <json_path> [--cache-root <path>]",
+            file=sys.stderr,
+        )
+        return 1
+    stack, json_path = positional[0], positional[1]
+    return cache_update(stack, json_path, cache_root=cache_root)
+
+
+_JSON_SUBCOMMANDS = {
+    "check": check,
+    "remediate": remediate,
+    "classify": classify,
+}
+
+
 def main(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(
@@ -104,27 +129,10 @@ def main(argv: list[str]) -> int:
         )
         return 0
     cmd = argv[0]
-    if cmd == "check":
-        repo_root = argv[1] if len(argv) > 1 else "."
-        print(json.dumps(check(repo_root), indent=2))
-        return 0
-    if cmd == "remediate":
-        repo_root = argv[1] if len(argv) > 1 else "."
-        print(json.dumps(remediate(repo_root), indent=2))
-        return 0
-    if cmd == "classify":
-        repo_root = argv[1] if len(argv) > 1 else "."
-        print(json.dumps(classify(repo_root), indent=2))
-        return 0
+    json_handler = _JSON_SUBCOMMANDS.get(cmd)
+    if json_handler is not None:
+        return _run_json_subcommand(json_handler, argv)
     if cmd == "cache-update":
-        positional, cache_root = _split_cache_root(argv[1:])
-        if len(positional) < 2:
-            print(
-                "usage: cache-update <stack> <json_path> [--cache-root <path>]",
-                file=sys.stderr,
-            )
-            return 1
-        stack, json_path = positional[0], positional[1]
-        return cache_update(stack, json_path, cache_root=cache_root)
+        return _run_cache_update_subcommand(argv[1:])
     print(f"unknown subcommand: {cmd}", file=sys.stderr)
     return 2

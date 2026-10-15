@@ -472,180 +472,215 @@ def check_validate_order(repo_root: str, chain_incomplete_found: bool) -> dict |
     }
 
 
-def check_makefile_shape(repo_root: str, get_tooling=None) -> list[dict]:
-    """Return a list of Makefile-target/tooling-category gap findings.
+def _stack_gap_summary(
+    subject_label: str,
+    name: str,
+    detected,
+    resolved: tuple[object, bool, list[str]],
+    success_summary_prefix: str,
+) -> tuple[object, bool, list[str], str]:
+    recommendation, needs_research, missing_stacks = resolved
+    if needs_research and detected:
+        return (
+            None,
+            True,
+            missing_stacks,
+            f"{subject_label} '{name}' needs research for stack(s): "
+            f"{', '.join(missing_stacks)}",
+        )
+    if needs_research:
+        return (
+            None,
+            True,
+            [],
+            f"{subject_label} '{name}' needs a detected stack before "
+            "any tooling recommendation is possible -- no stack "
+            "markers found in this repo",
+        )
+    return (
+        recommendation,
+        False,
+        [],
+        f"{success_summary_prefix} '{name}': {recommendation}",
+    )
 
-    A missing Makefile or `.pre-commit-config.yaml` is reported as the
-    maximal, most informative gap (every required target missing), never a
-    crash -- both parsers return an empty result for an absent file.
-    """
-    if get_tooling is None:
-        get_tooling = _default_get_stack_tooling
 
-    makefile_path = os.path.join(repo_root, "Makefile")
-    precommit_path = os.path.join(repo_root, ".pre-commit-config.yaml")
+def _missing_required_target_finding(
+    name: str,
+    hooks: dict[str, str | None],
+    detected,
+    get_tooling,
+) -> dict:
+    finding: dict = {
+        "target": name,
+        "present": False,
+        "criticality": CRITICALITY_CRITICAL,
+    }
+    if name in hooks:
+        cmd = hooks[name] if hooks[name] else f"pre-commit run {name}"
+        finding["recommendation"] = f"add a `{name}` target running: {cmd}"
+        finding["summary"] = f"Add Makefile target '{name}' running: {cmd}"
+        finding["needs_research"] = False
+        return finding
+    resolved = _resolve_across_stacks(name, detected, get_tooling)
+    rec, needs, stacks, summary = _stack_gap_summary(
+        "Makefile target",
+        name,
+        detected,
+        resolved,
+        "Add Makefile target",
+    )
+    finding["recommendation"] = rec
+    finding["needs_research"] = needs
+    finding["stacks"] = stacks
+    finding["summary"] = summary
+    return finding
 
-    present_targets = parse_makefile_targets(makefile_path)
-    hooks = parse_precommit_hooks(precommit_path)
-    detected = detect_stacks(repo_root)
 
-    # Read once, shared by the reachability check and the recipe-cap
-    # check's single-pass recipe map (Task 2) -- avoids re-reading the
-    # file per check and per target.
-    makefile_text = ""
-    if os.path.isfile(makefile_path):
-        with open(makefile_path, encoding="utf-8") as handle:
-            makefile_text = handle.read()
-
-    findings: list[dict] = []
-
+def _findings_missing_required_targets(
+    present_targets: set[str],
+    hooks: dict[str, str | None],
+    detected,
+    get_tooling,
+) -> list[dict]:
     required = set(REQUIRED_STATIC_TARGETS) | set(hooks.keys())
-    for name in sorted(required):
-        if name in present_targets:
-            continue
-        finding = {"target": name, "present": False, "criticality": CRITICALITY_CRITICAL}
-        if name in hooks:
-            cmd = hooks[name] if hooks[name] else f"pre-commit run {name}"
-            finding["recommendation"] = f"add a `{name}` target running: {cmd}"
-            finding["summary"] = f"Add Makefile target '{name}' running: {cmd}"
-            finding["needs_research"] = False
-        else:
-            recommendation, needs_research, missing_stacks = _resolve_across_stacks(
-                name, detected, get_tooling
-            )
-            if needs_research and detected:
-                finding["recommendation"] = None
-                finding["needs_research"] = True
-                finding["stacks"] = missing_stacks
-                finding["summary"] = (
-                    f"Makefile target '{name}' needs research for stack(s): "
-                    f"{', '.join(missing_stacks)}"
-                )
-            elif needs_research:
-                finding["recommendation"] = None
-                finding["needs_research"] = True
-                finding["stacks"] = []
-                finding["summary"] = (
-                    f"Makefile target '{name}' needs a detected stack before "
-                    "any tooling recommendation is possible -- no stack "
-                    "markers found in this repo"
-                )
-            else:
-                finding["recommendation"] = recommendation
-                finding["needs_research"] = False
-                finding["summary"] = f"Add Makefile target '{name}': {recommendation}"
-        findings.append(finding)
+    return [
+        _missing_required_target_finding(name, hooks, detected, get_tooling)
+        for name in sorted(required)
+        if name not in present_targets
+    ]
 
+
+def _missing_tooling_category_finding(category: str, detected, get_tooling) -> dict:
+    resolved = _resolve_across_stacks(category, detected, get_tooling)
+    rec, needs, stacks, summary = _stack_gap_summary(
+        "Tooling category",
+        category,
+        detected,
+        resolved,
+        "Add tooling category",
+    )
+    return {
+        "category": category,
+        "criticality": CRITICALITY_CRITICAL,
+        "recommendation": rec,
+        "needs_research": needs,
+        "stacks": stacks,
+        "summary": summary,
+    }
+
+
+def _findings_missing_tooling_categories(
+    present_targets: set[str],
+    hooks: dict[str, str | None],
+    detected,
+    get_tooling,
+) -> list[dict]:
     already_present_names = {n.lower() for n in present_targets} | {
         n.lower() for n in hooks
     }
+    findings: list[dict] = []
     for category in RESEARCH_CATEGORIES:
         keywords = CATEGORY_KEYWORDS[category]
         if any(kw in name for name in already_present_names for kw in keywords):
             continue
-        recommendation, needs_research, missing_stacks = _resolve_across_stacks(
-            category, detected, get_tooling
-        )
-        finding = {"category": category, "criticality": CRITICALITY_CRITICAL}
-        if needs_research and detected:
-            finding["recommendation"] = None
-            finding["needs_research"] = True
-            finding["stacks"] = missing_stacks
-            finding["summary"] = (
-                f"Tooling category '{category}' needs research for stack(s): "
-                f"{', '.join(missing_stacks)}"
-            )
-        elif needs_research:
-            finding["recommendation"] = None
-            finding["needs_research"] = True
-            finding["stacks"] = []
-            finding["summary"] = (
-                f"Tooling category '{category}' needs a detected stack "
-                "before any tooling recommendation is possible -- no stack "
-                "markers found in this repo"
-            )
-        else:
-            finding["recommendation"] = recommendation
-            finding["needs_research"] = False
-            finding["summary"] = f"Add tooling category '{category}': {recommendation}"
-        findings.append(finding)
+        findings.append(_missing_tooling_category_finding(category, detected, get_tooling))
+    return findings
 
-    chain_incomplete_found = False
-    if "validate" in present_targets:
-        validate_recipe = parse_makefile_recipe(makefile_path, "validate")
-        validate_prereqs = parse_makefile_prerequisites(makefile_path, "validate")
-        chainable = {hook_id for hook_id in hooks if hook_id in present_targets}
-        if chainable:
 
-            def _wired(member):
-                return (
-                    recipe_mentions_target(validate_recipe, member)
-                    or member in validate_prereqs
-                )
+def _validate_chain_findings(
+    makefile_path: str,
+    present_targets: set[str],
+    hooks: dict[str, str | None],
+) -> tuple[list[dict], bool]:
+    if "validate" not in present_targets:
+        return [], False
+    validate_recipe = parse_makefile_recipe(makefile_path, "validate")
+    validate_prereqs = parse_makefile_prerequisites(makefile_path, "validate")
+    chainable = {hook_id for hook_id in hooks if hook_id in present_targets}
+    if not chainable:
+        return [], False
 
-            missing_chain_members = sorted(m for m in chainable if not _wired(m))
-            if missing_chain_members:
-                chain_incomplete_found = True
-                recommendation = (
-                    "restructure `validate` to invoke each of: "
-                    + ", ".join(sorted(chainable))
-                    + " explicitly (via its recipe or as a Make prerequisite; "
-                    "lightest/cheapest check first)"
-                )
-                findings.append(
-                    {
-                        "target": "validate",
-                        "present": True,
-                        "issue": "chain_incomplete",
-                        "missing_chain_members": missing_chain_members,
-                        "recommendation": recommendation,
-                        "needs_research": False,
-                        "criticality": CRITICALITY_CRITICAL,
-                        "summary": recommendation,
-                    }
-                )
+    def _wired(member):
+        return recipe_mentions_target(validate_recipe, member) or member in validate_prereqs
 
-    if "test" in present_targets and "test-unit" in present_targets:
-        test_recipe = parse_makefile_recipe(makefile_path, "test")
-        test_unit_recipe = parse_makefile_recipe(makefile_path, "test-unit")
-        test_prereqs = parse_makefile_prerequisites(makefile_path, "test")
-        test_unit_prereqs = parse_makefile_prerequisites(makefile_path, "test-unit")
-        aliased = (
-            recipe_mentions_target(test_recipe, "test-unit")
-            or recipe_mentions_target(test_unit_recipe, "test")
-            or "test-unit" in test_prereqs
-            or "test" in test_unit_prereqs
-            or test_recipe.strip() == test_unit_recipe.strip()
-        )
-        if not aliased:
-            recommendation = (
-                "make `test` invoke `test-unit` (e.g. `$(MAKE) test-unit`), "
-                "list it as a Make prerequisite (`test: test-unit`), or keep "
-                "their recipes identical so the two names are a genuine "
-                "alias, per REQ-rules-makefile"
-            )
-            findings.append(
-                {
-                    "target": "test-unit-alias",
-                    "present": True,
-                    "issue": "not_aliased",
-                    "recommendation": recommendation,
-                    "needs_research": False,
-                    "criticality": CRITICALITY_CRITICAL,
-                    "summary": recommendation,
-                }
-            )
+    missing_chain_members = sorted(m for m in chainable if not _wired(m))
+    if not missing_chain_members:
+        return [], False
+    recommendation = (
+        "restructure `validate` to invoke each of: "
+        + ", ".join(sorted(chainable))
+        + " explicitly (via its recipe or as a Make prerequisite; "
+        "lightest/cheapest check first)"
+    )
+    return [
+        {
+            "target": "validate",
+            "present": True,
+            "issue": "chain_incomplete",
+            "missing_chain_members": missing_chain_members,
+            "recommendation": recommendation,
+            "needs_research": False,
+            "criticality": CRITICALITY_CRITICAL,
+            "summary": recommendation,
+        }
+    ], True
 
-    # validate-<category> alias family (ROADMAP Phase 10 SC2). Placed after
-    # the inherited chain block above so both see the same parsed target
-    # set (`present_targets`).
+
+def _test_unit_alias_findings(
+    makefile_path: str, present_targets: set[str]
+) -> list[dict]:
+    if "test" not in present_targets or "test-unit" not in present_targets:
+        return []
+    test_recipe = parse_makefile_recipe(makefile_path, "test")
+    test_unit_recipe = parse_makefile_recipe(makefile_path, "test-unit")
+    test_prereqs = parse_makefile_prerequisites(makefile_path, "test")
+    test_unit_prereqs = parse_makefile_prerequisites(makefile_path, "test-unit")
+    aliased = (
+        recipe_mentions_target(test_recipe, "test-unit")
+        or recipe_mentions_target(test_unit_recipe, "test")
+        or "test-unit" in test_prereqs
+        or "test" in test_unit_prereqs
+        or test_recipe.strip() == test_unit_recipe.strip()
+    )
+    if aliased:
+        return []
+    recommendation = (
+        "make `test` invoke `test-unit` (e.g. `$(MAKE) test-unit`), "
+        "list it as a Make prerequisite (`test: test-unit`), or keep "
+        "their recipes identical so the two names are a genuine "
+        "alias, per REQ-rules-makefile"
+    )
+    return [
+        {
+            "target": "test-unit-alias",
+            "present": True,
+            "issue": "not_aliased",
+            "recommendation": recommendation,
+            "needs_research": False,
+            "criticality": CRITICALITY_CRITICAL,
+            "summary": recommendation,
+        }
+    ]
+
+
+def _collect_required_validate_aliases(
+    present_targets: set[str],
+) -> list[tuple[str, str, list[str]]]:
     required_aliases: list[tuple[str, str, list[str]]] = []
     for category in RESEARCH_CATEGORIES:
         triggering = _alias_required_targets(category, present_targets)
         if not triggering:
-            continue  # this category requires no alias
+            continue
         required_aliases.append((category, CATEGORY_ALIAS_MAP[category], triggering))
+    return required_aliases
 
+
+def _missing_validate_alias_findings(
+    present_targets: set[str],
+    required_aliases: list[tuple[str, str, list[str]]],
+) -> list[dict]:
+    findings: list[dict] = []
     for category, alias, triggering in required_aliases:
         if alias in present_targets:
             continue
@@ -668,121 +703,180 @@ def check_makefile_shape(repo_root: str, get_tooling=None) -> list[dict]:
                 "summary": recommendation,
             }
         )
+    return findings
 
-    if "validate" in present_targets and required_aliases:
-        validate_recipe = parse_makefile_recipe(makefile_path, "validate")
-        validate_prereqs = parse_makefile_prerequisites(makefile_path, "validate")
 
-        def _alias_wired(alias_name):
-            return (
-                recipe_mentions_target(validate_recipe, alias_name)
-                or alias_name in validate_prereqs
-            )
+def _unchained_validate_alias_findings(
+    makefile_path: str,
+    present_targets: set[str],
+    required_aliases: list[tuple[str, str, list[str]]],
+) -> list[dict]:
+    if "validate" not in present_targets or not required_aliases:
+        return []
+    validate_recipe = parse_makefile_recipe(makefile_path, "validate")
+    validate_prereqs = parse_makefile_prerequisites(makefile_path, "validate")
 
-        unchained_aliases = sorted(
-            {
-                alias
-                for _category, alias, _triggering in required_aliases
-                if alias in present_targets and not _alias_wired(alias)
-            }
+    def _alias_wired(alias_name):
+        return (
+            recipe_mentions_target(validate_recipe, alias_name)
+            or alias_name in validate_prereqs
         )
-        if unchained_aliases:
-            recommendation = (
-                "chain the following alias target(s) into `validate` (via "
-                "its recipe or as a Make prerequisite): "
-                + ", ".join(unchained_aliases)
-            )
-            findings.append(
-                {
-                    "target": "validate",
-                    "present": True,
-                    "issue": "alias_chain_incomplete",
-                    "missing_alias_members": unchained_aliases,
-                    "recommendation": recommendation,
-                    "needs_research": False,
-                    "criticality": CRITICALITY_HIGH,
-                    "summary": recommendation,
-                }
-            )
 
-    # Help/fail reachability (ROADMAP Phase 10 SC3).
+    unchained_aliases = sorted(
+        {
+            alias
+            for _category, alias, _triggering in required_aliases
+            if alias in present_targets and not _alias_wired(alias)
+        }
+    )
+    if not unchained_aliases:
+        return []
+    recommendation = (
+        "chain the following alias target(s) into `validate` (via "
+        "its recipe or as a Make prerequisite): "
+        + ", ".join(unchained_aliases)
+    )
+    return [
+        {
+            "target": "validate",
+            "present": True,
+            "issue": "alias_chain_incomplete",
+            "missing_alias_members": unchained_aliases,
+            "recommendation": recommendation,
+            "needs_research": False,
+            "criticality": CRITICALITY_HIGH,
+            "summary": recommendation,
+        }
+    ]
+
+
+def _help_reachability_findings(
+    makefile_text: str, present_targets: set[str]
+) -> list[dict]:
     default_goal_name = _default_goal_target(makefile_text)
     has_catchall = _has_stemless_catchall(makefile_text)
     default_goal_satisfied = (
         default_goal_name is not None and default_goal_name in present_targets
     )
-    if not default_goal_satisfied and not has_catchall:
-        if default_goal_name is not None:
-            reach_summary = (
-                f"`.DEFAULT_GOAL` points at '{default_goal_name}', which is not a "
-                "defined target, so an unknown-target invocation has no reachable "
-                "help path"
-            )
-        else:
-            reach_summary = (
-                "no `.DEFAULT_GOAL` directive naming a real target and no "
-                "stemless catch-all `%:` rule, so an unknown-target invocation "
-                "has no reachable help path"
-            )
-        findings.append(
-            {
-                "target": "help",
-                "present": "help" in present_targets,
-                "issue": "no_reachable_help_path",
-                "recommendation": (
-                    "add a `.DEFAULT_GOAL := help`-style directive naming a real "
-                    "target, or a stemless catch-all rule (`%:`) that prints usage"
-                ),
-                "needs_research": False,
-                "criticality": CRITICALITY_MEDIUM,
-                "summary": reach_summary,
-            }
+    if default_goal_satisfied or has_catchall:
+        return []
+    if default_goal_name is not None:
+        reach_summary = (
+            f"`.DEFAULT_GOAL` points at '{default_goal_name}', which is not a "
+            "defined target, so an unknown-target invocation has no reachable "
+            "help path"
         )
+    else:
+        reach_summary = (
+            "no `.DEFAULT_GOAL` directive naming a real target and no "
+            "stemless catch-all `%:` rule, so an unknown-target invocation "
+            "has no reachable help path"
+        )
+    return [
+        {
+            "target": "help",
+            "present": "help" in present_targets,
+            "issue": "no_reachable_help_path",
+            "recommendation": (
+                "add a `.DEFAULT_GOAL := help`-style directive naming a real "
+                "target, or a stemless catch-all rule (`%:`) that prints usage"
+            ),
+            "needs_research": False,
+            "criticality": CRITICALITY_MEDIUM,
+            "summary": reach_summary,
+        }
+    ]
 
-    # 3-line recipe cap (ROADMAP Phase 10 SC4). The exempt set has exactly
-    # two members, both fixture-discriminable: the target named by the
-    # default-goal directive, and a target literally named `help`. The
-    # stemless catch-all is deliberately NOT a member --
-    # `parse_makefile_targets`'s header pattern contains no `%`, so a
-    # catch-all never enters `present_targets` and this loop never sees its
-    # body; an exemption for it would be unreachable by construction.
+
+def _recipe_length_findings(
+    makefile_text: str, present_targets: set[str]
+) -> list[dict]:
+    default_goal_name = _default_goal_target(makefile_text)
     recipe_exempt_targets = set()
     if default_goal_name is not None and default_goal_name in present_targets:
         recipe_exempt_targets.add(default_goal_name)
     if "help" in present_targets:
         recipe_exempt_targets.add("help")
 
+    findings: list[dict] = []
     recipe_map = _build_recipe_map(makefile_text)
     for target in sorted(present_targets):
         if target in recipe_exempt_targets:
             continue
         line_count = _real_recipe_line_count(recipe_map.get(target, ""))
-        if line_count > 3:
-            cap_recommendation = (
-                f"extract `{target}`'s {line_count}-line recipe into a shell "
-                "script the target then calls"
-            )
-            findings.append(
-                {
-                    "target": target,
-                    "present": True,
-                    "issue": "recipe_too_long",
-                    "line_count": line_count,
-                    "recommendation": cap_recommendation,
-                    "needs_research": False,
-                    "criticality": CRITICALITY_MEDIUM,
-                    "summary": cap_recommendation,
-                }
-            )
+        if line_count <= 3:
+            continue
+        cap_recommendation = (
+            f"extract `{target}`'s {line_count}-line recipe into a shell "
+            "script the target then calls"
+        )
+        findings.append(
+            {
+                "target": target,
+                "present": True,
+                "issue": "recipe_too_long",
+                "line_count": line_count,
+                "recommendation": cap_recommendation,
+                "needs_research": False,
+                "criticality": CRITICALITY_MEDIUM,
+                "summary": cap_recommendation,
+            }
+        )
+    return findings
 
-    # Docker build-before-up (ROADMAP Phase 10 SC5, first clause).
+
+def check_makefile_shape(repo_root: str, get_tooling=None) -> list[dict]:
+    """Return a list of Makefile-target/tooling-category gap findings.
+
+    A missing Makefile or `.pre-commit-config.yaml` is reported as the
+    maximal, most informative gap (every required target missing), never a
+    crash -- both parsers return an empty result for an absent file.
+    """
+    if get_tooling is None:
+        get_tooling = _default_get_stack_tooling
+
+    makefile_path = os.path.join(repo_root, "Makefile")
+    precommit_path = os.path.join(repo_root, ".pre-commit-config.yaml")
+
+    present_targets = parse_makefile_targets(makefile_path)
+    hooks = parse_precommit_hooks(precommit_path)
+    detected = detect_stacks(repo_root)
+
+    makefile_text = ""
+    if os.path.isfile(makefile_path):
+        with open(makefile_path, encoding="utf-8") as handle:
+            makefile_text = handle.read()
+
+    findings: list[dict] = []
+    findings.extend(
+        _findings_missing_required_targets(
+            present_targets, hooks, detected, get_tooling
+        )
+    )
+    findings.extend(
+        _findings_missing_tooling_categories(
+            present_targets, hooks, detected, get_tooling
+        )
+    )
+
+    chain_findings, chain_incomplete_found = _validate_chain_findings(
+        makefile_path, present_targets, hooks
+    )
+    findings.extend(chain_findings)
+    findings.extend(_test_unit_alias_findings(makefile_path, present_targets))
+
+    required_aliases = _collect_required_validate_aliases(present_targets)
+    findings.extend(_missing_validate_alias_findings(present_targets, required_aliases))
+    findings.extend(
+        _unchained_validate_alias_findings(
+            makefile_path, present_targets, required_aliases
+        )
+    )
+    findings.extend(_help_reachability_findings(makefile_text, present_targets))
+    findings.extend(_recipe_length_findings(makefile_text, present_targets))
     findings.extend(_docker_build_before_up_findings(makefile_path, present_targets))
-
-    # Shellcheck threshold (ROADMAP Phase 10 SC5, second clause).
     findings.extend(_shellcheck_threshold_findings(repo_root, present_targets, hooks))
 
-    # Advisory fast-vs-slow ordering heuristic (ROADMAP Phase 10 SC5, third
-    # clause).
     validate_order_finding = check_validate_order(repo_root, chain_incomplete_found)
     if validate_order_finding is not None:
         findings.append(validate_order_finding)

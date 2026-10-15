@@ -105,6 +105,28 @@ def _real_recipe_lines(recipe_text: str) -> list[str]:
     return lines
 
 
+_NOT_TOOL_SHAPED = {"tool_shaped": False, "clause": None, "identity": None}
+
+
+def _shape_from_delegate_lines(real_lines: list[str]) -> dict | None:
+    for line in real_lines:
+        match = _DELEGATE_RE.search(line)
+        if match is not None:
+            return {"tool_shaped": True, "clause": "i", "identity": match.group(1)}
+    return None
+
+
+def _shape_from_catalog_name(name: str, real_lines: list[str]) -> dict | None:
+    if resolve_tool_category(name) is not None:
+        return {"tool_shaped": True, "clause": "iii", "identity": name}
+    if len(real_lines) != 1:
+        return None
+    candidate = _first_token_after_runner_prefix(real_lines[0])
+    if candidate is not None and resolve_tool_category(candidate) is not None:
+        return {"tool_shaped": True, "clause": "iii", "identity": name}
+    return None
+
+
 def classify_target_shape(name: str, recipe_text: str, prerequisites: set[str]) -> dict:
     """D-P2: is `name` a "single-tool Makefile target" -- a SHAPE, not a
     name list?
@@ -136,33 +158,91 @@ def classify_target_shape(name: str, recipe_text: str, prerequisites: set[str]) 
     tool-shaped either, regardless of clause.
     """
     real_lines = _real_recipe_lines(recipe_text)
-    not_shaped = {"tool_shaped": False, "clause": None, "identity": None}
-
     if len(real_lines) > 2:
-        return not_shaped
+        return _NOT_TOOL_SHAPED
     if not real_lines and prerequisites:
-        return not_shaped
+        return _NOT_TOOL_SHAPED
 
-    for line in real_lines:
-        match = _DELEGATE_RE.search(line)
-        if match is not None:
-            return {"tool_shaped": True, "clause": "i", "identity": match.group(1)}
+    delegate_shape = _shape_from_delegate_lines(real_lines)
+    if delegate_shape is not None:
+        return delegate_shape
 
     if normalize_name(name) in _CLAUSE_II_NAMES:
         return {"tool_shaped": True, "clause": "ii", "identity": name}
 
-    # Clause (iii), a THIRD OR, evaluated under the SAME cap as clauses (i)
-    # and (ii) (both early-return checks above already ran) -- never beside
-    # it, never bypassing it.
-    if resolve_tool_category(name) is not None:
-        return {"tool_shaped": True, "clause": "iii", "identity": name}
+    catalog_shape = _shape_from_catalog_name(name, real_lines)
+    if catalog_shape is not None:
+        return catalog_shape
 
-    if len(real_lines) == 1:
-        candidate = _first_token_after_runner_prefix(real_lines[0])
-        if candidate is not None and resolve_tool_category(candidate) is not None:
-            return {"tool_shaped": True, "clause": "iii", "identity": name}
+    return _NOT_TOOL_SHAPED
 
-    return not_shaped
+
+def _parity_hook_without_target_findings(
+    hooks: dict[str, str | None],
+    normalized_targets: dict[str, str],
+) -> list[dict]:
+    findings: list[dict] = []
+    for hook_id in sorted(hooks):
+        if normalize_name(hook_id) in normalized_targets:
+            continue
+        entry = hooks[hook_id]
+        delegate = f"uv run pre-commit run {hook_id} --all-files"
+        recommendation = (
+            f"add a Makefile target for pre-commit hook '{hook_id}' "
+            f"(e.g. `{delegate}`)"
+        )
+        if entry:
+            recommendation += f" -- the hook's own `entry:` command is: {entry}"
+        findings.append(
+            {
+                "category": "precommit-parity",
+                "issue": "hook_without_target",
+                "hook_id": hook_id,
+                "entry": entry,
+                "recommendation": recommendation,
+                "needs_research": False,
+                "criticality": CRITICALITY_HIGH,
+                "summary": recommendation,
+            }
+        )
+    return findings
+
+
+def _parity_target_without_hook_findings(
+    makefile_path: str,
+    targets: set[str],
+    normalized_hooks: dict[str, str],
+) -> list[dict]:
+    findings: list[dict] = []
+    for target in sorted(targets):
+        recipe_text = parse_makefile_recipe(makefile_path, target)
+        prerequisites = parse_makefile_prerequisites(makefile_path, target)
+        shape = classify_target_shape(target, recipe_text, prerequisites)
+        if not shape["tool_shaped"]:
+            continue
+        identity = shape["identity"]
+        if normalize_name(identity) in normalized_hooks:
+            continue
+        recommendation = (
+            f"target '{target}' has no matching pre-commit hook for '{identity}' -- "
+            f"either add a pre-commit hook id matching '{identity}', or record in the "
+            f"Makefile (a comment beside the '{target}' target) that it is "
+            "deliberately non-gating"
+        )
+        findings.append(
+            {
+                "category": "precommit-parity",
+                "issue": "target_without_hook",
+                "target": target,
+                "identity": identity,
+                "clause": shape["clause"],
+                "recommendation": recommendation,
+                "needs_research": False,
+                "criticality": CRITICALITY_HIGH,
+                "summary": recommendation,
+            }
+        )
+    return findings
 
 
 def check_parity(repo_root: str) -> list[dict]:
@@ -209,62 +289,12 @@ def check_parity(repo_root: str) -> list[dict]:
     normalized_hooks = {normalize_name(h): h for h in hooks}
 
     findings: list[dict] = []
-
-    # Direction A: hook -> target.
-    for hook_id in sorted(hooks):
-        if normalize_name(hook_id) in normalized_targets:
-            continue
-        entry = hooks[hook_id]
-        delegate = f"uv run pre-commit run {hook_id} --all-files"
-        recommendation = (
-            f"add a Makefile target for pre-commit hook '{hook_id}' "
-            f"(e.g. `{delegate}`)"
+    findings.extend(_parity_hook_without_target_findings(hooks, normalized_targets))
+    findings.extend(
+        _parity_target_without_hook_findings(
+            makefile_path, targets, normalized_hooks
         )
-        if entry:
-            recommendation += f" -- the hook's own `entry:` command is: {entry}"
-        findings.append(
-            {
-                "category": "precommit-parity",
-                "issue": "hook_without_target",
-                "hook_id": hook_id,
-                "entry": entry,
-                "recommendation": recommendation,
-                "needs_research": False,
-                "criticality": CRITICALITY_HIGH,
-                "summary": recommendation,
-            }
-        )
-
-    # Direction B: tool-shaped target -> hook.
-    for target in sorted(targets):
-        recipe_text = parse_makefile_recipe(makefile_path, target)
-        prerequisites = parse_makefile_prerequisites(makefile_path, target)
-        shape = classify_target_shape(target, recipe_text, prerequisites)
-        if not shape["tool_shaped"]:
-            continue
-        identity = shape["identity"]
-        if normalize_name(identity) in normalized_hooks:
-            continue
-        recommendation = (
-            f"target '{target}' has no matching pre-commit hook for '{identity}' -- "
-            f"either add a pre-commit hook id matching '{identity}', or record in the "
-            f"Makefile (a comment beside the '{target}' target) that it is "
-            "deliberately non-gating"
-        )
-        findings.append(
-            {
-                "category": "precommit-parity",
-                "issue": "target_without_hook",
-                "target": target,
-                "identity": identity,
-                "clause": shape["clause"],
-                "recommendation": recommendation,
-                "needs_research": False,
-                "criticality": CRITICALITY_HIGH,
-                "summary": recommendation,
-            }
-        )
-
+    )
     return findings
 
 
