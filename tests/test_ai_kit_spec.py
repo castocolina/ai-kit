@@ -10564,15 +10564,19 @@ class TestOpencodeApiImageInput(unittest.TestCase):
         self.assertEqual(entry["image_input"], True)
         self.assertEqual(entry["image_input_source"], "opencode-api")
 
-        # No source field, or any other value -> the default "opencode".
-        for source in (None, "weird"):
-            cli_data = {"installed": True, "image_input": {"opencode/exo-free": True}}
-            if source is not None:
-                cli_data["image_input_source"] = source
-            meta = _runtime_meta_from_snapshot({"clis": {"opencode": cli_data}})
-            entry = {}
-            _apply_runtime_meta(entry, meta, "opencode", "opencode/exo-free")
-            self.assertEqual(entry["image_input_source"], "opencode")
+        # No source field (a schema-2 snapshot) -> the 1.x default "opencode".
+        cli_data = {"installed": True, "image_input": {"opencode/exo-free": True}}
+        meta = _runtime_meta_from_snapshot({"clis": {"opencode": cli_data}})
+        entry = {}
+        _apply_runtime_meta(entry, meta, "opencode", "opencode/exo-free")
+        self.assertEqual(entry["image_input_source"], "opencode")
+
+        # C-IN-02: an unknown label is unsourced data, never relabelled as 1.x verbose.
+        cli_data = {**cli_data, "image_input_source": "weird"}
+        meta = _runtime_meta_from_snapshot({"clis": {"opencode": cli_data}})
+        entry = {}
+        _apply_runtime_meta(entry, meta, "opencode", "opencode/exo-free")
+        self.assertEqual(entry, {})
 
     def test_validate_catalog_entry_accepts_opencode_api_source(self):
         base = {

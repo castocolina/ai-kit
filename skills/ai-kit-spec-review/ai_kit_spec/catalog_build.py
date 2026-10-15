@@ -3,6 +3,7 @@ import re
 import time
 from typing import NamedTuple
 
+from ai_kit_spec.detection import OPENCODE_API_IMAGE_SOURCE
 from ai_kit_spec.model_catalog import canonical_key, merge_catalog_entry
 from ai_kit_spec.model_heuristics import (
     infer_batch_mode,
@@ -224,7 +225,8 @@ def _runtime_meta_from_snapshot(runtimes: dict) -> dict:
     record per model. Anything malformed is skipped, never raised: a non-dict
     `clis` entry, a non-dict `reasoning_modes` or `image_input`, a blank/
     `str`-keyed lookup, an effort list that is not a non-empty list of
-    `str`, or an `image_input` value that is not a bool."""
+    `str`, an `image_input` value that is not a bool, or an `image_input_source`
+    label other than `opencode`/`opencode-api`."""
     meta = {}
     for cli_name, cli_data in (runtimes or {}).get("clis", {}).items():
         if not isinstance(cli_data, dict):
@@ -241,8 +243,10 @@ def _runtime_meta_from_snapshot(runtimes: dict) -> dict:
         # D-09 source 2: image_input is only read from opencode runtime metadata
         if cli_name == "opencode":
             image_map = cli_data.get("image_input")
-            source = cli_data.get("image_input_source")
-            if isinstance(image_map, dict):
+            # Absent (schema-2 snapshot) means the 1.x verbose path; an unknown label is
+            # unsourced, so its values are skipped rather than relabelled.
+            source = cli_data.get("image_input_source", "opencode")
+            if isinstance(image_map, dict) and source in ("opencode", OPENCODE_API_IMAGE_SOURCE):
                 for model_id, image in image_map.items():
                     if not isinstance(model_id, str) or not model_id.strip():
                         continue
@@ -250,8 +254,7 @@ def _runtime_meta_from_snapshot(runtimes: dict) -> dict:
                         continue
                     record = meta.setdefault((cli_name, model_id), {})
                     record["image_input"] = image
-                    record["image_input_source"] = \
-                        source if source in ("opencode", "opencode-api") else "opencode"
+                    record["image_input_source"] = source
     return meta
 
 
