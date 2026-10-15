@@ -13,6 +13,7 @@ class ExecuteResolveOptions(NamedTuple):
     affinity_table: dict
     top_n_keys: list
     warn_fn: object | None = None
+    screen_exempt_fn: object | None = None
 
 
 def purpose_matches(purpose: str | None, wanted: str) -> bool:
@@ -69,17 +70,22 @@ def _execute_default_warn(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
-def screen_execute_clis(candidates: list, warn_fn=None) -> list:
+def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
     """D-15 hardening screen: a candidate naming a CLI without a real execute builder (claude,
     grok -- Phase 16.1 removed both) is never silently routed to another CLI. An entry whose
     purpose explicitly declares it an executor (`purpose == "execute"`) raises ValueError
     naming the supported CLIs; an entry that merely includes execution (purpose unset or
     "both") is dropped with a visible stderr warning instead of being silently executed.
-    Native candidates (cli None) and purpose-"review" entries pass through untouched."""
+    Native candidates (cli None) and purpose-"review" entries pass through untouched, as does
+    any candidate `exempt_fn` accepts (a caller route that needs no execute builder, such as
+    GSD's native-tier write, A-WR-08)."""
     emit_warn = warn_fn if warn_fn is not None else _execute_default_warn
     kept = []
     for c in candidates:
         cli = c.get("cli")
+        if exempt_fn is not None and exempt_fn(c):
+            kept.append(c)
+            continue
         if cli is not None and cli not in commands.SUPPORTED_EXECUTE_CLIS \
                 and purpose_matches(c.get("purpose"), "execute"):
             cli_err = commands.execute_cli_error(cli) or ""
@@ -115,7 +121,7 @@ def resolve_execute_candidates(candidates: list, options: ExecuteResolveOptions)
     bonus actually applies -- it needs a real task_type, which only exists here, at real
     dispatch time, never at Plan A's generic wizard-time ranking (see that plan's Global
     Constraints)."""
-    candidates = screen_execute_clis(candidates, options.warn_fn)
+    candidates = screen_execute_clis(candidates, options.warn_fn, options.screen_exempt_fn)
     purpose_filtered = filter_by_purpose(candidates, "execute")
     if options.task_type is not None:
         purpose_filtered = filter_by_affinity(

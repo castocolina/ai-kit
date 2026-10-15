@@ -344,8 +344,31 @@ class TestAssembleCandidates(unittest.TestCase):
         self.assertEqual(candidates, [{"key": "codex/gpt-5.6-sol", "model": "gpt-5.6-sol",
                                         "cli": "codex", "vendor": "openai", "command": None,
                                         "task_affinity": None, "context_limit": None,
-                                        "tier": None}])
+                                        "tier": None, "purpose": None, "effort": None,
+                                        "service_tier": None}])
         self.assertEqual(top_n_keys, ["codex/gpt-5.6-sol"])
+
+    def test_carries_purpose_effort_and_service_tier(self):
+        # A-WR-07: without purpose the D-15 hard error and filter_by_purpose are unreachable on
+        # the GSD path; without effort the codex reasoning flag is dropped from the hook.
+        def fake_cfg_resolve(cwd, env):
+            return {"policy": {"ladder": []},
+                    "reviewers": [{"key": "c", "model": "m", "cli": "codex",
+                                   "purpose": "review", "effort": "high",
+                                   "service_tier": "flex"}]}
+        candidates, _ = adapter.assemble_candidates("/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
+        self.assertEqual((candidates[0]["purpose"], candidates[0]["effort"],
+                          candidates[0]["service_tier"]), ("review", "high", "flex"))
+
+    def test_purpose_execute_on_an_unsupported_cli_is_a_hard_error_end_to_end(self):
+        def fake_cfg_resolve(cwd, env):
+            return {"policy": {"ladder": ["g", "r"]},
+                    "reviewers": [{"key": "g", "model": "m", "cli": "grok", "purpose": "execute"},
+                                  {"key": "r", "model": "m", "cli": "codex",
+                                   "purpose": "review"}]}
+        candidates, top = adapter.assemble_candidates("/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
+        with self.assertRaisesRegex(ValueError, "codex, cursor-agent, opencode"):
+            _resolve_gsd_dispatch(candidates, top, {}, _ctx(), "/repo")
 
     def test_native_cli_none_entry_derives_tier_from_its_own_model_field(self):
         # This repo's own "opus-native"-shaped entries: model IS already a tier alias.
@@ -569,6 +592,48 @@ class TestResolveGsdDispatch(unittest.TestCase):
         self.assertEqual(result["provenance"], "fallback")
         self.assertIn("gemini/gemini-3.1-pro", stderr.getvalue())
         self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
+        # C-WR-02: the reason is the screen, never a context-size rejection.
+        self.assertEqual(result["reason"], "no_usable_dispatch")
+        self.assertIn("gemini/gemini-3.1-pro", result["message"])
+        self.assertNotIn("context", result["message"])
+
+    def test_tiered_gemini_keeps_its_native_tier_route_without_a_screen_warning(self):
+        # A-WR-08: the native-tier route writes GSD config and needs no execute builder, so the
+        # D-15 screen must not drop it (it returned native_tier before Phase 16.1).
+        import contextlib
+        import io
+        stderr = io.StringIO()
+        seen = []
+        candidates = [{"cli": "gemini", "model": "gemini-3.1-pro", "key": "g",
+                       "vendor": "google", "task_affinity": None, "context_limit": None,
+                       "tier": "opus"}]
+        with contextlib.redirect_stderr(stderr):
+            result = _resolve_gsd_dispatch(
+                candidates, ["g"], {}, _ctx(), "/repo",
+                apply_changes_fn=lambda ctx, changes: seen.append(changes) or
+                gsd_config.ApplyResult([k for k, _ in changes], None, None, [], []))
+        self.assertEqual(result["mode"], "native_tier")
+        self.assertEqual(seen, [[("runtime", "gemini"),
+                                 ("model_profile_overrides.gemini.opus", "gemini-3.1-pro")]])
+        self.assertNotIn("skipping", stderr.getvalue())
+
+    def test_tiered_claude_and_grok_stay_screened_fail_closed(self):
+        # D-15 names claude and grok; whether it covers GSD's native-tier route for them is
+        # unsettled, so they stay screened (warning, no config write).
+        import contextlib
+        import io
+        for cli_name in ("claude", "grok"):
+            with self.subTest(cli=cli_name):
+                stderr = io.StringIO()
+                candidates = [{"cli": cli_name, "model": "m", "key": "k", "vendor": "v",
+                               "task_affinity": None, "context_limit": None, "tier": "opus"}]
+                with contextlib.redirect_stderr(stderr):
+                    result = _resolve_gsd_dispatch(
+                        candidates, ["k"], {}, _ctx(), "/repo",
+                        apply_changes_fn=lambda ctx, changes: self.fail("no write expected"))
+                self.assertEqual(result["mode"], "fallback_notice")
+                self.assertEqual(result["reason"], "no_usable_dispatch")
+                self.assertIn("skipping 'k'", stderr.getvalue())
 
     def test_every_candidate_lacks_quota_falls_back_quota_exhausted(self):
         candidates = [

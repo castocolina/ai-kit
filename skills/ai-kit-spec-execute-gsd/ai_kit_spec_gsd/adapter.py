@@ -14,6 +14,7 @@ from ai_kit_spec.execute_selection import (
     ExecuteResolveOptions,
     candidates_to_ladder,
     resolve_execute_candidates,
+    screen_execute_clis,
 )
 from ai_kit_spec.quota import resolve_ladder_pick
 
@@ -51,7 +52,8 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
             "key": r["key"], "model": r.get("model", ""), "cli": cli,
             "vendor": r.get("vendor", ""), "command": r.get("command"),
             "task_affinity": r.get("task_affinity"), "context_limit": r.get("context_limit"),
-            "tier": tier,
+            "tier": tier, "purpose": r.get("purpose"),
+            "effort": r.get("effort"), "service_tier": r.get("service_tier"),
         })
     top_n_keys = resolved.get("policy", {}).get("ladder", [])
     return candidates, top_n_keys
@@ -89,6 +91,18 @@ class NativeTierOutcome(NamedTuple):
 
 def _runtime_identity(cli) -> str:
     return cli if cli is not None else "claude"
+
+
+# D-15 names claude and grok (their execute builders were deleted). Whether D-15 also covers
+# GSD's own native-tier route for them is not settled, so they stay screened (fail closed).
+_D15_NAMED_CLIS = frozenset({"claude", "grok"})
+
+
+def _native_tier_route(candidate: dict) -> bool:
+    """A curated GSD tier is written as GSD config and run by GSD's own runtime -- it never
+    uses an ai-kit execute builder, so D-15's builder screen does not apply (A-WR-08)."""
+    return (candidate.get("tier") in KNOWN_GSD_TIERS
+            and candidate.get("cli") not in _D15_NAMED_CLIS)
 
 
 def _fallback_notice(top_choice_key, reason_code: str, reason_prose: str) -> dict:
@@ -227,8 +241,14 @@ def resolve_gsd_dispatch(
         candidates,
         ExecuteResolveOptions(
             None, dispatch.required_context, {}, top_n_keys,
-            warn_fn=lambda msg: print(msg, file=sys.stderr)),
+            warn_fn=lambda msg: print(msg, file=sys.stderr),
+            screen_exempt_fn=_native_tier_route),
     )
+    if not ranked and not screen_execute_clis(candidates, lambda _msg: None, _native_tier_route):
+        return _fallback_notice(
+            candidates[0]["key"], "no_usable_dispatch",
+            "no configured candidate has a usable native GSD tier or a CLI with an execute "
+            "builder (each was skipped with a warning above)")
     if not ranked:
         return _fallback_notice(
             None, "all_candidates_context_rejected",
