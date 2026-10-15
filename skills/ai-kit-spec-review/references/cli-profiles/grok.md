@@ -52,8 +52,8 @@ grok -p {prompt} -m {model} --output-format plain
 ```
 
 (`{model}`/`{prompt}` are bare config `command` template placeholders,
-unquoted; `{prompt}` is `shlex.quote`d by `render_reviewer_command`
-before substitution, so never wrap it in your own quotes here.)
+unquoted; `render_reviewer_command` splits the template into argv and
+fills `{prompt}` as one argument — no extra quoting in the template.)
 
 **Quota exhaustion — confirmed live**: a real out-of-balance account
 returns `Internal error: {"message": "API error (status 402 Payment

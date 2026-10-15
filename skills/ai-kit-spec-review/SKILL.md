@@ -165,6 +165,12 @@ Runs once per invocation, after Step 0.6. Before walking the cross-AI ladder, as
 
 Once resolved, `REVIEWER_LIST`, `RUN_TMP_DIR`, `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `SHARED_TOOLING_PATH`, and `TOOL_AVAILABILITY_JSON` are consumed by Step 1 below exactly as named.
 
+When `probe-quota` or `resolve-reviewers` prints `ignoring untrusted project-local config`
+(on stderr), a project-local `.aikit/review-spec.toml` is present but not trusted yet — show
+the user `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT> --show` (each reviewer's exact
+argv), ask whether to trust it, and run `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT>`
+only after an explicit yes. Never trust on the user's behalf.
+
 ## Constants
 
 - **Reviewer skill:** `ai-kit-spec-review-checklist`

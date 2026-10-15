@@ -65,8 +65,8 @@ bracket-parameter override on a model this plan can't use at all fails
 with a *different* message instead (`Cannot use this model: <id>.
 Available models: auto, ...`) — both are real, both are correctly
 classified `available: False` by `probe_reviewer_quota` (nonzero exit
-code alone is sufficient; the extra `_UNAVAILABLE_SIGNALS` entries for
-`actionrequirederror` are belt-and-suspenders). `cursor-agent models`
+status and stderr — exit code alone is sufficient for these messages).
+`cursor-agent models`
 lists every model the *account* can see, not what the *plan* can
 actually use — do not treat that list as availability; always run
 `check-reviewer` (or let `probe-quota` do it) against a candidate before
@@ -126,15 +126,14 @@ cursor-agent -p --output-format text --mode plan --model {model}
 (`ai-kit-spec.py`'s `build_reviewer_command("cursor-agent", mode="plan")`
 returns exactly this template — do not hand-write it; `{model}` is a bare
 config `command` template placeholder, unquoted. `render_reviewer_command`
-still accepts a `{prompt}` placeholder too, `shlex.quote`d, for a
-hand-written open-hatch template that prefers to inline it — this
-profile's own template simply doesn't use it.)
+still accepts a `{prompt}` placeholder too (one argv element, no extra
+quoting) for a hand-written open-hatch template that prefers to inline
+it — this profile's own template simply doesn't use it.)
 
 **Quota/plan-gating probe — confirmed live**: a trivial call against a
 named model on a Free-plan account returns the `ActionRequiredError`
 above with exit code 1; the same call with `--model auto` succeeds with
 exit code 0 and clean plain-text output. This is the reference
 implementation for testing this profile's `probe_reviewer_quota`
-classification end to end — it needs no CLI-specific parser, the same
-generic "nonzero exit or unavailable-signal text" rule every other
-profile uses already covers it.
+classification end to end — availability is classified from exit status
+and stderr only; no CLI-specific parser is required.

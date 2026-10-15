@@ -30,11 +30,11 @@ claude -p --model {model} --output-format text
 `{model}` above is the literal `command`-template placeholder every
 reviewer entry's `command` field can reference — written bare, never
 wrapped in extra quotes. `render_reviewer_command` (in `ai-kit-spec.py`)
-still accepts a `{prompt}` placeholder too — `shlex.quote`d before
-substitution — for a hand-written open-hatch `command` that prefers to
-inline the prompt as a shell argument instead of relying on stdin; this
-profile's own template simply doesn't use it. Copy this shape directly
-into a `command` field.
+still accepts a `{prompt}` placeholder too — it becomes one argv element
+with no extra quoting — for a hand-written open-hatch `command` that
+prefers to inline the prompt instead of relying on stdin; this profile's
+own template simply doesn't use it. Copy this shape directly into a
+`command` field.
 
 Quota/context-window introspection: unconfirmed syntax — research
 whether a dedicated Claude usage

@@ -33,18 +33,16 @@ codex exec --sandbox read-only --skip-git-repo-check \
 bare, unquoted. `{effort}`/`{service_tier}` are also literal
 `command`-template placeholders, but filled from the reviewer entry's own
 `extra` table (e.g. `effort = "high"`, `service_tier = "fast"` in
-`review-spec.toml`), not from `{model}` — `render_reviewer_command` fills
-every placeholder the template references via
-`resolved.command.format(model=..., prompt=..., **resolved.extra)`
-(`{prompt}` is always accepted too, `shlex.quote`d, for a hand-written
-open-hatch template that prefers to inline it instead — this profile's
-own template simply doesn't reference it), so an entry that omits
-`effort`/`service_tier` from its `extra` table and still references them
-here fails to render (a config error, surfaced at dispatch — see
-`review-spec/SKILL.md`'s reviewer dispatch step). **Do not append
-`2>/dev/null`** — `probe_reviewer_quota` classifies availability from
-`stdout + stderr` combined, so suppressing stderr hides the exact
-usage-limit signal the probe below depends on.
+`review-spec.toml`), not from `{model}` — `render_reviewer_command` splits
+the template into argv (shell-style word splitting) and fills every
+placeholder the template references; `{prompt}` is always accepted as one
+argument with no extra quoting, for a hand-written open-hatch template that
+prefers to inline it instead — this profile's own template simply doesn't
+reference it, so an entry that omits `effort`/`service_tier` from its `extra` table and still
+references them here fails to render (a config error, surfaced at dispatch
+— see `review-spec/SKILL.md`'s reviewer dispatch step). Availability is
+classified from the exit status and stderr only — a redirect such as
+`2>/dev/null` in a template is rejected as shell syntax anyway.
 
 **Quota probe — confirmed live**: a low-effort/fast-tier call against an
 exhausted quota returns a usage-limit error. Example that produced exactly

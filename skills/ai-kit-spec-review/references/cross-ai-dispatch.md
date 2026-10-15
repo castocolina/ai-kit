@@ -174,6 +174,12 @@ Runs once per invocation, after Step 0.6.
    the one that actually owns the document under review — when
    `CODEBASE_ROOT` is a labeled set, that means the root of `<DOC_PATHS>`'s
    first entry, same rule as point 4 above).
+   **If either command's stderr prints `ignoring untrusted project-local config`**, the
+   project-local `.aikit/review-spec.toml` under `<CODEBASE_ROOT>` is ignored until the user
+   trusts it. Show them `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT> --show` (each
+   reviewer's exact argv), ask whether to trust it, and run
+   `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT>` only after an explicit yes — never
+   trust on the user's behalf, then re-run points 4–5.
 6. **(Active cross-AI path only — point 2's degraded path already set
    `REVIEWER_LIST` directly and skipped straight to Step 1.)**
    `$RUN_TMP_DIR/reviewers.json` holds a JSON array of 1 or 2 reviewer
@@ -193,9 +199,10 @@ the reviewer entry (`--reviewers-json` + `--index`), not a pre-rendered command 
 `render_reviewer_command` internally *after* it has prefixed the tooling guidance onto the
 prompt. That ordering is load-bearing twice over: some CLIs (grok) inline the prompt into their
 own command line via `{prompt}` rather than reading stdin, so guidance composed after the render
-would never reach them; and a rendered command round-tripped back through a `--command "<string>"`
-shell argument would be shell-evaluated twice, reintroducing the `$`/backtick injection hazard
-`render_reviewer_command`'s escaping exists to prevent. There is likewise **no**
+would never reach them; and pre-rendering the argv yourself bypasses the single
+`render_reviewer_command` split point (templates become argv the way a shell splits words;
+`{prompt}` is one argument with no extra quoting; shell operators, `$`, and backticks in a
+template are rejected with an error naming the reviewer). There is likewise **no**
 `--codegraph-registered` flag to compute: `dispatch-reviewer` runs the same live
 `check_codegraph_mcp_healthy` check itself whenever the entry has a `cli` (the same
 internal-resolution pattern the execute family's `prepare-tooling` already uses), so the

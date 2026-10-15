@@ -40,9 +40,10 @@ opencode run -m {model}
 (`{model}` here is the full `<provider/model>` id, e.g.
 `opencode-go/kimi-k3` or a local provider's `local-llm-env/my-plan-review`
 — it is a bare config `command` template placeholder, unquoted.
-`render_reviewer_command` still accepts a `{prompt}` placeholder too,
-`shlex.quote`d, for a hand-written open-hatch template that prefers to
-inline it — this profile's own template simply doesn't use it.)
+`render_reviewer_command` still accepts a `{prompt}` placeholder too (one
+argv element, no extra quoting) for a hand-written open-hatch template
+that prefers to inline it — this profile's own template simply doesn't
+use it.)
 
 `opencode stats` shows token usage/cost statistics — likely the quota
 introspection source; exact parseable shape unconfirmed, research during

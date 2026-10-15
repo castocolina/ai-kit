@@ -76,6 +76,8 @@ already be installed."
 - **Never skip announcing the target path before asking reviewer questions** — user must know where config is headed from the start.
 - **Never re-derive the write target at Step 3** — use what Step 2 already resolved and announced (consistency guarantee).
 - **Never translate literal identifiers** — `purpose` values (REVIEW/EXECUTE), model ids, catalog keys, CLI/runtime names, and field labels stay in their literal, invariant form regardless of what language the rest of this conversation is in. Narrate and explain in the user's own language, but never garble an identifier a user or this skill needs to match against config values by translating it.
+- **Never run `trust-local` without the user's explicit yes** — show `trust-local --cwd <dir> --show` first; the user must consent after seeing each reviewer's argv.
+- **Never trust the local config file this wizard just wrote** — a freshly written `./.aikit/review-spec.toml` stays inactive until the user completes the `--show` / ask / trust sequence in Step 4; do not call `trust-local` on their behalf.
 
 ### Step 1 — Detect
 
@@ -215,7 +217,7 @@ python3 "$TOOLS_PY" build-model-id --cli cursor-agent --base-model <id> \
 ```
 and use the printed id as this entry's `model` field (unchanged from the plain id when no overrides were given).
 
-**The factory is a convenience for known CLIs, not the only way to register a reviewer.** `build-command` fails with "no command builder registered" for any CLI outside that registry — a CLI this catalog of profiles hasn't caught up with yet, a brand-new provider, or a fully custom local script the user wants to wire in. `review-spec.toml`'s `command` field has always accepted a plain hand-written template with just `{model}`/`{prompt}` as placeholders (`render_reviewer_command` fills both at dispatch time, exactly the same way regardless of whether the template came from a builder or was typed by hand) — when `build-command` doesn't recognize a CLI, fall back to asking the user for that raw template directly instead of blocking. This is the intended open escape hatch: any CLI/script that can be invoked non-interactively with a model and a prompt can become a reviewer entry, whether or not this design has a named builder for it yet.
+**The factory is a convenience for known CLIs, not the only way to register a reviewer.** `build-command` fails with "no command builder registered" for any CLI outside that registry — a CLI this catalog of profiles hasn't caught up with yet, a brand-new provider, or a fully custom local script the user wants to wire in. `review-spec.toml`'s `command` field has always accepted a plain hand-written template with just `{model}`/`{prompt}` as placeholders — when `build-command` doesn't recognize a CLI, fall back to asking the user for that raw template directly instead of blocking. Hand-written templates are split into argv the way a shell splits words; `{model}`, `{prompt}`, and any `extra` fields each fill a whole argument (`{prompt}` needs no quoting). Shell operators (`;`, `|`, `&&`, `>`), `$` expansions, and backticks are rejected with an error naming the reviewer — wrap a pipeline in a script and register the script. This is the intended open escape hatch: any CLI/script that can be invoked non-interactively with a model and a prompt can become a reviewer entry, whether or not this design has a named builder for it yet.
 
 #### Step 2.5 — Test the candidate before saving
 
@@ -336,3 +338,14 @@ Priority fallback order:
 not folded into a single vague sentence about "reviewers configured in
 some order" — the point of this report is that the user can see the
 exact fallback sequence without having to open the file.
+
+**When the write target was local** (`./.aikit/review-spec.toml` or another project-local
+path), tell the user the file stays inactive for cross-AI review until trusted. Run
+`python3 "$TOOLS_PY" trust-local --cwd <project root> --show` (use the directory containing
+the written file as `--cwd`), show each reviewer's argv, ask whether to trust it, and run
+`python3 "$TOOLS_PY" trust-local --cwd <project root>` only after an explicit yes — never
+trust on the user's behalf (including for the config this wizard just wrote).
+
+When `probe-quota` (Step 1 `--check-only` or any later call) prints `ignoring untrusted
+project-local config`, apply the same `--show` / ask / trust sequence before treating probe
+output as authoritative for that project's local entries.
