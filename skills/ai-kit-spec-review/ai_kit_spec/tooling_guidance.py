@@ -20,6 +20,13 @@ def resolve_shared_tooling_reference_path() -> str | None:
     return candidate if os.path.isfile(candidate) else None
 
 
+def resolve_cross_ai_template_path() -> str | None:
+    """Package-relative path to references/cross-ai.mjs (template v2), or None if missing."""
+    package_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidate = os.path.join(package_dir, "references", "cross-ai.mjs")
+    return candidate if os.path.isfile(candidate) else None
+
+
 def build_tooling_guidance(cli: str, tool_availability: dict, agents_tooling_path,
                             codegraph_registered: bool, shared_reference_path=None) -> str:
     lines = []
