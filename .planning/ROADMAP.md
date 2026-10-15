@@ -605,3 +605,21 @@ assumptions analysis, 2026-10-14.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.5: Idle watchdog for the cross-AI runner (BACKLOG)
+
+**Goal:** [Captured for future planning] The Phase 18 cross-AI runner
+(`.planning/scripts/cross-ai.mjs`, rendered from the ai-kit-spec-review template) kills the
+child's process group only at the overall deadline (outer `workflow.cross_ai_timeout` minus the
+D-29 margin). A child that hangs without output burns the whole window. Add an opt-in idle
+watchdog: kill the process group after N seconds with no stdout/stderr growth, then exit with the
+existing status vocabulary (a `retry-later` or `fallback` action, never a new exit class). It needs
+a self-test case and a default that is safe for slow, quiet models. Deferred by 18 D-43
+(RUN-46, 2026-10-15): not required by SPEC R5/D-27, and the runner is the largest new code in
+Phase 18.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
