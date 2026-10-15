@@ -18,6 +18,7 @@ _SUBPROCESS_TIMEOUT = 120
 _DETECT_WARN = "detect-runtimes failed; using the cached runtimes snapshot"
 _STALE_WARN = "catalog refresh failed; using the stale cache"
 _AA_WARN = "Artificial Analysis refresh failed; scores from cache"
+_MODELS_DEV_WARN = "models.dev refresh failed; prices and capabilities from cache"
 _SIBLING_ERR = (
     "the ai-kit-spec-review sibling skill (ai_kit_spec) is not installed next to this skill"
 )
@@ -224,6 +225,8 @@ def _catalog_state(fetch_result: dict | None, entries: dict) -> tuple[str, list[
         warns = []
         if not skipped and models_ok and not aa_ok:
             warns.append(_AA_WARN)
+        if not skipped and not models_ok:
+            warns.append(_MODELS_DEV_WARN)
         return "fresh", warns
     return "stale", [_STALE_WARN]
 

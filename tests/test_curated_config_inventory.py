@@ -451,6 +451,15 @@ class TestCatalogStates(unittest.TestCase):
         assert parsed is not None
         return parsed
 
+    def test_models_dev_failure_warns_even_when_aa_succeeds(self):
+        """B-WR-04: never a silent 'fresh' when prices/capabilities came from cache."""
+        state, warns = catalog_adapter._catalog_state(
+            {"models_dev_ok": False, "artificial_analysis_ok": True, "fetch_skipped": False},
+            {"openai/x": {}},
+        )
+        self.assertEqual(state, "fresh")
+        self.assertIn(catalog_adapter._MODELS_DEV_WARN, warns)
+
     def test_fetch_skipped_is_fresh_without_warning(self):
         home = tempfile.mkdtemp()
         project = tempfile.mkdtemp()
