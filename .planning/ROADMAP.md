@@ -310,11 +310,11 @@ with the v2 flow living alongside the unchanged v1 CLI.
   7. When a System One backend is detected (local Laya or a TypeSafe key), `jev-fast-decision` is
      recommended in `agent_skills` for `gsd-advisor-researcher` and `gsd-assumptions-analyzer`
      (the discuss-phase decision agents), and is never recommended when no backend is present.
-**Plans**: 22 plans (strictly serial waves 1-22, cross-AI executed)
+**Plans**: 1/22 plans executed (strictly serial waves 1-22, cross-AI executed)
 
 Plans:
 **Wave 1**
-- [ ] 18-01-PLAN.md — pi RPC model enumeration + router merge proof, strict config-set encoder, presence-only secret check
+- [x] 18-01-PLAN.md — pi RPC model enumeration + router merge proof, strict config-set encoder, presence-only secret check
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 18-02-PLAN.md — inventory: gsd-core review lanes, skills roots, extra key probes (schema 2)
