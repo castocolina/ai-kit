@@ -1,0 +1,413 @@
+{
+  "_meta": {
+    "gsd_core_version": "1.16.0",
+    "keys": "union of presets.closed_key_set over host.HOSTS"
+  },
+  "agent_to_phase_type": {
+    "gsd-advisor-researcher": "research",
+    "gsd-ai-researcher": "research",
+    "gsd-assumptions-analyzer": "discuss",
+    "gsd-code-fixer": "execution",
+    "gsd-code-reviewer": "verification",
+    "gsd-codebase-mapper": "research",
+    "gsd-debug-session-manager": "execution",
+    "gsd-debugger": "execution",
+    "gsd-doc-classifier": "research",
+    "gsd-doc-synthesizer": "research",
+    "gsd-doc-verifier": "verification",
+    "gsd-doc-writer": "execution",
+    "gsd-dom-verifier": "verification",
+    "gsd-domain-researcher": "research",
+    "gsd-eval-auditor": "verification",
+    "gsd-eval-planner": "planning",
+    "gsd-executor": "execution",
+    "gsd-framework-selector": "planning",
+    "gsd-integration-checker": "verification",
+    "gsd-intel-updater": "research",
+    "gsd-mempalace-curator": "research",
+    "gsd-nyquist-auditor": "verification",
+    "gsd-pattern-mapper": "planning",
+    "gsd-phase-researcher": "research",
+    "gsd-plan-checker": "verification",
+    "gsd-planner": "planning",
+    "gsd-project-researcher": "research",
+    "gsd-research-synthesizer": "research",
+    "gsd-roadmapper": "planning",
+    "gsd-security-auditor": "verification",
+    "gsd-ui-auditor": "verification",
+    "gsd-ui-checker": "verification",
+    "gsd-ui-researcher": "research",
+    "gsd-user-profiler": "research",
+    "gsd-verifier": "verification"
+  },
+  "model_profiles": {
+    "gsd-advisor-researcher": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "opus"
+    },
+    "gsd-ai-researcher": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "opus"
+    },
+    "gsd-assumptions-analyzer": {
+      "adaptive": "opus",
+      "balanced": "sonnet",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-code-fixer": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-code-reviewer": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-codebase-mapper": {
+      "adaptive": "haiku",
+      "balanced": "haiku",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-debug-session-manager": {
+      "adaptive": "opus",
+      "balanced": "sonnet",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-debugger": {
+      "adaptive": "opus",
+      "balanced": "sonnet",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-doc-classifier": {
+      "adaptive": "haiku",
+      "balanced": "haiku",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-doc-synthesizer": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "opus"
+    },
+    "gsd-doc-verifier": {
+      "adaptive": "haiku",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-doc-writer": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "opus"
+    },
+    "gsd-dom-verifier": {
+      "adaptive": "haiku",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-domain-researcher": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "opus"
+    },
+    "gsd-eval-auditor": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "opus"
+    },
+    "gsd-eval-planner": {
+      "adaptive": "opus",
+      "balanced": "opus",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-executor": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-framework-selector": {
+      "adaptive": "opus",
+      "balanced": "sonnet",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-integration-checker": {
+      "adaptive": "haiku",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-intel-updater": {
+      "adaptive": "haiku",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "opus"
+    },
+    "gsd-mempalace-curator": {
+      "adaptive": "haiku",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-nyquist-auditor": {
+      "adaptive": "haiku",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-pattern-mapper": {
+      "adaptive": "haiku",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-phase-researcher": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "opus"
+    },
+    "gsd-plan-checker": {
+      "adaptive": "haiku",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-planner": {
+      "adaptive": "opus",
+      "balanced": "opus",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-project-researcher": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "opus"
+    },
+    "gsd-research-synthesizer": {
+      "adaptive": "haiku",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-roadmapper": {
+      "adaptive": "opus",
+      "balanced": "sonnet",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-security-auditor": {
+      "adaptive": "opus",
+      "balanced": "sonnet",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-ui-auditor": {
+      "adaptive": "haiku",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-ui-checker": {
+      "adaptive": "haiku",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "sonnet"
+    },
+    "gsd-ui-researcher": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "opus"
+    },
+    "gsd-user-profiler": {
+      "adaptive": "opus",
+      "balanced": "sonnet",
+      "budget": "sonnet",
+      "quality": "opus"
+    },
+    "gsd-verifier": {
+      "adaptive": "sonnet",
+      "balanced": "sonnet",
+      "budget": "haiku",
+      "quality": "sonnet"
+    }
+  },
+  "runtime_profile_map": {
+    "claude": {
+      "haiku": {
+        "model": "claude-haiku-4-5"
+      },
+      "opus": {
+        "model": "claude-opus-4-8"
+      },
+      "sonnet": {
+        "model": "claude-sonnet-5"
+      }
+    },
+    "codex": {
+      "haiku": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "medium"
+      },
+      "opus": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "xhigh"
+      },
+      "sonnet": {
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "medium"
+      }
+    },
+    "copilot": {
+      "haiku": {
+        "model": "claude-haiku-4-5"
+      },
+      "opus": {
+        "model": "claude-opus-4-8"
+      },
+      "sonnet": {
+        "model": "claude-sonnet-5"
+      }
+    },
+    "hermes": {
+      "haiku": {
+        "model": "anthropic/claude-haiku-4-5"
+      },
+      "opus": {
+        "model": "anthropic/claude-opus-4-8"
+      },
+      "sonnet": {
+        "model": "anthropic/claude-sonnet-5"
+      }
+    },
+    "kilo": {
+      "haiku": {
+        "model": "anthropic/claude-haiku-4-5"
+      },
+      "opus": {
+        "model": "anthropic/claude-opus-4-8"
+      },
+      "sonnet": {
+        "model": "anthropic/claude-sonnet-5"
+      }
+    },
+    "opencode": {
+      "haiku": {
+        "model": "anthropic/claude-haiku-4-5"
+      },
+      "opus": {
+        "model": "anthropic/claude-opus-4-8"
+      },
+      "sonnet": {
+        "model": "anthropic/claude-sonnet-5"
+      }
+    },
+    "pi": {
+      "haiku": {
+        "model": "claude-haiku-4-5"
+      },
+      "opus": {
+        "model": "claude-opus-4-8"
+      },
+      "sonnet": {
+        "model": "claude-sonnet-5"
+      }
+    },
+    "qwen": {
+      "haiku": {
+        "model": "qwen3-coder-next"
+      },
+      "opus": {
+        "model": "qwen3-max-2026-01-23"
+      },
+      "sonnet": {
+        "model": "qwen3-coder-plus"
+      }
+    }
+  },
+  "valid_keys": {
+    "accepted": [
+      "code_quality.fallow.enabled",
+      "code_quality.fallow.profile",
+      "dynamic_routing.enabled",
+      "dynamic_routing.escalate_on_failure",
+      "dynamic_routing.max_escalations",
+      "effort.agent_overrides.gsd-code-fixer",
+      "effort.agent_overrides.gsd-code-reviewer",
+      "effort.agent_overrides.gsd-executor",
+      "effort.routing_tier_defaults.heavy",
+      "effort.routing_tier_defaults.light",
+      "effort.routing_tier_defaults.standard",
+      "granularity",
+      "intel.enabled",
+      "model_overrides.gsd-code-fixer",
+      "model_overrides.gsd-code-reviewer",
+      "model_overrides.gsd-dom-verifier",
+      "model_overrides.gsd-executor",
+      "model_overrides.gsd-plan-checker",
+      "model_overrides.gsd-ui-auditor",
+      "model_overrides.gsd-ui-researcher",
+      "model_profile",
+      "model_profile_overrides.claude.haiku",
+      "model_profile_overrides.claude.opus",
+      "model_profile_overrides.claude.sonnet",
+      "model_profile_overrides.codex.haiku",
+      "model_profile_overrides.codex.opus",
+      "model_profile_overrides.codex.sonnet",
+      "model_profile_overrides.cursor.haiku",
+      "model_profile_overrides.cursor.opus",
+      "model_profile_overrides.cursor.sonnet",
+      "model_profile_overrides.opencode.haiku",
+      "model_profile_overrides.opencode.opus",
+      "model_profile_overrides.opencode.sonnet",
+      "model_profile_overrides.pi.haiku",
+      "model_profile_overrides.pi.opus",
+      "model_profile_overrides.pi.sonnet",
+      "models.planning",
+      "models.research",
+      "models.verification",
+      "plan_review.source_grounding_authority",
+      "refactor.trigger_enabled",
+      "resolve_model_ids",
+      "review.default_reviewers",
+      "runtime",
+      "workflow.code_review_depth",
+      "workflow.cross_ai_command",
+      "workflow.cross_ai_execution",
+      "workflow.mvp_mode",
+      "workflow.nyquist_validation",
+      "workflow.pattern_mapper",
+      "workflow.plan_check",
+      "workflow.plan_review_convergence",
+      "workflow.research",
+      "workflow.security_asvs_level",
+      "workflow.security_block_on",
+      "workflow.tdd_mode",
+      "workflow.ui_phase",
+      "workflow.ui_review",
+      "workflow.verifier"
+    ],
+    "rejected": []
+  }
+}
+
