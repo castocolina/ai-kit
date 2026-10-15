@@ -239,20 +239,10 @@ def pick_why(pick: Pick, purpose: str, target: str, ceiling: Ceiling) -> str:
 def choice_candidates(
     cands: list, purpose: str, ceiling_value: float | None, limit: int = 3
 ) -> list[dict]:
+    """Price-ordered fallback rows for a `needs_choice` slot. Only reached after
+    `best_pick` found no eligible `purpose`-scored candidate, so no row has a score."""
     pool = [c for c in cands if c["fast_twin_of"] is None and not c["is_router"]]
-    scored = [c for c in pool if purpose in c["purpose_scores"]]
-    if scored:
-        ordered = sorted(scored, key=lambda c: tie_key(c, purpose))
-        out = []
-        for c in ordered[:limit]:
-            out.append({
-                "model": c["model"],
-                "runtime": c["runtime"],
-                "score": round(c["purpose_scores"][purpose], 1),
-                "price": c["price"],
-                "why": f"{purpose} score",
-            })
-        return out
+
     def _price_order(c: dict) -> tuple:
         p = c["price"]
         return (p is None, p if p is not None else 0, c["model"])
