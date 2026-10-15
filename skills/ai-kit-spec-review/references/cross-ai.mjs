@@ -119,8 +119,29 @@ const STATUS_TABLE = {
   unverified: { exit: 1, action: 'stop' },
 };
 
+const FINALIZE_CAP_MS = 10000;
+const KILL_GRACE_MS = 2000;
+const PIPE_DRAIN_MS = 2000;
+const SIGNAL_GRACE_MS = 1000;
+const GIT_CAP_MS = 10000;
+
 let runStartedMs = Date.now();
 let liveFields = { cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean' };
+let finished = false;
+let runDeadline = 0;
+let finalizeBy = 0;
+let current = null;
+let currentFinalize = null;
+let aborting = 0;
+
+function budgetMs(capMs, limit) {
+  return Math.max(0, Math.min(capMs, limit - Date.now()));
+}
+
+function log(text) {
+  if (finished) return;
+  process.stderr.write(text.endsWith('\n') ? text : `${text}\n`);
+}
 
 function finish(status, fields) {
   const row = STATUS_TABLE[status] || { exit: 1, action: 'stop' };
@@ -137,7 +158,18 @@ function finish(status, fields) {
     `exit=${exit} cli_rc=${fields.cli_rc ?? '-'} elapsed=${elapsed}s out=${fields.out ?? 0} ` +
     `tree=${tree} action=${action}`;
   process.stderr.write(`${line}\n`);
+  finished = true;
   return exit;
+}
+
+function exitFlushed(code) {
+  const go = () => process.exit(code);
+  const flushFd = (fd) => {
+    try { fs.fsyncSync(fd); } catch { /* no fsync on this stream */ }
+  };
+  flushFd(process.stderr.fd);
+  flushFd(process.stdout.fd);
+  go();
 }
 
 const RUNTIMES = {
@@ -252,15 +284,142 @@ function outerTimeoutS(cwd) {
 function innerTimeoutS(outer) { return outer - Math.min(TIMEOUT_MARGIN_S, Math.floor(outer / 5)); }
 function readOr(p, dflt) { try { return fs.readFileSync(p, 'utf8'); } catch { return dflt; } }
 
-function gitState(cwd) {
-  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' });
-  const st = spawnSync('git', ['status', '--porcelain'], { cwd, encoding: 'utf8' });
-  return head.status === 0 && st.status === 0 ? head.stdout + st.stdout : null;
+function stateSig(st) {
+  if (!st) return null;
+  return `${st.head ?? ''}\t${st.tree ?? ''}`;
 }
 
-function treeAfter(before, after) {
-  if (before === null || after === null) return 'unknown';
-  return before === after ? 'clean' : 'dirty';
+function treeLabel(before, after) {
+  if (!before || !after) return 'unknown';
+  return stateSig(before) === stateSig(after) ? 'clean' : 'dirty';
+}
+
+function killGroup(child, sig) {
+  if (!child || !child.pid) return;
+  try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* gone */ } }
+}
+
+function waitForExit(child, ms) {
+  return new Promise((resolve) => {
+    if (!child || child.exitCode !== null) return resolve(true);
+    const t = setTimeout(() => resolve(false), ms);
+    child.once('exit', () => { clearTimeout(t); resolve(true); });
+  });
+}
+
+function drainStream(stream, ms) {
+  return new Promise((resolve) => {
+    if (!stream || stream.readableEnded) return resolve();
+    const t = setTimeout(resolve, ms);
+    stream.on('end', () => { clearTimeout(t); resolve(); });
+    stream.on('close', () => { clearTimeout(t); resolve(); });
+    stream.resume();
+  });
+}
+
+function runChild(bin, argv, opts = {}) {
+  const capMs = opts.capMs ?? Number.POSITIVE_INFINITY;
+  const limit = opts.limit ?? finalizeBy;
+  const spawnMs = budgetMs(capMs, limit);
+  if (spawnMs <= 0) {
+    return Promise.resolve({ code: null, signal: null, timedOut: true, spawnErr: null, stdout: '', stderr: '' });
+  }
+  const signalPath = aborting > 0;
+  const graceCap = signalPath ? SIGNAL_GRACE_MS : KILL_GRACE_MS;
+  const drainCap = signalPath ? SIGNAL_GRACE_MS : PIPE_DRAIN_MS;
+  return new Promise((resolve) => {
+    let settled = false;
+    let child = null;
+    let timer = null;
+    let timedOut = false;
+    let spawnErr = null;
+    let code = null;
+    let signal = null;
+    const outChunks = [];
+    const errChunks = [];
+    let hb = null;
+
+    const finalize = async (reason) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (hb) clearInterval(hb);
+      if (currentFinalize === finalize) currentFinalize = null;
+      if (child) killGroup(child, 'SIGTERM');
+      if (child && child.exitCode === null && reason !== 'exit') {
+        await waitForExit(child, budgetMs(graceCap, finalizeBy));
+      }
+      if (child) {
+        await Promise.all([
+          drainStream(child.stdout, budgetMs(drainCap, finalizeBy)),
+          drainStream(child.stderr, budgetMs(drainCap, finalizeBy)),
+        ]);
+        child.stdout?.removeAllListeners('data');
+        child.stderr?.removeAllListeners('data');
+        child.stdin?.destroy();
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        killGroup(child, 'SIGKILL');
+      }
+      if (current === child) current = null;
+      resolve({
+        code, signal, timedOut, spawnErr,
+        stdout: Buffer.concat(outChunks).toString('utf8'),
+        stderr: Buffer.concat(errChunks).toString('utf8'),
+      });
+    };
+
+    timer = setTimeout(() => { timedOut = true; finalize('timeout'); }, spawnMs);
+    try {
+      child = spawn(bin, argv, {
+        cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true,
+      });
+    } catch (e) {
+      spawnErr = e;
+      finalize('spawn');
+      return;
+    }
+    current = child;
+    currentFinalize = finalize;
+    if (opts.input !== undefined) {
+      child.stdin.on('error', () => { /* closed early */ });
+      child.stdin.end(opts.input);
+    } else {
+      child.stdin.end();
+    }
+    child.stdout.on('data', (d) => {
+      outChunks.push(d);
+      opts.onStdout?.(d);
+    });
+    child.stderr.on('data', (d) => {
+      errChunks.push(d);
+      opts.onStderr?.(d);
+    });
+    child.on('error', (e) => { spawnErr = e; finalize('error'); });
+    child.on('exit', (c, s) => { code = c; signal = s; finalize('exit'); });
+  });
+}
+
+async function treeState(cwd, limit) {
+  const git = which('git', process.env.PATH || '');
+  if (!git) return null;
+  const headR = await runChild(git, ['rev-parse', 'HEAD'], { cwd, capMs: GIT_CAP_MS, limit });
+  if (headR.timedOut || headR.spawnErr) return null;
+  let head = null;
+  if (headR.code === 0) head = headR.stdout.trim();
+  else if (/unborn|unknown revision|bad object/i.test(headR.stderr)) head = null;
+  else if (headR.code !== 0) return null;
+  const idxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-idx-'));
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(idxDir, 'index') };
+  try {
+    const addR = await runChild(git, ['add', '-A'], { cwd, env, capMs: GIT_CAP_MS, limit });
+    if (addR.timedOut || addR.spawnErr || addR.code !== 0) return null;
+    const wtR = await runChild(git, ['write-tree'], { cwd, env, capMs: GIT_CAP_MS, limit });
+    if (wtR.timedOut || wtR.spawnErr || wtR.code !== 0) return null;
+    return { head, tree: wtR.stdout.trim() };
+  } finally {
+    fs.rmSync(idxDir, { recursive: true, force: true });
+  }
 }
 
 function childEnv(extra, baseEnv) {
@@ -275,59 +434,36 @@ function withExtra(cli, argv) {
   return extra && extra.length ? [...argv, ...extra] : argv;
 }
 
-let current = null;
-let aborting = 0;
-
-function killGroup(child, sig) { try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* gone */ } } }
-
 for (const [sig, n] of [['SIGTERM', 15], ['SIGINT', 2], ['SIGHUP', 1]]) {
-  process.on(sig, () => {
+  process.on(sig, async () => {
     aborting = n;
-    if (!current) {
-      finish('signal', { ...liveFields, exit: 128 + n, tree: 'unknown' });
-      process.exit(128 + n);
-    }
-    killGroup(current, 'SIGTERM');
-    setTimeout(() => {
-      if (current) killGroup(current, 'SIGKILL');
-      finish('signal', { ...liveFields, exit: 128 + n, tree: liveFields.tree });
-      process.exit(128 + n);
-    }, 2000).unref();
+    if (currentFinalize) await currentFinalize('signal');
+    const code = finish('signal', { ...liveFields, exit: 128 + n, tree: liveFields.tree });
+    exitFlushed(code);
   });
 }
 
-function runOnce(bin, argv, input, env, cwd, deadline, label) {
-  return new Promise((resolve) => {
-    const child = spawn(bin, argv, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
-    current = child;
-    const out = []; let outBytes = 0; let errTail = ''; let timedOut = false; let lastBytes = 0;
-    const started = Date.now();
-    child.stdout.on('data', (d) => { out.push(d); outBytes += d.length; });
-    child.stderr.on('data', (d) => { process.stderr.write(d); errTail = (errTail + d).slice(-65536); });
-    child.stdin.on('error', () => { /* CLI closed stdin early */ });
-    child.stdin.end(input);
-    const hb = setInterval(() => {
-      process.stderr.write(`cross-ai: ${label} running ${Math.round((Date.now() - started) / 1000)}s, stdout +${outBytes - lastBytes} bytes\n`);
-      lastBytes = outBytes;
-    }, CONFIG.heartbeatS * 1000);
-    const ms = Math.max(0, deadline - Date.now());
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killGroup(child, 'SIGTERM');
-      setTimeout(() => killGroup(child, 'SIGKILL'), 5000).unref();
-    }, ms);
-    const done = (code, signal, spawnErr) => {
-      clearInterval(hb); clearTimeout(timer); current = null;
-      resolve({ code, signal, timedOut, spawnErr, stdout: Buffer.concat(out).toString('utf8'), stderr: errTail, outBytes });
-    };
-    child.on('error', (e) => done(null, null, e));
-    child.on('close', (code, signal) => done(code, signal, null));
+async function runOnce(bin, argv, input, env, cwd, label) {
+  let outBytes = 0;
+  let lastBytes = 0;
+  const started = Date.now();
+  let errTail = '';
+  const hb = setInterval(() => {
+    log(`cross-ai: ${label} running ${Math.round((Date.now() - started) / 1000)}s, stdout +${outBytes - lastBytes} bytes`);
+    lastBytes = outBytes;
+  }, CONFIG.heartbeatS * 1000);
+  const r = await runChild(bin, argv, {
+    cwd, env, input, capMs: budgetMs(Number.POSITIVE_INFINITY, runDeadline), limit: runDeadline,
+    onStdout: (d) => { outBytes += d.length; },
+    onStderr: (d) => { log(d.toString('utf8')); errTail = (errTail + d.toString('utf8')).slice(-65536); },
   });
+  clearInterval(hb);
+  return { ...r, stderr: errTail || r.stderr, outBytes };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function runCli(name, rt, binPath, model, mode, prompt, deadline, opts = {}) {
+async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const backoff = opts.backoffS || CONFIG.backoffS;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cross-ai-'));
   const ctx = { cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md') };
@@ -335,9 +471,9 @@ async function runCli(name, rt, binPath, model, mode, prompt, deadline, opts = {
   let argv = withExtra(name, rt[mode](model, ctx)); let input = prompt;
   try {
     for (let attempt = 0; ; attempt++) {
-      process.stderr.write(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${Math.round((deadline - Date.now()) / 1000)}s\n`);
-      process.stderr.write(`cross-ai: argv=${JSON.stringify(argv)}\n`);
-      const r = await runOnce(binPath, argv, input, env, ctx.cwd, deadline, name);
+      log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${Math.max(0, Math.round(budgetMs(1000, runDeadline) / 1000))}s`);
+      log(`cross-ai: argv=${JSON.stringify(argv)}`);
+      const r = await runOnce(binPath, argv, input, env, ctx.cwd, name);
       if (aborting) return { ok: false, code: 128 + aborting, outBytes: r.outBytes, cli_rc: r.code };
       if (r.timedOut) return { ok: false, code: 124, timedOut: true, outBytes: r.outBytes, cli_rc: r.code };
       if (r.spawnErr) return { ok: false, code: r.spawnErr.code === 'ENOENT' ? 127 : 126, error: String(r.spawnErr), outBytes: 0, cli_rc: null };
@@ -353,8 +489,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, deadline, opts = {
         return { ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'), cli_rc: 0 };
       }
       const wait = (backoff[attempt] ?? backoff[backoff.length - 1]) * 1000;
-      process.stderr.write(`cross-ai: ${name} failed (exit ${r.code}${r.signal ? ' ' + r.signal : ''}, ${hit || 'crash'}${p.error ? ': ' + p.error.slice(0, 200) : ''})\n`);
-      if (hit !== 'transient' || attempt >= (opts.retries ?? CONFIG.retries) || deadline - Date.now() < wait + 60000) {
+      log(`cross-ai: ${name} failed (exit ${r.code}${r.signal ? ' ' + r.signal : ''}, ${hit || 'crash'}${p.error ? ': ' + p.error.slice(0, 200) : ''})`);
+      if (hit !== 'transient' || attempt >= (opts.retries ?? CONFIG.retries) || budgetMs(wait + 60000, runDeadline) <= 0) {
         return { ok: false, status: 'crash', outBytes: r.outBytes, cli_rc: r.code ?? '-' };
       }
       await sleep(wait);
@@ -423,15 +559,37 @@ function writeCopy(tmp, name, override) {
   return p;
 }
 
+function writeGitWrapper(binDir, realGit) {
+  const body = `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+const realGit = ${JSON.stringify(realGit)};
+const home = process.env.HOME || '';
+const sub = process.argv.slice(2);
+if (sub[0] === 'write-tree') {
+  if (fs.existsSync(path.join(home, '.fake-git-hang'))) { while (true) {} }
+  if (fs.existsSync(path.join(home, '.fake-git-fail'))) process.exit(128);
+}
+const r = spawnSync(realGit, sub, { stdio: 'inherit' });
+process.exit(r.status ?? 1);
+`;
+  const p = path.join(binDir, 'git');
+  fs.writeFileSync(p, body);
+  fs.chmodSync(p, 0o755);
+}
+
 function writeFakePi(binDir) {
   const body = String.raw`#!/usr/bin/env node
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 const args = process.argv;
 let model = '';
 for (let i = 0; i < args.length; i++) if (args[i] === '--model') model = args[++i] || '';
 const fakeMode = model.startsWith('fake/') ? model.slice(5) : '';
 const calls = process.env.FAKE_CALLS;
 const log = (line) => { if (calls) fs.appendFileSync(calls, line + '\n'); };
+const STICKY_FAKE = new Set(['hang', 'gcescape']);
 const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
   ansi: () => { fs.appendFileSync('a.txt', 'x\n'); process.stdout.write('\x1B[0mDone.## Summary\nC# is fine. Use ## inline'); },
@@ -446,6 +604,36 @@ const FAKE_MODES = {
   auth: () => { process.stderr.write('401 unauthorized\n'); process.exit(1); },
   perm: () => { process.stderr.write('permission denied\n'); process.exit(1); },
   quota: () => { process.stderr.write('quota exceeded\n'); process.exit(1); },
+  dirtycrash: () => { fs.appendFileSync('a.txt', 'd\n'); process.stderr.write('boom\n'); process.exit(7); },
+  reedit: () => { fs.appendFileSync('dirty.txt', 'more\n'); process.stdout.write('# Summary\nok'); },
+  hang: () => {
+    const gc = spawn(process.execPath, ['-e', 'while(true){}'], { stdio: 'ignore' });
+    fs.writeFileSync('gc.pid', String(gc.pid));
+    setInterval(() => {}, 1 << 30);
+  },
+  gcpipe: () => {
+    const gc = spawn(process.execPath, ['-e', 'while(true){}'], { stdio: 'inherit' });
+    fs.writeFileSync('gc.pid', String(gc.pid));
+    fs.appendFileSync('a.txt', 'gp\n');
+    process.stdout.write('# Summary\nok');
+  },
+  gcterm: () => {
+    const gc = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{});while(true){}'], { stdio: 'inherit' });
+    fs.writeFileSync('gc.pid', String(gc.pid));
+    fs.appendFileSync('a.txt', 'gt\n');
+    process.stdout.write('# Summary\nok');
+  },
+  gcescape: () => {
+    const gc = spawn(process.execPath, ['-e', 'const fs=require("fs");fs.writeFileSync("gc.pid",String(process.pid));setInterval(()=>process.stderr.write("gc-late"+String.fromCharCode(10)),100);setInterval(()=>{},1<<30);'], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    gc.stderr.on('data', (d) => process.stderr.write(d));
+    gc.unref();
+    setInterval(() => {}, 1 << 30);
+  },
+  gitfail: () => {
+    fs.appendFileSync('a.txt', 'gf\n');
+    fs.writeFileSync((process.env.HOME || '') + '/.fake-git-fail', '1');
+    process.stdout.write('# Summary\nok');
+  },
 };
 const modeIdx = args.indexOf('--mode');
 if (modeIdx >= 0 && args[modeIdx + 1] === 'rpc') {
@@ -464,7 +652,7 @@ process.stdin.on('end', () => {
   const fn = FAKE_MODES[fakeMode];
   if (!fn) process.exit(1);
   fn();
-  process.exit(0);
+  if (!STICKY_FAKE.has(fakeMode)) process.exit(0);
 });
 `;
   const p = path.join(binDir, 'pi');
@@ -547,17 +735,11 @@ function statusLineOk(stderr, pattern) {
   return null;
 }
 
-function runSelfTestCase(tmp, spec) {
-  const repo = path.join(tmp, `r-${spec.name}`);
-  fs.mkdirSync(repo, { recursive: true });
-  spawnSync('git', ['init', '-q'], { cwd: repo, env: hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') }) });
-  fs.writeFileSync(path.join(repo, 'a.txt'), 'base\n');
-  spawnSync('git', ['add', 'a.txt'], { cwd: repo, env: hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') }) });
-  spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo, env: hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') }) });
-  const home = path.join(tmp, `home-${spec.name}`);
-  const calls = path.join(tmp, `calls-${spec.name}.log`);
-  const copy = writeCopy(tmp, spec.name, spec.config || {});
-  const env = hermeticEnv(tmp, { HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), FAKE_CALLS: calls, ...(spec.env || {}) });
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+function runSelfTestCaseSync(tmp, spec, repo, home, calls, copy, env) {
   const t0 = Date.now();
   const r = spawnSync(process.execPath, [copy, ...(spec.args || [])], {
     cwd: repo, env, input: spec.stdin ?? 'prompt\n', encoding: 'utf8', timeout: 30000,
@@ -574,7 +756,60 @@ function runSelfTestCase(tmp, spec) {
   return null;
 }
 
-function blackBoxSelfTest() {
+function runSelfTestCaseSpawn(tmp, spec, repo, home, calls, copy, env) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const child = spawn(process.execPath, [copy, ...(spec.args || [])], {
+      cwd: repo, env, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    child.stdin.write(spec.stdin ?? 'prompt\n');
+    child.stdin.end();
+    let stderr = '';
+    child.stderr.on('data', (d) => { stderr += d.toString('utf8'); });
+    const sigAt = setTimeout(() => child.kill('SIGTERM'), 1000);
+    const hard = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* gone */ }
+      resolve('spawn case hung past 30s');
+    }, 30000);
+    child.on('exit', (code) => {
+      clearTimeout(sigAt);
+      clearTimeout(hard);
+      const elapsedMs = Date.now() - t0;
+      if (code !== spec.exit) return resolve(`exit ${code} expected ${spec.exit}`);
+      const err = statusLineOk(stderr, spec.status);
+      if (err) return resolve(err);
+      if (elapsedMs > 3000) return resolve(`elapsed ${elapsedMs}ms > 3000ms after signal`);
+      const callLines = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean) : [];
+      if (spec.check) {
+        const cErr = spec.check({ stderr, status: code }, { repo, home, calls: callLines, elapsedMs });
+        if (cErr) return resolve(cErr);
+      }
+      resolve(null);
+    });
+  });
+}
+
+async function runSelfTestCase(tmp, spec) {
+  const repo = path.join(tmp, `r-${spec.name}`);
+  fs.mkdirSync(repo, { recursive: true });
+  spawnSync('git', ['init', '-q'], { cwd: repo, env: hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') }) });
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'base\n');
+  spawnSync('git', ['add', 'a.txt'], { cwd: repo, env: hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') }) });
+  spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo, env: hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') }) });
+  const home = path.join(tmp, `home-${spec.name}`);
+  fs.mkdirSync(home, { recursive: true });
+  const calls = path.join(tmp, `calls-${spec.name}.log`);
+  const copy = writeCopy(tmp, spec.name, spec.config || {});
+  const env = hermeticEnv(tmp, { HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), FAKE_CALLS: calls, ...(spec.env || {}) });
+  if (spec.setup) {
+    const se = spec.setup({ repo, home, tmp, calls });
+    if (se) return se;
+  }
+  if (spec.spawn) return runSelfTestCaseSpawn(tmp, spec, repo, home, calls, copy, env);
+  return runSelfTestCaseSync(tmp, spec, repo, home, calls, copy, env);
+}
+
+async function blackBoxSelfTest() {
   const gitBin = which('git');
   if (!gitBin) {
     process.stderr.write('self-test: git not found\n');
@@ -585,11 +820,19 @@ function blackBoxSelfTest() {
     const binDir = path.join(tmp, 'bin');
     fs.mkdirSync(binDir, { recursive: true });
     fs.symlinkSync(process.execPath, path.join(binDir, 'node'));
-    fs.symlinkSync(gitBin, path.join(binDir, 'git'));
+    writeGitWrapper(binDir, gitBin);
+    const binNoCodex = path.join(tmp, 'bin-nocodex');
+    fs.mkdirSync(binNoCodex, { recursive: true });
     writeFakePi(binDir);
     writeFakeCursor(binDir);
     writeFakeOpencode(binDir);
     writeFakeCodex(binDir);
+    for (const name of fs.readdirSync(binDir)) {
+      if (name === 'codex') continue;
+      const src = path.join(binDir, name);
+      const dst = path.join(binNoCodex, name);
+      if (!fs.existsSync(dst)) fs.symlinkSync(src, dst);
+    }
 
     const cases = [
       {
@@ -748,11 +991,132 @@ function blackBoxSelfTest() {
         exit: 69,
         status: /^AIKIT-XAI status=auth cli=cursor model=fake-err-cursor exit=69 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
       },
+      {
+        name: 'dirtycrash',
+        args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/dirtycrash', '--model-cursor', 'fake-ok-cursor'],
+        exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/dirtycrash exit=1 cli_rc=7 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran after dirty crash' : null),
+      },
+      {
+        name: 'fallback',
+        args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/nochange', '--model-cursor', 'fake-ok-cursor'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=cursor model=fake-ok-cursor exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: (_r, ctx) => {
+          const piIdx = ctx.calls.findIndex((l) => l.startsWith('pi '));
+          const curIdx = ctx.calls.findIndex((l) => l.startsWith('cursor-agent'));
+          if (piIdx < 0 || curIdx < 0 || piIdx > curIdx) return `call order: ${ctx.calls.join('|')}`;
+          return null;
+        },
+      },
+      {
+        name: 'reedit',
+        setup: (ctx) => { fs.writeFileSync(path.join(ctx.repo, 'dirty.txt'), 'seed\n'); return null; },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/reedit'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/reedit exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+      },
+      {
+        name: 'hang',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '2'],
+        exit: 124,
+        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/,
+        check: (_r, ctx) => {
+          const pidFile = path.join(ctx.repo, 'gc.pid');
+          if (!fs.existsSync(pidFile)) return null;
+          const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+          return pidAlive(pid) ? 'grandchild still alive' : null;
+        },
+      },
+      {
+        name: 'not-installed-codex',
+        args: ['--prefer', 'codex', '--model-codex', 'x'],
+        env: { PATH: `${path.join(tmp, 'bin-nocodex')}` },
+        exit: 127,
+        status: /^AIKIT-XAI status=not_installed .* exit=127 .* action=fallback$/,
+      },
+      {
+        name: 'sigterm-hang',
+        spawn: true,
+        args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '60'],
+        exit: 143,
+        status: /^AIKIT-XAI status=signal .* exit=143 .* action=stop$/,
+      },
+      {
+        name: 'gcescape',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/gcescape', '--timeout', '2'],
+        exit: 124,
+        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/gcescape exit=124 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.elapsedMs >= 10000) return `elapsed ${ctx.elapsedMs}`;
+          const lines = (r.stderr || '').split('\n');
+          const late = lines.filter((l) => l.includes('gc-late'));
+          const statusIdx = lines.findIndex((l) => l.startsWith('AIKIT-XAI '));
+          if (!(r.stderr || '').includes('gc-late')) return 'no gc-late';
+          if (late.some((l) => lines.indexOf(l) >= statusIdx && statusIdx >= 0)) return 'gc-late after status';
+          const pidFile = path.join(ctx.repo, 'gc.pid');
+          if (fs.existsSync(pidFile)) {
+            try { process.kill(Number(fs.readFileSync(pidFile, 'utf8')), 'SIGKILL'); } catch { /* esrch */ }
+          }
+          return null;
+        },
+      },
+      {
+        name: 'gcpipe',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/gcpipe', '--timeout', '60'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/gcpipe exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          if (ctx.elapsedMs >= 15000) return `elapsed ${ctx.elapsedMs}`;
+          const pidFile = path.join(ctx.repo, 'gc.pid');
+          if (!fs.existsSync(pidFile)) return null;
+          return pidAlive(Number(fs.readFileSync(pidFile, 'utf8'))) ? 'gc alive' : null;
+        },
+      },
+      {
+        name: 'gcterm',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/gcterm', '--timeout', '60'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/gcterm exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          if (ctx.elapsedMs >= 15000) return `elapsed ${ctx.elapsedMs}`;
+          const pidFile = path.join(ctx.repo, 'gc.pid');
+          if (!fs.existsSync(pidFile)) return null;
+          return pidAlive(Number(fs.readFileSync(pidFile, 'utf8'))) ? 'gc alive' : null;
+        },
+      },
+      {
+        name: 'git-before-fail',
+        setup: (ctx) => { fs.writeFileSync(path.join(ctx.home, '.fake-git-fail'), '1'); return null; },
+        args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/ok', '--model-cursor', 'fake-ok-cursor'],
+        exit: 1,
+        status: /^AIKIT-XAI status=unverified cli=pi model=fake\/ok exit=1 cli_rc=- elapsed=\d+s out=0 tree=unknown action=stop$/,
+        check: (_r, ctx) => {
+          if (ctx.calls.some((l) => l === 'pi ok' || l.startsWith('cursor-agent'))) return `calls=${ctx.calls.join(',')}`;
+          return null;
+        },
+      },
+      {
+        name: 'git-after-fail',
+        args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/gitfail', '--model-cursor', 'fake-ok-cursor'],
+        exit: 1,
+        status: /^AIKIT-XAI status=unverified cli=pi model=fake\/gitfail exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=unknown action=stop$/,
+        check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null),
+      },
+      {
+        name: 'git-hang',
+        setup: (ctx) => { fs.writeFileSync(path.join(ctx.home, '.fake-git-hang'), '1'); return null; },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--timeout', '3'],
+        exit: 1,
+        status: /^AIKIT-XAI status=unverified cli=pi model=fake\/ok exit=1 cli_rc=- elapsed=\d+s out=0 tree=unknown action=stop$/,
+        check: (_r, ctx) => (ctx.elapsedMs >= 10000 ? `elapsed ${ctx.elapsedMs}` : null),
+      },
     ];
 
     let failed = false;
     for (const c of cases) {
-      const reason = runSelfTestCase(tmp, c);
+      const reason = await runSelfTestCase(tmp, c);
       if (reason) {
         failed = true;
         process.stderr.write(`self-test FAIL ${c.name}: ${reason}\n`);
@@ -768,10 +1132,11 @@ function blackBoxSelfTest() {
 
 async function main(argv) {
   runStartedMs = Date.now();
+  finished = false;
   liveFields = { cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean' };
   let o;
   try { o = parseArgs(argv); } catch (e) {
-    process.stderr.write(`cross-ai: ${e.message}\n`);
+    log(`cross-ai: ${e.message}`);
     return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   if (o.selfTest) return blackBoxSelfTest();
@@ -779,7 +1144,7 @@ async function main(argv) {
   const models = { ...CONFIG.models, ...o.models };
   const cands = order.map((name) => ({
     name, rt: RUNTIMES[name], model: models[name],
-    bin: RUNTIMES[name].bins.map((b) => which(b)).find(Boolean) || null,
+    bin: RUNTIMES[name].bins.map((b) => which(b, process.env.PATH || '')).find(Boolean) || null,
   }));
 
   if (o.printArgv) {
@@ -792,34 +1157,38 @@ async function main(argv) {
   }
   const raw = readStdin();
   if (!raw || !raw.trim()) {
-    process.stderr.write('cross-ai: pipe the prompt on stdin\n');
+    log('cross-ai: pipe the prompt on stdin');
     return finish('empty_stdin', { ...liveFields, tree: 'clean', exit: 2 });
   }
   const prompt = raw + (o.preamble ? (o.mode === 'exec' ? EXEC_PREAMBLE : REVIEW_PREAMBLE) : '');
-  const innerS = o.timeout || innerTimeoutS(outerTimeoutS(process.cwd()));
-  const deadline = Date.now() + innerS * 1000;
+  const outer = outerTimeoutS(process.cwd());
+  const innerDefault = innerTimeoutS(outer);
+  const innerS = o.timeout ?? innerDefault;
+  runDeadline = Date.now() + innerS * 1000;
+  const marginMs = (outer - innerDefault) * 1000;
+  finalizeBy = runDeadline + Math.min(FINALIZE_CAP_MS, Math.floor(marginMs / 2));
 
   let last = null;
   let sawModel = false;
   for (const c of cands) {
-    if (!c.bin) { process.stderr.write(`cross-ai: ${c.name} not installed, skipping\n`); continue; }
+    if (!c.bin) { log(`cross-ai: ${c.name} not installed, skipping`); continue; }
     if (!c.model) {
-      process.stderr.write(`cross-ai: no model configured for ${c.name} (--model-${c.name}), skipping\n`);
+      log(`cross-ai: no model configured for ${c.name} (--model-${c.name}), skipping`);
       last = last || { kind: 'no_model' };
       continue;
     }
     sawModel = true;
     liveFields.cli = c.name;
     liveFields.model = c.model;
-    const before = gitState(process.cwd());
+    const before = await treeState(process.cwd(), runDeadline);
     if (before === null) {
       return finish('unverified', { ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1 });
     }
-    const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, deadline);
+    const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt);
     liveFields.out = r.outBytes || 0;
     liveFields.cli_rc = r.cli_rc ?? '-';
-    const after = gitState(process.cwd());
-    const tree = treeAfter(before, after);
+    const after = await treeState(process.cwd(), finalizeBy);
+    const tree = treeLabel(before, after);
     liveFields.tree = tree;
     if (r.timedOut || aborting) {
       return finish('timeout', { ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? 124 });
@@ -830,7 +1199,7 @@ async function main(argv) {
       }
       if (tree === 'clean') {
         last = { status: 'no_change', cli: c.name, model: c.model, tree, cli_rc: 0 };
-        process.stderr.write(`cross-ai: ${c.name} answered without repo change, trying the next CLI\n`);
+        log(`cross-ai: ${c.name} answered without repo change, trying the next CLI`);
         continue;
       }
       process.stdout.write(r.text);
@@ -841,7 +1210,7 @@ async function main(argv) {
     liveFields.tree = treeField;
     last = { status, cli: c.name, model: c.model, tree: treeField, cli_rc: r.cli_rc };
     if (tryNextCli(status, treeField)) {
-      process.stderr.write(`cross-ai: ${c.name} ${status}, trying the next CLI\n`);
+      log(`cross-ai: ${c.name} ${status}, trying the next CLI`);
       continue;
     }
     return finish(status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc, cli: c.name, model: c.model });
@@ -850,7 +1219,7 @@ async function main(argv) {
     return finish('no_model', { ...liveFields, tree: 'clean', exit: 2 });
   }
   if (!last) {
-    process.stderr.write(`cross-ai: none of [${order.join(', ')}] is installed\n`);
+    log(`cross-ai: none of [${order.join(', ')}] is installed`);
     return finish('not_installed', { ...liveFields, tree: 'clean', exit: 127 });
   }
   if (last.status === 'no_change') {
@@ -864,10 +1233,13 @@ async function main(argv) {
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2)).then(
-    (code) => { process.exitCode = code; },
+    (code) => {
+      if (finished) exitFlushed(code);
+      else exitFlushed(code ?? 0);
+    },
     (e) => {
-      process.stderr.write(`cross-ai: internal error: ${e && e.stack || e}\n`);
-      process.exitCode = finish('crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' });
+      log(`cross-ai: internal error: ${e && e.stack || e}`);
+      exitFlushed(finish('crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' }));
     },
   );
 }
