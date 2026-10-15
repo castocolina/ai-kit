@@ -288,17 +288,21 @@ class TestSkillDocs(unittest.TestCase):
         self.assertEqual([], ms.audit_block(block("good-palette.mmd")))
 
 
+import importlib.util
 import json
 
 _SCORER = os.path.join(os.path.dirname(__file__), "..", "skills",
                        "mermaid-audit", "evals", "score_consensus.py")
-sys.path.insert(0, os.path.dirname(_SCORER))
 
 
 class TestConsensusScorer(unittest.TestCase):
     def setUp(self):
-        import score_consensus
-        self.sc = score_consensus
+        spec = importlib.util.spec_from_file_location("score_consensus", _SCORER)
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.sc = module
 
     def test_high_agreement_when_judges_concur(self):
         gold = {"01-flat-gray.md": ["C1"], "04-clean.md": []}

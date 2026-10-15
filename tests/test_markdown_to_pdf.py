@@ -36,6 +36,7 @@ class TestFindFences(unittest.TestCase):
 class TestRenderAll(unittest.TestCase):
     def _fake_run_ok(self):
         def run(cmd, capture_output=True, text=True, **kwargs):
+            del capture_output, kwargs
             # assert mmdc was called with high-DPI scale flag
             self.assertIn("-s", cmd)
             self.assertEqual(cmd[cmd.index("-s") + 1], "3")
@@ -56,6 +57,7 @@ class TestRenderAll(unittest.TestCase):
     def test_aborts_with_line_and_stderr_on_failure(self):
         md = "a\n```mermaid\nbroken!!!\n```\n"
         def run_fail(cmd, capture_output=True, text=True, **kwargs):
+            del capture_output, kwargs
             return type("P", (), {"returncode": 1,
                                   "stderr": "Parse error on line 2: ...", "stdout": ""})()
         with self.assertRaises(rm.MermaidRenderError) as cm:
@@ -132,6 +134,7 @@ class TestBuildCommand(unittest.TestCase):
 class TestConvert(unittest.TestCase):
     def _stub_run_writes_pdf(self):
         def run(cmd, capture_output=True, text=True, **kwargs):
+            del capture_output, kwargs
             out = cmd[cmd.index("-o") + 1] if "-o" in cmd else cmd[cmd.index("--output") + 1]
             with open(out, "wb") as fh:
                 fh.write(b"%PDF-1.7\n")
@@ -201,6 +204,7 @@ class TestConvert(unittest.TestCase):
 class TestDeckAndMain(unittest.TestCase):
     def _stub_run_writes(self, flag="-o"):
         def run(cmd, capture_output=True, text=True, **kwargs):
+            del capture_output, kwargs
             out = cmd[cmd.index(flag) + 1]
             with open(out, "wb") as fh:
                 fh.write(b"%PDF")
@@ -216,7 +220,7 @@ class TestDeckAndMain(unittest.TestCase):
             out_path=out,
             which=lambda n: "/x/marp" if n == "marp" else None,
             run=self._stub_run_writes(),
-            render=lambda t, w, fmt="svg", run=None: t,
+            render=lambda t, _w, fmt="svg", run=None: t,
         )
         res = m2p.convert_deck(src, opts)
         self.assertEqual(res.backend, "marp-cli")
@@ -231,7 +235,7 @@ class TestDeckAndMain(unittest.TestCase):
                 src,
                 m2p.ConvertOptions(
                     which=lambda n: None,
-                    render=lambda t, w, fmt="svg", run=None: t,
+                    render=lambda t, _w, fmt="svg", run=None: t,
                 ),
             )
         self.assertEqual(cm.exception.recommend.name, "marp-cli")

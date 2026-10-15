@@ -180,8 +180,12 @@ class TestScopeCollectorDispatch(unittest.TestCase):
             "top_call()\n"
         )
         tree = ast.parse(source)
-        sync_fn = tree.body[1]
-        async_fn = tree.body[2]
+        sync_node = tree.body[1]
+        async_node = tree.body[2]
+        assert isinstance(sync_node, ast.FunctionDef)
+        assert isinstance(async_node, ast.AsyncFunctionDef)
+        sync_fn = sync_node
+        async_fn = async_node
         collector = ast_only._ScopeCollector()
         collector.visit(tree)
         self.assertIn(tree, collector.scope_assignments)
@@ -200,6 +204,9 @@ class TestScopeCollectorDispatch(unittest.TestCase):
         module_call = module_expr.value
         inner_sync_call = sync_expr.value
         inner_async_call = async_expr.value
+        assert isinstance(module_call, ast.Call)
+        assert isinstance(inner_sync_call, ast.Call)
+        assert isinstance(inner_async_call, ast.Call)
         self.assertIs(collector.call_scope[module_call], tree)
         self.assertIs(collector.call_scope[inner_sync_call], sync_fn)
         self.assertIs(collector.call_scope[inner_async_call], async_fn)

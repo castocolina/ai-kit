@@ -1392,6 +1392,7 @@ class TestCaptureCodex(unittest.TestCase):
 
         self.assertEqual(session_ids, {_CODEX_SESSION_UUID})
         self.assertIsNotNone(function_call)
+        assert function_call is not None
         arguments = function_call["payload"]["payload"]["arguments"]
         self.assertIsInstance(arguments, str)
         self.assertNotIsInstance(arguments, dict)
@@ -3992,6 +3993,8 @@ class TestDashboardFull(unittest.TestCase):
         )
         self.assertIsNotNone(flat_row_match, "no #thead-flat header row found")
         self.assertIsNotNone(grouped_row_match, "no #thead-grouped header row found")
+        assert flat_row_match is not None
+        assert grouped_row_match is not None
 
         flat_header_count = len(re.findall(r"<th\b", flat_row_match.group(1)))
         grouped_header_count = len(re.findall(r"<th\b", grouped_row_match.group(1)))
@@ -4577,6 +4580,8 @@ class TestDashboardFull(unittest.TestCase):
         )
         self.assertIsNotNone(flat_thead)
         self.assertIsNotNone(grouped_thead)
+        assert flat_thead is not None
+        assert grouped_thead is not None
         flat_header_keys = re.findall(r'data-sort-key="([^"]+)"', flat_thead.group(1))
         grouped_header_keys = re.findall(
             r'data-sort-key="([^"]+)"', grouped_thead.group(1)
@@ -4841,6 +4846,7 @@ class TestTracer151(unittest.TestCase):
         thead_start = html.index("<thead>") + len("<thead>")
         first_th_tag = re.search(r"<th[^>]*>", html[thead_start:])
         self.assertIsNotNone(first_th_tag)
+        assert first_th_tag is not None
         self.assertIn('data-sort-key="runtime"', first_th_tag.group(0))
 
         self.assertIn("md-checkbox", html)
@@ -5175,6 +5181,7 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_usage_metrics", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):
