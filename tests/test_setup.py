@@ -1949,6 +1949,27 @@ class TestCmdUninstall(unittest.TestCase):
         self.assertTrue(os.path.isdir(self.install))
 
 
+    def test_unreadable_settings_or_failed_write_exits_nonzero(self):
+        settings = os.path.join(self.claude, "settings.json")
+        with open(settings, "w", encoding="utf-8") as f:
+            f.write("{not json")
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rc = setup.cmd_uninstall(self.env, dry=False)
+        self.assertEqual(rc, 1)
+        self.assertIn(settings, err.getvalue())
+        self.assertIn("statusLine left as is", err.getvalue())
+        with open(settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": {"type": "command", "command":
+                                      "python3 " + self.install + "/tools/status-line.py"}}, f)
+        err = io.StringIO()
+        with mock.patch.object(setup.os, "replace", side_effect=OSError("boom")), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rc = setup.cmd_uninstall(self.env, dry=False)
+        self.assertEqual(rc, 1)
+        self.assertIn("failed to write", err.getvalue())
+
+
 class TestCmdDelegation(unittest.TestCase):
     def test_doctor_shells_out_to_status_line(self):
         env = {"HOME": "/h", "AI_KIT_DIR": "/i"}

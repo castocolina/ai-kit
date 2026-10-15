@@ -1763,22 +1763,20 @@ def unwire_statusline(settings, install_dir, dry):
     Reads through `_read_json_checked` and writes through `_atomic_write_json`
     (D-22): an absent, empty or unparseable settings.json is never written, and
     the rewrite is a same-directory os.replace — the old bytes survive intact
-    until the new content is complete."""
+    until the new content is complete. Returns False when an unreadable file was
+    skipped or the write failed (the statusLine may still be wired), else True."""
     state, data = _read_json_checked(settings)
+    if state == JSON_STATE_UNREADABLE:
+        _warn_hook_config(settings, "cannot parse as a JSON object; statusLine left as is")
+        return False
     if state != JSON_STATE_OK or data is None:
-        return
+        return True
     cur = data.get("statusLine")
     cur_cmd = cur.get("command", "") if isinstance(cur, dict) else ""
     if not (cur_cmd and _is_inside_str(install_dir, cur_cmd)):
-        return
-    if dry:
-        print("would clear ai-kit statusLine")
-        return
+        return True
     data.pop("statusLine", None)
-    try:
-        _atomic_write_json(settings, data)
-    except OSError as exc:
-        print(f"warn: failed to write {settings}: {exc}", file=sys.stderr)
+    return _commit_unwire(settings, data, dry, "would clear ai-kit statusLine")
 
 
 def _entry_is_ours_nested(entry, marker):
@@ -1787,54 +1785,58 @@ def _entry_is_ours_nested(entry, marker):
 
 
 def _commit_unwire(path, data, dry, would_msg):
-    """Honour dry, then atomically rewrite `path`. Never raises."""
+    """Honour dry, then atomically rewrite `path`. Never raises; False on a failed write."""
     if dry:
         print(would_msg)
-        return
+        return True
     try:
         _atomic_write_json(path, data)
     except OSError as exc:
         print(f"warn: failed to write {path}: {exc}", file=sys.stderr)
+        return False
+    return True
 
 
 def unwire_hook_claude(settings, dry):
-    """Remove ai-kit's own SessionStart entry; leave every foreign entry."""
+    """Remove ai-kit's own SessionStart entry; leave every foreign entry.
+    False when the file was refused or the write failed."""
     ok, data, _ = _load_hook_config(settings, CLAUDE_HOOK_EVENT, nested=True)
     if not ok:
-        return
+        return False
     assert data is not None  # ok True <=> data is a dict, see _load_hook_config
     hooks = data.get("hooks") or {}
     if CLAUDE_HOOK_EVENT not in hooks:
-        return
+        return True
     entries = hooks[CLAUDE_HOOK_EVENT]
     kept = [e for e in entries if not _entry_is_ours_nested(e, CLAUDE_HOOK_MARKER)]
     if kept == entries:
-        return
+        return True
     hooks[CLAUDE_HOOK_EVENT] = kept
-    _commit_unwire(settings, data, dry, "would remove ai-kit SessionStart hook")
+    return _commit_unwire(settings, data, dry, "would remove ai-kit SessionStart hook")
 
 
 def unwire_hook_cursor(cursor_hooks, dry):
-    """Remove ai-kit's own sessionStart entry; leave every foreign entry."""
+    """Remove ai-kit's own sessionStart entry; leave every foreign entry.
+    False when the file was refused or the write failed."""
     parent = os.path.dirname(cursor_hooks) or "."
     if not os.path.isdir(parent) or not os.path.isfile(cursor_hooks):
-        return
+        return True
     ok, data, _ = _load_hook_config(cursor_hooks, CURSOR_HOOK_EVENT)
     if not ok:
-        return
+        return False
     assert data is not None  # ok True <=> data is a dict, see _load_hook_config
     hooks = data.get("hooks") or {}
     if CURSOR_HOOK_EVENT not in hooks:
-        return
+        return True
     entries = hooks[CURSOR_HOOK_EVENT]
     kept = [
         e for e in entries
         if CURSOR_HOOK_MARKER not in e.get("command", "")
     ]
     if kept == entries:
-        return
+        return True
     hooks[CURSOR_HOOK_EVENT] = kept
-    _commit_unwire(
+    return _commit_unwire(
         cursor_hooks, data, dry, "would remove ai-kit sessionStart hook")
 
 
@@ -2907,18 +2909,25 @@ def cmd_uninstall(env, dry):
     """Remove every ai-kit symlink under ~/.claude, the ai-kit statusLine (only
     if it points into install_dir), and ai-kit's own session-start hook entries
     from both Claude Code and Cursor. Foreign hook entries are never touched.
-    Leaves install_dir, foreign links, and the config TOML in place."""
+    Leaves install_dir, foreign links, and the config TOML in place. Exits 1 when
+    a settings file could not be read or rewritten, so ai-kit may still be wired."""
     paths = resolve_paths(env)
     counts = new_counts()
     installed = installed_links(paths.claude_dir, paths.install_dir)
     for cat in CATEGORIES:
         for name in sorted(installed[cat]):
             unlink_one(os.path.join(paths.claude_dir, cat, name), dry, counts)
-    unwire_statusline(paths.settings, paths.install_dir, dry)
-    unwire_hook_claude(paths.settings, dry)
-    unwire_hook_cursor(paths.cursor_hooks, dry)
+    unwired = [
+        unwire_statusline(paths.settings, paths.install_dir, dry),
+        unwire_hook_claude(paths.settings, dry),
+        unwire_hook_cursor(paths.cursor_hooks, dry),
+    ]
     print(f"removed {counts['unlinked']} ai-kit symlink(s). "
           f"install dir left in place: {paths.install_dir}")
+    if not all(unwired):
+        print("uninstall: one or more settings files could not be updated "
+              "(see warnings above) — exiting non-zero", file=sys.stderr)
+        return 1
     return 0
 
 
