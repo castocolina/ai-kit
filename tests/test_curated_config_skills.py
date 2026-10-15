@@ -15,7 +15,7 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_gsd_curated_config import host, skill_scan
+from ai_kit_gsd_curated_config import host, plan_io, recommend, skill_scan, skills
 
 from tests.test_curated_config_golden import tables_answer
 from tests.test_curated_config_inventory import (
@@ -24,6 +24,7 @@ from tests.test_curated_config_inventory import (
     make_gsd_install,
     run_inventory,
 )
+from tests.test_curated_config_recommend import make_inventory, run_recommend
 
 
 def make_home(root: str) -> str:
@@ -480,3 +481,365 @@ class TestSystemOneBackend(unittest.TestCase):
         ):
             out = skill_scan.system_one_backend({}, connect)
         self.assertEqual(out["via"], [])
+
+
+def _inv(host="claude", skills=None, project=None, backend=None) -> dict:
+    inv = make_inventory(host=host, project=project)
+    if skills is not None:
+        inv["skills"] = skills
+    if backend is not None:
+        inv["system_one_backend"] = backend
+    return inv
+
+
+def _skill_row(
+    name: str,
+    root_kind: str,
+    *,
+    plugin: str | None = None,
+    addressable: bool = True,
+    root: str | None = None,
+) -> dict:
+    label = root or ("skills" if root_kind == "project" else "~/.claude/skills")
+    return {
+        "name": name,
+        "root_kind": root_kind,
+        "root": label,
+        "plugin": plugin,
+        "escapes_root": False,
+        "addressable": addressable,
+    }
+
+
+def _shipped_affinity() -> dict:
+    doc, err = plan_io.load_affinity(plan_io.AFFINITY_PATH)
+    assert doc is not None and err is None
+    return doc
+
+
+def _plan_with_affinity(inv: dict, rigor: str = "standard", affinity: dict | None = None) -> dict:
+    aff = affinity if affinity is not None else _shipped_affinity()
+    return recommend.build_plan(
+        inv,
+        recommend.RecommendOpts("adaptive", rigor, affinity=aff),
+    )
+
+
+class TestAffinityValidation(unittest.TestCase):
+    def test_validate_affinity_refuses_bad_schema_version(self):
+        bad = {"schema_version": 2, "as_of": "x", "families": []}
+        self.assertIsNotNone(skills.validate_affinity(bad))
+
+    def test_validate_affinity_refuses_bool_schema_version(self):
+        bad = {"schema_version": True, "as_of": "x", "families": []}
+        self.assertIsNotNone(skills.validate_affinity(bad))
+
+    def test_validate_affinity_refuses_bad_when(self):
+        doc = {
+            "schema_version": 1,
+            "as_of": "2026-01-01",
+            "families": [{"id": "x", "skills": [], "agents": [], "when": "nope"}],
+        }
+        self.assertIsNotNone(skills.validate_affinity(doc))
+
+    def test_validate_affinity_refuses_non_list_skills(self):
+        doc = {
+            "schema_version": 1,
+            "as_of": "2026-01-01",
+            "families": [{"id": "x", "skills": "bad", "agents": [], "when": None}],
+        }
+        self.assertIsNotNone(skills.validate_affinity(doc))
+
+    def test_validate_affinity_refuses_duplicate_family_id(self):
+        fam = {"id": "dup", "skills": ["a"], "agents": ["gsd-planner"], "when": None}
+        doc = {"schema_version": 1, "as_of": "2026-01-01", "families": [fam, fam]}
+        self.assertIsNotNone(skills.validate_affinity(doc))
+
+    def test_load_affinity_invalid_file_suffix(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump({"schema_version": 2, "as_of": "x", "families": []}, handle)
+            path = handle.name
+        try:
+            _doc, err = plan_io.load_affinity(path)
+            self.assertIsNone(_doc)
+            self.assertTrue(err is not None and err.endswith("; fix skill_affinity.json"))
+        finally:
+            os.unlink(path)
+
+
+class TestAffinityResolve(unittest.TestCase):
+    def test_reference_for_encoding(self):
+        self.assertEqual(skills.reference_for(_skill_row("x", "project")), "skills/x")
+        self.assertEqual(skills.reference_for(_skill_row("x", "global")), "global:x")
+        row = _skill_row("ponytail-review", "plugin", plugin="ponytail")
+        self.assertEqual(skills.reference_for(row), "global:ponytail:ponytail-review")
+
+    def test_dotted_plugin_not_addressable(self):
+        row = _skill_row("s", "plugin", plugin="bad.name", addressable=False)
+        inv = _inv(skills=[row])
+        self.assertIsNone(skills.locate("s", inv))
+
+    def test_cap_boundary_standard_drops_fourth(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {"id": "f1", "skills": ["a"], "agents": ["gsd-planner"], "when": None},
+                {"id": "f2", "skills": ["b"], "agents": ["gsd-planner"], "when": None},
+                {"id": "f3", "skills": ["c"], "agents": ["gsd-planner"], "when": None},
+                {"id": "f4", "skills": ["d"], "agents": ["gsd-planner"], "when": None},
+            ],
+        }
+        inv = _inv(skills=[_skill_row(n, "global") for n in ("a", "b", "c", "d")],
+        )
+        facts = skills.skill_facts(inv, [], {})
+        resolved, _notes = skills.resolve(affinity, inv, facts, "standard")
+        self.assertEqual(resolved.get("gsd-planner"), ["a", "b", "c"])
+
+    def test_cap_rigorous_keeps_four(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {"id": "f1", "skills": ["a"], "agents": ["gsd-planner"], "when": None},
+                {"id": "f2", "skills": ["b"], "agents": ["gsd-planner"], "when": None},
+                {"id": "f3", "skills": ["c"], "agents": ["gsd-planner"], "when": None},
+                {"id": "f4", "skills": ["d"], "agents": ["gsd-planner"], "when": None},
+            ],
+        }
+        inv = _inv(skills=[_skill_row(n, "global") for n in ("a", "b", "c", "d")],
+        )
+        resolved, _ = skills.resolve(affinity, inv, skills.skill_facts(inv, [], {}), "rigorous")
+        self.assertEqual(resolved.get("gsd-planner"), ["a", "b", "c", "d"])
+
+    def test_empty_agent_no_entry(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {"id": "f1", "skills": ["a"], "agents": ["gsd-planner"], "when": None},
+            ],
+        }
+        inv = _inv(skills=[])
+        resolved, _ = skills.resolve(affinity, inv, skills.skill_facts(inv, [], {}), "standard")
+        self.assertNotIn("gsd-debugger", resolved)
+
+    def test_dedupe_same_skill_two_families(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {"id": "f1", "skills": ["shared"], "agents": ["gsd-executor"], "when": None},
+                {"id": "f2", "skills": ["shared"], "agents": ["gsd-executor"], "when": None},
+            ],
+        }
+        inv = _inv(skills=[_skill_row("shared", "global")])
+        resolved, _ = skills.resolve(affinity, inv, skills.skill_facts(inv, [], {}), "standard")
+        self.assertEqual(resolved["gsd-executor"], ["shared"])
+
+    def test_unknown_agent_note(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {"id": "fam-x", "skills": ["a"], "agents": ["not-a-real-agent"], "when": None},
+            ],
+        }
+        inv = _inv(skills=[_skill_row("a", "global")])
+        facts = skills.skill_facts(inv, [], {})
+        _resolved, notes = skills.resolve(affinity, inv, facts, "standard")
+        self.assertEqual(len(notes), 1)
+        self.assertIn("not-a-real-agent", notes[0]["text"])
+        self.assertIn("fam-x", notes[0]["text"])
+
+    def test_precedence_project_over_global_and_plugin(self):
+        inv = _inv(skills=[
+                _skill_row("dup", "plugin", plugin="ponytail"),
+                _skill_row("dup", "global"),
+                _skill_row("dup", "project"),
+            ],
+        )
+        row = skills.locate("dup", inv)
+        assert row is not None
+        self.assertEqual(row["root_kind"], "project")
+
+    def test_global_beats_plugin(self):
+        inv = _inv(skills=[
+                _skill_row("dup", "plugin", plugin="ponytail"),
+                _skill_row("dup", "global"),
+            ],
+        )
+        row = skills.locate("dup", inv)
+        assert row is not None
+        self.assertEqual(row["root_kind"], "global")
+
+    def test_frontend_gate(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {
+                    "id": "frontend",
+                    "skills": ["react-dev"],
+                    "agents": ["gsd-executor"],
+                    "when": "frontend",
+                },
+            ],
+        }
+        inv = _inv(skills=[_skill_row("react-dev", "global")])
+        facts_off = skills.skill_facts(inv, [], {})
+        resolved_off, _ = skills.resolve(affinity, inv, facts_off, "standard")
+        self.assertNotIn("gsd-executor", resolved_off)
+        inv_on = _inv(
+            project={"frontend": True, "intel_index_present": False, "db": False},
+            skills=[_skill_row("react-dev", "global")],
+        )
+        facts_on = skills.skill_facts(inv_on, [], {})
+        resolved_on, _ = skills.resolve(affinity, inv_on, facts_on, "standard")
+        self.assertEqual(resolved_on.get("gsd-executor"), ["react-dev"])
+
+    def test_tdd_gate_from_prior_entry(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {
+                    "id": "tdd",
+                    "skills": ["test-driven-development"],
+                    "agents": ["gsd-planner"],
+                    "when": "tdd_mode",
+                },
+            ],
+        }
+        inv = _inv(skills=[_skill_row("test-driven-development", "global")])
+        prior = [{"key": "workflow.tdd_mode", "value": True}]
+        facts = skills.skill_facts(inv, prior, {})
+        resolved, _ = skills.resolve(affinity, inv, facts, "rigorous")
+        self.assertEqual(resolved.get("gsd-planner"), ["test-driven-development"])
+
+    def test_db_gate(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {
+                    "id": "db",
+                    "skills": ["database-schema-designer"],
+                    "agents": ["gsd-planner"],
+                    "when": "db",
+                },
+            ],
+        }
+        inv = _inv(
+            project={"frontend": False, "intel_index_present": False, "db": True},
+            skills=[_skill_row("database-schema-designer", "global")],
+        )
+        resolved, _ = skills.resolve(affinity, inv, skills.skill_facts(inv, [], {}), "standard")
+        self.assertEqual(resolved.get("gsd-planner"), ["database-schema-designer"])
+
+    def test_jev_once_with_backend(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {
+                    "id": "system-one",
+                    "skills": ["jev-fast-decision"],
+                    "agents": ["gsd-advisor-researcher", "gsd-assumptions-analyzer"],
+                    "when": "system_one_backend",
+                },
+            ],
+        }
+        inv = _inv(
+            skills=[_skill_row("jev-fast-decision", "global")],
+            backend={"detected": True, "via": ["url_reachable", "key_present"], "note": ""},
+        )
+        inv["gsd_core"]["agent_to_phase_type"]["gsd-advisor-researcher"] = "research"
+        inv["gsd_core"]["agent_to_phase_type"]["gsd-assumptions-analyzer"] = "research"
+        resolved, _ = skills.resolve(affinity, inv, skills.skill_facts(inv, [], {}), "standard")
+        self.assertEqual(resolved["gsd-advisor-researcher"], ["jev-fast-decision"])
+        self.assertEqual(resolved["gsd-assumptions-analyzer"], ["jev-fast-decision"])
+
+    def test_jev_without_backend_not_wired(self):
+        inv = _inv(skills=[_skill_row("jev-fast-decision", "global")])
+        plan = _plan_with_affinity(inv, rigor="standard")
+        blob = json.dumps(plan)
+        self.assertNotIn("jev-fast-decision", blob)
+
+    def test_jev_backend_without_skill_silent(self):
+        inv = _inv(skills=[],
+            backend={"detected": True, "via": ["key_present"], "note": ""},
+        )
+        plan = _plan_with_affinity(inv, rigor="standard")
+        blob = json.dumps(plan)
+        self.assertNotIn("jev-fast-decision", blob)
+
+
+class TestSkillsLayer(unittest.TestCase):
+    def test_mvp_reviewer_ponytail_not_reducing_entropy(self):
+        with tempfile.TemporaryDirectory() as root:
+            home = make_home(root)
+            add_plugin(
+                home,
+                "ponytail",
+                "ponytail",
+                ["ponytail-review", "ponytail-audit", "ponytail"],
+            )
+            add_skill(os.path.join(home, ".claude", "skills"), "reducing-entropy")
+            inv = make_inventory(host="claude")
+            inv["skills"] = skill_scan.scan_skills(
+                root,
+                "claude",
+                {"claude": os.path.join(home, ".claude", "skills")},
+                home,
+            )
+            plan = _plan_with_affinity(inv, rigor="mvp")
+            em = {e["key"]: e["value"] for e in plan["entries"]}
+            self.assertEqual(
+                em.get("agent_skills.gsd-code-reviewer"),
+                ["ponytail-review", "ponytail-audit"],
+            )
+
+    def test_executor_ponytail_once(self):
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {"id": "a", "skills": ["ponytail"], "agents": ["gsd-executor"], "when": None},
+                {"id": "b", "skills": ["ponytail"], "agents": ["gsd-executor"], "when": None},
+            ],
+        }
+        inv = _inv(skills=[_skill_row("ponytail", "plugin", plugin="ponytail")])
+        plan = _plan_with_affinity(inv, rigor="standard", affinity=affinity)
+        em = {e["key"]: e["value"] for e in plan["entries"]}
+        self.assertEqual(em["agent_skills.gsd-executor"], ["ponytail"])
+
+    def test_no_ponytail_inventory_no_names(self):
+        inv = _inv(skills=[])
+        plan = _plan_with_affinity(inv, rigor="standard")
+        skill_entries = [e for e in plan["entries"] if e["key"].startswith("agent_skills.")]
+        self.assertEqual(skill_entries, [])
+
+    def test_missing_skill_never_named(self):
+        ghost = "ghost-skill-not-installed"
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {"id": "g", "skills": [ghost], "agents": ["gsd-planner"], "when": None},
+            ],
+        }
+        inv = _inv(skills=[])
+        plan = _plan_with_affinity(inv, rigor="standard", affinity=affinity)
+        blob = json.dumps(plan)
+        self.assertNotIn(ghost, blob)
+        code, _plan, _bytes, err = run_recommend(
+            inv, "--profile", "adaptive", "--rigor", "standard"
+        )
+        self.assertEqual(code, 0)
+        combined = blob + err
+        self.assertNotIn("systematic-debugging", combined)
+
+
+if __name__ == "__main__":
+    unittest.main()
