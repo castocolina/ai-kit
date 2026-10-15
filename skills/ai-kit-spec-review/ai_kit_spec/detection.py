@@ -556,11 +556,10 @@ def _probe_from(binary, probe_dir, popen_fn, urlopen_fn) -> dict:
         port, token = _read_opencode_banner(proc.stdout)
         if port is None or token is None:
             return {}
-        request = urllib.request.Request(
-            f"http://127.0.0.1:{port}/api/model",
-            headers={"Authorization": "Basic "
-                     + base64.b64encode(f"opencode:{token}".encode()).decode()},
-        )
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/api/model")
+        # Unredirected: a redirect never carries the password to another host.
+        request.add_unredirected_header(
+            "Authorization", "Basic " + base64.b64encode(f"opencode:{token}".encode()).decode())
         with urlopen_fn(request, timeout=10) as response:
             body = response.read()
         return parse_opencode_api_models(json.loads(body))

@@ -10193,7 +10193,9 @@ class TestOpencodeApiImageInput(unittest.TestCase):
 
         def fake_urlopen(request, timeout=None):
             recorded["url"] = request.full_url
-            recorded["authorization"] = request.headers.get("Authorization")
+            # Unredirected: a redirect never forwards the password (17 security audit).
+            recorded["authorization"] = request.unredirected_hdrs.get("Authorization")
+            recorded["redirectable_auth"] = request.headers.get("Authorization")
             recorded["timeout"] = timeout
             return self.FakeResponse(
                 body if body is not None else _read_bytes(OPENCODE_API_FIXTURE_PATH)
@@ -10390,6 +10392,7 @@ class TestOpencodeApiImageInput(unittest.TestCase):
         self.assertEqual(recorded["url"], "http://127.0.0.1:41234/api/model")
         expected = "Basic " + base64.b64encode(b"opencode:s3cr3t").decode()
         self.assertEqual(recorded["authorization"], expected)
+        self.assertIsNone(recorded["redirectable_auth"])
 
     def test_probe_stops_server_after_success(self):
         popen = self.FakePopen()
