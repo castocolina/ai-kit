@@ -123,7 +123,7 @@ Source: transcript `tmp/16.1-24-live-checks.txt` and `.planning/phases/16.1-hard
 **Branch-code proof** (transcript line 1; the path is under `git rev-parse --show-toplevel`):
 
 ```
-ai_kit_spec.__file__: /var/home/bazzite/git/personal/ai-kit/.claude/worktrees/v13-curated-config-v2/skills/ai-kit-spec-review/ai_kit_spec/__init__.py
+ai_kit_spec.__file__: <checkout>/skills/ai-kit-spec-review/ai_kit_spec/__init__.py
 ```
 
 **The four `--if-stale` commands** (`RT=~/.cache/ai-kit/spec/runtimes.json`, `CAT=~/.cache/ai-kit/spec/model-catalog.json`, both taken from `cache-path`):
