@@ -241,7 +241,7 @@ plan — without writing anything.
      counterpart" note on single-provider hosts.
   4. Keys unknown to the host's installed gsd-core version are dropped from the plan with a
      visible note rather than silently written.
-**Plans**: 6/9 plans executed
+**Plans**: 7/9 plans executed
 
 Plans (sequential, one wave each: plans land one at a time in a shared checkout, and each
 plan's checks also run the modules the previous plan touched):
@@ -258,7 +258,7 @@ plan's checks also run the modules the previous plan touched):
 - Wave 6
   - [x] 17-06-PLAN.md — specialist overrides: execution, counterpart and vision rules, cap of 7
 - Wave 7
-  - [ ] 17-07-PLAN.md — project facts, existing config, conflicts/info, read-only guarantee
+  - [x] 17-07-PLAN.md — project facts, existing config, conflicts/info, read-only guarantee
 - Wave 8
   - [ ] 17-08-PLAN.md — reconcile layer: managed-family unsets, policy leaves, runtime per host
 - Wave 9
