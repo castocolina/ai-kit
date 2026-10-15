@@ -437,7 +437,9 @@ def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
 def _cmd_inventory(args, which_fn, run_fn, env_fn) -> int:
     deps = host.InventoryDeps(which_fn, run_fn, env_fn)
     inv, error = inventory.build_inventory(
-        os.path.abspath(args.project_dir), inventory.InventoryOpts(args.host), deps
+        os.path.abspath(args.project_dir),
+        inventory.InventoryOpts(args.host, refresh=args.refresh),
+        deps,
     )
     if inv is None:
         print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
@@ -522,6 +524,11 @@ def _build_parser():
     p_inventory = sub.add_parser("inventory")
     p_inventory.add_argument("--project-dir", required=True)
     p_inventory.add_argument("--host", choices=host.HOSTS, default=None)
+    p_inventory.add_argument(
+        "--refresh",
+        action="store_true",
+        help="force detect-runtimes and a full catalog fetch",
+    )
 
     p_recommend = sub.add_parser("recommend")
     p_recommend.add_argument("--inventory", required=True)
