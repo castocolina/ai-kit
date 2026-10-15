@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(
     0,
@@ -342,3 +343,140 @@ class TestPonytailVisibility(unittest.TestCase):
         for host_name in host.HOSTS:
             if host_name != "codex":
                 self.assertEqual(vis[host_name], [])
+
+
+class _FakeSocket:
+    def close(self) -> None:
+        return None
+
+
+class TestSystemOneBackend(unittest.TestCase):
+    def _recorder(self):
+        calls: list = []
+
+        def connect(endpoint, timeout=None):
+            calls.append((endpoint, timeout))
+            return _FakeSocket()
+
+        return connect, calls
+
+    def test_empty_url_never_connects(self):
+        connect, calls = self._recorder()
+        out = skill_scan.system_one_backend({}, connect)
+        self.assertEqual(out, {"detected": False, "via": [], "note": ""})
+        self.assertEqual(calls, [])
+
+    def test_url_ports_and_schemes(self):
+        connect, calls = self._recorder()
+        env = {"JEV_API_URL": "https://jev.example:8443/v1"}
+        out = skill_scan.system_one_backend(env, connect)
+        self.assertEqual(calls, [(("jev.example", 8443), skill_scan.CONNECT_TIMEOUT_S)])
+        self.assertEqual(out["via"], ["url_reachable"])
+        connect, calls = self._recorder()
+        skill_scan.system_one_backend({"JEV_API_URL": "http://h/x"}, connect)
+        self.assertEqual(calls[0][0], ("h", 80))
+        connect, calls = self._recorder()
+        skill_scan.system_one_backend({"JEV_API_URL": "https://h"}, connect)
+        self.assertEqual(calls[0][0], ("h", 443))
+        connect, calls = self._recorder()
+        skill_scan.system_one_backend({"JEV_API_URL": "ftp://h"}, connect)
+        skill_scan.system_one_backend({"JEV_API_URL": "https://h:notaport"}, connect)
+        self.assertEqual(calls, [])
+
+    def test_connect_errors_and_success_note(self):
+        def refuse(endpoint, timeout=None):
+            raise OSError("refused")
+
+        out = skill_scan.system_one_backend({"JEV_API_URL": "https://h/"}, refuse)
+        self.assertFalse(out["detected"])
+        self.assertEqual(out["via"], [])
+        connect, _calls = self._recorder()
+        out = skill_scan.system_one_backend({"JEV_API_URL": "https://h/"}, connect)
+        self.assertEqual(out["note"], skill_scan.URL_NOTE)
+
+    def test_slow_connect_times_out(self):
+        import threading
+        import time
+
+        gate = threading.Event()
+
+        def slow(endpoint, timeout=None):
+            gate.wait()
+
+        env = {"JEV_API_URL": "https://slow.example/"}
+        start = time.monotonic()
+        with mock.patch.object(skill_scan, "CONNECT_TIMEOUT_S", 0.2):
+            out = skill_scan.system_one_backend(env, slow)
+        self.addCleanup(gate.set)
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 1.0)
+        self.assertNotIn("url_reachable", out["via"])
+
+    def test_key_present_env_and_secrets(self):
+        connect, _calls = self._recorder()
+        out = skill_scan.system_one_backend({"JEV_API_KEY": "set"}, connect)
+        self.assertIn("key_present", out["via"])
+        root = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        cfg = os.path.join(root, ".config", "ai-kit")
+        os.makedirs(cfg, exist_ok=True)
+        with open(os.path.join(cfg, "secrets.env"), "w", encoding="utf-8") as fh:
+            fh.write("JEV_API_KEY=from-file\n")
+        out = skill_scan.system_one_backend({"HOME": root}, connect)
+        self.assertIn("key_present", out["via"])
+
+    def test_url_and_key_together(self):
+        connect, _calls = self._recorder()
+        env = {"JEV_API_URL": "https://h/", "JEV_API_KEY": "x"}
+        out = skill_scan.system_one_backend(env, connect)
+        self.assertEqual(out["via"], ["url_reachable", "key_present"])
+
+    def test_key_value_never_in_output(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        os.makedirs(project)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        cfg = os.path.join(home, ".config", "ai-kit")
+        os.makedirs(cfg, exist_ok=True)
+        with open(os.path.join(cfg, "secrets.env"), "w", encoding="utf-8") as fh:
+            fh.write("JEV_API_KEY=sk-SENTINEL-18-03\n")
+        env = _inventory_env(home)
+        env["JEV_API_URL"] = "https://user:pw-SENTINEL@h:1/"
+        connect, _calls = self._recorder()
+
+        def node_answer(cmd):
+            keys = json.loads(cmd[6])
+            return json.dumps(tables_answer(keys, home))
+
+        stdout = __import__("io").StringIO()
+        stderr = __import__("io").StringIO()
+        with __import__("contextlib").redirect_stdout(stdout), __import__(
+            "contextlib"
+        ).redirect_stderr(stderr):
+            code = __import__("ai_kit_gsd_curated_config.cli", fromlist=["cli"]).main(
+                ["inventory", "--project-dir", project, "--host", "codex"],
+                which_fn=lambda name, **_kw: "node" if name == "node" else None,
+                env_fn=lambda: dict(env),
+                run_fn=FakeRun(node_stdout=node_answer),
+                connect_fn=connect,
+            )
+        self.assertEqual(code, 0)
+        blob = stdout.getvalue() + stderr.getvalue()
+        self.assertNotIn("sk-SENTINEL-18-03", blob)
+        self.assertNotIn("pw-SENTINEL", blob)
+        self.assertNotIn("https://user:", blob)
+
+    def test_missing_spec_sibling_env_key_only(self):
+        connect, _calls = self._recorder()
+        with mock.patch.object(
+            skill_scan.gsd_catalog, "load_ai_kit_spec_module", return_value=None
+        ):
+            out = skill_scan.system_one_backend({"JEV_API_KEY": "x"}, connect)
+        self.assertIn("key_present", out["via"])
+        with mock.patch.object(
+            skill_scan.gsd_catalog, "load_ai_kit_spec_module", return_value=None
+        ):
+            out = skill_scan.system_one_backend({}, connect)
+        self.assertEqual(out["via"], [])

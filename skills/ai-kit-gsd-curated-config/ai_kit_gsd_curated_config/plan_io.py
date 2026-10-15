@@ -101,6 +101,17 @@ def _validate_skills(skills) -> str | None:
     return None
 
 
+def _validate_system_one_backend(backend) -> str | None:
+    if not isinstance(backend, dict):
+        return "key system_one_backend: expected dict"
+    if not isinstance(backend.get("detected"), bool):
+        return "key system_one_backend.detected: expected bool"
+    via = backend.get("via")
+    if not isinstance(via, list) or not all(isinstance(item, str) for item in via):
+        return "key system_one_backend.via: expected list of str"
+    return None
+
+
 def _validate_ponytail_visibility(pvisibility) -> str | None:
     if not isinstance(pvisibility, dict):
         return "key ponytail_visibility: expected dict"
@@ -121,6 +132,9 @@ def _validate_inventory_tail(inv: dict) -> str | None:
         _missing(inv, "skills") or _validate_skills(inv.get("skills")),
         _missing(inv, "ponytail_visibility") or _validate_ponytail_visibility(
             inv.get("ponytail_visibility")
+        ),
+        _missing(inv, "system_one_backend") or _validate_system_one_backend(
+            inv.get("system_one_backend")
         ),
     ):
         if problem:

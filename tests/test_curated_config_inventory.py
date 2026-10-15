@@ -152,7 +152,7 @@ class FakeRun:
         return subprocess.CompletedProcess(cmd, 1, "", "")
 
 
-def run_inventory(project, env, fake, *extra):
+def run_inventory(project, env, fake, *extra, connect_fn=None):
     stdout = io.StringIO()
     stderr = io.StringIO()
     argv = ["inventory", "--project-dir", project, *extra]
@@ -162,6 +162,7 @@ def run_inventory(project, env, fake, *extra):
             which_fn=lambda name, **_kw: "node" if name == "node" else None,
             env_fn=lambda: dict(env),
             run_fn=fake,
+            connect_fn=connect_fn,
         )
     err = stderr.getvalue()
     raw = stdout.getvalue()

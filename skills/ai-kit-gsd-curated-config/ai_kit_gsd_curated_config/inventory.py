@@ -413,6 +413,7 @@ def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore,
         "project": facts,
         "skills": skills,
         "ponytail_visibility": ponytail,
+        "system_one_backend": parts["system_one_backend"],
         "installed_runtimes": parts["installed_runtimes"],
         "conflicts": conflicts,
         "info": info,
@@ -456,4 +457,7 @@ def build_inventory(project_dir, opts: InventoryOpts, deps: host.InventoryDeps):
     if fields is None:
         return None, error
     parts = {**configs, **fields}
+    parts["system_one_backend"] = skill_scan.system_one_backend(
+        deps.env_fn(), deps.connect_fn
+    )
     return _assemble_inventory(project_dir, host_name, host_source, core, parts), None

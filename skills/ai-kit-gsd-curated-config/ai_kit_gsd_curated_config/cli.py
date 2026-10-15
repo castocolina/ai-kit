@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 from typing import Any, NamedTuple
@@ -433,7 +434,7 @@ def _cmd_apply_workflow_defaults(args, which_fn, run_fn, env_fn):
     return 0
 
 
-def _cmd_inventory(args, which_fn, run_fn, env_fn) -> int:
+def _cmd_inventory(args, which_fn, run_fn, env_fn, connect_fn) -> int:
     project_dir = os.path.abspath(args.project_dir)
     if not os.path.isdir(project_dir):
         # A typo must not read as a plausible fresh project (B-WR-02).
@@ -602,9 +603,13 @@ def main(
     which_fn=shutil.which,
     run_fn=subprocess.run,
     env_fn=lambda: dict(os.environ),
+    connect_fn=None,
 ) -> int:
     args = _build_parser().parse_args(argv)
     handler = _COMMAND_HANDLERS.get(args.command)
     if handler is None:
         _build_parser().error(f"unknown command: {args.command}")
+    if args.command == "inventory":
+        probe = connect_fn if connect_fn is not None else socket.create_connection
+        return _cmd_inventory(args, which_fn, run_fn, env_fn, probe)
     return handler(args, which_fn, run_fn, env_fn)

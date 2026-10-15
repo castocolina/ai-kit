@@ -294,6 +294,7 @@ def make_inventory(
         "installed_runtimes": [],
         "skills": [],
         "ponytail_visibility": {h: [] for h in host_mod.HOSTS},
+        "system_one_backend": {"detected": False, "via": [], "note": ""},
     }
 
 

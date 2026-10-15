@@ -8,9 +8,10 @@ hand-copied launcher order. On pi and opencode hosts the project-local gsd-core 
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from . import gsd_catalog
 
@@ -33,6 +34,7 @@ class InventoryDeps(NamedTuple):
     which_fn: Callable[..., str | None]
     run_fn: Callable[..., subprocess.CompletedProcess]
     env_fn: Callable[[], dict]
+    connect_fn: Callable[..., Any] = socket.create_connection
 
 
 class GsdCore(NamedTuple):
