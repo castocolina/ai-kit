@@ -19,8 +19,10 @@ _THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SUBPROCESS_TIMEOUT = 120
 _TERM_GRACE_S = 10
 _DETECT_WARN = "detect-runtimes failed; using the cached runtimes snapshot"
+_DETECT_NO_CACHE_WARN = "detect-runtimes failed; no cached runtimes snapshot"
 _STALE_WARN = "catalog refresh failed; using the stale cache"
 _AA_WARN = "Artificial Analysis refresh failed; scores from cache"
+_AA_UNSCORED_WARN = "Artificial Analysis unavailable (no key or fetch failed); catalog unscored"
 _MODELS_DEV_WARN = "models.dev refresh failed; prices and capabilities from cache"
 _PROBE_WARN = "opencode 2.x image probe failed; image_input unverified for opencode models"
 
@@ -107,6 +109,8 @@ def _catalog_state_from_cache(read: _CacheRead, weights, warnings, fetch_result)
         read.cache, read.model_catalog, read.paths.runtimes_path, read.paths.catalog_path
     )
     state, state_warnings = _catalog_state(fetch_result, entries)
+    if not runtimes:
+        warnings = [_DETECT_NO_CACHE_WARN if w == _DETECT_WARN else w for w in warnings]
     if _opencode_probe_failed(runtimes):
         state_warnings.append(_PROBE_WARN)
     merged = sorted(set(warnings) | set(state_warnings))
@@ -258,7 +262,7 @@ def _catalog_state(fetch_result: dict | None, entries: dict) -> tuple[str, list[
     if skipped or models_ok or aa_ok:
         warns = []
         if not skipped and models_ok and not aa_ok:
-            warns.append(_AA_WARN)
+            warns.append(_AA_WARN if _catalog_is_scored(entries) else _AA_UNSCORED_WARN)
         if not skipped and not models_ok:
             warns.append(_MODELS_DEV_WARN)
         return "fresh", warns

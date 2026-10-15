@@ -589,6 +589,29 @@ class TestCatalogStates(unittest.TestCase):
             "Artificial Analysis refresh failed; scores from cache", parsed["warnings"]
         )
 
+    def test_aa_fail_on_unscored_catalog_claims_no_cache(self):
+        """B-IN-04: with no scores anywhere, an AA failure never says "from cache"."""
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        catalog = {
+            "_meta": {},
+            "openai/gpt-5.6-sol": {
+                "provider": "openai",
+                "runtimes": {"codex": {"model_id": "gpt-5.6-sol"}},
+            },
+        }
+        result = {"fetch_skipped": False, "models_dev_ok": True, "artificial_analysis_ok": False}
+        parsed = self._run_with_fetch(
+            home, project, catalog, {"fetch-model-catalog": (0, json.dumps(result))}
+        )
+        self.assertIn(
+            "Artificial Analysis unavailable (no key or fetch failed); catalog unscored",
+            parsed["warnings"],
+        )
+        self.assertFalse(any("scores from cache" in w for w in parsed["warnings"]))
+
     def test_fetch_failure_is_stale_with_warning(self):
         home = tempfile.mkdtemp()
         project = tempfile.mkdtemp()
@@ -712,6 +735,21 @@ class TestCatalogStates(unittest.TestCase):
             a for a in fake.argv_log if len(a) > 2 and a[2] == "fetch-model-catalog"
         ]
         self.assertEqual(len(fetch_calls), 1)
+
+    def test_detect_failure_without_snapshot_says_so(self):
+        """B-IN-04: no cached runtimes snapshot means no fallback to claim."""
+        home = tempfile.mkdtemp()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        env = _inventory_env(home, {}, {"_meta": {}})
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        fake = FakeRun(spec_answers={"detect-runtimes": (1, "")})
+        code, parsed, _err = run_inventory(project, env, fake, "--host", "codex")
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertIn("detect-runtimes failed; no cached runtimes snapshot", parsed["warnings"])
+        self.assertFalse(any("using the cached" in w for w in parsed["warnings"]))
 
     def test_refresh_argv(self):
         home = tempfile.mkdtemp()
