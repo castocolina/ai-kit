@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import unittest
@@ -722,52 +723,265 @@ class TestCliResolveDispatch(unittest.TestCase):
 
 
 class TestCliConfigPath(unittest.TestCase):
-    def test_config_path_subcommand_prints_the_resolved_path(self):
+    def test_config_path_prints_the_gsd_tools_resolved_path(self):
         import io
-        stdout = io.StringIO()
-        exit_code = cli.main(["config-path", "--cwd", "/repo"], stdout=stdout)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(stdout.getvalue().strip(), "/repo/.planning/config.json")
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t)
+            stdout = io.StringIO()
+            exit_code = cli.main(["config-path", "--cwd", t], run_fn=fake.run_fn,
+                                 which_fn=_node_which,
+                                 resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path,
+                                 stdout=stdout)
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stdout.getvalue().strip(),
+                             os.path.join(t, ".planning", "config.json"))
 
-
-class TestCliWriteWorkflowKey(unittest.TestCase):
-    def test_write_workflow_key_subcommand_writes_a_real_json_value(self):
+    def test_config_path_exits_2_when_gsd_tools_cannot_be_resolved(self):
+        import contextlib
         import io
-        import json
-        writes = {}
-        def fake_write(path, gsd_config, key, value, **kw):
-            writes["args"] = (path, gsd_config, key, value)
-            return {**gsd_config, "workflow": {key: value}}
-        stdout = io.StringIO()
-        exit_code = cli.main(
-            ["write-workflow-key", "--config-path", "/repo/.planning/config.json",
-             "--config-json", "{}", "--key", "cross_ai_execution", "--run-id", "run-1",
-             "--value-json", "true"],
-            write_workflow_key_fn=fake_write, stdout=stdout)
-        self.assertEqual(exit_code, 0)
-        result = json.loads(stdout.getvalue())
-        self.assertIs(result["workflow"]["cross_ai_execution"], True)
-        self.assertIs(writes["args"][3], True)  # a real bool, never the string "true"
+        with contextlib.redirect_stderr(io.StringIO()):
+            exit_code = cli.main(["config-path", "--cwd", "/repo"], which_fn=_node_which,
+                                 resolve_gsd_tools_fn=lambda start: None)
+        self.assertEqual(exit_code, 2)
 
 
-class TestCliClearWorkflowKey(unittest.TestCase):
-    def test_clear_workflow_key_subcommand_clears_an_adapter_owned_key(self):
+class TestCliClearWorkflowKeys(unittest.TestCase):
+    def test_clear_workflow_keys_unset_only_adapter_owned_keys_through_config_set(self):
         import io
         import json
-        config_json = json.dumps({
-            "workflow": {"cross_ai_command": "codex exec ..."},
-            "_ai_kit_spec_execute_gsd": {"workflow": {"cross_ai_command": "codex exec ..."}},
-        })
-        def fake_clear(path, gsd_config, key, **kw):
-            return {**gsd_config, "workflow": {}}
-        stdout = io.StringIO()
-        exit_code = cli.main(
-            ["clear-workflow-key", "--config-path", "/repo/.planning/config.json",
-             "--config-json", config_json, "--key", "cross_ai_command", "--run-id", "run-1"],
-            clear_workflow_key_if_adapter_owned_fn=fake_clear, stdout=stdout)
-        self.assertEqual(exit_code, 0)
-        result = json.loads(stdout.getvalue())
-        self.assertNotIn("cross_ai_command", result["workflow"])
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t)
+            fake.config["workflow.cross_ai_command"] = "codex exec ..."
+            fake.config["workflow.user_key"] = "user-set"
+            planning = os.path.join(t, ".planning")
+            os.makedirs(planning)
+            # The on-disk config.json is gsd-tools' own artifact; ai-kit only ever reads it.
+            with open(os.path.join(planning, "config.json"), "w", encoding="utf-8") as f:
+                json.dump({"workflow": {"cross_ai_command": "codex exec ...",
+                                        "user_key": "user-set"}}, f)
+            gsd_config.write_ownership(os.path.join(planning, "config.json"),
+                                       {"workflow.cross_ai_command": "codex exec ..."})
+            stdout = io.StringIO()
+            exit_code = cli.main(
+                ["clear-workflow-keys", "--cwd", t, "--run-id", "r1",
+                 "--key", "cross_ai_command", "--key", "user_key"],
+                run_fn=fake.run_fn, which_fn=_node_which,
+                resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path, stdout=stdout)
+            self.assertEqual(exit_code, 0)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["applied"], ["workflow.cross_ai_command"])
+            calls = fake.config_set_calls()
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][3:5], ["workflow.cross_ai_command", "null"])
+            self.assertNotIn("workflow.cross_ai_command", fake.config)
+            self.assertEqual(fake.config["workflow.user_key"], "user-set")  # user value kept
+            with open(os.path.join(planning, "ai-kit-gsd-owned.json"), encoding="utf-8") as f:
+                self.assertEqual(json.load(f), {})  # cleared key dropped from the sidecar
+
+
+class FakeGsdTools:
+    """In-memory gsd-tools double (plan 16.1-10): answers `config-set` against an in-memory
+    dict and `config-path`, records every argv, and raises AssertionError on any other
+    subcommand -- config-get included -- proving ai-kit never calls it (RUN-11)."""
+
+    def __init__(self, root, fail_keys=(), raw_keys=()):
+        self.gsd_tools_path = os.path.join(root, "gsd-core", "bin", "gsd-tools.cjs")
+        self.config = {}  # dotted key -> value (stands in for config.json)
+        self.calls = []
+        self.fail_keys = set(fail_keys)
+        self.raw_keys = set(raw_keys)
+
+    class _Result:
+        def __init__(self, returncode, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def run_fn(self, argv, **kw):
+        self.calls.append(list(argv))
+        assert argv[0] == "node" and argv[1] == self.gsd_tools_path, argv
+        sub, rest = argv[2], argv[3:]
+        if sub == "config-set":
+            return self._config_set(rest[0], rest[1])
+        if sub == "config-path":
+            cwd = rest[rest.index("--cwd") + 1]
+            return self._Result(0, stdout=os.path.join(cwd, ".planning", "config.json") + "\n")
+        raise AssertionError(f"FakeGsdTools saw an unexpected subcommand: {sub}")
+
+    def _config_set(self, key, value):
+        if key in self.fail_keys:
+            return self._Result(1, stderr=f"Error: config-set failed for {key}")
+        if key in self.raw_keys:
+            return self._Result(0, stdout=f"{key}={value}\n")
+        if value == "null":
+            was_present = key in self.config
+            old = self.config.pop(key, None)
+            out = {"updated": True, "unset": True, "key": key, "value": None}
+            if was_present:
+                out["previousValue"] = old
+            return self._Result(0, stdout=json.dumps(out) + "\n")
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            decoded = value
+        out = {"updated": True, "key": key, "value": decoded}
+        if key in self.config:
+            out["previousValue"] = self.config[key]
+        self.config[key] = decoded
+        return self._Result(0, stdout=json.dumps(out) + "\n")
+
+    def config_set_calls(self):
+        return [argv for argv in self.calls if argv[2] == "config-set"]
+
+    def subcommands(self):
+        return [argv[2] for argv in self.calls]
+
+
+def _node_which(name):
+    return "node"
+
+
+class TestWorkflowKeysViaConfigSet(unittest.TestCase):
+    """R11: workflow keys reach GSD only through gsd-tools config-set, one call per key, with
+    ownership in the sidecar and no direct config.json write."""
+
+    def _run_write(self, fake, t, sets, stdout):
+        return cli.main(
+            ["write-workflow-keys", "--cwd", t, "--run-id", "r1"]
+            + [flag for spec in sets for flag in ("--set", spec)],
+            run_fn=fake.run_fn, which_fn=_node_which,
+            resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path, stdout=stdout)
+
+    def test_three_keys_go_through_config_set_one_call_each_in_plan_order(self):
+        import io
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t)
+            stdout = io.StringIO()
+            code = self._run_write(fake, t,
+                                   ['cross_ai_command="python3 x"', "cross_ai_execution=true",
+                                    "cross_ai_timeout=900"], stdout)
+            self.assertEqual(code, 0)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["applied"], ["workflow.cross_ai_command",
+                                                  "workflow.cross_ai_execution",
+                                                  "workflow.cross_ai_timeout"])
+            self.assertIsNone(result["failed"])
+            self.assertEqual(result["reverted"], [])
+            calls = fake.config_set_calls()
+            self.assertEqual(len(calls), 3)
+            self.assertEqual([c[3] for c in calls],
+                             ["workflow.cross_ai_command", "workflow.cross_ai_execution",
+                              "workflow.cross_ai_timeout"])
+            self.assertEqual(fake.config["workflow.cross_ai_execution"], True)
+            self.assertEqual(fake.config["workflow.cross_ai_timeout"], 900)
+            self.assertEqual(fake.config["workflow.cross_ai_command"], "python3 x")
+
+    def test_ownership_sidecar_maps_each_dotted_key_to_its_written_value(self):
+        import io
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t)
+            stdout = io.StringIO()
+            self._run_write(fake, t, ["cross_ai_execution=true"], stdout)
+            with open(os.path.join(t, ".planning", "ai-kit-gsd-owned.json"),
+                      encoding="utf-8") as f:
+                owned = json.load(f)
+            self.assertEqual(owned, {"workflow.cross_ai_execution": True})
+
+    def test_no_direct_config_json_write_and_no_config_get_calls(self):
+        import io
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t)
+            config_json = os.path.join(t, ".planning", "config.json")
+            spied = []
+            real_write = gsd_config.cache_write_json
+            with mock.patch.object(gsd_config, "cache_write_json",
+                                   side_effect=lambda p, d: (spied.append(p),
+                                                             real_write(p, d))):
+                stdout = io.StringIO()
+                self._run_write(fake, t, ["cross_ai_execution=true"], stdout)
+            self.assertFalse(os.path.exists(config_json))  # never created by ai-kit
+            for path in spied:
+                self.assertFalse(path.endswith("config.json"), path)  # sidecar only
+            self.assertNotIn("config-get", fake.subcommands())  # RUN-11
+
+    def test_bytes_of_an_existing_config_json_are_untouched(self):
+        import io
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            planning = os.path.join(t, ".planning")
+            os.makedirs(planning)
+            config_json = os.path.join(planning, "config.json")
+            with open(config_json, "w", encoding="utf-8") as f:
+                f.write('{"workflow": {"cross_ai_execution": false}}')
+            with open(config_json, "rb") as f:
+                before = f.read()
+            fake = FakeGsdTools(t)
+            fake.config["workflow.cross_ai_execution"] = False
+            stdout = io.StringIO()
+            self._run_write(fake, t, ["cross_ai_execution=true"], stdout)
+            with open(config_json, "rb") as f:
+                self.assertEqual(f.read(), before)  # gsd-tools owns the real write
+
+    def test_write_workflows_keys_without_any_set_is_an_argparse_error(self):
+        import contextlib
+        import io
+        import tempfile
+        with (tempfile.TemporaryDirectory() as t,
+              contextlib.redirect_stderr(io.StringIO()),
+              self.assertRaises(SystemExit)):
+            cli.main(["write-workflow-keys", "--cwd", t, "--run-id", "r1"],
+                     run_fn=lambda *a, **k: None, which_fn=_node_which,
+                     resolve_gsd_tools_fn=lambda start: "/x/gsd-tools.cjs")
+
+    def test_empty_change_list_makes_zero_run_fn_calls(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t)
+            ctx = gsd_config.GsdWriteContext(
+                tools=None, project_dir=t,
+                config_path=os.path.join(t, ".planning", "config.json"),
+                run_id="r1", run_fn=fake.run_fn)
+            result = gsd_config.apply_changes(ctx, [])
+            self.assertEqual(result, gsd_config.ApplyResult([], None, None, []))
+            self.assertEqual(fake.calls, [])
+
+    def test_gsd_core_version_banner_printed_once_with_version_file(self):
+        import contextlib
+        import io
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            os.makedirs(os.path.join(t, "gsd-core", "bin"))
+            with open(os.path.join(t, "gsd-core", "VERSION"), "w", encoding="utf-8") as f:
+                f.write("9.9.9\n")
+            fake = FakeGsdTools(t)
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self._run_write(fake, t, ["cross_ai_execution=true"], stdout)
+            expected = f"ai-kit: gsd-core 9.9.9 at {fake.gsd_tools_path}"
+            self.assertEqual([l for l in stderr.getvalue().splitlines() if l.startswith("ai-kit:")],
+                             [expected])
+            self.assertEqual(json.loads(stdout.getvalue())["applied"],
+                             ["workflow.cross_ai_execution"])
+
+    def test_gsd_core_version_banner_says_unknown_without_a_version_file(self):
+        import contextlib
+        import io
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t)
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self._run_write(fake, t, ["cross_ai_execution=true"], io.StringIO())
+            self.assertIn(f"ai-kit: gsd-core unknown at {fake.gsd_tools_path}",
+                          stderr.getvalue())
 
 
 class _FakeCompletedProcess:

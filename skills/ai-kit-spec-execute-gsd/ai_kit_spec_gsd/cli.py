@@ -1,16 +1,18 @@
 """CLI entrypoint for ai-kit-spec-execute-gsd -- invoked via the ai-kit-spec-gsd.py shim. Mirrors
 ai_kit_spec/cli.py's own subcommand pattern (Plan 1) so Task 5's SKILL.md gives an executing agent
 one concrete, runnable command for every operation it performs -- resolve-dispatch, config-path,
-write-workflow-key, clear-workflow-key, prepare-tooling, prepare-cross-ai-guidance,
+write-workflow-keys, clear-workflow-keys, prepare-tooling, prepare-cross-ai-guidance,
 write-resumable-state. There is no dispatch-phase/classify-failure subcommand: GSD's own
 /gsd-execute-phase skill performs the actual dispatch in-session, invoked directly via the Skill
 tool by Task 5's SKILL.md, never subprocess-invoked here (Task 1 finding 3)."""
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 
+from ai_kit_spec import gsd_tools
 from ai_kit_spec.cache import cache_read_json, cache_write_json
 from ai_kit_spec.config_io import ConfigError
 from ai_kit_spec.detection import (
@@ -34,16 +36,57 @@ from ai_kit_spec_gsd.adapter import (
 )
 from ai_kit_spec_gsd.cross_ai_guidance import GSD_SUMMARY_FORMAT_BLOCK, build_gsd_cross_ai_guidance
 from ai_kit_spec_gsd.gsd_config import (
-    clear_workflow_key_if_adapter_owned,
+    GsdWriteContext,
+    apply_changes,
     generate_run_id,
+    is_adapter_owned,
     read_gsd_config,
     resolve_active_runtime,
-    resolve_gsd_config_path,
     write_active_runtime,
     write_model_profile,
     write_native_tier_override,
-    write_workflow_key,
 )
+
+
+def _resolve_gsd_tooling(cwd: str, which_fn, resolve_gsd_tools_fn) -> tuple:
+    """Resolves (node, gsd-tools path), printing which piece is missing to stderr -- returns
+    (None, None) so the caller can exit 2."""
+    node = which_fn("node")
+    if not node:
+        print("ai-kit-spec-execute-gsd: node not found on PATH -- required to run gsd-tools",
+              file=sys.stderr)
+        return None, None
+    tools_path = resolve_gsd_tools_fn(start=cwd)
+    if not tools_path:
+        print(f"ai-kit-spec-execute-gsd: no gsd-tools.cjs found for {cwd} -- GSD must be "
+              f"installed (project-local gsd-core first)", file=sys.stderr)
+        return None, None
+    return node, tools_path
+
+
+def _default_resolve_gsd_tools(start: str):
+    return gsd_tools.resolve_gsd_tools(start=start)
+
+
+def _build_write_context(cwd: str, run_id: str, which_fn=shutil.which,
+                          resolve_gsd_tools_fn=_default_resolve_gsd_tools,
+                          run_fn=subprocess.run) -> GsdWriteContext | None:
+    """The one helper that builds a GsdWriteContext: resolves node + gsd-tools, asks gsd-tools
+    for the workstream-aware config path, and prints the `ai-kit: gsd-core <version> at <path>`
+    banner to stderr so a previousValue contract drift on a non-1.16 gsd-core is diagnosable
+    from every config-writing run. Returns None (after naming the miss) when node or gsd-tools
+    cannot be resolved."""
+    node, tools_path = _resolve_gsd_tooling(cwd, which_fn, resolve_gsd_tools_fn)
+    if node is None:
+        return None
+    tools = gsd_tools.GsdTools(node_bin=node, gsd_tools_path=tools_path)
+    config_path = gsd_tools.config_path(tools, cwd, run_fn=run_fn)
+    if not config_path:
+        config_path = os.path.join(cwd, ".planning", "config.json")
+    version = gsd_tools.gsd_core_version(tools_path)
+    print(f"ai-kit: gsd-core {version or 'unknown'} at {tools_path}", file=sys.stderr)
+    return GsdWriteContext(tools=tools, project_dir=cwd, config_path=config_path,
+                            run_id=run_id, run_fn=run_fn)
 
 
 def main(argv: list, **kwargs) -> int:
@@ -62,8 +105,7 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
          cache_read_json_fn=cache_read_json, cache_write_json_fn=cache_write_json,
          write_tier_fn=write_native_tier_override, write_runtime_fn=write_active_runtime,
          write_model_profile_fn=write_model_profile,
-         write_workflow_key_fn=write_workflow_key,
-         clear_workflow_key_if_adapter_owned_fn=clear_workflow_key_if_adapter_owned,
+         which_fn=shutil.which, resolve_gsd_tools_fn=_default_resolve_gsd_tools,
          detect_tool_availability_fn=detect_tool_availability,
          resolve_agents_tooling_path_fn=resolve_agents_tooling_path,
          ensure_codegraph_registered_fn=ensure_codegraph_registered,
@@ -90,26 +132,22 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
     p_config_path = sub.add_parser("config-path")
     p_config_path.add_argument("--cwd", required=True)
 
-    p_write_workflow = sub.add_parser("write-workflow-key")
-    p_write_workflow.add_argument("--config-path", required=True)
-    p_write_workflow.add_argument("--config-json", required=True,
-                                   help="the current gsd_config dict as a JSON string -- thread "
-                                        "the PREVIOUS write's own stdout into this on a second "
-                                        "call in the same run")
-    p_write_workflow.add_argument("--key", required=True)
-    p_write_workflow.add_argument("--value-json", required=True,
-                                   help="the value to write, as a JSON literal -- e.g. "
-                                        "'\"codex exec ...\"' for a string, 'true' for a JSON "
-                                        "boolean")
-    p_write_workflow.add_argument("--run-id", required=True,
-                                   help="the SAME run_id captured from this wave's "
-                                        "resolve-dispatch call (result['run_id'])")
+    p_write_workflows = sub.add_parser("write-workflow-keys")
+    p_write_workflows.add_argument("--cwd", required=True)
+    p_write_workflows.add_argument("--run-id", required=True,
+                                    help="the SAME run_id captured from this wave's "
+                                         "resolve-dispatch call (result['run_id'])")
+    p_write_workflows.add_argument("--set", action="append", required=True, metavar="KEY=JSON",
+                                    help="workflow key (without the 'workflow.' prefix) and its "
+                                         "JSON value -- e.g. '--set cross_ai_execution=true'")
 
-    p_clear_workflow = sub.add_parser("clear-workflow-key")
-    p_clear_workflow.add_argument("--config-path", required=True)
-    p_clear_workflow.add_argument("--config-json", required=True)
-    p_clear_workflow.add_argument("--key", required=True)
-    p_clear_workflow.add_argument("--run-id", required=True)
+    p_clear_workflows = sub.add_parser("clear-workflow-keys")
+    p_clear_workflows.add_argument("--cwd", required=True)
+    p_clear_workflows.add_argument("--run-id", required=True)
+    p_clear_workflows.add_argument("--key", action="append", required=True,
+                                    metavar="KEY",
+                                    help="workflow key (without the 'workflow.' prefix) to "
+                                         "unset -- only keys the sidecar marks adapter-owned")
 
     p_prepare = sub.add_parser("prepare-tooling")
     p_prepare.add_argument("--cli", default=None,
@@ -179,23 +217,47 @@ def _main(argv: list, assemble_candidates_fn=assemble_candidates,
         return 0
 
     if args.command == "config-path":
-        stdout.write(resolve_gsd_config_path(args.cwd) + "\n")
+        node, tools_path = _resolve_gsd_tooling(args.cwd, which_fn, resolve_gsd_tools_fn)
+        if node is None:
+            return 2
+        tools = gsd_tools.GsdTools(node_bin=node, gsd_tools_path=tools_path)
+        resolved = gsd_tools.config_path(tools, args.cwd, run_fn=run_fn)
+        if not resolved:
+            print(f"ai-kit-spec-execute-gsd: gsd-tools could not resolve a config path for "
+                  f"{args.cwd}", file=sys.stderr)
+            return 2
+        stdout.write(resolved + "\n")
         return 0
 
-    if args.command == "write-workflow-key":
-        gsd_config = json.loads(args.config_json)
-        value = json.loads(args.value_json)
-        result = write_workflow_key_fn(args.config_path, gsd_config, args.key, value,
-                                        run_id=args.run_id)
-        stdout.write(json.dumps(result))
-        return 0
+    if args.command == "write-workflow-keys":
+        ctx = _build_write_context(args.cwd, args.run_id, which_fn=which_fn,
+                                    resolve_gsd_tools_fn=resolve_gsd_tools_fn, run_fn=run_fn)
+        if ctx is None:
+            return 2
+        changes = []
+        for spec in args.set:
+            key, _, raw = spec.partition("=")
+            changes.append(("workflow." + key, json.loads(raw)))
+        result = apply_changes(ctx, changes)
+        stdout.write(json.dumps(result._asdict()))
+        return 1 if result.failed else 0
 
-    if args.command == "clear-workflow-key":
-        gsd_config = json.loads(args.config_json)
-        result = clear_workflow_key_if_adapter_owned_fn(args.config_path, gsd_config, args.key,
-                                                          run_id=args.run_id)
-        stdout.write(json.dumps(result))
-        return 0
+    if args.command == "clear-workflow-keys":
+        ctx = _build_write_context(args.cwd, args.run_id, which_fn=which_fn,
+                                    resolve_gsd_tools_fn=resolve_gsd_tools_fn, run_fn=run_fn)
+        if ctx is None:
+            return 2
+        gsd_config, status = read_gsd_config(ctx.config_path,
+                                              warn_fn=lambda msg: print(msg, file=sys.stderr))
+        if status == "malformed":
+            print(f"ai-kit-spec-execute-gsd: {ctx.config_path} is malformed -- refusing to "
+                  f"clear workflow keys over it", file=sys.stderr)
+            return 2
+        changes = [("workflow." + key, None) for key in args.key
+                   if is_adapter_owned(gsd_config, ctx.config_path, "workflow." + key)]
+        result = apply_changes(ctx, changes)
+        stdout.write(json.dumps(result._asdict()))
+        return 1 if result.failed else 0
 
     if args.command == "prepare-tooling":
         tool_availability = detect_tool_availability_fn()

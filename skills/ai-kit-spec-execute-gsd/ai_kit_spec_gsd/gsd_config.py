@@ -6,8 +6,10 @@ import json
 import os
 import shutil
 import time
+from typing import NamedTuple
 
-from ai_kit_spec.cache import cache_write_json
+from ai_kit_spec import gsd_tools
+from ai_kit_spec.cache import cache_read_json, cache_write_json
 
 KNOWN_GSD_RUNTIMES = {
     "claude", "codex", "gemini", "opencode", "qwen", "kilo", "copilot", "grok", "cursor",
@@ -38,6 +40,103 @@ TIER_TO_MODEL_PROFILE = {"opus": "quality", "sonnet": "balanced", "haiku": "budg
 # MODEL_PROFILES table. This 3-tier mapping mirrors GSD's own core.cjs fallback intent (quality->
 # opus, budget->haiku, else sonnet) -- coarser than a per-tier override (applies project-wide to
 # every agent role GSD spawns, not just one dispatch), but it is the mechanism GSD actually reads.
+
+
+class GsdWriteContext(NamedTuple):
+    """Everything one config-writing run needs, threaded as one value (D-17): the resolved
+    gsd-tools handle, the project dir its CLI is invoked with, the config path gsd-tools'
+    own `config-path` returned (workstream-aware), the per-run id backing up the config, and
+    the subprocess runner (injected in tests)."""
+
+    tools: gsd_tools.GsdTools
+    project_dir: str
+    config_path: str
+    run_id: str
+    run_fn: object
+
+
+class ApplyResult(NamedTuple):
+    """Outcome of one `apply_changes` run: the keys whose `config-set` succeeded, the one key
+    that failed (None on full success), its error text, and the earlier keys reverted in
+    reverse order."""
+
+    applied: list
+    failed: str | None
+    error: str | None
+    reverted: list
+
+
+OWNERSHIP_SIDECAR = "ai-kit-gsd-owned.json"
+
+
+def _ownership_path(config_path: str) -> str:
+    return os.path.join(os.path.dirname(config_path), OWNERSHIP_SIDECAR)
+
+
+def read_ownership(config_path: str) -> dict:
+    """The sidecar ownership map (dotted key -> value ai-kit wrote), {} when missing -- a lost
+    or edited sidecar only ever makes values user-owned (fail-safe, D-16)."""
+    return cache_read_json(_ownership_path(config_path)) or {}
+
+
+def write_ownership(config_path: str, owned: dict) -> None:
+    cache_write_json(_ownership_path(config_path), owned)
+
+
+def _dotted_get(gsd_config: dict, dotted_key: str):
+    current = gsd_config
+    for part in dotted_key.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def is_adapter_owned(gsd_config: dict, config_path: str, dotted_key: str) -> bool:
+    """True only when the config's current value is not None and exactly equals the sidecar's
+    record for that dotted key -- a missing sidecar means every value reads as user-owned."""
+    current = _dotted_get(gsd_config, dotted_key)
+    return current is not None and current == read_ownership(config_path).get(dotted_key)
+
+
+def apply_changes(ctx: GsdWriteContext, changes: list) -> ApplyResult:
+    """Applies (dotted_key, value) changes through `gsd-tools config-set`, one call per key, in
+    plan order (D-17, R11). Each undo entry is that key's own config-set `previousValue`
+    (RUN-11: never a separate config-get). On any failure the earlier applied keys are reverted
+    in reverse order and the failed key keeps its new value. gsd-tools owns locking and
+    validation; this module never writes config.json itself."""
+    if not changes:
+        return ApplyResult([], None, None, [])
+    _backup_once(ctx.config_path, shutil.copy2, os.path.isfile, ctx.run_id)
+    applied, reverts, reverted = [], [], []
+    failed, error = None, None
+    for key, value in changes:
+        ok, output = gsd_tools.config_set(ctx.tools, ctx.project_dir, key, value,
+                                           run_fn=ctx.run_fn)
+        if not ok:
+            failed, error = key, f"config-set failed for {key}: {output}"
+            break
+        undo = gsd_tools.prior_value(output)
+        if undo is None:
+            failed = key
+            error = (f"config-set gave no parseable result for {key}; its prior value is "
+                     f"unknown, so it keeps the new value")
+            break
+        reverts.append((key, undo[1]))
+        applied.append(key)
+    if failed is not None:
+        for key, prior in reversed(reverts):
+            gsd_tools.config_set(ctx.tools, ctx.project_dir, key, prior, run_fn=ctx.run_fn)
+            reverted.append(key)
+    else:
+        owned = read_ownership(ctx.config_path)
+        for key, value in changes:
+            if value is None:
+                owned.pop(key, None)
+            else:
+                owned[key] = value
+        write_ownership(ctx.config_path, owned)
+    return ApplyResult(applied, failed, error, reverted)
 
 
 def read_gsd_config(path: str, read_fn=open, warn_fn=print) -> tuple:

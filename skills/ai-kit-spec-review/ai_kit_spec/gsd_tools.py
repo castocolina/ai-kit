@@ -235,6 +235,18 @@ def config_path(
     return result.stdout.strip() or None
 
 
+def gsd_core_version(gsd_tools_path: str) -> str | None:
+    """The stripped text of the gsd-core `VERSION` file (two directories above
+    `bin/gsd-tools.cjs`, i.e. the install root), or `None` on OSError -- callers print it so a
+    `previousValue` contract drift on a non-1.16 gsd-core is diagnosable from any run."""
+    root = os.path.dirname(os.path.dirname(gsd_tools_path))
+    try:
+        with open(os.path.join(root, "VERSION"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
 def ensure_config_exists(
     tools: GsdTools,
     project_dir: str,
