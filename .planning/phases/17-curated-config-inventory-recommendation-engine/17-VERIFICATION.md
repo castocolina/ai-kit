@@ -57,6 +57,7 @@ warnings:
     fix: >-
       Treat a catalog with no models_dev or artificial_analysis sourced entry as "none" (or pass
       "had a cache before the refresh" into _catalog_state), plus one fixture test.
+    resolved: "28ba056: rows whose source flags are all false classify as none (test_failed_fetch_with_router_only_rows_is_none)"
 ---
 
 # Phase 17: Curated-Config Inventory & Recommendation Engine Verification Report
