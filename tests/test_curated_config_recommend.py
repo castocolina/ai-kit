@@ -870,6 +870,11 @@ class TestSlotEdges(unittest.TestCase):
         self.assertEqual(entry["op"], "unset")
         self.assertEqual(entry["source"], "native")
         self.assertEqual(entry["existing"], "x")
+        # A-IN-06: every unset carries value null, like the reconcile-layer unsets.
+        self.assertIsNone(entry["value"])
+        empty = build(dict(inv, candidates=[]), rigor="standard")
+        empty_entry = entry_map(empty)["model_profile_overrides.codex.sonnet"]
+        self.assertEqual((empty_entry["op"], empty_entry["value"]), ("unset", None))
 
     def test_pi_sonnet_needs_choice(self):
         inv = make_inventory(

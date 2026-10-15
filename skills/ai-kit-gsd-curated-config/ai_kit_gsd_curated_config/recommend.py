@@ -205,6 +205,8 @@ _CODEX_EMPTY_WHY = "kept gsd default: codex enumerated no models; presence and c
 
 
 def _keep_why(existing: Any, why: str = _KEEP_WHY) -> tuple[str, str]:
+    """`keep` shows the gsd default as `value`; an `unset` (existing override removed so
+    the default applies) carries `value: None` like every other unset."""
     if existing is None:
         return "keep", why
     return "unset", why + "; removes the existing override"
@@ -254,7 +256,7 @@ def _tier_slot(ctx: PlanCtx, tier: str, cands: list, ceiling: roles.Ceiling) -> 
         return make_entry(
             ctx,
             meta.key,
-            _native_value(ctx, tier),
+            _native_value(ctx, tier) if op == "keep" else None,
             "native",
             why,
             op=op,
@@ -288,7 +290,8 @@ def _codex_empty_slots(ctx: PlanCtx, tiers: tuple[str, ...]) -> tuple[list, list
     for tier in tiers:
         key = _slot_meta(ctx, tier).key
         op, why = _keep_why(presets.get_dotted(ctx.existing, key), _CODEX_EMPTY_WHY)
-        value = _native_value(ctx, tier) if _native_model(ctx, tier) is not None else None
+        known = op == "keep" and _native_model(ctx, tier) is not None
+        value = _native_value(ctx, tier) if known else None
         entries.append(make_entry(ctx, key, value, "native", why, op=op, effect=effect))
     return entries, []
 
