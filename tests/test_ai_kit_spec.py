@@ -5,6 +5,7 @@ import glob
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -11672,6 +11673,84 @@ class TestDispatchExecuteArgv(unittest.TestCase):
         self.assertEqual(result["command"], shlex.join(captured["argv"]))
         self.assertIn("-m", captured["argv"])
         self.assertIn("gpt-5.6-sol", captured["argv"])
+
+
+
+class TestCrossAiTemplateText(unittest.TestCase):
+    """Pins cross-ai.mjs header, CONFIG block, and scrub list for the v2 renderer (18-09)."""
+
+    _SCRUB_DEFAULT = sorted(detection.HOST_SIGNAL_ENV_VARS)
+
+    def _template_path(self) -> str:
+        path = tooling_guidance.resolve_cross_ai_template_path()
+        self.assertIsNotNone(path)
+        assert path is not None
+        return path
+
+    def test_resolve_path_missing_when_file_absent(self):
+        self.assertIsNotNone(tooling_guidance.resolve_cross_ai_template_path())
+        with mock.patch("ai_kit_spec.tooling_guidance.os.path.isfile", return_value=False):
+            self.assertIsNone(tooling_guidance.resolve_cross_ai_template_path())
+
+    def test_header_and_config_contract(self):
+        path = self._template_path()
+        text = _read_bytes(path).decode("utf-8")
+        lines = text.splitlines()
+        hdr = (
+            r"^// ai-kit-cross-ai generator=ai-kit-gsd-curated-config "
+            r"template=(\d+) sha256=UNSTAMPED$"
+        )
+        m = re.match(hdr, lines[1])
+        self.assertIsNotNone(m)
+        assert m is not None
+        self.assertEqual(m.group(1), "2")
+        start = text.index("// <config>\n") + len("// <config>\n")
+        end = text.index("\n// </config>", start)
+        block = text[start:end]
+        self.assertTrue(block.startswith("const CONFIG = "))
+        cfg_text = block[len("const CONFIG = ") : -1]
+        cfg = json.loads(cfg_text)
+        expected = {
+            "backoffS": [30, 60],
+            "extraArgs": {},
+            "heartbeatS": 30,
+            "models": {},
+            "outerTimeoutS": 1800,
+            "prefer": ["pi", "cursor", "opencode"],
+            "retries": 2,
+            "routerBacked": {},
+            "scrubEnv": self._SCRUB_DEFAULT,
+        }
+        self.assertEqual(cfg, expected)
+        self.assertNotIn("timeoutMarginS", cfg)
+        reserialized = "const CONFIG = " + json.dumps(cfg, indent=2, sort_keys=True) + ";"
+        self.assertEqual(block, reserialized)
+        self.assertIn("const TIMEOUT_MARGIN_S = 30;", text)
+        self.assertEqual(cfg["scrubEnv"], sorted(detection.HOST_SIGNAL_ENV_VARS))
+
+    def test_retired_cli_absent_outside_scrub_entry(self):
+        path = self._template_path()
+        text = _read_bytes(path).decode("utf-8")
+        start = text.index('"scrubEnv"')
+        end = text.index("\n// </config>", start)
+        region = text[:start] + text[end:]
+        region_no_grok_agent = region.replace('"GROK_AGENT"', "")
+        self.assertIsNone(re.search("grok", region_no_grok_agent, re.I))
+        cfg_start = text.index("const CONFIG = ") + len("const CONFIG = ")
+        cfg_end = text.index("\n// </config>")
+        cfg = json.loads(text[cfg_start:cfg_end].rstrip(";"))
+        for key in ("prefer", "models", "extraArgs", "routerBacked"):
+            val = cfg.get(key)
+            if isinstance(val, (dict, list)):
+                self.assertFalse(any("grok" in str(k).lower() for k in val))
+
+    def test_no_absolute_home_paths_or_header_state(self):
+        path = self._template_path()
+        text = _read_bytes(path).decode("utf-8")
+        for frag in ("/home/", "/Users/", "/var/home/"):
+            self.assertNotIn(frag, text)
+        self.assertNotIn("headerState", text)
+
 
 
 if __name__ == "__main__":
