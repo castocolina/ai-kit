@@ -276,6 +276,18 @@ class TestRenderAndWriteToml(unittest.TestCase):
             cfg_write_toml(path, {"policy": {"mode": "single"}, "reviewers": []})
             self.assertTrue(os.path.exists(path))
 
+    def test_write_toml_replaces_atomically(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "review-spec.toml")
+            config = {"policy": {"mode": "single"}, "reviewers": []}
+            cfg_write_toml(path, {"policy": {"mode": "double"}, "reviewers": []})
+            with mock.patch("ai_kit_spec.cache.os.replace", wraps=os.replace) as replace:
+                cfg_write_toml(path, config)
+            replace.assert_called_once()
+            with open(path, encoding="utf-8") as f:
+                self.assertEqual(f.read(), cfg_render_toml(config))
+            self.assertEqual(os.listdir(d), ["review-spec.toml"])
+
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_escapes_quotes_and_backslashes_in_strings(self):
         rendered = cfg_render_toml(
@@ -1033,17 +1045,14 @@ class TestCacheWriteJsonAtomic(unittest.TestCase):
             cache_write_json(path, {"a": 1})
             with open(path, "rb") as f:
                 original = f.read()
-            real_dump = json.dump
-
-            def boom(*args, **kwargs):
-                raise ValueError("injected")
-
-            with unittest.mock.patch.object(json, "dump", boom), self.assertRaises(ValueError):
+            # Fail after the temp file is written, so the cleanup path runs.
+            with unittest.mock.patch(
+                "ai_kit_spec.cache.os.replace", side_effect=OSError("injected")
+            ), self.assertRaises(OSError):
                 cache_write_json(path, {"a": 2})
             with open(path, "rb") as f:
                 self.assertEqual(f.read(), original)
             self.assertEqual(glob.glob(os.path.join(d, "*.tmp")), [])
-            del real_dump
 
     def test_concurrent_writers_both_succeed(self):
         with tempfile.TemporaryDirectory() as d:

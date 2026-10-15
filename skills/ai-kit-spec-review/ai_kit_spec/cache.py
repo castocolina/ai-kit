@@ -21,6 +21,10 @@ def cache_read_json(path: str) -> dict | None:
 
 
 def cache_write_json(path: str, data: dict) -> None:
+    cache_write_text(path, json.dumps(data, indent=2))
+
+
+def cache_write_text(path: str, text: str) -> None:
     """Crash-safe atomic write: each writer gets its own mkstemp temp file (unique name,
     mode 0600) in the target directory, then os.replace moves it over the target, so two
     concurrent sessions writing the same cache or trust record never collide on a shared
@@ -30,7 +34,7 @@ def cache_write_json(path: str, data: dict) -> None:
     fd, tmp = tempfile.mkstemp(dir=parent, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            f.write(text)
         os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):

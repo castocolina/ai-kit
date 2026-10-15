@@ -1,6 +1,7 @@
 import os
 import sys
 
+from ai_kit_spec.cache import cache_write_text
 from ai_kit_spec.trust import is_trusted
 
 try:
@@ -319,9 +320,7 @@ def cfg_render_toml(config: dict) -> str:
 
 
 def cfg_write_toml(path: str, config: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(cfg_render_toml(config))
+    cache_write_text(path, cfg_render_toml(config))
 
 
 def resolve_timeout_tiers(reviewer_entry: dict, policy: dict) -> list[int]:
