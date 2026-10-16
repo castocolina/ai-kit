@@ -276,6 +276,23 @@ class TestWrappers(unittest.TestCase):
             gsd_tools.ensure_config_exists(self.TOOLS, "/p", run_fn=recording_run([(1, "", "")]))
         )
 
+    def test_ensure_config_exists_timeout_and_spawn_error_are_false(self):
+        seen = []
+
+        def raiser(exc):
+            def run(_cmd, **kw):
+                seen.append((kw.get("timeout"), kw.get("env")))
+                raise exc
+            return run
+
+        for exc in (subprocess.TimeoutExpired("node", 120), OSError("no node")):
+            self.assertFalse(
+                gsd_tools.ensure_config_exists(
+                    self.TOOLS, "/p", run_fn=raiser(exc), env={"A": "1"}, timeout=120
+                )
+            )
+        self.assertEqual(seen, [(120, {"A": "1"}), (120, {"A": "1"})])
+
 
 
 class TestStrictEncoder(unittest.TestCase):

@@ -359,14 +359,25 @@ def ensure_config_exists(
     tools: GsdTools,
     project_dir: str,
     run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    *,
+    env: Mapping[str, str] | None = None,
+    timeout: float | None = None,
 ) -> bool:
-    """Runs `config-new-project --cwd <dir>`. `True` covers both the freshly-created case
-    and gsd-tools' own idempotent `already_exists` no-op; `False` otherwise."""
-    result = run_fn(
-        [tools.node_bin, tools.gsd_tools_path, "config-new-project", "--cwd", project_dir,
-         "--raw"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    """Runs `config-new-project --cwd <dir>` with `env` (default: this process's). `True`
+    covers both the freshly-created case and gsd-tools' own idempotent `already_exists`
+    no-op; `False` otherwise, including a spawn error or a `timeout`."""
+    # env only when given: callers' run_fn wrappers may inject their own env keyword.
+    env_kw = {} if env is None else {"env": dict(env)}
+    try:
+        result = run_fn(
+            [tools.node_bin, tools.gsd_tools_path, "config-new-project", "--cwd", project_dir,
+             "--raw"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+            **env_kw,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
     return result.returncode == 0

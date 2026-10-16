@@ -379,6 +379,7 @@ class PrepareCtx(NamedTuple):
     inputs: Inputs
     target: Target
     deps: ApplyDeps
+    gsd_mod: Any
     config_path: str
     config_existed: bool
     progress: Progress
@@ -524,25 +525,6 @@ def _config_call(target: Target, inputs: Inputs, deps: ApplyDeps) -> Any:
     if gsd is None:
         raise OSError(gsd_catalog.SIBLING_MISSING)
     return gsd.ConfigCall(target.tools, inputs.project_dir, deps.run_fn, target.env)
-
-
-def _new_project(call: Any) -> bool:
-    proc = call.run_fn(
-        [
-            call.tools.node_bin,
-            call.tools.gsd_tools_path,
-            "config-new-project",
-            "--cwd",
-            call.project_dir,
-            "--raw",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-        env=None if call.env is None else dict(call.env),
-    )
-    return proc.returncode == 0
 
 
 def _script_warning(path: str) -> str:
@@ -832,8 +814,11 @@ def _prepare_writes(
         return _rollback_report(ctx.progress, config_path, ctx.report, str(exc))
     created_config = False
     if not ctx.config_existed:
-        call = _config_call(ctx.target, ctx.inputs, ctx.deps)
-        if not _new_project(call):
+        target = ctx.target
+        created = ctx.gsd_mod.ensure_config_exists(
+            target.tools, ctx.inputs.project_dir, ctx.deps.run_fn, env=target.env, timeout=120
+        )
+        if not created:
             return _rollback_report(
                 ctx.progress, config_path, ctx.report, "config-new-project failed"
             )
@@ -860,7 +845,8 @@ def _pre_commit(
 ) -> tuple[int, dict] | None:
     """D-22 steps 4-6 (new project, runner, config-set); a failure has already rolled back."""
     prep = PrepareCtx(
-        ctx.inputs, ctx.target, ctx.deps, config_path, config_existed, progress, ctx.report
+        ctx.inputs, ctx.target, ctx.deps, ctx.gsd_mod, config_path, config_existed, progress,
+        ctx.report,
     )
     prepared = _prepare_writes(prep)
     if isinstance(prepared, tuple):

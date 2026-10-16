@@ -1882,7 +1882,7 @@ class TestPreCommitExceptions(unittest.TestCase):
             code, report = _write_apply(plan_path, inv_path, project, env, rec)
             self.assertEqual(code, 1)
             self.assertFalse(report["applied"])
-            self.assertIn("timed out", report["error"])
+            self.assertIn("config-new-project failed", report["error"])
             self.assertIsNone(report["restore_error"])
             self.assertEqual(_config_set_keys(rec.argv_log), [])
             self._assert_fresh_rolled_back(project, config_path)
@@ -1940,15 +1940,23 @@ class TestPreCommitExceptions(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
             shutil.rmtree(os.path.join(project, ".planning"))
-            rec = _NewProjectRun(fake, config_path, raise_exc=OSError("node vanished"))
-            code, parsed, _out, err = _run_apply(
-                plan_path, inv_path, project, env, rec, dry_run=False
-            )
+            rec = _NewProjectRun(fake, config_path)
+            real_update = config_backup.update_marker
+
+            def fail_runner(path, **fields):
+                if "runner" in fields:
+                    raise OSError("marker vanished")
+                return real_update(path, **fields)
+
+            with mock.patch.object(config_backup, "update_marker", side_effect=fail_runner):
+                code, parsed, _out, err = _run_apply(
+                    plan_path, inv_path, project, env, rec, dry_run=False
+                )
             self.assertEqual(code, 1)
             assert parsed is not None
             self.assertFalse(parsed["applied"])
-            self.assertIn("node vanished", parsed["error"])
-            self.assertIn("node vanished", err)
+            self.assertIn("marker vanished", parsed["error"])
+            self.assertIn("marker vanished", err)
             self._assert_fresh_rolled_back(project, config_path)
 
 
