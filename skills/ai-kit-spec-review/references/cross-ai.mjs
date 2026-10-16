@@ -692,8 +692,9 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       if (!failed) return { ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0 };
       const wait = (backoff[attempt] ?? backoff[backoff.length - 1]) * 1000;
       log(`cross-ai: ${name} failed (exit ${r.code}${r.signal ? ' ' + r.signal : ''}, ${hit || 'crash'}${p.error ? ': ' + p.error.slice(0, 200) : ''})`);
+      // Retry only with the wait plus a minute of work left before the deadline.
       const exhausted = hit === 'transient' && (
-        attempt >= (opts.retries ?? CONFIG.retries) || budgetMs(wait + 60000, runDeadline) <= 0
+        attempt >= (opts.retries ?? CONFIG.retries) || runDeadline - Date.now() < wait + 60000
       );
       if (hit !== 'transient' || exhausted) {
         const st = exhausted ? 'capacity' : 'crash';
@@ -708,7 +709,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
           return { ok: false, status: 'contract_violation', outBytes: r.outBytes, cli_rc: r.code ?? '-' };
         }
       }
-      await sleep(wait);
+      await sleep(budgetMs(wait, runDeadline));
       if (aborting) return { ok: false, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
       const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
       const retry = retryArgv(name, rt, model, ctx, sid, mode, prompt);
@@ -1548,7 +1549,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'sigterm-backoff',
-        args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded', '--timeout', '60'],
+        args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded', '--timeout', '200'],
         config: { backoffS: [20] },
         signal: { when: (c) => readOr(c.calls, '').includes('pi overloaded'), sig: 'SIGTERM', withinMs: 2900 },
         exit: 143,
@@ -1717,6 +1718,14 @@ async function blackBoxSelfTest() {
           const n = ctx.calls.filter((l) => l === 'pi overloaded').length;
           return n === 3 ? null : `overloaded calls=${n}`;
         },
+      },
+      {
+        name: 'backoff-deadline',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded', '--timeout', '3'],
+        config: { backoffS: [30, 60] },
+        exit: 75,
+        status: /^AIKIT-XAI status=capacity cli=pi model=fake\/overloaded exit=75 cli_rc=1 .* tree=clean action=retry-later$/,
+        check: (_r, ctx) => (ctx.elapsedMs < 5000 ? null : `elapsed ${ctx.elapsedMs}ms`),
       },
       {
         name: 'review-ok',
