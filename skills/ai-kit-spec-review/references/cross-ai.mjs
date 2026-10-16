@@ -28,6 +28,14 @@
  *                                            CONFIG cap)
  *   --print-argv                             print the resolved command per CLI and exit (no model call)
  *   --no-preamble                            send the prompt unchanged
+ *   --prepend-file <path>                    put this file before the prompt
+ *                                            (path relative to the cwd)
+ *   --codex-sandbox workspace-write          codex exec writes inside the cwd,
+ *                                            plus /tmp and $TMPDIR, which
+ *                                            workspace-write always allows
+ *   --child-pgid-file <path>                 append spawn <pid> / exit <pid>
+ *                                            per detached child, for a
+ *                                            supervising caller's cleanup
  *   --codex-effort minimal|low|medium|high|xhigh   overrides CONFIG.effort.codex
  *   --codex-service-tier <id>                codex -c service_tier=
  *   --cursor-mode ask|plan                   review mode only (replaces cursor --mode)
@@ -155,6 +163,8 @@ const PI_RPC_ARGS = [
 ];
 const PI_RPC_REQUEST = '{"id":"1","type":"get_available_models"}\n';
 
+let childPgidFile = null;
+let childPgidBroken = false;
 let runStartedMs = Date.now();
 let liveFields = { cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean' };
 let finished = false;
@@ -250,6 +260,8 @@ const RUNTIMES = {
     exec: (m, c) => ['-p', '--output-format', 'json', '--model', m, '--trust', '--force', '--sandbox', 'disabled', '--approve-mcps', '--workspace', c.cwd],
     review: (m, c) => ['-p', '--output-format', 'json', '--model', m, '--mode', c.cursorMode || 'ask', '--trust', '--workspace', c.cwd],
     resume: (m, c, sid, mode) => [...RUNTIMES.cursor[mode](m, c), '--resume', sid],
+    // Cursor bracket ids (effort, fast); the listing has the bare id.
+    modelSuffix: /\[[^\]]*\]$/,
     parse: (out) => {
       const ev = lastJson(out, (j) => j.type === 'result');
       if (!ev) return { text: '', sessionId: null, error: 'no result event in cursor output' };
@@ -285,8 +297,7 @@ const RUNTIMES = {
   codex: {
     bins: ['codex'],
     list: { argv: ['debug', 'models'], parse: parseCodexListingIds },
-    exec: (m, c) => withCodexKnobs(['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-C', c.cwd, '-m', m,
-      '--json', '-o', c.outFile, '-'], c),
+    exec: (m, c) => withCodexKnobs(codexExecArgv(m, c), c),
     review: (m, c) => withCodexKnobs(['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '-C', c.cwd, '-m', m, '--json', '-o', c.outFile, '-'], c),
     resume: (m, c, sid, mode) => withCodexKnobs(['exec', 'resume', ...(mode === 'exec' ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
       '--skip-git-repo-check', '-m', m, '--json', '-o', c.outFile, sid, '-'], c),
@@ -335,6 +346,18 @@ function withCodexKnobs(argv, ctx) {
   if (ctx.codexEffort) out.push('-c', `model_reasoning_effort=${ctx.codexEffort}`);
   if (ctx.codexServiceTier) out.push('-c', `service_tier=${ctx.codexServiceTier}`);
   return out;
+}
+
+// --codex-sandbox workspace-write confines exec to the cwd (codex still allows /tmp and
+// $TMPDIR). Without the flag the bypass formula is unchanged.
+function codexExecArgv(model, ctx) {
+  const gate = ctx.codexSandbox
+    ? ['--sandbox', 'workspace-write']
+    : ['--dangerously-bypass-approvals-and-sandbox'];
+  return [
+    'exec', ...gate, '--skip-git-repo-check', '-C', ctx.cwd, '-m', model,
+    '--json', '-o', ctx.outFile, '-',
+  ];
 }
 
 function parseJson(s) { try { return JSON.parse(s); } catch { return null; } }
@@ -386,6 +409,22 @@ function which(bin, envPath = process.env.PATH || '') {
 }
 function isExec(p) { try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch { return false; } }
 
+// A bare `agent` is cursor only when it really is cursor-agent (D-02). Anything else
+// (another CLI that ships the same name) is not acceptable; a realpath error is the same.
+function resolveBin(rt, envPath) {
+  for (const b of rt.bins) {
+    const found = which(b, envPath);
+    if (!found) continue;
+    if (b === 'agent') {
+      let base = '';
+      try { base = path.basename(fs.realpathSync(found)); } catch { base = ''; }
+      if (base !== 'cursor-agent') continue;
+    }
+    return found;
+  }
+  return null;
+}
+
 function ownTimeout(cfgPath) {
   const cfg = parseJson(readOr(cfgPath, ''));
   const wf = cfg && typeof cfg === 'object' && !Array.isArray(cfg) ? cfg.workflow : null;
@@ -436,7 +475,8 @@ function retryArgv(name, rt, model, ctx, sid, mode, prompt) {
     ctx.sid = crypto.randomUUID();
     return { argv: withExtra(name, rt.review(model, ctx)), input: prompt };
   }
-  if (sid && rt.resume) {
+  // A sandboxed exec retry is a fresh run: resume's sandbox flag is not verified.
+  if (sid && rt.resume && !(mode === 'exec' && ctx.codexSandbox)) {
     return { argv: withExtra(name, rt.resume(model, ctx, sid, mode)), input: RESUME_MSG };
   }
   return { argv: withExtra(name, rt[mode](model, ctx)), input: `${RESUME_MSG}\n\n${prompt}` };
@@ -451,6 +491,18 @@ function stateSig(st) {
 function treeLabel(before, after) {
   if (!before || !after) return 'unknown';
   return stateSig(before) === stateSig(after) ? 'clean' : 'dirty';
+}
+
+// Bookkeeping for a supervisor that may have to reap a runner which can no longer run its
+// own signal handler. A write error logs once and never fails the run; later writes skip.
+function noteChildPgid(kind, pid) {
+  if (!childPgidFile || childPgidBroken || !pid) return;
+  try {
+    fs.appendFileSync(childPgidFile, `${kind} ${pid}\n`);
+  } catch {
+    childPgidBroken = true;
+    log(`cross-ai: --child-pgid-file unwritable: ${childPgidFile}`);
+  }
 }
 
 function killGroup(child, sig) {
@@ -513,6 +565,7 @@ function runChild(bin, argv, opts = {}) {
         child.stdin?.destroy();
         child.stdout?.destroy();
         child.stderr?.destroy();
+        noteChildPgid('exit', child.pid);
       }
       if (current === child) current = null;
       resolve({
@@ -532,6 +585,7 @@ function runChild(bin, argv, opts = {}) {
       finalize('spawn');
       return;
     }
+    noteChildPgid('spawn', child.pid);
     current = child;
     currentFinalize = finalize;
     if (opts.input !== undefined) {
@@ -784,7 +838,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const ctx = {
     cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md'),
     codexEffort: opts.codexEffort, codexServiceTier: opts.codexServiceTier, cursorMode: opts.cursorMode,
-    piThinking: opts.piThinking,
+    piThinking: opts.piThinking, codexSandbox: opts.codexSandbox,
   };
   const env = childEnv(rt.env, process.env);
   let argv = withExtra(name, rt[mode](model, ctx)); let input = prompt;
@@ -845,18 +899,22 @@ const PI_THINKING = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh',
 const CURSOR_MODES = new Set(['ask', 'plan']);
 // No leading dash (read as a CLI option) and no shell or space characters (U-4).
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/;
+// Cursor only: one trailing [k=v,...] bracket (D-18). No space, quote, `$` or `;`.
+const CURSOR_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\[[A-Za-z0-9._=,-]+\])?$/;
 
 function parseArgs(argv) {
   const o = {
     prefer: null, models: {}, mode: 'exec', timeout: null, outerTimeout: null, printArgv: false,
     preamble: true, selfTest: false, codexEffort: null, codexServiceTier: null, cursorMode: null,
+    prependFile: null, codexSandbox: null, childPgidFile: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]; const v = () => { if (i + 1 >= argv.length) throw new Error(`${a} needs a value`); return argv[++i]; };
     if (a === '--prefer') o.prefer = v().split(',').filter(Boolean);
     else if (a.startsWith('--model-')) {
       const id = v();
-      if (!MODEL_ID.test(id)) throw new Error(`${a} must match ${MODEL_ID.source}`);
+      const modelRe = a === '--model-cursor' ? CURSOR_MODEL_ID : MODEL_ID;
+      if (!modelRe.test(id)) throw new Error(`${a} must match ${modelRe.source}`);
       o.models[a.slice(8)] = id;
     }
     else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); }
@@ -866,6 +924,13 @@ function parseArgs(argv) {
       if (!(o.outerTimeout > 0)) throw new Error('--outer-timeout must be > 0');
     } else if (a === '--print-argv') o.printArgv = true;
     else if (a === '--no-preamble') o.preamble = false;
+    else if (a === '--prepend-file') o.prependFile = v();
+    else if (a === '--codex-sandbox') {
+      o.codexSandbox = v();
+      if (o.codexSandbox !== 'workspace-write') {
+        throw new Error('--codex-sandbox must be workspace-write');
+      }
+    } else if (a === '--child-pgid-file') o.childPgidFile = v();
     else if (a === '--codex-effort') {
       o.codexEffort = v();
       if (!CODEX_EFFORTS.has(o.codexEffort)) throw new Error('--codex-effort must be minimal|low|medium|high|xhigh');
@@ -965,6 +1030,11 @@ const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race', 'stubborn', 'slow
 let stdinBuf = '';
 const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
+  echoprompt: () => {
+    fs.writeFileSync('prompt.seen', stdinBuf);
+    fs.appendFileSync('a.txt', 'e\n');
+    process.stdout.write('# Summary\nok');
+  },
   ansi: () => { fs.appendFileSync('a.txt', 'x\n'); process.stdout.write('\x1B[0mDone.## Summary\nC# is fine. Use ## inline'); },
   nochange: () => { process.stdout.write('# Summary\nno edits'); },
   okwarn: () => {
@@ -1328,7 +1398,7 @@ function runCaseProcess(spec, c) {
 }
 
 async function checkCase(spec, c) {
-  const r = await runCaseProcess(spec, c);
+  const r = await runCaseProcess({ ...spec, args: c.args || spec.args }, c);
   if (r.reason) return r.reason;
   if (r.status !== spec.exit) return `exit ${r.status} expected ${spec.exit}`;
   if (!spec.closeStderr) {
@@ -2422,6 +2492,207 @@ async function blackBoxSelfTest() {
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
       },
       {
+        // D-18: a cursor bracket id is preflighted without the suffix, then run whole.
+        name: 'cursor-bracket-model',
+        args: [
+          '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor[effort=high,fast=false]',
+        ],
+        config: { prefer: ['cursor'] },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=cursor .* exit=0 .* tree=dirty action=stop$/,
+        check: (_r, ctx) => {
+          const listed = ctx.calls.indexOf('cursor-agent models');
+          const ran = ctx.calls.indexOf(
+            'cursor-agent fake-ok-cursor[effort=high,fast=false]',
+          );
+          if (listed < 0 || ran < 0 || listed > ran) return `calls=${ctx.calls.join('|')}`;
+          return null;
+        },
+      },
+      {
+        // Brackets are cursor-only; every other --model-<rt> keeps the template-2 charset.
+        name: 'cursor-bracket-other-rt',
+        args: ['--print-argv', '--model-pi', 'fake/ok[x=1]'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        // D-02: a bare `agent` whose real path is not cursor-agent is not cursor.
+        name: 'bare-agent-guard',
+        args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        setup: (c) => {
+          const dir = path.join(c.tmp, 'bin-agent-bare-agent-guard');
+          fs.mkdirSync(dir);
+          const other = path.join(dir, 'other-agent-1.0.52-linux-x86_64');
+          fs.writeFileSync(other, '#!/bin/sh\nexit 0\n');
+          fs.chmodSync(other, 0o755);
+          const shared = path.join(c.tmp, 'bin');
+          fs.symlinkSync(path.join(shared, 'node'), path.join(dir, 'node'));
+          fs.symlinkSync(path.join(shared, 'git'), path.join(dir, 'git'));
+          fs.symlinkSync(other, path.join(dir, 'agent'));
+          c.env.PATH = dir;
+          return null;
+        },
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
+          if (!line || !line.startsWith('cursor\tMISSING\t')) return `line=${line}`;
+          return null;
+        },
+      },
+      {
+        // The same bare name is cursor when its real path is cursor-agent.
+        name: 'agent-cursor-realpath',
+        args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        setup: (c) => {
+          const dir = path.join(c.tmp, 'bin-agent-agent-cursor-realpath');
+          fs.mkdirSync(dir);
+          const shared = path.join(c.tmp, 'bin');
+          fs.symlinkSync(path.join(shared, 'node'), path.join(dir, 'node'));
+          fs.symlinkSync(path.join(shared, 'git'), path.join(dir, 'git'));
+          fs.symlinkSync(path.join(shared, 'cursor-agent'), path.join(dir, 'agent'));
+          c.env.PATH = dir;
+          return null;
+        },
+        check: (_r, ctx) => {
+          const agent = path.join(ctx.tmp, 'bin-agent-agent-cursor-realpath', 'agent');
+          const line = (_r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
+          if (!line || !line.includes(`\t${agent}\t`)) return `line=${line}`;
+          return null;
+        },
+      },
+      {
+        // D-30: a file's content goes before the stdin prompt, and nothing else with --no-preamble.
+        name: 'prepend-file',
+        args: [
+          '--prefer', 'pi', '--model-pi', 'fake/echoprompt', '--no-preamble',
+          '--prepend-file', 'guide.md',
+        ],
+        stdin: 'TASK-BODY',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/echoprompt exit=0 .* action=stop$/,
+        setup: (c) => {
+          fs.writeFileSync(path.join(c.repo, 'guide.md'), 'PREPEND-MARKER-18-1');
+          return null;
+        },
+        check: (_r, ctx) => {
+          const seen = readOr(path.join(ctx.repo, 'prompt.seen'), '');
+          if (!seen.startsWith('PREPEND-MARKER-18-1')) {
+            return `start=${JSON.stringify(seen.slice(0, 40))}`;
+          }
+          const body = seen.indexOf('TASK-BODY');
+          if (body < 0 || body < seen.indexOf('PREPEND-MARKER-18-1')) return 'TASK-BODY order';
+          if (seen.includes('<executor_rules>') || seen.includes('<reviewer_rules>')) {
+            return 'preamble leaked';
+          }
+          return null;
+        },
+      },
+      {
+        name: 'prepend-file-missing',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--prepend-file', 'nope.md'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (_r, ctx) => {
+          return ctx.calls.some((l) => l.startsWith('pi ')) ? `calls=${ctx.calls.join('|')}` : null;
+        },
+      },
+      {
+        // D-27: workspace-write replaces the bypass, and a retry stays a fresh sandboxed run.
+        name: 'codex-sandbox-exec',
+        args: [
+          '--print-argv', '--prefer', 'codex', '--model-codex', 'x', '--mode', 'exec',
+          '--codex-sandbox', 'workspace-write',
+        ],
+        config: { prefer: ['codex'] },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('codex\t'));
+          if (!line) return 'missing codex line';
+          const argv = JSON.parse(line.split('\t')[2]);
+          const sandboxed = argv.includes('--sandbox') && argv.includes('workspace-write')
+            && argv.includes('-C');
+          if (!sandboxed) return `argv=${JSON.stringify(argv)}`;
+          if (argv.includes('--dangerously-bypass-approvals-and-sandbox')) {
+            return 'bypass still present';
+          }
+          const retry = (r.stderr || '').split('\n').find((l) => l.includes('retry codex argv='));
+          if (!retry) return 'missing retry argv';
+          const retryArgv = JSON.parse(retry.slice(retry.indexOf('[')));
+          if (retryArgv.includes('resume')) return 'retry resumed';
+          return null;
+        },
+      },
+      {
+        name: 'codex-sandbox-default',
+        args: ['--print-argv', '--prefer', 'codex', '--model-codex', 'x', '--mode', 'exec'],
+        config: { prefer: ['codex'] },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('codex\t'));
+          if (!line) return 'missing codex line';
+          const argv = JSON.parse(line.split('\t')[2]);
+          return argv.includes('--dangerously-bypass-approvals-and-sandbox')
+            ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'codex-sandbox-bad',
+        args: [
+          '--print-argv', '--prefer', 'codex', '--model-codex', 'x', '--mode', 'exec',
+          '--codex-sandbox', 'danger-full-access',
+        ],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        // The runner records each detached CLI child so a supervisor can reap a wedged run.
+        name: 'child-pgid-file',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          const pgid = path.join(c.tmp, 'pgid-child-pgid-file');
+          c.args = [
+            '--prefer', 'pi', '--model-pi', 'fake/ok', '--child-pgid-file', pgid,
+          ];
+          c.pgidFile = pgid;
+          return null;
+        },
+        check: (_r, ctx) => {
+          const text = readOr(ctx.pgidFile, '');
+          const spawns = [...text.matchAll(/^spawn (\d+)$/gm)].map((m) => m[1]);
+          if (!spawns.length) return `pgid file=${JSON.stringify(text)}`;
+          for (const n of spawns) {
+            const spawnAt = text.indexOf(`spawn ${n}`);
+            const exitAt = text.indexOf(`exit ${n}`, spawnAt + 1);
+            if (exitAt < 0) return `no exit for ${n}: ${text}`;
+          }
+          return null;
+        },
+      },
+      {
+        name: 'child-pgid-file-unwritable',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          c.args = [
+            '--prefer', 'pi', '--model-pi', 'fake/ok', '--child-pgid-file',
+            path.join(c.tmp, 'missing-dir', 'pgid'),
+          ];
+          return null;
+        },
+        check: (r) => {
+          const hits = (r.stderr || '').split('\n')
+            .filter((l) => l.includes('--child-pgid-file unwritable'));
+          return hits.length === 1 ? null : `hits=${hits.length}`;
+        },
+      },
+      {
         name: 'extra-args-pi',
         args: ['--print-argv', '--prefer', 'pi', '--model-pi', 'fake/ok'],
         config: { extraArgs: { pi: ['--skill', 'skills/x/SKILL.md'] } },
@@ -2489,11 +2760,13 @@ async function main(argv) {
     return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   if (o.selfTest) return blackBoxSelfTest();
+  childPgidFile = o.childPgidFile;
+  childPgidBroken = false;
   const order = o.prefer || CONFIG.prefer;
   const models = { ...CONFIG.models, ...o.models };
   const cands = order.map((name) => ({
     name, rt: RUNTIMES[name], model: models[name],
-    bin: RUNTIMES[name].bins.map((b) => which(b, process.env.PATH || '')).find(Boolean) || null,
+    bin: resolveBin(RUNTIMES[name], process.env.PATH || ''),
   }));
   // Baked per-runner effort (the plan's selection); --codex-effort still wins for codex.
   const effort = CONFIG.effort || {};
@@ -2512,11 +2785,14 @@ async function main(argv) {
     log(dl.error);
     return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
+  if (o.codexSandbox && o.mode !== 'exec') {
+    log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
+  }
   if (o.printArgv) {
     const ctx = {
       cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
       codexEffort: knobs.codexEffort, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
-      piThinking: knobs.piThinking,
+      piThinking: knobs.piThinking, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
     };
     for (const c of cands) {
       const argvOut = c.model ? withExtra(c.name, c.rt[o.mode](c.model, ctx)) : null;
@@ -2533,7 +2809,18 @@ async function main(argv) {
     log('cross-ai: pipe the prompt on stdin');
     return finish('empty_stdin', { ...liveFields, tree: 'clean', exit: 2 });
   }
-  const prompt = raw + (o.preamble ? (o.mode === 'exec' ? EXEC_PREAMBLE : REVIEW_PREAMBLE) : '');
+  let body = raw;
+  if (o.prependFile) {
+    let prepended;
+    try {
+      prepended = fs.readFileSync(path.resolve(process.cwd(), o.prependFile), 'utf8');
+    } catch {
+      log(`cross-ai: --prepend-file unreadable: ${o.prependFile}`);
+      return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
+    body = `${prepended}\n\n${raw}`;
+  }
+  const prompt = body + (o.preamble ? (o.mode === 'exec' ? EXEC_PREAMBLE : REVIEW_PREAMBLE) : '');
   const { outer, inner: innerS, innerDefault } = dl;
   runDeadline = Date.now() + innerS * 1000;
   const marginMs = (outer - innerDefault) * 1000;
@@ -2589,7 +2876,7 @@ async function main(argv) {
     const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
       beforeSig: noTree ? null : stateSig(before), codexEffort: knobs.codexEffort,
       piThinking: knobs.piThinking, codexServiceTier: o.codexServiceTier,
-      cursorMode: o.cursorMode,
+      cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
     });
     liveFields.out = r.outBytes || 0;
     liveFields.cli_rc = r.cli_rc ?? '-';

@@ -3506,7 +3506,10 @@ class TestErrorClassifier(unittest.TestCase):
     def test_reason_vocabulary_is_closed(self):
         self.assertEqual(
             set(REASONS),
-            {"quota", "auth", "timeout", "configuration", "dispatch_unavailable", "real_error"},
+            {
+                "quota", "auth", "timeout", "configuration", "dispatch_unavailable",
+                "real_error", "capacity", "billing_or_access", "git_timeout",
+            },
         )
 
 

@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-k
 from ai_kit_spec import commands, detection
 from ai_kit_spec.cli import main
 from ai_kit_spec.detection import normalize_runtime_keys, runtime_id
+from ai_kit_spec.error_classifier import REASONS, STATUS_TO_REASON, reason_for_status
 from ai_kit_spec.model_catalog import split_catalog_meta
 
 _SCRUB_NAMES = {
@@ -358,7 +359,7 @@ class TestRetiredIdUsage(unittest.TestCase):
                 ["git", "ls-files", "skills", "tools", "README.md", "AGENTS.md"],
                 check=True, capture_output=True, text=True,
             ).stdout.splitlines()
-        except FileNotFoundError:
+        except (FileNotFoundError, subprocess.CalledProcessError):
             self.skipTest("git is unavailable; tracked-text scan cannot run")
         hits = []
         for path in paths:
@@ -423,3 +424,109 @@ class TestConfigDoctorRuntimeLiterals(unittest.TestCase):
             self.assertEqual([], self.unknown_runtime_literals(
                 self.runtime_keyword_literals(ast.parse(source))
             ))
+
+
+def _runner_template_text():
+    path = os.path.join(
+        os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review",
+        "references", "cross-ai.mjs",
+    )
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def template_model_suffixes(text):
+    """Map each template runtime id to its modelSuffix source, or None."""
+    block = text.split("const RUNTIMES = {", 1)[1]
+    end = re.search(r"^};", block, re.M)
+    block = block[: end.start() if end else 0]
+    parts = re.split(r"^  (\w+): \{", block, flags=re.M)
+    suffixes = {}
+    rows = iter(parts[1:])
+    for name, body in zip(rows, rows, strict=True):
+        match = re.search(r"modelSuffix: /(.+)/,", body)
+        suffixes[name] = match.group(1) if match else None
+    return suffixes
+
+
+def model_suffix_mismatches(text):
+    """Runtimes whose template modelSuffix source differs from the Python table."""
+    suffixes = template_model_suffixes(text)
+    names = set(suffixes) | {
+        name for name, spec in detection.RUNTIMES.items() if spec.runner
+    }
+    bad = []
+    for name in sorted(names):
+        spec = detection.RUNTIMES.get(name)
+        expected = spec.model_suffix if spec is not None else None
+        if suffixes.get(name) != expected:
+            bad.append(name)
+    return bad
+
+
+class TestModelSuffixParity(unittest.TestCase):
+    def test_template_suffixes_match_the_runtime_table(self):
+        self.assertEqual(model_suffix_mismatches(_runner_template_text()), [])
+
+    def test_doctored_cursor_suffix_is_a_mismatch(self):
+        text = _runner_template_text()
+        doctored = text.replace(
+            "modelSuffix: /\\[[^\\]]*\\]$/,",
+            "modelSuffix: /WRONG$/,",
+            1,
+        )
+        self.assertNotEqual(doctored, text)
+        self.assertIn("cursor", model_suffix_mismatches(doctored))
+
+
+def template_status_keys(text):
+    """STATUS_TABLE keys between `const STATUS_TABLE = {` and the closing `};`."""
+    start = text.index("const STATUS_TABLE = {")
+    end = text.index("};", start)
+    block = text[start:end]
+    return re.findall(r"^  (\w+):", block, re.M)
+
+
+def status_map_drift(text):
+    """Template STATUS_TABLE keys missing from STATUS_TO_REASON."""
+    return [key for key in template_status_keys(text) if key not in STATUS_TO_REASON]
+
+
+class TestStatusMapDrift(unittest.TestCase):
+    def test_every_template_status_is_mapped(self):
+        self.assertEqual(status_map_drift(_runner_template_text()), [])
+
+    def test_map_values_are_none_or_known_reasons(self):
+        known = set(REASONS)
+        bad = [
+            (status, reason) for status, reason in STATUS_TO_REASON.items()
+            if reason is not None and reason not in known
+        ]
+        self.assertEqual(bad, [])
+
+    def test_unverified_is_neither_a_map_key_nor_a_template_status(self):
+        self.assertNotIn("unverified", STATUS_TO_REASON)
+        self.assertNotIn("unverified", template_status_keys(_runner_template_text()))
+
+    def test_doctored_status_is_a_drift(self):
+        text = _runner_template_text()
+        needle = "const STATUS_TABLE = {"
+        doctored = text.replace(needle, needle + "\n  zzz_new: { exit: 1, action: 'stop' },", 1)
+        self.assertNotEqual(doctored, text)
+        self.assertIn("zzz_new", status_map_drift(doctored))
+
+    def test_reason_for_status_maps_named_statuses(self):
+        cases = (
+            ("quota", None, "quota"),
+            ("quota_wait", None, "quota"),
+            ("billing", None, "billing_or_access"),
+            ("capacity", None, "capacity"),
+            ("git_timeout", None, "git_timeout"),
+            ("git_error", None, "real_error"),
+            ("empty_answer", None, "real_error"),
+            (None, 0, None),
+            (None, 127, "dispatch_unavailable"),
+            (None, 3, "real_error"),
+        )
+        for status, code, want in cases:
+            self.assertEqual(reason_for_status(status, code), want, status)

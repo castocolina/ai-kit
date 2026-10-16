@@ -5,9 +5,11 @@ empty stderr is a success, never an unavailability. Callers store the returned r
 quota entry's own `reason` field (`quota.py:probe_reviewer_quota`) or map it into their own
 vocabulary (`ai_kit_spec_superpowers.dispatch_injection.classify_dispatch_failure`).
 
-The 18.1/25 runner adds `billing_or_access` and `capacity` by mapping its OWN status line
-(Python maps the runner's `AIKIT-XAI` status marker); those reasons deliberately do NOT live
-here — this module's vocabulary stays the six subprocess-shaped reasons below."""
+The 18.1/25 runner maps its OWN status line (`AIKIT-XAI status=...`) through
+STATUS_TO_REASON / reason_for_status. `capacity` and `billing_or_access` come from that
+map (Python never classifies those from stderr). `git_timeout` means the runner's git
+work-tree check timed out before or after the CLI, not the CLI itself, and is not worth
+waiting for."""
 
 # Closed reason vocabulary (D-13). Order here is documentation only; classify_error's
 # check order is: timeout, exit 0, auth, quota, dispatch_unavailable, configuration.
@@ -18,7 +20,38 @@ REASONS = (
     "configuration",       # malformed/missing command template or unknown model
     "dispatch_unavailable",  # the binary could not be invoked at all
     "real_error",          # anything else — a real, non-time-bound failure
+    "capacity",            # provider overloaded; mapped from the runner status line
+    "billing_or_access",   # billing / entitlement; mapped from the runner status line
+    "git_timeout",         # runner git work-tree check timed out, not the CLI
 )
+
+# Runner status -> reason (D-12 as amended by 25 D-21; D-34). Values are None (success)
+# or a REASONS member. `unverified` is the D-31 route name only, never a status key.
+STATUS_TO_REASON: dict[str, str | None] = {
+    "ok": None,
+    "quota": "quota",
+    "quota_wait": "quota",
+    "auth": "auth",
+    "billing": "billing_or_access",
+    "billing_or_access": "billing_or_access",
+    "capacity": "capacity",
+    "timeout": "timeout",
+    "idle_stall": "timeout",
+    "bad_model": "configuration",
+    "bad_prompt": "configuration",
+    "permission_blocked": "configuration",
+    "usage": "configuration",
+    "no_model": "configuration",
+    "empty_stdin": "configuration",
+    "not_installed": "dispatch_unavailable",
+    "no_change": "real_error",
+    "empty_answer": "real_error",
+    "crash": "real_error",
+    "contract_violation": "real_error",
+    "signal": "real_error",
+    "git_error": "real_error",
+    "git_timeout": "git_timeout",
+}
 
 # auth/entitlement/setup signals — checked BEFORE quota so "not logged in ... quota" reads
 # auth, never the (retryable) quota. cursor-agent evidence, 16.1-RESEARCH.md: stderr
@@ -75,3 +108,17 @@ def classify_error(returncode: int | None, stderr: str | bytes, timed_out: bool 
     if returncode in (126, 127):
         return "dispatch_unavailable"
     return _signal_reason(text, ((_CONFIGURATION_SIGNALS, "configuration"),)) or "real_error"
+
+
+def reason_for_status(status: str | None, returncode: int | None) -> str | None:
+    """Map a runner status (or a bare returncode) onto the closed reason vocabulary.
+
+    A known STATUS_TABLE key uses STATUS_TO_REASON. Otherwise returncode 0 is success,
+    127 is dispatch_unavailable, and every other code is real_error."""
+    if status in STATUS_TO_REASON:
+        return STATUS_TO_REASON[status]
+    if returncode == 0:
+        return None
+    if returncode == 127:
+        return "dispatch_unavailable"
+    return "real_error"
