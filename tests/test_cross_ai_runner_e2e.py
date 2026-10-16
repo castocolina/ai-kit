@@ -188,7 +188,7 @@ class TestRenderedRunner(unittest.TestCase):
             "kind": "cross-ai-script",
             "path": ".planning/scripts/cross-ai.mjs",
             "template": "cross-ai.mjs",
-            "version": 2,
+            "version": 3,
             "config": {
                 "prefer": ["pi", "cursor"],
                 "models": {"pi": "router-env/my-coding"},

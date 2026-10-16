@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=2 sha256=UNSTAMPED
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=3 sha256=UNSTAMPED
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v2).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v3).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
- * unknown means not a git repo or git failed; with no CLI run it is clean.
+ * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
+ * failed. With no CLI run it is clean.
  * Gitignored files count by stat signature (mode, size, mtime, ctime), except inside a
  * fully ignored directory (a cache, an indexer's dir): edits there are not seen.
  *
@@ -23,6 +24,8 @@
  *   --model-<cli> <id>                       model per CLI, e.g. --model-cursor auto
  *   --mode exec|review                       exec = full permissions (default); review = read-only
  *   --timeout <s>                            inner deadline (lowers default; never above derived inner)
+ *   --outer-timeout <s>                      outer deadline (replaces the GSD lookup and the
+ *                                            CONFIG cap)
  *   --print-argv                             print the resolved command per CLI and exit (no model call)
  *   --no-preamble                            send the prompt unchanged
  *   --codex-effort minimal|low|medium|high|xhigh   overrides CONFIG.effort.codex
@@ -132,7 +135,8 @@ const STATUS_TABLE = {
   timeout: { exit: 124, action: 'stop' },
   not_installed: { exit: 127, action: 'fallback' },
   signal: { exit: 128, action: 'stop' },
-  unverified: { exit: 1, action: 'stop' },
+  git_error: { exit: 1, action: 'stop' },
+  git_timeout: { exit: 1, action: 'stop' },
 };
 
 const FINALIZE_CAP_MS = 10000;
@@ -411,7 +415,10 @@ function innerTimeoutS(outer) {
   return outer - Math.max(1, Math.min(TIMEOUT_MARGIN_S, Math.floor(outer / 5)));
 }
 function resolveDeadline(cwd, env, o) {
-  const outer = Math.min(CONFIG.outerTimeoutS, liveOuterTimeoutS(cwd, env));
+  // D-18: an explicit outer deadline replaces both the GSD lookup and the CONFIG cap.
+  const outer = o.outerTimeout != null
+    ? o.outerTimeout
+    : Math.min(CONFIG.outerTimeoutS, liveOuterTimeoutS(cwd, env));
   if (outer < 2) return { error: 'cross-ai: outer timeout must be at least 2s' };
   const innerDefault = innerTimeoutS(outer);
   const inner = o.timeout != null ? Math.min(innerDefault, o.timeout) : innerDefault;
@@ -622,27 +629,64 @@ async function listModels(rt, binPath, env, limit) {
 }
 
 const MAX_NESTED_REPOS = 8;
+// Set by treeState before every null return: { kind: 'timeout'|'error', what }.
+let gitFailure = null;
+
+function gitFailed(result, what) {
+  gitFailure = { kind: result.timedOut ? 'timeout' : 'error', what };
+}
+
+function gitFailStatus() {
+  const f = gitFailure || { kind: 'error', what: 'unknown' };
+  const verb = f.kind === 'timeout' ? 'timed out' : 'failed';
+  log(`cross-ai: git ${f.what} ${verb} reading the work tree (fail closed)`);
+  return f.kind === 'timeout' ? 'git_timeout' : 'git_error';
+}
+
+// Filesystem only, so it cannot hang and ignores locale. A repo git refuses to read (dubious
+// ownership, for example) still counts: it fails closed below.
+function inGitTree(cwd) {
+  if ((process.env.GIT_DIR || '').trim()) return true;
+  const ceiling = (process.env.GIT_CEILING_DIRECTORIES || '').split(path.delimiter).filter(Boolean)
+    .map((d) => path.resolve(d));
+  let dir = path.resolve(cwd);
+  for (;;) {
+    if (ceiling.includes(dir)) return false;
+    if (fs.existsSync(path.join(dir, '.git'))) return true;
+    const parent = path.dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
 
 async function treeState(cwd, limit, depth = 0) {
   const git = which('git', process.env.PATH || '');
-  if (!git) return null;
+  if (!git) { gitFailure = { kind: 'error', what: 'not found' }; return null; }
   // --verify -q: exit 1 with no message on an unborn HEAD, in any locale; 128 outside a repo.
   const headR = await runChild(git, ['rev-parse', '--verify', '-q', 'HEAD'], { cwd, capMs: GIT_CAP_MS, limit });
-  if (headR.timedOut || headR.spawnErr || (headR.code !== 0 && headR.code !== 1)) return null;
+  if (headR.timedOut || headR.spawnErr || (headR.code !== 0 && headR.code !== 1)) {
+    gitFailed(headR, 'rev-parse'); return null;
+  }
   const head = headR.code === 0 ? headR.stdout.trim() : null;
   const idxDir = makeTemp('xai-idx-');
   const env = { ...process.env, GIT_INDEX_FILE: path.join(idxDir, 'index') };
   try {
     const addR = await runChild(git, ['add', '-A'], { cwd, env, capMs: GIT_CAP_MS, limit });
-    if (addR.timedOut || addR.spawnErr || addR.code !== 0) return null;
+    if (addR.timedOut || addR.spawnErr || addR.code !== 0) {
+      gitFailed(addR, 'add -A'); return null;
+    }
     const wtR = await runChild(git, ['write-tree'], { cwd, env, capMs: GIT_CAP_MS, limit });
-    if (wtR.timedOut || wtR.spawnErr || wtR.code !== 0) return null;
+    if (wtR.timedOut || wtR.spawnErr || wtR.code !== 0) {
+      gitFailed(wtR, 'write-tree'); return null;
+    }
     // git add -A skips ignored files, so fold in a stat signature of each one (U-3): hashing
     // contents would be too slow for node_modules-sized trees, and a write changes ctime.
     // Fully ignored dirs list as one 'dir/' entry and are skipped, so a background cache or
     // indexer (.codegraph/, node_modules/) cannot read as an agent edit.
     const ignR = await runChild(git, ['ls-files', '-z', '-o', '-i', '--exclude-standard', '--directory'], { cwd, env, capMs: GIT_CAP_MS, limit });
-    if (ignR.timedOut || ignR.spawnErr || ignR.code !== 0) return null;
+    if (ignR.timedOut || ignR.spawnErr || ignR.code !== 0) {
+      gitFailed(ignR, 'ls-files'); return null;
+    }
     const ignHash = crypto.createHash('sha256');
     for (const rel of ignR.stdout.split('\0').filter((r) => r && !r.endsWith('/')).sort()) {
       let sig = 'gone';
@@ -655,13 +699,15 @@ async function treeState(cwd, limit, depth = 0) {
     // git add records a submodule (or any nested repo) as its HEAD only, so snapshot each
     // checked-out one too: edits inside it must count.
     const lsR = await runChild(git, ['ls-files', '-s', '-z'], { cwd, env, capMs: GIT_CAP_MS, limit });
-    if (lsR.timedOut || lsR.spawnErr || lsR.code !== 0) return null;
+    if (lsR.timedOut || lsR.spawnErr || lsR.code !== 0) { gitFailed(lsR, 'ls-files'); return null; }
     let nested = '';
     for (const entry of lsR.stdout.split('\0')) {
       if (!entry.startsWith('160000 ')) continue;
       const rel = entry.slice(entry.indexOf('\t') + 1);
       if (!fs.existsSync(path.join(cwd, rel, '.git'))) continue; // not checked out: the gitlink is all there is
-      if (depth >= MAX_NESTED_REPOS) return null;
+      if (depth >= MAX_NESTED_REPOS) {
+        gitFailure = { kind: 'error', what: 'nested repos' }; return null;
+      }
       const sub = await treeState(path.join(cwd, rel), limit, depth + 1);
       if (sub === null) return null;
       nested += `\t${rel}=${stateSig(sub)}`;
@@ -771,12 +817,14 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         const st = exhausted ? 'capacity' : 'crash';
         return { ok: false, status: st, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
       }
-      if (mode === 'review') {
+      if (mode === 'review' && beforeSig !== null) {
         const mid = await treeState(ctx.cwd, runDeadline);
         if (mid === null) {
-          return { ok: false, status: 'unverified', outBytes: r.outBytes, cli_rc: r.code ?? '-' };
+          return {
+            ok: false, status: gitFailStatus(), outBytes: r.outBytes, cli_rc: r.code ?? '-',
+          };
         }
-        if (beforeSig !== null && stateSig(mid) !== beforeSig) {
+        if (stateSig(mid) !== beforeSig) {
           return { ok: false, status: 'contract_violation', outBytes: r.outBytes, cli_rc: r.code ?? '-' };
         }
       }
@@ -800,8 +848,8 @@ const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/;
 
 function parseArgs(argv) {
   const o = {
-    prefer: null, models: {}, mode: 'exec', timeout: null, printArgv: false, preamble: true,
-    selfTest: false, codexEffort: null, codexServiceTier: null, cursorMode: null,
+    prefer: null, models: {}, mode: 'exec', timeout: null, outerTimeout: null, printArgv: false,
+    preamble: true, selfTest: false, codexEffort: null, codexServiceTier: null, cursorMode: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]; const v = () => { if (i + 1 >= argv.length) throw new Error(`${a} needs a value`); return argv[++i]; };
@@ -813,7 +861,10 @@ function parseArgs(argv) {
     }
     else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); }
     else if (a === '--timeout') { o.timeout = Number(v()); if (!(o.timeout > 0)) throw new Error('--timeout must be > 0'); }
-    else if (a === '--print-argv') o.printArgv = true;
+    else if (a === '--outer-timeout') {
+      o.outerTimeout = Number(v());
+      if (!(o.outerTimeout > 0)) throw new Error('--outer-timeout must be > 0');
+    } else if (a === '--print-argv') o.printArgv = true;
     else if (a === '--no-preamble') o.preamble = false;
     else if (a === '--codex-effort') {
       o.codexEffort = v();
@@ -1623,7 +1674,8 @@ async function blackBoxSelfTest() {
         name: 'git-after-quota',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/gitfailquota', '--model-cursor', 'fake-ok-cursor'],
         exit: 1,
-        status: /^AIKIT-XAI status=unverified cli=pi model=fake\/gitfailquota exit=1 cli_rc=1 .* tree=unknown action=stop$/,
+        status: new RegExp('^AIKIT-XAI status=git_error cli=pi model=fake/gitfailquota ' +
+          'exit=1 cli_rc=1 .* tree=unknown action=stop$'),
         check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null),
       },
       {
@@ -1781,7 +1833,8 @@ async function blackBoxSelfTest() {
         setup: (ctx) => { fs.writeFileSync(path.join(ctx.home, '.fake-git-fail'), '1'); return null; },
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/ok', '--model-cursor', 'fake-ok-cursor'],
         exit: 1,
-        status: /^AIKIT-XAI status=unverified cli=pi model=fake\/ok exit=1 cli_rc=- elapsed=\d+s out=0 tree=unknown action=stop$/,
+        status: new RegExp('^AIKIT-XAI status=git_error cli=pi model=fake/ok exit=1 cli_rc=- ' +
+          'elapsed=\\d+s out=0 tree=unknown action=stop$'),
         check: (_r, ctx) => {
           if (ctx.calls.some((l) => l === 'pi ok' || l.startsWith('cursor-agent'))) return `calls=${ctx.calls.join(',')}`;
           return null;
@@ -1791,7 +1844,8 @@ async function blackBoxSelfTest() {
         name: 'git-after-fail',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/gitfail', '--model-cursor', 'fake-ok-cursor'],
         exit: 1,
-        status: /^AIKIT-XAI status=unverified cli=pi model=fake\/gitfail exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=unknown action=stop$/,
+        status: new RegExp('^AIKIT-XAI status=git_error cli=pi model=fake/gitfail exit=1 cli_rc=0' +
+          ' elapsed=\\d+s out=\\d+ tree=unknown action=stop$'),
         check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null),
       },
       {
@@ -1799,8 +1853,60 @@ async function blackBoxSelfTest() {
         setup: (ctx) => { fs.writeFileSync(path.join(ctx.home, '.fake-git-hang'), '1'); return null; },
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--timeout', '3'],
         exit: 1,
-        status: /^AIKIT-XAI status=unverified cli=pi model=fake\/ok exit=1 cli_rc=- elapsed=\d+s out=0 tree=unknown action=stop$/,
+        status: new RegExp('^AIKIT-XAI status=git_timeout cli=pi model=fake/ok exit=1 cli_rc=- ' +
+          'elapsed=\\d+s out=0 tree=unknown action=stop$'),
         check: (_r, ctx) => (ctx.elapsedMs >= 10000 ? `elapsed ${ctx.elapsedMs}` : null),
+      },
+      {
+        // D-34: outside any git work tree the CLI still runs, once, with tree=unknown.
+        name: 'non-git-exec',
+        setup: (c) => {
+          fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
+          c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo);
+          return null;
+        },
+        args: [
+          '--prefer', 'pi,cursor', '--model-pi', 'fake/ok', '--model-cursor', 'fake-ok-cursor',
+        ],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=unknown action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('is not inside a git work tree')) {
+            return 'missing tree line';
+          }
+          return ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null;
+        },
+      },
+      {
+        name: 'non-git-review',
+        setup: (c) => {
+          fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
+          c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo);
+          return null;
+        },
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=unknown action=stop$/,
+        check: (r) => (
+          (r.stderr || '').includes('cannot verify the read-only contract')
+            ? null : 'missing review line'
+        ),
+      },
+      {
+        name: 'non-git-no-fallback',
+        setup: (c) => {
+          fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
+          c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo);
+          return null;
+        },
+        args: [
+          '--prefer', 'pi,cursor', '--model-pi', 'fake/crash', '--model-cursor', 'fake-ok-cursor',
+        ],
+        exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi .* tree=unknown action=stop$/,
+        check: (_r, ctx) => (
+          ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null
+        ),
       },
 
       {
@@ -2004,14 +2110,15 @@ async function blackBoxSelfTest() {
         name: 'review-gitfail',
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-gitfail'],
         exit: 1,
-        status: /^AIKIT-XAI status=unverified cli=pi model=fake\/review-gitfail exit=1 .* tree=unknown action=stop$/,
+        status: new RegExp('^AIKIT-XAI status=git_error cli=pi model=fake/review-gitfail exit=1 ' +
+          '.* tree=unknown action=stop$'),
       },
       {
         name: 'review-git-before-fail',
         setup: (ctx) => { fs.writeFileSync(path.join(ctx.home, '.fake-git-fail'), '1'); return null; },
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
         exit: 1,
-        status: /^AIKIT-XAI status=unverified .* tree=unknown action=stop$/,
+        status: /^AIKIT-XAI status=git_error .* tree=unknown action=stop$/,
         check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('pi ')) ? `calls=${ctx.calls.join(',')}` : null),
       },
       {
@@ -2233,6 +2340,25 @@ async function blackBoxSelfTest() {
         check: (r) => ((r.stderr || '').includes('cross-ai: deadline 1770s (outer 1800s)') ? null : 'deadline line'),
       },
       {
+        // D-18: an explicit outer deadline replaces both the GSD lookup and the CONFIG cap.
+        name: 'outer-timeout-flag',
+        args: [
+          '--print-argv', '--outer-timeout', '1830', '--timeout', '1800', '--model-pi', 'fake/ok',
+        ],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => (
+          (r.stderr || '').includes('cross-ai: deadline 1800s (outer 1830s)')
+            ? null : 'deadline line'
+        ),
+      },
+      {
+        name: 'outer-timeout-bad',
+        args: ['--print-argv', '--outer-timeout', '0', '--model-pi', 'fake/ok'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
         name: 'codex-knobs',
         args: ['--print-argv', '--prefer', 'codex', '--model-codex', 'x', '--codex-effort', 'high', '--codex-service-tier', 'flex'],
         config: { prefer: ['codex'] },
@@ -2415,6 +2541,15 @@ async function main(argv) {
 
   let last = null;
   let sawModel = false;
+  // Decided once: a directory with no .git ancestor still dispatches (D-34).
+  const noTree = !inGitTree(process.cwd());
+  if (noTree) {
+    log(`cross-ai: ${process.cwd()} is not inside a git work tree; running without the tree ` +
+      'check (tree=unknown); no other CLI runs after one has run');
+    if (o.mode === 'review') {
+      log('cross-ai: review mode cannot verify the read-only contract outside a git work tree');
+    }
+  }
   for (const c of cands) {
     if (aborting) break;
     if (!c.bin) { log(`cross-ai: ${c.name} not installed, skipping`); continue; }
@@ -2426,10 +2561,10 @@ async function main(argv) {
     sawModel = true;
     liveFields.cli = c.name;
     liveFields.model = c.model;
-    const before = await treeState(process.cwd(), runDeadline);
+    const before = noTree ? null : await treeState(process.cwd(), runDeadline);
     if (aborting) break;
-    if (before === null) {
-      return finish('unverified', { ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1 });
+    if (!noTree && before === null) {
+      return finish(gitFailStatus(), { ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1 });
     }
     const listEnv = childEnv(c.rt.env, process.env);
     const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
@@ -2452,20 +2587,22 @@ async function main(argv) {
     // From here until the next snapshot nothing proves the tree clean (CR-03).
     liveFields.tree = 'unknown';
     const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
-      beforeSig: stateSig(before), codexEffort: knobs.codexEffort, piThinking: knobs.piThinking,
-      codexServiceTier: o.codexServiceTier,
+      beforeSig: noTree ? null : stateSig(before), codexEffort: knobs.codexEffort,
+      piThinking: knobs.piThinking, codexServiceTier: o.codexServiceTier,
       cursorMode: o.cursorMode,
     });
     liveFields.out = r.outBytes || 0;
     liveFields.cli_rc = r.cli_rc ?? '-';
-    let after = await treeState(process.cwd(), finalizeBy);
+    let after = noTree ? null : await treeState(process.cwd(), finalizeBy);
     // A signal during this snapshot killed its git child: read once more on the signal budget.
-    if (aborting && after === null) after = await treeState(process.cwd(), finalizeBy);
-    const tree = treeLabel(before, after);
+    if (!noTree && aborting && after === null) after = await treeState(process.cwd(), finalizeBy);
+    const tree = noTree ? 'unknown' : treeLabel(before, after);
     liveFields.tree = tree;
     if (aborting) break;
-    if (r.status === 'contract_violation' || r.status === 'unverified') {
-      const treeField = r.status === 'unverified' ? 'unknown' : tree;
+    if (
+      r.status === 'contract_violation' || r.status === 'git_error' || r.status === 'git_timeout'
+    ) {
+      const treeField = r.status === 'contract_violation' ? tree : 'unknown';
       return finish(r.status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc ?? '-', exit: 1 });
     }
     if (r.timedOut) {
@@ -2475,8 +2612,8 @@ async function main(argv) {
       return finish('contract_violation', { ...liveFields, tree, cli_rc: r.cli_rc ?? '-', exit: 1 });
     }
     if (r.ok) {
-      if (after === null || before === null) {
-        return finish('unverified', { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
+      if (!noTree && (after === null || before === null)) {
+        return finish(gitFailStatus(), { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
       }
       if (o.mode === 'exec' && tree === 'clean') {
         last = { status: 'no_change', cli: c.name, model: c.model, tree, cli_rc: 0 };
@@ -2486,8 +2623,10 @@ async function main(argv) {
       process.stdout.write(r.text);
       return finish('ok', { ...liveFields, tree, exit: 0, cli_rc: 0, out: r.outBytes || 0 });
     }
-    if (after === null) {
-      return finish('unverified', { ...liveFields, tree: 'unknown', cli_rc: r.cli_rc ?? '-', exit: 1 });
+    if (!noTree && after === null) {
+      return finish(gitFailStatus(), {
+        ...liveFields, tree: 'unknown', cli_rc: r.cli_rc ?? '-', exit: 1,
+      });
     }
     const status = r.status || 'crash';
     last = { status, cli: c.name, model: c.model, tree, cli_rc: r.cli_rc };

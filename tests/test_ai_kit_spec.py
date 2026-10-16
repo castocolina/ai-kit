@@ -11918,7 +11918,7 @@ class TestCrossAiTemplateText(unittest.TestCase):
         m = re.match(hdr, lines[1])
         self.assertIsNotNone(m)
         assert m is not None
-        self.assertEqual(m.group(1), "2")
+        self.assertEqual(m.group(1), "3")
         start = text.index("// <config>\n") + len("// <config>\n")
         end = text.index("\n// </config>", start)
         block = text[start:end]

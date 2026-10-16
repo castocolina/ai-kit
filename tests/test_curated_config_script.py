@@ -87,7 +87,7 @@ class TestRender(unittest.TestCase):
         digest = hashlib.sha256(body_crlf).hexdigest()
         header = (
             b"// ai-kit-cross-ai generator=ai-kit-gsd-curated-config "
-            b"template=2 sha256=" + digest.encode()
+            b"template=3 sha256=" + digest.encode()
         )
         crlf_file = shebang + b"\n" + header + b"\n" + body_crlf
         self.assertEqual(cross_ai_script.script_state(crlf_file), "pristine")
@@ -111,7 +111,7 @@ class TestScriptState(unittest.TestCase):
         parts = cross_ai_script.split_header(rendered)
         assert parts is not None
         shebang, _header, body = parts
-        fake = b"// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=2 sha256="
+        fake = b"// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=3 sha256="
         fake += b"0" * 64
         tampered = shebang + b"\n" + fake + b"\n" + body
         self.assertEqual(cross_ai_script.script_state(tampered), "edited")
@@ -212,7 +212,7 @@ class TestPlanScript(unittest.TestCase):
             unstamped = (
                 b"#!/usr/bin/env node\n"
                 b"// ai-kit-cross-ai generator=ai-kit-gsd-curated-config "
-                b"template=2 sha256=UNSTAMPED\n"
+                b"template=3 sha256=UNSTAMPED\n"
                 b"// body\n"
             )
             with open(target, "wb") as f:
@@ -285,8 +285,8 @@ class TestPlanScript(unittest.TestCase):
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "wb") as f:
                 f.write(data)
-            template_v3 = re.sub(rb"template=2", b"template=3", self.template, count=1)
-            plan = cross_ai_script.plan_script(tmp, art, template_v3, HOST_SIGNAL_ENV_VARS)
+            template_v4 = re.sub(rb"template=3", b"template=4", self.template, count=1)
+            plan = cross_ai_script.plan_script(tmp, art, template_v4, HOST_SIGNAL_ENV_VARS)
             self.assertEqual(plan.kind, "change")
             cross_ai_script.write_script(plan)
             with open(target, "rb") as f:
@@ -295,7 +295,7 @@ class TestPlanScript(unittest.TestCase):
             assert parts is not None
             match = cross_ai_script.HEADER_RE.match(parts[1])
             assert match is not None
-            self.assertEqual(int(match.group(1)), 3)
+            self.assertEqual(int(match.group(1)), 4)
 
 
 if __name__ == "__main__":
