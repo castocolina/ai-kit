@@ -141,11 +141,26 @@ def _run_refresh(paths: _RefreshPaths, refresh, env, run_fn):
     return warnings, fetch_result
 
 
+def _normalize_snapshot_clis(runtimes):
+    """Id-key a cached snapshot's `clis` in memory. No detection module leaves them as read."""
+    if not isinstance(runtimes, dict):
+        return runtimes
+    clis = runtimes.get("clis")
+    if not isinstance(clis, dict):
+        return runtimes
+    detection = gsd_catalog.load_ai_kit_spec_module("detection")
+    if detection is None:
+        return runtimes
+    normalized = dict(runtimes)
+    normalized["clis"] = detection.normalize_runtime_keys(clis)
+    return normalized
+
+
 def _read_cache(cache, model_catalog, paths: _RefreshPaths):
     runtimes = cache.cache_read_json(paths.runtimes_path) or {}
     raw_catalog = cache.cache_read_json(paths.catalog_path) or {}
     entries, _meta = model_catalog.split_catalog_meta(raw_catalog)
-    return runtimes, entries
+    return _normalize_snapshot_clis(runtimes), entries
 
 
 def _detect_argv(spec_path: str, runtimes_path: str, refresh: bool) -> list:

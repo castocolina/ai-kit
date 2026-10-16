@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-k
 from ai_kit_spec import commands, detection
 from ai_kit_spec.cli import main
 from ai_kit_spec.detection import normalize_runtime_keys, runtime_id
+from ai_kit_spec.model_catalog import split_catalog_meta
 
 _SCRUB_NAMES = {
     "AI_AGENT",
@@ -31,6 +32,7 @@ _SCRUB_NAMES = {
 
 class _ModelsResult:
     stdout = "auto - Auto\n"
+    returncode = 0
 
 
 class TestRuntimeTracer(unittest.TestCase):
@@ -87,6 +89,51 @@ class TestRuntimeTable(unittest.TestCase):
         )
         for env, expected in pairs:
             self.assertEqual(detection.detect_current_runtime(env), expected)
+
+
+class TestCatalogRuntimeMigration(unittest.TestCase):
+    def test_schema_2_renames_cursor_agent_and_keeps_confirmations(self):
+        raw = {
+            "_meta": {"schema_version": 2},
+            "openai/x": {
+                "provider": "openai",
+                "runtimes": {"cursor-agent": {"model_id": "x"}},
+                "heuristic_confirmed": ["is_router"],
+            },
+        }
+        entries, _meta = split_catalog_meta(raw)
+        entry = entries["openai/x"]
+        self.assertEqual(entry["runtimes"], {"cursor": {"model_id": "x"}})
+        self.assertEqual(entry["heuristic_confirmed"], ["is_router"])
+        self.assertEqual(raw["openai/x"]["runtimes"], {"cursor-agent": {"model_id": "x"}})
+
+    def test_cursor_value_wins_when_both_keys_exist(self):
+        raw = {
+            "_meta": {"schema_version": 2},
+            "openai/x": {
+                "runtimes": {
+                    "cursor-agent": {"model_id": "legacy"},
+                    "cursor": {"model_id": "x"},
+                },
+            },
+        }
+        entries, _meta = split_catalog_meta(raw)
+        self.assertEqual(entries["openai/x"]["runtimes"], {"cursor": {"model_id": "x"}})
+
+    def test_schema_3_is_returned_unrenamed(self):
+        raw = {
+            "_meta": {"schema_version": 3},
+            "openai/x": {"runtimes": {"cursor-agent": {"model_id": "x"}}},
+        }
+        entries, _meta = split_catalog_meta(raw)
+        self.assertEqual(entries["openai/x"]["runtimes"], {"cursor-agent": {"model_id": "x"}})
+        self.assertIs(entries["openai/x"], raw["openai/x"])
+
+    def test_missing_meta_counts_as_old(self):
+        raw = {"openai/x": {"runtimes": {"cursor-agent": {"model_id": "x"}}}}
+        entries, meta = split_catalog_meta(raw)
+        self.assertEqual(meta, {})
+        self.assertEqual(entries["openai/x"]["runtimes"], {"cursor": {"model_id": "x"}})
 
 
 class TestRuntimeId(unittest.TestCase):

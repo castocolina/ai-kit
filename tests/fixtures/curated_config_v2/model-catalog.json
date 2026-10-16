@@ -21,7 +21,7 @@
     ],
     "anthropic_model_ids_as_of": "2026-10-15",
     "fixture_note": "synthetic: scores and tokens_per_sec are rank-preserving synthetic values, not Artificial Analysis data; pricing and capabilities are trimmed from models.dev",
-    "schema_version": 2
+    "schema_version": 3
   },
   "anthropic/claude-fable-5-1": {
     "batch_mode": false,

@@ -15,7 +15,6 @@ from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 
 from ai_kit_spec.cache import cache_base
-from ai_kit_spec.model_catalog import split_catalog_meta
 from ai_kit_spec.vendor import _MODEL_TIER_SUFFIXES
 
 RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-static
@@ -262,43 +261,60 @@ def _list_argv(rid: str) -> tuple[str, ...]:
     return argv
 
 
-def detect_opencode_models(binary: str, run_fn=subprocess.run) -> list:
-    """Runs `<binary> models`; one model id per non-blank line. opencode is
-    one of the known-installed multi-provider CLIs (confirmed live: lists
-    opencode-go/kimi-k3, opencode-go/qwen3.8-max, opencode-go/grok-4.6,
-    etc. under its own routing) — codex is enumerated separately via its
-    own `codex debug models` (detect_codex_models); claude and grok have
-    no list subcommand."""
+def _listing_stdout(result) -> str | None:
+    """Stdout of an exit-0 listing. A missing or non-zero returncode is a failure."""
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    stdout = getattr(result, "stdout", None)
+    return stdout if isinstance(stdout, str) else None
+
+
+def detect_opencode_models(binary: str, run_fn=subprocess.run) -> list | None:
+    """Runs `<binary> models`; one model id per non-blank line. None on OSError,
+    TimeoutExpired, or a non-zero exit. Exit 0 returns the lines, possibly []."""
     try:
         result = _run_opencode(run_fn, [binary, *_list_argv("opencode")], timeout=15)
     except (OSError, subprocess.TimeoutExpired):
-        return []
-    return [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+        return None
+    stdout = _listing_stdout(result)
+    if stdout is None:
+        return None
+    return [line.strip() for line in stdout.splitlines() if line.strip()]
 
 
-def detect_cursor_agent_models(binary: str, run_fn=subprocess.run) -> list:
-    """Runs `<binary> models`; each line is `<id> - <display name>` after
-    a header ("Available models") and a blank line — confirmed live
-    against a real authenticated install (2026.08.25-3e8eec8). Returns
-    just the ids (before ` - `), skipping the header/blank lines and any
-    line with no ` - ` separator (defensive — a format change should
-    degrade to an empty/partial list here, never crash detection).
+def _parse_cursor_models(stdout: str) -> list | None:
+    """[] when only the header remains. None when no id parsed and a non-blank line
+    is neither the header nor `<id> - <name>` (format not recognized)."""
+    models: list[str] = []
+    unrecognized = False
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if not line or line == "Available models":
+            continue
+        model_id = line.split(" - ", 1)[0].strip() if " - " in line else ""
+        if not model_id:
+            unrecognized = True
+            continue
+        models.append(model_id)
+    if models:
+        return models
+    return None if unrecognized else []
 
-    ai-kit only reads here, but `cursor-agent models` itself rewrites the
-    `privacyCache` key of ~/.cursor/cli-config.json (reproduced under a scratch
-    HOME in 16.1), so a before/after config fingerprint changes."""
+
+def detect_cursor_agent_models(binary: str, run_fn=subprocess.run) -> list | None:
+    """Runs `<binary> models` (`<id> - <name>` after an "Available models" header).
+    None on OSError, TimeoutExpired, a non-zero exit, or unrecognized output.
+    Exit 0 with only the header is []. `cursor-agent models` rewrites privacyCache
+    in ~/.cursor/cli-config.json, so a config fingerprint changes."""
     try:
         result = run_fn([binary, *_list_argv("cursor")], capture_output=True, text=True,
                          check=False, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
-        return []
-    models = []
-    for ln in result.stdout.splitlines():
-        ln = ln.strip()
-        if " - " not in ln:
-            continue
-        models.append(ln.split(" - ", 1)[0].strip())
-    return models
+        return None
+    stdout = _listing_stdout(result)
+    if stdout is None:
+        return None
+    return _parse_cursor_models(stdout)
 
 
 def _codex_reasoning_modes(item: dict) -> list[str]:
@@ -328,7 +344,7 @@ def _parse_one_codex_debug_model(item, seen: set) -> dict | None:
     return {"id": slug, "reasoning_modes": _codex_reasoning_modes(item)}
 
 
-def parse_codex_debug_models(stdout) -> list:
+def parse_codex_debug_models(stdout) -> list | None:
     """Parses the JSON stdout of `codex debug models` into
     `[{"id": <slug>, "reasoning_modes": [<effort>, ...]}, ...]`, one entry
     per listed model, in output order. Built from a real capture
@@ -340,22 +356,21 @@ def parse_codex_debug_models(stdout) -> list:
     slugs, not user-selectable models, and a MISSING `visibility` key
     counts as hidden too. `reasoning_modes` collects each
     `supported_reasoning_levels[].effort` value, in order, without
-    duplicates. Every malformed input degrades to [] (or to skipping just
-    the malformed item) and never raises: a non-`str` input, invalid JSON,
-    a non-dict top level, a missing/non-list `models`, a non-dict item, a
-    non-str/blank `slug`, a duplicate slug (first occurrence wins), or a
-    missing/non-list `supported_reasoning_levels`. The function reads only
+    duplicates. An unusable envelope returns None and never raises: a non-`str`
+    input, invalid JSON, a non-dict top level, or a missing/non-list `models`.
+    Inside a valid envelope, a bad item is skipped and an empty or all-hidden
+    list is []. The function reads only
     `slug`, `visibility` and `supported_reasoning_levels[].effort` — the
     real payload is ~260KB, almost all of it `model_messages`/
     `base_instructions` prompt text that must never be copied."""
     if not isinstance(stdout, str):
-        return []
+        return None
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError:
-        return []
+        return None
     if not isinstance(data, dict) or not isinstance(data.get("models"), list):
-        return []
+        return None
     parsed = []
     seen: set[str] = set()
     for item in data["models"]:
@@ -365,28 +380,19 @@ def parse_codex_debug_models(stdout) -> list:
     return parsed
 
 
-def detect_codex_models(binary: str, run_fn=subprocess.run) -> list:
-    """Runs `<binary> debug models` (codex-cli 0.147.0, resolved via PATH —
-    a volta shim, i.e. a real executable, not an alias/function) and
-    parses its JSON stdout via `parse_codex_debug_models`, keeping only
-    models whose `visibility` is "list" (the "hide" entries are
-    internal/reserved slugs, not user-selectable). A non-zero exit is a
-    FAILURE, not a success with a stale/partial payload: a failing command
-    that still prints JSON must never populate models, so the result's
-    `returncode` must be exactly 0 (the same gate
-    ai_kit_gsd_curated_config/model_detect.py already applies); a `run_fn`
-    stub returning None or an object without a `returncode` attribute
-    yields []. Like every parser in this file, any failure degrades to []
-    and never raises — an OSError/TimeoutExpired, invalid JSON, or an
-    unexpected shape all return [] rather than crashing detection."""
+def detect_codex_models(binary: str, run_fn=subprocess.run) -> list | None:
+    """Runs `<binary> debug models` and keeps `visibility` "list" slugs. None on
+    OSError, TimeoutExpired, a non-zero or missing returncode, or a None parse.
+    A valid empty or all-hidden payload is []. Never raises."""
     try:
         result = run_fn([binary, *_list_argv("codex")], capture_output=True, text=True,
                         check=False, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
-        return []
-    if getattr(result, "returncode", 1) != 0:
-        return []
-    return parse_codex_debug_models(getattr(result, "stdout", None))
+        return None
+    stdout = _listing_stdout(result)
+    if stdout is None:
+        return None
+    return parse_codex_debug_models(stdout)
 
 
 def _pi_reasoning_modes(item: dict) -> list[str]:
@@ -886,6 +892,14 @@ def runtimes_schema_is_current(data) -> bool:
         and version >= RUNTIMES_SCHEMA_VERSION
 
 
+def _catalog_meta(raw) -> dict:
+    """Copy of a catalog `_meta` dict, or {}. Never raises."""
+    if not isinstance(raw, dict):
+        return {}
+    meta = raw.get("_meta")
+    return dict(meta) if isinstance(meta, dict) else {}
+
+
 def claude_runtime_fields(catalog_raw) -> dict:
     """16 D-04 hybrid claude model sourcing: `aliases` is what Claude Code's `--model`
     resolves (see CLAUDE_MODEL_ALIASES); `models` holds full ids taken from
@@ -899,7 +913,7 @@ def claude_runtime_fields(catalog_raw) -> dict:
     dated fallback or a filtered subset, never an exception. Aliases stay OUT of `models` so
     catalog discovery (which walks every `models` array) never tries to match a bare alias
     against models.dev or mint a bogus `anthropic/opus`-style key."""
-    _, meta = split_catalog_meta(catalog_raw)
+    meta = _catalog_meta(catalog_raw)
     raw_ids = meta.get("anthropic_model_ids")
     ids: list = []
     if isinstance(raw_ids, list):
@@ -929,6 +943,22 @@ def _snapshot_node(which_fn) -> dict:
     return record
 
 
+def _record_listed_models(entry: dict, models) -> None:
+    """Successful listings include []. None leaves `models` absent (the listing failed)."""
+    if isinstance(models, list):
+        entry["models"] = models
+
+
+def _record_codex_listing(entry: dict, listed) -> None:
+    """Record codex ids and reasoning modes when the listing succeeded, [] included."""
+    if not isinstance(listed, list):
+        return
+    entry["models"] = [item["id"] for item in listed]
+    entry["reasoning_modes"] = {
+        item["id"]: item["reasoning_modes"] for item in listed if item["reasoning_modes"]
+    }
+
+
 def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
                             catalog_fn=None, popen_fn: Callable[..., Any] = subprocess.Popen,
                             urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN) -> dict:
@@ -936,8 +966,8 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
     "path"?: str, "models"?: [str], "reasoning_modes"?: {model_id: [effort, ...]},
     "aliases"?: [str], "models_source"?: str, "models_as_of"?: str, "image_input"?: {id: bool},
     "image_input_source"?: str, "image_input_probe"?: "failed"}}}.
-    `models` is populated for opencode/cursor always, for codex when `codex debug models`
-    enumeration succeeds, for pi when RPC `get_available_models` succeeds, and for claude from
+    `models` is set only when a listing succeeded, an empty list included, so a missing
+    key means the listing failed (opencode, cursor, codex, pi); claude's models come from
     the 16 D-04 hybrid (aliases + full ids); `reasoning_modes` maps each enumerated model id
     to CLI-reported effort/thinking levels (codex/pi), only for ids with a non-empty list;
     `image_input` (pi/opencode) maps model id to bool. `catalog_fn` (claude only) is optional
@@ -955,7 +985,7 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
             continue
         entry = {"installed": True, "path": binpath}
         if cli == "opencode":
-            entry["models"] = detect_opencode_models(binpath, run_fn=run_fn)
+            _record_listed_models(entry, detect_opencode_models(binpath, run_fn=run_fn))
             image_input_map, image_input_source = opencode_image_input_with_source(
                 binpath, run_fn=run_fn, popen_fn=popen_fn, urlopen_fn=urlopen_fn)
             if image_input_map:
@@ -965,15 +995,9 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
                 # A failed 2.x probe is a recorded gap, never silently "no data" (D-24).
                 entry["image_input_probe"] = "failed"
         elif cli == "cursor":
-            entry["models"] = detect_cursor_agent_models(binpath, run_fn=run_fn)
+            _record_listed_models(entry, detect_cursor_agent_models(binpath, run_fn=run_fn))
         elif cli == "codex":
-            codex_models = detect_codex_models(binpath, run_fn=run_fn)
-            if codex_models:
-                entry["models"] = [m["id"] for m in codex_models]
-                entry["reasoning_modes"] = {
-                    m["id"]: m["reasoning_modes"]
-                    for m in codex_models if m["reasoning_modes"]
-                }
+            _record_codex_listing(entry, detect_codex_models(binpath, run_fn=run_fn))
         elif cli == "pi":
             pi_models = detect_pi_models(binpath, run_fn=run_fn)
             if pi_models is not None:

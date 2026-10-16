@@ -1443,10 +1443,151 @@ class TestRuntimePrecedenceMatrix(unittest.TestCase):
         self.assertNotIn("OPENCODE_PID", doc)
 
 
+def _listing(stdout, returncode=0):
+    return subprocess.CompletedProcess(["bin"], returncode, stdout=stdout, stderr="")
+
+
+class TestListerOutcomes(unittest.TestCase):
+    """A failed listing is None; a successful one is a list, possibly empty."""
+
+    def _check(self, name, call, expected):
+        with self.subTest(name=name):
+            if expected is None:
+                self.assertIsNone(call())
+            else:
+                self.assertEqual(call(), expected)
+
+    def test_each_enumerator(self):
+        pi_one = (
+            '{"command":"get_available_models","success":true,'
+            '"data":{"models":[{"id":"m","provider":"p"}]}}'
+        )
+        pi_empty = (
+            '{"command":"get_available_models","success":true,"data":{"models":[]}}'
+        )
+        codex_one = json.dumps(
+            {"models": [{"slug": "m", "visibility": "list"}]}
+        )
+        cursor_one = "Available models\n\nm - Name\n"
+        cases = {
+            "opencode-ids": (
+                lambda: detect_opencode_models("/b", run_fn=lambda *_a, **_k: _listing("m\n")),
+                ["m"],
+            ),
+            "opencode-empty": (
+                lambda: detect_opencode_models("/b", run_fn=lambda *_a, **_k: _listing("")),
+                [],
+            ),
+            "cursor-ids": (
+                lambda: detect_cursor_agent_models(
+                    "/b", run_fn=lambda *_a, **_k: _listing(cursor_one)
+                ),
+                ["m"],
+            ),
+            "cursor-empty": (
+                lambda: detect_cursor_agent_models(
+                    "/b", run_fn=lambda *_a, **_k: _listing("Available models\n")
+                ),
+                [],
+            ),
+            "codex-ids": (
+                lambda: detection.detect_codex_models(
+                    "/b", run_fn=lambda *_a, **_k: _listing(codex_one)
+                ),
+                [{"id": "m", "reasoning_modes": []}],
+            ),
+            "codex-empty": (
+                lambda: detection.detect_codex_models(
+                    "/b", run_fn=lambda *_a, **_k: _listing('{"models": []}')
+                ),
+                [],
+            ),
+            "pi-ids": (
+                lambda: detection.detect_pi_models(
+                    "/b", run_fn=lambda *_a, **_k: _listing(pi_one)
+                ),
+                [{
+                    "id": "p/m",
+                    "reasoning_modes": [],
+                    "image_input": False,
+                    "context_window": None,
+                }],
+            ),
+            "pi-empty": (
+                lambda: detection.detect_pi_models(
+                    "/b", run_fn=lambda *_a, **_k: _listing(pi_empty)
+                ),
+                [],
+            ),
+        }
+        for name, (call, expected) in cases.items():
+            self._check(name, call, expected)
+        self._check_failures(cursor_one, codex_one, pi_one)
+
+    def _check_failures(self, cursor_one, codex_one, pi_one):
+        def boom(exc):
+            def run_fn(*_a, **_k):
+                raise exc
+            return run_fn
+
+        timeout = subprocess.TimeoutExpired(cmd="bin", timeout=15)
+        listers = (
+            ("opencode", detect_opencode_models, "m\n"),
+            ("cursor", detect_cursor_agent_models, cursor_one),
+            ("codex", detection.detect_codex_models, codex_one),
+            ("pi", detection.detect_pi_models, pi_one),
+        )
+        for label, fn, stdout in listers:
+            self._check(
+                f"{label}-timeout",
+                lambda fn=fn: fn("/b", run_fn=boom(timeout)),
+                None,
+            )
+            self._check(
+                f"{label}-oserror",
+                lambda fn=fn: fn("/b", run_fn=boom(OSError("down"))),
+                None,
+            )
+            self._check(
+                f"{label}-nonzero",
+                lambda fn=fn, stdout=stdout: fn(
+                    "/b", run_fn=lambda *_a, **_k: _listing(stdout, returncode=1)
+                ),
+                None,
+            )
+        self._check(
+            "cursor-malformed",
+            lambda: detect_cursor_agent_models(
+                "/b", run_fn=lambda *_a, **_k: _listing("not a listing\n")
+            ),
+            None,
+        )
+        for name, stdout in (
+            ("codex-invalid-json", "not json"),
+            ("codex-non-dict", "[]"),
+            ("codex-models-not-list", '{"models": {}}'),
+        ):
+            self._check(
+                name,
+                lambda stdout=stdout: detection.detect_codex_models(
+                    "/b", run_fn=lambda *_a, **_k: _listing(stdout)
+                ),
+                None,
+            )
+        self._check(
+            "pi-malformed",
+            lambda: detection.detect_pi_models(
+                "/b", run_fn=lambda *_a, **_k: _listing("no envelope")
+            ),
+            None,
+        )
+
+
 class TestDetectOpencodeModels(unittest.TestCase):
     def test_parses_one_model_per_line(self):
         class FakeResult:
             stdout = "opencode-go/kimi-k3\nopencode-go/qwen3.8-max\n\n"
+            returncode = 0
 
         result = detect_opencode_models("/usr/bin/opencode", run_fn=lambda *a, **k: FakeResult())
         self.assertEqual(result, ["opencode-go/kimi-k3", "opencode-go/qwen3.8-max"])
@@ -1455,7 +1596,7 @@ class TestDetectOpencodeModels(unittest.TestCase):
         def fake_run(*a, **k):
             raise OSError("not found")
 
-        self.assertEqual(detect_opencode_models("/usr/bin/opencode", run_fn=fake_run), [])
+        self.assertIsNone(detect_opencode_models("/usr/bin/opencode", run_fn=fake_run))
 
 
 class TestDetectCursorAgentModels(unittest.TestCase):
@@ -1470,6 +1611,7 @@ class TestDetectCursorAgentModels(unittest.TestCase):
                 "kimi-k3-high - Kimi K3 High\n"
                 "glm-5.2-high - GLM 5.2\n"
             )
+            returncode = 0
 
         result = detect_cursor_agent_models(
             "/usr/bin/cursor-agent", run_fn=lambda *a, **k: FakeResult()
@@ -1479,6 +1621,7 @@ class TestDetectCursorAgentModels(unittest.TestCase):
     def test_skips_lines_with_no_separator(self):
         class FakeResult:
             stdout = "Available models\n\nauto - Auto (current, default)\n"
+            returncode = 0
 
         result = detect_cursor_agent_models(
             "/usr/bin/cursor-agent", run_fn=lambda *a, **k: FakeResult()
@@ -1489,8 +1632,8 @@ class TestDetectCursorAgentModels(unittest.TestCase):
         def fake_run(*a, **k):
             raise OSError("not found")
 
-        self.assertEqual(
-            detect_cursor_agent_models("/usr/bin/cursor-agent", run_fn=fake_run), []
+        self.assertIsNone(
+            detect_cursor_agent_models("/usr/bin/cursor-agent", run_fn=fake_run)
         )
 
 
@@ -1898,6 +2041,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
     def test_lists_opencode_models_when_installed(self):
         class FakeResult:
             stdout = "opencode-go/kimi-k3\n"
+            returncode = 0
 
         def fake_which(name):
             return "/usr/bin/opencode" if name == "opencode" else None
@@ -1911,6 +2055,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
     def test_lists_cursor_agent_models_when_installed(self):
         class FakeResult:
             stdout = "Available models\n\nauto - Auto (current, default)\n"
+            returncode = 0
 
         def fake_which(name):
             return "/usr/bin/cursor-agent" if name == "cursor-agent" else None
@@ -1981,6 +2126,40 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         self.assertEqual(
             snapshot["clis"]["codex"], {"installed": True, "path": "/fake/volta/bin/codex"}
         )
+
+    def test_failed_opencode_listing_omits_models_key(self):
+        def fake_which(name):
+            return "/usr/bin/opencode" if name == "opencode" else None
+
+        def fake_run(*_a, **_k):
+            raise OSError("down")
+
+        snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run)
+        entry = snapshot["clis"]["opencode"]
+        self.assertTrue(entry["installed"])
+        self.assertNotIn("models", entry)
+
+    def test_failed_cursor_listing_omits_models_key(self):
+        def fake_which(name):
+            return "/usr/bin/cursor-agent" if name == "cursor-agent" else None
+
+        def fake_run(*_a, **_k):
+            raise OSError("down")
+
+        snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run)
+        entry = snapshot["clis"]["cursor"]
+        self.assertTrue(entry["installed"])
+        self.assertNotIn("models", entry)
+
+    def test_empty_codex_listing_records_empty_models(self):
+        def fake_which(name):
+            return "/usr/bin/codex" if name == "codex" else None
+
+        snapshot = build_runtimes_snapshot(
+            which_fn=fake_which,
+            run_fn=lambda *_a, **_k: _listing('{"models": []}'),
+        )
+        self.assertEqual(snapshot["clis"]["codex"]["models"], [])
 
 
 class TestCodexEnumerationEndToEnd(unittest.TestCase):
@@ -2140,8 +2319,8 @@ class TestCodexEnumerationEndToEnd(unittest.TestCase):
 
 
 class TestParseCodexDebugModels(unittest.TestCase):
-    """Pins parse_codex_debug_models's degrade contract (16 D-05): every malformed input
-    degrades to [] or a partial list and never raises."""
+    """Pins parse_codex_debug_models: an unusable envelope is None; a valid one skips
+    bad items and returns [] when nothing is listed."""
 
     @staticmethod
     def _fixture_text():
@@ -2150,12 +2329,14 @@ class TestParseCodexDebugModels(unittest.TestCase):
 
     def test_fixture_yields_only_listed_slugs_in_output_order(self):
         parsed = detection.parse_codex_debug_models(self._fixture_text())
+        assert parsed is not None
         self.assertEqual(
             [m["id"] for m in parsed], ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]
         )
 
     def test_fixture_effort_lists_match_supported_reasoning_levels(self):
         parsed = detection.parse_codex_debug_models(self._fixture_text())
+        assert parsed is not None
         efforts = {m["id"]: m["reasoning_modes"] for m in parsed}
         self.assertEqual(efforts["gpt-5.6-sol"], ["low", "medium", "high", "xhigh", "max", "ultra"])
         self.assertEqual(
@@ -2165,20 +2346,20 @@ class TestParseCodexDebugModels(unittest.TestCase):
         self.assertEqual(efforts["gpt-5.5"], ["low", "medium", "high", "xhigh"])
 
     def test_non_string_input_returns_empty(self):
-        self.assertEqual(detection.parse_codex_debug_models(None), [])
-        self.assertEqual(detection.parse_codex_debug_models(b"{}"), [])
-        self.assertEqual(detection.parse_codex_debug_models(42), [])
+        self.assertIsNone(detection.parse_codex_debug_models(None))
+        self.assertIsNone(detection.parse_codex_debug_models(b"{}"))
+        self.assertIsNone(detection.parse_codex_debug_models(42))
 
     def test_invalid_json_returns_empty(self):
-        self.assertEqual(detection.parse_codex_debug_models(""), [])
-        self.assertEqual(detection.parse_codex_debug_models("not json"), [])
-        self.assertEqual(detection.parse_codex_debug_models("{"), [])
+        self.assertIsNone(detection.parse_codex_debug_models(""))
+        self.assertIsNone(detection.parse_codex_debug_models("not json"))
+        self.assertIsNone(detection.parse_codex_debug_models("{"))
 
     def test_unexpected_top_level_shapes_return_empty(self):
-        self.assertEqual(detection.parse_codex_debug_models("[]"), [])
-        self.assertEqual(detection.parse_codex_debug_models("{}"), [])
-        self.assertEqual(detection.parse_codex_debug_models('{"models": {}}'), [])
-        self.assertEqual(detection.parse_codex_debug_models('{"models": null}'), [])
+        self.assertIsNone(detection.parse_codex_debug_models("[]"))
+        self.assertIsNone(detection.parse_codex_debug_models("{}"))
+        self.assertIsNone(detection.parse_codex_debug_models('{"models": {}}'))
+        self.assertIsNone(detection.parse_codex_debug_models('{"models": null}'))
 
     def test_malformed_items_are_skipped_not_fatal(self):
         stdout = json.dumps(
@@ -2269,6 +2450,7 @@ class TestDetectCodexModels(unittest.TestCase):
             return unittest.mock.MagicMock(returncode=0, stdout=self._fixture_text())
 
         models = detection.detect_codex_models("/fake/volta/bin/codex", run_fn=fake_run_fn)
+        assert models is not None
         self.assertEqual(
             [m["id"] for m in models], ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]
         )
@@ -2280,39 +2462,39 @@ class TestDetectCodexModels(unittest.TestCase):
         def fake_run_fn(*a, **k):
             raise OSError("binary vanished")
 
-        self.assertEqual(detection.detect_codex_models("/fake/codex", run_fn=fake_run_fn), [])
+        self.assertIsNone(detection.detect_codex_models("/fake/codex", run_fn=fake_run_fn))
 
     def test_timeout_returns_empty(self):
         def fake_run_fn(*a, **k):
             raise subprocess.TimeoutExpired(cmd="codex", timeout=15)
 
-        self.assertEqual(detection.detect_codex_models("/fake/codex", run_fn=fake_run_fn), [])
+        self.assertIsNone(detection.detect_codex_models("/fake/codex", run_fn=fake_run_fn))
 
     def test_none_result_returns_empty(self):
-        self.assertEqual(
-            detection.detect_codex_models("/fake/codex", run_fn=lambda *a, **k: None), []
+        self.assertIsNone(
+            detection.detect_codex_models("/fake/codex", run_fn=lambda *a, **k: None)
         )
 
     def test_empty_stdout_returns_empty(self):
         result = unittest.mock.MagicMock(returncode=0, stdout="")
-        self.assertEqual(
-            detection.detect_codex_models("/fake/codex", run_fn=lambda *a, **k: result), []
+        self.assertIsNone(
+            detection.detect_codex_models("/fake/codex", run_fn=lambda *a, **k: result)
         )
 
     def test_nonzero_exit_with_valid_json_returns_empty(self):
         # A failing command that still prints stale or partial JSON must not populate
         # models -- non-zero exit is a failure, not a success with a payload.
         result = unittest.mock.MagicMock(returncode=1, stdout=self._fixture_text())
-        self.assertEqual(
-            detection.detect_codex_models("/fake/codex", run_fn=lambda *a, **k: result), []
+        self.assertIsNone(
+            detection.detect_codex_models("/fake/codex", run_fn=lambda *a, **k: result)
         )
 
     def test_result_without_returncode_returns_empty(self):
         class NoReturnCode:
             stdout = self._fixture_text()
 
-        self.assertEqual(
-            detection.detect_codex_models("/fake/codex", run_fn=lambda *a, **k: NoReturnCode()), []
+        self.assertIsNone(
+            detection.detect_codex_models("/fake/codex", run_fn=lambda *a, **k: NoReturnCode())
         )
 
 
@@ -8944,12 +9126,13 @@ class TestCatalogSchemaVersion(unittest.TestCase):
         for bad in (
             {},
             {"schema_version": 1},
+            {"schema_version": 2},
             {"schema_version": True},
             {"schema_version": "2"},
             None,
         ):
             self.assertFalse(f(bad))
-        for good in ({"schema_version": 2}, {"schema_version": 3}):
+        for good in ({"schema_version": 3}, {"schema_version": 4}):
             self.assertTrue(f(good))
 
     # ── merge_catalog_entry reserved-key guard ────────────────────────────
@@ -9017,7 +9200,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             self.assertEqual(result["entry_count"], 1)  # entries only, `_meta` not counted
             written = cache_read_json(catalog_path)
             assert written is not None
-            self.assertEqual(written["_meta"], {"schema_version": 2})
+            self.assertEqual(written["_meta"], {"schema_version": 3})
             self.assertEqual(written["openai/gpt-5.6-sol"], self._legacy_entry())  # preserved
 
     def test_meta_with_older_version_is_refetched(self):
@@ -9055,7 +9238,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
             with open(catalog_path, "w", encoding="utf-8") as f:
-                json.dump({"_meta": {"schema_version": 2, "note": "keep"}}, f)
+                json.dump({"_meta": {"schema_version": 3, "note": "keep"}}, f)
             self._write_fresh_fetch_meta(catalog_path)
             runtimes_path = os.path.join(d, "runtimes.json")
             with open(runtimes_path, "w", encoding="utf-8") as f:
@@ -9081,7 +9264,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             self.assertEqual(code, 0)
             written = cache_read_json(catalog_path)
             assert written is not None
-            self.assertEqual(written["_meta"], {"schema_version": 2, "note": "keep"})
+            self.assertEqual(written["_meta"], {"schema_version": 3, "note": "keep"})
 
     def test_models_dev_down_aa_only_never_stamps_meta_so_next_run_refetches(self):
         with tempfile.TemporaryDirectory() as d:
@@ -9273,7 +9456,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             written = cache_read_json(catalog_path)
             assert written is not None
             self.assertIsInstance(written, dict)
-            self.assertEqual(written.get("_meta"), {"schema_version": 2})
+            self.assertEqual(written.get("_meta"), {"schema_version": 3})
 
 
 class TestClaudeEnumerationEndToEnd(unittest.TestCase):
@@ -9407,7 +9590,7 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
                 meta["anthropic_model_ids"], sorted([*detection.CLAUDE_FALLBACK_MODEL_IDS, new])
             )
             self.assertEqual(meta["anthropic_model_ids_as_of"], time.strftime("%Y-%m-%d"))
-            self.assertEqual(meta["schema_version"], 2)
+            self.assertEqual(meta["schema_version"], 3)
             for mid in [*detection.CLAUDE_FALLBACK_MODEL_IDS, new]:
                 key = f"anthropic/{mid}"
                 self.assertIn(key, entries)
@@ -9729,7 +9912,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 "image_input": True,
                 "image_input_source": "models_dev",
             }
-            cache_write_json(c, {"_meta": {"schema_version": 2}, "vendor/text-only": entry})
+            cache_write_json(c, {"_meta": {"schema_version": 3}, "vendor/text-only": entry})
             cache_write_json(
                 r,
                 {
@@ -10399,7 +10582,7 @@ openai/gpt-5.6-sol
             cache_write_json(
                 c,
                 {
-                    "_meta": {"schema_version": 2},
+                    "_meta": {"schema_version": 3},
                     "vendor/no-modalities": {
                         "provider": "vendor",
                         "runtimes": {"opencode": {"model_id": "vendor/no-modalities"}},

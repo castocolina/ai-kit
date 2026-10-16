@@ -6,13 +6,15 @@ import os
 import re
 
 from ai_kit_spec.cache import cache_base
+from ai_kit_spec.detection import normalize_runtime_keys
 
 CATALOG_TTL_SECONDS = 30 * 24 * 3600  # ~30 days -- spec Section 8, same order as RUNTIMES_TTL
 
 # 16 D-12: the catalog's own metadata lives in this reserved top-level object because every
 # other top-level key is a `provider/model` canonical key (canonical keys always contain `/`,
 # _meta never does); pre-Phase-16 catalogs have no `_meta` and count as version 1.
-CATALOG_SCHEMA_VERSION = 2
+# 18.1 D-04: entry runtimes keyed by runtime id.
+CATALOG_SCHEMA_VERSION = 3
 CATALOG_META_KEY = "_meta"
 
 _MANDATORY_CATALOG_FIELDS = {"provider", "runtimes", "source", "confidence", "last_verified"}
@@ -57,16 +59,41 @@ def cache_catalog_path(env: dict) -> str:
     return os.path.join(cache_base(env), "model-catalog.json")
 
 
+def _runtime_migration_needed(meta: dict) -> bool:
+    """True when entry runtimes still use pre-id keys (18.1 D-04). Missing counts as old."""
+    version = meta.get("schema_version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        return True
+    return version < CATALOG_SCHEMA_VERSION
+
+
+def _entry_with_id_runtimes(entry):
+    """Shallow copy with runtime-id keys; entries without a dict `runtimes` stay put."""
+    if not isinstance(entry, dict):
+        return entry
+    runtimes = entry.get("runtimes")
+    if not isinstance(runtimes, dict):
+        return entry
+    copied = dict(entry)
+    copied["runtimes"] = normalize_runtime_keys(runtimes)
+    return copied
+
+
 def split_catalog_meta(raw) -> tuple:
     """16 D-12: splits a raw catalog file's dict into (entries, meta). Entries is every
     top-level key except the reserved CATALOG_META_KEY; meta is a shallow copy of that
     key's value when it is a dict, else {}. Never raises, never mutates its input; a
-    non-dict `raw` (None, a list, a string) splits to ({}, {})."""
+    non-dict `raw` (None, a list, a string) splits to ({}, {}). A schema older than
+    CATALOG_SCHEMA_VERSION returns each dict entry that has a dict `runtimes` as a
+    shallow copy whose keys are runtime ids; a current schema returns entries unchanged."""
     if not isinstance(raw, dict):
         return {}, {}
     entries = {k: v for k, v in raw.items() if k != CATALOG_META_KEY}
-    meta = raw.get(CATALOG_META_KEY)
-    return entries, dict(meta) if isinstance(meta, dict) else {}
+    meta_raw = raw.get(CATALOG_META_KEY)
+    meta = dict(meta_raw) if isinstance(meta_raw, dict) else {}
+    if _runtime_migration_needed(meta):
+        entries = {key: _entry_with_id_runtimes(value) for key, value in entries.items()}
+    return entries, meta
 
 
 def join_catalog_meta(entries: dict, meta: dict) -> dict:

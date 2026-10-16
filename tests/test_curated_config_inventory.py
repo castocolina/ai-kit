@@ -29,7 +29,8 @@ from ai_kit_gsd_curated_config import (
     presets,
     project_facts,
 )
-from ai_kit_spec import gsd_tools
+from ai_kit_spec import cache as spec_cache
+from ai_kit_spec import gsd_tools, model_catalog
 
 from tests.test_curated_config_recommend import build, entry_map, make_inventory
 
@@ -1034,6 +1035,50 @@ class TestBuildCandidates(unittest.TestCase):
         off_host = catalog_adapter.build_candidates(runtimes, entries, "claude", weights)
         self.assertFalse(off_host[0]["is_host"])
         self.assertEqual(off_host[0]["catalog_key"], "acme/m")
+
+    def test_legacy_cursor_agent_cache_matches_id_keyed_host(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        runtimes_path = os.path.join(home, "runtimes.json")
+        catalog_path = os.path.join(home, "model-catalog.json")
+        snapshot = {"clis": {"cursor-agent": {"installed": True, "models": ["m"]}}}
+        catalog = {
+            "_meta": {"schema_version": 2},
+            "acme/m": {
+                "provider": "acme",
+                "runtimes": {"cursor-agent": {"model_id": "m"}},
+                "heuristic_confirmed": ["is_router"],
+            },
+        }
+        with open(runtimes_path, "w", encoding="utf-8") as fh:
+            json.dump(snapshot, fh)
+        with open(catalog_path, "w", encoding="utf-8") as fh:
+            json.dump(catalog, fh)
+        paths = catalog_adapter._RefreshPaths("spec", runtimes_path, catalog_path, home)
+        runtimes, entries = catalog_adapter._read_cache(spec_cache, model_catalog, paths)
+        weights = self._weights()
+        legacy = catalog_adapter.build_candidates(runtimes, entries, "cursor", weights)
+        id_keyed_entries = {
+            "acme/m": {
+                "provider": "acme",
+                "runtimes": {"cursor": {"model_id": "m"}},
+                "heuristic_confirmed": ["is_router"],
+            },
+        }
+        id_keyed = catalog_adapter.build_candidates(
+            {"clis": {"cursor": {"installed": True, "models": ["m"]}}},
+            id_keyed_entries,
+            "cursor",
+            weights,
+        )
+        self.assertEqual(len(legacy), 1)
+        self.assertEqual(legacy[0]["runtime"], "cursor")
+        self.assertEqual(legacy[0]["catalog_key"], "acme/m")
+        self.assertEqual(legacy[0]["provider"], "acme")
+        self.assertTrue(legacy[0]["is_host"])
+        self.assertEqual(legacy, id_keyed)
+        with open(catalog_path, encoding="utf-8") as fh:
+            self.assertIn("cursor-agent", json.load(fh)["acme/m"]["runtimes"])
 
 
 class TestGsdCoreResolution(unittest.TestCase):
