@@ -48,11 +48,11 @@ def exec_cand(model: str, runtime: str, execution: float = 80.0, price: float = 
 
 def _all_runners_inv(host_name: str, execution: float = 90.0):
     cands = [
-        exec_cand(f"m-{rid}", cross_ai.RUNNER_CLI[rid], execution=execution)
-        for rid in cross_ai.RUNNER_CLI
+        exec_cand(f"m-{rid}", rid, execution=execution)
+        for rid in cross_ai.RUNNER_IDS
     ]
     inv = make_inventory(host=host_name, candidates=cands)
-    inv["installed_runtimes"] = sorted(set(cross_ai.RUNNER_CLI.values()))
+    inv["installed_runtimes"] = list(cross_ai.RUNNER_IDS)
     return inv
 
 
@@ -61,12 +61,12 @@ class TestExecTargetsEndToEnd(unittest.TestCase):
         inv = make_inventory(
             host="pi",
             candidates=[
-                exec_cand("m-cursor", "cursor-agent"),
+                exec_cand("m-cursor", "cursor"),
                 exec_cand("m-opencode", "opencode"),
                 exec_cand("m-pi", "pi"),
             ],
         )
-        inv["installed_runtimes"] = ["cursor-agent", "opencode", "pi"]
+        inv["installed_runtimes"] = ["cursor", "opencode", "pi"]
         code, plan, _, err = run_recommend(
             inv, "--profile", "adaptive", "--rigor", "standard", "--cross-ai-exec", "y"
         )
@@ -78,11 +78,11 @@ class TestExecTargetsEndToEnd(unittest.TestCase):
         inv = make_inventory(
             host="claude",
             candidates=[
-                exec_cand("m-cursor", "cursor-agent"),
+                exec_cand("m-cursor", "cursor"),
                 exec_cand("m-opencode", "opencode"),
             ],
         )
-        inv["installed_runtimes"] = ["cursor-agent", "opencode"]
+        inv["installed_runtimes"] = ["cursor", "opencode"]
         code, plan, _, err = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
         self.assertEqual((code, err), (0, ""))
         assert plan is not None
@@ -98,11 +98,11 @@ class TestExecTargets(unittest.TestCase):
             host="claude",
             candidates=[
                 exec_cand("m-opencode", "opencode"),
-                exec_cand("m-cursor", "cursor-agent"),
+                exec_cand("m-cursor", "cursor"),
                 exec_cand("m-pi", "pi"),
             ],
         )
-        inv["installed_runtimes"] = ["opencode", "cursor-agent", "pi"]
+        inv["installed_runtimes"] = ["opencode", "cursor", "pi"]
         targets = cross_ai.exec_targets(inv, "standard")
         self.assertEqual([t.cli for t in targets], ["pi", "cursor", "opencode"])
 
@@ -123,19 +123,19 @@ class TestExecTargets(unittest.TestCase):
             host="claude",
             candidates=[
                 exec_cand("m-grok", "grok"),
-                exec_cand("m-cursor", "cursor-agent"),
+                exec_cand("m-cursor", "cursor"),
             ],
         )
-        inv["installed_runtimes"] = ["grok", "cursor-agent"]
+        inv["installed_runtimes"] = ["grok", "cursor"]
         targets = cross_ai.exec_targets(inv, "standard")
         self.assertEqual([t.cli for t in targets], ["cursor"])
 
     def test_claude_in_prefer_skipped(self):
         inv = make_inventory(
             host="pi",
-            candidates=[exec_cand("m-cursor", "cursor-agent")],
+            candidates=[exec_cand("m-cursor", "cursor")],
         )
-        inv["installed_runtimes"] = ["cursor-agent"]
+        inv["installed_runtimes"] = ["cursor"]
         targets = cross_ai.exec_targets(inv, "standard", prefer=("claude", "cursor"))
         self.assertEqual([t.cli for t in targets], ["cursor"])
 
@@ -145,18 +145,17 @@ class TestExecTargets(unittest.TestCase):
                 inv = _all_runners_inv(host_name)
                 targets = cross_ai.exec_targets(inv, "standard")
                 for target in targets:
-                    mapped = cross_ai.RUNNER_CLI.get(target.cli)
-                    self.assertNotEqual(mapped, host_name)
+                    self.assertNotEqual(target.cli, host_name)
 
     def test_equal_execution_score_breaks_by_price(self):
         inv = make_inventory(
             host="claude",
             candidates=[
-                exec_cand("z-cursor", "cursor-agent", execution=50.0, price=4.0),
-                exec_cand("a-cursor", "cursor-agent", execution=50.0, price=1.0),
+                exec_cand("z-cursor", "cursor", execution=50.0, price=4.0),
+                exec_cand("a-cursor", "cursor", execution=50.0, price=1.0),
             ],
         )
-        inv["installed_runtimes"] = ["cursor-agent"]
+        inv["installed_runtimes"] = ["cursor"]
         target = cross_ai.exec_targets(inv, "standard")[0]
         self.assertEqual(target.model, "a-cursor")
 
@@ -164,11 +163,11 @@ class TestExecTargets(unittest.TestCase):
         inv = make_inventory(
             host="claude",
             candidates=[
-                exec_cand("b-cursor", "cursor-agent", execution=50.0, price=2.0),
-                exec_cand("a-cursor", "cursor-agent", execution=50.0, price=2.0),
+                exec_cand("b-cursor", "cursor", execution=50.0, price=2.0),
+                exec_cand("a-cursor", "cursor", execution=50.0, price=2.0),
             ],
         )
-        inv["installed_runtimes"] = ["cursor-agent"]
+        inv["installed_runtimes"] = ["cursor"]
         target = cross_ai.exec_targets(inv, "standard")[0]
         self.assertEqual(target.model, "a-cursor")
 
@@ -176,11 +175,11 @@ class TestExecTargets(unittest.TestCase):
         inv = make_inventory(
             host="claude",
             candidates=[
-                exec_cand("cheap", "cursor-agent", execution=70.0, price=1.0),
-                exec_cand("dear", "cursor-agent", execution=95.0, price=100.0),
+                exec_cand("cheap", "cursor", execution=70.0, price=1.0),
+                exec_cand("dear", "cursor", execution=95.0, price=100.0),
             ],
         )
-        inv["installed_runtimes"] = ["cursor-agent"]
+        inv["installed_runtimes"] = ["cursor"]
         target = cross_ai.exec_targets(inv, "mvp")[0]
         self.assertEqual(target.model, "cheap")
 
@@ -188,10 +187,10 @@ class TestExecTargets(unittest.TestCase):
         inv = make_inventory(
             host="claude",
             candidates=[
-                exec_cand("catalog-high", "cursor-agent", execution=99.0, price=1.0),
+                exec_cand("catalog-high", "cursor", execution=99.0, price=1.0),
                 cand(
                     "router-env/run",
-                    runtime="cursor-agent",
+                    runtime="cursor",
                     is_host=False,
                     is_router=True,
                     router_confirmed=True,
@@ -201,7 +200,7 @@ class TestExecTargets(unittest.TestCase):
                 ),
             ],
         )
-        inv["installed_runtimes"] = ["cursor-agent"]
+        inv["installed_runtimes"] = ["cursor"]
         target = cross_ai.exec_targets(inv, "standard")[0]
         self.assertEqual(target.model, "router-env/run")
         self.assertTrue(target.router_backed)
@@ -210,10 +209,10 @@ class TestExecTargets(unittest.TestCase):
         inv = make_inventory(
             host="claude",
             candidates=[
-                exec_cand("catalog-pick", "cursor-agent", execution=80.0, price=1.0),
+                exec_cand("catalog-pick", "cursor", execution=80.0, price=1.0),
                 cand(
                     "router-env/run",
-                    runtime="cursor-agent",
+                    runtime="cursor",
                     is_host=False,
                     is_router=True,
                     router_confirmed=False,
@@ -223,7 +222,7 @@ class TestExecTargets(unittest.TestCase):
                 ),
             ],
         )
-        inv["installed_runtimes"] = ["cursor-agent"]
+        inv["installed_runtimes"] = ["cursor"]
         target = cross_ai.exec_targets(inv, "standard")[0]
         self.assertEqual(target.model, "catalog-pick")
         self.assertFalse(target.router_backed)
@@ -233,8 +232,7 @@ class TestExecTargets(unittest.TestCase):
             host="claude", candidates=[exec_cand(model, runtime, reasoning_modes=modes)]
         )
         inv["installed_runtimes"] = [runtime]
-        runner = next(r for r, rt in cross_ai.RUNNER_CLI.items() if rt == runtime)
-        return cross_ai.exec_targets(inv, "standard", prefer=(runner,))[0]
+        return cross_ai.exec_targets(inv, "standard", prefer=(runtime,))[0]
 
     def test_catalog_pick_pins_effort_on_pi_and_codex(self):
         """WR-06: the selection's effort target reaches runners that can pin it."""
@@ -248,7 +246,7 @@ class TestExecTargets(unittest.TestCase):
 
     def test_no_effort_without_flag_modes_or_with_variant_id(self):
         cases = (
-            ("cursor-agent", ["low", "medium"], "m-reason"),  # no effort flag in the runner
+            ("cursor", ["low", "medium"], "m-reason"),  # no effort flag in the runner
             ("pi", [], "m-reason"),  # not a reasoning model: pi clamps to off itself
             ("pi", ["low", "medium"], "m-reason-low"),  # the id already names the effort
         )
@@ -261,7 +259,7 @@ class TestExecTargets(unittest.TestCase):
 
     def test_no_candidates_needs_choice(self):
         inv = make_inventory(host="claude", candidates=[])
-        inv["installed_runtimes"] = ["cursor-agent"]
+        inv["installed_runtimes"] = ["cursor"]
         targets = cross_ai.exec_targets(inv, "standard")
         self.assertEqual(len(targets), 1)
         self.assertIsNone(targets[0].model)
@@ -360,9 +358,13 @@ def review_cand(model: str, runtime: str, review: float = 80.0, **fields):
 
 
 def _lane_row(slug: str, binary: str | None, model_key: str, effort_key: str | None = None):
+    from ai_kit_spec.detection import runtime_id
+
+    runtime = runtime_id(binary) if isinstance(binary, str) else None
     return {
         "slug": slug,
         "binary": binary,
+        "runtime": runtime,
         "transport": "spawn",
         "model_key": model_key,
         "effort_key": effort_key,
@@ -385,6 +387,40 @@ def _review_inv(host_name: str, candidates, installed, lanes, extra_accepted=())
 
 
 class TestReviewLanes(unittest.TestCase):
+    def test_parse_lane_runtime_from_binary(self):
+        rows = gsd_catalog._parse_review_lanes([
+            {"slug": "cursor", "binary": "cursor-agent"},
+            {"slug": "claude", "binary": "claude"},
+            {"slug": "ollama", "binary": None},
+        ])
+        assert rows is not None
+        by_slug = {row["slug"]: row for row in rows}
+        self.assertEqual(by_slug["cursor"]["binary"], "cursor-agent")
+        self.assertEqual(by_slug["cursor"]["runtime"], "cursor")
+        self.assertEqual(by_slug["claude"]["runtime"], "claude")
+        self.assertIsNone(by_slug["ollama"]["runtime"])
+
+    def test_cursor_binary_lane_matches_cursor_runtime(self):
+        lane = {
+            "slug": "cursor",
+            "binary": "cursor-agent",
+            "runtime": "cursor",
+            "transport": "spawn",
+            "model_key": "review.models.cursor",
+            "effort_key": None,
+            "default_effort": None,
+        }
+        inv = _review_inv(
+            "claude",
+            [review_cand("composer-2.5", "cursor", vendor="cursor")],
+            ["cursor"],
+            [lane],
+        )
+        eligible = cross_ai.eligible_lanes(inv)
+        self.assertEqual([row["slug"] for row in eligible], ["cursor"])
+        pool = cross_ai.lane_pool(lane, inv)
+        self.assertEqual([row["model"] for row in pool], ["composer-2.5"])
+
     def test_r2_boundary_one_eligible_rigorous(self):
         lanes = [_lane_row("codex", "codex", "review.models.codex", "review.effort.codex")]
         inv = _review_inv(
@@ -481,9 +517,9 @@ class TestReviewLanes(unittest.TestCase):
                 cand("gpt-5.6-sol", vendor="openai", score_axes=3,
                      purpose_scores={"planning": 9.0}),
                 review_cand("agy-model", "agy", vendor="google"),
-                review_cand("composer-2.5", "cursor-agent", vendor="cursor"),
+                review_cand("composer-2.5", "cursor", vendor="cursor"),
             ],
-            ["codex", "agy", "cursor-agent"],
+            ["codex", "agy", "cursor"],
             lanes,
         )
         picked, _ = cross_ai.select_lanes(inv, "standard", "openai")
@@ -737,7 +773,14 @@ class TestReviewLanes(unittest.TestCase):
         self.assertNotIn("review.default_reviewers", entry_map(plan))
 
     def test_host_and_pi_never_lanes(self):
-        base_lanes = _fixture_review_lanes()
+        from ai_kit_spec.detection import runtime_id
+
+        base_lanes = []
+        for lane in _fixture_review_lanes():
+            row = dict(lane)
+            binary = row.get("binary")
+            row["runtime"] = runtime_id(binary) if isinstance(binary, str) else None
+            base_lanes.append(row)
         for host_name in host.HOSTS:
             with self.subTest(host=host_name):
                 inv = _review_inv(

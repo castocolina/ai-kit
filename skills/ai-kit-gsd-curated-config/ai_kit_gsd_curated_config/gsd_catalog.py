@@ -181,9 +181,18 @@ _GSD_TABLES_QUERY_SCRIPT = (
 _LANE_ROW_KEYS = ("slug", "transport", "binary", "model_key", "effort_key", "default_effort")
 
 
+def _lane_runtime(binary: str | None, detection) -> str | None:
+    if not isinstance(binary, str):
+        return None
+    if detection is None:
+        return binary
+    return detection.runtime_id(binary)
+
+
 def _parse_review_lanes(raw) -> list | None:
     if raw is None or not isinstance(raw, list):
         return None
+    detection = load_ai_kit_spec_module("detection")
     rows: list[dict] = []
     for row in raw:
         if not isinstance(row, dict):
@@ -195,6 +204,7 @@ def _parse_review_lanes(raw) -> list | None:
         for key in _LANE_ROW_KEYS[1:]:
             val = row.get(key)
             cleaned[key] = val if isinstance(val, str) else None
+        cleaned["runtime"] = _lane_runtime(cleaned["binary"], detection)
         rows.append(cleaned)
     return rows
 

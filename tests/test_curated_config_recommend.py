@@ -257,7 +257,7 @@ def make_inventory(
     host="codex", candidates=(), project=None, existing=None, conflicts=(), rejected=(),
     global_values=None, global_path=None, extra_accepted=(), review_lanes=(),
 ):
-    """A full schema-version-2 inventory (18-02) with token paths."""
+    """A full current-schema inventory with token paths."""
     from ai_kit_gsd_curated_config import host as host_mod
     if project is None:
         project = {"frontend": False, "intel_index_present": False}
@@ -1545,11 +1545,20 @@ class TestDeterminism(unittest.TestCase):
 
 
 def _fixture_review_lanes():
+    from ai_kit_spec.detection import runtime_id
+
     path = os.path.join(
         REPO_ROOT, "tests", "fixtures", "curated_config_v2", "gsd_tables_1_16.json"
     )
     with open(path, encoding="utf-8") as handle:
-        return json.load(handle)["review_lanes"]
+        lanes = json.load(handle)["review_lanes"]
+    stamped = []
+    for lane in lanes:
+        row = dict(lane)
+        binary = row.get("binary")
+        row["runtime"] = runtime_id(binary) if isinstance(binary, str) else None
+        stamped.append(row)
+    return stamped
 
 
 
@@ -1638,7 +1647,7 @@ class TestCrossAi(unittest.TestCase):
         )
         cursor_cand = cand(
             "composer-2.5",
-            runtime="cursor-agent",
+            runtime="cursor",
             is_host=False,
             price=1,
             score_axes=3,
@@ -1654,7 +1663,7 @@ class TestCrossAi(unittest.TestCase):
             ("claude", (pi_router,), ["pi"], "standard", "y", "y"),
             ("claude", (pi_router,), ["pi"], "rigorous", "y", "y"),
             ("claude", (), [], "mvp", "n", "n"),
-            ("codex", (cursor_cand,), ["cursor-agent"], "standard", "y", "y"),
+            ("codex", (cursor_cand,), ["cursor"], "standard", "y", "y"),
         ]
         for host, candidates, installed, rigor, want_review, want_exec in cases:
             inv = make_inventory(host=host, candidates=candidates)
@@ -1677,7 +1686,7 @@ class TestCrossAi(unittest.TestCase):
         plan = build(inv, rigor="standard")
         notes = [n for n in plan["notes"] if n["kind"] == "cross_ai_exec"]
         self.assertEqual(len(notes), 1)
-        self.assertIn("pi, cursor-agent, opencode", notes[0]["text"])
+        self.assertIn("pi, cursor, opencode", notes[0]["text"])
 
     def test_empty_runner_pool_names_the_enumeration_cause(self):
         """C-W12: a failed or empty model listing is not a price-ceiling outcome."""
@@ -1706,6 +1715,27 @@ class TestCrossAi(unittest.TestCase):
         plan = build(inv, rigor="standard", cross_ai_review="y")
         why = entry_map(plan)["workflow.plan_review_convergence"]["why"]
         self.assertIn("no installed non-host lane CLI", why)
+
+    def test_no_lane_reason_follows_runtime_when_binary_differs(self):
+        lane = {
+            "slug": "cursor",
+            "binary": "cursor-agent",
+            "runtime": "cursor",
+            "transport": "spawn",
+            "model_key": "review.models.cursor",
+            "effort_key": None,
+            "default_effort": None,
+        }
+        inv = make_inventory(
+            host="claude",
+            candidates=[],
+            review_lanes=[lane],
+            extra_accepted=["review.models.cursor"],
+        )
+        inv["installed_runtimes"] = ["cursor"]
+        why = recommend._no_lane_reason(inv, "anthropic")
+        self.assertNotIn("no installed non-host lane CLI", why)
+        self.assertIn("no enumerated models on an installed non-host lane", why)
 
     def test_explicit_flag_not_defaulted(self):
         plan = build(make_inventory(), rigor="mvp", cross_ai_review="y")
@@ -2073,6 +2103,27 @@ class TestInventoryValidation(unittest.TestCase):
         self.assertIn(f"schema_version {ver + 1} unsupported (expected {ver})", err)
         # B-IN-08: the same prefix as every other CLI error path.
         self.assertTrue(err.startswith("ai-kit-gsd-curated-config: inventory "), err)
+
+    def test_schema_2_inventory_refused(self):
+        inv = make_inventory()
+        inv["schema_version"] = 2
+        code, plan, plan_bytes, err = self._run(inv)
+        self.assertEqual((code, plan, plan_bytes), (2, None, None))
+        self.assertIn("schema_version 2 unsupported (expected 3)", err)
+
+    def test_lane_missing_runtime_refused(self):
+        lane = {
+            "slug": "codex",
+            "transport": "spawn",
+            "binary": "codex",
+            "model_key": "review.models.codex",
+            "effort_key": None,
+            "default_effort": None,
+        }
+        inv = make_inventory(review_lanes=[lane])
+        code, plan, plan_bytes, err = self._run(inv)
+        self.assertEqual((code, plan, plan_bytes), (2, None, None))
+        self.assertIn("missing runtime", err)
 
     def test_missing_schema_version_fails_closed(self):
         inv = make_inventory()

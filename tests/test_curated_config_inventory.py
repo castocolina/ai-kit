@@ -428,11 +428,11 @@ class TestEnumerationStatus(unittest.TestCase):
         clis = {
             "pi": {"installed": True},
             "opencode": {"installed": True, "models": []},
-            "cursor-agent": {"installed": True, "models": ["composer-2.5"]},
+            "cursor": {"installed": True, "models": ["composer-2.5"]},
         }
         self.assertEqual(
             inventory.enumeration_status(clis, sorted(clis)),
-            {"cursor-agent": "ok", "opencode": "empty", "pi": "failed"},
+            {"cursor": "ok", "opencode": "empty", "pi": "failed"},
         )
 
 
@@ -753,7 +753,7 @@ class TestBuildCandidates(unittest.TestCase):
     def test_fast_twin_same_runtime_only(self):
         runtimes = {
             "clis": {
-                "cursor-agent": {
+                "cursor": {
                     "installed": True,
                     "models": [
                         "gpt-5.6-sol-high",
@@ -768,7 +768,7 @@ class TestBuildCandidates(unittest.TestCase):
                 },
             }
         }
-        out = catalog_adapter.build_candidates(runtimes, {}, "cursor-agent", self._weights())
+        out = catalog_adapter.build_candidates(runtimes, {}, "cursor", self._weights())
         by_model = {c["model"]: c for c in out}
         self.assertEqual(by_model["gpt-5.6-sol-high-fast"]["fast_twin_of"], "gpt-5.6-sol-high")
         self.assertEqual(by_model["composer-2.5-fast"]["fast_twin_of"], "composer-2.5")
@@ -793,7 +793,7 @@ class TestBuildCandidates(unittest.TestCase):
         entries = {
             "requesty/gpt-5.6-sol-medium": {
                 "provider": "requesty",
-                "runtimes": {"cursor-agent": {"model_id": "gpt-5.6-sol-medium"}},
+                "runtimes": {"cursor": {"model_id": "gpt-5.6-sol-medium"}},
             },
             "zai-coding-plan/glm-5.3": {
                 "provider": "zai-coding-plan",
@@ -815,7 +815,7 @@ class TestBuildCandidates(unittest.TestCase):
         }
         runtimes = {
             "clis": {
-                "cursor-agent": {"installed": True, "models": ["gpt-5.6-sol-medium"]},
+                "cursor": {"installed": True, "models": ["gpt-5.6-sol-medium"]},
                 "opencode": {
                     "installed": True,
                     "models": [
@@ -827,7 +827,7 @@ class TestBuildCandidates(unittest.TestCase):
                 },
             }
         }
-        out = catalog_adapter.build_candidates(runtimes, entries, "cursor-agent", self._weights())
+        out = catalog_adapter.build_candidates(runtimes, entries, "cursor", self._weights())
         by_model = {c["model"]: c for c in out}
         self.assertEqual(by_model["gpt-5.6-sol-medium"]["vendor"], "openai")
         self.assertEqual(by_model["zai-coding-plan/glm-5.3"]["vendor"], "zhipu")
@@ -995,15 +995,15 @@ class TestBuildCandidates(unittest.TestCase):
         entries = {
             "z/z": {
                 "provider": "z",
-                "runtimes": {"cursor-agent": {"model_id": "m"}},
+                "runtimes": {"cursor": {"model_id": "m"}},
             },
             "a/a": {
                 "provider": "a",
-                "runtimes": {"cursor-agent": {"model_id": "m"}},
+                "runtimes": {"cursor": {"model_id": "m"}},
             },
         }
-        runtimes = {"clis": {"cursor-agent": {"installed": True, "models": ["m"]}}}
-        out = catalog_adapter.build_candidates(runtimes, entries, "cursor-agent", self._weights())
+        runtimes = {"clis": {"cursor": {"installed": True, "models": ["m"]}}}
+        out = catalog_adapter.build_candidates(runtimes, entries, "cursor", self._weights())
         self.assertEqual(out[0]["catalog_key"], "a/a")
 
     def test_skips_uninstalled_and_non_str_models(self):
@@ -1016,6 +1016,24 @@ class TestBuildCandidates(unittest.TestCase):
         out = catalog_adapter.build_candidates(runtimes, {}, "opencode", self._weights())
         self.assertEqual([c["model"] for c in out], ["good"])
         self.assertEqual(out[0]["runtime"], "opencode")
+
+    def test_cursor_host_joins_cursor_runtime_and_is_host(self):
+        entries = {
+            "acme/m": {
+                "provider": "acme",
+                "runtimes": {"cursor": {"model_id": "m"}},
+            }
+        }
+        runtimes = {"clis": {"cursor": {"installed": True, "models": ["m"]}}}
+        weights = self._weights()
+        on_host = catalog_adapter.build_candidates(runtimes, entries, "cursor", weights)
+        self.assertEqual(len(on_host), 1)
+        self.assertEqual(on_host[0]["runtime"], "cursor")
+        self.assertEqual(on_host[0]["catalog_key"], "acme/m")
+        self.assertTrue(on_host[0]["is_host"])
+        off_host = catalog_adapter.build_candidates(runtimes, entries, "claude", weights)
+        self.assertFalse(off_host[0]["is_host"])
+        self.assertEqual(off_host[0]["catalog_key"], "acme/m")
 
 
 class TestGsdCoreResolution(unittest.TestCase):
@@ -1273,7 +1291,9 @@ class TestLaneParsing(unittest.TestCase):
         row = rows[0]
         self.assertEqual(set(row.keys()), {
             "slug", "transport", "binary", "model_key", "effort_key", "default_effort",
+            "runtime",
         })
+        self.assertIsNone(row["runtime"])
         self.assertIsNone(row["binary"])
 
     def test_skills_roots_null_and_values(self):
@@ -1386,6 +1406,7 @@ class TestInventorySchema2(unittest.TestCase):
             "model_key": None,
             "effort_key": None,
             "default_effort": None,
+            "runtime": None,
         }]
         _, err4 = self._load_inv_file(inv4)
         assert err4 is not None
@@ -1398,6 +1419,7 @@ class TestInventorySchema2(unittest.TestCase):
             "model_key": [],
             "effort_key": None,
             "default_effort": None,
+            "runtime": None,
         }]
         _, err5 = self._load_inv_file(inv5)
         assert err5 is not None

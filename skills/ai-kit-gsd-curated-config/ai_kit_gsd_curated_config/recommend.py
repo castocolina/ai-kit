@@ -754,7 +754,7 @@ def _no_lane_reason(inv: dict, planner_vendor: str | None) -> str:
     eligible = cross_ai.eligible_lanes(inv)
     installed = set(inv.get("installed_runtimes") or [])
     lane_bins = {
-        lane.get("binary")
+        lane.get("runtime")
         for lane in inv["gsd_core"].get("review_lanes") or []
         if isinstance(lane, dict) and lane.get("slug") not in (inv["host"], "pi")
     }

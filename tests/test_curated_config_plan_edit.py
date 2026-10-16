@@ -785,6 +785,18 @@ class TestPlanValidator(unittest.TestCase):
 class TestScriptPseudoKeys(unittest.TestCase):
     CURSOR_MODEL = "gemini-3.8-flash-low"
 
+    def test_cursor_script_target_checks_installed_runtime_id(self):
+        call = plan_edit.EditCall(
+            plan={"host": "claude"},
+            inv={"installed_runtimes": ["cursor"]},
+            force=False,
+            encode=lambda _key, _value: "",
+        )
+        plan_edit._assert_runner_target(call, "cursor")
+        blocked = call._replace(inv={"installed_runtimes": ["cursor-agent"]})
+        with self.assertRaises(plan_edit.PlanEditError):
+            plan_edit._assert_runner_target(blocked, "cursor")
+
     def _setup_partial(self, tmp):
         inv_path, plan_path, inv, plan = _write_pair(tmp)
         partial = _partial_runner_plan(inv, plan)

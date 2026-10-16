@@ -109,8 +109,7 @@ def _parse_fallback(raw: str):
 def runtime_candidates(inv: dict, runner_id: str, rigor: str) -> list[dict]:
     """The ``needs_choice`` rows recommend lists for ``runner_id`` (PT-09): routers and
     fast twins excluded, within the rigor's price ceiling first."""
-    runtime = cross_ai.RUNNER_CLI[runner_id]
-    cands = [c for c in inv.get("candidates") or [] if c.get("runtime") == runtime]
+    cands = [c for c in inv.get("candidates") or [] if c.get("runtime") == runner_id]
     # .get: a hand-edited rigor reads as no ceiling, like rigorous.
     ceiling = roles.host_ceiling(cands, presets.PRICE_PERCENTILE.get(rigor))
     return roles.choice_candidates(cands, "execution", ceiling.value)
@@ -207,9 +206,8 @@ def _plan_set_script_model(
         raise PlanEditError(f"script target {runner_id} is not in config.prefer")
     row = _find_inventory_model(call.inv, runner_id, model)
     if row is None and not call.force:
-        runtime = cross_ai.RUNNER_CLI[runner_id]
         raise PlanEditError(
-            f"{model!r} is not listed for {runtime} in the inventory; "
+            f"{model!r} is not listed for {runner_id} in the inventory; "
             "pass --force to pin it anyway"
         )
     router = bool(row.get("is_router")) if row else False
@@ -333,11 +331,10 @@ def _unset_refusal(plan: dict, key: str, entry: dict) -> None:
 def _assert_runner_target(call: EditCall, runner_id: str) -> None:
     host_name = call.plan.get("host")
     installed = set(call.inv.get("installed_runtimes") or [])
-    runtime = cross_ai.RUNNER_CLI.get(runner_id)
     bad = (
-        runtime is None
+        runner_id not in cross_ai.RUNNER_IDS
         or runner_id == host_name
-        or runtime not in installed
+        or runner_id not in installed
     )
     if bad:
         raise PlanEditError(
@@ -347,11 +344,10 @@ def _assert_runner_target(call: EditCall, runner_id: str) -> None:
 
 
 def _find_inventory_model(inv: dict, runner_id: str, model: str) -> dict | None:
-    runtime = cross_ai.RUNNER_CLI[runner_id]
     for row in inv.get("candidates") or []:
         if not isinstance(row, dict):
             continue
-        if row.get("runtime") == runtime and row.get("model") == model:
+        if row.get("runtime") == runner_id and row.get("model") == model:
             return row
     return None
 

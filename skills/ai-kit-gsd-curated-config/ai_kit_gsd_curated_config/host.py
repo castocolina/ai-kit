@@ -45,11 +45,6 @@ class GsdCore(NamedTuple):
     warnings: tuple[str, ...]
 
 
-def host_cli(host: str) -> str:
-    """Maps inventory host labels to KNOWN_CLIS binary names."""
-    return "cursor-agent" if host == "cursor" else host
-
-
 def detect_host(env: dict, override: str | None) -> tuple[str | None, str]:
     """Returns `(host, host_source)` or `(None, error_message)`."""
     if override is not None:

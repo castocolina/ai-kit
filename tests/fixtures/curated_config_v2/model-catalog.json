@@ -202,7 +202,7 @@
     },
     "provider": "anthropic",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1000000,
         "model_id": "claude-opus-5-5-high"
       }
@@ -236,7 +236,7 @@
     },
     "provider": "anthropic",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1000000,
         "model_id": "claude-opus-5-5-low"
       }
@@ -270,7 +270,7 @@
     },
     "provider": "anthropic",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1000000,
         "model_id": "claude-opus-5-5-xhigh"
       }
@@ -338,7 +338,7 @@
     },
     "provider": "google",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1048576,
         "model_id": "gemini-3.8-flash-high"
       }
@@ -372,7 +372,7 @@
     },
     "provider": "google",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1048576,
         "model_id": "gemini-3.8-flash-low"
       }
@@ -450,7 +450,7 @@
     },
     "provider": "openai",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1050000,
         "model_id": "gpt-5.6-luna-low"
       }
@@ -484,7 +484,7 @@
     },
     "provider": "openai",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1050000,
         "model_id": "gpt-5.6-luna-xhigh"
       }
@@ -564,7 +564,7 @@
     },
     "provider": "openai",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1050000,
         "model_id": "gpt-5.6-sol-high"
       }
@@ -598,7 +598,7 @@
     },
     "provider": "openai",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1050000,
         "model_id": "gpt-5.6-sol-low"
       }
@@ -629,7 +629,7 @@
     },
     "provider": "openai",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": null,
         "model_id": "gpt-5.6-sol-max"
       }
@@ -661,7 +661,7 @@
     },
     "provider": "openai",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1050000,
         "model_id": "gpt-5.6-sol-xhigh"
       }
@@ -952,7 +952,7 @@
     },
     "provider": "requesty",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1050000,
         "model_id": "gpt-5.6-luna-medium"
       }
@@ -986,7 +986,7 @@
     },
     "provider": "requesty",
     "runtimes": {
-      "cursor-agent": {
+      "cursor": {
         "ctx_window": 1050000,
         "model_id": "gpt-5.6-sol-medium"
       }

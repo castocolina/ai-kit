@@ -1,7 +1,7 @@
 """Pure cross-AI execution target selection (18 D-09/D-10/D-15/D-28/D-39).
 
-Imports only ``.presets`` and ``.roles``. Target ids are runner ids; ``RUNNER_CLI`` maps
-them to inventory runtimes. The script artifact ``config`` is the sole copy of runner
+Imports only ``.presets`` and ``.roles``. Target ids and inventory runtimes are the
+same runtime ids. The script artifact ``config`` is the sole copy of runner
 settings (no parallel ``targets[]`` list).
 """
 import re
@@ -46,12 +46,7 @@ TEMPLATE_NAME = "cross-ai.mjs"
 TEMPLATE_VERSION = 2
 MIN_TIMEOUT_S = 1800
 DEFAULT_PREFER = ("pi", "cursor", "opencode")
-RUNNER_CLI = {
-    "pi": "pi",
-    "cursor": "cursor-agent",
-    "opencode": "opencode",
-    "codex": "codex",
-}
+RUNNER_IDS = ("pi", "cursor", "opencode", "codex")
 EXEC_DEFAULT_HOSTS = ("claude", "codex")
 EXEC_EFFORT_TARGET = "medium"
 # Runners whose CLI can pin effort, and the levels it accepts: pi --thinking, codex
@@ -61,7 +56,7 @@ EFFORT_LEVELS = {
     "codex": ("minimal", "low", "medium", "high", "xhigh"),
 }
 CROSS_AI_FLAG = "--cross-ai"
-NO_TARGET_TEXT = "no installed cross-AI target (pi, cursor-agent, opencode)"
+NO_TARGET_TEXT = "no installed cross-AI target (pi, cursor, opencode)"
 _ROUTER_WHY = "user-curated router (declared purpose: execute)"
 _ENUMERATION_TAIL = {"failed": " (listing failed)", "empty": " (listing empty)"}
 
@@ -77,8 +72,7 @@ class Target(NamedTuple):
 
 
 def _runtime_cands(inv: dict, runner_id: str) -> list:
-    runtime = RUNNER_CLI[runner_id]
-    return [c for c in inv["candidates"] if c.get("runtime") == runtime]
+    return [c for c in inv["candidates"] if c.get("runtime") == runner_id]
 
 
 def _declared_routers(pool: list, purpose: str) -> list:
@@ -137,20 +131,19 @@ def exec_targets(inv: dict, rigor: str, prefer=DEFAULT_PREFER) -> list[Target]:
     installed = inv["installed_runtimes"]
     out: list[Target] = []
     for runner_id in prefer:
-        if runner_id not in RUNNER_CLI:
+        if runner_id not in RUNNER_IDS:
             continue
         if runner_id == host:
             continue
-        runtime = RUNNER_CLI[runner_id]
-        if runtime not in installed:
+        if runner_id not in installed:
             continue
         cands = _runtime_cands(inv, runner_id)
         target = _pick_for_runner(runner_id, cands, rigor)
         if not cands:
             # C-W12: an empty pool states its enumeration cause, never a ceiling outcome.
-            status = (inv.get("runtime_enumeration") or {}).get(runtime, "")
+            status = (inv.get("runtime_enumeration") or {}).get(runner_id, "")
             tail = _ENUMERATION_TAIL.get(status, "")
-            target = target._replace(why=f"no {runtime} models enumerated{tail}")
+            target = target._replace(why=f"no {runner_id} models enumerated{tail}")
         out.append(target)
     return out
 
@@ -219,18 +212,18 @@ def eligible_lanes(inv: dict) -> list[dict]:
         if not isinstance(lane, dict):
             continue
         slug = lane.get("slug")
-        binary = lane.get("binary")
+        runtime = lane.get("runtime")
         model_key = lane.get("model_key")
         if not isinstance(slug, str) or slug in (host, "pi"):
             continue
-        if not isinstance(binary, str) or binary not in installed:
+        if not isinstance(runtime, str) or runtime not in installed:
             continue
         if not isinstance(model_key, str) or not model_key:
             continue
         if model_key not in accepted or model_key in rejected:
             continue
         if not any(
-            c.get("runtime") == binary and not c.get("is_host", False)
+            c.get("runtime") == runtime and not c.get("is_host", False)
             for c in inv.get("candidates") or []
         ):
             continue
@@ -239,11 +232,11 @@ def eligible_lanes(inv: dict) -> list[dict]:
 
 
 def lane_pool(lane: dict, inv: dict) -> list[dict]:
-    binary = lane["binary"]
+    runtime = lane.get("runtime")
     pool = [
         c
         for c in inv.get("candidates") or []
-        if c.get("runtime") == binary and not c.get("is_host", False)
+        if c.get("runtime") == runtime and not c.get("is_host", False)
     ]
     if lane.get("slug") == "claude":
         return roles.claude_alias_rows(pool)

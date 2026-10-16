@@ -334,6 +334,7 @@ class TestRealGsdLanes(_RealGsdTestCase):
         self.assertEqual(codex["default_effort"], "high")
         cursor = next(row for row in lanes if row.get("slug") == "cursor")
         self.assertEqual(cursor["binary"], "cursor-agent")
+        self.assertEqual(cursor["runtime"], "cursor")
         self.assertIsNone(cursor["effort_key"])
         roots = result["skills_roots"]
         self.assertIsInstance(roots, dict)
@@ -444,6 +445,8 @@ class TestGoldenTables(unittest.TestCase):
         body = _tables_body()
         self.assertEqual(raw_profiles, body["model_profiles"])
         expected = {**body, "model_profiles": gsd_catalog.profile_first(body["model_profiles"])}
+        # The tables fixture is gsd-core's raw rows. Parsing adds runtime ids.
+        expected["review_lanes"] = gsd_catalog._parse_review_lanes(body.get("review_lanes"))
         compare = {k: v for k, v in result.items() if k != "skills_roots"}
         self.assertEqual(compare, expected)
         roots = result["skills_roots"]

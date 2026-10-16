@@ -18,7 +18,7 @@ _AFFINITY_SUFFIX = "; fix skill_affinity.json"
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AFFINITY_PATH = os.path.join(_PKG_ROOT, "skill_affinity.json")
 
-INVENTORY_SCHEMA_VERSION = 2
+INVENTORY_SCHEMA_VERSION = 3
 
 _ERROR_SUFFIX = "; rerun inventory"
 
@@ -68,7 +68,7 @@ def _schema_version_problem(inv: dict) -> str | None:
 
 def _validate_inventory(inv) -> str | None:
     """Returns the problem string, or `None` when the document matches the
-    schema-version-2 contract (18-02)."""
+    schema-version-3 contract."""
     if not isinstance(inv, dict):
         return "top-level JSON is not an object"
     problem = _schema_version_problem(inv)
@@ -198,13 +198,15 @@ def _validate_inventory_tail(inv: dict) -> str | None:
 def _lane_field_problem(lane: dict, index: int) -> str | None:
     if not isinstance(lane, dict):
         return f"key gsd_core.review_lanes[{index}]: expected dict"
-    for key in ("slug", "transport", "binary", "model_key", "effort_key", "default_effort"):
+    for key in (
+        "slug", "transport", "binary", "model_key", "effort_key", "default_effort", "runtime",
+    ):
         if key not in lane:
             return f"key gsd_core.review_lanes[{index}]: missing {key}"
     slug = lane["slug"]
     if not isinstance(slug, str):
         return f"key gsd_core.review_lanes[{index}].slug: expected str"
-    for key in ("transport", "binary", "model_key", "effort_key", "default_effort"):
+    for key in ("transport", "binary", "model_key", "effort_key", "default_effort", "runtime"):
         val = lane[key]
         if val is not None and not isinstance(val, str):
             return f"key gsd_core.review_lanes[{index}].{key}: expected str or null"
@@ -788,7 +790,7 @@ def _validate_prefer(prefer, plan_host: str) -> str | None:
     if len(set(prefer)) != len(prefer):
         return "artifacts[0].config.prefer: ids must be unique"
     for runner_id in prefer:
-        if runner_id not in cross_ai.RUNNER_CLI:
+        if runner_id not in cross_ai.RUNNER_IDS:
             return f"artifacts[0].config.prefer: unknown id {runner_id!r}"
         if runner_id == plan_host:
             return f"artifacts[0].config.prefer: must not include plan host {plan_host!r}"

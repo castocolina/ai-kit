@@ -229,7 +229,7 @@
   ],
   "profile": "adaptive",
   "rigor": "mvp",
-  "schema_version": 2,
+  "schema_version": 3,
   "skill_affinity": {
     "as_of": "2026-10-15",
     "schema_version": 1

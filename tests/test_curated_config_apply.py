@@ -1310,7 +1310,7 @@ class _RecordingRun:
 
 def _minimal_plan(host: str, inv: dict, entries: list, artifacts: list | None = None) -> dict:
     plan = {
-        "schema_version": 2,
+        "schema_version": plan_schema.PLAN_SCHEMA_VERSION,
         "host": host,
         "profile": "adaptive",
         "rigor": "standard",

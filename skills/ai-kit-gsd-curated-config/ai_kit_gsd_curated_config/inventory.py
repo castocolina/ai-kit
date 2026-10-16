@@ -148,7 +148,7 @@ def _catalog_fields(project_dir, opts, host_name, env, run_fn):
         return None, cat_err
     try:
         candidates = catalog_adapter.build_candidates(
-            cat.runtimes, cat.entries, host.host_cli(host_name), cat.weights
+            cat.runtimes, cat.entries, host_name, cat.weights
         )
     except ImportError as exc:
         return None, str(exc)

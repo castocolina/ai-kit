@@ -87,7 +87,7 @@
         ]
       }
     },
-    "cursor-agent": {
+    "cursor": {
       "installed": true,
       "models": [
         "claude-opus-5-5-high",
@@ -135,5 +135,5 @@
       "synthetic": true
     }
   },
-  "schema_version": 4
+  "schema_version": 5
 }

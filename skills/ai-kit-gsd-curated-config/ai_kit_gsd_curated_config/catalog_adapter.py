@@ -52,7 +52,7 @@ class _JoinCtx(NamedTuple):
 
 class _RuntimeCtx(NamedTuple):
     runtime: str
-    host_cli: str
+    host: str
     family_map: dict
     model_set: set
     mode_map: dict
@@ -266,7 +266,7 @@ def _catalog_is_scored(entries: dict) -> bool:
     return any(_score_axes(entry) > 0 for entry in entries.values())
 
 
-def build_candidates(runtimes, entries, host_cli, weights) -> list[dict]:
+def build_candidates(runtimes, entries, host, weights) -> list[dict]:
     """One candidate per installed runtime model id, joined to catalog entries when present.
     Raises ImportError when the ai-kit-spec-review sibling modules are missing."""
     ranker = gsd_catalog.load_ai_kit_spec_module("model_ranker")
@@ -284,11 +284,11 @@ def build_candidates(runtimes, entries, host_cli, weights) -> list[dict]:
     out: list[dict] = []
     clis = (runtimes or {}).get("clis") or {}
     for runtime in sorted(clis):
-        out.extend(_runtime_candidates(clis[runtime], runtime, host_cli, detection, join))
+        out.extend(_runtime_candidates(clis[runtime], runtime, host, detection, join))
     return sorted(out, key=lambda c: (c["runtime"], c["model"]))
 
 
-def _runtime_candidates(cli_entry, runtime, host_cli, detection, join: _JoinCtx) -> list[dict]:
+def _runtime_candidates(cli_entry, runtime, host, detection, join: _JoinCtx) -> list[dict]:
     if not isinstance(cli_entry, dict) or not cli_entry.get("installed"):
         return []
     models = cli_entry.get("models")
@@ -299,7 +299,7 @@ def _runtime_candidates(cli_entry, runtime, host_cli, detection, join: _JoinCtx)
     mode_map = raw_modes if isinstance(raw_modes, dict) else {}
     ctx = _RuntimeCtx(
         runtime,
-        host_cli,
+        host,
         _family_lookup(detection.group_models_by_family(str_models), str_models),
         set(str_models),
         mode_map,
@@ -380,7 +380,7 @@ def _one_candidate(join: _JoinCtx, ctx: _RuntimeCtx, model: str) -> dict:
     return {
         "runtime": ctx.runtime,
         "model": model,
-        "is_host": ctx.runtime == ctx.host_cli,
+        "is_host": ctx.runtime == ctx.host,
         "catalog_key": catalog_key,
         "provider": entry.get("provider") if entry else None,
         "vendor": vendor,
