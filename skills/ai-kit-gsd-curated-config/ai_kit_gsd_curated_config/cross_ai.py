@@ -290,22 +290,29 @@ def select_lanes(
     if not ranked:
         return [], notes
     chosen = [ranked[0]]
-    if want >= 2:
-        if len(eligible) == 1:
-            notes.append({
-                "kind": "review_lane",
-                "key": "review.default_reviewers",
-                "text": "only one eligible review lane; rigorous wanted 2",
-            })
-        else:
-            first = chosen[0]
-            excl = set(excluded)
-            if first.vendor is not None:
-                excl.add(first.vendor)
-            rest = [lane for lane in eligible if lane["slug"] != first.slug]
-            second_ranked = _ranked_lanes(rest, inv, rigor, excl)
-            if second_ranked:
-                chosen.append(second_ranked[0])
+    if want < 2:
+        return chosen, notes
+    reason = "only one eligible review lane"
+    if len(eligible) > 1:
+        first = chosen[0]
+        excl = set(excluded)
+        if first.vendor is not None:
+            excl.add(first.vendor)
+        rest = [lane for lane in eligible if lane["slug"] != first.slug]
+        second_ranked = _ranked_lanes(rest, inv, rigor, excl)
+        if second_ranked:
+            chosen.append(second_ranked[0])
+        reason = (
+            "no other review lane has a candidate within the ceiling whose vendor differs "
+            "from the planner's and the first reviewer's"
+        )
+    if len(chosen) < want:
+        # SPEC R2: Rigorous otherwise gets 1 lane plus a note.
+        notes.append({
+            "kind": "review_lane",
+            "key": "review.default_reviewers",
+            "text": f"{reason}; {rigor} wanted {want}",
+        })
     return chosen, notes
 
 

@@ -407,6 +407,31 @@ class TestReviewLanes(unittest.TestCase):
         self.assertEqual(len(picked), 2)
         self.assertNotEqual(picked[0].vendor, picked[1].vendor)
 
+    def test_r2_rigorous_no_vendor_different_second_lane_notes(self):
+        # SPEC R2 / PT-17: two eligible lanes, but the second only offers excluded vendors.
+        lanes = [
+            _lane_row("codex", "codex", "review.models.codex", "review.effort.codex"),
+            _lane_row("opencode", "opencode", "review.models.opencode", "review.effort.opencode"),
+        ]
+        inv = _review_inv(
+            "claude",
+            [
+                cand("claude-opus-5-5", vendor="anthropic", score_axes=3,
+                     purpose_scores={"planning": 9.0}),
+                review_cand("openai-a", "codex", review=90.0, vendor="openai", price=1.0),
+                review_cand("openai-b", "opencode", review=99.0, vendor="openai", price=1.0),
+                review_cand("anthropic-c", "opencode", review=80.0, vendor="anthropic", price=1.0),
+            ],
+            ["claude", "codex", "opencode"],
+            lanes,
+        )
+        picked, notes = cross_ai.select_lanes(inv, "rigorous", "anthropic")
+        self.assertEqual([lane.model for lane in picked], ["openai-b"])
+        texts = [n["text"] for n in notes if n["kind"] == "review_lane"]
+        self.assertEqual(len(texts), 1)
+        self.assertIn("vendor", texts[0])
+        self.assertIn("rigorous wanted 2", texts[0])
+
     def test_r2_empty_no_installed_cli(self):
         inv = _review_inv("claude", [], [], _fixture_review_lanes())
         plan = build(inv, rigor="standard", cross_ai_review="y")
