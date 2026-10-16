@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -15,6 +16,8 @@ from . import gsd_catalog, host, presets
 HOST_DIRS = {"claude": ".claude", "codex": ".codex", "opencode": ".opencode"}
 EFFORT_SYNC_HOSTS = ("claude", "codex", "opencode")
 PACKAGE = "@opengsd/gsd-core"
+# An exact release (with optional prerelease); the VERSION file may sit in an untrusted checkout.
+_SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?")
 REQUIRE_IDS = ("installer", "effort_sync")
 
 _INSTALLER_PURPOSE = "install a project-local gsd-core for this host"
@@ -157,11 +160,10 @@ def _followup_dict(row: FollowUp) -> dict:
 
 
 def _inventory_version(inv: dict) -> str | None:
-    core = inv.get("gsd_core") or {}
-    version = core.get("version")
-    if not version or version == "unknown":
+    version = (inv.get("gsd_core") or {}).get("version")
+    if not isinstance(version, str) or not _SEMVER.fullmatch(version):
         return None
-    return str(version)
+    return version
 
 
 def _disclosures() -> list[str]:
@@ -215,8 +217,8 @@ def _opencode_root_note(project_dir: str) -> str:
 
 def _unknown_version_note() -> str:
     return (
-        "local gsd-core installer not offered: inventory gsd_core.version is unknown; "
-        "pin a version by hand before installing"
+        "local gsd-core installer not offered: inventory gsd_core.version is unknown or "
+        "not an exact release version; pin a version by hand before installing"
     )
 
 

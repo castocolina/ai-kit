@@ -512,6 +512,27 @@ class TestDisclosures(unittest.TestCase):
         self.assertEqual(block["required"], [])
         self.assertTrue(any("pin a version" in n for n in block["notes"]))
 
+    def test_non_release_version_never_reaches_npx(self) -> None:
+        """B WR-07: a dist-tag or package spec in VERSION is not a pinned version."""
+        for version in ("latest", "next", "file:../x", "git+https://h/x", "1.16", "1.16.0 x"):
+            with self.subTest(version=version):
+                inv = make_inventory(host="opencode")
+                inv["gsd_core"]["version"] = version
+                plan = _minimal_plan("opencode", inv, [])
+                block = _build_block(
+                    plan, inv, "/p", "/i", "/proj", {"HOME": "/h"}, FollowupsRun(),
+                    force=("installer",),
+                )
+                self.assertEqual(block["required"], [])
+                self.assertTrue(any("pin a version" in n for n in block["notes"]))
+        inv = make_inventory(host="opencode")
+        inv["gsd_core"]["version"] = "1.17.0-rc.1"
+        block = _build_block(
+            _minimal_plan("opencode", inv, []), inv, "/p", "/i", "/proj", {"HOME": "/h"},
+            FollowupsRun(), force=("installer",),
+        )
+        self.assertIn("@opengsd/gsd-core@1.17.0-rc.1", block["required"][0]["argv"])
+
     def test_installer_failure_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, config_path, fake = _setup_opencode_global(tmp)
