@@ -755,6 +755,14 @@ class TestPlanUnset(unittest.TestCase):
             self.assertEqual(row["op"], "keep")
             self.assertEqual(row["source"], "user")
 
+    def test_bool_over_numeric_existing_is_a_set(self):
+        """B IN-07: planning false over a live 0 must still write the boolean."""
+        entry = {"key": "workflow.research", "op": "keep", "existing": 0, "value": 0}
+        plan_edit._apply_entry(entry, False, False)
+        self.assertEqual(entry["op"], "set")
+        plan_edit._apply_entry(entry, 0, False)
+        self.assertEqual(entry["op"], "keep")
+
     def test_unset_absent_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             inv_path, plan_path, _inv, _plan = _write_pair(tmp)

@@ -139,17 +139,12 @@ def _planned_to(entry: dict, inv: dict) -> Any:
 
 
 def _diff_kind(op: str, live: Any, planned: Any) -> str:
-    if op == "keep":
-        return "keep"
+    """The one no-op rule: the dry-run diff, the writes and the skipped count use it."""
     if op == "unset":
         return "keep" if live is None else "remove"
-    if op == "set":
-        if live is None:
-            return "add"
-        if live == planned:
-            return "keep"
-        return "change"
-    return "keep"
+    if op != "set" or plan_io.same_value(live, planned):
+        return "keep"
+    return "add" if live is None else "change"
 
 
 def diff_entries(plan: dict, live: dict, inv: dict) -> list[dict]:

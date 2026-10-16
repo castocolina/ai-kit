@@ -37,6 +37,11 @@ def read_json_object(path: str) -> tuple[dict | None, str | None]:
     return data, None
 
 
+def same_value(a, b) -> bool:
+    """JSON equality: Python's ``0 == False`` would hide a retype gsd-core sees (IN-07)."""
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
 def _missing(inv: dict, key: str) -> str | None:
     if key not in inv:
         return f"missing key: {key}"

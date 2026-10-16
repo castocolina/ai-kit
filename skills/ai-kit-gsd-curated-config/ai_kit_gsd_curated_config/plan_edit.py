@@ -581,7 +581,7 @@ def _apply_entry(entry: dict, value: Any, forced: bool) -> None:
         entry["forced"] = True
     else:
         entry.pop("forced", None)
-    if existing is not None and value == existing:
+    if existing is not None and plan_io.same_value(value, existing):
         entry["op"] = "keep"
     else:
         entry["op"] = "set"

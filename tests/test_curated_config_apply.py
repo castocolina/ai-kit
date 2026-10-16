@@ -949,6 +949,20 @@ class TestDiffKinds(unittest.TestCase):
         )
         self.assertEqual([r["key"] for r in rows], sorted(kinds))
 
+    def test_bool_vs_number_is_a_change(self) -> None:
+        """B IN-07: a live 0/1 is not the planned false/true (JS === and the schema differ)."""
+        plan = {
+            "entries": [
+                {"key": "a", "op": "set", "value": False},
+                {"key": "b", "op": "set", "value": True},
+                {"key": "c", "op": "set", "value": [1]},
+                {"key": "d", "op": "set", "value": True},
+            ]
+        }
+        live = {"a": 0, "b": 1, "c": [True], "d": True}
+        kinds = {r["key"]: r["kind"] for r in apply_mod.diff_entries(plan, live, {})}
+        self.assertEqual(kinds, {"a": "change", "b": "change", "c": "change", "d": "keep"})
+
     def test_nested_live_lookup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(
