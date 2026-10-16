@@ -453,7 +453,7 @@ def _cmd_inventory(args, which_fn, run_fn, env_fn, connect_fn) -> int:
             file=sys.stderr,
         )
         return 2
-    deps = host.InventoryDeps(which_fn, run_fn, env_fn)
+    deps = host.InventoryDeps(which_fn, run_fn, env_fn, connect_fn)
     inv, error = inventory.build_inventory(
         project_dir,
         inventory.InventoryOpts(args.host, refresh=args.refresh),

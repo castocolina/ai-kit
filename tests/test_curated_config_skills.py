@@ -445,7 +445,7 @@ class TestSystemOneBackend(unittest.TestCase):
             fh.write("JEV_API_KEY=sk-SENTINEL-18-03\n")
         env = _inventory_env(home)
         env["JEV_API_URL"] = "https://user:pw-SENTINEL@h:1/"
-        connect, _calls = self._recorder()
+        connect, calls = self._recorder()
 
         def node_answer(cmd):
             keys = json.loads(cmd[6])
@@ -468,6 +468,9 @@ class TestSystemOneBackend(unittest.TestCase):
         self.assertNotIn("sk-SENTINEL-18-03", blob)
         self.assertNotIn("pw-SENTINEL", blob)
         self.assertNotIn("https://user:", blob)
+        # C-W1: the injected connect_fn reaches the probe (no real network I/O).
+        self.assertTrue(calls)
+        self.assertEqual(calls[0][0], ("h", 1))
 
     def test_missing_spec_sibling_env_key_only(self):
         connect, _calls = self._recorder()
