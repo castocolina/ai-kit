@@ -125,13 +125,13 @@ _ENUMERATION_TAIL = {"failed": " (listing failed)", "empty": " (listing empty)"}
 def _exec_targets(inv: dict, rigor: str) -> list[cross_ai.Target]:
     """cross_ai's targets; an empty runtime pool states its enumeration cause, never a
     ceiling outcome (C-W12)."""
-    status = inv.get("runtime_enumeration") or {}
+    status: dict[str, str] = inv.get("runtime_enumeration") or {}
     out = []
     for target in cross_ai.exec_targets(inv, rigor):
         runtime = cross_ai.RUNNER_CLI[target.cli]
         pool = [c for c in inv["candidates"] if c.get("runtime") == runtime]
         if target.model is None and not pool:
-            tail = _ENUMERATION_TAIL.get(status.get(runtime), "")
+            tail = _ENUMERATION_TAIL.get(status.get(runtime, ""), "")
             target = target._replace(why=f"no {runtime} models enumerated{tail}")
         out.append(target)
     return out
