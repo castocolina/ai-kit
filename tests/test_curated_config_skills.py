@@ -899,19 +899,43 @@ class TestAffinityResolve(unittest.TestCase):
         self.assertEqual(resolved["gsd-advisor-researcher"], ["jev-fast-decision"])
         self.assertEqual(resolved["gsd-assumptions-analyzer"], ["jev-fast-decision"])
 
+    def _jev_inv(self, rows, backend=None) -> dict:
+        """C-W13: both system-one agents known, so only the gate or the skill can stop it."""
+        inv = _inv(
+            skills=rows,
+            backend=backend,
+            extra_accepted=[
+                "agent_skills.gsd-advisor-researcher",
+                "agent_skills.gsd-assumptions-analyzer",
+            ],
+        )
+        inv["gsd_core"]["agent_to_phase_type"].update({
+            "gsd-advisor-researcher": "research",
+            "gsd-assumptions-analyzer": "research",
+        })
+        return inv
+
+    def _assert_jev_silent(self, plan: dict) -> None:
+        self.assertNotIn("jev-fast-decision", json.dumps(plan))
+        agent_notes = [n for n in plan["notes"] if n["kind"] == "affinity_agent"]
+        self.assertFalse(any("advisor" in n["text"] or "assumptions" in n["text"]
+                             for n in agent_notes))
+
     def test_jev_without_backend_not_wired(self):
-        inv = _inv(skills=[_skill_row("jev-fast-decision", "global")])
-        plan = _plan_with_affinity(inv, rigor="standard")
-        blob = json.dumps(plan)
-        self.assertNotIn("jev-fast-decision", blob)
+        jev = [_skill_row("jev-fast-decision", "global")]
+        self._assert_jev_silent(_plan_with_affinity(self._jev_inv(jev)))
+        backend = {"detected": True, "via": ["key_present"], "note": ""}
+        wired = entry_map(_plan_with_affinity(self._jev_inv(jev, backend)))
+        self.assertEqual(
+            wired["agent_skills.gsd-advisor-researcher"]["value"], ["jev-fast-decision"]
+        )
 
     def test_jev_backend_without_skill_silent(self):
-        inv = _inv(skills=[],
-            backend={"detected": True, "via": ["key_present"], "note": ""},
-        )
-        plan = _plan_with_affinity(inv, rigor="standard")
-        blob = json.dumps(plan)
-        self.assertNotIn("jev-fast-decision", blob)
+        backend = {"detected": True, "via": ["key_present"], "note": ""}
+        self._assert_jev_silent(_plan_with_affinity(self._jev_inv([], backend)))
+        jev = [_skill_row("jev-fast-decision", "global")]
+        wired = entry_map(_plan_with_affinity(self._jev_inv(jev, backend)))
+        self.assertIn("agent_skills.gsd-assumptions-analyzer", wired)
 
 
 class TestTrustedRoots(unittest.TestCase):
@@ -1326,12 +1350,21 @@ class TestSkillsLayer(unittest.TestCase):
         plan = _plan_with_affinity(inv, rigor="standard", affinity=affinity)
         blob = json.dumps(plan)
         self.assertNotIn(ghost, blob)
+        # C-W13: the debugging family's agents are known, so only the install check decides.
+        inv["gsd_core"]["agent_to_phase_type"].update(
+            {"gsd-debugger": "debug", "gsd-debug-session-manager": "debug"}
+        )
         code, _plan, _bytes, err = run_recommend(
             inv, "--profile", "adaptive", "--rigor", "standard"
         )
         self.assertEqual(code, 0)
-        combined = blob + err
-        self.assertNotIn("systematic-debugging", combined)
+        self.assertNotIn("systematic-debugging", blob + json.dumps(_plan) + err)
+        inv["skills"] = [_skill_row("systematic-debugging", "global")]
+        inv["gsd_core"]["valid_keys"]["accepted"] += [
+            "agent_skills.gsd-debugger", "agent_skills.gsd-debug-session-manager",
+        ]
+        wired = entry_map(_plan_with_affinity(inv))
+        self.assertEqual(wired["agent_skills.gsd-debugger"]["value"], ["systematic-debugging"])
 
 
 if __name__ == "__main__":

@@ -284,7 +284,8 @@ def make_inventory(
         "gsd_core": {
             "runtime_profile_map": TABLES["runtime_profile_map"],
             "model_profiles": TABLES["model_profiles"],
-            "agent_to_phase_type": TABLES["agent_to_phase_type"],
+            # A copy: tests add agents to their own inventory, never to the shared TABLES.
+            "agent_to_phase_type": dict(TABLES["agent_to_phase_type"]),
             "valid_keys": {"accepted": accepted, "rejected": list(rejected)},
             "review_lanes": list(review_lanes),
             "skills_roots": {},
