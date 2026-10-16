@@ -114,6 +114,13 @@ def _escapes_root(skill_dir: str, root_dir: str) -> bool:
     return dir_out or md_out
 
 
+def _escapes_project(skill_dir: str, project_dir: str) -> bool:
+    """gsd-core's project rule (``tryWithinRoot(skillPath, projectRoot)``): the skill
+    directory's realpath must stay inside the project's; ``SKILL.md`` is not resolved."""
+    proj_real, dir_real = _real(project_dir), _real(skill_dir)
+    return proj_real is None or dir_real is None or not _inside(dir_real, proj_real)
+
+
 def _real_dir(skill_dir: str) -> str | None:
     md_real = _real(os.path.join(skill_dir, "SKILL.md"))
     if md_real is None:
@@ -241,7 +248,9 @@ def scan_skills(
     """Sorted by (root_kind, root, name)."""
     entries: list[dict] = []
     proj_root = os.path.join(project_dir, "skills")
-    entries.extend(scan_root(proj_root, "project", "skills", home))
+    for row in scan_root(proj_root, "project", "skills", home):
+        row["escapes_root"] = _escapes_project(os.path.join(proj_root, row["name"]), project_dir)
+        entries.append(row)
     global_root = skills_roots.get(host_name) if isinstance(skills_roots, dict) else None
     if isinstance(global_root, str) and global_root:
         entries.extend(scan_root(global_root, "global", global_root, home))

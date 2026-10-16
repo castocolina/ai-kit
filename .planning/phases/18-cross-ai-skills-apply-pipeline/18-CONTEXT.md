@@ -490,6 +490,11 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
   unverified until Phase 20 runs the installer.
 - D-31's escape check uses the realpath of `SKILL.md`, as gsd-core does; a project copy that
   escapes is not preferred (18-03, 18-08).
+  - *(amended 2026-10-15, review C-CR-1)* That rule holds for global rows only. A project row
+    uses gsd-core's own project rule (`tryWithinRoot(skillPath, projectRoot)`): the realpath of
+    the skill directory must stay inside the realpath of the project root. `SKILL.md` is not
+    resolved. So a symlinked `skills/` dir that points outside the project escapes, and an
+    in-project link (`skills/foo -> <project>/vendor/foo`) does not.
 - D-40's marker is created exclusively and also records the runner snapshot; D-21's restore
   covers the runner (18-16, 18-18).
 - D-42's digest pairing is joined by the destination binding (18-17).

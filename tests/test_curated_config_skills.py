@@ -189,6 +189,46 @@ class TestScanSkills(unittest.TestCase):
         self.assertEqual({r["root_kind"] for r in rows}, {"global", "project"})
         self.assertNotEqual(rows[0]["real_dir"], rows[1]["real_dir"])
 
+    def test_symlinked_project_skills_root_outside_escapes(self):
+        """C-CR-1: gsd-core confines skills/<name> to the project root, not to skills/."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        os.makedirs(project)
+        shared = os.path.join(home, "shared", "skills")
+        add_skill(shared, "foo")
+        os.symlink(shared, os.path.join(project, "skills"))
+        rows = skill_scan.scan_skills(project, "codex", {"codex": None}, home)
+        self.assertEqual([r["name"] for r in rows], ["foo"])
+        self.assertTrue(rows[0]["escapes_root"])
+        self.assertIsNone(skills.locate("foo", _inv(skills=rows)))
+
+    def test_in_project_links_do_not_escape(self):
+        """C-CR-1: a link that stays inside the project is accepted, as gsd-core does."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        add_skill(os.path.join(project, "vendor"), "foo")
+        os.makedirs(os.path.join(project, "skills"))
+        os.symlink(
+            os.path.join(project, "vendor", "foo"), os.path.join(project, "skills", "foo")
+        )
+        bar_dir = os.path.join(project, "skills", "bar")
+        os.makedirs(bar_dir)
+        docs = os.path.join(project, "docs")
+        os.makedirs(docs)
+        with open(os.path.join(docs, "bar.md"), "w", encoding="utf-8") as fh:
+            fh.write("---\ndescription: x\n---\n")
+        os.symlink(os.path.join(docs, "bar.md"), os.path.join(bar_dir, "SKILL.md"))
+        rows = {r["name"]: r for r in skill_scan.scan_skills(project, "codex", {}, home)}
+        self.assertFalse(rows["foo"]["escapes_root"])
+        self.assertFalse(rows["bar"]["escapes_root"])
+        row = skills.locate("foo", _inv(skills=list(rows.values())))
+        assert row is not None
+        self.assertEqual(skills.reference_for(row), "skills/foo")
+
     def test_empty_roots_and_missing_dirs(self):
         project = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, project, ignore_errors=True)
