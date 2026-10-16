@@ -94,13 +94,15 @@ const RESUME_MSG = 'You were interrupted by a transient provider error. Continue
   'first inspect git status, git diff and git log, do not redo finished steps, finish the remaining steps ' +
   '(verify commands and commits included), then reply with the final report as originally asked.';
 
+// First matching key wins: billing and quota come before auth so a 403 spending-limit or
+// free-tier error is not read as an auth failure.
 // <patterns>
 const PATTERNS = {
   "permission_blocked": "permission denied|requires approval|approval required|workspace trust required|pre-dispatch filters",
-  "auth": "\\b40[13]\\b|unauthori[sz]ed|token_expired|invalid_refresh_token|could not be refreshed|not logged in|log ?in required|please (?:log|sign) ?in|invalid api key|requires an opencode API key|credential gate",
-  "billing": "spending limit|billing|payment required|\\b402\\b",
-  "bad_model": "model not found|unknown model|invalid model",
+  "billing": "spending limit|billing|payment required|\\b402\\b|free ?tier",
   "quota": "quota exceeded|insufficient_quota|usage limit",
+  "auth": "\\b40[13]\\b|unauthori[sz]ed|token_expired|invalid_refresh_token|could not be refreshed|not logged in|log ?in required|please (?:log|sign) ?in|invalid api key|requires an opencode API key|credential gate",
+  "bad_model": "model not found|unknown model|invalid model",
   "capacity": "overloaded|at capacity|service unavailable|\\b503\\b",
   "transient": "temporarily unavailable|cooling down|is locked|rate.?limit|too many requests|\\b429\\b|\\b50[24]\\b|ECONNRESET|ETIMEDOUT|socket hang up|stream (?:closed|disconnected)"
 };
@@ -890,6 +892,8 @@ const FAKE_MODES = {
     process.stdout.write('429 rate limit and billing noted.\n# Summary\nok');
   },
   billing: () => { process.stderr.write('402 payment required\n'); process.exit(1); },
+  spend403: () => { process.stderr.write('Error 403: spending limit reached for this team\n'); process.exit(1); },
+  freetier: () => { process.stderr.write('403: {"type":"FreeTierError"}\n'); process.exit(1); },
   auth: () => { process.stderr.write('401 unauthorized\n'); process.exit(1); },
   perm: () => { process.stderr.write('permission denied\n'); process.exit(1); },
   quota: () => { process.stderr.write('quota exceeded\n'); process.exit(1); },
@@ -1478,6 +1482,19 @@ async function blackBoxSelfTest() {
         config: { routerBacked: { pi: true } },
         exit: 75,
         status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=retry-later$/,
+      },
+      {
+        name: 'billing-403-router',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/spend403'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/spend403 exit=75 cli_rc=1 .* tree=clean action=retry-later$/,
+      },
+      {
+        name: 'billing-free-tier',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/freetier'],
+        exit: 69,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/freetier exit=69 cli_rc=1 .* tree=clean action=fallback$/,
       },
       {
         name: 'auth',

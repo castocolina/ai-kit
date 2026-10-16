@@ -11803,10 +11803,10 @@ class TestCrossAiTemplateText(unittest.TestCase):
         patterns = json.loads(pat_text)
         expected_keys = [
             "permission_blocked",
-            "auth",
             "billing",
-            "bad_model",
             "quota",
+            "auth",
+            "bad_model",
             "capacity",
             "transient",
         ]
