@@ -119,24 +119,6 @@ def cross_ai_answers(ctx: PlanCtx) -> dict:
     }
 
 
-_ENUMERATION_TAIL = {"failed": " (listing failed)", "empty": " (listing empty)"}
-
-
-def _exec_targets(inv: dict, rigor: str) -> list[cross_ai.Target]:
-    """cross_ai's targets; an empty runtime pool states its enumeration cause, never a
-    ceiling outcome (C-W12)."""
-    status: dict[str, str] = inv.get("runtime_enumeration") or {}
-    out = []
-    for target in cross_ai.exec_targets(inv, rigor):
-        runtime = cross_ai.RUNNER_CLI[target.cli]
-        pool = [c for c in inv["candidates"] if c.get("runtime") == runtime]
-        if target.model is None and not pool:
-            tail = _ENUMERATION_TAIL.get(status.get(runtime, ""), "")
-            target = target._replace(why=f"no {runtime} models enumerated{tail}")
-        out.append(target)
-    return out
-
-
 def _preset_layer(ctx: PlanCtx, _prior_entries: list) -> tuple[list, list]:
     """Layer 1: every §5 preset key for the chosen rigor plus its conditional keys."""
     entries = []
@@ -1230,7 +1212,7 @@ def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
         host=inventory["host"],
         existing=inventory["existing_config"]["values"],
         preset=presets.preset_values(opts.rigor, inventory["project"]),
-        targets=tuple(_exec_targets(inventory, opts.rigor)),
+        targets=tuple(cross_ai.exec_targets(inventory, opts.rigor)),
     )
     ctx = ctx._replace(answers=cross_ai_answers(ctx))
     entries, notes = _merge_layers(ctx)

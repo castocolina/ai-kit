@@ -31,6 +31,7 @@ EFFORT_LEVELS = {
 CROSS_AI_FLAG = "--cross-ai"
 NO_TARGET_TEXT = "no installed cross-AI target (pi, cursor-agent, opencode)"
 _ROUTER_WHY = "user-curated router (declared purpose: execute)"
+_ENUMERATION_TAIL = {"failed": " (listing failed)", "empty": " (listing empty)"}
 
 
 class Target(NamedTuple):
@@ -112,7 +113,13 @@ def exec_targets(inv: dict, rigor: str, prefer=DEFAULT_PREFER) -> list[Target]:
         if runtime not in installed:
             continue
         cands = _runtime_cands(inv, runner_id)
-        out.append(_pick_for_runner(runner_id, cands, rigor))
+        target = _pick_for_runner(runner_id, cands, rigor)
+        if not cands:
+            # C-W12: an empty pool states its enumeration cause, never a ceiling outcome.
+            status = (inv.get("runtime_enumeration") or {}).get(runtime, "")
+            tail = _ENUMERATION_TAIL.get(status, "")
+            target = target._replace(why=f"no {runtime} models enumerated{tail}")
+        out.append(target)
     return out
 
 
