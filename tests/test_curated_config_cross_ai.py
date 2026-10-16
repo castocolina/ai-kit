@@ -228,6 +228,37 @@ class TestExecTargets(unittest.TestCase):
         self.assertEqual(target.model, "catalog-pick")
         self.assertFalse(target.router_backed)
 
+    def _effort_target(self, runtime: str, modes, model: str = "m-reason"):
+        inv = make_inventory(
+            host="claude", candidates=[exec_cand(model, runtime, reasoning_modes=modes)]
+        )
+        inv["installed_runtimes"] = [runtime]
+        runner = next(r for r, rt in cross_ai.RUNNER_CLI.items() if rt == runtime)
+        return cross_ai.exec_targets(inv, "standard", prefer=(runner,))[0]
+
+    def test_catalog_pick_pins_effort_on_pi_and_codex(self):
+        """WR-06: the selection's effort target reaches runners that can pin it."""
+        for runtime, runner in (("pi", "pi"), ("codex", "codex")):
+            with self.subTest(runtime=runtime):
+                target = self._effort_target(runtime, ["low", "medium", "high"])
+                self.assertEqual(target.effort, "medium")
+                art = cross_ai.script_artifact([target], cross_ai.MIN_TIMEOUT_S)
+                self.assertEqual(art["config"]["effort"], {runner: "medium"})
+        self.assertEqual(self._effort_target("pi", ["high", "xhigh"]).effort, "high")
+
+    def test_no_effort_without_flag_modes_or_with_variant_id(self):
+        cases = (
+            ("cursor-agent", ["low", "medium"], "m-reason"),  # no effort flag in the runner
+            ("pi", [], "m-reason"),  # not a reasoning model: pi clamps to off itself
+            ("pi", ["low", "medium"], "m-reason-low"),  # the id already names the effort
+        )
+        for runtime, modes, model in cases:
+            with self.subTest(runtime=runtime, modes=modes, model=model):
+                target = self._effort_target(runtime, modes, model)
+                self.assertIsNone(target.effort)
+                art = cross_ai.script_artifact([target], cross_ai.MIN_TIMEOUT_S)
+                self.assertNotIn("effort", art["config"])
+
     def test_no_candidates_needs_choice(self):
         inv = make_inventory(host="claude", candidates=[])
         inv["installed_runtimes"] = ["cursor-agent"]

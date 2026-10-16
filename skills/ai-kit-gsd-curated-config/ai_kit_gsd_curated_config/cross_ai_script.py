@@ -98,6 +98,7 @@ def runner_config(template: bytes, artifact: dict, scrub_env) -> dict:
         base["outerTimeoutS"] = cfg["outer_timeout_s"]
     if "router_backed" in cfg:
         base["routerBacked"] = cfg["router_backed"]
+    base["effort"] = cfg.get("effort", {})
     base["scrubEnv"] = sorted(scrub_env)
     return base
 

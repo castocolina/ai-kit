@@ -101,6 +101,8 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
    - **Runner models** are the pseudo-keys `script:cross-ai.model.<runner>` (pick from
      `artifacts[0].choices.<runner>.candidates`) and `script:cross-ai.prefer` (a JSON list
      of runner ids, in order). `plan-unset script:cross-ai.model.<runner>` reopens a choice.
+     A pi or codex model with reasoning modes also pins its effort (`config.effort`, medium
+     or the nearest mode); the runner passes it as pi `--thinking` / codex effort.
    - **Trusted roots** (`agent_skills_security.trusted_global_roots`): the one candidate's
      `value` is the whole list — already-configured roots first, then the new `~/` roots.
      Approve it with that list, or decline with `plan-unset`. A list that drops an

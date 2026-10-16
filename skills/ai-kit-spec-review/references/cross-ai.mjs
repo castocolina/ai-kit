@@ -23,10 +23,13 @@
  *   --timeout <s>                            inner deadline (lowers default; never above derived inner)
  *   --print-argv                             print the resolved command per CLI and exit (no model call)
  *   --no-preamble                            send the prompt unchanged
- *   --codex-effort minimal|low|medium|high|xhigh
+ *   --codex-effort minimal|low|medium|high|xhigh   overrides CONFIG.effort.codex
  *   --codex-service-tier <id>                codex -c service_tier=
  *   --cursor-mode ask|plan                   review mode only (replaces cursor --mode)
  *   --self-test                              hermetic black-box checks (no real CLIs)
+ *
+ * CONFIG.effort pins the selected effort per runner: pi --thinking (skipped when the model
+ * has a :level suffix) and codex model_reasoning_effort.
  *
  * Live outer timeout reads workflow.cross_ai_timeout the way gsd-tools config-get does:
  * .planning[/$GSD_PROJECT][/workstreams/$GSD_WORKSTREAM]/config.json, then the root config
@@ -46,6 +49,7 @@ const CONFIG = {
     30,
     60
   ],
+  "effort": {},
   "extraArgs": {},
   "heartbeatS": 30,
   "models": {},
@@ -262,8 +266,8 @@ const RUNTIMES = {
   pi: {
     bins: ['pi'],
     list: { argv: PI_RPC_ARGS, input: PI_RPC_REQUEST, parse: parsePiListingIds },
-    exec: (m, c) => ['-p', '--model', m, '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline'],
-    review: (m, c) => ['-p', '--model', m, '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
+    exec: (m, c) => ['-p', '--model', m, ...piThinkingArgs(m, c), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline'],
+    review: (m, c) => ['-p', '--model', m, ...piThinkingArgs(m, c), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
       '--tools', 'read,grep,find,ls'],
     resume: (m, c, sid, mode) => RUNTIMES.pi[mode](m, c),
     parse: (out) => ({ text: out, sessionId: null, error: null }),
@@ -310,6 +314,12 @@ const RUNTIMES = {
     env: {},
   },
 };
+
+// CONFIG.effort.pi pins thinking unless the model spec already carries a :level suffix
+// (without either, pi runs the user's default, xhigh on some machines).
+function piThinkingArgs(model, ctx) {
+  return ctx.piThinking && !RUNTIMES.pi.modelSuffix.test(model) ? ['--thinking', ctx.piThinking] : [];
+}
 
 function withCodexKnobs(argv, ctx) {
   const out = [...argv];
@@ -707,6 +717,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const ctx = {
     cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md'),
     codexEffort: opts.codexEffort, codexServiceTier: opts.codexServiceTier, cursorMode: opts.cursorMode,
+    piThinking: opts.piThinking,
   };
   const env = childEnv(rt.env, process.env);
   let argv = withExtra(name, rt[mode](model, ctx)); let input = prompt;
@@ -761,6 +772,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
 }
 
 const CODEX_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
+const PI_THINKING = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const CURSOR_MODES = new Set(['ask', 'plan']);
 
 function parseArgs(argv) {
@@ -819,7 +831,7 @@ function hermeticEnv(tmp, extra = {}) {
 function writeCopy(tmp, name, override) {
   const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
   const cfg = {
-    backoffS: [0, 0], extraArgs: {}, heartbeatS: 30, models: {}, outerTimeoutS: 1800,
+    backoffS: [0, 0], effort: {}, extraArgs: {}, heartbeatS: 30, models: {}, outerTimeoutS: 1800,
     prefer: ['pi', 'cursor', 'opencode'], retries: 2, routerBacked: {}, scrubEnv: [...CONFIG.scrubEnv],
     ...override,
   };
@@ -2153,6 +2165,28 @@ async function blackBoxSelfTest() {
           return null;
         },
       },
+      ...[
+        ['argv-pi-thinking', 'pi', 'fake/ok', { effort: { pi: 'medium' } }, [], ['--thinking', 'medium']],
+        ['argv-pi-thinking-suffix', 'pi', 'fake/ok:high', { effort: { pi: 'medium' } }, [], null],
+        ['argv-codex-effort-config', 'codex', 'x', { prefer: ['codex'], effort: { codex: 'low' } }, [], ['-c', 'model_reasoning_effort=low']],
+        ['argv-codex-effort-flag-wins', 'codex', 'x', { prefer: ['codex'], effort: { codex: 'low' } },
+          ['--codex-effort', 'high'], ['-c', 'model_reasoning_effort=high']],
+      ].map(([name, rt, model, config, extra, want]) => ({
+        // WR-06: the plan's baked effort reaches the CLI (exec and review argv alike).
+        name,
+        args: ['--print-argv', '--prefer', rt, `--model-${rt}`, model, ...extra],
+        config,
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith(`${rt}\t`));
+          const argv = JSON.parse(line.split('\t')[2]);
+          const flag = want ? want[0] : '--thinking';
+          const hits = argv.flatMap((t, i) => (t === flag && (rt !== 'codex' || /effort/.test(argv[i + 1])) ? [argv[i + 1]] : []));
+          if (!want) return hits.length ? `unexpected ${flag} ${hits}` : null;
+          return hits.length === 1 && hits[0] === want[1] ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      })),
       {
         name: 'codex-effort-bogus',
         args: ['--codex-effort', 'bogus', '--prefer', 'codex', '--model-codex', 'x'],
@@ -2252,6 +2286,12 @@ async function main(argv) {
     name, rt: RUNTIMES[name], model: models[name],
     bin: RUNTIMES[name].bins.map((b) => which(b, process.env.PATH || '')).find(Boolean) || null,
   }));
+  // Baked per-runner effort (the plan's selection); --codex-effort still wins for codex.
+  const effort = CONFIG.effort || {};
+  const knobs = {
+    codexEffort: o.codexEffort ?? (CODEX_EFFORTS.has(effort.codex) ? effort.codex : null),
+    piThinking: PI_THINKING.has(effort.pi) ? effort.pi : null,
+  };
   const reviewOnly = o.mode === 'exec' ? cands.find((c) => !c.rt.exec) : null;
   if (reviewOnly) {
     log(`cross-ai: ${reviewOnly.name} is review-only (no exec formula)`);
@@ -2266,7 +2306,8 @@ async function main(argv) {
   if (o.printArgv) {
     const ctx = {
       cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
-      codexEffort: o.codexEffort, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
+      codexEffort: knobs.codexEffort, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
+      piThinking: knobs.piThinking,
     };
     for (const c of cands) {
       const argvOut = c.model ? withExtra(c.name, c.rt[o.mode](c.model, ctx)) : null;
@@ -2328,7 +2369,8 @@ async function main(argv) {
     // From here until the next snapshot nothing proves the tree clean (CR-03).
     liveFields.tree = 'unknown';
     const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
-      beforeSig: stateSig(before), codexEffort: o.codexEffort, codexServiceTier: o.codexServiceTier,
+      beforeSig: stateSig(before), codexEffort: knobs.codexEffort, piThinking: knobs.piThinking,
+      codexServiceTier: o.codexServiceTier,
       cursorMode: o.cursorMode,
     });
     liveFields.out = r.outBytes || 0;

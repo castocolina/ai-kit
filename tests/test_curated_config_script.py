@@ -54,6 +54,10 @@ class TestRender(unittest.TestCase):
         self.assertEqual(cfg["routerBacked"], {"pi": True})
         self.assertEqual(cfg["scrubEnv"], sorted(HOST_SIGNAL_ENV_VARS))
         self.assertIn("backoffS", cfg)
+        self.assertEqual(cfg["effort"], {})
+        art["config"]["effort"] = {"pi": "medium"}
+        cfg = cross_ai_script.runner_config(self.template, art, HOST_SIGNAL_ENV_VARS)
+        self.assertEqual(cfg["effort"], {"pi": "medium"})
 
     def test_render_idempotent(self):
         art = _artifact()

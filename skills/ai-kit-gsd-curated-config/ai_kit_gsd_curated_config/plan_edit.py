@@ -214,6 +214,7 @@ def _plan_set_script_model(
     router_map = config.setdefault("router_backed", {})
     models[runner_id] = model
     router_map[runner_id] = router
+    _set_effort(config, runner_id, cross_ai.exec_effort(runner_id, row) if row else None)
     artifact.setdefault("choices", {}).pop(runner_id, None)
     _finish_script_artifact(artifact)
     _sync_artifact_command(plan, artifact)
@@ -241,6 +242,7 @@ def _plan_set_script_prefer(call: EditCall, raw: str) -> tuple[dict, list[str]]:
         models.pop(dropped, None)
         router_map.pop(dropped, None)
         choices.pop(dropped, None)
+        _set_effort(config, dropped, None)
     for runner_id in ids:
         if runner_id in models:
             continue
@@ -266,6 +268,7 @@ def _plan_unset_script_model(call: EditCall, key: str) -> tuple[dict, list[str]]
         raise PlanEditError(f"script target {runner_id} is not in config.prefer")
     config.setdefault("models", {}).pop(runner_id, None)
     config.setdefault("router_backed", {}).pop(runner_id, None)
+    _set_effort(config, runner_id, None)
     artifact.setdefault("choices", {})[runner_id] = {
         "candidates": runtime_candidates(call.inv, runner_id, call.plan["rigor"]),
     }
@@ -348,6 +351,19 @@ def _find_inventory_model(inv: dict, runner_id: str, model: str) -> dict | None:
         if row.get("runtime") == runtime and row.get("model") == model:
             return row
     return None
+
+
+def _set_effort(config: dict, runner_id: str, effort: str | None) -> None:
+    """Keep `config.effort` in step with the runner's model; absent when empty."""
+    efforts = dict(config.get("effort") or {})
+    if effort is None:
+        efforts.pop(runner_id, None)
+    else:
+        efforts[runner_id] = effort
+    if efforts:
+        config["effort"] = efforts
+    else:
+        config.pop("effort", None)
 
 
 def _finish_script_artifact(artifact: dict) -> None:

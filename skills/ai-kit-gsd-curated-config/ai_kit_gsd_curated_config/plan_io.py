@@ -760,7 +760,24 @@ def _validate_artifact_config(config, choices, status, plan_host: str) -> str | 
     if not isinstance(router, dict):
         return "artifacts[0].config.router_backed: expected object"
     choice_map = choices if isinstance(choices, dict) else {}
-    return _validate_artifact_targets(prefer, models, router, choice_map, status)
+    return _validate_effort(config.get("effort", {}), models) or _validate_artifact_targets(
+        prefer, models, router, choice_map, status
+    )
+
+
+def _validate_effort(effort, models: dict) -> str | None:
+    """Optional per-runner effort pin (WR-06): only runners that can pin it, on a set model."""
+    if not isinstance(effort, dict):
+        return "artifacts[0].config.effort: expected object"
+    for runner_id, level in effort.items():
+        levels = cross_ai.EFFORT_LEVELS.get(runner_id)
+        if levels is None:
+            return f"artifacts[0].config.effort: {runner_id!r} cannot pin effort"
+        if runner_id not in models:
+            return f"artifacts[0].config.effort: id {runner_id!r} has no model"
+        if level not in levels:
+            return f"artifacts[0].config.effort.{runner_id}: expected one of {list(levels)}"
+    return None
 
 
 def _validate_prefer(prefer, plan_host: str) -> str | None:

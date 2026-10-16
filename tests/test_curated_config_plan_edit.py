@@ -26,7 +26,7 @@ from ai_kit_gsd_curated_config import (
 )
 
 from tests.test_curated_config_golden import build_golden_inventory
-from tests.test_curated_config_recommend import run_recommend
+from tests.test_curated_config_recommend import cand, run_recommend
 
 
 def _read_bytes(path: str) -> bytes:
@@ -557,6 +557,27 @@ class TestPlanValidator(unittest.TestCase):
                 entry["status"] = "needs_choice"
         self.assertIsNone(plan_io.validate_plan(plan))
 
+    def test_artifact_effort_rules(self):
+        """WR-06: effort is optional; only pinnable runners, known levels, with a model."""
+        for effort, ok in (
+            ({}, True),
+            ({"pi": "medium"}, True),
+            ({"pi": "max"}, True),
+            ({"pi": "bogus"}, False),
+            ({"cursor": "medium"}, False),
+            ({"codex": "medium"}, False),  # codex has no model in this plan
+            (["medium"], False),
+        ):
+            with self.subTest(effort=effort):
+                plan = self._golden_plan()
+                plan["artifacts"][0]["config"]["effort"] = effort
+                problem = plan_io.validate_plan(plan)
+                if ok:
+                    self.assertIsNone(problem)
+                else:
+                    self.assertIsNotNone(problem)
+                    self.assertIn("effort", str(problem))
+
     def test_artifact_bad_path(self):
         plan = self._golden_plan()
         plan["artifacts"][0]["path"] = "../x.mjs"
@@ -785,6 +806,22 @@ class TestScriptPseudoKeys(unittest.TestCase):
                 e for e in reloaded["entries"] if e["key"] == "workflow.cross_ai_command"
             )
             self.assertEqual(cmd.get("status"), "needs_choice")
+
+    def test_script_model_effort_follows_the_inventory_row(self):
+        """WR-06: setting a pi model pins its effort; unsetting it drops the effort."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _inv_path, _plan_path, inv, plan = self._setup_partial(tmp)
+            inv = copy.deepcopy(inv)
+            inv["candidates"].append(
+                cand("prov/reasoner", runtime="pi", is_host=False, reasoning_modes=["low", "high"])
+            )
+            call = plan_edit.EditCall(plan, inv, False, _strict_encode())
+            edited, _ = plan_edit.plan_set(call, "script:cross-ai.model.pi", "prov/reasoner")
+            self.assertEqual(edited["artifacts"][0]["config"]["effort"], {"pi": "low"})
+            self.assertIsNone(plan_io.validate_plan(edited))
+            call = plan_edit.EditCall(edited, inv, False, _strict_encode())
+            unset, _ = plan_edit.plan_unset(call, "script:cross-ai.model.pi")
+            self.assertNotIn("effort", unset["artifacts"][0]["config"])
 
     def test_plan_unset_script_model_direct(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -11771,6 +11771,7 @@ class TestCrossAiTemplateText(unittest.TestCase):
         cfg = json.loads(cfg_text)
         expected = {
             "backoffS": [30, 60],
+            "effort": {},
             "extraArgs": {},
             "heartbeatS": 30,
             "models": {},
