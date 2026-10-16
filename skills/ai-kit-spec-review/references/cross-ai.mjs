@@ -623,7 +623,9 @@ async function listModels(cli, binPath, env, limit) {
   return { ok: true, ids, reason: '' };
 }
 
-async function treeState(cwd, limit) {
+const MAX_NESTED_REPOS = 8;
+
+async function treeState(cwd, limit, depth = 0) {
   const git = which('git', process.env.PATH || '');
   if (!git) return null;
   // --verify -q: exit 1 with no message on an unborn HEAD, in any locale; 128 outside a repo.
@@ -637,7 +639,21 @@ async function treeState(cwd, limit) {
     if (addR.timedOut || addR.spawnErr || addR.code !== 0) return null;
     const wtR = await runChild(git, ['write-tree'], { cwd, env, capMs: GIT_CAP_MS, limit });
     if (wtR.timedOut || wtR.spawnErr || wtR.code !== 0) return null;
-    return { head, tree: wtR.stdout.trim() };
+    // git add records a submodule (or any nested repo) as its HEAD only, so snapshot each
+    // checked-out one too: edits inside it must count.
+    const lsR = await runChild(git, ['ls-files', '-s', '-z'], { cwd, env, capMs: GIT_CAP_MS, limit });
+    if (lsR.timedOut || lsR.spawnErr || lsR.code !== 0) return null;
+    let nested = '';
+    for (const entry of lsR.stdout.split('\0')) {
+      if (!entry.startsWith('160000 ')) continue;
+      const rel = entry.slice(entry.indexOf('\t') + 1);
+      if (!fs.existsSync(path.join(cwd, rel, '.git'))) continue; // not checked out: the gitlink is all there is
+      if (depth >= MAX_NESTED_REPOS) return null;
+      const sub = await treeState(path.join(cwd, rel), limit, depth + 1);
+      if (sub === null) return null;
+      nested += `\t${rel}=${stateSig(sub)}`;
+    }
+    return { head, tree: wtR.stdout.trim() + nested };
   } finally {
     dropTemp(idxDir);
   }
@@ -915,6 +931,7 @@ const FAKE_MODES = {
     process.exit(1);
   },
   reedit: () => { fs.appendFileSync('dirty.txt', 'more\n'); process.stdout.write('# Summary\nok'); },
+  subedit: () => { fs.appendFileSync('sub/f.txt', 'edit\n'); process.stdout.write('# Summary\nok'); },
   stubborn: () => {
     process.on('SIGTERM', () => {});
     process.on('SIGINT', () => {});
@@ -1244,6 +1261,18 @@ async function checkCase(spec, c) {
   const callLines = fs.existsSync(c.calls) ? fs.readFileSync(c.calls, 'utf8').trim().split('\n').filter(Boolean) : [];
   const ctx = { ...c, calls: callLines, elapsedMs: r.elapsedMs, pids: recordedPids(c.pidFile) };
   return spec.check ? spec.check(r, ctx) : null;
+}
+
+function nestedRepoSetup(c) {
+  const sub = path.join(c.repo, 'sub');
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(sub, 'f.txt'), 'base\n');
+  for (const [cwd, argv] of [[sub, ['init', '-q']], [sub, ['add', 'f.txt']], [sub, ['commit', '-q', '-m', 's']],
+    [c.repo, ['add', 'sub']], [c.repo, ['commit', '-q', '-m', 'gitlink']]]) {
+    const g = spawnSync('git', argv, { cwd, env: c.env, encoding: 'utf8' });
+    if (g.status !== 0) return `setup git ${argv.join(' ')}: ${g.stderr}`;
+  }
+  return null;
 }
 
 // Fails unless each named recorded process (or gc.pid) existed and is dead now.
@@ -1720,6 +1749,21 @@ async function blackBoxSelfTest() {
         check: (_r, ctx) => (ctx.elapsedMs >= 10000 ? `elapsed ${ctx.elapsedMs}` : null),
       },
 
+      {
+        // WR-12: git add records a nested repo as its HEAD only; an edit inside it still counts.
+        name: 'submodule-edit',
+        setup: nestedRepoSetup,
+        args: ['--prefer', 'pi', '--model-pi', 'fake/subedit'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/subedit exit=0 .* tree=dirty action=stop$/,
+      },
+      {
+        name: 'submodule-review-ok',
+        setup: nestedRepoSetup,
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/review-ok exit=0 .* tree=clean action=stop$/,
+      },
       {
         name: 'unborn-head-l10n',
         setup: (c) => {
