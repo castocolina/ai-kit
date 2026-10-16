@@ -10,7 +10,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 from typing import NamedTuple
 
 from . import gsd_catalog
@@ -120,7 +119,7 @@ def _replace_config(template: bytes, config: dict) -> bytes:
     return template[:inner_start] + _config_block(config) + template[end:]
 
 
-def _stamp(template: bytes, body_source: bytes, version: int) -> bytes:
+def _stamp(body_source: bytes, version: int) -> bytes:
     parts = split_header(body_source)
     if parts is None:
         raise ValueError("cannot stamp without header")
@@ -136,11 +135,7 @@ def _stamp(template: bytes, body_source: bytes, version: int) -> bytes:
 def render(template: bytes, config: dict) -> bytes:
     version = template_version(template)
     replaced = _replace_config(template, config)
-    return _stamp(template, replaced, version)
-
-
-def command_argv(command: str) -> list[str]:
-    return shlex.split(command)
+    return _stamp(replaced, version)
 
 
 def load_template() -> tuple[bytes | None, str | None]:
@@ -162,21 +157,17 @@ def _read_target(path: str) -> bytes | None:
         return None
 
 
+_STATE_DETAIL = {
+    "edited": "edited (its body no longer matches its sha256 header)",
+    "unstamped": "unstamped (sha256=UNSTAMPED)",
+    "foreign": "foreign (unrecognized generator header)",
+}
+
+
 def _note_new(state: str, path: str) -> str:
-    new_path = f"{path}.new"
-    if state == "edited":
-        return (
-            f"existing {path} was edited (its body no longer matches its sha256 header); "
-            f"the new render is {new_path}; merge it by hand"
-        )
-    if state == "unstamped":
-        return (
-            f"existing {path} was unstamped (sha256=UNSTAMPED); "
-            f"the new render is {new_path}; merge it by hand"
-        )
     return (
-        f"existing {path} was foreign (unrecognized generator header); "
-        f"the new render is {new_path}; merge it by hand"
+        f"existing {path} was {_STATE_DETAIL[state]}; "
+        f"the new render is {path}.new; merge it by hand"
     )
 
 
@@ -205,13 +196,6 @@ def _publish(write_path: str, data: bytes) -> None:
     cache.cache_write_bytes(write_path, data, mode=cache.umask_file_mode())
 
 
-def _divert_to_new(plan: ScriptPlan, note: str) -> ScriptPlan:
-    new_path = plan.path + ".new"
-    return ScriptPlan(
-        "new-as-.new", plan.path, new_path, plan.data, plan.state, note, plan.expected
-    )
-
-
 def write_script(plan: ScriptPlan) -> ScriptPlan:
     # shortcut: a write landing between the re-read and os.replace is still lost; closing that
     # needs a lock the runner does not take
@@ -221,7 +205,7 @@ def write_script(plan: ScriptPlan) -> ScriptPlan:
             f"{plan.path} changed after planning; the new render is {plan.path}.new; "
             "merge it by hand"
         )
-        performed = _divert_to_new(plan, note)
+        performed = plan._replace(kind="new-as-.new", write_path=plan.path + ".new", note=note)
         _publish(plan.path + ".new", performed.data)
         return performed
     if plan.kind == "keep-pristine":

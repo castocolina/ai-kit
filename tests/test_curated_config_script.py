@@ -88,9 +88,9 @@ class TestRender(unittest.TestCase):
         crlf_file = shebang + b"\n" + header + b"\n" + body_crlf
         self.assertEqual(cross_ai_script.script_state(crlf_file), "pristine")
 
-    def test_command_argv_splits_without_shell(self):
-        argv = cross_ai_script.command_argv("node .planning/scripts/cross-ai.mjs")
-        self.assertEqual(argv, ["node", ".planning/scripts/cross-ai.mjs"])
+    def test_command_splits_without_shell(self):
+        # GSD expands ${CROSS_AI_CMD} unquoted: plain word splitting, no shell parsing.
+        self.assertEqual(cross_ai.CROSS_AI_COMMAND.split(), ["node", cross_ai.SCRIPT_PATH])
 
 
 class TestScriptState(unittest.TestCase):
