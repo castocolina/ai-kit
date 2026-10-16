@@ -294,6 +294,16 @@ class TestScanSkills(unittest.TestCase):
         row = skill_scan.scan_root(gdir, "project", "skills", root)[0]
         self.assertEqual(len(row["description"]), skill_scan.DESCRIPTION_MAX)
 
+    def test_block_scalar_descriptions(self):
+        """C-W2: chomping and indent indicators start a block, not a literal value."""
+        for indicator in (">", "|", ">-", "|-", ">+", "|+", ">2", "|2-", ">-2"):
+            with self.subTest(indicator=indicator):
+                text = f"---\nname: x\ndescription: {indicator}\n  Draws\n  charts\n---\n"
+                self.assertEqual(skill_scan._parse_description(text), "Draws charts")
+        self.assertEqual(
+            skill_scan._parse_description("---\ndescription: >-x\n---\n"), ">-x"
+        )
+
     def test_unreadable_skill_md_keeps_entry(self):
         if os.geteuid() == 0:
             self.skipTest("chmod 000 ineffective as root")

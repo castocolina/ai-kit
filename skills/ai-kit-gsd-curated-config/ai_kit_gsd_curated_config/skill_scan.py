@@ -28,6 +28,8 @@ DESCRIPTION_MAX = 300
 CONNECT_TIMEOUT_S = 1.5
 URL_NOTE = "reachable, not verified as System One"
 
+# YAML block scalar header: style, then optional chomping and indent indicators in either order.
+_BLOCK_INDICATOR = re.compile(r"[>|](?:[-+]?[1-9]?|[1-9][-+])")
 _ROOT_KIND_ORDER = {"global": 0, "plugin": 1, "project": 2}
 
 
@@ -80,7 +82,7 @@ def _parse_description(text: str) -> str:
         if not in_desc:
             if line.startswith("description:"):
                 rest = line[len("description:") :].strip()
-                if rest in (">", "|"):
+                if _BLOCK_INDICATOR.fullmatch(rest):
                     in_desc = True
                     continue
                 if rest.startswith(('"', "'")) and rest.endswith(rest[0]) and len(rest) >= 2:
