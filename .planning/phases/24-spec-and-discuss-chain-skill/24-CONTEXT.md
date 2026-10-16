@@ -199,7 +199,12 @@ locked in `24-SPEC.md` (R1–R13, amended 2026-10-14). This file locks the HOW.
 <deferred>
 ## Deferred Ideas
 
-None.
+- **Jev 1.14 capabilities (owner note 2026-10-15, not researched):** image questions
+  (`TypeSafe-Danger-Zone-Images: true` + `assets`), the `box` type, long context, and
+  `jev-preview`/`jev-latest` moving to 1.14. `decide.py` stays text-only and keeps D-07's item
+  schema and D-11's payload guard. Extending it is future work. Its first step is to decide the
+  response-model check (`jev-latest` → 1.14) and per-question thresholds, since `confidence` is
+  a peakedness summary, not calibration. Required reading: [Jev 1.14 release notes](https://typesafe.ai/blog/jev-1-14), [Primitives](https://docs.typesafe.ai/primitives), [Images](https://docs.typesafe.ai/images), [Confidence](https://docs.typesafe.ai/confidence).
 </deferred>
 
 ---

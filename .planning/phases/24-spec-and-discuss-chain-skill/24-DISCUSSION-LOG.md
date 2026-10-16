@@ -77,6 +77,14 @@ One Laya call per item; `needs_fallback` items batched to TypeSafe direct. Summa
 - 16.1 has not landed, so R13's regex gate coverage is a dependency: ROADMAP "Depends on"
   amended.
 
+## Owner notes (2026-10-15, not researched)
+
+- uz: Jev supports images and other capabilities, with new ways to ask and get answers.
+  Required reading for this skill's decision ladder: [Jev 1.14 release notes](https://typesafe.ai/blog/jev-1-14), [Primitives](https://docs.typesafe.ai/primitives), [Images](https://docs.typesafe.ai/images), [Confidence](https://docs.typesafe.ai/confidence).
+- Recorded as SPEC notes (Background, Constraints) and a CONTEXT deferred idea. No decision
+  changed: the ladder stays text-only. The `jev-latest` → 1.14 response-model check is flagged
+  for whoever extends it.
+
 ## Corrections Made
 
 No user corrections.

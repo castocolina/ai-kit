@@ -51,6 +51,9 @@ This SPEC encodes what was learned in the tools-installer run of 2026-10-13/14 (
   - Laya (local): `JEV_API_URL=http://127.0.0.1:8010/v1/systemone`, `JEV_MODEL=jev-1`,
     `JEV_RESPONSE_MODEL=laya-rl-agent`.
   - TypeSafe: `https://api.typesafe.ai/v1/systemone`, `jev-latest` → `jev-1.13.0`.
+    (owner note 2026-10-15, not researched: per the Jev 1.14 notes `jev-latest` moves to
+    `jev-1.14.0` about a week after release, so an exact `jev-1.13.0` response-model check would
+    start failing; pin `jev-1.13.0` or accept both.)
   - The jev client script ships with the `jev-fast-decision` skill.
 - **The prototype** `jev_ladder.py` (session scratchpad) hardcoded a key-file path; the shipped
   script must not.
@@ -169,6 +172,10 @@ This SPEC encodes what was learned in the tools-installer run of 2026-10-13/14 (
 - Runtime code is stdlib-only, with no hardcoded machine paths.
 - No secret value in any output, log or ledger; keys are checked by name.
 - Portable across Agent Skills hosts; host-specific gaps are flagged, not silently degraded.
+- (owner note 2026-10-15, not researched) Jev is no longer text-only. Images are accepted with
+  the `TypeSafe-Danger-Zone-Images: true` header and an `assets` map; 1.14 adds a `box` type and
+  long context; `confidence` is not claimed calibrated. This phase's ladder stays text-only;
+  required reading before extending it: [Jev 1.14 release notes](https://typesafe.ai/blog/jev-1-14), [Primitives](https://docs.typesafe.ai/primitives), [Images](https://docs.typesafe.ai/images), [Confidence](https://docs.typesafe.ai/confidence).
 
 ## Acceptance Criteria
 
