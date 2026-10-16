@@ -11,7 +11,7 @@ source: cursor-agent --help, live against a real authenticated install (2026.08.
 # cursor — reviewer profile
 
 **Binary name hazard — use bare `agent` only when its real path's basename is `cursor-agent`.**
-Cursor and Grok both ship an `agent` binary, so PATH order is ambiguous. Resolve the real path
+Cursor and Grok both ship an `agent` binary, so PATH order is ambiguous. Resolve its `realpath`
 before accepting bare `agent`; an unguarded probe of `agent` remains forbidden. Prefer the explicit
 `cursor-agent` binary whenever possible.
 
