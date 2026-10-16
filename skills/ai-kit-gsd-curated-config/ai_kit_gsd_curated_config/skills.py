@@ -79,7 +79,15 @@ def validate_affinity(doc: Any) -> str | None:
             problem = _family_shape_problem(family, index, seen_ids)
             if problem:
                 break
+        if problem is None:
+            problem = _id_collision_problem(families, seen_ids)
     return problem
+
+
+def _id_collision_problem(families: list, ids: set[str]) -> str | None:
+    """A family id that is also a skill name would name that skill in drop notes (C-W5)."""
+    clash = sorted(ids & {name for family in families for name in family["skills"]})
+    return f"family id {clash[0]!r} equals a skill name" if clash else None
 
 
 def skill_facts(inv: dict, prior: list, existing: dict) -> dict[str, bool]:
@@ -241,11 +249,13 @@ def _can_wire(name: str, ctx: _ResolveCtx) -> bool:
 
 def _wire_agent(ctx: _ResolveCtx, fam_id: str, agent: str, skill_names: list) -> None:
     if agent not in ctx.agents_known:
-        ctx.notes.append({
-            "kind": "affinity_agent",
-            "key": f"agent_skills.{agent}",
-            "text": f"dropped unknown agent {agent} from family {fam_id}",
-        })
+        # Only a family that would wire something gets a note (C-W5, SPEC R9).
+        if any(isinstance(n, str) and unwired_reason(n, ctx.inv) is None for n in skill_names):
+            ctx.notes.append({
+                "kind": "affinity_agent",
+                "key": f"agent_skills.{agent}",
+                "text": f"dropped unknown agent {agent} from family {fam_id}",
+            })
         return
     bucket = ctx.seen_per_agent.setdefault(agent, set())
     names = ctx.agent_skills.setdefault(agent, [])

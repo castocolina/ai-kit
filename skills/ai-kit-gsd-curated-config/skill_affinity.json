@@ -21,7 +21,7 @@
         "gsd-eval-auditor",
         "gsd-ui-auditor"
       ],
-      "id": "ponytail-review",
+      "id": "ponytail-reviewers",
       "skills": [
         "ponytail-review",
         "ponytail-audit"
@@ -32,7 +32,7 @@
       "agents": [
         "gsd-verifier"
       ],
-      "id": "ponytail-debt",
+      "id": "ponytail-verifier",
       "skills": [
         "ponytail-debt"
       ],

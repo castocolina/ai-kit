@@ -59,7 +59,7 @@
         "ponytail-review",
         "ponytail-audit"
       ],
-      "why": "family ponytail-review: ponytail-review, ponytail-audit"
+      "why": "family ponytail-reviewers: ponytail-review, ponytail-audit"
     },
     {
       "existing": null,
@@ -70,7 +70,7 @@
         "ponytail-review",
         "ponytail-audit"
       ],
-      "why": "family ponytail-review: ponytail-review, ponytail-audit"
+      "why": "family ponytail-reviewers: ponytail-review, ponytail-audit"
     },
     {
       "existing": null,
@@ -92,7 +92,7 @@
         "ponytail-review",
         "ponytail-audit"
       ],
-      "why": "family ponytail-review: ponytail-review, ponytail-audit"
+      "why": "family ponytail-reviewers: ponytail-review, ponytail-audit"
     },
     {
       "existing": null,
@@ -113,7 +113,7 @@
         "ponytail-review",
         "ponytail-audit"
       ],
-      "why": "family ponytail-review: ponytail-review, ponytail-audit"
+      "why": "family ponytail-reviewers: ponytail-review, ponytail-audit"
     },
     {
       "existing": null,
@@ -124,7 +124,7 @@
         "ponytail-review",
         "ponytail-audit"
       ],
-      "why": "family ponytail-review: ponytail-review, ponytail-audit"
+      "why": "family ponytail-reviewers: ponytail-review, ponytail-audit"
     },
     {
       "existing": null,
@@ -144,7 +144,7 @@
       "value": [
         "ponytail-debt"
       ],
-      "why": "family ponytail-debt: ponytail-debt"
+      "why": "family ponytail-verifier: ponytail-debt"
     },
     {
       "candidates": [

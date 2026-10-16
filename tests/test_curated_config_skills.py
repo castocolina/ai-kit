@@ -665,6 +665,21 @@ class TestAffinityValidation(unittest.TestCase):
         doc = {"schema_version": 1, "as_of": "2026-01-01", "families": [fam, fam]}
         self.assertIsNotNone(skills.validate_affinity(doc))
 
+    def test_validate_affinity_refuses_family_id_equal_to_skill_name(self):
+        """C-W5: a family id that is also a skill name would name that skill in notes."""
+        doc = {
+            "schema_version": 1,
+            "as_of": "2026-01-01",
+            "families": [
+                {"id": "a", "skills": ["b"], "agents": ["gsd-planner"], "when": None},
+                {"id": "b", "skills": ["c"], "agents": ["gsd-planner"], "when": None},
+            ],
+        }
+        problem = skills.validate_affinity(doc)
+        self.assertIsNotNone(problem)
+        self.assertIn("'b'", problem or "")
+        self.assertIsNone(skills.validate_affinity(_shipped_affinity()))
+
     def test_load_affinity_invalid_file_suffix(self):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
             json.dump({"schema_version": 2, "as_of": "x", "families": []}, handle)
@@ -761,6 +776,20 @@ class TestAffinityResolve(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertIn("not-a-real-agent", notes[0]["text"])
         self.assertIn("fam-x", notes[0]["text"])
+
+    def test_unknown_agent_note_needs_a_wireable_family_skill(self):
+        """C-W5: no drop note (naming the family) when the family would wire nothing."""
+        inv = _inv(host="codex", skills=[])
+        plan = _plan_with_affinity(inv)
+        agent_notes = [n for n in plan["notes"] if n["kind"] == "affinity_agent"]
+        self.assertEqual(agent_notes, [])
+        self.assertNotIn("ponytail", json.dumps(plan["notes"]))
+        inv = _inv(host="codex", skills=[_skill_row("ponytail-review", "global")])
+        plan = _plan_with_affinity(inv)
+        texts = [n["text"] for n in plan["notes"] if n["kind"] == "affinity_agent"]
+        self.assertIn(
+            "dropped unknown agent gsd-security-auditor from family ponytail-reviewers", texts
+        )
 
     def test_precedence_project_over_global_and_plugin(self):
         inv = _inv(skills=[
