@@ -1219,6 +1219,21 @@ class TestSkillNotes(unittest.TestCase):
         self.assertIn("skips", entry["why"])
 
 
+class TestTrustedRootCandidate(unittest.TestCase):
+    def test_candidate_value_is_the_merged_list(self):
+        """C-W8 (proposal side): the one candidate keeps the configured roots."""
+        inv = _inv_existing_roots(
+            ["~/vault"],
+            project={"frontend": True, "intel_index_present": False, "db": False},
+            skills=[_escaping_global("react-dev", "~/.agents/skills/react-dev")],
+        )
+        entry = entry_map(_plan_with_affinity(inv))["agent_skills_security.trusted_global_roots"]
+        self.assertEqual(len(entry["candidates"]), 1)
+        candidate = entry["candidates"][0]
+        self.assertEqual(candidate["value"], ["~/vault", "~/.agents/skills/react-dev"])
+        self.assertEqual(candidate["skills"], ["react-dev"])
+
+
 class TestSkillsLayer(unittest.TestCase):
     def test_mvp_reviewer_ponytail_not_reducing_entropy(self):
         with tempfile.TemporaryDirectory() as root:

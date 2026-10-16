@@ -355,8 +355,18 @@ def trusted_roots(wired: dict, inv: dict) -> tuple[list[dict], list[dict]]:
     return candidates, notes
 
 
+def trusted_roots_candidate(candidates: list[dict], inv: dict) -> dict:
+    """The one approval value: configured roots first, then the new ones (C-W8), so taking
+    the candidate never drops a root the user already trusts."""
+    return {
+        "value": existing_roots(inv) + [item["value"] for item in candidates],
+        "skills": sorted({item["skill"] for item in candidates}),
+        "why": "configured roots kept; adds the real directory of each escaping global skill",
+    }
+
+
 def merged_trusted_roots_why(candidates: list[dict], inv: dict) -> str:
-    merged = existing_roots(inv) + [item["value"] for item in candidates]
+    merged = trusted_roots_candidate(candidates, inv)["value"]
     payload = json.dumps(merged, separators=(",", ":"))
     return (
         f"approve with plan-set agent_skills_security.trusted_global_roots {shlex.quote(payload)} "

@@ -1105,7 +1105,7 @@ def _skills_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
                 "affinity",
                 skills.merged_trusted_roots_why(candidates, ctx.inv),
                 status="needs_choice",
-                candidates=candidates,
+                candidates=[skills.trusted_roots_candidate(candidates, ctx.inv)],
             )
         )
     notes.extend(skills.proposals(affinity, ctx.inv))

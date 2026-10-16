@@ -424,7 +424,9 @@ def _candidate_values(entry: dict) -> set[Any]:
             continue
         for field in ("model", "value"):
             val = row.get(field)
-            if val is not None:
+            if isinstance(val, list):  # a list candidate (trusted roots) admits its elements
+                out.update(item for item in val if isinstance(item, str))
+            elif val is not None:
                 out.add(val)
     return out
 

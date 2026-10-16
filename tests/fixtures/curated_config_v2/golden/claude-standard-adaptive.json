@@ -150,9 +150,13 @@
     {
       "candidates": [
         {
-          "skill": "react-dev",
-          "value": "~/.agents/skills/react-dev",
-          "why": "global skill react-dev resolves outside the configured root"
+          "skills": [
+            "react-dev"
+          ],
+          "value": [
+            "~/.agents/skills/react-dev"
+          ],
+          "why": "configured roots kept; adds the real directory of each escaping global skill"
         }
       ],
       "existing": null,

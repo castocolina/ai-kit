@@ -984,6 +984,16 @@ class TestPlanSetExtra(unittest.TestCase):
             self.assertEqual(entry["source"], "user")
             self.assertNotIn("status", entry)
 
+    def test_trusted_roots_candidate_value_runs(self):
+        """C-W8: plan-set with the entry's candidate value is accepted as is."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, plan = _write_pair(tmp)
+            key = "agent_skills_security.trusted_global_roots"
+            entry = next(e for e in plan["entries"] if e["key"] == key)
+            payload = json.dumps(entry["candidates"][0]["value"])
+            code, _, err = _run_plan_set(plan_path, inv_path, key, payload)
+            self.assertEqual(code, 0, err)
+
     def test_ponytail_skill(self):
         with tempfile.TemporaryDirectory() as tmp:
             inv_path, plan_path, _inv, _plan = _write_pair(tmp)
