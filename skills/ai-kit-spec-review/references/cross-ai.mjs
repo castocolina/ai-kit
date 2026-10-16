@@ -646,15 +646,15 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       if (r.spawnErr) return { ok: false, code: r.spawnErr.code === 'ENOENT' ? 127 : 126, error: String(r.spawnErr), outBytes: 0, cli_rc: null };
       const p = rt.parse(r.stdout, ctx);
       const hit = classify(r.stderr, p.error);
+      // stderr noise never overrules a clean exit with an answer; it only names a failure.
+      const failed = r.code !== 0 || Boolean(p.error);
+      if (!failed && p.text.trim()) {
+        return { ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'), cli_rc: 0 };
+      }
       if (hit && hit !== 'transient') {
         return { ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
       }
-      if (r.code === 0 && !p.error) {
-        if (!p.text.trim()) {
-          return { ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0 };
-        }
-        return { ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'), cli_rc: 0 };
-      }
+      if (!failed) return { ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0 };
       const wait = (backoff[attempt] ?? backoff[backoff.length - 1]) * 1000;
       log(`cross-ai: ${name} failed (exit ${r.code}${r.signal ? ' ' + r.signal : ''}, ${hit || 'crash'}${p.error ? ': ' + p.error.slice(0, 200) : ''})`);
       const exhausted = hit === 'transient' && (
@@ -795,6 +795,12 @@ const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
   ansi: () => { fs.appendFileSync('a.txt', 'x\n'); process.stdout.write('\x1B[0mDone.## Summary\nC# is fine. Use ## inline'); },
   nochange: () => { process.stdout.write('# Summary\nno edits'); },
+  okwarn: () => {
+    fs.appendFileSync('a.txt', 'w\n');
+    process.stderr.write('provider returned 503 Service Unavailable; retrying\nwrote 401 lines\n');
+    process.stdout.write('# Summary\nok');
+  },
+  emptyauth: () => { process.stderr.write('401 unauthorized\n'); },
   empty: () => {},
   crash: () => { process.stderr.write('boom\n'); process.exit(7); },
   quote: () => {
@@ -1328,6 +1334,19 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/quote'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/quote exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+      },
+      {
+        name: 'okwarn',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/okwarn'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/okwarn exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: (r) => (r.stdout === '# Summary\nok\n' ? null : `stdout=${JSON.stringify(r.stdout)}`),
+      },
+      {
+        name: 'empty-auth',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/emptyauth'],
+        exit: 69,
+        status: /^AIKIT-XAI status=auth cli=pi model=fake\/emptyauth exit=69 cli_rc=0 .* tree=clean action=fallback$/,
       },
       {
         name: 'billing',
