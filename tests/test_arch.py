@@ -420,6 +420,24 @@ def check_broad_except_allowlist(relpath, src):
     ]
 
 
+_RETIRED_LITERALS = {
+    "cursor-agent": frozenset({"skills/ai-kit-spec-review/ai_kit_spec/detection.py"})
+}
+
+
+def check_retired_literals(relpath, tree):
+    """Rule 10: retired runtime literals occur only in their explicit legacy map."""
+    if any(relpath in allowed for allowed in _RETIRED_LITERALS.values()):
+        return []
+    return [
+        f"{relpath}:{node.lineno}: retired literal {node.value!r}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value in _RETIRED_LITERALS
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Live-tree tests — every rule must pass against the real render module.
 # --------------------------------------------------------------------------- #
@@ -476,6 +494,26 @@ class TestArchitecture(unittest.TestCase):
                     for msg in check_no_shell_true(tree):
                         violations.append(f"{os.path.relpath(path, repo_root)}: {msg}")
         self.assertEqual([], violations)
+
+    def test_rule10_retired_literals_only_in_allowlist(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        violations = []
+        seen_allowlist = set()
+        for top in ("skills", "tools"):
+            for dirpath, _dirnames, filenames in os.walk(os.path.join(repo_root, top)):
+                for filename in filenames:
+                    if not filename.endswith(".py"):
+                        continue
+                    path = os.path.join(dirpath, filename)
+                    relpath = os.path.relpath(path, repo_root).replace(os.sep, "/")
+                    with open(path, encoding="utf-8") as handle:
+                        tree = ast.parse(handle.read(), filename=path)
+                    violations.extend(check_retired_literals(relpath, tree))
+                    if any(relpath in allowed for allowed in _RETIRED_LITERALS.values()):
+                        seen_allowlist.add(relpath)
+        self.assertEqual([], violations)
+        expected = set().union(*_RETIRED_LITERALS.values())
+        self.assertEqual(expected, seen_allowlist)
 
     def test_rule9_broad_except_only_in_listed_backstops(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -689,6 +727,14 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertEqual(1, len(check_no_shell_true(bad_var)))
         self.assertEqual([], check_no_shell_true(good))
 
+
+    def test_rule10_flags_retired_literal(self):
+        bad = ast.parse('x = "cursor-agent"')
+        binary = ast.parse('x = "cursor-agent -p"')
+        allowlisted = "skills/ai-kit-spec-review/ai_kit_spec/detection.py"
+        self.assertEqual(1, len(check_retired_literals("skills/other.py", bad)))
+        self.assertEqual([], check_retired_literals(allowlisted, bad))
+        self.assertEqual([], check_retired_literals("skills/other.py", binary))
 
     def test_rule9_flags_unlisted_broad_except(self):
         src = (

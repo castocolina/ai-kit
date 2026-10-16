@@ -17,7 +17,7 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
     **The CLIs to consider were already chosen in SKILL.md's Step 2.2 stub** — do not re-ask.
     Group each kept multi-provider CLI's raw model list BEFORE any of it is
     discovered/matched/ranked. For each CLI the user kept, if it's multi-provider
-    (`models` array present — e.g. `opencode`, `cursor-agent`, and `codex` when `codex debug models` enumerated it), **never hand its raw
+    (`models` array present — e.g. `opencode`, `cursor`, and `codex` when `codex debug models` enumerated it), **never hand its raw
     model list to `fetch-model-catalog` as-is** — a
     multi-provider CLI's raw list can be very long (confirmed live: cursor-agent's catalog is
    ~200 ids, a handful of base model families each multiplied out by effort/thinking/fast-tier
@@ -34,7 +34,7 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
    single-member family, which is fine). Present the **families**, not the raw ids, and let the
    user pick a family (defaulting to its base id) or drill into a specific tier/effort variant
    only if they want one. **Always ask this via `AskUserQuestion` with `multiSelect: true`,
-   consistently across every multi-provider CLI (opencode, cursor-agent, claude, or any other) —
+   consistently across every multi-provider CLI (opencode, cursor, claude, or any other) —
    never single-select here, and never decide select-mode per CLI on your own judgment.** A user
    may legitimately want more than one family registered from the same CLI (e.g. both a flagship
    and a fast tier); deciding single- vs multi-select per CLI case-by-case has been observed in

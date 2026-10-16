@@ -1,8 +1,11 @@
 """One runtime-id table: snapshot keys, legacy names, and host precedence (18.1 R1)."""
 
+import ast
 import io
 import json
 import os
+import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -281,3 +284,142 @@ class TestRegistryIdsInTable(unittest.TestCase):
         self.assertTrue(set(detection._SUPPORTED_CODEGRAPH_CLIENTS) <= ids)
         self.assertTrue(set(detection._MCP_LIST_COMMANDS) <= ids)
         self.assertTrue(set(detection._CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS) <= ids)
+
+    def test_curated_config_registries_use_table_ids(self):
+        curated_path = os.path.join(
+            os.path.dirname(__file__), "..", "skills", "ai-kit-gsd-curated-config"
+        )
+        sys.path.insert(0, curated_path)
+        try:
+            from ai_kit_gsd_curated_config import cross_ai, cross_ai_build, preference_match
+        finally:
+            sys.path.remove(curated_path)
+        ids = set(detection.RUNTIMES)
+        self.assertLessEqual(set(cross_ai.RUNNER_IDS), ids)
+        self.assertLessEqual(set(cross_ai_build.REVIEWER_SLUGS), ids)
+        self.assertLessEqual(set(preference_match._RUNTIME_ORDER), ids)
+
+    def test_runner_template_keys_use_table_ids(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review",
+            "references", "cross-ai.mjs",
+        )
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        block = source.split("const RUNTIMES = {", 1)[1].split("};", 1)[0]
+        runtime_ids = set(re.findall(r"^  ([\w-]+): \{", block, re.MULTILINE))
+        self.assertTrue(runtime_ids)
+        self.assertLessEqual(runtime_ids, set(detection.RUNTIMES))
+
+    def test_gsd_lane_runtimes_map_to_table_ids(self):
+        from ai_kit_gsd_curated_config.gsd_catalog import _parse_review_lanes
+
+        fixture = os.path.join(
+            os.path.dirname(__file__), "fixtures", "curated_config_v2", "gsd_tables_1_16.json"
+        )
+        with open(fixture, encoding="utf-8") as handle:
+            raw = json.load(handle)
+        lanes = _parse_review_lanes(raw.get("review_lanes")) or []
+        expected_non_table = {"agy", "coderabbit", "kimi", "qwen"}
+        table_ids = set(detection.RUNTIMES)
+        lane_ids = {lane.get("runtime") for lane in lanes if lane.get("runtime")}
+        self.assertEqual(lane_ids - table_ids, expected_non_table)
+        self.assertIn("cursor", lane_ids)
+        self.assertNotIn("cursor-agent", lane_ids)
+
+    def test_runtime_subset_helper_non_vacuity(self):
+        values = ["codex", "cursor-agent"]
+        unknown = [value for value in values if value not in detection.RUNTIMES]
+        self.assertEqual(unknown, ["cursor-agent"])
+
+
+_ID_SHAPED = (
+    r"cursor-agent\.md",
+    r"--(?:cli|runtime)[ =]cursor-agent\b",
+    r"[\"']cursor-agent[\"']\s*:",
+    r"\b(?:clis|runtimes)\.cursor-agent\b",
+    r"\b(?:cli|runtime)\s*=\s*[\"']cursor-agent[\"']",
+)
+
+
+def id_shaped_hits(relpath, text):
+    patterns = [re.compile(pattern, re.IGNORECASE) for pattern in _ID_SHAPED]
+    return [
+        f"{relpath}:{line_number}"
+        for line_number, line in enumerate(text.splitlines(), 1)
+        if "legacy" not in line.lower() and any(pattern.search(line) for pattern in patterns)
+    ]
+
+
+class TestRetiredIdUsage(unittest.TestCase):
+    def test_tree_clean(self):
+        try:
+            paths = subprocess.run(
+                ["git", "ls-files", "skills", "tools", "README.md", "AGENTS.md"],
+                check=True, capture_output=True, text=True,
+            ).stdout.splitlines()
+        except FileNotFoundError:
+            self.skipTest("git is unavailable; tracked-text scan cannot run")
+        hits = []
+        for path in paths:
+            if path == "skills/ai-kit-spec-review/ai_kit_spec/detection.py":
+                continue
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    hits.extend(id_shaped_hits(path, handle.read()))
+            except (UnicodeDecodeError, OSError):
+                continue
+        self.assertEqual([], hits)
+
+    def test_flags_each_pattern(self):
+        examples = (
+            "cursor-agent.md",
+            "--cli cursor-agent",
+            '"cursor-agent": {}',
+            "clis.cursor-agent",
+            'runtime = "cursor-agent"',
+        )
+        for example in examples:
+            self.assertEqual(1, len(id_shaped_hits("sample.txt", example)), example)
+        self.assertEqual([], id_shaped_hits("sample.txt", "legacy cursor-agent"))
+        self.assertEqual([], id_shaped_hits("sample.txt", "cursor-agent -p prompt"))
+
+
+class TestConfigDoctorRuntimeLiterals(unittest.TestCase):
+    CONFIG_DOCTOR_SENTINELS = frozenset({"cross"})
+
+    @staticmethod
+    def runtime_keyword_literals(tree):
+        values = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                for keyword in node.keywords:
+                    if keyword.arg == "runtime" and isinstance(keyword.value, ast.Constant) \
+                            and isinstance(keyword.value.value, str):
+                        values.append(keyword.value.value)
+        return values
+
+    @classmethod
+    def unknown_runtime_literals(cls, values):
+        return [
+            value for value in values
+            if value not in detection.RUNTIMES and value not in cls.CONFIG_DOCTOR_SENTINELS
+        ]
+
+    def test_live_file(self):
+        path = os.path.join(os.path.dirname(__file__), "..", "tools", "config_doctor_checks.py")
+        with open(path, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read())
+        values = self.runtime_keyword_literals(tree)
+        self.assertTrue(values)
+        self.assertIn("cross", values)
+        self.assertEqual([], self.unknown_runtime_literals(values))
+
+    def test_flags_retired_id(self):
+        source = 'f(runtime="cursor-agent")'
+        values = self.runtime_keyword_literals(ast.parse(source))
+        self.assertEqual(["cursor-agent"], self.unknown_runtime_literals(values))
+        for source in ('f(runtime="cross")', 'f(runtime="codex")'):
+            self.assertEqual([], self.unknown_runtime_literals(
+                self.runtime_keyword_literals(ast.parse(source))
+            ))

@@ -28,7 +28,7 @@ Model: `-m/--model <MODEL>`. Output shaping: `--output-format
 <OUTPUT_FORMAT>`; `--json-schema <SCHEMA>` for structured output (implies
 `--output-format json`). **`grok`'s `--output-format` only accepts `plain`,
 `json`, `streaming-json`, or `streaming-messages-json` — confirmed live
-via `grok --help`; unlike `claude`/`cursor-agent`, `text` is not a valid
+via `grok --help`; unlike `claude`/`cursor`, `text` is not a valid
 value here and fails hard** (`error: invalid value 'text' for
 '--output-format <OUTPUT_FORMAT>' ... [possible values: plain, json,
 streaming-json, streaming-messages-json]`, exit code 2 — this is exactly

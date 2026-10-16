@@ -1,5 +1,5 @@
 ---
-id: cursor-agent
+id: cursor
 display_name: Cursor Agent CLI
 status: confirmed
 read_only: "confirmed (--mode plan or --mode ask — both explicitly read-only per --help; --sandbox enabled is a secondary, redundant guard)"
@@ -8,17 +8,12 @@ last_verified: 2026-08-28
 source: cursor-agent --help, live against a real authenticated install (2026.08.25-3e8eec8)
 ---
 
-# cursor-agent — reviewer profile
+# cursor — reviewer profile
 
-**Binary name hazard — always use `cursor-agent`, never `agent`.**
-Cursor's own installer symlinks `~/.local/bin/agent` → the real
-`cursor-agent` binary, but on a machine that also has the Grok CLI
-installed (`~/.grok/bin/agent`), `PATH` order decides which `agent`
-resolves — confirmed live: `~/.grok/bin/agent` won on this machine even
-though cursor's `agent` symlink existed too, because `~/.grok/bin`
-appeared earlier in `PATH`. `detect_installed_clis`/`KNOWN_CLIS` already
-only ever probes `cursor-agent` (never the ambiguous bare `agent`) — do
-not "helpfully" add `agent` as an alias anywhere in this design.
+**Binary name hazard — use bare `agent` only when its real path's basename is `cursor-agent`.**
+Cursor and Grok both ship an `agent` binary, so PATH order is ambiguous. Resolve the real path
+before accepting bare `agent`; an unguarded probe of `agent` remains forbidden. Prefer the explicit
+`cursor-agent` binary whenever possible.
 
 **Read-only dispatch — use `--mode plan` (not just `--sandbox`).**
 `cursor-agent --help` documents `--mode plan` as "read-only/planning
