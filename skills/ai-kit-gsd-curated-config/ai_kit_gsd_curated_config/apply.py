@@ -774,7 +774,8 @@ def _abort_marker(
     return 1, report
 
 
-def _apply_script_step(ctx: ScriptStepCtx) -> cross_ai_script.ScriptPlan | None:
+def _apply_script_step(ctx: ScriptStepCtx) -> bool:
+    """False once the step failed and rolled back; True otherwise (no artifact included)."""
     inputs = ctx.inputs
     config_path = ctx.config_path
     progress = ctx.progress
@@ -782,18 +783,18 @@ def _apply_script_step(ctx: ScriptStepCtx) -> cross_ai_script.ScriptPlan | None:
     scrub = _scrub_env()
     artifacts = inputs.plan.get("artifacts") or []
     if not artifacts:
-        return None
+        return True
     artifact = artifacts[0]
     if not isinstance(artifact, dict):
-        return None
+        return True
     try:
         plan = cross_ai_script.plan_script(
             inputs.project_dir, artifact, ctx.template, scrub
         )
     except ValueError as exc:
-        report["error"] = str(exc)
+        report["error"] = f"cross-AI runner render failed: {exc or type(exc).__name__}"
         report["restore_error"] = _rollback(progress, config_path)
-        return None
+        return False
     runner_dir = os.path.dirname(plan.path)
     if not os.path.isdir(runner_dir):
         progress.created_dirs.extend(_missing_dir_chain(plan.path))
@@ -808,9 +809,9 @@ def _apply_script_step(ctx: ScriptStepCtx) -> cross_ai_script.ScriptPlan | None:
     try:
         performed = cross_ai_script.write_script(plan)
     except OSError as exc:
-        report["error"] = str(exc)
+        report["error"] = f"cross-AI runner write failed: {exc}"
         report["restore_error"] = _rollback(progress, config_path)
-        return None
+        return False
     progress.runner = performed
     if performed.kind == "new-as-.new":
         if not new_existed:
@@ -820,7 +821,7 @@ def _apply_script_step(ctx: ScriptStepCtx) -> cross_ai_script.ScriptPlan | None:
         with contextlib.suppress(OSError):
             _clear_runner_marker(config_path, snap)
     report["script"] = _script_report(performed, inputs.project_dir, report["warnings"])
-    return performed
+    return True
 
 
 def _apply_config_writes(ctx: ConfigWriteCtx) -> bool:
@@ -831,7 +832,7 @@ def _apply_config_writes(ctx: ConfigWriteCtx) -> bool:
             ctx.report["writes"].append({"key": key, "op": op})
             continue
         ctx.report["failed_key"] = key
-        ctx.report["error"] = output
+        ctx.report["error"] = f"config-set {key} failed: {output or 'no output'}"
         ctx.report["restore_error"] = _rollback(ctx.progress, ctx.config_path)
         return False
     return True
@@ -932,8 +933,7 @@ def _pre_commit(
     script_ctx = ScriptStepCtx(
         ctx.inputs, ctx.target, ctx.template, config_path, progress, ctx.report
     )
-    performed = _apply_script_step(script_ctx)
-    if performed is None and ctx.report.get("error"):
+    if not _apply_script_step(script_ctx):
         return 1, ctx.report
     write_ctx = ConfigWriteCtx(
         _config_call(ctx.target, ctx.inputs, ctx.deps),

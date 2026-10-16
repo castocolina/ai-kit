@@ -1477,6 +1477,43 @@ class TestApplyWritePath(unittest.TestCase):
             self.assertIsNone(config_backup.read_marker(config_path))
             self.assertGreaterEqual(restore.call_count, 2)
 
+    def test_failed_config_set_error_names_the_key(self) -> None:
+        """B IN-06: the stderr line names the failing key even when gsd-tools is silent."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _config_path, _inv, fake = _decided_plan(tmp)
+
+            class SilentFail(_RecordingRun):
+                def __call__(self, cmd, **kw):
+                    row = [str(part) for part in cmd]
+                    if len(row) >= 4 and row[2] == "query" and row[3] == "config-set":
+                        self.argv_log.append(row)
+                        return subprocess.CompletedProcess(cmd, 1, "", "")
+                    return super().__call__(cmd, **kw)
+
+            code, parsed, _out, err = _run_apply(
+                plan_path, inv_path, project, env, SilentFail(fake), dry_run=False
+            )
+            self.assertEqual(code, 1)
+            assert parsed is not None
+            key = parsed["failed_key"]
+            self.assertEqual(parsed["error"], f"config-set {key} failed: no output")
+            self.assertIn(f"config-set {key} failed", err)
+
+    def test_empty_render_error_still_stops_before_config_set(self) -> None:
+        """B IN-06: an empty exception message must not read as success."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            rec = _RecordingRun(fake)
+            with mock.patch.object(
+                cross_ai_script, "plan_script", side_effect=ValueError("")
+            ):
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            self.assertFalse(report["applied"])
+            self.assertTrue(report["error"])
+            self.assertEqual(_config_set_keys(rec.argv_log), [])
+            self.assertIsNone(config_backup.read_marker(config_path))
+
     def test_backup_step_failure_leaves_config_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
