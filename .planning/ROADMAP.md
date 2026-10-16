@@ -398,7 +398,7 @@ names. Source: `.planning/research/2026-10-13-audit/18-runtime-detection-and-sub
      and every rewritten SKILL.md passes `/skill-judge` in code review.
 **Plans**: TBD
 - [x] 18.1-01-PLAN.md
-- [ ] 18.1-02-PLAN.md
+- [x] 18.1-02-PLAN.md
 - [ ] 18.1-03-PLAN.md
 - [ ] 18.1-04-PLAN.md
 - [ ] 18.1-05-PLAN.md
