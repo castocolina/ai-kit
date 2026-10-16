@@ -442,7 +442,13 @@ def load_plan(path: str) -> tuple[dict | None, str | None]:
 
 
 def check_plan_inventory(plan: dict, inv: dict) -> str | None:
-    """Trusted-roots ``existing`` must match the inventory (review cycle 3)."""
+    """The plan's host and trusted-roots ``existing`` must match the inventory (review cycle 3);
+    the digest binds the plan to the inventory, not these plan fields."""
+    if plan.get("host") != inv.get("host"):
+        return (
+            f"plan host {plan.get('host')!r} does not match the inventory host "
+            f"{inv.get('host')!r}; rerun recommend"
+        )
     key = "agent_skills_security.trusted_global_roots"
     for entry in plan.get("entries") or []:
         if entry.get("key") != key:

@@ -364,6 +364,27 @@ class TestPlanSetRefusals(unittest.TestCase):
             self.assertIsNone(plan_io.check_plan_inventory(good_plan, inv))
 
 
+class TestPlanHostBinding(unittest.TestCase):
+    """B WR-03: a hand-edited plan host is refused by every loader."""
+
+    def test_edited_host_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, inv, plan = _write_pair(tmp)
+            plan["host"] = "codex"
+            self.assertIsNone(plan_io.validate_plan(plan))
+            problem = plan_io.check_plan_inventory(plan, inv)
+            assert problem is not None
+            self.assertIn("does not match the inventory host", problem)
+            _save_plan(plan_path, inv, plan)
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "workflow.plan_review_convergence", "false"
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("inventory host", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
+
+
 class TestPlanSetWarnings(unittest.TestCase):
     def test_unprobed_key_warning(self):
         with tempfile.TemporaryDirectory() as tmp:
