@@ -254,6 +254,7 @@ const RUNTIMES = {
     review: (m) => ['run', '--model', m, '--agent', 'plan', '--format', 'json'],
     resume: (m, c, sid, mode) => [...RUNTIMES.opencode[mode](m, c), '--session', sid],
     parse: parseOpencode,
+    modelSuffix: /#[^#/]+$/, // provider/model#variant; the listing has no variants
     env: { OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' },
   },
   pi: {
@@ -263,6 +264,8 @@ const RUNTIMES = {
       '--tools', 'read,grep,find,ls'],
     resume: (m, c, sid, mode) => RUNTIMES.pi[mode](m, c),
     parse: (out) => ({ text: out, sessionId: null, error: null }),
+    // pi documents --model provider/id[:thinking]; the listing has bare ids.
+    modelSuffix: /:(?:off|minimal|low|medium|high|xhigh|max)$/,
     env: {},
   },
   // unverified (outside the default prefer)
@@ -862,7 +865,7 @@ function writeFakePi(binDir) {
   writeExe(binDir, 'pi', "import { spawn, spawnSync } from 'node:child_process';\n", String.raw`
 const args = process.argv;
 const model = argOf('--model');
-const fakeMode = model.startsWith('fake/') ? model.slice(5) : '';
+const fakeMode = model.startsWith('fake/') ? model.slice(5).replace(/:[a-z]+$/, '') : '';
 const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
 const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big']);
 let stdinBuf = '';
@@ -1724,6 +1727,25 @@ async function blackBoxSelfTest() {
         },
       },
       {
+        name: 'model-suffix-pi',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok:high'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok:high exit=0 .* tree=dirty action=stop$/,
+        check: (r) => ((r.stderr || '').includes('suffix :high is not validated') ? null : 'missing suffix note'),
+      },
+      {
+        name: 'model-suffix-opencode',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok#high'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=opencode model=fake\/ok#high exit=0 .* tree=dirty action=stop$/,
+      },
+      {
+        name: 'model-suffix-bad-base',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/missing:high'],
+        exit: 69,
+        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing:high exit=69 .* action=fallback$/,
+      },
+      {
         name: 'bad-model-only',
         args: ['--prefer', 'pi', '--model-pi', 'fake/missing'],
         exit: 69,
@@ -2211,7 +2233,11 @@ async function main(argv) {
     const listEnv = childEnv(c.rt.env, process.env);
     const listing = await listModels(c.name, c.bin, listEnv, runDeadline);
     if (listing.ok) {
-      if (!listing.ids.includes(c.model)) {
+      const listed = c.rt.modelSuffix ? c.model.replace(c.rt.modelSuffix, '') : c.model;
+      if (listed !== c.model) {
+        log(`cross-ai: ${c.name} preflight checks ${listed}; the suffix ${c.model.slice(listed.length)} is not validated`);
+      }
+      if (!listing.ids.includes(listed)) {
         log(`cross-ai: ${c.name} bad_model (${c.model} not in model list)`);
         last = { status: 'bad_model', cli: c.name, model: c.model, tree: 'clean', cli_rc: '-' };
         if (tryNextCli('bad_model', 'clean')) {
