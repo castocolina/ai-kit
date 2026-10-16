@@ -306,6 +306,9 @@ class TestStrictEncoder(unittest.TestCase):
         self.assertEqual(enc("k", 1.5), "1.5")
         self.assertEqual(enc("k", "gpt-5.6-sol"), "gpt-5.6-sol")
         self.assertEqual(enc("k", "router-env/my-coding"), "router-env/my-coding")
+        # JS Number() rejects these, so config-set keeps them strings.
+        for ok in ("", "1_000", "-0x1", "Infinity", "0x", "inf", "nan"):
+            self.assertEqual(enc("k", ok), ok)
         self.assertEqual(
             enc("k", "node .planning/scripts/cross-ai.mjs"),
             "node .planning/scripts/cross-ai.mjs",
@@ -313,7 +316,11 @@ class TestStrictEncoder(unittest.TestCase):
 
     def test_refuses_retyped_strings_and_bad_types(self):
         enc = gsd_tools.encode_value_strict
-        for bad in ("true", "false", "null", "12", " 12", "1e3", "-0.5", "[1", "{x"):
+        for bad in (
+            "true", "false", "null", "12", " 12", "1e3", "-0.5", ".5", "5.", "[1", "{x",
+            # config-set's Number() also reads these (WR-11)
+            "0x10", "0o17", "0b11", "0XfF", "   ", "\t", "﻿7",
+        ):
             with self.subTest(bad=bad):
                 with self.assertRaises(ValueError) as ctx:
                     enc("my.key", bad)

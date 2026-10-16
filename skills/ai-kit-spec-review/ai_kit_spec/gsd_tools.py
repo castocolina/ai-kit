@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping
@@ -151,11 +152,20 @@ class ConfigGetResult(NamedTuple):
 _RETYPED = frozenset(("true", "false", "null"))
 
 
-def _is_finite_number(text: str) -> bool:
-    try:
-        return math.isfinite(float(text))
-    except ValueError:
+# What JS `Number(text)` turns into a finite number, which is config-set's coercion rule
+# (`Number.isFinite(Number(val)) && val !== ''`): decimal literals and 0x/0o/0b integers.
+_JS_FINITE_NUMBER = re.compile(
+    r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?|0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+"
+)
+
+
+def _coerced_to_number(text: str) -> bool:
+    """True when config-set would store `text` as a number. Python's strip is a superset of
+    JS whitespace except U+FEFF, so it may over-refuse (safe) but never under-refuse."""
+    if text == "":
         return False
+    stripped = text.strip().strip("﻿").strip()
+    return stripped == "" or _JS_FINITE_NUMBER.fullmatch(stripped) is not None
 
 
 def _encode_refusal(key: str, detail: str) -> ValueError:
@@ -187,7 +197,7 @@ def encode_value_strict(key: str, value: object) -> str:
         if (
             stripped in _RETYPED
             or stripped.startswith(("[", "{"))
-            or _is_finite_number(stripped)
+            or _coerced_to_number(value)
         ):
             raise _encode_refusal(key, f"string {value!r}")
         return value
