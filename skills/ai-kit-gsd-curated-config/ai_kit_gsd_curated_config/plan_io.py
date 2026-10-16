@@ -495,7 +495,21 @@ def validate_plan(plan: dict) -> str | None:
     problem = _validate_artifacts(plan.get("artifacts"), plan_host)
     if problem:
         return problem
+    problem = _host_reviewer_problem(plan, plan_host)
+    if problem:
+        return problem
     return _validate_execution_coupling(plan)
+
+
+def _host_reviewer_problem(plan: dict, plan_host: str) -> str | None:
+    """SPEC R2 must-not: the host CLI never reviews its own plans, even with --force."""
+    entry = _plan_entry(plan, "review.default_reviewers")
+    if entry is None or entry.get("op") != "set":
+        return None
+    value = entry.get("value")
+    if isinstance(value, list) and plan_host in value:
+        return f"review.default_reviewers: {plan_host!r} is the host CLI, not a review lane"
+    return None
 
 
 def _validate_execution_coupling(plan: dict) -> str | None:

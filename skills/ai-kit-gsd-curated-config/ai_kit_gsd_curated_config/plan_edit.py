@@ -452,6 +452,10 @@ def _candidate_refusal(
 def _reviewers_refusal(call: EditCall, value: Any, forced: bool) -> None:
     if not isinstance(value, list):
         return
+    host_name = call.inv["host"]
+    if host_name in value:
+        # Force-immune, like the execution side (_assert_runner_target): SPEC R2 must-not.
+        raise PlanEditError(f"{host_name!r} is the host CLI and cannot be a review lane")
     lanes = {lane["slug"] for lane in cross_ai.eligible_lanes(call.inv)}
     bad = [slug for slug in value if slug not in lanes]
     if bad and not call.force:
