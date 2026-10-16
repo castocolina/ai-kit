@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from unittest import mock
 
 sys.path.insert(
@@ -185,6 +186,30 @@ class TestFollowupsTracer(unittest.TestCase):
             self.assertEqual(len(fake.npx_log), 1)
             self.assertEqual(fake.npx_log[0][-2:], ["--opencode", "--local"])
             self.assertEqual(fake.kw_log[-1].get("cwd"), project)
+
+    def test_approve_refused_while_apply_marker_held(self) -> None:
+        """B WR-08: no installer or effort sync over a running or failed apply."""
+        from ai_kit_gsd_curated_config import config_backup
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, config_path, fake = _setup_opencode_global(tmp)
+            inv_path, plan_path, _inv = _opencode_plan_inv(
+                tmp, project, env, fake, config_path
+            )
+            config_backup.acquire_marker(config_path, True, lambda: datetime.now(UTC))
+            base = ["followups", "--plan", plan_path, "--inventory", inv_path,
+                    "--project-dir", project]
+            code, parsed, err = _run_followups_cli(
+                [*base, "--approve", "--require", "installer"], env, fake
+            )
+            self.assertEqual(code, 2)
+            self.assertIsNone(parsed)
+            self.assertIn("an apply is running or did not finish", err)
+            self.assertEqual(fake.npx_log, [])
+            code, parsed, _err = _run_followups_cli(base, env, fake)
+            self.assertEqual(code, 0)
+            assert parsed is not None
+            self.assertIn("required", parsed)
 
 
 def _inv_deps(env, fake):

@@ -15,6 +15,7 @@ from . import (
 )
 from . import (
     claude_md_detect,
+    config_backup,
     critical_agents,
     cross_ai_build,
     cross_ai_script,
@@ -651,6 +652,19 @@ def _followup_force_ids(raw: str) -> tuple[tuple[str, ...] | None, list[str] | N
     return tuple(raw_ids), None
 
 
+def _apply_marker_held(config_path: str) -> bool:
+    """R14: follow-ups run after a successful apply, never over a half-written config."""
+    marker = config_backup.read_marker(config_path)
+    if marker is None:
+        return False
+    print(
+        "ai-kit-gsd-curated-config: followups --approve refused; "
+        + config_backup.recovery_text(marker, config_path),
+        file=sys.stderr,
+    )
+    return True
+
+
 def _cmd_followups(args, which_fn, run_fn, env_fn) -> int:
     deps = apply_mod.ApplyDeps(which_fn, run_fn, env_fn)
     inputs, error = apply_mod.load_inputs(args.plan, args.inventory, args.project_dir)
@@ -660,6 +674,8 @@ def _cmd_followups(args, which_fn, run_fn, env_fn) -> int:
     target, error = apply_mod.resolve_target(inputs, deps)
     if target is None:
         print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
+        return 2
+    if args.approve and _apply_marker_held(target.config_path):
         return 2
     force_ids, bad = _followup_force_ids(args.require)
     if bad is not None:
