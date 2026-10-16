@@ -655,6 +655,8 @@ def _entry_shape_problem(key: str, op, status, entry: dict) -> str | None:
 
 
 def _validate_entry_value(key: str, value, entry: dict) -> str | None:
+    if cross_ai.is_model_key(key):
+        return cross_ai.model_id_problem(key, value)
     if key == "workflow.cross_ai_timeout":
         problem = timeout_problem(key, value)
         if problem:
@@ -826,7 +828,7 @@ def _model_row_problem(prefer, runner_id: str, model) -> str | None:
         return f"artifacts[0].config.models: id {runner_id!r} not in prefer"
     if not isinstance(model, str) or not model:
         return f"artifacts[0].config.models.{runner_id}: expected non-empty str"
-    return None
+    return cross_ai.model_id_problem(f"artifacts[0].config.models.{runner_id}", model)
 
 
 def _choice_row_problem(prefer, runner_id: str, models, row) -> str | None:

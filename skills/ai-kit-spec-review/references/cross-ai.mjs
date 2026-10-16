@@ -792,6 +792,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
 const CODEX_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
 const PI_THINKING = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const CURSOR_MODES = new Set(['ask', 'plan']);
+// No leading dash (read as a CLI option) and no shell or space characters (U-4).
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/;
 
 function parseArgs(argv) {
   const o = {
@@ -801,7 +803,11 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]; const v = () => { if (i + 1 >= argv.length) throw new Error(`${a} needs a value`); return argv[++i]; };
     if (a === '--prefer') o.prefer = v().split(',').filter(Boolean);
-    else if (a.startsWith('--model-')) o.models[a.slice(8)] = v();
+    else if (a.startsWith('--model-')) {
+      const id = v();
+      if (!MODEL_ID.test(id)) throw new Error(`${a} must match ${MODEL_ID.source}`);
+      o.models[a.slice(8)] = id;
+    }
     else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); }
     else if (a === '--timeout') { o.timeout = Number(v()); if (!(o.timeout > 0)) throw new Error('--timeout must be > 0'); }
     else if (a === '--print-argv') o.printArgv = true;
@@ -1413,6 +1419,13 @@ async function blackBoxSelfTest() {
         exit: 2,
         status: /^AIKIT-XAI status=no_model .* action=stop$/,
       },
+      // U-4: a model id must not read as an option or carry shell/space characters.
+      ...['--yolo', 'a b', 'x;rm'].map((model, i) => ({
+        name: `bad-model-id-${i}`,
+        args: ['--prefer', 'pi', '--model-pi', model],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* action=stop$/,
+      })),
       {
         name: 'unknown_prefer',
         args: ['--prefer', 'nosuchcli', '--model-nosuchcli', 'x'],

@@ -325,6 +325,24 @@ class TestPlanSetRefusals(unittest.TestCase):
             <= set(cross_ai.COMMAND_KEYS)
         )
 
+    def test_unsafe_model_id_refused_even_forced(self):
+        """U-4: a model id reaches CLI argv, so --force never admits an option-like id."""
+        for key in ("review.models.opencode", "script:cross-ai.model.pi"):
+            for bad in ("a b", "x;rm", "$(id)"):
+                with self.subTest(key=key, bad=bad), tempfile.TemporaryDirectory() as tmp:
+                    inv_path, plan_path, _inv, _plan = _write_pair(tmp)
+                    raw = _read_bytes(plan_path)
+                    code, _, err = _run_plan_set(plan_path, inv_path, key, bad, force=True)
+                    self.assertEqual(code, 2, err)
+                    self.assertIn("must match", err)
+                    self.assertEqual(_read_bytes(plan_path), raw)
+            # argparse already rejects a dash-led positional; the API refuses it too.
+            with tempfile.TemporaryDirectory() as tmp:
+                _inv_path, _plan_path, inv, plan = _write_pair(tmp)
+                call = plan_edit.EditCall(plan, inv, True, _strict_encode())
+                with self.assertRaisesRegex(plan_edit.PlanEditError, "must match"):
+                    plan_edit.plan_set(call, key, "--yolo")
+
     def test_canonical_command_clears_forced(self):
         """B IN-01: re-setting the canonical runner drops a stale forced flag."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -591,6 +609,22 @@ class TestPlanValidator(unittest.TestCase):
                 if key == "workflow.cross_ai_command":
                     continue  # its forced path is test_forced_command_ok (execution coupling)
                 self.assertIsNone(plan_io.validate_plan(plan))
+
+    def test_unsafe_model_id_rejected(self):
+        """U-4: hand-edited model ids (entry and runner artifact) keep the safe charset."""
+        plan = self._golden_plan()
+        for entry in plan["entries"]:
+            if entry["key"] == "review.models.opencode":
+                entry["value"] = "-x"
+        problem = plan_io.validate_plan(plan)
+        assert problem is not None
+        self.assertIn("review.models.opencode", problem)
+        plan = self._golden_plan()
+        runner_id = next(iter(plan["artifacts"][0]["config"]["models"]))
+        plan["artifacts"][0]["config"]["models"][runner_id] = "--yolo"
+        problem = plan_io.validate_plan(plan)
+        assert problem is not None
+        self.assertIn("must match", problem)
 
     def test_needs_choice_none_ok(self):
         plan = self._golden_plan()

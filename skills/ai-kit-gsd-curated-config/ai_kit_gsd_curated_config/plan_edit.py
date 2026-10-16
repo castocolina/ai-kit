@@ -196,6 +196,9 @@ def _plan_set_script_model(
 ) -> tuple[dict, list[str]]:
     _assert_runner_target(call, runner_id)
     model = raw
+    problem = cross_ai.model_id_problem(f"{SCRIPT_MODEL_PREFIX}{runner_id}", model)
+    if problem:  # force-immune: the id lands in the runner's CLI argv
+        raise PlanEditError(problem)
     plan = copy.deepcopy(call.plan)
     artifact = _script_artifact(plan)
     config = artifact.setdefault("config", {})
@@ -497,6 +500,10 @@ def _special_keys(
         return _check_timeout(value), False
     if key in cross_ai.COMMAND_KEYS:
         return _check_command_key(call, key, value, warnings)
+    if cross_ai.is_model_key(key):
+        problem = cross_ai.model_id_problem(key, value)
+        if problem:  # force-immune: the id lands in a reviewer CLI's argv
+            raise PlanEditError(problem)
     if key.startswith("agent_skills."):
         return _check_agent_skills(call.inv, key, value), False
     if key == "agent_skills_security.trusted_global_roots":

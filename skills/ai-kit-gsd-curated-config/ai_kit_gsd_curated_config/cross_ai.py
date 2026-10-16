@@ -4,6 +4,7 @@ Imports only ``.presets`` and ``.roles``. Target ids are runner ids; ``RUNNER_CL
 them to inventory runtimes. The script artifact ``config`` is the sole copy of runner
 settings (no parallel ``targets[]`` list).
 """
+import re
 from typing import NamedTuple
 
 from . import presets, roles
@@ -22,6 +23,24 @@ COMMAND_KEYS = {
 
 def forced_command_warning(key: str) -> str:
     return f"{key} is a forced command; gsd-core runs it with full permissions"
+
+
+# Model ids reach CLI argv: no leading dash (read as an option), no shell or space characters
+# (U-4). The runner's MODEL_ID regex mirrors this one.
+MODEL_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/#@+-]*")
+
+
+def is_model_key(key: str) -> bool:
+    """Plan keys whose value gsd-review passes to a reviewer CLI as its model."""
+    return key.startswith("review.models.") or (
+        key.startswith("review.reviewer_instances.") and key.endswith(".model")
+    )
+
+
+def model_id_problem(label: str, value) -> str | None:
+    if isinstance(value, str) and MODEL_ID_RE.fullmatch(value):
+        return None
+    return f"{label}: model id {value!r} must match {MODEL_ID_RE.pattern}"
 SCRIPT_PATH = ".planning/scripts/cross-ai.mjs"
 TEMPLATE_NAME = "cross-ai.mjs"
 TEMPLATE_VERSION = 2
