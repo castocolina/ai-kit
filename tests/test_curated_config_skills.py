@@ -489,6 +489,7 @@ class TestSystemOneBackend(unittest.TestCase):
 
         def slow(endpoint, timeout=None):
             gate.wait()
+            return _FakeSocket()  # C-IN-05: the leaked worker closes a real-shaped socket
 
         env = {"JEV_API_URL": "https://slow.example/"}
         start = time.monotonic()
@@ -498,6 +499,19 @@ class TestSystemOneBackend(unittest.TestCase):
         elapsed = time.monotonic() - start
         self.assertLess(elapsed, 1.0)
         self.assertNotIn("url_reachable", out["via"])
+
+    def test_invalid_idna_host_is_unreachable_without_thread_traceback(self):
+        """C-IN-05: UnicodeError (a ValueError) from IDNA encoding stays in the worker."""
+        import threading
+
+        def bad_idna(endpoint, timeout=None):
+            raise UnicodeError("label empty or too long")
+
+        leaked: list = []
+        with mock.patch.object(threading, "excepthook", leaked.append):
+            out = skill_scan.system_one_backend({"JEV_API_URL": "http://a..b/"}, bad_idna)
+        self.assertEqual(out["via"], [])
+        self.assertEqual(leaked, [])
 
     def test_key_present_env_and_secrets(self):
         connect, _calls = self._recorder()

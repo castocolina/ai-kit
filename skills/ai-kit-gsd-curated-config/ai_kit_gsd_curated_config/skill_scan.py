@@ -311,7 +311,7 @@ def _tcp_reachable(endpoint: tuple[str, int], connect_fn) -> bool:
             sock = connect_fn(endpoint, timeout=CONNECT_TIMEOUT_S)
             holder.append(sock)
             sock.close()
-        except OSError as exc:
+        except (OSError, ValueError) as exc:  # ValueError: UnicodeError on an IDNA-invalid host
             err.append(exc)
 
     thread = threading.Thread(target=_worker, daemon=True)
