@@ -577,6 +577,18 @@ class TestPlanValidator(unittest.TestCase):
         assert problem is not None
         self.assertIn("trusted_global_roots", problem)
 
+    def test_timeout_problem_one_rule(self):
+        self.assertIsNone(plan_io.timeout_problem("t", 1800))
+        for bad in (1799, True, "1800", None, 1800.0):
+            problem = plan_io.timeout_problem("t", bad)
+            assert problem is not None
+            self.assertIn("t must be an integer >= 1800", problem)
+        plan = self._golden_plan()
+        plan["artifacts"][0]["config"]["outer_timeout_s"] = True
+        problem = plan_io.validate_plan(plan)
+        assert problem is not None
+        self.assertIn("outer_timeout_s must be an integer >= 1800", problem)
+
     def test_home_relative_root(self):
         ok = ("~/.agents/skills/x", "~/a/../b", "~/vault")
         bad = ("~/", "~/..", "~/../..", "~/a/../../b", "/abs", "~//etc", "~user/x")

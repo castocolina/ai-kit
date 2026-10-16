@@ -509,16 +509,9 @@ def _special_keys(
 
 
 def _check_timeout(value: Any) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise PlanEditError(
-            f"workflow.cross_ai_timeout must be an integer >= {cross_ai.MIN_TIMEOUT_S} "
-            f"(got {value!r})"
-        )
-    if value < cross_ai.MIN_TIMEOUT_S:
-        raise PlanEditError(
-            f"workflow.cross_ai_timeout must be an integer >= {cross_ai.MIN_TIMEOUT_S} "
-            f"(got {value})"
-        )
+    problem = plan_io.timeout_problem("workflow.cross_ai_timeout", value)
+    if problem:
+        raise PlanEditError(problem)
     return value
 
 

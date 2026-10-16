@@ -569,15 +569,17 @@ def _validate_execution_coupling(plan: dict) -> str | None:
     return _validate_runner_timeout(plan)
 
 
+def timeout_problem(label: str, value) -> str | None:
+    """The one runner-timeout rule (PT-07): an int, not a bool, at least MIN_TIMEOUT_S."""
+    floor = cross_ai.MIN_TIMEOUT_S
+    if isinstance(value, int) and not isinstance(value, bool) and value >= floor:
+        return None
+    return f"{label} must be an integer >= {floor} (got {value!r})"
+
+
 def _validate_runner_timeout(plan: dict) -> str | None:
     timeout_entry = _plan_entry(plan, "workflow.cross_ai_timeout")
-    timeout = entry_effective_value(timeout_entry)
-    floor = cross_ai.MIN_TIMEOUT_S
-    if not isinstance(timeout, int) or isinstance(timeout, bool):
-        return f"workflow.cross_ai_timeout must be an integer >= {floor}"
-    if timeout < floor:
-        return f"workflow.cross_ai_timeout must be an integer >= {floor} (got {timeout})"
-    return None
+    return timeout_problem("workflow.cross_ai_timeout", entry_effective_value(timeout_entry))
 
 
 def _plan_envelope_problem(plan: dict) -> str | None:
@@ -648,10 +650,9 @@ def _entry_shape_problem(key: str, op, status, entry: dict) -> str | None:
 
 def _validate_entry_value(key: str, value, entry: dict) -> str | None:
     if key == "workflow.cross_ai_timeout":
-        if not isinstance(value, int) or isinstance(value, bool):
-            return f"{key}: must be an integer >= {cross_ai.MIN_TIMEOUT_S}"
-        if value < cross_ai.MIN_TIMEOUT_S:
-            return f"{key}: must be an integer >= {cross_ai.MIN_TIMEOUT_S} (got {value})"
+        problem = timeout_problem(key, value)
+        if problem:
+            return problem
     if (
         key == "workflow.cross_ai_command"
         and value != cross_ai.CROSS_AI_COMMAND
@@ -770,11 +771,7 @@ def _validate_prefer(prefer, plan_host: str) -> str | None:
 
 
 def _validate_outer_timeout(timeout) -> str | None:
-    if not isinstance(timeout, int) or isinstance(timeout, bool):
-        return "artifacts[0].config.outer_timeout_s: expected int"
-    if timeout < cross_ai.MIN_TIMEOUT_S:
-        return f"artifacts[0].config.outer_timeout_s: must be >= {cross_ai.MIN_TIMEOUT_S}"
-    return None
+    return timeout_problem("artifacts[0].config.outer_timeout_s", timeout)
 
 
 def _validate_artifact_targets(prefer, models, router, choices, status) -> str | None:
