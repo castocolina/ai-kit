@@ -411,7 +411,7 @@ names. Source: `.planning/research/2026-10-13-audit/18-runtime-detection-and-sub
 - [x] 18.1-12-PLAN.md
 - [x] 18.1-13-PLAN.md
 - [x] 18.1-14-PLAN.md
-- [ ] 18.1-15-PLAN.md
+- [x] 18.1-15-PLAN.md
 - [ ] 18.1-16-PLAN.md
 - [ ] 18.1-17-PLAN.md
 - [ ] 18.1-18-PLAN.md
