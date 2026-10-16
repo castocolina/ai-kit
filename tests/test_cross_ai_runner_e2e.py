@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "skills", "ai-kit-spec-review"))
 
 from ai_kit_gsd_curated_config import cross_ai_script
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
+from ai_kit_spec.runner_dispatch import RunnerSeams, RunnerSpec, run_runner
 
 
 def _real_node_executable() -> str | None:
@@ -90,6 +91,65 @@ def run_group(argv: list[str], timeout: int, **kwargs) -> subprocess.CompletedPr
             out, err = proc.communicate()
             raise
         return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
+_FAKE_OPENCODE = """\
+#!/usr/bin/env node
+import fs from 'node:fs';
+const calls = process.env.FAKE_CALLS;
+const log = (line) => { if (calls) fs.appendFileSync(calls, line + '\\n'); };
+const argOf = (flag) => {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 ? process.argv[i + 1] || '' : '';
+};
+const sub = process.argv.slice(2);
+if (sub[0] === 'models') {
+  log('opencode models');
+  console.log('fake/ok');
+  process.exit(0);
+}
+const model = argOf('--model');
+log('opencode ' + model);
+process.stdin.on('data', () => {}).on('end', () => {
+  if (process.argv.includes('--auto')) fs.appendFileSync('a.txt', 'oc\\n');
+  const lines = [
+    JSON.stringify({ type: 'text', sessionID: 'ses_1',
+      part: { id: 'p1', messageID: 'm1', type: 'text', text: 'Plan first.' } }),
+    JSON.stringify({ type: 'tool_use', sessionID: 'ses_1',
+      part: { type: 'tool', tool: 'bash' } }),
+    JSON.stringify({ type: 'text', sessionID: 'ses_1',
+      part: { id: 'p2', messageID: 'm2', type: 'text', text: '## Summary\\ndone' } }),
+  ];
+  for (const l of lines) console.log(l);
+});
+"""
+
+
+def write_fake_opencode(bin_dir: str) -> None:
+    """The template's own fake opencode: lists `fake/ok`, and otherwise drains stdin,
+    appends `oc` to `a.txt` only when argv contains `--auto`, and prints the three JSON lines."""
+    path = os.path.join(bin_dir, "opencode")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(_FAKE_OPENCODE)
+    os.chmod(path, 0o755)
+
+
+def _git_init(repo: str) -> None:
+    env = runner_env(os.path.dirname(repo))
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"], cwd=repo, env=env, check=True,
+        capture_output=True, text=True,
+    )
+    with open(os.path.join(repo, "a.txt"), "w", encoding="utf-8") as handle:
+        handle.write("base\n")
+    subprocess.run(
+        ["git", "add", "a.txt"], cwd=repo, env=env, check=True,
+        capture_output=True, text=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "base"], cwd=repo, env=env, check=True,
+        capture_output=True, text=True,
+    )
 
 
 def pids_with_cwd_under(root: str) -> list[int]:
@@ -246,6 +306,96 @@ class TestRenderedRunner(unittest.TestCase):
             assert match is not None, proc.stderr
             self.assertEqual(int(match.group(2)), 1800)
             self.assertLess(int(match.group(1)), 1800)  # SPEC R6: strictly below the timeout
+
+
+class TestRunnerDispatchE2E(unittest.TestCase):
+    """run_runner drives the real template with a fake opencode."""
+
+    def setUp(self):
+        if _real_node_executable() is None:
+            self.skipTest("node not on PATH: runner e2e skipped")
+        if shutil.which("git") is None:
+            self.skipTest("git not on PATH: runner e2e skipped")
+
+    def _dispatch(self, tmp, model, repo):
+        env = runner_env(tmp)
+        env["FAKE_CALLS"] = os.path.join(tmp, "calls.log")
+        write_fake_opencode(os.path.join(tmp, "bin"))
+        lines: list[str] = []
+        seams = RunnerSeams(env_fn=lambda: env, print_fn=lines.append)
+        spec = RunnerSpec("opencode", model, "review", 30, cwd=repo)
+        result = run_runner(spec, "hi", seams)
+        return result, lines, env["FAKE_CALLS"]
+
+    def test_review_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(tmp, "repo")
+            os.makedirs(repo)
+            _git_init(repo)
+            result, _lines, calls_path = self._dispatch(tmp, "fake/ok", repo)
+            self.assertEqual(result.returncode, 0, msg="".join(_lines))
+            self.assertIsNone(result.reason)
+            assert result.status is not None
+            self.assertEqual(result.status["status"], "ok")
+            self.assertIn("done", result.stdout)
+            self.assertNotIn("--child-pgid-file", result.argv)
+            self.assertEqual(pids_with_cwd_under(tmp), [])
+            with open(calls_path, encoding="utf-8") as handle:
+                calls = handle.read()
+            self.assertIn("opencode models", calls)
+            self.assertIn("opencode fake/ok", calls)
+
+    def test_review_bad_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(tmp, "repo")
+            os.makedirs(repo)
+            _git_init(repo)
+            result, _lines, calls_path = self._dispatch(tmp, "fake/missing", repo)
+            self.assertEqual(result.reason, "configuration")
+            assert result.status is not None
+            self.assertEqual(result.status["status"], "bad_model")
+            with open(calls_path, encoding="utf-8") as handle:
+                calls = [line.strip() for line in handle if line.strip()]
+            self.assertTrue(calls)
+            self.assertTrue(all(line.startswith("opencode models") for line in calls))
+
+    def test_non_git_dir_dispatches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scratch = os.path.join(tmp, "scratch")
+            os.makedirs(scratch)
+            env = runner_env(tmp)
+            env["GIT_CEILING_DIRECTORIES"] = os.path.dirname(scratch)
+            write_fake_opencode(os.path.join(tmp, "bin"))
+            lines: list[str] = []
+            seams = RunnerSeams(env_fn=lambda: env, print_fn=lines.append)
+            spec = RunnerSpec("opencode", "fake/ok", "review", 30, cwd=scratch)
+            result = run_runner(spec, "hi", seams)
+            self.assertIsNone(result.reason, msg="".join(lines))
+            assert result.status is not None
+            self.assertEqual(result.status["status"], "ok")
+            self.assertEqual(result.status["tree"], "unknown")
+            self.assertTrue(any("is not inside a git work tree" in line for line in lines))
+            self.assertEqual(pids_with_cwd_under(tmp), [])
+
+
+class TestRunnerDispatchNoNode(unittest.TestCase):
+    def test_no_node_fails_closed(self):
+        spawned: list[list[str]] = []
+
+        def popen_fn(*_args, **_kwargs):
+            spawned.append(["called"])
+            raise AssertionError("popen must not be called without node")
+
+        lines: list[str] = []
+        seams = RunnerSeams(
+            which_fn=lambda _name: None, popen_fn=popen_fn, print_fn=lines.append,
+        )
+        result = run_runner(RunnerSpec("opencode", "fake/ok", "review", 30), "hi", seams)
+        self.assertEqual(result.reason, "dispatch_unavailable")
+        self.assertEqual(spawned, [])
+        self.assertTrue(any(
+            "subprocess dispatch needs Node (node not found on PATH)" in line for line in lines
+        ))
 
 
 if __name__ == "__main__":
