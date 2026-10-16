@@ -512,7 +512,7 @@ def _run_apply(
     inv_path: str,
     project: str,
     env: dict,
-    fake: FakeRun,
+    fake: "FakeRun | _RecordingRun",
     *,
     dry_run: bool = True,
 ) -> tuple[int, dict | None, str, str]:
@@ -1698,6 +1698,115 @@ class _AgentSkillsFailRun(_RecordingRun):
         if len(row) >= 4 and row[0] == "node" and row[3] == "agent-skills":
             return subprocess.CompletedProcess(cmd, 1, "", "skills probe failed")
         return super().__call__(cmd, **kw)
+
+
+class _NewProjectRun(_RecordingRun):
+    """config-new-project writes a config holding a copied global key, then may raise."""
+
+    def __init__(self, base: FakeRun, config_path: str, *, raise_exc=None):
+        super().__init__(base, config_path=config_path)
+        self._raise = raise_exc
+
+    def __call__(self, cmd, **kw):
+        row = [str(part) for part in cmd]
+        if len(row) >= 3 and row[0] == "node" and row[2] == "config-new-project":
+            self.argv_log.append(row)
+            assert self._config_path is not None
+            os.makedirs(os.path.dirname(self._config_path), exist_ok=True)
+            with open(self._config_path, "w", encoding="utf-8") as handle:
+                json.dump({"model_profile": "balanced", "resolve_model_ids": "omit"}, handle)
+            if self._raise is not None:
+                raise self._raise
+            return subprocess.CompletedProcess(cmd, 0, "created", "")
+        return super().__call__(cmd, **kw)
+
+
+class TestPreCommitExceptions(unittest.TestCase):
+    """B CR-01: a raised failure before the commit point rolls back like a returned one."""
+
+    def _assert_fresh_rolled_back(self, project: str, config_path: str) -> None:
+        self.assertFalse(os.path.exists(config_path))
+        self.assertIsNone(config_backup.read_marker(config_path))
+        self.assertFalse(os.path.exists(os.path.join(project, ".planning")))
+
+    def test_new_project_timeout_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            shutil.rmtree(os.path.join(project, ".planning"))
+            rec = _NewProjectRun(
+                fake, config_path, raise_exc=subprocess.TimeoutExpired("node", 120)
+            )
+            code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            self.assertFalse(report["applied"])
+            self.assertIn("timed out", report["error"])
+            self.assertIsNone(report["restore_error"])
+            self.assertEqual(_config_set_keys(rec.argv_log), [])
+            self._assert_fresh_rolled_back(project, config_path)
+
+    def test_runner_marker_oserror_on_fresh_project_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            shutil.rmtree(os.path.join(project, ".planning"))
+            rec = _NewProjectRun(fake, config_path)
+            real_update = config_backup.update_marker
+
+            def fail_runner(path, **fields):
+                if "runner" in fields:
+                    raise OSError("marker disk full")
+                return real_update(path, **fields)
+
+            with mock.patch.object(config_backup, "update_marker", side_effect=fail_runner):
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            self.assertIn("marker disk full", report["error"])
+            self.assertEqual(_config_set_keys(rec.argv_log), [])
+            self._assert_fresh_rolled_back(project, config_path)
+
+    def test_snapshot_oserror_restores_existing_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (
+                project,
+                env,
+                inv_path,
+                plan_path,
+                config_path,
+                _inv,
+                fake,
+                runner,
+                before_bytes,
+                _before_mode,
+            ) = _setup_reapply_change(tmp)
+            with open(config_path, "rb") as handle:
+                before_config = handle.read()
+            rec = _RecordingRun(fake, config_path=config_path)
+            with mock.patch.object(
+                config_backup, "snapshot_file", side_effect=OSError("snapshot denied")
+            ):
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            self.assertIn("snapshot denied", report["error"])
+            with open(config_path, "rb") as handle:
+                self.assertEqual(handle.read(), before_config)
+            with open(runner, "rb") as handle:
+                self.assertEqual(handle.read(), before_bytes)
+            self.assertIsNone(config_backup.read_marker(config_path))
+            self.assertEqual(_config_set_keys(rec.argv_log), [])
+
+    def test_cli_prints_json_report_not_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            shutil.rmtree(os.path.join(project, ".planning"))
+            rec = _NewProjectRun(fake, config_path, raise_exc=OSError("node vanished"))
+            code, parsed, _out, err = _run_apply(
+                plan_path, inv_path, project, env, rec, dry_run=False
+            )
+            self.assertEqual(code, 1)
+            assert parsed is not None
+            self.assertFalse(parsed["applied"])
+            self.assertIn("node vanished", parsed["error"])
+            self.assertIn("node vanished", err)
+            self._assert_fresh_rolled_back(project, config_path)
 
 
 class TestCommitPointEdges(unittest.TestCase):

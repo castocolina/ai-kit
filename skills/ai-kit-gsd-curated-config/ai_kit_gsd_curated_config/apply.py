@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -631,8 +632,9 @@ def _rollback(progress: Progress, config_path: str) -> str | None:
             restore_error = restore_error or str(exc)
     if restore_error:
         return restore_error
-    if progress.snapshot:
-        config_backup.discard_snapshot(progress.snapshot)
+    with contextlib.suppress(OSError):
+        if progress.snapshot:
+            config_backup.discard_snapshot(progress.snapshot)
     with contextlib.suppress(OSError):
         config_backup.clear_marker(config_path)
     _rmdir_chain(progress.created_dirs)
@@ -876,6 +878,35 @@ def _prepare_writes(
     return writes
 
 
+def _pre_commit(
+    ctx: ExecuteCtx, config_path: str, config_existed: bool, progress: Progress
+) -> tuple[int, dict] | None:
+    """D-22 steps 4-6 (new project, runner, config-set); a failure has already rolled back."""
+    prep = PrepareCtx(
+        ctx.inputs, ctx.target, ctx.deps, config_path, config_existed, progress, ctx.report
+    )
+    prepared = _prepare_writes(prep)
+    if isinstance(prepared, tuple):
+        return prepared
+    script_ctx = ScriptStepCtx(
+        ctx.inputs, ctx.target, ctx.template, config_path, progress, ctx.report
+    )
+    performed = _apply_script_step(script_ctx)
+    if performed is None and ctx.report.get("error"):
+        return 1, ctx.report
+    write_ctx = ConfigWriteCtx(
+        _config_call(ctx.target, ctx.inputs, ctx.deps),
+        ctx.gsd_mod,
+        prepared,
+        progress,
+        config_path,
+        ctx.report,
+    )
+    if not _apply_config_writes(write_ctx):
+        return 1, ctx.report
+    return None
+
+
 def _execute_apply(ctx: ExecuteCtx) -> tuple[int, dict]:
     project_dir = ctx.inputs.project_dir
     config_path = ctx.target.config_path
@@ -888,29 +919,14 @@ def _execute_apply(ctx: ExecuteCtx) -> tuple[int, dict]:
     blocked = _take_backup(config_path, project_dir, progress, ctx.deps, ctx.report)
     if blocked is not None:
         return blocked
-    prep = PrepareCtx(
-        ctx.inputs, ctx.target, ctx.deps, config_path, config_existed, progress, ctx.report
-    )
-    prepared = _prepare_writes(prep)
-    if isinstance(prepared, tuple):
-        return prepared
-    writes = prepared
-    script_ctx = ScriptStepCtx(
-        ctx.inputs, ctx.target, ctx.template, config_path, progress, ctx.report
-    )
-    performed = _apply_script_step(script_ctx)
-    if performed is None and ctx.report.get("error"):
-        return 1, ctx.report
-    write_ctx = ConfigWriteCtx(
-        _config_call(ctx.target, ctx.inputs, ctx.deps),
-        ctx.gsd_mod,
-        writes,
-        progress,
-        config_path,
-        ctx.report,
-    )
-    if not _apply_config_writes(write_ctx):
-        return 1, ctx.report
+    try:
+        failed = _pre_commit(ctx, config_path, config_existed, progress)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        # A raised failure before the commit point restores exactly like a returned one (D-22).
+        message = str(exc) or type(exc).__name__
+        return _rollback_report(progress, config_path, ctx.report, message)
+    if failed is not None:
+        return failed
     ctx.report["applied"] = True
     _cleanup_committed(
         CleanupCtx(progress, config_path, project_dir, ctx.target, ctx.inputs, ctx.deps, ctx.report)
