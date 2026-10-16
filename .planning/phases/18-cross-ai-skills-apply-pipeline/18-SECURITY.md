@@ -30,7 +30,8 @@ created: "2026-10-15"
 ## Threat Register
 
 Audit at HEAD 72fd95d by gsd-security-auditor (xhigh). Result: SECURED, 74/74 closed.
-Mitigate 70, accept 4, transfer 0. Abbreviations: `cc/` = `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/`, `spec/` = `skills/ai-kit-spec-review/ai_kit_spec/`, `runner` = `skills/ai-kit-spec-review/references/cross-ai.mjs`.
+Mitigate 70, accept 4, transfer 0. The post-audit pass (cc58225..2e7c34f) registered and
+closed the five unregistered flags as T-18-74..T-18-78: 79/79 closed, mitigate 75. Abbreviations: `cc/` = `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/`, `spec/` = `skills/ai-kit-spec-review/ai_kit_spec/`, `runner` = `skills/ai-kit-spec-review/references/cross-ai.mjs`.
 
 | Threat ID | Disposition | Status | Evidence |
 |-----------|-------------|--------|----------|
@@ -50,7 +51,7 @@ Mitigate 70, accept 4, transfer 0. Abbreviations: `cc/` = `skills/ai-kit-gsd-cur
 | T-18-14 | mitigate | closed | `cc/skills.py:314-351`, `cc/plan_io.py:675-699` |
 | T-18-15 | mitigate | closed | `cc/skills.py:60-90,237-246` affinity validation |
 | T-18-16 | mitigate | closed | `runner:357-366,735-745` stderr-only classification (A-CR-01) |
-| T-18-17 | mitigate | closed | `runner:623-655` temp-index tree id (see U-3) |
+| T-18-17 | mitigate | closed | `runner:623-655` temp-index tree id (see T-18-76) |
 | T-18-18 | mitigate | closed | `runner:469-544` group kill, bounded drain |
 | T-18-19 | accept | closed | locked D-10; host signals scrubbed `runner:657-662` |
 | T-18-20 | mitigate | closed | `runner:393-411` workstream guard, deadline only lowered |
@@ -70,7 +71,7 @@ Mitigate 70, accept 4, transfer 0. Abbreviations: `cc/` = `skills/ai-kit-gsd-cur
 | T-18-34 | mitigate | closed | `cc/apply.py:548-565,725-736`; AST test |
 | T-18-35 | mitigate | closed | `cc/apply.py:732-735,854-873`; e2e |
 | T-18-36 | mitigate | closed | `cc/apply.py:414-433,813`; e2e |
-| T-18-37 | mitigate | closed | `cc/followups.py:21,47-48,163-176` exact semver (see U-2) |
+| T-18-37 | mitigate | closed | `cc/followups.py:21,47-48,163-176` exact semver (see T-18-75) |
 | T-18-38 | mitigate | closed | `cc/cli.py:654-659` only caller after `--approve` |
 | T-18-39 | mitigate | closed | `cc/followups.py:174-175` |
 | T-18-40 | mitigate | closed | SKILL.md trust/permission text; drift tests |
@@ -107,6 +108,11 @@ Mitigate 70, accept 4, transfer 0. Abbreviations: `cc/` = `skills/ai-kit-gsd-cur
 | T-18-71 | mitigate | closed | `cc/config_backup.py:173-175`, `cc/apply.py:406-411,859` |
 | T-18-72 | mitigate | closed | `cc/apply.py:577-643` commit point |
 | T-18-73 | mitigate | closed | `cc/cli.py:629-638` resolve_target |
+| T-18-74 | mitigate | closed | U-1: `cc/cross_ai.py:15-25` COMMAND_KEYS (cross_ai_command, plan_bounce_script, code_review_command, test_command, build_command); `cc/plan_edit.py:521-534` refuse without `--force`, record `forced`; `cc/plan_io.py:664-669` unforced hand edit rejected; `cc/apply.py:259-265` dry-run/apply warning; tests `test_every_command_key_guarded`, `test_unforced_command_key_rejected` |
+| T-18-75 | mitigate | closed | U-2: `cc/followups.py:21,49-58` `--registry` and scoped `--@opengsd:registry` pinned to registry.npmjs.org; disclosure `cc/followups.py:184-185`; argv test in `TestFollowupsTracer` (scoped-flag precedence per npm docs, not live-run: npm is banned on the dev machine) |
+| T-18-76 | mitigate | closed | U-3: `runner:640-652,667` stat signature of every ignored untracked file folded into the tree id; header `runner:8-9`; self-test `ignored-edit` (dirty) and `ignored-review-ok` (clean) |
+| T-18-77 | mitigate | closed | U-4: `cc/cross_ai.py:30-43` MODEL_ID_RE; `cc/plan_io.py:658-659,831` validate_plan; `cc/plan_edit.py:199-201,503-506` plan-set, force-immune; `runner:797,809` `--model-<cli>`; tests `test_unsafe_model_id_*`, self-test `bad-model-id-*` |
+| T-18-78 | mitigate | closed | U-5: `skills/ai-kit-gsd-curated-config/SKILL.md:24-26` names the `.pi`/`.opencode` host-first roots and the `gsd_run` fallback; `runner:377` empty PATH segment = cwd (informational) |
 | T-18-SC | mitigate | closed | no dependency manifest touched; stdlib/`node:` only |
 
 ---
@@ -124,13 +130,7 @@ Mitigate 70, accept 4, transfer 0. Abbreviations: `cc/` = `skills/ai-kit-gsd-cur
 
 ## Unregistered Flags (found by the audit, no plan modeled them)
 
-| ID | Severity | Surface | Disposition |
-|----|----------|---------|-------------|
-| U-1 | medium | Other command-valued gsd-core keys (`workflow.plan_bounce_script`, `workflow.code_review_command`) settable via `plan-set` without the D-44 disclosure | fix in the post-audit pass |
-| U-2 | medium | Follow-up `npx` runs in the target cwd, so a project `.npmrc` can redirect the registry; not disclosed | fix in the post-audit pass |
-| U-3 | medium | Tree snapshot skips gitignored files, so edits there read `tree=clean` | fix in the post-audit pass |
-| U-4 | low | Model ids not restricted to a safe character set (dash-prefixed id read as an option) | fix in the post-audit pass |
-| U-5 | low | SKILL.md trust text omits the `.pi`/`.opencode` gsd-core roots tried first; empty PATH segment = cwd (POSIX, informational) | fix in the post-audit pass |
+None open. U-1..U-5 are registered and closed as T-18-74..T-18-78 in the threat register.
 
 Out of scope: `tests/e2e/docker/Dockerfile:24` unpinned `curl | sh` uv install (Phase 01.1); A-IN-12 full-tree rehash (fails safe to `unverified`).
 
@@ -141,6 +141,7 @@ Out of scope: `tests/e2e/docker/Dockerfile:24` unpinned `curl | sh` uv install (
 | Audit Date | Threats Total | Closed | Open | Run By |
 |------------|---------------|--------|------|--------|
 | 2026-10-15 | 74 | 74 | 0 | gsd-security-auditor (xhigh), HEAD 72fd95d |
+| 2026-10-16 | 79 | 79 | 0 | post-audit fix pass U-1..U-5, cc58225..2e7c34f |
 
 ---
 
