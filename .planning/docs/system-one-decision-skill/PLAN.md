@@ -23,6 +23,16 @@
 | Laya latency ~12 ms/question warm | live benchmark |
 | Laya accuracy on 14 easy labeled cases: choice 7/8, noul 6/6; the wrong/borderline answers sat at 0.55–0.57 | live |
 
+## Addendum 2026-10-15: Jev 1.14 capabilities (required reading)
+
+Read before executing any task. These facts supersede the plan's text-only assumptions:
+- [Jev 1.14 release notes](https://typesafe.ai/blog/jev-1-14)
+- [Primitives](https://docs.typesafe.ai/primitives)
+- [Images](https://docs.typesafe.ai/images)
+- [Confidence](https://docs.typesafe.ai/confidence)
+
+What they change: images are supported (danger-zone header plus `assets`); Jev 1.14 adds a `box` type and long context; and `confidence` is not claimed to be calibrated. Each task that builds a request shape, a backend adapter or a threshold must state how it handles images and `box`, or why it defers them. Support on the Laya and Zen backends is unverified.
+
 ## Global Constraints
 
 - Backend names are exactly `typesafe`, `opencode`, `laya`. Selection env: `JEV_BACKEND` ∈ {`auto`, `typesafe`, `opencode`, `laya`}, default `auto`.
