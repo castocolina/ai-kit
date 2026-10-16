@@ -83,14 +83,14 @@ RESULT_JSON="$(python3 "$GSD_SHIM" resolve-dispatch --cwd "$CWD" \
 RUN_ID="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<< "$RESULT_JSON")"
 RESULT_MODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])' <<< "$RESULT_JSON")"
 RESULT_KEY="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("key") or "")' <<< "$RESULT_JSON")"
-RESULT_CLI="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("cli") or "")' <<< "$RESULT_JSON")"
+RESULT_RUNTIME="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("runtime") or "")' <<< "$RESULT_JSON")"
 RESULT_PROVENANCE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("provenance") or "")' <<< "$RESULT_JSON")"
 RESULT_REASON="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("reason") or "")' <<< "$RESULT_JSON")"
 RESULT_MESSAGE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or "")' <<< "$RESULT_JSON")"
 RESULT_CROSS_AI_COMMAND="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("cross_ai_command") or "")' <<< "$RESULT_JSON")"
-printf 'CWD=%s\nPHASE_ID=%s\nPHASE_PROMPT_FILE=%s\nGSD_CONFIG_PATH=%s\nRUN_ID=%s\nRESULT_MODE=%s\nRESULT_KEY=%s\nRESULT_CLI=%s\nRESULT_PROVENANCE=%s\nRESULT_REASON=%s\nRESULT_MESSAGE=%s\nRESULT_CROSS_AI_COMMAND=%s\n' \
+printf 'CWD=%s\nPHASE_ID=%s\nPHASE_PROMPT_FILE=%s\nGSD_CONFIG_PATH=%s\nRUN_ID=%s\nRESULT_MODE=%s\nRESULT_KEY=%s\nRESULT_RUNTIME=%s\nRESULT_PROVENANCE=%s\nRESULT_REASON=%s\nRESULT_MESSAGE=%s\nRESULT_CROSS_AI_COMMAND=%s\n' \
   "$CWD" "$PHASE_ID" "$PHASE_PROMPT_FILE" "$GSD_CONFIG_PATH" "$RUN_ID" "$RESULT_MODE" \
-  "$RESULT_KEY" "$RESULT_CLI" "$RESULT_PROVENANCE" "$RESULT_REASON" "$RESULT_MESSAGE" \
+  "$RESULT_KEY" "$RESULT_RUNTIME" "$RESULT_PROVENANCE" "$RESULT_REASON" "$RESULT_MESSAGE" \
   "$RESULT_CROSS_AI_COMMAND"
 ```
 
@@ -196,10 +196,10 @@ default runs unmodified). Never schedule a wake for these.
                                   # one, so dispatch_with_heartbeat's own graceful kill-and-drain
                                   # completes before GSD's blunt outer `timeout` SIGKILLs the
                                   # whole pipeline uncleanly (mid-write, no partial output saved)
-  # NO manual quoting around $TOOLS_PY/$RESULT_CLI/$RESULT_MODEL/$CWD/$FORMAT_BLOCK_PATH below --
+  # NO manual quoting around $TOOLS_PY/$RESULT_RUNTIME/$RESULT_MODEL/$CWD/$FORMAT_BLOCK_PATH below --
   # this is deliberate, required by how GSD expands this value. Read only if you need to know why:
   # references/dispatch-notes.md#why-no-manual-quoting-around-workflowcross_ai_commands-values
-  WRAPPER_COMMAND="python3 $TOOLS_PY dispatch-execute --cli $RESULT_CLI --model $RESULT_MODEL --target-dir $CWD --prompt-file - --stdout-only --timeout $DISPATCH_TIMEOUT_SECONDS --format-block-file $FORMAT_BLOCK_PATH"
+  WRAPPER_COMMAND="python3 $TOOLS_PY dispatch-execute --runtime $RESULT_RUNTIME --model $RESULT_MODEL --target-dir $CWD --prompt-file - --stdout-only --timeout $DISPATCH_TIMEOUT_SECONDS --format-block-file $FORMAT_BLOCK_PATH"
   python3 "$GSD_SHIM" write-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
     --set "cross_ai_command=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$WRAPPER_COMMAND")" \
     --set cross_ai_execution=true \
@@ -238,19 +238,15 @@ python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
 ## Step 3: Prepare confirmed-only tooling guidance, then invoke GSD's own `/gsd-execute-phase` skill
 
 Resolve the CLI identity to prepare tooling guidance for:
-- `native_tier`: use `--cli "$RESULT_CLI"` when non-empty, else `--cli claude` (a `cli=None`
-  candidate dispatches as the current session itself, i.e. Claude Code — never skip tooling
-  preparation for this case).
-- `cross_ai_hook`: use `--cli "$RESULT_CLI"` directly (the real external vendor).
-- `fallback_notice`: omit `--cli` entirely (no candidate was resolved — generic detection only).
+- `native_tier`: use `--runtime "$RESULT_RUNTIME"` (the adapter fills the native Claude alias).
+- `cross_ai_hook`: use `--runtime "$RESULT_RUNTIME"` directly (the real external runtime).
+- `fallback_notice`: omit `--runtime` entirely (no candidate was resolved — generic detection only).
 
 ```bash
 if [ "$RESULT_MODE" = "fallback_notice" ]; then
   CLI_ARGS=()
-elif [ -z "$RESULT_CLI" ]; then
-  CLI_ARGS=(--cli claude)
 else
-  CLI_ARGS=(--cli "$RESULT_CLI")
+  CLI_ARGS=(--runtime "$RESULT_RUNTIME")
 fi
 GUIDANCE="$(python3 "$GSD_SHIM" prepare-tooling "${CLI_ARGS[@]}" --target-dir "$CWD")"
 MARKER="<!-- ai-kit-spec-execute-gsd:tooling-guidance -->"
@@ -261,7 +257,7 @@ fi
 
 This `prepare-tooling` subcommand (Task 4) runs `detect_tool_availability()`,
 `resolve_agents_tooling_path()`, then `probe_codegraph(cli)` (report-only, 15 s timeout; skipped
-when `--cli` is omitted). When codegraph is missing or unhealthy, the shim prints the exact install
+when `--runtime` is omitted). When codegraph is missing or unhealthy, the shim prints the exact install
 command on stderr — relay that line to the user verbatim and never run it on their behalf
 (installing is the user's call through their own tooling). Only when the probe finds codegraph
 registered and not known unhealthy (codex health is unknown, so it gets a stderr note) does it run

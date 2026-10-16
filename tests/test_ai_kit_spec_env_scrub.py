@@ -100,7 +100,7 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
         out = os.path.join(tmp, "execute.json")
         execute_dispatch.dispatch_execute(
             execute_dispatch.ExecuteDispatchSpec(
-                candidate={"cli": "codex", "model": "m", "key": "codex/m"},
+                candidate={"runtime": "codex", "model": "m", "key": "codex/m"},
                 prompt="p",
                 target_dir=tmp,
                 heartbeat_interval=1,
@@ -122,7 +122,7 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
                     "key": "k",
                     "model": "m",
                     "vendor": "v",
-                    "cli": None,
+                    "runtime": None,
                     "command": _command_template(script, out),
                     "extra": {},
                 },

@@ -283,14 +283,14 @@ class TestKnownGsdRuntimes(unittest.TestCase):
 class TestBuildCrossAiCommand(unittest.TestCase):
     def test_native_cli_none_returns_none(self):
         # cli=None is native/current-session dispatch -- never needs the cross-AI hook.
-        candidate = {"cli": None, "model": "opus", "key": "opus-native"}
+        candidate = {"runtime": None, "model": "opus", "key": "opus-native"}
         self.assertIsNone(gsd_cross_ai.build_cross_ai_command(candidate, "/repo"))
 
     def test_cli_in_known_gsd_runtimes_still_builds_when_it_has_a_real_execute_builder(self):
         # Bug fix (2026-08-30): a cli name being in KNOWN_GSD_RUNTIMES must NOT by itself block
         # the cross-AI hook -- adapter.py already tried (and failed) the curated-tier native route
         # before ever calling this function, so a live-verified execute builder must still be used.
-        candidate = {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
+        candidate = {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
         result = gsd_cross_ai.build_cross_ai_command(candidate, "/repo")
         self.assertEqual(
             result,
@@ -299,7 +299,7 @@ class TestBuildCrossAiCommand(unittest.TestCase):
     def test_no_live_verified_builder_returns_none_not_raise(self):
         # A CLI with no registered execute-mode builder at all (Foundation's real
         # build_execute_command raises ValueError for it) must degrade to None, never raise.
-        candidate = {"cli": "gemini", "model": "gemini-3.1-pro", "key": "gemini/gemini-3.1-pro"}
+        candidate = {"runtime": "gemini", "model": "gemini-3.1-pro", "key": "gemini/gemini-3.1-pro"}
         self.assertIsNone(gsd_cross_ai.build_cross_ai_command(candidate, "/repo"))
 
     def test_builds_the_real_command_string_with_model_filled_in(self):
@@ -307,7 +307,7 @@ class TestBuildCrossAiCommand(unittest.TestCase):
         # CLIs Foundation has actually implemented today.
         def fake_execute_command(cli, target_dir, effort=None, service_tier=None):
             return f"future-cli exec --write -C {target_dir} -m {{model}}"
-        candidate = {"cli": "future-cli", "model": "gpt-5.6-terra",
+        candidate = {"runtime": "future-cli", "model": "gpt-5.6-terra",
                      "key": "future-cli/gpt-5.6-terra"}
         result = gsd_cross_ai.build_cross_ai_command(
             candidate, "/repo/worktree", execute_command_fn=fake_execute_command)
@@ -326,7 +326,7 @@ class TestBuildCrossAiCommand(unittest.TestCase):
             captured["service_tier"] = service_tier
             return f"codex exec -C {target_dir} -m {{model}}"
 
-        candidate = {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+        candidate = {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                      "effort": "high", "service_tier": "priority"}
         gsd_cross_ai.build_cross_ai_command(
             candidate, "/repo/worktree", execute_command_fn=fake_execute_command)
@@ -343,7 +343,7 @@ class TestAssembleCandidates(unittest.TestCase):
         candidates, top_n_keys = adapter.assemble_candidates(
             "/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
         self.assertEqual(candidates, [{"key": "codex/gpt-5.6-sol", "model": "gpt-5.6-sol",
-                                        "cli": "codex", "vendor": "openai", "command": None,
+                                        "runtime": "codex", "vendor": "openai", "command": None,
                                         "task_affinity": None, "context_limit": None,
                                         "tier": None, "purpose": None, "effort": None,
                                         "service_tier": None}])
@@ -411,9 +411,9 @@ class TestResolveGsdDispatch(unittest.TestCase):
         # candidate whose tier is "fable" must never resolve as native_tier; it must be dropped
         # and the next ladder entry tried instead.
         candidates = [
-            {"cli": None, "model": "fable", "key": "fable-native", "vendor": "",
+            {"runtime": None, "model": "fable", "key": "fable-native", "vendor": "",
              "task_affinity": None, "context_limit": None, "tier": "fable"},
-            {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+            {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
              "vendor": "openai", "task_affinity": None, "context_limit": None, "tier": "sonnet"},
         ]
         result = _resolve_gsd_dispatch(
@@ -424,7 +424,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         self.assertEqual(result["tier"], "sonnet")
 
     def test_native_candidate_with_curated_tier_writes_override_and_runtime_in_one_call(self):
-        candidates = [{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+        candidates = [{"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
         seen = []
@@ -434,7 +434,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         result = _resolve_gsd_dispatch(
             candidates, ["codex/gpt-5.6-sol"], {}, _ctx(), "/repo", apply_changes_fn=fake_apply)
         self.assertEqual(result, {"mode": "native_tier", "runtime": "codex", "tier": "sonnet",
-                                    "model": "gpt-5.6-sol", "written": True, "cli": "codex",
+                                    "model": "gpt-5.6-sol", "written": True,
                                     "key": "codex/gpt-5.6-sol", "provenance": "resolved_candidate"})
         # D-17: ONE apply_changes call; runtime first, then the tier override, in that order.
         self.assertEqual(len(seen), 1)
@@ -444,7 +444,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
                                    ("model_profile_overrides.codex.sonnet", "gpt-5.6-sol")])
 
     def test_does_not_rewrite_active_runtime_when_it_already_matches_current_runtime(self):
-        candidates = [{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+        candidates = [{"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
         seen = []
@@ -459,7 +459,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         # Task 7 smoke-test finding: model_profile_overrides.claude.<tier> is dead for GSD's real
         # resolution -- native claude dispatch writes the model_profile scalar instead (mapped via
         # TIER_TO_MODEL_PROFILE), never model_profile_overrides.
-        candidates = [{"cli": None, "model": "opus", "key": "opus-native", "vendor": "",
+        candidates = [{"runtime": None, "model": "opus", "key": "opus-native", "vendor": "",
                        "task_affinity": None, "context_limit": None, "tier": "opus"}]
         seen = []
         result = _resolve_gsd_dispatch(
@@ -468,14 +468,14 @@ class TestResolveGsdDispatch(unittest.TestCase):
             or gsd_config.ApplyResult([key for key, _ in changes], None, None, [], []))
         self.assertEqual(result["runtime"], "claude")
         self.assertEqual(result["tier"], "opus")
-        self.assertIsNone(result["cli"])
+        self.assertNotIn("cli", result)
         self.assertEqual(result["model"], "quality")
         self.assertTrue(result["written"])
         self.assertEqual(seen, [[("model_profile", "quality")]])
 
     def test_native_candidate_honors_an_existing_non_adapter_owned_model_profile(self):
         cfg = {"model_profile": "budget"}  # a genuine, hand-set user value
-        candidates = [{"cli": None, "model": "opus", "key": "opus-native", "vendor": "",
+        candidates = [{"runtime": None, "model": "opus", "key": "opus-native", "vendor": "",
                        "task_affinity": None, "context_limit": None, "tier": "opus"}]
         seen = []
         result = _resolve_gsd_dispatch(
@@ -489,7 +489,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
 
     def test_existing_non_adapter_owned_slot_is_honored_and_not_overwritten(self):
         cfg = {"model_profile_overrides": {"codex": {"sonnet": "hand-picked-model"}}}
-        candidates = [{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+        candidates = [{"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
         seen = []
@@ -504,7 +504,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
 
     def test_adapter_owned_existing_slot_is_re_resolved_not_treated_as_fixed(self):
         cfg = {"model_profile_overrides": {"codex": {"sonnet": "stale-model"}}}
-        candidates = [{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+        candidates = [{"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
         result = _resolve_gsd_dispatch(
@@ -515,7 +515,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         self.assertTrue(result["written"])
 
     def test_a_failed_apply_surfaces_as_a_write_failed_result_carrying_the_undo_log(self):
-        candidates = [{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+        candidates = [{"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
         failing = gsd_config.ApplyResult(["runtime"], "model_profile_overrides.codex.sonnet",
@@ -534,13 +534,14 @@ class TestResolveGsdDispatch(unittest.TestCase):
         # D-15 (Phase 16.1): only SUPPORTED_EXECUTE_CLIS entries survive the ladder screen, so
         # this uses opencode (supported, no curated tier) instead of the removed grok path.
         mock_build.return_value = "opencode run -m router-env/my-coding -C /repo"
-        candidates = [{"cli": "opencode", "model": "router-env/my-coding",
+        candidates = [{"runtime": "opencode", "model": "router-env/my-coding",
                        "key": "opencode/router-env-my-coding", "vendor": "opencode",
                        "task_affinity": None, "context_limit": None, "tier": None}]
         result = _resolve_gsd_dispatch(
             candidates, ["opencode/router-env-my-coding"], {}, _ctx(), "/repo")
         self.assertEqual(result["mode"], "cross_ai_hook")
-        self.assertEqual(result["cli"], "opencode")
+        self.assertEqual(result["runtime"], "opencode")
+        self.assertNotIn("cli", result)
         self.assertEqual(result["cross_ai_command"],
                          "opencode run -m router-env/my-coding -C /repo")
         self.assertEqual(result["provenance"], "resolved_candidate")
@@ -549,10 +550,10 @@ class TestResolveGsdDispatch(unittest.TestCase):
     def test_escalates_past_an_unusable_candidate_to_a_later_native_one(self, mock_build):
         mock_build.return_value = None
         candidates = [
-            {"cli": "opencode", "model": "router-env/my-coding",
+            {"runtime": "opencode", "model": "router-env/my-coding",
              "key": "opencode/router-env-my-coding", "vendor": "opencode",
              "task_affinity": None, "context_limit": None, "tier": None},
-            {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+            {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
              "vendor": "openai", "task_affinity": None, "context_limit": None, "tier": "sonnet"},
         ]
         result = _resolve_gsd_dispatch(
@@ -563,10 +564,10 @@ class TestResolveGsdDispatch(unittest.TestCase):
 
     def test_skips_a_candidate_with_no_quota_and_uses_the_next_one(self):
         candidates = [
-            {"cli": "opencode", "model": "router-env/my-coding",
+            {"runtime": "opencode", "model": "router-env/my-coding",
              "key": "opencode/router-env-my-coding", "vendor": "opencode",
              "task_affinity": None, "context_limit": None, "tier": None},
-            {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+            {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
              "vendor": "openai", "task_affinity": None, "context_limit": None, "tier": "sonnet"},
         ]
         quota = {"opencode/router-env-my-coding": {"available": False}}
@@ -583,7 +584,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         import contextlib
         import io
         stderr = io.StringIO()
-        candidates = [{"cli": "gemini", "model": "gemini-3.1-pro",
+        candidates = [{"runtime": "gemini", "model": "gemini-3.1-pro",
                        "key": "gemini/gemini-3.1-pro", "vendor": "google",
                        "task_affinity": None, "context_limit": None, "tier": None}]
         with contextlib.redirect_stderr(stderr):
@@ -605,7 +606,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         import io
         stderr = io.StringIO()
         seen = []
-        candidates = [{"cli": "gemini", "model": "gemini-3.1-pro", "key": "g",
+        candidates = [{"runtime": "gemini", "model": "gemini-3.1-pro", "key": "g",
                        "vendor": "google", "task_affinity": None, "context_limit": None,
                        "tier": "opus"}]
         with contextlib.redirect_stderr(stderr):
@@ -626,7 +627,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         for cli_name in ("claude", "grok"):
             with self.subTest(cli=cli_name):
                 stderr = io.StringIO()
-                candidates = [{"cli": cli_name, "model": "m", "key": "k", "vendor": "v",
+                candidates = [{"runtime": cli_name, "model": "m", "key": "k", "vendor": "v",
                                "task_affinity": None, "context_limit": None, "tier": "opus"}]
                 with contextlib.redirect_stderr(stderr):
                     result = _resolve_gsd_dispatch(
@@ -638,10 +639,10 @@ class TestResolveGsdDispatch(unittest.TestCase):
 
     def test_every_candidate_lacks_quota_falls_back_quota_exhausted(self):
         candidates = [
-            {"cli": "opencode", "model": "router-env/my-coding",
+            {"runtime": "opencode", "model": "router-env/my-coding",
              "key": "opencode/router-env-my-coding", "vendor": "opencode",
              "task_affinity": None, "context_limit": None, "tier": None},
-            {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+            {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
              "vendor": "openai", "task_affinity": None, "context_limit": None, "tier": "sonnet"},
         ]
         quota = {"opencode/router-env-my-coding": {"available": False},
@@ -659,10 +660,10 @@ class TestResolveGsdDispatch(unittest.TestCase):
 
     def test_all_candidates_present_but_context_rejected_gets_a_distinct_reason_code(self):
         candidates = [
-            {"cli": "opencode", "model": "router-env/my-coding",
+            {"runtime": "opencode", "model": "router-env/my-coding",
              "key": "opencode/router-env-my-coding", "vendor": "opencode",
              "task_affinity": None, "context_limit": 1000, "tier": None},
-            {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+            {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
              "vendor": "openai", "task_affinity": None, "context_limit": 2000, "tier": "sonnet"},
         ]
         result = _resolve_gsd_dispatch(
@@ -675,13 +676,22 @@ class TestResolveGsdDispatch(unittest.TestCase):
         real_phase_prompt = "Implement the login form validation for the signup flow." * 20
         required_context = adapter.estimate_required_context(real_phase_prompt)
         self.assertGreater(required_context, 0)
-        candidates = [{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+        candidates = [{"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                        "vendor": "openai", "task_affinity": None, "context_limit": None,
                        "tier": "sonnet"}]
         result = _resolve_gsd_dispatch(
             candidates, ["codex/gpt-5.6-sol"], {}, _ctx(), "/repo",
             quota={}, required_context=required_context, apply_changes_fn=_ok_apply)
         self.assertNotEqual(result["mode"], "fallback_notice")
+
+    def test_prepare_tooling_accepts_runtime_and_cli_aliases(self):
+        parser = cli._build_parser()
+        runtime_args = parser.parse_args(["prepare-tooling", "--runtime", "codex",
+                                          "--target-dir", "/repo"])
+        cli_args = parser.parse_args(["prepare-tooling", "--cli", "codex",
+                                      "--target-dir", "/repo"])
+        self.assertEqual(runtime_args.runtime, "codex")
+        self.assertEqual(cli_args.runtime, "codex")
 
 class TestCliResolveDispatch(unittest.TestCase):
     """resolve-dispatch resolves node + gsd-tools itself (project-local first), asks gsd-tools
@@ -727,7 +737,7 @@ class TestCliResolveDispatch(unittest.TestCase):
     @staticmethod
     def _codex_assemble():
         def fake_assemble(cwd, env):
-            return ([{"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+            return ([{"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                       "vendor": "openai", "task_affinity": None, "context_limit": None,
                       "tier": "sonnet"}],
                     ["codex/gpt-5.6-sol"])
@@ -812,7 +822,7 @@ class TestCliResolveDispatch(unittest.TestCase):
         import io
         import tempfile
         def fake_assemble(cwd, env):
-            return ([{"cli": "claude", "model": "opus", "key": "claude/opus",
+            return ([{"runtime": "claude", "model": "opus", "key": "claude/opus",
                       "vendor": "anthropic", "purpose": "execute", "task_affinity": None,
                       "context_limit": None, "tier": None}],
                     ["claude/opus"])
@@ -841,10 +851,10 @@ class TestCliResolveDispatch(unittest.TestCase):
         import json
         import tempfile
         def fake_assemble(cwd, env):
-            return ([{"cli": "grok", "model": "grok-4.6", "key": "grok/grok-4.6",
+            return ([{"runtime": "grok", "model": "grok-4.6", "key": "grok/grok-4.6",
                       "vendor": "xai", "task_affinity": None, "context_limit": None,
                       "tier": None},
-                     {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
+                     {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                       "vendor": "openai", "task_affinity": None, "context_limit": None,
                       "tier": "sonnet"}],
                     ["grok/grok-4.6", "codex/gpt-5.6-sol"])
@@ -864,7 +874,7 @@ class TestCliResolveDispatch(unittest.TestCase):
         self.assertEqual(code, 0)
         result = json.loads(stdout.getvalue())
         self.assertEqual(result["mode"], "native_tier")
-        self.assertEqual(result["cli"], "codex")
+        self.assertEqual(result["runtime"], "codex")
         warnings = [line for line in stderr.getvalue().splitlines() if "grok/grok-4.6" in line]
         self.assertEqual(len(warnings), 1)
         self.assertIn("codex, cursor, opencode", warnings[0])
@@ -1434,7 +1444,7 @@ class TestNativeTierViaConfigSet(unittest.TestCase):
         return fake, ctx
 
     def _codex_opus(self):
-        return [{"cli": "codex", "model": "m-x", "key": "codex/m-x", "vendor": "openai",
+        return [{"runtime": "codex", "model": "m-x", "key": "codex/m-x", "vendor": "openai",
                  "task_affinity": None, "context_limit": None, "tier": "opus"}]
 
     def test_codex_opus_on_a_claude_runtime_project_writes_runtime_then_tier(self):
@@ -1464,7 +1474,7 @@ class TestNativeTierViaConfigSet(unittest.TestCase):
 
     def test_claude_runtime_writes_model_profile_only_when_not_user_owned(self):
         import tempfile
-        candidates = [{"cli": None, "model": "opus", "key": "opus-native", "vendor": "",
+        candidates = [{"runtime": None, "model": "opus", "key": "opus-native", "vendor": "",
                        "task_affinity": None, "context_limit": None, "tier": "opus"}]
         with tempfile.TemporaryDirectory() as t:
             fake, ctx = self._fake(t)

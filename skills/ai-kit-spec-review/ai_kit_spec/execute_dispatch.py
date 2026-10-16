@@ -59,7 +59,7 @@ def _compose_execute_prompt(
     spec: ExecuteDispatchSpec, seams: ExecuteSeams
 ) -> tuple[list[str], str]:
     candidate = spec.candidate
-    cli = candidate["cli"]
+    cli = candidate["runtime"]
     command_template = seams.build_execute_command_fn(
         cli,
         target_dir=spec.target_dir,
@@ -90,16 +90,16 @@ def dispatch_execute(
 ) -> dict:
     """Resolves `spec.candidate`'s real execute-mode command, composes the prompt, and runs it."""
     active = seams or ExecuteSeams()
-    cli = spec.candidate["cli"]
+    cli = spec.candidate["runtime"]
     if cli is None:
         raise ValueError(
-            "dispatch_execute is for cross-AI (cli-set) candidates only -- a native "
-            "(cli is None) candidate executes in-process and never reaches this function"
+            "dispatch_execute is for cross-AI (runtime-set) candidates only -- a native "
+            "(runtime is None) candidate executes in-process and never reaches this function"
         )
     argv, full_prompt = _compose_execute_prompt(spec, active)
     result = active.dispatch_fn(argv, full_prompt, spec.heartbeat_interval, spec.timeout)
     return {
-        "cli": cli,
+        "runtime": cli,
         "model": spec.candidate["model"],
         "command": shlex.join(argv),
         **result,

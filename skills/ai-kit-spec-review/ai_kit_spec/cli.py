@@ -413,7 +413,7 @@ def _discovered_catalog_candidates(
 ) -> list:
     clis = normalize_runtime_keys(runtimes.get("clis"))
     discovered = [
-        {"cli": cli_name, "model_id": model_id}
+        {"runtime": cli_name, "model_id": model_id}
         for cli_name, cli_data in clis.items()
         for model_id in cli_data.get("models", [])
     ]
@@ -427,11 +427,11 @@ def _discovered_catalog_candidates(
         resolved = cfg_resolve(cwd, deps.env_fn())
         for reviewer in resolved.get("reviewers", []):
             if reviewer.get("cli") in single_provider_clis and reviewer.get("model"):
-                discovered.append({"cli": reviewer["cli"], "model_id": reviewer["model"]})
+                discovered.append({"runtime": reviewer["cli"], "model_id": reviewer["model"]})
     for raw in args.extra_candidate:
         cli_name, _, model_id = raw.partition(":")
         if cli_name and model_id:
-            discovered.append({"cli": cli_name, "model_id": model_id})
+            discovered.append({"runtime": cli_name, "model_id": model_id})
     return discovered
 
 
@@ -499,9 +499,9 @@ def _claude_catalog_candidates(
 ) -> tuple[list, bool]:
     if not anthropic_ids or not which_fn("claude"):
         return [], False
-    listed = {(c["cli"], c["model_id"]) for c in discovered}
+    listed = {(c["runtime"], c["model_id"]) for c in discovered}
     claude_candidates = [
-        {"cli": "claude", "model_id": model_id}
+        {"runtime": "claude", "model_id": model_id}
         for model_id in anthropic_ids
         if ("claude", model_id) not in listed
     ]
@@ -528,7 +528,7 @@ def _run_fetch_catalog_build(
     filtered = [
         record
         for record in unmatched
-        if (record.get("cli"), record.get("model_id")) not in extra
+        if (record.get("runtime"), record.get("model_id")) not in extra
     ]
     meta = _finalize_fetch_catalog_meta(
         catalog, inputs.catalog_meta, anthropic_ids, materialized
@@ -807,7 +807,7 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
             format_block = f.read()
     tool_availability = (json.loads(args.tool_availability_json)
                           if args.tool_availability_json else {})
-    candidate = {"cli": rid, "model": args.model, "effort": args.effort,
+    candidate = {"runtime": rid, "model": args.model, "effort": args.effort,
                  "service_tier": args.service_tier}
     try:
         result = deps.dispatch_execute_fn(

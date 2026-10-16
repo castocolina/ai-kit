@@ -142,7 +142,7 @@ def _refresh_quota_for_candidates(
 ) -> dict:
     quota = deps.refresh_quota_cache_fn(
         {"reviewers": [
-            {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "cli": c["cli"],
+            {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "cli": c["runtime"],
              "command": c.get("command")} for c in candidates
         ]},
         [c["key"] for c in candidates], existing_quota, QUOTA_TTL_SECONDS)

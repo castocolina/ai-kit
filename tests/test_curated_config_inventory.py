@@ -895,7 +895,7 @@ class TestBuildCandidates(unittest.TestCase):
                 },
             }
         }
-        discovered = [{"cli": "pi", "model_id": "router-env/my-coding"}]
+        discovered = [{"runtime": "pi", "model_id": "router-env/my-coding"}]
         catalog, rejections, unmatched = spec_cli.build_model_catalog(
             discovered,
             spec_cli.CatalogSources({}, False, [], False),

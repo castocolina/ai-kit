@@ -112,7 +112,7 @@ def _malformed_resolve_result(config_path: str, run_id: str) -> dict:
     return {
         "mode": "fallback_notice",
         "key": None,
-        "cli": None,
+        "runtime": None,
         "provenance": "fallback",
         "reason": "malformed_config",
         "message": (
@@ -128,7 +128,7 @@ def _refresh_quota_for_candidates(
 ) -> dict:
     quota = deps.refresh_quota_cache_fn(
         {"reviewers": [
-            {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "cli": c["cli"],
+            {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "cli": c["runtime"],
              "command": c.get("command")}
             for c in candidates
         ]},
@@ -256,8 +256,8 @@ def _codegraph_registered_for_cli(cli_name: str | None, target_dir: str, deps: C
 def _cmd_prepare_tooling(args: argparse.Namespace, deps: CliDeps) -> int:
     tool_availability = deps.detect_tool_availability_fn()
     agents_tooling_path = deps.resolve_agents_tooling_path_fn()
-    codegraph_registered = _codegraph_registered_for_cli(args.cli, args.target_dir, deps)
-    guidance_cli = args.cli if args.cli is not None else "claude"
+    codegraph_registered = _codegraph_registered_for_cli(args.runtime, args.target_dir, deps)
+    guidance_cli = args.runtime if args.runtime is not None else "claude"
     guidance = build_tooling_guidance(
         guidance_cli, tool_availability, agents_tooling_path, codegraph_registered,
         shared_reference_path=resolve_shared_tooling_reference_path())
@@ -319,7 +319,7 @@ def _build_parser() -> argparse.ArgumentParser:
                                          "unset -- only keys the sidecar marks adapter-owned")
 
     p_prepare = sub.add_parser("prepare-tooling")
-    p_prepare.add_argument("--cli", default=None,
+    p_prepare.add_argument("--runtime", "--cli", dest="runtime", default=None,
                             help="omit (or pass 'claude') for native/current-runtime dispatch")
     p_prepare.add_argument("--target-dir", required=True)
 

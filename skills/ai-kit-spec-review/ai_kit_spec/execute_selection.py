@@ -83,7 +83,7 @@ def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
     emit_warn = warn_fn if warn_fn is not None else _execute_default_warn
     kept = []
     for c in candidates:
-        cli = c.get("cli")
+        cli = c.get("runtime")
         if exempt_fn is not None and exempt_fn(c):
             kept.append(c)
             continue

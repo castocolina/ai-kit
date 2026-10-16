@@ -405,8 +405,8 @@ def _router_vendor_unknown_record(
     name_purpose: str,
 ) -> dict:
     model_id = candidate["model_id"]
-    cli_name = candidate["cli"]
-    record = {"cli": cli_name, "model_id": model_id, "provider": None,
+    cli_name = candidate["runtime"]
+    record = {"runtime": cli_name, "model_id": model_id, "provider": None,
               "key": None, "vendor_unknown": True,
               "name_declared_purpose": name_purpose,
               **_infer_heuristics("", model_id)}
@@ -422,7 +422,7 @@ def _process_router_name_purpose(
     provider_hint: str | None,
 ) -> tuple[dict, str | None, dict | None]:
     model_id = candidate["model_id"]
-    cli_name = candidate["cli"]
+    cli_name = candidate["runtime"]
     existing_key = _find_existing_key_for_runtime(
         ctx.existing_catalog, cli_name, model_id)
     provider = (ctx.existing_catalog[existing_key]["provider"] if existing_key
@@ -543,7 +543,7 @@ def _matched_enrichment_fields(
     pricing, clear_pricing = _resolve_catalog_pricing(
         matches.md_match, aa_pricing, md_ok, aa_ok, existing_entry)
     ctx_window = _preserved_or_fresh_ctx_window(
-        matches.md_match, md_ok, existing_entry, candidate["cli"],
+        matches.md_match, md_ok, existing_entry, candidate["runtime"],
         md_enrich_match=matches.md_enrich_match)
     return _MatchedEnrichment(md_fields, aa_fields, pricing, clear_pricing, ctx_window)
 
@@ -558,7 +558,7 @@ def _build_matched_catalog_entry(inputs: _MatchedMergeInputs) -> dict:
     existing_entry = resolution.existing_entry
     enrich = _matched_enrichment_fields(candidate, ctx, resolution, matches)
     model_id = candidate["model_id"]
-    cli_name = candidate["cli"]
+    cli_name = candidate["runtime"]
     heuristics = {
         field: (existing_entry or {}).get(field, inferred)
         for field, inferred in _infer_heuristics(provider, model_id).items()
@@ -594,11 +594,11 @@ def _merge_matched_catalog_entry(
     resolution = inputs.resolution
     runtime_meta = ctx.runtime_meta
     model_id = candidate["model_id"]
-    cli_name = candidate["cli"]
+    cli_name = candidate["runtime"]
     provider = resolution.provider
     key = resolution.key
     if key is None:
-        record = {"cli": cli_name, "model_id": model_id, "provider": provider,
+        record = {"runtime": cli_name, "model_id": model_id, "provider": provider,
                   "key": key, "vendor_unknown": resolution.vendor_unknown,
                   **_infer_heuristics(provider or "", model_id)}
         _apply_runtime_meta(record, runtime_meta, cli_name, model_id)
@@ -616,7 +616,7 @@ def _fetch_source_matches(
     provider_hint: str | None,
 ) -> tuple[_SourceMatches, str | None]:
     model_id = candidate["model_id"]
-    cli_name = candidate["cli"]
+    cli_name = candidate["runtime"]
     models_dev_data = sources.models_dev_data
     models_dev_ok = sources.models_dev_ok
     aa_models = sources.aa_models
@@ -641,14 +641,14 @@ def _process_matched_catalog_candidate(
     existing_catalog = ctx.existing_catalog
     runtime_meta = ctx.runtime_meta
     model_id = candidate["model_id"]
-    cli_name = candidate["cli"]
+    cli_name = candidate["runtime"]
     matches, provider_hint = _fetch_source_matches(candidate, ctx.sources, provider_hint)
     existing_key = _find_existing_key_for_runtime(existing_catalog, cli_name, model_id)
     no_signal = matches.md_match is None and matches.aa_match is None
     resolution = _resolve_catalog_provider(_ProviderLookup(
         model_id, catalog, existing_catalog, matches, provider_hint, no_signal, existing_key))
     if resolution.provider is None or (no_signal and resolution.existing_entry is None):
-        record = {"cli": cli_name, "model_id": model_id, "provider": resolution.provider,
+        record = {"runtime": cli_name, "model_id": model_id, "provider": resolution.provider,
                   "key": resolution.key, "vendor_unknown": resolution.vendor_unknown,
                   **_infer_heuristics(resolution.provider or "", model_id)}
         _apply_runtime_meta(record, runtime_meta, cli_name, model_id)
@@ -680,7 +680,7 @@ def build_model_catalog(
     runtime_meta: dict | None = None,
 ) -> tuple:
     """Pure orchestration (design spec 2026-09-02, Section 4 steps 2-5): match each discovered
-    {"cli", "model_id"} candidate against both external sources, enrich deterministically from
+    {"runtime", "model_id"} candidate against both external sources, enrich deterministically from
     whatever matched (or preserve cached fields when a source is down -- see the _preserved_
     or_fresh_* helpers), apply local naming heuristics for is_router/batch_mode/fallback_quota
     ONLY on first discovery (a value already present on `existing_entry` is a prior heuristic

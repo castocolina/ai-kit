@@ -928,7 +928,7 @@ class TestCurrentCandidateKeys(unittest.TestCase):
             "openai/gpt-5.6-sol": {"runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}}},
             "xai/grok-old": {"runtimes": {"opencode": {"model_id": "xai/grok-old"}}},
         }
-        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        discovered = [{"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"}]
         self.assertEqual(
             model_catalog.current_candidate_keys(catalog, discovered), {"openai/gpt-5.6-sol"}
         )
@@ -2307,7 +2307,7 @@ class TestCodexEnumerationEndToEnd(unittest.TestCase):
             result = json.loads(printed)
             gpt55 = [u for u in result["unmatched"] if u["model_id"] == "gpt-5.5"]
             self.assertEqual(len(gpt55), 1)
-            self.assertEqual(gpt55[0]["cli"], "codex")
+            self.assertEqual(gpt55[0]["runtime"], "codex")
             self.assertEqual(gpt55[0]["reasoning_modes"], ["low", "medium", "high", "xhigh"])
             self.assertFalse(
                 [
@@ -2686,7 +2686,7 @@ class TestPiRouterMerge(unittest.TestCase):
                 },
             }
         }
-        discovered = [{"cli": "pi", "model_id": "router-env/my-coding"}]
+        discovered = [{"runtime": "pi", "model_id": "router-env/my-coding"}]
         catalog, rejections, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, False, [], False), existing
         )
@@ -4033,7 +4033,7 @@ class TestMainCli(unittest.TestCase):
             captured["timeout"] = spec.timeout
             captured["format_block"] = spec.format_block
             return {
-                "cli": spec.candidate["cli"],
+                "cli": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
@@ -4069,7 +4069,7 @@ class TestMainCli(unittest.TestCase):
         self.assertEqual(result["stdout"], "done")
         self.assertEqual(
             captured["candidate"],
-            {"cli": "codex", "model": "gpt-5.6-sol", "effort": None, "service_tier": None},
+            {"runtime": "codex", "model": "gpt-5.6-sol", "effort": None, "service_tier": None},
         )
         self.assertEqual(captured["prompt"], "do the phase task")
         self.assertEqual(captured["target_dir"], "/scratch/run1")
@@ -4086,7 +4086,7 @@ class TestMainCli(unittest.TestCase):
         def fake_dispatch(spec, **kw):
             captured["format_block"] = spec.format_block
             return {
-                "cli": spec.candidate["cli"],
+                "cli": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
@@ -4134,7 +4134,7 @@ class TestMainCli(unittest.TestCase):
         def fake_dispatch(spec, **kw):
             captured["candidate"] = spec.candidate
             return {
-                "cli": spec.candidate["cli"],
+                "cli": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
@@ -4218,7 +4218,7 @@ class TestMainCli(unittest.TestCase):
         def fake_dispatch(spec, **kw):
             captured["prompt"] = spec.prompt
             return {
-                "cli": spec.candidate["cli"],
+                "cli": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
@@ -4257,7 +4257,7 @@ class TestMainCli(unittest.TestCase):
 
         def fake_dispatch(spec, **kw):
             return {
-                "cli": spec.candidate["cli"],
+                "cli": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
@@ -4299,7 +4299,7 @@ class TestMainCli(unittest.TestCase):
 
         def fake_dispatch(spec, **kw):
             return {
-                "cli": spec.candidate["cli"],
+                "cli": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 3,
@@ -4977,7 +4977,7 @@ class TestBuildSoftConfinementGuidance(unittest.TestCase):
 
 class TestDispatchExecute(unittest.TestCase):
     def test_native_candidate_raises_rather_than_dispatch(self):
-        candidate = {"cli": None, "model": "opus", "key": "opus-native"}
+        candidate = {"runtime": None, "model": "opus", "key": "opus-native"}
         with self.assertRaises(ValueError) as ctx:
             execute_dispatch.dispatch_execute(
                 execute_dispatch.ExecuteDispatchSpec(
@@ -4991,7 +4991,7 @@ class TestDispatchExecute(unittest.TestCase):
         self.assertIn("native", str(ctx.exception).lower())
 
     def test_builds_real_command_and_dispatches_with_composed_prompt(self):
-        candidate = {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
+        candidate = {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
         captured = {}
 
         def fake_dispatch(command, prompt, heartbeat_interval, timeout):
@@ -5031,12 +5031,12 @@ class TestDispatchExecute(unittest.TestCase):
         self.assertTrue(captured["prompt"].endswith("do the task"))
         self.assertEqual(captured["heartbeat_interval"], 30)
         self.assertEqual(captured["timeout"], 600)
-        self.assertEqual(result["cli"], "codex")
+        self.assertEqual(result["runtime"], "codex")
         self.assertEqual(result["model"], "gpt-5.6-sol")
         self.assertEqual(result["stdout"], "done")
 
     def test_no_hard_sandbox_cli_gets_soft_confinement_guidance_appended(self):
-        candidate = {"cli": "cursor-agent", "model": "auto", "key": "cursor-agent/auto"}
+        candidate = {"runtime": "cursor-agent", "model": "auto", "key": "cursor-agent/auto"}
         captured = {}
 
         def fake_dispatch(command, prompt, heartbeat_interval, timeout):
@@ -5057,7 +5057,7 @@ class TestDispatchExecute(unittest.TestCase):
         self.assertIn("/scratch/run1", captured["prompt"])
 
     def test_hard_sandbox_cli_gets_no_soft_confinement_guidance(self):
-        candidate = {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
+        candidate = {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
         captured = {}
 
         def fake_dispatch(command, prompt, heartbeat_interval, timeout):
@@ -5077,7 +5077,7 @@ class TestDispatchExecute(unittest.TestCase):
         self.assertNotIn("NO operating-system-level write confinement", captured["prompt"])
 
     def test_includes_tool_guidance_when_provided(self):
-        candidate = {"cli": "cursor-agent", "model": "sonnet", "key": "cursor-agent/sonnet"}
+        candidate = {"runtime": "cursor-agent", "model": "sonnet", "key": "cursor-agent/sonnet"}
         captured = {}
 
         def fake_dispatch(command, prompt, heartbeat_interval, timeout):
@@ -5102,7 +5102,7 @@ class TestDispatchExecute(unittest.TestCase):
 
     def test_includes_output_format_block_when_given(self):
         candidate = {
-            "cli": "opencode",
+            "runtime": "opencode",
             "model": "router-env/my-coding",
             "key": "opencode/router-env/my-coding",
         }
@@ -5127,7 +5127,7 @@ class TestDispatchExecute(unittest.TestCase):
 
     def test_threads_effort_and_service_tier_from_the_candidate_into_the_real_builder(self):
         candidate = {
-            "cli": "codex",
+            "runtime": "codex",
             "model": "gpt-5.6-sol",
             "key": "codex/gpt-5.6-sol",
             "effort": "high",
@@ -5672,8 +5672,8 @@ class TestExecuteLadderScreen(unittest.TestCase):
     def test_purpose_none_claude_entry_is_skipped_with_a_warning(self):
         warnings = []
         candidates = [
-            {"key": "cla", "cli": "claude", "model": "m"},
-            {"key": "oc", "cli": "opencode", "model": "m"},
+            {"key": "cla", "runtime": "claude", "model": "m"},
+            {"key": "oc", "runtime": "opencode", "model": "m"},
         ]
         result = self._screen(candidates, warn_fn=warnings.append)
         self.assertEqual([c["key"] for c in result], ["oc"])
@@ -5683,14 +5683,14 @@ class TestExecuteLadderScreen(unittest.TestCase):
 
     def test_purpose_both_grok_entry_is_skipped_with_a_warning(self):
         warnings = []
-        candidates = [{"key": "gk", "cli": "grok", "model": "m", "purpose": "both"}]
+        candidates = [{"key": "gk", "runtime": "grok", "model": "m", "purpose": "both"}]
         result = self._screen(candidates, warn_fn=warnings.append)
         self.assertEqual(result, [])
         self.assertEqual(len(warnings), 1)
         self.assertIn("gk", warnings[0])
 
     def test_purpose_execute_claude_entry_raises_value_error(self):
-        candidates = [{"key": "cla", "cli": "claude", "model": "m", "purpose": "execute"}]
+        candidates = [{"key": "cla", "runtime": "claude", "model": "m", "purpose": "execute"}]
         with self.assertRaises(ValueError) as ctx:
             self._screen(candidates, warn_fn=lambda _msg: self.fail("must raise, not warn"))
         self.assertIn("codex, cursor, opencode", str(ctx.exception))
@@ -5698,7 +5698,7 @@ class TestExecuteLadderScreen(unittest.TestCase):
 
     def test_purpose_review_claude_entry_passes_through_untouched(self):
         warnings = []
-        candidates = [{"key": "cla", "cli": "claude", "model": "m", "purpose": "review"}]
+        candidates = [{"key": "cla", "runtime": "claude", "model": "m", "purpose": "review"}]
         result = self._screen(candidates, warn_fn=warnings.append)
         self.assertEqual([c["key"] for c in result], ["cla"])
         self.assertEqual(warnings, [])
@@ -7534,7 +7534,7 @@ class TestMatchArtificialAnalysis(unittest.TestCase):
 
 class TestBuildModelCatalog(unittest.TestCase):
     def test_matched_candidate_is_enriched_and_added(self):
-        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        discovered = [{"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"}]
         models_dev_data = {
             "openai": {
                 "models": {
@@ -7586,7 +7586,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "evaluations": {"artificial_analysis_coding_index": 89.0},
             }
         ]
-        discovered = [{"cli": "opencode", "model_id": "opencode-go/router-env-coding"}]
+        discovered = [{"runtime": "opencode", "model_id": "opencode-go/router-env-coding"}]
         catalog, rejections, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, aa_models, True), {}
         )
@@ -7600,7 +7600,7 @@ class TestBuildModelCatalog(unittest.TestCase):
         self.assertNotIn("scores", entry)
 
     def test_router_candidate_with_review_hint_gets_review_purpose(self):
-        discovered = [{"cli": "opencode", "model_id": "opencode-go/router-env-plan-review"}]
+        discovered = [{"runtime": "opencode", "model_id": "opencode-go/router-env-plan-review"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, [], True), {}
         )
@@ -7624,7 +7624,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 }
             }
         }
-        discovered = [{"cli": "opencode", "model_id": "opencode-go/router-env-fast"}]
+        discovered = [{"runtime": "opencode", "model_id": "opencode-go/router-env-fast"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, [], True), {}
         )
@@ -7650,7 +7650,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 }
             }
         }
-        discovered = [{"cli": "codex", "model_id": "openai/gpt-5-coding-assistant"}]
+        discovered = [{"runtime": "codex", "model_id": "openai/gpt-5-coding-assistant"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, [], True), {}
         )
@@ -7697,7 +7697,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 }
             }
         }
-        discovered = [{"cli": "opencode", "model_id": "opencode-go/router-env-coding"}]
+        discovered = [{"runtime": "opencode", "model_id": "opencode-go/router-env-coding"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, [], True), existing_catalog
         )
@@ -7729,7 +7729,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 }
             }
         }
-        discovered = [{"cli": "opencode", "model_id": "opencode-go/router-env-coding-review"}]
+        discovered = [{"runtime": "opencode", "model_id": "opencode-go/router-env-coding-review"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, [], True), {}
         )
@@ -7747,7 +7747,7 @@ class TestBuildModelCatalog(unittest.TestCase):
         # still carry `name_declared_purpose` on that payload -- otherwise the wizard's Task 4
         # partition, which only inspects catalog entries, would silently lose the declaration
         # for any candidate that never makes it into the catalog.
-        discovered = [{"cli": "customcli", "model_id": "router-env-coding"}]
+        discovered = [{"runtime": "customcli", "model_id": "router-env-coding"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, [], True), {}
         )
@@ -7792,7 +7792,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "evaluations": {"artificial_analysis_intelligence_index": 70.0},
             }
         ]
-        discovered = [{"cli": "codex", "model_id": "sol"}]
+        discovered = [{"runtime": "codex", "model_id": "sol"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, aa_models, True), {}
         )
@@ -7839,7 +7839,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
             }
         ]
-        discovered = [{"cli": "cursor-agent", "model_id": "claude-opus-5-high"}]
+        discovered = [{"runtime": "cursor-agent", "model_id": "claude-opus-5-high"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, aa_models, True), {}
         )
@@ -7876,7 +7876,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
             }
         ]
-        discovered = [{"cli": "cursor-agent", "model_id": "claude-opus-5-high"}]
+        discovered = [{"runtime": "cursor-agent", "model_id": "claude-opus-5-high"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, aa_models, True), {}
         )
@@ -7938,8 +7938,8 @@ class TestBuildModelCatalog(unittest.TestCase):
             }
         ]
         discovered = [
-            {"cli": "cursor-agent", "model_id": "claude-opus-5-high"},
-            {"cli": "opencode", "model_id": "openai/gpt-5.6-sol"},
+            {"runtime": "cursor-agent", "model_id": "claude-opus-5-high"},
+            {"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"},
         ]
         catalog_run1, _, unmatched_run1 = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data_run1, True, aa_models, True), {}
@@ -7966,7 +7966,7 @@ class TestBuildModelCatalog(unittest.TestCase):
     def test_unmatched_new_candidate_is_reported_but_never_persisted(self):
         # CRITICAL: an unmatched, never-before-seen candidate must NOT land in the catalog
         # automatically -- it needs research + user confirmation first (Task 8's wizard).
-        discovered = [{"cli": "opencode", "model_id": "vendor/totally-unknown"}]
+        discovered = [{"runtime": "opencode", "model_id": "vendor/totally-unknown"}]
         catalog, rejections, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, [], True), {}
         )
@@ -7974,7 +7974,7 @@ class TestBuildModelCatalog(unittest.TestCase):
         self.assertNotIn("vendor/totally-unknown", catalog)
         self.assertEqual(len(unmatched), 1)
         self.assertEqual(unmatched[0]["model_id"], "vendor/totally-unknown")
-        self.assertEqual(unmatched[0]["cli"], "opencode")
+        self.assertEqual(unmatched[0]["runtime"], "opencode")
 
     def test_unmatched_candidate_carries_heuristic_fields_for_wizard_confirmation(self):
         # CRITICAL finding: an earlier draft returned unmatched candidates with NO heuristic
@@ -7982,7 +7982,7 @@ class TestBuildModelCatalog(unittest.TestCase):
         # (a KeyError, since unmatched entries are never added to catalog) -- both bugs fixed
         # here: heuristics are computed for unmatched candidates too, and returned inline on
         # the unmatched dict itself, never via a catalog lookup that can't succeed.
-        discovered = [{"cli": "opencode", "model_id": "router-env/totally-unknown"}]
+        discovered = [{"runtime": "opencode", "model_id": "router-env/totally-unknown"}]
         _, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, [], True), {}
         )
@@ -8004,7 +8004,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "last_verified": "2026-08-01",
             }
         }
-        discovered = [{"cli": "opencode", "model_id": "vendor/totally-unknown"}]
+        discovered = [{"runtime": "opencode", "model_id": "vendor/totally-unknown"}]
         catalog, _rejections, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, [], True), existing
         )
@@ -8020,7 +8020,7 @@ class TestBuildModelCatalog(unittest.TestCase):
         # models.dev match so it actually lands in `catalog`, exercising the heuristics
         # on the MATCHED path (the unmatched path's own heuristic fields are already
         # covered separately, above).
-        discovered = [{"cli": "opencode", "model_id": "router-env/my-plan-review"}]
+        discovered = [{"runtime": "opencode", "model_id": "router-env/my-plan-review"}]
         models_dev_data = {"router-env": {"models": {"my-plan-review": {"id": "my-plan-review"}}}}
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, [], True), {}
@@ -8048,8 +8048,8 @@ class TestBuildModelCatalog(unittest.TestCase):
     def test_two_clis_reporting_the_same_model_merge_into_one_canonical_entry(self):
         # HIGH finding: catalog identity must not lose runtime mappings across CLIs.
         discovered = [
-            {"cli": "opencode", "model_id": "openai/gpt-5.6-sol"},
-            {"cli": "codex", "model_id": "gpt-5.6-sol"},
+            {"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"},
+            {"runtime": "codex", "model_id": "gpt-5.6-sol"},
         ]
         models_dev_data = {"openai": {"models": {"gpt-5.6-sol": {"id": "gpt-5.6-sol"}}}}
         catalog, _, _ = cli.build_model_catalog(
@@ -8073,7 +8073,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "pricing": {"input_per_1m": 3.5, "output_per_1m": 14.0},
             }
         }
-        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        discovered = [{"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, False, [], True), existing
         )  # models_dev_ok=False: source is DOWN
@@ -8094,7 +8094,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "scores": {"intelligence_index": 91.0},
             }
         }
-        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        discovered = [{"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"}]
         catalog, _, _ = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, False, [], False), existing
         )
@@ -8114,7 +8114,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "pricing": {"price_1m_input_tokens": 2.0, "price_1m_output_tokens": 8.0},
             }
         ]
-        discovered = [{"cli": "opencode", "model_id": "vendor/totally-unknown"}]
+        discovered = [{"runtime": "opencode", "model_id": "vendor/totally-unknown"}]
         catalog, _, _ = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, aa_models, True), {}
         )
@@ -8135,7 +8135,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "last_verified": "2026-08-01",
             }
         }
-        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        discovered = [{"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"}]
         catalog, _, _ = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, False, [], True), existing
         )
@@ -8160,7 +8160,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "tokens_per_sec": 142.3,
             }
         }
-        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        discovered = [{"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"}]
         catalog, _, _ = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, [], False), existing
         )
@@ -8183,7 +8183,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "scores": {"intelligence_index": 91.0, "coding_index": 88.0, "agentic_index": 84.0},
             }
         }
-        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        discovered = [{"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"}]
         catalog, _, _ = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, [], True), existing
         )
@@ -8220,7 +8220,7 @@ class TestBuildModelCatalog(unittest.TestCase):
             }
         ]
         # no "performance" key at all -- a genuine partial match
-        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+        discovered = [{"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"}]
         catalog, _, _ = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, aa_models, True), existing
         )
@@ -8243,7 +8243,7 @@ class TestBuildModelCatalog(unittest.TestCase):
             }
         }
         # user corrected this away from the heuristic default (True)
-        discovered = [{"cli": "opencode", "model_id": "router-env/my-plan-review"}]
+        discovered = [{"runtime": "opencode", "model_id": "router-env/my-plan-review"}]
         catalog, _, _ = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, [], True), existing
         )
@@ -8265,7 +8265,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "evaluations": {"artificial_analysis_intelligence_index": 91.0},
             }
         ]
-        discovered = [{"cli": "codex", "model_id": "gpt-5.6-sol"}]
+        discovered = [{"runtime": "codex", "model_id": "gpt-5.6-sol"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, aa_models, True), {}
         )
@@ -8282,13 +8282,13 @@ class TestBuildModelCatalog(unittest.TestCase):
         # regardless of whether the candidate came from a runtimes snapshot, review-spec.toml,
         # or --extra-candidate -- there's no special-casing by origin inside this function.
         discovered = [
-            {"cli": "opencode", "model_id": "openai/gpt-5.6-sol"},
-            {"cli": "codex", "model_id": "gpt-5.6-alt"},
+            {"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"},
+            {"runtime": "codex", "model_id": "gpt-5.6-alt"},
         ]  # e.g. from --extra-candidate
         _catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, [], True), {}
         )
-        self.assertEqual({u["cli"] for u in unmatched}, {"opencode", "codex"})
+        self.assertEqual({u["runtime"] for u in unmatched}, {"opencode", "codex"})
 
     def test_bare_id_with_both_sources_unavailable_recovers_key_from_existing_catalog(self):
         # CRITICAL/HIGH fix (round-2 native-opus review): this is the `--if-stale` DEFAULT
@@ -8308,7 +8308,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "scores": {"intelligence_index": 91.0},
             }
         }
-        discovered = [{"cli": "codex", "model_id": "gpt-5.6-sol"}]
+        discovered = [{"runtime": "codex", "model_id": "gpt-5.6-sol"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, False, [], False), existing
         )
@@ -8341,7 +8341,7 @@ class TestBuildModelCatalog(unittest.TestCase):
             }
         }
         models_dev_data = {"openai": {"models": {"gpt-5.6-sol": {"id": "gpt-5.6-sol"}}}}
-        discovered = [{"cli": "codex", "model_id": "gpt-5.6-sol"}]
+        discovered = [{"runtime": "codex", "model_id": "gpt-5.6-sol"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, [], True), existing
         )
@@ -8360,7 +8360,7 @@ class TestBuildModelCatalog(unittest.TestCase):
         # vendor. Distinct from the recoverable case above (test_bare_id_with_both_sources_
         # unavailable_recovers_key_from_existing_catalog), which still gets its real recovered
         # provider, not None.
-        discovered = [{"cli": "codex", "model_id": "totally-unknown-bare-id"}]
+        discovered = [{"runtime": "codex", "model_id": "totally-unknown-bare-id"}]
         _, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, False, [], False), {}
         )
@@ -8381,7 +8381,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "last_verified": "2026-08-01",
             }
         }
-        discovered = [{"cli": "codex", "model_id": "bare-id"}]
+        discovered = [{"runtime": "codex", "model_id": "bare-id"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, False, [], False), existing
         )
@@ -8410,7 +8410,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "evaluations": {"artificial_analysis_intelligence_index": 91.0},
             }
         ]
-        discovered = [{"cli": "codex", "model_id": "gpt-5.6-sol"}]
+        discovered = [{"runtime": "codex", "model_id": "gpt-5.6-sol"}]
         catalog, rejections, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, False, aa_models, True), {}
         )  # models_dev_ok=False -> md_match None
@@ -8443,7 +8443,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "evaluations": {"artificial_analysis_intelligence_index": 91.0},
             }
         ]
-        discovered = [{"cli": "codex", "model_id": "gpt-5.6-sol"}]
+        discovered = [{"runtime": "codex", "model_id": "gpt-5.6-sol"}]
         catalog, rejections, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, False, aa_models, True), {}
         )  # models_dev_ok=False -> md_match None
@@ -8485,7 +8485,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
             }
         ]
-        discovered = [{"cli": "cursor-agent", "model_id": "claude-opus-5-thinking-xhigh"}]
+        discovered = [{"runtime": "cursor-agent", "model_id": "claude-opus-5-thinking-xhigh"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, aa_models, True), {}
         )
@@ -8536,7 +8536,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "pricing": {"price_1m_input_tokens": 15.0, "price_1m_output_tokens": 75.0},
             }
         ]
-        discovered = [{"cli": "cursor-agent", "model_id": "claude-opus-5-high"}]
+        discovered = [{"runtime": "cursor-agent", "model_id": "claude-opus-5-high"}]
         catalog, _, _ = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, aa_models, True), {}
         )
@@ -8570,7 +8570,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "evaluations": {"artificial_analysis_intelligence_index": 70.0},
             }
         ]
-        discovered = [{"cli": "opencode", "model_id": "openai/gpt-5-high"}]
+        discovered = [{"runtime": "opencode", "model_id": "openai/gpt-5-high"}]
         catalog, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, aa_models, True), {}
         )
@@ -8644,8 +8644,8 @@ class TestBuildModelCatalog(unittest.TestCase):
             },
         ]
         discovered = [
-            {"cli": "cursor-agent", "model_id": "claude-opus-5-high"},
-            {"cli": "cursor-agent", "model_id": "claude-opus-5-high-fast"},
+            {"runtime": "cursor-agent", "model_id": "claude-opus-5-high"},
+            {"runtime": "cursor-agent", "model_id": "claude-opus-5-high-fast"},
         ]
         catalog, rejections, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources(models_dev_data, True, aa_models, True), {}
@@ -8872,7 +8872,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             self.assertEqual(code, 0)
             result = json.loads(buf.getvalue())
             self.assertIn(
-                {"cli": "codex", "model_id": "vendor/typed-in-model"}, result["discovered"]
+                {"runtime": "codex", "model_id": "vendor/typed-in-model"}, result["discovered"]
             )
 
     def test_single_provider_cli_candidate_pulled_from_review_spec_toml(self):
@@ -8923,7 +8923,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             self.assertEqual(code, 0)
             result = json.loads(buf.getvalue())
             self.assertIn(
-                {"cli": "codex", "model_id": "vendor/already-registered"}, result["discovered"]
+                {"runtime": "codex", "model_id": "vendor/already-registered"}, result["discovered"]
             )
 
     def test_confirm_catalog_entry_rejects_invalid_entry_with_nonzero_exit(self):
@@ -9158,7 +9158,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             "openai/gpt-5.6-sol": {"runtimes": {"opencode": {"model_id": "openai/gpt-5.6-sol"}}},
         }
         keys = model_catalog.current_candidate_keys(
-            catalog, [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+            catalog, [{"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"}]
         )
         self.assertEqual(keys, {"openai/gpt-5.6-sol"})
         self.assertNotIn("_meta", keys)
@@ -9601,7 +9601,10 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
             self.assertFalse([k for k in entries if k.startswith("reseller/")])
             self.assertEqual(
                 result["discovered"],
-                [{"cli": "claude", "model_id": mid} for mid in detection.CLAUDE_FALLBACK_MODEL_IDS],
+                [
+                    {"runtime": "claude", "model_id": mid}
+                    for mid in detection.CLAUDE_FALLBACK_MODEL_IDS
+                ],
             )
             self.assertEqual(result["unmatched"], [])
 
@@ -9629,7 +9632,7 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
             result = json.loads(out)
             self.assertTrue(result["fetch_skipped"])
             self.assertEqual(len(md_fetch_count), 1)  # still just the one real fetch
-            self.assertIn({"cli": "claude", "model_id": new}, result["discovered"])
+            self.assertIn({"runtime": "claude", "model_id": new}, result["discovered"])
             self.assertEqual(result["unmatched"], [])
             entries, _ = model_catalog.split_catalog_meta(cache_read_json(catalog_path))
             self.assertIn(f"anthropic/{new}", entries)
@@ -10321,7 +10324,7 @@ openai/gpt-5.6-sol
                 u for u in result.get("unmatched", []) if u["model_id"] == "router-env/custom"
             ]
             self.assertEqual(len(unmatched), 1)
-            self.assertEqual(unmatched[0]["cli"], "opencode")
+            self.assertEqual(unmatched[0]["runtime"], "opencode")
             self.assertEqual(unmatched[0].get("image_input"), True)
             self.assertEqual(unmatched[0].get("image_input_source"), "opencode")
 
@@ -10329,7 +10332,7 @@ openai/gpt-5.6-sol
         """Vendor-unknown router carries image_input from runtime metadata."""
         with tempfile.TemporaryDirectory():
             result = cli.build_model_catalog(
-                [{"cli": "opencode", "model_id": "local-llm-coding"}],
+                [{"runtime": "opencode", "model_id": "local-llm-coding"}],
                 cli.CatalogSources({}, True, [], True),
                 {},
                 runtime_meta={("opencode", "local-llm-coding"): {"image_input": False}},
@@ -11505,7 +11508,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
             for mid in [*detection.CLAUDE_FALLBACK_MODEL_IDS, "claude-new-not-in-fallback"]:
                 self.assertEqual(entries[f"anthropic/{mid}"]["runtimes"]["claude"]["model_id"], mid)
             self.assertEqual(
-                result["discovered"], [{"cli": "opencode", "model_id": "openai/gpt-5.6-sol"}]
+                result["discovered"], [{"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"}]
             )
             self.assertFalse([u for u in result["unmatched"] if u.get("cli") == "claude"])
             self.assertEqual(
@@ -11519,14 +11522,14 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
             "reseller": {"models": {"claude-x": {"id": "claude-x"}}},
         }
         catalog, _, unmatched = cli.build_model_catalog(
-            [{"cli": "claude", "model_id": "claude-x"}],
+            [{"runtime": "claude", "model_id": "claude-x"}],
             cli.CatalogSources(md, True, [], False),
             {},
         )
         self.assertIn("anthropic/claude-x", catalog)
         self.assertEqual(unmatched, [])
         catalog, _, unmatched = cli.build_model_catalog(
-            [{"cli": "cursor-agent", "model_id": "claude-x"}],
+            [{"runtime": "cursor-agent", "model_id": "claude-x"}],
             cli.CatalogSources(md, True, [], False),
             {},
         )
@@ -11883,7 +11886,7 @@ class TestDispatchExecuteArgv(unittest.TestCase):
     """D-10: execute dispatch splits the template, formats per token, reports shlex.join."""
 
     def test_target_dir_with_braces_reaches_the_child_verbatim_as_one_argument(self):
-        candidate = {"cli": "opencode", "model": "m", "key": "opencode/m"}
+        candidate = {"runtime": "opencode", "model": "m", "key": "opencode/m"}
         captured = {}
 
         def fake_dispatch(argv, prompt, heartbeat_interval, timeout):
@@ -11909,7 +11912,7 @@ class TestDispatchExecuteArgv(unittest.TestCase):
         self.assertEqual(result["command"], shlex.join(captured["argv"]))
 
     def test_result_command_is_shlex_join_of_the_argv(self):
-        candidate = {"cli": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
+        candidate = {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
         captured = {}
 
         def fake_dispatch(argv, prompt, heartbeat_interval, timeout):

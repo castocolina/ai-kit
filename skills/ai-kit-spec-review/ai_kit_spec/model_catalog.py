@@ -274,10 +274,10 @@ def merge_catalog_entry(catalog: dict, model_id: str, entry: dict) -> tuple:
 
 def current_candidate_keys(catalog: dict, discovered_models: list) -> set:
     """The subset of catalog keys whose `runtimes` contain at least one (cli, model_id) pair
-    from `discovered_models` (the same [{"cli", "model_id"}, ...] shape Task 7 builds from a
+    from `discovered_models` (the same [{"runtime", "model_id"}, ...] shape Task 7 builds from a
     fresh runtimes snapshot). Used to exclude stale entries -- a model no longer installed --
     from ranking/presentation (Task 8) without deleting them from the cache."""
-    discovered_pairs = {(c["cli"], c["model_id"]) for c in discovered_models}
+    discovered_pairs = {(c["runtime"], c["model_id"]) for c in discovered_models}
     return {
         key for key, entry in catalog.items()
         if any((cli, rt.get("model_id")) in discovered_pairs

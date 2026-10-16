@@ -173,7 +173,7 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
         if "key" not in r:
             continue
         candidates.append({
-            "key": r["key"], "model": r.get("model", ""), "cli": r.get("cli"),
+            "key": r["key"], "model": r.get("model", ""), "runtime": r.get("cli"),
             "vendor": r.get("vendor", ""), "command": r.get("command"),
             "task_affinity": r.get("task_affinity"), "context_limit": r.get("context_limit"),
             "purpose": r.get("purpose"),
@@ -237,7 +237,7 @@ def _is_dispatchable(candidate: dict, build_execute_command_fn) -> bool:
     attempt an unverified invocation" rule). Since Phase 16.1's D-15 screen, claude and grok
     have no execute builder at all -- resolve_execute_candidates drops/warns them before this
     probe would even see them -- so this is a backstop, not the primary D-15 gate."""
-    cli = candidate.get("cli")
+    cli = candidate.get("runtime")
     if cli is None:
         return True
     try:
@@ -283,7 +283,7 @@ def compute_ladder_keys(task_markdown: str, candidates: list, files_touched_size
 
 
 def _injection_for_candidate(candidate: dict) -> dict:
-    cli = candidate["cli"]
+    cli = candidate["runtime"]
     if cli is None:
         return {"mode": "native_claude", "model": candidate["model"], "key": candidate["key"]}
     return {
@@ -357,7 +357,7 @@ def dispatch_superpowers_task(request: DispatchTaskRequest,
     guide = guidance or SuperpowersDispatchGuidance()
     seam = seams or SuperpowersDispatchSeams()
     injection = request.injection
-    candidate = {"cli": injection["cli"], "model": injection["model"],
+    candidate = {"runtime": injection["cli"], "model": injection["model"],
                  "effort": injection.get("effort"), "service_tier": injection.get("service_tier")}
     return seam.dispatch_execute_fn(
         ExecuteDispatchSpec(

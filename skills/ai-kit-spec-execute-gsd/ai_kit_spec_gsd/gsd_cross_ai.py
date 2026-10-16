@@ -24,7 +24,7 @@ def build_cross_ai_command(resolved_candidate: dict, target_dir: str,
     build_cross_ai_command({'cli': 'codex', ...}, ...) returned None regardless, every time. The
     only genuinely native case left to check here is cli is None (current-session dispatch,
     no CLI at all -- never needs a shell hook)."""
-    cli = resolved_candidate["cli"]
+    cli = resolved_candidate["runtime"]
     if cli is None:
         return None  # true native (current-session) dispatch -- no hook needed
     try:

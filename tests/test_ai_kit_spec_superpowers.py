@@ -97,7 +97,7 @@ class TestAssembleCandidates(unittest.TestCase):
         )
         self.assertEqual(top_n_keys, ["claude/opus-5", "codex/terra"])
         self.assertEqual(candidates[1]["task_affinity"], "backend")
-        self.assertEqual(candidates[1]["cli"], "codex")
+        self.assertEqual(candidates[1]["runtime"], "codex")
 
     def test_resolves_end_to_end_against_todays_real_config_shape(self):
         # CRITICAL finding: ai-kit-spec-config's real generated review-spec.toml carries the
@@ -244,7 +244,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "claude/opus-5",
-                "cli": None,
+                "runtime": None,
                 "model": "opus",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -263,7 +263,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "codex/terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -292,14 +292,14 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "claude/opus-5",
-                "cli": None,
+                "runtime": None,
                 "model": "opus",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
             },
             {
                 "key": "codex/terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -327,14 +327,14 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "gemini/main",
-                "cli": "gemini",
+                "runtime": "gemini",
                 "model": "gemini-3-pro",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
             },
             {
                 "key": "codex/terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -369,14 +369,14 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "claude-cli/opus-5",
-                "cli": "claude",
+                "runtime": "claude",
                 "model": "opus",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
             },
             {
                 "key": "codex/terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -401,7 +401,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "claude-cli/opus-5",
-                "cli": "claude",
+                "runtime": "claude",
                 "model": "opus",
                 "purpose": "execute",
                 "task_affinity": "backend",
@@ -421,7 +421,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "claude-cli/opus-5",
-                "cli": "claude",
+                "runtime": "claude",
                 "model": "opus",
                 "vendor": "anthropic",
                 "purpose": "execute",
@@ -464,9 +464,9 @@ class TestBuildDispatchInjection(unittest.TestCase):
     def test_resolve_injection_prints_the_d15_skip_warning_once(self):
         # A-IN-06: the ladder pass and the build pass both screen; warn only once.
         candidates = [
-            {"key": "g", "cli": "grok", "model": "m", "vendor": "x", "purpose": None,
+            {"key": "g", "runtime": "grok", "model": "m", "vendor": "x", "purpose": None,
              "task_affinity": None, "context_limit": None},
-            {"key": "c", "cli": "codex", "model": "m", "vendor": "o", "purpose": None,
+            {"key": "c", "runtime": "codex", "model": "m", "vendor": "o", "purpose": None,
              "task_affinity": None, "context_limit": None},
         ]
         out, stderr = io.StringIO(), io.StringIO()
@@ -500,7 +500,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "claude/opus-5",
-                "cli": None,
+                "runtime": None,
                 "model": "opus",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -533,7 +533,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "codex/terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -562,7 +562,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "codex/terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -590,7 +590,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "codex/terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -617,7 +617,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "codex/terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -646,7 +646,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "codex/terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -675,14 +675,14 @@ class TestBuildDispatchInjection(unittest.TestCase):
         candidates = [
             {
                 "key": "claude/opus-5",
-                "cli": None,
+                "runtime": None,
                 "model": "opus",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
             },
             {
                 "key": "codex/terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -753,7 +753,7 @@ class TestComputeResumeExclusions(unittest.TestCase):
         candidates = [
             {
                 "key": "claude/opus-5",
-                "cli": None,
+                "runtime": None,
                 "model": "opus",
                 "task_affinity": "backend",
                 "context_limit": 1_000_000,
@@ -820,7 +820,7 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
             ),
         )
         self.assertEqual(captured["target_dir"], "/real/scratch/dir")
-        self.assertEqual(captured["candidate"]["cli"], "codex")
+        self.assertEqual(captured["candidate"]["runtime"], "codex")
         self.assertEqual(captured["candidate"]["effort"], "high")
         self.assertEqual(result["returncode"], 0)
 
@@ -978,7 +978,7 @@ class TestCliResolveInjection(unittest.TestCase):
             {
                 "key": "claude/opus-5",
                 "model": "opus",
-                "cli": None,
+                "runtime": None,
                 "vendor": "anthropic",
                 "task_affinity": None,
                 "context_limit": None,
@@ -1027,7 +1027,7 @@ class TestCliResolveInjection(unittest.TestCase):
             {
                 "key": "claude/opus-5",
                 "model": "opus",
-                "cli": None,
+                "runtime": None,
                 "vendor": "anthropic",
                 "task_affinity": None,
                 "context_limit": None,
@@ -1089,7 +1089,7 @@ class TestCliResolveInjection(unittest.TestCase):
             {
                 "key": "claude/opus-5",
                 "model": "opus",
-                "cli": None,
+                "runtime": None,
                 "vendor": "anthropic",
                 "task_affinity": None,
                 "context_limit": None,
@@ -1140,7 +1140,7 @@ class TestCliResolveInjection(unittest.TestCase):
             {
                 "key": "claude/opus-5",
                 "model": "opus",
-                "cli": None,
+                "runtime": None,
                 "vendor": "anthropic",
                 "task_affinity": None,
                 "context_limit": None,
@@ -1192,7 +1192,7 @@ class TestCliResolveInjection(unittest.TestCase):
             {
                 "key": "small-context/model",
                 "model": "opus",
-                "cli": None,
+                "runtime": None,
                 "vendor": "anthropic",
                 "task_affinity": None,
                 "context_limit": 10,
@@ -1244,7 +1244,7 @@ class TestCliResolveInjection(unittest.TestCase):
             {
                 "key": "claude/opus-5",
                 "model": "opus",
-                "cli": None,
+                "runtime": None,
                 "vendor": "anthropic",
                 "task_affinity": None,
                 "context_limit": None,
@@ -1252,7 +1252,7 @@ class TestCliResolveInjection(unittest.TestCase):
             {
                 "key": "codex/terra",
                 "model": "gpt-5.6-terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "vendor": "openai",
                 "task_affinity": None,
                 "context_limit": None,
@@ -1316,7 +1316,7 @@ class TestCliResolveInjection(unittest.TestCase):
             {
                 "key": "claude/opus-5",
                 "model": "opus",
-                "cli": None,
+                "runtime": None,
                 "vendor": "anthropic",
                 "task_affinity": None,
                 "context_limit": None,
@@ -1324,7 +1324,7 @@ class TestCliResolveInjection(unittest.TestCase):
             {
                 "key": "codex/terra",
                 "model": "gpt-5.6-terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "vendor": "openai",
                 "task_affinity": None,
                 "context_limit": None,
