@@ -24,9 +24,13 @@ file with a matching name exists in the project root.
 ## Codex confinement
 
 The hook passes `--codex-sandbox workspace-write` for a codex executor, the same confinement the
-old direct-dispatch path used. Whether GSD's own git commits succeed under `workspace-write` is
-unverified: the sandbox allows writes inside the project directory, but `.git` writability under
-it has not been confirmed.
+old direct-dispatch path used. The runner then uses `--sandbox workspace-write` instead of the
+bypass, so writes stay inside the project directory plus `/tmp` and `$TMPDIR`, which
+workspace-write always allows. Whether GSD's own git commits succeed under `workspace-write` is
+unverified: `.git` writability under it has not been confirmed. Every other exec target runs with
+full permissions and gets only the soft-confinement sentence in the guidance file, which is
+guidance, not a boundary. `claude` is review-only and never a hook target. pi exec uses the
+runner's pi formula, verified by its hermetic self-test only; live verification is Phase 22.
 
 ## History: the guidance file supersedes the old guidance-append step
 
@@ -41,11 +45,19 @@ from the plan file to build its `$TASK_PROMPT`, not necessarily the whole file v
 appended block could in principle land outside what GSD actually extracts.
 
 A later Step 2 composed that guidance inside a `dispatch-execute` wrapper at the moment of the
-subprocess call. The hook now names the project's own supervised runner instead, and Step 2
-writes the same guidance (reinforcement with GSD's SUMMARY.md format block, tooling guidance,
-and the soft-confinement sentence for every runtime except codex) into
-`.planning/scripts/cross-ai-guidance.md`, which the hook places before the prompt with the
-runner's own preamble off, so nothing is said twice.
+subprocess call. The hook now names the project's own supervised runner instead. Step 2 renders or
+upgrades that runner and the guidance file through curated-config `ensure-runner`; a user-edited
+runner is never
+overwritten and gets a `.new` file plus the printed notes. The guidance (reinforcement with GSD's
+SUMMARY.md format block, tooling guidance, and the soft-confinement sentence for every runtime
+except codex) lands in `.planning/scripts/cross-ai-guidance.md`, which the hook places before the
+prompt with the runner's own preamble off, so nothing is said twice. The hook stays unquoted: GSD
+expands the stored value by word splitting only, so a quote character would be a literal, not a
+quoting boundary.
+
+A custom entry (a `command` and no `runtime`) is the one exception to "every subprocess runs
+through the runner": the fixed-argv custom launcher runs it on the same supervision core, and only
+as a reviewer. Exec mode routes it `review_only`, so it never becomes a GSD hook.
 
 The underlying guidance functions still live in `ai_kit_spec.dispatch_guidance`
 (framework-agnostic, shared with any future `ai-kit-spec-execute-<other-framework>` adapter) and

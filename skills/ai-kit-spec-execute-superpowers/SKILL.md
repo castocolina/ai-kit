@@ -1,13 +1,13 @@
 ---
 name: ai-kit-spec-execute-superpowers
-description: Resolves the best available, live-quota-checked model/CLI for each task in a superpowers-generated implementation plan, then delegates actual execution to superpowers:subagent-driven-development, injecting the resolved model/CLI at its implementer-dispatch point without bypassing that harness's TDD enforcement, agent-identity/resume, task review, fix-loop, or final-review pattern. Use when ai-kit-spec-execute detects a superpowers-generated plan (docs/superpowers/plans/*.md) being run under subagent-driven-development and needs to resolve a model/CLI for it; not for superpowers:executing-plans, which executes every task inline with no subagent-dispatch point to inject into.
+description: Resolves the best available, live-quota-checked (runtime, model) pair for each task in a superpowers-generated implementation plan, then delegates actual execution to superpowers:subagent-driven-development, injecting the resolved pair at its implementer-dispatch point without bypassing that harness's TDD enforcement, agent-identity/resume, task review, fix-loop, or final-review pattern. Use when ai-kit-spec-execute detects a superpowers-generated plan (docs/superpowers/plans/*.md) being run under subagent-driven-development and needs to resolve a pair for it; not for superpowers:executing-plans, which executes every task inline with no subagent-dispatch point to inject into.
 ---
 
 # ai-kit-spec-execute-superpowers
 
-**This skill never dispatches a task itself.** It resolves WHICH model/CLI a task should use, then
-hands that resolution to `superpowers:subagent-driven-development` at its one documented dispatch
-point ("1. Dispatch the implementer"). That skill keeps full ownership of TDD enforcement,
+**This skill never dispatches a task itself.** It resolves WHICH pair a task should use, then hands
+that resolution to `superpowers:subagent-driven-development` at its one documented dispatch point
+("1. Dispatch the implementer"). That skill keeps full ownership of TDD enforcement,
 fresh-subagent-per-task, agent identity and resume, task review, fix loops, and the final
 whole-branch review. `superpowers:executing-plans` is out of scope: it runs every task inline,
 with no dispatch point to inject into.
@@ -130,7 +130,11 @@ again this run, even though the line repeats on every task and fix round. Never 
 user's behalf.
 
 **Branch on `$INJECTION_MODE` before reading any other field.** Only `native` and
-`external_cli` carry `key`/`runtime`:
+`external_cli` carry `key`/`runtime`. Both come from one routing decision, never from a stored
+field: `native` when this host runs the pair itself, `external_cli` when it runs as a subprocess.
+A route of `unverified` still dispatches as `external_cli`: the runtime's model list was
+unavailable after one refresh, so neither ai-kit nor the runner checks the model before the CLI
+runs, and stderr prints `ai-kit-spec: dispatching <key> unverified: ...`.
 
 ```bash
 if [ "$INJECTION_MODE" != "quota_exhausted" ] && [ "$INJECTION_MODE" != "no_candidate" ]; then
@@ -150,10 +154,10 @@ Record both when the block ran. `$INJECTION_KEY` is the ladder key (e.g. `codex/
 - **`quota_exhausted`** — read `any_quota_recoverable`
   (`python3 -c 'import json,sys; print(json.loads(sys.argv[1])["any_quota_recoverable"])' "$INJECTION_JSON"`).
   It, not `all_auth_failures`, is the gate. `reasons` holds `"quota"`, `"auth"`,
-  `"billing_or_access"`,
-  `"capacity"`, `"git_timeout"`, `"timeout"`, `"configuration"`, `"dispatch_unavailable"`,
-  `"real_error"`, or a route name (`"bad_model"`, `"review_only"`, `"not_installed"`,
-  `"no_inventory"`, `"unknown_runtime"`, `"no_model"`). Only `"quota"` is worth waiting for.
+  `"billing_or_access"`, `"capacity"`, `"git_timeout"`, `"timeout"`, `"configuration"`,
+  `"dispatch_unavailable"`, `"real_error"`, or a route name (`"bad_model"`, `"review_only"`,
+  `"not_installed"`, `"no_inventory"`, `"unknown_runtime"`, `"no_model"`). Only `"quota"` is
+  worth waiting for. A skip route is recorded under that route name and never picked.
   - **`any_quota_recoverable == False`** — every candidate failed for a reason waiting never fixes.
     Do **not** schedule `CronCreate`. STOP this wave and tell the user which key needs what fix,
     read off `reasons`: `"auth"` needs login or entitlement, `"configuration"` a fixed `command`
@@ -174,12 +178,16 @@ Record both when the block ran. `$INJECTION_KEY` is the ladder key (e.g. `codex/
 
 ## Step 3: Dispatch the implementer — apply the injection
 
-**`mode == "native"`:** the host's own subagent, unchanged. On Claude Code, pass `model` as the
-`Agent` tool's `model` parameter (omit it when empty) and record the returned agent identity;
-fix-loop rounds 1–3 resume that same agent. Its round 4/5 model bump is that skill's own judgment,
-with no ladder.
+A reviewer or executor is a (runtime, model) pair. Each call runs it natively when its runtime is the current host and the host can select that model; otherwise it runs as a subprocess through the supervised runner. An entry with neither a runtime nor a model is the session default, which the host always runs natively. Today only Claude Code selects a model per call (its sonnet, opus, haiku and fable aliases); every other host runs only its session default natively.
 
-**`mode == "external_cli"`:** a CLI process exits when done, so there is no live agent to resume.
+**`mode == "native"`:** this host's own subagent mechanism, unchanged. On Claude Code, pass `model`
+as the `Agent` tool's `model` parameter (omit it when empty) and record the returned agent identity;
+fix-loop rounds 1–3 resume that same agent. Its round 4/5 model bump is that skill's own judgment,
+with no ladder. On any other host the native case is only the session default, so omit `model` and
+let the host use its current session.
+
+**`mode == "external_cli"`:** a subprocess through the supervised runner. A CLI process exits when
+done, so there is no live agent to resume.
 Every dispatch, first attempt and every fix round, uses subagent-driven-development's documented
 fallback: a fresh implementer carrying the brief path, the report-file path, and the findings, with
 the report file as the persistent memory.
@@ -222,8 +230,9 @@ back to `write` for this task.
 2. **Write the status contract** (`DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`, from
    implementer-prompt.md's "After Review Findings") to `$FORMAT_BLOCK_FILE`. It becomes the
    dispatch's format block.
-3. **Dispatch.** `dispatch-task` prepares tooling guidance itself. `--timeout 900` is a fixed
-   constant: a candidate's per-entry `timeout_tiers` is not plumbed into this adapter.
+3. **Dispatch.** `dispatch-task` prepares tooling guidance itself and runs the pair through the
+   supervised runner. `--timeout 900` is a fixed constant: a candidate's per-entry `timeout_tiers`
+   is not plumbed into this adapter.
 
 ```bash
 DISPATCH_RESULT_JSON="$(python3 "$SHIM" dispatch-task --injection-json "$INJECTION_JSON" \
@@ -276,6 +285,24 @@ EXCLUDED_KEYS_JSON="$(python3 -c 'import json,sys; print(json.dumps(sorted(set(j
 - **`"real_error"`** — never retried unchanged. Handle it as subagent-driven-development's
   `BLOCKED`: more context and retry, a capability-escalated candidate (below), split the task, or
   rule on a plan defect.
+
+**Exec confinement.** Codex runs under `--codex-sandbox workspace-write`: the runner uses
+`--sandbox workspace-write` instead of the bypass, so writes stay inside the target dir plus
+`/tmp` and `$TMPDIR`, which workspace-write always allows. Whether that sandbox also allows writes
+inside `.git` is unverified. Every other exec target runs with full permissions; the guidance it
+receives tells it to write only inside the target dir, and that prose is guidance, not a boundary.
+`claude` is review-only: routing skips an exec-mode `claude` candidate on any other host, so it
+never runs here. pi exec uses the runner's pi formula, verified by its hermetic self-test only;
+live verification is Phase 22, and stderr prints that note before the run.
+
+**The one exception.** Every subprocess runs through the supervised runner, except a custom entry
+(a `command` and no `runtime`): exec mode routes it `review_only`, so it is skipped for execution
+and never reaches `dispatch-task`. In review it runs through the fixed-argv custom launcher on the
+same supervision core.
+
+**Node.** Subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
+Without Node, the runner fails closed as `dispatch_unavailable`
+(`ai-kit-spec: subprocess dispatch needs Node`) and the session default still runs.
 
 **Rounds 4–5 capability escalation (`external_cli` only).** When `$FIX_ROUND >= 4` after the
 increment, subagent-driven-development requires "a MORE CAPABLE model". Excluding the stuck key and

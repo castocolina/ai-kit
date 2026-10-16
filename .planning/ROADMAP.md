@@ -396,29 +396,30 @@ names. Source: `.planning/research/2026-10-13-audit/18-runtime-detection-and-sub
      runtime id, whose binary is `cursor-agent`.
   3. The affected SKILL.md files and AGENTS.md's Architecture section use the one-model wording,
      and every rewritten SKILL.md passes `/skill-judge` in code review.
-**Plans**: TBD
-- [x] 18.1-01-PLAN.md
-- [x] 18.1-02-PLAN.md
-- [x] 18.1-03-PLAN.md
-- [x] 18.1-04-PLAN.md
-- [x] 18.1-05-PLAN.md
-- [x] 18.1-06-PLAN.md
-- [x] 18.1-07-PLAN.md
-- [x] 18.1-08-PLAN.md
-- [x] 18.1-09-PLAN.md
-- [x] 18.1-10-PLAN.md
-- [x] 18.1-11-PLAN.md
-- [x] 18.1-12-PLAN.md
-- [x] 18.1-13-PLAN.md
-- [x] 18.1-14-PLAN.md
-- [x] 18.1-15-PLAN.md
-- [x] 18.1-16-PLAN.md
-- [x] 18.1-17-PLAN.md
-- [x] 18.1-18-PLAN.md
-- [x] 18.1-19-PLAN.md
-- [ ] 18.1-20-PLAN.md
-- [ ] 18.1-21-PLAN.md
-- [ ] 18.1-22-PLAN.md
+**Plans**: 22 plans
+
+- [x] 18.1-01-PLAN.md — Introduce the one runtime-id table (D-01) in `ai_kit_spec/detection.py` and switch ai_kit_spec to the ids
+- [x] 18.1-02-PLAN.md — Move curated-config v2 to runtime ids, dropping its own cursor/cursor-agent translation
+- [x] 18.1-03-PLAN.md — Migrate legacy caches in memory: the catalog's `runtimes.cursor-agent` keys become `runtimes.cursor` at the one read choke point
+- [x] 18.1-04-PLAN.md — Close the id rename: the cursor CLI profile is renamed to its id and three guards keep the retired id out
+- [x] 18.1-05-PLAN.md — Apply D-24 before the schema change: rename the cross-module `cli` dict keys that name a runtime to `runtime`
+- [x] 18.1-06-PLAN.md — Write the legacy normalizer as pure, fully tested functions plus `routing.host_can_select`, without wiring them into config loading yet
+- [x] 18.1-07-PLAN.md — Wire the normalizer at the `cfg_resolve`/`cfg_combine` choke point and make the pair the in-memory schema for every consumer
+- [x] 18.1-08-PLAN.md — Finish the pair schema on the save side and retire `native_runtime`: strict validation at save, a normalizing re-save
+- [x] 18.1-09-PLAN.md — Add per-call routing: a `routing` module wired into `resolve-reviewers` so every reviewer gets an ephemeral route
+- [x] 18.1-10-PLAN.md — Rename superpowers' host-specific mode and route its candidates per call: `native_claude` becomes `native`
+- [x] 18.1-11-PLAN.md — Bump the runner template to 3 with the outer-timeout fix and non-git dispatch
+- [x] 18.1-12-PLAN.md — Finish runner template 3: cursor bracket model ids, the realpath guard on a bare `agent`, `--prepend-file` and `--codex-sandbox`
+- [x] 18.1-13-PLAN.md — Add the thin Python wrapper over the runner and the custom-entry launcher on one supervision core
+- [x] 18.1-14-PLAN.md — Swap the review lane onto `runner_dispatch`: reviewer dispatch, the quota probe and `check-reviewer`
+- [x] 18.1-15-PLAN.md — Swap the direct exec lane onto the runner: `dispatch_execute` and superpowers' dispatch and failure classification
+- [x] 18.1-16-PLAN.md — Make the project-local runner something ai-kit can render and upgrade on demand, and give both GSD hook writers one hook-string builder
+- [x] 18.1-17-PLAN.md — Point ai-kit-spec-execute-gsd's `cross_ai_hook` at the project-local runner with its guidance file before the prompt
+- [x] 18.1-18-PLAN.md — Delete what the runner replaced while keeping every feature it carried, including grok's custom-entry generator
+- [x] 18.1-19-PLAN.md — Rewrite the review-side documentation for one runtime model: the review and config skills, their references and AGENTS.md
+- [ ] 18.1-20-PLAN.md — Rewrite the execute-side, curated-config and opencode-providers documentation for one runtime model and amend the planning sources
+- [ ] 18.1-21-PLAN.md — Run the skill-judge loop on the three review-side skills rewritten in 18.1-19/20
+- [ ] 18.1-22-PLAN.md — Close the phase: the skill-judge loop on the three execute-side skills and the phase verdict over all six
 
 ### Phase 19: Evaluation on Claude
 

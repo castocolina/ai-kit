@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-execute-gsd
-description: Resolves the best available model/CLI for a GSD (Get Sh*t Done) phase, prepares GSD's own .planning/config.json (native runtime + model_profile_overrides, or workflow.cross_ai_command), then invokes GSD's own /gsd-execute-phase skill directly to perform the actual execution -- never subprocess-dispatches GSD itself. Use when (1) ai-kit-spec-execute detects a GSD-managed plan (.planning/ directory present) and needs to run a phase with a resolved model, (2) a GSD phase needs a native-tier model pin (runtime + model_profile_overrides) written before execution, or (3) a GSD plan is opted into cross-AI delegation (frontmatter `cross_ai: true`) and needs workflow.cross_ai_command wired to this adapter's instrumented dispatch wrapper before /gsd-execute-phase runs.
+description: Resolves the best available (runtime, model) pair for a GSD (Get Sh*t Done) phase, prepares GSD's own .planning/config.json (a native-tier pin of runtime plus model_profile_overrides, or workflow.cross_ai_command naming the project's supervised runner), then invokes GSD's own /gsd-execute-phase skill directly to perform the actual execution -- never subprocess-dispatches GSD itself. Use when (1) ai-kit-spec-execute detects a GSD-managed plan (.planning/ directory present) and needs to run a phase with a resolved pair, (2) a GSD phase needs a native-tier model pin (runtime + model_profile_overrides) written before execution, or (3) a GSD plan is opted into cross-AI delegation (frontmatter `cross_ai: true`) and needs workflow.cross_ai_command wired to the project's supervised runner before /gsd-execute-phase runs.
 ---
 
 # ai-kit-spec-execute-gsd
@@ -13,7 +13,10 @@ description: Resolves the best available model/CLI for a GSD (Get Sh*t Done) pha
   gsd-tools' own `config-set` (validation, locking, workstream-aware path) and records ownership.
 - **Never write `workflow.cross_ai_command` without checking the plan's `cross_ai: true`
   frontmatter**, and never put the raw vendor CLI string there — the hook names the project's own
-  supervised runner (Step 2), never a raw vendor CLI string.
+  supervised runner (Step 2), never a raw vendor CLI string. A custom entry (a `command` and no
+  `runtime`) is the one exception to "every subprocess runs through the runner": it runs through
+  the fixed-argv custom launcher on the same supervision core, and only as a reviewer. Exec mode
+  routes it `review_only`, so it is never a GSD hook.
 - **Never run `trust-local` without an explicit yes**, and never ask twice in one wave.
 - **Never parse an empty result** — exit 2 from any shim call means STOP and relay stderr.
 
@@ -156,6 +159,8 @@ default runs unmodified). Never schedule a wake for these.
 
 ## Step 2: Act on the dispatch mode
 
+A reviewer or executor is a (runtime, model) pair. Each call runs it natively when its runtime is the current host and the host can select that model; otherwise it runs as a subprocess through the supervised runner. An entry with neither a runtime nor a model is the session default, which the host always runs natively. Today only Claude Code selects a model per call (its sonnet, opus, haiku and fable aliases); every other host runs only its session default natively.
+
 **Mindset before writing anything here:**
 - Resolve dispatch mode fresh every run, never reuse a cached decision — quota state, installed
   CLIs, and per-plan `cross_ai: true` opt-in can all change between runs, and a stale cached mode
@@ -168,20 +173,24 @@ default runs unmodified). Never schedule a wake for these.
   adapter-owned hook from a PRIOR run must never keep dispatching cross-AI just because THIS run
   didn't touch it.
 
-- `native_tier` (either `written` value): the resolved mode is NOT cross-AI — run the
-  mode-transition cleanup below before proceeding to Step 3, in case a PRIOR run of this project
-  left an adapter-owned cross-AI hook active that this run's resolution superseded.
+- `native_tier` (either `written` value): this host runs the pair itself, so the resolved mode is
+  NOT cross-AI — run the mode-transition cleanup below before proceeding to Step 3, in case a PRIOR
+  run of this project left an adapter-owned cross-AI hook active that this run's resolution
+  superseded.
   `written=False`/`provenance="existing_gsd_config"`: GSD's own config already carries a genuine
   (non-adapter-owned) value at `model_profile_overrides[runtime][tier]` — a real user pin, honored
   as-is, nothing further to write.
   `written=True`/`provenance="resolved_candidate"`: the CLI call already wrote the pin, taking a
   per-run backup first — `model_profile` for a claude tier, else `runtime` (if needed) and
   `model_profile_overrides[runtime][tier]`.
-- `cross_ai_hook`: **write GSD's own real, confirmed `workflow.*` keys** (Task 1 finding 1) in
-  one `write-workflow-keys` call (`--cwd "$CWD"`, `--run-id "$RUN_ID"` — the same `run_id` from
+- `cross_ai_hook`: the pair runs as a subprocess through the project's own supervised runner.
+  **Write GSD's own real, confirmed `workflow.*` keys** (Task 1 finding 1) in one
+  `write-workflow-keys` call (`--cwd "$CWD"`, `--run-id "$RUN_ID"` — the same `run_id` from
   Step 1), without threading a config snapshot between calls. Exit 1 means a key failed and
   earlier keys from that call were reverted (any in `revert_failed` still hold the new value);
   exit 2 means gsd-tools could not be resolved, as in Step 1. Show the output to the user and STOP.
+  A model id the unquoted hook cannot carry comes back from Step 1 as `fallback_notice` with
+  reason `unsafe_hook_token` instead of a broken hook string.
 
   **`workflow.cross_ai_command` is NOT the raw external CLI command — it names the project's own
   supervised runner**, and the guidance file is tracked next to it under `.planning/scripts/`.
@@ -223,8 +232,26 @@ default runs unmodified). Never schedule a wake for these.
   A non-zero producer exit, empty guidance, a missing curated shim, or an `ensure-runner` exit of
   1 (not ready: a user-edited runner gets a `.new` file plus the printed notes) or 2 (error)
   writes nothing: show the printed notes to the user, run the mode-transition cleanup above, and
-  continue as `fallback_notice`. Exit 0 writes the hook and the 900-second timeout. The guidance
-  file goes before the prompt and the runner's own preamble is off, so nothing is said twice.
+  continue as `fallback_notice`. Exit 0 writes the hook and the 900-second timeout.
+
+  **Hook setup.** This skill renders or upgrades the runner and the guidance file through
+  curated-config `ensure-runner`; a user-edited runner is never overwritten and gets a `.new` file
+  instead, with the printed notes. The guidance file goes before the prompt and the runner's own
+  preamble is off, so nothing is said twice. The hook stays unquoted because GSD expands the stored
+  value by word splitting only, never as shell syntax — see `references/dispatch-notes.md`.
+
+  **Exec confinement.** Codex runs under `--codex-sandbox workspace-write`: the runner uses
+  `--sandbox workspace-write` instead of the bypass, so writes stay inside the project dir plus
+  `/tmp` and `$TMPDIR`, which workspace-write always allows. Whether that sandbox also allows
+  writes inside `.git` is unverified. Every other exec target runs with full permissions; the
+  guidance file tells it to write only inside the project dir, and that prose is guidance, not a
+  boundary. `claude` is review-only and never a hook target. pi exec uses the runner's pi formula,
+  verified by its hermetic self-test only; live verification is Phase 22, and stderr prints that
+  note before the hook is written.
+
+  **Node.** Subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
+  Without Node, the runner fails closed as `dispatch_unavailable`
+  (`ai-kit-spec: subprocess dispatch needs Node`) and the session default still runs.
 
   **Explicit scope boundary (Global Constraints): this workflow-level write alone does NOT make
   GSD delegate to cross-AI.** Real GSD also requires the TARGET PLAN's own frontmatter to carry
@@ -250,9 +277,9 @@ python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
 
 ## Step 3: Prepare confirmed-only tooling guidance, then invoke GSD's own `/gsd-execute-phase` skill
 
-Resolve the CLI identity to prepare tooling guidance for:
+Resolve the runtime to prepare tooling guidance for:
 - `native_tier`: use `--runtime "$RESULT_RUNTIME"` (the adapter fills the native Claude alias).
-- `cross_ai_hook`: use `--runtime "$RESULT_RUNTIME"` directly (the real external runtime).
+- `cross_ai_hook`: use `--runtime "$RESULT_RUNTIME"` directly (the runtime the hook runs).
 - `fallback_notice`: omit `--runtime` entirely (no candidate was resolved — generic detection only).
 
 ```bash

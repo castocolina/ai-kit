@@ -13,11 +13,14 @@ the START of composing the dispatch prompt, immediately AFTER that round's `$FIX
 prompt, whenever `$FIX_ROUND >= 4` (i.e. `subagent-driven-development`'s own fix-loop, unmodified
 per Step 4, has re-entered this dispatch point for the 4th or 5th time on this task) AND the mode in
 play is `external_cli` (a `native` fix-loop round is unchanged — its round 4/5 model-tier
-bump is that skill's own `Agent`-tool dispatch judgment, made fresh each round exactly as
+bump is that skill's own dispatch judgment, made fresh each round exactly as
 `subagent-driven-development`'s own Model Selection section already specifies, with no ladder
-involved). `subagent-driven-development`'s own Model Selection section requires rounds 4–5 to
-"dispatch a fresh implementer on a MORE CAPABLE model" — a genuine capability bump, not merely a
-different one.
+involved). `external_cli` means a subprocess through the supervised runner; `native` means this
+host runs the pair itself. A custom entry (a `command` and no `runtime`) is the one exception to
+that runner path: exec mode routes it `review_only`, so it never reaches this escalation.
+`subagent-driven-development`'s own Model Selection section requires rounds 4–5 to "dispatch a
+fresh implementer on a MORE CAPABLE model" — a genuine capability bump, not merely a different
+one.
 
 Naively excluding the stuck candidate's key and letting `resolve-injection` re-walk the ladder does
 NOT guarantee this: the next surviving candidate by quota/affinity/context ranking could easily be
@@ -78,7 +81,7 @@ Re-run `resolve-injection` with the SAME `--exclude-keys-json "$EXCLUDED_KEYS_JS
 `resolve-injection` invocation, plus this one extra argument) — this excludes every
 genuinely-tried-and-failed candidate exactly as before, AND every candidate ranked at-or-below the
 stuck one — i.e. same-or-weaker — never just the stuck one alone. If it resolves to a real candidate
-(`native`/`external_cli`), that IS the capability-bumped implementer for this round: proceed
+(`native` or `external_cli`), that IS the capability-bumped implementer for this round: proceed
 with the new injection WITHOUT reassigning `$EXCLUDED_KEYS_JSON`, framing the dispatch exactly as
 `subagent-driven-development`'s own text requires: "A prior implementer attempted this task [N]
 times; you own it now. Read the report file for what was tried."

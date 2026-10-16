@@ -21,6 +21,15 @@ The `quota_exhausted` shape (`mode`, `task_type`, `tried`, `reasons`, `all_auth_
 `ladder_keys`) carry no `key`/`runtime`. Reading `["key"]` first raised `KeyError` on exactly the
 cases Step 2 exists to handle.
 
+`native` and `external_cli` are the two dispatch modes of one routing decision, never stored
+fields. `native` means this host runs the pair itself (today only Claude Code selects a model per
+call; every other host runs only its session default natively). `external_cli` means a subprocess
+through the supervised runner, including a route of `unverified`: the model list was unavailable,
+so neither side checks the model before the CLI runs. A custom entry (a `command` and no
+`runtime`) is the one exception to that runner path, and only in review: exec mode routes it
+`review_only`, so it is skipped here. In review the fixed-argv custom launcher runs it on the same
+supervision core.
+
 ## Why `$INJECTION_KEY`, never `$INJECTION_RUNTIME`, goes into exclusions
 
 `$INJECTION_KEY` is the ladder key (`codex/terra`). `$INJECTION_RUNTIME` is the runtime id
@@ -62,6 +71,15 @@ whenever the prose mentions one in passing. In the extraction regex, the longer 
 `DONE` so the alternation cannot stop at the `DONE` prefix, and `tail -1` takes the final status
 when the reply echoes the allowed-values list first. `rg` is used because tool detection already
 confirms it on every supported environment.
+
+## Why exec confinement differs by runtime
+
+Codex runs under `--codex-sandbox workspace-write`, so its writes stay inside the target dir plus
+`/tmp` and `$TMPDIR`, which workspace-write always allows; whether `.git` is writable under that
+sandbox is unverified. Every other exec target runs with full permissions and gets only the
+soft-confinement sentence, which is guidance, not a boundary. `claude` is review-only and never an
+exec target. pi exec uses the runner's pi formula, verified by its hermetic self-test only until
+Phase 22.
 
 ## Why `--timeout 900` is a fixed constant
 

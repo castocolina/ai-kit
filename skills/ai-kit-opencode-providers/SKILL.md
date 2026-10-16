@@ -127,9 +127,10 @@ qualifier when the local review-spec sets `strategy = "local-only"`, because
 naming the global file does not by itself mean the referencing reviewer is
 live.
 
-Matching is **substring**-based and informational. A provider id that is also
-a runtime name — `opencode` or `codex`, say — matches the `cli` field of every
-reviewer configured for that runtime, producing warnings that have nothing to
+Matching is **substring**-based and informational. `remove` scans each reviewer's
+`runtime`, its legacy `cli` and its `model`. A provider id that is also a runtime
+name — `opencode` or `codex`, say — matches the `runtime` (and a leftover legacy `cli`) of
+every reviewer configured for that runtime, producing warnings that have nothing to
 do with the provider being removed. That is expected; it never blocks
 removal. Read the named field and locator to judge each line. Over-warning is
 the deliberate direction for a non-blocking check.
@@ -169,6 +170,6 @@ the deliberate direction for a non-blocking check.
   reviewer.
 - Never relay a "its value is not an object" result to the user as "that
   provider is not in your config" — the key **is** in their file.
-- Never present a substring match on a `cli` field as proof that the reviewer
-  uses the provider being removed. A provider id that is also a runtime name
-  matches every reviewer configured for that runtime.
+- Never present a substring match on a `runtime`, legacy `cli` or `model` field as
+  proof that the reviewer uses the provider being removed. A provider id that is also
+  a runtime name matches every reviewer configured for that runtime.

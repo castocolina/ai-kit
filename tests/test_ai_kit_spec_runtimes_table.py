@@ -547,7 +547,14 @@ _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 REWRITTEN = [
     "skills/ai-kit-spec-review/SKILL.md",
     "skills/ai-kit-spec-config/SKILL.md",
+    "skills/ai-kit-spec-execute-superpowers/SKILL.md",
+    "skills/ai-kit-spec-execute-gsd/SKILL.md",
+    "skills/ai-kit-gsd-curated-config/SKILL.md",
+    "skills/ai-kit-opencode-providers/SKILL.md",
 ]
+# The canonical paragraph describes dispatch, so only the skills that do dispatch carry it.
+# curated-config and opencode-providers are checked for forbidden tokens only.
+PAIR_RULE_SKILLS = REWRITTEN[:4]
 REFERENCES = [
     "skills/ai-kit-spec-review/references/cross-ai-dispatch.md",
     "skills/ai-kit-spec-review/references/cli-profiles/claude.md",
@@ -556,7 +563,22 @@ REFERENCES = [
     "skills/ai-kit-spec-review/references/cli-profiles/opencode.md",
     "skills/ai-kit-spec-review/references/cli-profiles/grok.md",
     "skills/ai-kit-spec-config/references/cli-model-selection.md",
+    "skills/ai-kit-spec-execute-superpowers/references/escalation.md",
+    "skills/ai-kit-spec-execute-superpowers/references/design-notes.md",
+    "skills/ai-kit-spec-execute-gsd/references/dispatch-notes.md",
 ]
+_EXEC_SKILLS = (
+    "skills/ai-kit-spec-execute-superpowers/SKILL.md",
+    "skills/ai-kit-spec-execute-gsd/SKILL.md",
+)
+_CONFINEMENT_TOKENS = (
+    "--codex-sandbox",
+    "/tmp",
+    "$TMPDIR",
+    "full permissions",
+    "self-test",
+    "Phase 22",
+)
 
 _FORBIDDEN = (
     _RETIRED_FIELD,
@@ -595,7 +617,16 @@ class TestWordingGrep(unittest.TestCase):
         self.assertEqual(hits, [])
 
     def test_pair_rule_paragraph(self):
-        missing = [path for path in REWRITTEN if PAIR_RULE_PARAGRAPH not in _read_repo(path)]
+        missing = [path for path in PAIR_RULE_SKILLS if PAIR_RULE_PARAGRAPH not in _read_repo(path)]
+        self.assertEqual(missing, [])
+
+    def test_exec_confinement_statement(self):
+        missing = [
+            f"{path}: {token}"
+            for path in _EXEC_SKILLS
+            for token in _CONFINEMENT_TOKENS
+            if token not in _read_repo(path)
+        ]
         self.assertEqual(missing, [])
 
     def test_review_only_label(self):

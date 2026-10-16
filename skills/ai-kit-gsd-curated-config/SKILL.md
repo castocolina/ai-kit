@@ -58,7 +58,8 @@ substitute the directory containing this `SKILL.md`.
 Before the first command, ask yourself: is `<target>` a trusted checkout? Was its config
 last written by v1 (`apply-execution` writes the runner command `node
 .planning/scripts/cross-ai.mjs …` and renders or upgrades `.planning/scripts/cross-ai.mjs`,
-so a user-edited script gets `.new` instead of being overwritten; v2 replaces that command)? Where will `inventory.json` and `plan.json` live? Keep both in one
+so a user-edited script gets `.new` instead of being overwritten; v2 replaces that command)?
+Where will `inventory.json` and `plan.json` live? Keep both in one
 scratch directory **outside** `<target>/.planning/`: `recommend --out` is refused inside the
 project's `.planning/` and onto an input or config file. `plan-set`/`plan-unset` read
 `inventory.json` beside `plan.json` unless `--inventory` is given.
@@ -158,17 +159,37 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
   applied state; **never** restore its backup. Delete only the leftovers the warning names.
   If a marker remains, the next `apply` refuses (exit 2) and prints the recovery steps
   recorded in it (the dry run does not check the marker).
-- **Runner `unverified` status** (git tree could not be read): claim nothing about
-  success or fallback; report the status line only.
+- **Runner `git_timeout` or `git_error` status** (git could not read the work tree): claim
+  nothing about its state, and report the status line only. There is no fallback to another CLI
+  after a CLI has already run. **`tree=unknown`** on a run outside any git work tree means the
+  CLI ran without the check: report that, and do not read it as a clean or dirty tree.
 - **Effort sync** is not offered when the inventory points at a workstream config (gsd-core
   sync reads only the root config).
 
 ## Cross-AI execution
 
 Apply sets `workflow.cross_ai_command` to `node .planning/scripts/cross-ai.mjs` and renders
-the runner from the bundled template. **Targets run unattended with full permissions** (no
-sandbox, no ask mode). After every external dispatch, print the `AIKIT-XAI status=…` line
-from stderr **verbatim**.
+the runner from the bundled template (template 3). The hook is a runtime id plus a model, never a
+raw vendor CLI string; the runtime id is `cursor` (its binaries are `cursor-agent` and a bare
+`agent` only when that binary's real path is `cursor-agent`).
+
+Template 3 adds three flags the rendered hook can carry:
+
+- `--outer-timeout <s>` replaces the GSD config lookup and the CONFIG cap as the outer deadline.
+- `--prepend-file <path>` puts that file before the prompt. The guidance file
+  (`.planning/scripts/cross-ai-guidance.md`) rides this flag, and `--no-preamble` keeps the
+  runner's own preamble off, so nothing is said twice.
+- `--codex-sandbox workspace-write` confines a codex exec target: writes stay inside the project
+  dir plus `/tmp` and `$TMPDIR`, which workspace-write always allows. Whether `.git` is writable
+  under it is unverified. Every other exec target runs with full permissions (no sandbox, no ask
+  mode); the guidance it receives is prose, not a boundary.
+
+**Runner upgrade.** `ensure-runner` renders or upgrades the project runner and, with
+`--guidance-file`, the guidance file. A user-edited runner is never overwritten: it gets a `.new`
+file plus the printed notes, and the result is not ready until that file is merged by hand. v1
+`apply-execution` writes the runner command (`node .planning/scripts/cross-ai.mjs …`) only when
+that render is ready. After every external dispatch, print the `AIKIT-XAI status=…` line from
+stderr **verbatim**.
 
 **Bare profile by default** (pi `--no-skills --no-extensions`, opencode with Claude-skill
 loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
