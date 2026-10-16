@@ -23,6 +23,9 @@ class PlanCtx(NamedTuple):
     host: str
     existing: dict
     preset: dict
+    # Computed once in build_plan so every layer reads the same answer (PT-14).
+    targets: tuple = ()
+    answers: Any = None
 
 
 class _SlotMeta(NamedTuple):
@@ -108,8 +111,7 @@ def cross_ai_answers(ctx: PlanCtx) -> dict:
     standard_qualified = ctx.opts.rigor == "standard" and claude_or_codex and other_cli
     if ctx.opts.rigor == "rigorous" or standard_qualified:
         review_default = "y"
-    targets = cross_ai.exec_targets(ctx.inv, ctx.opts.rigor)
-    exec_default, _ = cross_ai.exec_default(ctx.host, targets)
+    exec_default, _ = cross_ai.exec_default(ctx.host, list(ctx.targets))
     return {
         "review": _resolve(ctx.opts.cross_ai_review, review_default),
         "exec": _resolve(ctx.opts.cross_ai_exec, exec_default),
@@ -725,8 +727,7 @@ def _cross_ai_why(ctx: PlanCtx, answers_key: str, answer: dict) -> str:
     base = f"cross-AI {answers_key} answer: {answer['answer']}{defaulted}"
     if answers_key != "exec" or not answer["defaulted"]:
         return base
-    targets = cross_ai.exec_targets(ctx.inv, ctx.opts.rigor)
-    _, def_why = cross_ai.exec_default(ctx.host, targets)
+    _, def_why = cross_ai.exec_default(ctx.host, list(ctx.targets))
     return f"{base}; {def_why}"
 
 
@@ -797,12 +798,11 @@ def _cross_ai_review_entries(
         return entries, notes
     planner_model = _agent_slot_model(ctx, prior_entries, "gsd-planner")
     planner_vendor, _ = _facts(ctx, _host_cands(ctx), planner_model)
-    if planner_vendor is None:
-        why = _no_lane_reason(ctx.inv, None)
-        entries.append(_review_off_entry(ctx, why))
-        notes.append(_review_lane_note("workflow.plan_review_convergence", why))
-        return entries, notes
-    lanes, lane_notes = cross_ai.select_lanes(ctx.inv, ctx.opts.rigor, planner_vendor)
+    lanes, lane_notes = (
+        cross_ai.select_lanes(ctx.inv, ctx.opts.rigor, planner_vendor)
+        if planner_vendor is not None
+        else ([], [])
+    )
     notes.extend(lane_notes)
     if not lanes:
         why = _no_lane_reason(ctx.inv, planner_vendor)
@@ -906,10 +906,10 @@ def _cross_ai_exec_entries(ctx: PlanCtx, answer: dict, targets: list) -> tuple[l
 
 def _cross_ai_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     """Layer 3: cross-AI booleans mirror the answers; exec yes wires runner keys (18 D-09)."""
-    answers = cross_ai_answers(ctx)
+    answers = ctx.answers
     entries = []
     notes = []
-    targets = cross_ai.exec_targets(ctx.inv, ctx.opts.rigor)
+    targets = list(ctx.targets)
     review_answer = answers["review"]
     if review_answer["answer"] == "n":
         entries.append(
@@ -1205,11 +1205,13 @@ def build_plan(inventory: dict, opts: RecommendOpts) -> dict:
         host=inventory["host"],
         existing=inventory["existing_config"]["values"],
         preset=presets.preset_values(opts.rigor, inventory["project"]),
+        targets=tuple(cross_ai.exec_targets(inventory, opts.rigor)),
     )
+    ctx = ctx._replace(answers=cross_ai_answers(ctx))
     entries, notes = _merge_layers(ctx)
-    answers = cross_ai_answers(ctx)
+    answers = ctx.answers
     exec_yes = answers["exec"]["answer"] == "y"
-    targets = cross_ai.exec_targets(ctx.inv, opts.rigor) if exec_yes else []
+    targets = list(ctx.targets) if exec_yes else []
     artifacts: list = []
     if exec_yes and targets:
         timeout_key = "workflow.cross_ai_timeout"
