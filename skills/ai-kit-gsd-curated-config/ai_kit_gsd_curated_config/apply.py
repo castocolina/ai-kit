@@ -158,10 +158,16 @@ def script_preview(inputs: Inputs, template: bytes) -> list[dict]:
     for artifact in inputs.plan.get("artifacts") or []:
         if not isinstance(artifact, dict):
             continue
-        plan = cross_ai_script.plan_script(
-            inputs.project_dir, artifact, template, scrub
-        )
         path = artifact.get("path")
+        try:
+            plan = cross_ai_script.plan_script(
+                inputs.project_dir, artifact, template, scrub
+            )
+        except cross_ai_script.ScriptReadError as exc:
+            if not isinstance(path, str):
+                path = ""
+            rows.append({"path": path, "kind": "unreadable", "note": str(exc)})
+            continue
         if not isinstance(path, str):
             path = plan.path
         rows.append({"path": path, "kind": plan.kind, "note": plan.note})
@@ -703,7 +709,7 @@ def _apply_script_step(ctx: ScriptStepCtx) -> bool:
     new_existed = os.path.lexists(plan.path + ".new")
     try:
         performed = cross_ai_script.write_script(plan)
-    except OSError as exc:
+    except (OSError, cross_ai_script.ScriptReadError) as exc:
         report["error"] = f"cross-AI runner write failed: {exc}"
         report["restore_error"] = _rollback(progress, config_path)
         return False

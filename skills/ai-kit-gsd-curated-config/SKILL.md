@@ -56,8 +56,9 @@ substitute the directory containing this `SKILL.md`.
 ## Run the v2 flow
 
 Before the first command, ask yourself: is `<target>` a trusted checkout? Was its config
-last written by v1 (`apply-execution` leaves a direct `opencode run …`/`cursor-agent …`
-command that v2 replaces)? Where will `inventory.json` and `plan.json` live? Keep both in one
+last written by v1 (`apply-execution` writes the runner command `node
+.planning/scripts/cross-ai.mjs …` and renders or upgrades `.planning/scripts/cross-ai.mjs`,
+so a user-edited script gets `.new` instead of being overwritten; v2 replaces that command)? Where will `inventory.json` and `plan.json` live? Keep both in one
 scratch directory **outside** `<target>/.planning/`: `recommend --out` is refused inside the
 project's `.planning/` and onto an input or config file. `plan-set`/`plan-unset` read
 `inventory.json` beside `plan.json` unless `--inventory` is given.
@@ -256,6 +257,7 @@ python3 "$ENTRYPOINT" apply-workflow-defaults --project-dir <target> --ui-phase 
 | `plan-unset` | `key`, `--plan` (`--inventory` optional) | Decline / remove a plan entry |
 | `apply` | `--plan`, `--inventory`, `--project-dir` | Write config + runner (`--dry-run` previews) |
 | `followups` | `--plan`, `--inventory`, `--project-dir` | List, or `--approve` the listed commands |
+| `ensure-runner` | `--cwd` (`--guidance-file <path>` or `-` for stdin, optional) | Render or upgrade `.planning/scripts/cross-ai.mjs` (a user-edited script gets `.new`); prints JSON `{ready, runner, guidance, notes}`, exit 0 ready, 1 not ready, 2 on error |
 | v1 | `--project-dir`, except the two `detect-*-candidate` (no flags) | See the v1 path |
 
 ## NEVER
@@ -270,8 +272,8 @@ python3 "$ENTRYPOINT" apply-workflow-defaults --project-dir <target> --ui-phase 
   command (`workflow.cross_ai_command`, `plan_bounce_script`, `code_review_command`,
   `test_command`, `build_command`); use it only for a value the user explicitly chose.
 - **Never run v1 `apply-execution`/`apply-review` on a project v2 `apply` configured.**
-  `apply-execution` overwrites `workflow.cross_ai_command` with a direct CLI command, so
-  `.planning/scripts/cross-ai.mjs` silently stops being used.
+  `apply-execution` overwrites `workflow.cross_ai_command` with its own single-runtime
+  runner command, dropping the prefer order and models v2 chose.
 - **Never delete an apply marker** without following the recovery text apply prints.
 - **Never treat `cross-ai.mjs.new` as active** before merging it and running `--print-argv`.
 

@@ -128,6 +128,56 @@ def _spec(**overrides):
     return RunnerSpec(**fields)
 
 
+class TestProjectRunnerCommand(unittest.TestCase):
+    def test_opencode_exec_token_order(self):
+        spec = RunnerSpec("opencode", "router-env/my-coding", "exec", 0)
+        self.assertEqual(
+            rd.project_runner_command(spec),
+            "node .planning/scripts/cross-ai.mjs --prefer opencode "
+            "--model-opencode router-env/my-coding --mode exec",
+        )
+
+    def test_codex_sandbox_only_in_exec_mode(self):
+        exec_spec = RunnerSpec("codex", "m", "exec", 0, codex_sandbox="workspace-write")
+        review_spec = exec_spec._replace(mode="review")
+        exec_cmd = rd.project_runner_command(exec_spec)
+        assert exec_cmd is not None
+        self.assertTrue(exec_cmd.endswith("--codex-sandbox workspace-write"))
+        review_cmd = rd.project_runner_command(review_spec)
+        assert review_cmd is not None
+        self.assertNotIn("codex-sandbox", review_cmd)
+
+    def test_guidance_appends_prepend_file(self):
+        spec = RunnerSpec("opencode", "m", "exec", 0)
+        command = rd.project_runner_command(spec, guidance=True)
+        assert command is not None
+        self.assertTrue(command.endswith(
+            "--no-preamble --prepend-file .planning/scripts/cross-ai-guidance.md"
+        ))
+
+    def test_unsupported_runtime_is_none(self):
+        spec = RunnerSpec("claude", "opus", "exec", 0)
+        self.assertIsNone(rd.project_runner_command(spec))
+
+    def test_unsafe_model_tokens_are_none(self):
+        for model in ("has space", "quo'te", "dol$lar", "star*", "paren("):
+            with self.subTest(model=model):
+                spec = RunnerSpec("opencode", model, "exec", 0)
+                self.assertIsNone(rd.project_runner_command(spec))
+
+    def test_bracket_model_only_for_cursor(self):
+        model = "gpt-6[effort=high]"
+        cursor = rd.project_runner_command(
+            RunnerSpec("cursor", model, "exec", 0)
+        )
+        assert cursor is not None
+        self.assertIn(model, cursor)
+        opencode = rd.project_runner_command(
+            RunnerSpec("opencode", model, "exec", 0)
+        )
+        self.assertIsNone(opencode)
+
+
 class TestBuildRunnerArgv(unittest.TestCase):
     def test_opencode_review(self):
         spec = _spec(timeout_s=600)

@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "skills", "ai-kit-gsd-curated-config"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_gsd_curated_config import cross_ai, cross_ai_script
+from ai_kit_gsd_curated_config import cli, cross_ai, cross_ai_script
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 
 TEMPLATE_PATH = os.path.join(
@@ -300,3 +306,291 @@ class TestPlanScript(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _v2_pristine(template: bytes, prefer: list) -> bytes:
+    """A pristine script stamped template=2, body otherwise identical to a current render."""
+    cfg = cross_ai_script.template_config(template)
+    cfg["prefer"] = prefer
+    cfg["scrubEnv"] = sorted(HOST_SIGNAL_ENV_VARS)
+    rendered = cross_ai_script.render(template, cfg)
+    return re.sub(rb"template=3", b"template=2", rendered, count=1)
+
+
+class TestEnsureRunner(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.template = _load_template()
+
+    def test_upgrade_tracer(self):
+        from ai_kit_spec.runner_dispatch import RunnerSpec, project_runner_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old = _v2_pristine(self.template, ["codex"])
+            target = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(old)
+            code, result = _run_ensure(
+                ["--cwd", tmp, "--guidance-file", "-"], stdin_text="GUIDE"
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue(result["ready"])
+            self.assertEqual(result["runner"], "change")
+            self.assertEqual(result["guidance"], "add")
+            with open(target, "rb") as handle:
+                upgraded = handle.read()
+            self.assertIn(b"template=3", upgraded.split(b"\n", 2)[1])
+            self.assertEqual(
+                cross_ai_script.template_config(upgraded)["prefer"], ["codex"]
+            )
+            guidance = os.path.join(tmp, ".planning", "scripts", "cross-ai-guidance.md")
+            with open(guidance, "rb") as handle:
+                text = handle.read()
+            lines = text.split(b"\n")
+            self.assertTrue(lines[0].startswith(b"<!-- "))
+            self.assertTrue(lines[1].startswith(b"<!-- ai-kit-cross-ai-guidance "))
+            self.assertTrue(text.endswith(b"GUIDE"))
+
+            command = project_runner_command(
+                RunnerSpec("codex", "gpt-5.6-sol", "exec", 0,
+                           codex_sandbox="workspace-write"),
+                guidance=True,
+            )
+            assert command is not None
+            tokens = command.split()
+            self.assertEqual(tokens[0], "node")
+            self.assertEqual(tokens[1], ".planning/scripts/cross-ai.mjs")
+            if shutil.which("node") is None:
+                self.skipTest("node not on PATH")
+            proc = subprocess.run(
+                ["node", target, "--print-argv", *tokens[2:]],
+                cwd=tmp, capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("workspace-write", proc.stdout)
+
+
+def _run_ensure(argv, stdin_text=None):
+    out = io.StringIO()
+    cli._stdin.text = stdin_text
+    try:
+        with contextlib.redirect_stdout(out):
+            code = cli.main(["ensure-runner", *argv])
+    finally:
+        cli._stdin.text = None
+    return code, json.loads(out.getvalue())
+
+
+def _current_pristine(template: bytes) -> bytes:
+    cfg = cross_ai_script.template_config(template)
+    cfg["scrubEnv"] = sorted(HOST_SIGNAL_ENV_VARS)
+    return cross_ai_script.render(template, cfg)
+
+
+class TestEnsureRunnerStates(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.template = _load_template()
+
+    def _runner(self, tmp):
+        return os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
+
+    def test_absent_adds_and_is_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual(code, 0)
+            self.assertEqual(result["runner"], "add")
+            self.assertTrue(result["ready"])
+            self.assertTrue(os.path.isfile(self._runner(tmp)))
+
+    def test_pristine_current_kept_byte_for_byte(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = _current_pristine(self.template)
+            target = self._runner(tmp)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(data)
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual((code, result["runner"]), (0, "keep-pristine"))
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), data)
+
+    def test_edited_template_2_writes_new_and_is_not_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = _v2_pristine(self.template, ["codex"]) + b"\n"
+            target = self._runner(tmp)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(data)
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual(code, 1)
+            self.assertFalse(result["ready"])
+            self.assertEqual(result["runner"], "new-as-.new")
+            self.assertTrue(any(target + ".new" in note for note in result["notes"]))
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), data)
+            self.assertTrue(os.path.isfile(target + ".new"))
+
+    def test_edited_template_3_kept_and_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = _current_pristine(self.template) + b"\n"
+            target = self._runner(tmp)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(data)
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual((code, result["runner"]), (0, "keep-edited"))
+            self.assertTrue(result["ready"])
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), data)
+            self.assertFalse(os.path.exists(target + ".new"))
+
+    def test_foreign_writes_new_and_is_not_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = self._runner(tmp)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(b"#!/usr/bin/env node\n// mine\n")
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual(code, 1)
+            self.assertFalse(result["ready"])
+            self.assertTrue(os.path.isfile(target + ".new"))
+
+    def test_guidance_pristine_new_text_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _run_ensure(["--cwd", tmp, "--guidance-file", "-"], stdin_text="one")
+            code, result = _run_ensure(
+                ["--cwd", tmp, "--guidance-file", "-"], stdin_text="two"
+            )
+            self.assertEqual((code, result["guidance"]), (0, "change"))
+            path = os.path.join(tmp, ".planning", "scripts", "cross-ai-guidance.md")
+            with open(path, "rb") as handle:
+                self.assertTrue(handle.read().endswith(b"two"))
+
+    def test_guidance_user_edited_writes_new_and_stays_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _run_ensure(["--cwd", tmp, "--guidance-file", "-"], stdin_text="one")
+            path = os.path.join(tmp, ".planning", "scripts", "cross-ai-guidance.md")
+            with open(path, "ab") as handle:
+                handle.write(b"\nuser")
+            with open(path, "rb") as handle:
+                edited = handle.read()
+            code, result = _run_ensure(
+                ["--cwd", tmp, "--guidance-file", "-"], stdin_text="two"
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue(result["ready"])
+            self.assertEqual(result["guidance"], "new-as-.new")
+            self.assertTrue(result["notes"])
+            with open(path, "rb") as handle:
+                self.assertEqual(handle.read(), edited)
+            self.assertTrue(os.path.isfile(path + ".new"))
+
+
+class TestEnsureRunnerErrors(unittest.TestCase):
+    def test_directory_at_runner_path_exits_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
+            os.makedirs(target)
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual(code, 2)
+            self.assertFalse(result["ready"])
+            self.assertIn("cannot read", result["error"])
+            self.assertFalse(os.path.exists(target + ".new"))
+
+    def test_missing_template_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(
+            cross_ai_script, "load_template", return_value=(None, "sibling missing")
+        ):
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual(code, 2)
+            self.assertIn("sibling missing", result["error"])
+            self.assertFalse(os.path.exists(os.path.join(tmp, ".planning")))
+
+    def test_template_open_oserror_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(
+            cross_ai_script, "load_template", side_effect=OSError("disk")
+        ):
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual(code, 2)
+            self.assertIn("disk", result["error"])
+            self.assertFalse(os.path.exists(os.path.join(tmp, ".planning")))
+
+    def test_unparsable_template_header_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(
+            cross_ai_script, "load_template", return_value=(b"no header\n", None)
+        ):
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual(code, 2)
+            self.assertTrue(result["error"])
+            self.assertFalse(os.path.exists(os.path.join(tmp, ".planning")))
+
+    def test_publish_oserror_for_runner_leaves_runner_null(self):
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(
+            cross_ai_script, "_publish", side_effect=OSError("full")
+        ):
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual(code, 2)
+            self.assertIsNone(result["runner"])
+            self.assertIn("full", result["error"])
+
+    def test_publish_oserror_for_guidance_names_the_written_runner(self):
+        real = cross_ai_script._publish
+
+        def fail_guidance(path, data):
+            if path.endswith("cross-ai-guidance.md"):
+                raise OSError(f"cannot write {path}")
+            real(path, data)
+
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(
+            cross_ai_script, "_publish", side_effect=fail_guidance
+        ):
+            code, result = _run_ensure(
+                ["--cwd", tmp, "--guidance-file", "-"], stdin_text="GUIDE"
+            )
+            self.assertEqual(code, 2)
+            self.assertEqual(result["runner"], "add")
+            self.assertIsNone(result["guidance"])
+            self.assertIn("cross-ai-guidance.md", result["error"])
+            self.assertFalse(result["ready"])
+
+    def test_directory_at_guidance_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            guide = os.path.join(tmp, ".planning", "scripts", "cross-ai-guidance.md")
+            os.makedirs(guide)
+            code, result = _run_ensure(
+                ["--cwd", tmp, "--guidance-file", "-"], stdin_text="GUIDE"
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("cannot read", result["error"])
+            self.assertIn("cross-ai-guidance.md", result["error"])
+
+    def test_empty_guidance_rejected_before_any_write(self):
+        for text in ("", "   \n\t"):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
+                code, result = _run_ensure(
+                    ["--cwd", tmp, "--guidance-file", "-"], stdin_text=text
+                )
+                self.assertEqual(code, 2)
+                self.assertEqual(result["error"], "guidance text is empty")
+                self.assertFalse(
+                    os.path.exists(os.path.join(tmp, ".planning", "scripts"))
+                )
+
+
+class TestReadTarget(unittest.TestCase):
+    def test_missing_file_is_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(
+                cross_ai_script._read_target(os.path.join(tmp, "absent"))
+            )
+
+    def test_directory_raises_script_read_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "adir")
+            os.makedirs(target)
+            with self.assertRaises(cross_ai_script.ScriptReadError) as ctx:
+                cross_ai_script._read_target(target)
+            self.assertIn(f"cannot read {target}", str(ctx.exception))
+            self.assertIsInstance(ctx.exception, ValueError)

@@ -1765,6 +1765,29 @@ class TestApplyWritePath(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertTrue(os.path.isfile(runner + ".new"))
 
+    def test_unreadable_runner_previews_and_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
+            os.makedirs(runner)
+            code, report, _out, _err = _run_apply(
+                plan_path, inv_path, project, env, fake, dry_run=True
+            )
+            self.assertEqual(code, 0)
+            assert report is not None
+            rows = [a for a in report["artifacts"] if a["path"].endswith("cross-ai.mjs")]
+            self.assertEqual(rows[0]["kind"], "unreadable")
+            self.assertIn("cannot read", rows[0]["note"])
+            self.assertFalse(os.path.exists(runner + ".new"))
+            rec = _RecordingRun(fake)
+            code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            self.assertTrue(
+                report["error"].startswith("cross-AI runner render failed: cannot read")
+            )
+            self.assertIsNone(config_backup.read_marker(config_path))
+            self.assertFalse(os.path.exists(runner + ".new"))
+
     def test_render_failure_before_config_set(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)

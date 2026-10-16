@@ -541,7 +541,6 @@ class TestAiKitSpecImportGracefulDegradation(unittest.TestCase):
 
     def test_cross_ai_build_imports_without_crashing_and_degrades_to_none(self):
         reimported = self._reimport_with_ai_kit_spec_blocked("cross_ai_build")
-        self.assertIsNone(reimported.build_execute_command)
         self.assertIsNone(reimported.execute_cli_error)
         result = reimported.build_execution_command("opencode", "some-model", "/fake/project")
         self.assertIsNone(result)
@@ -726,6 +725,27 @@ class TestBuildExecutionCommand(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestBuildExecutionCommandRunner(unittest.TestCase):
+    def test_cursor_agent_maps_to_the_runner_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            command = cross_ai_build.build_execution_command("cursor-agent", "auto", tmp)
+        self.assertEqual(
+            command,
+            "node .planning/scripts/cross-ai.mjs --prefer cursor "
+            "--model-cursor auto --mode exec",
+        )
+
+    def test_codex_ends_with_the_sandbox_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            command = cross_ai_build.build_execution_command("codex", "m", tmp)
+        assert command is not None
+        self.assertTrue(command.endswith("--codex-sandbox workspace-write"))
+
+    def test_claude_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(cross_ai_build.build_execution_command("claude", "opus", tmp))
+
+
 class TestReviewerSlug(unittest.TestCase):
     def test_cursor_agent_maps_to_cursor_not_itself(self):
         self.assertEqual(cross_ai_build.reviewer_slug("cursor-agent"), "cursor")
@@ -748,7 +768,13 @@ class TestApplyExecutionCli(unittest.TestCase):
         _make_fake_install(self.fake_install_root)
         self.env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
 
+    def _scratch_project(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        return project
+
     def test_real_candidate_writes_both_keys(self):
+        project = self._scratch_project()
         run = make_fake_run([(0, "ok", ""), (0, "ok", "")])
         buf = io.StringIO()
         with (
@@ -763,7 +789,7 @@ class TestApplyExecutionCli(unittest.TestCase):
                 [
                     "apply-execution",
                     "--project-dir",
-                    "/fake/project",
+                    project,
                     "--cli",
                     "opencode",
                     "--model",
@@ -820,6 +846,7 @@ class TestApplyExecutionCli(unittest.TestCase):
 
     def test_unimplemented_builder_degrades_to_no_builder(self):
         """Phase 7 code review WR-04: the no_builder degrade branch had zero test coverage."""
+        project = self._scratch_project()
         run = make_fake_run([(0, "ok", "")])
         buf = io.StringIO()
         with (
@@ -830,7 +857,7 @@ class TestApplyExecutionCli(unittest.TestCase):
         ):
             exit_code = cli.main(
                 [
-                    "apply-execution", "--project-dir", "/fake/project",
+                    "apply-execution", "--project-dir", project,
                     "--cli", "opencode", "--model", "some-model",
                 ],
                 which_fn=_which_stub(),
@@ -843,6 +870,88 @@ class TestApplyExecutionCli(unittest.TestCase):
         summary = json.loads(buf.getvalue())
         self.assertFalse(summary["cross_ai_command_written"])
         self.assertEqual(summary["degraded_reason"], "no_builder")
+
+    def _apply(self, project, cli_name, model, results):
+        run = make_fake_run(results)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = cli.main(
+                ["apply-execution", "--project-dir", project,
+                 "--cli", cli_name, "--model", model],
+                which_fn=_which_stub(), run_fn=run, env_fn=self.env_fn,
+            )
+        return code, run, json.loads(buf.getvalue())
+
+    def test_scratch_project_writes_the_runner_command(self):
+        project = self._scratch_project()
+        code, run, summary = self._apply(project, "codex", "m", [(0, "ok", "")] * 2)
+        self.assertEqual(code, 0)
+        command_writes = [
+            call for call in run.calls
+            if "config-set" in call and call[3] == "workflow.cross_ai_command"
+        ]
+        self.assertEqual(len(command_writes), 1)
+        self.assertTrue(
+            command_writes[0][4].startswith("node .planning/scripts/cross-ai.mjs ")
+        )
+        runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
+        with open(runner, "rb") as handle:
+            self.assertIn(b"template=3", handle.read().split(b"\n", 2)[1])
+        self.assertEqual(summary["runner"], "add")
+        self.assertEqual(summary["notes"], [])
+        for key in ("cross_ai_execution_written", "cross_ai_command_written", "degraded_reason"):
+            self.assertIn(key, summary)
+
+    def test_edited_template_2_degrades_without_a_command_write(self):
+        project = self._scratch_project()
+        self._apply(project, "codex", "m", [(0, "ok", "")] * 2)
+        runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
+        with open(runner, "rb") as handle:
+            current = handle.read()
+        edited = current.replace(b"template=3", b"template=2", 1) + b"\n"
+        with open(runner, "wb") as handle:
+            handle.write(edited)
+        code, run, summary = self._apply(project, "codex", "m", [(0, "ok", "")])
+        self.assertEqual(code, 0)
+        self.assertEqual(summary["degraded_reason"], "runner_not_ready")
+        self.assertFalse(summary["cross_ai_command_written"])
+        command_writes = [
+            call for call in run.calls if "config-set" in call and "command" in call[3]
+        ]
+        self.assertEqual(command_writes, [])
+        with open(runner, "rb") as handle:
+            self.assertEqual(handle.read(), edited)
+        self.assertTrue(os.path.isfile(runner + ".new"))
+
+    def test_unreadable_runner_degrades_with_the_read_error_in_notes(self):
+        project = self._scratch_project()
+        os.makedirs(os.path.join(project, ".planning", "scripts", "cross-ai.mjs"))
+        code, run, summary = self._apply(project, "codex", "m", [(0, "ok", "")])
+        self.assertEqual(code, 0)
+        self.assertEqual(summary["degraded_reason"], "runner_not_ready")
+        self.assertFalse(summary["cross_ai_command_written"])
+        self.assertTrue(any("cannot read" in note for note in summary["notes"]))
+        command_writes = [
+            call for call in run.calls if "config-set" in call and "command" in call[3]
+        ]
+        self.assertEqual(command_writes, [])
+
+    def test_pi_exec_note_in_json_and_stderr_absent_for_codex(self):
+        from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE
+
+        project = self._scratch_project()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, _run, summary = self._apply(project, "pi", "m", [(0, "ok", "")] * 2)
+        self.assertEqual(code, 0)
+        self.assertIn(PI_EXEC_NOTE, summary["notes"])
+        self.assertIn(PI_EXEC_NOTE, err.getvalue())
+        project = self._scratch_project()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            _code, _run, summary = self._apply(project, "codex", "m", [(0, "ok", "")] * 2)
+        self.assertNotIn(PI_EXEC_NOTE, summary["notes"])
+        self.assertNotIn(PI_EXEC_NOTE, err.getvalue())
 
     def test_rejected_executor_cli_exits_2_before_any_config_write(self):
         # D-15 (Phase 16.1): an explicit claude/grok (or case-variant) executor choice fails

@@ -1,14 +1,12 @@
-"""Builds the fully-rendered `workflow.cross_ai_command` string for execution delegation
-(D-04/D-05, 07-CONTEXT.md), reusing `ai_kit_spec.commands.build_execute_command` -- the
-already-live-verified per-CLI execute-mode command-string factory -- instead of hand-writing
-opencode/cursor-agent invocation syntax. Mirrors `ai_kit_spec_gsd/gsd_cross_ai.py`'s own
-thin-wrapper pattern (catch `ValueError`, return `None`) as a self-contained function -- this
-module does NOT import from `ai_kit_spec_gsd`, a sibling skill with its own separate
-install-root resolution, not a dependency of this skill.
+"""Builds the `workflow.cross_ai_command` string for execution delegation (D-26, D-27).
 
-The `sys.path`-injection-via-`model_detect.resolve_ai_kit_spec_path` pattern this module uses to
-import `build_execute_command` is the SAME one `preference_match.py` already established -- no
-second, divergent resolution strategy for the same sibling skill. The import is wrapped in
+The command is the project-local runner hook from `ai_kit_spec.runner_dispatch`, not a
+direct CLI invocation. Mirrors `ai_kit_spec_gsd/gsd_cross_ai.py`'s thin-wrapper pattern
+(return `None`, never raise) -- this module does NOT import from `ai_kit_spec_gsd`, a
+sibling skill with its own install-root resolution, not a dependency of this skill.
+
+The `sys.path`-injection-via-`model_detect.resolve_ai_kit_spec_path` pattern this module uses
+is the SAME one `preference_match.py` already established. The import is wrapped in
 `try/except ImportError` (same pattern as `preference_match.py`): its absence must degrade
 `build_execution_command` to its own documented `None` return, never crash the whole CLI at
 import time. (Every gsd-tools write in `cli.py` does require the sibling, through the shared
@@ -17,6 +15,7 @@ import time. (Every gsd-tools write in `cli.py` does require the sibling, throug
 import os
 import sys
 from collections.abc import Callable
+from typing import Any
 
 from . import model_detect
 
@@ -27,13 +26,15 @@ if _ai_kit_spec_shim is not None:
     if _ai_kit_spec_skill_dir not in sys.path:
         sys.path.insert(0, _ai_kit_spec_skill_dir)
 
-build_execute_command: Callable[..., str] | None
 execute_cli_error: Callable[[str], str | None] | None
 runtime_id: Callable[[str], str] | None
+project_runner_command: Callable[..., str | None] | None
+RunnerSpec: Callable[..., Any] | None
 
 try:
-    from ai_kit_spec.commands import build_execute_command, execute_cli_error
+    from ai_kit_spec.commands import execute_cli_error
     from ai_kit_spec.detection import runtime_id
+    from ai_kit_spec.runner_dispatch import RunnerSpec, project_runner_command
 except ImportError:
     # `ai_kit_spec` is optional at import time (module docstring above): if its skill
     # directory can't be resolved, or the sibling install is missing/broken, this module must
@@ -43,9 +44,10 @@ except ImportError:
     # supported-CLI list to validate `--cli` against either, so execute_cli_error is None and
     # the documented `no_builder` degrade path applies. reviewer_slug then keeps the name as
     # given.
-    build_execute_command = None
     execute_cli_error = None
     runtime_id = None
+    project_runner_command = None
+    RunnerSpec = None
 
 # Closed reviewer slugs. Unknown names are rejected before any config write.
 REVIEWER_SLUGS = ("claude", "cursor", "opencode")
@@ -66,18 +68,21 @@ def reject_execute_cli(cli):
     return execute_cli_error(cli)
 
 
-def build_execution_command(cli, model, project_dir, execute_command_fn=build_execute_command):
-    """Returns the fully-rendered command string (no unfilled `{model}` placeholder remaining)
-    when `execute_command_fn` successfully returns a template for `cli`; returns `None` (never
-    raises) when `execute_command_fn` raises `ValueError` for an unimplemented CLI. The returned
-    string never contains `project_dir` rendered as anything other than `shlex.quote`d --
-    delegated entirely to `execute_command_fn`; this function itself never re-quotes or
-    re-escapes it. Also returns `None` when `execute_command_fn` is the `None` sentinel (the
-    `ai_kit_spec` import failed at module load -- graceful degradation, never a crash)."""
-    if execute_command_fn is None:
+def build_execution_command(cli, model, project_dir=None, execute_command_fn=None):
+    """The project-local runner hook for `cli`, or `None` when it cannot be built.
+
+    `project_dir` is unused: the hook is a project-root-relative path. `execute_command_fn`
+    remains only so an injected builder still works; the default builds the runner hook.
+    Returns `None` (never raises) when the sibling import failed or the runtime is not an
+    execute target."""
+    del project_dir
+    if execute_command_fn is not None:
+        try:
+            return execute_command_fn(cli, target_dir="").format(model=model)
+        except (ValueError, AttributeError):
+            return None
+    if project_runner_command is None or RunnerSpec is None or runtime_id is None:
         return None
-    try:
-        template = execute_command_fn(cli, target_dir=project_dir)
-    except ValueError:
-        return None
-    return template.format(model=model)
+    runtime = runtime_id(cli)
+    sandbox = "workspace-write" if runtime == "codex" else None
+    return project_runner_command(RunnerSpec(runtime, model, "exec", 0, codex_sandbox=sandbox))

@@ -18,9 +18,17 @@ import time
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
+from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS
 from ai_kit_spec.dispatch import child_env
 from ai_kit_spec.error_classifier import classify_error, reason_for_status
 from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
+
+# Project-local paths a GSD hook names, relative to the project root (D-26, D-30).
+PROJECT_RUNNER_PATH = ".planning/scripts/cross-ai.mjs"
+PROJECT_GUIDANCE_PATH = ".planning/scripts/cross-ai-guidance.md"
+# GSD word-splits the hook unquoted, so a token may hold none of the shell metacharacters.
+HOOK_TOKEN_RE = re.compile(r"^[A-Za-z0-9._:/@+=,#-]+$")
+_HOOK_BRACKET_RE = re.compile(r"^[A-Za-z0-9._:/@+=,#-]+\[[A-Za-z0-9._=,-]+\]$")
 
 RUNNER_OUTER_MARGIN_S = 30
 _KILL_GRACE_S = 10  # slack after the runner's own outer timeout before the backstop fires
@@ -113,6 +121,32 @@ PI_EXEC_NOTE = (
     "ai-kit-spec: pi exec uses the runner's pi formula, verified by its hermetic "
     "self-test only; live verification is Phase 22"
 )
+
+
+def _hook_token_ok(token: str, *, bracket: bool) -> bool:
+    if HOOK_TOKEN_RE.fullmatch(token):
+        return True
+    return bracket and _HOOK_BRACKET_RE.fullmatch(token) is not None
+
+
+def project_runner_command(spec: RunnerSpec, *, guidance: bool = False) -> str | None:
+    """The project-local hook string, or None when a token is unsafe or unsupported.
+
+    GSD expands the value unquoted, so the tokens are joined with single spaces and never
+    quoted; anything outside the allowlist (the cursor model may carry one bracket suffix)
+    returns None instead of a command."""
+    if spec.runtime not in SUPPORTED_EXECUTE_CLIS:
+        return None
+    flags = runner_flags(spec)
+    model_at = flags.index(f"--model-{spec.runtime}") + 1
+    tokens = ["node", PROJECT_RUNNER_PATH, *flags]
+    if guidance:
+        tokens += ["--no-preamble", "--prepend-file", PROJECT_GUIDANCE_PATH]
+    for token in tokens:
+        bracket = token == flags[model_at] and spec.runtime == "cursor"
+        if not _hook_token_ok(token, bracket=bracket):
+            return None
+    return " ".join(tokens)
 
 
 def runner_flags(spec: RunnerSpec) -> list[str]:

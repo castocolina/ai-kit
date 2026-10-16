@@ -18,6 +18,7 @@ from . import (
     config_backup,
     critical_agents,
     cross_ai_build,
+    cross_ai_script,
     frontend_detect,
     gsd_catalog,
     host,
@@ -33,6 +34,11 @@ from . import (
 from . import (
     followups as followups_mod,
 )
+
+try:
+    from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE as _PI_EXEC_NOTE
+except ImportError:  # the sibling skill is optional, same as cross_ai_build's import
+    _PI_EXEC_NOTE = None
 
 VALID_MODEL_PROFILES = ("quality", "balanced", "budget", "adaptive")
 
@@ -209,6 +215,41 @@ def _cmd_detect_review_candidate(args, which_fn, run_fn, env_fn):
     return 0
 
 
+class _Stdin:
+    """Guidance text a test injects; None reads the real stdin."""
+
+    text: str | None = None
+
+
+_stdin = _Stdin()
+
+
+def _read_guidance_file(path: str) -> str:
+    if path == "-":
+        return sys.stdin.read() if _stdin.text is None else _stdin.text
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _cmd_ensure_runner(args, which_fn, run_fn, env_fn):
+    del which_fn, run_fn, env_fn
+    guidance = None
+    if args.guidance_file is not None:
+        try:
+            guidance = _read_guidance_file(args.guidance_file)
+        except OSError as exc:
+            print(json.dumps({
+                "ready": False, "runner": None, "guidance": None, "notes": [],
+                "error": f"cannot read {args.guidance_file}: {exc}",
+            }))
+            return 2
+    result = cross_ai_script.ensure_runner(args.cwd, guidance)
+    print(json.dumps(result))
+    if result.get("error"):
+        return 2
+    return 0 if result["ready"] else 1
+
+
 def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
     # D-15 (Phase 16.1): validate `--cli` BEFORE the first config-set, workflow.cross_ai_execution
     # included -- a rejected executor (claude/grok, or any unsupported name) must leave the GSD
@@ -236,6 +277,7 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
 
     cross_ai_command_written = False
     degraded_reason = None
+    runner_result = None
     if not args.cli:
         degraded_reason = "no_candidate"
     elif not args.model:
@@ -244,28 +286,68 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
         # a fabricated, broken command reported as success. Fail closed instead (D-05).
         degraded_reason = "no_model"
     else:
-        command = cross_ai_build.build_execution_command(args.cli, args.model, args.project_dir)
-        if command is None:
-            degraded_reason = "no_builder"
+        runner_result = cross_ai_script.ensure_runner(args.project_dir)
+        if not runner_result["ready"]:
+            degraded_reason = "runner_not_ready"
         else:
-            ok, output = gsd.config_set(
-                tools, args.project_dir, "workflow.cross_ai_command", command, run_fn=run_fn
+            command = cross_ai_build.build_execution_command(
+                args.cli, args.model, args.project_dir
             )
-            if not ok:
-                print(
-                    f"ai-kit-gsd-curated-config: failed to write "
-                    f"workflow.cross_ai_command: {output}",
-                    file=sys.stderr,
-                )
-                return 1
-            cross_ai_command_written = True
+            if command is None:
+                degraded_reason = "no_builder"
+            else:
+                written = _write_execution_command(gsd, tools, args, command, run_fn)
+                if not written:
+                    return 1
+                cross_ai_command_written = True
 
     print(json.dumps({
         "cross_ai_execution_written": True,
         "cross_ai_command_written": cross_ai_command_written,
         "degraded_reason": degraded_reason,
+        "runner": None if runner_result is None else runner_result["runner"],
+        "notes": _execution_notes(runner_result, args.cli),
     }))
     return 0
+
+
+def _pi_exec_note(cli_name) -> str | None:
+    """D-35: pi exec is self-test verified only, so the note is part of the result."""
+    if cross_ai_build.runtime_id is None or cross_ai_build.runtime_id(cli_name) != "pi":
+        return None
+    if _PI_EXEC_NOTE is None:
+        return None
+    print(_PI_EXEC_NOTE, file=sys.stderr)
+    return _PI_EXEC_NOTE
+
+
+def _execution_notes(runner_result, cli_name) -> list[str]:
+    """The runner's notes, its read error, and the pi exec note when it applies."""
+    if runner_result is None:
+        notes: list[str] = []
+    else:
+        notes = list(runner_result["notes"])
+        error = runner_result.get("error")
+        if error and error not in notes:
+            notes.append(error)
+    pi_note = _pi_exec_note(cli_name) if cli_name else None
+    if pi_note and pi_note not in notes:
+        notes.append(pi_note)
+    return notes
+
+
+def _write_execution_command(gsd, tools, args, command, run_fn) -> bool:
+    """Write the hook. False prints the failure; the caller exits 1."""
+    ok, output = gsd.config_set(
+        tools, args.project_dir, "workflow.cross_ai_command", command, run_fn=run_fn
+    )
+    if ok:
+        return True
+    print(
+        f"ai-kit-gsd-curated-config: failed to write workflow.cross_ai_command: {output}",
+        file=sys.stderr,
+    )
+    return False
 
 
 def _config_set_exit(ctx: _GsdCtx, key, value, label):
@@ -685,6 +767,12 @@ def _cmd_apply(args, which_fn, run_fn, env_fn) -> int:
     return code
 
 
+def _register_ensure_runner_parser(sub) -> None:
+    parser = sub.add_parser("ensure-runner")
+    parser.add_argument("--cwd", required=True)
+    parser.add_argument("--guidance-file", default=None)
+
+
 def _register_followups_parser(sub) -> None:
     p_followups = sub.add_parser("followups")
     p_followups.add_argument("--plan", required=True)
@@ -726,6 +814,8 @@ def _build_parser():
 
     p_critical = sub.add_parser("apply-critical-agents")
     p_critical.add_argument("--project-dir", required=True)
+
+    _register_ensure_runner_parser(sub)
 
     sub.add_parser("detect-execution-candidate")
     sub.add_parser("detect-review-candidate")
@@ -801,6 +891,7 @@ def _build_parser():
 
 _COMMAND_HANDLERS = {
     "ensure-project": _cmd_ensure_project,
+    "ensure-runner": _cmd_ensure_runner,
     "apply-profile": _cmd_apply_profile,
     "apply-critical-agents": _cmd_apply_critical_agents,
     "detect-execution-candidate": _cmd_detect_execution_candidate,
@@ -832,6 +923,6 @@ def main(
     if handler is None:
         _build_parser().error(f"unknown command: {args.command}")
     if args.command == "inventory":
-        probe = connect_fn if connect_fn is not None else socket.create_connection
+        probe = connect_fn or socket.create_connection
         return _cmd_inventory(args, which_fn, run_fn, env_fn, probe)
     return handler(args, which_fn, run_fn, env_fn)
