@@ -106,8 +106,8 @@ Runs once per invocation, after Step 0.6.
    directory is actually removed — not simply "after this loop ends" any more).
 2. **If `--no-cross-ai` was requested (or `TOOLS_PY` is missing, point 0
    above)**: set `REVIEWER_LIST` directly, in-context, to the single-entry
-   array `[{"key": "session-default", "model": "", "vendor": "", "cli":
-   null, "command": null, "extra": {}}]` — `ai-kit-spec.py`'s
+   array `[{"key": "session-default", "model": "", "vendor": "", "runtime": null,
+   "command": null, "extra": {}}]` — `ai-kit-spec.py`'s
    `NO_CONFIG_FALLBACK` constant's exact shape. **Do not run
    `resolve-reviewers`, `probe-quota`, or
    `detect-runtimes`, and do not write `$RUN_TMP_DIR/reviewers.json`** —

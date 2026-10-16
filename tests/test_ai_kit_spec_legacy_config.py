@@ -13,7 +13,11 @@ from ai_kit_spec.cli import main
 from ai_kit_spec.config_io import (
     _emit_legacy_note,
     _legacy_command_knobs,
+    cfg_combine,
     cfg_load_toml,
+    cfg_local_path,
+    cfg_resolve,
+    cfg_trust_store_dir,
     infer_legacy_native,
     normalize_legacy_entry,
     normalize_legacy_reviewers,
@@ -60,6 +64,17 @@ class TestLegacyTracer(unittest.TestCase):
 
 
 class TestLegacyLoad(unittest.TestCase):
+    def _env(self, root):
+        home = os.path.join(root, "home")
+        xdg = os.path.join(root, "xdg")
+        os.makedirs(os.path.join(xdg, "ai-kit"), exist_ok=True)
+        return {"HOME": home, "XDG_CONFIG_HOME": xdg}, xdg
+
+    def _write(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write(text)
+
     def test_tracer(self):
         command = ("codex exec --sandbox read-only --skip-git-repo-check -m {model} "
                    "-c model_reasoning_effort='\"high\"'")
@@ -89,6 +104,100 @@ class TestLegacyLoad(unittest.TestCase):
             self.assertEqual(err.getvalue().count("legacy reviewer fields loaded"), 1)
             with open(path, "rb") as stream:
                 self.assertEqual(stream.read(), before)
+
+    def test_one_note_per_file(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, xdg = self._env(root)
+            path = os.path.join(xdg, "ai-kit", "review-spec.toml")
+            self._write(path, '[[reviewers]]\nkey="old"\ncli="codex"\nmodel="m"\n')
+            warnings = []
+            for _ in range(2):
+                cfg_resolve(root, env, warn_fn=warnings.append)
+            self.assertEqual(len(warnings), 1)
+            self.assertIn(path, warnings[0])
+            self.assertIn("old", warnings[0])
+            self.assertIn("re-save", warnings[0])
+
+    def test_mixed_file_names_only_old_entries(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, xdg = self._env(root)
+            path = os.path.join(xdg, "ai-kit", "review-spec.toml")
+            self._write(path, '[[reviewers]]\nkey="old"\ncli="codex"\nmodel="m"\n'
+                                '[[reviewers]]\nkey="new"\nruntime="pi"\nmodel="m"\n')
+            warnings = []
+            result = cfg_resolve(root, env, warn_fn=warnings.append)
+            self.assertEqual([r["key"] for r in result["reviewers"]], ["old", "new"])
+            self.assertEqual(len(warnings), 1)
+            self.assertIn("old", warnings[0])
+            self.assertNotIn("new", warnings[0])
+
+    def test_load_never_writes(self):
+        from ai_kit_spec.trust import is_trusted, record_trust
+
+        with tempfile.TemporaryDirectory() as root:
+            env, _ = self._env(root)
+            path = cfg_local_path(root)
+            self._write(path, '[[reviewers]]\nkey="old"\ncli="codex"\nmodel="m"\n')
+            with open(path, "rb") as stream:
+                before = stream.read()
+            stat_before = os.stat(path)
+            record_trust(cfg_trust_store_dir(env), os.path.realpath(path), before)
+            trusted_before = is_trusted(cfg_trust_store_dir(env), os.path.realpath(path), before)
+            cfg_resolve(root, env, warn_fn=lambda _: None)
+            stat_after = os.stat(path)
+            with open(path, "rb") as stream:
+                self.assertEqual(stream.read(), before)
+            self.assertEqual(stat_after.st_mtime_ns, stat_before.st_mtime_ns)
+            self.assertEqual(is_trusted(cfg_trust_store_dir(env), os.path.realpath(path), before),
+                             trusted_before)
+
+    def test_partial_override(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, xdg = self._env(root)
+            command = ('codex exec --sandbox read-only --skip-git-repo-check -m {model} '
+                       "-c model_reasoning_effort='\\\"high\\\"'")
+            self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"),
+                        '[[reviewers]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
+                        f"command={json.dumps(command)}\n[policy]\nladder=[\"k\"]\n")
+            local = {"reviewers": [{"key": "k", "model": "opus"}]}
+            merged = cfg_combine(local, env, warn_fn=lambda _: None, local_path="local.toml")
+            entry = merged["reviewers"][0]
+            self.assertEqual(entry["runtime"], "codex")
+            self.assertEqual(entry["model"], "opus")
+            self.assertNotIn("inferred", str(entry))
+
+    def test_variant_merge(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, xdg = self._env(root)
+            factory = "codex exec --sandbox read-only --skip-git-repo-check -m {model}"
+            self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"),
+                        '[[reviewers]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
+                        f"command={json.dumps(factory)}\n")
+            custom = "mycli --fast {model}"
+            merged = cfg_combine({"reviewers": [{"key": "k", "command": custom}]}, env,
+                                warn_fn=lambda _: None, local_path="local.toml")
+            self.assertNotIn("runtime", merged["reviewers"][0])
+            self.assertEqual(merged["reviewers"][0]["command"], custom)
+
+            self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"),
+                        '[[reviewers]]\nkey="g"\ncli="mycli"\nmodel="m"\n'
+                        'command="mycli {model}"\n')
+            merged = cfg_combine({"reviewers": [{"key": "g", "runtime": "codex",
+                                                "model": "gpt-5.6-sol"}]}, env,
+                                warn_fn=lambda _: None, local_path="local.toml")
+            self.assertEqual(merged["reviewers"][0]["runtime"], "codex")
+            self.assertNotIn("command", merged["reviewers"][0])
+
+    def test_order(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, xdg = self._env(root)
+            path = os.path.join(xdg, "ai-kit", "review-spec.toml")
+            self._write(path, '[policy]\nladder=["b", "a"]\n'
+                              '[[reviewers]]\nkey="b"\ncli="codex"\nmodel="m"\n'
+                              '[[reviewers]]\nkey="a"\nruntime="pi"\nmodel="m"\n')
+            resolved = cfg_resolve(root, env, warn_fn=lambda _: None)
+            self.assertEqual([r["key"] for r in resolved["reviewers"]], ["b", "a"])
+            self.assertEqual(resolved["policy"]["ladder"], ["b", "a"])
 
 class TestLegacyForms(unittest.TestCase):
     def test_legacy_form_matrix(self):

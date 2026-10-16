@@ -225,7 +225,7 @@ Run this loop. Each iteration is one reviewer dispatch followed by (conditionall
 
 For each entry in `REVIEWER_LIST`:
 
-- **`cli` is `null`** (native dispatch): use the `Agent` tool exactly as
+- **`runtime` and `command` are both `null`** (session-default dispatch): use the `Agent` tool exactly as
   before —
   - `subagent_type`: `general-purpose`
   - `model`: the entry's `model`, **omitted entirely when `model == ""`**
@@ -248,7 +248,7 @@ For each entry in `REVIEWER_LIST`:
     open for it and crashes the loop the first time `policy.mode =
     "double"` actually runs.
 
-- **`cli` is set** (external CLI dispatch):
+- **`runtime` or `command` is set** (subprocess dispatch):
   1. Write the prompt text below to `$RUN_TMP_DIR/iter<N>-<key>-prompt.txt`
      via the `Write` tool, with `{prompt}` filled in as:
 

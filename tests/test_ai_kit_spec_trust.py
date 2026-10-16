@@ -110,6 +110,24 @@ class TestTrustLifecycle(TrustEnvTestCase):
             self.assertEqual(cli.main(["trust-local", "--cwd", self.cwd, "--show"]), 0)
         return [json.loads(x) for x in out.getvalue().strip().splitlines()]
 
+    def test_show_lists_runtime_and_custom_entries(self):
+        factory = "codex exec --sandbox read-only --skip-git-repo-check -m {model}"
+        custom = "mycli --fast {model}"
+        text = ('strategy = "local-only"\n'
+                '[[reviewers]]\nkey = "codex"\ncli = "codex"\n'
+                'model = "gpt-5.6-sol"\n'
+                f"command = '{factory}'\n"
+                '[[reviewers]]\nkey = "custom"\ncli = "mycli"\n'
+                'model = "custom-model"\n'
+                f"command = '{custom}'\n")
+        self.write_local(text.encode())
+        lines = self.show_lines()
+        self.assertEqual([line["key"] for line in lines], ["codex", "custom"])
+        self.assertEqual(lines[0]["argv"],
+                         ["codex", "exec", "--sandbox", "read-only", "--skip-git-repo-check",
+                          "-m", "gpt-5.6-sol"])
+        self.assertEqual(lines[1]["argv"], ["mycli", "--fast", "custom-model"])
+
     def test_show_renders_placeholder_hidden_flag_and_executable(self):
         # A-CR-01: a placeholder must never hide what runs -- the consent display shows the
         # rendered argv, with only the prompt kept symbolic.
