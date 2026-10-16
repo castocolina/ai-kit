@@ -35,10 +35,11 @@ _ROOT_KIND_ORDER = {"global": 0, "plugin": 1, "project": 2}
 
 
 def _read_json(path: str) -> dict:
+    # Not plan_io.read_json_object: plan_io imports this module (its skill-name regex).
     try:
         with open(path, encoding="utf-8") as handle:
             raw = json.load(handle)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return {}
     return raw if isinstance(raw, dict) else {}
 

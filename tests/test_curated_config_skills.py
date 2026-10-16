@@ -422,6 +422,15 @@ class TestPluginSkills(unittest.TestCase):
         self.assertEqual(rows, [])
 
 
+class TestReadJson(unittest.TestCase):
+    def test_deep_nesting_reads_as_empty(self):
+        """PT-12: like plan_io's loader, a RecursionError is a bad file, not a traceback."""
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            handle.write("[" * 100000 + "]" * 100000)
+        self.addCleanup(os.unlink, handle.name)
+        self.assertEqual(skill_scan._read_json(handle.name), {})
+
+
 class TestPonytailVisibility(unittest.TestCase):
     def test_per_host_global_roots_only(self):
         root = tempfile.mkdtemp()
