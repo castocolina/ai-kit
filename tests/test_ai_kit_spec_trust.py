@@ -51,8 +51,10 @@ class TrustEnvTestCase(unittest.TestCase):
         self.cwd = tempfile.mkdtemp(dir=self._tmp.name)
         self.home = tempfile.mkdtemp(dir=self._tmp.name)
         self.xdg = tempfile.mkdtemp(dir=self._tmp.name)
+        self.cache = tempfile.mkdtemp(dir=self._tmp.name)
         self.env_patcher = mock.patch.dict(
-            os.environ, {"HOME": self.home, "XDG_CONFIG_HOME": self.xdg})
+            os.environ, {"HOME": self.home, "XDG_CONFIG_HOME": self.xdg,
+                         "XDG_CACHE_HOME": self.cache})
         self.env_patcher.start()
         self.addCleanup(self.env_patcher.stop)
         self.store = config_io.cfg_trust_store_dir(dict(os.environ))
@@ -303,7 +305,8 @@ class TestTrustLifecycle(TrustEnvTestCase):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["resolve-reviewers", "--cwd", self.cwd,
-                             "--quota-path", quota_path])
+                             "--quota-path", quota_path],
+                            which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None)
         self.assertEqual(code, 0)
         self.assertNotIn('"local"', out.getvalue())
 
@@ -399,7 +402,8 @@ class TestLoudConfigErrors(TrustEnvTestCase):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["resolve-reviewers", "--cwd", self.cwd,
-                             "--quota-path", quota_path])
+                             "--quota-path", quota_path],
+                            which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None)
         self.assertEqual(code, 2)
         self.assertIn(config_io.cfg_local_path(self.cwd), err.getvalue())
 
@@ -409,7 +413,8 @@ class TestLoudConfigErrors(TrustEnvTestCase):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["resolve-reviewers", "--cwd", self.cwd,
-                             "--quota-path", quota_path])
+                             "--quota-path", quota_path],
+                            which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None)
         self.assertEqual(code, 2)
         self.assertIn(os.path.join(self.xdg, "ai-kit", "review-spec.toml"), err.getvalue())
 

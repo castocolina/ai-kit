@@ -176,6 +176,27 @@ def normalize_legacy_entry(entry) -> tuple[dict, list[str]]:
     return result, notes
 
 
+def _drop_stored_routes(reviewers) -> tuple[list, list[str]]:
+    """Drop a stored route from every entry. Load-only: save rejects one instead."""
+    cleaned = []
+    notes = []
+    for entry in reviewers:
+        result, note = _drop_stored_route(entry)
+        cleaned.append(result)
+        if note:
+            notes.append(note)
+    return cleaned, notes
+
+
+def _drop_stored_route(entry) -> tuple[dict, str | None]:
+    """A stored route is a decision, never config. Load drops it; save rejects it."""
+    if not isinstance(entry, dict) or "route" not in entry:
+        return entry, None
+    result = dict(entry)
+    value = result.pop("route")
+    return result, f"{entry.get('key', '<unknown>')}: route={value} ignored (decided per run)"
+
+
 def normalize_legacy_reviewers(reviewers) -> tuple[list, list[str]]:
     """Normalize reviewer entries while preserving order and malformed non-dicts."""
     normalized = []
@@ -388,33 +409,36 @@ def cfg_resolve(cwd: str, env: dict, warn_fn=None) -> dict:
     return cfg_combine(local, env, warn_fn=emit_warn, local_path=local_path)
 
 
+def _combine_layers(local, global_cfg):
+    """(reviewers, policy) after strategy, legacy normalization and the route drop."""
+    local_reviewers, local_notes = normalize_legacy_reviewers(local.get("reviewers", []))
+    global_reviewers, global_notes = normalize_legacy_reviewers(global_cfg.get("reviewers", []))
+    strategy = local.get("strategy", "global-merge") if local else "global-merge"
+    if not local:
+        merged, policy = global_reviewers, {**DEFAULT_POLICY, **global_cfg.get("policy", {})}
+    elif strategy == "local-only":
+        merged, policy = local_reviewers, {**DEFAULT_POLICY, **local.get("policy", {})}
+    else:
+        merged = cfg_merge_reviewers(global_reviewers, local_reviewers)
+        policy = {**DEFAULT_POLICY, **global_cfg.get("policy", {}), **local.get("policy", {})}
+    merged, inferred_notes = infer_legacy_native(merged)
+    merged, route_notes = _drop_stored_routes(merged)
+    return merged, policy, local_notes, global_notes, inferred_notes + route_notes
+
+
 def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None) -> dict:
     """Combine an already-parsed (and already-trusted, or empty) local config with the
     global one, honoring the local `strategy`. Shared by cfg_resolve and `trust-local
     --show`, so the consent display renders the same merged entries dispatch would run."""
     emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
     global_path = cfg_global_path(env)
-    global_cfg = cfg_load_toml(global_path)
-    local_reviewers, local_notes = normalize_legacy_reviewers(local.get("reviewers", []))
-    global_reviewers, global_notes = normalize_legacy_reviewers(
-        global_cfg.get("reviewers", [])
-    )
+    merged, policy, local_notes, global_notes, notes = _combine_layers(
+        local, cfg_load_toml(global_path))
     if local:
         _emit_legacy_note(local_path or "project-local review-spec.toml", local_notes, emit_warn)
     _emit_legacy_note(global_path, global_notes, emit_warn)
-    strategy = local.get("strategy", "global-merge") if local else "global-merge"
-    if not local:
-        merged = global_reviewers
-        policy = {**DEFAULT_POLICY, **global_cfg.get("policy", {})}
-    elif strategy == "local-only":
-        merged = local_reviewers
-        policy = {**DEFAULT_POLICY, **local.get("policy", {})}
-    else:
-        policy = {**DEFAULT_POLICY, **global_cfg.get("policy", {}), **local.get("policy", {})}
-        merged = cfg_merge_reviewers(global_reviewers, local_reviewers)
-    merged, inferred_notes = infer_legacy_native(merged)
     _emit_legacy_note(f"merged review-spec.toml ({local_path or 'local'}, {global_path})",
-                      inferred_notes, emit_warn)
+                      notes, emit_warn)
     return {"policy": policy, "reviewers": merged}
 
 
@@ -480,6 +504,8 @@ def validate_reviewer_fields(entry: dict) -> str | None:
     # specifically added below) so it surfaces through the existing rejections/WARNING
     # pathway instead of writing corrupted TOML.
     for field, value in entry.items():
+        if field == "route":
+            return f"{key}: 'route' is decided per run and is never stored"
         if isinstance(value, dict):
             return (
                 f"{key}: '{field}' has a nested-object value, which this TOML schema "
@@ -552,7 +578,10 @@ def _cfg_render_reviewer_lines(valid_reviewers: list) -> list[str]:
 
 
 def _cfg_render_reviewers(config: dict) -> tuple[list, list[str]]:
-    """The two load steps, in the same order, so a write holds only the new form."""
+    """The two load steps, in the same order, so a write holds only the new form.
+
+    A stored route is NOT dropped here: save rejects it, so the entry stays intact for
+    validate_reviewer_fields to refuse. Load drops it instead."""
     reviewers, notes = normalize_legacy_reviewers(config.get("reviewers", []))
     reviewers, inferred = infer_legacy_native(reviewers)
     return reviewers, notes + inferred

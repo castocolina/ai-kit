@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from ai_kit_spec import trust
+from ai_kit_spec import routing, trust
 from ai_kit_spec.cache import (
     cache_is_stale,
     cache_read_json,
@@ -41,17 +41,14 @@ from ai_kit_spec.config_io import (
 )
 from ai_kit_spec.detection import (
     LOOPBACK_URLOPEN,
-    RUNTIMES_TTL_SECONDS,
     build_runtimes_snapshot,
     cache_runtimes_path,
-    claude_runtime_is_current,
     detect_current_runtime,
     detect_tool_availability,
     find_codegraph_alternative,
     group_models_by_family,
     normalize_runtime_keys,
     runtime_id,
-    runtimes_schema_is_current,
 )
 from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
 from ai_kit_spec.local_secrets import load_secret
@@ -81,7 +78,7 @@ from ai_kit_spec.review_reports import (
     report_status,
 )
 from ai_kit_spec.reviewer_dispatch import ReviewerDispatchSpec, dispatch_reviewer
-from ai_kit_spec.routing import host_can_select
+from ai_kit_spec.routing import RouteContext, RuntimesSeams, host_can_select
 from ai_kit_spec.vendor import infer_vendor_from_model
 
 
@@ -389,17 +386,10 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
         # so ruff's lambda-assignment rule never fires.
         return cache_read_json(cache_catalog_path(deps.env_fn()))
 
-    # 16 D-12: the skip requires BOTH a fresh mtime AND the current schema_version --
-    # a missing or older version forces re-detection whatever the TTL says (Pitfall 3:
-    # the refresh condition is "stale OR version not current", never chained ANDs).
-    # Plan 16-04 adds a third AND-ed condition (the claude entry matches the current
-    # catalog) to this same expression; the catalog is only read when the cache would
-    # otherwise be skipped, and only its claude portion is compared.
-    cached_runtimes = cache_read_json(args.if_stale) if args.if_stale else None
-    if args.if_stale and not cache_is_stale(args.if_stale, RUNTIMES_TTL_SECONDS) \
-            and runtimes_schema_is_current(cached_runtimes) \
-            and claude_runtime_is_current(cached_runtimes,
-                                          catalog_fn=_read_default_catalog):
+    # 16 D-12: the skip requires a fresh mtime, the current schema_version and a claude
+    # entry matching the current catalog. The test lives in routing so this caller and the
+    # bounded refresh cannot drift.
+    if args.if_stale and routing.runtimes_cache_is_fresh(args.if_stale, deps.env_fn()):
         print(json.dumps({}))  # fresh — caller should treat this as "nothing to do"
         return 0
     snapshot = build_runtimes_snapshot(which_fn=deps.which_fn, run_fn=deps.run_fn,
@@ -644,11 +634,43 @@ def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
     print(json.dumps(updated))
     return 0
 
+_UNVERIFIED_NOTE = (
+    "ai-kit-spec: dispatching reviewer {key} unverified: the {runtime} model list is "
+    "unavailable, so neither ai-kit nor the runner can check {model} before it runs"
+)
+
+
+def _route_reviewers(config: dict, deps: CliDeps) -> dict[str, str]:
+    """Route every configured reviewer and say why each skipped or unchecked one lost."""
+    env = deps.env_fn()
+    routes = routing.route_all(
+        config.get("reviewers", []),
+        RouteContext(detect_current_runtime(env), "review", env,
+                     RuntimesSeams(deps.which_fn, deps.run_fn, deps.popen_fn, deps.urlopen_fn)))
+    by_key = {entry.get("key"): entry for entry in config.get("reviewers", [])
+              if isinstance(entry, dict)}
+    for key, decision in routes.items():
+        if decision in routing.SKIP_ROUTES:
+            print(f"ai-kit-spec: skipping reviewer {key}: route {decision}", file=sys.stderr)
+        elif decision == "unverified":
+            entry = by_key.get(key, {})
+            print(_UNVERIFIED_NOTE.format(key=key, runtime=entry.get("runtime"),
+                                           model=entry.get("model", "")), file=sys.stderr)
+    return routes
+
+
 def _cmd_resolve_reviewers(args: argparse.Namespace, deps: CliDeps) -> int:
-    config = cfg_resolve(args.cwd, dict(os.environ))
-    quota = cache_read_json(args.quota_path) or {}
+    env = deps.env_fn()
+    config = cfg_resolve(args.cwd, env)
+    routes = _route_reviewers(config, deps)
+    quota = routing.unroutable_quota(cache_read_json(args.quota_path) or {}, routes)
     reviewers = resolve_reviewers(config, quota, args.source_vendor, args.cross_ai)
-    print(json.dumps([r._asdict() for r in reviewers]))
+    printed = []
+    for reviewer in reviewers:
+        row = reviewer._asdict()
+        row["route"] = routes.get(reviewer.key, "native")
+        printed.append(row)
+    print(json.dumps(printed))
     return 0
 
 def _cmd_merge_reports(args: argparse.Namespace, deps: CliDeps) -> int:

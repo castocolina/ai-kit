@@ -223,10 +223,13 @@ Run this loop. Each iteration is one reviewer dispatch followed by (conditionall
 
 ### Step 1 — Dispatch reviewer(s) (every iteration)
 
+Entries whose route is a skip never reach `REVIEWER_LIST`: `resolve-reviewers` prints why on
+stderr (`ai-kit-spec: skipping reviewer <key>: route <route>`).
+
 For each entry in `REVIEWER_LIST`:
 
-- **`runtime` and `command` are both `null`** (session-default dispatch): use the `Agent` tool exactly as
-  before —
+- **`route` is `native`** (the host's own subagent; on Claude Code the `Agent` tool with the
+  alias): use the `Agent` tool exactly as before —
   - `subagent_type`: `general-purpose`
   - `model`: the entry's `model`, **omitted entirely when `model == ""`**
     (the `NO_CONFIG_FALLBACK`/session-default case — never substitute a
@@ -248,7 +251,7 @@ For each entry in `REVIEWER_LIST`:
     open for it and crashes the loop the first time `policy.mode =
     "double"` actually runs.
 
-- **`runtime` or `command` is set** (subprocess dispatch):
+- **`route` is `subprocess`, `unverified` or `custom`** (dispatch-reviewer, unchanged steps):
   1. Write the prompt text below to `$RUN_TMP_DIR/iter<N>-<key>-prompt.txt`
      via the `Write` tool, with `{prompt}` filled in as:
 

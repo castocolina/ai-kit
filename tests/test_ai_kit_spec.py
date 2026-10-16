@@ -4332,7 +4332,13 @@ class TestMainCli(unittest.TestCase):
             quota_path = os.path.join(cwd, "quota.json")
             cache_write_json(quota_path, {})
             buf = io.StringIO()
-            env = {"HOME": home}
+            env = {"HOME": home, "XDG_CACHE_HOME": os.path.join(cwd, "cache")}
+            cache_write_json(
+                detection.cache_runtimes_path(env),
+                {"schema_version": detection.RUNTIMES_SCHEMA_VERSION,
+                 "clis": {"codex": {"installed": True, "path": "/fake/codex",
+                                     "models": ["gpt-5.2", "gpt-5.2-mini"]}}},
+            )
             with mock.patch.object(os, "environ", env), redirect_stdout(buf):
                 code = main(
                     [
@@ -4344,11 +4350,15 @@ class TestMainCli(unittest.TestCase):
                         "--source-vendor",
                         "anthropic",
                         "--cross-ai",
-                    ]
+                    ],
+                    which_fn=lambda _name: None,
+                    run_fn=lambda *_a, **_k: None,
+                    env_fn=lambda: dict(env),
                 )
             self.assertEqual(code, 0)
             parsed = json.loads(buf.getvalue())
             self.assertEqual(parsed[0]["model"], "gpt-5.2-mini")  # local override applied
+            self.assertIn("route", parsed[0])
 
     def test_probe_quota_does_not_probe_a_host_selectable_alias(self):
         with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:

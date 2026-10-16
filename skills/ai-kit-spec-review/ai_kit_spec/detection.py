@@ -476,6 +476,23 @@ def parse_pi_models(stdout) -> list | None:
     return parsed_models
 
 
+def list_runtime_models(rid, binary, run_fn=subprocess.run) -> list[str] | None:
+    """Model ids for one runtime. None means the listing failed (or this runtime has no
+    lister: claude's ids come from the catalog, never a listing); [] means it succeeded
+    with nothing selectable."""
+    if rid == "opencode":
+        return detect_opencode_models(binary, run_fn=run_fn)
+    if rid == "cursor":
+        return detect_cursor_agent_models(binary, run_fn=run_fn)
+    if rid == "codex":
+        listed = detect_codex_models(binary, run_fn=run_fn)
+        return [item["id"] for item in listed] if isinstance(listed, list) else None
+    if rid == "pi":
+        listed = detect_pi_models(binary, run_fn=run_fn)
+        return [item["id"] for item in listed] if isinstance(listed, list) else None
+    return None
+
+
 def detect_pi_models(binary: str, run_fn=subprocess.run) -> list | None:
     """Runs pi RPC `get_available_models` (shape verified live 2026-10-15, pi 1.2.0;
     not live-validated from a pi host, Phase 22). A non-zero exit, OSError,

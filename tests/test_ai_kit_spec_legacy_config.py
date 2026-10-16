@@ -91,14 +91,25 @@ class TestLegacyLoad(unittest.TestCase):
                     f"command = {json.dumps(command)}\n[policy]\nladder = [\"cx\"]\n")
             with open(path, "w", encoding="utf-8") as stream:
                 stream.write(text)
-            env = {"HOME": home, "XDG_CONFIG_HOME": xdg}
+            env = {"HOME": home, "XDG_CONFIG_HOME": xdg,
+                   "XDG_CACHE_HOME": os.path.join(root, "cache")}
+            from ai_kit_spec.cache import cache_write_json
+            from ai_kit_spec.detection import RUNTIMES_SCHEMA_VERSION, cache_runtimes_path
+            cache_write_json(
+                cache_runtimes_path(env),
+                {"schema_version": RUNTIMES_SCHEMA_VERSION,
+                 "clis": {"codex": {"installed": True, "path": "/fake/codex",
+                                     "models": ["gpt-5.6-sol"]}}})
             out, err = io.StringIO(), io.StringIO()
             with open(path, "rb") as stream:
                 before = stream.read()
             with mock.patch.dict(os.environ, env), \
                     redirect_stdout(out), redirect_stderr(err):
                 self.assertEqual(main(["resolve-reviewers", "--cwd", root, "--cross-ai",
-                                       "--quota-path", os.path.join(root, "quota.json")]), 0)
+                                       "--quota-path", os.path.join(root, "quota.json")],
+                                      which_fn=lambda _name: None,
+                                      run_fn=lambda *_a, **_k: None,
+                                      env_fn=lambda: dict(env)), 0)
             result = json.loads(out.getvalue())[0]
             self.assertEqual(result["runtime"], "codex")
             self.assertIsNone(result["command"])

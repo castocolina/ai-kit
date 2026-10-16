@@ -167,6 +167,11 @@ Runs once per invocation, after Step 0.6.
      --cross-ai \
      > "$RUN_TMP_DIR/reviewers.json"
    ```
+   Each object in the output carries a `route` key (`native`, `subprocess`, `unverified` or
+   `custom`) decided for this run and never stored. Stderr names every reviewer that was left
+   out (`ai-kit-spec: skipping reviewer <key>: route <route>`) and every one dispatched
+   unchecked (`ai-kit-spec: dispatching reviewer <key> unverified: the <runtime> model list is
+   unavailable, so neither ai-kit nor the runner can check <model> before it runs`).
    `resolve-reviewers` itself calls `cfg_resolve(cwd, env)`,
    which already handles the local-vs-global/`strategy` resolution — this
    step never re-implements that logic, it only picks which `--cwd` to
