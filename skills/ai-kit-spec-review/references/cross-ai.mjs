@@ -171,8 +171,14 @@ function dropTemp(dir) {
   tempDirs.delete(dir);
 }
 
+let stderrGone = false;
+// A vanished reader must not crash the runner (that would orphan the CLI group): the run
+// still finishes and is still supervised, only its output is lost.
+process.stdout.on('error', () => { /* answer reader gone */ });
+process.stderr.on('error', () => { stderrGone = true; });
+
 function log(text) {
-  if (finished) return;
+  if (finished || stderrGone) return;
   process.stderr.write(text.endsWith('\n') ? text : `${text}\n`);
 }
 
@@ -192,22 +198,37 @@ function finish(status, fields) {
   const line = `AIKIT-XAI status=${status} cli=${fields.cli ?? '-'} model=${fields.model ?? '-'} ` +
     `exit=${exit} cli_rc=${fields.cli_rc ?? '-'} elapsed=${elapsed}s out=${fields.out ?? 0} ` +
     `tree=${tree} action=${action}`;
-  process.stderr.write(`${line}\n`);
+  if (!stderrGone) process.stderr.write(`${line}\n`);
   finished = true;
   finishedExit = exit;
   return exit;
 }
 
+// process.exit drops writes still queued on a pipe, so exit only once both streams have
+// flushed (a stalled reader gets a bounded wait, shorter on the signal path).
 function exitFlushed(code) {
   if (backstop) clearTimeout(backstop);
-  const go = () => process.exit(code);
-  const flushFd = (fd) => {
-    try { fs.fsyncSync(fd); } catch { /* no fsync on this stream */ }
-  };
-  flushFd(process.stderr.fd);
-  flushFd(process.stdout.fd);
-  go();
+  process.exitCode = code;
+  let pending = 2;
+  const done = () => { if (--pending === 0) process.exit(code); };
+  for (const s of [process.stdout, process.stderr]) {
+    if (s.destroyed || s.writableEnded) done();
+    else s.write('', done);
+  }
+  setTimeout(() => process.exit(code), aborting ? 300 : 5000).unref();
 }
+
+process.on('uncaughtException', (e) => {
+  if (selfTestRoot) {
+    process.stderr.write(`self-test: internal error: ${e && e.stack || e}\n`);
+    selfTestAbort(1);
+    return;
+  }
+  if (current) killGroup(current, 'SIGKILL');
+  for (const dir of [...tempDirs]) dropTemp(dir);
+  log(`cross-ai: internal error: ${e && e.stack || e}`);
+  exitFlushed(finish('crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' }));
+});
 
 const RUNTIMES = {
   cursor: {
@@ -616,7 +637,7 @@ function withExtra(cli, argv) {
 
 for (const [sig, n] of [['SIGTERM', 15], ['SIGINT', 2], ['SIGHUP', 1]]) {
   process.on(sig, () => {
-    if (selfTestRoot) { selfTestAbort(n); return; }
+    if (selfTestRoot) { selfTestAbort(128 + n); return; }
     if (aborting) {
       // A second signal skips what is left of the grace period.
       if (current) killGroup(current, 'SIGKILL');
@@ -826,7 +847,7 @@ const args = process.argv;
 const model = argOf('--model');
 const fakeMode = model.startsWith('fake/') ? model.slice(5) : '';
 const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
-const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race', 'stubborn']);
+const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big']);
 let stdinBuf = '';
 const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
@@ -838,6 +859,15 @@ const FAKE_MODES = {
     process.stdout.write('# Summary\nok');
   },
   emptyauth: () => { process.stderr.write('401 unauthorized\n'); },
+  big: () => {
+    fs.appendFileSync('a.txt', 'big\n');
+    process.stderr.write('e'.repeat(300000) + '\n');
+    process.stdout.write('# Summary\n' + 'y'.repeat(300000), () => process.exit(0));
+  },
+  slowok: () => {
+    fs.writeFileSync('started', '1');
+    setTimeout(() => { fs.appendFileSync('a.txt', 'slow\n'); process.stdout.write('# Summary\nok'); process.exit(0); }, 2500);
+  },
   empty: () => {},
   crash: () => { process.stderr.write('boom\n'); process.exit(7); },
   quote: () => {
@@ -1157,6 +1187,7 @@ function runCaseProcess(spec, c) {
     });
     child.stdin.on('error', () => { /* runner exited early */ });
     child.stdin.end(spec.stdin ?? 'prompt\n');
+    if (spec.closeStderr) waitFor(() => spec.closeStderr(c), 10000).then(() => child.stderr.destroy());
     if (spec.signal) {
       waitFor(() => spec.signal.when(c), 10000).then((ready) => {
         if (done) return;
@@ -1236,13 +1267,13 @@ async function runSelfTestCase(tmp, spec) {
 
 // Self-test mode owns SIGTERM/SIGINT/SIGHUP: reap every case process, drop the tmp dir, exit.
 let selfTestRoot = null;
-function selfTestAbort(n) {
+function selfTestAbort(code) {
   for (const child of caseRunners) killGroup(child, 'SIGKILL');
   if (selfTestRoot) {
     reapUnder(selfTestRoot, fs.readdirSync(selfTestRoot).filter((f) => f.startsWith('pids-')).map((f) => path.join(selfTestRoot, f)));
     fs.rmSync(selfTestRoot, { recursive: true, force: true });
   }
-  process.exit(128 + n);
+  process.exit(code);
 }
 
 async function blackBoxSelfTest() {
@@ -1391,6 +1422,23 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/okwarn'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/okwarn exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: (r) => (r.stdout === '# Summary\nok\n' ? null : `stdout=${JSON.stringify(r.stdout)}`),
+      },
+      {
+        // WR-01: a large answer and stderr through pipes arrive whole, status line last.
+        name: 'big-pipe',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/big'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/big exit=0 .* tree=dirty action=stop$/,
+        check: (r) => (r.stdout === `# Summary\n${'y'.repeat(300000)}\n` ? null : `stdout ${r.stdout.length} bytes`),
+      },
+      {
+        // WR-02: the stderr reader goes away mid-run; the runner must still finish the run.
+        name: 'stderr-closed',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/slowok'],
+        config: { heartbeatS: 1 },
+        closeStderr: (c) => fs.existsSync(path.join(c.repo, 'started')),
+        exit: 0,
         check: (r) => (r.stdout === '# Summary\nok\n' ? null : `stdout=${JSON.stringify(r.stdout)}`),
       },
       {
@@ -2188,10 +2236,7 @@ async function main(argv) {
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2)).then(
-    (code) => {
-      if (finished) exitFlushed(code);
-      else exitFlushed(code ?? 0);
-    },
+    (code) => exitFlushed(code ?? 0),
     (e) => {
       log(`cross-ai: internal error: ${e && e.stack || e}`);
       exitFlushed(finish('crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' }));
