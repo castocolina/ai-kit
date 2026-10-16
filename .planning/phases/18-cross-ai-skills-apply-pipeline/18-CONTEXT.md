@@ -326,6 +326,9 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
   `skills-root`. On this machine none is visible outside the Claude plugin cache, so non-Claude
   hosts get no ponytail entries, and SKILL.md records a dated result. Other hosts' own plugin
   routes are not addressable through `agent_skills` and are never run.
+  - *(amended 2026-10-15, skill-judge I6)* SKILL.md no longer records the maintainer machine's
+    dated result: it tells the agent to report the inventory's live `ponytail_visibility`,
+    which covers each host's global skills root only (Claude plugin skills are `skills` rows).
 - **D-36: System One detection is a reachability check, not a health check.**
   - It is a TCP connect (1–2 s) to `JEV_API_URL`'s host and port when the variable is set,
     reported as "reachable, not verified as System One". A key present by name also counts:
