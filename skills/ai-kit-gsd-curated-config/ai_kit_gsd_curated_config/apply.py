@@ -362,6 +362,7 @@ class Progress:
     runner: cross_ai_script.ScriptPlan | None = None
     snapshot: str | None = None
     created_dirs: list[str] = field(default_factory=list)
+    new_render: str | None = None  # a .new this apply created (removed on rollback)
 
 
 class CleanupCtx(NamedTuple):
@@ -660,6 +661,8 @@ def _rollback(progress: Progress, config_path: str) -> str | None:
                 config_backup.restore_backup(runner.path, progress.snapshot)
             elif runner.kind == "add":
                 config_backup.restore_backup(runner.path, None)
+            elif progress.new_render:
+                config_backup.restore_backup(progress.new_render, None)
         except OSError as exc:
             restore_error = restore_error or str(exc)
     if restore_error:
@@ -801,6 +804,7 @@ def _apply_script_step(ctx: ScriptStepCtx) -> cross_ai_script.ScriptPlan | None:
         _record_runner_marker(config_path, plan, snapshot)
     elif plan.kind == "add":
         _record_runner_marker(config_path, plan, None)
+    new_existed = os.path.lexists(plan.path + ".new")
     try:
         performed = cross_ai_script.write_script(plan)
     except OSError as exc:
@@ -809,6 +813,8 @@ def _apply_script_step(ctx: ScriptStepCtx) -> cross_ai_script.ScriptPlan | None:
         return None
     progress.runner = performed
     if performed.kind == "new-as-.new":
+        if not new_existed:
+            progress.new_render = performed.write_path
         snap = progress.snapshot
         progress.snapshot = None
         with contextlib.suppress(OSError):

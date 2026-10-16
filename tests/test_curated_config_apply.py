@@ -1675,7 +1675,7 @@ class TestApplyWritePath(unittest.TestCase):
                 self.assertEqual(cross_ai_script.script_state(handle.read()), "pristine")
             self.assertIsNone(config_backup.read_marker(config_path))
 
-    def test_edited_runner_failed_write_keeps_runner_and_new(self) -> None:
+    def test_edited_runner_failed_write_keeps_runner_drops_own_new(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
             template, tmpl_err = cross_ai_script.load_template()
@@ -1698,8 +1698,16 @@ class TestApplyWritePath(unittest.TestCase):
             self.assertEqual(code, 1)
             with open(runner, "rb") as handle:
                 self.assertEqual(handle.read(), edited)
-            self.assertTrue(os.path.isfile(runner + ".new"))
+            # B IN-05: the rolled-back apply's render is not left behind as "merge it by hand".
+            self.assertFalse(os.path.exists(runner + ".new"))
             self.assertIsNone(config_backup.read_marker(config_path))
+            # A .new that predates the apply is overwritten (18 CONTEXT: stale .new) but kept.
+            with open(runner + ".new", "wb") as handle:
+                handle.write(b"stale render")
+            rec = _RecordingRun(fake, fail_config_set=2)
+            code, _report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 1)
+            self.assertTrue(os.path.isfile(runner + ".new"))
 
     def test_render_failure_before_config_set(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
