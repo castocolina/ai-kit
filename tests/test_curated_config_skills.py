@@ -1133,6 +1133,21 @@ class TestProposals(unittest.TestCase):
         inv = _inv(skills=[_skill_row("ponytail", "global", description="x")])
         self.assertEqual(skills.proposals(_shipped_affinity(), inv), [])
 
+    def test_only_wireable_skills_once_per_name(self):
+        """C-W6: no proposal plan-set would refuse or gsd-core would skip; one per name."""
+        inv = _inv(skills=[
+            _skill_row("esc", "project", escapes_root=True, description="d"),
+            _skill_row(
+                "away", "global", escapes_root=True, real_dir="/outside/away",
+                real_dir_home=None, description="d",
+            ),
+            _skill_row("dup", "global", description="global copy"),
+            _skill_row("dup", "plugin", plugin="p", description="plugin copy"),
+        ])
+        notes = skills.proposals(_shipped_affinity(), inv)
+        self.assertEqual([n["key"] for n in notes], ["dup"])
+        self.assertIn("global copy", notes[0]["text"])
+
     def test_cap_and_more_note(self):
         rows = [
             _skill_row(f"skill-{idx:02d}", "global", description="d")

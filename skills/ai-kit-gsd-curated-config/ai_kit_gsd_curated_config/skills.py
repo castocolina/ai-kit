@@ -381,23 +381,20 @@ def _family_skill_names(affinity: dict) -> set[str]:
 
 
 def proposals(affinity: dict, inv: dict) -> list[dict]:
-    """Capped notes for unknown installed skills (18 D-03)."""
+    """Capped notes for unknown installed skills (18 D-03): one per name, wireable only."""
     family = _family_skill_names(affinity)
     rows = inv.get("skills")
     if not isinstance(rows, list):
         return []
+    names = {row.get("name") for row in rows if isinstance(row, dict)}
     eligible: list[dict] = []
-    for row in rows:
-        if not isinstance(row, dict) or row.get("addressable") is not True:
+    for name in sorted(n for n in names if isinstance(n, str)):
+        if name in family or name.startswith("gsd-") or unwired_reason(name, inv) is not None:
             continue
-        name = row.get("name")
-        if not isinstance(name, str) or name in family or name.startswith("gsd-"):
-            continue
-        desc = row.get("description")
-        if not isinstance(desc, str) or not desc.strip():
-            continue
-        eligible.append(row)
-    eligible.sort(key=lambda item: item["name"])
+        row = locate(name, inv)
+        desc = row.get("description") if row else None
+        if row is not None and isinstance(desc, str) and desc.strip():
+            eligible.append(row)
     notes: list[dict] = []
     for row in eligible[:PROPOSAL_CAP]:
         name = row["name"]
