@@ -393,7 +393,9 @@ class TestRecoveryText(unittest.TestCase):
             }
             text = config_backup.recovery_text(marker, config_path)
             self.assertIn("apply --dry-run", text)
-            self.assertIn("put config.json.bak-20261015T120000Z back over", text)
+            backup = os.path.join(tmp, ".planning", "config.json.bak-20261015T120000Z")
+            # B IN-02: the backup is named by an absolute path, usable from any cwd.
+            self.assertIn(f"put {backup} back over", text)
             self.assertIn(
                 "put .planning/scripts/cross-ai.mjs.ai-kit-apply-backup back over",
                 text,

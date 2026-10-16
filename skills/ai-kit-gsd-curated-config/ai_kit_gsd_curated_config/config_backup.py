@@ -227,7 +227,8 @@ def _leftovers_phrase(marker: dict[str, Any]) -> str:
 def _recovery_config_step(marker: dict[str, Any], config_path: str) -> str:
     backup = marker.get("backup")
     if backup:
-        return f"put {backup} back over {config_path}"
+        # The marker keeps the basename (relocatable); the text needs a path usable from any cwd.
+        return f"put {os.path.join(os.path.dirname(config_path), backup)} back over {config_path}"
     if not marker.get("config_existed", True):
         return f"delete {config_path} if it exists (that apply created it)"
     return (
