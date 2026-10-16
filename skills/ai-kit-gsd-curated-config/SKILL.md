@@ -21,9 +21,11 @@ skill must be installed beside this one; `node` and a resolvable gsd-core are re
 
 **Use it on trusted checkouts only.** `inventory` runs the target project's own gsd-core under `node`
 (project-local gsd-core wins over global), so point `--project-dir` only at trees you would
-already run GSD in. Resolution order: `<root>/gsd-core`, `<root>/.claude/gsd-core`,
-`<root>/.codex/gsd-core`, then global installs. When `JEV_API_URL` is set, `inventory` also
-opens one TCP connection to its host (reachability only, never a request).
+already run GSD in. Resolution order: on a pi or opencode host `<root>/.pi/gsd-core` or
+`<root>/.opencode/gsd-core` first, then `<root>/gsd-core`, `<root>/.claude/gsd-core`,
+`<root>/.codex/gsd-core`, then global installs and a `gsd_run` launcher on `PATH`. When
+`JEV_API_URL` is set, `inventory` also opens one TCP connection to its host (reachability
+only, never a request).
 
 **Exit codes:**
 

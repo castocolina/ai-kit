@@ -374,6 +374,7 @@ function tryNextCli(status, tree) {
 function which(bin, envPath = process.env.PATH || '') {
   if (bin.includes('/')) return isExec(bin) ? bin : null;
   for (const dir of envPath.split(path.delimiter)) {
+    // An empty segment is the cwd, as POSIX shells resolve it (U-5, informational).
     const p = path.join(dir || '.', bin);
     if (isExec(p)) return p;
   }
