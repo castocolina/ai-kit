@@ -9,7 +9,12 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from ai_kit_spec import trust
-from ai_kit_spec.cache import cache_is_stale, cache_read_json, cache_write_json
+from ai_kit_spec.cache import (
+    cache_is_stale,
+    cache_read_json,
+    cache_write_json,
+    cache_write_text,
+)
 from ai_kit_spec.catalog_build import (
     CatalogSources,
     _anthropic_model_ids,
@@ -32,7 +37,6 @@ from ai_kit_spec.config_io import (
     cfg_render_toml,
     cfg_resolve,
     cfg_trust_store_dir,
-    cfg_write_toml,
     resolve_timeout_tiers,
 )
 from ai_kit_spec.detection import (
@@ -375,7 +379,7 @@ def _cmd_detect_tools(args: argparse.Namespace, deps: CliDeps) -> int:
     return 0
 
 def _cmd_detect_current_runtime(args: argparse.Namespace, deps: CliDeps) -> int:
-    print(json.dumps({"native_runtime": detect_current_runtime(deps.env_fn())}))
+    print(json.dumps({"host": detect_current_runtime(deps.env_fn())}))
     return 0
 
 def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -679,7 +683,9 @@ def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
         config = json.load(f)
     rendered = cfg_render_toml(config)
     if args.out:
-        cfg_write_toml(args.out, config)
+        # Write the already-rendered bytes: cfg_write_toml renders again and would print
+        # the migration note a second time.
+        cache_write_text(args.out, rendered)
     print(rendered)
     return 0
 

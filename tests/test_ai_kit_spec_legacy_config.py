@@ -18,11 +18,13 @@ from ai_kit_spec.config_io import (
     cfg_combine,
     cfg_load_toml,
     cfg_local_path,
+    cfg_render_toml,
     cfg_resolve,
     cfg_trust_store_dir,
     infer_legacy_native,
     normalize_legacy_entry,
     normalize_legacy_reviewers,
+    validate_reviewer_fields,
 )
 
 
@@ -398,6 +400,145 @@ class TestLegacyAdapters(unittest.TestCase):
                                                    "runtime": "claude"}]}
         candidates, _ = assemble_candidates("/repo", {}, resolve)
         self.assertIsNone(candidates[0]["tier"])
+
+
+class TestSaveSide(unittest.TestCase):
+    """Save writes the new form only: pairs, custom entries, and the session default."""
+
+    _FACTORY = "codex exec --sandbox read-only --skip-git-repo-check -m {model}"
+    _TUNED = _FACTORY + " --profile fast"
+    _CUSTOM = "mycli --fast {model}"
+
+    def _raw_entries(self):
+        return [
+            {"key": "factory", "cli": "codex", "model": "gpt-5.6-sol",
+             "command": self._FACTORY},
+            {"key": "tuned", "cli": "codex", "model": "gpt-5.6-sol",
+             "command": self._TUNED},
+            {"key": "native", "native_runtime": "claude", "model": "opus"},
+            {"key": "alias", "model": "sonnet"},
+            {"key": "custom", "cli": "mycli", "model": "m", "command": self._CUSTOM},
+        ]
+
+    def _normalized(self, entries):
+        mapped, notes = normalize_legacy_reviewers(entries)
+        inferred, inferred_notes = infer_legacy_native(mapped)
+        return inferred, notes + inferred_notes
+
+    def _render_out(self, config, path):
+        json_path = path + ".json"
+        with open(json_path, "w", encoding="utf-8") as stream:
+            json.dump(config, stream)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = main(["render-toml", "--json-config", json_path, "--out", path])
+        return code, err.getvalue()
+
+    def _pairs(self, reviewers):
+        return [(r.get("key"), r.get("runtime"), r.get("model"), r.get("command"))
+                for r in reviewers]
+
+    def test_canonical_round_trip(self):
+        canonical, _ = self._normalized(self._raw_entries())
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "review-spec.toml")
+            code, err = self._render_out({"reviewers": canonical}, path)
+            self.assertEqual(code, 0)
+            self.assertNotIn("migrated legacy fields", err)
+            with open(path, encoding="utf-8") as stream:
+                written = stream.read()
+            self.assertNotIn("cli =", written)
+            self.assertNotIn("native_runtime", written)
+            self.assertNotRegex(written, r'runtime = "[^"]+"\ncommand =')
+            reloaded, notes = self._normalized(cfg_load_toml(path)["reviewers"])
+            self.assertEqual(self._pairs(reloaded), self._pairs(canonical))
+            self.assertEqual(notes, [])
+
+    def test_raw_legacy_json_migrates_on_save(self):
+        canonical, _ = self._normalized(self._raw_entries())
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "review-spec.toml")
+            code, err = self._render_out({"reviewers": self._raw_entries()}, path)
+            self.assertEqual(code, 0)
+            self.assertEqual(err.count("migrated legacy fields before writing"), 1)
+            for key in ("factory", "tuned", "native", "alias", "custom"):
+                self.assertIn(key, err)
+            reloaded, _ = self._normalized(cfg_load_toml(path)["reviewers"])
+            self.assertEqual(self._pairs(reloaded), self._pairs(canonical))
+
+    def test_variant_merge_saves(self):
+        with tempfile.TemporaryDirectory() as root:
+            home = os.path.join(root, "home")
+            xdg = os.path.join(root, "xdg")
+            os.makedirs(os.path.join(xdg, "ai-kit"))
+            env = {"HOME": home, "XDG_CONFIG_HOME": xdg}
+            global_path = os.path.join(xdg, "ai-kit", "review-spec.toml")
+            with open(global_path, "w", encoding="utf-8") as stream:
+                stream.write('[[reviewers]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
+                             f"command={json.dumps(self._FACTORY)}\n")
+            merged = cfg_combine({"reviewers": [{"key": "k", "command": self._CUSTOM}]},
+                                 env, warn_fn=lambda _: None, local_path="local.toml")
+            with open(global_path, "w", encoding="utf-8") as stream:
+                stream.write('[[reviewers]]\nkey="g"\ncli="mycli"\nmodel="m"\n'
+                             'command="mycli {model}"\n')
+            second = cfg_combine({"reviewers": [{"key": "g", "runtime": "codex",
+                                                  "model": "gpt-5.6-sol"}]},
+                                 env, warn_fn=lambda _: None, local_path="local.toml")
+            config = {"reviewers": merged["reviewers"] + second["reviewers"]}
+            rendered = cfg_render_toml(config)
+            self.assertNotIn("WARNING", rendered)
+            with tempfile.TemporaryDirectory() as directory:
+                path = os.path.join(directory, "review-spec.toml")
+                with open(path, "w", encoding="utf-8") as stream:
+                    stream.write(rendered)
+                reloaded, notes = self._normalized(cfg_load_toml(path)["reviewers"])
+            self.assertEqual(notes, [])
+            self.assertEqual(reloaded[0]["command"], self._CUSTOM)
+            self.assertNotIn("runtime", reloaded[0])
+            self.assertEqual(reloaded[1]["runtime"], "codex")
+            self.assertNotIn("command", reloaded[1])
+
+    def test_rejects(self):
+        cases = [
+            {"key": "bad-runtime", "runtime": "gemini", "model": "m"},
+            {"key": "empty-model", "runtime": "codex", "model": ""},
+            {"key": "hybrid", "runtime": "codex", "model": "m", "command": "codex x"},
+        ]
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rendered = cfg_render_toml(
+                {"policy": {"ladder": [c["key"] for c in cases]}, "reviewers": cases}
+            )
+        warning = err.getvalue()
+        self.assertIn("WARNING", warning)
+        for case in cases:
+            self.assertIn(case["key"], warning)
+            self.assertNotIn(f'key = "{case["key"]}"', rendered)
+        self.assertIn("ladder = []", rendered)
+        # Render migrates a runtime-less pinned model before validating, so the reject
+        # is checked on the validator directly.
+        pinned = validate_reviewer_fields({"key": "pinned", "model": "opus"})
+        self.assertIsNotNone(pinned)
+        assert pinned is not None
+        self.assertIn("pinned", pinned)
+
+    def test_session_default_and_host_model_are_distinct(self):
+        entries = [
+            {"key": "d", "model": ""},
+            {"key": "c", "runtime": "claude", "model": "opus"},
+        ]
+        rendered = cfg_render_toml({"reviewers": entries})
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "review-spec.toml")
+            with open(path, "w", encoding="utf-8") as stream:
+                stream.write(rendered)
+            reloaded, notes = self._normalized(cfg_load_toml(path)["reviewers"])
+        self.assertEqual(notes, [])
+        self.assertEqual(len(reloaded), 2)
+        self.assertEqual(reloaded[0]["key"], "d")
+        self.assertEqual(reloaded[0]["model"], "")
+        self.assertNotIn("runtime", reloaded[0])
+        self.assertEqual(reloaded[1], entries[1])
 
 
 class TestHostCanSelect(unittest.TestCase):

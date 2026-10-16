@@ -430,57 +430,6 @@ class TestRenderAndWriteToml(unittest.TestCase):
         output = config_io.cfg_render_toml(config)
         self.assertIn('purpose = "execute"', output)
 
-    def test_render_toml_rejects_invalid_native_runtime_value(self):
-        config = {
-            "policy": {},
-            "reviewers": [{"key": "a", "model": "m", "vendor": "v", "native_runtime": "planning"}],
-        }
-        output = config_io.cfg_render_toml(config)
-        self.assertNotIn("planning", output)
-        self.assertNotIn("[[reviewers]]", output)
-
-    def test_render_toml_rejects_non_string_native_runtime_without_raising(self):
-        config = {
-            "policy": {},
-            "reviewers": [{"key": "a", "model": "m", "vendor": "v", "native_runtime": ["claude"]}],
-        }
-        output = config_io.cfg_render_toml(config)
-        self.assertNotIn("[[reviewers]]", output)
-
-    def test_render_toml_keeps_valid_native_runtime_value(self):
-        config = {
-            "policy": {},
-            "reviewers": [{"key": "a", "model": "m", "vendor": "v", "native_runtime": "unknown"}],
-        }
-        output = config_io.cfg_render_toml(config)
-        self.assertIn('native_runtime = "unknown"', output)
-
-    def test_render_toml_rejects_native_runtime_with_non_null_cli(self):
-        config = {
-            "policy": {},
-            "reviewers": [
-                {
-                    "key": "a",
-                    "model": "m",
-                    "vendor": "v",
-                    "native_runtime": "claude",
-                    "cli": "codex",
-                }
-            ],
-        }
-        output = config_io.cfg_render_toml(config)
-        self.assertNotIn("[[reviewers]]", output)
-        self.assertNotIn("native_runtime", output)
-
-    def test_render_toml_keeps_native_runtime_when_cli_is_absent(self):
-        config = {
-            "policy": {},
-            "reviewers": [{"key": "a", "model": "m", "vendor": "v", "native_runtime": "claude"}],
-        }
-        output = config_io.cfg_render_toml(config)
-        self.assertIn("[[reviewers]]", output)
-        self.assertIn('native_runtime = "claude"', output)
-
     def test_render_toml_rejects_non_bool_is_router(self):
         config = {
             "policy": {},
@@ -553,13 +502,7 @@ class TestRenderAndWriteToml(unittest.TestCase):
             "policy": {"mode": "single", "ladder": ["bad", "good"]},
             "reviewers": [
                 {"key": "bad", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"},
-                {
-                    "key": "good",
-                    "model": "m2",
-                    "vendor": "v2",
-                    "cli": "opencode",
-                    "command": "opencode run -m {model}",
-                },
+                {"key": "good", "model": "m2", "vendor": "v2", "runtime": "opencode"},
             ],
         }
         with tempfile.TemporaryDirectory() as d:
@@ -687,34 +630,6 @@ class TestValidateCatalogEntry(unittest.TestCase):
     def test_absent_name_declared_purpose_is_never_rejected(self):
         reason = model_catalog.validate_catalog_entry("x", self._valid_entry())
         self.assertIsNone(reason)
-
-    def test_unrecognized_native_runtime_value_is_rejected(self):
-        reason = model_catalog.validate_catalog_entry(
-            "x", self._valid_entry(native_runtime="planning")
-        )
-        self.assertIsNotNone(reason)
-        assert reason is not None
-        self.assertIn("native_runtime", reason)
-
-    def test_valid_native_runtime_values_are_accepted(self):
-        for value in ("claude", "opencode", "codex", "cursor", "pi", "unknown"):
-            reason = model_catalog.validate_catalog_entry(
-                "x", self._valid_entry(native_runtime=value)
-            )
-            self.assertIsNone(reason, msg=value)
-
-    def test_absent_native_runtime_is_never_rejected(self):
-        reason = model_catalog.validate_catalog_entry("x", self._valid_entry())
-        self.assertIsNone(reason)
-
-    def test_native_runtime_rejected_when_cli_is_present(self):
-        reason = model_catalog.validate_catalog_entry(
-            "x", self._valid_entry(native_runtime="claude", cli="codex")
-        )
-        self.assertIsNotNone(reason)
-        assert reason is not None
-        self.assertIn("native_runtime", reason)
-        self.assertIn("cli", reason)
 
     def test_wrong_type_scores_subfield_is_rejected(self):
         reason = model_catalog.validate_catalog_entry(
@@ -1273,9 +1188,9 @@ class TestPiHostEndToEnd(unittest.TestCase):
                 env_fn=lambda: {"PI_CODING_AGENT": "1", "CLAUDECODE": "1"},
             )
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(buf.getvalue()), {"native_runtime": "pi"})
+        self.assertEqual(json.loads(buf.getvalue()), {"host": "pi"})
 
-    def test_pi_native_runtime_survives_the_review_spec_render(self):
+    def test_pi_host_renders_as_the_session_default(self):
         import io
         from contextlib import redirect_stdout
 
@@ -1285,26 +1200,29 @@ class TestPiHostEndToEnd(unittest.TestCase):
                 ["detect-current-runtime"],
                 env_fn=lambda: {"PI_CODING_AGENT": "1", "CLAUDECODE": "1"},
             )
-        value = json.loads(buf.getvalue())["native_runtime"]
-        config = {
-            "policy": {},
-            "reviewers": [
-                {"key": "native-primary", "model": "m", "vendor": "v", "native_runtime": value}
-            ],
-        }
-        rendered = config_io.cfg_render_toml(config)
+        host = json.loads(buf.getvalue())["host"]
+        self.assertEqual(host, "pi")
+        # Only Claude Code aliases are per-call selectable today, so a pi host's native
+        # entry is the session default: an empty model and no runtime.
+        rendered = config_io.cfg_render_toml(
+            {"policy": {}, "reviewers": [{"key": "native-primary", "model": ""}]}
+        )
         self.assertIn("[[reviewers]]", rendered)
-        self.assertIn('native_runtime = "pi"', rendered)
+        self.assertIn('model = ""', rendered)
+        self.assertNotIn("runtime =", rendered)
 
-    def test_pi_native_runtime_accepted_by_both_validators(self):
-        self.assertIsNone(config_io.validate_reviewer_fields({"key": "a", "native_runtime": "pi"}))
+    def test_pi_host_is_a_table_runtime(self):
+        self.assertIsNone(
+            config_io.validate_reviewer_fields(
+                {"key": "a", "runtime": "pi", "model": "m"}
+            )
+        )
         entry = {
             "provider": "openai",
-            "runtimes": {"opencode": {"model_id": "m"}},
+            "runtimes": {"pi": {"model_id": "m"}},
             "source": {"models_dev": True},
             "confidence": "high",
             "last_verified": "2026-09-02",
-            "native_runtime": "pi",
         }
         self.assertIsNone(model_catalog.validate_catalog_entry("x", entry))
 
@@ -1321,7 +1239,7 @@ class TestPiHostEndToEnd(unittest.TestCase):
                 env_fn=lambda: {"CODEX_THREAD_ID": "t-1", "CLAUDECODE": "1"},
             )
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(buf.getvalue()), {"native_runtime": "codex"})
+        self.assertEqual(json.loads(buf.getvalue()), {"host": "codex"})
 
 
 class TestRuntimePrecedenceMatrix(unittest.TestCase):
@@ -3991,7 +3909,7 @@ class TestMainCli(unittest.TestCase):
         with redirect_stdout(buf):
             code = main(["detect-current-runtime"], env_fn=lambda: {"CLAUDECODE": "1"})
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(buf.getvalue()), {"native_runtime": "claude"})
+        self.assertEqual(json.loads(buf.getvalue()), {"host": "claude"})
 
     def test_detect_current_runtime_prints_json_for_unknown(self):
         import io
@@ -4001,7 +3919,7 @@ class TestMainCli(unittest.TestCase):
         with redirect_stdout(buf):
             code = main(["detect-current-runtime"], env_fn=lambda: {})
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(buf.getvalue()), {"native_runtime": "unknown"})
+        self.assertEqual(json.loads(buf.getvalue()), {"host": "unknown"})
 
     def test_detect_runtimes_save_writes_cache_file(self):
         with tempfile.TemporaryDirectory() as d:

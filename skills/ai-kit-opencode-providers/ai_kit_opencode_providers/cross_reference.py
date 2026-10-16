@@ -27,7 +27,7 @@ class Reference(NamedTuple):
 
 
 def scan_review_spec(path: str, provider_id: str) -> list[Reference]:
-    """One Reference per [[reviewers]] whose cli or model contains provider_id.
+    """One Reference per [[reviewers]] whose runtime, cli or model contains provider_id.
 
     Missing, unreadable, or malformed files return an empty list, never raise.
     """
@@ -54,7 +54,7 @@ def scan_review_spec(path: str, provider_id: str) -> list[Reference]:
         locator = entry.get("key", "")
         if not isinstance(locator, str):
             locator = str(locator)
-        for field in ("cli", "model"):
+        for field in ("runtime", "cli", "model"):
             value = entry.get(field)
             if isinstance(value, str) and provider_id in value:
                 refs.append(Reference(path, locator, field, value))

@@ -28,7 +28,7 @@ _FIELD_TYPES = {
     "batch_mode": bool, "is_router": bool, "fallback_quota": bool,
     "tokens_per_sec": (int, float), "max_output_tokens": int, "structured_output": bool,
     "tool_calling": bool, "native": bool, "reasoning_modes": list, "fast_mode": bool,
-    "speed_tier": str, "name_declared_purpose": str, "native_runtime": str,
+    "speed_tier": str, "name_declared_purpose": str,
     # 16 D-09 — optional; absent means unknown; written only from a source statement.
     "image_input": bool,
     # 16 D-09 (review cycle 2 MEDIUM) — field-level provenance of image_input.
@@ -49,10 +49,6 @@ _NUMERIC_SUBFIELD_TABLES = {
 _RUNTIME_FIELD_TYPES = {"model_id": str, "ctx_window": (int, float)}
 _VALID_NAME_DECLARED_PURPOSE = {"review", "execute"}
 _VALID_IMAGE_INPUT_SOURCE = {"models_dev", "opencode", "opencode-api"}
-# Deliberately duplicated with config_io._VALID_NATIVE_RUNTIME -- the two sets must change
-# together (AGENTS.md Architecture). "pi" is here because detect_current_runtime can return it
-# since Phase 16.
-_VALID_NATIVE_RUNTIME = {"claude", "opencode", "codex", "cursor", "pi", "unknown"}
 
 
 def cache_catalog_path(env: dict) -> str:
@@ -180,18 +176,6 @@ def _validate_declared_purpose_fields(model_id: str, entry: dict) -> str | None:
     return None
 
 
-def _validate_native_runtime_fields(model_id: str, entry: dict) -> str | None:
-    if "native_runtime" in entry and entry["native_runtime"] is not None \
-            and entry["native_runtime"] not in _VALID_NATIVE_RUNTIME:
-        return (f"{model_id}: 'native_runtime' must be one of "
-                f"{sorted(_VALID_NATIVE_RUNTIME)}")
-    if "native_runtime" in entry and entry.get("native_runtime") is not None \
-            and entry.get("cli") is not None:
-        return (f"{model_id}: 'native_runtime' must not be set on an "
-                f"entry with a non-null 'cli'")
-    return None
-
-
 def _validate_list_and_numeric_tables(model_id: str, entry: dict) -> str | None:
     if "reasoning_modes" in entry and isinstance(entry["reasoning_modes"], list) and \
             not all(isinstance(m, str) for m in entry["reasoning_modes"]):
@@ -217,7 +201,6 @@ _CATALOG_ENTRY_VALIDATORS = (
     _validate_confidence_and_dates,
     _validate_typed_fields,
     _validate_declared_purpose_fields,
-    _validate_native_runtime_fields,
     _validate_list_and_numeric_tables,
 )
 

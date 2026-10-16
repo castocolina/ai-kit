@@ -898,6 +898,21 @@ class TestCrossReferenceReviewSpec(_XrefScratch):
         self.assertEqual(refs[0].field, "cli")
         self.assertEqual(refs[0].value, "synth-router")
 
+    def test_runtime_form_model_yields_reference(self):
+        _write_file(
+            self.local_spec,
+            "\n".join([
+                "[[reviewers]]",
+                'key = "pair-reviewer"',
+                'runtime = "opencode"',
+                'model = "synth-router/demo-model"',
+                "",
+            ]),
+        )
+        refs = scan_review_spec(self.local_spec, "synth-router")
+        self.assertEqual([(ref.field, ref.value) for ref in refs],
+                         [("model", "synth-router/demo-model")])
+
     def test_missing_file_is_empty(self):
         self.assertEqual(scan_review_spec(self.local_spec, "synth-router"), [])
 

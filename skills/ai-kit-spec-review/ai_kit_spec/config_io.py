@@ -430,18 +430,47 @@ def _toml_value(v) -> str:
 
 
 _VALID_PURPOSE = {"review", "execute", "both"}
-# Deliberately duplicated with model_catalog._VALID_NATIVE_RUNTIME -- the two sets must change
-# together (AGENTS.md Architecture). "pi" is here because detect_current_runtime can return it
-# since Phase 16.
-_VALID_NATIVE_RUNTIME = {"claude", "opencode", "codex", "cursor", "pi", "unknown"}
+_LEGACY_WRITE_FIELDS = ("cli", "native_runtime")
+
+
+def _validate_pair_fields(entry: dict, key) -> str | None:
+    """Save is strict: a runtime must be in the table and carry a model, a command only exists
+    on a custom entry, and a pinned model needs a runtime. Load stays lenient."""
+    runtime = entry.get("runtime")
+    if "runtime" in entry and runtime is not None:
+        if not isinstance(runtime, str) or runtime not in RUNTIMES:
+            return f"{key}: 'runtime' must be one of {sorted(RUNTIMES)}"
+        model = entry.get("model")
+        if "model" not in entry or not isinstance(model, str) or model == "":
+            return f"{key}: an entry with a 'runtime' needs a non-empty 'model'"
+    if "command" in entry and (
+        not isinstance(entry["command"], str)
+        or entry["command"] == ""
+        or entry.get("runtime") is not None
+    ):
+        return f"{key}: 'command' is only for a custom entry with no 'runtime'"
+    model = entry.get("model")
+    if (
+        entry.get("runtime") is None
+        and "command" not in entry
+        and isinstance(model, str)
+        and model
+    ):
+        return (
+            f"{key}: a pinned 'model' needs a 'runtime' "
+            "(or leave both unset for the session default)"
+        )
+    for name in _LEGACY_WRITE_FIELDS:
+        if name in entry and entry[name] is not None:
+            return f"{key}: legacy field '{name}' is not written"
+    return None
 
 
 def validate_reviewer_fields(entry: dict) -> str | None:
     """The review-spec.toml-side sibling of model_catalog.validate_catalog_entry (design spec
     2026-09-02 Section 5: "enforced in both render-toml and the new fetch-model-catalog
-    subcommand"). Only checks the THREE fields this design adds -- purpose/is_router/
-    fallback_quota -- when present; every pre-existing field's validation is unchanged.
-    Absent is always valid (pre-migration configs keep working exactly as before)."""
+    subcommand"). Checks purpose/is_router/fallback_quota when present, then the pair rules:
+    a table runtime needs a model, a command is custom-only, a pinned model needs a runtime."""
     key = entry.get("key", "<unknown>")
     # WR-03 fix: `_toml_value` (below) has no `dict` branch -- any dict-valued field falls
     # through to its final `str(v)` branch and silently corrupts into a quoted TOML STRING
@@ -465,21 +494,10 @@ def validate_reviewer_fields(entry: dict) -> str | None:
         not isinstance(entry["purpose"], str) or entry["purpose"] not in _VALID_PURPOSE
     ):
         return f"{key}: 'purpose' must be one of {sorted(_VALID_PURPOSE)}"
-    if "native_runtime" in entry and (
-        not isinstance(entry["native_runtime"], str)
-        or entry["native_runtime"] not in _VALID_NATIVE_RUNTIME
-    ):
-        return f"{key}: 'native_runtime' must be one of {sorted(_VALID_NATIVE_RUNTIME)}"
-    if (
-        "native_runtime" in entry
-        and entry.get("native_runtime") is not None
-        and entry.get("cli") is not None
-    ):
-        return f"{key}: 'native_runtime' must not be set on an entry with a non-null 'cli'"
     for field in ("is_router", "fallback_quota"):
         if field in entry and not isinstance(entry[field], bool):
             return f"{key}: '{field}' must be a boolean"
-    return None
+    return _validate_pair_fields(entry, key)
 
 
 def _cfg_partition_reviewers(reviewers: list) -> tuple[list, list, set]:
@@ -533,6 +551,13 @@ def _cfg_render_reviewer_lines(valid_reviewers: list) -> list[str]:
     return lines
 
 
+def _cfg_render_reviewers(config: dict) -> tuple[list, list[str]]:
+    """The two load steps, in the same order, so a write holds only the new form."""
+    reviewers, notes = normalize_legacy_reviewers(config.get("reviewers", []))
+    reviewers, inferred = infer_legacy_native(reviewers)
+    return reviewers, notes + inferred
+
+
 def cfg_render_toml(config: dict) -> str:
     """Hand-rolled TOML serializer for this schema only (an optional
     top-level `strategy` string, a flat [policy] table, and an
@@ -540,14 +565,20 @@ def cfg_render_toml(config: dict) -> str:
     tomllib is read-only in stdlib, and adding a writer dependency would
     break this repo's zero-dependency runtime.
 
-    A reviewer entry that fails validate_reviewer_fields is dropped individually (never
-    aborts the rest of the write) AND removed from policy.ladder -- a valid-looking ladder
-    that references a key with no corresponding [[reviewers]] entry is unusable
+    Reviewers are normalized first (the same two steps load runs), then validated strictly:
+    an entry that fails validate_reviewer_fields is dropped individually (never aborts the
+    rest of the write) AND removed from policy.ladder -- a valid-looking ladder that
+    references a key with no corresponding [[reviewers]] entry is unusable
     (resolve_ladder_pick can never satisfy it), so the two must never diverge."""
     lines: list[str] = []
-    valid_reviewers, rejections, dropped_keys = _cfg_partition_reviewers(
-        config.get("reviewers", [])
-    )
+    reviewers, notes = _cfg_render_reviewers(config)
+    if notes:
+        print(
+            "ai-kit-spec: render-toml: migrated legacy fields before writing "
+            f"({'; '.join(notes)})",
+            file=sys.stderr,
+        )
+    valid_reviewers, rejections, dropped_keys = _cfg_partition_reviewers(reviewers)
 
     if "strategy" in config:
         lines.append(f"strategy = {_toml_value(config['strategy'])}")

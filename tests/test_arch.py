@@ -420,22 +420,24 @@ def check_broad_except_allowlist(relpath, src):
     ]
 
 
+# Built by concatenation so this file never contains the retired field's literal text.
+_RETIRED_FIELD = "native" + "_runtime"
 _RETIRED_LITERALS = {
-    "cursor-agent": frozenset({"skills/ai-kit-spec-review/ai_kit_spec/detection.py"})
+    "cursor-agent": frozenset({"skills/ai-kit-spec-review/ai_kit_spec/detection.py"}),
+    _RETIRED_FIELD: frozenset({"skills/ai-kit-spec-review/ai_kit_spec/config_io.py"}),
 }
 
 
 def check_retired_literals(relpath, tree):
     """Rule 10: retired runtime literals occur only in their explicit legacy map."""
-    if any(relpath in allowed for allowed in _RETIRED_LITERALS.values()):
-        return []
-    return [
-        f"{relpath}:{node.lineno}: retired literal {node.value!r}"
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and node.value in _RETIRED_LITERALS
-    ]
+    hits = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        allowed = _RETIRED_LITERALS.get(node.value)
+        if allowed is not None and relpath not in allowed:
+            hits.append(f"{relpath}:{node.lineno}: retired literal {node.value!r}")
+    return hits
 
 
 # --------------------------------------------------------------------------- #
@@ -735,6 +737,10 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertEqual(1, len(check_retired_literals("skills/other.py", bad)))
         self.assertEqual([], check_retired_literals(allowlisted, bad))
         self.assertEqual([], check_retired_literals("skills/other.py", binary))
+        retired = ast.parse(f'x = "{_RETIRED_FIELD}"')
+        config_io = "skills/ai-kit-spec-review/ai_kit_spec/config_io.py"
+        self.assertEqual(1, len(check_retired_literals("skills/other.py", retired)))
+        self.assertEqual([], check_retired_literals(config_io, retired))
 
     def test_rule9_flags_unlisted_broad_except(self):
         src = (
