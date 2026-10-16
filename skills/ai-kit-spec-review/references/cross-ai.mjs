@@ -28,8 +28,9 @@
  *   --cursor-mode ask|plan                   review mode only (replaces cursor --mode)
  *   --self-test                              hermetic black-box checks (no real CLIs)
  *
- * Live outer timeout reads workflow.cross_ai_timeout from .planning/config.json, or from
- * .planning/workstreams/$GSD_WORKSTREAM/config.json when GSD_WORKSTREAM matches [A-Za-z0-9_-]+.
+ * Live outer timeout reads workflow.cross_ai_timeout the way gsd-tools config-get does:
+ * .planning[/$GSD_PROJECT][/workstreams/$GSD_WORKSTREAM]/config.json, then the root config
+ * under GSD_WORKSTREAM, else 300.
  * No idle watchdog in this version (D-43); only the overall deadline bounds each child.
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -357,15 +358,29 @@ function which(bin, envPath = process.env.PATH || '') {
 }
 function isExec(p) { try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch { return false; } }
 
-function liveOuterTimeoutS(cwd, env) {
-  const ws = env.GSD_WORKSTREAM;
-  let cfgPath = path.join(cwd, '.planning', 'config.json');
-  if (typeof ws === 'string' && ws.length > 0 && /^[A-Za-z0-9_-]+$/.test(ws)) {
-    cfgPath = path.join(cwd, '.planning', 'workstreams', ws, 'config.json');
-  }
+function ownTimeout(cfgPath) {
   const cfg = parseJson(readOr(cfgPath, ''));
-  const t = Number(cfg && cfg.workflow && cfg.workflow.cross_ai_timeout);
-  return Number.isFinite(t) && t > 0 ? t : GSD_DEFAULT_TIMEOUT_S;
+  const wf = cfg && typeof cfg === 'object' && !Array.isArray(cfg) ? cfg.workflow : null;
+  if (!wf || typeof wf !== 'object' || Array.isArray(wf) || !Object.hasOwn(wf, 'cross_ai_timeout')) return undefined;
+  return wf.cross_ai_timeout;
+}
+// Same ladder as gsd-core readScopedConfigValue (planning-workspace.cjs), which config-get
+// follows: the scoped config's own key, then the root key only under GSD_WORKSTREAM; a
+// GSD_PROJECT/GSD_WORKSTREAM with a path separator or `..` reads as absent.
+// shortcut: the stored active-workstream pointer is not read (only the env), upgrade when
+// GSD starts running cross_ai_command without exporting GSD_WORKSTREAM.
+function liveOuterTimeoutS(cwd, env) {
+  const ws = (env.GSD_WORKSTREAM || '').trim();
+  const project = (env.GSD_PROJECT || '').trim();
+  let t;
+  if (!/[/\\]|\.\./.test(ws) && !/[/\\]|\.\./.test(project)) {
+    const root = path.join(cwd, '.planning');
+    const scoped = path.join(root, project, ws ? path.join('workstreams', ws) : '');
+    t = ownTimeout(path.join(scoped, 'config.json'));
+    if (t === undefined && ws) t = ownTimeout(path.join(root, 'config.json'));
+  }
+  const n = Number(t);
+  return t !== undefined && t !== null && Number.isFinite(n) && n > 0 ? n : GSD_DEFAULT_TIMEOUT_S;
 }
 function innerTimeoutS(outer) {
   // D-29: inner deadline sits strictly below outer (margin floor at least 1s).
@@ -1245,6 +1260,10 @@ async function runSelfTestCase(tmp, spec) {
     fs.mkdirSync(wdir, { recursive: true });
     if (spec.workstream.config) fs.writeFileSync(path.join(wdir, 'config.json'), JSON.stringify(spec.workstream.config));
   }
+  for (const [rel, body] of Object.entries(spec.files || {})) {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), JSON.stringify(body));
+  }
   const home = path.join(tmp, `home-${spec.name}`);
   fs.mkdirSync(home, { recursive: true });
   const calls = path.join(tmp, `calls-${spec.name}.log`);
@@ -1950,14 +1969,32 @@ async function blackBoxSelfTest() {
         check: (r) => ((r.stderr || '').includes('cross-ai: deadline 570s (outer 600s)') ? null : 'deadline line'),
       },
       {
+        // config-get rejects the segment, so GSD falls back to its 300 s default too.
         name: 'deadline-workstream-bad',
         args: ['--print-argv', '--model-pi', 'fake/ok'],
         env: { GSD_WORKSTREAM: '../x' },
         planningConfig: { workflow: { cross_ai_timeout: 600 } },
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
-        check: (r) => ((r.stderr || '').includes('cross-ai: deadline 570s (outer 600s)') ? null : 'deadline line'),
+        check: (r) => ((r.stderr || '').includes('cross-ai: deadline 270s (outer 300s)') ? null : 'deadline line'),
       },
+      ...[
+        ['deadline-workstream-inherit', { GSD_WORKSTREAM: 'ws' }, { '.planning/workstreams/ws/STATE.md': {} }, '1770s (outer 1800s)'],
+        ['deadline-workstream-nokey', { GSD_WORKSTREAM: 'ws' }, { '.planning/workstreams/ws/config.json': { workflow: {} } }, '1770s (outer 1800s)'],
+        ['deadline-project', { GSD_PROJECT: 'p' }, { '.planning/p/config.json': { workflow: { cross_ai_timeout: 600 } } }, '570s (outer 600s)'],
+        ['deadline-project-no-root', { GSD_PROJECT: 'p' }, { '.planning/p/config.json': { workflow: {} } }, '270s (outer 300s)'],
+        ['deadline-project-workstream', { GSD_PROJECT: 'p', GSD_WORKSTREAM: 'ws' },
+          { '.planning/p/workstreams/ws/config.json': { workflow: { cross_ai_timeout: 900 } } }, '870s (outer 900s)'],
+      ].map(([name, env, files, want]) => ({
+        name,
+        args: ['--print-argv', '--model-pi', 'fake/ok'],
+        env,
+        files,
+        planningConfig: { workflow: { cross_ai_timeout: 1800 } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => ((r.stderr || '').includes(`cross-ai: deadline ${want}`) ? null : 'deadline line'),
+      })),
       {
         name: 'deadline-outer-min',
         args: ['--print-argv', '--model-pi', 'fake/ok'],
