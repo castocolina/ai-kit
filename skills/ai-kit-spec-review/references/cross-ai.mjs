@@ -236,6 +236,7 @@ process.on('uncaughtException', (e) => {
 const RUNTIMES = {
   cursor: {
     bins: ['cursor-agent', 'agent'],
+    list: { argv: ['models'], parse: parseCursorListingIds },
     exec: (m, c) => ['-p', '--output-format', 'json', '--model', m, '--trust', '--force', '--sandbox', 'disabled', '--approve-mcps', '--workspace', c.cwd],
     review: (m, c) => ['-p', '--output-format', 'json', '--model', m, '--mode', c.cursorMode || 'ask', '--trust', '--workspace', c.cwd],
     resume: (m, c, sid, mode) => [...RUNTIMES.cursor[mode](m, c), '--resume', sid],
@@ -250,6 +251,7 @@ const RUNTIMES = {
   // ~/.agents/skills and ~/.config/opencode/skills (opencode docs)
   opencode: {
     bins: ['opencode'],
+    list: { argv: ['models'], parse: parseOpencodeListingIds },
     exec: (m) => ['run', '--model', m, '--auto', '--format', 'json'],
     review: (m) => ['run', '--model', m, '--agent', 'plan', '--format', 'json'],
     resume: (m, c, sid, mode) => [...RUNTIMES.opencode[mode](m, c), '--session', sid],
@@ -259,6 +261,7 @@ const RUNTIMES = {
   },
   pi: {
     bins: ['pi'],
+    list: { argv: PI_RPC_ARGS, input: PI_RPC_REQUEST, parse: parsePiListingIds },
     exec: (m, c) => ['-p', '--model', m, '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline'],
     review: (m, c) => ['-p', '--model', m, '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
       '--tools', 'read,grep,find,ls'],
@@ -271,6 +274,7 @@ const RUNTIMES = {
   // unverified (outside the default prefer)
   codex: {
     bins: ['codex'],
+    list: { argv: ['debug', 'models'], parse: parseCodexListingIds },
     exec: (m, c) => withCodexKnobs(['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-C', c.cwd, '-m', m,
       '--json', '-o', c.outFile, '-'], c),
     review: (m, c) => withCodexKnobs(['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '-C', c.cwd, '-m', m, '--json', '-o', c.outFile, '-'], c),
@@ -291,6 +295,7 @@ const RUNTIMES = {
   // read-only enforcement not live-verified
   claude: {
     bins: ['claude'],
+    list: null,
     exec: null,
     review: (m) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'plan'],
     resume: null,
@@ -348,9 +353,7 @@ function classify(stderrText, structuredError) {
 }
 
 function tryNextCli(status, tree) {
-  const row = STATUS_TABLE[status] || STATUS_TABLE.crash;
-  if (row.action !== 'fallback' || tree !== 'clean') return false;
-  return true;
+  return (STATUS_TABLE[status] || STATUS_TABLE.crash).action === 'fallback' && tree === 'clean';
 }
 
 function which(bin, envPath = process.env.PATH || '') {
@@ -589,35 +592,14 @@ function parseCodexListingIds(stdout) {
   return ids;
 }
 
-function parseListingIds(cli, stdout) {
-  if (cli === 'pi') return parsePiListingIds(stdout);
-  if (cli === 'opencode') return parseOpencodeListingIds(stdout);
-  if (cli === 'cursor') return parseCursorListingIds(stdout);
-  if (cli === 'codex') return parseCodexListingIds(stdout);
-  return null;
-}
-
-async function listModels(cli, binPath, env, limit) {
-  if (cli === 'claude') return { ok: false, ids: [], reason: 'no listing' };
-  let argv;
-  let input;
-  if (cli === 'pi') {
-    argv = PI_RPC_ARGS;
-    input = PI_RPC_REQUEST;
-  } else if (cli === 'opencode') {
-    argv = ['models'];
-  } else if (cli === 'cursor') {
-    argv = ['models'];
-  } else if (cli === 'codex') {
-    argv = ['debug', 'models'];
-  } else {
-    return { ok: false, ids: [], reason: 'no listing' };
-  }
+async function listModels(rt, binPath, env, limit) {
+  if (!rt.list) return { ok: false, ids: [], reason: 'no listing' };
+  const { argv, input, parse } = rt.list;
   const r = await runChild(binPath, argv, { cwd: process.cwd(), env, input, capMs: LIST_CAP_MS, limit });
   if (r.timedOut) return { ok: false, ids: [], reason: 'timeout' };
   if (r.spawnErr) return { ok: false, ids: [], reason: 'spawn error' };
   if (r.code !== 0) return { ok: false, ids: [], reason: `exit ${r.code}` };
-  const ids = parseListingIds(cli, r.stdout);
+  const ids = parse(r.stdout);
   if (ids === null) return { ok: false, ids: [], reason: 'unparseable' };
   if (ids.length === 0) return { ok: false, ids: [], reason: 'no ids' };
   return { ok: true, ids, reason: '' };
@@ -2326,7 +2308,7 @@ async function main(argv) {
       return finish('unverified', { ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1 });
     }
     const listEnv = childEnv(c.rt.env, process.env);
-    const listing = await listModels(c.name, c.bin, listEnv, runDeadline);
+    const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
     if (listing.ok) {
       const listed = c.rt.modelSuffix ? c.model.replace(c.rt.modelSuffix, '') : c.model;
       if (listed !== c.model) {
@@ -2334,12 +2316,10 @@ async function main(argv) {
       }
       if (!listing.ids.includes(listed)) {
         log(`cross-ai: ${c.name} bad_model (${c.model} not in model list)`);
+        // bad_model falls back and nothing ran, so the next CLI may always try.
         last = { status: 'bad_model', cli: c.name, model: c.model, tree: 'clean', cli_rc: '-' };
-        if (tryNextCli('bad_model', 'clean')) {
-          log(`cross-ai: ${c.name} bad_model, trying the next CLI`);
-          continue;
-        }
-        return finish('bad_model', { ...liveFields, tree: 'clean', cli_rc: '-' });
+        log(`cross-ai: ${c.name} bad_model, trying the next CLI`);
+        continue;
       }
     } else if (listing.reason !== 'no listing') {
       log(`cross-ai: ${c.name} model list unavailable (${listing.reason}); not preflighted`);
