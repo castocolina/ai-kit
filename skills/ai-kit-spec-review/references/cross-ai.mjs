@@ -5,8 +5,8 @@
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means not a git repo or git failed; with no CLI run it is clean.
- * Gitignored files count by stat signature (mode, size, mtime, ctime), so a background
- * writer into an ignored dir (a cache, an indexer) also reads dirty.
+ * Gitignored files count by stat signature (mode, size, mtime, ctime), except inside a
+ * fully ignored directory (a cache, an indexer's dir): edits there are not seen.
  *
  * GSD runs:  echo "$TASK_PROMPT" | gsd-tools run-with-timeout $T -- node .planning/scripts/cross-ai.mjs [flags]
  *   - The prompt arrives on stdin. stdout becomes the plan's SUMMARY candidate, and stderr is GSD's error log.
@@ -639,10 +639,12 @@ async function treeState(cwd, limit, depth = 0) {
     if (wtR.timedOut || wtR.spawnErr || wtR.code !== 0) return null;
     // git add -A skips ignored files, so fold in a stat signature of each one (U-3): hashing
     // contents would be too slow for node_modules-sized trees, and a write changes ctime.
-    const ignR = await runChild(git, ['ls-files', '-z', '-o', '-i', '--exclude-standard'], { cwd, env, capMs: GIT_CAP_MS, limit });
+    // Fully ignored dirs list as one 'dir/' entry and are skipped, so a background cache or
+    // indexer (.codegraph/, node_modules/) cannot read as an agent edit.
+    const ignR = await runChild(git, ['ls-files', '-z', '-o', '-i', '--exclude-standard', '--directory'], { cwd, env, capMs: GIT_CAP_MS, limit });
     if (ignR.timedOut || ignR.spawnErr || ignR.code !== 0) return null;
     const ignHash = crypto.createHash('sha256');
-    for (const rel of ignR.stdout.split('\0').filter(Boolean).sort()) {
+    for (const rel of ignR.stdout.split('\0').filter((r) => r && !r.endsWith('/')).sort()) {
       let sig = 'gone';
       try {
         const st = fs.lstatSync(path.join(cwd, rel));
@@ -951,7 +953,8 @@ const FAKE_MODES = {
   },
   reedit: () => { fs.appendFileSync('dirty.txt', 'more\n'); process.stdout.write('# Summary\nok'); },
   subedit: () => { fs.appendFileSync('sub/f.txt', 'edit\n'); process.stdout.write('# Summary\nok'); },
-  ignorededit: () => { fs.appendFileSync('ign/x.txt', 'edit\n'); process.stdout.write('# Summary\nok'); },
+  ignorededit: () => { fs.appendFileSync('x.local', 'edit\n'); process.stdout.write('# Summary\nok'); },
+  cachewrite: () => { fs.appendFileSync('ign/x.txt', 'edit\n'); process.stdout.write('# Summary\nok'); },
   stubborn: () => {
     process.on('SIGTERM', () => {});
     process.on('SIGINT', () => {});
@@ -1300,9 +1303,10 @@ function nestedRepoSetup(c) {
 }
 
 function ignoredFileSetup(c) {
-  fs.writeFileSync(path.join(c.repo, '.gitignore'), 'ign/\n');
+  fs.writeFileSync(path.join(c.repo, '.gitignore'), 'ign/\n*.local\n');
   fs.mkdirSync(path.join(c.repo, 'ign'));
   fs.writeFileSync(path.join(c.repo, 'ign', 'x.txt'), 'seed\n');
+  fs.writeFileSync(path.join(c.repo, 'x.local'), 'seed\n');
   for (const argv of [['add', '.gitignore'], ['commit', '-q', '-m', 'ignore']]) {
     const g = spawnSync('git', argv, { cwd: c.repo, env: c.env, encoding: 'utf8' });
     if (g.status !== 0) return `setup git ${argv.join(' ')}: ${g.stderr}`;
@@ -1814,6 +1818,14 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/ignorededit'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ignorededit exit=0 .* tree=dirty action=stop$/,
+      },
+      {
+        // ...but a write inside a fully ignored dir (a cache) does not.
+        name: 'ignored-dir-write',
+        setup: ignoredFileSetup,
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/cachewrite'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/cachewrite exit=0 .* tree=clean action=stop$/,
       },
       {
         name: 'ignored-review-ok',
