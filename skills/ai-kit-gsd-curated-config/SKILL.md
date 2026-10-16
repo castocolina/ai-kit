@@ -14,7 +14,7 @@ This skill wraps `ai-kit-gsd-curated-config.py`. **Primary path:** the v2 pipeli
 
 Config keys are written only through gsd-tools (`config-set` / `config-new-project`, via the
 shared `ai_kit_spec.gsd_tools` wrappers). Two writes are not config keys: the runner script
-and, when an apply fails, the backup bytes restored directly (D-21). The `ai-kit-spec-review`
+and, when an apply fails, the backup bytes restored directly. The `ai-kit-spec-review`
 skill must be installed beside this one; `node` and a resolvable gsd-core are required.
 
 ## Prerequisites and trust model
@@ -30,7 +30,7 @@ opens one TCP connection to its host (reachability only, never a request).
 | Exit | v1 subcommands | v2 subcommands |
 |---|---|---|
 | `0` | success | success (read the JSON for warnings and `needs_choice`) |
-| `2` | install problem: sibling skill, `node` or `gsd-tools.cjs` missing. Surface stderr verbatim; do not retry | a refusal you can fix: bad `--out`, inventory digest mismatch, open `needs_choice`, malformed inventory or plan, held apply marker, refused `plan-set` value — or the same install problems. Read the stderr line, fix the input, re-run (`inventory`/`recommend` first when it says so) |
+| `2` | install problem (sibling skill, `node` or `gsd-tools.cjs` missing) or, for `apply-execution`/`apply-review`, an unrecognized `--cli` before any write. Surface stderr verbatim; do not retry | a refusal you can fix: bad `--out`, inventory digest mismatch, open `needs_choice`, malformed inventory or plan, held apply marker, refused `plan-set` value — or the same install problems. Read the stderr line, fix the input, re-run (`inventory`/`recommend` first when it says so) |
 | `1` | a gsd-tools read/write failed | `apply` write failed and rolled back (or `restore_error`); a follow-up command failed |
 
 ## Resolve the entrypoint
@@ -60,7 +60,9 @@ scratch directory **outside** `<target>/.planning/`: `recommend --out` is refuse
 project's `.planning/` and onto an input or config file. `plan-set`/`plan-unset` read
 `inventory.json` beside `plan.json` unless `--inventory` is given.
 
-1. **Inventory** (writes JSON to stdout only — capture it). Create the scratch dir once and
+1. **Inventory** (never touches project config; prints JSON to stdout — capture it). It
+   refreshes ai-kit's runtime/catalog caches and may contact the catalog services and the
+   jev endpoint (TCP reachability only); say so before running it offline or on a no-write request. Create the scratch dir once and
    record its printed path; like the entrypoint, write it literally wherever `$WORK` appears.
    Add `--host <host>` only when the host cannot be detected (exit 2 says so); `--refresh`
    forces a full catalog fetch.
@@ -106,7 +108,12 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
    - **Trusted roots** (`agent_skills_security.trusted_global_roots`): the one candidate's
      `value` is the whole list — already-configured roots first, then the new `~/` roots.
      Approve it with that list, or decline with `plan-unset`. A list that drops an
-     already-configured root is refused, and the refusal prints the merged command.
+     already-configured root is refused; the refusal prints the merged list — re-run
+     `plan-set` with it (entrypoint and `--plan` included).
+   - `workflow.cross_ai_command` and the runner artifact stay open until every runner in
+     `artifacts[0].choices` has a model (`plan-unset` is refused while execution is on).
+     To drop a runner, `plan-set script:cross-ai.prefer` without it; to drop execution,
+     `plan-set workflow.cross_ai_execution false`.
    - A refused value outside the candidates takes `--force` **only** when the user explicitly
      chose that value; say what it bypasses before using it.
 
@@ -130,7 +137,9 @@ python3 "$ENTRYPOINT" apply --plan "$WORK/plan.json" --inventory "$WORK/inventor
    disclosures and unverified notes. On yes, run `python3 "$ENTRYPOINT"` followed by the
    `approve_with` string **unchanged**: it carries `--require` for the listed ids and a
    `--fingerprint` of the rows the user saw. If approval is refused because the follow-ups
-   changed, list them again and re-ask.
+   changed, list them again and re-ask. If `required` is empty, ask nothing and skip
+   approval. Always relay `recommended` items as suggestions. If the report has no
+   `followups` block (warning "follow-ups could not be listed"), run the listing command below.
 
 ```bash
 python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inventory.json" --project-dir <target>
@@ -171,10 +180,11 @@ target. The next apply then writes `cross-ai.mjs.new` instead of overwriting the
 
 **`.new` is not active:** the live runner keeps its old CONFIG and apply reports
 `script.active: false`. Merge `.new` by hand (keep customizations), check the **active**
-runner, then delete `.new`:
+runner (the runner resolves its config from its cwd, so run it inside the target), then
+delete `.new`:
 
 ```bash
-node .planning/scripts/cross-ai.mjs --print-argv
+cd <target> && node .planning/scripts/cross-ai.mjs --print-argv
 ```
 
 ## Skills
@@ -187,7 +197,7 @@ node .planning/scripts/cross-ai.mjs --print-argv
   wired and gsd-core skips it with a reported warning.
 - Unknown installed skills get capped proposals (one per name, wireable only) — never
   auto-install or auto-wire them.
-- **Jev session gate:** System One is the jev backend; inventory detects it by a TCP
+- **Jev session gate:** inventory detects the jev (System One) backend, `system_one_backend`, by a TCP
   reachability check of `JEV_API_URL` or by `JEV_API_KEY` being present (never a health
   check). A wiring that rests on reachability alone carries an `effect` flag. The agent
   session also needs `GSD_PATH_JEV=1` and `GSD_PATH_JEV_TIMEOUT_SECONDS`.
@@ -204,7 +214,7 @@ node .planning/scripts/cross-ai.mjs --print-argv
 | cursor / pi hosts | **not live-validated** |
 | opencode providers | Providers defined only in a project's `opencode.json` are not candidates |
 | effort sync | Skipped for workstream configs; `--config-dir <project>/<host dir>` value **unverified** |
-| local gsd root | `.opencode/gsd-core` install root **unverified** until Phase 20 |
+| local gsd root | `.opencode/gsd-core` install root **unverified** |
 
 ## v1 path (kept, secondary)
 
@@ -238,7 +248,7 @@ python3 "$ENTRYPOINT" apply-workflow-defaults --project-dir <target> --ui-phase 
 
 | Subcommand | Required flags | Role |
 |---|---|---|
-| `inventory` | `--project-dir` (`--host`, `--refresh` optional) | Read-only snapshot to stdout |
+| `inventory` | `--project-dir` (`--host`, `--refresh` optional) | Snapshot to stdout; refreshes ai-kit caches, may go online |
 | `recommend` | `--inventory`, `--profile`, `--rigor`, `--out` | Write `plan.json` |
 | `plan-set` | `key`, `value`, `--plan` (`--inventory`, `--force` optional) | Decide a plan entry |
 | `plan-unset` | `key`, `--plan` (`--inventory` optional) | Decline / remove a plan entry |
