@@ -324,7 +324,8 @@ def _tcp_reachable(endpoint: tuple[str, int], connect_fn) -> bool:
 
 def _key_present(env: dict) -> bool:
     secrets = gsd_catalog.load_ai_kit_spec_module("local_secrets")
-    if secrets is not None:
+    # Without HOME the secrets path would be ./.config/... (cwd-relative): env var only (C-IN-11).
+    if secrets is not None and env.get("HOME"):
         return bool(secrets.secret_is_set(env, "JEV_API_KEY"))
     return bool(str(env.get("JEV_API_KEY", "")).strip())
 

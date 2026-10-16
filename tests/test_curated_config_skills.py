@@ -550,6 +550,22 @@ class TestSystemOneBackend(unittest.TestCase):
         out = skill_scan.system_one_backend({"HOME": root}, connect)
         self.assertIn("key_present", out["via"])
 
+    def test_unset_home_never_reads_a_cwd_relative_secrets_file(self):
+        """C-IN-11: without HOME only the env var counts, never ./.config/ai-kit/."""
+        cwd_root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, cwd_root, True)
+        cfg = os.path.join(cwd_root, ".config", "ai-kit")
+        os.makedirs(cfg)
+        with open(os.path.join(cfg, "secrets.env"), "w", encoding="utf-8") as fh:
+            fh.write("JEV_API_KEY=planted-in-cwd\n")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(cwd_root)
+        connect, _calls = self._recorder()
+        out = skill_scan.system_one_backend({}, connect)
+        self.assertNotIn("key_present", out["via"])
+        out = skill_scan.system_one_backend({"JEV_API_KEY": "k"}, connect)
+        self.assertIn("key_present", out["via"])
+
     def test_url_and_key_together(self):
         connect, _calls = self._recorder()
         env = {"JEV_API_URL": "https://h/", "JEV_API_KEY": "x"}
