@@ -18,6 +18,7 @@ import unittest.mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
 from ai_kit_spec import dispatch, execute_dispatch, quota, reviewer_dispatch
+from ai_kit_spec.runner_dispatch import RunnerResult, RunnerSeams
 
 HOST_SIGNALS = [
     "AI_AGENT",
@@ -83,19 +84,23 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
         )
         assert result["returncode"] == 0, result
         results["dispatch_with_polling"] = _read_child_env_names(out)
-        # 3. probe_reviewer_quota (real subprocess.run via its default run_fn)
-        out = os.path.join(tmp, "probe.json")
+        # 3. probe_reviewer_quota: the runner seam's env_fn is what the child would get
+        captured = {}
+
+        def fake_runner(spec, prompt, seams):
+            del spec, prompt
+            captured["env"] = seams.env_fn()
+            return RunnerResult(0, "", {"status": "ok"}, None, False, [], "")
+
         resolved = quota.ResolvedReviewer(
-            key="k",
-            model="m",
-            vendor="v",
-            runtime="codex",
-            command=_command_template(script, out),
-            extra={},
+            key="k", model="m", vendor="v", runtime="codex", command=None, extra={},
         )
-        probe = quota.probe_reviewer_quota(resolved)
+        probe = quota.probe_reviewer_quota(
+            resolved,
+            seams=quota.ProbeSeams(runner_fn=fake_runner, env_fn=lambda: dispatch.child_env()),
+        )
         assert probe["available"], probe
-        results["probe_reviewer_quota"] = _read_child_env_names(out)
+        results["probe_reviewer_quota"] = set(captured["env"])
         # 4. dispatch_execute (real child via its default dispatch_fn)
         out = os.path.join(tmp, "execute.json")
         execute_dispatch.dispatch_execute(
@@ -114,31 +119,32 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
             ),
         )
         results["dispatch_execute"] = _read_child_env_names(out)
-        # 5. dispatch_reviewer (cli None: no codegraph health probe, command template is ours)
-        out = os.path.join(tmp, "reviewer.json")
+        # 5. dispatch_reviewer: the launcher seam's env_fn is what its child would get
+        reviewer_env = {}
+
+        def fake_custom(spec, prompt, seams):
+            del spec, prompt
+            reviewer_env.update(seams.env_fn())
+            return RunnerResult(0, "", None, None, False, [], "")
+
         result = reviewer_dispatch.dispatch_reviewer(
             reviewer_dispatch.ReviewerDispatchSpec(
                 reviewer_entry={
-                    "key": "k",
-                    "model": "m",
-                    "vendor": "v",
-                    "runtime": None,
-                    "command": _command_template(script, out),
-                    "extra": {},
+                    "key": "k", "model": "m", "vendor": "v",
+                    "command": "mycli --model {model}", "extra": {},
                 },
-                prompt="p",
-                timeout_tiers=[timeout],
-                tool_availability={},
+                prompt="p", timeout_tiers=[timeout], tool_availability={},
             ),
             seams=reviewer_dispatch.ReviewerSeams(
-                dispatch_fn=dispatch.dispatch_with_polling,
+                custom_fn=fake_custom,
+                runner_seams=RunnerSeams(env_fn=dispatch.child_env),
                 build_tooling_guidance_fn=lambda *_a, **_kw: "",
                 resolve_shared_reference_fn=lambda: None,
                 codegraph_health_fn=lambda _cli: False,
             ),
         )
         assert result["returncode"] == 0, result
-        results["dispatch_reviewer"] = _read_child_env_names(out)
+        results["dispatch_reviewer"] = set(reviewer_env)
     return results
 
 

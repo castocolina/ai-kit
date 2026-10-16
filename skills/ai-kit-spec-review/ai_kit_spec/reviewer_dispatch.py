@@ -1,17 +1,23 @@
-"""Direct dispatch for ai-kit-spec-review's own external-CLI reviewer entries -- wraps
-dispatch.dispatch_with_polling with the review-specific prompt composition (tooling guidance
-only; no model-selection-override/incremental-progress/failure-reporting reinforcement, since
-a reviewer's own checklist skill (ai-kit-spec-review-checklist) already owns that contract).
-Read-only by construction: the command this module runs is always rendered from a review-mode
-`command` template (built by commands.build_reviewer_command and stored on the reviewer entry),
-never an execute-mode one -- this module itself has no read/write distinction to enforce, that
-lives entirely in which builder produced the entry's `command` before it ever reaches here."""
+"""Direct dispatch for ai-kit-spec-review's own external reviewer entries.
+
+A table-runtime entry (route `subprocess` or `unverified`) runs through the cross-AI runner in
+review mode. A custom entry (a `command` and no runtime, D-21) runs through the fixed-argv
+launcher. A `native` route never reaches a subprocess: the host runs it. Tooling guidance is
+prefixed onto the prompt; a reviewer's own checklist skill owns the review contract.
+"""
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
 from ai_kit_spec.detection import check_codegraph_mcp_usable
-from ai_kit_spec.dispatch import dispatch_with_polling
+from ai_kit_spec.runner_dispatch import (
+    CustomSpec,
+    RunnerResult,
+    RunnerSeams,
+    RunnerSpec,
+    run_custom_command,
+    run_runner_tiers,
+)
 from ai_kit_spec.tooling_guidance import (
     build_tooling_guidance,
     resolve_shared_tooling_reference_path,
@@ -19,10 +25,11 @@ from ai_kit_spec.tooling_guidance import (
 
 
 class ReviewerSeams(NamedTuple):
-    dispatch_fn: Callable[..., dict] = dispatch_with_polling
+    runner_tiers_fn: Callable[..., RunnerResult] = run_runner_tiers
+    custom_fn: Callable[..., RunnerResult] = run_custom_command
+    runner_seams: RunnerSeams = RunnerSeams()
     build_tooling_guidance_fn: Callable[..., str] = build_tooling_guidance
     resolve_shared_reference_fn: Callable[[], Any] = resolve_shared_tooling_reference_path
-    render_command_fn: Callable[..., list[str]] = render_reviewer_command
     codegraph_health_fn: Callable[[Any], bool] = check_codegraph_mcp_usable
 
 
@@ -32,6 +39,7 @@ class ReviewerDispatchSpec(NamedTuple):
     timeout_tiers: list[int]
     tool_availability: dict
     agents_tooling_path: object = None
+    cwd: str | None = None
 
 
 def _reviewer_full_prompt(
@@ -50,21 +58,59 @@ def _reviewer_full_prompt(
     return runtime, full_prompt
 
 
+def _runner_spec(entry: dict, tiers: list[int], cwd: str | None) -> RunnerSpec:
+    """One review-mode runner spec from a table-runtime entry and its first timeout tier."""
+    extra = entry.get("extra") or {}
+    return RunnerSpec(
+        entry["runtime"], entry["model"], "review", tiers[0], cwd=cwd,
+        effort=extra.get("effort"), service_tier=extra.get("service_tier"),
+        cursor_mode=extra.get("cursor_mode"),
+    )
+
+
+def _result_dict(result: RunnerResult) -> dict:
+    return {
+        "stdout": result.stdout, "returncode": result.returncode, "timed_out": result.timed_out,
+        "reason": result.reason, "status": result.status, "argv": result.argv,
+    }
+
+
+def _dispatch_runtime(entry: dict, spec: ReviewerDispatchSpec, prompt: str,
+                      seams: ReviewerSeams) -> dict:
+    result = seams.runner_tiers_fn(
+        _runner_spec(entry, spec.timeout_tiers, spec.cwd), spec.timeout_tiers, prompt,
+        seams.runner_seams,
+    )
+    return _result_dict(result)
+
+
+def _dispatch_custom(entry: dict, spec: ReviewerDispatchSpec, prompt: str,
+                     seams: ReviewerSeams) -> dict:
+    resolved = ResolvedReviewer(
+        key=entry.get("key", ""), model=entry.get("model", ""), vendor=entry.get("vendor", ""),
+        runtime=None, command=entry.get("command"), extra=entry.get("extra") or {},
+    )
+    custom = CustomSpec(
+        resolved.key, render_reviewer_command(resolved, prompt), spec.timeout_tiers, cwd=spec.cwd,
+    )
+    return _result_dict(seams.custom_fn(custom, prompt, seams.runner_seams))
+
+
 def dispatch_reviewer(
     spec: ReviewerDispatchSpec,
     seams: ReviewerSeams | None = None,
 ) -> dict:
-    """Compose the reviewer prompt and run the entry's command via dispatch_with_polling."""
+    """Compose the reviewer prompt and run the entry through the runner or the launcher."""
     active = seams or ReviewerSeams()
+    if not spec.timeout_tiers:
+        raise ValueError("timeout_tiers must name at least one tier -- got an empty list")
     runtime, full_prompt = _reviewer_full_prompt(spec, active)
     entry = spec.reviewer_entry
-    resolved = ResolvedReviewer(
-        key=entry.get("key", ""),
-        model=entry.get("model", ""),
-        vendor=entry.get("vendor", ""),
-        runtime=runtime,
-        command=entry.get("command"),
-        extra=entry.get("extra") or {},
-    )
-    command = active.render_command_fn(resolved, full_prompt)
-    return active.dispatch_fn(command, full_prompt, spec.timeout_tiers)
+    key = entry.get("key", "")
+    if entry.get("route") == "native" or not (runtime or entry.get("command")):
+        raise ValueError(
+            f"reviewer {key} routes native; the host runs it, not dispatch-reviewer"
+        )
+    if runtime:
+        return _dispatch_runtime(entry, spec, full_prompt, active)
+    return _dispatch_custom(entry, spec, full_prompt, active)

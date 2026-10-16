@@ -20,6 +20,11 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "skills", "ai-kit-spec-review"))
 
 from ai_kit_gsd_curated_config import cross_ai_script
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
+from ai_kit_spec.reviewer_dispatch import (
+    ReviewerDispatchSpec,
+    ReviewerSeams,
+    dispatch_reviewer,
+)
 from ai_kit_spec.runner_dispatch import RunnerSeams, RunnerSpec, run_runner
 
 
@@ -57,10 +62,15 @@ def runner_env(tmp: str) -> dict[str, str]:
         link = os.path.join(bin_dir, "git")
         if not os.path.lexists(link):
             os.symlink(git_bin, link)
+    # the fake bin stays first; the real node dir is added so a seam whose which_fn reads PATH
+    # (the default) still resolves node, while the child itself only ever sees bin_dir
+    path = bin_dir
+    if node_bin:
+        path = bin_dir + os.pathsep + os.path.dirname(node_bin)
     home = os.path.join(tmp, "home")
     os.makedirs(home, exist_ok=True)
     return {
-        "PATH": bin_dir,
+        "PATH": path,
         "HOME": home,
         "XDG_CONFIG_HOME": os.path.join(home, ".config"),
         "GIT_CONFIG_GLOBAL": os.devnull,
@@ -103,15 +113,16 @@ const argOf = (flag) => {
   return i >= 0 ? process.argv[i + 1] || '' : '';
 };
 const sub = process.argv.slice(2);
+const MODES = ['ok', 'empty', 'quota', 'auth', 'billing', 'capacity', 'crash', 'hang', 'nochange'];
 if (sub[0] === 'models') {
   log('opencode models');
-  console.log('fake/ok');
+  for (const mode of MODES) console.log('fake/' + mode);
   process.exit(0);
 }
 const model = argOf('--model');
+const mode = model.startsWith('fake/') ? model.slice(5).replace(/#[^#/]+$/, '') : '';
 log('opencode ' + model);
-process.stdin.on('data', () => {}).on('end', () => {
-  if (process.argv.includes('--auto')) fs.appendFileSync('a.txt', 'oc\\n');
+const okLines = () => {
   const lines = [
     JSON.stringify({ type: 'text', sessionID: 'ses_1',
       part: { id: 'p1', messageID: 'm1', type: 'text', text: 'Plan first.' } }),
@@ -121,13 +132,28 @@ process.stdin.on('data', () => {}).on('end', () => {
       part: { id: 'p2', messageID: 'm2', type: 'text', text: '## Summary\\ndone' } }),
   ];
   for (const l of lines) console.log(l);
+};
+process.stdin.on('data', () => {}).on('end', () => {
+  if (mode === 'empty') process.exit(0);
+  if (mode === 'quota') { process.stderr.write('quota exceeded\\n'); process.exit(1); }
+  if (mode === 'auth') { process.stderr.write('401 unauthorized\\n'); process.exit(1); }
+  if (mode === 'billing') { process.stderr.write('402 payment required\\n'); process.exit(1); }
+  if (mode === 'capacity') { process.stderr.write('503 Service Unavailable\\n'); process.exit(1); }
+  if (mode === 'crash') { process.stderr.write('boom\\n'); process.exit(7); }
+  if (mode === 'hang') { setInterval(() => {}, 1 << 30); return; }
+  if (mode === 'nochange') { okLines(); return; }
+  if (process.argv.includes('--auto')) fs.appendFileSync('a.txt', 'oc\\n');
+  okLines();
 });
 """
 
 
 def write_fake_opencode(bin_dir: str) -> None:
-    """The template's own fake opencode: lists `fake/ok`, and otherwise drains stdin,
-    appends `oc` to `a.txt` only when argv contains `--auto`, and prints the three JSON lines."""
+    """The template's own fake opencode, extended with `fake/<mode>` behaviors.
+
+    `models` lists every mode except `missing`. `ok` drains stdin, appends `oc` to `a.txt` only
+    under `--auto`, and prints the three JSON lines; the other modes follow the template's fake pi.
+    """
     path = os.path.join(bin_dir, "opencode")
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(_FAKE_OPENCODE)
@@ -374,6 +400,75 @@ class TestRunnerDispatchE2E(unittest.TestCase):
             assert result.status is not None
             self.assertEqual(result.status["status"], "ok")
             self.assertEqual(result.status["tree"], "unknown")
+            self.assertTrue(any("is not inside a git work tree" in line for line in lines))
+            self.assertEqual(pids_with_cwd_under(tmp), [])
+
+
+_REVIEW_STATUSES = (
+    ("fake/ok", None, "ok", [600]),
+    ("fake/empty", "real_error", "empty_answer", [600]),
+    ("fake/quota", "quota", "quota", [600]),
+    ("fake/auth", "auth", "auth", [600]),
+    ("fake/billing", "billing_or_access", "billing", [600]),
+    ("fake/capacity", "capacity", "capacity", [600]),
+    ("fake/crash", "real_error", "crash", [600]),
+    ("fake/hang", "timeout", "timeout", [3]),
+    ("fake/missing", "configuration", "bad_model", [600]),
+)
+
+
+class TestReviewStatusesE2E(unittest.TestCase):
+    """Every review status the map handles, through the real runner and a fake opencode."""
+
+    def setUp(self):
+        if _real_node_executable() is None:
+            self.skipTest("node not on PATH: review status e2e skipped")
+        if shutil.which("git") is None:
+            self.skipTest("git not on PATH: review status e2e skipped")
+
+    def _entry(self, model: str) -> dict:
+        return {"key": "oc", "model": model, "vendor": "opencode", "runtime": "opencode"}
+
+    def _review(self, tmp, model, tiers, cwd, env):
+        write_fake_opencode(os.path.join(tmp, "bin"))
+        lines: list[str] = []
+        seams = ReviewerSeams(
+            runner_seams=RunnerSeams(env_fn=lambda: env, print_fn=lines.append),
+            codegraph_health_fn=lambda _runtime: False,
+        )
+        result = dispatch_reviewer(
+            ReviewerDispatchSpec(self._entry(model), "hi", tiers, {}, cwd=cwd), seams,
+        )
+        return result, lines
+
+    def test_each_review_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(tmp, "repo")
+            os.makedirs(repo)
+            _git_init(repo)
+            env = runner_env(tmp)
+            with open(os.path.join(repo, "a.txt"), encoding="utf-8") as handle:
+                baseline = handle.read()
+            for model, reason, status, tiers in _REVIEW_STATUSES:
+                with self.subTest(model=model):
+                    result, lines = self._review(tmp, model, tiers, repo, env)
+                    self.assertEqual(result["reason"], reason, msg="".join(lines))
+                    assert result["status"] is not None
+                    self.assertEqual(result["status"]["status"], status)
+                    with open(os.path.join(repo, "a.txt"), encoding="utf-8") as handle:
+                        self.assertEqual(handle.read(), baseline)
+                    self.assertEqual(pids_with_cwd_under(tmp), [])
+
+    def test_non_git_dir_dispatches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scratch = os.path.join(tmp, "scratch")
+            os.makedirs(scratch)
+            env = runner_env(tmp)
+            env["GIT_CEILING_DIRECTORIES"] = os.path.dirname(scratch)
+            result, lines = self._review(tmp, "fake/ok", [600], scratch, env)
+            self.assertIsNone(result["reason"], msg="".join(lines))
+            assert result["status"] is not None
+            self.assertEqual(result["status"]["tree"], "unknown")
             self.assertTrue(any("is not inside a git work tree" in line for line in lines))
             self.assertEqual(pids_with_cwd_under(tmp), [])
 

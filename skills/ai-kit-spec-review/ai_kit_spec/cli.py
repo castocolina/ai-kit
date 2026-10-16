@@ -66,6 +66,7 @@ from ai_kit_spec.model_catalog import (
 from ai_kit_spec.model_sources import fetch_artificial_analysis, fetch_models_dev
 from ai_kit_spec.quota import (
     QUOTA_TTL_SECONDS,
+    ProbeSeams,
     cache_quota_path,
     probe_reviewer_quota,
     refresh_quota_cache,
@@ -77,8 +78,16 @@ from ai_kit_spec.review_reports import (
     render_merged_report,
     report_status,
 )
-from ai_kit_spec.reviewer_dispatch import ReviewerDispatchSpec, dispatch_reviewer
+from ai_kit_spec.reviewer_dispatch import ReviewerDispatchSpec, ReviewerSeams, dispatch_reviewer
 from ai_kit_spec.routing import RouteContext, RuntimesSeams, host_can_select
+from ai_kit_spec.runner_dispatch import (
+    RunnerSpec,
+    build_runner_argv,
+    run_custom_command,
+    run_runner,
+    run_runner_tiers,
+)
+from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 from ai_kit_spec.vendor import infer_vendor_from_model
 
 
@@ -108,12 +117,19 @@ class CliDeps(NamedTuple):
     run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run
     dispatch_execute_fn: Callable[..., dict] = dispatch_execute
     dispatch_reviewer_fn: Callable[..., dict] = dispatch_reviewer
+    runner_fn: Callable[..., Any] = run_runner
+    runner_tiers_fn: Callable[..., Any] = run_runner_tiers
+    custom_fn: Callable[..., Any] = run_custom_command
     env_fn: Callable[[], dict[str, str]] = _default_env_fn
     load_secret_fn: Callable[..., Any] = load_secret
     fetch_models_dev_fn: Callable[..., Any] = fetch_models_dev
     fetch_artificial_analysis_fn: Callable[..., Any] = fetch_artificial_analysis
     popen_fn: Callable[..., Any] = subprocess.Popen  # the opencode 2.x image probe server
     urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN  # its loopback API call
+
+    def probe_seams(self) -> ProbeSeams:
+        """The runner and launcher a probe or a quota refresh spawns through."""
+        return ProbeSeams(self.runner_fn, self.custom_fn, self.env_fn)
 
 
 def _register_cache_detect_parsers(sub: argparse._SubParsersAction) -> None:
@@ -334,6 +350,9 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
         help="comma-separated seconds, e.g. '600,1200,1800' -- escalation order")
     p_dispatch_reviewer.add_argument("--tool-availability-json", default=None)
     p_dispatch_reviewer.add_argument("--agents-tooling-path", default=None)
+    p_dispatch_reviewer.add_argument(
+        "--cwd", default=None,
+        help="working directory for the review subprocess; default is the caller's own cwd")
     p_dispatch_reviewer.add_argument(
         "--stdout-only", action="store_true",
         help="print ONLY the dispatched reviewer's own stdout and exit with its real "
@@ -629,7 +648,10 @@ def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
               if not host_can_select(reviewers.get(key, {}).get("runtime"),
                                      reviewers.get(key, {}).get("model", ""), host)]
     existing = cache_read_json(args.quota_path) or {}
-    updated = refresh_quota_cache(config, ladder, existing, QUOTA_TTL_SECONDS, run_fn=deps.run_fn)
+    updated = refresh_quota_cache(
+        config, ladder, existing, QUOTA_TTL_SECONDS, run_fn=deps.run_fn,
+        seams=deps.probe_seams(),
+    )
     cache_write_json(args.quota_path, updated)
     print(json.dumps(updated))
     return 0
@@ -711,18 +733,30 @@ def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
     print(rendered)
     return 0
 
+def _display_argv(entry: dict, prompt: str, which_fn) -> list[str]:
+    """The argv a review would run: the runner's for a table runtime (the prompt goes on
+    stdin, never into argv), the custom argv otherwise."""
+    if entry.get("runtime"):
+        extra = entry.get("extra") or {}
+        spec = RunnerSpec(
+            entry["runtime"], entry.get("model", ""), "review", 600,
+            effort=extra.get("effort"), service_tier=extra.get("service_tier"),
+            cursor_mode=extra.get("cursor_mode"),
+        )
+        node = which_fn("node") or "node"
+        return build_runner_argv(spec, resolve_cross_ai_template_path() or "<runner>", node)
+    resolved = to_resolved(entry)
+    return render_reviewer_command(resolved, prompt)
+
+
 def _cmd_render_command(args: argparse.Namespace, deps: CliDeps) -> int:
     with open(args.reviewers_json, encoding="utf-8") as f:
         reviewers = json.load(f)
-    r = reviewers[args.index]
-    resolved = ResolvedReviewer(key=r["key"], model=r["model"], vendor=r["vendor"],
-                                 runtime=r.get("runtime"), command=r.get("command"),
-                                 extra=r.get("extra", {}))
     with open(args.prompt_file, encoding="utf-8") as f:
         prompt = f.read()
     try:
-        # argv dispatch (D-10): print the rendered argv as a JSON array, not a string
-        print(json.dumps(render_reviewer_command(resolved, prompt)))
+        # argv display: a JSON array, never a shell string, and never the prompt for a runtime
+        print(json.dumps(_display_argv(reviewers[args.index], prompt, deps.which_fn)))
     except ValueError as exc:
         # Deliberately no "### Status:" substring — same fail-closed
         # convention as merge-reports: review-spec/SKILL.md's existing
@@ -748,11 +782,12 @@ def _trust_local_argv_lines(config: dict, env: dict) -> list[dict]:
     stays symbolic (A-CR-01)."""
     local_keys = {r.get("key") for r in config.get("reviewers", [])}
     lines = []
+    # the parsed local file, not cfg_resolve: --show must render a file that is not trusted yet
     for r in cfg_combine(config, env)["reviewers"]:
         if not (r.get("runtime") or r.get("command")) or r.get("key") not in local_keys:
             continue
         try:
-            argv = render_reviewer_command(to_resolved(r), "<prompt>")
+            argv = _display_argv(r, "<prompt>", shutil.which)
         except ValueError as exc:
             lines.append({"key": r["key"], "error": str(exc)})
             continue
@@ -895,7 +930,9 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
                 timeout_tiers,
                 tool_availability,
                 args.agents_tooling_path,
-            )
+                cwd=args.cwd,
+            ),
+            seams=ReviewerSeams(runner_tiers_fn=deps.runner_tiers_fn, custom_fn=deps.custom_fn),
         )
     except ValueError as exc:
         # Deliberately no "### Status:" substring -- same fail-closed convention
@@ -916,7 +953,7 @@ def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     rid = None if args.runtime is None else runtime_id(args.runtime)
     resolved = ResolvedReviewer(key=args.key, model=args.model, vendor=args.vendor,
                                  runtime=rid, command=args.reviewer_command, extra=extra)
-    result = probe_reviewer_quota(resolved, run_fn=deps.run_fn)
+    result = probe_reviewer_quota(resolved, run_fn=deps.run_fn, seams=deps.probe_seams())
     print(json.dumps(result))
     return 0
 _COMMANDS = {

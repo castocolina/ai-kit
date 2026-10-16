@@ -20,6 +20,7 @@ import typing
 import unittest
 import unittest.mock
 import urllib.error
+import uuid
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
@@ -45,6 +46,7 @@ from ai_kit_spec import (
     model_sources,
     quota,
     reviewer_dispatch,
+    runner_dispatch,
     tooling_guidance,
     trust,
 )
@@ -86,6 +88,7 @@ from ai_kit_spec.detection import (
 from ai_kit_spec.error_classifier import REASONS, classify_error
 from ai_kit_spec.quota import (
     NO_CONFIG_FALLBACK,
+    ProbeSeams,
     cache_quota_path,
     entry_reason,
     probe_reviewer_quota,
@@ -3249,12 +3252,15 @@ class TestRenderReviewerCommand(unittest.TestCase):
         # argv dispatch, no shell: the prompt survives verbatim as ONE argv element
         self.assertEqual(out[-1], dangerous_prompt)
 
-    def test_runtime_entry_builds_command_without_template(self):
+    def test_runtime_entry_without_a_command_raises_value_error(self):
         resolved = ResolvedReviewer(
             key="codex-gpt", model="gpt-5.2", vendor="openai", runtime="codex",
             command=None, extra={},
         )
-        self.assertIn("gpt-5.2", render_reviewer_command(resolved, "hello"))
+        with self.assertRaises(ValueError) as ctx:
+            render_reviewer_command(resolved, "hello")
+        self.assertIn("codex-gpt", str(ctx.exception))
+        self.assertIn("no command", str(ctx.exception))
 
     def test_malformed_template_raises_value_error_not_key_error(self):
         # {unknown_field} isn't {model}/{prompt}/in extra -> str.format
@@ -3294,6 +3300,13 @@ class TestRenderReviewerCommand(unittest.TestCase):
             render_reviewer_command(resolved, "hello")
 
 
+def _probe_result(reason, status=None, stderr_tail=""):
+    return runner_dispatch.RunnerResult(
+        0 if reason is None else 1, "", {"status": status} if status else None, reason,
+        False, ["node", "runner"], stderr_tail,
+    )
+
+
 class TestProbeReviewerQuota(unittest.TestCase):
     def test_native_entry_is_always_available(self):
         resolved = ResolvedReviewer(
@@ -3302,129 +3315,120 @@ class TestProbeReviewerQuota(unittest.TestCase):
         )
         result = probe_reviewer_quota(
             resolved,
-            run_fn=lambda *a, **k: (_ for _ in ()).throw(
+            seams=ProbeSeams(runner_fn=lambda *a: (_ for _ in ()).throw(
                 AssertionError("should never shell out for a native entry")
-            ),
+            )),
         )
         self.assertTrue(result["available"])
+
+    def _codex(self):
+        return ResolvedReviewer(
+            key="codex-gpt", model="gpt-5.2", vendor="openai", runtime="codex",
+            command=None, extra={},
+        )
 
     def test_successful_call_is_available(self):
-        resolved = ResolvedReviewer(
-            key="codex-gpt",
-            model="gpt-5.2",
-            vendor="openai",
-            runtime="codex",
-            command="echo ok",
-            extra={},
-        )
+        seen = {}
 
-        class FakeResult:
-            returncode = 0
-            stdout = "ok\n"
-            stderr = ""
+        def fake_runner(spec, prompt, seams):
+            seen["spec"] = spec
+            return _probe_result(None, "ok")
 
-        result = probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
+        result = probe_reviewer_quota(self._codex(), seams=ProbeSeams(runner_fn=fake_runner))
         self.assertTrue(result["available"])
         self.assertIsNone(result["reason"])
+        self.assertEqual(seen["spec"].mode, "review")
+        self.assertEqual(seen["spec"].timeout_s, 30)
+        self.assertEqual(seen["spec"].runtime, "codex")
 
     def test_nonzero_exit_is_unavailable(self):
-        resolved = ResolvedReviewer(
-            key="codex-gpt",
-            model="gpt-5.2",
-            vendor="openai",
-            runtime="codex",
-            command="false",
-            extra={},
+        result = probe_reviewer_quota(
+            self._codex(),
+            seams=ProbeSeams(runner_fn=lambda *a: _probe_result("real_error", "crash")),
         )
-
-        class FakeResult:
-            returncode = 1
-            stdout = ""
-            stderr = "some error"
-
-        result = probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
         self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "real_error")
 
     def test_answer_containing_quota_text_on_exit_zero_is_a_success(self):
-        # R8/D-13: the model's answer (stdout) is never classified — an answer
-        # saying "quota exceeded" with exit 0 and empty stderr is a success.
-        resolved = ResolvedReviewer(
-            key="codex-gpt",
-            model="gpt-5.2",
-            vendor="openai",
-            runtime="codex",
-            command="echo hi",
-            extra={},
+        # R8/D-13: the runner's status decides, never the answer text — an `ok` status is a
+        # success even when the answer happens to say "quota exceeded".
+        result = probe_reviewer_quota(
+            self._codex(), seams=ProbeSeams(runner_fn=lambda *a: _probe_result(None, "ok"))
         )
-
-        class FakeResult:
-            returncode = 0
-            stdout = "The reviewer reports: quota exceeded"
-            stderr = ""
-
-        result = probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
         self.assertTrue(result["available"])
         self.assertIsNone(result["reason"])
 
-    def test_stderr_quota_error_on_nonzero_exit_records_reason_quota(self):
-        resolved = ResolvedReviewer(
-            key="codex-gpt",
-            model="gpt-5.2",
-            vendor="openai",
-            runtime="codex",
-            command="codex exec",
-            extra={},
+    def test_quota_status_records_reason_quota_and_relays_stderr(self):
+        lines = []
+
+        def fake_runner(spec, prompt, seams):
+            del spec, prompt
+            seams.print_fn("Error: usage limit reached")
+            return _probe_result("quota", "quota")
+
+        result = probe_reviewer_quota(
+            self._codex(), seams=ProbeSeams(runner_fn=fake_runner, print_fn=lines.append)
         )
-
-        class FakeResult:
-            returncode = 1
-            stdout = ""
-            stderr = "Error: usage limit reached"
-
-        result = probe_reviewer_quota(resolved, run_fn=lambda *a, **k: FakeResult())
         self.assertFalse(result["available"])
         self.assertEqual(result["reason"], "quota")
         self.assertIn("usage limit", result["detail"])
+        self.assertEqual(lines, ["Error: usage limit reached"])
 
     def test_timeout_is_unavailable(self):
-        resolved = ResolvedReviewer(
-            key="codex-gpt",
-            model="gpt-5.2",
-            vendor="openai",
-            runtime="codex",
-            command="sleep 999",
-            extra={},
+        result = probe_reviewer_quota(
+            self._codex(),
+            seams=ProbeSeams(runner_fn=lambda *a: _probe_result("timeout", "timeout")),
         )
-
-        def fake_run(*a, **k):
-            raise subprocess.TimeoutExpired(cmd="sleep 999", timeout=30)
-
-        result = probe_reviewer_quota(resolved, run_fn=fake_run)
         self.assertFalse(result["available"])
         self.assertEqual(result["reason"], "timeout")
 
-    def test_probe_pipes_prompt_via_stdin(self):
-        # the probe prompt must reach the child process via stdin
-        # (input=), never inlined as a shell argument — this is what
-        # makes codex/claude/grok/opencode/cursor-agent's stdin-only
-        # command templates (no {prompt} placeholder) actually work
-        resolved = ResolvedReviewer(
-            key="codex-gpt", model="gpt-5.2", vendor="openai",
-            runtime="codex", command="cat", extra={},
+    def test_billing_status_records_billing_or_access(self):
+        result = probe_reviewer_quota(
+            self._codex(),
+            seams=ProbeSeams(
+                runner_fn=lambda *a: _probe_result("billing_or_access", "billing")
+            ),
         )
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "billing_or_access")
+
+    def test_probe_sends_the_prompt_to_the_runner(self):
+        # the probe prompt reaches the runner as its prompt argument, never inside argv
         captured = {}
 
-        class FakeResult:
-            returncode = 0
-            stdout = ""
-            stderr = ""
+        def fake_runner(spec, prompt, seams):
+            del spec, seams
+            captured["prompt"] = prompt
+            return _probe_result(None, "ok")
 
-        def fake_run(*a, **k):
-            captured.update(k)
-            return FakeResult()
+        probe_reviewer_quota(self._codex(), seams=ProbeSeams(runner_fn=fake_runner))
+        self.assertEqual(captured["prompt"], "Only say: Hello world!")
 
-        probe_reviewer_quota(resolved, run_fn=fake_run)
-        self.assertEqual(captured.get("input"), "Only say: Hello world!")
+    def test_no_node_is_dispatch_unavailable_and_names_node(self):
+        def fake_runner(spec, prompt, seams):
+            del spec, prompt
+            seams.print_fn(
+                "ai-kit-spec: subprocess dispatch needs Node (node not found on PATH)")
+            return _probe_result("dispatch_unavailable")
+
+        result = probe_reviewer_quota(self._codex(), seams=ProbeSeams(runner_fn=fake_runner))
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "dispatch_unavailable")
+        self.assertIn("Node", result["detail"])
+
+    def test_probe_cwd_is_outside_any_git_work_tree_and_removed_afterwards(self):
+        seen = {}
+
+        def fake_runner(spec, prompt, seams):
+            del prompt, seams
+            seen["cwd"] = spec.cwd
+            seen["existed"] = os.path.isdir(spec.cwd)
+            return _probe_result(None, "ok")
+
+        probe_reviewer_quota(self._codex(), seams=ProbeSeams(runner_fn=fake_runner))
+        self.assertTrue(seen["existed"])
+        self.assertFalse(os.path.exists(seen["cwd"]))
+        self.assertFalse(os.path.isdir(os.path.join(seen["cwd"], ".git")))
 
     def test_session_default_is_available_without_a_probe(self):
         resolved = ResolvedReviewer(
@@ -3544,17 +3548,9 @@ class TestRefreshQuotaCache(unittest.TestCase):
         }
 
     def test_probes_missing_entries(self):
-        class FakeResult:
-            returncode = 0
-            stdout = "ok"
-            stderr = ""
-
         updated = refresh_quota_cache(
-            self.config,
-            ["codex-gpt"],
-            existing={},
-            ttl_seconds=3600,
-            run_fn=lambda *a, **k: FakeResult(),
+            self.config, ["codex-gpt"], existing={}, ttl_seconds=3600,
+            seams=ProbeSeams(runner_fn=lambda *a: _probe_result(None, "ok")),
         )
         self.assertTrue(updated["codex-gpt"]["available"])
 
@@ -3565,24 +3561,17 @@ class TestRefreshQuotaCache(unittest.TestCase):
             raise AssertionError("should not re-probe a fresh entry")
 
         updated = refresh_quota_cache(
-            self.config, ["codex-gpt"], existing, ttl_seconds=3600, run_fn=fail_if_called
+            self.config, ["codex-gpt"], existing, ttl_seconds=3600,
+            seams=ProbeSeams(runner_fn=fail_if_called),
         )
         self.assertFalse(updated["codex-gpt"]["available"])  # untouched
 
     def test_reprobes_stale_entries(self):
         existing = {"codex-gpt": {"available": False, "checked_at": time.time() - 7200}}
 
-        class FakeResult:
-            returncode = 0
-            stdout = "ok"
-            stderr = ""
-
         updated = refresh_quota_cache(
-            self.config,
-            ["codex-gpt"],
-            existing,
-            ttl_seconds=3600,
-            run_fn=lambda *a, **k: FakeResult(),
+            self.config, ["codex-gpt"], existing, ttl_seconds=3600,
+            seams=ProbeSeams(runner_fn=lambda *a: _probe_result(None, "ok")),
         )
         self.assertTrue(updated["codex-gpt"]["available"])  # re-probed, flipped to available
 
@@ -4373,11 +4362,18 @@ class TestMainCli(unittest.TestCase):
                  "reviewers": [{"key": "native", "model": "opus", "runtime": "claude"}]},
             )
             quota_path = os.path.join(cwd, "quota.json")
-            fake_run = mock.Mock(side_effect=AssertionError("host-selectable reviewer probed"))
+            fake_runner = mock.Mock(
+                side_effect=AssertionError("host-selectable reviewer reached the runner"))
+            fake_custom = mock.Mock(
+                side_effect=AssertionError("host-selectable reviewer reached the launcher"))
             with mock.patch.object(os, "environ", {"HOME": home, "CLAUDECODE": "1"}):
-                self.assertEqual(main(["probe-quota", "--cwd", cwd,
-                                       "--quota-path", quota_path], run_fn=fake_run), 0)
-            fake_run.assert_not_called()
+                self.assertEqual(main(
+                    ["probe-quota", "--cwd", cwd, "--quota-path", quota_path],
+                    env_fn=lambda: {"CLAUDECODE": "1"},
+                    runner_fn=fake_runner, custom_fn=fake_custom,
+                ), 0)
+            fake_runner.assert_not_called()
+            fake_custom.assert_not_called()
             written = cache_read_json(quota_path)
             self.assertNotIn("native", written or {})
 
@@ -4401,20 +4397,17 @@ class TestMainCli(unittest.TestCase):
             )
             quota_path = os.path.join(cwd, "quota.json")
             env = {"HOME": home}
-            fake_run = mock.Mock(
-                return_value=subprocess.CompletedProcess(
-                    args=[], returncode=0, stdout="ok", stderr=""
-                )
-            )
+            fake_custom = mock.Mock(return_value=_probe_result(None, "ok"))
             with mock.patch.object(os, "environ", env):
                 code = main(
-                    ["probe-quota", "--cwd", cwd, "--quota-path", quota_path], run_fn=fake_run
+                    ["probe-quota", "--cwd", cwd, "--quota-path", quota_path],
+                    custom_fn=fake_custom,
                 )
             self.assertEqual(code, 0)
             written = cache_read_json(quota_path)
             assert written is not None
             self.assertTrue(written["codex-gpt"]["available"])
-            fake_run.assert_called()  # never shells out to a real "echo ok"
+            fake_custom.assert_called()  # a command entry goes through the launcher
 
     def test_merge_reports_reads_files_and_prints_markdown(self):
         import io
@@ -4701,74 +4694,65 @@ class TestMainCli(unittest.TestCase):
         with redirect_stdout(buf):
             code = main(
                 ["check-reviewer", "--key", "session-default"],
-                run_fn=lambda *a, **k: (_ for _ in ()).throw(
+                runner_fn=lambda *a: (_ for _ in ()).throw(
                     AssertionError("should never shell out for a native entry")
                 ),
             )
         self.assertEqual(code, 0)
         self.assertTrue(json.loads(buf.getvalue())["available"])
 
-    def test_check_reviewer_runs_the_real_command_and_reports_detail(self):
+    def test_check_reviewer_runtime_goes_through_the_runner(self):
         import io
         from contextlib import redirect_stdout
 
-        class FakeResult:
-            returncode = 1
-            stdout = ""
-            stderr = "ActionRequiredError: Named models unavailable"
+        seen = {}
+
+        def fake_runner(spec, prompt, seams):
+            del prompt
+            seen["spec"] = spec
+            seams.print_fn("ActionRequiredError: Named models unavailable")
+            return _probe_result("auth", "auth")
 
         buf = io.StringIO()
         with redirect_stdout(buf):
             code = main(
-                [
-                    "check-reviewer",
-                    "--key",
-                    "cursor-glm",
-                    "--model",
-                    "glm-5.2-high",
-                    "--vendor",
-                    "zhipu",
-                    "--cli",
-                    "cursor-agent",
-                    "--command",
-                    "cursor-agent -p {prompt} --output-format text --model {model}",
-                ],
-                run_fn=lambda *a, **k: FakeResult(),
+                ["check-reviewer", "--key", "cursor-glm", "--model", "glm-5.2-high",
+                 "--vendor", "zhipu", "--runtime", "cursor"],
+                runner_fn=fake_runner,
             )
         self.assertEqual(code, 0)
         parsed = json.loads(buf.getvalue())
         self.assertFalse(parsed["available"])
+        self.assertEqual(parsed["reason"], "auth")
         self.assertIn("ActionRequiredError", parsed["detail"])
+        self.assertEqual(seen["spec"].runtime, "cursor")
+        self.assertEqual(seen["spec"].mode, "review")
 
-    def test_check_reviewer_passes_extra_json_to_command_template(self):
+    def test_check_reviewer_custom_command_goes_through_the_launcher(self):
         import io
         from contextlib import redirect_stdout
 
-        class FakeResult:
-            returncode = 0
-            stdout = "ok"
-            stderr = ""
+        seen = {}
+
+        def fake_custom(spec, prompt, seams):
+            del prompt, seams
+            seen["argv"] = spec.argv
+            seen["tiers"] = spec.timeout_tiers
+            return _probe_result(None)
 
         buf = io.StringIO()
         with redirect_stdout(buf):
             code = main(
-                [
-                    "check-reviewer",
-                    "--key",
-                    "codex-gpt",
-                    "--model",
-                    "gpt-5.2",
-                    "--cli",
-                    "codex",
-                    "--command",
-                    "codex -m {model} -c effort={effort} {prompt}",
-                    "--extra-json",
-                    '{"effort": "high"}',
-                ],
-                run_fn=lambda *a, **k: FakeResult(),
+                ["check-reviewer", "--key", "codex-gpt", "--model", "gpt-5.2",
+                 "--command", "codex -m {model} -c effort={effort} {prompt}",
+                 "--extra-json", '{"effort": "high"}'],
+                custom_fn=fake_custom,
+                runner_fn=lambda *a: (_ for _ in ()).throw(AssertionError("runner")),
             )
         self.assertEqual(code, 0)
         self.assertTrue(json.loads(buf.getvalue())["available"])
+        self.assertEqual(seen["tiers"], [30])
+        self.assertIn("effort=high", seen["argv"])
 
 
 class TestMainCliDetectTools(unittest.TestCase):
@@ -5850,21 +5834,17 @@ class TestCandidatesToLadder(unittest.TestCase):
 
 
 class TestDispatchReviewer(unittest.TestCase):
-    def test_composes_tooling_guidance_and_dispatches_via_the_polling_engine(self):
+    def test_composes_tooling_guidance_and_dispatches_through_the_runner(self):
         captured = {}
 
-        def fake_dispatch(command, prompt, timeout_tiers, _poll_interval=150, **kw):
-            captured["command"] = command
+        def fake_tiers(spec, tiers, prompt, seams):
+            del seams
+            captured["spec"] = spec
             captured["prompt"] = prompt
-            captured["timeout_tiers"] = timeout_tiers
-            return {
-                "returncode": 0,
-                "stdout": "## Review\n### Status: Approved\n",
-                "stderr": "",
-                "timed_out": False,
-                "tiers_tried": 1,
-                "final_timeout": 600,
-            }
+            captured["timeout_tiers"] = tiers
+            return runner_dispatch.RunnerResult(
+                0, "## Review\n### Status: Approved\n", {"status": "ok"}, None, False, [], ""
+            )
 
         result = reviewer_dispatch.dispatch_reviewer(
             reviewer_dispatch.ReviewerDispatchSpec(
@@ -5872,9 +5852,9 @@ class TestDispatchReviewer(unittest.TestCase):
                     "key": "codex-sol",
                     "model": "gpt-5.6-sol",
                     "vendor": "openai",
-                    "cli": "codex",
-                    "command": "codex exec --sandbox read-only -m {model}",
-                    "extra": {},
+                    "runtime": "codex",
+                    "extra": {"effort": "high"},
+                    "route": "subprocess",
                 },
                 prompt="Read the checklist and review...",
                 timeout_tiers=[600, 1200],
@@ -5882,7 +5862,7 @@ class TestDispatchReviewer(unittest.TestCase):
                 agents_tooling_path=None,
             ),
             seams=reviewer_dispatch.ReviewerSeams(
-                dispatch_fn=fake_dispatch,
+                runner_tiers_fn=fake_tiers,
                 build_tooling_guidance_fn=lambda *a, **kw: "TOOLING GUIDANCE HERE",
                 resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
                 codegraph_health_fn=lambda cli: True,
@@ -5892,28 +5872,23 @@ class TestDispatchReviewer(unittest.TestCase):
         self.assertEqual(captured["timeout_tiers"], [600, 1200])
         self.assertIn("TOOLING GUIDANCE HERE", captured["prompt"])
         self.assertIn("Read the checklist and review...", captured["prompt"])
-        self.assertEqual(
-            captured["command"], ["codex", "exec", "--sandbox", "read-only", "-m", "gpt-5.6-sol"]
-        )
+        self.assertEqual(captured["spec"].runtime, "codex")
+        self.assertEqual(captured["spec"].model, "gpt-5.6-sol")
+        self.assertEqual(captured["spec"].mode, "review")
+        self.assertEqual(captured["spec"].effort, "high")
         self.assertEqual(result["stdout"], "## Review\n### Status: Approved\n")
+        self.assertIsNone(result["reason"])
 
-    def test_command_line_prompt_cli_receives_the_tooling_guidance_prefix_too(self):
-        # The whole point of rendering INSIDE dispatch_reviewer: grok inlines {prompt} into its
-        # own command line and never reads stdin, so a guidance prefix applied only to stdin
-        # would be silently discarded for exactly the CLI that has no AGENTS.md ingestion.
+    def test_custom_command_receives_the_tooling_guidance_prefix_too(self):
+        # A custom entry (D-21) inlines {prompt} into its own argv and may never read stdin,
+        # so the guidance prefix has to be inside the substituted prompt, not only on stdin.
         captured = {}
 
-        def fake_dispatch(command, prompt, timeout_tiers, **kw):
-            captured["command"] = command
+        def fake_custom(spec, prompt, seams):
+            del seams
+            captured["argv"] = spec.argv
             captured["prompt"] = prompt
-            return {
-                "returncode": 0,
-                "stdout": "",
-                "stderr": "",
-                "timed_out": False,
-                "tiers_tried": 1,
-                "final_timeout": 600,
-            }
+            return runner_dispatch.RunnerResult(0, "", None, None, False, spec.argv, "")
 
         reviewer_dispatch.dispatch_reviewer(
             reviewer_dispatch.ReviewerDispatchSpec(
@@ -5921,7 +5896,6 @@ class TestDispatchReviewer(unittest.TestCase):
                     "key": "grok-flagship",
                     "model": "grok-4.6",
                     "vendor": "xai",
-                    "cli": "grok",
                     "command": "grok -p {prompt} -m {model}",
                     "extra": {},
                 },
@@ -5931,30 +5905,24 @@ class TestDispatchReviewer(unittest.TestCase):
                 agents_tooling_path=None,
             ),
             seams=reviewer_dispatch.ReviewerSeams(
-                dispatch_fn=fake_dispatch,
+                custom_fn=fake_custom,
                 resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
                 codegraph_health_fn=lambda cli: False,
             ),
         )
 
-        # argv dispatch: the full prompt (guidance + caller prompt) is ONE argv element
-        prompt_element = captured["command"][2]
+        prompt_element = captured["argv"][2]
         self.assertIn("SHARED_TOOLING_PATH = /fake/tooling-guidance.md", prompt_element)
         self.assertIn("TOOL_AVAILABILITY = ", prompt_element)
         self.assertIn("Read the checklist and review...", prompt_element)
+        self.assertEqual(captured["prompt"], prompt_element)
 
     def test_codegraph_health_is_resolved_internally_not_asked_of_the_caller(self):
         asked = []
 
-        def fake_dispatch(command, prompt, timeout_tiers, **kw):
-            return {
-                "returncode": 0,
-                "stdout": "",
-                "stderr": "",
-                "timed_out": False,
-                "tiers_tried": 1,
-                "final_timeout": 600,
-            }
+        def fake_tiers(spec, tiers, prompt, seams):
+            del spec, tiers, prompt, seams
+            return runner_dispatch.RunnerResult(0, "", {"status": "ok"}, None, False, [], "")
 
         def fake_health(cli):
             asked.append(cli)
@@ -5976,7 +5944,7 @@ class TestDispatchReviewer(unittest.TestCase):
                     "model": "m",
                     "vendor": "v",
                     "runtime": "codex",
-                    "command": "codex exec -m {model}",
+                    "route": "subprocess",
                     "extra": {},
                 },
                 prompt="p",
@@ -5984,7 +5952,7 @@ class TestDispatchReviewer(unittest.TestCase):
                 tool_availability={"codegraph": True},
             ),
             seams=reviewer_dispatch.ReviewerSeams(
-                dispatch_fn=fake_dispatch,
+                runner_tiers_fn=fake_tiers,
                 build_tooling_guidance_fn=fake_guidance,
                 resolve_shared_reference_fn=lambda: None,
                 codegraph_health_fn=fake_health,
@@ -5994,18 +5962,12 @@ class TestDispatchReviewer(unittest.TestCase):
         self.assertEqual(asked, ["codex"])
         self.assertTrue(captured_guidance_args["codegraph_registered"])
 
-    def test_native_entry_with_no_cli_never_runs_the_codegraph_health_check(self):
+    def test_custom_entry_never_runs_the_codegraph_health_check(self):
         asked = []
 
-        def fake_dispatch(command, prompt, timeout_tiers, **kw):
-            return {
-                "returncode": 0,
-                "stdout": "",
-                "stderr": "",
-                "timed_out": False,
-                "tiers_tried": 1,
-                "final_timeout": 600,
-            }
+        def fake_custom(spec, prompt, seams):
+            del spec, prompt, seams
+            return runner_dispatch.RunnerResult(0, "", None, None, False, [], "")
 
         reviewer_dispatch.dispatch_reviewer(
             reviewer_dispatch.ReviewerDispatchSpec(
@@ -6013,7 +5975,6 @@ class TestDispatchReviewer(unittest.TestCase):
                     "key": "custom",
                     "model": "m",
                     "vendor": "v",
-                    "cli": None,
                     "command": "my-script --model {model} --prompt {prompt}",
                     "extra": {},
                 },
@@ -6022,7 +5983,7 @@ class TestDispatchReviewer(unittest.TestCase):
                 tool_availability={},
             ),
             seams=reviewer_dispatch.ReviewerSeams(
-                dispatch_fn=fake_dispatch,
+                custom_fn=fake_custom,
                 resolve_shared_reference_fn=lambda: None,
                 codegraph_health_fn=lambda cli: asked.append(cli) or True,
             ),
@@ -6030,26 +5991,29 @@ class TestDispatchReviewer(unittest.TestCase):
 
         self.assertEqual(asked, [])
 
-    def test_malformed_entry_without_a_command_template_raises_value_error(self):
-        with self.assertRaises(ValueError):
+    def test_native_route_raises_value_error_naming_the_key(self):
+        with self.assertRaises(ValueError) as ctx:
             reviewer_dispatch.dispatch_reviewer(
                 reviewer_dispatch.ReviewerDispatchSpec(
                     reviewer_entry={
-                        "key": "broken",
-                        "model": "m",
-                        "vendor": "v",
-                        "cli": "codex",
-                        "command": None,
-                        "extra": {},
+                        "key": "host",
+                        "model": "opus",
+                        "vendor": "anthropic",
+                        "runtime": "claude",
+                        "route": "native",
                     },
                     prompt="p",
                     timeout_tiers=[600],
                     tool_availability={},
                 ),
                 seams=reviewer_dispatch.ReviewerSeams(
-                    resolve_shared_reference_fn=lambda: None, codegraph_health_fn=lambda cli: False
+                    resolve_shared_reference_fn=lambda: None,
+                    codegraph_health_fn=lambda cli: False,
+                    runner_tiers_fn=lambda *a: (_ for _ in ()).throw(AssertionError(a)),
                 ),
             )
+        self.assertIn("host", str(ctx.exception))
+        self.assertIn("routes native", str(ctx.exception))
 
     def test_dispatch_reviewer_cli_subcommand_stdout_only_prints_raw_report(self):
         import io
@@ -11659,8 +11623,9 @@ class TestChildEnv(unittest.TestCase):
 
 
 class TestDispatchReviewerRealChild(unittest.TestCase):
-    """R9 tracer: a REAL child spawned through dispatch_reviewer with all eleven host
-    signal variables set sees none of them; PATH and HOME pass through."""
+    """R9 tracer: a REAL custom child spawned through dispatch_reviewer with all eleven host
+    signal variables set sees none of them; PATH and HOME pass through. The marker rides the
+    child's argv so a leak check can find this process if it outlives the test."""
 
     def test_real_child_sees_none_of_the_host_signals(self):
         with tempfile.TemporaryDirectory() as d:
@@ -11672,7 +11637,11 @@ class TestDispatchReviewerRealChild(unittest.TestCase):
                     "    f.write(json.dumps(sorted(os.environ)))\n"
                 )
             outfile = os.path.join(d, "env.json")
-            command = f"{shlex.quote(sys.executable)} {shlex.quote(script)} {shlex.quote(outfile)}"
+            marker = f"aikit-leak-marker-{uuid.uuid4().hex}"
+            command = (
+                f"{shlex.quote(sys.executable)} {shlex.quote(script)} "
+                f"{shlex.quote(outfile)} {marker}"
+            )
             signals = [
                 "AI_AGENT",
                 "CLAUDECODE",
@@ -11695,7 +11664,6 @@ class TestDispatchReviewerRealChild(unittest.TestCase):
                             "key": "k",
                             "model": "m",
                             "vendor": "v",
-                            "cli": None,
                             "command": command,
                             "extra": {},
                         },
@@ -11704,13 +11672,13 @@ class TestDispatchReviewerRealChild(unittest.TestCase):
                         tool_availability={},
                     ),
                     seams=reviewer_dispatch.ReviewerSeams(
-                        dispatch_fn=dispatch.dispatch_with_polling,
+                        custom_fn=runner_dispatch.run_custom_command,
                         build_tooling_guidance_fn=lambda *a, **kw: "",
                         resolve_shared_reference_fn=lambda: None,
                         codegraph_health_fn=lambda cli: False,
                     ),
                 )
-            self.assertEqual(result["returncode"], 0, result["stderr"])
+            self.assertEqual(result["returncode"], 0, result)
             with open(outfile, encoding="utf-8") as f:
                 child_env_keys = set(json.load(f))
             self.assertEqual(child_env_keys & set(signals), set())
@@ -11787,57 +11755,60 @@ class TestFakePopenArgvContract(unittest.TestCase):
 
 
 class TestProbeArgv(unittest.TestCase):
-    """D-10/D-14: the quota probe spawns an argv list, no shell, scrubbed env."""
+    """D-11/D-14: a runtime probe is one review-mode runner call; a custom probe is a launcher
+    call whose argv carries no shell and whose reason still comes from stderr."""
 
-    def test_probe_calls_run_fn_with_argv_no_shell_and_scrubbed_env(self):
+    def test_runtime_probe_is_one_review_mode_runner_call(self):
         resolved = ResolvedReviewer(
-            key="k", model="m", vendor="v", runtime="codex",
-            command="codex exec -m {model}", extra={},
+            key="k", model="m", vendor="v", runtime="codex", command=None,
+            extra={"effort": "high", "service_tier": "fast"},
         )
         captured = {}
 
-        class FakeResult:
-            returncode = 0
-            stdout = "ok"
-            stderr = ""
-
-        def fake_run(argv, **kw):
-            captured["argv"] = argv
-            captured.update(kw)
-            return FakeResult()
+        def fake_runner(spec, prompt, seams):
+            del seams
+            captured["spec"] = spec
+            captured["prompt"] = prompt
+            return _probe_result(None, "ok")
 
         with unittest.mock.patch.dict(os.environ, {"AI_AGENT": "1"}):  # C-WR-08
-            probe_reviewer_quota(resolved, run_fn=fake_run)
-        self.assertEqual(captured["argv"], ["codex", "exec", "-m", "m"])
-        self.assertNotIn("shell", captured)
-        self.assertEqual(captured["input"], "Only say: Hello world!")
-        self.assertEqual(captured["timeout"], 30)
-        self.assertNotIn("AI_AGENT", captured["env"])
+            result = probe_reviewer_quota(resolved, seams=ProbeSeams(runner_fn=fake_runner))
+        self.assertTrue(result["available"])
+        self.assertEqual(captured["spec"].mode, "review")
+        self.assertEqual(captured["spec"].timeout_s, 30)
+        self.assertEqual(captured["spec"].effort, "high")
+        self.assertEqual(captured["spec"].service_tier, "fast")
+        self.assertEqual(captured["prompt"], "Only say: Hello world!")
+        self.assertNotIn("AI_AGENT", captured["prompt"])
 
-    def test_probe_with_nonexistent_binary_reports_oserror_not_exception(self):
+    def test_custom_probe_with_a_missing_binary_names_it(self):
         resolved = ResolvedReviewer(
-            key="k",
-            model="m",
-            vendor="v",
-            runtime="codex",
-            command="definitely-not-a-real-binary-xyz --flag",
-            extra={},
+            key="k", model="m", vendor="v", runtime=None,
+            command="definitely-not-a-real-binary-xyz --flag", extra={},
         )
-        result = probe_reviewer_quota(resolved)
+
+        def fake_custom(spec, prompt, seams):
+            del prompt
+            seams.print_fn(f"[Errno 2] No such file or directory: '{spec.argv[0]}'")
+            return _probe_result("dispatch_unavailable")
+
+        result = probe_reviewer_quota(resolved, seams=ProbeSeams(custom_fn=fake_custom))
         self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "dispatch_unavailable")
         self.assertIn("definitely-not-a-real-binary-xyz", result["detail"])
 
-    def test_probe_on_shell_syntax_template_is_unavailable_naming_the_key(self):
+    def test_custom_probe_on_shell_syntax_is_unavailable_naming_the_key(self):
         resolved = ResolvedReviewer(
-            key="k", model="m", vendor="v", runtime="codex", command="codex exec $HOME", extra={}
+            key="k", model="m", vendor="v", runtime=None, command="codex exec $HOME", extra={}
         )
         result = probe_reviewer_quota(
             resolved,
-            run_fn=lambda *a, **k: (_ for _ in ()).throw(
+            seams=ProbeSeams(custom_fn=lambda *a: (_ for _ in ()).throw(
                 AssertionError("must fail before any spawn")
-            ),
+            )),
         )
         self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "configuration")
         self.assertIn("k", result["detail"])
 
 

@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-spec-execute-superpowers"))
 
 from ai_kit_spec import cli, config_io, trust
+from ai_kit_spec.runner_dispatch import RunnerResult
 
 
 def _local_spec(argv_cmd: str) -> bytes:
@@ -38,10 +39,8 @@ def _local_spec(argv_cmd: str) -> bytes:
     ).encode()
 
 
-class _FakeResult:
-    returncode = 0
-    stdout = ""
-    stderr = ""
+def _probe_ok():
+    return RunnerResult(0, "", {"status": "ok"}, None, False, ["node", "runner"], "")
 
 
 class TrustEnvTestCase(unittest.TestCase):
@@ -74,15 +73,16 @@ class TestTrustLifecycle(TrustEnvTestCase):
     def probe_quota(self):
         calls = []
 
-        def rec(argv, **kwargs):
-            calls.append(list(argv))
-            return _FakeResult()
+        def rec(spec, prompt, seams):
+            del prompt, seams
+            calls.append(getattr(spec, "argv", None) or [spec.runtime, spec.model])
+            return _probe_ok()
 
         quota_path = os.path.join(self.cwd, "quota.json")
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["probe-quota", "--cwd", self.cwd, "--quota-path", quota_path],
-                            run_fn=rec)
+                            runner_fn=rec, custom_fn=rec)
         return code, calls, out.getvalue(), err.getvalue()
 
     def test_untrusted_local_probes_nothing_and_warns(self):
@@ -125,9 +125,11 @@ class TestTrustLifecycle(TrustEnvTestCase):
         self.write_local(text.encode())
         lines = self.show_lines()
         self.assertEqual([line["key"] for line in lines], ["codex", "custom"])
-        self.assertEqual(lines[0]["argv"],
-                         ["codex", "exec", "--sandbox", "read-only", "--skip-git-repo-check",
-                          "-m", "gpt-5.6-sol"])
+        # a factory-shaped legacy command normalizes to a runtime: the runner's argv
+        self.assertEqual(lines[0]["argv"][2:4], ["--prefer", "codex"])
+        self.assertIn("--model-codex", lines[0]["argv"])
+        self.assertNotIn("<prompt>", lines[0]["argv"])
+        # an unknown cli keeps its own command; this template names no {prompt}
         self.assertEqual(lines[1]["argv"], ["mycli", "--fast", "custom-model"])
 
     def test_show_renders_placeholder_hidden_flag_and_executable(self):
@@ -152,10 +154,13 @@ class TestTrustLifecycle(TrustEnvTestCase):
             f.write('[[reviewers]]\nkey = "g"\nmodel = "m"\nvendor = "v"\ncli = "codex"\n'
                     'flag = "--safe"\ncommand = "codex exec {flag} -m {model}"\n')
         self.write_local(b'[[reviewers]]\nkey = "g"\nflag = "--yolo"\n')
-        self.assertEqual(self.show_lines(),
-                         [{"key": "g", "argv": ["codex", "exec", "--yolo", "-m", "m"],
-                           "trusted": False,
-                           "path": os.path.realpath(config_io.cfg_local_path(self.cwd))}])
+        line = self.show_lines()[0]
+        # a non-factory command stays custom, so the merged local flag is visible
+        self.assertEqual(line["key"], "g")
+        self.assertEqual(line["argv"], ["codex", "exec", "--yolo", "-m", "m"])
+        self.assertFalse(line["trusted"])
+        self.assertEqual(line["path"],
+                         os.path.realpath(config_io.cfg_local_path(self.cwd)))
 
     def test_show_reports_shell_syntax_refusal_not_an_argv(self):
         self.write_local(_local_spec("x; rm -rf ~"))
@@ -185,7 +190,7 @@ class TestTrustLifecycle(TrustEnvTestCase):
         code, calls, _, _ = self.probe_quota()
         self.assertEqual(code, 0)
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][0], sys.executable)
+        self.assertEqual(calls[0], [sys.executable, "-c", "pass"])
 
     def test_edit_after_trust_reblocks(self):
         path = self.write_local(_local_spec(self.PROBE_CMD))
@@ -282,9 +287,10 @@ class TestTrustLifecycle(TrustEnvTestCase):
     def test_global_only_reviewer_needs_no_trust(self):
         calls = []
 
-        def rec(argv, **kwargs):
-            calls.append(list(argv))
-            return _FakeResult()
+        def rec(spec, prompt, seams):
+            del prompt, seams
+            calls.append(getattr(spec, "argv", None) or [spec.runtime])
+            return _probe_ok()
 
         cfg_dir = os.path.join(self.xdg, "ai-kit")
         os.makedirs(cfg_dir, exist_ok=True)
@@ -295,7 +301,7 @@ class TestTrustLifecycle(TrustEnvTestCase):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["probe-quota", "--cwd", self.cwd, "--quota-path", quota_path],
-                            run_fn=rec)
+                            runner_fn=rec, custom_fn=rec)
         self.assertEqual(code, 0)
         self.assertEqual(len(calls), 1)
 

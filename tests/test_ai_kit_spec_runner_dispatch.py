@@ -1,6 +1,8 @@
 """The one supervision core: argv, charset, trailer, tiers, cleanup, custom entries (R7)."""
 
 import contextlib
+import io
+import json
 import os
 import re
 import signal
@@ -10,11 +12,14 @@ import textwrap
 import time
 import unittest
 import uuid
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
+from ai_kit_spec import reviewer_dispatch
 from ai_kit_spec import runner_dispatch as rd
+from ai_kit_spec.cli import main
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.runner_dispatch import (
     CURSOR_MODEL_ID_SRC,
@@ -584,6 +589,183 @@ class TestRunCustomCommand(_ChildTracker):
             with open(out, encoding="utf-8") as handle:
                 child_names = set(handle.read().splitlines())
             self.assertTrue(HOST_SIGNAL_ENV_VARS.isdisjoint(child_names))
+
+
+def _runner_result(stdout="### Status: Approved\n", returncode=0, reason=None,
+                   status="ok", argv=None):
+    return rd.RunnerResult(
+        returncode, stdout, {"status": status} if status else None, reason, False,
+        argv if argv is not None else ["node", "runner"], "",
+    )
+
+
+class TestDispatchReviewerRunner(unittest.TestCase):
+    """dispatch-reviewer runs a table runtime through the runner and a custom entry
+    through the launcher (D-11, D-21)."""
+
+    def _reviewers(self, tmp, entries, name="reviewers.json"):
+        path = os.path.join(tmp, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(entries, handle)
+        prompt = os.path.join(tmp, "prompt.txt")
+        with open(prompt, "w", encoding="utf-8") as handle:
+            handle.write("review this")
+        return path, prompt
+
+    def _argv(self, reviewers, prompt, extra=None):
+        argv = ["dispatch-reviewer", "--reviewers-json", reviewers, "--index", "0",
+                "--prompt-file", prompt, "--timeout-tiers", "600,1200"]
+        return argv + (extra or [])
+
+    def test_runtime_entry_reaches_the_runner_with_its_tiers(self):
+        seen = {}
+
+        def fake_tiers(spec, tiers, prompt, seams):
+            seen["spec"] = spec
+            seen["tiers"] = tiers
+            seen["prompt"] = prompt
+            return _runner_result(
+                reason="quota", status="quota", argv=["node", "cross-ai.mjs"],
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewers, prompt = self._reviewers(tmp, [{
+                "key": "oc", "runtime": "opencode", "model": "x/y",
+                "extra": {"effort": "high"}, "route": "subprocess",
+            }])
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(
+                    self._argv(reviewers, prompt),
+                    dispatch_reviewer_fn=reviewer_dispatch.dispatch_reviewer,
+                    runner_tiers_fn=fake_tiers,
+                )
+        self.assertEqual(code, 0, err.getvalue())
+        spec = seen["spec"]
+        self.assertEqual(spec.runtime, "opencode")
+        self.assertEqual(spec.model, "x/y")
+        self.assertEqual(spec.mode, "review")
+        self.assertEqual(spec.timeout_s, 600)
+        self.assertIsNone(spec.cwd)
+        self.assertEqual(seen["tiers"], [600, 1200])
+        self.assertIn("review this", seen["prompt"])
+        body = json.loads(out.getvalue())
+        self.assertEqual(body["reason"], "quota")
+        self.assertEqual(body["status"]["status"], "quota")
+        self.assertEqual(body["argv"], ["node", "cross-ai.mjs"])
+        self.assertIn("stdout", body)
+        self.assertIn("returncode", body)
+        self.assertIn("timed_out", body)
+
+    def test_stdout_only_prints_the_report_and_exits_with_the_runner_code(self):
+        def fake_tiers(spec, tiers, prompt, seams):
+            del spec, tiers, prompt, seams
+            return _runner_result(stdout="### Status: Approved\n", returncode=7)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewers, prompt = self._reviewers(tmp, [{
+                "key": "oc", "runtime": "opencode", "model": "x/y", "route": "subprocess",
+            }])
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(
+                    self._argv(reviewers, prompt, ["--stdout-only"]),
+                    runner_tiers_fn=fake_tiers,
+                )
+        self.assertEqual(code, 7)
+        self.assertEqual(out.getvalue(), "### Status: Approved\n")
+
+    def test_native_route_exits_1_and_spawns_nothing(self):
+        spawned = []
+
+        def fake_tiers(*_args):
+            spawned.append("runner")
+            raise AssertionError("a native route must not reach the runner")
+
+        def fake_custom(*_args):
+            spawned.append("custom")
+            raise AssertionError("a native route must not reach the launcher")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewers, prompt = self._reviewers(tmp, [{
+                "key": "host", "runtime": "claude", "model": "opus", "route": "native",
+            }])
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                code = main(
+                    self._argv(reviewers, prompt),
+                    runner_tiers_fn=fake_tiers, custom_fn=fake_custom,
+                )
+        self.assertEqual(code, 1)
+        self.assertIn("dispatch-reviewer: reviewer host routes native", err.getvalue())
+        self.assertEqual(spawned, [])
+
+    def test_cwd_flag_reaches_both_specs_and_never_changes_the_process_cwd(self):
+        seen = {}
+
+        def fake_tiers(spec, tiers, prompt, seams):
+            del tiers, prompt, seams
+            seen.setdefault("runner", []).append(spec.cwd)
+            return _runner_result()
+
+        def fake_custom(spec, prompt, seams):
+            del prompt, seams
+            seen["custom"] = spec.cwd
+            return _runner_result()
+
+        before = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            scratch = os.path.join(tmp, "scratch")
+            os.makedirs(scratch)
+            runtime, prompt = self._reviewers(tmp, [{
+                "key": "oc", "runtime": "opencode", "model": "x/y", "route": "subprocess",
+            }], "runtime.json")
+            custom, _prompt = self._reviewers(tmp, [{
+                "key": "mine", "command": "mycli --model {model}", "model": "m",
+            }], "custom.json")
+            seams = {"runner_tiers_fn": fake_tiers, "custom_fn": fake_custom}
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                code = main(self._argv(runtime, prompt, ["--cwd", scratch]), **seams)
+                self.assertEqual(code, 0, err.getvalue())
+                self.assertEqual(
+                    main(self._argv(custom, prompt, ["--cwd", scratch]), **seams), 0)
+                self.assertEqual(main(self._argv(runtime, prompt), **seams), 0)
+        self.assertEqual(seen["runner"], [scratch, None])
+        self.assertEqual(seen["custom"], scratch)
+        self.assertEqual(os.getcwd(), before)
+
+    def test_without_cwd_both_specs_carry_none(self):
+        seen = {}
+
+        def fake_tiers(spec, tiers, prompt, seams):
+            del tiers, prompt, seams
+            seen["runner"] = spec.cwd
+            return _runner_result()
+
+        def fake_custom(spec, prompt, seams):
+            del prompt, seams
+            seen["custom"] = spec.cwd
+            return _runner_result()
+
+        before = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, prompt = self._reviewers(tmp, [{
+                "key": "oc", "runtime": "opencode", "model": "x/y", "route": "subprocess",
+            }], "runtime.json")
+            custom, _prompt = self._reviewers(tmp, [{
+                "key": "mine", "command": "mycli --model {model}", "model": "m",
+            }], "custom.json")
+            seams = {"runner_tiers_fn": fake_tiers, "custom_fn": fake_custom}
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                code = main(self._argv(runtime, prompt), **seams)
+            self.assertEqual(code, 0, err.getvalue())
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                main(self._argv(custom, prompt), **seams)
+        self.assertIsNone(seen["runner"])
+        self.assertIsNone(seen["custom"])
+        self.assertEqual(os.getcwd(), before)
 
 
 if __name__ == "__main__":

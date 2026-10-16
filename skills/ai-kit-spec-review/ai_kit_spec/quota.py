@@ -1,14 +1,24 @@
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
+from collections.abc import Callable
+from typing import NamedTuple
 
 from ai_kit_spec.cache import cache_base
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
 from ai_kit_spec.config_io import _KNOWN_REVIEWER_FIELDS
-from ai_kit_spec.dispatch import child_env
-from ai_kit_spec.error_classifier import classify_error
 from ai_kit_spec.execute_selection import purpose_matches
+from ai_kit_spec.runner_dispatch import (
+    CustomSpec,
+    RunnerResult,
+    RunnerSeams,
+    RunnerSpec,
+    run_custom_command,
+    run_runner,
+)
 
 QUOTA_TTL_SECONDS = 3600                 # 1 hour: quota/context headroom is highly dynamic
 
@@ -194,83 +204,124 @@ def entry_reason(entry: dict) -> str | None:
     return "real_error"
 
 
-def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) -> dict:
-    """Native (cli-less) entries are never probed — there is nothing to
-    shell out to, and dispatch mechanics there are the current session's
-    own concern, not a quota this module can observe. For CLI entries: run
-    a trivial prompt through the reviewer's own command (an ARGV list from
-    render_reviewer_command, spawned with no shell and a scrubbed child
-    environment via child_env -- D-10/D-14) and classify the outcome via
-    error_classifier.classify_error from the exit status and stderr only
-    (D-13/R8): the probe is available exactly when the returncode is 0 —
-    the model's answer (stdout) is never classified, so an answer that
-    happens to contain "quota exceeded" on exit 0 is a success.
-    A `cli`-set entry with a missing or malformed `command` template is
-    deliberately classified `available: False`, reason `configuration`,
-    here rather than skipped/True — it can never actually be dispatched,
-    so reporting it as available would let a broken config entry win the
-    ladder walk and fail later, in real dispatch, instead of here where
-    the failure is cheap and diagnosable.
+class ProbeSeams(NamedTuple):
+    """The two spawn paths a probe can take, plus where its stderr lines are collected."""
 
-    `detail` (always present) carries the reviewer's own combined
-    stdout+stderr, truncated to `_DETAIL_MAX_CHARS`, when unavailable —
-    e.g. "ActionRequiredError: Named models unavailable. Free plans can
-    only use Auto." (confirmed live against cursor-agent). Empty string
-    when available or native (nothing to report). `reason` (always
-    present, D-13) carries the classify_error-typed why: callers act on
-    `available`, dispatch on `reason` (e.g. superpowers' hourly-wake
-    gate), and `detail` stays purely human-readable diagnostics.
+    runner_fn: Callable[..., RunnerResult] = run_runner
+    custom_fn: Callable[..., RunnerResult] = run_custom_command
+    env_fn: Callable[[], dict] = lambda: dict(os.environ)
+    print_fn: Callable[[str], None] | None = None
 
-    The probe prompt is always piped via stdin (`input=`), never inlined
-    as a shell argument — confirmed live against every known-CLI builder
-    (codex/claude/opencode/cursor-agent all read a missing prompt from
-    stdin; see each `_build_*_command`'s docstring). This is
-    unconditional, not gated on whether `resolved.command` happens to
-    still contain a literal `{prompt}` (grok's builder, and any
-    hand-written open-hatch command, still can) — an unread stdin pipe is
-    harmless to a CLI that takes its prompt inline instead, so one code
-    path serves both without the caller needing to introspect the
-    template first."""
+
+def _probe_spec(resolved: "ResolvedReviewer", cwd: str) -> RunnerSpec:
+    extra = resolved.extra or {}
+    runtime = resolved.runtime or ""
+    return RunnerSpec(
+        runtime, resolved.model, "review", 30, cwd=cwd,
+        effort=extra.get("effort"), service_tier=extra.get("service_tier"),
+        cursor_mode=extra.get("cursor_mode"),
+    )
+
+
+def _probe_entry(result: RunnerResult, detail: str) -> dict:
+    """Available exactly when the runner or launcher reports no reason (D-13)."""
+    if result.reason is None:
+        return {"available": True, "checked_at": time.time(), "reason": None, "detail": ""}
+    return {"available": False, "checked_at": time.time(), "reason": result.reason,
+            "detail": detail[:_DETAIL_MAX_CHARS]}
+
+
+class _ProbeRun(NamedTuple):
+    result: RunnerResult
+    detail: str
+
+
+def _collecting_seams(seams: ProbeSeams, lines: list[str]) -> RunnerSeams:
+    """Stderr lines land in `lines`; a caller's print_fn, when set, sees them too."""
+    if seams.print_fn is None:
+        return RunnerSeams(env_fn=seams.env_fn, print_fn=lines.append)
+
+    emit = seams.print_fn
+    assert emit is not None
+
+    def _both(line: str) -> None:
+        lines.append(line)
+        emit(line)
+
+    return RunnerSeams(env_fn=seams.env_fn, print_fn=_both)
+
+
+def _probe_call(resolved, prompt, seams, runner_seams, cwd):
+    """The one spawn: the runner for a table runtime, the launcher for a custom command."""
+    if resolved.runtime:
+        return seams.runner_fn(_probe_spec(resolved, cwd), prompt, runner_seams)
+    argv = render_reviewer_command(resolved, prompt)
+    return seams.custom_fn(CustomSpec(resolved.key, argv, [30], cwd=cwd), prompt, runner_seams)
+
+
+def _run_probe(resolved: "ResolvedReviewer", prompt: str, seams: ProbeSeams) -> _ProbeRun:
+    """One 30 s review probe. A private cwd keeps the runner off the caller's git work tree,
+    so a large repo can never turn the probe into a git timeout (D-34)."""
+    lines: list[str] = []
+    cwd = tempfile.mkdtemp(prefix="aikit-probe-")
+    try:
+        result = _probe_call(resolved, prompt, seams, _collecting_seams(seams, lines), cwd)
+    finally:
+        shutil.rmtree(cwd, ignore_errors=True)
+    return _ProbeRun(result, "\n".join(lines))
+
+
+def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run,
+                         seams: ProbeSeams | None = None) -> dict:
+    """A native entry (no runtime, no command) is never probed: nothing to run, and the
+    session's own dispatch is not a quota this module can observe.
+
+    A table-runtime entry runs one 30 s review through the runner; a custom entry (a command,
+    no runtime) runs through the launcher with one 30 s tier. Available exactly when that call
+    reports no reason. `detail` is the relayed stderr, truncated. `run_fn` stays accepted and
+    unused so existing callers keep working."""
+    del run_fn
     if not resolved.runtime and not resolved.command:
         return {"available": True, "checked_at": time.time(), "reason": None, "detail": ""}
     probe_prompt = "Only say: Hello world!"
     try:
-        filled = render_reviewer_command(resolved, probe_prompt)
+        run = _run_probe(resolved, probe_prompt, seams or ProbeSeams())
     except ValueError as exc:
         return {"available": False, "checked_at": time.time(), "reason": "configuration",
                 "detail": str(exc)}
-    try:
-        result = run_fn(filled, input=probe_prompt, capture_output=True, encoding="utf-8",
-                         errors="replace", check=False, timeout=30, env=child_env())
-    except subprocess.TimeoutExpired:
-        return {"available": False, "checked_at": time.time(), "reason": "timeout",
-                "detail": "timed out after 30s"}
-    except OSError as exc:
-        return {"available": False, "checked_at": time.time(),
-                "reason": "dispatch_unavailable", "detail": str(exc)}
-    combined = (result.stdout + result.stderr).strip()
-    if result.returncode != 0:
-        return {"available": False, "checked_at": time.time(),
-                "reason": classify_error(result.returncode, result.stderr, False),
-                "detail": combined[:_DETAIL_MAX_CHARS]}
-    return {"available": True, "checked_at": time.time(), "reason": None, "detail": ""}
+    return _probe_entry(run.result, run.detail)
+
+
+class _Refresh(NamedTuple):
+    """A cache refresh: the config and ladder to probe, the cache to update, how old an entry
+    may be, and the seams the probe spawns through."""
+
+    config: dict
+    ladder_keys: list
+    existing: dict
+    ttl_seconds: int
+    seams: ProbeSeams | None = None
 
 
 def refresh_quota_cache(config: dict, ladder_keys: list, existing: dict, ttl_seconds: int,
-                         run_fn=subprocess.run) -> dict:
+                         seams: ProbeSeams | None = None, **_unused) -> dict:
     """Returns an updated quota dict: probes only ladder_keys entries that
     are missing or whose last probe is older than ttl_seconds; entries
     still fresh are left untouched (no re-probe, no wasted quota-checking
-    quota)."""
-    reviewers = config.get("reviewers", [])
-    updated = dict(existing)
+    quota). `run_fn`, accepted through `_unused`, stays unused."""
+    return _refresh(_Refresh(config, ladder_keys, existing, ttl_seconds, seams))
+
+
+def _refresh(job: _Refresh) -> dict:
+    reviewers = job.config.get("reviewers", [])
+    updated = dict(job.existing)
     now = time.time()
-    for key in ladder_keys:
+    for key in job.ladder_keys:
         current = updated.get(key)
-        if current is not None and now - current.get("checked_at", 0) < ttl_seconds:
+        if current is not None and now - current.get("checked_at", 0) < job.ttl_seconds:
             continue
         entry = _reviewer_by_key(reviewers, key)
         if entry is None:
             continue
-        updated[key] = probe_reviewer_quota(to_resolved(entry), run_fn=run_fn)
+        updated[key] = probe_reviewer_quota(to_resolved(entry), seams=job.seams)
     return updated

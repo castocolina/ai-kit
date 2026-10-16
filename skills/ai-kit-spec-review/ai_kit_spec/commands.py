@@ -353,50 +353,26 @@ def build_reviewer_model_id(cli: str, base_model: str, effort=None, fast=None,
 
 
 def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> list[str]:
-    """Fill a resolved reviewer's `command` template and return the argv LIST to run -- argv
-    dispatch with no shell (D-10). The template is tokenized by split_command_template
+    """Fill a custom reviewer's `command` template and return the argv list to run, with no
+    shell (D-21). Table-runtime entries have no command: the runner builds their argv, so this
+    raises rather than inventing one. The template is tokenized by split_command_template
     (which rejects shell syntax loudly), then each token is formatted: {model} and {prompt}
-    are always available; any of the entry's extra fields (effort, service_tier, ...) fill
-    their own {placeholder} when the command references it. Shared by probe_reviewer_quota
-    (below) and review-spec/SKILL.md's real dispatch step (via the `render-command` CLI
-    subcommand), so probing and dispatching can never drift apart.
+    are always available; any of the entry's extra fields fill their own {placeholder}.
 
-    The prompt is substituted RAW and UNQUOTED: it is already one argv element by
-    construction (tokenization happens before substitution), so no quoting is needed -- free
-    text built from document paths/content can never inject into anything because no shell
-    ever re-splits it. Templates may write `{prompt}` bare or quoted ("{prompt}" and
-    '{prompt}' both tokenize to the same single token under posix shlex). {model} and extra
-    fields are likewise substituted raw -- short, human-typed config values.
+    The prompt is substituted raw: tokenization happens before substitution, so it is already
+    one argv element and no shell ever re-splits it. {model} and extra fields are likewise
+    substituted raw.
 
-    Raises `ValueError` -- never a raw `KeyError`/`AttributeError`/`IndexError`/`TypeError`
-    -- when `resolved.command` is missing (a `cli`-set entry with no `command` is a
-    malformed config, per the schema's "required iff `cli` present"), the template is empty
-    or uses shell syntax (see split_command_template), references a placeholder that isn't
-    {model}/{prompt}/one of `extra`'s keys, contains a literal unescaped brace, or `extra`
-    itself defines a `model`/`prompt` key (a hand-written config collision with the two
-    reserved placeholder names). A malformed `review-spec.toml` entry must surface as a
-    reportable config error, never crash the caller."""
-    if resolved.command:
-        try:
-            tokens = split_command_template(resolved.key, resolved.command)
-            return [token.format(model=resolved.model, prompt=prompt, **resolved.extra)
-                    for token in tokens]
-        except (KeyError, IndexError, ValueError, TypeError, AttributeError) as exc:
-            raise ValueError(f"reviewer {resolved.key!r}: {exc}") from exc
-    if resolved.runtime and not resolved.model:
-        raise ValueError(f"reviewer {resolved.key!r} has a runtime but no model")
-    if not resolved.runtime:
+    Raises `ValueError` -- never a raw `KeyError`/`AttributeError`/`IndexError`/`TypeError` --
+    when the entry has no command, the template is empty or uses shell syntax, references a
+    placeholder that isn't {model}/{prompt}/one of `extra`'s keys, contains a literal brace, or
+    `extra` defines a `model`/`prompt` key."""
+    if not resolved.command:
         raise ValueError(
-            f"reviewer {resolved.key} has no runtime or command; "
-            "the session default is run by the host"
+            f"reviewer {resolved.key} has no command; table runtimes run through the runner"
         )
-    template = build_reviewer_command(
-        resolved.runtime, effort=resolved.extra.get("effort"),
-        service_tier=resolved.extra.get("service_tier"),
-        mode=resolved.extra.get("cursor_mode", "plan"),
-    )
     try:
-        tokens = split_command_template(resolved.key, template)
+        tokens = split_command_template(resolved.key, resolved.command)
         return [token.format(model=resolved.model, prompt=prompt, **resolved.extra)
                 for token in tokens]
     except (KeyError, IndexError, ValueError, TypeError, AttributeError) as exc:
