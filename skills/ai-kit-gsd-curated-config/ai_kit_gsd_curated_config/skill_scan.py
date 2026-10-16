@@ -15,7 +15,8 @@ from urllib.parse import urlsplit
 
 from . import gsd_catalog, host
 
-SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# Always fullmatch: re.match with "$" also accepts a trailing newline (C-IN-01).
+SKILL_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 PONYTAIL_SKILLS = (
     "ponytail",
     "ponytail-audit",
@@ -153,8 +154,8 @@ def scan_root(
         resolved = _real_dir(skill_dir)
         if resolved is None:
             continue
-        addr_name = bool(SKILL_NAME_RE.match(name))
-        addr_plugin = plugin is None or bool(SKILL_NAME_RE.match(plugin))
+        addr_name = bool(SKILL_NAME_RE.fullmatch(name))
+        addr_plugin = plugin is None or bool(SKILL_NAME_RE.fullmatch(plugin))
         out.append(
             {
                 "name": name,

@@ -365,6 +365,19 @@ class TestPluginSkills(unittest.TestCase):
         rows = skill_scan.plugin_skills(os.path.join(home, ".claude"), root, home)
         self.assertFalse(rows[0]["addressable"])
 
+    def test_trailing_newline_names_not_addressable(self):
+        """C-IN-01: ``$`` accepted ``foo\\n``; gsd-core's regex and plan_io's fullmatch do not."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        gdir = os.path.join(root, "skills")
+        add_skill(gdir, "ok")
+        add_skill(gdir, "nl\n")
+        rows = {r["name"]: r for r in skill_scan.scan_root(gdir, "global", gdir, root)}
+        self.assertTrue(rows["ok"]["addressable"])
+        self.assertFalse(rows["nl\n"]["addressable"])
+        plugin_rows = skill_scan.scan_root(gdir, "plugin", "p@m", root, plugin="ponytail\n")
+        self.assertFalse(any(r["addressable"] for r in plugin_rows))
+
     def test_missing_install_and_nonstandard_layout(self):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
