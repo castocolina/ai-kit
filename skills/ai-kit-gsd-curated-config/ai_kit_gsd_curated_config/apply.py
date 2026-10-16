@@ -468,33 +468,6 @@ def reconcile_writes(plan: dict, live: dict, host_name: str) -> list[tuple[str, 
     return rows
 
 
-def pending_writes(
-    plan: dict, inv: dict, live: dict, host_name: str
-) -> list[tuple[str, object]]:
-    del host_name  # reserved for symmetry with reconcile_writes
-    rows: list[tuple[str, object]] = []
-    for entry in plan.get("entries") or []:
-        op = entry.get("op")
-        key = entry.get("key")
-        if not isinstance(key, str) or op == "keep":
-            continue
-        if op == "unset":
-            if presets.get_dotted(live, key) is None:
-                continue
-            rows.append((key, None))
-            continue
-        if op != "set":
-            continue
-        value = _planned_to(entry, inv)
-        if presets.get_dotted(live, key) == value:
-            continue
-        rows.append((key, value))
-    rows.sort(
-        key=lambda row: write_order(row[0], "unset" if row[1] is None else "set")
-    )
-    return rows
-
-
 def _wired_agents(plan: dict) -> list[str]:
     seen: set[str] = set()
     agents: list[str] = []
@@ -588,27 +561,6 @@ def _new_project(call: Any) -> bool:
         env=None if call.env is None else dict(call.env),
     )
     return proc.returncode == 0
-
-
-def _count_skipped(plan: dict, inv: dict, live: dict) -> int:
-    skipped = 0
-    for entry in plan.get("entries") or []:
-        op = entry.get("op")
-        key = entry.get("key")
-        if not isinstance(key, str):
-            continue
-        if op == "keep" or (
-            op == "unset" and presets.get_dotted(live, key) is None
-        ):
-            skipped += 1
-        elif op == "set":
-            try:
-                planned = _planned_to(entry, inv)
-            except ValueError:
-                continue
-            if presets.get_dotted(live, key) == planned:
-                skipped += 1
-    return skipped
 
 
 def _script_warning(path: str) -> str:
@@ -909,14 +861,15 @@ def _prepare_writes(
             live = read_live_config(config_path)
         except ValueError as exc:
             return _rollback_report(ctx.progress, config_path, ctx.report, str(exc))
-    host_name = plan["host"]
-    reconcile = reconcile_writes(plan, live, host_name) if created_config else []
+    reconcile = reconcile_writes(plan, live, plan["host"]) if created_config else []
     ctx.report["reconciled"] = [key for key, _ in reconcile]
-    live = read_live_config(config_path)
-    plan_writes = pending_writes(plan, ctx.inputs.inv, live, host_name)
-    writes = reconcile + plan_writes
+    # One no-op rule for the dry-run diff, the writes and the skipped count (PT-02).
+    rows = diff_entries(plan, live, ctx.inputs.inv)
+    writes: list[tuple[str, object]] = [
+        *reconcile, *((row["key"], row["to"]) for row in rows if row["kind"] != "keep")
+    ]
     writes.sort(key=lambda row: write_order(row[0], "unset" if row[1] is None else "set"))
-    ctx.report["skipped"] = _count_skipped(plan, ctx.inputs.inv, live)
+    ctx.report["skipped"] = sum(1 for row in rows if row["kind"] == "keep")
     return writes
 
 
