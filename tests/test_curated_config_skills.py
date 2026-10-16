@@ -294,6 +294,17 @@ class TestScanSkills(unittest.TestCase):
         row = skill_scan.scan_root(gdir, "project", "skills", root)[0]
         self.assertEqual(len(row["description"]), skill_scan.DESCRIPTION_MAX)
 
+    def test_dangling_skill_md_link_not_inventoried(self):
+        """C-W4: a SKILL.md link to nothing is not an installed skill (D-32)."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        gdir = os.path.join(root, "skills")
+        os.makedirs(os.path.join(gdir, "ghost"))
+        os.symlink(os.path.join(root, "missing.md"), os.path.join(gdir, "ghost", "SKILL.md"))
+        add_skill(gdir, "real")
+        rows = skill_scan.scan_root(gdir, "global", gdir, root)
+        self.assertEqual([r["name"] for r in rows], ["real"])
+
     def test_block_scalar_descriptions(self):
         """C-W2: chomping and indent indicators start a block, not a literal value."""
         for indicator in (">", "|", ">-", "|-", ">+", "|+", ">2", "|2-", ">-2"):

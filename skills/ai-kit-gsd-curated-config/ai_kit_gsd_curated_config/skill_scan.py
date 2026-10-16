@@ -148,7 +148,7 @@ def scan_root(
     for name in names:
         skill_dir = os.path.join(root, name)
         skill_md = os.path.join(skill_dir, "SKILL.md")
-        if not os.path.isfile(skill_md) and not os.path.islink(skill_md):
+        if not os.path.isfile(skill_md):  # follows links: a dangling SKILL.md is skipped
             continue
         resolved = _real_dir(skill_dir)
         if resolved is None:
