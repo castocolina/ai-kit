@@ -286,9 +286,12 @@ const RUNTIMES = {
       '--skip-git-repo-check', '-m', m, '--json', '-o', c.outFile, sid, '-'], c),
     parse: (out, c) => {
       let sid = null, error = null;
+      // shortcut: assumes codex emits `error` for stream retries it recovers from and ends a
+      // good turn with turn.completed (not live-verified); turn.failed always counts.
       for (const j of jsonLines(out)) {
         if (j.type === 'thread.started') sid = j.thread_id || sid;
         if (j.type === 'error' || j.type === 'turn.failed') error = JSON.stringify(j).slice(0, 400);
+        if (j.type === 'turn.completed') error = null;
       }
       let text = '';
       try { text = fs.readFileSync(c.outFile, 'utf8'); } catch { /* no answer written */ }
@@ -1110,7 +1113,7 @@ function writeFakeCodex(binDir) {
 const sub = process.argv.slice(2);
 if (sub[0] === 'debug' && sub[1] === 'models') {
   log('codex models');
-  console.log(JSON.stringify({ models: [{ slug: 'fake-ok-codex', visibility: 'list' }] }));
+  console.log(JSON.stringify({ models: ['fake-ok-codex', 'fake-retry-codex'].map((slug) => ({ slug, visibility: 'list' })) }));
   process.exit(0);
 }
 const outFile = argOf('-o');
@@ -1119,6 +1122,10 @@ process.stdin.on('data', () => {}).on('end', () => {
   fs.appendFileSync('a.txt', 'cx\n');
   if (outFile) fs.writeFileSync(outFile, '## Summary\nok');
   console.log(JSON.stringify({ type: 'thread.started', thread_id: 't1' }));
+  if (argOf('-m') === 'fake-retry-codex') {
+    console.log(JSON.stringify({ type: 'error', message: 'stream disconnected; retrying 1/5' }));
+    console.log(JSON.stringify({ type: 'turn.completed' }));
+  }
 });
 `);
 }
@@ -1458,6 +1465,14 @@ async function blackBoxSelfTest() {
           if (mi < 0 || ri < 0 || mi > ri) return `calls=${ctx.calls.join('|')}`;
           return null;
         },
+      },
+      {
+        // A recovered stream error before turn.completed is not a failure.
+        name: 'parser-codex-recovered',
+        args: ['--prefer', 'codex', '--model-codex', 'fake-retry-codex'],
+        config: { prefer: ['codex'] },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=codex model=fake-retry-codex exit=0 .* tree=dirty action=stop$/,
       },
       {
         name: 'parser-pi-ansi',
