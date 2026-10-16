@@ -397,6 +397,28 @@ names. Source: `.planning/research/2026-10-13-audit/18-runtime-detection-and-sub
   3. The affected SKILL.md files and AGENTS.md's Architecture section use the one-model wording,
      and every rewritten SKILL.md passes `/skill-judge` in code review.
 **Plans**: TBD
+- [x] 18.1-01-PLAN.md
+- [ ] 18.1-02-PLAN.md
+- [ ] 18.1-03-PLAN.md
+- [ ] 18.1-04-PLAN.md
+- [ ] 18.1-05-PLAN.md
+- [ ] 18.1-06-PLAN.md
+- [ ] 18.1-07-PLAN.md
+- [ ] 18.1-08-PLAN.md
+- [ ] 18.1-09-PLAN.md
+- [ ] 18.1-10-PLAN.md
+- [ ] 18.1-11-PLAN.md
+- [ ] 18.1-12-PLAN.md
+- [ ] 18.1-13-PLAN.md
+- [ ] 18.1-14-PLAN.md
+- [ ] 18.1-15-PLAN.md
+- [ ] 18.1-16-PLAN.md
+- [ ] 18.1-17-PLAN.md
+- [ ] 18.1-18-PLAN.md
+- [ ] 18.1-19-PLAN.md
+- [ ] 18.1-20-PLAN.md
+- [ ] 18.1-21-PLAN.md
+- [ ] 18.1-22-PLAN.md
 
 ### Phase 19: Evaluation on Claude
 
